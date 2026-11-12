@@ -944,13 +944,15 @@ namespace gnubase::engine
 		Controller,      // a MIDI control change: number and channel; 0 to 1
 		PitchBend,       // channel; 0 to 1, 0.5 is no bend
 		ChannelPressure, // channel; 0 to 1
+		MidiEffect,      // a parameter of the MIDI effect in one of the channel's MIDI slots, in its range: number and
+						 // parameter
 	};
 
 	struct AutomationTarget
 	{
 		AutomationTargetType type = AutomationTargetType::Volume;
-		uint32_t parameter = 0; // Instrument, Plugin and Strip: the parameter's id
-		uint8_t number = 0;     // Controller: 0-127
+		uint32_t parameter = 0; // Instrument, Plugin, Strip and MidiEffect: the parameter's id
+		uint8_t number = 0;     // Controller: 0-127; MidiEffect: the slot, 0-3 the MIDI inserts, 4-7 the MIDI sends
 		uint8_t channel = 0;    // the MIDI types: 0-15
 		ObjectId slot = 0;      // Plugin: the slot
 	};
@@ -1293,6 +1295,11 @@ namespace gnubase::engine
 		std::string timeFormat = "barsBeats"; // the primary time format: one of g_rulerTimeFormats
 	};
 
+	// The sample rates a project can have, in Hz: from the lowest common one to the highest that export writes. Far
+	// outside them the conversions between ticks and samples leave a time::Ticks or a time::Samples.
+	inline constexpr double g_lowestSampleRate = 8000.0;
+	inline constexpr double g_highestSampleRate = 768000.0;
+
 	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
 	struct Project
 	{
@@ -1392,10 +1399,9 @@ namespace gnubase::engine
 	// The main mix, or 0 if the project has no output bus.
 	ObjectId mainMix(const Project& project);
 
-	// How many ticks from its start the longest project lasts at its tempo: g_maxPosition samples long, but below
-	// 8 kHz, the lowest common sample rate, as long as at 8 kHz. At 999 BPM that is about 10^18 ticks, which still fits
-	// a time::Ticks, while at a few hundred hertz the ticks would leave it. Edits that compute positions, such as the
-	// rule editors', stop there.
+	// How many ticks from its start the longest project lasts at its tempo: g_maxPosition samples long. At 999 BPM and
+	// the lowest sample rate that is about 10^18 ticks, which still fits a time::Ticks. Edits that compute positions,
+	// such as the rule editors', stop there.
 	time::Ticks longestProjectTicks(const Project& project);
 
 	// Makes the first top-level output bus the main mix if no bus is.
@@ -1458,6 +1464,17 @@ namespace gnubase::engine
 
 	// Whether a channel can be a send's destination: a group or effect channel, or a folder's group channel.
 	bool isSendDestination(const Project& project, ObjectId channel);
+
+	// The MIDI insert (number 0 to 3) or send (4 to 7) slot of a channel, as AutomationTarget::number counts them.
+	inline const midi::EffectSlot& midiEffectSlot(const Channel& channel, uint8_t number)
+	{
+		const midi::EffectRack& rack = number < midi::g_effectSlots ? channel.midiInserts : channel.midiSends;
+		return rack.slots[number % midi::g_effectSlots];
+	}
+
+	// Whether a MIDI send from a channel to another one (midi::EffectSlot::output) would come back to it: whether
+	// channel is to or is reached from it through the outputs of MIDI sends.
+	bool midiSendLoops(const Project& project, ObjectId channel, ObjectId to);
 
 	// Whether audio from a channel to another one, through an output or a send, would come back to it: whether
 	// channel is to or is reached from it through outputs and the destinations of sends, on or off. Routing never

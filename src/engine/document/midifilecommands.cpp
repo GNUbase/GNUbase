@@ -167,7 +167,9 @@ namespace gnubase::engine
 				"ones go on. Content is parts and audio events (also of the tracks' other versions), markers and "
 				"arranger events by their end, and chord, scale and transpose events and automation points by their "
 				"position, so one at the file's end counts; on linear tracks it is in samples, compared with the "
-				"file's end in the file's tempo. Unless markers is false, its "
+				"file's end in the file's tempo. An audio event on a musical track keeps its start in ticks and its "
+				"length in samples, so it counts by its start in the file's tempo plus its length (by its end in "
+				"ticks if its clip plays in musical mode). Unless markers is false, its "
 				"markers are added to the active marker track (one is added if there is none), except that a type 1 "
 				"file's tracks of nothing but a name and markers, which midiFile.export writes for marker tracks, "
 				"become new marker tracks at the top while the project has room for them. The options of the "
@@ -232,31 +234,30 @@ namespace gnubase::engine
 			for (const auto& part : parts)
 				extend({part.position.base, part.position.value + part.length});
 		};
-		// An audio event keeps its position in its track's time base: on a linear track its end in samples, on a
-		// musical one its end in ticks, as the project's tempo has it now.
-		const auto extendEvent = [&project, &extend](const AudioEvent& event)
-		{
-			const time::Samples end = eventSpan(project, event).end;
-			const auto track = project.trackById.find(event.track);
-			if (track != project.trackById.end() && track->second.timeBase == time::TimeBase::Linear)
-				extend({time::TimeBase::Linear, end});
-			else
-				extend({time::TimeBase::Musical, project.tempo.toTicks(end, project.sampleRate)});
-		};
 		for (const auto& [id, part] : project.midiParts)
 			extend({part.position.base, part.position.value + part.length});
 		for (const auto& [id, part] : project.audioParts)
 			extend({part.position.base, part.position.value + part.length});
-		for (const auto& [id, event] : project.audioEvents)
-			extendEvent(event);
 		for (const auto& [id, track] : project.trackById)
 			for (const TrackVersion& version : track.versions)
 			{
 				extendParts(version.midiParts);
 				extendParts(version.audioParts);
-				for (const AudioEvent& event : version.audioEvents)
-					extendEvent(event);
 			}
+		// An audio event keeps its position in its track's time base. On a linear track it counts by its end in
+		// samples. On a musical one it keeps its start in ticks and its length in samples, so it ends at its start in
+		// the file's tempo plus its length, unless its clip plays in musical mode and so keeps its end in ticks too.
+		forEveryAudioEvent(project,
+			[&project, &options, &extend](const AudioEvent& event)
+			{
+				const EventSpan span = eventSpan(project, event);
+				if (event.position.base == time::TimeBase::Linear)
+					extend({time::TimeBase::Linear, span.end});
+				else if (project.clips.at(event.clip).warp.musical)
+					extend({time::TimeBase::Musical, project.tempo.toTicks(span.end, project.sampleRate)});
+				else
+					options.audioEvents.push_back({event.position.value, span.end - span.start});
+			});
 		for (const auto& [id, marker] : project.markers)
 			extend(marker.end);
 		for (const ArrangerEvent& event : project.arranger.events)

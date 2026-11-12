@@ -259,11 +259,12 @@ namespace gnubase::engine::dsp
 		for (uint32_t i = begin; i < end; ++i)
 		{
 			const auto input = static_cast<float>(m_input.next());
-			// The gain this frame needs once it leaves the delay.
+			// The gain this frame needs once it leaves the delay. The detector keeps running while bypassed, so the
+			// gain is ready when the bypass ends and its first frames are lowered by the gain, not hard-clipped.
 			double peak = 0.0;
 			for (int c = 0; c < count; ++c)
 				peak = std::max(peak, static_cast<double>(std::abs(audio[c][i] * input)));
-			const double required = peak > m_ceiling && !m_bypass ? m_ceiling / peak : 1.0;
+			const double required = peak > m_ceiling ? m_ceiling / peak : 1.0;
 
 			// The minimum over the last L + 1 frames. The candidates that leave the window go first, which makes room
 			// for the new one: the window holds L + 1 frames, this one included.
@@ -297,7 +298,7 @@ namespace gnubase::engine::dsp
 			for (int c = 0; c < count; ++c)
 			{
 				float& delayed = m_delay[(static_cast<size_t>(c) * m_lookahead) + m_position];
-				const float out = delayed * gain;
+				const float out = m_bypass ? delayed : delayed * gain;
 				delayed = audio[c][i] * input;
 				audio[c][i] = m_bypass ? flushDenormal(out) : std::clamp(flushDenormal(out), -ceiling, ceiling);
 			}

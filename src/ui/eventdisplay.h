@@ -550,6 +550,7 @@ namespace gnubase::ui
 		// A right click that opens the context menu selects the event there, unless it's selected already.
 		void areaRightDown(Rml::Event& event, double x, double y);
 		void areaMove(Rml::Event& event, double dx, double dy);
+		// A Ctrl/Shift press left for a click: drags the pressed event once the drag starts.
 		void narrowToPressed();
 		// Whether the keys are exactly the tool modifier of Copy or Shared Copy.
 		bool copyKeys(const std::string& keys) const;

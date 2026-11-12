@@ -361,8 +361,10 @@ namespace gnubase::ui
 
 	KeyEditor::~KeyEditor()
 	{
-		// A key held while the editor goes ends its pitch: the editor closing, or the switch between the key and drum
-		// editor, which builds a key editor of its own. Sending may throw, which a destructor must not pass on.
+		// A key held while the editor goes ends its pitch, whichever way the editor goes: closing, its window closed,
+		// another editor shown instead, the lower zone's panel or an in-place editor going, or the switch between the
+		// key and drum editor, which builds a key editor of its own. Sending may throw, which a destructor must not
+		// pass on.
 		try
 		{
 			sound(std::nullopt);

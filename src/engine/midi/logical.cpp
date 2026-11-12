@@ -6,8 +6,10 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <optional>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <tuple>
@@ -377,7 +379,19 @@ namespace gnubase::engine::midi
 
 	uint64_t nextLogicalSeed() noexcept
 	{
-		static std::atomic<uint64_t> seeds{1};
+		// From a random start, so that each session's first Apply gives other values than the last one's did.
+		static std::atomic<uint64_t> seeds{[]() noexcept
+			{
+				try
+				{
+					std::random_device device;
+					return (uint64_t{device()} << 32U) ^ device();
+				}
+				catch (...)
+				{
+					return static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
+				}
+			}()};
 		return seeds.fetch_add(1, std::memory_order_relaxed);
 	}
 
@@ -619,7 +633,15 @@ namespace gnubase::engine::midi
 			}
 			if (item.contains("rules"))
 			{
-				LogicalRules rules = logicalRulesFromJson(item.at("rules"));
+				LogicalRules rules;
+				try
+				{
+					rules = logicalRulesFromJson(item.at("rules"));
+				}
+				catch (const std::invalid_argument& error)
+				{
+					throw std::invalid_argument(name + "." + error.what());
+				}
 				if (rules.function == LogicalFunction::Select)
 					throw std::invalid_argument(name + ": input transformers don't select");
 				// Live events have no position or length.
