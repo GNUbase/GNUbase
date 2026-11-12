@@ -281,25 +281,46 @@ namespace gnubase::engine
 						m_engine->post("transport.update");
 					}
 					Playback::Cue cue;
-					std::shared_ptr<const ArrangerPlan> plan;
+					cue.window = static_cast<time::Samples>(g_cueSeconds * m_device->format().sampleRate);
 					{
+						// Held while it cues, so that a cue made before a start doesn't come after its exact cue.
 						const std::scoped_lock lock(m_cueMutex);
 						cue.playing = m_cueState.playing;
 						cue.settings = m_cueState.settings;
-						plan = m_cueState.arranger;
+						cue.arranger = m_cueState.arranger.get();
+						cue.arrangerState = m_transport.arranger();
+						cue.position = m_transport.position();
+						const time::Samples countInStart = m_transport.countInStart();
+						// At a start the command thread cued, until the audio thread plays from there, and while it
+						// counts in, where playback starts after it. Either may begin while this cues: the voice it
+						// reads stays.
+						if (m_cueState.start >= 0 && m_transport.appliedRequests() < m_cueState.startRequests)
+						{
+							cue.position = m_cueState.start;
+							cue.enter = m_cueState.enter;
+							cue.playing = true;
+							cue.starting = true;
+						}
+						else if (countInStart >= 0)
+						{
+							cue.position = countInStart;
+							cue.playing = true;
+							cue.starting = true;
+						}
+						m_playback.cue(cue);
 					}
-					cue.arranger = plan.get();
-					cue.arrangerState = m_transport.arranger();
-					// While counting in, where playback will start, as for a stopped transport.
-					const time::Samples countInStart = m_transport.countInStart();
-					cue.position = countInStart >= 0 ? countInStart : m_transport.position();
-					cue.playing = cue.playing && countInStart < 0;
-					cue.window = static_cast<time::Samples>(g_cueSeconds * m_device->format().sampleRate);
-					m_playback.cue(cue);
 					m_audition.cue(cue.window, true);
 					std::this_thread::sleep_for(g_cueInterval);
 				}
 			});
+	}
+
+	void AudioEngine::cueStart(time::Samples start, time::Samples enter)
+	{
+		const std::scoped_lock lock(m_cueMutex);
+		m_cueState.start = start;
+		m_cueState.enter = enter;
+		m_cueState.startRequests = m_transport.sentRequests() + 1;
 	}
 
 	void AudioEngine::startDevice()
@@ -2519,13 +2540,20 @@ namespace gnubase::engine
 
 	void AudioEngine::sent(bool accepted)
 	{
+		if (accepted)
+		{
+			if (!m_device || !m_device->running())
+				m_transport.update(); // no audio thread applies the request
+			m_transport.sync();
+		}
+		{
+			const std::scoped_lock lock(m_cueMutex);
+			m_cueState.playing = m_transport.playing();
+			m_cueState.settings = m_transport.settings();
+			if (!accepted)
+				m_cueState.start = -1; // the start cueStart announced doesn't come
+		}
 		require(accepted, "the transport is busy; try again");
-		if (!m_device || !m_device->running())
-			m_transport.update(); // no audio thread applies the request
-		m_transport.sync();
-		const std::scoped_lock lock(m_cueMutex);
-		m_cueState.playing = m_transport.playing();
-		m_cueState.settings = m_transport.settings();
 	}
 
 	bool AudioEngine::syncTransport()
@@ -2566,6 +2594,7 @@ namespace gnubase::engine
 		}
 		if (m_device && !m_transport.playing())
 		{
+			cueStart(m_transport.startPosition(), m_transport.playStart());
 			cue(m_transport.startPosition(), false, m_device->format().blockSize, true, m_transport.playStart());
 			// Only starting playback waits for the samplers' samples, not locating or a count-in (#1180).
 			waitForSamples(g_startWait);
@@ -2611,7 +2640,10 @@ namespace gnubase::engine
 	{
 		const time::Samples from = m_transport.startPosition();
 		if (m_device)
+		{
+			cueStart(from, -1);
 			cue(from, false, m_device->format().blockSize, true);
+		}
 		const TransportSettings& settings = m_transport.settings();
 		const time::Samples start =
 			settings.startMode == StartMode::CycleStart ? settings.left : m_transport.position();

@@ -838,8 +838,9 @@ namespace gnubase::engine
 			}
 
 			// The entries at the cursor, one per layer, each with a voice of its own: while playing, a voice reading
-			// near it or waiting just ahead of it has it. Otherwise it needs one: while stopped exactly there, while
-			// playing a little ahead, so the voice is ready by the time playback gets there.
+			// near it or waiting just ahead of it has it (at a start, one waiting exactly there). Otherwise it needs
+			// one: while stopped or starting exactly there, while playing a little ahead, so the voice is ready by
+			// the time playback gets there.
 			for (const PlaylistLayer& layer : playlist.layers)
 			{
 				const PlaylistEntry* at = entryAt(layer, cue.position);
@@ -853,6 +854,8 @@ namespace gnubase::engine
 						{
 							if (claimed[i] || m_voices[i]->media != at->media)
 								return false;
+							if (cue.starting && !reading[i])
+								return (states[i].started ? states[i].next : states[i].cueFrame) == frame;
 							const time::Samples next = reading[i] ? states[i].next : states[i].cueFrame;
 							return std::abs(next - frame) <= 2 * slack;
 						});
@@ -864,6 +867,11 @@ namespace gnubase::engine
 							if (!taken[i] && m_voices[i]->media == at->media &&
 								std::abs(states[i].cueFrame - frame) <= 2 * slack)
 								taken[i] = true; // keep the voice waiting there
+						continue;
+					}
+					if (cue.starting)
+					{
+						unmet.push_back({at->media, frame});
 						continue;
 					}
 					Cue later = cue;

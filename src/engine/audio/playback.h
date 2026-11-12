@@ -99,6 +99,10 @@ namespace gnubase::engine
 			// playing or an audition that replaces another makes: the voices it reads and those waiting just ahead of
 			// it stay where they are, and the cue gets others. -1 for none.
 			time::Samples playsOn = -1;
+			// With playing: playback starts at position, or has only just started there, as when a count-in ends, a
+			// transport start goes out or an audition plays its first block meanwhile. An entry at the cursor keeps a
+			// voice the audio thread reads near it or one waiting exactly there, and else gets one there, not ahead.
+			bool starting = false;
 		};
 
 		struct Track

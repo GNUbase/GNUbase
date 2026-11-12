@@ -735,6 +735,50 @@ TEST_CASE(
 	CHECK(one.playback.dropouts() == 0);
 }
 
+TEST_CASE(
+	"a cue at a start leaves the voice alone that the audio thread starts reading there meanwhile", "[integration]")
+{
+	// The cue thread while a count-in ends or a start goes out: it reads where playback starts before the audio
+	// thread plays its first block and the voices after that block. The voice the audio thread started reading must
+	// stay where it reads, not go back to the start, which would leave the second block silent.
+	constexpr auto timeout = std::chrono::seconds(5);
+	OneEntry one;
+	Playback::Cue cue;
+	cue.window = 256;
+	one.playback.cue(cue);
+	REQUIRE(one.playback.waitUntilBuffered(timeout));
+	cue.playing = true;
+	cue.starting = true;
+	cue.window = 4800;
+	one.playback.whileCueing = [&one] { one.blocks.play(); };
+	one.playback.cue(cue);
+	CHECK(!one.playback.whileCueing);
+	REQUIRE(one.playback.waitUntilBuffered(timeout));
+	one.blocks.play();
+
+	CHECK(one.blocks.position == 512);
+	CHECK(one.blocks.wrong == 0);
+	CHECK(one.playback.dropouts() == 0);
+}
+
+TEST_CASE("a cue at a start gives an entry there without a voice one at the start itself", "[integration]")
+{
+	// As for a playing transport, but playback hasn't got past the start yet: a voice 0.1 seconds ahead would leave
+	// that much silent.
+	constexpr auto timeout = std::chrono::seconds(5);
+	OneEntry one;
+	Playback::Cue cue;
+	cue.playing = true;
+	cue.starting = true;
+	cue.window = 4800;
+	one.playback.cue(cue);
+	REQUIRE(one.playback.waitUntilBuffered(timeout));
+	one.blocks.play();
+
+	CHECK(one.blocks.wrong == 0);
+	CHECK(one.playback.dropouts() == 0);
+}
+
 TEST_CASE("auditioning plays only the pressed audio track, past its channel and without the transport", "[integration]")
 {
 	const int blockSize = GENERATE(64, 100);
@@ -1295,6 +1339,30 @@ TEST_CASE("a locate while the transport plays leaves the playback without dropou
 	{
 		run(song.client, "transport.locate", {{"position", 24000 + (i * 480)}});
 		playUntil(song, played(song) + 480);
+	}
+	run(song.client, "audio.stop");
+	CHECK(run(song.client, "audio.get").at("playbackDropouts") == 0);
+}
+
+TEST_CASE("playback that starts away from the cursor starts without a dropout", "[integration][realtime]")
+{
+	// With a pre-roll, playback starts half a second before the cursor, which the cue thread cues while the transport
+	// stands. Once transport.play has cued the start, the cue thread cues there too, until the audio thread plays
+	// from there, rather than at the cursor, where it would take the start's voice away.
+	const gnubase::test::TempDir dir;
+	Song song(256);
+	const TestTrack track = song.addTrack(2);
+	const ObjectId clip = song.addClip(writeRamp(dir, "stereo", 2, 96000));
+	song.add({track.id, 0, 0, 96000, 2}, clip);
+	run(song.client, "transport.set", {{"preRoll", true}, {"preRollAmount", 24000}});
+	run(song.client, "audio.start");
+	for (int i = 0; i < 10; ++i)
+	{
+		run(song.client, "transport.locate", {{"position", 48000}});
+		playUntil(song, played(song) + 960); // the cue thread cues the cursor
+		run(song.client, "transport.play");
+		playUntil(song, played(song) + 2400);
+		run(song.client, "transport.stop");
 	}
 	run(song.client, "audio.stop");
 	CHECK(run(song.client, "audio.get").at("playbackDropouts") == 0);
