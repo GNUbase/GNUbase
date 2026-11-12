@@ -271,6 +271,9 @@ namespace gnubase::ui
 		// modifier Split Event.
 		void setTool(Tool tool);
 		Tool tool() const { return m_tool; }
+		// Whether the modifier keys of a mouse event are those the user setting ui.toolModifiers gives the action, e.g.
+		// erase.deleteLaterEvents.
+		bool toolModifier(const char* action, Rml::Event& event) const;
 		void setCombineSelectionTools(bool on);
 		bool combineSelectionTools() const { return m_combine; }
 		void setLineMode(LineMode mode);

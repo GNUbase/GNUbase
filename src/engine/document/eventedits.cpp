@@ -2763,6 +2763,45 @@ namespace gnubase::engine
 			"Paste",
 			[this](Project& project, CommandContext& context) { return pasteRange(project, context, m_clipboard); });
 
+		Json withPosition = rangeParameters;
+		withPosition["position"] = integer();
+		withPosition["copy"] = boolean();
+		addEdit(engine,
+			{"range.move", 1,
+				"Moves what lies in " + range +
+					" to position (project samples) on the same tracks, as dragging a selection range does (reference "
+					"manual p. 291): cut at its edges (splitNotes as in range.split), deleted from the range as "
+					"range.delete does and pasted at position as range.paste does, without the range clipboard. copy "
+					"(Alt, p. 432) leaves the range as it is and pastes a copy. Locked events stay where they are and "
+					"aren't copied. Returns the new events.",
+				schema(withPosition, {"position"}), eventsResult(), false},
+			"Move Range",
+			[](Project& project, CommandContext& context)
+			{
+				const Range range = rangeFrom(project, context, true);
+				const auto at = context.parameters().at("position").get<time::Samples>();
+				require(at >= 0, "position must not be before the project start");
+				RangeClipboard moved = copyRange(project, range);
+				// Locked events stay, as range.delete leaves them; so do the events of a locked audio part.
+				std::set<ObjectId> lockedParts;
+				for (const AudioPart& part : moved.audioParts)
+					if (part.lock)
+						lockedParts.insert(part.id);
+				const auto locked = [](const auto& item) { return item.lock; };
+				moved.audioParts.erase(
+					std::remove_if(moved.audioParts.begin(), moved.audioParts.end(), locked), moved.audioParts.end());
+				moved.midiParts.erase(
+					std::remove_if(moved.midiParts.begin(), moved.midiParts.end(), locked), moved.midiParts.end());
+				moved.audioEvents.erase(
+					std::remove_if(moved.audioEvents.begin(), moved.audioEvents.end(),
+						[&lockedParts](const AudioEvent& event)
+						{ return event.part == 0 ? event.lock : lockedParts.count(event.part) != 0; }),
+					moved.audioEvents.end());
+				if (!context.parameters().value("copy", false))
+					deleteRange(project, range, false, context);
+				return Json{{"events", idsOf(pasteClipboard(project, moved, range.tracks, at, context))}};
+			});
+
 		addEdit(engine,
 			{"arranger.flatten", 1,
 				"Flatten Chain (#167): makes the project play the arranger chain (default: the active one) linearly. "
