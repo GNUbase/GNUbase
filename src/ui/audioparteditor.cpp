@@ -46,8 +46,9 @@ namespace gnubase::ui
 		// by tool): a gesture's mouse moves come as its drag events, and its dragend comes wherever the button goes up,
 		// also outside the window, where no element gets a mouseup. A gesture's mouseup in the window comes from the
 		// document (listen()), also for a press that didn't move, which makes no drag.
-		constexpr std::array<Rml::EventId, 5> g_events = {Rml::EventId::Mousedown, Rml::EventId::Click,
-			Rml::EventId::Dblclick, Rml::EventId::Drag, Rml::EventId::Dragend};
+		// The body's scroll comes up to the root too: it changes where the mouse is on the display.
+		constexpr std::array<Rml::EventId, 6> g_events = {Rml::EventId::Mousedown, Rml::EventId::Click,
+			Rml::EventId::Dblclick, Rml::EventId::Drag, Rml::EventId::Dragend, Rml::EventId::Scroll};
 
 		std::string attribute(const Rml::Element& element, const char* name)
 		{
@@ -283,9 +284,8 @@ namespace gnubase::ui
 		return m_gesture == Gesture::Move || m_gesture == Gesture::MoveVertical;
 	}
 
-	// A move goes on with its event as it is now, from the time and lane under the press to those under the mouse. An
-	// event that went or that the part editing mode no longer reaches ends it without its effect: the event's selection
-	// went with it, and so may its drag element (renderEvents()).
+	// A move goes on with its event as it is now. An event that went or that the part editing mode no longer reaches
+	// ends it without its effect: the event's selection went with it, and so may its drag element (renderEvents()).
 	void AudioPartEditor::updateMove()
 	{
 		if (!moving() || !m_pressed)
@@ -297,23 +297,44 @@ namespace gnubase::ui
 			cancel();
 			return;
 		}
-		// A move goes from its event's start as it is now, by the time from the press to the mouse's last place on the
-		// display as it is now, on the grid as it is now: the pressed point of the event stays under the mouse when the
-		// display's range changes, and a change of snap shows before the mouse moves again.
+		// The move goes on from the event as it is now; render() works it out again once the display is laid out.
 		m_pressed = *found;
-		if (m_dragged)
-			updateMoved();
 	}
 
-	// What a dragged move has moved so far, by the mouse's last place in the drag.
+	// What a dragged move has moved so far, by the mouse's last place in the drag, on the display and the grid as they
+	// are now: a change of the range, of the layout or of snap shows before the mouse moves again.
 	void AudioPartEditor::updateMoved()
 	{
 		if (!m_pressed)
 			return;
 		const auto [seconds, lane] = at(m_draggedTo);
-		m_moved = {
-			m_gesture == Gesture::Move ? snap(m_pressed->start + seconds - m_pressedAt.first) - m_pressed->start : 0.0,
-			lane - m_pressedAt.second};
+		m_moved = {m_gesture == Gesture::Move ? movedBy(seconds) : 0.0, lane - m_pressedAt.second};
+	}
+
+	// Where the pressed event's start goes for the mouse over seconds, from where it is now: the start that puts the
+	// point pressed, kept as an offset into the event, under the mouse, on the grid. So a command that moves the
+	// pressed event or the display's range during the drag, or both together as a move of the part does, doesn't take
+	// the event away from the mouse.
+	double AudioPartEditor::movedBy(double seconds) const
+	{
+		return snap(seconds - m_pressedOffset) - m_pressed->start;
+	}
+
+	// Works a dragged move out again once the display is laid out as it is now, which a scroll, a window that changes
+	// its size and a new lane's scrollbar change while the mouse stays.
+	void AudioPartEditor::moveAgain()
+	{
+		if (!moving() || !m_dragged || !m_pressed || m_laying)
+			return;
+		if (const Rml::Element* root = m_root.get())
+			if (Rml::ElementDocument* document = root->GetOwnerDocument())
+			{
+				m_laying = true; // the layout may scroll the body, which comes back here
+				document->UpdateDocument();
+				m_laying = false;
+			}
+		updateMoved();
+		preview();
 	}
 
 	float AudioPartEditor::dpRatio() const
@@ -424,7 +445,7 @@ namespace gnubase::ui
 					setClass(events->GetChild(i), "outside", found->outside);
 				}
 		}
-		preview(); // a render while a move drags, as when the selection comes back, keeps showing it
+		moveAgain(); // a render while a move drags, as when the selection comes back, keeps showing it
 		if (m_waveforms && display != nullptr)
 		{
 			const double width = display->GetClientWidth() / dpRatio();
@@ -711,6 +732,9 @@ namespace gnubase::ui
 		case Rml::EventId::Resize:
 			render();
 			break;
+		case Rml::EventId::Scroll:
+			moveAgain();
+			break;
 		default:
 			break;
 		}
@@ -770,6 +794,7 @@ namespace gnubase::ui
 		if (pressed != nullptr)
 			m_pressed = *pressed;
 		const double seconds = m_pressedAt.first;
+		m_pressedOffset = pressed != nullptr ? seconds - pressed->start : 0.0;
 		switch (m_tool)
 		{
 		case AudioPartTool::ObjectSelection:
@@ -916,9 +941,7 @@ namespace gnubase::ui
 		if (!m_pressed)
 			return;
 		const auto [seconds, lane] = at(event);
-		const double dt = gesture == Gesture::Move && isDrag
-			? snap(m_pressed->start + seconds - m_pressedAt.first) - m_pressed->start
-			: 0.0;
+		const double dt = gesture == Gesture::Move && isDrag ? movedBy(seconds) : 0.0;
 		const int dl = isDrag ? lane - m_pressedAt.second : 0;
 		if (gesture == Gesture::MoveVertical && dl == 0)
 		{

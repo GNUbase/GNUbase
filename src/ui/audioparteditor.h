@@ -110,6 +110,10 @@ namespace gnubase::ui
 		// The project or view shown changed: a move follows its event, or ends if that went.
 		void updateMove();
 		void updateMoved();
+		// The pressed event's move for the mouse over seconds.
+		double movedBy(double seconds) const;
+		// Works a dragged move out again on the layout as it is now.
+		void moveAgain();
 		void release(Rml::Event& event);
 		void doubleClick(Rml::Event& event);
 
@@ -158,9 +162,12 @@ namespace gnubase::ui
 		std::unique_ptr<EventWaveforms> m_waveforms;
 
 		Gesture m_gesture = Gesture::None;
-		std::pair<double, int> m_pressedAt; // the seconds and lane under the press, kept as the display changes
-		Rml::Vector2f m_pressedMouse;       // px
+		std::pair<double, int> m_pressedAt; // the seconds and lane under the press
+		double m_pressedOffset =
+			0.0; // seconds from the pressed event's start to the press, kept as the display changes
+		Rml::Vector2f m_pressedMouse; // px
 		bool m_dragged = false;
+		bool m_laying = false;                     // moveAgain() lays the document out
 		Rml::Vector2f m_draggedTo;                 // px, the mouse's last place in a dragged move
 		std::pair<double, int> m_moved;            // a dragged move's seconds and lanes
 		std::optional<Event> m_pressed;            // the event pressed, as the project shown has it
