@@ -47,11 +47,11 @@ sections player modes, presets, step input and the List, Proximity and Circle of
   dorian, phrygian, lydian, mixolydian and locrian, the triads on the scale's seven degrees on a root, which becomes the
   root key; `load` chooses chords and players, chords only or players only (the basic player without offset).
   `chordPads.savePreset` keeps the pads as a preset of the user's own in the user setting `chordPads.presets` (each
-  pad's chord, voicing and adaptive voicing, the root key, the scale and the player), which `chordPads.loadPreset`
-  brings back pad by pad and `chordPads.deletePreset` deletes; saving is no change to the project. `chordPads.presets`
-  lists the scale-based presets, then the user's, the order in which Previous and Next Preset step (p. 1348). The pads
-  keep the loaded preset's name (`preset`) and its scale (`scale`), which the degrees and the assistant's levels are
-  in.
+  pad's chord, voicing and adaptive voicing, the root key, the scale and the players, without their tracks, which are
+  the project's), which `chordPads.loadPreset` brings back pad by pad and `chordPads.deletePreset` deletes; saving is
+  no change to the project. `chordPads.presets` lists the scale-based presets, then the user's, the order in which
+  Previous and Next Preset step (p. 1348). The pads keep the loaded preset's name (`preset`) and its scale (`scale`),
+  which the degrees and the assistant's levels are in.
 - **Enh. Shift** (p. 1363): with `flats`, each pad's `spelled` name has flats for the sharps of its notes (Db for C#,
   `chordpads::withFlats`); tensions such as #9 stay. Chord names themselves have one spelling.
 - **Symbols** (p. 1390): each pad has its degree as a roman numeral (`degree`) and in the Nashville Number System

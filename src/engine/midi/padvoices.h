@@ -177,6 +177,14 @@ namespace gnubase::engine::midi
 					m_tick = 0.0;
 				}
 			}
+			else if ((status == 0x80 || status == 0x90) && !m_held.at(pitch))
+			{
+				// The off of a note that sounded before the pattern took over, such as a chord held while the player
+				// mode changed: it ends that note.
+				audio::MidiMessage off = message;
+				off.offset = at;
+				pads.add(off);
+			}
 			else if (status == 0x80 || status == 0x90)
 			{
 				m_held.at(pitch) = false;
@@ -326,15 +334,18 @@ namespace gnubase::engine::midi
 				}
 				else if (snap && playing && off)
 				{
-					// After its note-on, if that one waits.
-					for (size_t i = 0; i < m_pending; ++i)
+					// After its note-on, if that one waits or this block puts it later.
+					const auto sameNote = [&message](const audio::MidiMessage& other)
 					{
-						const audio::MidiMessage& waiting = m_waiting.at(i).message;
-						if ((waiting.bytes[0] & 0xF0) == 0x90 &&
-							(waiting.bytes[0] & 0x0F) == (message.bytes[0] & 0x0F) &&
-							waiting.bytes[1] == message.bytes[1])
+						return (other.bytes[0] & 0xF0) == 0x90 && other.bytes[2] > 0 &&
+							(other.bytes[0] & 0x0F) == (message.bytes[0] & 0x0F) && other.bytes[1] == message.bytes[1];
+					};
+					for (size_t i = 0; i < m_pending; ++i)
+						if (sameNote(m_waiting.at(i).message))
 							at = std::max(at, m_waiting.at(i).at);
-					}
+					for (size_t i = 0; i < count; ++i)
+						if (sameNote(m_out.at(i)))
+							at = std::max(at, position + m_out.at(i).offset);
 				}
 				if (at < end || m_pending == m_waiting.size())
 					out(message, at - position);

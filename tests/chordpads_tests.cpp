@@ -451,6 +451,25 @@ TEST_CASE("the user's own chord pads presets are saved, listed, loaded and delet
 	CHECK_THAT(reject(client, "chordPads.deletePreset", {{"name", "Song"}}), ContainsSubstring("no chord pads preset"));
 }
 
+TEST_CASE("a user preset loaded in another project brings back its players without their tracks", "[unit]")
+{
+	// Presets are the user's, for every project; track ids are each project's.
+	Engine engine;
+	Client client(engine);
+	const auto track = run(client, "track.add", {{"type", "instrument"}}).at("track").at("id").get<ObjectId>();
+	run(client, "chordPads.addPlayer", {{"library", "piano"}, {"track", track}});
+	run(client, "chordPads.savePreset", {{"name", "Tracked"}});
+	run(client, "project.new");
+	run(client, "track.add", {{"type", "audio"}});
+	run(client, "chordPads.loadPreset", {{"preset", "Tracked"}, {"load", "players"}});
+	const Json players = run(client, "chordPads.get").at("players");
+	REQUIRE(players.size() == 2);
+	CHECK(players[1].at("library") == "piano");
+	CHECK(players[0].at("track") == 0);
+	CHECK(players[1].at("track") == 0);
+	run(client, "chordPads.deletePreset", {{"name", "Tracked"}});
+}
+
 TEST_CASE("the chord assistant suggests chords after a pad's and shows the circle of fifths", "[unit]")
 {
 	Engine engine;
@@ -1055,6 +1074,26 @@ TEST_CASE("the sections player mode plays a pad's chord section by section from 
 	CHECK_THAT(reject(client, "chordPads.set", {{"sectionKeys", {128}}}), ContainsSubstring("sectionKeys"));
 }
 
+TEST_CASE("a remote key's chord held or latched before the sections player mode ends with the key", "[integration]")
+{
+	RemoteRig remote;
+	Client& client = remote.rig.client;
+	const std::vector<std::vector<int>> offs = sorted({{0x83, 48, 0}, {0x82, 60, 0}, {0x81, 64, 0}, {0x80, 67, 0}});
+	CHECK(remote.send(0x90, 36, 90).size() == 4);
+	run(client, "chordPads.set", {{"mode", "sections"}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(sorted(remote.send(0x80, 36, 0)) == offs);
+	// Latched: the key's next press selects the pad for the sections, its off ends the chord.
+	run(client, "chordPads.set", {{"mode", "plainChords"}, {"latch", true}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(remote.send(0x90, 36, 90).size() == 4);
+	CHECK(remote.send(0x80, 36, 0).empty());
+	run(client, "chordPads.set", {{"mode", "sections"}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(remote.send(0x90, 36, 90).empty());
+	CHECK(sorted(remote.send(0x80, 36, 0)) == offs);
+}
+
 TEST_CASE("Select/Mute Player's remote keys select the previous and next player and mute it", "[integration]")
 {
 	// Reference manual p. 1389.
@@ -1109,6 +1148,67 @@ TEST_CASE("the pattern player repeats its pattern on the held chord's voices", "
 	CHECK(ons[3].second == 67);
 	CHECK(ons[4].second == 48);
 	CHECK(std::abs(ons[4].first - 48000) <= 1);
+}
+
+TEST_CASE("the pattern player passes on the offs of notes it didn't start", "[unit]")
+{
+	midi::PadPatternSteps steps;
+	steps.on = true;
+	steps.length = g_beatTicks;
+	steps.steps.at(steps.count++) = {0, g_beatTicks / 4, 0, 100};
+	midi::PadPattern pattern;
+	gnubase::audio::MidiBuffer pads(16);
+	gnubase::audio::MidiMessage off;
+	off.size = 3;
+	off.bytes = {0x82, 60, 0};
+	off.offset = 5;
+	pads.add(off);
+	pattern.process(pads, steps, 64, 1.0);
+	REQUIRE(pads.size() == 1);
+	CHECK(pads.begin()->bytes == off.bytes);
+	CHECK(pads.begin()->offset == 5);
+}
+
+TEST_CASE("chords held or latched while the player mode changes to pattern end on the track", "[integration]")
+{
+	Rig rig;
+	Client& client = rig.client;
+	const std::vector<std::vector<int>> offs = sorted({{0x83, 48, 0}, {0x82, 60, 0}, {0x81, 64, 0}, {0x80, 67, 0}});
+	run(client, "chordPads.trigger", {{"pad", 0}});
+	CHECK(rig.played().size() == 4);
+	run(client, "chordPads.setPattern", {{"preset", "brokenChord"}});
+	run(client, "audio.render", {{"frames", 64}});
+	run(client, "chordPads.trigger", {{"pad", 0}, {"on", false}});
+	CHECK(sorted(rig.played()) == offs);
+	// Latched, the pad's next trigger ends it.
+	run(client, "chordPads.set", {{"mode", "plainChords"}, {"latch", true}});
+	run(client, "audio.render", {{"frames", 64}});
+	run(client, "chordPads.trigger", {{"pad", 0}});
+	CHECK(rig.played().size() == 4);
+	run(client, "chordPads.set", {{"mode", "pattern"}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(run(client, "chordPads.trigger", {{"pad", 0}}).at("on") == false);
+	CHECK(sorted(rig.played()) == offs);
+}
+
+TEST_CASE("with Snap Playback a note-off in the block that snaps its note-on comes after it", "[unit]")
+{
+	// A note-on and its off in one block whose next grid position is at frame 40.
+	midi::PadSnap snap;
+	gnubase::audio::MidiBuffer pads(16);
+	gnubase::audio::MidiMessage note;
+	note.size = 3;
+	note.bytes = {0x91, 60, 90};
+	note.offset = 2;
+	pads.add(note);
+	note.bytes = {0x81, 60, 0};
+	note.offset = 3;
+	pads.add(note);
+	snap.process(pads, true, true, 1000, 64, [](int64_t) { return int64_t{1040}; });
+	std::vector<std::pair<int, uint32_t>> out;
+	for (const gnubase::audio::MidiMessage& message : pads)
+		out.emplace_back(message.bytes[0], message.offset);
+	CHECK(out == std::vector<std::pair<int, uint32_t>>{{0x91, 40}, {0x81, 40}});
 }
 
 TEST_CASE("with Snap Playback to Musical Grid a pad's chord starts at the next grid position", "[integration]")

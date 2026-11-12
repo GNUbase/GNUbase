@@ -257,6 +257,8 @@ namespace gnubase::engine
 			}
 			if (keys.counts.at(keys.selected).at(key) > 0 || (off && static_cast<int>(key) == m_sectionPad))
 			{
+				if (off)
+					offAll(); // a chord the key held or latched before the player mode changed
 				if (!off)
 				{
 					m_sectionPad = static_cast<int>(key);

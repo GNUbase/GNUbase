@@ -1639,6 +1639,9 @@ namespace gnubase::engine
 				{
 					pads.players = chords.empty() ? playersFromJson(mine.value("players", Json::array()))
 												  : std::vector<ChordPlayer>{ChordPlayer()};
+					// Tracks are the project's, so even a preset that has them plays none.
+					for (ChordPlayer& player : pads.players)
+						player.track = 0;
 					if (pads.players.empty()) // a preset from before the players
 					{
 						pads.players = {ChordPlayer()};
@@ -1668,7 +1671,8 @@ namespace gnubase::engine
 				"Save Preset (reference manual p. 1371): the chord pads as a preset of the user's own, kept in the "
 				"user "
 				"setting chordPads.presets: each pad's chord, voicing and adaptive voicing, the root key, the scale "
-				"and the player (the octave offset). A preset of the name is replaced; the scale-based ones can't be. "
+				"and the players without their tracks. A preset of the name is replaced; the scale-based ones can't "
+				"be. "
 				"No change to the project.",
 				objectSchema({{"name", stringSchema}}, {"name"}), objectSchema({}), false},
 			[this, &engine](CommandContext& context)
@@ -1682,8 +1686,11 @@ namespace gnubase::engine
 				Json saved = Json::array();
 				for (const ChordPad& pad : pads.pads)
 					saved.push_back({{"chord", pad.chord}, {"voicings", pad.voicings}, {"adaptive", pad.adaptive}});
+				Json players = playersJson(pads);
+				for (Json& player : players)
+					player.erase("track"); // the project's, while presets are for every project
 				const Json preset = {{"pads", saved}, {"rootKey", pads.rootKey}, {"scale", pads.scale},
-					{"players", playersJson(pads)}, {"player", pads.player}};
+					{"players", players}, {"player", pads.player}};
 				engine.modifySetting(context, g_presetsKey,
 					[&name, &preset](const Json& value)
 					{
