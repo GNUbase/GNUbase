@@ -621,7 +621,9 @@ namespace gnubase::engine
 					right.quantizeOrigin->original = {right.position.base, right.position.value - moved};
 				}
 				else
+				{
 					right.quantizeOrigin.reset();
+				}
 				event.length = frames;
 				event.fadeOut = Fade();
 				// An event that crossfaded from this one now overlaps the piece after the split.

@@ -271,6 +271,7 @@ namespace gnubase::engine
 					taken.push_back(candidate);
 			std::sort(taken.begin(), taken.end(), [](const Candidate& a, const Candidate& b) { return a.at < b.at; });
 			std::vector<time::Samples> positions;
+			positions.reserve(taken.size());
 			for (const Candidate& candidate : taken)
 				positions.push_back(candidate.at);
 			require(!positions.empty(),
