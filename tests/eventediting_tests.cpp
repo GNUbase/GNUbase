@@ -686,6 +686,11 @@ TEST_CASE("a second resize release can precede the first release's project", "[u
 	f.automation.press(std::nullopt, f.at(298, 60), ui::MouseButton::Left);
 	f.automation.move(std::nullopt, f.at(348, 60));
 	REQUIRE(f.waitUntil([&bothEnds] { return bothEnds(3.5); }));
+	// A project answer that reaches the display during the drag asks its preview again (resizeProjectChanged), so
+	// wait until no preview and no project are on their way: a leftover preview would be what waiting() counts
+	// below, not the second drag's, and the second drag's would queue behind the second hold.
+	REQUIRE(f.waitUntil(
+		[&f] { return f.binding.waiting("event.previewResize") == 0 && f.binding.waiting("project.get") == 0; }));
 	// The first release's resize queues behind a hold: it can't run, and its project can't reach the display, until
 	// the test lets the engine go on.
 	holder.send("test.hold");
