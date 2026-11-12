@@ -24,6 +24,9 @@ track presets and templates (p. 1579).
   the active profile's files back from `profile-switch/active` (complete once `profile-switch/active-profile` names
   the profile, written after both copies) while `profiles.json` still has that profile active, then switches again;
   if they can't be put back, `profile-switch` stays, as it may hold their only complete copy, and the switch waits.
+  While it stays, the settings may be half of each profile's: `profile.list` says `unfinished`, the Profile Manager
+  opens after the start and says that what the user changes until the files go back is overwritten then, and the
+  active profile can't be renamed, as the next start would take its files in `profile-switch` for another profile's.
   The safe start mode's Delete program preferences drops `profile-switch` with the pending switch. A chosen profile
   whose folder the file system takes for the active profile's (see Names) isn't switched to.
 - **Names** are folder names on every OS: 1 to 100 characters, none of `< > : " / \ | ? *`, not ending with a dot or a
@@ -36,10 +39,10 @@ track presets and templates (p. 1579).
 
 | Command | What it does |
 |---|---|
-| `profile.list` | The profiles, sorted, the active one and `next`, the one that becomes active at the next start |
+| `profile.list` | The profiles, sorted, the active one, `next`, the one that becomes active at the next start, and `unfinished`, whether a switch waits in `profile-switch` |
 | `profile.add` | Adds a profile with the factory settings (New) |
 | `profile.duplicate` | Adds a copy of a profile's files under a new name (Duplicate) |
-| `profile.rename` | Renames a profile, the active one too (Rename) |
+| `profile.rename` | Renames a profile, the active one too, except while a switch is unfinished (Rename) |
 | `profile.remove` | Deletes a profile that isn't active, with its files (Delete) |
 | `profile.activate` | Makes a profile active at the next start (Activate Profile) |
 | `profile.export`, `profile.import` | Saves a profile in a file, JSON with its name and files, and adds one from such a file under its name or another (Export, Import) |
@@ -85,12 +88,16 @@ on macOS and Linux.
   add, duplicate, rename and import refusing a name that differs from another profile's only in case; device names
   refused; names in another case of letters such as Ä taken where the file system folds them, also the active
   profile's; a switch that fails on the way leaving the settings and the active profile as they were, before anything
-  changed and after the active profile's files were saved; a switch that GNUbase didn't finish undone at the next
-  start, then done, or kept for later when its files can't be put back, and dropped by Delete program preferences; a
-  switch to a folder that is the active profile's refused.
+  changed, when the active profile's files can't be saved, and after files in the settings folder were replaced (a
+  test hook of `settings::switchProfile` makes that step fail), then done at the next start; a switch whose files
+  can't be put back keeping `profile-switch`, from which the next start puts them back before it switches; a switch
+  that GNUbase didn't finish undone at the next start, then done, or kept for later when its files can't be put back,
+  with `next` and `unfinished` in `profile.list` and the active profile's rename refused, and dropped by Delete
+  program preferences; a switch to a folder that is the active profile's refused.
 - `tests/profiles_ui_tests.cpp`: the Profile Manager from the Edit menu, adding, duplicating, renaming and deleting
   profiles through its name field and buttons, a taken name's error, and Activate Profile saying that the profile
-  becomes active at the next start; Export and Import through the file dialogs, answered as `ui_file_dialog` does.
+  becomes active at the next start; Export and Import through the file dialogs, answered as `ui_file_dialog` does;
+  the dialog opening after the start with its message while a switch is unfinished.
 - `tests/safemode_tests.cpp`: the command line's options; the settings folder as it is, disabled into memory with the
   files left alone, or deleted, without the recent projects; the factory settings with the profile's files left alone
   and the templates still there; deleting the settings with a profile switch pending, which starts with the factory
