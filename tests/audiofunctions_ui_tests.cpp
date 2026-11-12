@@ -317,7 +317,7 @@ TEST_CASE("the Spectrum Analyzer draws the spectrum, shows the values under the 
 TEST_CASE("the Spectrum Analyzer shows the error of a clip whose file can't be read", "[ui]")
 {
 	test::UiApp app({1000, 760});
-	test::TempDir dir;
+	const test::TempDir dir;
 	test::Audio audio;
 	audio.sampleRate = 48000;
 	audio.samples.assign(48000, 0.25f);
@@ -337,12 +337,12 @@ TEST_CASE("the Spectrum Analyzer shows the error of a clip whose file can't be r
 TEST_CASE("the Spectrum Analyzer draws the channel of a stereo clip that #sa-channel chooses", "[ui]")
 {
 	test::UiApp app({1000, 760});
-	test::TempDir dir;
+	const test::TempDir dir;
 	// A second of stereo: 1 kHz at -6 dBFS on the left, 3 kHz at -6 dBFS on the right.
 	test::Audio audio;
 	audio.sampleRate = 48000;
 	audio.channels = 2;
-	audio.samples.resize(2 * 48000);
+	audio.samples.resize(size_t{2} * 48000);
 	for (size_t i = 0; i < 48000; ++i)
 	{
 		const double t = static_cast<double>(i) / 48000.0;
