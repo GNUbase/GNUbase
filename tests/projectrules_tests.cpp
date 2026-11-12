@@ -207,6 +207,18 @@ TEST_CASE("project rules as JSON: factory presets round-trip, and wrong rules ar
 	Json open = filter("containerType", "equal", "part");
 	open["open"] = 1;
 	CHECK_THAT(refused(rules({open}, "select")), ContainsSubstring("not closed"));
+	// Brackets nest at most 3 deep, as the MIDI rules' do (#1143).
+	Json deep = filter("containerType", "equal", "part");
+	deep["open"] = 3;
+	Json deeper = filter("containerType", "equal", "part");
+	deeper["open"] = 1;
+	deeper["close"] = 3;
+	Json last = filter("containerType", "equal", "part");
+	last["close"] = 1;
+	CHECK_THAT(refused(rules({deep, deeper, last}, "select")), ContainsSubstring("nest at most 3 deep"));
+	deeper["open"] = 0;
+	deeper["close"] = 2;
+	CHECK(refused(rules({deep, deeper, last}, "select")) == "accepted");
 	CHECK_THAT(refused(rules({}, "transform", {action("name", "add", "x")})), ContainsSubstring("no operation add"));
 	CHECK_THAT(refused(rules({}, "transform", {action("trackOperation", "mute", "maybe")})),
 		ContainsSubstring("on, off or toggle"));
@@ -381,6 +393,17 @@ TEST_CASE("project.applyRules transforms and deletes in one undo step", "[integr
 		run(f.client, "history.undo");
 		run(f.client, "project.applyRules", move);
 		CHECK(f.object("midiParts", f.full).at("position") == first);
+	}
+	SECTION("without a seed, each Apply gives new random values")
+	{
+		const Json move = {{"rules",
+			rules({filter("containerType", "equal", "part")}, "transform",
+				{action("position", "setRandom", 0, 480000)})}};
+		run(f.client, "project.applyRules", move);
+		const Json first = f.object("midiParts", f.full).at("position");
+		run(f.client, "history.undo");
+		run(f.client, "project.applyRules", move);
+		CHECK(f.object("midiParts", f.full).at("position") != first);
 	}
 	SECTION("generated names count only what is renamed")
 	{

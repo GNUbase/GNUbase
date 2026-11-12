@@ -29,8 +29,8 @@ input plays (the input transformers). A preset library holds named rules for bot
     changed from 0 and lengths they changed from 1 tick (a note shorter than a tick keeps its length otherwise).
     Positions and lengths stay finite after every action, and in parts stop at the longest project
     (`longestProjectTicks`). Random values come from a generator seeded per command, so the same seed gives the same
-    values on every platform; a command without `seed` takes a new one (`nextLogicalSeed`), so that each Apply of
-    Humanize gives new values.
+    values on every platform; a command without `seed` takes a new one (`nextLogicalSeed`, counting from a random
+    value when GNUbase starts), so that each Apply of Humanize gives new values, in every session (#1143).
   - JSON (`toJson`, `logicalRulesFromJson`, `logicalRulesSchema`): `{filters: [{open, target, condition, parameter1,
     parameter2, close, join}], function, actions: [{target, operation, parameter1, parameter2}]}` with names in camel
     case (`mainValue`, `insideRange`, `insertExclusive`, `setRelativeRandom`); a type is its name (`"note"`), a scale
@@ -89,7 +89,9 @@ function (Filter instead of Delete for the input transformer, which has no Selec
 line, Remove removes the lines whose check box is on, or the last one; a type or scale parameter is a drop-down list.
 Save Preset saves what it shows under the name. Apply runs `midi.applyRules`, or for select shows how many events
 `midi.findByRules` found; the input transformer's OK sets its modules. A value that isn't a number, or rules the engine
-refuses, keep the dialog open with the message; for a value that isn't a number the module shown stays too.
+refuses, keep the dialog open with the message; for a value that isn't a number the module shown stays too, and for
+rules the engine refuses the module it names shows (its messages say `modules[i]`, from 0). Choosing another module
+puts that module's preset into the name field (#1143).
 
 ## Not yet
 
@@ -111,9 +113,10 @@ removing, the file in the settings folder, a preset that can't be read); input t
 through `midi.inject` and `midi.capture` (note-offs following their note-ons while the rules change, modules in order,
 filter, insert, insert exclusive, a sustain pedal playing a bass drum), undo, saving and loading, and what
 `channel.set` refuses; an input transformer inserting past its buffers' capacity ending every note it plays; fresh
-seeds, very short notes, positions at the longest project and refused type changes (#966).
+seeds, very short notes, positions at the longest project and refused type changes (#966); the module that `midi.setInputTransformer`'s message names (#1143).
 `tests/midieffects_tests.cpp`'s golden files check that the transformer effect plays as before.
 `tests/rtcheck_tests.cpp` runs input transformers without allocating. `tests/midirules_ui_tests.cpp` drives MIDI > Rule
 Editor (a factory preset, lines put together, Remove, select, a value that isn't a number, the asterisk, Save Preset),
-Project > Project Input Transformer (its preset list, modules keeping their edits) and the inspector's Input
+Project > Project Input Transformer (its preset list, modules keeping their edits, OK setting a module's edits while
+another one shows, the module the engine refuses showing with its message, the name field following the module) and the inspector's Input
 Transformer (modes, Open Panel... and the track's modules) in the app with `ui::Automation`.

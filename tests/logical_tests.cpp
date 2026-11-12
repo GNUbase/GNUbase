@@ -784,6 +784,12 @@ TEST_CASE("input transformers change what a track's MIDI input plays", "[integra
 		CHECK_THAT(reject(f.client, "midi.setInputTransformer",
 					   {{"modules", Json::array({module(up), module(up), module(up), module(up), module(up)})}}),
 			ContainsSubstring("at most 4"));
+		// The message names the module that the engine refuses (#1143).
+		Json unclosed = filter("type", "equal", "note");
+		unclosed["open"] = 1;
+		CHECK_THAT(reject(f.client, "midi.setInputTransformer",
+					   {{"modules", Json::array({module(up), module(rules({unclosed}, "delete"))})}}),
+			ContainsSubstring("modules[1].rules.filters: a bracket is opened and not closed"));
 		// Live events have no position or length.
 		for (const Json& timed :
 			{rules({filter("length", "less", 60)}, "delete"), rules({filter("position", "bigger", 0)}, "delete"),
