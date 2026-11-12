@@ -70,6 +70,17 @@ namespace
 
 		Json events() { return call("chord.get").at("events"); }
 
+		// The parameters of the commands that ran, oldest first (engine.commandLog), by name.
+		Json ran(const std::string& command)
+		{
+			Json found = Json::array();
+			const Json log = call("engine.commandLog");
+			for (const Json& each : log.at("commands"))
+				if (each.at("command") == command)
+					found.push_back(each.at("parameters"));
+			return found;
+		}
+
 		test::UiApp app{{1000, 600}};
 		ui::EventDisplay& display;
 	};
@@ -88,8 +99,9 @@ TEST_CASE("Add Track adds the chord track once", "[ui]")
 	};
 	click("#add-track");
 	REQUIRE(app.waitUntil([&] { return !elements("#add-track-dialog").empty(); }));
-	// The list scrolls: Chord is below Transpose.
-	click("#type-transpose");
+	// The list scrolls: Chord is below Arranger and Transpose.
+	click("#type-arranger");
+	app.ui().key(std::nullopt, "Down");
 	app.ui().key(std::nullopt, "Down");
 	app.shell().step(std::chrono::milliseconds(0));
 	REQUIRE(elements("#track-types").at(0).at("attributes").at("value") == "chord");
@@ -109,7 +121,8 @@ TEST_CASE("Add Track adds the chord track once", "[ui]")
 		click("#add-track");
 		REQUIRE(app.waitUntil([&] { return !elements("#add-track-dialog").empty(); }));
 	}
-	click("#type-transpose");
+	click("#type-arranger");
+	app.ui().key(std::nullopt, "Down");
 	app.ui().key(std::nullopt, "Down");
 	app.shell().step(std::chrono::milliseconds(0));
 	REQUIRE(elements("#track-types").at(0).at("attributes").at("value") == "chord");
@@ -217,14 +230,22 @@ TEST_CASE("Project > Chord Track converts chords to MIDI and back, the Inspector
 	window.click(".inspector select[control=liveInput]");
 	CHECK(window.app.waitUntil([&] { return window.call("chord.get").at("follow")[0].at("liveInput") == "chords"; }));
 
-	// Create Chord Events: the dialog's options, then the chords of the selected track's notes replace those in
-	// their range.
+	// Create Chord Events: the dialog's options reach chord.fromMidi, then the chords of the selected track's notes
+	// replace those in their range.
 	window.call("chord.set", {{"events", {{{"event", window.events()[1].at("id")}, {"chord", "F"}}}}});
 	window.app.keys().run("track.createChordEventsSelected", Json::object(), window.app.main(), nullptr);
 	REQUIRE(window.app.waitUntil([&] { return window.elements("#create-chord-events-dialog").size() == 1; }));
+	window.click("#chord-events-bass");
 	window.click("#chord-events-arpeggios");
+	window.click("#chord-events-sustain");
+	window.click("#chord-events-min-length", 2);
+	window.type("120");
 	window.click("#create-chord-events");
 	CHECK(window.app.waitUntil([&] { return window.events().size() == 2 && window.events()[1].at("chord") == "Am"; }));
+	REQUIRE(window.ran("chord.fromMidi").size() == 1);
+	CHECK(window.ran("chord.fromMidi")[0] ==
+		Json{{"parts", {parts()[0].at("id")}}, {"includeBass", false}, {"includeTensions", true},
+			{"detectArpeggios", true}, {"sustainPedal", true}, {"minLength", 120 * (g_quarter / 480)}});
 
 	// Map to Chord Track: the notes move to the chord track's chords for good.
 	window.call("chord.follow", {{"track", track}, {"mode", "off"}});
@@ -304,4 +325,97 @@ TEST_CASE("the scale lane, the chord track's controls and its Inspector settings
 	window.click(".inspector valuefield[control=chordShift]", 2);
 	window.type("-10");
 	CHECK(window.app.waitUntil([&] { return window.call("chord.get").at("shiftChords") == -10 * (g_quarter / 480); }));
+}
+
+TEST_CASE(
+	"Project > Chord Track takes the selected parts, else the selected tracks' parts and loose audio events", "[ui]")
+{
+	const test::TempDir dir;
+	Window window;
+	const auto midi = window.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	const auto audio = window.call("track.add", {{"type", "audio"}}).at("track").at("id").get<uint64_t>();
+	const auto part = [&](int64_t position)
+	{
+		return window.call("midiPart.add", {{"track", midi}, {"position", position}, {"length", 4 * g_quarter}})
+			.at("part")
+			.at("id")
+			.get<uint64_t>();
+	};
+	const uint64_t first = part(0);
+	const uint64_t second = part(8 * g_quarter);
+	// Two audio events, the second inside an audio part (reference manual p. 1344: not from audio parts).
+	const auto file = dir.path() / "silence.wav";
+	test::writeWav(file, {std::vector<float>(48000, 0.0F), 1, 48000});
+	const Json media = window.call("media.add", {{"path", file.u8string()}}).at("media");
+	const Json clip = window.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	const auto event = [&](int64_t position)
+	{
+		return window
+			.call("audioEvent.add",
+				{{"track", audio}, {"clip", clip.at("id")}, {"position", position}, {"length", 48000}})
+			.at("event")
+			.at("id")
+			.get<uint64_t>();
+	};
+	const uint64_t loose = event(0);
+	window.call("event.toPart", {{"events", {event(96000)}}});
+	const auto row = [](uint64_t track)
+	{ return "#track-list listitem[value=\"" + std::to_string(track) + "\"] .track-name"; };
+	REQUIRE(window.app.waitUntil([&] { return window.elements(row(audio)).size() == 1; }));
+	const auto run = [&](const char* action)
+	{ window.app.keys().run(action, Json::object(), window.app.main(), nullptr); };
+
+	// The selected audio track: its loose audio events, not those in its parts.
+	window.click(row(audio));
+	window.display.select({});
+	run("track.createChordEventsSelected");
+	REQUIRE(window.app.waitUntil([&] { return window.ran("chord.fromAudio").size() == 1; }));
+	CHECK(window.ran("chord.fromAudio")[0] == Json{{"events", {loose}}});
+
+	// The selected MIDI track: all its parts; with a part selected, only that one.
+	window.click(row(midi));
+	window.display.select({});
+	run("track.mapToChordTrackSelected");
+	REQUIRE(window.app.waitUntil([&] { return window.elements("#map-to-chord-track-dialog").size() == 1; }));
+	window.click("#map-to-chord-track");
+	REQUIRE(window.app.waitUntil([&] { return window.ran("chord.map").size() == 1; }));
+	CHECK(window.ran("chord.map")[0].at("parts") == Json{first, second});
+	window.display.select({second});
+	run("track.createChordEventsSelected");
+	REQUIRE(window.app.waitUntil([&] { return window.elements("#create-chord-events-dialog").size() == 1; }));
+	window.click("#create-chord-events");
+	REQUIRE(window.app.waitUntil([&] { return window.ran("chord.fromMidi").size() == 1; }));
+	CHECK(window.ran("chord.fromMidi")[0].at("parts") == Json{second});
+	CHECK(window.ran("chord.fromAudio").size() == 1); // no audio event selected
+	run("track.mapToChordTrackSelected");
+	REQUIRE(window.app.waitUntil([&] { return window.elements("#map-to-chord-track-dialog").size() == 1; }));
+	window.click("#map-to-chord-track");
+	REQUIRE(window.app.waitUntil([&] { return window.ran("chord.map").size() == 2; }));
+	CHECK(window.ran("chord.map")[1].at("parts") == Json{second});
+}
+
+TEST_CASE("with Acoustic Feedback, pressing a chord or scale event auditions it until the button is let go", "[ui]")
+{
+	Window window;
+	window.call("track.add", {{"type", "chord"}});
+	const auto midi = window.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	const auto chord = window.call("chord.add", {{"position", 0}, {"chord", "C"}}).at("event").at("id");
+	const auto scale = window.call("chord.add", {{"position", 0}, {"scale", "D dorian"}}).at("event").at("id");
+	window.call("chord.setTrack", {{"audition", midi}, {"acousticFeedback", true}, {"showScales", true}});
+	REQUIRE(window.app.waitUntil(
+		[&] { return window.elements(".chord-event").size() == 1 && window.elements(".scale-event").size() == 1; }));
+	window.display.setTool(ui::Tool::ObjectSelection);
+	size_t count = 0;
+	for (const auto& [selector, id] : {std::pair{".chord-event", chord}, std::pair{".scale-event", scale}})
+	{
+		window.app.ui().press(std::nullopt, {selector, 0, std::nullopt}, ui::MouseButton::Left);
+		window.app.shell().step(std::chrono::milliseconds(0));
+		REQUIRE(window.app.waitUntil([&] { return window.ran("chord.audition").size() == count + 1; }));
+		CHECK(window.ran("chord.audition")[count] == Json{{"event", id}});
+		window.app.ui().release(std::nullopt, {selector, 0, std::nullopt}, ui::MouseButton::Left);
+		window.app.shell().step(std::chrono::milliseconds(0));
+		REQUIRE(window.app.waitUntil([&] { return window.ran("chord.audition").size() == count + 2; }));
+		CHECK(window.ran("chord.audition")[count + 1] == Json{{"on", false}});
+		count += 2;
+	}
 }

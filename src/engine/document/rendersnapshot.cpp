@@ -98,8 +98,9 @@ namespace gnubase::engine
 
 		// Adds a part's notes and controllers, cut at the part's end, the notes as the chord track maps them if the
 		// track follows it (#173), then as the channel's MIDI modifiers, the part's transpose and velocity and global
-		// transposition (#168) at their start play them.
-		void compilePart(const Project& project, ObjectId partId, const MidiPart& part, RenderChannel& channel)
+		// transposition (#168) at their start play them. follower is the part's track's.
+		void compilePart(const Project& project, ObjectId partId, const MidiPart& part, const ChordFollower& follower,
+			RenderChannel& channel)
 		{
 			const time::Ticks start = time::toTicks(part.position, project.tempo, project.sampleRate);
 			const time::Position endPosition{part.position.base, part.position.value + part.length};
@@ -113,7 +114,6 @@ namespace gnubase::engine
 			// The track's drum map plays each note's sound: its O-note, on its channel unless that is Any, and not
 			// at all if it is muted (#129). The modifiers then apply to the O-note.
 			const DrumMap* map = midi::drumMapOf(project, part.track);
-			const ChordFollower follower(project, part.track);
 			// The track's articulation map plays each note's sound slot (#175): the slot's output events where the
 			// slot changes, and the slot's MIDI modifiers.
 			const ArticulationMap* articulations = midi::articulationMapOf(project, part.track);
@@ -481,10 +481,11 @@ namespace gnubase::engine
 	}
 
 	std::unique_ptr<const RenderSnapshot> compile(
-		const Project& project, uint64_t revision, const RenderSnapshot* previous)
+		const Project& project, uint64_t revision, const RenderSnapshot* previous, uint64_t opened)
 	{
 		auto snapshot = std::make_unique<RenderSnapshot>();
 		snapshot->revision = revision;
+		snapshot->opened = opened;
 		snapshot->sampleRate = project.sampleRate;
 		snapshot->tempo = project.tempo;
 		snapshot->signatures = project.signatures;
@@ -663,6 +664,10 @@ namespace gnubase::engine
 				std::any_of(sends.slots.begin(), sends.slots.end(),
 					[](const midi::EffectSlot& slot) { return slot.on && !slot.effect.empty(); });
 		};
+		// What each track's notes play as it follows the chord track, made once per track, not once per part.
+		std::map<ObjectId, ChordFollower> followers;
+		const auto follower = [&](ObjectId track) -> const ChordFollower&
+		{ return followers.try_emplace(track, project, track).first->second; };
 		for (const auto& [id, part] : project.midiParts)
 		{
 			RenderChannel& channel = snapshot->channels[static_cast<size_t>(trackChannel.at(part.track))];
@@ -680,11 +685,11 @@ namespace gnubase::engine
 				played.notes = midi::playedNotes(project, part);
 			}
 			const MidiPart& compiled = isPattern ? played : part;
-			compilePart(project, id, compiled, channel);
+			compilePart(project, id, compiled, follower(part.track), channel);
 			if (!preNotes(channel))
 				continue;
 			RenderChannel unmodified;
-			compilePart(project, id, compiled, unmodified);
+			compilePart(project, id, compiled, follower(part.track), unmodified);
 			channel.preNotes.insert(channel.preNotes.end(), unmodified.notes.begin(), unmodified.notes.end());
 		}
 

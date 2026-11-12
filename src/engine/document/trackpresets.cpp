@@ -619,6 +619,8 @@ namespace gnubase::engine
 			channel.midiSends = sound.midiSends;
 			for (midi::EffectSlot& slot : channel.midiSends.slots)
 				slot.output = 0; // the preset's tracks aren't this project's
+			if (channel.instrument != sound.instrument)
+				channel.sample = 0; // only the sampler plays one (#180), as with channel.set
 			channel.instrument = sound.instrument;
 			channel.instrumentParameters = sound.instrumentParameters;
 			if (channel.format != ChannelFormat::None)

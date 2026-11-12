@@ -3680,7 +3680,7 @@ namespace gnubase::engine
 
 	void ProjectModel::publish()
 	{
-		m_snapshots.publish(compile(m_project, ++m_revision, &m_snapshots.latest()));
+		m_snapshots.publish(compile(m_project, ++m_revision, &m_snapshots.latest(), m_openedRevision));
 	}
 
 	Json ProjectModel::undoOrRedo(CommandContext& context, Direction direction)

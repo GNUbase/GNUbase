@@ -12,12 +12,15 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 using namespace gnubase::engine;
@@ -636,6 +639,12 @@ TEST_CASE("chord events from audio events", "[integration]")
 	CHECK(events[0].at("detected")[0] == "C");
 	CHECK(events[1].at("detected")[0] == "Am");
 	CHECK(events[2].at("audioEvent") == 0);
+	// Its audio event removed, a chord event is no longer from audio, until undo brings the audio event back.
+	run(client, "event.remove", {{"events", {event.at("id")}}});
+	CHECK(run(client, "chord.get").at("events")[0].at("audioEvent") == 0);
+	CHECK(run(client, "chord.get").at("events")[0].at("detected").empty());
+	run(client, "history.undo");
+	CHECK(run(client, "chord.get").at("events")[0].at("audioEvent") == event.at("id"));
 	CHECK(reject(client, "chord.fromAudio", {{"events", {12345}}}).find("12345") != std::string::npos);
 }
 
@@ -656,6 +665,22 @@ TEST_CASE("recording chord events from the notes a MIDI track records", "[integr
 	run(client, "chord.setTrack", {{"recordEnable", true}});
 	run(client, "recording.add", recorded);
 	CHECK(chordNames(client) == std::vector<std::string>{"C", "Dm", "E"});
+}
+
+TEST_CASE("a cycle recording's laps make chord events each, the last lap's over the earlier ones'", "[integration]")
+{
+	Song song;
+	Client& client = song.client;
+	run(client, "track.add", {{"type", "chord"}});
+	run(client, "chord.setTrack", {{"recordEnable", true}});
+	const auto note = [](size_t take, int pitch)
+	{ return Json{{"position", 0}, {"length", g_barSamples}, {"pitch", pitch}, {"velocity", 0.8}, {"take", take}}; };
+	const Json lap = {{"position", 0}, {"length", g_barSamples}};
+	run(client, "recording.add",
+		{{"tracks",
+			{{{"track", song.track}, {"takes", {lap, lap}},
+				{"notes", {note(0, 60), note(0, 64), note(0, 67), note(1, 62), note(1, 65), note(1, 69)}}}}}});
+	CHECK(chordNames(client) == std::vector<std::string>{"Dm"});
 }
 
 namespace
@@ -704,6 +729,25 @@ namespace
 		ObjectId track = 0;
 		ObjectId channel = 0;
 	};
+}
+
+TEST_CASE("Live Input: a note that two held keys play ends when the last of them is let go", "[integration]")
+{
+	Rig rig;
+	Client& client = rig.client;
+	run(client, "chord.follow", {{"track", rig.track}, {"liveInput", "chords"}});
+	run(client, "audio.render", {{"frames", 64}});
+	const auto inject = [&](int status, int pitch)
+	{
+		run(client, "midi.inject",
+			{{"channel", rig.channel}, {"messages", {{{"position", 0}, {"bytes", {status, pitch, 100}}}}}});
+		run(client, "audio.render", {{"frames", 64}});
+		return notesPlayed(run(client, "midi.capture"));
+	};
+	CHECK(inject(0x90, 63) == std::vector<std::vector<int>>{{0x90, 64}}); // D# to E
+	CHECK(inject(0x90, 64) == std::vector<std::vector<int>>{{0x90, 64}});
+	CHECK(inject(0x80, 63).empty()); // E is still held
+	CHECK(inject(0x80, 64) == std::vector<std::vector<int>>{{0x80, 64}});
 }
 
 TEST_CASE("Live Input moves the notes played into a track to the chord track's chords or scales", "[integration]")
@@ -785,4 +829,58 @@ TEST_CASE("a chord held on an audition track that is removed doesn't block audit
 	run(client, "audio.render", {{"frames", 64}});
 	CHECK(notesPlayed(run(client, "midi.capture")) ==
 		std::vector<std::vector<int>>{{0x80, 48}, {0x80, 60}, {0x80, 64}, {0x80, 67}});
+}
+
+TEST_CASE("an auditioned chord whose note-offs don't fit stays held until a later call ends it", "[integration]")
+{
+	Rig rig;
+	Client& client = rig.client;
+	run(client, "chord.setTrack", {{"audition", rig.track}});
+	run(client, "chord.audition", {{"chord", "C"}});
+	run(client, "audio.render", {{"frames", 64}});
+	run(client, "midi.capture"); // drops the note-ons
+	// 4096 messages wait for the audio device: the note-offs don't fit, so the chord stays held.
+	Json waiting = Json::array();
+	for (int i = 0; i < 4096; ++i)
+		waiting.push_back({{"position", 0}, {"bytes", {0xB0, 7, 100}}});
+	run(client, "midi.inject", {{"channel", rig.channel}, {"messages", waiting}});
+	CHECK(reject(client, "chord.audition", {{"on", false}}).find("too many") != std::string::npos);
+	for (int block = 0; block < 16; ++block) // a block takes some of them
+	{
+		run(client, "audio.render", {{"frames", 64}});
+		run(client, "midi.capture");
+	}
+	run(client, "chord.audition", {{"on", false}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(notesPlayed(run(client, "midi.capture")) ==
+		std::vector<std::vector<int>>{{0x80, 48}, {0x80, 60}, {0x80, 64}, {0x80, 67}});
+}
+
+TEST_CASE("recording chord events from an instrument track that only monitors", "[integration]")
+{
+	Rig rig;
+	Client& client = rig.client;
+	run(client, "chord.setTrack", {{"recordEnable", true}});
+	run(client, "transport.record");
+	Json messages = Json::array();
+	for (const int pitch : {65, 69, 72})
+	{
+		messages.push_back({{"position", 1000}, {"bytes", {0x90, pitch, 100}}});
+		messages.push_back({{"position", 20000}, {"bytes", {0x80, pitch, 0}}});
+	}
+	run(client, "midi.inject", {{"channel", rig.channel}, {"messages", messages}});
+	run(client, "audio.render", {{"frames", 24000}});
+	run(client, "transport.stop");
+	run(client, "audio.render", {{"frames", 640}});
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+	bool added = false;
+	while (!added && std::chrono::steady_clock::now() < deadline)
+	{
+		const std::optional<Message> next = client.wait(std::chrono::milliseconds(50));
+		const auto* event = next ? std::get_if<Event>(&*next) : nullptr;
+		added = event != nullptr && event->name == "recording.added";
+	}
+	REQUIRE(added);
+	CHECK(chordNames(client) == std::vector<std::string>{"F"});
+	CHECK(run(client, "project.get").at("midiParts").empty()); // the track didn't record
 }

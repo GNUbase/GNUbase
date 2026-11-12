@@ -68,23 +68,28 @@ namespace gnubase::engine::midifile
 		time::Ticks start = 0;       // where the file's start goes, in project ticks
 		time::TempoMap tempo{120.0}; // the project's tempo and signatures, which hold before start
 		time::SignatureMap signatures;
-		time::Ticks contentEnd = 0; // where the project's parts, events and markers end, in project ticks
+		// Where the project's content ends (parts, events, markers, automation): on musical tracks in ticks, on linear
+		// tracks in samples at sampleRate, which keep their time under the file's tempo.
+		time::Ticks contentEnd = 0;
+		time::Samples contentEndSamples = 0;
+		double sampleRate = 48000.0;
 	};
 
 	// What a MIDI file holds. A type 1 or 2 file gives a track per file track with events, a type 0 file a track
 	// per MIDI channel unless options.dissolve is false. Everything is placed from options.start on; the tempo and
 	// signatures before it are those of options, and the file's start at 120 BPM in 4/4 unless it sets its own. After
-	// the file's end they are those of options again if they change after start or options.contentEnd is after the
-	// file's end; otherwise the file's last ones go on. The
-	// markers of a type 1 file's tracks after the first that hold nothing but a name and markers are marker tracks of
-	// their own; all other markers are merged. The tracks of a type 2 file are independent sequences: they are laid out
-	// one after another, each from the first bar start after the previous one's end, and each starts at 120 BPM in 4/4
-	// unless it sets its own tempo and signature at its start; sequences that would start after 2^53 ticks are left
-	// out. Notes end at their note-off (the first note-on of a pitch and channel ends first) or, if they have none, at
-	// the track's end. Bank select directly before a program change at the same tick becomes the program change's bank.
-	// Tempo and time signatures that the project can't hold are adjusted: tempo to 1-999 BPM, signature changes to the
-	// next bar start; signatures with a beat other than 1, 2, 4, 8 or 16 are left out. Track and marker names that
-	// aren't valid UTF-8 are read as Windows-1252 (Latin-1 with more characters in 0x80-0x9F). Ids are left at 0.
+	// the file's end they are those of options again if they change after start or options.contentEnd (or
+	// contentEndSamples, with the file's tempo up to its end) is after the file's end; otherwise the file's last ones
+	// go on. The markers of a type 1 file's tracks after the first that hold nothing but a name and markers are marker
+	// tracks of their own; all other markers are merged. The tracks of a type 2 file are independent sequences: they
+	// are laid out one after another, each from the first bar start after the previous one's end, and each starts at
+	// 120 BPM in 4/4 unless it sets its own tempo and signature at its start; sequences that would start after 2^53
+	// ticks are left out. Notes end at their note-off (the first note-on of a pitch and channel ends first) or, if they
+	// have none, at the track's end. Bank select directly before a program change at the same tick becomes the program
+	// change's bank. Tempo and time signatures that the project can't hold are adjusted: tempo to 1-999 BPM, signature
+	// changes to the next bar start; signatures with a beat other than 1, 2, 4, 8 or 16 are left out. Track and marker
+	// names that aren't valid UTF-8 are read as Windows-1252 (Latin-1 with more characters in 0x80-0x9F). Ids are left
+	// at 0.
 	Import importFile(const File& file, const ImportOptions& options = ImportOptions());
 
 	// The part a track's events go into: from the start of the bar of its first event to the end of the bar of its

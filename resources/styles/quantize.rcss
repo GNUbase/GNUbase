@@ -89,7 +89,6 @@
 {
 	display: none;
 	align-items: center;
-	margin-left: 6dp;
 }
 
 @media (min-width: 1000dp)
@@ -97,6 +96,15 @@
 	.toolbar-quantize
 	{
 		display: flex;
+	}
+}
+
+/* The toolbar's quantize section, hidden as a whole where its controls are, so it takes no gap. */
+@media (max-width: 999dp)
+{
+	.toolbar-section[section=quantize]
+	{
+		display: none;
 	}
 }
 

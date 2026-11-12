@@ -86,12 +86,16 @@ the project start. The sample grids count from the project start, as the samples
   command thread; a file that can't be read leaves the position as it is. `snap.zeroCrossings` moves positions on
   tracks the same way, inside the audio event that plays there on the first of the tracks where one plays: the event
   display's selection range edges (p. 285, [tools.md](tools.md)). The event that plays is unmuted, within its audio
-  part, which isn't muted, and where events overlap (takes on lanes, the stack of #99) the one in front.
+  part, which isn't muted, and where events overlap (takes on lanes, the stack of #99) the one in front; of two at
+  the same place in the stack, such as the pieces of a split event, the one with the higher id, as in playback. A
+  position moves only to where that event plays (`zeroCrossingBetween`): inside it and its part, and not under an
+  event in front of it, so that a range's edge never lands on audio that doesn't play there (#1086).
 
 ## The event display
 
 - **Toolbar** (`resources/ui/project.rml`): the snap toggle `#snap`, the snap type menu `#snap-type-menu` behind
-  `#snap-type`, the grid type menu `#grid-type-menu` behind `#grid-type`, and the toggle `#snap-zero-crossing`. The
+  `#snap-type`, the grid type menu `#grid-type-menu` behind `#grid-type` (its section is hidden in windows narrower
+  than 840 dp, which the toolbar has no room for), and the toggle `#snap-zero-crossing`. The
   buttons show the settings (`.checked`, and the chosen type's name); the grid type menu has the grid types of the
   ruler's time format (bars and beats, seconds, timecode and fps (User), samples), filled in by the display from the
   engine's table (`engine::gridTypes`), the chosen one checked. Every change goes to the engine with `snap.set`; the
@@ -136,7 +140,9 @@ Not yet: grid lines and snap point lines in the event display, the editors' own 
   musical track across a tempo change; splitting and resizing at zero crossings of a real file, not when sizing moves
   the contents or the file is missing; a split near an event's start still splits it, and one just outside an event
   leaves it alone; `snap.zeroCrossings` inside an event, outside it and on tracks without audio, and following the
-  event in front, not a muted one, nor one outside its part or in a muted part.
+  event in front, not a muted one, nor one outside its part or in a muted part; a position moving only to where that
+  event plays, not past its part's end, under an event in front of it, nor between two such events; of the two
+  overlapping pieces of a split event the one playback plays in front, in the overlap and just before it.
 - `tests/eventediting_tests.cpp` (fake window system, real engine): with snap on, a drag, a resize and an Alt click land
   on bars, shuffle swaps two parts, events, a position marker and the cursor attract, a position marker and a cycle
   marker's end on a linear marker track that isn't active attract a drag where `snap.position` puts it, a snap point set
