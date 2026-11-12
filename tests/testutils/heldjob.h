@@ -20,7 +20,8 @@ namespace gnubase::test
 	{
 	public:
 		// Holds the first job of the given kind, such as "media.locate", that sends a job.progress from now on, for a
-		// minute at most. One HeldJob per engine at a time; it must not outlive the engine.
+		// minute at most. One HeldJob per engine at a time: a second throws std::logic_error. It must not outlive the
+		// engine.
 		HeldJob(engine::Engine& engine, std::string kind);
 
 		// Releases the job and holds no other.

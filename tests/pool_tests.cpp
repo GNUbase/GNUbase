@@ -196,8 +196,8 @@ namespace
 	}
 
 	// Starts a job with the command and holds it at its first job.progress while during runs with its id, then lets it
-	// go on and returns the job once it ended (#1154): what during does comes before anything the job does after it
-	// got going, however the threads are scheduled. Progress events go to progress, if given.
+	// go on and returns the job once it ended (#1154): what during does comes before anything the job does after its
+	// first job.progress, however the threads are scheduled. Progress events go to progress, if given.
 	Json whileHeld(SavedProject& song, const std::string& command, Json parameters,
 		const std::function<void(uint64_t job)>& during, std::vector<Json>* progress = nullptr)
 	{

@@ -21,6 +21,7 @@
 #include <optional>
 #include <random>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -517,11 +518,15 @@ TEST_CASE("a backup reports its progress and can be cancelled", "[integration][s
 	for (size_t i = 1; i < progress.size(); ++i)
 		CHECK(progress[i].at("progress") >= progress[i - 1].at("progress"));
 
-	// Cancelled, a backup leaves nothing behind.
+	// Cancelled, a backup leaves nothing behind. It is held at its first progress until job.cancel ran, so that it
+	// can't end first (#1154).
 	const fs::path folder = dir.path() / "cancelled";
+	test::HeldJob held(song.engine, "project.backup");
 	const uint64_t job =
 		run(song.client, "project.backup", {{"folder", utf8(folder)}}).at("job").at("id").get<uint64_t>();
-	run(song.client, "job.cancel", {{"job", job}});
+	REQUIRE(held.waitUntilHeld());
+	CHECK(run(song.client, "job.cancel", {{"job", job}}).at("job").at("state") == "running");
+	held.release();
 	const Json cancelled = waitForJob(song.client, job);
 	CHECK(cancelled.at("state") == "cancelled");
 	CHECK(!fs::exists(folder));
@@ -529,7 +534,7 @@ TEST_CASE("a backup reports its progress and can be cancelled", "[integration][s
 
 	// So does one cancelled while it copies the project's Mixdown folder, with the folders it made in there. A project
 	// without media starts copying the Mixdown folder at once, and its first progress event comes once the folders
-	// for the first file are made: it is cancelled then. Into a folder that was there, which stays, empty.
+	// for the first file are made: it is held there and cancelled. Into a folder that was there, which stays, empty.
 	Song saved;
 	fs::create_directories(dir.path() / "project" / "Mixdown" / "Stems");
 	for (const char* name : {"a.wav", "b.wav", "c.wav", "d.wav"})
@@ -537,16 +542,12 @@ TEST_CASE("a backup reports its progress and can be cancelled", "[integration][s
 	run(saved.client, "project.save", {{"path", utf8(dir.path() / "project" / "Song.dawproject")}});
 	const fs::path mixdowns = dir.path() / "cancelled mixdowns";
 	fs::create_directories(mixdowns);
+	test::HeldJob heldMixdown(saved.engine, "project.backup");
 	const uint64_t copying =
 		run(saved.client, "project.backup", {{"folder", utf8(mixdowns)}}).at("job").at("id").get<uint64_t>();
-	bool progressed = false;
-	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-	while (!progressed && std::chrono::steady_clock::now() < deadline)
-		if (const std::optional<Message> message = saved.client.wait(std::chrono::milliseconds(100)))
-			if (const auto* event = std::get_if<Event>(&*message))
-				progressed = event->name == "job.progress" && event->data.at("job") == copying;
-	REQUIRE(progressed);
-	run(saved.client, "job.cancel", {{"job", copying}});
+	REQUIRE(heldMixdown.waitUntilHeld());
+	CHECK(run(saved.client, "job.cancel", {{"job", copying}}).at("job").at("state") == "running");
+	heldMixdown.release();
 	CHECK(waitForJob(saved.client, copying).at("state") == "cancelled");
 	CHECK(fs::is_directory(mixdowns));
 	CHECK(fs::is_empty(mixdowns));
@@ -888,11 +889,15 @@ TEST_CASE("a job held at its first progress keeps no command or event waiting", 
 	const Json running = run(song.client, "job.get", {{"job", job}}).at("job");
 	CHECK(running.at("state") == "running");
 	CHECK(running.at("progress").get<double>() < 0.01);
+
+	// Only the first job of the kind is held: another one runs through meanwhile.
+	CHECK(backup(song.client, {{"folder", utf8(dir.path() / "next")}}).at("missing").empty());
+	CHECK(run(song.client, "job.get", {{"job", job}}).at("job").at("state") == "running");
 	held.release();
 	CHECK(waitForJob(song.client, job).at("state") == "done");
 
-	// Only the first job of the kind is held: the next one runs through.
-	CHECK(backup(song.client, {{"folder", utf8(dir.path() / "next")}}).at("missing").empty());
+	// One HeldJob per engine at a time: a second would unhold the first when it goes.
+	CHECK_THROWS_AS(test::HeldJob(song.engine, "media.locate"), std::logic_error);
 }
 
 TEST_CASE("a backup is opened when it's done only if the project didn't change meanwhile", "[integration]")

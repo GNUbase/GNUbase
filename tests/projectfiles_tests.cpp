@@ -897,19 +897,20 @@ TEST_CASE("a save or backup that fails shows its error", "[ui]")
 	click(app, "#project-error-dialog button[result=ok]");
 	REQUIRE(app.waitUntil([&app] { return !shown(app, "#project-error-dialog"); }));
 
-	// A backup that is to be opened isn't if the project changed while the job ran, and says so.
-	test::writeWav(dir.path() / "take.wav", {std::vector<float>(5760000, 0.25f), 2, 48000}); // 1 min
+	// A backup that is to be opened isn't if the project changed while the job ran, and says so. The job is held at
+	// its first progress until the edit ran, so that it can't ask to open the backup first (#1154).
+	test::writeWav(dir.path() / "take.wav", {std::vector<float>(96000, 0.25f), 2, 48000}); // 1 s
 	app.call("media.add", {{"path", utf8(dir.path() / "take.wav")}});
 	app.call("project.save", Json::object());
 	const Json song = location(app);
+	test::HeldJob held(app.engine(), "project.backup");
 	fileMenu(app, "file.backup");
 	answer(app, {dir.path() / "Opened"});
 	click(app, "#backup-keep-active");
-	// Without click's step, so that the edit is queued right after project.backup, before the job can ask to open
-	// the backup.
-	app.ui().click(std::nullopt, {"#backup-project-dialog button.primary", 0, std::nullopt},
-		gnubase::ui::MouseButton::Left, 1, {});
+	click(app, "#backup-project-dialog button.primary");
+	REQUIRE(app.waitUntil([&held] { return held.held(); }, std::chrono::seconds(30)));
 	app.call("project.set", {{"name", "Edited"}});
+	held.release();
 	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }, std::chrono::seconds(30)));
 	CHECK_THAT(elements(app, "#project-error-message").at(0).at("text").get<std::string>(),
 		ContainsSubstring("wasn't opened"));
