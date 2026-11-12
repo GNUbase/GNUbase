@@ -114,6 +114,7 @@ namespace gnubase::ui
 		bool m_lock = false;                              // Lock Parameter Settings, the user setting ui.samplerPanel's
 		double m_level = 0.0;                             // the Normalization Level, dBFS, likewise
 		bool m_settingsKnown = false;                     // a change came before settings.get answered: it is newer
+		int m_savesSent = 0; // settings.set sent and not answered: what settings.changed brings meanwhile is older
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 		std::vector<Subscription> m_subscriptions;
 		// The file drop event's name, made once, so that removing its listener in the destructor allocates nothing.

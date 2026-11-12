@@ -3,6 +3,7 @@
 
 #include "engine/document/chordtrack.h"
 #include "engine/document/rendersnapshot.h"
+#include "engine/midi/articulationmaps.h"
 #include "engine/midi/chords.h"
 #include "engine/midi/drummaps.h"
 #include "engine/midi/midivalues.h"
@@ -910,6 +911,7 @@ namespace gnubase::engine::midi
 			// Inserts the track's MIDI modifiers.
 			const TrackPitches sourcePitches(project, part.track);
 			const Modifiers& trackModifiers = project.channels.at(project.trackById.at(part.track).channel).modifiers;
+			const ArticulationMap* articulations = articulationMapOf(project, part.track);
 			Modifiers modifiers = settings.includeInserts && !trackModifiers.bypass ? trackModifiers : Modifiers();
 			modifiers.transpose += part.transpose;
 			modifiers.velocityShift += part.velocity;
@@ -941,16 +943,29 @@ namespace gnubase::engine::midi
 					continue;
 				Controller copy = controller;
 				copy.position = at;
+				// Of each group of the track's articulation map, the direction in effect where the range starts, so
+				// that the notes play the same sound slot (#175), also without includeChase. Playback resolves
+				// directions per part, so only from a part that still plays there.
+				int group = -1;
+				if (controller.type == ControllerType::Articulation && articulations != nullptr &&
+					sampleOf(partTo) > settings.start)
+					for (const Articulation& each : articulations->articulations)
+						if (each.name == controller.articulation)
+							group = each.group;
 				if (inRange(at))
 				{
 					controllers.push_back(copy);
 				}
-				else if (sampleOf(at) < settings.start && settings.includeChase &&
-					controller.type != ControllerType::SysEx && controller.type != ControllerType::Articulation)
+				else if (sampleOf(at) < settings.start &&
+					(controller.type == ControllerType::Articulation
+							? group >= 0
+							: settings.includeChase && controller.type != ControllerType::SysEx))
 				{
-					const LaneKey key = controller.type == ControllerType::Program
-						? LaneKey{ControllerType::Program, controller.channel, 0}
-						: laneOf(controller);
+					LaneKey key = laneOf(controller);
+					if (group >= 0)
+						key = {ControllerType::Articulation, 0, static_cast<uint8_t>(group)};
+					else if (controller.type == ControllerType::Program)
+						key = {ControllerType::Program, controller.channel, 0};
 					const auto previous = chasedAt.find(key);
 					if (previous == chasedAt.end() || previous->second <= at)
 					{

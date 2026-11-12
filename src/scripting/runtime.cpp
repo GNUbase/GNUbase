@@ -304,7 +304,7 @@ namespace gnubase::scripting
 
 		lua_newtable(state); // gnubase
 		const std::pair<const char*, lua_CFunction> helpers[] = {
-			{"on", &Runtime::on}, {"waitFor", &Runtime::waitFor}, {"events", &Runtime::events}};
+			{"on", &Runtime::on}, {"off", &Runtime::off}, {"waitFor", &Runtime::waitFor}, {"events", &Runtime::events}};
 		for (const auto& [name, function] : helpers)
 		{
 			lua_pushlightuserdata(state, this);
@@ -593,6 +593,29 @@ namespace gnubase::scripting
 		}
 		lua_pushvalue(state, 2);
 		lua_rawseti(state, -2, static_cast<lua_Integer>(lua_rawlen(state, -2)) + 1);
+		return 0;
+	}
+
+	int Runtime::off(lua_State* state)
+	{
+		luaL_checkstring(state, 1);
+		luaL_checktype(state, 2, LUA_TFUNCTION);
+		lua_getfield(state, LUA_REGISTRYINDEX, g_handlersKey);
+		if (lua_getfield(state, -1, lua_tostring(state, 1)) != LUA_TTABLE)
+			return 0;
+		// A new list without the handler, so that a dispatch going through the old one goes on unchanged.
+		lua_newtable(state);
+		const auto count = static_cast<lua_Integer>(lua_rawlen(state, -2));
+		lua_Integer kept = 0;
+		for (lua_Integer i = 1; i <= count; ++i)
+		{
+			lua_rawgeti(state, -2, i);
+			if (lua_rawequal(state, -1, 2) != 0)
+				lua_pop(state, 1);
+			else
+				lua_rawseti(state, -2, ++kept);
+		}
+		lua_setfield(state, -3, lua_tostring(state, 1));
 		return 0;
 	}
 

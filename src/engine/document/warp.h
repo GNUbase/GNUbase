@@ -3,6 +3,7 @@
 
 #include "engine/document/document.h"
 #include "engine/dsp/warp.h"
+#include "engine/schema.h"
 
 #include <vector>
 
@@ -10,6 +11,8 @@
 // Manual Adjust), free warp markers, and where that makes an audio event's audio play.
 namespace gnubase::engine
 {
+	class CommandContext;
+
 	// Whether a clip's audio plays warped: in musical mode, or with free warp markers.
 	bool warped(const Clip& clip);
 
@@ -46,4 +49,14 @@ namespace gnubase::engine
 		time::Samples end = 0;
 	};
 	WarpedClipEdges warpedClipEdges(const Clip& clip, time::Samples length, const std::vector<dsp::WarpPoint>& map);
+
+	// An audio event's JSON (toJson), and for an event of a warped clip what follows its warp: playedLength, the
+	// project samples from its start to its end (eventSpan), and fadeRoom, the frames its fades may take together
+	// (fadeRoom). For project.get and the events' announcements, so the project window draws it where it plays.
+	Json audioEventJson(const Project& project, const AudioEvent& event);
+
+	// Announces audioEvent.changed with audioEventJson for the events of after whose playedLength or fadeRoom differs
+	// from before, as after a tempo change or a warp edit, and for warped events that changed, whose announcements
+	// toJson made. ProjectModel calls it after every edit, undo and redo.
+	void announceWarpedEvents(const Project& before, const Project& after, CommandContext& context);
 }
