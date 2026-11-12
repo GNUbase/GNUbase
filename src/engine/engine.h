@@ -252,7 +252,10 @@ namespace gnubase::engine
 		void setSampleReader(std::function<std::shared_ptr<const processors::Sample>(const std::string& path)> read);
 		// For tests: calls hook on a job's thread after each job.progress the job sends, outside every lock, e.g. to
 		// hold the job there until the test ran what must come before the job goes on (tests/testutils/heldjob.h).
-		// Events and commands go on meanwhile, unlike in a Listener that blocks. Empty for none. Any thread.
+		// Events and commands go on meanwhile, unlike in a Listener that blocks; job.cancel, project.load and
+		// project.new don't wait for a job that the hook holds, but the engine's shutdown does, as it joins every job's
+		// thread. An exception from the hook comes out of the job's JobContext::progress, as if its work threw it
+		// there: uncaught, it ends the job as failed, or as cancelled for JobCancelled. Empty for none. Any thread.
 		void setJobProgressHook(std::function<void(uint64_t job, const std::string& kind)> hook);
 
 	private:

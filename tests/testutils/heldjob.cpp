@@ -3,11 +3,15 @@
 
 #include "engine/engine.h"
 
+#include <catch2/catch_test_macros.hpp>
+
 #include <condition_variable>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <utility>
+#include <variant>
 
 namespace gnubase::test
 {
@@ -26,18 +30,31 @@ namespace gnubase::test
 			static Holders all;
 			return all;
 		}
+
+		engine::Json run(engine::Client& client, const std::string& command, engine::Json parameters)
+		{
+			const engine::Result result = client.call(command, std::move(parameters));
+			INFO(command << ": " << result.error);
+			REQUIRE(result.ok());
+			return result.value;
+		}
 	}
 
 	struct HeldJob::State
 	{
 		std::string kind;
+		std::chrono::milliseconds hold{0};
 		mutable std::mutex mutex;
 		std::condition_variable changed;
-		uint64_t job = 0; // the held one, once it is held
-		bool released = false;
+		uint64_t job = 0;      // the one that got to its first job.progress, once it did
+		bool released = false; // by the test
+		bool lapsed = false;   // the hold, before the test released the job
+
+		bool holding() const { return job != 0 && !released && !lapsed; }
 	};
 
-	HeldJob::HeldJob(engine::Engine& engine, std::string kind) : m_engine(engine), m_state(std::make_shared<State>())
+	HeldJob::HeldJob(engine::Engine& engine, std::string kind, std::chrono::milliseconds hold)
+		: m_engine(engine), m_state(std::make_shared<State>())
 	{
 		{
 			Holders& all = holders();
@@ -46,17 +63,22 @@ namespace gnubase::test
 				throw std::logic_error("another HeldJob holds this engine's jobs");
 		}
 		m_state->kind = std::move(kind);
+		m_state->hold = hold;
 		m_engine.setJobProgressHook(
 			[state = m_state](uint64_t job, const std::string& jobKind)
 			{
 				if (jobKind != state->kind)
 					return;
 				std::unique_lock lock(state->mutex);
-				if (state->released || (state->job != 0 && state->job != job))
+				if (state->released || state->job != 0) // one job, once
 					return;
 				state->job = job;
 				state->changed.notify_all();
-				state->changed.wait_for(lock, std::chrono::minutes(1), [&state] { return state->released; });
+				if (!state->changed.wait_for(lock, state->hold, [&state] { return state->released; }))
+				{
+					state->lapsed = true;
+					state->changed.notify_all();
+				}
 			});
 	}
 
@@ -72,13 +94,13 @@ namespace gnubase::test
 	bool HeldJob::held() const
 	{
 		const std::scoped_lock lock(m_state->mutex);
-		return m_state->job != 0;
+		return m_state->holding();
 	}
 
 	bool HeldJob::waitUntilHeld(std::chrono::milliseconds timeout)
 	{
 		std::unique_lock lock(m_state->mutex);
-		return m_state->changed.wait_for(lock, timeout, [this] { return m_state->job != 0; });
+		return m_state->changed.wait_for(lock, timeout, [this] { return m_state->job != 0; }) && m_state->holding();
 	}
 
 	uint64_t HeldJob::job() const
@@ -87,12 +109,59 @@ namespace gnubase::test
 		return m_state->job;
 	}
 
-	void HeldJob::release()
+	bool HeldJob::release()
 	{
+		bool wasHeld = false;
 		{
 			const std::scoped_lock lock(m_state->mutex);
+			wasHeld = m_state->holding();
 			m_state->released = true;
 		}
 		m_state->changed.notify_all();
+		return wasHeld;
+	}
+
+	engine::Json waitForJob(engine::Client& client, uint64_t job, std::vector<engine::Json>* progress)
+	{
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+		engine::Json finished; // null until the job finishes
+		while (finished.is_null() && std::chrono::steady_clock::now() < deadline)
+		{
+			const std::optional<engine::Message> message = client.wait(std::chrono::milliseconds(100));
+			if (!message)
+			{
+				// A wait for another job may have taken this job's events: once none are left, job.get tells.
+				if (engine::Json state = run(client, "job.get", {{"job", job}}).at("job");
+					state.at("state") != "running")
+					finished = std::move(state);
+				continue;
+			}
+			const auto* event = std::get_if<engine::Event>(&*message);
+			if (event == nullptr)
+				continue;
+			if (event->name == "job.progress" && event->data.at("job") == job && progress != nullptr)
+				progress->push_back(event->data);
+			if (event->name == "job.finished" && event->data.at("job").at("id") == job)
+				finished = event->data.at("job");
+		}
+		INFO("job " << job << " didn't finish");
+		REQUIRE(!finished.is_null());
+		return finished;
+	}
+
+	engine::Json whileHeld(engine::Engine& engine, engine::Client& client, const std::string& command,
+		engine::Json parameters, const std::function<void(uint64_t job)>& during, std::vector<engine::Json>* progress)
+	{
+		HeldJob held(engine, command);
+		const engine::Json started = run(client, command, std::move(parameters)).at("job");
+		CHECK(started.at("kind") == command);
+		const auto job = started.at("id").get<uint64_t>();
+		REQUIRE(held.waitUntilHeld());
+		CHECK(held.job() == job);
+		during(job);
+		CHECK(run(client, "job.get", {{"job", job}}).at("job").at("state") == "running");
+		INFO("the hold lapsed before " << command << "'s job was released");
+		CHECK(held.release());
+		return waitForJob(client, job, progress);
 	}
 }

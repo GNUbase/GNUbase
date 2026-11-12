@@ -31,6 +31,8 @@ namespace test = gnubase::test;
 namespace fs = std::filesystem;
 using Catch::Matchers::ContainsSubstring;
 using gnubase::test::readZip;
+using gnubase::test::waitForJob;
+using gnubase::test::whileHeld;
 
 namespace
 {
@@ -114,34 +116,6 @@ namespace
 	int64_t framesOf(const std::string& path)
 	{
 		return AudioFileReader::open(path)->info().frames;
-	}
-
-	// Waits for the job's job.finished event and returns the job. Progress events go to progress, if given.
-	Json waitForJob(Client& client, uint64_t job, std::vector<Json>* progress = nullptr)
-	{
-		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
-		Json finished; // null until the job finishes
-		while (finished.is_null() && std::chrono::steady_clock::now() < deadline)
-		{
-			const std::optional<Message> message = client.wait(std::chrono::milliseconds(100));
-			if (!message)
-			{
-				// A wait for another job may have taken this job's events: once none are left, job.get tells.
-				if (Json state = run(client, "job.get", {{"job", job}}).at("job"); state.at("state") != "running")
-					finished = std::move(state);
-				continue;
-			}
-			const auto* event = std::get_if<Event>(&*message);
-			if (event == nullptr)
-				continue;
-			if (event->name == "job.progress" && event->data.at("job") == job && progress != nullptr)
-				progress->push_back(event->data);
-			if (event->name == "job.finished" && event->data.at("job").at("id") == job)
-				finished = event->data.at("job");
-		}
-		INFO("job " << job << " didn't finish");
-		REQUIRE(!finished.is_null());
-		return finished;
 	}
 
 	// Runs a command that starts a job and waits for the job; requires it to succeed and returns its result.
@@ -521,13 +495,13 @@ TEST_CASE("a backup reports its progress and can be cancelled", "[integration][s
 	// Cancelled, a backup leaves nothing behind. It is held at its first progress until job.cancel ran, so that it
 	// can't end first (#1154).
 	const fs::path folder = dir.path() / "cancelled";
-	test::HeldJob held(song.engine, "project.backup");
-	const uint64_t job =
-		run(song.client, "project.backup", {{"folder", utf8(folder)}}).at("job").at("id").get<uint64_t>();
-	REQUIRE(held.waitUntilHeld());
-	CHECK(run(song.client, "job.cancel", {{"job", job}}).at("job").at("state") == "running");
-	held.release();
-	const Json cancelled = waitForJob(song.client, job);
+	const auto cancel = [](Client& client)
+	{
+		return [&client](uint64_t job)
+		{ CHECK(run(client, "job.cancel", {{"job", job}}).at("job").at("state") == "running"); };
+	};
+	const Json cancelled =
+		whileHeld(song.engine, song.client, "project.backup", {{"folder", utf8(folder)}}, cancel(song.client));
 	CHECK(cancelled.at("state") == "cancelled");
 	CHECK(!fs::exists(folder));
 	CHECK(run(song.client, "job.list").at("jobs").size() == 2);
@@ -542,13 +516,8 @@ TEST_CASE("a backup reports its progress and can be cancelled", "[integration][s
 	run(saved.client, "project.save", {{"path", utf8(dir.path() / "project" / "Song.dawproject")}});
 	const fs::path mixdowns = dir.path() / "cancelled mixdowns";
 	fs::create_directories(mixdowns);
-	test::HeldJob heldMixdown(saved.engine, "project.backup");
-	const uint64_t copying =
-		run(saved.client, "project.backup", {{"folder", utf8(mixdowns)}}).at("job").at("id").get<uint64_t>();
-	REQUIRE(heldMixdown.waitUntilHeld());
-	CHECK(run(saved.client, "job.cancel", {{"job", copying}}).at("job").at("state") == "running");
-	heldMixdown.release();
-	CHECK(waitForJob(saved.client, copying).at("state") == "cancelled");
+	CHECK(whileHeld(saved.engine, saved.client, "project.backup", {{"folder", utf8(mixdowns)}}, cancel(saved.client))
+			  .at("state") == "cancelled");
 	CHECK(fs::is_directory(mixdowns));
 	CHECK(fs::is_empty(mixdowns));
 }
@@ -897,27 +866,73 @@ TEST_CASE("a job held at its first progress keeps no command or event waiting", 
 
 	// Engine::setJobProgressHook runs on the job's thread after its job.progress went out, outside every lock: a
 	// command that sends events runs meanwhile, and the job is still at its first progress.
-	test::HeldJob held(song.engine, "project.backup");
+	{
+		test::HeldJob held(song.engine, "project.backup");
+		const uint64_t job = run(song.client, "project.backup", {{"folder", utf8(dir.path() / "backup")}})
+								 .at("job")
+								 .at("id")
+								 .get<uint64_t>();
+		REQUIRE(held.waitUntilHeld());
+		CHECK(held.held());
+		CHECK(held.job() == job);
+		run(song.client, "track.add", {{"type", "audio"}});
+		const Json running = run(song.client, "job.get", {{"job", job}}).at("job");
+		CHECK(running.at("state") == "running");
+		CHECK(running.at("progress").get<double>() < 0.01);
+
+		// Only the first job of the kind is held: another one runs through meanwhile.
+		CHECK(backup(song.client, {{"folder", utf8(dir.path() / "next")}}).at("missing").empty());
+
+		// One HeldJob per engine at a time: a second would unhold the first when it goes. Refused, it leaves the
+		// first one holding its job.
+		CHECK_THROWS_AS(test::HeldJob(song.engine, "media.locate"), std::logic_error);
+		CHECK(held.held());
+		const Json still = run(song.client, "job.get", {{"job", job}}).at("job");
+		CHECK(still.at("state") == "running");
+		CHECK(still.at("progress").get<double>() < 0.01);
+
+		CHECK(held.release());
+		CHECK(!held.held());
+		CHECK(waitForJob(song.client, job).at("state") == "done");
+		CHECK(held.job() == job);
+		CHECK_THROWS_AS(test::HeldJob(song.engine, "media.locate"), std::logic_error);
+	}
+
+	// A HeldJob that goes while it holds its job, as when a REQUIRE fails meanwhile, lets the job go on.
+	uint64_t dropped = 0;
+	{
+		test::HeldJob held(song.engine, "project.backup");
+		dropped = run(song.client, "project.backup", {{"folder", utf8(dir.path() / "dropped")}})
+					  .at("job")
+					  .at("id")
+					  .get<uint64_t>();
+		REQUIRE(held.waitUntilHeld());
+	}
+	CHECK(waitForJob(song.client, dropped).at("state") == "done");
+}
+
+TEST_CASE("a job whose hold lapsed runs free, and its HeldJob tells", "[integration]")
+{
+	const test::TempDir dir;
+	writeNoise(dir.path() / "take.wav", 480000); // 10 s, so the backup sends several progress events
+	Song song;
+	song.addEvent(song.addClip(song.addMedia(dir.path() / "take.wav")), 0, 0, 4800);
+
+	// Its hold lapses at once: the job goes on and is held at none of its later progress events. The HeldJob no longer
+	// says it holds the job, and release says that it didn't, so that a test sees that the job may have gone on
+	// before what it did meanwhile.
+	test::HeldJob held(song.engine, "project.backup", std::chrono::milliseconds(0));
+	std::vector<Json> progress;
 	const uint64_t job = run(song.client, "project.backup", {{"folder", utf8(dir.path() / "backup")}})
 							 .at("job")
 							 .at("id")
 							 .get<uint64_t>();
-	REQUIRE(held.waitUntilHeld());
-	CHECK(held.held());
+	CHECK(waitForJob(song.client, job, &progress).at("state") == "done");
+	CHECK(progress.size() > 1);
 	CHECK(held.job() == job);
-	run(song.client, "track.add", {{"type", "audio"}});
-	const Json running = run(song.client, "job.get", {{"job", job}}).at("job");
-	CHECK(running.at("state") == "running");
-	CHECK(running.at("progress").get<double>() < 0.01);
-
-	// Only the first job of the kind is held: another one runs through meanwhile.
-	CHECK(backup(song.client, {{"folder", utf8(dir.path() / "next")}}).at("missing").empty());
-	CHECK(run(song.client, "job.get", {{"job", job}}).at("job").at("state") == "running");
-	held.release();
-	CHECK(waitForJob(song.client, job).at("state") == "done");
-
-	// One HeldJob per engine at a time: a second would unhold the first when it goes.
-	CHECK_THROWS_AS(test::HeldJob(song.engine, "media.locate"), std::logic_error);
+	CHECK(!held.held());
+	CHECK(!held.waitUntilHeld(std::chrono::milliseconds(0)));
+	CHECK(!held.release());
 }
 
 TEST_CASE("a backup is opened when it's done only if the project didn't change meanwhile", "[integration]")
@@ -944,16 +959,9 @@ TEST_CASE("a backup is opened when it's done only if the project didn't change m
 	// An edit while the backup runs stays, with its undo history; the result says why the backup wasn't opened. The
 	// job is held at its first progress until the edit ran, so that it can't ask to open the backup first (#1154).
 	const uint64_t revision = run(song.client, "project.revision").at("revision").get<uint64_t>();
-	test::HeldJob held(song.engine, "project.backup");
-	const uint64_t job =
-		run(song.client, "project.backup", {{"folder", utf8(dir.path() / "edited")}, {"activate", true}})
-			.at("job")
-			.at("id")
-			.get<uint64_t>();
-	REQUIRE(held.waitUntilHeld());
-	run(song.client, "project.set", {{"name", "Edited"}});
-	held.release();
-	const Json finished = waitForJob(song.client, job);
+	const Json finished = whileHeld(song.engine, song.client, "project.backup",
+		{{"folder", utf8(dir.path() / "edited")}, {"activate", true}},
+		[&song](uint64_t /*job*/) { run(song.client, "project.set", {{"name", "Edited"}}); });
 	REQUIRE(finished.at("state") == "done");
 	CHECK(finished.at("result").at("activated") == false);
 	CHECK_THAT(finished.at("result").at("activationError").get<std::string>(), ContainsSubstring("changed"));
@@ -980,15 +988,15 @@ TEST_CASE("a folder that a running job writes into takes no other backup", "[int
 
 	// The others run while it is held at its first progress, so that it can't end first (#1154).
 	const fs::path folder = dir.path() / "backup";
-	test::HeldJob held(song.engine, "project.backup");
-	const uint64_t job =
-		run(song.client, "project.backup", {{"folder", utf8(folder)}}).at("job").at("id").get<uint64_t>();
-	REQUIRE(held.waitUntilHeld());
-	for (const fs::path& other : {folder, folder / "inner", dir.path()})
-		CHECK_THAT(reject(song.client, "project.backup", {{"folder", utf8(other)}}), ContainsSubstring("running job"));
-	run(song.client, "job.cancel", {{"job", job}});
-	held.release();
-	CHECK(waitForJob(song.client, job).at("state") == "cancelled");
+	const Json finished = whileHeld(song.engine, song.client, "project.backup", {{"folder", utf8(folder)}},
+		[&](uint64_t job)
+		{
+			for (const fs::path& other : {folder, folder / "inner", dir.path()})
+				CHECK_THAT(
+					reject(song.client, "project.backup", {{"folder", utf8(other)}}), ContainsSubstring("running job"));
+			run(song.client, "job.cancel", {{"job", job}});
+		});
+	CHECK(finished.at("state") == "cancelled");
 	CHECK(!fs::exists(folder));
 	// Once the job has ended, only the usual checks apply.
 	CHECK_THAT(reject(song.client, "project.backup", {{"folder", utf8(dir.path())}}), ContainsSubstring("empty"));
@@ -1085,13 +1093,12 @@ TEST_CASE("a copy whose media file changed meanwhile isn't used", "[integration]
 
 	// Relinked by hand while the job copies, held at its first progress (#1154): the hand-made link stays, and the
 	// copy goes.
-	test::HeldJob held(song.engine, "media.prepareArchive");
-	const uint64_t job = run(song.client, "media.prepareArchive").at("job").at("id").get<uint64_t>();
-	REQUIRE(held.waitUntilHeld());
-	run(song.client, "media.relink",
-		{{"files", Json::array({{{"media", media}, {"path", utf8(dir.path() / "library" / "other.wav")}}})}});
-	held.release();
-	const Json finished = waitForJob(song.client, job);
+	const Json finished = whileHeld(song.engine, song.client, "media.prepareArchive", Json::object(),
+		[&](uint64_t /*job*/)
+		{
+			run(song.client, "media.relink",
+				{{"files", Json::array({{{"media", media}, {"path", utf8(dir.path() / "library" / "other.wav")}}})}});
+		});
 	REQUIRE(finished.at("state") == "done");
 	CHECK(finished.at("result").at("copied").empty());
 	CHECK(finished.at("result").at("changed") == Json::array({media}));
