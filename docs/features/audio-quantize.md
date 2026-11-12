@@ -68,9 +68,8 @@ every other track, instead of keeping the one `event.split` copied from its even
 stretches each clip by itself, so it doesn't keep them phase coherent (p. 371).
 
 `quantize.crossfade` records what it changed in each event's origin, so that a later `quantize.reset` puts every slice
-back to its position, offset, length and crossfade and the slices tile again, with no overlaps and no gaps left: Reset
-Quantize resets the length changes made in the quantize panel too (p. 367), and the crossfades are such changes
-(p. 379).
+back to its position, offset, length and crossfade, and the slices tile again with no overlaps and no gaps left: Reset
+Quantize resets the length changes made in the quantize panel too (p. 367), and crossfades are such changes (p. 379).
 
 ## In the UI
 
