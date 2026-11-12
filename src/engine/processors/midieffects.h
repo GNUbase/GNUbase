@@ -155,7 +155,7 @@ namespace gnubase::engine::processors
 	// take the places of other events, and a note-on that doesn't fit is left out with its note-off, so that notes
 	// hang only if more of them end in one block than it holds.
 	// Velocities stay from 1 to 127, and a controller turned into a note plays a note-on for values above 0 and a
-	// note-off for 0. SysEx passes.
+	// note-off for 0, once each while the note is held, counting as a held note. SysEx passes.
 	class LogicalStage
 	{
 	public:
@@ -178,8 +178,12 @@ namespace gnubase::engine::processors
 		static bool uses(const Held& held, uint16_t source, uint16_t note) noexcept;
 		// Counts a note-on of note less; true when none is left and the note ends.
 		bool release(uint16_t note) noexcept;
+		// Adds what the rules made of an event other than a note-on: a note-on or note-off counts with the held notes,
+		// a note-off before the other events in a full output.
+		void playMade(const graph::ProcessEvent& event, graph::EventBuffer& out) noexcept;
 
 		std::array<Held, MidiEffect::g_notes> m_held{};
+		std::array<bool, MidiEffect::g_notes> m_made{}; // per note out, whether another event's note-on holds it
 		std::array<uint16_t, MidiEffect::g_notes> m_sounding{}; // per note out, how many held notes play it
 		midi::LogicalRandom m_random;
 	};

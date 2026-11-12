@@ -611,6 +611,24 @@ namespace gnubase::engine
 				right.length -= frames;
 				right.fadeIn = Fade();
 				right.crossfade = Crossfade();
+				// The piece of a quantized event after the split was as far from its own original, in samples, as
+				// the split is from where quantizing put the event, so that resetting puts both pieces back
+				// (#910). It goes through samples: a musical event's position is in ticks, but its audio keeps its
+				// length in samples (#414), so how many ticks the piece lies after the start depends on the tempo
+				// there, which quantizing can have moved the event past. An origin that has stopped counting, of an
+				// event moved by other means since, doesn't come along.
+				if (right.quantizeOrigin && right.quantizeOrigin->quantized == event.position)
+				{
+					const time::Samples original =
+						samples(project, right.quantizeOrigin->original) + (at - samples(project, event.position));
+					right.quantizeOrigin->quantized = right.position;
+					right.quantizeOrigin->original =
+						rebased(project, {time::TimeBase::Linear, original}, event.position.base);
+				}
+				else
+				{
+					right.quantizeOrigin.reset();
+				}
 				event.length = frames;
 				event.fadeOut = Fade();
 				// An event that crossfaded from this one now overlaps the piece after the split.
@@ -2230,6 +2248,8 @@ namespace gnubase::engine
 				}
 				if (lane->target.type == AutomationTargetType::Instrument)
 					copied.processor = channel.instrument;
+				if (lane->target.type == AutomationTargetType::MidiEffect)
+					copied.processor = midiEffectSlot(channel, lane->target.number).effect;
 				if (!contains(clipboard.tracks, lane->track))
 					clipboard.tracks.push_back(lane->track);
 				clipboard.lanes.push_back(std::move(copied));
@@ -2275,6 +2295,10 @@ namespace gnubase::engine
 			case AutomationTargetType::PitchBend:
 			case AutomationTargetType::ChannelPressure:
 				has = track.type == TrackType::Midi || track.type == TrackType::Instrument;
+				break;
+			case AutomationTargetType::MidiEffect: // the same effect in the same slot
+				has = (track.type == TrackType::Midi || track.type == TrackType::Instrument) &&
+					midiEffectSlot(channel, target.number).effect == copied.processor;
 				break;
 			}
 			return has ? std::optional<AutomationTarget>(target) : std::nullopt;
@@ -2543,7 +2567,9 @@ namespace gnubase::engine
 				"unlocked one that a position cuts. A MIDI part's notes stay in the part they start in, or with "
 				"splitNotes are cut in two. With zeroCrossing, audio events split at the nearest point within 50 ms "
 				"and inside the event where their audio crosses zero. The pieces of a pattern event continue its "
-				"pattern (patternOffset). Returns the new events after the splits.",
+				"pattern (patternOffset). The piece of a quantized audio event after the split keeps where it "
+				"was before quantizing, shifted by the split, so that quantize.reset puts both pieces back. "
+				"Returns the new events after the splits.",
 				schema({{"events", events()}, {"positions", {{"type", "array"}, {"items", integer()}}},
 						   {"splitNotes", boolean()}, {"zeroCrossing", boolean()}},
 					{"positions"}),

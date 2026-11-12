@@ -22,17 +22,20 @@ holds named rules, as the MIDI rules have one ([midi-rules.md](midi-rules.md)).
     found, or deselects everything.
   - **Action lines** change, in order: position and length (add, subtract, multiply by, divide by, round by, random,
     relative random, fixed value; each result stops at plus or minus the longest project, `time::g_maxPosition`
-    samples or, below 8 kHz, as long as at 8 kHz, so that its ticks fit at any sample rate; it stops at the project's
-    start when it is applied, and a cycle marker stays at least one sample long), name (replace, append, prepend,
+    samples, so that its ticks fit at any sample rate a project can have; it stops at the project's start when it is
+    applied, where a cycle marker keeps its length, as a part does, and a cycle marker stays at least one sample
+    long), name (replace, append, prepend,
     generate name: text and a number counting up from parameter 2 over the elements that are renamed, so locked parts
     and audio events take none, replace search string, erase before, erase after, erase the first or last character),
-    track operations (mute, solo, record, monitor: on, off or toggle; time domain: musical, linear or toggle) and color
+    track operations (mute, solo, record, monitor: on, off or toggle; time domain: musical, linear or toggle; a marker track's markers that move too
+    take their positions in its new time domain) and color
     (a project color's name or `#rrggbb`, the next or previous project color).
   - **Pre and post commands:** up to four key commands each ([key-commands.md](key-commands.md)), engine or UI
     commands with parameters, kept with the rules and their presets. The UI runs them before and after the rules.
   - JSON (`toJson`, `projectRulesFromJson`, `projectRulesSchema`): `{filters: [{open, target, condition, parameter1,
     parameter2, close, join}], function, actions: [{target, operation, parameter1, parameter2}], pre: [{command,
-    parameters}], post}`; parameter 1 is text for the text targets.
+    parameters}], post}`; parameter 1 is text for the text targets. Brackets must match and nest at most three deep,
+    as the MIDI rules' do (#1143).
 - **Commands:** `project.applyRules` applies rules, or a preset by name, in one undo step, through the commands that
   make such changes (`event.move`, `event.resize`, `event.set`, `event.remove`, `track.set`, `track.remove`,
   `channel.set`, `marker.set`, `marker.remove`), so their checks and events are the same. A found folder takes its
@@ -40,7 +43,7 @@ holds named rules, as the MIDI rules have one ([midi-rules.md](midi-rules.md)).
   with the part, and delete keeps an audio part that holds a locked event, while the unlocked events found in it go.
   An audio part that moves takes its events along, locked ones too, as `event.move` does. The active marker track is
   removed after the other marker tracks, so that no marker track that goes is activated in passing. `seed` makes
-  random values repeatable. `project.findByRules` returns what the filters find (`tracks`, `events` for parts and audio
+  random values repeatable; without it each call takes a new one, as `midi.applyRules` does. `project.findByRules` returns what the filters find (`tracks`, `events` for parts and audio
   events, `markers`) and changes nothing; `project.applyRules` refuses select and deselect. `event.set` renames parts
   (`name`) for the name actions.
 - **Presets** belong to the user: `projectRules.presets` lists the factory presets (`Init`, `Delete/Empty parts`,
@@ -73,11 +76,13 @@ and post lists and a command browser.
 ## Checks
 
 `tests/projectrules_tests.cpp`: every factory preset round-tripping through JSON with pre and post commands, and the
-rules JSON refuses; `project.findByRules` on every filter target, brackets, properties and the selection;
+rules JSON refuses (brackets nesting too deep among it); `project.findByRules` on every filter target, brackets, properties and the selection;
 `project.applyRules` moving, resizing, renaming and coloring parts and markers, track names, mute, solo, time domain
 and colors, delete with folders, locked parts, audio parts that hold locked events and the active marker track last,
-generated names without gaps, positions and lengths at the longest project, also at sample rates far below 8 kHz,
-cycle markers made zero long on musical and linear tracks and at a low sample rate, and repeatable random values, in
+generated names without gaps, new random values without a seed, positions and lengths at the longest project, also
+on a linear track and at the lowest sample rate, cycle markers made zero long on musical and linear tracks, at the
+lowest sample rate, at a tempo change and at 1 BPM, cycle markers moved before the start keeping their length,
+markers moved while their track changes its time domain both ways, and repeatable random values, in
 one undo step, undone and redone; `event.set` renaming parts; the preset library (listing, saving, removing, the file
 in the settings folder, a preset that can't be read). `tests/projectrules_ui_tests.cpp` drives Project > Project
 Rule Editor in the app with `ui::Automation`, selecting parts and markers.

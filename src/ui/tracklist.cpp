@@ -1956,6 +1956,7 @@ namespace gnubase::ui
 	{
 		const std::vector<uint64_t> tracks = selection();
 		Json parameters = {{"type", "midi"}};
+		bool midiInputNone = false;
 		if (const auto found = tracks.empty() ? m_index.end() : m_index.find(tracks.back()); found != m_index.end())
 		{
 			const Row& below = m_tracks[found->second];
@@ -1967,6 +1968,8 @@ namespace gnubase::ui
 					{
 						if (below.type == "audio")
 							parameters["input"] = channel.at("input");
+						else
+							midiInputNone = channel.at("midiInput") == "none"; // a new channel's input is all
 						parameters["output"] = channel.at("output");
 					}
 			}
@@ -1977,7 +1980,28 @@ namespace gnubase::ui
 			parameters["parent"] = below.parent;
 			parameters["index"] = before + 1;
 		}
-		m_binding.send("track.add", parameters);
+		if (!midiInputNone)
+		{
+			m_binding.send("track.add", parameters);
+			return;
+		}
+		// track.add doesn't take midiInput, so a channel.set for the new channel follows it (reference manual p. 198:
+		// the same input bus); the transaction's merge key joins it into the track.add's undo step. The key is one of
+		// its own per double click, so that two of them stay two steps.
+		const std::string merge = "tracklist.addTrack " + std::to_string(++m_addTrackMerges);
+		const Json add = {{"command", "track.add"}, {"parameters", std::move(parameters)}};
+		m_binding.send("history.transaction",
+			{{"description", "Add track"}, {"merge", merge}, {"commands", Json::array({add})}},
+			[this, merge, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (alive.expired() || !result.ok())
+					return;
+				const Json set = {{"command", "channel.set"},
+					{"parameters",
+						{{"channel", result.value.at("results").at(0).at("channel").at("id")}, {"midiInput", "none"}}}};
+				m_binding.send("history.transaction",
+					{{"description", "Add track"}, {"merge", merge}, {"commands", Json::array({set})}});
+			});
 	}
 
 	void TrackList::mouseDown(Rml::Event& event)
