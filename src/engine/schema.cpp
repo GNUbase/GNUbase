@@ -71,11 +71,13 @@ namespace gnubase::engine
 		if (const auto pattern = schema.find("pattern"); value.is_string() && pattern != schema.end() &&
 			!std::regex_search(value.get<std::string>(), std::regex(pattern->get<std::string>())))
 			return name + " must match " + pattern->get<std::string>();
+		// Written so that a NaN, which an in-process client such as Lua can send, is outside the range: every
+		// comparison with it is false (#1131).
 		if (const auto minimum = schema.find("minimum");
-			value.is_number() && minimum != schema.end() && value.get<double>() < minimum->get<double>())
+			value.is_number() && minimum != schema.end() && !(value.get<double>() >= minimum->get<double>()))
 			return name + " must be at least " + minimum->dump();
 		if (const auto maximum = schema.find("maximum");
-			value.is_number() && maximum != schema.end() && value.get<double>() > maximum->get<double>())
+			value.is_number() && maximum != schema.end() && !(value.get<double>() <= maximum->get<double>()))
 			return name + " must be at most " + maximum->dump();
 
 		if (value.is_object())

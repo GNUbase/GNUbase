@@ -22,6 +22,7 @@
 #include "engine/document/timewarp.h"
 #include "engine/document/trackpresets.h"
 #include "engine/document/trackversions.h"
+#include "engine/document/trackvisibility.h"
 #include "engine/document/volumecurves.h"
 #include "engine/document/workspaces.h"
 #include "engine/dsp/timestretch.h"
@@ -3529,6 +3530,8 @@ namespace gnubase::engine
 				try
 				{
 					result = handler(m_project, context);
+					if (context.unchanged())
+						return result;
 					syncSharedParts(before.midiParts, m_project, context);
 					midi::adoptPatterns(m_project, context);
 				}
@@ -3632,6 +3635,7 @@ namespace gnubase::engine
 		require(static_cast<size_t>(steps) <= available,
 			"only " + std::to_string(available) + (undo ? " steps can be undone" : " steps can be redone"));
 		const std::string timeFormat = m_project.setup.timeFormat;
+		const Json layout = trackLayoutJson(m_project);
 		for (int64_t i = 0; i < steps; ++i)
 		{
 			const HistoryStep& step = undo ? m_history.undo() : m_history.redo();
@@ -3639,6 +3643,10 @@ namespace gnubase::engine
 			announce(*this, m_project, step.change, direction, context);
 		}
 		followTimeFormat(m_project, timeFormat, context);
+		// The project keeps the heights and fold states of removed tracks for undo: a track that comes back or goes
+		// brings its own back or takes them away (#1131).
+		if (Json now = trackLayoutJson(m_project); now != layout)
+			context.emit("trackLayout.changed", std::move(now));
 		announceHistory(context);
 		publish();
 		return {{"position", m_history.position()}};
