@@ -798,6 +798,20 @@ namespace gnubase::engine
 			std::vector<Point> unmet;
 			const Playlist& playlist = *track.playlist;
 			const auto slack = static_cast<time::Samples>(m_sampleRate / 10.0);
+			// Keeps a free voice that waits at the point, unread since its cue, if there is one.
+			const auto keepWaiting = [&](const Point& point)
+			{
+				const auto waiting = std::find_if(mine.begin(), mine.end(),
+					[&](size_t i)
+					{
+						return !taken[i] && m_voices[i]->media == point.media && !states[i].started &&
+							states[i].cueFrame == point.frame;
+					});
+				if (waiting == mine.end())
+					return false;
+				taken[*waiting] = true;
+				return true;
+			};
 
 			// So do the voices waiting where that playback enters entries in the next half second, which the command
 			// thread waits for the exact cue's voices in, and those waiting at playsOn itself, which nothing may read
@@ -806,18 +820,8 @@ namespace gnubase::engine
 			{
 				for (const PlaylistLayer& layer : playlist.layers)
 				{
-					const PlaylistEntry* at = entryAt(layer, cue.playsOn);
-					if (at == nullptr)
-						continue;
-					const time::Samples frame = at->frame + (cue.playsOn - at->start);
-					const auto waiting = std::find_if(mine.begin(), mine.end(),
-						[&](size_t i)
-						{
-							return !taken[i] && m_voices[i]->media == at->media && !states[i].started &&
-								states[i].cueFrame == frame;
-						});
-					if (waiting != mine.end())
-						taken[*waiting] = true;
+					if (const PlaylistEntry* at = entryAt(layer, cue.playsOn))
+						keepWaiting({at->media, at->frame + (cue.playsOn - at->start)});
 				}
 				Cue onward = cue;
 				onward.position = cue.playsOn;
@@ -825,16 +829,7 @@ namespace gnubase::engine
 				onward.window = std::max(cue.window, 5 * slack);
 				onward.enter = -1;
 				for (const Point& point : points(playlist, onward))
-				{
-					const auto waiting = std::find_if(mine.begin(), mine.end(),
-						[&](size_t i)
-						{
-							return !taken[i] && m_voices[i]->media == point.media && !states[i].started &&
-								states[i].cueFrame == point.frame;
-						});
-					if (waiting != mine.end())
-						taken[*waiting] = true;
-				}
+					keepWaiting(point);
 			}
 
 			// The entries at the cursor, one per layer, each with a voice of its own: while playing, a voice reading
@@ -900,18 +895,8 @@ namespace gnubase::engine
 
 			// Points a voice already waits at keep it.
 			for (const Point& point : points(playlist, cue))
-			{
-				const auto waiting = std::find_if(mine.begin(), mine.end(),
-					[&](size_t i)
-					{
-						return !taken[i] && m_voices[i]->media == point.media && !states[i].started &&
-							states[i].cueFrame == point.frame;
-					});
-				if (waiting != mine.end())
-					taken[*waiting] = true;
-				else
+				if (!keepWaiting(point))
 					unmet.push_back(point);
-			}
 
 			// A free voice that the audio thread hasn't started reading since its state was read: claimed for the
 			// cue, or the end of mine.
