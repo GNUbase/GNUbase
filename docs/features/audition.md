@@ -30,11 +30,12 @@ in the project window ([tools.md](tools.md)), and the commands behind them, whic
   and frozen tracks play, which take those events' and channels' ids.
 - **A clip** (#860): `clip` instead of `track` or `media` plays the clip's media file the same way, with the clip's
   fades at its start and end, as the sample editor's play and scrub tools and its Play back Slice play it. The
-  result's `media` is the clip's media file.
+  result's `clip` is the clip and its `media` the clip's media file, so that a client tells a clip with its fades
+  from its media file without them.
 
-Each returns and announces `audition.changed`: the auditioned `track` or `media` (0 for none) and the `mode`, `off`,
-`play` or `scrub`. Starting one ends what ran before. They need an audio device, and an audio track, a media file
-or a clip of the project.
+Each returns and announces `audition.changed`: the auditioned `track`, `media` and `clip` (0 for none) and the
+`mode`, `off`, `play` or `scrub`. Starting one ends what ran before. They need an audio device, and an audio track,
+a media file or a clip of the project.
 
 ## How it plays
 

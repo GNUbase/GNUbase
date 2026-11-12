@@ -253,8 +253,8 @@ namespace gnubase::ui
 		return name != nullptr ? name : "";
 	}
 
-	int SdlWindowSystem::ask(
-		const std::string& title, const std::string& message, const std::vector<std::string>& buttons)
+	int SdlWindowSystem::ask(const std::string& title, const std::string& message,
+		const std::vector<std::string>& buttons, Severity severity)
 	{
 		std::vector<SDL_MessageBoxButtonData> data;
 		data.reserve(buttons.size());
@@ -262,8 +262,9 @@ namespace gnubase::ui
 			data.push_back(
 				{i == 0 ? SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT | SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT : 0U,
 					static_cast<int>(i), buttons[i].c_str()});
-		const SDL_MessageBoxData box{SDL_MESSAGEBOX_INFORMATION, nullptr, title.c_str(), message.c_str(),
-			static_cast<int>(data.size()), data.data(), nullptr};
+		const SDL_MessageBoxData box{
+			severity == Severity::Warning ? SDL_MESSAGEBOX_WARNING : SDL_MESSAGEBOX_INFORMATION, nullptr, title.c_str(),
+			message.c_str(), static_cast<int>(data.size()), data.data(), nullptr};
 		int chosen = -1;
 		return SDL_ShowMessageBox(&box, &chosen) ? chosen : -1;
 	}
