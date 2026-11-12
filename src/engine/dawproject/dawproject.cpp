@@ -24,6 +24,7 @@
 #include <iomanip>
 #include <limits>
 #include <map>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <string>
@@ -1665,17 +1666,29 @@ namespace gnubase::engine
 
 				MediaFile media;
 				media.id = m_project.newId();
-				media.path = resolvedPath(xmlPath, file.attribute("external").as_bool(false));
-				try
+				const bool external = file.attribute("external").as_bool(false);
+				media.path = resolvedPath(xmlPath, external);
+				// An embedded file that isn't extracted isn't read: its path is the entry's name in the file.
+				std::optional<AudioFileInfo> info;
+				if (external || !m_mediaFolder.empty())
 				{
-					const AudioFileInfo info = AudioFileReader::open(media.path)->info();
-					media.sampleRate = info.sampleRate;
-					media.channels = info.channels;
-					media.length = info.frames;
+					try
+					{
+						info = AudioFileReader::open(media.path)->info();
+					}
+					catch (const AudioFileError&)
+					{
+						info.reset(); // a missing or unreadable file
+					}
 				}
-				catch (const AudioFileError&)
+				if (info)
 				{
-					// A missing or unreadable file: keep what project.xml says about it.
+					media.sampleRate = info->sampleRate;
+					media.channels = info->channels;
+					media.length = info->frames;
+				}
+				else // what project.xml says about it
+				{
 					media.sampleRate = audio.attribute("sampleRate").as_double(48000.0);
 					media.channels = audio.attribute("channels").as_int(2);
 					media.length = std::llround(audio.attribute("duration").as_double() * media.sampleRate);

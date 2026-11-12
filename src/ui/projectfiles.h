@@ -58,6 +58,9 @@ namespace gnubase::ui
 		// Logs the error and shows it in a dialog in the window (project-error.rml): also for the File menu's other
 		// commands that read or write files, such as importing and exporting tracks.
 		void showError(WindowId window, const std::string& error);
+		// Shows a message in the same dialog under another title, for a command that worked but left something out,
+		// such as File > Export > Selected Tracks.
+		void showNotice(WindowId window, const std::string& title, const std::string& message);
 
 	private:
 		using Closed = std::function<void(Rml::ElementDocument& dialog, const std::string& result)>;

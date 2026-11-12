@@ -152,6 +152,9 @@ namespace gnubase::engine
 		// A slot of the project as the plugin.* commands and their plugin.changed events describe it, with its index
 		// and status; null for no such slot. Only on the command thread.
 		Json describeSlot(const Project& project, ObjectId slot) const;
+		// Announces what changed from before to after with the events that redoing it would send, for an edit that
+		// changes much at once, such as track.import.
+		void announceChange(const Project& before, const Project& after, CommandContext& context) const;
 
 	private:
 		// Registers a query, or a command that changes the project. Such a command runs on the project, and if it

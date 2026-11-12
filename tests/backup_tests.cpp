@@ -777,6 +777,26 @@ TEST_CASE("media can be copied into the project folder when they are added", "[i
 		Json{{"file", nullptr}, {"folder", nullptr}, {"mediaFolder", nullptr}, {"name", "Untitled"}});
 }
 
+TEST_CASE("media.prepareArchive copies only the media files given", "[integration]")
+{
+	const test::TempDir dir;
+	const fs::path elsewhere = dir.path() / "library";
+	writeNoise(elsewhere / "a.wav", 4800, 2, 1);
+	writeNoise(elsewhere / "b.wav", 4800, 2, 2);
+	const fs::path project = dir.path() / "project";
+	Song song;
+	const ObjectId a = song.addMedia(elsewhere / "a.wav");
+	song.addMedia(elsewhere / "b.wav");
+	fs::create_directories(project);
+	run(song.client, "project.save", {{"path", utf8(project / "Song.dawproject")}, {"embedMedia", false}});
+	CHECK_THAT(reject(song.client, "media.prepareArchive", {{"media", {123456}}}), ContainsSubstring("123456"));
+	const Json result = runJob(song.client, "media.prepareArchive", {{"media", {a}}});
+	REQUIRE(result.at("copied").size() == 1);
+	CHECK(result.at("copied")[0].at("media") == a);
+	CHECK(fs::exists(project / "Audio" / "a.wav"));
+	CHECK(!fs::exists(project / "Audio" / "b.wav"));
+}
+
 TEST_CASE("preparing an archive gathers the media in the project folder", "[integration]")
 {
 	const test::TempDir dir;

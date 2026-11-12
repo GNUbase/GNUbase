@@ -552,6 +552,28 @@ namespace gnubase::ui
 		openError(window, error, false);
 	}
 
+	void ProjectFiles::showNotice(WindowId window, const std::string& title, const std::string& message)
+	{
+		// The dialog that asked may still be closing.
+		m_shell.post(
+			// NOLINTNEXTLINE(bugprone-exception-escape): only MSVC's std::string; out of memory only
+			[this, window, title, message]
+			{
+				openDialog(
+					window, "project-error.rml",
+					[title, message](Rml::ElementDocument* dialog)
+					{
+						if (dialog == nullptr)
+							return;
+						if (Rml::Element* heading = dialog->GetElementById("project-error-title"))
+							heading->SetInnerRML(Rml::StringUtilities::EncodeRml(title));
+						if (Rml::Element* text = dialog->GetElementById("project-error-message"))
+							text->SetInnerRML(Rml::StringUtilities::EncodeRml(message));
+					},
+					[](Rml::ElementDocument&, const std::string&) {});
+			});
+	}
+
 	void ProjectFiles::openError(WindowId window, const std::string& error, bool autoSave)
 	{
 		// The dialog that asked may still be closing.

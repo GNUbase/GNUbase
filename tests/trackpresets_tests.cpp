@@ -2,6 +2,7 @@
 // Track presets and track import and export (#164, docs/features/track-presets.md): saving the sound of one or more
 // tracks as a preset and applying it to tracks or adding tracks from it, and exporting tracks as a track archive and
 // importing tracks from archives and projects, round trip.
+#include "engine/dawproject/dawproject.h"
 #include "engine/document/document.h"
 #include "engine/engine.h"
 #include "testutils/testutils.h"
@@ -12,7 +13,9 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -405,13 +408,30 @@ TEST_CASE("folders go along without the tracks inside them that can't be importe
 	CHECK(exported.at("skipped")[0].at("type") == "vca");
 	CHECK_THAT(reject(client, "track.export", {{"tracks", {vca.track}}, {"path", archive.u8string()}}),
 		ContainsSubstring("vca"));
+	// Listed, also inside a listed folder, they are refused.
+	CHECK_THAT(reject(client, "track.export", {{"tracks", {folder.track, vca.track}}, {"path", archive.u8string()}}),
+		ContainsSubstring("vca"));
+	add(client, {{"type", "vca"}, {"name", "Outer"}});
 	run(client, "project.save", {{"path", song.u8string()}});
 
 	run(client, "project.new");
+	const Json sources = run(client, "track.importSources", {{"path", song.u8string()}});
+	REQUIRE(sources.at("tracks").size() == 4);
+	CHECK(sources.at("tracks")[1].at("importable") == true);
+	CHECK(sources.at("tracks")[2].at("name") == "Faders");
+	CHECK(sources.at("tracks")[2].at("importable") == false);
+	CHECK(sources.at("project") ==
+		Json{{"name", "Untitled"}, {"sampleRate", 48000.0}, {"frameRate", "25"}, {"startTime", 0.0}});
+	CHECK_THAT(reject(client, "track.import",
+				   {{"path", song.u8string()},
+					   {"tracks", {sources.at("tracks")[0].at("id"), sources.at("tracks")[2].at("id")}}}),
+		ContainsSubstring("vca"));
 	const Json imported = run(client, "track.import", {{"path", song.u8string()}});
 	CHECK(outline(run(client, "project.get")) == std::vector<std::string>{"Band:folder", "Band/Vocals:audio"});
-	REQUIRE(imported.at("skipped").size() == 1);
+	// From top to bottom: the one inside the folder first.
+	REQUIRE(imported.at("skipped").size() == 2);
 	CHECK(imported.at("skipped")[0].at("name") == "Faders");
+	CHECK(imported.at("skipped")[1].at("name") == "Outer");
 	CHECK(run(client, "track.import", {{"path", archive.u8string()}}).at("skipped").empty());
 }
 
@@ -472,6 +492,165 @@ TEST_CASE("track.import keeps the time of linear positions from a file at anothe
 	CHECK(project.at("automation")[0].at("points")[0].at("position") == 96000);
 	REQUIRE(project.at("markers").size() == 1);
 	CHECK(project.at("markers")[0].at("position") == 24000);
+}
+
+TEST_CASE("track.import imports tracks onto the project's tracks of their type", "[integration]")
+{
+	const test::TempDir dir;
+	const fs::path song = dir.path() / "Song.dawproject";
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	const Added reverb = add(client, {{"type", "effect"}, {"name", "Reverb"}});
+	run(client, "channel.set", {{"channel", reverb.channel}, {"volume", -3.0}});
+	const Added keys = add(client, {{"type", "instrument"}, {"name", "Keys"}});
+	run(client, "channel.set",
+		{{"channel", keys.channel}, {"volume", -5.0},
+			{"sends", {{{"send", 1}, {"destination", reverb.channel}, {"on", true}}}}});
+	run(client, "midiPart.add", {{"track", keys.track}, {"position", 1920}, {"length", 960}});
+	const Added band = add(client, {{"type", "folder"}, {"name", "Band"}});
+	add(client, {{"type", "audio"}, {"name", "Guitar"}, {"parent", band.track}});
+	run(client, "project.save", {{"path", song.u8string()}});
+	const Json sources = run(client, "track.importSources", {{"path", song.u8string()}}).at("tracks");
+	const auto source = [&sources](const std::string& name)
+	{ return trackNamed({{"tracks", sources}}, name).at("id"); };
+
+	run(client, "project.new");
+	const Added mine = add(client, {{"type", "effect"}, {"name", "Reverb"}});
+	const Added dry = add(client, {{"type", "audio"}, {"name", "Dry"}});
+	run(client, "channel.set",
+		{{"channel", dry.channel}, {"sends", {{{"send", 1}, {"destination", mine.channel}, {"on", true}}}}});
+	const Added piano = add(client, {{"type", "instrument"}, {"name", "Piano"}});
+	run(client, "channel.set", {{"channel", piano.channel}, {"mute", true}});
+	run(client, "midiPart.add", {{"track", piano.track}, {"position", 0}, {"length", 960}});
+	const Added folder = add(client, {{"type", "folder"}, {"name", "Band"}});
+	add(client, {{"type", "audio"}, {"name", "Old"}, {"parent", folder.track}});
+	const std::vector<std::string> before = outline(run(client, "project.get"));
+	const auto import = [&](const std::string& existing)
+	{
+		return run(client, "track.import",
+			{{"path", song.u8string()}, {"tracks", {source("Reverb"), source("Keys"), source("Band")}},
+				{"existing", existing},
+				{"destinations",
+					{{{"source", source("Reverb")}, {"track", mine.track}},
+						{{"source", source("Keys")}, {"track", piano.track}},
+						{{"source", source("Band")}, {"track", folder.track}}}}});
+	};
+	const size_t steps = run(client, "history.get").at("steps").size();
+	CHECK(import("version").at("tracks").empty()); // no new tracks
+	CHECK(run(client, "history.get").at("steps").size() == steps + 1);
+	Json project = run(client, "project.get");
+	// The effect track and the folder were replaced, in their places; the dry track sends to the effect track
+	// imported.
+	CHECK(outline(project) ==
+		std::vector<std::string>{"Reverb:effect", "Dry:audio", "Piano:instrument", "Band:folder", "Band/Guitar:audio"});
+	CHECK(trackNamed(project, "Reverb").at("id") != mine.track);
+	const ObjectId imported = channelOf(project, "Reverb").at("id").get<ObjectId>();
+	CHECK(channelOf(project, "Reverb").at("volume") == -3.0);
+	CHECK(channelOf(project, "Dry").at("sends")[0].at("destination") == imported);
+	// The instrument track keeps its name and buttons and gets the settings, with the send to the imported effect
+	// track, and a new version with the part.
+	CHECK(trackNamed(project, "Piano").at("id") == piano.track);
+	CHECK(channelOf(project, "Piano").at("id") == piano.channel);
+	CHECK(channelOf(project, "Piano").at("volume") == -5.0);
+	CHECK(channelOf(project, "Piano").at("mute") == true);
+	CHECK(channelOf(project, "Piano").at("sends")[0].at("destination") == imported);
+	CHECK(trackNamed(project, "Piano").at("versions").size() == 2);
+	REQUIRE(count(project, "midiParts", piano.track) == 1);
+	CHECK(project.at("midiParts")[0].at("position") == 1920);
+	run(client, "history.undo");
+	CHECK(outline(run(client, "project.get")) == before);
+
+	// Replacing the track's parts, or adding to them.
+	import("replace");
+	project = run(client, "project.get");
+	CHECK(count(project, "midiParts", piano.track) == 1);
+	CHECK(trackNamed(project, "Piano").at("versions").size() == 1);
+	run(client, "history.undo");
+	import("add");
+	CHECK(count(run(client, "project.get"), "midiParts", piano.track) == 2);
+	run(client, "history.undo");
+
+	CHECK_THAT(reject(client, "track.import",
+				   {{"path", song.u8string()}, {"tracks", {source("Keys")}},
+					   {"destinations", {{{"source", source("Keys")}, {"track", dry.track}}}}}),
+		ContainsSubstring("instrument"));
+	CHECK_THAT(reject(client, "track.import",
+				   {{"path", song.u8string()}, {"tracks", {source("Reverb")}},
+					   {"destinations", {{{"source", source("Keys")}, {"track", piano.track}}}}}),
+		ContainsSubstring("among the tracks imported"));
+	CHECK(outline(run(client, "project.get")) == before);
+}
+
+TEST_CASE("track.import places events at their absolute or relative position or at the cursor, within a range",
+	"[integration]")
+{
+	const test::TempDir dir;
+	const fs::path song = dir.path() / "Song.dawproject";
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	run(client, "project.set", {{"startTime", 10.0}});
+	const Added keys = add(client, {{"type", "midi"}, {"name", "Keys"}, {"timeBase", "linear"}});
+	for (const int position : {48000, 480000})
+		run(client, "midiPart.add", {{"track", keys.track}, {"position", position}, {"length", 4800}});
+	run(client, "project.save", {{"path", song.u8string()}});
+
+	run(client, "project.new");
+	run(client, "project.set", {{"startTime", 5.0}});
+	const auto import = [&client, &song](Json parameters)
+	{
+		parameters["path"] = song.u8string();
+		run(client, "track.import", parameters);
+		std::vector<int64_t> positions;
+		const Json project = run(client, "project.get");
+		for (const Json& part : project.at("midiParts"))
+			positions.push_back(part.at("position").get<int64_t>());
+		std::sort(positions.begin(), positions.end());
+		run(client, "history.undo");
+		return positions;
+	};
+	// At the timecode they had: 5 seconds later here.
+	CHECK(import(Json::object()) == std::vector<int64_t>{288000, 720000});
+	CHECK(import({{"position", "relative"}}) == std::vector<int64_t>{48000, 480000});
+	run(client, "transport.locate", {{"position", 96000}});
+	CHECK(import({{"position", "cursor"}}) == std::vector<int64_t>{144000, 576000});
+	CHECK(import({{"position", "relative"}, {"range", {{"start", 0}, {"end", 96000}}}}) == std::vector<int64_t>{48000});
+	CHECK_THAT(reject(client, "track.import", {{"path", song.u8string()}, {"range", {{"start", 10}, {"end", 10}}}}),
+		ContainsSubstring("range"));
+	run(client, "project.set", {{"startTime", 20.0}});
+	CHECK_THAT(reject(client, "track.import", {{"path", song.u8string()}}), ContainsSubstring("project start"));
+}
+
+TEST_CASE("listing the tracks of a file reads no media file in its place", "[integration]")
+{
+	const test::TempDir dir;
+	const fs::path wav = dir.path() / "take.wav";
+	test::writeWav(wav, {std::vector<float>(4800, 0.25f), 1, 48000});
+	const fs::path archive = dir.path() / "Take.dawproject";
+	{
+		Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+		Client client(engine);
+		const Added take = add(client, {{"type", "audio"}, {"name", "Take"}});
+		const ObjectId media =
+			run(client, "media.add", {{"path", wav.u8string()}}).at("media").at("id").get<ObjectId>();
+		const ObjectId clip = run(client, "clip.add", {{"media", media}}).at("clip").at("id").get<ObjectId>();
+		run(client, "audioEvent.add",
+			{{"track", take.track}, {"clip", clip}, {"position", 0}, {"offset", 0}, {"length", 4800}});
+		run(client, "track.export", {{"tracks", {take.track}}, {"path", archive.u8string()}});
+	}
+	const Project listed = loadDawProject(archive.u8string(), (dir.path() / "media").u8string(), false);
+	REQUIRE(listed.media.size() == 1);
+	const fs::path entry = fs::u8path(listed.media.begin()->second.path); // its name in the file
+	REQUIRE(entry.is_relative());
+	// A file of that name in the working folder isn't read instead.
+	const test::TempDir work;
+	fs::create_directories(work.path() / entry.parent_path());
+	test::writeWav(work.path() / entry, {std::vector<float>(100, 0.25f), 1, 22050});
+	const fs::path previous = fs::current_path();
+	fs::current_path(work.path());
+	const Project again = loadDawProject(archive.u8string(), (dir.path() / "media").u8string(), false);
+	fs::current_path(previous);
+	CHECK(again.media.begin()->second.sampleRate == 48000.0);
+	CHECK(again.media.begin()->second.length == 4800);
 }
 
 TEST_CASE("track archives and presets keep the fader top, and volumes come down to a lower one", "[integration]")
@@ -544,36 +723,57 @@ TEST_CASE("File > Export > Selected Tracks and File > Import > Tracks go through
 		app.call("track.add", {{"type", "audio"}, {"name", "Top"}}).at("track").at("id").get<ObjectId>();
 	app.call("track.add", {{"type", "audio"}, {"name", "Bottom"}});
 	select(app, {top});
-	app.keys().run("file.importTracks", Json::object(), app.main(), nullptr);
-	answer(app, dir.path() / "stems.dawproject");
+	// The file chosen opens in the Import Options dialog, which imports below the selected track.
+	const auto importTracks = [&app](const fs::path& file)
+	{
+		app.keys().run("file.importTracks", Json::object(), app.main(), nullptr);
+		answer(app, file);
+		REQUIRE(app.waitUntil([&app] { return shown(app, "#track-import-dialog"); }));
+	};
+	const auto text = [&app](const std::string& selector)
+	{ return app.ui().dom(std::nullopt, selector, 0).at("elements")[0].at("text").get<std::string>(); };
+	importTracks(dir.path() / "stems.dawproject");
+	click(app, "#import-confirm");
 	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("tracks").size() == 3; }));
 	CHECK(outline(app.call("project.get")) == std::vector<std::string>{"Top:audio", "Vocals:audio", "Bottom:audio"});
+	// Select Matching imports onto the track of the same name, into a new version of it.
+	importTracks(dir.path() / "stems.dawproject");
+	click(app, "#import-select-matching");
+	click(app, "#import-confirm");
+	REQUIRE(app.waitUntil([&app] { return trackNamed(app.call("project.get"), "Vocals").at("versions").size() == 2; }));
+	CHECK(app.call("project.get").at("tracks").size() == 3);
 
-	// The engine's refusals show, and the tracks an import leaves out.
-	const auto error = [&app]
+	// The engine's refusals show, in the dialog or the project error dialog, and the tracks left out.
+	const auto error = [&app, &text](const std::string& title)
 	{
 		REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
-		const auto text =
-			app.ui().dom(std::nullopt, "#project-error-message", 0).at("elements")[0].at("text").get<std::string>();
+		CHECK(text("#project-error-title") == title);
+		const std::string message = text("#project-error-message");
 		click(app, "#project-error-dialog button[result=ok]");
 		REQUIRE(app.waitUntil([&app] { return !shown(app, "#project-error-dialog"); }));
-		return text;
+		return message;
 	};
-	app.keys().run("file.importTracks", Json::object(), app.main(), nullptr);
-	answer(app, dir.path() / "none.dawproject");
-	CHECK_THAT(error(), ContainsSubstring("none.dawproject"));
+	importTracks(dir.path() / "none.dawproject");
+	CHECK_THAT(text("#import-message"), ContainsSubstring("none.dawproject"));
+	click(app, "#track-import-dialog button[result=cancel]");
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#track-import-dialog"); }));
 	test::writeWav(dir.path() / "take.wav", {std::vector<float>(10, 0.0f), 1, 48000});
 	select(app, {top});
 	app.keys().run("file.exportTracks", Json::object(), app.main(), nullptr);
 	answer(app, dir.path() / "take.wav" / "stems.dawproject"); // not a folder
-	CHECK_THAT(error(), ContainsSubstring("take.wav"));
+	CHECK_THAT(error("Project Error"), ContainsSubstring("take.wav"));
 	const ObjectId folder =
 		app.call("track.add", {{"type", "folder"}, {"name", "Band"}}).at("track").at("id").get<ObjectId>();
 	app.call("track.add", {{"type", "vca"}, {"name", "Faders"}, {"parent", folder}});
 	app.call("project.save", {{"path", (dir.path() / "song.dawproject").u8string()}});
-	app.keys().run("file.importTracks", Json::object(), app.main(), nullptr);
-	answer(app, dir.path() / "song.dawproject");
-	CHECK_THAT(error(), ContainsSubstring("Faders"));
+	select(app, {folder});
+	app.keys().run("file.exportTracks", Json::object(), app.main(), nullptr);
+	answer(app, dir.path() / "band.dawproject");
+	CHECK_THAT(error("Export Selected Tracks"), ContainsSubstring("Faders"));
+	// The dialog shows the tracks that can't be imported.
+	importTracks(dir.path() / "song.dawproject");
+	CHECK_THAT(text("#import-tracks"), ContainsSubstring("Faders (can't be imported yet)"));
+	click(app, "#track-import-dialog button[result=cancel]");
 }
 
 TEST_CASE("the track preset dialog saves, loads and adds track presets", "[ui]")

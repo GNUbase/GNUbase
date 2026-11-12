@@ -3504,6 +3504,11 @@ namespace gnubase::engine
 	{
 	}
 
+	void ProjectModel::announceChange(const Project& before, const Project& after, CommandContext& context) const
+	{
+		announce(*this, after, difference(before, after), Direction::Redo, context);
+	}
+
 	void ProjectModel::add(Engine& engine, CommandInfo info, Handler handler)
 	{
 		std::string action = actionName(info.name);
@@ -3958,9 +3963,8 @@ namespace gnubase::engine
 				"each side: 0dB, -3dB (the default), -4.5dB, -6dB or equalPower (-3.01 dB, the power stays the same "
 				"wherever it is panned); the side panned toward is always at 0 dB. maxVolume is the top of the "
 				"faders, 6 (the default) or 12 dB; faders, send levels and volume automation above a lower maximum "
-				"come "
-				"down to it. tempo (1 to 999 BPM) "
-				"and signature {numerator 1 to 99, denominator 1, 2, 4, 8 or 16} are the project's first tempo and "
+				"come down to it. tempo (1 to 999 BPM) and signature {numerator 1 to 99, denominator 1, 2, 4, 8 or 16} "
+				"are the project's first tempo and "
 				"time signature, as the transport bar sets them: the fixed tempo, or in tempo track mode the tempo "
 				"track's first event; later changes stay, and musical positions keep their ticks. tempoTrackActive "
 				"switches between fixed tempo mode (false, a new project's) and tempo track mode, in which the "
@@ -4816,16 +4820,28 @@ namespace gnubase::engine
 				"undo step. The job's result lists the copies as copied, media files that couldn't be read as "
 				"missing (they keep their paths), and media whose path changed while the job ran as changed (they "
 				"keep the new path). The project must have been saved; save it again without embedding media to keep "
-				"the new paths.",
-				objectSchema({}), objectSchema({{"job", Jobs::schema()}}, {"job"}), false},
-			[this, &jobs](CommandContext&)
+				"the new paths. media limits it to those media files, such as the ones track.import added (Copy to "
+				"Active Project Folder, reference manual p. 205).",
+				objectSchema({{"media", {{"type", "array"}, {"items", integerSchema}}}}),
+				objectSchema({{"job", Jobs::schema()}}, {"job"}), false},
+			[this, &jobs](CommandContext& context)
 			{
 				require(
 					!m_file.empty(), "save the project first: media are copied into the folder of its project file");
 				const std::filesystem::path file = std::filesystem::u8path(m_file);
+				const Json& parameters = context.parameters();
+				for (const Json& id : parameters.value("media", Json::array()))
+					require(m_project.media.count(id.get<ObjectId>()) != 0, "no media file " + id.dump());
+				const auto chosen = [&parameters](ObjectId id)
+				{
+					if (!parameters.contains("media"))
+						return true;
+					const Json& media = parameters.at("media");
+					return std::find(media.begin(), media.end(), Json(id)) != media.end();
+				};
 				std::vector<MediaCopy> files;
 				for (const auto& [id, media] : m_project.media)
-					if (!isInside(media.path, file.parent_path()))
+					if (chosen(id) && !isInside(media.path, file.parent_path()))
 						files.push_back({id, media.path, {}});
 				return Json{{"job",
 					startMediaCopy(jobs, "media.prepareArchive", std::move(files), mediaFolderFor(file),
