@@ -454,7 +454,7 @@ namespace gnubase::engine
 						continue;
 					}
 					note(a.id);
-					note(b.id); // it crossfades from a now, which resetting removes
+					note(b.id); // it crossfades from a now, which resetting puts back to what it was
 					model.runEdit("crossfade.set", project, {{"from", a.id}, {"to", b.id}}, context);
 				}
 			}
