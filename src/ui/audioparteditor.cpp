@@ -308,16 +308,16 @@ namespace gnubase::ui
 		if (!m_pressed)
 			return;
 		const auto [seconds, lane] = at(m_draggedTo);
-		m_moved = {m_gesture == Gesture::Move ? movedBy(seconds) : 0.0, lane - m_pressedAt.second};
+		m_moved = {m_gesture == Gesture::Move ? movedBy(m_pressed->start, seconds) : 0.0, lane - m_pressedAt.second};
 	}
 
-	// Where the pressed event's start goes for the mouse over seconds, from where it is now: the start that puts the
-	// point pressed, kept as an offset into the event, under the mouse, on the grid. So a command that moves the
-	// pressed event or the display's range during the drag, or both together as a move of the part does, doesn't take
-	// the event away from the mouse.
-	double AudioPartEditor::movedBy(double seconds) const
+	// Where the pressed event's start goes for the mouse over seconds, from where it is (start) now: the start that
+	// puts the point pressed, kept as an offset into the event, under the mouse, on the grid. So a command that moves
+	// the pressed event or the display's range during the drag, or both together as a move of the part does, doesn't
+	// take the event away from the mouse.
+	double AudioPartEditor::movedBy(double start, double seconds) const
 	{
-		return snap(seconds - m_pressedOffset) - m_pressed->start;
+		return snap(seconds - m_pressedOffset) - start;
 	}
 
 	// Works a dragged move out again once the display is laid out as it is now, which a scroll, a window that changes
@@ -941,7 +941,7 @@ namespace gnubase::ui
 		if (!m_pressed)
 			return;
 		const auto [seconds, lane] = at(event);
-		const double dt = gesture == Gesture::Move && isDrag ? movedBy(seconds) : 0.0;
+		const double dt = gesture == Gesture::Move && isDrag ? movedBy(m_pressed->start, seconds) : 0.0;
 		const int dl = isDrag ? lane - m_pressedAt.second : 0;
 		if (gesture == Gesture::MoveVertical && dl == 0)
 		{

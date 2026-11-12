@@ -110,8 +110,8 @@ namespace gnubase::ui
 		// The project or view shown changed: a move follows its event, or ends if that went.
 		void updateMove();
 		void updateMoved();
-		// The pressed event's move for the mouse over seconds.
-		double movedBy(double seconds) const;
+		// The pressed event's move, from its start, for the mouse over seconds.
+		double movedBy(double start, double seconds) const;
 		// Works a dragged move out again on the layout as it is now.
 		void moveAgain();
 		void release(Rml::Event& event);
