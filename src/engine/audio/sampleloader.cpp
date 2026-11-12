@@ -62,6 +62,18 @@ namespace gnubase::engine
 		return m_done.wait_for(lock, timeout, [this] { return m_queue.empty() && !m_announcing; });
 	}
 
+	bool SampleLoader::waitUntilRead(std::chrono::milliseconds timeout, const std::set<std::string>& paths)
+	{
+		std::unique_lock lock(m_mutex);
+		return m_done.wait_for(lock, timeout,
+			[this, &paths]
+			{
+				return !m_announcing &&
+					std::none_of(m_queue.begin(), m_queue.end(),
+						[&paths](const std::string& path) { return paths.count(path) != 0; });
+			});
+	}
+
 	void SampleLoader::setRead(Read read)
 	{
 		const std::scoped_lock lock(m_mutex);

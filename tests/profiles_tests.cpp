@@ -10,7 +10,10 @@
 
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <iterator>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -71,7 +74,8 @@ TEST_CASE("profiles keep sets of the user settings and become active when GNUbas
 {
 	Fixture f;
 	CHECK(f.call("profile.list") ==
-		Json{{"profiles", {{{"name", "Default"}, {"active", true}}}}, {"active", "Default"}, {"next", ""}});
+		Json{{"profiles", {{{"name", "Default"}, {"active", true}}}}, {"active", "Default"}, {"next", ""},
+			{"unfinished", false}});
 	f.setScale(1.5);
 
 	// New has the factory settings, Duplicate the settings of the profile it copies.
@@ -245,7 +249,7 @@ TEST_CASE("a profile switch to a folder that is the active profile's on this fil
 	CHECK(std::filesystem::exists(other / "settings.json"));
 }
 
-TEST_CASE("a profile switch that fails after the active profile's files were saved puts them back", "[unit]")
+TEST_CASE("a profile switch that can't save the active profile's files leaves them as they were", "[unit]")
 {
 	Fixture f;
 	f.setScale(1.5);
@@ -258,6 +262,84 @@ TEST_CASE("a profile switch that fails after the active profile's files were sav
 	CHECK(f.scale() == 1.5);
 	CHECK(!std::filesystem::exists(f.dir.path() / "profile-switch"));
 	CHECK(std::filesystem::is_directory(f.dir.path() / "profiles" / "Studio"));
+}
+
+namespace
+{
+	// Stops the engine with the profile next chosen, then switches with replacing, which may make a step fail.
+	void switchWith(
+		Fixture& f, const std::string& next, const std::function<void(const std::filesystem::path& file)>& replacing)
+	{
+		f.call("profile.activate", {{"name", next}});
+		f.client.reset();
+		f.engine.reset();
+		engine::settings::switchProfile(f.dir.path(), replacing);
+	}
+
+	std::string contents(const std::filesystem::path& file)
+	{
+		std::ifstream stream(file, std::ios::binary);
+		return {std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
+	}
+}
+
+TEST_CASE("a profile switch that fails after it replaced files in the settings folder puts them back", "[unit]")
+{
+	Fixture f;
+	f.setScale(2.0);
+	f.call("profile.duplicate", {{"name", "Default"}, {"newName", "Studio"}});
+	f.setScale(1.5);
+	const std::filesystem::path dir = f.dir.path();
+	std::string before;
+	bool failed = false;
+	// The second file can't be replaced once Studio's settings.json is in the settings folder.
+	switchWith(f, "Studio",
+		[&](const std::filesystem::path& file)
+		{
+			if (file == dir / "settings.json" && before.empty())
+			{
+				before = contents(file);
+			}
+			else if (file == dir / "quantize-presets.json" && !failed)
+			{
+				failed = true;
+				CHECK(contents(dir / "settings.json") == contents(dir / "profiles" / "Studio" / "settings.json"));
+				throw std::runtime_error("can't be replaced");
+			}
+		});
+	CHECK(failed);
+	CHECK(contents(dir / "settings.json") == before);
+	CHECK(!std::filesystem::exists(dir / "profile-switch"));
+	CHECK(!std::filesystem::exists(dir / "profiles" / "Default"));
+	CHECK(std::filesystem::exists(dir / "profiles" / "Studio" / "settings.json"));
+	// The switch waits for the next start.
+	f.start();
+	CHECK(f.call("profile.list").at("active") == "Studio");
+	CHECK(f.scale() == 2.0);
+}
+
+TEST_CASE("a profile switch that fails and can't put the active profile's files back keeps its copies", "[unit]")
+{
+	Fixture f;
+	f.setScale(2.0);
+	f.call("profile.duplicate", {{"name", "Default"}, {"newName", "Studio"}});
+	f.setScale(1.5);
+	const std::filesystem::path dir = f.dir.path();
+	switchWith(f, "Studio",
+		[&dir](const std::filesystem::path& file)
+		{
+			if (file == dir / "quantize-presets.json")
+				throw std::runtime_error("can't be replaced");
+		});
+	CHECK(std::filesystem::exists(dir / "profile-switch" / "active" / "settings.json"));
+	// The next start puts them back from there, then switches.
+	f.start();
+	CHECK(f.call("profile.list").at("active") == "Studio");
+	CHECK(f.scale() == 2.0);
+	CHECK(!std::filesystem::exists(dir / "profile-switch"));
+	f.call("profile.activate", {{"name", "Default"}});
+	f.start();
+	CHECK(f.scale() == 1.5);
 }
 
 namespace
@@ -316,8 +398,17 @@ TEST_CASE("an unfinished profile switch whose files can't be put back keeps its 
 	std::filesystem::remove(f.dir.path() / "quantize-presets.json");
 	std::filesystem::create_directories(f.dir.path() / "quantize-presets.json" / "folder");
 	f.start();
-	CHECK(f.call("profile.list").at("active") == "Default");
+	// The switch waits, and the profiles say so.
+	const Json list = f.call("profile.list");
+	CHECK(list.at("active") == "Default");
+	CHECK(list.at("next") == "Studio");
+	CHECK(list.at("unfinished") == true);
 	CHECK(std::filesystem::exists(f.dir.path() / "profile-switch" / "active" / "settings.json"));
+	// Renaming the active profile would make the next start take its files for another profile's.
+	CHECK_THAT(
+		f.fails("profile.rename", {{"name", "Default"}, {"newName", "Home"}}), ContainsSubstring("didn't finish"));
+	f.call("profile.rename", {{"name", "Studio"}, {"newName", "Laptop"}});
+	CHECK(f.call("profile.list").at("next") == "Laptop");
 }
 
 TEST_CASE("the safe start mode's Delete program preferences drops an unfinished profile switch", "[unit]")

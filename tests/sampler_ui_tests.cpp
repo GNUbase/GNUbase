@@ -11,6 +11,8 @@
 #include "ui/shell.h"
 #include "ui/tracklist.h"
 
+#include <SDL3/SDL.h>
+
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
@@ -265,7 +267,19 @@ TEST_CASE("the sampler panel shows why a sample didn't load or normalize", "[ui]
 	std::ofstream(text) << "not audio";
 	f.app.ui().drop(std::nullopt, of(".sampler-display"), {text});
 	REQUIRE(f.app.waitUntil([&] { return f.has("#sampler-message", "error"); }));
-	CHECK(!f.elements("#sampler-message").at(0).value("text", "").empty());
+	const Json message = f.elements("#sampler-message").at(0);
+	CHECK(!message.value("text", "").empty());
+	CHECK(message.at("attributes").value("title", "") == message.value("text", "")); // the whole text
+
+	// Another track shown takes the message away, as it concerned the track before.
+	f.select(f.audio);
+	REQUIRE(f.app.waitUntil([&] { return f.has("#sampler-panel", "empty"); }));
+	CHECK(!f.has("#sampler-message", "error"));
+	f.select(f.track);
+	REQUIRE(f.app.waitUntil([&] { return !f.has("#sampler-panel", "empty"); }));
+	CHECK(f.elements("#sampler-message").at(0).value("text", "").empty());
+	f.app.ui().drop(std::nullopt, of(".sampler-display"), {text});
+	REQUIRE(f.app.waitUntil([&] { return f.has("#sampler-message", "error"); }));
 
 	// A file that loads clears the message.
 	f.app.ui().drop(std::nullopt, of(".sampler-display"), {f.other});
@@ -297,6 +311,15 @@ TEST_CASE("Lock Parameter Settings and the normalization level last when the pan
 	CHECK(setting().value("later", 0) == 1);
 	f.app.ui().wheel(std::nullopt, of("#sampler-level"), 0.0F, 1.0F);
 	REQUIRE(f.app.waitUntil([&] { return setting().value("normalizeLevel", 0.0) < 0.0; }));
+	const double step = setting().at("normalizeLevel").get<double>();
+	// Changes in quick succession, as a drag of the field makes them: the older ones that settings.changed brings back
+	// don't set the field back meanwhile (#1180).
+	for (int i = 0; i < 20; ++i)
+	{
+		f.app.ui().wheel(std::nullopt, of("#sampler-level"), 0.0F, 1.0F);
+		f.app.shell().step(std::chrono::milliseconds(0));
+	}
+	REQUIRE(f.app.waitUntil([&] { return std::abs(setting().value("normalizeLevel", 0.0) - (21 * step)) < 1e-6; }));
 	const double level = setting().at("normalizeLevel").get<double>();
 
 	// In a window of its own the panel is a new one, with the lock and the level as they were.
@@ -354,6 +377,33 @@ TEST_CASE("the keyboard's handles drag the root key and the key range", "[ui]")
 	drag("high", 30);
 	REQUIRE(f.app.waitUntil([&] { return f.parameter("Key high") == 40.0; }));
 	REQUIRE(f.app.waitUntil([&] { return f.has(".sampler-key[key=\"41\"]", "outside"); }));
+	// Nor the low one above the high one.
+	f.set("Key high", 50.0);
+	REQUIRE(f.app.waitUntil([&] { return !f.has(".sampler-key[key=\"50\"]", "outside"); }));
+	drag("low", 70);
+	REQUIRE(f.app.waitUntil([&] { return f.parameter("Key low") == 50.0; }));
+
+	// On the same key the three handles lie side by side, so each can be grabbed (#1180).
+	f.set("Root key", 50.0);
+	REQUIRE(f.app.waitUntil([&] { return std::abs(centre(".sampler-handle[handle=root]") - at(50)) < 2.0; }));
+	const std::vector<std::string> handles = {"root", "low", "high"};
+	for (size_t i = 0; i < handles.size(); ++i)
+		for (size_t j = i + 1; j < handles.size(); ++j)
+		{
+			const Json a = f.box(".sampler-handle[handle=" + handles[i] + "]");
+			const Json b = f.box(".sampler-handle[handle=" + handles[j] + "]");
+			const auto apart = [](const Json& first, const Json& second, const char* position, const char* size)
+			{
+				return first.at(position).get<double>() + first.at(size).get<double>() <=
+					second.at(position).get<double>() + 1.0; // rounded to whole pixels
+			};
+			INFO(handles[i] << " and " << handles[j]);
+			CHECK((apart(a, b, "x", "width") || apart(b, a, "x", "width") || apart(a, b, "y", "height") ||
+				apart(b, a, "y", "height")));
+		}
+	drag("high", 60);
+	REQUIRE(f.app.waitUntil([&] { return f.parameter("Key high") == 60.0; }));
+	CHECK(f.parameter("Key low") == 50.0);
 }
 
 TEST_CASE("a drag of a handle or a marker ends when the button goes up outside the window", "[ui]")
@@ -398,6 +448,60 @@ TEST_CASE("a drag of a handle or a marker ends when the button goes up outside t
 	CHECK(!f.has(".sampler-marker[marker=\"Start\"]", "dragged"));
 }
 
+TEST_CASE("a drag of a handle ends when its window loses the focus", "[ui]")
+{
+	Fixture f;
+	f.open();
+	const Json keyboard = f.box("#sampler-keyboard");
+	const double x = keyboard.at("x").get<double>();
+	const double key = keyboard.at("width").get<double>() / 128.0;
+	const auto at = [&](int pitch) { return static_cast<float>(x + ((pitch + 0.5) * key)); };
+	const Json box = f.box(".sampler-handle[handle=low]");
+	const auto y = static_cast<float>(box.at("y").get<double>() + (box.at("height").get<double>() / 2));
+	// Through SDL's own events, as the OS sends them: the button down on the low key's handle, a drag to key 40.
+	const auto push = [&](SDL_EventType type, float to)
+	{
+		SDL_Event event{};
+		event.type = type;
+		if (type == SDL_EVENT_MOUSE_MOTION)
+		{
+			event.motion.windowID = f.app.main().id();
+			event.motion.x = to;
+			event.motion.y = y;
+			event.motion.state = SDL_BUTTON_LMASK;
+		}
+		else if (type == SDL_EVENT_WINDOW_FOCUS_LOST)
+		{
+			event.window.windowID = f.app.main().id();
+		}
+		else
+		{
+			event.button.windowID = f.app.main().id();
+			event.button.button = SDL_BUTTON_LEFT;
+			event.button.down = type == SDL_EVENT_MOUSE_BUTTON_DOWN;
+			event.button.clicks = 1;
+			event.button.x = to;
+			event.button.y = y;
+		}
+		REQUIRE(SDL_PushEvent(&event));
+		f.app.shell().step(std::chrono::milliseconds(0));
+	};
+	push(SDL_EVENT_MOUSE_MOTION, at(0));
+	push(SDL_EVENT_MOUSE_BUTTON_DOWN, at(0));
+	for (int pitch = 5; pitch <= 40; pitch += 5)
+		push(SDL_EVENT_MOUSE_MOTION, at(pitch));
+	REQUIRE(f.app.waitUntil([&] { return f.parameter("Key low") == 40.0; }));
+	REQUIRE(f.has(".sampler-handle[handle=low]", "dragged"));
+
+	// The focus goes, e.g. to Alt+Tab, and the button goes up elsewhere: the drag ends (#1191).
+	push(SDL_EVENT_WINDOW_FOCUS_LOST, at(40));
+	REQUIRE(f.app.waitUntil([&] { return !f.has(".sampler-handle[handle=low]", "dragged"); }));
+	push(SDL_EVENT_MOUSE_MOTION, at(60));
+	push(SDL_EVENT_MOUSE_MOTION, at(70));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.parameter("Key low") == 40.0);
+}
+
 TEST_CASE("Import Audio File loads the file chosen, with the lock, and shows why one didn't load", "[ui]")
 {
 	Fixture f;
@@ -428,4 +532,15 @@ TEST_CASE("Import Audio File loads the file chosen, with the lock, and shows why
 	CHECK(f.parameter("Cutoff") == 1000.0);
 	REQUIRE(f.app.waitUntil([&] { return !f.has("#sampler-message", "error"); }));
 	CHECK(f.elements("#sampler-message").at(0).value("text", "").empty());
+
+	// Closed while the dialog is open, the panel can't show why: the file loads all the same, with the lock.
+	f.set("Cutoff", 2000.0);
+	f.click("#sampler-import");
+	REQUIRE(f.app.waitUntil([&] { return f.app.shell().fileDialogs().size() == 1; }));
+	f.app.appUi().docking().setTabHidden("sampler", true);
+	REQUIRE(f.app.waitUntil([&] { return f.elements("#sampler-panel").empty(); }));
+	const uint64_t loaded = f.samplerChannel().at("sample").get<uint64_t>();
+	CHECK(f.app.shell().answerFileDialog(f.app.shell().fileDialogs().begin()->first, {f.file}));
+	REQUIRE(f.app.waitUntil([&] { return f.samplerChannel().at("sample") != loaded; }));
+	CHECK(f.parameter("Cutoff") == 2000.0);
 }
