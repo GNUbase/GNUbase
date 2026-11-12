@@ -494,6 +494,17 @@ TEST_CASE("event.previewResize tells what event.resize would make of the events 
 	f.call("event.set", {{"events", {part}}, {"lock", true}});
 	CHECK_THAT(f.fails("event.previewResize", {{"events", {part}}, {"edge", "end"}, {"delta", 1}}),
 		ContainsSubstring("locked"));
+
+	// A warped event comes with what follows its warp, as project.get gives it (#965): at 60 BPM in musical mode
+	// its clip plays twice as fast at the project's 120.
+	const Json clip = f.audio(event).at("clip");
+	f.call("clip.setWarp", {{"clip", clip}, {"musical", true}});
+	f.call("clip.setWarp", {{"clip", clip}, {"tempo", 60.0}});
+	const Json warped = f.call("event.previewResize", {{"events", {event}}, {"edge", "end"}, {"delta", -g_second / 2}});
+	REQUIRE(warped.at("audioEvents").size() == 1);
+	CHECK(warped.at("audioEvents")[0].contains("playedLength"));
+	CHECK(warped.at("audioEvents")[0].contains("fadeRoom"));
+	CHECK(agrees({{"events", {event}}, {"edge", "end"}, {"delta", -g_second / 2}}) == 1);
 }
 
 TEST_CASE("event.split splits events and parts at positions", "[unit]")
