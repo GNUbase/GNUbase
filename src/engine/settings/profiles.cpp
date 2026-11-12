@@ -186,8 +186,9 @@ namespace gnubase::engine::settings
 			// Two processes that pick the same name are no harm: the second rename fails, or replaces an empty folder.
 			static std::atomic<uint64_t> counter{0};
 			const auto time = static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
+			const uint64_t unique = time + (counter++ << 40U);
 			char hex[17] = {};
-			std::snprintf(hex, sizeof(hex), "%016llx", static_cast<unsigned long long>(time + (counter++ << 40U)));
+			std::snprintf(hex, sizeof(hex), "%016llx", static_cast<unsigned long long>(unique));
 			const fs::path removed = directory / (std::string(g_removedPrefix) + hex);
 			std::error_code renamed;
 			fs::rename(folder, removed, renamed);
