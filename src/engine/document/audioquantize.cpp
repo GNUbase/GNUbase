@@ -270,6 +270,11 @@ namespace gnubase::engine
 						{ return each.track != candidate.track && std::llabs(each.at - candidate.at) <= distance; }))
 					taken.push_back(candidate);
 			std::sort(taken.begin(), taken.end(), [](const Candidate& a, const Candidate& b) { return a.at < b.at; });
+			// Two events of one track can have hitpoints at the same place; the range merges hitpoints of different
+			// tracks, not those (#1268).
+			taken.erase(std::unique(taken.begin(), taken.end(),
+							[](const Candidate& a, const Candidate& b) { return a.at == b.at; }),
+				taken.end());
 			std::vector<time::Samples> positions;
 			positions.reserve(taken.size());
 			for (const Candidate& candidate : taken)
@@ -283,6 +288,12 @@ namespace gnubase::engine
 		{
 			context.emit("audioEvent.changed", {{"event", toJson(event)}});
 			return event.id;
+		}
+
+		// What quantizing and the panel's length changes move in an event, as its origin keeps it.
+		EventTiming timingOf(const AudioEvent& event)
+		{
+			return {event.position, event.offset, event.length};
 		}
 
 		// quantize.slice: cuts every event offset before each position and gives the slices snap points there.
@@ -375,8 +386,13 @@ namespace gnubase::engine
 			require(lengthMs >= 0.0 && lengthMs <= 500.0, "length must be 0 to 500 ms");
 			const double crossfadeSamples = lengthMs * project.sampleRate / 1000.0;
 			std::map<ObjectId, std::vector<ObjectId>> tracks;
+			// Where each event is now, so that resetting can put back what this step changes in it (p. 367).
+			std::map<ObjectId, EventTiming> was;
 			for (const ObjectId id : events)
+			{
 				tracks[project.audioEvents.at(id).track].push_back(id);
+				was[id] = timingOf(project.audioEvents.at(id));
+			}
 			std::vector<ObjectId> changed;
 			const auto note = [&changed](ObjectId id)
 			{
@@ -438,11 +454,21 @@ namespace gnubase::engine
 						continue;
 					}
 					note(a.id);
+					note(b.id); // it crossfades from a now, which resetting removes
 					model.runEdit("crossfade.set", project, {{"from", a.id}, {"to", b.id}}, context);
 				}
 			}
 			for (const ObjectId id : changed)
-				emitEvent(project.audioEvents.at(id), context);
+			{
+				AudioEvent& event = project.audioEvents.at(id);
+				// Resetting puts back where the event was before this step, so that the slices tile again with no
+				// overlaps and no gaps left.
+				if (event.quantizeOrigin && event.quantizeOrigin->quantized == was.at(id))
+					event.quantizeOrigin->quantized = timingOf(event);
+				else
+					event.quantizeOrigin = EventQuantizeOrigin{was.at(id), timingOf(event)};
+				emitEvent(event, context);
+			}
 			return {{"events", changed}};
 		}
 	}
@@ -451,10 +477,10 @@ namespace gnubase::engine
 	{
 		if (event.lock)
 			return false;
-		const bool still = event.quantizeOrigin && event.quantizeOrigin->quantized == event.position;
-		const time::Position original = still ? event.quantizeOrigin->original : event.position;
+		const bool still = event.quantizeOrigin && event.quantizeOrigin->quantized.position == event.position;
+		const EventTiming original = still ? event.quantizeOrigin->original : timingOf(event);
 		AudioEvent from = event;
-		from.position = grid.settings().soft ? event.position : original;
+		from.position = grid.settings().soft ? event.position : original.position;
 		const time::Samples snap = snapOffset(project, from);
 		const time::Samples at = startOf(project, from) + snap;
 		const bool musical = from.position.base == time::TimeBase::Musical;
@@ -468,18 +494,25 @@ namespace gnubase::engine
 		}
 		const time::Position before = event.position;
 		event.position = result;
-		if (result == original)
+		const EventTiming quantized{result, event.offset, event.length};
+		if (quantized == original)
 			event.quantizeOrigin.reset();
 		else
-			event.quantizeOrigin = EventQuantizeOrigin{original, result};
+			event.quantizeOrigin = EventQuantizeOrigin{original, quantized};
 		return event.position != before;
 	}
 
 	bool resetEventQuantize(AudioEvent& event)
 	{
-		if (!event.quantizeOrigin || event.quantizeOrigin->quantized != event.position)
+		if (!event.quantizeOrigin || event.quantizeOrigin->quantized.position != event.position)
 			return false;
-		event.position = event.quantizeOrigin->original;
+		const EventTiming original = event.quantizeOrigin->original;
+		event.position = original.position;
+		event.offset = original.offset;
+		event.length = original.length;
+		// The panel's Crossfade step crossfaded the event into the one after it, and the state before quantizing had
+		// no crossfade, so resetting removes it. A decision of ours: the reference manual doesn't say.
+		event.crossfade = Crossfade();
 		event.quantizeOrigin.reset();
 		return true;
 	}
@@ -576,8 +609,9 @@ namespace gnubase::engine
 				"Crossfades section, reference manual p. 379): on each track, in order, an event that overlaps the "
 				"next one ends where that one starts, and an event after a gap starts earlier, where the one before "
 				"ends, as far as its clip has audio there. Then each event goes on length ms (default 10, up to 500) "
-				"into the next one and crossfades into it (crossfade.set). Locked events stay. Returns the events "
-				"changed.",
+				"into the next one and crossfades into it (crossfade.set). Locked events stay. quantize.reset puts "
+				"every event it changed back to where it was before quantizing, and removes the crossfades this "
+				"made. Returns the events changed.",
 				objectSchema({{"events", ids}, {"length", number}}, {"events"}),
 				objectSchema({{"events", ids}}, {"events"}), false},
 			"Crossfade",
