@@ -670,9 +670,9 @@ TEST_CASE("auditioning plays only the pressed audio track, past its channel and 
 	const Json transport = run(song.client, "transport.get");
 
 	CHECK(run(song.client, "audition.start", {{"track", track}, {"position", 50}}) ==
-		Json{{"track", track}, {"media", 0}, {"mode", "play"}});
+		Json{{"track", track}, {"media", 0}, {"clip", 0}, {"mode", "play"}});
 	run(song.client, "audio.render", {{"frames", 1000}});
-	CHECK(run(song.client, "audition.stop") == Json{{"track", 0}, {"media", 0}, {"mode", "off"}});
+	CHECK(run(song.client, "audition.stop") == Json{{"track", 0}, {"media", 0}, {"clip", 0}, {"mode", "off"}});
 	run(song.client, "audio.render", {{"frames", 200}});
 
 	for (int channel = 0; channel < 2; ++channel)
@@ -706,9 +706,9 @@ TEST_CASE("auditioning up to an end plays the track to there and then nothing", 
 		ContainsSubstring("end must be after position"));
 	// The sample editor's Play back Slice: from 100 to 1000, which is in the middle of a block of 64.
 	CHECK(run(song.client, "audition.start", {{"track", track.id}, {"position", 100}, {"end", 1000}}) ==
-		Json{{"track", track.id}, {"media", 0}, {"mode", "play"}});
+		Json{{"track", track.id}, {"media", 0}, {"clip", 0}, {"mode", "play"}});
 	run(song.client, "audio.render", {{"frames", 1200}});
-	CHECK(run(song.client, "audition.stop") == Json{{"track", 0}, {"media", 0}, {"mode", "off"}});
+	CHECK(run(song.client, "audition.stop") == Json{{"track", 0}, {"media", 0}, {"clip", 0}, {"mode", "off"}});
 	for (int channel = 0; channel < 2; ++channel)
 	{
 		const std::vector<float> output = song.capture(channel, 1200);
@@ -743,12 +743,12 @@ TEST_CASE("auditioning a media file plays its frames, also outside the events th
 
 	// From frame 500, before the event, to 3900 and on past the file's end, where it plays nothing.
 	CHECK(run(song.client, "audition.start", {{"media", media}, {"position", 500}, {"end", 900}}) ==
-		Json{{"track", 0}, {"media", media}, {"mode", "play"}});
+		Json{{"track", 0}, {"media", media}, {"clip", 0}, {"mode", "play"}});
 	run(song.client, "audio.render", {{"frames", 500}});
 	CHECK(run(song.client, "audition.start", {{"media", media}, {"position", 3900}}) ==
-		Json{{"track", 0}, {"media", media}, {"mode", "play"}});
+		Json{{"track", 0}, {"media", media}, {"clip", 0}, {"mode", "play"}});
 	run(song.client, "audio.render", {{"frames", 300}});
-	CHECK(run(song.client, "audition.stop") == Json{{"track", 0}, {"media", 0}, {"mode", "off"}});
+	CHECK(run(song.client, "audition.stop") == Json{{"track", 0}, {"media", 0}, {"clip", 0}, {"mode", "off"}});
 	for (int channel = 0; channel < 2; ++channel)
 	{
 		const std::vector<float> output = song.capture(channel, 800);
@@ -802,7 +802,7 @@ TEST_CASE("scrubbing a media file plays its frames and leaves the cursor alone",
 
 	// No event plays the file. 480 frames back in 0.01 seconds play backwards at normal speed.
 	CHECK(run(song.client, "audition.scrub", {{"media", media}, {"position", 1000}}) ==
-		Json{{"track", 0}, {"media", media}, {"mode", "scrub"}});
+		Json{{"track", 0}, {"media", media}, {"clip", 0}, {"mode", "scrub"}});
 	run(song.client, "audition.scrub", {{"media", media}, {"position", 520}, {"seconds", 0.01}});
 	run(song.client, "audio.render", {{"frames", 600}});
 	run(song.client, "audition.stop");
@@ -864,13 +864,13 @@ TEST_CASE("auditioning a clip plays its media file with the clip's fades", "[int
 		return frame >= 3500 ? static_cast<float>(4000 - frame) / 500.0f : 1.0f;
 	};
 
-	// Played from its start to its end; the result names the clip's media file.
+	// Played from its start to its end; the result names the clip and its media file.
 	CHECK(run(song.client, "audition.start", {{"clip", clip}, {"position", 0}}) ==
-		Json{{"track", 0}, {"media", media}, {"mode", "play"}});
+		Json{{"track", 0}, {"media", media}, {"clip", clip}, {"mode", "play"}});
 	run(song.client, "audio.render", {{"frames", 4000}});
 	// Scrubbed 480 frames back from frame 1000, at normal speed, in the fade in.
 	CHECK(run(song.client, "audition.scrub", {{"clip", clip}, {"position", 1000}}) ==
-		Json{{"track", 0}, {"media", media}, {"mode", "scrub"}});
+		Json{{"track", 0}, {"media", media}, {"clip", clip}, {"mode", "scrub"}});
 	run(song.client, "audition.scrub", {{"clip", clip}, {"position", 520}, {"seconds", 0.01}});
 	run(song.client, "audio.render", {{"frames", 600}});
 	run(song.client, "audition.stop");
@@ -932,7 +932,7 @@ TEST_CASE("auditioning needs a device and an audio track", "[integration]")
 		ContainsSubstring("position must be 0 to"));
 	CHECK_THAT(client.call("audition.scrub", {{"track", midi}, {"position", g_maxPosition + 1}}).error,
 		ContainsSubstring("position must be 0 to"));
-	CHECK(run(client, "audition.stop") == Json{{"track", 0}, {"media", 0}, {"mode", "off"}});
+	CHECK(run(client, "audition.stop") == Json{{"track", 0}, {"media", 0}, {"clip", 0}, {"mode", "off"}});
 }
 
 TEST_CASE("scrubbing plays an audio track forwards and backwards at the speed positions come, and moves the cursor",
@@ -949,7 +949,7 @@ TEST_CASE("scrubbing plays an audio track forwards and backwards at the speed po
 	// The first scrub only sets where it starts and moves the cursor there; 480 frames back in 0.01 seconds (480
 	// frames) play backwards at normal speed.
 	CHECK(run(song.client, "audition.scrub", {{"track", track.id}, {"position", 1000}}) ==
-		Json{{"track", track.id}, {"media", 0}, {"mode", "scrub"}});
+		Json{{"track", track.id}, {"media", 0}, {"clip", 0}, {"mode", "scrub"}});
 	CHECK(run(song.client, "transport.get").at("position") == 1000);
 	run(song.client, "audition.scrub", {{"track", track.id}, {"position", 520}, {"seconds", 0.01}});
 	CHECK(run(song.client, "transport.get").at("position") == 520);
