@@ -430,6 +430,13 @@ namespace gnubase::app
 				if (keys.key == Rml::Input::KI_UNKNOWN)
 					m_winding.stop(); // the keyboard focus lost: also a button held
 			});
+		// What a script's click or key changed shows in the menu before the script reads the DOM, as after a step.
+		m_shell.onInputHandled(
+			[this]
+			{
+				if (m_menu)
+					m_menu->update();
+			});
 		m_keys.add({"window.markers", "Opens or closes the markers window.",
 			// Later in the step: the key may be the markers window's own, which closing it would destroy.
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_shell.post([this] { toggleMarkers(); }); }});

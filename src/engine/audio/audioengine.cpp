@@ -934,6 +934,7 @@ namespace gnubase::engine
 				for (const uint16_t kind : chaseKinds)
 					kinds.push_back(chaseKindEvent(kind));
 				sourceStrip->chasedWhenHeard(std::move(kinds), sequencer->second);
+				sourceStrip->playsProject(snapshot.opened);
 			}
 			if (const auto tap = m_renderTaps.find(channel.id); tap != m_renderTaps.end())
 				(tap->second.point == RenderPoint::Source ? sourceStrip : fader)
