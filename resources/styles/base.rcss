@@ -1133,6 +1133,33 @@ meter .meter-peak
 	width: 100%;
 }
 
+/* The chord editor's buttons (p. 1357), a row each of roots, types, tensions and bass notes. */
+.chord-editor-row
+{
+	display: flex;
+	flex-wrap: wrap;
+	gap: 2dp;
+	width: 100%;
+	padding-bottom: 3dp;
+}
+
+.chord-editor-button
+{
+	width: 21dp;
+	min-width: 0dp;
+	padding: 1dp 0dp;
+}
+
+.chord-editor-button.chord-editor-type
+{
+	width: 36dp;
+}
+
+.chord-editor-button.chord-editor-tension
+{
+	width: 26dp;
+}
+
 .chord-proximity-reference
 {
 	width: 100%;

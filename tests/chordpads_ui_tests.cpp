@@ -255,6 +255,25 @@ TEST_CASE("the chord assistant suggests chords after the selected pad's and assi
 	CHECK(window.text(".chord-circle-outer .chord-suggestion[chord=\"G\"] .chord-suggestion-degree") == "V");
 	CHECK(window.hasClass(".chord-circle-inner .chord-suggestion[chord=\"Am\"]", "in-key"));
 
+	// The chord editor's buttons (#1089): the selected pad's chord lit, a button makes another chord. The lower zone
+	// is high enough for all of them.
+	window.app.appUi().docking().setSize("project", "lower", 400.0);
+	window.step();
+	window.click("#chord-pads-page-editor");
+	REQUIRE(window.app.waitUntil(
+		[&] { return window.hasClass(".chord-editor-button[part=root][value=\"0\"]", "checked"); }));
+	CHECK(window.hasClass(".chord-editor-button[part=type][value=maj]", "checked"));
+	window.click(".chord-editor-button[part=type][value=min]");
+	REQUIRE(window.app.waitUntil([&] { return window.pads()[0].at("chord") == "Cm"; }));
+	window.click(".chord-editor-button[part=tension][value=\"7\"]");
+	REQUIRE(window.app.waitUntil([&] { return window.pads()[0].at("chord") == "Cm7"; }));
+	window.click(".chord-editor-button[part=bass][value=\"7\"]");
+
+	REQUIRE(window.app.waitUntil([&] { return window.pads()[0].at("chord") == "Cm7/G"; }));
+	CHECK(window.app.waitUntil(
+		[&] { return window.hasClass(".chord-editor-button[part=bass][value=\"7\"]", "checked"); }));
+	window.call("chordPads.assign", {{"assignments", {{{"pad", 0}, {"chord", "C"}}}}});
+
 	// The Proximity assistant: rows by distance above the reference (#1089); the List's cadence types.
 	window.click("#chord-pads-page-proximity");
 	REQUIRE(window.app.waitUntil([&] { return window.elements(".chord-proximity-row").size() >= 2; }));
@@ -481,6 +500,10 @@ TEST_CASE("the toolbar and the settings panes change output mode, players, playe
 	REQUIRE(window.app.waitUntil([&] { return pads().at("outputMode") == false; }));
 	window.click("#chord-pads-snapPlayback");
 	REQUIRE(window.app.waitUntil([&] { return pads().at("snapPlayback") == true; }));
+	// Enh. Shift: the pads spell with flats.
+	window.call("chordPads.assign", {{"assignments", {{{"pad", 7}, {"chord", "C#m"}}}}});
+	window.click("#chord-pads-flats");
+	REQUIRE(window.app.waitUntil([&] { return window.text(Window::pad(7) + " .chord-pad-chord") == "Dbm"; }));
 
 	// Player Settings: a piano player with a style; the octave offset is the basic player's.
 	window.click("#chord-pads-pane-player-button");
@@ -525,6 +548,40 @@ TEST_CASE("the toolbar and the settings panes change output mode, players, playe
 	REQUIRE(window.app.waitUntil([&] { return pads().at("overlaps") == "legato"; }));
 	window.click("#chord-pads-filterNotes");
 	REQUIRE(window.app.waitUntil([&] { return pads().at("filterNotes") == true; }));
+	// The pattern player mode with a preset (pp. 1379-1380), and back.
+	CHECK_FALSE(window.visible("#chord-pads-patternPreset"));
+	window.click("#chord-pads-playerMode");
+	window.app.ui().key(std::nullopt, "Down");
+	window.click("#chord-pads-playerMode");
+	REQUIRE(window.app.waitUntil([&] { return pads().at("mode") == "pattern"; }));
+	REQUIRE(window.app.waitUntil([&] { return window.visible("#chord-pads-patternPreset"); }));
+	window.click("#chord-pads-patternPreset");
+	window.app.ui().key(std::nullopt, "Down");
+	window.click("#chord-pads-patternPreset");
+	REQUIRE(window.app.waitUntil([&] { return pads().at("pattern").at("name") == "arpeggioUp"; }));
+	CHECK(window.app.waitUntil([&] { return window.text("#chord-pads-pattern-info") == "arpeggioUp (4 voices)"; }));
+	window.click("#chord-pads-velocityFromKeyboard");
+	REQUIRE(window.app.waitUntil([&] { return pads().at("velocityFromKeyboard") == true; }));
+	window.call("chordPads.set", {{"mode", "plainChords"}});
+	REQUIRE(window.app.waitUntil([&] { return window.visible("#chord-pads-overlaps"); }));
+
+	// Player Remote Control (p. 1389) and the sections mode's settings.
+	window.click("#chord-pads-pane-playerRemote-button");
+	REQUIRE(window.visible("#chord-pads-sectionKeys-0"));
+	window.click("#chord-pads-sectionKeys-1", 2);
+	window.app.ui().key(std::nullopt, "Mod+A");
+	window.app.ui().text(std::nullopt, "61");
+	window.app.ui().key(std::nullopt, "Enter");
+	REQUIRE(window.app.waitUntil([&] { return pads().at("sectionKeys")[1] == 61; }));
+	CHECK(pads().at("sectionKeys")[0] == 55);
+	window.click("#chord-pads-mute-2");
+	REQUIRE(window.app.waitUntil([&] { return pads().at("mutedSections")[2] == true; }));
+	window.click("#chord-pads-latchPads");
+	REQUIRE(window.app.waitUntil([&] { return pads().at("latchPads") == true; }));
+	window.click("#chord-pads-sectionPlay");
+	window.app.ui().key(std::nullopt, "Down");
+	window.click("#chord-pads-sectionPlay");
+	REQUIRE(window.app.waitUntil([&] { return pads().at("sectionPlay") == "chordPads"; }));
 
 	// Remote Settings: Latch Chords, the chord modifiers and their keys, MIDI Learn.
 	window.click("#chord-pads-pane-remote-button");

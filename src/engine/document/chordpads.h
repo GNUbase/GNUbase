@@ -50,6 +50,10 @@ namespace gnubase::engine
 		// takes the last one away.
 		midi::ChordSymbol withTensions(const midi::ChordSymbol& chord, int steps, int key);
 
+		// A chord's name with its notes spelled with flats (Enh. Shift, reference manual p. 1363): Db for C#, Gbm7/Db
+		// for F#m7/C#. Tensions such as #9 stay.
+		std::string withFlats(const std::string& chord);
+
 		// The chord moved by semitones: its root and its bass note.
 		midi::ChordSymbol transposed(const midi::ChordSymbol& chord, int semitones);
 

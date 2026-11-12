@@ -486,7 +486,8 @@ namespace gnubase::engine
 		MidiPorts::PadBuffers m_padOutput; // and the chord pads' notes, by player
 		// Which wait for the grid with Snap Playback to Musical Grid, by player.
 		std::array<midi::PadSnap, ChordPadKeys::g_maxPlayers> m_padSnap;
-		MidiTap m_tap; // midi.inject and midi.capture
+		std::array<midi::PadPattern, ChordPadKeys::g_maxPlayers> m_padPattern; // the pattern player mode's, by player
+		MidiTap m_tap;                                                         // midi.inject and midi.capture
 
 		// Changed only while the device is stopped.
 		enum class Limit : uint8_t

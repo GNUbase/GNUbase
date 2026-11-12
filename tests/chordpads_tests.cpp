@@ -4,6 +4,7 @@
 // record, step input, pads dragged onto tracks and the pads' remote keys on a MIDI input.
 #include "engine/document/chordpads.h"
 #include "engine/engine.h"
+#include "engine/midi/padvoices.h"
 #include "mcp/server.h"
 #include "platform/audio/device.h"
 #include "platform/hosttime.h"
@@ -14,8 +15,10 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -305,6 +308,11 @@ TEST_CASE("the root key, presets and the chord track's chords fill the pads", "[
 	// The degrees and the assistant's levels are the loaded preset's scale's.
 	CHECK(pads.at("pads")[0].at("degree") == "i");
 	CHECK(pads.at("pads")[2].at("degree") == "III");
+	// Enh. Shift (p. 1363): spelled with flats.
+	CHECK(chordpads::withFlats("F#m7/C#") == "Gbm7/Db");
+	CHECK(chordpads::withFlats("C7(#9)") == "C7(#9)");
+	CHECK(chordpads::withFlats("E#") == "F");
+	CHECK(pads.at("pads")[0].at("spelled") == "Dm");
 	// And the Nashville numbers (p. 1390).
 	CHECK(pads.at("pads")[0].at("nashville") == "1m");
 	CHECK(pads.at("pads")[2].at("nashville") == "3");
@@ -876,6 +884,170 @@ TEST_CASE("several players on several tracks: each track plays its player's voic
 	CHECK(pitches[rig.channel] == std::vector<int>{48, 60, 64, 67});
 	CHECK(pitches[pianoChannel] == std::vector<int>{48, 60, 64, 67});
 	run(client, "chordPads.trigger", {{"pad", 0}, {"on", false}});
+}
+
+TEST_CASE("the pattern player mode plays a MIDI part's pattern with the notes of the chord that plays", "[integration]")
+{
+	// Reference manual pp. 1378-1380 (#1089): at 120 BPM and 48 kHz a quarter note is 24000 samples.
+	Rig rig;
+	Client& client = rig.client;
+	const auto midiTrack = run(client, "track.add", {{"type", "midi"}}).at("track").at("id").get<ObjectId>();
+	const auto part = run(client, "midiPart.add", {{"track", midiTrack}, {"position", 0}, {"length", 2 * g_beatTicks}})
+						  .at("part")
+						  .at("id")
+						  .get<ObjectId>();
+	// Four voices, one per eighth note: the lowest pitch is the bass, the highest the top voice.
+	Json notes = Json::array();
+	for (int i = 0; i < 4; ++i)
+		notes.push_back({{"position", i * g_beatTicks / 2}, {"length", g_beatTicks / 4}, {"pitch", 40 + (3 * i)},
+			{"velocity", 0.5}});
+	run(client, "note.add", {{"part", part}, {"notes", notes}});
+	CHECK_THAT(reject(client, "chordPads.setPattern", {{"part", 9999}}), ContainsSubstring("no MIDI part"));
+	run(client, "chordPads.setPattern", {{"part", part}});
+	Json pads = run(client, "chordPads.get");
+	CHECK(pads.at("mode") == "pattern");
+	CHECK(pads.at("pattern").at("voices") == 4);
+	CHECK(pads.at("pattern").at("length") == 2 * g_beatTicks);
+	REQUIRE(pads.at("pattern").at("notes").size() == 4);
+
+	// C plays 48 60 64 67 as voices 0 to 3: the bass at once, an eighth note (12000 samples) apart.
+	const auto ons = [](const std::vector<std::vector<int>>& played)
+	{
+		std::vector<int> pitches;
+		for (const std::vector<int>& note : played)
+			if ((note[0] & 0xF0) == 0x90)
+				pitches.push_back(note[1]);
+		return pitches;
+	};
+	// The windows end between the notes, which come a block or two after the trigger, as MIDI input does.
+	run(client, "chordPads.trigger", {{"pad", 0}});
+	run(client, "audio.render", {{"frames", 1000}});
+	CHECK(ons(rig.played()) == std::vector<int>{48});
+	run(client, "audio.render", {{"frames", 16872}}); // up to 18000
+	CHECK(ons(rig.played()) == std::vector<int>{60});
+	run(client, "audio.render", {{"frames", 11936}}); // 30000
+	CHECK(ons(rig.played()) == std::vector<int>{64});
+	run(client, "audio.render", {{"frames", 11936}}); // 42000
+	CHECK(ons(rig.played()) == std::vector<int>{67});
+	// Two beats later it starts over.
+	run(client, "audio.render", {{"frames", 11936}}); // 54000
+	CHECK(ons(rig.played()) == std::vector<int>{48});
+	// Releasing the pad ends it.
+	run(client, "chordPads.trigger", {{"pad", 0}, {"on", false}});
+	rig.played();
+	run(client, "audio.render", {{"frames", 48000}});
+	CHECK(ons(rig.played()).empty());
+
+	// A preset; plain chords again play the chord.
+	run(client, "chordPads.setPattern", {{"preset", "brokenChord"}});
+	CHECK(run(client, "chordPads.get").at("pattern").at("name") == "brokenChord");
+	run(client, "chordPads.set", {{"mode", "plainChords"}});
+	run(client, "audio.render", {{"frames", 64}});
+	run(client, "chordPads.trigger", {{"pad", 0}});
+	CHECK(ons(rig.played()).size() == 4);
+	run(client, "chordPads.trigger", {{"pad", 0}, {"on", false}});
+	// A part of fewer than three voices is no pattern.
+	const auto two = run(client, "midiPart.add", {{"track", midiTrack}, {"position", 0}, {"length", g_beatTicks}})
+						 .at("part")
+						 .at("id")
+						 .get<ObjectId>();
+	run(client, "note.add",
+		{{"part", two},
+			{"notes",
+				{{{"position", 0}, {"length", 100}, {"pitch", 40}, {"velocity", 0.5}},
+					{{"position", 100}, {"length", 100}, {"pitch", 41}, {"velocity", 0.5}}}}});
+	CHECK_THAT(reject(client, "chordPads.setPattern", {{"part", two}}), ContainsSubstring("3 to 5 voices"));
+}
+
+TEST_CASE("the sections player mode plays a pad's chord section by section from the section keys", "[integration]")
+{
+	// Reference manual pp. 1381-1385, 1389 (#1089): C plays 48 60 64 67, the sections from the lowest note up.
+	RemoteRig remote;
+	Client& client = remote.rig.client;
+	run(client, "chordPads.set", {{"mode", "sections"}});
+	CHECK(run(client, "chordPads.get").at("sectionKeys") == std::vector<int>{55, 56, 57, 58, 59});
+	run(client, "audio.render", {{"frames", 64}});
+	// The pad's key alone plays nothing; with it down the section keys play its sections.
+	CHECK(remote.send(0x90, 36, 90).empty());
+	CHECK(remote.send(0x90, 55, 80) == std::vector<std::vector<int>>{{0x90, 48, 80}});
+	CHECK(remote.send(0x90, 57, 80) == std::vector<std::vector<int>>{{0x90, 64, 80}});
+	CHECK(remote.send(0x80, 57, 0) == std::vector<std::vector<int>>{{0x80, 64, 0}});
+	// The pad's key going up ends them.
+	CHECK(remote.send(0x80, 36, 0) == std::vector<std::vector<int>>{{0x80, 48, 0}});
+	CHECK(remote.send(0x80, 55, 0).empty());
+	// Without the pad's key down, sections play nothing; chordPads takes the pad triggered last.
+	CHECK(remote.send(0x90, 56, 80).empty());
+	remote.send(0x80, 56, 0);
+	run(client, "chordPads.set", {{"sectionPlay", "chordPads"}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(remote.send(0x90, 56, 80) == std::vector<std::vector<int>>{{0x90, 60, 80}});
+	CHECK(remote.send(0x80, 56, 0) == std::vector<std::vector<int>>{{0x80, 60, 0}});
+	// A muted section plays nothing; a subsection is its section moved.
+	run(client, "chordPads.set",
+		{{"mutedSections", {false, true}}, {"subsectionKeys", {62}}, {"subsectionSections", {3}},
+			{"subsectionOffsets", {12}}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(remote.send(0x90, 56, 80).empty());
+	remote.send(0x80, 56, 0);
+	CHECK(remote.send(0x90, 62, 80) == std::vector<std::vector<int>>{{0x90, 79, 80}});
+	remote.send(0x80, 62, 0);
+	CHECK_THAT(reject(client, "chordPads.set", {{"sectionKeys", {128}}}), ContainsSubstring("sectionKeys"));
+}
+
+TEST_CASE("Select/Mute Player's remote keys select the previous and next player and mute it", "[integration]")
+{
+	// Reference manual p. 1389.
+	RemoteRig remote;
+	Client& client = remote.rig.client;
+	run(client, "chordPads.addPlayer", {{"library", "piano"}});
+	run(client, "chordPads.set", {{"player", 0}, {"playerKeys", {70, 71, 72}}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(remote.send(0x90, 71, 90).empty());
+	remote.send(0x80, 71, 0);
+	CHECK(remote.until([&] { return run(client, "chordPads.get").at("player") == 1; }));
+	remote.send(0x90, 70, 90);
+	CHECK(remote.until([&] { return run(client, "chordPads.get").at("player") == 0; }));
+	remote.send(0x90, 72, 90);
+	CHECK(remote.until([&] { return run(client, "chordPads.get").at("players")[0].at("muted") == true; }));
+	// A muted player plays nothing.
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(remote.send(0x90, 36, 90).empty());
+}
+
+TEST_CASE("the pattern player repeats its pattern on the held chord's voices", "[unit]")
+{
+	// midi::PadPattern on its own: four eighth notes on four voices, two beats long, at 120 BPM and 48 kHz.
+	midi::PadPatternSteps steps;
+	steps.on = true;
+	steps.length = 2 * g_beatTicks;
+	for (int i = 0; i < 4; ++i)
+		steps.steps.at(steps.count++) = {i * g_beatTicks / 2, g_beatTicks / 4, static_cast<uint8_t>(i), 100};
+	midi::PadPattern pattern;
+	gnubase::audio::MidiBuffer pads(256);
+	for (const uint8_t pitch : std::array<uint8_t, 4>{48, 60, 64, 67})
+	{
+		gnubase::audio::MidiMessage on;
+		on.size = 3;
+		on.bytes = {0x90, pitch, 90};
+		pads.add(on);
+	}
+	const double ticksPerFrame = 2.0 * static_cast<double>(g_beatTicks) / 48000.0;
+	std::vector<std::pair<int64_t, int>> ons;
+	for (int64_t block = 0; block < 800; ++block)
+	{
+		pattern.process(pads, steps, 64, ticksPerFrame);
+		for (const gnubase::audio::MidiMessage& message : pads)
+			if ((message.bytes[0] & 0xF0) == 0x90)
+				ons.emplace_back((block * 64) + message.offset, message.bytes[1]);
+		pads.clear();
+	}
+	REQUIRE(ons.size() >= 5);
+	CHECK(ons[0] == std::pair<int64_t, int>{0, 48});
+	CHECK(ons[1].second == 60);
+	CHECK(std::abs(ons[1].first - 12000) <= 1);
+	CHECK(ons[3].second == 67);
+	CHECK(ons[4].second == 48);
+	CHECK(std::abs(ons[4].first - 48000) <= 1);
 }
 
 TEST_CASE("with Snap Playback to Musical Grid a pad's chord starts at the next grid position", "[integration]")

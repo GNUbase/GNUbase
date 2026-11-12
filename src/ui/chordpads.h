@@ -46,7 +46,11 @@ namespace gnubase::ui
 		// dropOn, if given, finds the track and the position (ticks) at a point of the window (pixels) where a pad
 		// dragged out of the zone was released, such as on the event display's lanes.
 		using DropTarget = std::function<std::optional<std::pair<uint64_t, int64_t>>(float x, float y)>;
-		ChordPadsPanel(EngineBinding& binding, Rml::Element& element, DropTarget dropOn = {});
+		// selectedEvents, if given, gives the event display's selected events and parts, of which the first MIDI part
+		// becomes the pattern with From Selected Part.
+		using Selection = std::function<std::vector<uint64_t>()>;
+		ChordPadsPanel(
+			EngineBinding& binding, Rml::Element& element, DropTarget dropOn = {}, Selection selectedEvents = {});
 		~ChordPadsPanel() override;
 		ChordPadsPanel(const ChordPadsPanel&) = delete;
 		ChordPadsPanel& operator=(const ChordPadsPanel&) = delete;
@@ -79,14 +83,17 @@ namespace gnubase::ui
 		void requestPorts();
 		void requestTracks();
 		void showPlayerTrack();
+		void showEditor();
+		void pressEditor(const Rml::Element& button);
 		void modifyPressed(const std::string& name);
-		bool modifies(const std::string& name) const;
+		static bool modifies(const std::string& name);
 		std::vector<int> selected() const;
 		void send(const std::string& command, engine::Json parameters);
 		Rml::Element* find(const std::string& id) const;
 
 		EngineBinding& m_binding;
 		DropTarget m_dropOn;
+		Selection m_selectedEvents;
 		Rml::ObserverPtr<Rml::Element> m_root;
 		Rml::ObserverPtr<Rml::Element> m_document; // for the mouse button going up outside the panel
 		engine::Json m_pads = engine::Json::object();

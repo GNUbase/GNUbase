@@ -558,12 +558,14 @@ namespace gnubase::app
 		// The chord pads (reference manual pp. 1346-1391, docs/features/chord-pads.md) in the lower zone.
 		m_docking.add({"chordPads", "Chord Pads", "project", "lower", [this](Rml::Element& element)
 			{
-				return std::make_shared<ui::ChordPadsPanel>(m_binding, element,
+				return std::make_shared<ui::ChordPadsPanel>(
+					m_binding, element,
 					[this](float x, float y)
 					{
 						return m_eventDisplay ? m_eventDisplay->trackAt(x, y)
 											  : std::optional<std::pair<uint64_t, int64_t>>();
-					});
+					},
+					[this] { return m_eventDisplay ? m_eventDisplay->selection() : std::vector<uint64_t>(); });
 			}});
 		// The sampler panel (reference manual pp. 710-730, docs/features/sampler-track.md) in the lower zone, for the
 		// selected sampler track. Import Audio File asks for the file in the window it shows in.

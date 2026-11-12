@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 
@@ -82,6 +83,182 @@ namespace gnubase::engine::midi
 		std::array<std::array<uint8_t, g_maxPitches>, g_triggers> m_pitches{};
 		std::array<uint8_t, 128> m_holders{};  // per pitch: how many triggers hold it
 		std::array<uint8_t, 128> m_channels{}; // per pitch: the channel it sounds on
+	};
+
+	// The chord pads' pattern as the audio thread plays it (reference manual pp. 1379-1380): at most 64 notes on the
+	// chord's voices, from the lowest (0) up, repeating every length ticks.
+	struct PadPatternSteps
+	{
+		static constexpr size_t g_maxNotes = 64;
+		struct Step
+		{
+			int64_t position = 0; // ticks from the pattern's start
+			int64_t length = 0;
+			uint8_t voice = 0;
+			uint8_t velocity = 100;
+		};
+		bool on = false;
+		bool velocityFromKeyboard = false;
+		int64_t length = 0;
+		size_t count = 0;
+		std::array<Step, g_maxNotes> steps{};
+	};
+
+	// The pattern player (#1089): while the chord pads hold a chord, its notes don't play; the pattern does, with the
+	// held pitches on its voices (the lowest pitch on voice 0; voices beyond the chord an octave above its lower
+	// ones), from the moment the first chord comes, on and on, the next chord's pitches taking over as it comes. When
+	// nothing is held any more it ends. Fixed arrays and no allocations, for the audio thread.
+	class PadPattern
+	{
+	public:
+		// One block of a player's chord notes, frames long, at ticksPerFrame (the tempo).
+		void process(
+			audio::MidiBuffer& pads, const PadPatternSteps& pattern, uint32_t frames, double ticksPerFrame) noexcept
+		{
+			if (!pattern.on || pattern.length <= 0 || pattern.count == 0 || !(ticksPerFrame > 0.0))
+			{
+				if (m_running)
+					stop(pads, 0);
+				return;
+			}
+			std::array<audio::MidiMessage, 64> changes{};
+			size_t count = 0;
+			for (const audio::MidiMessage& message : pads)
+				if (count < changes.size())
+					changes.at(count++) = message;
+			pads.clear();
+			// The block in sections between the chord's changes, the pattern going on through each.
+			uint32_t at = 0;
+			for (size_t i = 0; i <= count; ++i)
+			{
+				const uint32_t until = i < count ? std::min(changes.at(i).offset, frames) : frames;
+				if (m_running && until > at)
+					play(pads, pattern, at, until, ticksPerFrame);
+				at = std::max(at, until);
+				if (i < count)
+					hold(changes.at(i), pads, at);
+			}
+		}
+
+	private:
+		struct Out
+		{
+			uint32_t frame = 0;
+			bool on = false;
+			uint8_t pitch = 0;
+			uint8_t velocity = 0;
+			uint8_t channel = 0;
+		};
+
+		void hold(const audio::MidiMessage& message, audio::MidiBuffer& pads, uint32_t at) noexcept
+		{
+			const int status = message.bytes[0] & 0xF0;
+			const auto pitch = static_cast<size_t>(message.bytes[1] & 0x7F);
+			if (status == 0x90 && message.bytes[2] > 0)
+			{
+				m_held.at(pitch) = true;
+				m_velocity = message.bytes[2];
+				if (!m_running)
+				{
+					m_running = true;
+					m_tick = 0.0;
+				}
+			}
+			else if (status == 0x80 || status == 0x90)
+			{
+				m_held.at(pitch) = false;
+				if (m_running && std::none_of(m_held.begin(), m_held.end(), [](bool down) { return down; }))
+					stop(pads, at);
+			}
+		}
+
+		// The pattern's notes from the tick it reached up to frame until, from frame from.
+		void play(audio::MidiBuffer& pads, const PadPatternSteps& pattern, uint32_t from, uint32_t until,
+			double ticksPerFrame) noexcept
+		{
+			std::array<uint8_t, 8> voices{};
+			size_t count = 0;
+			for (size_t pitch = 0; pitch < m_held.size() && count < voices.size(); ++pitch)
+				if (m_held.at(pitch))
+					voices.at(count++) = static_cast<uint8_t>(pitch);
+			const double end = m_tick + (static_cast<double>(until - from) * ticksPerFrame);
+			const auto frameAt = [this, from, until, ticksPerFrame](double tick)
+			{
+				const double frame = from + std::max(tick - m_tick, 0.0) / ticksPerFrame;
+				return static_cast<uint32_t>(std::min(frame, static_cast<double>(until - 1)));
+			};
+			std::array<Out, 2 * g_maxSounding> outs{};
+			size_t n = 0;
+			const auto length = static_cast<double>(pattern.length);
+			for (size_t s = 0; s < pattern.count && count > 0; ++s)
+			{
+				const PadPatternSteps::Step& step = pattern.steps.at(s);
+				const auto position = static_cast<double>(step.position);
+				double tick = position + (std::ceil((m_tick - position) / length) * length);
+				for (; tick < end && m_sounding < g_maxSounding && n < outs.size(); tick += length)
+				{
+					const size_t voice = step.voice;
+					const int pitch = std::min(voices.at(voice % count) + (static_cast<int>(voice / count) * 12), 127);
+					const auto channel =
+						static_cast<uint8_t>(std::min<size_t>(count - 1 - std::min(voice, count - 1), 15));
+					const uint8_t velocity = pattern.velocityFromKeyboard ? m_velocity : step.velocity;
+					outs.at(n++) = {frameAt(tick), true, static_cast<uint8_t>(pitch), velocity, channel};
+					m_pitches.at(m_sounding) = static_cast<uint8_t>(pitch);
+					m_channels.at(m_sounding) = channel;
+					m_ends.at(m_sounding) = tick + static_cast<double>(std::max<int64_t>(step.length, 1));
+					++m_sounding;
+				}
+			}
+			for (size_t i = 0; i < m_sounding && n < outs.size();)
+			{
+				if (m_ends.at(i) < end)
+				{
+					outs.at(n++) = {frameAt(m_ends.at(i)), false, m_pitches.at(i), 0, m_channels.at(i)};
+					--m_sounding;
+					m_ends.at(i) = m_ends.at(m_sounding);
+					m_pitches.at(i) = m_pitches.at(m_sounding);
+					m_channels.at(i) = m_channels.at(m_sounding);
+				}
+				else
+				{
+					++i;
+				}
+			}
+			std::stable_sort(outs.begin(), outs.begin() + static_cast<std::ptrdiff_t>(n),
+				[](const Out& a, const Out& b) { return a.frame < b.frame || (a.frame == b.frame && !a.on && b.on); });
+			for (size_t i = 0; i < n; ++i)
+				send(pads, outs.at(i).on, outs.at(i).pitch, outs.at(i).velocity, outs.at(i).channel, outs.at(i).frame);
+			m_tick = end;
+		}
+
+		void stop(audio::MidiBuffer& pads, uint32_t at) noexcept
+		{
+			for (size_t i = 0; i < m_sounding; ++i)
+				send(pads, false, m_pitches.at(i), 0, m_channels.at(i), at);
+			m_sounding = 0;
+			m_running = false;
+			m_held.fill(false);
+		}
+
+		static void send(
+			audio::MidiBuffer& pads, bool on, uint8_t pitch, uint8_t velocity, uint8_t channel, uint32_t frame) noexcept
+		{
+			audio::MidiMessage message;
+			message.size = 3;
+			message.bytes = {static_cast<uint8_t>((on ? 0x90 : 0x80) | channel), pitch, velocity};
+			message.offset = frame;
+			pads.add(message);
+		}
+
+		static constexpr size_t g_maxSounding = 64;
+		std::array<bool, 128> m_held{};
+		uint8_t m_velocity = 100;
+		bool m_running = false;
+		double m_tick = 0.0; // ticks since the pattern started
+		size_t m_sounding = 0;
+		std::array<uint8_t, g_maxSounding> m_pitches{};
+		std::array<uint8_t, g_maxSounding> m_channels{};
+		std::array<double, g_maxSounding> m_ends{}; // in ticks since the start
 	};
 
 	// Snap Playback to Musical Grid (reference manual p. 1349, #1089): while the transport plays, the chord pads'

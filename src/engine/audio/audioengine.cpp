@@ -328,7 +328,7 @@ namespace gnubase::engine
 
 	Json AudioEngine::padEvents()
 	{
-		static constexpr std::array<const char*, 4> kinds = {"triggered", "released", "modifier", "note"};
+		static constexpr std::array<const char*, 5> kinds = {"triggered", "released", "modifier", "note", "player"};
 		Json events;
 		MidiPorts::PadEvent event;
 		while (m_midi.takePadEvent(event))
@@ -1114,6 +1114,10 @@ namespace gnubase::engine
 		MidiTap::thru(m_midiInput, program.sequencers, program.thru);
 		// Snap Playback to Musical Grid: the pads' note-ons wait for the next grid position while playing (#1089).
 		const int64_t snap = program.chordPadKeys.snapTicks;
+		// The pattern player mode plays the pattern at the tempo where the transport is (#1089).
+		const double ticksPerFrame =
+			program.tempo.bpmAt(program.tempo.toTicks(transport.position, program.sampleRate)) / 60.0 *
+			static_cast<double>(time::g_ticksPerQuarter) / program.sampleRate;
 		for (size_t player = 0; player < m_padOutput.size(); ++player)
 		{
 			m_padSnap.at(player).process(m_padOutput.at(player), snap > 0,
@@ -1124,6 +1128,8 @@ namespace gnubase::engine
 					const time::Ticks grid = ((ticks + snap - 1) / snap) * snap;
 					return program.tempo.toSamples(grid, program.sampleRate);
 				});
+			m_padPattern.at(player).process(
+				m_padOutput.at(player), program.chordPadKeys.pattern, block.frames, ticksPerFrame);
 			MidiTap::thru(m_padOutput.at(player), program.sequencers, program.padThru.at(player));
 		}
 		for (size_t i = 0; i < program.sequencers.size() && i < program.inputTransformers.size(); ++i)

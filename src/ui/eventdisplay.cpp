@@ -770,9 +770,9 @@ namespace gnubase::ui
 			return;
 		if (m_stepCursor->IsClassSet("hidden") == m_stepInput)
 			m_stepCursor->SetClass("hidden", !m_stepInput);
+		const double seconds = m_time.tempo.toSeconds(m_stepTicks);
 		if (m_stepInput)
-			m_stepCursor->SetProperty(
-				Rml::PropertyId::Left, dp((m_time.tempo.toSeconds(m_stepTicks) - m_view.start) / m_view.scale));
+			m_stepCursor->SetProperty(Rml::PropertyId::Left, dp((seconds - m_view.start) / m_view.scale));
 	}
 
 	void EventDisplay::follow()

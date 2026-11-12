@@ -86,6 +86,7 @@ namespace gnubase::engine
 				Released,
 				Modifier,
 				Note,
+				Player, // a key of Select/Mute Player
 			};
 			Kind kind = Kind::Note;
 			uint8_t key = 0;
@@ -149,6 +150,12 @@ namespace gnubase::engine
 		rt::SpscQueue<Received> m_monitor;
 		// Audio thread: the pitches each remote key's note-on played, until its note-off.
 		std::array<midi::PadVoices, ChordPadKeys::g_maxPlayers> m_padVoices; // per player
+		// The sections player mode: the pad key that is down or was last, whether it is down, and the section keys
+		// that play.
+		int m_sectionPad = -1;
+		bool m_sectionPadDown = false;
+		// The sections player mode's keys: a section or subsection key's notes for the pad that plays them.
+		bool playSection(const audio::MidiMessage& message, const ChordPadKeys& keys, PadBuffers& pads) noexcept;
 		rt::SpscQueue<PadEvent> m_padEvents{512};
 		std::atomic<bool> m_padListen{false};
 		// Per input slot, chordPadPortHash of its port's key, for the MIDI input that the remote keys come from.

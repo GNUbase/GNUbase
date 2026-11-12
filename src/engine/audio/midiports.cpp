@@ -218,6 +218,52 @@ namespace gnubase::engine
 		const auto tell = [this, key](PadEvent::Kind kind, uint8_t velocity)
 		{ m_padEvents.tryPush(PadEvent{kind, static_cast<uint8_t>(key), velocity}); };
 		const bool off = status == 0x80 || message.bytes[2] == 0;
+		// Select/Mute Player's keys play nothing; the command thread selects or mutes (p. 1389).
+		if (keys.active && std::find(keys.playerKeys.begin(), keys.playerKeys.end(), key) != keys.playerKeys.end())
+		{
+			if (!off)
+				tell(PadEvent::Kind::Player, message.bytes[2]);
+			return true;
+		}
+		// The sections player mode (pp. 1381-1385): a pad key chooses the chord, its section keys play its sections.
+		if (keys.active && keys.sections)
+		{
+			const bool section =
+				std::find(keys.sectionKeys.begin(), keys.sectionKeys.end(), key) != keys.sectionKeys.end() ||
+				std::find(keys.subsectionKeys.begin(), keys.subsectionKeys.end(), key) != keys.subsectionKeys.end();
+			if (section)
+			{
+				if (off)
+					offAll();
+				else
+					playSection(message, keys, pads);
+				return true;
+			}
+			if (keys.counts.at(keys.selected).at(key) > 0 || (off && static_cast<int>(key) == m_sectionPad))
+			{
+				if (!off)
+				{
+					m_sectionPad = static_cast<int>(key);
+					m_sectionPadDown = true;
+					tell(PadEvent::Kind::Triggered, message.bytes[2]);
+				}
+				else if (static_cast<int>(key) == m_sectionPad)
+				{
+					m_sectionPadDown = false;
+					tell(PadEvent::Kind::Released, 0);
+					// Without Latch Chord Pads, the sections end with the pad key.
+					if (!keys.latchPads)
+						for (const uint8_t each : keys.sectionKeys)
+							for (size_t player = 0; player < m_padVoices.size(); ++player)
+								m_padVoices.at(player).off(each, emitTo(player));
+					if (!keys.latchPads)
+						for (const uint8_t each : keys.subsectionKeys)
+							for (size_t player = 0; player < m_padVoices.size(); ++player)
+								m_padVoices.at(player).off(each, emitTo(player));
+				}
+				return true;
+			}
+		}
 		// A chord modifier's key plays nothing; the command thread changes the pads.
 		if (keys.active && keys.modifiers &&
 			std::find(keys.modifierKeys.begin(), keys.modifierKeys.end(), key) != keys.modifierKeys.end())
@@ -252,6 +298,63 @@ namespace gnubase::engine
 				m_padVoices.at(player).on(key, keys.pitches.at(player).at(key).data(), keys.counts.at(player).at(key),
 					message.bytes[2], keys.overlap, emitTo(player));
 		tell(PadEvent::Kind::Triggered, message.bytes[2]);
+		return true;
+	}
+
+	bool MidiPorts::playSection(const audio::MidiMessage& message, const ChordPadKeys& keys, PadBuffers& pads) noexcept
+	{
+		const size_t key = message.bytes[1] & 0x7F;
+		const uint8_t velocity = message.bytes[2];
+		// The section of a section key, or of a subsection key with its offset.
+		int section = -1;
+		int offset = 0;
+		for (size_t i = 0; i < keys.sectionKeys.size(); ++i)
+			if (keys.sectionKeys.at(i) == key)
+				section = static_cast<int>(i);
+		for (size_t i = 0; i < keys.subsectionKeys.size() && section < 0; ++i)
+			if (keys.subsectionKeys.at(i) == key)
+			{
+				section = keys.subsectionSections.at(i);
+				offset = keys.subsectionOffsets.at(i);
+			}
+		// sections needs the pad key down (or latched), chordPads and combination take the pad triggered last.
+		const bool padPlays = m_sectionPad >= 0 && (m_sectionPadDown || keys.latchPads || keys.sectionPlay != 0);
+		if (section < 0 || section >= 5 || keys.mutedSections.at(static_cast<size_t>(section)) || !padPlays)
+			return false;
+		const auto pad = static_cast<size_t>(m_sectionPad);
+		for (size_t player = 0; player < m_padVoices.size(); ++player)
+		{
+			if ((keys.players & (1U << player)) == 0)
+				continue;
+			const uint8_t count = keys.counts.at(player).at(pad);
+			const auto& chord = keys.pitches.at(player).at(pad);
+			// The chord's notes from the lowest up over five sections: one each, and the rest to the top section, or
+			// with spread as evenly as they go.
+			std::array<uint8_t, ChordPadKeys::g_maxPitches> notes{};
+			size_t n = 0;
+			for (size_t i = 0; i < count; ++i)
+			{
+				size_t of = 0;
+				if (count <= 5)
+					of = i;
+				else if (keys.spread)
+					of = i * 5 / count;
+				else
+					of = std::min<size_t>(i, 4);
+				if (static_cast<int>(of) == section)
+					notes.at(n++) = static_cast<uint8_t>(std::clamp(chord.at(i) + offset, 0, 127));
+			}
+			if (n > 0)
+			{
+				const auto emit = [&pads, &message, player](bool on, uint8_t pitch, uint8_t level, uint8_t channel)
+				{
+					audio::MidiMessage note = message;
+					note.bytes = {static_cast<uint8_t>((on ? 0x90 : 0x80) | channel), pitch, level};
+					pads.at(player).add(note);
+				};
+				m_padVoices.at(player).on(key, notes.data(), n, velocity, midi::PadOverlap::HoldFirst, emit);
+			}
+		}
 		return true;
 	}
 

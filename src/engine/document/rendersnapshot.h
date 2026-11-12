@@ -259,6 +259,19 @@ namespace gnubase::engine
 		uint64_t portHash = 0;
 		// Snap Playback to Musical Grid (p. 1349): the grid in ticks, the quantize grid's; 0 while it's off.
 		int64_t snapTicks = 0;
+		// The pattern player mode (pp. 1379-1380): the pattern the pads' chords play while it's on.
+		midi::PadPatternSteps pattern;
+		// The sections player mode (pp. 1381-1385, 1389): its remote keys (255 for none), as ChordPads has them.
+		bool sections = false;
+		std::array<uint8_t, 5> sectionKeys{};
+		std::array<uint8_t, 5> subsectionKeys{};
+		std::array<uint8_t, 5> subsectionSections{};
+		std::array<int8_t, 5> subsectionOffsets{};
+		uint8_t sectionPlay = 0; // 0 sections, 1 chordPads, 2 combination
+		bool latchPads = false;
+		bool spread = false;
+		std::array<bool, 5> mutedSections{};
+		std::array<uint8_t, 3> playerKeys{}; // previous, next, mute player
 		// Per player and key, as the player voices the pad's chord. The selected player and those with a track play
 		// (players, a bit per player).
 		std::array<std::array<uint8_t, 128>, g_maxPlayers> counts{};
