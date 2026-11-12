@@ -170,7 +170,7 @@ namespace gnubase::ui
 		double trackHeight(uint64_t track) const;
 		double ownHeight(uint64_t track) const;
 		void setTrackHeight(uint64_t track, double height);
-		void setTrackHeights(double height); // every track's
+		void setTrackHeights(const std::vector<uint64_t>& tracks, double height); // those tracks' (clamped)
 		// The heights tracks have of their own, by track, and replacing them all (the project's, trackLayout.get).
 		const std::map<uint64_t, double>& ownTrackHeights() const { return m_heights; }
 		void setOwnTrackHeights(std::map<uint64_t, double> heights);
