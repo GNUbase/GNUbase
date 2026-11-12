@@ -175,6 +175,10 @@ namespace gnubase::ui
 		// the playback position, the shell steps at least once a frame (g_framePeriod).
 		void eachStep(std::function<bool()> task);
 
+		// Runs task in every step after the eachStep tasks, right before drawing, e.g. to fit a layout to what they
+		// changed.
+		void beforeDraw(std::function<void()> task) { m_beforeDraw.push_back(std::move(task)); }
+
 		// Runs handler for every key pressed in a window that none of its elements used, e.g. for key commands
 		// (ui/keycommands.h). Elements that use a key stop its propagation.
 		void onUnusedKey(std::function<void(Window&, const KeyPress&)> handler) { m_unusedKey = std::move(handler); }
@@ -241,6 +245,7 @@ namespace gnubase::ui
 		std::mutex m_postedMutex; // guards m_posted, which other threads add to
 		std::vector<std::function<void()>> m_posted;
 		std::vector<std::function<bool()>> m_stepTasks;
+		std::vector<std::function<void()>> m_beforeDraw;
 		Clock::time_point m_nextFrame = Clock::time_point::max(); // when a step task that follows values runs again
 		std::function<void(Window&, const KeyPress&)> m_unusedKey;
 		std::function<void(Window&, const KeyPress&)> m_keyReleased;

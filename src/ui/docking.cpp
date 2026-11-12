@@ -225,14 +225,13 @@ namespace gnubase::ui
 						return;
 					}
 			});
-		// In every step, before the shell draws: the window's size, the UI scale, a label or the shown sections may
-		// have changed the room.
-		m_shell.eachStep(
+		// In every step, after the step tasks and right before the shell draws: the window's size, the UI scale, a
+		// label the engine binding changed or the shown sections may have changed the room.
+		m_shell.beforeDraw(
 			[this, alive = std::weak_ptr<bool>(m_alive)]
 			{
 				if (!alive.expired())
 					fitSections();
-				return false;
 			});
 		// Windows the user moved, resized, opened or closed: kept for when they open again, and for workspaces.
 		m_shell.every(std::chrono::milliseconds(500),

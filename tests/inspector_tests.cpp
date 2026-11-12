@@ -761,9 +761,11 @@ namespace
 		std::vector<double> between;
 	};
 
-	ToolbarGaps toolbarGaps(Window& window, const std::vector<std::string>& order)
+	// Steps the shell first, unless step is false, to measure what the last step drew.
+	ToolbarGaps toolbarGaps(Window& window, const std::vector<std::string>& order, bool step = true)
 	{
-		window.app.shell().step(std::chrono::milliseconds(0));
+		if (step)
+			window.app.shell().step(std::chrono::milliseconds(0));
 		ToolbarGaps result;
 		result.tightest = 1.0e9;
 		result.spacer = element(window.app, "#toolbar .spacer").at("box").at("width").get<double>();
@@ -803,7 +805,8 @@ namespace
 	void checkToolbarGaps(const ToolbarGaps& now, const ToolbarGaps& expected)
 	{
 		REQUIRE(!now.between.empty());
-		CHECK(now.between.front() > now.within + 1.0);
+		// 4 dp wider, which pixels round to less at small dp ratios: 3 against 2 pixels at 0.7.
+		CHECK(now.between.front() > now.within);
 		for (const double gap : now.between)
 			CHECK(std::abs(gap - now.between.front()) <= 1.0);
 		CHECK(std::abs(now.inset - expected.inset) <= 1.0);
@@ -914,11 +917,11 @@ namespace
 	// shown sections before the spacer come first, those the window has no room for (.no-room) after them, and the
 	// first of those would not fit where the spacer is; no button covers the next one, the gaps are those of the
 	// order `expected` measured, and the last section ends as far from the toolbar's right edge as the first button
-	// starts from its left one. Returns the sections shown.
+	// starts from its left one. Returns the sections shown. Steps the shell first, unless step is false.
 	std::vector<std::string> checkToolbarRoom(
-		Window& window, const std::vector<std::string>& order, const ToolbarGaps& expected)
+		Window& window, const std::vector<std::string>& order, const ToolbarGaps& expected, bool step = true)
 	{
-		const ToolbarGaps gaps = toolbarGaps(window, order);
+		const ToolbarGaps gaps = toolbarGaps(window, order, step);
 		if (gaps.between.empty())
 			CHECK(std::abs(gaps.inset - expected.inset) <= 1.0); // no gap between sections before the last place
 		else
@@ -958,24 +961,30 @@ namespace
 
 TEST_CASE("the toolbar shows the sections it has room for, the last before the spacer going first", "[ui]")
 {
-	// At a UI scale of 125 % a window of 1374 pixels is 1099.2 dp wide, between the widths of whole dp (#1178).
-	for (const int width : {1400, 1374, 1280, 1024, 900, 840, 800, 700})
+	// The shell fits windows into their monitor, 1024 pixels wide on CI: smaller dp ratios give the wider dp widths,
+	// 0.7 about 1463 dp, 0.8 1280 dp and 0.9316 about 1099.2 dp, between the widths of whole dp (#1178).
+	for (const int width : {1024, 900, 840, 800, 700})
 	{
 		INFO("window width " << width);
 		Window window(width);
+		REQUIRE(window.app.main().pixelSize().width == width); // a smaller display would test something else
 		ui::Docking& docking = window.app.appUi().docking();
 		const std::vector<std::string> defaults = docking.sections("project", "toolbar");
 		// Narrower in dp first, then wider: the sections the room hid show again.
-		for (const float ratio : {1.25F, 1.0F})
+		std::vector<float> ratios = {1.25F, 1.0F};
+		if (width == 1024)
+			ratios.insert(ratios.end(), {0.9316F, 0.8F, 0.7F});
+		for (const float ratio : ratios)
 		{
-			INFO("dp ratio " << ratio);
+			const double dp = width / static_cast<double>(ratio);
+			INFO("dp ratio " << ratio << ", " << dp << " dp");
 			window.app.setDpRatio(ratio);
 			docking.resetSections("project", "toolbar");
 			const ToolbarGaps reference = toolbarGaps(window, defaults);
 			const std::vector<std::string> shown = checkToolbarRoom(window, defaults, reference);
-			if (ratio == 1.0F && width >= 1400)
+			if (dp >= 1400.0)
 				CHECK(shown == defaults);
-			if (width <= 840 || ratio > 1.0F)
+			if (dp <= 840.0)
 				CHECK(shown.size() < defaults.size());
 
 			// Quantize first: its controls have no gap of their own before them.
@@ -998,6 +1007,7 @@ TEST_CASE("the toolbar makes room for its sections with the widest labels, and f
 	{
 		INFO("window width " << width);
 		Window window(width);
+		REQUIRE(window.app.main().pixelSize().width == width);
 		ui::Docking& docking = window.app.appUi().docking();
 		const std::vector<std::string> defaults = docking.sections("project", "toolbar");
 		const ToolbarGaps reference = toolbarGaps(window, defaults);
@@ -1007,7 +1017,8 @@ TEST_CASE("the toolbar makes room for its sections with the widest labels, and f
 		window.call("snap.set", {{"type", "eventsGridCursor"}, {"grid", "adaptToZoom"}});
 		REQUIRE(window.app.waitUntil(
 			[&] { return element(window.app, "#grid-type").value("text", "") == "Adapt to Zoom"; }));
-		const std::vector<std::string> wide = checkToolbarRoom(window, defaults, reference);
+		// Fitted in the step that shows the new labels, before the shell drew them.
+		const std::vector<std::string> wide = checkToolbarRoom(window, defaults, reference, false);
 		CHECK(wide.size() < before.size());
 
 		// A section the user hides in the setup pane makes room for the next one.

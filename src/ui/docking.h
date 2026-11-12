@@ -226,8 +226,8 @@ namespace gnubase::ui
 		// Gives a zone or resizable element its size from ui.layout, or its default.
 		static void applySize(Rml::Element& element, const engine::Json* saved);
 		void applySections(const std::string& window, const Attached& attached, Rml::Element& root);
-		// Gives the sections of the shown windows' fit="room" containers the room they have, in the shell's steps
-		// before it draws; fit does one container, laid out, and says whether it changed.
+		// Gives the sections of the shown windows' fit="room" containers the room they have, after the shell's step
+		// tasks, before it draws; fit does one container, laid out, and says whether it changed.
 		void fitSections();
 		static bool fit(Rml::Element& container);
 		// Runs change in the shell's next step, unless the docking system is gone by then.
