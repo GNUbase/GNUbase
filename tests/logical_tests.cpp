@@ -378,15 +378,15 @@ namespace
 TEST_CASE("the MIDI rule commands tell callers how deep brackets nest", "[integration]")
 {
 	// The generated Lua and MCP references show the refusal callers can get (#1203).
-	Fixture f;
-	std::set<std::string> described;
+	const Fixture f;
+	std::vector<std::string> described;
 	for (const CommandInfo& info : f.engine.commands())
 		if (info.description.find("nest at most 3 deep") != std::string::npos)
-			described.insert(info.name);
+			described.push_back(info.name);
 	for (const char* name : {"midi.applyRules", "midi.findByRules", "midi.setInputTransformer"})
 	{
 		INFO(name);
-		CHECK(described.count(name) == 1);
+		CHECK(std::find(described.begin(), described.end(), name) != described.end());
 	}
 }
 

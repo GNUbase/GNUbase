@@ -315,18 +315,16 @@ namespace gnubase::engine::midi
 			" rules: filters, each {open, target, condition, parameter1, parameter2, close, join} (target position, "
 			"length, subtype, mainValue, channel, type or secondaryValue; condition equal, unequal, bigger, "
 			"biggerOrEqual, less, lessOrEqual, insideRange, outsideRange or noteIsEqualTo; open and close brackets 0 "
-			"to 3, which match and nest at most 3 deep; join and or or to the next line, and binding more tightly than "
-			"or), function (delete, transform, "
-			"insert, insertExclusive or select) and actions, each {target, operation, parameter1, parameter2} "
-			"(operation add, subtract, multiplyBy, divideBy, roundBy, setRandom, setFixed, setRelativeRandom, "
-			"useSubtype, useMainValue, mirror, transposeToScale or addLength), applied in order. Values are MIDI "
-			"1.0's, "
-			"channels 1 to 16, positions and lengths in ticks of 480 to a quarter note from the project's start; the "
-			"type's parameter1 is note, polyPressure, controller, program, aftertouch or pitchBend, and "
-			"transposeToScale's parameter2 a scale type, its parameter1 the root (0 is C). Subtype and main value are "
-			"a note's pitch and velocity, poly pressure's pitch and pressure, a controller's number and value, a "
-			"program change's program, aftertouch's pressure (subtype) and pitch bend's low and high 7 bits; the "
-			"secondary value is a note's note-off velocity. preset names a preset instead of rules.";
+			"to 3, which must match and nest at most 3 deep; join and or or to the next line, and binding more tightly "
+			"than or), function (delete, transform, insert, insertExclusive or select) and actions, each {target, "
+			"operation, parameter1, parameter2} (operation add, subtract, multiplyBy, divideBy, roundBy, setRandom, "
+			"setFixed, setRelativeRandom, useSubtype, useMainValue, mirror, transposeToScale or addLength), applied in "
+			"order. Values are MIDI 1.0's, channels 1 to 16, positions and lengths in ticks of 480 to a quarter note "
+			"from the project's start; the type's parameter1 is note, polyPressure, controller, program, aftertouch or "
+			"pitchBend, and transposeToScale's parameter2 a scale type, its parameter1 the root (0 is C). Subtype and "
+			"main value are a note's pitch and velocity, poly pressure's pitch and pressure, a controller's number and "
+			"value, a program change's program, aftertouch's pressure (subtype) and pitch bend's low and high 7 bits; "
+			"the secondary value is a note's note-off velocity. preset names a preset instead of rules.";
 		const Json targetProperties = {
 			{"parts", ids}, {"notes", ids}, {"rules", rulesSchema}, {"preset", stringSchema}, {"seed", idSchema}};
 

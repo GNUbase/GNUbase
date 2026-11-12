@@ -233,7 +233,7 @@ TEST_CASE("project rules as JSON: factory presets round-trip, and wrong rules ar
 TEST_CASE("the project rule commands tell callers how deep brackets nest", "[integration]")
 {
 	// The generated Lua and MCP references show the refusal callers can get (#1203).
-	Fixture f;
+	const Fixture f;
 	std::vector<std::string> described;
 	for (const CommandInfo& info : f.engine.commands())
 		if (info.description.find("nest at most 3 deep") != std::string::npos)
