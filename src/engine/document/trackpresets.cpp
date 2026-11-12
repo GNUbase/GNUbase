@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <exception>
 #include <filesystem>
 #include <iterator>
@@ -654,7 +655,7 @@ namespace gnubase::engine
 		}
 
 		// What an import onto an existing track does with its events and parts (reference manual p. 203).
-		enum class Existing
+		enum class Existing : uint8_t
 		{
 			Replace, // Replace All Events and Parts
 			Add,     // Add Events and Parts
@@ -744,7 +745,7 @@ namespace gnubase::engine
 				}
 				source.versions.clear();
 			}
-			Track& source = project.trackById.at(copy);
+			const Track& source = project.trackById.at(copy);
 			Track& track = project.trackById.at(id);
 			if (options.settings && source.channel != 0 && track.channel != 0)
 			{
@@ -1061,8 +1062,8 @@ namespace gnubase::engine
 				"convert them into the project folder (Media Files, p. 205). Tempo, signature, arranger, transpose, "
 				"chord and VCA tracks can't be imported yet: listed, also inside a listed folder, they are refused, "
 				"otherwise they stay behind. Emits the events of what changed, as redoing it would. Returns the new "
-				"tracks, the tracks of the file that stayed behind (skipped), from top to bottom, and the media files "
-				"it added (media).",
+				"tracks, also those that replace tracks, the tracks of the file that stayed behind (skipped), from top "
+				"to bottom, and the media files it added (media).",
 				objectSchema(
 					{{"path", stringSchema}, {"tracks", idsSchema}, {"track", idSchema}, {"events", booleanSchema},
 						{"settings", booleanSchema}, {"automation", booleanSchema},
@@ -1113,7 +1114,11 @@ namespace gnubase::engine
 				const auto [parent, index] = below(project, parameters);
 				const Project before = project;
 				Copied copied = copyTracks(file, project, tracks, options, parent, index);
-				const std::string existing = parameters.value("existing", "version");
+				Existing existing = Existing::Version;
+				if (parameters.value("existing", "version") == "replace")
+					existing = Existing::Replace;
+				else if (parameters.value("existing", "version") == "add")
+					existing = Existing::Add;
 				std::set<ObjectId> taken;
 				for (const Json& entry : parameters.value("destinations", Json::array()))
 				{
@@ -1128,13 +1133,14 @@ namespace gnubase::engine
 						"track " + std::to_string(id) + " is not a " + trackTypeName(type) +
 							" track: tracks are imported onto tracks of their type");
 					require(taken.insert(id).second, "track " + std::to_string(id) + " is a destination twice");
+					require(project.trackById.count(id) != 0,
+						"track " + std::to_string(id) + " is inside a track that another one replaces");
 					const ObjectId copy = copied.copies.at(source);
-					copied.tracks.erase(std::find(copied.tracks.begin(), copied.tracks.end(), copy));
 					if (type == TrackType::Audio || type == TrackType::Instrument || type == TrackType::Midi)
-						mergeTrack(model, project, copy, id, options,
-							existing == "replace" ? Existing::Replace
-												  : (existing == "add" ? Existing::Add : Existing::Version),
-							inner);
+					{
+						copied.tracks.erase(std::find(copied.tracks.begin(), copied.tracks.end(), copy));
+						mergeTrack(model, project, copy, id, options, existing, inner);
+					}
 					else
 						replaceTrack(model, project, copy, id, inner);
 				}

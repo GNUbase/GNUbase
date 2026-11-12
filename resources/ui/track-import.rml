@@ -12,7 +12,7 @@
 	<style>
 		dialog
 		{
-			width: 780dp;
+			width: 860dp;
 		}
 
 		.row
@@ -49,6 +49,8 @@
 		.import-fold
 		{
 			width: 20dp;
+			min-width: 20dp;
+			padding: 0;
 		}
 
 		.import-name
@@ -107,7 +109,7 @@
 
 		.field select
 		{
-			width: 200dp;
+			width: 230dp;
 		}
 
 		.field input.text
@@ -252,7 +254,8 @@
 
 		local function settings(project, file)
 			return '<div class="settings"><span>' .. escape(file) .. "</span></div>" ..
-				'<div class="settings"><span>Sample Rate</span><span>' .. project.sampleRate .. " Hz</span></div>" ..
+				'<div class="settings"><span>Sample Rate</span><span>' .. (math.tointeger(project.sampleRate) or
+				project.sampleRate) .. " Hz</span></div>" ..
 				'<div class="settings"><span>Frame Rate</span><span>' .. escape(project.frameRate) ..
 				" fps</span></div>" ..
 				'<div class="settings"><span>Start</span><span>' ..
@@ -371,10 +374,11 @@
 				timecode(dialog.project.startTime + dialog.locators[2] / rate, dialog.project.frameRate))
 		end
 
-		-- A range field as samples from the project start, or nil.
+		-- A range field, a timecode of the file, as samples from the file's start (track.import's range), or nil. The
+		-- locators' timecodes in the project are where Absolute Position puts what has that timecode in the file.
 		local function rangeValue(id)
 			local seconds = gnubase.ui.parseTimecode{text = value(id), frameRate = dialog.project.frameRate}.seconds
-			return seconds and math.floor((seconds - dialog.project.startTime) * dialog.project.sampleRate + 0.5)
+			return seconds and math.floor((seconds - dialog.file.startTime) * dialog.project.sampleRate + 0.5)
 		end
 
 		function dialog.confirm()

@@ -536,7 +536,7 @@ TEST_CASE("track.import imports tracks onto the project's tracks of their type",
 						{{"source", source("Band")}, {"track", folder.track}}}}});
 	};
 	const size_t steps = run(client, "history.get").at("steps").size();
-	CHECK(import("version").at("tracks").empty()); // no new tracks
+	CHECK(import("version").at("tracks").size() == 2); // the effect track and the folder that replace the project's
 	CHECK(run(client, "history.get").at("steps").size() == steps + 1);
 	Json project = run(client, "project.get");
 	// The effect track and the folder were replaced, in their places; the dry track sends to the effect track

@@ -61,14 +61,14 @@ they are.
   automation above the project's fader top come down to it, from presets too.
 - **Onto existing tracks** (Destination Track, pp. 200, 203). `destinations` `[{source, track}]` imports listed tracks
   onto the project's tracks of their type instead of as new ones. A group, effect, folder, marker or ruler track
-  replaces the track, a folder with the tracks inside it: the copy takes its place, and what played or sent into the
-  track's channel goes into the copy's. An audio, instrument or MIDI track gives the track what it brings, and the
-  track keeps its id, name and buttons: with `events` its events and parts as `existing` says (On Import on Existing
-  Tracks: `replace` removes the track's first, `add` adds them, `version`, the default, puts them into a new version
-  of the track, as the manual's note on Events and Parts says), and its other versions after the track's; with
-  `settings` its channel settings, inserts, routing and drum and articulation maps, the track's plugins going with
-  their automation; with `automation` its automation in place of the track's. What played or sent into the copy's
-  channel, such as another imported track, goes into the track's.
+  replaces the track, a folder with the tracks inside it: the copy takes its place, among the new tracks the result
+  lists, and what played or sent into the track's channel goes into the copy's. An audio, instrument or MIDI track gives
+  the track what it brings, and the track keeps its id, name and buttons: with `events` its events and parts as
+  `existing` says (On Import on Existing Tracks: `replace` removes the track's first, `add` adds them, `version`, the
+  default, puts them into a new version of the track, as the manual's note on Events and Parts says), and its other
+  versions after the track's; with `settings` its channel settings, inserts, routing and drum and articulation maps, the
+  track's plugins going with their automation; with `automation` its automation in place of the track's. What played or
+  sent into the copy's channel, such as another imported track, goes into the track's.
 - **Where the events go** (Import Position, p. 204). `position` `absolute` (the default) puts them at the timecode
   they had in the file, so they move by the difference of the project start times (project setup's start); `relative`
   keeps them as far from the project start as from the file's; `cursor` puts them as far from the project cursor. That
@@ -104,9 +104,10 @@ so the tracks an import leaves out are known before it. Above the list are Selec
 Collapse All (the folders fold), Select Matching (each imported track's destination becomes the project's track of the
 same name and type), Reset (New Track for each) and the search field with Clear Search, which shows only the tracks
 whose names contain the text. Below it are the options of `track.import`: Events and Parts, On Import on Existing
-Tracks (disabled without events), Import Position, Range with its start and end as timecodes and Use Locators (the
-range starts at the left and right locators), Channel and Inspector Settings, Automation and Import Position for New
-Tracks (Bottom of Track List without a selected track). Project Settings shows the file's and the project's file
+Tracks (disabled without events), Import Position, Range with its start and end as timecodes of the file and Use
+Locators (the timecodes of the left and right locators, which is where Absolute Position puts what has them in the
+file), Channel and Inspector Settings, Automation and Import Position for New Tracks (Bottom of Track List without a
+selected track). Project Settings shows the file's and the project's file
 name, sample rate, frame rate and start. Copy to Active Project Folder (disabled while the project has no file) sends
 `media.prepareArchive` for the media files the import added, and Convert Sample Rate (only with it, for a file at
 another sample rate) `media.conform` for those at another sample rate than the project's, through `gnubase.ui.command`
