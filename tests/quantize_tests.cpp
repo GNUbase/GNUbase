@@ -1066,6 +1066,31 @@ TEST_CASE("the preset shown is saved with the project", "[integration]")
 	CHECK(shownPreset(elsewhere.client) == "1/16");
 }
 
+TEST_CASE("a preset with fractional settings read from the files is still the one shown", "[integration]")
+{
+	const test::TempDir settings;
+	const test::TempDir dir;
+	const std::string file = (dir.path() / "fractional.dawproject").u8string();
+	// Doubles no binary fraction holds exactly, unlike the whole numbers and halves the other tests use: the preset
+	// shows again only if the settings folder and the project keep them as they are.
+	const Json fractional = {{"grid", "1/8"}, {"swing", 0.17}, {"strength", 0.33}};
+	{
+		Fixture f(settings.path());
+		REQUIRE(run(f.client, "quantize.set", {{"settings", fractional}}).at("preset") == nullptr);
+		run(f.client, "quantize.savePreset", {{"name", "Loose swing"}});
+		CHECK(shownPreset(f.client) == "Loose swing");
+		run(f.client, "project.save", {{"path", file}});
+	}
+
+	// A new engine reads the preset from the settings folder and the project's settings from its file.
+	Fixture next(settings.path());
+	run(next.client, "project.load", {{"path", file}});
+	const Json loaded = run(next.client, "quantize.get");
+	CHECK(loaded.at("settings").at("swing") == 0.17);
+	CHECK(loaded.at("settings").at("strength") == 0.33);
+	CHECK(loaded.at("preset") == "Loose swing");
+}
+
 namespace
 {
 	bool modified(Client& client)
