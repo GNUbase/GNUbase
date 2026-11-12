@@ -160,8 +160,10 @@ namespace gnubase::test
 		CHECK(held.job() == job);
 		during(job);
 		CHECK(run(client, "job.get", {{"job", job}}).at("job").at("state") == "running");
-		INFO("the hold lapsed before " << command << "'s job was released");
-		CHECK(held.release());
+		{
+			INFO("the hold lapsed before " << command << "'s job was released");
+			CHECK(held.release());
+		}
 		return waitForJob(client, job, progress);
 	}
 }

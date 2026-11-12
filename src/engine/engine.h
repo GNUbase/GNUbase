@@ -255,7 +255,8 @@ namespace gnubase::engine
 		// Events and commands go on meanwhile, unlike in a Listener that blocks; job.cancel, project.load and
 		// project.new don't wait for a job that the hook holds, but the engine's shutdown does, as it joins every job's
 		// thread. An exception from the hook comes out of the job's JobContext::progress, as if its work threw it
-		// there: uncaught, it ends the job as failed, or as cancelled for JobCancelled. Empty for none. Any thread.
+		// there: uncaught, a std::exception ends the job as failed, JobCancelled as cancelled. Empty for none. Any
+		// thread.
 		void setJobProgressHook(std::function<void(uint64_t job, const std::string& kind)> hook);
 
 	private:

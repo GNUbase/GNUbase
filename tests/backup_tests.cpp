@@ -898,10 +898,11 @@ TEST_CASE("a job held at its first progress keeps no command or event waiting", 
 		CHECK_THROWS_AS(test::HeldJob(song.engine, "media.locate"), std::logic_error);
 	}
 
-	// A HeldJob that goes while it holds its job, as when a REQUIRE fails meanwhile, lets the job go on.
+	// A HeldJob that goes while it holds its job, as when a REQUIRE fails meanwhile, lets the job go on: held for
+	// longer than waitForJob waits, the job ends only if it does.
 	uint64_t dropped = 0;
 	{
-		test::HeldJob held(song.engine, "project.backup");
+		test::HeldJob held(song.engine, "project.backup", std::chrono::minutes(5));
 		dropped = run(song.client, "project.backup", {{"folder", utf8(dir.path() / "dropped")}})
 					  .at("job")
 					  .at("id")
