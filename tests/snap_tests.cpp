@@ -738,6 +738,55 @@ TEST_CASE("event.shuffle lays out audio events on musical tracks by their length
 	CHECK(near(span(b).first, g_second / 2));
 	CHECK(near(span(c).first, 3 * g_second / 2));
 	CHECK(near(span(c).second, 5 * g_second / 2));
+
+	// A position between the two middles decides at the length where B goes (#873): closed up at the start,
+	// B's middle is 0.75 quarter at that length, but 0.5 quarter at the length at its old position, so 0.6
+	// quarter (0.3 s) keeps A in front of B.
+	f.call("event.shuffle", {{"events", {a}}, {"position", 3 * g_second / 10}});
+	CHECK(near(span(a).first, 0));
+	CHECK(near(span(b).first, g_second / 2));
+	CHECK(near(span(c).first, 3 * g_second / 2));
+	CHECK(near(span(c).second, 5 * g_second / 2));
+}
+
+TEST_CASE("event.shuffle moves a row's end when an audio part and audio events cross a tempo change", "[unit]")
+{
+	// Audio parts keep their length in ticks and audio events in samples, so a row with both ends somewhere
+	// else after a shuffle across a tempo change, and may overlap the locked event that ends the row; that is
+	// the row's new layout, not an error (#873). 120 BPM for a quarter (24000 samples), then 60 BPM.
+	Fixture f;
+	f.call("project.set", {{"tempoTrackActive", true}});
+	f.call("tempo.add", {{"position", g_quarter}, {"bpm", 60.0}, {"ramp", false}});
+	const int64_t audio = f.track("audio");
+	// Part P over the first quarter, audio event E (half a second) right after it, locked L from sample
+	// 48000 on (positions in ticks).
+	const int64_t p = f.call("audioPart.add", {{"track", audio}, {"position", 0}, {"length", g_quarter}})
+						  .at("part")
+						  .at("id")
+						  .get<int64_t>();
+	const int64_t e = f.audioEvent(audio, "e.wav", g_second, g_quarter, 0, g_second / 2);
+	const int64_t l = f.audioEvent(audio, "l.wav", g_second, 3 * g_quarter / 2, 0, g_second / 2);
+	f.call("event.set", {{"events", {l}}, {"lock", true}});
+	const auto span = [&f](int64_t id)
+	{
+		const Json info = f.call("event.get", {{"events", {id}}}).at("events").at(0);
+		return std::pair<int64_t, int64_t>{info.at("start").get<int64_t>(), info.at("end").get<int64_t>()};
+	};
+	const auto near = [](int64_t actual, int64_t expected) { return std::abs(actual - expected) <= 1; };
+	// The row is P and E; the locked L ends it, and the row ends at sample 48000.
+	CHECK(near(span(p).second, g_second / 2));
+	CHECK(near(span(e).second, g_second));
+
+	// E to the front: P follows at its length in ticks where it goes, from sample 24000 to 72000, so the
+	// row's end moves to 72000, half a second into L, which doesn't move.
+	f.call("event.shuffle", {{"events", {e}}, {"position", 0}});
+	CHECK(near(span(e).first, 0));
+	CHECK(near(span(e).second, g_second / 2));
+	CHECK(f.object("audioParts", p).at("position").get<int64_t>() == g_quarter);
+	CHECK(near(span(p).first, g_second / 2));
+	CHECK(near(span(p).second, 3 * g_second / 2));
+	CHECK(near(span(l).first, g_second));
+	CHECK(near(span(l).second, 3 * g_second / 2));
 }
 
 TEST_CASE("splitting and resizing audio events snap to zero crossings", "[unit]")
