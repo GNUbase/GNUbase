@@ -129,9 +129,12 @@ window, with the state class `.shown`. It goes when the mouse moves to an elemen
 and on a click, a key or the wheel. The tooltip goes with its element: no tooltip comes when the element is removed
 while the mouse rests on it, and a shown one goes when its element is removed, as when a list under the mouse is
 rendered anew, or kept elsewhere instead of destroyed. A new element with a title in the removed one's place, under
-the resting mouse, gets its tooltip after the usual rest, without another mouse move. It goes too when the mouse moves
-from the element onto a part of an ancestor that no other element covers (the gap between a toolbar's buttons): RmlUi
-sends no Mouseover there, so the tooltip treats an element that has lost its `:hover` like one that is gone. Every
+the resting mouse, gets its tooltip after the usual rest, without another mouse move. When the mouse moves from the
+element onto a part of an ancestor that no other element covers (the gap between a toolbar's buttons), the tooltip goes
+and, if that ancestor has a title, its tooltip comes after the rest, though RmlUi sends no Mouseover there; the same
+happens when the element under the resting mouse is removed or kept elsewhere. The tooltip looks at the element under
+the mouse itself, and treats an element that has lost its `:hover` like one that is gone. An element whose Mouseover a
+listener stops gets no `:hover` from RmlUi, so no tooltip either; nothing in the app stops it. Every
 document gets its tooltip element when it loads; it lets the mouse through.
 
 ## Notifications

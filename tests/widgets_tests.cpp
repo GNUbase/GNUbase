@@ -26,6 +26,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -1074,7 +1075,7 @@ TEST_CASE("tooltips show an element's title once the mouse rests on it", "[ui]")
 	CHECK_FALSE(visible(app, "tooltip"));
 }
 
-TEST_CASE("a tooltip doesn't outlive the element it belongs to", "[ui]")
+TEST_CASE("a tooltip doesn't outlive the element it belongs to", "[ui][slow]")
 {
 	test::UiApp app;
 	Rml::ElementDocument& document = app.show("popups.rml");
@@ -1139,42 +1140,38 @@ TEST_CASE("an element that replaces the one under a resting mouse gets its toolt
 	// Replaced while its tooltip shows: the new one gets its own.
 	replace("Audio 03");
 	CHECK(showsAfterSteps("Audio 03"));
+
+	// The element under the mouse is taken out and kept, as docking's parked panels are, and another with a title
+	// takes its place: the same.
+	Rml::Element* old = document.GetElementById("track");
+	Rml::ElementPtr created = document.CreateElement("div");
+	created->SetId("track");
+	created->SetClassNames("panel");
+	created->SetAttribute("title", "Audio 04");
+	document.AppendChild(std::move(created));
+	Rml::ElementPtr parked = old->GetParentNode()->RemoveChild(old);
+	document.GetContext()->RequestNextUpdate(0.0);
+	CHECK(showsAfterSteps("Audio 04"));
+	parked.reset();
 }
 
 TEST_CASE("a tooltip asks for one more update when its element is gone, not for update after update", "[ui]")
 {
 	test::UiApp app;
 	Rml::ElementDocument& document = app.show("popups.rml");
-	Rml::ElementList tooltips;
-	document.GetElementsByTagName(tooltips, "tooltip");
-	REQUIRE(tooltips.size() == 1);
-	const Rml::Element& tooltip = *tooltips.front();
-	// Steps the shell until the window has drawn no frame for longer than the tooltip's delay, which also lets the
-	// update that the mouse's rest asked for at the delay go by.
-	const auto settle = [&app]
+	Rml::Context& context = *document.GetContext();
+	// The context's updates after an action: the first finds the element gone, the second is the one that asked for
+	// and looks for the element under the mouse, and none asks for a third. Checked on the tooltip alone, without
+	// waiting for frames: the app draws for other reasons too.
+	const auto updateTwice = [&context]
 	{
-		const auto limit = std::chrono::steady_clock::now() + std::chrono::seconds(20);
-		uint64_t frames = app.main().frames();
-		auto changed = std::chrono::steady_clock::now();
-		while (std::chrono::steady_clock::now() - changed < std::chrono::milliseconds(1000) &&
-			std::chrono::steady_clock::now() < limit)
-		{
-			app.shell().step(std::chrono::milliseconds(10));
-			if (app.main().frames() != frames)
-			{
-				frames = app.main().frames();
-				changed = std::chrono::steady_clock::now();
-			}
-		}
+		context.Update();
+		context.Update();
 	};
-	// Whether the window draws a frame in the next 700 ms.
-	const auto drawsAgain = [&app]
+	const auto asksNoMore = [&context, &updateTwice]
 	{
-		const uint64_t frames = app.main().frames();
-		const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(700);
-		while (std::chrono::steady_clock::now() < end)
-			app.shell().step(std::chrono::milliseconds(10));
-		return app.main().frames() != frames;
+		updateTwice();
+		return context.GetNextUpdateDelay() == std::numeric_limits<double>::infinity();
 	};
 	const auto remove = [&document](const char* id)
 	{
@@ -1183,23 +1180,35 @@ TEST_CASE("a tooltip asks for one more update when its element is gone, not for 
 		document.GetContext()->RequestNextUpdate(0.0); // as code that changes elements does
 	};
 
-	// Removed with nothing in its place, once before the tooltip is due and once while it shows: after the update that
-	// finds the element gone and the one it asks for, the window draws no more frames.
+	// Removed with nothing in its place, once before the tooltip is due and once while it shows.
 	app.ui().move(std::nullopt, at("#track"));
 	remove("track");
-	settle();
-	CHECK_FALSE(tooltip.IsClassSet("shown"));
-	CHECK_FALSE(drawsAgain());
+	CHECK(asksNoMore());
+	CHECK_FALSE(visible(app, "tooltip"));
 
 	app.ui().move(std::nullopt, at("#corner"));
-	REQUIRE(app.waitUntil([&tooltip] { return tooltip.IsClassSet("shown"); }));
+	REQUIRE(app.waitUntil([&app] { return visible(app, "tooltip"); }));
 	remove("corner");
-	settle();
-	CHECK_FALSE(tooltip.IsClassSet("shown"));
-	CHECK_FALSE(drawsAgain());
+	CHECK(asksNoMore());
+	CHECK_FALSE(visible(app, "tooltip"));
+
+	// The mouse moved onto a bare part of an ancestor, where the element's tooltip went with a Mouseout and none comes.
+	app.ui().move(std::nullopt, at("#titled"));
+	app.ui().move(std::nullopt, point(2, 2));
+	CHECK(asksNoMore());
+
+	// An element taken out and kept: its :hover goes with no Mouseout that reaches the document.
+	app.ui().move(std::nullopt, at("#titled"));
+	Rml::Element* titled = document.GetElementById("titled");
+	Rml::ElementPtr parked = titled->GetParentNode()->RemoveChild(titled);
+	context.RequestNextUpdate(0.0);
+	// The group under the mouse now has a title: its tooltip waits for its rest, without update after update.
+	updateTwice();
+	CHECK(context.GetNextUpdateDelay() > 0.1);
+	parked.reset();
 }
 
-TEST_CASE("an element without a title that replaces the one under a resting mouse gets no tooltip", "[ui]")
+TEST_CASE("an element without a title that replaces the one under a resting mouse gets no tooltip", "[ui][slow]")
 {
 	test::UiApp app;
 	Rml::ElementDocument& document = app.show("popups.rml");
@@ -1247,7 +1256,7 @@ TEST_CASE("an element without a title that replaces the one under a resting mous
 	CHECK_FALSE(tooltip.IsClassSet("shown"));
 }
 
-TEST_CASE("the tooltip goes when the mouse moves to a bare part of an ancestor of its element", "[ui]")
+TEST_CASE("the tooltip goes when the mouse moves to a bare part of an ancestor of its element", "[ui][slow]")
 {
 	test::UiApp app;
 	Rml::ElementDocument& document = app.show("popups.rml");
@@ -1284,6 +1293,38 @@ TEST_CASE("the tooltip goes when the mouse moves to a bare part of an ancestor o
 	CHECK(app.waitUntil([&app] { return !visible(app, "tooltip"); }));
 	CHECK_FALSE(app.waitUntil([&app] { return visible(app, "tooltip"); }, std::chrono::seconds(1)));
 	parked.reset();
+}
+
+TEST_CASE("a titled ancestor's tooltip comes after its titled member's has gone", "[ui][slow]")
+{
+	test::UiApp app;
+	Rml::ElementDocument& document = app.show("popups.rml");
+	const Json group = element(app, "#group").at("box");
+	// A point of the group's own area, covered by none of its members.
+	const ui::Target bare = point(group.at("x").get<int>() + group.at("width").get<int>() - 5,
+		group.at("y").get<int>() + group.at("height").get<int>() - 5);
+	const auto shows = [&app](const char* text)
+	{
+		return app.waitUntil(
+			[&app, text] { return visible(app, "tooltip") && element(app, "tooltip").at("text") == text; });
+	};
+
+	// From the member onto the group's own area, which was in the hover chain already, so RmlUi sends no Mouseover:
+	// the member's tooltip goes at once and the group's comes after the rest.
+	app.ui().move(std::nullopt, at("#titled"));
+	REQUIRE(shows("Titled"));
+	app.ui().move(std::nullopt, bare);
+	CHECK_FALSE(visible(app, "tooltip"));
+	CHECK(shows("Group"));
+
+	// The same when the member under the resting mouse is removed.
+	app.ui().move(std::nullopt, at("#titled"));
+	REQUIRE(shows("Titled"));
+	Rml::Element* titled = document.GetElementById("titled");
+	titled->GetParentNode()->RemoveChild(titled);
+	document.GetContext()->RequestNextUpdate(0.0);
+	CHECK(app.waitUntil([&app] { return !visible(app, "tooltip"); }));
+	CHECK(shows("Group"));
 }
 
 namespace

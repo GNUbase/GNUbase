@@ -358,6 +358,7 @@ namespace gnubase::ui
 			// The mouse is over the element now, at a point in the window's pixels.
 			void hover(Rml::Element* element, Rml::Vector2f at)
 			{
+				m_mouse = at;
 				Rml::Element* titled = closestWith(element, "title");
 				if (titled == m_titled.get())
 					return;
@@ -375,6 +376,7 @@ namespace gnubase::ui
 			{
 				m_titled.reset();
 				m_tracking = false;
+				m_looking = false;
 				SetClass("shown", false);
 			}
 
@@ -384,29 +386,42 @@ namespace gnubase::ui
 				Rml::Element::OnUpdate();
 				const Rml::Element* titled = m_titled.get();
 				// An element that isn't hovered any more is gone from under the mouse like a destroyed one: the mouse
-				// moved onto a part of its ancestor that no other element covers, where RmlUi sends the Mouseout to
-				// the element and no Mouseover, or the element was taken out and kept, which clears the state with its
-				// Mouseout too. (RmlUi sets :hover in the default action of the Mouseover, which a listener that stops
-				// the event keeps from running: nothing stops it now.)
+				// moved onto a part of its ancestor that no other element covers and the Mouseout missed it (an
+				// element taken out and kept has its :hover cleared without a Mouseout reaching the document). RmlUi
+				// sets :hover in the default action of the Mouseover, which a listener that stops the event keeps
+				// from running: such an element gets no tooltip, and nothing stops the event in the app.
 				if (titled != nullptr && !titled->IsPseudoClassSet("hover"))
 				{
 					m_titled.reset();
-					m_tracking = true;
 					titled = nullptr;
 				}
 				if (titled == nullptr)
 				{
-					// The element may have gone from under the mouse, when a list is rendered anew. The one that
-					// replaces it is under the mouse only once it's laid out, which this update did: one more
-					// update finds it in the hover chain and sends it the Mouseover that starts its tooltip.
-					if (m_tracking)
+					if (m_looking)
 					{
+						// The update after the one that found the element gone: the hover chain was updated at its
+						// start, with the layout of the update before. The element under the mouse now is the one
+						// that replaced the removed one, or a part of an ancestor: either gets its tooltip, which
+						// no Mouseover starts when the ancestor was in the hover chain already.
+						m_looking = false;
+						lookUp();
+						titled = m_titled.get();
+					}
+					else if (m_tracking)
+					{
+						// The element may have gone from under the mouse, when a list is rendered anew. The one that
+						// replaces it is under the mouse only once it's laid out, which this update did: one more
+						// update looks.
 						m_tracking = false;
+						m_looking = true;
 						GetContext()->RequestNextUpdate(0.0);
 					}
-					if (IsClassSet("shown"))
-						SetClass("shown", false);
-					return;
+					if (titled == nullptr)
+					{
+						if (IsClassSet("shown"))
+							SetClass("shown", false);
+						return;
+					}
 				}
 				if (IsClassSet("shown"))
 					return;
@@ -430,10 +445,20 @@ namespace gnubase::ui
 			}
 
 		private:
+			// What the mouse is over now, if it's in this tooltip's document, for its tooltip.
+			void lookUp()
+			{
+				Rml::Element* hovered = GetContext()->GetHoverElement();
+				if (hovered != nullptr && hovered->GetOwnerDocument() == GetOwnerDocument())
+					hover(hovered, m_mouse);
+			}
+
 			Rml::ObserverPtr<Rml::Element> m_titled; // whose title is shown, or waits to be
 			// hover() set m_titled and hide() hasn't cleared it: if m_titled is empty, its element is gone or not
 			// hovered
 			bool m_tracking = false;
+			bool m_looking = false; // its element is gone: the next update looks for the one under the mouse
+			Rml::Vector2f m_mouse;  // where the mouse was when it entered the element it's over, in the window's pixels
 			Rml::Vector2f m_at;
 			double m_due = 0.0;
 		};
@@ -641,9 +666,17 @@ namespace gnubase::ui
 							menu->hover(*item);
 					break;
 				case Rml::EventId::Mouseout:
-					// The mouse left the document; Mouseover reports where it goes within it.
-					if (tooltip != nullptr && target == document)
-						tooltip->hide();
+					// The mouse left the document, or an element within it: the tooltip goes, and the one of the
+					// element it is over now comes. A part of an ancestor in the hover chain already gets no
+					// Mouseover, so the context's hover element is the one to look at, if it's in this document.
+					if (tooltip != nullptr)
+					{
+						Rml::Element* hovered = document->GetContext()->GetHoverElement();
+						if (target == document || hovered == nullptr || hovered->GetOwnerDocument() != document)
+							tooltip->hide();
+						else
+							tooltip->hover(hovered, mouse);
+					}
 					break;
 				case Rml::EventId::Mousescroll:
 					if (tooltip != nullptr)
