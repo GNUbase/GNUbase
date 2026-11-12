@@ -2,11 +2,15 @@
 // The in-place editor's engine side (#131, docs/features/in-place-editor.md): editor.inPlace opens and closes a MIDI
 // track's in-place editor, an editor view named inPlace:<track> that shows every MIDI part of its track.
 // tests/inplaceeditor_ui_tests.cpp drives it in the app.
+#include "engine/dawproject/dawproject.h"
+#include "engine/document/document.h"
 #include "engine/engine.h"
+#include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <mutex>
 #include <string>
 #include <utility>
@@ -161,15 +165,22 @@ TEST_CASE("the in-place editor refuses tracks without notes and changing its par
 		if (info.name == "editor.get")
 		{
 			CHECK(info.parameters.at("properties").at("editor").at("pattern") == "^(lower|window|inPlace:[0-9]+)$");
-			// inPlace: and a track id of at most 19 digits, as many as requireEditor takes (#1059).
-			CHECK(info.parameters.at("properties").at("editor").at("maxLength") == 27);
+			// inPlace: and a track id of at most 20 digits, as many as a 64-bit id has (#1059, #1159).
+			CHECK(info.parameters.at("properties").at("editor").at("maxLength") == 28);
 		}
 	CHECK_THAT(f.fails("editor.get", {{"editor", "lowerZone"}}), ContainsSubstring("lower|window|inPlace:"));
 	CHECK_THAT(f.fails("editor.get", {{"editor", "inPlace:" + std::string(19, '9')}}),
 		ContainsSubstring("no track " + std::string(19, '9')));
-	// A longer name gets the schema's length error, before the pattern ever sees it.
+	// The largest 64-bit id has 20 digits; a larger number is no id (#1159).
+	CHECK_THAT(f.fails("editor.get", {{"editor", "inPlace:18446744073709551615"}}),
+		ContainsSubstring("no track 18446744073709551615"));
+	CHECK_THAT(f.fails("editor.get", {{"editor", "inPlace:18446744073709551616"}}),
+		ContainsSubstring("editor must be lower, window or inPlace:<track>"));
 	CHECK_THAT(f.fails("editor.get", {{"editor", "inPlace:" + std::string(20, '9')}}),
-		ContainsSubstring("parameters.editor must be at most 27 characters"));
+		ContainsSubstring("editor must be lower, window or inPlace:<track>"));
+	// A longer name gets the schema's length error, before the pattern ever sees it.
+	CHECK_THAT(f.fails("editor.get", {{"editor", "inPlace:" + std::string(21, '9')}}),
+		ContainsSubstring("parameters.editor must be at most 28 characters"));
 	CHECK_THAT(f.fails("editor.open", {{"editor", Fixture::name(midi)}, {"parts", {part}}}),
 		ContainsSubstring("editor.inPlace"));
 
@@ -190,6 +201,45 @@ TEST_CASE("the in-place editor refuses tracks without notes and changing its par
 	const uint64_t empty = f.track("instrument");
 	CHECK(f.call("editor.inPlace", {{"tracks", {empty}}, {"open", true}}).at("tracks") == Json::array({midi, empty}));
 	CHECK(f.view(empty).at("parts") == Json::array());
+}
+
+TEST_CASE("a track whose id has 20 digits has an in-place editor", "[integration]")
+{
+	// Track ids come from the project file, so they may take all 64 bits: 10^19 and more have 20 digits, which
+	// editor.inPlace announces and editor.get, editor.set and editor.close take (#1159).
+	const test::TempDir dir;
+	const std::string file = (dir.path() / "large-ids.dawproject").u8string();
+	{
+		Fixture f;
+		f.call("project.save", {{"path", file}});
+	}
+	engine::Project project = engine::loadDawProject(file, (dir.path() / "media").u8string());
+	project.nextId = 10'000'000'000'000'000'000ULL;
+	engine::saveDawProject(project, file, engine::DawProjectSaveOptions());
+
+	Fixture f;
+	f.call("project.load", {{"path", file}});
+	const uint64_t midi = f.track("midi");
+	REQUIRE(midi >= 10'000'000'000'000'000'000ULL);
+	const uint64_t part = f.part(midi, 0);
+	const std::string name = Fixture::name(midi);
+	REQUIRE(name.size() == 28);
+
+	std::mutex mutex;
+	std::vector<std::string> announced;
+	const engine::Listener listener(f.engine,
+		[&](const engine::Event& event)
+		{
+			const std::scoped_lock lock(mutex);
+			if (event.name == "editor.changed")
+				announced.push_back(event.data.at("editor").get<std::string>());
+		});
+	CHECK(f.call("editor.inPlace", {{"tracks", {midi}}, {"open", true}}).at("tracks") == Json::array({midi}));
+	CHECK(ids(f.view(midi).at("parts")) == std::vector<uint64_t>{part});
+	f.call("editor.set", {{"editor", name}, {"activePart", part}});
+	CHECK_FALSE(f.call("editor.close", {{"editor", name}}).at("open").get<bool>());
+	const std::scoped_lock lock(mutex);
+	CHECK(std::find(announced.begin(), announced.end(), name) != announced.end());
 }
 
 TEST_CASE("a removed track's in-place editor closes, and a new project closes them all", "[unit]")
