@@ -360,6 +360,13 @@ namespace gnubase::engine
 			m_pre->setSequence(std::move(unmodified));
 			sequence->pre = m_pre;
 		}
+		if (sequence->articulations.id != m_mapId || sequence->articulations.slots != m_mapSlots)
+		{
+			m_mapId = sequence->articulations.id;
+			m_mapSlots = sequence->articulations.slots;
+			++m_slotsSerial;
+		}
+		sequence->slotsSerial = m_slotsSerial;
 		sequence->serial = ++m_sequenceSerial;
 		m_sequence.publish(std::move(sequence));
 	}
@@ -589,6 +596,14 @@ namespace gnubase::engine
 		const graph::TransportBlock& transport = context.transport;
 		if (!transport.playing && m_next >= 0) // a stop: the instrument ends what the input held
 			m_inputHeld.fill(false);
+		// Another map, or other slots: the slot selected before isn't the one of that index now, whose on events
+		// didn't go out.
+		if (sequence.slotsSerial != m_inputSlotsSerial)
+		{
+			m_inputSlotsSerial = sequence.slotsSerial;
+			m_inputSlot = -1;
+			m_inputSlotHeld = -1;
+		}
 		for (graph::ProcessEvent event : m_input)
 		{
 			if (triggerSlot(sequence, event, out))
@@ -758,15 +773,36 @@ namespace gnubase::engine
 		}
 
 		// The kinds found, in time order; at one position by track, then kind, so a bank select precedes its program.
+		// Per MIDI channel, the earlier bank select (CC 0 or CC 32) chased for tracks heard again, known by the time
+		// its program comes: the controllers' kinds come before the programs'.
+		std::array<const Chased*, 16> bank{};
 		for (size_t kind = 0; kind < m_chased.size(); ++kind)
 		{
 			const Chased& found = m_chased[kind];
 			// Heard again: the parts of a track that was soloed out or disabled, and the kinds the channels sent.
-			if (found.played || found.position == std::numeric_limits<int64_t>::min() ||
-				(heardAgain && heard(sequence.chase[found.track]) != HeardAgain::Quiet && !m_resent[kind]))
+			const bool none = found.played || found.position == std::numeric_limits<int64_t>::min();
+			bool skipped =
+				!none && heardAgain && heard(sequence.chase[found.track]) != HeardAgain::Quiet && !m_resent[kind];
+			const bool program = kind >= g_notes && kind < g_notes + 16;
+			// Another track's program change on that MIDI channel after the bank select, or after the earlier of CC 0
+			// and CC 32, follows it, as at a jump; the instrument would keep that program in the bank it had otherwise.
+			// An earlier one a jump sends before the bank select, which changes nothing until the next program change:
+			// it isn't sent again.
+			if (const Chased* select = program ? bank[kind - g_notes] : nullptr; skipped && select != nullptr &&
+				std::tie(found.position, found.track) > std::tie(select->position, select->track))
+				skipped = false;
+			if (none || skipped)
 			{
 				m_chased[kind] = Chased();
 				continue;
+			}
+			const auto number = static_cast<uint8_t>(kind % 128);
+			if (heardAgain && kind < g_notes && (number == 0 || number == 32))
+			{
+				const Chased*& select = bank[kind / 128];
+				if (select == nullptr ||
+					std::tie(found.position, found.track) < std::tie(select->position, select->track))
+					select = &m_chased[m_chasedCount];
 			}
 			m_chased[m_chasedCount++] = m_chased[kind];
 			if (m_chasedCount - 1 != kind)
@@ -936,6 +972,9 @@ namespace gnubase::engine
 		if (found == map.slots.end())
 			return false;
 		const auto slot = static_cast<int>(found - map.slots.begin());
+		// A key whose note-on played, before the map came or the key became a trigger: its note-off ends that note.
+		if (event.type == Type::NoteOff && m_inputDown[((event.channel % 16) * 128) + (event.key % 128)])
+			return false;
 		if (event.type == Type::NoteOff)
 		{
 			// Without latch the default slot comes back where the key is released, unless another came since.

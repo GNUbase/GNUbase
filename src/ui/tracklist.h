@@ -249,5 +249,6 @@ namespace gnubase::ui
 		std::function<void(uint64_t, bool)> m_onMarker;
 		std::vector<Subscription> m_subscriptions;
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
+		uint64_t m_addTrackMerges = 0; // addTrack's merge keys, one per double click
 	};
 }

@@ -24,8 +24,9 @@ project closes it.
   the undo.
 - `editor.open` refuses in-place editors; other tracks than MIDI and instrument tracks have none.
 - The `editor` parameter's schema has the names as the pattern `^(lower|window|inPlace:[0-9]+)$`, so MCP clients and
-  Lua see them, and a `maxLength` of 27 (`inPlace:` and at most 19 digits for the track). A longer name gets the
-  length error before the pattern is matched, so that no name can make the matching overflow the stack (#1059).
+  Lua see them, and a `maxLength` of 28 (`inPlace:` and at most 20 digits for the track: track ids come from the
+  project file and may take all 64 bits, #1159). A longer name gets the length error before the pattern is matched, so
+  that no name can make the matching overflow the stack (#1059); a number beyond 64 bits isn't a track.
 
 ## In the UI
 
@@ -103,6 +104,7 @@ Transpositions and Event Colors (the key editor has none yet).
   in-place editors, a MIDI and an instrument track's, beside the lower zone's key editor, each with menus and a
   selection of its own, the multiple part controls setting their editor's editing mode and active part, and closing
   one leaving the other's menus; the track's lanes keeping their height, a folded folder hiding the editor; a
-  time-linear track's notes on the timeline; Q in the editor quantizing its selected note and not the selected part;
+  time-linear track's notes on the timeline; a key of the keyboard held while the editor closes ending its pitch
+  (key-editor.md); Q in the editor quantizing its selected note and not the selected part;
   the menu commands waiting for a MIDI or instrument track; a note being drawn moving with the notes while the project
   window zooms.
