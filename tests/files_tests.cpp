@@ -30,8 +30,8 @@ namespace
 		const auto two = gnubase::files::fileIdentity(folder.path() / "two.wav");
 		REQUIRE(one.has_value());
 		REQUIRE(two.has_value());
-		CHECK(*one == gnubase::files::fileIdentity(folder.path() / "one.wav")); // the same file, asked again
-		CHECK_FALSE(*one == *two);                                              // two files are two identities
+		CHECK(one == gnubase::files::fileIdentity(folder.path() / "one.wav")); // the same file, asked again
+		CHECK_FALSE(one == two);                                               // two files are two identities
 
 		// A letter's case the file system folds but the name doesn't: on Windows and macOS Übung.wav and übung.wav are
 		// one file, so one identity; on Linux they are two names and the second isn't there.
