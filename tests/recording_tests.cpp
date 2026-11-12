@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Audio recording (#96, reference manual pp. 335-346): record-enabled tracks record their input bus into files
 // written off the audio thread, cycle laps become takes, the audio record modes, and audio pre-record.
+#include "engine/audio/recorder.h"
 #include "engine/audiofile/audiofile.h"
 #include "engine/document/document.h"
 #include "engine/engine.h"
@@ -13,9 +14,11 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <string>
@@ -697,4 +700,67 @@ TEST_CASE("the audio record mode is a transport setting", "[integration]")
 		"cycleHistoryReplace");
 	CHECK_THAT(reject(client, "transport.set", {{"audioRecordMode", "merge"}}), ContainsSubstring("audioRecordMode"));
 	CHECK(run(client, "transport.get").at("audioRecordMode") == "cycleHistoryReplace");
+}
+
+TEST_CASE("Recorder::setup doesn't wait for the disk thread, which creates the files under its lock", "[unit]")
+{
+	using namespace std::chrono_literals;
+	namespace engine = gnubase::engine;
+	const gnubase::test::TempDir dir;
+	std::mutex mutex;
+	std::condition_variable changed;
+	bool finishing = false;
+	bool setUp = false;
+	bool sawSetUp = false;
+	{
+		// The disk thread holds its lock while it reports the recording, as while it lists the folder and creates
+		// the files: it waits there for setup to come back.
+		engine::Recorder recorder(
+			[&](const std::string& name, const Json&)
+			{
+				if (name != "recording.finished")
+					return;
+				std::unique_lock lock(mutex);
+				finishing = true;
+				changed.notify_all();
+				sawSetUp = changed.wait_for(lock, 5s, [&] { return setUp; });
+			});
+		constexpr uint32_t frames = 64;
+		recorder.prepare(1, frames);
+		engine::RecordSetup setup;
+		setup.folder = dir.path();
+		setup.format.sampleFormat = engine::SampleFormat::Float32;
+		setup.tracks = {{1, "Audio", {0}}};
+		recorder.setup(setup);
+
+		// A recorded block, then one that isn't: the recording ends.
+		std::vector<float> input(frames, 0.25f);
+		const float* inputs[] = {input.data()};
+		const gnubase::audio::MidiBuffer midiIn;
+		gnubase::audio::MidiBuffer midiOut;
+		engine::PlayedPositions played(size_t{4} * frames);
+		const engine::MidiTap::Sequencers sequencers;
+		for (uint64_t block = 0; block < 2; ++block)
+		{
+			const engine::graph::TransportSegment segment{0, frames, static_cast<int64_t>(block * frames), block == 0};
+			engine::graph::TransportBlock transport;
+			transport.playing = true;
+			transport.segments = &segment;
+			transport.segmentCount = 1;
+			transport.recording = segment.recording;
+			played.add(block * frames, frames, transport);
+			recorder.process({inputs, nullptr, frames, block * frames, 0, midiIn, midiOut}, played, 0, sequencers);
+		}
+		{
+			std::unique_lock lock(mutex);
+			REQUIRE(changed.wait_for(lock, 5s, [&] { return finishing; }));
+		}
+		recorder.setup({});
+		{
+			const std::scoped_lock lock(mutex);
+			setUp = true;
+		}
+		changed.notify_all();
+	}
+	CHECK(sawSetUp);
 }
