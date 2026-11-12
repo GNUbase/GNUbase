@@ -603,10 +603,12 @@ TEST_CASE("embedded files that differ only in the case of a non-ASCII letter kee
 		REQUIRE(!path.empty());
 		return path;
 	};
-	// Extracted next to the file, each from its own entry.
+	// Extracted next to the file, each from its own entry, which kept its name in the file: the second track's, which
+	// loads later, is numbered only where the file system reads the two names as one.
 	const fs::path extracted = project.media.path() / "project media" / "audio";
-	CHECK(fs::u8path(loadedMedia(oneMedia)).parent_path() == extracted);
-	CHECK(fs::u8path(loadedMedia(twoMedia)).parent_path() == extracted);
+	const bool folds = fs::equivalent(extracted / oneName, extracted / twoName);
+	CHECK(fs::u8path(loadedMedia(oneMedia)) == extracted / oneName);
+	CHECK(fs::u8path(loadedMedia(twoMedia)) == extracted / (folds ? fs::u8path("2-übung.wav") : twoName));
 	CHECK(firstDifference(samplesOf(loadedMedia(oneMedia)), oneMediaSamples) == -1);
 	CHECK(firstDifference(samplesOf(loadedMedia(twoMedia)), twoMediaSamples) == -1);
 }

@@ -40,9 +40,11 @@ namespace
 		const fs::path upper = folder.path() / fs::u8path("Übung.wav");
 		const fs::path lower = folder.path() / fs::u8path("übung.wav");
 		write(upper);
+		const auto written = gnubase::files::fileIdentity(upper);
+		REQUIRE(written.has_value());
 		const auto folded = gnubase::files::fileIdentity(lower);
 		if (fs::exists(lower))
-			CHECK(folded == gnubase::files::fileIdentity(upper));
+			CHECK(folded == written);
 		else
 			CHECK_FALSE(folded.has_value());
 	}
