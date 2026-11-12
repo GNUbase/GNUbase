@@ -352,8 +352,9 @@ namespace gnubase::app
 			}});
 		m_keys.enableWhen("midi.dissolvePart", hasParts);
 		m_keys.add({"midi.bounceMidi",
-			"Combines the selected MIDI parts of each track into one part, and those whose transpose or velocity "
-			"the notes can't hold into one for each.",
+			"Combines the selected MIDI parts of each track into one part with the first one's root key and Global "
+			"Transpose setting, and those whose transpose, velocity or global transpose the notes can't hold into one "
+			"for each.",
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/)
 			{
 				// The engine bounces the parts of one track; several tracks are one undo step.
