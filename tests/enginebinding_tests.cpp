@@ -205,6 +205,53 @@ TEST_CASE("the steps of one control go one at a time, the newest of a gesture re
 	CHECK(read("volume") == -2.0);
 }
 
+TEST_CASE("a control's steps leave no record behind once their last answer was handed on", "[unit]")
+{
+	engine::Engine engine;
+	ui::EngineBinding binding(engine);
+	engine::Client client(engine);
+	const Json channel = client.call("track.add", {{"type", "audio"}}).value.at("channel").at("id");
+	const auto set = [&channel](const char* key, double value)
+	{ return Json::array({Json{{"command", "channel.set"}, {"parameters", {{"channel", channel}, {key, value}}}}}); };
+	const auto read = [&client](const char* key)
+	{ return client.call("project.get").value.at("channels").at(0).at(key).get<double>(); };
+	const Json unknown = Json::array({Json{{"command", "channel.set"}, {"parameters", {{"channel", 999999}}}}});
+
+	// A drag: the newest step replaces the waiting one, and the last is taken. The record outlives the update that
+	// handed the answers on by one, since a view showing what it handed on still asks ahead() about it.
+	binding.sendStep(7, "volume", "Change Volume", set("volume", -1.0));
+	binding.sendStep(7, "volume", "Change Volume", set("volume", -2.0));
+	updateUntil(binding, [&binding] { return !binding.sending("volume"); });
+	CHECK(read("volume") == -2.0);
+	CHECK(binding.ahead("volume", 0)); // still ahead of an answer from before the drag
+	binding.update();                  // the next one lets the record go (#746)
+	CHECK(!binding.ahead("volume", 0));
+	CHECK(!binding.sending("volume"));
+
+	// Another control's record goes the same way.
+	binding.sendStep(7, "pan", "Change Pan", set("pan", 0.5));
+	updateUntil(binding, [&binding] { return !binding.sending("pan"); });
+	CHECK(read("pan") == 0.5);
+	CHECK(binding.ahead("pan", 0));
+	binding.update();
+	CHECK(!binding.ahead("pan", 0));
+
+	// A refused last step: its record goes too; an earlier taken step keeps the control ahead until then.
+	binding.sendStep(8, "volume", "Change Volume", set("volume", -3.0));
+	binding.sendStep(9, "volume", "Change Volume", unknown);
+	updateUntil(binding, [&binding] { return !binding.sending("volume"); });
+	CHECK(binding.ahead("volume", 0));
+	binding.update();
+	CHECK(!binding.ahead("volume", 0));
+	CHECK(read("volume") == -3.0); // the refused step changed nothing
+
+	// A later gesture makes the record again and works as before.
+	binding.sendStep(10, "volume", "Change Volume", set("volume", -4.0));
+	updateUntil(binding, [&binding] { return !binding.sending("volume"); });
+	CHECK(read("volume") == -4.0);
+	CHECK(binding.ahead("volume", 0));
+}
+
 TEST_CASE(
 	"settling sends the steps that wait and hands on results until no command that changes things is out", "[unit]")
 {
