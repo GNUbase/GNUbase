@@ -34,7 +34,9 @@ equalizer and the strip's dynamics, and their controls in the mixer. The fader a
   last one went off, to glide out, and the output of a strip with everything off is bit-identical to its input. The
   limiter's look-ahead counts in the channel node's latency while it is on or a lane of its switch plays
   (`ChannelStrip::latency`); while such a lane has it off, it runs bypassed, so the latency stays and the switch
-  doesn't click.
+  doesn't click. A bypassed limiter only delays the signal, but its detector and gain keep running, so when the lane
+  switches it on during a loud passage its gain is ready from the first frame and nothing is hard-clipped at the
+  threshold.
 - **Parameters and automation** (#658): every setting is a parameter with a target of type `strip` and an id
   (`StripParameter`, `src/engine/document/stripparameters.h`), in `parameter.list`, `parameter.get` and
   `parameter.set` with its range, unit and options, and a target of automation lanes ([automation.md](automation.md),
@@ -76,8 +78,10 @@ sections to linked channels, the sections in the inspector, and routing. The cha
   `channel.set` changing the same values, their groups, and none on MIDI channels.
 - `tests/automation_tests.cpp`: at block sizes 64 and 100, a pre gain lane with steps and a ramp gives the expected
   gain on every sample and the static gain with reading off; the phase's lane is a step curve that switches at its
-  point's sample; section lanes check their ranges and targets, round-trip through the project file and are copied
-  with the track. `tests/rtcheck_tests.cpp` plays section automation, the limiter's switch included, under the RT
-  checker.
+  point's sample; the limiter switch's lane plays it bypassed with its look-ahead and, once it switches it on, lowers
+  loud samples with its gain instead of clamping them; section lanes check their ranges and targets, round-trip
+  through the project file and are copied with the track. `tests/effects_tests.cpp` checks the bypassed limiter core
+  itself: it only delays, and its gain is ready when the bypass ends. `tests/rtcheck_tests.cpp` plays section
+  automation, the limiter's switch included, under the RT checker.
 - `tests/mixerwindow_tests.cpp`: the setup pane shows the sections, which MIDI channels don't have; the toggles,
   knobs and the panner send `channel.set`, and the controls show values set from the engine.

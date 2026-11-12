@@ -1344,7 +1344,17 @@ TEST_CASE("the bypassed limiter only delays, and limits again when its bypass en
 	limiter.process(channels, 2, 0, 2400);
 	CHECK(limiter.latency() == latency);
 	limiter.setBypass(false);
-	limiter.process(channels, 2, 2400, 4800);
+	// The detector ran while bypassed, so from the first frame on the output is the delayed input times a gain below
+	// one: nothing is hard-clipped at the ceiling while the gain gets ready.
+	for (uint32_t i = 2400; i < 4800; ++i)
+	{
+		limiter.process(channels, 2, i, i + 1);
+		const auto gain = static_cast<float>(limiter.gain());
+		INFO("frame " << i);
+		CHECK(gain < 1.0F);
+		CHECK(output[0][i] == input[0][i - latency] * gain);
+		CHECK(output[1][i] == input[1][i - latency] * gain);
+	}
 	CHECK(limiter.latency() == latency);
 	for (int c = 0; c < 2; ++c)
 	{

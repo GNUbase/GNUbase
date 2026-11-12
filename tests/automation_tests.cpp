@@ -1829,6 +1829,8 @@ TEST_CASE("a lane of the limiter's switch plays it bypassed with its look-ahead,
 	{
 		const std::vector<float> output = mixer.capture(channel, 12000);
 		size_t wrong = 0;
+		size_t flat = 0;
+		size_t pinnedNext = 0; // one past the last sample pinned at the ceiling
 		float before = 0.0F;
 		float limited = 0.0F;
 		for (size_t i = 0; i < output.size(); ++i)
@@ -1843,6 +1845,15 @@ TEST_CASE("a lane of the limiter's switch plays it bypassed with its look-ahead,
 			else if (i < 6000)
 			{
 				wrong += std::abs(output[i]) <= threshold * (1.0 + 1e-6) ? 0 : 1;
+				// Right after the switch a loud sample may only come out lowered by the gain, never hard-clipped:
+				// a clamp whose gain is not ready pins the loud samples at the ceiling for a whole stretch, while
+				// the limiting gain leaves at most the rare rounding error exactly on it (#881).
+				if (i < 2000 + lookAhead && std::abs(delayed) > threshold &&
+					std::abs(output[i]) == static_cast<float>(threshold))
+				{
+					flat += pinnedNext == i ? 1 : 0;
+					pinnedNext = i + 1;
+				}
 				limited = std::max(limited, std::abs(output[i]));
 			}
 			else if (i >= 8000) // off again, once its gain has released: the same delay as before
@@ -1852,6 +1863,7 @@ TEST_CASE("a lane of the limiter's switch plays it bypassed with its look-ahead,
 		}
 		INFO("channel " << channel);
 		CHECK(wrong == 0);
+		CHECK(flat == 0);
 		CHECK(before > 0.49F);
 		CHECK(limited > 0.9 * threshold);
 	}
