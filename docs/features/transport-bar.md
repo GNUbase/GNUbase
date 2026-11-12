@@ -53,7 +53,8 @@ each other.
   ([project-setup.md](project-setup.md)); lengths take none. Text that isn't a position changes
   nothing, and neither does leaving a display without typing. A position or length that ends past the largest
   project position (`time::g_maxPosition`, 2^48 samples) goes there, as `transport.locate` `by` stops there, and
-  timecode hours past 2147483647 aren't a position (#457). Typing the position a display shows locates to it: onto
+  timecode hours past 2147483647 aren't a position (#457). The event display, info line and marker window use the
+  same bound when they turn typed or dragged times into positions. Typing the position a display shows locates to it: onto
   the display's tick when the cursor was between ticks, and back to it during playback.
 - **The locator range** shows the length from the left to the right locator: in bars and beats counted from zero,
   "1.1.0.0" for a bar and a beat, in the other formats as a time (`ui::formatLength`). A length typed moves the right

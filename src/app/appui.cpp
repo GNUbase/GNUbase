@@ -256,16 +256,17 @@ namespace gnubase::app
 				"then follows the chord track.",
 				nullptr},
 			{"track.createChordEventsSelected",
-				"Create Chord Events: chord events from the selected audio tracks' events, and from the MIDI notes of "
-				"the selected MIDI and instrument tracks with the Create Chord Events dialog's options.",
+				"Create Chord Events: chord events from the selected audio events and from the MIDI notes of the "
+				"selected MIDI parts, with the Create Chord Events dialog's options; with none selected, from those "
+				"of the selected tracks. Audio events in audio parts don't count.",
 				nullptr},
 			{"track.mapToChordTrackSelected",
-				"Map to Chord Track: moves the notes of the selected MIDI and instrument tracks to the chord track's "
-				"chords, by the Map to Chord Track dialog's mapping mode.",
+				"Map to Chord Track: moves the notes of the selected MIDI parts, or with none selected those of the "
+				"selected tracks, to the chord track's chords, by the Map to Chord Track dialog's mapping mode.",
 				nullptr},
 			{"track.assignVoicesSelected",
-				"Assign Voices to Notes: moves the notes of the selected MIDI and instrument tracks to the voices of "
-				"the chord track's voicings.",
+				"Assign Voices to Notes: moves the notes of the selected MIDI parts, or with none selected those of "
+				"the selected tracks, to the voices of the chord track's voicings.",
 				nullptr},
 			{"track.toggleFolding", "Folds or unfolds the selected folders.", nullptr},
 			{"track.foldAll", "Folds every folder.", nullptr},
@@ -939,8 +940,13 @@ namespace gnubase::app
 		}
 
 		// Set Root Key for Unassigned Events in the context menu of the transpose track (reference manual p. 416).
-		m_keys.enableWhen("transpose.assignRootKey", [this](ui::Window&, Rml::Element*)
-			{ return m_trackList != nullptr && m_trackList->selectsType("transpose"); });
+		m_keys.enableWhen("transpose.assignRootKey",
+			[this](ui::Window&, Rml::Element*)
+			{
+				return m_trackList != nullptr && m_trackList->selectsType("transpose") && m_eventDisplay != nullptr &&
+					m_eventDisplay->project().is_object() &&
+					!m_eventDisplay->project().value("rootKey", std::string()).empty();
+			});
 
 		// Undo and Redo in the menus while the history has a step to undo or redo.
 		m_keys.enableWhen("history.undo", [this](ui::Window&, Rml::Element*) { return m_canUndo; });

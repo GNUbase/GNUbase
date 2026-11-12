@@ -480,8 +480,10 @@ namespace gnubase::ui
 		const auto shift = [this, &context, rate](const Json& event, const char* key, double to)
 		{
 			if (m_format == TimeFormat::BarsBeats)
-				return Json{{"ticks", context.tempo.toTicks(to) - event.at(std::string(key) + "Ticks").get<int64_t>()}};
-			return Json{{"delta", std::llround(to * rate) - event.at(key).get<int64_t>()}};
+				return Json{{"ticks",
+					context.tempo.toTicks(clampPositionSeconds(to, rate)) -
+						event.at(std::string(key) + "Ticks").get<int64_t>()}};
+			return Json{{"delta", positionSamples(to, rate) - event.at(key).get<int64_t>()}};
 		};
 		std::function<std::optional<double>(const Json&)> target; // where the edge goes, in seconds
 		const char* edge = "end";

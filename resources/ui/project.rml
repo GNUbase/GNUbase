@@ -42,11 +42,6 @@
 			margin-right: 2dp;
 		}
 
-		#toolbar #auto-scroll-settings, #toolbar #play-tool
-		{
-			margin-right: 12dp;
-		}
-
 		#toolbar .spacer
 		{
 			flex: 1 1 0;
@@ -116,7 +111,7 @@
 			<button tool="mute" class="icon-only" title="Mute"><svg class="icon" src="../icons/tool-mute.svg"/></button>
 			<button tool="zoom" class="icon-only" title="Zoom"><svg class="icon" src="../icons/tool-zoom.svg"/></button>
 			<button tool="line" tool-menu="line-menu" class="icon-only" title="Line"><svg class="icon" src="../icons/tool-line.svg"/></button>
-			<button id="play-tool" tool="play" tool-menu="play-menu" class="icon-only" title="Play"><svg class="icon" src="../icons/tool-audition.svg"/></button>
+			<button tool="play" tool-menu="play-menu" class="icon-only" title="Play"><svg class="icon" src="../icons/tool-audition.svg"/></button>
 		</div>
 		<div class="toolbar-section" section="autoScroll" label="Auto-Scroll">
 			<button id="auto-scroll" type="toggle" title="Auto-Scroll">Auto-Scroll</button>
