@@ -612,6 +612,102 @@ TEST_CASE("the step position stays within the longest project, however far stepB
 	CHECK(run(client, "chordPads.get").at("stepPosition") == g_bar);
 }
 
+TEST_CASE("moving the step input position is no undo step, and undoing a step takes it back", "[unit]")
+{
+	// #1089: moving the step input cursor is navigation, like moving the project cursor.
+	Engine engine;
+	Client client(engine);
+	const auto historyPosition = [&client] { return run(client, "history.get").at("position").get<int64_t>(); };
+	const auto stepPosition = [&client] { return run(client, "chordPads.get").at("stepPosition").get<int64_t>(); };
+	run(client, "chordPads.set", {{"stepInput", true}, {"moveInsert", true}});
+	const int64_t steps = historyPosition();
+	run(client, "chordPads.set", {{"stepBars", 3}});
+	run(client, "chordPads.set", {{"stepBars", -1}});
+	CHECK(stepPosition() == 2 * g_bar);
+	run(client, "chordPads.set", {{"stepPosition", g_bar}});
+	CHECK(historyPosition() == steps);
+	// #1174: a negative position is refused.
+	CHECK_THAT(reject(client, "chordPads.set", {{"stepPosition", -1}}), ContainsSubstring("stepPosition must be 0 to"));
+
+	// #1174: one undo takes back a step that adds the chord track: the chord, the track and the step position.
+	run(client, "chordPads.step", {{"pad", 0}});
+	CHECK(historyPosition() == steps + 1);
+	CHECK(run(client, "project.get").at("tracks").size() == 1);
+	CHECK(stepPosition() == 2 * g_bar);
+	run(client, "history.undo");
+	CHECK(run(client, "chord.get").at("events").empty());
+	CHECK(run(client, "project.get").at("tracks").empty());
+	CHECK(stepPosition() == g_bar);
+
+	// And a Move Insert step: the chord, the moved events and the step position; redo brings them back.
+	run(client, "chord.add", {{"position", g_bar}, {"chord", "Dm"}});
+	run(client, "chord.add", {{"position", 2 * g_bar}, {"chord", "G"}});
+	run(client, "chordPads.step", {{"pad", 0}});
+	Json chords = run(client, "chord.get");
+	REQUIRE(chords.at("events").size() == 3);
+	CHECK(chords.at("events")[0].at("chord") == "C");
+	CHECK(chords.at("events")[2].at("position") == 3 * g_bar);
+	CHECK(stepPosition() == 2 * g_bar);
+	run(client, "history.undo");
+	chords = run(client, "chord.get");
+	REQUIRE(chords.at("events").size() == 2);
+	CHECK(chords.at("events")[0].at("position") == g_bar);
+	CHECK(chords.at("events")[1].at("position") == 2 * g_bar);
+	CHECK(stepPosition() == g_bar);
+	run(client, "history.redo");
+	CHECK(run(client, "chord.get").at("events").size() == 3);
+	CHECK(stepPosition() == 2 * g_bar);
+
+	// Undoing an edit after the cursor moved leaves the cursor where it is.
+	run(client, "chordPads.set", {{"stepBars", 4}});
+	run(client, "chordPads.set", {{"velocity", 50}});
+	run(client, "history.undo");
+	CHECK(stepPosition() == 6 * g_bar);
+	// The position only goes along with an edit when the edit's command moved it.
+	run(client, "chordPads.set", {{"velocity", 60}, {"stepBars", -1}});
+	CHECK(stepPosition() == 5 * g_bar);
+	run(client, "history.undo");
+	CHECK(stepPosition() == 6 * g_bar);
+}
+
+TEST_CASE("step input stays in range at very low sample rates and refuses to move far chord events", "[unit]")
+{
+	// #1174: at 100 Hz the longest project's ticks would leave int64_t; step input stops where it does at 8 kHz.
+	Engine engine;
+	Client client(engine);
+	run(client, "project.set", {{"sampleRate", 100.0}});
+	run(client, "chordPads.set", {{"stepInput", true}, {"stepBars", INT64_MAX}});
+	const auto last = run(client, "chordPads.get").at("stepPosition").get<int64_t>();
+	CHECK(last > 1000000 * g_bar);
+	CHECK(last % g_bar == 0);
+	run(client, "chordPads.set", {{"stepPosition", g_bar}});
+	run(client, "chordPads.step", {{"pad", 0}});
+	CHECK(run(client, "chord.get").at("events")[0].at("position") == g_bar);
+	CHECK(run(client, "chordPads.get").at("stepPosition") == 2 * g_bar);
+	Project project;
+	project.sampleRate = 100.0;
+	chordPadsFromJson(project, {{"stepPosition", INT64_MAX}});
+	CHECK(project.chordPads.stepPosition == last + g_bar);
+	project.sampleRate = 0.0;
+	chordPadsFromJson(project, {{"stepPosition", INT64_MAX}});
+	CHECK(project.chordPads.stepPosition == last + g_bar);
+
+	// Move Insert refuses to move a chord event past the longest project's end a bar on, in musical and in linear time
+	// base, and changes nothing.
+	run(client, "chord.add", {{"position", INT64_MAX - 1}, {"chord", "F"}});
+	run(client, "chordPads.set", {{"moveInsert", true}, {"stepPosition", 0}});
+	CHECK_THAT(reject(client, "chordPads.step", {{"pad", 4}}), ContainsSubstring("past the longest project's end"));
+	CHECK(run(client, "chord.get").at("events").size() == 2);
+	CHECK(run(client, "chord.get").at("events")[1].at("position") == INT64_MAX - 1);
+	Engine linearEngine;
+	Client linear(linearEngine);
+	run(linear, "track.add", {{"type", "chord"}, {"timeBase", "linear"}});
+	run(linear, "chord.add", {{"position", INT64_MAX - 1}, {"chord", "F"}});
+	run(linear, "chordPads.set", {{"stepInput", true}, {"moveInsert", true}});
+	CHECK_THAT(reject(linear, "chordPads.step", {{"pad", 4}}), ContainsSubstring("past the longest project's end"));
+	CHECK(run(linear, "chord.get").at("events").size() == 1);
+}
+
 TEST_CASE("chord pads from a file with no pads, a reference below -1 or a step position out of range keep sound values",
 	"[unit]")
 {

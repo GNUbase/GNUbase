@@ -52,10 +52,15 @@ assistants. They build on the chord track's music theory ([chord-track.md](chord
   time base, as `chord.add` compares them: in linear time base a bar's start in ticks doesn't always come back from
   its samples. Moved events go a bar on in ticks, and an event on a bar's start onto the next bar's start in the track's
   time base, whatever the tempo there. `chordPads.set` `stepBars` moves the position by bars, as Left and Right Arrow
-  move the step input cursor. Step input writes chords up to the bar the longest project (`time::g_maxPosition`) ends
-  in, at the project's tempo: the position goes from 0 to that bar's end, where a step at it leaves it, and a
+  move the step input cursor. Moving the cursor is navigation, like moving the project cursor: a `chordPads.set` that
+  changes only the step position adds no undo step, and undoing an edit leaves the cursor where it is, but an edit
+  that moves it, such as a step, takes it back on undo (the history keeps it apart from the other settings, as it
+  keeps the time format, `ProjectChange::stepPositionBefore`). Step input writes chords up to the bar the longest
+  project ends in, at the project's tempo (`longestProjectTicks`: below 8 kHz as long as at 8 kHz, so that the ticks
+  fit at any sample rate): the position goes from 0 to that bar's end, where a step at it leaves it, and a
   `stepPosition` past it is refused, or clamped in a project file; `stepBars` of any size stops at that bar's start,
-  and a step from its end is refused.
+  and a step from its end is refused. Move Insert refuses a step while a chord event to move lies past that end, so
+  that moving it a bar on can't overflow.
 - **Pads onto tracks** (p. 1370): `chordPads.toTrack` puts a pad's chord on the chord track, or its voicing in a MIDI
   part a bar long on a MIDI or instrument track.
 - **The chord assistant** (pp. 1372-1375): `chordPads.assistant` with `kind` `list` suggests at most 24 chords after a
@@ -90,7 +95,8 @@ refuses, such as a remote start above the end, goes back to the one the pads hav
   tensions. Over the root key it moves the key a semitone, with Transpose Pads as it says (p. 1364).
 - With step input on, Left and Right Arrow move the step position a bar back or on wherever the focus is in the zone,
   such as on the Step Input button right after turning it on, except in its fields and menus, which take the keys
-  (p. 1369).
+  (p. 1369), and with Ctrl, Shift, Alt or Cmd, where they are other key commands (Cmd+Left and Right nudge on
+  macOS).
 - The assistant shows the List assistant's suggestions after the first selected pad's chord, colored by level
   (`.level-0` to `.level-2`), with an Algorithm menu, or the Circle of Fifths (outer and inner rings, the key's chords
   `.in-key`) with a Major/Minor menu. A press auditions a chord; a double click assigns it to the first unassigned pad.
@@ -105,16 +111,18 @@ List and Circle of Fifths assistants in major and minor; triggered pads played i
 per voice, ended as they were played, and recorded; a dummy MIDI input's notes on the remote keys playing the pads only
 while the remote is on, ended by their note-offs; step input with Move Insert Mode, at a bar's start, over a chord that
 is there and moved by bars, also on a chord track in linear time base at a tempo whose bars start between samples and
-with Move Insert across a tempo change, `stepBars` of any size and a step position past the longest project's end, and
-pads onto the chord track and a MIDI track; a file with no pads or a reference below -1; and saving and loading.
+with Move Insert across a tempo change, `stepBars` of any size and a step position past the longest project's end,
+cursor moves without undo steps and steps undone with their chord, moved events, chord track and position, the step
+range at 100 Hz and Move Insert refused for a far event, and pads onto the chord track and a MIDI track; a file with no pads or a reference below -1; and saving and loading.
 `tests/keycommandsdialog_tests.cpp`: the key commands don't list `chordPads.trigger` without parameters.
 `tests/chordpads_ui_tests.cpp` drives the zone: shown and hidden from the Project menu's command, a pad held with the
 mouse recorded on a record-enabled track, a chord typed after a double click, pads swapped by dragging, the extended
 toolbar, the wheel with and without Shift, Select All with Remove Assignment past a locked pad, Load and the root key
 with Transpose Pads, the assistant's suggestions and circle with a double click that assigns, the padlock and adaptive
 voicing indicators with Lock on two pads as one undo step and its undo, the reference indicator beside them inside the
-pad, a refused remote start going back, the wheel over the root key, and Left and Right with step input, on a pad and on
-the Step Input button, but not in the velocity field.
+pad and in its upper right corner, a refused remote start going back, the wheel over the root key, and Left and Right
+with step input, on a pad and on the Step Input button, as no undo step, but not in the velocity field, the chord field
+or the root key menu, or with Cmd.
 
 ## Not yet
 

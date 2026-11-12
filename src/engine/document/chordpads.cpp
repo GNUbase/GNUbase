@@ -3,7 +3,8 @@
 // basic player's voicings, playing and recording pads, step input, presets, the List and Circle of Fifths assistants
 // and the pads' remote keys. chordPads.set, chordPads.assign, chordPads.modify, chordPads.setPad, chordPads.move,
 // chordPads.fromChordTrack, chordPads.loadPreset, chordPads.step and chordPads.toTrack change the project, so each is
-// one undo step and changes nothing if it fails (ProjectModel::add); chordPads.get and chordPads.assistant are
+// one undo step and changes nothing if it fails (ProjectModel::add), except that a step position move alone is
+// navigation, no undo step (ProjectChange::stepPositionBefore); chordPads.get and chordPads.assistant are
 // queries. chordPads.trigger plays notes, so it is a control command (ProjectModel::addControl): no undo step, but not
 // read-only. The render snapshot carries the remote keys to the audio thread (chordPadKeys).
 #include "engine/document/chordpads.h"
@@ -106,15 +107,12 @@ namespace gnubase::engine
 			return pads.pads[static_cast<size_t>(pad)];
 		}
 
-		// The last bar step input writes a chord at: the one the longest project (time::g_maxPosition) ends in, at the
-		// project's tempo, so that the step position, stepBars of any size and the chord events step input writes
-		// stay far from overflowing (#1048).
+		// The last bar step input writes a chord at: the one the longest project ends in, at the project's tempo, so
+		// that the step position, stepBars of any size and the chord events step input writes stay far from
+		// overflowing (#1048), also at sample rates far below 8 kHz (longestProjectTicks, #1174).
 		int64_t lastStepBar(const Project& project)
 		{
-			return project.signatures
-				.toBarsBeats(
-					time::toTicks({time::TimeBase::Linear, time::g_maxPosition}, project.tempo, project.sampleRate))
-				.bar;
+			return project.signatures.toBarsBeats(longestProjectTicks(project)).bar;
 		}
 
 		// The last step position: the end of the last bar, where a step at that bar leaves it.
@@ -480,7 +478,8 @@ namespace gnubase::engine
 				"first pad and so on); stepInput, moveInsert and stepPosition (ticks, from 0 to the end of the bar "
 				"the longest project, 2^48 samples, ends in at the project's tempo) for chordPads.step (p. 1369); "
 				"stepBars moves the step position by bars, to a bar's start, at most that bar's (after "
-				"stepPosition), as Left and Right Arrow move the step input cursor.",
+				"stepPosition), as Left and Right Arrow move the step input cursor. Moving the step position is no "
+				"undo step of its own; with another change it goes back on undo.",
 				objectSchema({{"rootKey", integerSchema}, {"transposePads", booleanSchema}, {"padCount", integerSchema},
 					{"octaveOffset", integerSchema}, {"velocity", integerSchema}, {"remote", booleanSchema},
 					{"remoteStart", integerSchema}, {"remoteEnd", integerSchema}, {"stepInput", booleanSchema},
@@ -777,6 +776,13 @@ namespace gnubase::engine
 				const int64_t start = inBase(at);
 				if (pads.moveInsert)
 				{
+					// Events past the last step position stay where they are, as far as a chord event can be, so that
+					// moving them a bar on can't overflow (#1174).
+					const int64_t last = inBase(stepEnd(project));
+					require(std::none_of(project.chords.events.begin(), project.chords.events.end(),
+								[start, last](const ChordEvent& event)
+								{ return event.position.value >= start && event.position.value > last; }),
+						"a chord event to move is past the longest project's end");
 					// An event's position in ticks, and for one on a bar's start exactly that bar's, so that it moves
 					// onto the next bar's start in samples too, whatever the tempo there.
 					const auto ticksOf = [&project, &inBase](const time::Position& position)

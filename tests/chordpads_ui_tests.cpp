@@ -107,6 +107,16 @@ namespace
 				at(a, "y") + at(a, "height") <= at(b, "y") + at(b, "height");
 		}
 
+		// Whether the first element's box lies in the second's upper right quarter.
+		bool inUpperRight(const std::string& inner, const std::string& outer)
+		{
+			const Json a = box(inner);
+			const Json b = box(outer);
+			const auto at = [](const Json& item, const char* key) { return item.at(key).get<double>(); };
+			return at(a, "width") > 0 && at(a, "x") >= at(b, "x") + (at(b, "width") / 2) &&
+				at(a, "y") + at(a, "height") <= at(b, "y") + (at(b, "height") / 2);
+		}
+
 		static std::string pad(int index) { return ".chord-pad[pad=\"" + std::to_string(index) + "\"]"; }
 
 		test::UiApp app{{1200, 700}};
@@ -283,6 +293,7 @@ TEST_CASE(
 	REQUIRE(window.visible(Window::pad(1) + " .chord-pad-adaptive"));
 	CHECK(window.apart(Window::pad(1) + " .chord-pad-reference", Window::pad(1) + " .chord-pad-adaptive"));
 	CHECK(window.within(Window::pad(1) + " .chord-pad-reference", Window::pad(1)));
+	CHECK(window.inUpperRight(Window::pad(1) + " .chord-pad-reference", Window::pad(1))); // #1174
 
 	// A locked reference shows the padlock beside it; another pad as the reference takes the indicator along.
 	window.call("chordPads.setPad", {{"pad", 1}, {"locked", true}});
@@ -391,6 +402,53 @@ TEST_CASE(
 	window.app.ui().key(std::nullopt, "Left");
 	window.app.ui().key(std::nullopt, "Left");
 	window.step();
+	window.click("#chord-pads-moveInsert");
+	window.app.ui().key(std::nullopt, "Right");
+	window.step();
+	REQUIRE(window.app.waitUntil([&] { return window.call("chordPads.get").at("stepPosition") == 2 * bar; }));
+	CHECK(window.call("chord.get").at("events").empty());
+}
+
+TEST_CASE("Left and Right are no undo step, and leave the step position in the chord field, the root key menu and with "
+		  "Cmd",
+	"[ui]")
+{
+	// #1089: moving the step input cursor is navigation. #1174: the chord field and the root key menu take the keys,
+	// and with Cmd (meta) they are other key commands, such as Nudge on macOS.
+	Window window;
+	window.open();
+	window.click(Window::pad(0)); // selected before step input is on, where a click inserts the pad's chord
+	window.call("chordPads.set", {{"stepInput", true}, {"velocity", 90}});
+	REQUIRE(window.app.waitUntil(
+		[&] { return window.elements("#chord-pads-velocity")[0].at("attributes").value("value", "") == "90"; }));
+	const Json steps = window.call("history.get").at("position");
+	window.app.ui().key(std::nullopt, "Right");
+	window.step();
+	REQUIRE(window.app.waitUntil([&] { return window.call("chordPads.get").at("stepPosition") > 0; }));
+	const auto bar = window.call("chordPads.get").at("stepPosition").get<int64_t>();
+	window.app.ui().key(std::nullopt, "Meta+Right");
+	window.app.ui().key(std::nullopt, "Meta+Left");
+	window.step();
+	CHECK(window.call("history.get").at("position") == steps);
+	CHECK(window.call("chordPads.get").at("stepPosition") == bar);
+
+	// The chord field with the caret at the end of its text lets Right through.
+	window.click("#chord-pads-edit");
+	REQUIRE(window.app.waitUntil([&] { return window.hasClass("#chord-pads-field", "shown"); }));
+	window.app.ui().key(std::nullopt, "End");
+	window.app.ui().key(std::nullopt, "Right");
+	window.app.ui().key(std::nullopt, "Escape");
+	window.step();
+	CHECK(window.call("chordPads.get").at("stepPosition") == bar);
+
+	// The root key menu, open and closed: the keys move the focus on along the toolbar.
+	window.click("#chord-pads-root");
+	window.app.ui().key(std::nullopt, "Right");
+	window.click("#chord-pads-root");
+	window.app.ui().key(std::nullopt, "Left");
+	window.step();
+	CHECK(window.call("chordPads.get").at("stepPosition") == bar);
+	// A last Right on a button moves it on, after all the keys before it were handled.
 	window.click("#chord-pads-moveInsert");
 	window.app.ui().key(std::nullopt, "Right");
 	window.step();

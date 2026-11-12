@@ -3430,15 +3430,18 @@ namespace gnubase::engine
 					!(current.setup == previous.setup) || current.rootKey != previous.rootKey ||
 					change.timeFormatBefore)
 					context.emit("project.changed", projectSettingsJson(project));
-				if (!(current.chordPads == previous.chordPads))
+				if (!(current.chordPads == previous.chordPads) || change.stepPositionBefore)
 					context.emit("chordPads.changed", chordPadsJson(project));
 				announceBusses(previous.busses, current.busses, context);
 				reordered = current.tracks != previous.tracks;
 				activated = current.activeMarkerTrack != previous.activeMarkerTrack;
 			}
-			else if (change.timeFormatBefore)
+			else
 			{
-				context.emit("project.changed", projectSettingsJson(project));
+				if (change.timeFormatBefore)
+					context.emit("project.changed", projectSettingsJson(project));
+				if (change.stepPositionBefore)
+					context.emit("chordPads.changed", chordPadsJson(project));
 			}
 			for (const ObjectChange<Track>& track : change.tracks)
 				reordered = reordered || !track.before || !track.after || track.before->parent != track.after->parent ||
@@ -3592,6 +3595,20 @@ namespace gnubase::engine
 				change.timeFormatBefore.reset();
 				change.timeFormatAfter.reset();
 			}
+			// And only the step positions the gesture's commands moved, not the cursor moves between them.
+			change.stepPositionBefore = steps.back().change.stepPositionBefore;
+			change.stepPositionAfter = steps.back().change.stepPositionAfter;
+			if (before.chordPads.stepPosition != m_project.chordPads.stepPosition)
+			{
+				if (!change.stepPositionBefore)
+					change.stepPositionBefore = before.chordPads.stepPosition;
+				change.stepPositionAfter = m_project.chordPads.stepPosition;
+			}
+			if (change.stepPositionBefore == change.stepPositionAfter)
+			{
+				change.stepPositionBefore.reset();
+				change.stepPositionAfter.reset();
+			}
 			if (change.empty())
 				m_history.removeLast();
 			else
@@ -3720,6 +3737,21 @@ namespace gnubase::engine
 		{
 			change.timeFormatBefore.reset();
 			change.timeFormatAfter.reset();
+		}
+		// And the step positions its steps moved, not the cursor moves between them.
+		change.stepPositionBefore.reset();
+		change.stepPositionAfter.reset();
+		for (size_t i = first; i < position; ++i)
+			if (steps[i].change.stepPositionBefore)
+			{
+				if (!change.stepPositionBefore)
+					change.stepPositionBefore = steps[i].change.stepPositionBefore;
+				change.stepPositionAfter = steps[i].change.stepPositionAfter;
+			}
+		if (change.stepPositionBefore == change.stepPositionAfter)
+		{
+			change.stepPositionBefore.reset();
+			change.stepPositionAfter.reset();
 		}
 		std::optional<HistoryStep> joined;
 		if (!change.empty())

@@ -431,10 +431,12 @@ namespace gnubase::ui
 		{
 			// With step input, Left and Right Arrow move the step input cursor by a bar wherever the focus is in the
 			// zone, such as on the Step Input button just turned on (reference manual p. 1369), except in the fields
-			// and menus, which take them.
+			// and menus, which take them. With a modifier they are other key commands, such as Cmd+Left and Cmd+Right
+			// on macOS (edit.nudgeLeft and edit.nudgeRight, #1174).
 			const auto key = event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN);
-			if (!takesArrows(target) && m_pads.at("stepInput").get<bool>() && event.GetParameter("ctrl_key", 0) == 0 &&
-				event.GetParameter("shift_key", 0) == 0 && event.GetParameter("alt_key", 0) == 0 &&
+			const bool modified = event.GetParameter("ctrl_key", 0) != 0 || event.GetParameter("shift_key", 0) != 0 ||
+				event.GetParameter("alt_key", 0) != 0 || event.GetParameter("meta_key", 0) != 0;
+			if (!takesArrows(target) && m_pads.at("stepInput").get<bool>() && !modified &&
 				(key == Rml::Input::KI_LEFT || key == Rml::Input::KI_RIGHT))
 			{
 				send("chordPads.set", {{"stepBars", key == Rml::Input::KI_RIGHT ? 1 : -1}});
