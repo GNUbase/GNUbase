@@ -675,3 +675,45 @@ TEST_CASE("what the user does while an awaited query is out runs after its answe
 	CHECK(ran == std::vector<std::string>{"released"});
 	CHECK(binding.settle(std::chrono::seconds(10)));
 }
+
+TEST_CASE("awaiting what is held waits for the awaited answers only, not for other commands out", "[unit]")
+{
+	// As a press in the event display does (#1179): a slow command that isn't a query, sent after the awaited query,
+	// is still out once the held action has run, and awaitHeld returns then rather than waiting for it.
+	engine::Engine engine;
+	engine.registerCommand(
+		{"test.slowRead", 1, "Reads slowly.", engine::CommandInfo{}.parameters, Json::object(), true},
+		[](engine::CommandContext&)
+		{
+			std::this_thread::sleep_for(milliseconds(100));
+			return Json::object();
+		});
+	engine.registerCommand(
+		{"test.slowWrite", 1, "Writes slowly.", engine::CommandInfo{}.parameters, Json::object(), false},
+		[](engine::CommandContext&)
+		{
+			std::this_thread::sleep_for(milliseconds(1500));
+			return Json::object();
+		});
+	ui::EngineBinding binding(engine);
+	// Nothing held: at once.
+	CHECK(binding.awaitHeld(std::chrono::seconds(0)));
+
+	bool ran = false;
+	binding.sendAwaited("test.slowRead", Json::object(), {});
+	binding.send("test.slowWrite");
+	binding.afterAwaited([&ran] { ran = true; });
+	CHECK(binding.awaitHeld(std::chrono::seconds(10)));
+	CHECK(ran);
+	CHECK(binding.waiting("test.slowWrite") == 1);
+
+	// What is still held after the timeout stays held.
+	ran = false;
+	binding.sendAwaited("test.slowRead", Json::object(), {});
+	binding.afterAwaited([&ran] { ran = true; });
+	CHECK(!binding.awaitHeld(std::chrono::milliseconds(0)));
+	CHECK(!ran);
+	CHECK(binding.holding());
+	CHECK(binding.settle(std::chrono::seconds(10)));
+	CHECK(ran);
+}

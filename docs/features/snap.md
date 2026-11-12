@@ -87,9 +87,16 @@ the project start. The sample grids count from the project start, as the samples
   tracks the same way, inside the audio event that plays there on the first of the tracks where one plays: the event
   display's selection range edges (p. 285, [tools.md](tools.md)). The event that plays is unmuted, within its audio
   part, which isn't muted, and where events overlap (takes on lanes, the stack of #99) the one in front; of two at
-  the same place in the stack, such as the pieces of a split event, the one with the higher id, as in playback. A
-  position moves only to where that event plays (`zeroCrossingBetween`): inside it and its part, and not under an
-  event in front of it, so that a range's edge never lands on audio that doesn't play there (#1086).
+  the same place in the stack (pieces of a split from projects before #1189) the one with the higher id, as in
+  playback. A position moves only to where that event plays (`zeroCrossingBetween`): strictly inside it and its part,
+  and not under an event in front of it, so that a range's edge never lands on audio that doesn't play there (#1086);
+  a frame of a file at another sample rate that rounds back onto such a bound goes a sample inside it (#1179).
+- **What is heard** (#1179). The crossing is always one of the file of the event that plays in front. In a warped or
+  stretched event it is found in the file and mapped through the warp: the stretched audio is near zero there but
+  needn't cross it exactly, as finding it there would mean running the stretcher on the command thread. Where a
+  crossfade joins two events, the one in front plays from its start on and the search follows it, although the one
+  behind still fades out under it: the edge goes to a crossing of the event in front, not of the sum, which the fades
+  keep quiet anyway.
 
 ## The event display
 
@@ -142,7 +149,8 @@ Not yet: grid lines and snap point lines in the event display, the editors' own 
   leaves it alone; `snap.zeroCrossings` inside an event, outside it and on tracks without audio, and following the
   event in front, not a muted one, nor one outside its part or in a muted part; a position moving only to where that
   event plays, not past its part's end, under an event in front of it, nor between two such events; of the two
-  overlapping pieces of a split event the one playback plays in front, in the overlap and just before it.
+  overlapping pieces of a split event the one playback plays in front, in the overlap and just before it; a
+  position kept strictly inside a part whose start a file at another sample rate rounds a crossing onto.
 - `tests/eventediting_tests.cpp` (fake window system, real engine): with snap on, a drag, a resize and an Alt click land
   on bars, shuffle swaps two parts, events, a position marker and the cursor attract, a position marker and a cycle
   marker's end on a linear marker track that isn't active attract a drag where `snap.position` puts it, a snap point set

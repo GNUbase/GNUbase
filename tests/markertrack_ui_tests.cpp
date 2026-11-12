@@ -433,6 +433,18 @@ TEST_CASE("with the range tool, a double click on the marker track selects the r
 	CHECK(range.end == 4 * g_quarterSamples);
 	CHECK(range.tracks == std::vector<uint64_t>{fixture.audio, fixture.first, fixture.second});
 	CHECK(fixture.markers.selection().empty());
+
+	// What the user does right after the double click waits for its range (#1179): an action that waits finds the
+	// range between the markers, not the one a click at 9 s drew before.
+	fixture.automation.click(std::nullopt, fixture.lanesAt(900, 70), ui::MouseButton::Left, 1, {});
+	REQUIRE(fixture.waitUntil(
+		[&] { return fixture.display.range() && fixture.display.range()->start > 4 * g_quarterSamples; }));
+	fixture.automation.click(std::nullopt, fixture.lanesAt(150, 70), ui::MouseButton::Left, 2, {});
+	REQUIRE(fixture.binding.waiting("marker.range") == 1);
+	std::optional<ui::RangeSelection> found;
+	fixture.binding.afterAwaited([&] { found = fixture.display.range(); });
+	REQUIRE(fixture.waitUntil([&] { return found.has_value(); }));
+	CHECK(found.value_or(ui::RangeSelection{0, 0, std::vector<uint64_t>()}).start == 2 * g_quarterSamples);
 }
 
 TEST_CASE(
