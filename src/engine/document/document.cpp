@@ -129,9 +129,8 @@ namespace gnubase::engine
 
 	time::Ticks longestProjectTicks(const Project& project)
 	{
-		constexpr double lowestRate = 8000.0;
 		return project.tempo.toTicks(
-			static_cast<double>(time::g_maxPosition) / std::max(project.sampleRate, lowestRate));
+			static_cast<double>(time::g_maxPosition) / std::max(project.sampleRate, g_lowestSampleRate));
 	}
 
 	ObjectId mainMix(const Project& project)
