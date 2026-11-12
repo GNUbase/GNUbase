@@ -2139,6 +2139,23 @@ splitter.column .splitter-grip-horizontal
 	padding: 2dp 6dp;
 }
 
+/* The MIDI Inserts and MIDI Sends sections: a slot's control panel shows while its edit button opened it. */
+.midi-effect-panel
+{
+	display: none;
+	padding-left: 8dp;
+}
+
+.midi-effect-slot.open .midi-effect-panel
+{
+	display: block;
+}
+
+.midi-effect-slot.empty .midi-effect-edit
+{
+	visibility: hidden;
+}
+
 .inspector textarea.notepad
 {
 	width: 100%;

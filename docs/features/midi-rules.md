@@ -53,10 +53,13 @@ input plays (the input transformers). A preset library holds named rules for bot
   - **Live events** (`processors::LogicalStage`): rules see note-ons; a note-off, and the poly pressure of a held note
     that the rules don't find, go where its note-on went, so a note ends where it sounds even when the rules changed in between or insert played it
     twice. A note-on that became another kind of event loses its note-off. A controller or other event turned into a
-    note plays a note-on for a main value above 0 and a note-off for 0, so a sustain pedal can play a bass drum.
+    note plays a note-on for a main value above 0 and a note-off for 0, so a sustain pedal can play a bass drum; the
+    note plays once while it is held, however the pedal moves, and counts as a held note. Where two held notes play
+    one note (two keys transposed onto one pitch, a key and the pedal), it plays once and ends with the last of them.
     Note-offs take the places of other events in a full buffer, and a note-on that doesn't fit is left out with its
     note-off, so that inserts in several modules can't leave notes hanging unless more notes end in one block than a
-    block holds (1024 events).
+    block holds (1024 events). This holds for input transformers and the transformer effect alike, as both play
+    through `LogicalStage`.
   - **The transformer MIDI effect** (#135, [midi-effects.md](midi-effects.md)) is a rule of this kind with a fixed shape
     (type is note and a range of pitch, velocity or channel; one action or delete) and plays through the same
     `LogicalStage`.

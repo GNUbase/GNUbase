@@ -159,7 +159,8 @@ namespace gnubase::engine
 		struct Release
 		{
 			std::shared_ptr<InstrumentChannel> channel;
-			std::shared_ptr<MidiSequencer> departed;
+			std::shared_ptr<MidiSequencer> departed; // or a MIDI send of another track that played there:
+			std::shared_ptr<MidiSendTap> departedSend;
 			std::vector<std::shared_ptr<MidiSequencer>> staying; // the MIDI tracks still routed to the instrument
 		};
 
@@ -209,6 +210,8 @@ namespace gnubase::engine
 			ObjectId source = 0;     // the MIDI channel that left it
 			std::shared_ptr<InstrumentChannel> channel;
 			std::shared_ptr<MidiSequencer> departed;
+			std::shared_ptr<MidiSendTap> departedSend; // or the MIDI send of source's channel that left it
+			size_t sendSlot = 0;
 			uint64_t generation = 0; // the first program that has it
 		};
 
@@ -425,6 +428,8 @@ namespace gnubase::engine
 		{
 			std::string id;             // the built-in instrument, or empty
 			std::set<ObjectId> sources; // the MIDI channels routed to it
+			// The MIDI sends of other tracks that play to it, by channel and slot.
+			std::map<std::pair<ObjectId, size_t>, std::shared_ptr<MidiSendTap>> sends;
 			std::shared_ptr<InstrumentChannel> channel;
 			std::shared_ptr<processors::Sampler> sampler; // the sampler's, which loads its sample when it changes
 			std::string sample;                           // the media file that sampler is to play
