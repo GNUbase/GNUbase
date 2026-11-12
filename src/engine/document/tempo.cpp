@@ -225,10 +225,11 @@ namespace gnubase::engine
 		constexpr double g_minDetectSeconds = 7.0; // reference manual p. 1460
 		constexpr double g_chord = 0.03;           // seconds: notes that start this close together are one tap
 		// Rounds a retimed position that lands on exactly half a tick up, whichever part it is in: far above the
-		// conversions' floating point error, which grows with the tick count, far below a tick, and on a fraction no
-		// tempo ratio produces, so shared copies at the same tempo round their ties alike instead of a tick apart
-		// (#865).
-		constexpr double g_retimeTieOffset = 1.0 / 3000.0;
+		// conversions' floating point error, which grows with the tick count, and far below a tick, so shared copies at
+		// the same tempo round their ties alike instead of a tick apart. No offset rules out a tie for every tempo
+		// ratio, but this one, the golden ratio's fractional part over 1000, is one no simple ratio and no family of
+		// tempos one would type produces, so only a ratio chosen to hit it could (#865).
+		constexpr double g_retimeTieOffset = 0.000618033988749895;
 
 		// The tempo track playing beats (seconds, in order) distance ticks apart: a step tempo event at each beat but
 		// the last replaces the tempo events from the first beat to the last; beats before the project start don't

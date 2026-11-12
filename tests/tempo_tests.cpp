@@ -535,6 +535,53 @@ TEST_CASE("shared linear copies whose notes retime onto half a tick round alike 
 	}
 }
 
+TEST_CASE("shared linear copies whose notes retime onto a fine fraction stay shared through a tempo change", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId linear = addTrack(client, {{"type", "midi"}, {"timeBase", "linear"}});
+	// A change from 120 to 120.04 BPM has the ratio 3001/3000, so a note at a position 1499 modulo 3000 retimes onto
+	// exactly n + 1499/3000: the fraction a tie offset of 1/3000 would turn into the new tie, splitting the copies.
+	// The offset is the golden ratio's fractional part over 1000, which no such ratio produces, so they round alike
+	// (#865).
+	const ObjectId part =
+		run(client, "midiPart.add", {{"track", linear}, {"position", 1}, {"length", 4 * g_quarterSamples}})
+			.at("part")
+			.at("id")
+			.get<ObjectId>();
+	Json notes = Json::array();
+	for (int i = 0; i < 200; ++i)
+		notes.push_back({{"position", 1499 + (30000 * i)}, {"length", 3000}, {"pitch", 60}, {"velocity", 1.0}});
+	run(client, "note.add", {{"part", part}, {"notes", notes}});
+	const auto copy = [&client, part](int64_t delta)
+	{
+		return run(client, "event.copy", {{"events", {part}}, {"shared", true}, {"delta", delta}})
+			.at("events")
+			.at(0)
+			.get<ObjectId>();
+	};
+	const ObjectId second = copy(24001);
+	const ObjectId third = copy(100003);
+	const ObjectId fourth = copy(777777);
+	const Json group = midiPartJson(client, part).at("shared");
+	REQUIRE(group != 0);
+	for (const ObjectId id : {second, third, fourth})
+		REQUIRE(midiPartJson(client, id).at("shared") == group);
+	changedParts(client);
+
+	// All four round the fine fraction the same way: they keep one group with equal notes, and all four are reported.
+	run(client, "project.set", {{"tempo", 120.04}});
+	CHECK(changedParts(client) == std::vector<ObjectId>{part, second, third, fourth});
+	const Json first = midiPartJson(client, part);
+	CHECK(first.at("shared") == group);
+	for (const ObjectId id : {second, third, fourth})
+	{
+		const Json other = midiPartJson(client, id);
+		CHECK(other.at("shared") == group);
+		CHECK(other.at("notes") == first.at("notes"));
+	}
+}
+
 TEST_CASE(
 	"small tempo steps split a shared musical copy from a linear part instead of moving it off its beat", "[unit]")
 {
