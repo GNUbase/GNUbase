@@ -45,14 +45,14 @@ the project (#491).
   of each kind before the position (stopped: up to and including the cursor) where that is the track's, or where it is
   of a kind the channel's program, MIDI volume, pan or MIDI automation has just sent, whichever track it is on. A later
   event of another track on the instrument keeps its value: one the channel didn't touch isn't sent again, one it
-  overrode comes back. A bank select (CC 0 or CC 32) chased that way brings its MIDI channel's latest program after
-  it, whichever track has it, as a jump sends both. After a move while only its mute button muted it, its parts played
-  into the mute: the sequencer chases only the kinds the channel sent, whichever track has the latest, and the strip
-  sends the rest of what the mute dropped. A routed track's own sequencer chases it into its strip in that block too
-  (`MidiSequencer::stripChase`, with the same kinds), so the strip learns the pedals that the instrument's chase presses
-  and, before it sends what waits, forgets what the mute kept of every kind of that chase and of the kinds the channel
-  sent, so each goes out once, with the chased value. Notes that started while it was silent aren't chased. Silent
-  channels don't monitor their input directly either.
+  overrode comes back. A bank select (CC 0 or CC 32) chased that way brings its MIDI channel's latest program if that
+  comes after it, whichever track has it, as a jump sends both. After a move while only its mute button muted it, its
+  parts played into the mute: the sequencer chases only the kinds the channel sent, whichever track has the latest, and
+  the strip sends the rest of what the mute dropped. A routed track's own sequencer chases it into its strip in that
+  block too (`MidiSequencer::stripChase`, with the same kinds), so the strip learns the pedals that the instrument's
+  chase presses and, before it sends what waits, forgets what the mute kept of every kind of that chase and of the kinds
+  the channel sent, so each goes out once, with the chased value. Notes that started while it was silent aren't chased.
+  Silent channels don't monitor their input directly either.
 - **Disabled tracks** (p. 219): `track.set` `enabled` false disables an audio, instrument or MIDI track. It keeps its
   events, parts and channel settings, but the snapshot leaves its events and parts out (no disk streaming) and its
   channel is silent. Other track types refuse it.

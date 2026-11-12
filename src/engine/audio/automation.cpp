@@ -972,18 +972,22 @@ namespace gnubase::engine
 		// The events that end notes go first in a full buffer, so that no note hangs.
 		const auto put = [&out](const graph::ProcessEvent& event) noexcept
 		{ return graph::endsNotes(event) ? out.addEnd(event) : out.add(event); };
-		// A mute's note-off or pedal release; in a full buffer it takes the place of the last value that passed
-		// (EventBuffer::addEnd), which then waits for unmuting as if the mute had dropped it.
-		const auto end = [&state, &out](const graph::ProcessEvent& event) noexcept
+		// Before a mute's count note-offs and pedal releases: in a full buffer they take the places of the last
+		// values that passed (EventBuffer::addEnd), which then wait for unmuting as if the mute had dropped them,
+		// kept oldest first so that the latest of a kind wins and the kinds keep their order.
+		const auto makeRoom = [&state, &out](size_t count) noexcept
 		{
-			if (out.size() == out.capacity())
-				for (size_t i = out.size(); i > 0; --i)
-					if (!graph::endsNotes(out[i - 1]))
-					{
-						state.midiDropped.drop(out[i - 1]);
-						break;
-					}
-			out.addEnd(event);
+			const size_t room = out.capacity() - out.size();
+			if (count <= room)
+				return;
+			size_t displaced = count - room;
+			size_t first = out.size();
+			for (; first > 0 && displaced > 0; --first)
+				if (!graph::endsNotes(out[first - 1]))
+					--displaced;
+			for (size_t i = first; i < out.size(); ++i)
+				if (!graph::endsNotes(out[i]))
+					state.midiDropped.drop(out[i]);
 		};
 		size_t next = 0; // the events from here on haven't passed yet
 		// Sends what the mute dropped at offset, as far as it fits with room left for the block's events still to
@@ -1043,6 +1047,11 @@ namespace gnubase::engine
 				if (muted && !state.midiMuted)
 				{
 					resendAt = -1; // unmuted at this sample: what waits stays
+					size_t ends = static_cast<size_t>(std::count(state.midiHeld.begin(), state.midiHeld.end(), true));
+					for (const std::array<uint32_t, 3>& values : state.midiPedals)
+						ends += static_cast<size_t>(std::count_if(values.begin(), values.end(),
+							[](uint32_t value) { return midi::controllerToMidi1(value) != 0; }));
+					makeRoom(ends);
 					for (size_t n = 0; n < g_midiNotes; ++n)
 						if (state.midiHeld[n])
 						{
@@ -1051,7 +1060,7 @@ namespace gnubase::engine
 							off.type = Type::NoteOff;
 							off.channel = static_cast<uint8_t>(n / 128);
 							off.key = static_cast<uint8_t>(n % 128);
-							end(off);
+							out.addEnd(off);
 							state.midiHeld[n] = false;
 						}
 					state.midiDropped.compact();
@@ -1068,7 +1077,7 @@ namespace gnubase::engine
 								up.channel = static_cast<uint8_t>(channel);
 								up.key = controller;
 								up.value = 0;
-								end(up);
+								out.addEnd(up);
 								up.value = value;
 								state.midiDropped.drop(up);
 							}

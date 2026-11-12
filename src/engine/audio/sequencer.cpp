@@ -619,18 +619,12 @@ namespace gnubase::engine
 			bool skipped =
 				!none && heardAgain && heard(sequence.chase[found.track]) != HeardAgain::Quiet && !m_resent[kind];
 			const bool program = kind >= g_notes && kind < g_notes + 16;
-			if (skipped && program && bank[kind - g_notes] != nullptr)
-			{
-				// Another track's later program change on that MIDI channel follows the bank select, as at a jump;
-				// it would stay in the bank it had otherwise.
-				const Chased& select = *bank[kind - g_notes];
-				if (found.position < select.position)
-				{
-					found.position = select.position;
-					found.track = select.track;
-				}
+			// Another track's program change on that MIDI channel after the bank select follows it, as at a jump; the
+			// instrument would keep that program in the bank it had otherwise. An earlier one a jump sends before the
+			// bank select, which changes nothing until the next program change: it isn't sent again.
+			if (const Chased* select = program ? bank[kind - g_notes] : nullptr; skipped && select != nullptr &&
+				std::tie(found.position, found.track) > std::tie(select->position, select->track))
 				skipped = false;
-			}
 			if (none || skipped)
 			{
 				m_chased[kind] = Chased();

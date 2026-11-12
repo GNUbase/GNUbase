@@ -2352,6 +2352,30 @@ TEST_CASE(
 	CHECK(midiValuesOf(strip.play({})) == MidiValues{{g_controller, 0, 0, 2, last}});
 }
 
+TEST_CASE("values whose places a MIDI track's mute ends take in a full event buffer wait in their order, the latest "
+		  "of a kind winning",
+	"[unit]")
+{
+	using Type = graph::ProcessEvent::Type;
+	// Muted from 150 to 10 frames into the second block. Four notes sound at the mute, whose note-offs take the
+	// places of the block's last four values: CC 1 at 10, a bank select, a program change, CC 1 at 90.
+	MidiStrip strip({{0, 0.0}, {150, 1.0}, {g_midiBlock + 10, 0.0}});
+	std::vector<graph::ProcessEvent> events;
+	for (uint8_t pitch = 60; pitch < 64; ++pitch)
+		events.push_back(midiEvent(Type::NoteOn, 5, 3, pitch));
+	while (events.size() + 4 < graph::g_maxEventsPerBlock)
+		events.push_back(midiEvent(Type::Controller, 50, 0, 2, 1));
+	events.insert(events.end(),
+		{midiEvent(Type::Controller, 100, 0, 1, 10), midiEvent(Type::Controller, 105, 0, 0, 3),
+			midiEvent(Type::Program, 110, 0, 6, 0xFFFFFFFFU), midiEvent(Type::Controller, 120, 0, 1, 90)});
+	const graph::EventBuffer& full = strip.play(events);
+	REQUIRE(full.size() == graph::g_maxEventsPerBlock);
+	for (size_t i = full.size() - 4; i < full.size(); ++i)
+		CHECK(full[i].type == Type::NoteOff);
+	CHECK(midiValuesOf(strip.play({})) ==
+		MidiValues{{g_controller, 10, 0, 0, 3}, {g_program, 10, 0, 6, 0xFFFFFFFFU}, {g_controller, 10, 0, 1, 90}});
+}
+
 TEST_CASE("a MIDI track of another project on the channel doesn't get what the old one's mute kept", "[unit]")
 {
 	using Type = graph::ProcessEvent::Type;
