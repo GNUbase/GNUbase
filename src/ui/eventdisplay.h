@@ -301,8 +301,8 @@ namespace gnubase::ui
 		// user settings midi.import*, at the left locator with midi.importToLeftLocator, else at the project start.
 		// Into a new project (newProject), the file's tempo always replaces the project's. MIDI files dropped on the
 		// event lanes go where they are dropped instead (elsewhere on the display, such as the track list, to the
-		// project cursor), and with midi.importSinglePart into one part, on the MIDI or instrument track they are
-		// dropped on if any.
+		// project cursor), and with midi.importSinglePart into one part, on the MIDI or instrument track whose lane
+		// or track list row they are dropped on if any.
 		void importMidi(const std::vector<std::string>& files, bool newProject = false);
 
 		// The commands that key commands bind to, by id: zoom.in, zoom.out, zoom.inVertically, zoom.outVertically,
@@ -694,8 +694,13 @@ namespace gnubase::ui
 		void selectRange();                       // the events in it, when another tool takes over
 		void showRange();
 		// Moves the range's edges to zero crossings of the audio on its tracks (reference manual p. 285), with Snap to
-		// Zero Crossing on: snap.zeroCrossings answers later, and actions wait until it has (m_afterZeroCrossings).
+		// Zero Crossing on: snap.zeroCrossings answers later, and actions wait until it has (EngineBinding::sendAwaited
+		// and afterAwaited).
 		void zeroCrossRange();
+		// Runs the actions that wait for zeroCrossRange's answers before a press, which may start another range, so
+		// that they edit the range they were run on (#1086): the binding settles, handing the answers on, for at most
+		// a few seconds; actions still waiting then run on the range as it is.
+		void runWaitingActions();
 		// The rectangle that a tool drags, dp in the event lanes; hidden when not shown.
 		void showRectangle(bool shown, double left = 0.0, double top = 0.0, double right = 0.0, double bottom = 0.0);
 		void setToolModifiers(const engine::Json& value);
@@ -942,8 +947,6 @@ namespace gnubase::ui
 		std::map<uint64_t, std::set<uint64_t>> m_pointsBase; // the selection a rectangle with Ctrl or Shift adds to
 
 		std::map<std::string, std::function<void()>> m_actions;
-		size_t m_zeroCrossings = 0;                              // zeroCrossRange's requests not answered yet
-		std::vector<std::function<void()>> m_afterZeroCrossings; // the actions run meanwhile, which then run
 		std::map<std::string, bool> m_rangeActions; // the actions that need a range (canRun), whether with a length
 		std::vector<std::function<void()>> m_viewListeners;
 		std::vector<Subscription> m_subscriptions;

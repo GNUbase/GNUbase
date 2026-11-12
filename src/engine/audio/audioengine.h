@@ -9,6 +9,7 @@
 #include "engine/audio/performance.h"
 #include "engine/audio/playback.h"
 #include "engine/audio/recorder.h"
+#include "engine/audio/sampleloader.h"
 #include "engine/audio/sequencer.h"
 #include "engine/audio/transport.h"
 #include "engine/graph/graph.h"
@@ -107,6 +108,8 @@ namespace gnubase::engine
 		void readMeters(MeterFrame& frame); // metercommands.cpp
 		// Command thread: what the MIDI and instrument tracks chase when playback jumps (MidiSequencer).
 		void setChase(const MidiChase& chase);
+		// Any thread: reads the samplers' samples asked for from now on with read (SampleLoader::setRead).
+		void setSampleReader(SampleLoader::Read read);
 
 		// Command thread, after a command changed the user settings audio.portSettings (audioPorts) or
 		// midi.portSettings (midiPorts): emits the audio ports as audio.portsChanged, and the MIDI ports follow their
@@ -304,6 +307,13 @@ namespace gnubase::engine
 		// Gives MIDI and instrument channels their sequencers and instruments, and notes the MIDI tracks that left an
 		// instrument track for the program of the generation.
 		void attachMidi(const RenderSnapshot& snapshot, graph::GraphDesc& desc, uint64_t generation);
+		// Hands the samples the sample loader read to the samplers that wait for them, and lets go of the others.
+		void updateSamples();
+		// Waits until the sample loader has read every file the samplers wait for, at most timeout, and hands them
+		// over (updateSamples); false if one wasn't read in time.
+		bool waitForSamples(std::chrono::milliseconds timeout);
+		// Sample loader thread: has the command thread run updateSamples.
+		void postSampleUpdate();
 		// The releases for a new program: those pending that the audio thread hasn't done yet.
 		std::vector<Release> releases();
 		// Puts every channel's processor into a channel strip with the channel's fader and automation, and the
@@ -416,13 +426,15 @@ namespace gnubase::engine
 			std::set<ObjectId> sources; // the MIDI channels routed to it
 			std::shared_ptr<InstrumentChannel> channel;
 			std::shared_ptr<processors::Sampler> sampler; // the sampler's, which loads its sample when it changes
-			std::string sample;                           // the media file that sampler plays
+			std::string sample;                           // the media file that sampler is to play
+			std::string loaded; // the media file whose sample it has: until sample is read, the one before or none
 		};
 		std::map<ObjectId, std::shared_ptr<MidiSequencer>> m_sequencers; // per MIDI and instrument channel
 		// Per MIDI and instrument channel with an input transformer.
 		std::map<ObjectId, std::shared_ptr<processors::InputTransformerProcessor>> m_inputTransformers;
-		MidiChase m_chase;                                                 // what they chase
-		std::map<ObjectId, Instrument> m_instruments;                      // per instrument channel
+		MidiChase m_chase;                            // what they chase
+		std::map<ObjectId, Instrument> m_instruments; // per instrument channel
+		uint64_t m_opened = 0;                        // the project of the instruments (RenderSnapshot::opened)
 		std::map<ObjectId, std::shared_ptr<ChannelState>> m_channelStates; // per channel
 		std::mutex m_channelStatesMutex; // the command thread changes m_channelStates with it, readMeters reads with it
 		// The channels that mixdown.export renders from a point inside their strip while it renders, and where their
@@ -510,5 +522,9 @@ namespace gnubase::engine
 		std::shared_ptr<graph::Processor> m_generator;
 		graph::EventBuffer m_generatorEvents;
 		graph::EventBuffer m_generatorOut;
+
+		// Reads the samplers' samples (#1122). Last, so that it stops first: it posts audio.updateSamples.
+		std::atomic<bool> m_updatingSamples{false}; // an audio.updateSamples it posted hasn't started yet
+		SampleLoader m_sampleLoader{[this] { postSampleUpdate(); }};
 	};
 }

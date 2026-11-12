@@ -14,7 +14,8 @@ undo step.
   from its input.
 - **What records.** A MIDI or instrument track records while the transport records if it is record-enabled and
   enabled: everything its MIDI input plays, injected or from the ports. The tracks are those armed when recording
-  starts. Input belongs where the transport plays the frame it comes at, without the record offset that audio input
+  starts. With the chord track record-enabled, the tracks that only monitor record too, but only into chord events
+  ([chord-track.md](chord-track.md), reference manual p. 1345). Input belongs where the transport plays the frame it comes at, without the record offset that audio input
   has: the instrument plays it there, and the recording puts it there (`PlayedPositions::recordedAt` at its frame).
   The acceptance test injects notes through `midi.inject`, records them, and plays them back to find each note at the
   frame it was played at, for several block sizes (`tests/midirecording_tests.cpp`).

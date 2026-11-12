@@ -166,6 +166,11 @@ namespace gnubase::engine
 	// read. Reads the file: not on audio threads.
 	time::Samples zeroCrossing(const Project& project, const AudioEvent& event, time::Samples at, bool inside = false);
 
+	// The same strictly inside the event and between from and to (project samples), where it plays: e.g. within its
+	// audio part and between the events in front of it, so that a selection range's edge goes where its audio plays.
+	time::Samples zeroCrossingBetween(
+		const Project& project, const AudioEvent& event, time::Samples at, time::Samples from, time::Samples to);
+
 	// The same in a media file's frames: the frame nearest to frame, within 50 ms and first to last, where the sum of
 	// its channels changes sign (of the two frames there, the one nearer to zero), or frame if there is none or the
 	// file can't be read. Reads the file: not on audio threads.

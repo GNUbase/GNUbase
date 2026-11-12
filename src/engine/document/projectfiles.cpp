@@ -155,10 +155,10 @@ namespace gnubase::engine
 		m_automationClipboard.reset(); // so does this one
 		context.emit("project.reset");
 		announceHistory(context);
+		m_openedRevision = m_revision + 1; // the revision publish() makes, so that its snapshot is the new project's
 		publish();
 		m_savedRevision = autoSave ? 0 : m_revision; // publish() made m_revision at least 1
 		m_autoSavedRevision = m_revision;
-		m_openedRevision = m_revision;
 		m_lastSave = m_clock->now();
 		m_autoSaveFailure.reset();
 		if (!m_file.empty())

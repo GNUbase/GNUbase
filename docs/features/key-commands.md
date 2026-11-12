@@ -8,7 +8,9 @@ it up in `app::AppUi`.
   gives it, or a command of the UI's own (`ui::UiCommand`, added with `KeyCommands::add`), such as zooming or opening a
   window. Both share the engine's ids, "area.action"; a UI command can't take an engine command's id. Engine commands
   go through the UI's engine client (`EngineBinding::send`), so a key can do nothing that MCP and Lua can't, and
-  `engine.commandLog` shows what a key did as sent by `ui`. A failed command is logged.
+  `engine.commandLog` shows what a key did as sent by `ui`. A failed command is logged. While an action before it
+  waits for an answer, such as Delete for the zero crossings of a range just drawn, an engine command waits with it
+  (`EngineBinding::afterAwaited`, [ui-engine-binding.md](ui-engine-binding.md)), so the two go in the order pressed.
 - **Key map.** A binding (`ui::KeyBinding`) has keys, a command, the command's parameters and a focus zone (none for
   everywhere). `bind` checks the keys, and the command and its parameters with `check` (#446), which menu items and
   transport controls use too: the command must exist, an engine command's parameters must fit its schema, and a UI

@@ -115,13 +115,14 @@ namespace
 	// The project window in a main window of 800 by 300 dp, at a dp ratio of 1.
 	struct ProjectWindow
 	{
-		ProjectWindow() : display(app.appUi().showProject())
+		// The toolbar has room for its Grid Type section from 840 dp (#1050).
+		explicit ProjectWindow(int width = 800) : app{{width, 300}}, display(app.appUi().showProject())
 		{
 			app.setDpRatio(1.0F);
 			app.shell().step(std::chrono::milliseconds(0));
 		}
 
-		test::UiApp app{{800, 300}};
+		test::UiApp app;
 		ui::EventDisplay& display;
 	};
 }
@@ -543,7 +544,7 @@ TEST_CASE("the auto-scroll button switches auto-scroll, its menu sets the mode, 
 
 TEST_CASE("the snap buttons, the snap and grid type menus and J change the project's snap settings", "[ui]")
 {
-	ProjectWindow window;
+	ProjectWindow window(900);
 	test::UiApp& app = window.app;
 	ui::EventDisplay& display = window.display;
 	const auto snap = [&app] { return app.call("snap.get"); };
@@ -610,7 +611,7 @@ TEST_CASE("the snap buttons, the snap and grid type menus and J change the proje
 // #565: the grid type menu has the engine's grid types of the ruler's format, and a pick sends that format with it.
 TEST_CASE("the grid type menu has the format's grid types and picks them in the format shown", "[ui]")
 {
-	ProjectWindow window;
+	ProjectWindow window(900);
 	test::UiApp& app = window.app;
 	ui::EventDisplay& display = window.display;
 	const auto snap = [&app] { return app.call("snap.get"); };

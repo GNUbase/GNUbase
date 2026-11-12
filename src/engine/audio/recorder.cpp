@@ -697,9 +697,12 @@ namespace gnubase::engine
 		{
 			MidiTakeBuilder& builder = m_midiBuilders[track.channel];
 			builder.endNotes(last.position + last.length);
-			if (!builder.empty() && !takes.empty())
-				tracks.push_back({{"track", track.track}, {"takes", takes}, {"notes", builder.notes()},
-					{"controllers", builder.controllers()}});
+			if (builder.empty() || takes.empty())
+				continue;
+			tracks.push_back({{"track", track.track}, {"takes", takes}, {"notes", builder.notes()},
+				{"controllers", builder.controllers()}});
+			if (track.chordsOnly)
+				tracks.back()["chordsOnly"] = true;
 		}
 		m_midiBuilders.clear();
 		if (tracks.empty())
