@@ -258,6 +258,34 @@ TEST_CASE("every theme's piano keyboard has light white keys and dark black keys
 	}
 }
 
+TEST_CASE("every theme dims the audio part editor's events that their part hides entirely", "[unit]")
+{
+	// The audio part editor (docs/features/audio-part-editor.md): an event out of its part doesn't play there, so it
+	// is styled and looks dimmed, not like an event that plays.
+	for (const char* theme : g_themes)
+	{
+		INFO("theme " << theme);
+		std::string playing;
+		std::string outside;
+		for (const auto& [selector, declarations] : rules(gnubase::test::readText(themesDir() / theme / "theme.rcss")))
+		{
+			const size_t at = declarations.find("background-color: #");
+			if (at == std::string::npos)
+				continue;
+			const std::string color = declarations.substr(at + std::string_view("background-color: ").size(), 7);
+			const size_t first = selector.find_first_not_of(" \t");
+			const std::string name = selector.substr(first, selector.find_last_not_of(" \t\r") + 1 - first);
+			if (name == ".ape-event")
+				playing = color;
+			else if (name.find(".ape-event.outside") != std::string::npos)
+				outside = color;
+		}
+		REQUIRE(playing.size() == 7);
+		REQUIRE(outside.size() == 7);
+		CHECK(outside != playing);
+	}
+}
+
 TEST_CASE("the shared style sheets leave font sizes to the themes", "[unit]")
 {
 	const std::string base =
