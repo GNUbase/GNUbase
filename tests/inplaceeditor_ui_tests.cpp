@@ -36,14 +36,15 @@ namespace
 		return {selector, 0, std::nullopt};
 	}
 
-	// A MIDI track, selected, with a one-bar part "Keys" in the second bar and two notes, C3 on its first beat and
-	// E3 on its second, each a quarter long, and an audio track below it, in the project window at a dp ratio of 1.
+	// A MIDI or instrument track, selected, with a one-bar part "Keys" in the second bar and two notes, C3 on its
+	// first beat and E3 on its second, each a quarter long, and an audio track below it, in the project window at a
+	// dp ratio of 1.
 	struct Fixture
 	{
-		Fixture() : display(app.appUi().showProject())
+		explicit Fixture(const std::string& type = "midi") : display(app.appUi().showProject())
 		{
 			app.setDpRatio(1.0F);
-			track = app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+			track = app.call("track.add", {{"type", type}}).at("track").at("id").get<uint64_t>();
 			audio = app.call("track.add", {{"type", "audio"}}).at("track").at("id").get<uint64_t>();
 			part =
 				app.call("midiPart.add", {{"track", track}, {"position", g_bar}, {"length", g_bar}, {"name", "Keys"}})
@@ -277,61 +278,26 @@ TEST_CASE("the in-place editor edits notes as the key editor does, and the event
 TEST_CASE("a key of the in-place editor's keyboard held while the in-place editor closes ends its pitch", "[ui]")
 {
 	// The in-place editor closing while one of its keys is held: the key editor's destructor ends the pitch.
-	// Uses an instrument track (not the Fixture's MIDI track) so that noteProbe can play.
-	test::UiApp app{ui::Size{1200, 800}};
-	app.setDpRatio(1.0F);
-	auto& display = app.appUi().showProject();
-	const uint64_t track = app.call("track.add", {{"type", "instrument"}}).at("track").at("id").get<uint64_t>();
-	const uint64_t part = app.call("midiPart.add", {{"track", track}, {"position", g_bar}, {"length", g_bar}, {"name", "Keys"}})
-							  .at("part")
-							  .at("id")
-							  .get<uint64_t>();
-	const Json added = app.call("note.add",
-		{{"part", part},
-			{"notes",
-				{{{"position", 0}, {"length", g_quarter}, {"pitch", 60}, {"velocity", 0.5}},
-					{{"position", g_quarter}, {"length", g_quarter}, {"pitch", 64}, {"velocity", 0.5}}}}});
-	std::vector<uint64_t> notes;
-	for (const Json& note : added.at("notes"))
-		notes.push_back(note.at("id").get<uint64_t>());
-	REQUIRE(app.waitUntil(
-		[&]
-		{
-			const Json& project = display.project();
-			return project.is_object() && project.at("midiParts").size() == 1 &&
-				project.at("midiParts").at(0).at("notes").size() == 2;
-		}));
-	app.appUi().trackList()->select({track});
-
-	const std::string editor = ".in-place-editor[track=\"" + std::to_string(track) + "\"]";
-	const auto elements = [&](const std::string& selector) { return app.ui().dom(std::nullopt, selector, 0).at("elements"); };
-	const auto box = [&](const std::string& selector) { return elements(selector).at(0).at("box"); };
-
-	// Open the in-place editor.
-	app.keys().run("editor.openInPlace", Json::object(), app.main(), nullptr);
-	REQUIRE(app.waitUntil([&] { return elements(editor + " .key-note").size() == 2; }));
-	// Wait for the notes to be shown at their times.
-	REQUIRE(app.waitUntil([&] { return elements(editor + " .key-note").size() == 2; }));
-	app.shell().step(std::chrono::milliseconds(0));
-
-	// Scroll to show C3.
-	REQUIRE(app.waitUntil([&] { return app.appUi().inPlaceEditors()->keyEditor(track)->scrollToPitch(60); }));
-	app.shell().step(std::chrono::milliseconds(0));
+	Fixture f("instrument");
+	f.app.keys().run("editor.openInPlace", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil([&] { return f.elements(f.editor() + " .key-note").size() == 2; }));
+	f.settle(2);
+	f.scroll(60);
 
 	// Set up audio capture to hear what the keyboard plays.
-	app.call("audio.setDevice", {{"blockSize", 128}, {"inputChannels", 0}, {"captureSeconds", 1}});
-	app.call("channel.set",
-		{{"channel", app.call("project.get").at("tracks").at(0).at("channel")}, {"instrument", "noteProbe"}});
-	app.call("audio.render", {{"frames", 128}});
-	app.call("midi.capture", {{"start", true}});
+	f.app.call("audio.setDevice", {{"blockSize", 128}, {"inputChannels", 0}, {"captureSeconds", 1}});
+	f.app.call("channel.set",
+		{{"channel", f.app.call("project.get").at("tracks").at(0).at("channel")}, {"instrument", "noteProbe"}});
+	f.app.call("audio.render", {{"frames", 128}});
+	f.app.call("midi.capture", {{"start", true}});
 	std::vector<std::vector<int>> played;
 	const auto plays = [&](const std::vector<std::vector<int>>& expected)
 	{
-		return app.waitUntil(
+		return f.app.waitUntil(
 			[&]
 			{
-				app.call("audio.render", {{"frames", 128}});
-				const Json captured = app.call("midi.capture");
+				f.app.call("audio.render", {{"frames", 128}});
+				const Json captured = f.app.call("midi.capture");
 				for (const Json& message : captured.at("captured"))
 				{
 					const auto bytes = message.at("bytes").get<std::vector<int>>();
@@ -343,26 +309,24 @@ TEST_CASE("a key of the in-place editor's keyboard held while the in-place edito
 	};
 
 	// Press a key on the in-place editor's keyboard.
-	const Json keyboard = box(editor + " .key-editor-keys");
-	const Json grid = box(editor + " .key-editor-grid");
-	const ui::Target keyTarget = {"",
-		0,
+	const Json keyboard = f.box(f.editor() + " .key-editor-keys");
+	const Json grid = f.box(f.editor() + " .key-editor-grid");
+	const ui::Target keyTarget = {"", 0,
 		ui::Point{keyboard.at("x").get<int>() + 2,
-			static_cast<int>(std::lround(
-				grid.at("y").get<double>() +
-				((127.5 - 60) / 128.0 * grid.at("height").get<double>())))}};
-	app.ui().press(std::nullopt, keyTarget, ui::MouseButton::Left, {});
-	app.shell().step(std::chrono::milliseconds(0));
+			static_cast<int>(
+				std::lround(grid.at("y").get<double>() + ((127.5 - 60) / 128.0 * grid.at("height").get<double>())))}};
+	f.app.ui().press(std::nullopt, keyTarget, ui::MouseButton::Left, {});
+	f.app.shell().step(std::chrono::milliseconds(0));
 	CHECK(plays({{0x90, 60, 100}}));
 
 	// Close the in-place editor: the pitch ends.
-	app.call("editor.inPlace", {{"tracks", {track}}, {"open", false}});
-	REQUIRE(app.waitUntil([&] { return elements(editor).empty(); }));
+	f.app.call("editor.inPlace", {{"tracks", {f.track}}, {"open", false}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(f.editor()).empty(); }));
 	CHECK(plays({{0x90, 60, 100}, {0x80, 60, 0}}));
-	app.ui().release(std::nullopt, of(".event-area"), ui::MouseButton::Left, {});
+	f.app.ui().release(std::nullopt, of(".event-area"), ui::MouseButton::Left, {});
 	for (int block = 0; block < 4; ++block)
 	{
-		app.shell().step(std::chrono::milliseconds(0));
+		f.app.shell().step(std::chrono::milliseconds(0));
 		CHECK(plays({{0x90, 60, 100}, {0x80, 60, 0}}));
 	}
 }
