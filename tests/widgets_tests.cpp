@@ -1317,14 +1317,22 @@ TEST_CASE("a titled ancestor's tooltip comes after its titled member's has gone"
 	CHECK_FALSE(visible(app, "tooltip"));
 	CHECK(shows("Group"));
 
-	// The same when the member under the resting mouse is removed.
-	app.ui().move(std::nullopt, at("#titled"));
+	// The same when the member under the resting mouse is removed, and the tooltip comes under the mouse where it
+	// rests, not where it entered the member (RmlUi sends no event for moves within an element).
+	const Json box = element(app, "#titled").at("box");
+	const int x = box.at("x").get<int>() + (box.at("width").get<int>() / 2);
+	const int top = box.at("y").get<int>() + 1;
+	const int bottom = box.at("y").get<int>() + box.at("height").get<int>() - 2;
+	app.ui().move(std::nullopt, point(x, top));
+	app.ui().move(std::nullopt, point(x, bottom));
 	REQUIRE(shows("Titled"));
 	Rml::Element* titled = document.GetElementById("titled");
 	titled->GetParentNode()->RemoveChild(titled);
 	document.GetContext()->RequestNextUpdate(0.0);
 	CHECK(app.waitUntil([&app] { return !visible(app, "tooltip"); }));
 	CHECK(shows("Group"));
+	CHECK(
+		app.waitUntil([&app, bottom] { return element(app, "tooltip").at("box").at("y").get<int>() >= bottom + 15; }));
 }
 
 namespace

@@ -372,6 +372,9 @@ namespace gnubase::ui
 				GetContext()->RequestNextUpdate(g_tooltipDelay);
 			}
 
+			// The mouse moved within the element it's over, or elsewhere in the document.
+			void moved(Rml::Vector2f at) { m_mouse = at; }
+
 			void hide()
 			{
 				m_titled.reset();
@@ -458,7 +461,7 @@ namespace gnubase::ui
 			// hovered
 			bool m_tracking = false;
 			bool m_looking = false; // its element is gone: the next update looks for the one under the mouse
-			Rml::Vector2f m_mouse;  // where the mouse was when it entered the element it's over, in the window's pixels
+			Rml::Vector2f m_mouse;  // where the mouse was last seen, in the window's pixels
 			Rml::Vector2f m_at;
 			double m_due = 0.0;
 		};
@@ -643,9 +646,9 @@ namespace gnubase::ui
 			}
 
 		private:
-			static constexpr std::array<Rml::EventId, 8> g_events = {Rml::EventId::Mousedown, Rml::EventId::Mouseup,
+			static constexpr std::array<Rml::EventId, 9> g_events = {Rml::EventId::Mousedown, Rml::EventId::Mouseup,
 				Rml::EventId::Click, Rml::EventId::Keydown, Rml::EventId::Keyup, Rml::EventId::Mouseover,
-				Rml::EventId::Mousescroll, Rml::EventId::Mouseout};
+				Rml::EventId::Mousescroll, Rml::EventId::Mouseout, Rml::EventId::Mousemove};
 
 			void handle(Rml::Event& event)
 			{
@@ -664,6 +667,12 @@ namespace gnubase::ui
 					if (const Rml::Element* item = closestTag(target, "menuitem"))
 						if (auto* menu = dynamic_cast<Menu*>(item->GetParentNode()))
 							menu->hover(*item);
+					break;
+				case Rml::EventId::Mousemove:
+					// RmlUi sends no Mouseover for a move within an element: where the mouse rests, for the
+					// tooltip that a removed element's replacement gets.
+					if (tooltip != nullptr)
+						tooltip->moved(mouse);
 					break;
 				case Rml::EventId::Mouseout:
 					// The mouse left the document, or an element within it: the tooltip goes, and the one of the
