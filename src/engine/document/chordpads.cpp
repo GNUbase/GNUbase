@@ -997,6 +997,66 @@ namespace gnubase::engine
 		}
 	}
 
+	namespace
+	{
+		// chordPads.loadPreset, outside registerChordPadCommands to keep that within the function size limit.
+		void loadPreset(ChordPads& pads, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			const auto preset = parameters.at("preset").get<std::string>();
+			const int root = parameters.value("root", pads.rootKey);
+			require(root >= 0 && root < 12, "root must be 0 to 11");
+			const std::string load = parameters.value("load", std::string("chordsAndPlayers"));
+			const std::vector<midi::ChordSymbol> chords = chordpads::presetChords(preset, root);
+			const Json mine = chords.empty() ? userPresets(context).value(preset, Json()) : Json();
+			require(!chords.empty() || mine.is_object(), "no chord pads preset " + preset);
+			if (load != "players")
+			{
+				const Json saved = mine.is_object() ? mine.value("pads", Json::array()) : Json::array();
+				size_t next = 0;
+				for (size_t i = 0; i < pads.pads.size(); ++i)
+				{
+					ChordPad& pad = pads.pads[i];
+					if (pad.locked)
+						continue;
+					pad = ChordPad();
+					if (!chords.empty() && next < chords.size())
+					{
+						pad.chord = midi::chordName(chords[next++]);
+					}
+					else if (i < saved.size() && saved[i].is_object())
+					{
+						const midi::ChordSymbol chord = chordOf(saved[i].value("chord", std::string()));
+						pad.chord = chord.root < 0 ? std::string() : midi::chordName(chord);
+						pad.voicings = voicingsFromJson(saved[i]);
+						pad.adaptive = saved[i].value("adaptive", true);
+					}
+				}
+				pads.rootKey = chords.empty() ? pitchClass(mine.value("rootKey", 0)) : root;
+				pads.preset = preset;
+				const std::vector<std::string>& scales = chordpads::presetNames();
+				pads.scale = chords.empty() ? mine.value("scale", std::string("major")) : preset;
+				if (std::find(scales.begin(), scales.end(), pads.scale) == scales.end())
+					pads.scale = "major";
+			}
+			if (load != "chords")
+			{
+				pads.players = chords.empty() ? playersFromJson(mine.value("players", Json::array()))
+											  : std::vector<ChordPlayer>{ChordPlayer()};
+				// Tracks are the project's, so even a preset that has them plays none.
+				for (ChordPlayer& player : pads.players)
+					player.track = 0;
+				if (pads.players.empty()) // a preset from before the players
+				{
+					pads.players = {ChordPlayer()};
+					pads.players.front().octaveOffset = std::clamp(mine.value("octaveOffset", 0), -3, 3);
+				}
+				pads.player = std::clamp(
+					chords.empty() ? mine.value("player", 0) : 0, 0, static_cast<int>(pads.players.size()) - 1);
+			}
+		}
+	}
+
 	void ProjectModel::registerChordPadCommands(Engine& engine)
 	{
 		const Json integerSchema = {{"type", "integer"}};
@@ -1597,59 +1657,7 @@ namespace gnubase::engine
 				padsResult, false},
 			[changed](Project& project, CommandContext& context)
 			{
-				const Json& parameters = context.parameters();
-				ChordPads& pads = project.chordPads;
-				const auto preset = parameters.at("preset").get<std::string>();
-				const int root = parameters.value("root", pads.rootKey);
-				require(root >= 0 && root < 12, "root must be 0 to 11");
-				const std::string load = parameters.value("load", std::string("chordsAndPlayers"));
-				const std::vector<midi::ChordSymbol> chords = chordpads::presetChords(preset, root);
-				const Json mine = chords.empty() ? userPresets(context).value(preset, Json()) : Json();
-				require(!chords.empty() || mine.is_object(), "no chord pads preset " + preset);
-				if (load != "players")
-				{
-					const Json saved = mine.is_object() ? mine.value("pads", Json::array()) : Json::array();
-					size_t next = 0;
-					for (size_t i = 0; i < pads.pads.size(); ++i)
-					{
-						ChordPad& pad = pads.pads[i];
-						if (pad.locked)
-							continue;
-						pad = ChordPad();
-						if (!chords.empty() && next < chords.size())
-						{
-							pad.chord = midi::chordName(chords[next++]);
-						}
-						else if (i < saved.size() && saved[i].is_object())
-						{
-							const midi::ChordSymbol chord = chordOf(saved[i].value("chord", std::string()));
-							pad.chord = chord.root < 0 ? std::string() : midi::chordName(chord);
-							pad.voicings = voicingsFromJson(saved[i]);
-							pad.adaptive = saved[i].value("adaptive", true);
-						}
-					}
-					pads.rootKey = chords.empty() ? pitchClass(mine.value("rootKey", 0)) : root;
-					pads.preset = preset;
-					const std::vector<std::string>& scales = chordpads::presetNames();
-					pads.scale = chords.empty() ? mine.value("scale", std::string("major")) : preset;
-					if (std::find(scales.begin(), scales.end(), pads.scale) == scales.end())
-						pads.scale = "major";
-				}
-				if (load != "chords")
-				{
-					pads.players = chords.empty() ? playersFromJson(mine.value("players", Json::array()))
-												  : std::vector<ChordPlayer>{ChordPlayer()};
-					// Tracks are the project's, so even a preset that has them plays none.
-					for (ChordPlayer& player : pads.players)
-						player.track = 0;
-					if (pads.players.empty()) // a preset from before the players
-					{
-						pads.players = {ChordPlayer()};
-						pads.players.front().octaveOffset = std::clamp(mine.value("octaveOffset", 0), -3, 3);
-					}
-					pads.player = std::clamp(
-						chords.empty() ? mine.value("player", 0) : 0, 0, static_cast<int>(pads.players.size()) - 1);
-				}
+				loadPreset(project.chordPads, context);
 				return changed(project, context);
 			});
 		add(engine,
