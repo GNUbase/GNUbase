@@ -199,6 +199,17 @@ namespace
 		return found;
 	}
 
+	Json crossfadeOf(engine::Client& client, ObjectId event)
+	{
+		return byId(client, "audioEvents", event).at("crossfade");
+	}
+
+	// One state of an event's quantize origin as the project gives it, without a crossfade in it.
+	Json originState(int64_t position, int64_t offset, int64_t length)
+	{
+		return {{"position", position}, {"offset", offset}, {"length", length}, {"crossfade", nullptr}};
+	}
+
 	std::string lastStep(engine::Client& client)
 	{
 		return run(client, "history.get").at("steps").back().at("action").get<std::string>();
@@ -293,8 +304,7 @@ TEST_CASE("splitting a quantized audio event keeps both pieces resettable", "[in
 	REQUIRE(pieces.size() == 1);
 	const auto right = pieces.at(0).get<ObjectId>();
 	CHECK(byId(client, "audioEvents", right).at("quantizeOrigin") ==
-		Json({{"original", {{"position", 14000}, {"offset", 12000}, {"length", 84000}}},
-			{"quantized", {{"position", 12000}, {"offset", 12000}, {"length", 84000}}}}));
+		Json({{"original", originState(14000, 12000, 84000)}, {"quantized", originState(12000, 12000, 84000)}}));
 
 	run(client, "quantize.reset", {{"events", {loop.event, right}}});
 	CHECK(positionOf(client, loop.event) == 2000);
@@ -327,8 +337,7 @@ TEST_CASE("splitting a quantized audio event of a musical track keeps both piece
 	REQUIRE(pieces.size() == 1);
 	const auto right = pieces.at(0).get<ObjectId>();
 	CHECK(byId(client, "audioEvents", right).at("quantizeOrigin") ==
-		Json({{"original", {{"position", afterSplit}, {"offset", 30000}, {"length", 66000}}},
-			{"quantized", {{"position", split}, {"offset", 30000}, {"length", 66000}}}}));
+		Json({{"original", originState(afterSplit, 30000, 66000)}, {"quantized", originState(split, 30000, 66000)}}));
 
 	run(client, "quantize.reset", {{"events", {loop.event, right}}});
 	CHECK(positionOf(client, loop.event) == original);
@@ -666,6 +675,72 @@ TEST_CASE("Reset Quantize undoes what the panel's Crossfade step changed", "[int
 		run(client, "quantize.reset", {{"events", sliced.at("events")}});
 		CHECK(eventsOn(client, loop.track) == before);
 		CHECK(crossfades(client) == 0);
+	}
+}
+
+TEST_CASE("Reset Quantize keeps a crossfade the event had before quantizing", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	// Three overlapping events of one clip, the first crossfading into the second by hand before quantizing.
+	// Quantizing moves them, and the panel's Crossfade step cuts and stretches them and crossfades the second into
+	// the third. Resetting returns to the state before quantizing (reference manual p. 367), which that crossfade is
+	// part of: the one made by hand comes back and the one the step made goes.
+	const std::string file = (dir.path() / "loop.wav").u8string();
+	test::writeWav(file, clicks({1000}, 4 * g_quarter));
+	const ObjectId track = run(client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}, {"channels", 1}})
+							   .at("track")
+							   .at("id")
+							   .get<ObjectId>();
+	const ObjectId media = run(client, "media.add", {{"path", file}}).at("media").at("id").get<ObjectId>();
+	const ObjectId clip = run(client, "clip.add", {{"media", media}}).at("clip").at("id").get<ObjectId>();
+	const auto add = [&client, track, clip](int64_t position, int64_t offset)
+	{
+		return run(client, "audioEvent.add",
+			{{"track", track}, {"clip", clip}, {"position", position}, {"offset", offset}, {"length", 30000}})
+			.at("event")
+			.at("id")
+			.get<ObjectId>();
+	};
+	const ObjectId first = add(1000, 0);
+	const ObjectId second = add(25000, 24000);
+	const ObjectId third = add(49000, 48000);
+	run(client, "crossfade.set", {{"from", first}, {"to", second}, {"mode", "equalPower"}});
+	REQUIRE(crossfadeOf(client, second).at("mode") == "equalPower");
+	const std::vector<std::vector<int64_t>> before = eventsOn(client, track);
+	REQUIRE(
+		before == std::vector<std::vector<int64_t>>{{1000, 0, 30000}, {25000, 24000, 30000}, {49000, 48000, 30000}});
+
+	run(client, "quantize.set", {{"preset", "1/4"}});
+	const Json events = Json::array({first, second, third});
+	run(client, "quantize.apply", {{"events", events}});
+	run(client, "quantize.crossfade", {{"events", events}});
+	REQUIRE(crossfadeOf(client, second).at("mode") == "equalPower");
+	REQUIRE(crossfadeOf(client, third).at("from") == second);
+
+	SECTION("reset puts the hand-made crossfade back and removes the one the step made")
+	{
+		run(client, "quantize.reset", {{"events", events}});
+		CHECK(eventsOn(client, track) == before);
+		const Json kept = crossfadeOf(client, second);
+		REQUIRE(kept.is_object());
+		CHECK(kept.at("from") == first);
+		CHECK(kept.at("mode") == "equalPower");
+		CHECK(!crossfadeOf(client, third).is_object());
+	}
+
+	SECTION("a project saved after the crossfade keeps it")
+	{
+		const std::string saved = (dir.path() / "crossfaded.dawproject").u8string();
+		run(client, "project.save", {{"path", saved}, {"embedMedia", false}});
+		run(client, "project.new");
+		run(client, "project.load", {{"path", saved}});
+		REQUIRE(eventsOn(client, track).size() == 3);
+		run(client, "quantize.reset", {{"events", events}});
+		CHECK(eventsOn(client, track) == before);
+		CHECK(crossfadeOf(client, second).at("mode") == "equalPower");
+		CHECK(!crossfadeOf(client, third).is_object());
 	}
 }
 

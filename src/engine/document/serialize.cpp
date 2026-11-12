@@ -186,17 +186,19 @@ namespace gnubase::engine
 
 		Json eventTimingJson(const EventTiming& timing)
 		{
-			return {{"position", timing.position.value}, {"offset", timing.offset}, {"length", timing.length}};
+			return {{"position", timing.position.value}, {"offset", timing.offset}, {"length", timing.length},
+				{"crossfade", toJson(timing.crossfade)}};
 		}
 
-		// An audio event's quantize timing. A file from before #910 has a bare position for each state: no offset or
-		// length to put back, so resetting such an event leaves them as they are.
+		// An audio event's quantize timing. A file from before #910 has a bare position for each state: no offset,
+		// length or crossfade to put back, so resetting such an event leaves them as they are. One written while
+		// #910 was in progress has no crossfade either.
 		EventTiming eventTimingFrom(const Json& json, const AudioEvent& event)
 		{
 			if (!json.is_object())
-				return {{event.position.base, json.get<int64_t>()}, event.offset, event.length};
+				return {{event.position.base, json.get<int64_t>()}, event.offset, event.length, event.crossfade};
 			return {{event.position.base, json.at("position").get<int64_t>()}, json.at("offset").get<time::Samples>(),
-				json.at("length").get<time::Samples>()};
+				json.at("length").get<time::Samples>(), crossfadeFrom(json.value("crossfade", Json()))};
 		}
 
 		constexpr const char* g_base64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

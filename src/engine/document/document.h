@@ -495,13 +495,15 @@ namespace gnubase::engine
 		double curve = 0.0;
 	};
 
-	// What quantizing and the quantize panel's length changes make of an audio event (#910): where it plays, and
-	// the section of its clip it plays. As a note's timing, so that resetting can put all of it back.
+	// What quantizing and the quantize panel's length changes make of an audio event (#910): where it plays, the
+	// section of its clip it plays, and how it crossfades into the event after it. As a note's timing, so that
+	// resetting can put all of it back.
 	struct EventTiming
 	{
 		time::Position position; // in the track's time base
 		time::Samples offset = 0;
 		time::Samples length = 0;
+		Crossfade crossfade;
 	};
 
 	// Plays a section of a clip on an audio track.
@@ -1593,7 +1595,8 @@ namespace gnubase::engine
 
 	inline bool operator==(const EventTiming& a, const EventTiming& b)
 	{
-		return std::tie(a.position, a.offset, a.length) == std::tie(b.position, b.offset, b.length);
+		return std::tie(a.position, a.offset, a.length, a.crossfade) ==
+			std::tie(b.position, b.offset, b.length, b.crossfade);
 	}
 
 	inline bool operator==(const EventQuantizeOrigin& a, const EventQuantizeOrigin& b)

@@ -625,8 +625,8 @@ namespace gnubase::engine
 						samples(project, origin->original.position) + (at - samples(project, event.position));
 					const time::Position shifted =
 						rebased(project, {time::TimeBase::Linear, original}, event.position.base);
-					*origin = EventQuantizeOrigin{EventTiming{shifted, right.offset, right.length},
-						EventTiming{right.position, right.offset, right.length}};
+					*origin = EventQuantizeOrigin{EventTiming{shifted, right.offset, right.length, right.crossfade},
+						EventTiming{right.position, right.offset, right.length, right.crossfade}};
 					event.quantizeOrigin->original.length = frames;
 					event.quantizeOrigin->quantized.length = frames;
 				}

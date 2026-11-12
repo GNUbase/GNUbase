@@ -293,7 +293,7 @@ namespace gnubase::engine
 		// What quantizing and the panel's length changes move in an event, as its origin keeps it.
 		EventTiming timingOf(const AudioEvent& event)
 		{
-			return {event.position, event.offset, event.length};
+			return {event.position, event.offset, event.length, event.crossfade};
 		}
 
 		// quantize.slice: cuts every event offset before each position and gives the slices snap points there.
@@ -494,7 +494,7 @@ namespace gnubase::engine
 		}
 		const time::Position before = event.position;
 		event.position = result;
-		const EventTiming quantized{result, event.offset, event.length};
+		const EventTiming quantized = timingOf(event);
 		if (quantized == original)
 			event.quantizeOrigin.reset();
 		else
@@ -510,9 +510,10 @@ namespace gnubase::engine
 		event.position = original.position;
 		event.offset = original.offset;
 		event.length = original.length;
-		// The panel's Crossfade step crossfaded the event into the one after it, and the state before quantizing had
-		// no crossfade, so resetting removes it. A decision of ours: the reference manual doesn't say.
-		event.crossfade = Crossfade();
+		// The panel's Crossfade step crossfaded the event into the one after it; resetting returns to the state
+		// before quantizing (p. 367), which the crossfade it had then is part of, so that one comes back and the one
+		// the step made goes.
+		event.crossfade = original.crossfade;
 		event.quantizeOrigin.reset();
 		return true;
 	}
@@ -610,8 +611,8 @@ namespace gnubase::engine
 				"next one ends where that one starts, and an event after a gap starts earlier, where the one before "
 				"ends, as far as its clip has audio there. Then each event goes on length ms (default 10, up to 500) "
 				"into the next one and crossfades into it (crossfade.set). Locked events stay. quantize.reset puts "
-				"every event it changed back to where it was before quantizing, and removes the crossfades this "
-				"made. Returns the events changed.",
+				"every event it changed back to where it was before quantizing, crossfades included, so the ones this "
+				"made go. Returns the events changed.",
 				objectSchema({{"events", ids}, {"length", number}}, {"events"}),
 				objectSchema({{"events", ids}}, {"events"}), false},
 			"Crossfade",
