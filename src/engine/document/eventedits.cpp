@@ -135,15 +135,15 @@ namespace gnubase::engine
 		// order keeps it among them.
 		std::vector<size_t> stackOrder(Project& project, const std::vector<Item>& items)
 		{
-			std::vector<ObjectId> places(items.size(), 0);
+			std::vector<std::pair<ObjectId, ObjectId>> places(items.size());
 			for (size_t index = 0; index < items.size(); ++index)
 			{
 				const Item& item = items[index];
 				if (item.audio != nullptr)
-					places[index] = frontOf(*item.audio);
+					places[index] = stackKey(*item.audio);
 				else if (item.audioPart != nullptr)
 					for (const AudioEvent* event : eventsIn(project, item.audioPart->id))
-						places[index] = std::max(places[index], frontOf(*event));
+						places[index] = std::max(places[index], stackKey(*event));
 			}
 			std::vector<size_t> order(items.size());
 			std::iota(order.begin(), order.end(), size_t{0});
@@ -605,7 +605,21 @@ namespace gnubase::engine
 					return {};
 				AudioEvent right = event;
 				right.id = project.newId();
-				right.front = frontOf(event); // the piece after the split stays where the event is in the stack
+				// The piece after the split comes right in front of its event, as its id is the newest place, and
+				// what was in front of the event stays in front of it: new places after it, in the order it had
+				// (#1189), so that a second split of a piece doesn't bring it in front of the piece after it.
+				right.front = 0;
+				std::vector<AudioEvent*> inFront;
+				for (auto& [id, other] : project.audioEvents)
+					if (other.track == event.track && stackKey(other) > stackKey(event))
+						inFront.push_back(&other);
+				std::sort(inFront.begin(), inFront.end(),
+					[](const AudioEvent* a, const AudioEvent* b) { return stackKey(*a) < stackKey(*b); });
+				for (AudioEvent* other : inFront)
+				{
+					other->front = project.newId();
+					context.emit("audioEvent.changed", {{"event", toJson(*other)}});
+				}
 				right.position = rebased(project, {time::TimeBase::Linear, at}, event.position.base);
 				right.offset += frames;
 				right.length -= frames;
