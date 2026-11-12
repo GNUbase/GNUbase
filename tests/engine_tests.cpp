@@ -569,13 +569,19 @@ namespace
 			std::string path = where;
 			path += '.';
 			path += key;
+			const bool isCount = std::find(counts.begin(), counts.end(), key) != counts.end();
+			const bool isBound = std::find(bounds.begin(), bounds.end(), key) != bounds.end();
 			if (std::find(known.begin(), known.end(), key) == known.end())
+			{
 				found.push_back(path);
-			else if (std::find(counts.begin(), counts.end(), key) != counts.end() &&
-				(!item.is_number_integer() || item < 0))
-				found.push_back(path + " " + item.dump());
-			else if (std::find(bounds.begin(), bounds.end(), key) != bounds.end() && !item.is_number())
-				found.push_back(path + " " + item.dump());
+			}
+			else if ((isCount && (!item.is_number_integer() || item < 0)) || (isBound && !item.is_number()))
+			{
+				std::string value = path;
+				value += ' ';
+				value += item.dump();
+				found.push_back(value);
+			}
 			if (key == "properties" && item.is_object())
 			{
 				for (const auto& [property, propertySchema] : item.items())
