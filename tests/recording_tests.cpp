@@ -15,7 +15,9 @@
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <variant>
@@ -489,6 +491,30 @@ TEST_CASE("only record-enabled audio tracks record, and nothing records without 
 	CHECK(events[0].at("length") == 640);
 	CHECK(eventsOn(client, idle).empty());
 	CHECK(std::filesystem::directory_iterator(setup.dir.path() / "Audio") != std::filesystem::directory_iterator());
+}
+
+TEST_CASE("tracks of the same name record into files of their own, next to the ones in the folder", "[integration]")
+{
+	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
+	Client& client = setup.client;
+	const Json other = run(client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}, {"channels", 2}});
+	run(client, "channel.set", {{"channel", other.at("channel").at("id")}, {"recordEnable", true}});
+	const std::vector<ObjectId> tracks{setup.track, idOf(other, "track")};
+	for (const ObjectId track : tracks)
+		run(client, "track.set", {{"track", track}, {"name", "Vocals"}});
+	const std::filesystem::path audio = setup.dir.path() / "Audio";
+	std::filesystem::create_directories(audio);
+	std::ofstream(audio / "VOCALS.wav") << "there"; // differs only in case: taken on every file system
+	run(client, "transport.record");
+	run(client, "audio.render", {{"frames", 640}});
+	REQUIRE(setup.stop().is_object());
+
+	std::set<std::string> names;
+	for (const ObjectId track : tracks)
+		for (const Json& event : eventsOn(client, track))
+			names.insert(std::filesystem::u8path(pathOf(client, event)).filename().u8string());
+	CHECK(names == std::set<std::string>{"Vocals-2.wav", "Vocals-3.wav"});
+	CHECK(gnubase::test::readText(audio / "VOCALS.wav") == "there");
 }
 
 TEST_CASE("a recording isn't added to a project opened while it was recorded", "[integration]")

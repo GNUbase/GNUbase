@@ -652,6 +652,20 @@ namespace gnubase::engine
 				routed[channel.id] = &channel;
 			}
 
+		// A MIDI track's chase is told by its automation when the track is heard again after playback moved while it
+		// was silent (AutomationPlayer::heardAgain). The channel's state is there from the graph before, which had
+		// the track while it was silent.
+		const auto chaseTrack = [this](const RenderChannel& channel)
+		{
+			ChaseTrack track = makeChaseTrack(channel.controllers, channel.midiParts);
+			if (const auto state = m_channelStates.find(channel.id);
+				channel.type == TrackType::Midi && state != m_channelStates.end())
+			{
+				track.heardAgain = state->second->automation.heardAgain();
+				track.channelKinds = channelChaseKinds(channel);
+			}
+			return track;
+		};
 		std::map<ObjectId, std::shared_ptr<MidiSequencer>> sequencers;
 		std::map<ObjectId, std::shared_ptr<processors::InputTransformerProcessor>> transformers;
 		std::map<ObjectId, Instrument> instruments;
@@ -668,6 +682,7 @@ namespace gnubase::engine
 			sequence->controllers = channel.controllers;
 			sequence->modifiers = channel.modifiers;
 			sequence->liveInput = channel.liveInput;
+			sequence->drumInput = channel.drumInput;
 			sequence->inserts = channel.midiInserts;
 			sequence->sends = channel.midiSends;
 			sequence->preNotes = channel.preNotes;
@@ -678,14 +693,14 @@ namespace gnubase::engine
 			// each kind wins, whichever track it is on; not those of a track that its mute button mutes (a mute lane's
 			// track it chases, not knowing where the lane mutes). A routed track chases its own into its strip alone
 			// (MidiSequence::chaseIntoStrip), which learns its pedals from it and, muted by the button, keeps the
-			// values for unmuting (ChannelStrip::chaseFrom).
-			sequence->chase.push_back(makeChaseTrack(channel.controllers, channel.midiParts));
+			// values for unmuting (ChannelStrip::chaseFrom). Both are told when the track is heard again, so that its
+			// strip learns the pedals that the instrument's chase presses then.
+			sequence->chase.push_back(chaseTrack(channel));
 			sequence->chaseIntoStrip = routed.count(channel.id) != 0;
 			if (channel.type == TrackType::Instrument)
 				for (const ObjectId source : sources[channel.id])
 					if (!routed.at(source)->muted)
-						sequence->chase.push_back(
-							makeChaseTrack(routed.at(source)->controllers, routed.at(source)->midiParts));
+						sequence->chase.push_back(chaseTrack(*routed.at(source)));
 			sequencer->setSequence(std::move(sequence));
 			sequencer->setChase(m_chase);
 			sequencers[channel.id] = sequencer;
@@ -908,9 +923,19 @@ namespace gnubase::engine
 					state, nullptr, panning, std::nullopt, silent, StripPart::Fader, lookAhead);
 			}
 			node.processor = fader;
-			if (channel.type == TrackType::Midi && channel.output.kind == RenderTarget::Kind::Channel)
-				if (const auto sequencer = m_sequencers.find(channel.id); sequencer != m_sequencers.end())
+			if (const auto sequencer = m_sequencers.find(channel.id);
+				channel.type == TrackType::Midi && sequencer != m_sequencers.end())
+			{
+				if (channel.output.kind == RenderTarget::Kind::Channel)
 					sourceStrip->chaseFrom(sequencer->second->stripChase(), channel.muted);
+				// Every sequencer has the same chase settings (setChase).
+				const std::vector<uint16_t> chaseKinds = channelChaseKinds(channel);
+				std::vector<graph::ProcessEvent> kinds;
+				kinds.reserve(chaseKinds.size());
+				for (const uint16_t kind : chaseKinds)
+					kinds.push_back(chaseKindEvent(kind));
+				sourceStrip->chasedWhenHeard(std::move(kinds), sequencer->second);
+			}
 			if (const auto tap = m_renderTaps.find(channel.id); tap != m_renderTaps.end())
 				(tap->second.point == RenderPoint::Source ? sourceStrip : fader)
 					->tapRender(tap->second.tap, tap->second.point);

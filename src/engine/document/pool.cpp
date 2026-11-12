@@ -459,6 +459,7 @@ namespace gnubase::engine
 					total += static_cast<double>(std::max<time::Samples>(file.length, 1));
 				double done = 0.0;
 				Json relink = Json::array();
+				std::set<std::string> taken = takenNames(folder);
 				for (const Conversion& file : files)
 				{
 					job.checkCancelled();
@@ -467,7 +468,7 @@ namespace gnubase::engine
 					const auto frames = static_cast<double>(std::max<time::Samples>(file.length, 1));
 					job.progress(done / total, detail);
 					const std::string path =
-						createFreeFile(folder, fs::u8path(source.stem().u8string() + ".wav")).u8string();
+						createFreeFile(folder, fs::u8path(source.stem().u8string() + ".wav"), taken).u8string();
 					written.push_back(path);
 					convertSampleRate(file.path, {path}, sampleRate,
 						[&job, &detail, done, frames, total](double fraction)
