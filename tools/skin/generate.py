@@ -650,7 +650,8 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
           for state, color in (("", mix(c["surfaceRaised"], c["accent"], .6)), (".selected", c["accent2"]),
                                (".inactive", mix(c["surface"], c["textMuted"], .3)))],
         # The audio part editor (docs/features/audio-part-editor.md): lines between the lanes, the events, selected
-        # ones in the second accent, muted ones and those outside the part editing mode dimmed
+        # ones in the second accent, and muted ones, those outside the part editing mode and those their part hides
+        # entirely dimmed
         (".ape-display", {"background-color": c["surface"]}),
         (".ape-lane", {"border-bottom-width": f"{widths['hairline']}px",
                        "border-bottom-color": mix(c["surface"], c["border"], .5)}),
@@ -658,8 +659,8 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
                         "border-width": f"{widths['hairline']}px", "border-color": c["accent"]}),
         (".ape-event.selected", {"background-color": mix(c["surfaceRaised"], c["accent2"], .5),
                                  "border-color": c["text"]}),
-        (".ape-event.muted, .ape-event.inactive", {"background-color": mix(c["surface"], c["textMuted"], .3),
-                                                   "border-color": c["textMuted"]}),
+        (".ape-event.muted, .ape-event.inactive, .ape-event.outside",
+         {"background-color": mix(c["surface"], c["textMuted"], .3), "border-color": c["textMuted"]}),
         (".audio-part-editor .editor-part", {"color": c["textMuted"], "border-width": f"{widths['hairline']}dp",
                                              "border-color": c["border"],
                                              "background-color": mix(c["surface"], c["surfaceRaised"], .5)}),
