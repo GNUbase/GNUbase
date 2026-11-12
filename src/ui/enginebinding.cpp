@@ -253,7 +253,8 @@ namespace gnubase::ui
 		const auto deadline = std::chrono::steady_clock::now() + timeout;
 		for (;;)
 		{
-			sendWaitingSteps({}); // as before a command that isn't a query
+			// Only sooner: answerStep sends a waiting step once the one in flight is answered, which settle waits for.
+			sendWaitingSteps({});
 			update();
 			if (std::all_of(m_waiting.begin(), m_waiting.end(), [this](const auto& waiting)
 					{ return !waiting.second.awaited && m_queries.count(waiting.second.command) != 0; }))
