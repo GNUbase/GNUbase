@@ -268,8 +268,7 @@ namespace gnubase::engine
 		if (keys.active && keys.modifiers &&
 			std::find(keys.modifierKeys.begin(), keys.modifierKeys.end(), key) != keys.modifierKeys.end())
 		{
-			if (!off)
-				tell(PadEvent::Kind::Modifier, message.bytes[2]);
+			tell(PadEvent::Kind::Modifier, off ? 0 : message.bytes[2]);
 			return true;
 		}
 		// A remote key that Filter Notes keeps from MIDI thru, its note-offs too.

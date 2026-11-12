@@ -184,7 +184,7 @@ namespace gnubase::engine::midi
 			const double end = m_tick + (static_cast<double>(until - from) * ticksPerFrame);
 			const auto frameAt = [this, from, until, ticksPerFrame](double tick)
 			{
-				const double frame = from + std::max(tick - m_tick, 0.0) / ticksPerFrame;
+				const double frame = from + (std::max(tick - m_tick, 0.0) / ticksPerFrame);
 				return static_cast<uint32_t>(std::min(frame, static_cast<double>(until - 1)));
 			};
 			std::array<Out, 2 * g_maxSounding> outs{};
@@ -194,9 +194,14 @@ namespace gnubase::engine::midi
 			{
 				const PadPatternSteps::Step& step = pattern.steps.at(s);
 				const auto position = static_cast<double>(step.position);
-				double tick = position + (std::ceil((m_tick - position) / length) * length);
-				for (; tick < end && m_sounding < g_maxSounding && n < outs.size(); tick += length)
+				// Each time the step comes in this block: the repeats of the pattern from the first at or after the
+				// tick reached.
+				const auto first = static_cast<int64_t>(std::ceil((m_tick - position) / length));
+				for (int64_t repeat = first; m_sounding < g_maxSounding && n < outs.size(); ++repeat)
 				{
+					const double tick = position + (static_cast<double>(repeat) * length);
+					if (!(tick < end))
+						break;
 					const size_t voice = step.voice;
 					const int pitch = std::min(voices.at(voice % count) + (static_cast<int>(voice / count) * 12), 127);
 					const auto channel =

@@ -116,7 +116,8 @@ sections player modes, presets, step input and the List, Proximity and Circle of
   on the chord track as above.
 - **Chord modifiers** (p. 1387): with `modifiers`, the keys of `modifierKeys` (previous and next voicing, fewer and more
   tensions, transpose down and up; C2 to F2 by default) play nothing and change the pads whose remote keys are down,
-  or else the pad triggered last. The reference changes the selected pads; the engine has no pad selection, so it
+  or else the pad triggered last, and with no pad's key down play that pad while they are down. The reference changes
+  the selected pads; the engine has no pad selection, so it
   takes the pad that is played. Modify All Pad Voicings, Tensions and Transpose All Pads by aftertouch, pitch bend
   or a controller are not there yet.
 - **Assign from MIDI Input and MIDI Learn** (pp. 1360, 1388): `chordPads.listen` `assign` (a pad) takes the next notes
@@ -169,7 +170,7 @@ Offset of a basic one, and the player's track), Player Mode (Plain Chords or Pat
 Selected Part, which makes the event display's selected MIDI part the pattern, Velocity from MIDI Keyboard and what
 pattern is loaded; for Plain Chords Overlaps and Filter Notes), Remote Settings (the MIDI Input, Latch Chords, MIDI
 Learn of the range, Activate Chord Modifiers and their keys), Player Remote (the sections mode's Play Mode, Latch Chord
-Pads, Spread, the section and subsection keys and offsets, the section mutes and the Select/Mute Player keys) and
+Pads, Spread, the section and subsection keys, offsets and sections, the section mutes and the Select/Mute Player keys) and
 Display (`ui.chordPads`: the primary and secondary
 chord symbols, note names, roman numerals or Nashville numbers; the keyboard layout, where the pads on black remote
 keys are `.black-key`, or the grid with its columns; Show List Assistant Colors and Show Voicing Indicators). The
@@ -212,7 +213,8 @@ refuses, such as a remote start above the end, goes back to the one the pads hav
   `.in-key`) with a Major/Minor menu, or the Proximity assistant: rows by distance (`.chord-proximity-row`), the
   farthest at the top, above the reference (`.chord-proximity-reference`). On the List page a Cadence Type menu goes
   with Cadence. A press auditions a chord; a double click assigns it to the first unassigned pad,
-  and dropped on a pad it goes onto that one (pp. 1357-1359).
+  and dropped on a pad it goes onto that one (pp. 1357-1359); a context click assigns it to the first unassigned pad
+  (p. 1375), and the last three auditioned show in bold (`.recent`).
 
 ## Checks
 
@@ -257,10 +259,8 @@ dropped onto an instrument track's lane and onto the chord track; and the step i
 
 Modify All Pad Voicings, Modify All Pad Tensions and Transpose All Pads by aftertouch, pitch bend or a controller
 (p. 1387); a pad's own voicing per player (here every player inverts its voicing the same way); importing a pattern
-from the media browser's MIDI loops and the pattern play progress on the pads (p. 1391); choosing a subsection's section and
-the Chord Note Distribution beyond Spread in the zone (the engine takes `subsectionSections`); the chord editor's own
-keyboard display and Activate MIDI Input (the zone's keyboard and Assign from MIDI Input do the same); the chord
-modifiers' remote keys playing the pad they change; the Chord Assistant as a window of its own, the last three
-auditioned chords in bold and the Circle of Fifths' context menu; zooming and scrolling the zone's keyboard by
-dragging; preset attributes; and the reference indicator drawn as the reference manual's picture shows it (p. 1353:
+from the media browser's MIDI loops and the pattern play progress on the pads (p. 1391); the Chord Note Distribution
+beyond Spread; the chord editor's own keyboard display and Activate MIDI Input (the zone's keyboard and Assign from
+MIDI Input do the same); the Chord Assistant as a window of its own and the Circle of Fifths' context menu (a context
+click assigns at once); zooming and scrolling the zone's keyboard by dragging; preset attributes; and the reference indicator drawn as the reference manual's picture shows it (p. 1353:
 GNUbase shows a square beside the dot).

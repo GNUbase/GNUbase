@@ -70,6 +70,7 @@ namespace gnubase::engine
 		{
 			std::set<int> held;       // the pads whose remote keys are down
 			int last = -1;            // the pad triggered last, which the chord modifiers change when none is held
+			int auditioned = -1;      // the pad a chord modifier's key plays while it is down, or -1
 			std::string listen;       // "", "assign" or "learn"
 			int pad = -1;             // assign: the pad that gets the chord
 			std::string target;       // learn: "range" or a modifier's name
@@ -669,7 +670,7 @@ namespace gnubase::engine
 			keys.sectionKeys.at(i) = keyOf(pads.sectionKeys.at(i));
 			keys.subsectionKeys.at(i) = keyOf(pads.subsectionKeys.at(i));
 			keys.subsectionSections.at(i) = static_cast<uint8_t>(std::clamp(pads.subsectionSections.at(i), 0, 4));
-			keys.subsectionOffsets.at(i) = static_cast<int8_t>(std::clamp(pads.subsectionOffsets.at(i), -48, 48));
+			keys.subsectionOffsets.at(i) = static_cast<int16_t>(std::clamp(pads.subsectionOffsets.at(i), -48, 48));
 			keys.mutedSections.at(i) = pads.mutedSections.at(i);
 		}
 		keys.sectionPlay = 0;
@@ -1918,6 +1919,13 @@ namespace gnubase::engine
 						if (on)
 							record(context, pad);
 					}
+					else if (kind == "modifier" && velocity == 0)
+					{
+						// The key goes up: the pad it played ends.
+						if (state.auditioned >= 0)
+							context.call("chordPads.trigger", {{"pad", state.auditioned}, {"on", false}});
+						state.auditioned = -1;
+					}
 					else if (kind == "modifier")
 					{
 						size_t which = 0;
@@ -1932,13 +1940,21 @@ namespace gnubase::engine
 						static constexpr std::array<const char*, 3> changes = {"voicing", "tensions", "transpose"};
 						const char* change = changes.at(which / 2);
 						context.call("chordPads.modify", {{"pads", targets}, {change, step}});
+						// With no pad's key down, the key plays the pad it changed while it is down (p. 1387).
+						if (state.held.empty() && state.auditioned < 0)
+						{
+							state.auditioned = targets.front();
+							context.call("chordPads.trigger",
+								{{"pad", state.auditioned}, {"velocity", std::clamp(velocity, 1, 127)}});
+						}
 					}
 					else if (kind == "player")
 					{
-						const auto found = std::find(pads.playerKeys.begin(), pads.playerKeys.end(), key);
-						if (found == pads.playerKeys.end())
+						size_t which = 0;
+						while (which < pads.playerKeys.size() && pads.playerKeys.at(which) != key)
+							++which;
+						if (which == pads.playerKeys.size())
 							continue;
-						const auto which = static_cast<size_t>(std::distance(pads.playerKeys.begin(), found));
 						const auto count = static_cast<int>(pads.players.size());
 						if (which == 2)
 							context.call("chordPads.setPlayer",

@@ -266,7 +266,7 @@ namespace gnubase::engine
 		std::array<uint8_t, 5> sectionKeys{};
 		std::array<uint8_t, 5> subsectionKeys{};
 		std::array<uint8_t, 5> subsectionSections{};
-		std::array<int8_t, 5> subsectionOffsets{};
+		std::array<int16_t, 5> subsectionOffsets{};
 		uint8_t sectionPlay = 0; // 0 sections, 1 chordPads, 2 combination
 		bool latchPads = false;
 		bool spread = false;

@@ -84,6 +84,7 @@ namespace gnubase::ui
 		void requestTracks();
 		void showPlayerTrack();
 		void showEditor();
+		void showRecent();
 		void pressEditor(const Rml::Element& button);
 		void modifyPressed(const std::string& name);
 		static bool modifies(const std::string& name);
@@ -108,6 +109,7 @@ namespace gnubase::ui
 		engine::Json m_presets = engine::Json::array();  // chordPads.presets
 		engine::Json m_ports = engine::Json::array();    // the MIDI inputs, for the remote's MIDI Input
 		widgets::Options m_tracks;                       // the MIDI and instrument tracks, for a player's track
+		std::vector<std::string> m_recent;               // the last three chords auditioned in the assistant
 		engine::Json m_listening;                        // what chordPads.listen listens for, or null
 		std::map<int, std::vector<int>> m_sounding;      // the pitches each pad plays (-1: an audition)
 		int m_hovered = -1;                              // the pad under the mouse

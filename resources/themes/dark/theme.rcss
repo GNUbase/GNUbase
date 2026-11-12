@@ -698,6 +698,10 @@
 	{
 		color: #5ea7b3;
 	}
+	.chord-suggestion.recent .chord-suggestion-chord
+	{
+		font-weight: bold;
+	}
 	.chord-suggestion
 	{
 		color: #f3f4f5;

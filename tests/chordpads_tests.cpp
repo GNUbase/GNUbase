@@ -721,9 +721,17 @@ TEST_CASE(
 	CHECK(remote.send(0x90, 53, 90) == std::vector<std::vector<int>>{{0x90, 53, 90}}); // off: it plays itself
 	run(client, "chordPads.set", {{"modifiers", true}, {"modifierKeys", {{"transposeUp", 55}}}});
 	CHECK(run(client, "chordPads.get").at("modifierKeys").at("transposeUp") == 55);
+	// It plays the pad it changed while it is down, the pad's key being up.
 	CHECK(remote.send(0x90, 55, 90).empty());
-	CHECK(remote.send(0x80, 55, 0).empty());
 	CHECK(remote.until([&] { return pad(client, 0).at("chord") == "C#"; }));
+	CHECK(remote.until([&] { return remote.rig.played().size() == 4; }));
+	size_t offs = remote.send(0x80, 55, 0).size(); // the pad's note-offs
+	CHECK(remote.until(
+		[&]
+		{
+			offs += remote.rig.played().size();
+			return offs == 4;
+		}));
 	CHECK_THAT(
 		reject(client, "chordPads.set", {{"modifierKeys", {{"transposeUp", 128}}}}), ContainsSubstring("modifierKeys"));
 

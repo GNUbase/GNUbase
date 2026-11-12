@@ -155,6 +155,17 @@ namespace gnubase::ui
 			return rml;
 		}
 
+		// Which section each subsection plays, moved by its offset (p. 1384).
+		std::string subsectionSections()
+		{
+			std::string rml;
+			for (int i = 0; i < 5; ++i)
+				rml += R"(<select class="chord-pads-five" five="subsectionSections" index=")" + std::to_string(i) +
+					R"(" id="chord-pads-subsectionSections-)" + std::to_string(i) + R"(" title="Subsection )" +
+					std::to_string(i + 1) + R"( Assigned To"/>)";
+			return rml;
+		}
+
 		// The zone's keyboard (reference manual p. 1355), its keys from C0 to C6.
 		std::string keyboard()
 		{
@@ -351,7 +362,7 @@ namespace gnubase::ui
 			button("latchPads", "Latch Chord Pads", "Latch Pads", true) +
 			button("spread", "Chord Note Distribution: Spread", "Spread", true) +
 			fiveKeys("sectionKeys", "Section", 5, -1, 127) + fiveKeys("subsectionKeys", "Subsection", 5, -1, 127) +
-			fiveKeys("subsectionOffsets", "Subsection Offset", 5, -48, 48) +
+			fiveKeys("subsectionOffsets", "Subsection Offset", 5, -48, 48) + subsectionSections() +
 			R"(<button action="muteSection" index="0" id="chord-pads-mute-0" type="toggle" title="Mute Section 1">M1)"
 			R"(</button><button action="muteSection" index="1" id="chord-pads-mute-1" type="toggle" )"
 			R"(title="Mute Section 2">M2</button><button action="muteSection" index="2" id="chord-pads-mute-2" )"
@@ -552,7 +563,14 @@ namespace gnubase::ui
 				setValue(find(std::string("chord-pads-") + setting + "-" + std::to_string(i)),
 					pads.at(setting).at(i).get<int>());
 		for (size_t i = 0; i < 5; ++i)
+		{
 			setChecked(find("chord-pads-mute-" + std::to_string(i)), pads.at("mutedSections").at(i).get<bool>());
+			if (Rml::Element* select = find("chord-pads-subsectionSections-" + std::to_string(i)))
+				widgets::fill(*select,
+					{{"0", "Section 1"}, {"1", "Section 2"}, {"2", "Section 3"}, {"3", "Section 4"},
+						{"4", "Section 5"}},
+					std::to_string(pads.at("subsectionSections").at(i).get<int>()));
+		}
 		const Json& pattern = pads.at("pattern");
 		const std::string patternName = pattern.at("name").get<std::string>();
 		widgets::fill(*find("chord-pads-patternPreset"),
@@ -715,9 +733,23 @@ namespace gnubase::ui
 					}
 				}
 				suggestions->SetInnerRML(rml);
+				showRecent();
 				if (Rml::Context* context = suggestions->GetContext())
 					context->RequestNextUpdate(0);
 			});
+	}
+
+	void ChordPadsPanel::showRecent()
+	{
+		Rml::Element* suggestions = find("chord-pads-suggestions");
+		if (suggestions == nullptr)
+			return;
+		Rml::ElementList buttons;
+		suggestions->GetElementsByClassName(buttons, "chord-suggestion");
+		for (Rml::Element* button : buttons)
+			setClass(button, "recent",
+				std::find(m_recent.begin(), m_recent.end(), button->GetAttribute<Rml::String>("chord", "")) !=
+					m_recent.end());
 	}
 
 	std::vector<int> ChordPadsPanel::selected() const
@@ -735,6 +767,12 @@ namespace gnubase::ui
 		switch (event.GetId())
 		{
 		case Rml::EventId::Mousedown:
+			// Assign to First Unassigned Pad from a suggestion's context click (p. 1375).
+			if (event.GetParameter("button", 0) == 1 && suggestion != nullptr)
+			{
+				assignFirstFree(suggestion->GetAttribute<Rml::String>("chord", ""));
+				return;
+			}
 			if (event.GetParameter("button", 0) != 0)
 				return;
 			if (pad != nullptr)
@@ -745,6 +783,12 @@ namespace gnubase::ui
 			{
 				m_auditioned = suggestion->GetAttribute<Rml::String>("chord", "");
 				send("chordPads.trigger", {{"chord", m_auditioned}});
+				// The last three chords auditioned show in bold (pp. 1374-1375).
+				m_recent.erase(std::remove(m_recent.begin(), m_recent.end(), m_auditioned), m_recent.end());
+				m_recent.insert(m_recent.begin(), m_auditioned);
+				if (m_recent.size() > 3)
+					m_recent.resize(3);
+				showRecent();
 			}
 			else if (const Rml::Element* part = withAttribute(target, "part"))
 			{
@@ -851,9 +895,13 @@ namespace gnubase::ui
 					}
 				}
 				else if (modifies(name) && m_pressedModifier)
+				{
 					m_pressedModifier = false; // done on the press
+				}
 				else
+				{
 					action(name);
+				}
 			}
 			return;
 		default:
@@ -987,7 +1035,7 @@ namespace gnubase::ui
 		const Json& items = m_pads.at("pads");
 		if (name == "stepInput" || name == "moveInsert" || name == "remote" || name == "outputMode" ||
 			name == "filterNotes" || name == "latch" || name == "modifiers" || name == "snapPlayback" ||
-			name == "flats")
+			name == "flats" || name == "latchPads" || name == "spread" || name == "velocityFromKeyboard")
 		{
 			send("chordPads.set", {{name, !m_pads.at(name).get<bool>()}});
 		}
@@ -1010,15 +1058,6 @@ namespace gnubase::ui
 			setClass(field, "shown", true);
 			field->SetAttribute("value", "");
 			field->Focus();
-		}
-		else if (name == "latchPads" || name == "spread")
-		{
-			send("chordPads.set", {{name, !m_pads.at(name).get<bool>()}});
-		}
-
-		else if (name == "velocityFromKeyboard")
-		{
-			send("chordPads.set", {{name, !m_pads.at(name).get<bool>()}});
 		}
 		else if (name == "patternFromPart" && m_selectedEvents)
 		{
@@ -1189,6 +1228,18 @@ namespace gnubase::ui
 			return;
 		}
 		const auto value = event.GetParameter<Rml::String>("value", "");
+		if (target.GetTagName() == "select" && target.HasAttribute("five") && !value.empty())
+		{
+			const auto setting = target.GetAttribute<Rml::String>("five", "");
+			const auto index = static_cast<size_t>(target.GetAttribute<int>("index", 0));
+			Json values = m_pads.value(setting, Json::array());
+			if (index < values.size() && std::to_string(values.at(index).get<int>()) != value)
+			{
+				values.at(index) = std::stoi(value);
+				send("chordPads.set", {{setting, values}});
+			}
+			return;
+		}
 		if (id == "chord-pads-root" && !value.empty() && std::to_string(m_pads.at("rootKey").get<int>()) != value)
 		{
 			const bool transpose = find("chord-pads-transposePads")->HasAttribute("checked");
@@ -1493,11 +1544,17 @@ namespace gnubase::ui
 		const auto part = button.GetAttribute<Rml::String>("part", "");
 		const auto value = button.GetAttribute<Rml::String>("value", "");
 		if (part == "root")
+		{
 			symbol["root"] = std::stoi(value);
+		}
 		else if (part == "type")
+		{
 			symbol["type"] = value;
+		}
 		else if (part == "bass")
+		{
 			symbol["bass"] = std::stoi(value);
+		}
 		else if (part == "tension")
 		{
 			std::vector<std::string> tensions = symbol.at("tensions").get<std::vector<std::string>>();

@@ -573,6 +573,7 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".chord-pads-key.hover", {"background-color": c["warning"]}),
         (".chord-pads-key.played", {"background-color": c["accent2"]}),
         (".chord-proximity-reference", {"color": c["accent"]}),
+        (".chord-suggestion.recent .chord-suggestion-chord", {"font-weight": "bold"}),
         (".chord-suggestion", {"color": c["text"], "border-left-width": f"{widths['focus']}dp",
                                "border-left-color": c["border"]}),
         (".chord-suggestion.level-0", {"border-left-color": c["success"]}),

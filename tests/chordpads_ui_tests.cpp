@@ -244,9 +244,10 @@ TEST_CASE("the chord assistant suggests chords after the selected pad's and assi
 	CHECK(window.text(".chord-suggestion[chord=\"F\"] .chord-suggestion-degree") == "IV");
 	CHECK(window.hasClass(".chord-suggestion[chord=\"F\"]", "level-0"));
 
-	// A double click assigns the suggestion to the first unassigned pad.
+	// A double click assigns the suggestion to the first unassigned pad; it is one of the last three auditioned.
 	window.click(".chord-suggestion[chord=\"F\"]", 2);
 	REQUIRE(window.app.waitUntil([&] { return window.pads()[6].at("chord") == "F"; }));
+	CHECK(window.app.waitUntil([&] { return window.hasClass(".chord-suggestion[chord=\"F\"]", "recent"); }));
 
 	// The Circle of Fifths: the root key's chord first, the key's chords with their degrees.
 	window.click("#chord-pads-page-circle");
@@ -254,6 +255,12 @@ TEST_CASE("the chord assistant suggests chords after the selected pad's and assi
 		window.app.waitUntil([&] { return window.elements(".chord-circle-outer .chord-suggestion").size() == 12; }));
 	CHECK(window.text(".chord-circle-outer .chord-suggestion[chord=\"G\"] .chord-suggestion-degree") == "V");
 	CHECK(window.hasClass(".chord-circle-inner .chord-suggestion[chord=\"Am\"]", "in-key"));
+	// A context click assigns it to the first unassigned pad (p. 1375).
+	window.click(".chord-circle-outer .chord-suggestion[chord=\"D\"]");
+	window.app.ui().click(std::nullopt, {".chord-circle-outer .chord-suggestion[chord=\"D\"]", 0, std::nullopt},
+		ui::MouseButton::Right, 1, {});
+	window.step();
+	REQUIRE(window.app.waitUntil([&] { return window.pads()[7].at("chord") == "D"; }));
 
 	// The chord editor's buttons (#1089): the selected pad's chord lit, a button makes another chord. The lower zone
 	// is high enough for all of them.
