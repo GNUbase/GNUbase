@@ -460,6 +460,18 @@ TEST_CASE("a key of the keyboard held while the key editor goes ends its pitch",
 	f.app.call("editor.close", {{"editor", "window"}});
 	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().editorWindow() == nullptr; }));
 	CHECK(f.plays({{0x90, 62, 100}, {0x80, 62, 0}}));
+
+	// The user closing the editor window, as its close button does: the shell drops the window and its document first,
+	// and the key editor goes after them, so this is the one path where the note off is sent without its document.
+	f.played.clear();
+	f.app.call("editor.open", {{"editor", "window"}, {"parts", Json::array({f.part})}});
+	REQUIRE(f.app.waitUntil([&] { return keyEditor() != nullptr; }));
+	f.window = f.app.appUi().editorWindowId();
+	press(64);
+	CHECK(f.plays({{0x90, 64, 100}}));
+	f.app.ui().close(f.window, false);
+	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().editorWindow() == nullptr; }));
+	CHECK(f.plays({{0x90, 64, 100}, {0x80, 64, 0}}));
 }
 
 TEST_CASE("the object selection tool selects, moves, resizes, inserts and deletes notes", "[ui]")
