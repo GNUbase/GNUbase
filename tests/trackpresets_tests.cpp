@@ -703,6 +703,48 @@ TEST_CASE("track.import refuses a source onto two tracks or inside an imported f
 	CHECK(project.at("midiParts")[0].at("length") == 2 * gnubase::time::g_ticksPerQuarter);
 }
 
+TEST_CASE("track.import refuses a destination inside a folder it replaces and puts new tracks below that folder",
+	"[integration]")
+{
+	const test::TempDir dir;
+	const fs::path song = dir.path() / "Song.dawproject";
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	const Added band = add(client, {{"type", "folder"}, {"name", "Band"}});
+	add(client, {{"type", "midi"}, {"name", "Bass"}, {"parent", band.track}});
+	add(client, {{"type", "midi"}, {"name", "Lead"}});
+	run(client, "project.save", {{"path", song.u8string()}});
+	const Json sources = run(client, "track.importSources", {{"path", song.u8string()}}).at("tracks");
+	const auto source = [&sources](const std::string& name)
+	{ return trackNamed({{"tracks", sources}}, name).at("id"); };
+
+	run(client, "project.new");
+	const Added folder = add(client, {{"type", "folder"}, {"name", "Old"}});
+	const Added inner = add(client, {{"type", "midi"}, {"name", "Inner"}, {"parent", folder.track}});
+	const std::vector<std::string> before = outline(run(client, "project.get"));
+	// The destination inside the folder is refused in either order, before anything changes.
+	const Json lead = {{"source", source("Lead")}, {"track", inner.track}};
+	const Json old = {{"source", source("Band")}, {"track", folder.track}};
+	for (const Json& destinations : {Json::array({lead, old}), Json::array({old, lead})})
+	{
+		CHECK_THAT(reject(client, "track.import",
+					   {{"path", song.u8string()}, {"tracks", {source("Band"), source("Lead")}},
+						   {"destinations", destinations}}),
+			ContainsSubstring("inside a track that another one replaces"));
+		CHECK(outline(run(client, "project.get")) == before);
+	}
+
+	// New tracks below a track inside the folder go below the folder that replaces it, and stay.
+	const Json result = run(client, "track.import",
+		{{"path", song.u8string()}, {"tracks", {source("Band"), source("Lead")}}, {"track", inner.track},
+			{"destinations", Json::array({old})}});
+	const Json project = run(client, "project.get");
+	CHECK(outline(project) == std::vector<std::string>{"Band:folder", "Band/Bass:midi", "Lead:midi"});
+	REQUIRE(result.at("tracks").size() == 2);
+	for (const Json& id : result.at("tracks"))
+		CHECK(find(project.at("tracks"), id.get<ObjectId>()).at("parent") == 0);
+}
+
 TEST_CASE("track.import returns the media files it added, not the ones it shares with the project", "[integration]")
 {
 	const test::TempDir dir;

@@ -62,7 +62,8 @@ they are.
 - **Onto existing tracks** (Destination Track, pp. 200, 203). `destinations` `[{source, track}]` imports listed tracks
   onto the project's tracks of their type instead of as new ones. A group, effect, folder, marker or ruler track
   replaces the track, a folder with the tracks inside it: the copy takes its place, among the new tracks the result
-  lists, and what played or sent into the track's channel goes into the copy's. An audio, instrument or MIDI track gives
+  lists, and what played or sent into the track's channel goes into the copy's. A track inside it can't be a
+  destination too, in either order, and new tracks below a track inside it go below the copy instead. An audio, instrument or MIDI track gives
   the track what it brings, and the track keeps its id, name and buttons: with `events` its events and parts as
   `existing` says (On Import on Existing Tracks: `replace` removes the track's first, `add` adds them, `version`, the
   default, puts them into a new version of the track, as the manual's note on Events and Parts says), and its other
@@ -171,7 +172,8 @@ button.
   the working folder; `track.importSources` tells which tracks can be imported and the file's project settings; folders
   go along without the VCA tracks inside them, which `skipped` lists from top to bottom, and listed inside a listed
   folder they are refused; routing by name finds only the tracks the project had; importing onto existing tracks
-  replaces an effect track and a folder in their places, with sends going to the imported effect track, and gives an
+  replaces an effect track and a folder in their places, with sends going to the imported effect track, refuses a
+  destination inside a replaced folder and puts new tracks below a track inside it below the copy, and gives an
   instrument track the settings and a new version with the part (or replaces or adds to its parts), keeping its buttons,
   in one undo step, and refuses tracks of another type and sources that aren't imported; Absolute, Relative and Cursor
   Position and Range place the parts, and events before the project start are refused. `tests/backup_tests.cpp`:

@@ -1056,8 +1056,9 @@ namespace gnubase::engine
 				"else at the bottom of the track list (Import Position for New Tracks); marker tracks go to the top "
 				"level. destinations import some of tracks onto the project's tracks of their type instead "
 				"(Destination Track, p. 203), each source onto one track, not one inside a listed folder: a group, "
-				"effect, folder, marker or ruler track replaces the track, with the tracks inside it, and takes what "
-				"played or sent into it; an "
+				"effect, folder, marker or ruler track replaces the track, with the tracks inside it, which can't be "
+				"destinations themselves, and takes what played or sent into it; new tracks below a track inside it "
+				"go below it instead; an "
 				"audio, instrument or MIDI track gives the track its events and parts as existing says (On Import on "
 				"Existing Tracks: replace replaces the track's, add adds them, version, the default, puts them into a "
 				"new version), with its other versions after the track's, its settings and its automation, and the "
@@ -1136,7 +1137,40 @@ namespace gnubase::engine
 						brought.insert(id);
 				}
 				place(file, project, offset, range, brought, options);
-				const auto [parent, index] = below(project, parameters);
+				// A track replaced goes with the tracks inside it: none of them may be a destination, whatever the
+				// order, and the new tracks go below the outermost one replaced instead of into it.
+				const auto merges = [](TrackType type)
+				{ return type == TrackType::Audio || type == TrackType::Instrument || type == TrackType::Midi; };
+				std::set<ObjectId> replaced;
+				for (const Json& entry : parameters.value("destinations", Json::array()))
+				{
+					const auto track = project.trackById.find(entry.at("track").get<ObjectId>());
+					if (track != project.trackById.end() && !merges(track->second.type))
+						replaced.insert(track->first);
+				}
+				const auto replacing = [&project, &replaced](ObjectId id) // the outermost replaced track id is in, or 0
+				{
+					ObjectId outer = 0;
+					for (; id != 0; id = project.trackById.at(id).parent)
+						if (replaced.count(id) != 0)
+							outer = id;
+					return outer;
+				};
+				for (const Json& entry : parameters.value("destinations", Json::array()))
+				{
+					const auto id = entry.at("track").get<ObjectId>();
+					const auto track = project.trackById.find(id);
+					require(track == project.trackById.end() || replacing(track->second.parent) == 0,
+						"track " + std::to_string(id) + " is inside a track that another one replaces");
+				}
+				auto [parent, index] = below(project, parameters);
+				if (const ObjectId folder = replacing(parent); folder != 0)
+				{
+					parent = project.trackById.at(folder).parent;
+					const std::vector<ObjectId>& list =
+						parent == 0 ? project.tracks : project.trackById.at(parent).children;
+					index = static_cast<size_t>(std::find(list.begin(), list.end(), folder) - list.begin()) + 1;
+				}
 				const Project before = project;
 				Copied copied = copyTracks(file, project, tracks, options, parent, index);
 				Existing existing = Existing::Version;
@@ -1159,8 +1193,6 @@ namespace gnubase::engine
 						"track " + std::to_string(id) + " is not a " + trackTypeName(type) +
 							" track: tracks are imported onto tracks of their type");
 					require(taken.insert(id).second, "track " + std::to_string(id) + " is a destination twice");
-					require(project.trackById.count(id) != 0,
-						"track " + std::to_string(id) + " is inside a track that another one replaces");
 					require(sources.insert(source).second,
 						"track " + std::to_string(source) + " of the file is imported onto two tracks");
 					const ObjectId copy = copied.copies.at(source);
@@ -1168,7 +1200,7 @@ namespace gnubase::engine
 					require(top != copied.tracks.end(),
 						"track " + std::to_string(source) +
 							" of the file is inside a folder that is imported: it comes along with the folder");
-					if (type == TrackType::Audio || type == TrackType::Instrument || type == TrackType::Midi)
+					if (merges(type))
 					{
 						copied.tracks.erase(top);
 						mergeTrack(model, project, copy, id, options, existing, inner);
