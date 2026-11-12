@@ -420,6 +420,12 @@ namespace gnubase::ui
 			m_keyReleased(window, keys);
 	}
 
+	void Shell::inputHandled()
+	{
+		if (m_inputHandled)
+			m_inputHandled();
+	}
+
 	void Shell::every(std::chrono::milliseconds interval, std::function<void()> task)
 	{
 		m_tasks.push_back({interval, std::move(task), Clock::now() + interval});
