@@ -168,6 +168,15 @@ namespace gnubase::engine
 		uint16_t classes = 0;
 	};
 
+	// What a note played into a track with a drum map plays (#882, reference manual pp. 1239-1240): through the I-notes
+	// to the sound's pitch, then the sound's O-note on its channel, unless it is muted.
+	struct LiveDrumNote
+	{
+		uint8_t key = 0;
+		int8_t channel = -1; // 0-15, or -1 for the note's own (Any)
+		bool mute = false;
+	};
+
 	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
 	struct RenderChannel
 	{
@@ -203,6 +212,9 @@ namespace gnubase::engine
 		// MIDI and instrument channels: the track's articulation map (#175), whose remote triggers select the sound
 		// slot of the notes played into the track; without slots for none.
 		ArticulationMap articulations;
+		// MIDI and instrument channels with a drum map: what each note played into the track plays, by its pitch (128
+		// of them); empty without one.
+		std::vector<LiveDrumNote> drumInput;
 		bool monitor = false; // the monitor and record enable buttons
 		bool recordEnable = false;
 		// MIDI and instrument tracks: they play what comes from all MIDI inputs (MIDI thru), since they monitor or

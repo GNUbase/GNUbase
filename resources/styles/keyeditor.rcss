@@ -147,17 +147,17 @@
 }
 
 /* The drum editor (#129, docs/features/drum-editor.md): the drum sound list instead of the keyboard, a row per
-   sound with its pitch, mute button, name, snap, I-note, O-note and channel; taller rows; the notes as diamonds at
+   sound with its pitch, mute button, name, snap, I-note, O-note, channel and output; taller rows; the notes as diamonds at
    their start, which code places by their left edge. */
 .drum-editor .editor-parts
 {
-	margin-left: 300dp;
+	margin-left: 360dp;
 }
 
 /* The drum sounds stack in the list's flow, unlike the piano keys code places. */
 .drum-editor .key-editor-keys
 {
-	width: 300dp;
+	width: 360dp;
 	height: auto;
 }
 
@@ -215,6 +215,11 @@
 {
 	flex: 0 0 auto;
 	width: 40dp;
+}
+
+.drum-sound textdisplay.drum-sound-output
+{
+	width: 56dp;
 }
 
 .key-note.drum-note

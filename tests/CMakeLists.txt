@@ -243,6 +243,8 @@ add_executable(gnubase-ipcpeer ipcpeer.cpp)
 target_link_libraries(gnubase-ipcpeer PRIVATE gnubase-ipc)
 gnubase_target_defaults(gnubase-ipcpeer)
 target_compile_definitions(gnubase-tests PRIVATE GNUBASE_IPCPEER="$<TARGET_FILE:gnubase-ipcpeer>")
+# The test of the test run's temp folder runs a test case of its own in a child process (tests/testrun_tempfolder.cpp).
+target_compile_definitions(gnubase-tests PRIVATE GNUBASE_TESTS="$<TARGET_FILE:gnubase-tests>")
 add_dependencies(gnubase-tests gnubase-ipcpeer)
 # The test plugins and the loader tests that load them into the test process (plugins/README.md).
 if(GNUBASE_TEST_PLUGINS)

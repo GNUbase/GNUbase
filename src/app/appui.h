@@ -331,6 +331,9 @@ namespace gnubase::app
 		// and drumMap.export.
 		void saveDrumMap(ui::WindowId parent, const std::string& editor = "window");
 		void chooseDrumMapFile(ui::WindowId parent, uint64_t map);
+		// The Drum Map Setup (resources/ui/drum-maps.rml, #882), showing the drum map of the editor window's active
+		// track, else the lower zone's, if it has one.
+		void openDrumMaps(ui::Window& window);
 		// The active track of an editor (window, else lower), then the OS's file dialog for a pattern preset and
 		// pattern.export (save) or pattern.import.
 		void patternPreset(ui::WindowId parent, bool save, const std::string& editor = "window");
@@ -421,6 +424,7 @@ namespace gnubase::app
 		Rml::ObserverPtr<Rml::Element> m_addTrack;         // the open add track dialog's document
 		Rml::ObserverPtr<Rml::Element> m_midiFunction;     // the open dialog of the MIDI menu's
 		Rml::ObserverPtr<Rml::Element> m_articulationMaps; // the articulation map setup's last document
+		Rml::ObserverPtr<Rml::Element> m_drumMaps;         // the open drum map setup's document
 		// A mixer window: open while the shell has it; the app lets go of the mixer once the user closed the window.
 		struct MixerWindow
 		{

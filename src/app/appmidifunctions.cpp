@@ -41,7 +41,7 @@ namespace gnubase::app
 			const char* description;
 		};
 
-		constexpr std::array<MidiFunction, 13> g_midiFunctions{{
+		constexpr std::array<MidiFunction, 14> g_midiFunctions{{
 			{"midi.functionsLegato", "midi.legato", nullptr, true,
 				"Extends the selected MIDI notes or parts' notes to the next notes, by Legato Overlap "
 				"(editing.legatoOverlap), or to the next selected notes with editing.legatoBetweenSelected."},
@@ -69,6 +69,9 @@ namespace gnubase::app
 				"Reverses the playback order of the selected MIDI notes or parts' events."},
 			{"midi.functionsMirror", "midi.invert", nullptr, true,
 				"Mirrors the selected MIDI notes or parts' events in time."},
+			// O-Note Conversion (#882, p. 1240), in the MIDI menu itself.
+			{"midi.convertONotes", "midi.oNoteConversion", nullptr, true,
+				"Gives the selected MIDI notes or parts' notes their drum sounds' O-notes as pitches."},
 		}};
 
 		// Ids as a dialog's attribute: "1,2,3".

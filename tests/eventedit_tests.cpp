@@ -913,6 +913,37 @@ TEST_CASE("range.copy and range.cut keep the range for range.paste, which can pa
 	CHECK_THAT(f.fails("range.paste", {{"track", midi2}}), ContainsSubstring("enough tracks"));
 }
 
+TEST_CASE("range.move moves what is in the range, or copies it, in one undo step and without the clipboard", "[unit]")
+{
+	RangeFixture f;
+	const size_t steps = f.steps();
+
+	// Moved to 5 seconds: the pieces in the range go there, cut at its edges, and the rest stays.
+	const Json moved = f.call("range.move", f.range({{"position", 5 * g_second}})).at("events");
+	CHECK(moved.size() == 2);
+	CHECK(f.spans(f.audioTrack) == Spans{{g_second, g_start}, {5 * g_second, (11 * g_second) / 2}});
+	CHECK(f.spans(f.midiTrack) == Spans{{2 * g_second, g_start}, {g_end, 4 * g_second}, {5 * g_second, 6 * g_second}});
+	CHECK(f.steps() == steps + 1);
+	CHECK_THAT(f.fails("range.paste", Json::object()), ContainsSubstring("nothing"));
+	f.call("history.undo");
+	CHECK(f.spans(f.audioTrack) == Spans{{g_second, 3 * g_second}});
+
+	// With copy, a copy goes there and the range stays as it was.
+	f.call("range.move", f.range({{"position", 5 * g_second}, {"copy", true}}));
+	CHECK(f.spans(f.audioTrack) == Spans{{g_second, 3 * g_second}, {5 * g_second, (11 * g_second) / 2}});
+	CHECK(f.spans(f.midiTrack) == Spans{{2 * g_second, 4 * g_second}, {5 * g_second, 6 * g_second}});
+	f.call("history.undo");
+
+	// A locked event stays where it is, as range.delete leaves it, and isn't copied either.
+	f.call("event.set", {{"events", {f.event}}, {"lock", true}});
+	f.call("range.move", f.range({{"position", 5 * g_second}}));
+	CHECK(f.spans(f.audioTrack) == Spans{{g_second, 3 * g_second}});
+	CHECK(f.spans(f.midiTrack).size() == 3);
+
+	CHECK_THAT(f.fails("range.move", f.range()), ContainsSubstring("position"));
+	CHECK_THAT(f.fails("range.move", f.range({{"position", -1}})), ContainsSubstring("before the project start"));
+}
+
 TEST_CASE(
 	"range edits leave automation gaps without values, and with virgin territory range.delete makes one", "[unit]")
 {

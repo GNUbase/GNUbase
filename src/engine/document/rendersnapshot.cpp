@@ -587,6 +587,13 @@ namespace gnubase::engine
 			render.listen = channel.listen;
 			render.midiThru = (track.type == TrackType::Midi || track.type == TrackType::Instrument) &&
 				channel.midiInput == "all" && (channel.monitor || channel.recordEnable);
+			if (const DrumMap* map = midi::drumMapOf(project, track.id))
+				for (int played = 0; played < g_drumSounds; ++played)
+				{
+					const DrumSound& sound =
+						map->sounds.at(midi::inputPitch(project, track.id, static_cast<uint8_t>(played)));
+					render.drumInput.push_back({sound.oNote, static_cast<int8_t>(sound.channel), sound.mute});
+				}
 			render.autoFades = track.autoFades.value_or(project.autoFades);
 			if (const auto input = busIndex.find(channel.input); input != busIndex.end())
 				render.input = input->second;

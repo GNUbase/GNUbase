@@ -973,6 +973,35 @@ TEST_CASE("a free file's name differs from the names in the folder in more than 
 	CHECK_THROWS_AS(createFreeFile(dir.path() / "missing", "a.wav"), std::runtime_error); // no listing, no file
 }
 
+TEST_CASE("free files for several tracks come from one listing of the folder", "[unit]")
+{
+	const test::TempDir dir;
+	std::ofstream(dir.path() / "A.wav") << "there";
+	std::set<std::string> taken = takenNames(dir.path());
+	CHECK(taken == std::set<std::string>{"a.wav"});
+	CHECK(createFreeFile(dir.path(), "a.wav", taken).filename() == "a-2.wav");
+	CHECK(createFreeFile(dir.path(), "a.wav", taken).filename() == "a-3.wav");
+	// A file made after the listing is still found by the create.
+	std::ofstream(dir.path() / "b.wav") << "there";
+	CHECK(createFreeFile(dir.path(), "b.wav", taken).filename() == "b-2.wav");
+	CHECK(bytesOf(dir.path() / "b.wav") == "there");
+	CHECK(takenNames(dir.path() / "missing").empty());
+}
+
+#ifdef _WIN32
+TEST_CASE("a file whose name isn't valid UTF-16 doesn't keep free files from being made", "[unit]")
+{
+	// NTFS allows an unpaired surrogate, which can't be converted to UTF-8.
+	const test::TempDir dir;
+	const fs::path odd = dir.path() / std::wstring(L"\xD800.wav");
+	std::ofstream(odd) << "there";
+	REQUIRE(fs::exists(odd));
+	std::ofstream(dir.path() / "a.wav") << "there";
+	CHECK(takenNames(dir.path()) == std::set<std::string>{"a.wav"});
+	CHECK(createFreeFile(dir.path(), "a.wav").filename() == "a-2.wav");
+}
+#endif
+
 TEST_CASE("files made at the same time get names of their own", "[integration]")
 {
 	const test::TempDir dir;
