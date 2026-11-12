@@ -22,6 +22,9 @@
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
 #endif
 
 using Catch::Matchers::ContainsSubstring;
@@ -441,8 +444,8 @@ namespace
 	}
 
 	// A folder that something else has open while it lives, as a virus scanner may look at the files just written.
-	// On Windows, a deleted folder stays while it is open where the file system has no POSIX deletes, and no folder
-	// can be made under its name until then (#1284). Elsewhere it does nothing.
+	// On Windows, where the file system has no POSIX deletes, a deleted folder stays while it is open, and no folder
+	// can be made under its name until then (#1284).
 	class OpenFolder
 	{
 	public:
@@ -453,13 +456,16 @@ namespace
 				nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
 			REQUIRE(m_handle != INVALID_HANDLE_VALUE);
 #else
-			REQUIRE(std::filesystem::is_directory(folder));
+			m_handle = ::open(folder.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+			REQUIRE(m_handle != -1);
 #endif
 		}
 		~OpenFolder()
 		{
 #ifdef _WIN32
 			CloseHandle(m_handle);
+#else
+			::close(m_handle);
 #endif
 		}
 		OpenFolder(const OpenFolder&) = delete;
@@ -470,6 +476,8 @@ namespace
 	private:
 #ifdef _WIN32
 		HANDLE m_handle = INVALID_HANDLE_VALUE;
+#else
+		int m_handle = -1;
 #endif
 	};
 }
@@ -489,7 +497,7 @@ TEST_CASE("profiles switch back and forth many times in a row while something ha
 	REQUIRE(defaults != studio);
 	// Each switch deletes the next profile's folder, and the one after makes it again under that name, while the
 	// folder is still open.
-	std::unique_ptr<OpenFolder> open;
+	std::unique_ptr<OpenFolder> held;
 	for (int round = 0; round < 100; ++round)
 	{
 		INFO("round " << round);
@@ -499,14 +507,14 @@ TEST_CASE("profiles switch back and forth many times in a row while something ha
 		auto opened = std::make_unique<OpenFolder>(dir / "profiles" / next);
 		std::ofstream(dir / "profiles.json") << Json{{"active", active}, {"next", next}}.dump();
 		engine::settings::switchProfile(dir);
-		open = std::move(opened); // the one before stays open until this switch made its folder again
+		held = std::move(opened); // the one before stays open until this switch made its folder again
 		REQUIRE(Json::parse(contents(dir / "profiles.json")) == Json{{"active", next}, {"next", ""}});
 		REQUIRE(contents(dir / "settings.json") == (toStudio ? studio : defaults));
 		REQUIRE(contents(dir / "profiles" / active / "settings.json") == (toStudio ? defaults : studio));
 		REQUIRE(!fs::exists(dir / "profiles" / next));
 		REQUIRE(!fs::exists(dir / "profile-switch"));
 	}
-	open.reset();
+	held.reset();
 	f.start();
 	CHECK(f.call("profile.list").at("active") == "Default");
 	CHECK(f.scale() == 1.5);
@@ -518,7 +526,7 @@ TEST_CASE("a deleted profile can be added again under its name at once while its
 	const Fixture f;
 	f.call("profile.add", {{"name", "Studio"}});
 	{
-		const OpenFolder open(f.dir.path() / "profiles" / "Studio");
+		const OpenFolder held(f.dir.path() / "profiles" / "Studio");
 		f.call("profile.remove", {{"name", "Studio"}});
 		f.call("profile.add", {{"name", "Studio"}});
 	}
