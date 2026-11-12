@@ -301,6 +301,11 @@ TEST_CASE("the root key, presets and the chord track's chords fill the pads", "[
 	// The degrees and the assistant's levels are the loaded preset's scale's.
 	CHECK(pads.at("pads")[0].at("degree") == "i");
 	CHECK(pads.at("pads")[2].at("degree") == "III");
+	// And the Nashville numbers (p. 1390).
+	CHECK(pads.at("pads")[0].at("nashville") == "1m");
+	CHECK(pads.at("pads")[2].at("nashville") == "3");
+	CHECK(pads.at("pads")[5].at("nashville") == "6\xC2\xB0");
+	CHECK(pads.at("pads")[7].at("nashville") == "");
 	const Json afterDm = run(client, "chordPads.assistant", {{"kind", "list"}, {"chord", "Dm"}});
 	const auto f = std::find_if(afterDm.at("suggestions").begin(), afterDm.at("suggestions").end(),
 		[](const Json& suggestion) { return suggestion.at("chord") == "F"; });
@@ -329,6 +334,46 @@ TEST_CASE("the root key, presets and the chord track's chords fill the pads", "[
 	CHECK(more.at("pads")[3].at("key").is_null());
 	CHECK_THAT(reject(client, "chordPads.set", {{"padCount", 33}}), ContainsSubstring("padCount"));
 	CHECK_THAT(reject(client, "chordPads.set", {{"remoteStart", 60}, {"remoteEnd", 50}}), ContainsSubstring("remote"));
+}
+
+TEST_CASE("the user's own chord pads presets are saved, listed, loaded and deleted", "[unit]")
+{
+	// Reference manual pp. 1348, 1371: Save Preset keeps the chords and the player, Previous and Next Preset step
+	// through the list that chordPads.presets gives.
+	Engine engine;
+	Client client(engine);
+	std::vector<std::string> names = run(client, "chordPads.presets").at("presets").get<std::vector<std::string>>();
+	CHECK(names == std::vector<std::string>{"major", "minor", "dorian", "phrygian", "lydian", "mixolydian", "locrian"});
+	run(client, "chordPads.loadPreset", {{"preset", "dorian"}, {"root", 2}});
+	run(client, "chordPads.assign", {{"assignments", {{{"pad", 8}, {"chord", "A7"}}}}});
+	run(client, "chordPads.modify", {{"pads", {1}}, {"voicing", 1}});
+	run(client, "chordPads.set", {{"octaveOffset", -1}});
+	const Json saved = run(client, "chordPads.get").at("pads");
+	const auto steps = run(client, "history.get").at("position");
+	run(client, "chordPads.savePreset", {{"name", "Song"}});
+	CHECK(run(client, "history.get").at("position") == steps); // a preset is no change to the project
+	names = run(client, "chordPads.presets").at("presets").get<std::vector<std::string>>();
+	CHECK(names.back() == "Song");
+	CHECK_THAT(reject(client, "chordPads.savePreset", {{"name", "major"}}), ContainsSubstring("built-in"));
+	CHECK_THAT(reject(client, "chordPads.savePreset", {{"name", ""}}), ContainsSubstring("name"));
+
+	// Loaded, it brings back the chords pad by pad with their voicings, the root key, the scale and the player.
+	run(client, "chordPads.loadPreset", {{"preset", "major"}});
+	run(client, "chordPads.loadPreset", {{"preset", "Song"}, {"load", "chords"}});
+	CHECK(run(client, "chordPads.get").at("pads") != saved); // the player isn't loaded
+	CHECK(run(client, "chordPads.get").at("octaveOffset") == 0);
+	run(client, "chordPads.loadPreset", {{"preset", "Song"}, {"load", "players"}});
+	const Json loaded = run(client, "chordPads.get");
+	CHECK(loaded.at("pads") == saved);
+	CHECK(loaded.at("rootKey") == 2);
+	CHECK(loaded.at("preset") == "Song");
+	CHECK(loaded.at("pads")[2].at("degree") == "III"); // in D dorian
+
+	// Deleted, it is gone.
+	run(client, "chordPads.deletePreset", {{"name", "Song"}});
+	CHECK(run(client, "chordPads.presets").at("presets").size() == 7);
+	CHECK_THAT(reject(client, "chordPads.loadPreset", {{"preset", "Song"}}), ContainsSubstring("no chord pads preset"));
+	CHECK_THAT(reject(client, "chordPads.deletePreset", {{"name", "Song"}}), ContainsSubstring("no chord pads preset"));
 }
 
 TEST_CASE("the chord assistant suggests chords after a pad's and shows the circle of fifths", "[unit]")

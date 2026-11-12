@@ -40,6 +40,9 @@ namespace gnubase::engine
 		// roman numeral, such as "V", "ii", "vii°" or, outside the scale, "bVII"; lower case for minor and diminished
 		// chords, ° for diminished, + for augmented. Empty for an undefined chord.
 		std::string degreeName(const midi::ChordSymbol& chord, int key, const std::string& scale = "major");
+		// The same in the Nashville Number System (reference manual p. 1390): the degree as a number, such as "4",
+		// "2m", "7°" or "b7".
+		std::string nashvilleName(const midi::ChordSymbol& chord, int key, const std::string& scale = "major");
 
 		// The chord with more (steps > 0) or fewer tensions (reference manual p. 1351): each step adds the next of its
 		// type's tensions (major: maj7, or 7 on the key's fifth degree, then 9 and 13; minor: 7, 9, 11; others: 7) or

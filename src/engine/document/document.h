@@ -925,7 +925,8 @@ namespace gnubase::engine
 		bool remote = false;          // notes from MIDI inputs on the remote keys trigger the pads
 		int remoteStart = 36;         // C1: the first pad's remote key
 		int remoteEnd = 47;           // B1: the last remote key
-		std::string preset = "major"; // the preset loaded last
+		std::string preset = "major"; // the preset loaded last, a scale-based one or the user's (chordPads.presets)
+		std::string scale = "major";  // its scale, which the degrees and the assistant's levels are in
 		bool stepInput = false;       // triggered pads become chord events (chordPads.step)
 		bool moveInsert = false;
 		time::Ticks stepPosition = 0;
@@ -1723,10 +1724,11 @@ namespace gnubase::engine
 	inline bool operator==(const ChordPads& a, const ChordPads& b)
 	{
 		return std::tie(a.pads, a.rootKey, a.reference, a.octaveOffset, a.velocity, a.remote, a.remoteStart,
-				   a.remoteEnd, a.preset, a.stepInput, a.moveInsert, a.stepPosition, a.outputMode, a.latch, a.overlaps,
-				   a.filterNotes) ==
+				   a.remoteEnd, a.preset, a.scale, a.stepInput, a.moveInsert, a.stepPosition, a.outputMode, a.latch,
+				   a.overlaps, a.filterNotes) ==
 			std::tie(b.pads, b.rootKey, b.reference, b.octaveOffset, b.velocity, b.remote, b.remoteStart, b.remoteEnd,
-				b.preset, b.stepInput, b.moveInsert, b.stepPosition, b.outputMode, b.latch, b.overlaps, b.filterNotes);
+				b.preset, b.scale, b.stepInput, b.moveInsert, b.stepPosition, b.outputMode, b.latch, b.overlaps,
+				b.filterNotes);
 	}
 
 	inline bool operator==(const AutomationTarget& a, const AutomationTarget& b)

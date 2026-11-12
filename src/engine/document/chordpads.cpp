@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstdint>
 #include <cstdlib>
 #include <limits>
@@ -23,6 +24,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -50,6 +52,14 @@ namespace gnubase::engine
 
 		constexpr std::array<const char*, 7> g_numerals = {"I", "II", "III", "IV", "V", "VI", "VII"};
 		constexpr int g_maxPads = 32;
+		constexpr std::string_view g_presetsKey = "chordPads.presets";
+
+		// The user's own chord pads presets (chordPads.savePreset), by name.
+		Json userPresets(CommandContext& context)
+		{
+			const Json presets = context.call("settings.get", {{"key", std::string(g_presetsKey)}}).at("value");
+			return presets.is_object() ? presets : Json::object();
+		}
 
 		// The steps of a preset's scale (major, minor, dorian, ...), the major scale's for another name.
 		std::vector<int> scaleOf(const std::string& scale)
@@ -177,6 +187,27 @@ namespace gnubase::engine
 				chords.push_back(chord);
 			}
 			return chords;
+		}
+
+		std::string nashvilleName(const midi::ChordSymbol& chord, int key, const std::string& scale)
+		{
+			std::string roman = degreeName(chord, key, scale);
+			if (roman.empty())
+				return {};
+			std::string accidental;
+			if (roman.front() == 'b' || roman.front() == '#')
+			{
+				accidental = roman.substr(0, 1);
+				roman.erase(0, 1);
+			}
+			std::string numeral;
+			while (!roman.empty() && std::string("IViv").find(roman.front()) != std::string::npos)
+			{
+				numeral += static_cast<char>(std::toupper(static_cast<unsigned char>(roman.front())));
+				roman.erase(0, 1);
+			}
+			const auto degree = std::find(g_numerals.begin(), g_numerals.end(), numeral) - g_numerals.begin() + 1;
+			return accidental + std::to_string(degree) + (chord.type == "min" ? "m" : "") + roman;
 		}
 
 		std::string degreeName(const midi::ChordSymbol& chord, int key, const std::string& scale)
@@ -389,16 +420,19 @@ namespace gnubase::engine
 			list.push_back({{"chord", pad.chord},
 				{"degree",
 					pad.chord.empty() ? std::string()
-									  : chordpads::degreeName(chordOf(pad.chord), pads.rootKey, pads.preset)},
+									  : chordpads::degreeName(chordOf(pad.chord), pads.rootKey, pads.scale)},
+				{"nashville",
+					pad.chord.empty() ? std::string()
+									  : chordpads::nashvilleName(chordOf(pad.chord), pads.rootKey, pads.scale)},
 				{"pitches", voicings[i]}, {"voicing", pad.voicing}, {"adaptive", pad.adaptive}, {"locked", pad.locked},
 				{"key", key <= pads.remoteEnd && key <= 127 ? Json(key) : Json(nullptr)}});
 		}
 		return {{"pads", list}, {"rootKey", pads.rootKey}, {"reference", pads.reference},
 			{"octaveOffset", pads.octaveOffset}, {"velocity", pads.velocity}, {"remote", pads.remote},
 			{"remoteStart", pads.remoteStart}, {"remoteEnd", pads.remoteEnd}, {"preset", pads.preset},
-			{"stepInput", pads.stepInput}, {"moveInsert", pads.moveInsert}, {"stepPosition", pads.stepPosition},
-			{"outputMode", pads.outputMode}, {"latch", pads.latch}, {"overlaps", pads.overlaps},
-			{"filterNotes", pads.filterNotes}};
+			{"scale", pads.scale}, {"stepInput", pads.stepInput}, {"moveInsert", pads.moveInsert},
+			{"stepPosition", pads.stepPosition}, {"outputMode", pads.outputMode}, {"latch", pads.latch},
+			{"overlaps", pads.overlaps}, {"filterNotes", pads.filterNotes}};
 	}
 
 	void chordPadsFromJson(Project& project, const Json& json)
@@ -433,6 +467,10 @@ namespace gnubase::engine
 		pads.remoteStart = std::clamp(json.value("remoteStart", 36), 0, 127);
 		pads.remoteEnd = std::clamp(json.value("remoteEnd", 47), pads.remoteStart, 127);
 		pads.preset = json.value("preset", std::string("major"));
+		const std::vector<std::string>& scales = chordpads::presetNames();
+		pads.scale = json.value("scale", pads.preset);
+		if (std::find(scales.begin(), scales.end(), pads.scale) == scales.end())
+			pads.scale = "major";
 		pads.stepInput = json.value("stepInput", false);
 		pads.moveInsert = json.value("moveInsert", false);
 		pads.stepPosition = std::clamp(json.value("stepPosition", time::Ticks{0}), time::Ticks{0}, stepEnd(project));
@@ -456,12 +494,12 @@ namespace gnubase::engine
 				{{"pads", {{"type", "array"}}}, {"rootKey", integerSchema}, {"reference", integerSchema},
 					{"octaveOffset", integerSchema}, {"velocity", integerSchema}, {"remote", booleanSchema},
 					{"remoteStart", integerSchema}, {"remoteEnd", integerSchema}, {"preset", stringSchema},
-					{"stepInput", booleanSchema}, {"moveInsert", booleanSchema}, {"stepPosition", integerSchema},
-					{"outputMode", booleanSchema}, {"latch", booleanSchema}, {"overlaps", stringSchema},
-					{"filterNotes", booleanSchema}}},
+					{"scale", stringSchema}, {"stepInput", booleanSchema}, {"moveInsert", booleanSchema},
+					{"stepPosition", integerSchema}, {"outputMode", booleanSchema}, {"latch", booleanSchema},
+					{"overlaps", stringSchema}, {"filterNotes", booleanSchema}}},
 			{"required",
 				{"pads", "rootKey", "reference", "octaveOffset", "velocity", "remote", "remoteStart", "remoteEnd",
-					"preset", "stepInput", "moveInsert", "stepPosition", "outputMode", "latch", "overlaps",
+					"preset", "scale", "stepInput", "moveInsert", "stepPosition", "outputMode", "latch", "overlaps",
 					"filterNotes"}}};
 		// Each command that changes the pads announces them.
 		const auto changed = [](Project& project, CommandContext& context)
@@ -474,12 +512,14 @@ namespace gnubase::engine
 		add(engine,
 			{"chordPads.get", 1,
 				"The chord pads (reference manual pp. 1346-1391): pads, each with its chord (\"\" while unassigned), "
-				"degree (its scale degree as a roman numeral, in the loaded preset's scale on the root key), pitches "
+				"degree (its scale degree as a roman numeral, in the loaded preset's scale on the root key), nashville "
+				"(the same in the Nashville Number System, such as 2m), pitches "
 				"(the voicing it plays, from the lowest up), voicing (the inversion of its basic voicing), adaptive "
 				"(adaptive voicing), locked and key (the remote key that triggers it, or null); rootKey (0 C to 11 "
 				"B); reference (the adaptive voicing reference pad, or -1); octaveOffset (the basic player's); "
 				"velocity (of pads triggered with the mouse); remote, remoteStart and remoteEnd (the pads' remote "
-				"keys); preset (the last loaded); stepInput, moveInsert and stepPosition (ticks); outputMode, latch, "
+				"keys); preset (the last loaded) and scale (its scale); stepInput, moveInsert and stepPosition "
+				"(ticks); outputMode, latch, "
 				"overlaps and filterNotes (as chordPads.set takes them).",
 				objectSchema({}), padsResult, true},
 			[](Project& project, CommandContext&) { return chordPadsJson(project); });
@@ -731,14 +771,16 @@ namespace gnubase::engine
 			});
 		add(engine,
 			{"chordPads.loadPreset", 1,
-				"Loads a scale-based chord pads preset (reference manual pp. 1370-1371): major, minor, dorian, "
-				"phrygian, lydian, mixolydian or locrian, the triads on the seven degrees of the scale on root (0 C to "
-				"11 B, default the root key), which becomes the root key. load: chordsAndPlayers (the default), chords "
-				"(the chords, onto the pads from the first, the other unlocked pads unassigned) or players (the "
-				"basic player with no octave offset).",
-				objectSchema(
-					{{"preset", {{"type", "string"}, {"enum", chordpads::presetNames()}}}, {"root", integerSchema},
-						{"load", {{"type", "string"}, {"enum", {"chordsAndPlayers", "chords", "players"}}}}},
+				"Loads a chord pads preset (reference manual pp. 1370-1371). The scale-based ones, major, minor, "
+				"dorian, "
+				"phrygian, lydian, mixolydian and locrian, are the triads on the seven degrees of the scale on root (0 "
+				"C to 11 B, default the root key), which becomes the root key, onto the pads from the first. The "
+				"user's own (chordPads.savePreset) bring back their chords pad by pad with their voicings, their root "
+				"key and scale, and their player. load: chordsAndPlayers (the default), chords (the chords; the other "
+				"unlocked pads become unassigned) or players (the player: for the scale-based presets the basic "
+				"player with no octave offset). chordPads.presets lists them.",
+				objectSchema({{"preset", stringSchema}, {"root", integerSchema},
+								 {"load", {{"type", "string"}, {"enum", {"chordsAndPlayers", "chords", "players"}}}}},
 					{"preset"}),
 				padsResult, false},
 			[changed](Project& project, CommandContext& context)
@@ -748,26 +790,100 @@ namespace gnubase::engine
 				const auto preset = parameters.at("preset").get<std::string>();
 				const int root = parameters.value("root", pads.rootKey);
 				require(root >= 0 && root < 12, "root must be 0 to 11");
-				const std::vector<midi::ChordSymbol> chords = chordpads::presetChords(preset, root);
-				require(!chords.empty(), "no chord pads preset " + preset);
 				const std::string load = parameters.value("load", std::string("chordsAndPlayers"));
+				const std::vector<midi::ChordSymbol> chords = chordpads::presetChords(preset, root);
+				const Json mine = chords.empty() ? userPresets(context).value(preset, Json()) : Json();
+				require(!chords.empty() || mine.is_object(), "no chord pads preset " + preset);
 				if (load != "players")
 				{
+					const Json saved = mine.is_object() ? mine.value("pads", Json::array()) : Json::array();
 					size_t next = 0;
-					for (ChordPad& pad : pads.pads)
+					for (size_t i = 0; i < pads.pads.size(); ++i)
 					{
+						ChordPad& pad = pads.pads[i];
 						if (pad.locked)
 							continue;
 						pad = ChordPad();
-						if (next < chords.size())
+						if (!chords.empty() && next < chords.size())
 							pad.chord = midi::chordName(chords[next++]);
+						else if (i < saved.size() && saved[i].is_object())
+						{
+							const midi::ChordSymbol chord = chordOf(saved[i].value("chord", std::string()));
+							pad.chord = chord.root < 0 ? std::string() : midi::chordName(chord);
+							pad.voicing = std::clamp(saved[i].value("voicing", 0), -12, 12);
+							pad.adaptive = saved[i].value("adaptive", true);
+						}
 					}
-					pads.rootKey = root;
+					pads.rootKey = chords.empty() ? pitchClass(mine.value("rootKey", 0)) : root;
 					pads.preset = preset;
+					const std::vector<std::string>& scales = chordpads::presetNames();
+					pads.scale = chords.empty() ? mine.value("scale", std::string("major")) : preset;
+					if (std::find(scales.begin(), scales.end(), pads.scale) == scales.end())
+						pads.scale = "major";
 				}
 				if (load != "chords")
-					pads.octaveOffset = 0;
+					pads.octaveOffset = chords.empty() ? std::clamp(mine.value("octaveOffset", 0), -3, 3) : 0;
 				return changed(project, context);
+			});
+		add(engine,
+			{"chordPads.presets", 1,
+				"The chord pads presets that chordPads.loadPreset loads, as Previous and Next Preset step through them "
+				"(reference manual p. 1348): the scale-based ones, then the user's own by name.",
+				objectSchema({}),
+				objectSchema({{"presets", {{"type", "array"}, {"items", stringSchema}}}}, {"presets"}), true},
+			[](Project&, CommandContext& context)
+			{
+				Json names = chordpads::presetNames();
+				const Json mine = userPresets(context);
+				for (const auto& [name, preset] : mine.items())
+					names.push_back(name);
+				return Json{{"presets", names}};
+			});
+		addControl(engine,
+			{"chordPads.savePreset", 1,
+				"Save Preset (reference manual p. 1371): the chord pads as a preset of the user's own, kept in the "
+				"user "
+				"setting chordPads.presets: each pad's chord, voicing and adaptive voicing, the root key, the scale "
+				"and the player (the octave offset). A preset of the name is replaced; the scale-based ones can't be. "
+				"No change to the project.",
+				objectSchema({{"name", stringSchema}}, {"name"}), objectSchema({}), false},
+			[this, &engine](CommandContext& context)
+			{
+				const auto name = context.parameters().at("name").get<std::string>();
+				require(!name.empty(), "the preset needs a name");
+				const std::vector<std::string>& builtIn = chordpads::presetNames();
+				require(std::find(builtIn.begin(), builtIn.end(), name) == builtIn.end(),
+					name + " is a built-in chord pads preset");
+				const ChordPads& pads = m_project.chordPads;
+				Json saved = Json::array();
+				for (const ChordPad& pad : pads.pads)
+					saved.push_back({{"chord", pad.chord}, {"voicing", pad.voicing}, {"adaptive", pad.adaptive}});
+				const Json preset = {{"pads", saved}, {"rootKey", pads.rootKey}, {"scale", pads.scale},
+					{"octaveOffset", pads.octaveOffset}};
+				engine.modifySetting(context, g_presetsKey,
+					[&name, &preset](const Json& value)
+					{
+						Json presets = value.is_object() ? value : Json::object();
+						presets[name] = preset;
+						return presets;
+					});
+				return Json::object();
+			});
+		addControl(engine,
+			{"chordPads.deletePreset", 1, "Deletes a chord pads preset of the user's own (chordPads.savePreset).",
+				objectSchema({{"name", stringSchema}}, {"name"}), objectSchema({}), false},
+			[&engine](CommandContext& context)
+			{
+				const auto name = context.parameters().at("name").get<std::string>();
+				require(userPresets(context).contains(name), "no chord pads preset " + name + " of the user's own");
+				engine.modifySetting(context, g_presetsKey,
+					[&name](const Json& value)
+					{
+						Json presets = value.is_object() ? value : Json::object();
+						presets.erase(name);
+						return presets;
+					});
+				return Json::object();
 			});
 		add(engine,
 			{"chordPads.step", 1,
@@ -1029,7 +1145,7 @@ namespace gnubase::engine
 				}
 				const midi::ChordSymbol reference = chordFrom(parameters.value("chord", std::string()));
 				Json suggestions = Json::array();
-				const std::string& scale = project.chordPads.preset;
+				const std::string& scale = project.chordPads.scale;
 				for (const chordpads::Suggestion& suggestion : chordpads::suggestions(reference, key, scale,
 						 parameters.value("algorithm", std::string("cadence")), parameters.value("commonNotes", 2)))
 				{

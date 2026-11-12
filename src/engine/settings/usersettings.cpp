@@ -427,6 +427,10 @@ namespace gnubase::engine::settings
 					Json{{"type", "boolean"}}, false},
 				{"audio.sampleRate", "The audio device's sample rate in Hz.",
 					Json{{"type", "number"}, {"minimum", 8000}, {"maximum", 768000}}, 48000.0},
+				{"chordPads.presets",
+					"The user's own chord pads presets by name (chordPads.savePreset): each with pads (chord, voicing "
+					"and adaptive of each pad), rootKey, scale and octaveOffset.",
+					Json{{"type", "object"}}, Json::object()},
 				{"editing.applyFolderColor",
 					"Folder tracks give their color to the tracks inside them: when the folder's color changes and "
 					"when tracks are added or moved into it.",
