@@ -429,13 +429,13 @@ TEST_CASE("shared copies that still hold the same notes after a tempo change sta
 	CHECK(midiPartJson(client, other).at("shared") == group);
 }
 
-TEST_CASE("shared linear copies that a tempo change rounds a tick apart stay shared", "[unit]")
+TEST_CASE("shared linear copies at sample positions that aren't on a tick stay shared through a tempo change", "[unit]")
 {
 	Engine engine;
 	Client client(engine);
 	const ObjectId linear = addTrack(client, {{"type", "midi"}, {"timeBase", "linear"}});
-	// Copies at sample positions that aren't on a tick: the retiming below rounds their notes and controllers from
-	// their own starts, a tick apart here, which is far less than a sample.
+	// Copies at sample positions that aren't on a tick: the retiming rounds their notes and controllers once, from
+	// the exact times of the copies' starts, so both copies round alike where the tempo is the same at both.
 	const ObjectId part = addPartWithNote(client, linear, 1);
 	const ObjectId copy = run(client, "event.copy", {{"events", {part}}, {"shared", true}, {"delta", 24001}})
 							  .at("events")
@@ -468,8 +468,8 @@ TEST_CASE("shared linear copies that a tempo change rounds a tick apart stay sha
 	REQUIRE(near(noteTimes(linear), times));
 	changedParts(client);
 
-	// The new project tempo retimes both copies a tick apart: they stay in one group, take the ticks of its first
-	// copy and are both reported, and their notes keep their time.
+	// The new project tempo retimes both copies alike: they stay in one group holding the same notes and are both
+	// reported, and their notes keep their time.
 	run(client, "project.set", {{"tempo", 90.0}});
 	CHECK(changedParts(client) == std::vector<ObjectId>{part, copy});
 	const Json first = midiPartJson(client, part);
@@ -487,6 +487,87 @@ TEST_CASE("shared linear copies that a tempo change rounds a tick apart stay sha
 	CHECK(midiPartJson(client, copy).at("shared") == group);
 	CHECK(midiPartJson(client, part).at("notes") == notes);
 	CHECK(midiPartJson(client, copy).at("notes") == notes);
+}
+
+TEST_CASE(
+	"small tempo steps split a shared musical copy from a linear part instead of moving it off its beat", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId linear = addTrack(client, {{"type", "midi"}, {"timeBase", "linear"}});
+	const ObjectId musical = addTrack(client, {{"type", "midi"}});
+	const ObjectId part = addPartWithNote(client, linear, 0);
+	const ObjectId copy =
+		run(client, "event.copy", {{"events", {part}}, {"shared", true}, {"ticks", 0}, {"track", musical}})
+			.at("events")
+			.at(0)
+			.get<ObjectId>();
+	const Json group = midiPartJson(client, part).at("shared");
+	REQUIRE(group != 0);
+	REQUIRE(midiPartJson(client, copy).at("shared") == group);
+	changedParts(client);
+
+	// 300 steps of 0.0001 BPM: each retimes the linear part's notes by barely a tick, far less than a sample, but
+	// the musical copy's notes don't move at all, so the first step splits the group, and no step may take the copy
+	// off its beat (#865).
+	for (int step = 1; step <= 300; ++step)
+		run(client, "project.set", {{"tempo", 120.0 + 0.0001 * step}});
+	const Json copyAfter = midiPartJson(client, copy);
+	CHECK(copyAfter.at("shared") == 0);
+	CHECK(copyAfter.at("notes").at(0).at("position") == g_ticksPerQuarter);
+	CHECK(copyAfter.at("notes").at(0).at("length") == g_ticksPerQuarter);
+	CHECK(copyAfter.at("controllers").at(0).at("position") == 2 * g_ticksPerQuarter);
+	CHECK(midiPartJson(client, part).at("shared") == 0);
+	CHECK(midiPartJson(client, part).at("notes").at(0).at("position") != g_ticksPerQuarter);
+}
+
+TEST_CASE("shared linear copies before and after a tempo event keep their time through small tempo steps", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	run(client, "project.set", {{"tempoTrackActive", true}});
+	const ObjectId linear = addTrack(client, {{"type", "midi"}, {"timeBase", "linear"}});
+	const ObjectId part = addPartWithNote(client, linear, 0);
+	const ObjectId later =
+		run(client, "event.copy", {{"events", {part}}, {"shared", true}, {"delta", 9 * g_quarterSamples}})
+			.at("events")
+			.at(0)
+			.get<ObjectId>();
+	const Json group = midiPartJson(client, part).at("shared");
+	REQUIRE(group != 0);
+	REQUIRE(midiPartJson(client, later).at("shared") == group);
+	// A tempo event at the eighth quarter, at the project's tempo: nothing moves and the copies stay shared.
+	run(client, "tempo.add", point(8, 120.0));
+	CHECK(midiPartJson(client, part).at("shared") == group);
+	CHECK(midiPartJson(client, later).at("shared") == group);
+	const auto noteTimes = [&engine](ObjectId track)
+	{
+		std::vector<int64_t> times;
+		for (const auto& note : renderChannel(engine.renderSnapshots().acquire(), track).notes)
+		{
+			times.push_back(note.start);
+			times.push_back(note.end);
+		}
+		std::sort(times.begin(), times.end());
+		return times;
+	};
+	const auto near = [](const std::vector<int64_t>& a, const std::vector<int64_t>& b)
+	{
+		return std::equal(
+			a.begin(), a.end(), b.begin(), b.end(), [](int64_t x, int64_t y) { return std::abs(x - y) <= 1; });
+	};
+	// The first part's note, and the copy's, nine quarters later.
+	const std::vector<int64_t> times{24000, 48000, 240000, 264000};
+	REQUIRE(near(noteTimes(linear), times));
+	changedParts(client);
+
+	// Small steps of 0.0001 BPM at the event: the copy after it keeps its notes' time, so the first step already
+	// retimes it apart from the one before the event and they split, instead of sharing one another's drift (#865).
+	for (int step = 1; step <= 50; ++step)
+		run(client, "tempo.set", {{"events", {{{"position", 8 * g_ticksPerQuarter}, {"bpm", 120.0 + 0.0001 * step}}}}});
+	CHECK(midiPartJson(client, part).at("shared") == 0);
+	CHECK(midiPartJson(client, later).at("shared") == 0);
+	CHECK(near(noteTimes(linear), times));
 }
 
 TEST_CASE("the largest set of shared copies that still match keeps their group when a tempo change splits it", "[unit]")

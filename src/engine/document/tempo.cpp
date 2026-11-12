@@ -380,61 +380,6 @@ namespace gnubase::engine
 			return {{"tempoEvents", file.tempo.points().size()}, {"signatureEvents", file.signatures.changes().size()}};
 		}
 
-		// How many ticks last a sample at a part's start. Retiming a linear part rounds the ticks of its notes and
-		// controllers from its own start, so shared copies can come out of a tempo change a tick or two apart (#865).
-		double ticksPerSample(const Project& project, const MidiPart& part)
-		{
-			const time::Ticks start = time::toTicks(part.position, project.tempo, project.sampleRate);
-			return static_cast<double>(time::g_ticksPerQuarter) * project.tempo.bpmAt(start) /
-				(g_secondsPerMinute * project.sampleRate);
-		}
-
-		// Whether two shared copies hold the same notes and controllers, each within less than a sample of the
-		// other: their times may differ by the rounding of the retiming, which nothing audible carries, everything
-		// else must be the same.
-		bool sameWithinASample(const Project& project, const MidiPart& a, const MidiPart& b)
-		{
-			if (a.notes.size() != b.notes.size() || a.controllers.size() != b.controllers.size())
-				return false;
-			const double tolerance = std::min(ticksPerSample(project, a), ticksPerSample(project, b));
-			const auto sameTime = [tolerance](time::Ticks x, time::Ticks y)
-			{ return std::abs(static_cast<double>(x - y)) < tolerance; };
-			const auto sameTiming = [&sameTime](const NoteTiming& x, const NoteTiming& y)
-			{
-				return x.velocity == y.velocity && sameTime(x.position, y.position) &&
-					sameTime(x.position + x.length, y.position + y.length);
-			};
-			for (const auto& [id, note] : a.notes)
-			{
-				const auto found = b.notes.find(id);
-				if (found == b.notes.end())
-					return false;
-				const Note& other = found->second;
-				if (note.pitch != other.pitch || note.channel != other.channel ||
-					note.releaseVelocity != other.releaseVelocity || note.probability != other.probability ||
-					note.velocityVariance != other.velocityVariance || note.articulations != other.articulations ||
-					note.origin.has_value() != other.origin.has_value() ||
-					!sameTiming(
-						{note.position, note.length, note.velocity}, {other.position, other.length, other.velocity}))
-					return false;
-				if (note.origin &&
-					(!sameTiming(note.origin->original, other.origin->original) ||
-						!sameTiming(note.origin->quantized, other.origin->quantized)))
-					return false;
-			}
-			return std::all_of(a.controllers.begin(), a.controllers.end(),
-				[&b, &sameTime](const auto& controller)
-				{
-					const auto found = b.controllers.find(controller.first);
-					if (found == b.controllers.end())
-						return false;
-					const Controller& x = controller.second;
-					const Controller& y = found->second;
-					return x.type == y.type && x.number == y.number && x.value == y.value && x.channel == y.channel &&
-						x.data == y.data && x.articulation == y.articulation && sameTime(x.position, y.position);
-				});
-		}
-
 		Json importTempo(Project& project, CommandContext& context)
 		{
 			TempoTrackFile file;
@@ -474,10 +419,13 @@ namespace gnubase::engine
 		// the copies a split changes.
 		const auto retimePart = [&project, &before](MidiPart& part)
 		{
-			const time::Ticks startBefore = before.toTicks(part.position.value, project.sampleRate);
-			const time::Ticks start = project.tempo.toTicks(part.position.value, project.sampleRate);
-			const auto retime = [&](time::Ticks position)
-			{ return project.tempo.toTicks(before.toSeconds(startBefore + position)) - start; };
+			// Retime through the part start's exact time and round the relative position once, so that shared copies
+			// at the same tempo round to the same ticks instead of a tick apart from each of their own starts (#865).
+			const double startSeconds = static_cast<double>(part.position.value) / project.sampleRate;
+			const double startBefore = before.toTicksExact(startSeconds);
+			const double start = project.tempo.toTicksExact(startSeconds);
+			const auto retime = [&](time::Ticks position) -> time::Ticks
+			{ return std::llround(project.tempo.toTicksExact(before.toSecondsExact(startBefore + position)) - start); };
 			bool moved = false;
 			const auto update = [&moved](time::Ticks& value, time::Ticks to)
 			{
@@ -517,11 +465,10 @@ namespace gnubase::engine
 							retimePart(part);
 		}
 		// Shared copies that now hold different notes, such as copies before and after a tempo event, or a linear and
-		// a musical copy, can't share them all. Copies that still hold the same notes as each other stay shared, and
-		// so do copies the retiming rounded less than a sample apart (#865): the largest set of matching copies (the
-		// first of equal ones) keeps the group and its note and controller ids, every other set gets a group of its
-		// own with new ids, and a copy that matches no other becomes a real copy, as event.toRealCopy makes it. The
-		// copies of a set take the ticks of its first, so that they hold exactly the same notes and controllers.
+		// a musical copy, can't share them all. Copies that still hold the same notes as each other stay shared: the
+		// largest set of matching copies (the first of equal ones) keeps the group and its note and controller ids,
+		// every other set gets a group of its own with new ids, and a copy that matches no other becomes a real copy,
+		// as event.toRealCopy makes it.
 		std::map<ObjectId, std::vector<std::vector<MidiPart*>>> groups; // the sets of matching copies, in id order
 		for (auto& entry : project.midiParts)
 		{
@@ -529,33 +476,18 @@ namespace gnubase::engine
 			if (part.shared == 0)
 				continue;
 			std::vector<std::vector<MidiPart*>>& sets = groups[part.shared];
-			const auto matching =
-				std::find_if(sets.begin(), sets.end(), [&project, &part](const std::vector<MidiPart*>& set)
-					{ return sameWithinASample(project, *set.front(), part); });
+			const auto matching = std::find_if(sets.begin(), sets.end(), [&part](const std::vector<MidiPart*>& set)
+				{ return set.front()->notes == part.notes && set.front()->controllers == part.controllers; });
 			if (matching != sets.end())
 				matching->push_back(&part);
 			else
 				sets.push_back({&part});
 		}
-		const auto takeTicks = [&changed](const std::vector<MidiPart*>& set)
-		{
-			const MidiPart& source = *set.front();
-			for (auto other = std::next(set.begin()); other != set.end(); ++other)
-				if ((*other)->notes != source.notes || (*other)->controllers != source.controllers)
-				{
-					(*other)->notes = source.notes;
-					(*other)->controllers = source.controllers;
-					changed.insert((*other)->id);
-				}
-		};
 		for (auto& entry : groups)
 		{
 			const std::vector<std::vector<MidiPart*>>& sets = entry.second;
 			if (sets.size() < 2)
-			{
-				takeTicks(sets.front()); // the group stays together
 				continue;
-			}
 			const auto keeps = std::max_element(sets.begin(), sets.end(),
 				[](const std::vector<MidiPart*>& a, const std::vector<MidiPart*>& b) { return a.size() < b.size(); });
 			for (auto set = sets.begin(); set != sets.end(); ++set)
@@ -567,10 +499,6 @@ namespace gnubase::engine
 					{
 						source.shared = 0; // the last of its copies is a part like any other
 						changed.insert(source.id);
-					}
-					else
-					{
-						takeTicks(*set);
 					}
 					continue;
 				}
