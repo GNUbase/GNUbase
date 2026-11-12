@@ -801,13 +801,28 @@ meter .meter-peak
 	top: 0;
 }
 
-.event-display .project-cursor, .event-display .cross-hair-vertical
+.event-display .project-cursor, .event-display .cross-hair-vertical, .event-display .step-input-cursor
 {
 	position: absolute;
 	top: 0;
 	bottom: 0;
 	width: 1dp;
 	pointer-events: none;
+}
+
+/* The chord pads' step input cursor (docs/features/chord-pads.md): a line with a handle in the ruler. */
+.event-display .step-input-cursor.hidden
+{
+	display: none;
+}
+
+.event-display .step-input-handle
+{
+	position: absolute;
+	top: 0;
+	left: -4dp;
+	width: 9dp;
+	height: 8dp;
 }
 
 .event-display .cross-hair-horizontal
@@ -1061,6 +1076,68 @@ meter .meter-peak
 	justify-content: center;
 	width: 64dp;
 	height: 52dp;
+	border-bottom-width: 3dp;
+}
+
+/* The grid layout (reference manual p. 1391): the code gives each pad its column's share of the width. */
+.chord-pads-pads.grid
+{
+	gap: 0dp;
+}
+
+/* The pads on black keys of the remote range sit higher in the keyboard layout. */
+.chord-pad.black-key
+{
+	height: 40dp;
+}
+
+/* The voicing indicator at the bottom of the pad (p. 1353), unless the display settings hide it. */
+.chord-pads-pads.no-voicings .chord-pad-voicing
+{
+	display: none;
+}
+
+/* The settings panes under the toolbars, one at a time. */
+.chord-pads-pane input
+{
+	width: 96dp;
+}
+
+/* The zone's keyboard under the pads (p. 1355): white and black keys in a row, the black ones shorter. */
+.chord-pads-keyboard
+{
+	display: flex;
+	align-items: flex-start;
+	height: 28dp;
+	padding: 2dp 4dp;
+}
+
+.chord-pads-key
+{
+	flex: 1 1 0;
+	height: 100%;
+}
+
+.chord-pads-key.black
+{
+	height: 60%;
+}
+
+/* The Proximity assistant (p. 1374): rows of suggestions by distance, the reference below them in the middle. */
+.chord-proximity-row
+{
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: center;
+	gap: 3dp;
+	width: 100%;
+}
+
+.chord-proximity-reference
+{
+	width: 100%;
+	text-align: center;
+	padding: 4dp;
 }
 
 /* The adaptive voicing reference indicator, the adaptive voicing indicator and the padlock side by side in a pad's

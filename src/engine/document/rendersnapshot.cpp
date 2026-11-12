@@ -507,6 +507,8 @@ namespace gnubase::engine
 		if (outputs.empty() && mainMix(project) != 0)
 			outputs.push_back(mainMix(project)); // the default output, also when the chosen busses are gone
 		snapshot->chordPadKeys = chordPadKeys(project.chordPads);
+		if (project.chordPads.snapPlayback)
+			snapshot->chordPadKeys.snapTicks = project.quantize.grid.ticks();
 		snapshot->panLaw = project.panLaw;
 		snapshot->maxVolume = project.maxVolume;
 		snapshot->recordBitDepth = project.setup.recordBitDepth;
@@ -585,6 +587,9 @@ namespace gnubase::engine
 				channel.midiInput == "all" && (channel.monitor || channel.recordEnable);
 			render.padThru = (track.type == TrackType::Midi || track.type == TrackType::Instrument) &&
 				channel.midiInput == "chordPads" && (channel.monitor || channel.recordEnable);
+			for (size_t player = 0; player < project.chordPads.players.size(); ++player)
+				if (project.chordPads.players[player].track == track.id && track.id != 0)
+					render.padPlayer = static_cast<int>(player);
 			render.autoFades = track.autoFades.value_or(project.autoFades);
 			if (const auto input = busIndex.find(channel.input); input != busIndex.end())
 				render.input = input->second;

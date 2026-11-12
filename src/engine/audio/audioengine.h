@@ -192,8 +192,9 @@ namespace gnubase::engine
 			MidiTap::Sequencers sequencers;     // of the MIDI and instrument channels, for midi.inject
 			std::vector<uint64_t> destinations; // per sequencer, where it plays (MidiSequencer::playOn)
 			std::vector<uint8_t> thru;          // per sequencer, 1 if it plays all MIDI inputs (MidiTap::thru)
-			std::vector<uint8_t> padThru;       // and 1 if it plays the chord pads (#1089)
-			ChordPadKeys chordPadKeys;          // what MIDI inputs' notes on the chord pads' remote keys play
+			// Per chord pads player, per sequencer: 1 if it plays that player's notes (#1089).
+			std::array<std::vector<uint8_t>, ChordPadKeys::g_maxPlayers> padThru;
+			ChordPadKeys chordPadKeys; // what MIDI inputs' notes on the chord pads' remote keys play
 			// Per sequencer, its input transformer, which changes its input after the MIDI thru.
 			std::vector<InputTransform> inputTransformers;
 			MidiTap::Instruments instruments; // for midi.capture
@@ -481,9 +482,11 @@ namespace gnubase::engine
 		std::map<ObjectId, int> m_sourceNodes;          // rebuild: per channel
 		Transport m_transport;                          // advanced by the audio thread
 		MidiPorts m_midi;
-		audio::MidiBuffer m_midiInput; // the block's messages from all MIDI inputs, for MIDI thru (MidiTap::thru)
-		audio::MidiBuffer m_padOutput; // and the chord pads' notes
-		MidiTap m_tap;                 // midi.inject and midi.capture
+		audio::MidiBuffer m_midiInput;     // the block's messages from all MIDI inputs, for MIDI thru (MidiTap::thru)
+		MidiPorts::PadBuffers m_padOutput; // and the chord pads' notes, by player
+		// Which wait for the grid with Snap Playback to Musical Grid, by player.
+		std::array<midi::PadSnap, ChordPadKeys::g_maxPlayers> m_padSnap;
+		MidiTap m_tap; // midi.inject and midi.capture
 
 		// Changed only while the device is stopped.
 		enum class Limit : uint8_t

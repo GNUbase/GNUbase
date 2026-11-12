@@ -161,19 +161,30 @@ namespace gnubase::engine
 			return project.signatures.barStart(lastStepBar(project) + 1);
 		}
 
-		const ChordPlayer& playerOf(const ChordPads& pads)
+		const ChordPlayer& playerOf(const ChordPads& pads, int index = -1)
 		{
+			const int player = index >= 0 ? index : pads.player;
 			return pads.players.at(
-				static_cast<size_t>(std::clamp(pads.player, 0, static_cast<int>(pads.players.size()) - 1)));
+				static_cast<size_t>(std::clamp(player, 0, static_cast<int>(pads.players.size()) - 1)));
+		}
+
+		// The players that play: the selected one and those with a track (reference manual p. 1377).
+		std::vector<int> playingPlayers(const ChordPads& pads)
+		{
+			std::vector<int> playing;
+			for (int i = 0; i < static_cast<int>(pads.players.size()); ++i)
+				if (i == pads.player || pads.players[static_cast<size_t>(i)].track != 0)
+					playing.push_back(i);
+			return playing;
 		}
 
 		// The selected player's voicing of a chord (reference manual pp. 1376-1377): the basic player's moved by its
 		// octave offset, the piano and guitar players' in their voicing style; with adaptive, the one nearest to
 		// previous.
 		std::vector<int> playerVoicing(const ChordPads& pads, const midi::ChordSymbol& chord, bool adaptive = false,
-			const std::vector<int>& previous = {})
+			const std::vector<int>& previous = {}, int index = -1)
 		{
-			const ChordPlayer& player = playerOf(pads);
+			const ChordPlayer& player = playerOf(pads, index);
 			if (player.library == "basic")
 				return midi::voiceChord(chord, {player.octaveOffset, adaptive}, previous);
 			midi::VoicingStyle style;
@@ -187,7 +198,7 @@ namespace gnubase::engine
 			Json players = Json::array();
 			for (const ChordPlayer& player : pads.players)
 				players.push_back({{"name", player.name}, {"library", player.library}, {"style", player.style},
-					{"octaveOffset", player.octaveOffset}});
+					{"octaveOffset", player.octaveOffset}, {"track", player.track}});
 			return players;
 		}
 
@@ -206,9 +217,26 @@ namespace gnubase::engine
 				player.name = item.value("name", player.name);
 				player.style = item.value("style", std::string());
 				player.octaveOffset = std::clamp(item.value("octaveOffset", 0), -3, 3);
+				player.track = item.value("track", ObjectId{0});
 				players.push_back(player);
 			}
 			return players;
+		}
+
+		// A player's track: none (0), or a MIDI or instrument track that no other player has.
+		ObjectId playerTrack(const Project& project, ObjectId track, int player)
+		{
+			if (track == 0)
+				return 0;
+			const auto found = project.trackById.find(track);
+			require(found != project.trackById.end() &&
+					(found->second.type == TrackType::Midi || found->second.type == TrackType::Instrument),
+				"a chord pads player plays a MIDI or instrument track");
+			const std::vector<ChordPlayer>& players = project.chordPads.players;
+			for (size_t i = 0; i < players.size(); ++i)
+				require(static_cast<int>(i) == player || players[i].track != track,
+					"another chord pads player plays track " + std::to_string(track));
+			return track;
 		}
 
 		// The inversion of a pad's basic voicing that its current voicing is, for a pad with adaptive voicing whose
@@ -381,9 +409,17 @@ namespace gnubase::engine
 		}
 
 		std::vector<Suggestion> suggestions(const midi::ChordSymbol& reference, int key, const std::string& scale,
-			const std::string& algorithm, int commonNotes)
+			const std::string& algorithm, int commonNotes, const std::string& cadenceType)
 		{
 			const std::vector<int> steps = scaleOf(scale);
+			// The harmonic function of a root's scale degree: tonic I, iii, vi; subdominant ii, IV; dominant V, vii.
+			const auto function = [&steps, key](int root)
+			{
+				const auto degree = std::find(steps.begin(), steps.end(), pitchClass(root - key)) - steps.begin();
+				static constexpr std::array<const char*, 7> functions = {
+					"tonic", "subdominant", "tonic", "subdominant", "dominant", "tonic", "dominant"};
+				return degree < 7 ? std::string(functions.at(static_cast<size_t>(degree))) : std::string();
+			};
 			const std::vector<int> referenceClasses = classesOf(reference);
 			// How strongly a root step follows: a fifth down, a fifth up, the relative chords, a second, a third.
 			const auto rank = [](int step)
@@ -422,6 +458,8 @@ namespace gnubase::engine
 						}));
 					if (algorithm == "commonNotes" && shared != commonNotes)
 						continue;
+					if (cadenceType != "all" && function(root) != cadenceType)
+						continue;
 					const int level = std::min(outside, 2);
 					const int step = reference.root < 0 ? 0 : pitchClass(root - reference.root);
 					const int distance =
@@ -433,16 +471,50 @@ namespace gnubase::engine
 			std::stable_sort(candidates.begin(), candidates.end(),
 				[](const Candidate& a, const Candidate& b) { return a.order < b.order; });
 			std::vector<Suggestion> result;
+			result.reserve(std::min<size_t>(candidates.size(), 24));
+			for (size_t i = 0; i < candidates.size() && (algorithm == "proximity" || i < 24); ++i)
+				result.push_back(candidates[i].suggestion);
+			return result;
+		}
+
+		std::vector<Suggestion> proximity(const midi::ChordSymbol& reference, int key, const std::string& scale)
+		{
+			std::vector<Suggestion> chords = suggestions(reference, key, scale, "proximity", 0);
+			const std::vector<int> referenceClasses = classesOf(reference);
+			struct Candidate
+			{
+				std::tuple<int, int, int> order;
+				Suggestion suggestion;
+			};
+			std::vector<Candidate> candidates;
+			candidates.reserve(chords.size());
+			for (Suggestion& suggestion : chords)
+			{
+				const std::vector<int> classes = classesOf(suggestion.chord);
+				const auto foreign = static_cast<int>(std::count_if(classes.begin(), classes.end(),
+					[&referenceClasses](int note)
+					{
+						return std::find(referenceClasses.begin(), referenceClasses.end(), note) ==
+							referenceClasses.end();
+					}));
+				suggestion.distance = foreign + (suggestion.chord.tensions.empty() ? 0 : 1);
+				const int fifths = reference.root < 0 ? 0 : fifthsDistance(suggestion.chord.root, reference.root);
+				candidates.push_back({{suggestion.distance, suggestion.level, fifths}, suggestion});
+			}
+			std::stable_sort(candidates.begin(), candidates.end(),
+				[](const Candidate& a, const Candidate& b) { return a.order < b.order; });
+			std::vector<Suggestion> result;
+			result.reserve(candidates.size());
 			for (size_t i = 0; i < candidates.size() && i < 24; ++i)
 				result.push_back(candidates[i].suggestion);
 			return result;
 		}
 	}
 
-	std::vector<std::vector<int>> chordPadVoicings(const ChordPads& pads)
+	std::vector<std::vector<int>> chordPadVoicings(const ChordPads& pads, int player)
 	{
-		const auto basic = [&pads](const ChordPad& pad)
-		{ return chordpads::inverted(playerVoicing(pads, chordOf(pad.chord)), pad.voicing); };
+		const auto basic = [&pads, player](const ChordPad& pad)
+		{ return chordpads::inverted(playerVoicing(pads, chordOf(pad.chord), false, {}, player), pad.voicing); };
 		const bool referenced = pads.reference >= 0 && pads.reference < static_cast<int>(pads.pads.size()) &&
 			!pads.pads[static_cast<size_t>(pads.reference)].chord.empty();
 		const std::vector<int> reference =
@@ -455,7 +527,7 @@ namespace gnubase::engine
 			if (pad.chord.empty())
 				voicings.emplace_back();
 			else if (referenced && pad.adaptive && static_cast<int>(i) != pads.reference)
-				voicings.push_back(playerVoicing(pads, chordOf(pad.chord), true, reference));
+				voicings.push_back(playerVoicing(pads, chordOf(pad.chord), true, reference, player));
 			else
 				voicings.push_back(basic(pad));
 		}
@@ -476,18 +548,27 @@ namespace gnubase::engine
 		for (size_t i = 0; i < keys.modifierKeys.size(); ++i)
 			keys.modifierKeys.at(i) = static_cast<uint8_t>(std::clamp(pads.modifierKeys.at(i), 0, 127));
 		keys.portHash = chordPadPortHash(pads.remotePort);
-		const std::vector<std::vector<int>> voicings = chordPadVoicings(pads);
-		for (int key = std::max(pads.remoteStart, 0); key <= std::min(pads.remoteEnd, 127); ++key)
+		keys.selected =
+			static_cast<uint8_t>(std::clamp(pads.player, 0, static_cast<int>(ChordPadKeys::g_maxPlayers) - 1));
+		keys.players = 0;
+		for (const int player : playingPlayers(pads))
 		{
-			const auto pad = static_cast<size_t>(key - pads.remoteStart);
-			if (pad >= voicings.size())
-				break;
-			const std::vector<int>& voicing = voicings[pad];
-			const size_t count = std::min(voicing.size(), ChordPadKeys::g_maxPitches);
-			auto& pitches = keys.pitches.at(static_cast<size_t>(key));
-			for (size_t i = 0; i < count; ++i)
-				pitches.at(i) = static_cast<uint8_t>(std::clamp(voicing[i], 0, 127));
-			keys.counts.at(static_cast<size_t>(key)) = static_cast<uint8_t>(count);
+			if (player >= static_cast<int>(ChordPadKeys::g_maxPlayers))
+				continue;
+			keys.players = static_cast<uint8_t>(keys.players | (1U << static_cast<unsigned>(player)));
+			const std::vector<std::vector<int>> voicings = chordPadVoicings(pads, player);
+			for (int key = std::max(pads.remoteStart, 0); key <= std::min(pads.remoteEnd, 127); ++key)
+			{
+				const auto pad = static_cast<size_t>(key - pads.remoteStart);
+				if (pad >= voicings.size())
+					break;
+				const std::vector<int>& voicing = voicings[pad];
+				const size_t count = std::min(voicing.size(), ChordPadKeys::g_maxPitches);
+				auto& pitches = keys.pitches.at(static_cast<size_t>(player)).at(static_cast<size_t>(key));
+				for (size_t i = 0; i < count; ++i)
+					pitches.at(i) = static_cast<uint8_t>(std::clamp(voicing[i], 0, 127));
+				keys.counts.at(static_cast<size_t>(player)).at(static_cast<size_t>(key)) = static_cast<uint8_t>(count);
+			}
 		}
 		return keys;
 	}
@@ -518,7 +599,7 @@ namespace gnubase::engine
 			{"stepInput", pads.stepInput}, {"moveInsert", pads.moveInsert}, {"stepPosition", pads.stepPosition},
 			{"outputMode", pads.outputMode}, {"latch", pads.latch}, {"overlaps", pads.overlaps},
 			{"filterNotes", pads.filterNotes}, {"modifiers", pads.modifiers}, {"modifierKeys", modifierKeysJson(pads)},
-			{"remotePort", pads.remotePort}};
+			{"remotePort", pads.remotePort}, {"snapPlayback", pads.snapPlayback}};
 	}
 
 	void chordPadsFromJson(Project& project, const Json& json)
@@ -579,6 +660,7 @@ namespace gnubase::engine
 			if (keys.is_object() && keys.contains(g_modifierNames.at(i)) && keys.at(g_modifierNames.at(i)).is_number())
 				pads.modifierKeys.at(i) = std::clamp(keys.at(g_modifierNames.at(i)).get<int>(), 0, 127);
 		pads.remotePort = json.value("remotePort", std::string());
+		pads.snapPlayback = json.value("snapPlayback", false);
 	}
 
 	void ProjectModel::registerChordPadCommands(Engine& engine)
@@ -596,11 +678,13 @@ namespace gnubase::engine
 					{"stepInput", booleanSchema}, {"moveInsert", booleanSchema}, {"stepPosition", integerSchema},
 					{"outputMode", booleanSchema}, {"latch", booleanSchema}, {"overlaps", stringSchema},
 					{"filterNotes", booleanSchema}, {"modifiers", booleanSchema},
-					{"modifierKeys", {{"type", "object"}}}, {"remotePort", stringSchema}}},
+					{"modifierKeys", {{"type", "object"}}}, {"remotePort", stringSchema},
+					{"snapPlayback", booleanSchema}}},
 			{"required",
 				{"pads", "rootKey", "reference", "octaveOffset", "players", "player", "velocity", "remote",
 					"remoteStart", "remoteEnd", "preset", "scale", "stepInput", "moveInsert", "stepPosition",
-					"outputMode", "latch", "overlaps", "filterNotes", "modifiers", "modifierKeys", "remotePort"}}};
+					"outputMode", "latch", "overlaps", "filterNotes", "modifiers", "modifierKeys", "remotePort",
+					"snapPlayback"}}};
 		// Each command that changes the pads announces them.
 		auto remote = std::make_shared<RemoteState>();
 		const auto changed = [](Project& project, CommandContext& context)
@@ -657,7 +741,9 @@ namespace gnubase::engine
 				"transposeUp; C2 to F2 by default): such a key changes the pads whose remote keys are down, or else "
 				"the "
 				"one triggered last, and plays nothing. remotePort: the MIDI input whose notes trigger the pads, its "
-				"midi.portSettings key such as dummy/in/Keys (p. 1386); empty (the default) for all MIDI inputs.",
+				"midi.portSettings key such as dummy/in/Keys (p. 1386); empty (the default) for all MIDI inputs. "
+				"snapPlayback (Snap Playback to Musical Grid, p. 1349): while the transport plays, a triggered pad's "
+				"chord starts at the next position of the quantize grid (quantize.set).",
 				objectSchema({{"rootKey", integerSchema}, {"transposePads", booleanSchema}, {"padCount", integerSchema},
 					{"octaveOffset", integerSchema}, {"player", integerSchema}, {"velocity", integerSchema},
 					{"remote", booleanSchema}, {"remoteStart", integerSchema}, {"remoteEnd", integerSchema},
@@ -671,7 +757,7 @@ namespace gnubase::engine
 								{{"previousVoicing", integerSchema}, {"nextVoicing", integerSchema},
 									{"fewerTensions", integerSchema}, {"moreTensions", integerSchema},
 									{"transposeDown", integerSchema}, {"transposeUp", integerSchema}}}}},
-					{"remotePort", stringSchema}}),
+					{"remotePort", stringSchema}, {"snapPlayback", booleanSchema}}),
 				padsResult, false},
 			[changed](Project& project, CommandContext& context)
 			{
@@ -735,6 +821,7 @@ namespace gnubase::engine
 							pads.modifierKeys.at(i) = key;
 						}
 				pads.remotePort = parameters.value("remotePort", pads.remotePort);
+				pads.snapPlayback = parameters.value("snapPlayback", pads.snapPlayback);
 				if (parameters.contains("stepPosition"))
 				{
 					const time::Ticks end = stepEnd(project);
@@ -767,7 +854,7 @@ namespace gnubase::engine
 				"library's first: chord.setTrack lists them), which becomes the selected player whose voicings the "
 				"pads play. At most 8.",
 				objectSchema({{"library", {{"type", "string"}, {"enum", midi::voicingLibraries()}}},
-								 {"name", stringSchema}, {"style", stringSchema}},
+								 {"name", stringSchema}, {"style", stringSchema}, {"track", integerSchema}},
 					{"library"}),
 				padsResult, false},
 			[changed](Project& project, CommandContext& context)
@@ -777,14 +864,14 @@ namespace gnubase::engine
 				require(pads.players.size() < 8, "the chord pads have 8 players already");
 				ChordPlayer player;
 				player.library = parameters.at("library").get<std::string>();
-				const std::string named = player.library == "basic" ? "Basic"
-					: player.library == "piano"                     ? "Piano"
-																	: "Guitar";
-				player.name = parameters.value("name", named + " Player");
+				std::string named = player.library + " Player";
+				named.front() = static_cast<char>(std::toupper(static_cast<unsigned char>(named.front())));
+				player.name = parameters.value("name", named);
 				player.style = parameters.value("style", std::string());
 				const std::vector<std::string>& styles = midi::voicingStyles(player.library);
 				require(player.style.empty() || std::find(styles.begin(), styles.end(), player.style) != styles.end(),
 					"no " + player.library + " voicing style " + player.style);
+				player.track = playerTrack(project, parameters.value("track", ObjectId{0}), -1);
 				pads.players.push_back(player);
 				pads.player = static_cast<int>(pads.players.size()) - 1;
 				return changed(project, context);
@@ -793,9 +880,11 @@ namespace gnubase::engine
 			{"chordPads.setPlayer", 1,
 				"Changes a chord pads player (player, default the selected one; reference manual p. 1377): name "
 				"(Rename Selected Player), style (Chord Voicing Style, piano and guitar players: their library's "
-				"styles), octaveOffset (-3 to 3, basic players).",
+				"styles), octaveOffset (-3 to 3, basic players), track (Using Different Players on Multiple Tracks, "
+				"p. 1377: a MIDI or instrument track that gets this player's voicings while the other tracks get the "
+				"selected player's; 0 for none; one player a track).",
 				objectSchema({{"player", integerSchema}, {"name", stringSchema}, {"style", stringSchema},
-					{"octaveOffset", integerSchema}}),
+					{"octaveOffset", integerSchema}, {"track", integerSchema}}),
 				padsResult, false},
 			[changed](Project& project, CommandContext& context)
 			{
@@ -821,6 +910,8 @@ namespace gnubase::engine
 					player.octaveOffset = parameters.at("octaveOffset").get<int>();
 					require(player.octaveOffset >= -3 && player.octaveOffset <= 3, "octaveOffset must be -3 to 3");
 				}
+				if (parameters.contains("track"))
+					player.track = playerTrack(project, parameters.at("track").get<ObjectId>(), index);
 				return changed(project, context);
 			});
 		add(engine,
@@ -1029,7 +1120,9 @@ namespace gnubase::engine
 							continue;
 						pad = ChordPad();
 						if (!chords.empty() && next < chords.size())
+						{
 							pad.chord = midi::chordName(chords[next++]);
+						}
 						else if (i < saved.size() && saved[i].is_object())
 						{
 							const midi::ChordSymbol chord = chordOf(saved[i].value("chord", std::string()));
@@ -1285,7 +1378,8 @@ namespace gnubase::engine
 			});
 
 		// The chords that sound, by what triggered them: the pads by their index, an audition after them.
-		auto voices = std::make_shared<midi::PadVoices>();
+		// By player (#1089).
+		auto voices = std::make_shared<std::array<midi::PadVoices, ChordPadKeys::g_maxPlayers>>();
 		addControl(engine,
 			{"chordPads.trigger", 1,
 				"Triggers a chord pad, or auditions a chord (an assistant's suggestion), as a click does (reference "
@@ -1312,7 +1406,7 @@ namespace gnubase::engine
 				int index = -1;
 				std::string chord;
 				size_t trigger = g_maxPads; // an audition's
-				std::vector<int> pitches;
+				std::optional<midi::ChordSymbol> audition;
 				if (parameters.contains("pad"))
 				{
 					index = parameters.at("pad").get<int>();
@@ -1320,51 +1414,80 @@ namespace gnubase::engine
 						"no chord pad " + std::to_string(index));
 					chord = pads.pads[static_cast<size_t>(index)].chord;
 					trigger = static_cast<size_t>(index);
-					pitches = chordPadVoicings(pads).at(trigger);
 				}
 				else
 				{
-					const midi::ChordSymbol symbol = chordFrom(parameters.at("chord").get<std::string>());
-					chord = midi::chordName(symbol);
-					pitches = playerVoicing(pads, symbol);
+					audition = chordFrom(parameters.at("chord").get<std::string>());
+					chord = midi::chordName(*audition);
 				}
+				const auto holds = [&voices](size_t pad)
+				{
+					return std::any_of(voices->begin(), voices->end(),
+						[pad](const midi::PadVoices& player) { return player.holds(pad); });
+				};
 				if (pads.latch && index >= 0)
 				{
 					if (!on)
-						return Json{{"pitches", Json::array()}, {"on", voices->holds(trigger)}};
-					on = !voices->holds(trigger); // the next trigger of a latched pad ends its chord
+						return Json{{"pitches", Json::array()}, {"on", holds(trigger)}};
+					on = !holds(trigger); // the next trigger of a latched pad ends its chord
 				}
 				std::array<bool, g_maxPads> held{};
 				for (size_t pad = 0; pad < held.size(); ++pad)
-					held.at(pad) = voices->holds(pad);
-				Json messages = Json::array();
+					held.at(pad) = holds(pad);
+				// Each player that plays voices the chord its way, into the tracks it plays (p. 1377); the selected
+				// player's pitches are the result. An off ends what the on played, whatever changed since.
+				std::vector<int> pitches;
 				std::vector<int> ended;
-				const auto emit = [&messages, &ended](bool start, uint8_t pitch, uint8_t level, uint8_t channel)
+				std::vector<int> players = playingPlayers(pads);
+				if (!on)
+					for (int player = 0; player < static_cast<int>(voices->size()); ++player)
+						if (std::find(players.begin(), players.end(), player) == players.end())
+							players.push_back(player);
+				for (const int player : players)
 				{
-					messages.push_back({{"bytes", {(start ? 0x90 : 0x80) | channel, pitch, level}}});
-					if (!start)
-						ended.push_back(pitch);
-				};
-				if (on && !pitches.empty())
-				{
-					std::vector<uint8_t> notes;
-					for (const int pitch : pitches)
-						notes.push_back(static_cast<uint8_t>(std::clamp(pitch, 0, 127)));
-					voices->on(trigger, notes.data(), notes.size(), static_cast<uint8_t>(velocity),
-						overlapOf(pads.overlaps), emit);
+					if (player >= static_cast<int>(voices->size()))
+						continue;
+					midi::PadVoices& playing = voices->at(static_cast<size_t>(player));
+					std::vector<int> voicing;
+					if (on && audition)
+						voicing = playerVoicing(pads, *audition, false, {}, player);
+					else if (on)
+						voicing = chordPadVoicings(pads, player).at(trigger);
+					Json messages = Json::array();
+					const auto emit = [&messages, &ended, player, &pads](
+										  bool start, uint8_t pitch, uint8_t level, uint8_t channel)
+					{
+						messages.push_back({{"bytes", {(start ? 0x90 : 0x80) | channel, pitch, level}}});
+						if (!start && player == pads.player)
+							ended.push_back(pitch);
+					};
+					if (on && !voicing.empty())
+					{
+						std::vector<uint8_t> notes;
+						notes.reserve(voicing.size());
+						for (const int pitch : voicing)
+							notes.push_back(static_cast<uint8_t>(std::clamp(pitch, 0, 127)));
+						playing.on(trigger, notes.data(), notes.size(), static_cast<uint8_t>(velocity),
+							overlapOf(pads.overlaps), emit);
+					}
+					else
+					{
+						playing.off(trigger, emit);
+					}
+					if (player == pads.player)
+						pitches = voicing;
+					if (!messages.empty())
+						context.call(
+							"midi.keyboard", {{"messages", messages}, {"chordPads", true}, {"player", player}});
 				}
-				else
+				if (!on || pitches.empty())
 				{
-					// An off ends what the on played, whatever changed since.
-					voices->off(trigger, emit);
 					std::sort(ended.begin(), ended.end());
 					pitches = ended;
 					on = false;
 				}
-				if (!messages.empty())
-					context.call("midi.keyboard", {{"messages", messages}, {"chordPads", true}});
 				for (size_t pad = 0; pad < held.size(); ++pad)
-					if (held.at(pad) && !voices->holds(pad) && static_cast<int>(pad) != index)
+					if (held.at(pad) && !holds(pad) && static_cast<int>(pad) != index)
 						context.emit("chordPads.triggered",
 							{{"pad", pad}, {"chord", pad < pads.pads.size() ? pads.pads[pad].chord : std::string()},
 								{"on", false}, {"pitches", Json::array()}});
@@ -1405,7 +1528,11 @@ namespace gnubase::engine
 					require(!m_project.chordPads.pads[static_cast<size_t>(pad)].locked,
 						"chord pad " + std::to_string(pad) + " is locked");
 				}
-				state.listen = parameters.contains("assign") ? "assign" : parameters.contains("learn") ? "learn" : "";
+				state.listen.clear();
+				if (parameters.contains("assign"))
+					state.listen = "assign";
+				else if (parameters.contains("learn"))
+					state.listen = "learn";
 				state.pad = parameters.value("assign", -1);
 				state.target = parameters.value("learn", std::string());
 				state.down.clear();
@@ -1467,15 +1594,17 @@ namespace gnubase::engine
 					}
 					else if (kind == "modifier")
 					{
-						const auto found = std::find(pads.modifierKeys.begin(), pads.modifierKeys.end(), key);
+						size_t which = 0;
+						while (which < pads.modifierKeys.size() && pads.modifierKeys.at(which) != key)
+							++which;
 						std::vector<int> targets(state.held.begin(), state.held.end());
 						if (targets.empty() && state.last >= 0 && state.last < static_cast<int>(pads.pads.size()))
 							targets.push_back(state.last);
-						if (found == pads.modifierKeys.end() || targets.empty())
+						if (which == pads.modifierKeys.size() || targets.empty())
 							continue;
-						const auto which = found - pads.modifierKeys.begin();
 						const int step = which % 2 == 0 ? -1 : 1;
-						const char* change = which < 2 ? "voicing" : which < 4 ? "tensions" : "transpose";
+						static constexpr std::array<const char*, 3> changes = {"voicing", "tensions", "transpose"};
+						const char* change = changes.at(which / 2);
 						context.call("chordPads.modify", {{"pads", targets}, {change, step}});
 					}
 					else if (kind == "note" && !state.listen.empty())
@@ -1524,10 +1653,16 @@ namespace gnubase::engine
 				"follow most strongly first) or commonNotes (those that share commonNotes notes, default 2, with "
 				"it). kind circle (the Circle of Fifths assistant): outer, the twelve major chords from the "
 				"root key's in fifths (minor: from its relative major's), and inner, their relative minor chords, "
-				"each with its degree in the key, empty for chords outside it.",
-				objectSchema({{"kind", {{"type", "string"}, {"enum", {"list", "circle"}}}}, {"chord", stringSchema},
-								 {"algorithm", {{"type", "string"}, {"enum", {"cadence", "commonNotes"}}}},
-								 {"commonNotes", integerSchema}, {"minor", booleanSchema}},
+				"each with its degree in the key, empty for chords outside it. cadenceType (with cadence, p. 1373): "
+				"all (the default), or the chords of one harmonic function, by the scale degree of their root: tonic "
+				"(I, iii, vi), subdominant (ii, IV) or dominant (V, vii). kind proximity (the Proximity assistant, "
+				"p. 1374): the same chords around the reference, at most 24, nearest first, each with its distance: "
+				"how many of its notes the reference doesn't have, one more for a seventh.",
+				objectSchema(
+					{{"kind", {{"type", "string"}, {"enum", {"list", "circle", "proximity"}}}}, {"chord", stringSchema},
+						{"algorithm", {{"type", "string"}, {"enum", {"cadence", "commonNotes"}}}},
+						{"cadenceType", {{"type", "string"}, {"enum", {"all", "tonic", "subdominant", "dominant"}}}},
+						{"commonNotes", integerSchema}, {"minor", booleanSchema}},
 					{"kind"}),
 				{{"type", "object"}}, true},
 			[](Project& project, CommandContext& context)
@@ -1565,12 +1700,18 @@ namespace gnubase::engine
 				const midi::ChordSymbol reference = chordFrom(parameters.value("chord", std::string()));
 				Json suggestions = Json::array();
 				const std::string& scale = project.chordPads.scale;
-				for (const chordpads::Suggestion& suggestion : chordpads::suggestions(reference, key, scale,
-						 parameters.value("algorithm", std::string("cadence")), parameters.value("commonNotes", 2)))
+				const std::string algorithm = parameters.value("algorithm", std::string("cadence"));
+				const bool near = parameters.at("kind") == "proximity";
+				for (const chordpads::Suggestion& suggestion : near
+						? chordpads::proximity(reference, key, scale)
+						: chordpads::suggestions(reference, key, scale, algorithm, parameters.value("commonNotes", 2),
+							  algorithm == "cadence" ? parameters.value("cadenceType", std::string("all")) : "all"))
 				{
 					Json item = entry(suggestion.chord, scale);
 					item["degree"] = chordpads::degreeName(suggestion.chord, key, scale);
 					item["level"] = suggestion.level;
+					if (near)
+						item["distance"] = suggestion.distance;
 					suggestions.push_back(item);
 				}
 				return Json{{"suggestions", suggestions}};

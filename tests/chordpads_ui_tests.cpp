@@ -254,6 +254,21 @@ TEST_CASE("the chord assistant suggests chords after the selected pad's and assi
 		window.app.waitUntil([&] { return window.elements(".chord-circle-outer .chord-suggestion").size() == 12; }));
 	CHECK(window.text(".chord-circle-outer .chord-suggestion[chord=\"G\"] .chord-suggestion-degree") == "V");
 	CHECK(window.hasClass(".chord-circle-inner .chord-suggestion[chord=\"Am\"]", "in-key"));
+
+	// The Proximity assistant: rows by distance above the reference (#1089); the List's cadence types.
+	window.click("#chord-pads-page-proximity");
+	REQUIRE(window.app.waitUntil([&] { return window.elements(".chord-proximity-row").size() >= 2; }));
+	CHECK(window.text(".chord-proximity-reference") == "C");
+	CHECK(window.elements(".chord-proximity-row[distance=\"1\"] .chord-suggestion[chord=\"Am\"]").size() == 1);
+	window.click("#chord-pads-page-list");
+	REQUIRE(window.app.waitUntil([&] { return window.visible("#chord-pads-cadenceType"); }));
+	window.click("#chord-pads-cadenceType");
+	window.app.ui().key(std::nullopt, "Down");
+	window.app.ui().key(std::nullopt, "Down");
+	window.app.ui().key(std::nullopt, "Down");
+	window.click("#chord-pads-cadenceType");
+	CHECK(window.app.waitUntil([&] { return window.elements(".chord-suggestion[chord=\"F\"]").empty(); }));
+	CHECK(window.app.waitUntil([&] { return window.elements(".chord-suggestion[chord=\"G\"]").size() == 1; }));
 }
 
 TEST_CASE("the pads show their lock and adaptive voicing, and Lock on several pads is one undo step", "[ui]")
@@ -454,4 +469,262 @@ TEST_CASE("Left and Right are no undo step, and leave the step position in the c
 	window.step();
 	REQUIRE(window.app.waitUntil([&] { return window.call("chordPads.get").at("stepPosition") == 2 * bar; }));
 	CHECK(window.call("chord.get").at("events").empty());
+}
+
+TEST_CASE("the toolbar and the settings panes change output mode, players, player mode, remote and display", "[ui]")
+{
+	// Reference manual pp. 1347-1349, 1376-1391 (#1089).
+	Window window;
+	window.open();
+	const auto pads = [&] { return window.call("chordPads.get"); };
+	window.click("#chord-pads-outputMode");
+	REQUIRE(window.app.waitUntil([&] { return pads().at("outputMode") == false; }));
+	window.click("#chord-pads-snapPlayback");
+	REQUIRE(window.app.waitUntil([&] { return pads().at("snapPlayback") == true; }));
+
+	// Player Settings: a piano player with a style; the octave offset is the basic player's.
+	window.click("#chord-pads-pane-player-button");
+	REQUIRE(window.visible("#chord-pads-player"));
+	CHECK(window.visible("#chord-pads-octaveOffset"));
+	window.click("#chord-pads-library");
+	window.app.ui().key(std::nullopt, "Down");
+	window.click("#chord-pads-library");
+	window.click("#chord-pads-addPlayer");
+	REQUIRE(window.app.waitUntil([&] { return pads().at("players").size() == 2; }));
+	CHECK(pads().at("players")[1].at("library") == "piano");
+	REQUIRE(window.app.waitUntil([&] { return window.visible("#chord-pads-style"); }));
+	CHECK_FALSE(window.visible("#chord-pads-octaveOffset"));
+	window.click("#chord-pads-style");
+	window.app.ui().key(std::nullopt, "Down");
+	window.click("#chord-pads-style");
+	REQUIRE(window.app.waitUntil([&] { return pads().at("players")[1].at("style") == "triadsMaj9"; }));
+	window.click("#chord-pads-player-name", 2);
+	window.app.ui().key(std::nullopt, "Mod+A");
+	window.app.ui().text(std::nullopt, "Keys");
+	window.app.ui().key(std::nullopt, "Enter");
+	REQUIRE(window.app.waitUntil([&] { return pads().at("players")[1].at("name") == "Keys"; }));
+	// The player's track (p. 1377): the instrument track added meanwhile.
+	const auto track = window.call("track.add", {{"type", "instrument"}}).at("track").at("id").get<uint64_t>();
+	window.click("#chord-pads-pane-player-button");
+	window.click("#chord-pads-pane-player-button"); // shown again, with the tracks there are now
+	window.call("history.get");                     // after the zone's project.get
+	window.step();
+	window.click("#chord-pads-player-track");
+	window.app.ui().key(std::nullopt, "Down");
+	window.click("#chord-pads-player-track");
+	REQUIRE(window.app.waitUntil([&] { return pads().at("players")[1].at("track") == track; }));
+	window.click("#chord-pads-removePlayer");
+	REQUIRE(window.app.waitUntil([&] { return pads().at("players").size() == 1; }));
+
+	// Player Mode: Overlaps and Filter Notes; one pane shows at a time.
+	window.click("#chord-pads-pane-mode-button");
+	CHECK_FALSE(window.visible("#chord-pads-player"));
+	window.click("#chord-pads-overlaps");
+	window.app.ui().key(std::nullopt, "Down");
+	window.click("#chord-pads-overlaps");
+	REQUIRE(window.app.waitUntil([&] { return pads().at("overlaps") == "legato"; }));
+	window.click("#chord-pads-filterNotes");
+	REQUIRE(window.app.waitUntil([&] { return pads().at("filterNotes") == true; }));
+
+	// Remote Settings: Latch Chords, the chord modifiers and their keys, MIDI Learn.
+	window.click("#chord-pads-pane-remote-button");
+	window.click("#chord-pads-latch");
+	REQUIRE(window.app.waitUntil([&] { return pads().at("latch") == true; }));
+	window.click("#chord-pads-modifiers");
+	REQUIRE(window.app.waitUntil([&] { return pads().at("modifiers") == true; }));
+	window.click("#chord-pads-modifier-transposeUp", 2);
+	window.app.ui().key(std::nullopt, "Mod+A");
+	window.app.ui().text(std::nullopt, "60");
+	window.app.ui().key(std::nullopt, "Enter");
+	REQUIRE(window.app.waitUntil([&] { return pads().at("modifierKeys").at("transposeUp") == 60; }));
+	window.click("#chord-pads-learnRange");
+	REQUIRE(window.app.waitUntil([&] { return pads().at("listening") == Json{{"learn", "range"}}; }));
+	CHECK(window.app.waitUntil([&] { return window.hasClass("#chord-pads-learnRange", "checked"); }));
+	window.click("#chord-pads-learnRange");
+	REQUIRE(window.app.waitUntil([&] { return pads().at("listening").is_null(); }));
+
+	// Display: roman numerals as the primary symbol, Nashville numbers below, the grid layout.
+	window.click("#chord-pads-pane-display-button");
+	window.click("#chord-pads-primary");
+	window.app.ui().key(std::nullopt, "Down");
+	window.click("#chord-pads-primary");
+	REQUIRE(window.app.waitUntil([&] { return window.text(Window::pad(4) + " .chord-pad-chord") == "V"; }));
+	window.call(
+		"settings.set", {{"key", "ui.chordPads"}, {"value", {{"primary", "roman"}, {"secondary", "nashville"}}}});
+	REQUIRE(window.app.waitUntil([&] { return window.text(Window::pad(1) + " .chord-pad-degree") == "2m"; }));
+	CHECK(window.text(Window::pad(1) + " .chord-pad-voicing") == "0");
+	window.click("#chord-pads-voicingIndicators");
+	REQUIRE(window.app.waitUntil([&] { return window.hasClass("#chord-pads-pads", "no-voicings"); }));
+	window.click("#chord-pads-layout");
+	window.app.ui().key(std::nullopt, "Down");
+	window.click("#chord-pads-layout");
+	REQUIRE(window.app.waitUntil([&] { return window.hasClass("#chord-pads-pads", "grid"); }));
+	CHECK(window.visible("#chord-pads-columns"));
+}
+
+TEST_CASE("presets are saved and stepped through, and the pads' key commands select, remove, edit and lock", "[ui]")
+{
+	// Reference manual pp. 1348, 1351, 1357, 1362, 1371.
+	Window window;
+	window.open();
+	window.click("#chord-pads-savePreset");
+	REQUIRE(window.app.waitUntil([&] { return window.hasClass("#chord-pads-preset-name", "shown"); }));
+	window.app.ui().text(std::nullopt, "Mine");
+	window.app.ui().key(std::nullopt, "Enter");
+	REQUIRE(window.app.waitUntil([&] { return window.call("chordPads.presets").at("presets").back() == "Mine"; }));
+	// Next and Previous Preset load the neighbors in the list: minor after major, then back, and before major the
+	// last one, the user's.
+	// The zone shows the preset loaded before the next button goes from it.
+	const auto shows = [&](const std::string& preset)
+	{
+		return window.app.waitUntil(
+			[&]
+			{
+				return window.call("chordPads.get").at("preset") == preset &&
+					window.elements("#chord-pads-preset")[0].at("attributes").value("value", "") == preset;
+			});
+	};
+	window.click("#chord-pads-nextPreset");
+	REQUIRE(shows("minor"));
+	window.click("#chord-pads-previousPreset");
+	REQUIRE(shows("major"));
+	window.click("#chord-pads-previousPreset");
+	REQUIRE(shows("Mine"));
+
+	// The key commands while the zone has the focus.
+	window.click(Window::pad(1));
+	window.app.ui().key(std::nullopt, "Mod+Shift+L");
+	REQUIRE(window.app.waitUntil([&] { return window.pads()[1].at("locked") == true; }));
+	window.app.ui().key(std::nullopt, "Mod+A");
+	window.step();
+	REQUIRE(window.app.waitUntil([&] { return window.hasClass(Window::pad(11), "selected"); }));
+	window.app.ui().key(std::nullopt, "Delete");
+	REQUIRE(window.app.waitUntil([&] { return window.pads()[0].at("chord").get<std::string>().empty(); }));
+	CHECK(window.pads()[1].at("chord") == "Dm"); // locked
+	window.click(Window::pad(2));
+	window.app.ui().key(std::nullopt, "Enter");
+	CHECK(window.app.waitUntil([&] { return window.hasClass("#chord-pads-field", "shown"); }));
+}
+
+TEST_CASE("pad modifier buttons play the pad, the keyboard shows the notes, and chords drop onto pads", "[ui]")
+{
+	// Reference manual pp. 1351, 1353-1360.
+	Window window;
+	window.open();
+	const auto key = [](int pitch) { return ".chord-pads-key[pitch=" + std::to_string(pitch) + "]"; };
+	window.call("chordPads.set", {{"remote", true}});
+	REQUIRE(window.app.waitUntil([&] { return window.hasClass(key(36), "remote"); }));
+	CHECK(window.hasClass(key(47), "remote"));
+	CHECK_FALSE(window.hasClass(key(48), "remote"));
+	CHECK(window.hasClass(key(37), "black"));
+
+	// Transpose Up plays the first selected pad's new chord while the button is down.
+	window.click(Window::pad(0));
+	window.app.ui().press(std::nullopt, {"#chord-pads-transposeUp", 0, std::nullopt}, ui::MouseButton::Left);
+	window.step();
+	REQUIRE(window.app.waitUntil([&] { return window.hasClass(Window::pad(0), "triggered"); }));
+	CHECK(window.pads()[0].at("chord") == "C#");
+	REQUIRE(window.app.waitUntil([&] { return window.hasClass(key(49), "played"); }));
+	window.app.ui().release(std::nullopt, {"#chord-pads-transposeUp", 0, std::nullopt}, ui::MouseButton::Left);
+	window.step();
+	REQUIRE(window.app.waitUntil([&] { return !window.hasClass(Window::pad(0), "triggered"); }));
+	CHECK(window.pads()[0].at("chord") == "C#"); // once, not again on the click
+	CHECK_FALSE(window.hasClass(key(49), "played"));
+
+	// The hovered pad's trigger key.
+	window.app.ui().move(std::nullopt, {Window::pad(2), 0, std::nullopt});
+	window.step();
+	CHECK(window.app.waitUntil([&] { return window.hasClass(key(38), "hover"); }));
+
+	// A pad that a remote key triggers lights up.
+	window.call("chordPads.remoteInput", {{"events", {{{"kind", "triggered"}, {"key", 39}, {"velocity", 90}}}}});
+	REQUIRE(window.app.waitUntil([&] { return window.hasClass(Window::pad(3), "triggered"); }));
+	window.call("chordPads.remoteInput", {{"events", {{{"kind", "released"}, {"key", 39}}}}});
+	REQUIRE(window.app.waitUntil([&] { return !window.hasClass(Window::pad(3), "triggered"); }));
+
+	// An assistant's suggestion dragged onto a pad goes onto it.
+	window.click("#chord-pads-assistant");
+	window.click(Window::pad(0));
+	REQUIRE(window.app.waitUntil([&] { return window.elements(".chord-suggestion").size() == 24; }));
+	const Json first = window.elements(".chord-suggestion")[0];
+	const std::string chord = first.at("attributes").at("chord").get<std::string>();
+	window.app.ui().drag(std::nullopt, {".chord-suggestion", 0, std::nullopt}, {Window::pad(5), 0, std::nullopt});
+	window.step();
+	REQUIRE(window.app.waitUntil([&] { return window.pads()[5].at("chord") == chord; }));
+
+	// The List assistant's colors on the pads, after the first selected pad's chord.
+	window.call("settings.set", {{"key", "ui.chordPads"}, {"value", {{"listColors", true}}}});
+	window.click(Window::pad(0));
+	CHECK(window.app.waitUntil([&] { return window.hasClass(Window::pad(5), "level-0"); }));
+
+	// Assign from MIDI Input on the selected pad: its red frame until it's off again.
+	window.click("#chord-pads-assignMidi");
+	REQUIRE(window.app.waitUntil([&] { return window.hasClass(Window::pad(0), "listening"); }));
+	CHECK(window.call("chordPads.get").at("listening") == Json{{"assign", 0}});
+	window.click("#chord-pads-assignMidi");
+	REQUIRE(window.app.waitUntil([&] { return !window.hasClass(Window::pad(0), "listening"); }));
+}
+
+TEST_CASE("the step input cursor shows in the ruler and the event display while step input is on", "[ui]")
+{
+	// Reference manual p. 1369 (#1089): a line with a handle in the ruler, at the step position.
+	Window window;
+	window.open();
+	const std::string cursor = ".event-display .step-input-cursor";
+	REQUIRE(window.elements(cursor).size() == 1);
+	CHECK(window.hasClass(cursor, "hidden"));
+	window.call("chordPads.set", {{"stepInput", true}});
+	REQUIRE(window.app.waitUntil([&] { return !window.hasClass(cursor, "hidden"); }));
+	CHECK(window.elements(cursor + " .step-input-handle").size() == 1);
+	window.step();
+	const double start = window.box(cursor).at("x").get<double>();
+	window.call("chordPads.set", {{"stepBars", 2}});
+	REQUIRE(window.app.waitUntil(
+		[&]
+		{
+			window.step();
+			return window.box(cursor).at("x").get<double>() > start;
+		}));
+	window.call("chordPads.set", {{"stepInput", false}});
+	CHECK(window.app.waitUntil([&] { return window.hasClass(cursor, "hidden"); }));
+}
+
+TEST_CASE("a pad dragged onto a track's lane makes a MIDI part there, onto the chord track a chord event", "[ui]")
+{
+	// Reference manual p. 1370 (#1089).
+	Window window;
+	const auto track = window.call("track.add", {{"type", "instrument"}}).at("track").at("id").get<uint64_t>();
+	window.open();
+	const std::string row = "#track-list listitem[value=\"" + std::to_string(track) + "\"]";
+	REQUIRE(window.app.waitUntil([&] { return window.elements(row).size() == 1; }));
+	window.step();
+	const auto onLane = [&](const std::string& rowSelector)
+	{
+		const Json lanes = window.box(".event-display .events");
+		const Json at = window.box(rowSelector);
+		const double x = lanes.at("x").get<double>() + (lanes.at("width").get<double>() / 4.0);
+		const double y = at.at("y").get<double>() + (at.at("height").get<double>() / 2.0);
+		return ui::Target{"", 0, ui::Point{static_cast<int>(std::lround(x)), static_cast<int>(std::lround(y))}};
+	};
+	window.app.ui().drag(std::nullopt, {Window::pad(0), 0, std::nullopt}, onLane(row));
+	window.step();
+	REQUIRE(window.app.waitUntil([&] { return window.call("project.get").at("midiParts").size() == 1; }));
+	const Json part = window.call("project.get").at("midiParts")[0];
+	CHECK(part.at("track") == track);
+	std::vector<int> pitches;
+	for (const Json& note : part.at("notes"))
+		pitches.push_back(note.at("pitch").get<int>());
+	std::sort(pitches.begin(), pitches.end());
+	CHECK(pitches == std::vector<int>{48, 60, 64, 67});
+	CHECK(window.pads()[0].at("chord") == "C"); // no swap with a pad
+
+	// Onto the chord track a chord event.
+	const auto chords = window.call("track.add", {{"type", "chord"}}).at("track").at("id").get<uint64_t>();
+	const std::string chordRow = "#track-list listitem[value=\"" + std::to_string(chords) + "\"]";
+	REQUIRE(window.app.waitUntil([&] { return window.elements(chordRow).size() == 1; }));
+	window.step();
+	window.app.ui().drag(std::nullopt, {Window::pad(4), 0, std::nullopt}, onLane(chordRow));
+	window.step();
+	REQUIRE(window.app.waitUntil([&] { return window.call("chord.get").at("events").size() == 1; }));
+	CHECK(window.call("chord.get").at("events")[0].at("chord") == "G");
 }

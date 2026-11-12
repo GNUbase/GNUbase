@@ -108,6 +108,9 @@ namespace gnubase::ui
 		m_crossVertical = &add(*m_area, "div", "cross-hair-vertical");
 		m_crossHorizontal = &add(*m_area, "div", "cross-hair-horizontal");
 		m_cursorLine = &add(timeline, "div", "project-cursor");
+		m_stepCursor = &add(timeline, "div", "step-input-cursor");
+		m_stepCursor->SetClass("hidden", true);
+		add(*m_stepCursor, "div", "step-input-handle");
 		for (const Rml::EventId id : g_rootEvents)
 			root.AddEventListener(id, this);
 		// On the document, for files dropped on the track list too.
@@ -160,6 +163,14 @@ namespace gnubase::ui
 			}));
 		m_subscriptions.push_back(
 			m_binding.on("transport.changed", [this](const engine::Event& event) { followTransport(event.data); }));
+		m_subscriptions.push_back(
+			m_binding.on("chordPads.changed", [this](const engine::Event& event) { followChordPads(event.data); }));
+		m_binding.send("chordPads.get", Json::object(),
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (!alive.expired() && result.ok())
+					followChordPads(result.value);
+			});
 		m_subscriptions.push_back(m_binding.on("snap.changed",
 			[this](const engine::Event& event)
 			{
@@ -731,6 +742,39 @@ namespace gnubase::ui
 			m_cursorLine->SetProperty(Rml::PropertyId::Left, dp((m_cursor - m_view.start) / m_view.scale));
 	}
 
+	std::optional<std::pair<uint64_t, int64_t>> EventDisplay::trackAt(float x, float y) const
+	{
+		if (!alive())
+			return std::nullopt;
+		const double across = dpFrom(*m_lanes, x);
+		const double down = (y - m_lanes->GetAbsoluteTop()) / dpRatio();
+		if (across < 0.0 || down < 0.0 || across > width() || down > height())
+			return std::nullopt;
+		const size_t lane = laneAt(down + m_view.top);
+		if (lane >= m_laneTracks.size())
+			return std::nullopt;
+		const double seconds = std::max(m_view.start + (across * m_view.scale), 0.0);
+		return std::make_pair(m_laneTracks[lane], static_cast<int64_t>(std::llround(m_time.tempo.toTicks(seconds))));
+	}
+
+	void EventDisplay::followChordPads(const Json& pads)
+	{
+		m_stepInput = pads.value("stepInput", false);
+		m_stepTicks = pads.value("stepPosition", int64_t{0});
+		placeStepCursor();
+	}
+
+	void EventDisplay::placeStepCursor()
+	{
+		if (!alive() || m_stepCursor == nullptr)
+			return;
+		if (m_stepCursor->IsClassSet("hidden") == m_stepInput)
+			m_stepCursor->SetClass("hidden", !m_stepInput);
+		if (m_stepInput)
+			m_stepCursor->SetProperty(
+				Rml::PropertyId::Left, dp((m_time.tempo.toSeconds(m_stepTicks) - m_view.start) / m_view.scale));
+	}
+
 	void EventDisplay::follow()
 	{
 		const double visible = visibleLength();
@@ -868,6 +912,7 @@ namespace gnubase::ui
 			canvas->SetAttribute("scroll-top", m_view.top);
 		m_waveforms->show({m_view.start, m_view.scale, m_view.top, m_laneTops, width(), height(), dpRatio()});
 		setCursor(m_cursorSample);
+		placeStepCursor();
 		showRange();
 		placeAutomation();
 		placePartMarks();

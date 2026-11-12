@@ -697,6 +697,22 @@ namespace gnubase::engine::settings
 					Json{{"type", "boolean"}}, true},
 				{"ui.scale", "The UI scale, applied on top of each monitor's own scale.",
 					Json{{"type", "number"}, {"minimum", 0.5}, {"maximum", 4}}, 1.0},
+				{"ui.chordPads",
+					"The chord pads zone's display settings (reference manual pp. 1390-1391): primary and secondary, "
+					"the chord symbols' types (noteName, roman, nashville; the secondary also none), layout keyboard "
+					"or "
+					"grid with columns (1 to 16), listColors (the List assistant's colors on the pads) and "
+					"voicingIndicators. What it leaves out has its default: note names over roman numerals, the "
+					"keyboard layout, six columns, no colors and voicing indicators.",
+					Json{{"type", "object"},
+						{"properties",
+							{{"primary", {{"type", "string"}, {"enum", {"noteName", "roman", "nashville"}}}},
+								{"secondary",
+									{{"type", "string"}, {"enum", {"none", "noteName", "roman", "nashville"}}}},
+								{"layout", {{"type", "string"}, {"enum", {"keyboard", "grid"}}}},
+								{"columns", {{"type", "integer"}, {"minimum", 1}, {"maximum", 16}}},
+								{"listColors", {{"type", "boolean"}}}, {"voicingIndicators", {{"type", "boolean"}}}}}},
+					Json::object()},
 				{"ui.theme", "The theme's folder name in resources/themes.", Json{{"type", "string"}}, "gnubase"},
 				{"ui.timeDisplay",
 					"The time display window's options: beatCountOnly shows only the beat in its bar, size is the "

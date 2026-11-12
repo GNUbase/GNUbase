@@ -918,6 +918,9 @@ namespace gnubase::engine
 		std::string library = "basic"; // basic, piano or guitar
 		std::string style;             // of the library: empty for its first
 		int octaveOffset = 0;          // basic: -3 to 3
+		// The MIDI or instrument track the player plays (p. 1377): it gets this player's voicings, the other tracks
+		// the selected player's; 0 for none.
+		ObjectId track = 0;
 	};
 
 	// The chord pads (#174, reference manual pp. 1346-1391), saved with the project. A new project has twelve pads with
@@ -951,7 +954,8 @@ namespace gnubase::engine
 		// and more tensions, transpose down and up, by default C2 to F2, above the pads' range.
 		bool modifiers = false;
 		std::array<int, 6> modifierKeys = {48, 49, 50, 51, 52, 53};
-		std::string remotePort; // the MIDI input the remote keys come from (midi.portSettings key), empty for all
+		std::string remotePort;    // the MIDI input the remote keys come from (midi.portSettings key), empty for all
+		bool snapPlayback = false; // Snap Playback to Musical Grid (p. 1349): to the quantize grid while playing
 	};
 
 	// What an automation lane changes.
@@ -1739,18 +1743,18 @@ namespace gnubase::engine
 
 	inline bool operator==(const ChordPlayer& a, const ChordPlayer& b)
 	{
-		return std::tie(a.name, a.library, a.style, a.octaveOffset) ==
-			std::tie(b.name, b.library, b.style, b.octaveOffset);
+		return std::tie(a.name, a.library, a.style, a.octaveOffset, a.track) ==
+			std::tie(b.name, b.library, b.style, b.octaveOffset, b.track);
 	}
 
 	inline bool operator==(const ChordPads& a, const ChordPads& b)
 	{
 		return std::tie(a.pads, a.rootKey, a.reference, a.players, a.player, a.velocity, a.remote, a.remoteStart,
 				   a.remoteEnd, a.preset, a.scale, a.stepInput, a.moveInsert, a.stepPosition, a.outputMode, a.latch,
-				   a.overlaps, a.filterNotes, a.modifiers, a.modifierKeys, a.remotePort) ==
+				   a.overlaps, a.filterNotes, a.modifiers, a.modifierKeys, a.remotePort, a.snapPlayback) ==
 			std::tie(b.pads, b.rootKey, b.reference, b.players, b.player, b.velocity, b.remote, b.remoteStart,
 				b.remoteEnd, b.preset, b.scale, b.stepInput, b.moveInsert, b.stepPosition, b.outputMode, b.latch,
-				b.overlaps, b.filterNotes, b.modifiers, b.modifierKeys, b.remotePort);
+				b.overlaps, b.filterNotes, b.modifiers, b.modifierKeys, b.remotePort, b.snapPlayback);
 	}
 
 	inline bool operator==(const AutomationTarget& a, const AutomationTarget& b)

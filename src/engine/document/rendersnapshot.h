@@ -209,6 +209,7 @@ namespace gnubase::engine
 		// MIDI and instrument tracks whose MIDI input is the chord pads, and that monitor or are record-enabled: they
 		// play the chord pads (#1089).
 		bool padThru = false;
+		int padPlayer = -1; // the chord pads' player whose track it is, or -1 for the selected one
 		// Muted, silenced by another channel's solo, or on a disabled track: outputs silence. A quiet MIDI channel
 		// has no notes or controllers, and a disabled track no events or parts.
 		bool silent = false;
@@ -241,6 +242,7 @@ namespace gnubase::engine
 	struct ChordPadKeys
 	{
 		static constexpr size_t g_maxPitches = 8;
+		static constexpr size_t g_maxPlayers = 8; // the chord pads' players (#1089)
 		bool active = false;
 		uint8_t start = 36; // the remote range, which Filter Notes keeps from playing itself
 		uint8_t end = 47;
@@ -255,8 +257,14 @@ namespace gnubase::engine
 		// The MIDI input that the remote keys come from (p. 1386), chordPadPortHash of its midi.portSettings key such
 		// as "dummy/in/Keys"; 0 for all inputs that belong to all MIDI inputs.
 		uint64_t portHash = 0;
-		std::array<uint8_t, 128> counts{};
-		std::array<std::array<uint8_t, g_maxPitches>, 128> pitches{};
+		// Snap Playback to Musical Grid (p. 1349): the grid in ticks, the quantize grid's; 0 while it's off.
+		int64_t snapTicks = 0;
+		// Per player and key, as the player voices the pad's chord. The selected player and those with a track play
+		// (players, a bit per player).
+		std::array<std::array<uint8_t, 128>, g_maxPlayers> counts{};
+		std::array<std::array<std::array<uint8_t, g_maxPitches>, 128>, g_maxPlayers> pitches{};
+		uint8_t players = 1;
+		uint8_t selected = 0;
 	};
 
 	// A MIDI port's key (backend/in/id) as ChordPadKeys::portHash has it: FNV-1a, 0 for none.

@@ -489,6 +489,10 @@
 	{
 		background-color: #f1f4ff;
 	}
+	.event-display .step-input-cursor, .event-display .step-input-handle
+	{
+		background-color: #10dff2;
+	}
 	.event-display .cross-hair-vertical, .event-display .cross-hair-horizontal
 	{
 		background-color: #5c6174;
@@ -634,6 +638,65 @@
 	.chord-pad.triggered
 	{
 		background-color: #147488;
+	}
+	.chord-pad.listening
+	{
+		border-color: #ff5270;
+	}
+	.chord-pad.level-0
+	{
+		border-bottom-color: #39ddb2;
+	}
+	.chord-pad.level-1
+	{
+		border-bottom-color: #ffc44d;
+	}
+	.chord-pad.level-2
+	{
+		border-bottom-color: #ff5270;
+	}
+	.chord-pad .chord-pad-voicing
+	{
+		color: #aeb7d0;
+		font-size: 11dp;
+	}
+	.chord-pad.black-key
+	{
+		background-color: #0f1222;
+	}
+	.chord-pads-key.white
+	{
+		background-color: #f1f4ff;
+		border-width: 1dp;
+		border-color: #303754;
+	}
+	.chord-pads-key.black
+	{
+		background-color: #090b18;
+	}
+	.chord-pads-key.remote
+	{
+		background-color: #80eaf8;
+	}
+	.chord-pads-key.black.remote
+	{
+		background-color: #0d8a9b;
+	}
+	.chord-pads-key.modifier
+	{
+		background-color: #39ddb2;
+	}
+	.chord-pads-key.hover
+	{
+		background-color: #ffc44d;
+	}
+	.chord-pads-key.played
+	{
+		background-color: #e12ad8;
+	}
+	.chord-proximity-reference
+	{
+		color: #10dff2;
 	}
 	.chord-suggestion
 	{

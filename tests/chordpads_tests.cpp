@@ -14,9 +14,11 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -461,6 +463,54 @@ TEST_CASE("the chord assistant suggests chords after a pad's and shows the circl
 	CHECK(minor.at("inner")[0] == Json{{"chord", "Am"}, {"degree", "i"}});
 }
 
+TEST_CASE("the Proximity assistant and the List assistant's cadence types", "[unit]")
+{
+	// Reference manual pp. 1373-1374 (#1089).
+	Engine engine;
+	Client client(engine);
+	const Json near = run(client, "chordPads.assistant", {{"kind", "proximity"}, {"chord", "C"}}).at("suggestions");
+	REQUIRE(near.size() == 24);
+	const auto distanceOf = [&near](const std::string& name)
+	{
+		for (const Json& suggestion : near)
+			if (suggestion.at("chord") == name)
+				return suggestion.at("distance").get<int>();
+		return -1;
+	};
+	// A chord that shares two notes is nearest, one with a seventh a step further, one that shares one note further.
+	CHECK(distanceOf("Am") == 1);
+	CHECK(distanceOf("Em") == 1);
+	CHECK(distanceOf("Cmaj7") == 2);
+	CHECK(distanceOf("F") == 2);
+	CHECK(near.front().at("distance") == 1);
+	CHECK(near.back().at("distance") >= near.front().at("distance"));
+	for (const Json& suggestion : near)
+		CHECK(suggestion.contains("level"));
+
+	// Cadence types keep the chords of one harmonic function in the key: the dominant's are on V and vii.
+	const Json dominant =
+		run(client, "chordPads.assistant", {{"kind", "list"}, {"chord", "C"}, {"cadenceType", "dominant"}})
+			.at("suggestions");
+	REQUIRE_FALSE(dominant.empty());
+	for (const Json& suggestion : dominant)
+	{
+		std::string numeral;
+		for (const char letter : suggestion.at("degree").get<std::string>())
+			if (letter == 'I' || letter == 'V' || letter == 'i' || letter == 'v')
+				numeral += static_cast<char>(std::toupper(static_cast<unsigned char>(letter)));
+		INFO(suggestion.at("chord"));
+		CHECK((numeral == "V" || numeral == "VII"));
+	}
+	const Json tonic = run(client, "chordPads.assistant", {{"kind", "list"}, {"chord", "G"}, {"cadenceType", "tonic"}})
+						   .at("suggestions");
+	CHECK(
+		std::any_of(tonic.begin(), tonic.end(), [](const Json& suggestion) { return suggestion.at("chord") == "C"; }));
+	CHECK(
+		std::none_of(tonic.begin(), tonic.end(), [](const Json& suggestion) { return suggestion.at("chord") == "F"; }));
+	CHECK_THAT(reject(client, "chordPads.assistant", {{"kind", "list"}, {"chord", "C"}, {"cadenceType", "plagal"}}),
+		ContainsSubstring("cadenceType"));
+}
+
 TEST_CASE("triggered pads play into all MIDI inputs, one channel per voice, and are recorded", "[integration]")
 {
 	Rig rig;
@@ -771,6 +821,93 @@ TEST_CASE("Chord Pad Output Mode and the Chord Pads MIDI input route the pads' c
 	run(client, "chordPads.trigger", {{"pad", 0}, {"on", false}});
 	CHECK(rig.played().size() == 4);
 	CHECK_THAT(reject(client, "chordPads.set", {{"overlaps", "sometimes"}}), ContainsSubstring("overlaps"));
+}
+
+TEST_CASE("several players on several tracks: each track plays its player's voicings", "[integration]")
+{
+	// Reference manual p. 1377 (#1089): the track of a player gets its voicings, the others the selected player's.
+	Rig rig;
+	Client& client = rig.client;
+	const Json added = run(client, "track.add", {{"type", "instrument"}});
+	const auto pianoTrack = added.at("track").at("id").get<ObjectId>();
+	const auto pianoChannel = added.at("channel").at("id").get<ObjectId>();
+	run(client, "channel.set", {{"channel", pianoChannel}, {"instrument", "noteProbe"}, {"monitor", true}});
+	run(client, "chordPads.addPlayer", {{"library", "piano"}, {"style", "fourNote"}, {"track", pianoTrack}});
+	run(client, "chordPads.set", {{"player", 0}});
+	run(client, "audio.render", {{"frames", 64}});
+	run(client, "midi.capture", {{"start", true}});
+	// The pitches each channel's instrument played.
+	const auto played = [&]
+	{
+		run(client, "audio.render", {{"frames", 64}});
+		std::map<ObjectId, std::vector<int>> pitches;
+		const Json capture = run(client, "midi.capture");
+		for (const Json& captured : capture.at("captured"))
+			if ((captured.at("bytes").at(0).get<int>() & 0xF0) == 0x90)
+				pitches[captured.at("channel").get<ObjectId>()].push_back(captured.at("bytes").at(1).get<int>());
+		for (auto& [channel, notes] : pitches)
+			std::sort(notes.begin(), notes.end());
+		return pitches;
+	};
+	midi::VoicingStyle piano;
+	piano.library = "piano";
+	piano.style = "fourNote";
+	std::vector<int> fourNote = midi::voiceChord(chord("C"), {0, false}, {}, piano);
+	std::sort(fourNote.begin(), fourNote.end());
+	const Json result = run(client, "chordPads.trigger", {{"pad", 0}});
+	CHECK(result.at("pitches") == std::vector<int>{48, 60, 64, 67}); // the selected player's
+	std::map<ObjectId, std::vector<int>> pitches = played();
+	CHECK(pitches[rig.channel] == std::vector<int>{48, 60, 64, 67});
+	CHECK(pitches[pianoChannel] == fourNote);
+	run(client, "chordPads.trigger", {{"pad", 0}, {"on", false}});
+	played();
+
+	// One player a track, and only MIDI and instrument tracks.
+	const Json players = run(client, "chordPads.get").at("players");
+	CHECK(players.at(1).at("track") == pianoTrack);
+	CHECK_THAT(reject(client, "chordPads.setPlayer", {{"player", 0}, {"track", pianoTrack}}),
+		ContainsSubstring("another chord pads player"));
+	CHECK_THAT(reject(client, "chordPads.setPlayer", {{"track", 9999}}), ContainsSubstring("MIDI or instrument track"));
+	// Without a track the player plays only while it is selected.
+	run(client, "chordPads.setPlayer", {{"player", 1}, {"track", 0}});
+	run(client, "audio.render", {{"frames", 64}});
+	run(client, "chordPads.trigger", {{"pad", 0}});
+	pitches = played();
+	CHECK(pitches[rig.channel] == std::vector<int>{48, 60, 64, 67});
+	CHECK(pitches[pianoChannel] == std::vector<int>{48, 60, 64, 67});
+	run(client, "chordPads.trigger", {{"pad", 0}, {"on", false}});
+}
+
+TEST_CASE("with Snap Playback to Musical Grid a pad's chord starts at the next grid position", "[integration]")
+{
+	// Reference manual p. 1349: a quarter note grid at 120 BPM is 24000 samples at 48 kHz.
+	Rig rig;
+	Client& client = rig.client;
+	run(client, "quantize.set", {{"preset", "1/4"}});
+	run(client, "chordPads.set", {{"snapPlayback", true}});
+	CHECK(run(client, "chordPads.get").at("snapPlayback") == true);
+	// While the transport stands it plays at once.
+	run(client, "chordPads.trigger", {{"pad", 0}});
+	CHECK(rig.played().size() == 4);
+	run(client, "chordPads.trigger", {{"pad", 0}, {"on", false}});
+	CHECK(rig.played().size() == 4);
+	run(client, "transport.play");
+	run(client, "audio.render", {{"frames", 4800}});
+	rig.played();
+	run(client, "chordPads.trigger", {{"pad", 5}});
+	CHECK(rig.played().empty()); // a tenth of a second into the beat
+	run(client, "audio.render", {{"frames", 12000}});
+	CHECK(rig.played().empty());
+	run(client, "audio.render", {{"frames", 7104}}); // up to just past the second beat
+	CHECK(rig.played().size() == 4);
+	// An off before the grid position ends the chord right after it starts.
+	run(client, "chordPads.trigger", {{"pad", 5}, {"on", false}});
+	run(client, "chordPads.trigger", {{"pad", 4}});
+	run(client, "chordPads.trigger", {{"pad", 4}, {"on", false}});
+	CHECK(rig.played().size() == 4); // the offs of the Am chord
+	run(client, "audio.render", {{"frames", 24000}});
+	CHECK(rig.played().size() == 8); // G's ons and offs
+	run(client, "transport.stop");
 }
 
 TEST_CASE(

@@ -613,7 +613,7 @@ namespace gnubase::ui
 		}
 		available("[row=volume]", audio || vca);
 		available("[row=pan]", audio);
-		available("[row=input]", type == "audio");
+		available("[row=input]", type == "audio" || noteTrack);
 		// A MIDI track's patch (pp. 1108, 1113): by its device's patches, or by bank and program without one.
 		const Json* device = nullptr;
 		if (channel != nullptr && type == "midi")
@@ -651,6 +651,13 @@ namespace gnubase::ui
 					*output, outputs(*m_project, type, id), std::to_string(channel->at("output").get<uint64_t>()));
 			if (Rml::Element* input = element("select[control=input]"); input != nullptr && type == "audio")
 				widgets::fill(*input, inputs(*m_project), std::to_string(channel->at("input").get<uint64_t>()));
+			// A MIDI or instrument track's MIDI input: all MIDI inputs, the chord pads (reference manual p. 1367) or
+			// none.
+			if (Rml::Element* input = element("select[control=input]");
+				input != nullptr && (type == "midi" || type == "instrument"))
+				widgets::fill(*input,
+					{{"all", "All MIDI Inputs"}, {"chordPads", "Chord Pads"}, {"none", "Not Connected"}},
+					channel->value("midiInput", std::string("all")));
 			if (type == "midi")
 			{
 				const std::string named = channel->value("device", std::string());
@@ -923,6 +930,12 @@ namespace gnubase::ui
 		{
 			key = name == "record" ? "recordEnable" : name;
 			value = event.GetParameter<bool>("value", false);
+		}
+		else if (const auto picked = event.GetParameter<Rml::String>("value", "");
+			name == "input" && (picked == "all" || picked == "chordPads" || picked == "none"))
+		{
+			key = "midiInput"; // a MIDI or instrument track's
+			value = picked;
 		}
 		else if (name == "input" || name == "output")
 		{

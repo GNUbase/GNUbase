@@ -144,14 +144,21 @@ namespace gnubase::engine
 	}
 
 	void MidiPorts::take(const audio::DeviceBlock& block, double sampleRate, audio::MidiBuffer& allInputs,
-		audio::MidiBuffer& pads, const ChordPadKeys& padKeys) noexcept
+		PadBuffers& pads, const ChordPadKeys& padKeys) noexcept
 	{
 		m_queue.take(block.time, sampleRate, block.frames,
 			[this, &block, &allInputs, &pads, &padKeys](int slot, const audio::MidiMessage& message)
 			{
-				if (slot == g_keyboardSlot || slot == g_padsSlot)
+				if (slot == g_keyboardSlot)
 				{
-					(slot == g_padsSlot ? pads : allInputs).add(message); // not a port, so not for the monitor
+					allInputs.add(message); // not a port, so not for the monitor
+					return;
+				}
+				if (slot < 0)
+				{
+					const auto player = static_cast<size_t>(g_padsSlot - slot);
+					if (player < pads.size())
+						pads.at(player).add(message);
 					return;
 				}
 				const bool inAll = m_allInputs[static_cast<size_t>(slot)].load(std::memory_order_relaxed);
@@ -179,20 +186,34 @@ namespace gnubase::engine
 			});
 	}
 
-	bool MidiPorts::playPad(
-		const audio::MidiMessage& message, const ChordPadKeys& keys, audio::MidiBuffer& pads) noexcept
+	bool MidiPorts::playPad(const audio::MidiMessage& message, const ChordPadKeys& keys, PadBuffers& pads) noexcept
 	{
 		const int status = message.bytes[0] & 0xF0;
 		if (message.size != 3 || (status != 0x90 && status != 0x80))
 			return false;
 		const size_t key = message.bytes[1] & 0x7F;
-		const auto emit = [&message, &pads](bool on, uint8_t pitch, uint8_t velocity, uint8_t channel)
+		// Each player that plays voices the pad its way into its own buffer (#1089).
+		const auto emitTo = [&message, &pads](size_t player)
 		{
-			audio::MidiMessage note = message;
-			note.bytes[0] = static_cast<uint8_t>((on ? 0x90 : 0x80) | channel);
-			note.bytes[1] = pitch;
-			note.bytes[2] = velocity;
-			pads.add(note);
+			return [&message, &buffer = pads.at(player)](bool on, uint8_t pitch, uint8_t velocity, uint8_t channel)
+			{
+				audio::MidiMessage note = message;
+				note.bytes[0] = static_cast<uint8_t>((on ? 0x90 : 0x80) | channel);
+				note.bytes[1] = pitch;
+				note.bytes[2] = velocity;
+				buffer.add(note);
+			};
+		};
+		const auto plays = [&keys](size_t player) { return (keys.players & (1U << player)) != 0; };
+		const auto offAll = [this, &emitTo, key]
+		{
+			for (size_t player = 0; player < m_padVoices.size(); ++player)
+				m_padVoices.at(player).off(key, emitTo(player));
+		};
+		const auto holds = [this, key]
+		{
+			return std::any_of(m_padVoices.begin(), m_padVoices.end(),
+				[key](const midi::PadVoices& voices) { return voices.holds(key); });
 		};
 		const auto tell = [this, key](PadEvent::Kind kind, uint8_t velocity)
 		{ m_padEvents.tryPush(PadEvent{kind, static_cast<uint8_t>(key), velocity}); };
@@ -209,28 +230,28 @@ namespace gnubase::engine
 		const bool filtered = keys.active && keys.filter && key >= keys.start && key <= keys.end;
 		if (off)
 		{
-			if (!m_padVoices.holds(key))
+			if (!holds())
 				return filtered;
 			if (!keys.latch)
 			{
-				m_padVoices.off(key, emit);
+				offAll();
 				tell(PadEvent::Kind::Released, 0);
 			}
 			return true;
 		}
-		const uint8_t count = keys.counts[key];
-		if (!keys.active || count == 0)
+		if (!keys.active || keys.counts.at(keys.selected).at(key) == 0)
 			return filtered;
-		if (keys.latch && m_padVoices.holds(key))
+		if (keys.latch && holds())
 		{
-			m_padVoices.off(key, emit);
+			offAll();
 			tell(PadEvent::Kind::Released, 0);
+			return true;
 		}
-		else
-		{
-			m_padVoices.on(key, keys.pitches[key].data(), count, message.bytes[2], keys.overlap, emit);
-			tell(PadEvent::Kind::Triggered, message.bytes[2]);
-		}
+		for (size_t player = 0; player < m_padVoices.size(); ++player)
+			if (plays(player) && keys.counts.at(player).at(key) > 0)
+				m_padVoices.at(player).on(key, keys.pitches.at(player).at(key).data(), keys.counts.at(player).at(key),
+					message.bytes[2], keys.overlap, emitTo(player));
+		tell(PadEvent::Kind::Triggered, message.bytes[2]);
 		return true;
 	}
 
