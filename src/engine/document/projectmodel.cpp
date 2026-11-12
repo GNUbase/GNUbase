@@ -3916,7 +3916,7 @@ namespace gnubase::engine
 				for (Json& event : json.at("audioEvents"))
 					if (const auto found = project.audioEvents.find(event.at("id").get<ObjectId>());
 						found != project.audioEvents.end())
-						event = audioEventJson(project, found->second);
+						addWarpedLengths(event, project, found->second);
 				return json;
 			});
 		add(engine,

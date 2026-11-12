@@ -285,7 +285,7 @@ namespace gnubase::ui
 					m_resizeFrom = edge < 0 ? shown->start : shown->end;
 					m_resizeScrubs = true;
 					const AudioFades& fades = m_fades.at(shown->id);
-					scrubEdge(fades.clip, fades.offset, fades.frames);
+					scrubEdge(fades.clip, fades.offset, fades.length);
 					return true;
 				}
 				m_drag = Drag::Play;

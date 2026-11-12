@@ -558,8 +558,12 @@ TEST_CASE("a project exported from Bitwig Studio loads", "[integration]")
 	const Json& event = project.at("audioEvents")[0];
 	CHECK(event.at("position") == 0);
 	CHECK(event.at("offset") == 0);
-	CHECK(event.at("length") == 135530); // eight beats at 149 BPM are longer than the file
+	CHECK(event.at("length") == 135530); // the whole file, which its Warps play as eight beats
+	// Musical mode at the tempo that puts the file's 2.8235 seconds on eight beats, in the file's own clip.
+	REQUIRE(project.at("clips").size() == 1);
 	CHECK(project.at("clips")[0].at("name") == "Drumfunk3 170bpm");
+	CHECK(project.at("clips")[0].at("warp").at("musical") == true);
+	CHECK(std::abs(project.at("clips")[0].at("warp").at("tempo").get<double>() - 170.0) < 0.1);
 	CHECK(project.at("media")[0].at("sampleRate").get<double>() == 48000.0);
 	CHECK(std::filesystem::exists(std::filesystem::u8path(project.at("media")[0].at("path").get<std::string>())));
 

@@ -389,7 +389,8 @@ namespace gnubase::engine
 		}
 
 		// Whether a warp marker fits among a clip's markers: at a position of its own, passing none of them, and
-		// within the real-time stretcher's range of those around it (checkMarkers).
+		// within the real-time stretcher's range of those around it (checkMarkers; sections it leaves as they are
+		// may be beyond it).
 		bool fits(const std::vector<WarpMarker>& markers, const WarpMarker& marker, time::Samples length)
 		{
 			ClipWarp warp;
@@ -397,7 +398,7 @@ namespace gnubase::engine
 			warp.markers.push_back(marker);
 			try
 			{
-				checkMarkers(warp, length);
+				checkMarkers(warp, length, markers);
 				return true;
 			}
 			catch (const CommandError&)
