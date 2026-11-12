@@ -210,6 +210,37 @@ namespace
 		return {{"position", position}, {"offset", offset}, {"length", length}, {"crossfade", nullptr}};
 	}
 
+	// A new linear audio track, a clip of the audio, and an event of length frames of it at position playing the
+	// clip from offset.
+	struct Track
+	{
+		ObjectId track = 0;
+		ObjectId clip = 0;
+
+		ObjectId add(engine::Client& client, int64_t position, int64_t offset, int64_t length) const
+		{
+			return run(client, "audioEvent.add",
+				{{"track", track}, {"clip", clip}, {"position", position}, {"offset", offset}, {"length", length}})
+				.at("event")
+				.at("id")
+				.get<ObjectId>();
+		}
+	};
+
+	Track addTrack(engine::Client& client, const test::TempDir& dir, const std::string& name, const test::Audio& audio)
+	{
+		const std::string file = (dir.path() / (name + ".wav")).u8string();
+		test::writeWav(file, audio);
+		Track added;
+		added.track = run(client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}, {"channels", 1}})
+						  .at("track")
+						  .at("id")
+						  .get<ObjectId>();
+		const ObjectId media = run(client, "media.add", {{"path", file}}).at("media").at("id").get<ObjectId>();
+		added.clip = run(client, "clip.add", {{"media", media}}).at("clip").at("id").get<ObjectId>();
+		return added;
+	}
+
 	std::string lastStep(engine::Client& client)
 	{
 		return run(client, "history.get").at("steps").back().at("action").get<std::string>();
@@ -687,25 +718,11 @@ TEST_CASE("Reset Quantize keeps a crossfade the event had before quantizing", "[
 	// Quantizing moves them, and the panel's Crossfade step cuts and stretches them and crossfades the second into
 	// the third. Resetting returns to the state before quantizing (reference manual p. 367), which that crossfade is
 	// part of: the one made by hand comes back and the one the step made goes.
-	const std::string file = (dir.path() / "loop.wav").u8string();
-	test::writeWav(file, clicks({1000}, 4 * g_quarter));
-	const ObjectId track = run(client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}, {"channels", 1}})
-							   .at("track")
-							   .at("id")
-							   .get<ObjectId>();
-	const ObjectId media = run(client, "media.add", {{"path", file}}).at("media").at("id").get<ObjectId>();
-	const ObjectId clip = run(client, "clip.add", {{"media", media}}).at("clip").at("id").get<ObjectId>();
-	const auto add = [&client, track, clip](int64_t position, int64_t offset)
-	{
-		return run(client, "audioEvent.add",
-			{{"track", track}, {"clip", clip}, {"position", position}, {"offset", offset}, {"length", 30000}})
-			.at("event")
-			.at("id")
-			.get<ObjectId>();
-	};
-	const ObjectId first = add(1000, 0);
-	const ObjectId second = add(25000, 24000);
-	const ObjectId third = add(49000, 48000);
+	const Track loop = addTrack(client, dir, "loop", clicks({1000}, 4 * g_quarter));
+	const ObjectId track = loop.track;
+	const ObjectId first = loop.add(client, 1000, 0, 30000);
+	const ObjectId second = loop.add(client, 25000, 24000, 30000);
+	const ObjectId third = loop.add(client, 49000, 48000, 30000);
 	run(client, "crossfade.set", {{"from", first}, {"to", second}, {"mode", "equalPower"}});
 	REQUIRE(crossfadeOf(client, second).at("mode") == "equalPower");
 	const std::vector<std::vector<int64_t>> before = eventsOn(client, track);
@@ -742,6 +759,55 @@ TEST_CASE("Reset Quantize keeps a crossfade the event had before quantizing", "[
 		CHECK(crossfadeOf(client, second).at("mode") == "equalPower");
 		CHECK(!crossfadeOf(client, third).is_object());
 	}
+}
+
+TEST_CASE("Reset Quantize keeps an end trimmed by hand after quantizing", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	run(client, "quantize.set", {{"preset", "1/4"}});
+	const Loop loop = addLoop(client, dir, "loop", clicks({1000}, 4 * g_quarter), 2000);
+	run(client, "quantize.apply", {{"events", {loop.event}}});
+	REQUIRE(eventsOn(client, loop.track) == std::vector<std::vector<int64_t>>{{0, 0, 4 * g_quarter}});
+	// Trimming the end by hand is a length change of the user's own, not one the quantize panel made, so resetting
+	// leaves it, as a note's length changed by other means stays.
+	run(client, "event.resize", {{"events", {loop.event}}, {"edge", "end"}, {"delta", -30000}});
+	REQUIRE(eventsOn(client, loop.track) == std::vector<std::vector<int64_t>>{{0, 0, 66000}});
+
+	run(client, "quantize.reset", {{"events", {loop.event}}});
+	CHECK(eventsOn(client, loop.track) == std::vector<std::vector<int64_t>>{{2000, 0, 66000}});
+
+	// Quantizing again goes on from the trimmed length too, and keeps the original position.
+	run(client, "quantize.apply", {{"events", {loop.event}}});
+	CHECK(eventsOn(client, loop.track) == std::vector<std::vector<int64_t>>{{0, 0, 66000}});
+	run(client, "quantize.reset", {{"events", {loop.event}}});
+	CHECK(eventsOn(client, loop.track) == std::vector<std::vector<int64_t>>{{2000, 0, 66000}});
+}
+
+TEST_CASE("Reset Quantize keeps a crossfade made by hand after quantizing", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	// Two overlapping events of one clip, quantized and then crossfaded by hand: that crossfade is a change of the
+	// user's own, not one the quantize panel made, so resetting leaves it.
+	const Track loop = addTrack(client, dir, "loop", clicks({1000}, 4 * g_quarter));
+	const ObjectId first = loop.add(client, 1000, 0, 30000);
+	const ObjectId second = loop.add(client, 25000, 24000, 30000);
+	run(client, "quantize.set", {{"preset", "1/4"}});
+	const Json events = Json::array({first, second});
+	run(client, "quantize.apply", {{"events", events}});
+	REQUIRE(eventsOn(client, loop.track) == std::vector<std::vector<int64_t>>{{0, 0, 30000}, {24000, 24000, 30000}});
+	run(client, "crossfade.set", {{"from", first}, {"to", second}, {"mode", "equalPower"}});
+	REQUIRE(crossfadeOf(client, second).at("mode") == "equalPower");
+
+	run(client, "quantize.reset", {{"events", events}});
+	CHECK(eventsOn(client, loop.track) == std::vector<std::vector<int64_t>>{{1000, 0, 30000}, {25000, 24000, 30000}});
+	const Json kept = crossfadeOf(client, second);
+	REQUIRE(kept.is_object());
+	CHECK(kept.at("from") == first);
+	CHECK(kept.at("mode") == "equalPower");
 }
 
 TEST_CASE("a project file from before the origin kept the offset and length still loads", "[integration]")

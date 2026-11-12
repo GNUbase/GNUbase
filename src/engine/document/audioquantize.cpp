@@ -296,6 +296,25 @@ namespace gnubase::engine
 			return {event.position, event.offset, event.length, event.crossfade};
 		}
 
+		// The timing quantizing starts from and resetting puts back: the original while the event still is where
+		// quantizing put it, otherwise current, since the event was moved by other means. An offset, length or
+		// crossfade changed by other means since quantizing counts as the original, as a note's length or velocity
+		// changed by other means stays (midi/quantize.cpp).
+		EventTiming originalOf(const AudioEvent& event, const EventTiming& current)
+		{
+			if (!event.quantizeOrigin || event.quantizeOrigin->quantized.position != current.position)
+				return current;
+			const EventQuantizeOrigin& origin = *event.quantizeOrigin;
+			EventTiming original = origin.original;
+			if (current.offset != origin.quantized.offset)
+				original.offset = current.offset;
+			if (current.length != origin.quantized.length)
+				original.length = current.length;
+			if (!(current.crossfade == origin.quantized.crossfade))
+				original.crossfade = current.crossfade;
+			return original;
+		}
+
 		// quantize.slice: cuts every event offset before each position and gives the slices snap points there.
 		Json slice(ProjectModel& model, Project& project, CommandContext& context)
 		{
@@ -463,10 +482,7 @@ namespace gnubase::engine
 				AudioEvent& event = project.audioEvents.at(id);
 				// Resetting puts back where the event was before this step, so that the slices tile again with no
 				// overlaps and no gaps left.
-				if (event.quantizeOrigin && event.quantizeOrigin->quantized == was.at(id))
-					event.quantizeOrigin->quantized = timingOf(event);
-				else
-					event.quantizeOrigin = EventQuantizeOrigin{was.at(id), timingOf(event)};
+				event.quantizeOrigin = EventQuantizeOrigin{originalOf(event, was.at(id)), timingOf(event)};
 				emitEvent(event, context);
 			}
 			return {{"events", changed}};
@@ -477,8 +493,7 @@ namespace gnubase::engine
 	{
 		if (event.lock)
 			return false;
-		const bool still = event.quantizeOrigin && event.quantizeOrigin->quantized.position == event.position;
-		const EventTiming original = still ? event.quantizeOrigin->original : timingOf(event);
+		const EventTiming original = originalOf(event, timingOf(event));
 		AudioEvent from = event;
 		from.position = grid.settings().soft ? event.position : original.position;
 		const time::Samples snap = snapOffset(project, from);
@@ -506,13 +521,13 @@ namespace gnubase::engine
 	{
 		if (!event.quantizeOrigin || event.quantizeOrigin->quantized.position != event.position)
 			return false;
-		const EventTiming original = event.quantizeOrigin->original;
+		// Only what still is where quantizing and the panel's length changes left it goes back: an offset, length or
+		// crossfade changed by other means since stays, as a note's length or velocity changed by other means does.
+		// The crossfade is part of the state resetting returns to (p. 367), and the Crossfade step changes it (p. 379).
+		const EventTiming original = originalOf(event, timingOf(event));
 		event.position = original.position;
 		event.offset = original.offset;
 		event.length = original.length;
-		// The panel's Crossfade step crossfaded the event into the one after it; resetting returns to the state
-		// before quantizing (p. 367), which the crossfade it had then is part of, so that one comes back and the one
-		// the step made goes.
 		event.crossfade = original.crossfade;
 		event.quantizeOrigin.reset();
 		return true;
