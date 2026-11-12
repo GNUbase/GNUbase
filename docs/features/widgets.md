@@ -128,8 +128,10 @@ inside it without a title of its own, the document's `<tooltip>` shows the text 
 window, with the state class `.shown`. It goes when the mouse moves to an element without a title or leaves the window,
 and on a click, a key or the wheel. The tooltip goes with its element: no tooltip comes when the element is removed
 while the mouse rests on it, and a shown one goes when its element is removed, as when a list under the mouse is
-rendered anew. A new element with a title in the removed one's place, under the resting mouse, gets its tooltip after
-the usual rest, without another mouse move. Every document gets its tooltip element when it loads; it lets the mouse
+rendered anew, or kept elsewhere instead of destroyed. A new element with a title in the removed one's place, under
+the resting mouse, gets its tooltip after the usual rest, without another mouse move. It goes too when the mouse moves
+from the element onto a part of an ancestor that no other element covers (the gap between a toolbar's buttons): RmlUi
+sends no Mouseover there, so the tooltip treats an element that has lost its `:hover` like one that is gone. Every document gets its tooltip element when it loads; it lets the mouse
 through.
 
 ## Notifications
