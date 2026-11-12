@@ -338,6 +338,64 @@ TEST_CASE("the root key, presets and the chord track's chords fill the pads", "[
 	CHECK_THAT(reject(client, "chordPads.set", {{"remoteStart", 60}, {"remoteEnd", 50}}), ContainsSubstring("remote"));
 }
 
+TEST_CASE("piano and guitar players voice the pads in their styles, and the selected player plays", "[unit]")
+{
+	// Reference manual pp. 1376-1377: the Player Settings pane's players.
+	Engine engine;
+	Client client(engine);
+	const auto voiced = [](const std::string& name, const std::string& library, const std::string& style)
+	{
+		midi::VoicingStyle voicing;
+		voicing.library = library;
+		voicing.style = style;
+		return midi::voiceChord(chord(name), {0, false}, {}, voicing);
+	};
+	Json pads = run(client, "chordPads.get");
+	REQUIRE(pads.at("players").size() == 1);
+	CHECK(pads.at("players")[0].at("library") == "basic");
+	CHECK(pads.at("player") == 0);
+	run(client, "chordPads.addPlayer", {{"library", "piano"}});
+	pads = run(client, "chordPads.get");
+	CHECK(pads.at("player") == 1);
+	CHECK(pads.at("players")[1].at("name") == "Piano Player");
+	CHECK(pads.at("pads")[0].at("pitches") == voiced("C", "piano", ""));
+	run(client, "chordPads.setPlayer", {{"style", "fourNote"}, {"name", "Keys"}});
+	CHECK(pad(client, 0).at("pitches") == voiced("C", "piano", "fourNote"));
+	CHECK(run(client, "chordPads.get").at("players")[1].at("name") == "Keys");
+	CHECK_THAT(reject(client, "chordPads.set", {{"octaveOffset", 1}}), ContainsSubstring("basic player"));
+	CHECK_THAT(reject(client, "chordPads.setPlayer", {{"style", "modernJazz"}}), ContainsSubstring("voicing style"));
+	run(client, "chordPads.addPlayer", {{"library", "guitar"}, {"style", "threeString"}});
+	CHECK(pad(client, 4).at("pitches") == voiced("G", "guitar", "threeString"));
+	// The voicing modifiers invert the player's voicing.
+	run(client, "chordPads.modify", {{"pads", {4}}, {"voicing", 1}});
+	CHECK(pad(client, 4).at("pitches") == chordpads::inverted(voiced("G", "guitar", "threeString"), 1));
+	// Back to the basic player, whose octave offset changes its voicings only.
+	run(client, "chordPads.set", {{"player", 0}, {"octaveOffset", 1}});
+	CHECK(pad(client, 0).at("pitches") == std::vector<int>{60, 72, 76, 79});
+	run(client, "chordPads.removePlayer", {{"player", 1}});
+	pads = run(client, "chordPads.get");
+	CHECK(pads.at("players").size() == 2);
+	CHECK(pads.at("players")[1].at("library") == "guitar");
+	CHECK(pads.at("player") == 0);
+	run(client, "chordPads.removePlayer", {{"player", 1}});
+	CHECK_THAT(reject(client, "chordPads.removePlayer"), ContainsSubstring("keep one player"));
+	CHECK_THAT(reject(client, "chordPads.set", {{"player", 3}}), ContainsSubstring("no chord pads player"));
+	// A preset with players brings them back; a scale-based one loads the basic player alone.
+	run(client, "chordPads.addPlayer", {{"library", "piano"}});
+	run(client, "chordPads.savePreset", {{"name", "Two"}});
+	run(client, "chordPads.loadPreset", {{"preset", "major"}});
+	CHECK(run(client, "chordPads.get").at("players").size() == 1);
+	run(client, "chordPads.loadPreset", {{"preset", "Two"}, {"load", "players"}});
+	pads = run(client, "chordPads.get");
+	CHECK(pads.at("players").size() == 2);
+	CHECK(pads.at("player") == 1);
+	// A file from before the players keeps its octave offset.
+	Project project;
+	chordPadsFromJson(project, {{"octaveOffset", -2}});
+	REQUIRE(project.chordPads.players.size() == 1);
+	CHECK(project.chordPads.players[0].octaveOffset == -2);
+}
+
 TEST_CASE("the user's own chord pads presets are saved, listed, loaded and deleted", "[unit]")
 {
 	// Reference manual pp. 1348, 1371: Save Preset keeps the chords and the player, Previous and Next Preset step

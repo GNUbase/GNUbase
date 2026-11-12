@@ -161,11 +161,61 @@ namespace gnubase::engine
 			return project.signatures.barStart(lastStepBar(project) + 1);
 		}
 
+		const ChordPlayer& playerOf(const ChordPads& pads)
+		{
+			return pads.players.at(
+				static_cast<size_t>(std::clamp(pads.player, 0, static_cast<int>(pads.players.size()) - 1)));
+		}
+
+		// The selected player's voicing of a chord (reference manual pp. 1376-1377): the basic player's moved by its
+		// octave offset, the piano and guitar players' in their voicing style; with adaptive, the one nearest to
+		// previous.
+		std::vector<int> playerVoicing(const ChordPads& pads, const midi::ChordSymbol& chord, bool adaptive = false,
+			const std::vector<int>& previous = {})
+		{
+			const ChordPlayer& player = playerOf(pads);
+			if (player.library == "basic")
+				return midi::voiceChord(chord, {player.octaveOffset, adaptive}, previous);
+			midi::VoicingStyle style;
+			style.library = player.library;
+			style.style = player.style;
+			return midi::voiceChord(chord, {0, adaptive}, previous, style);
+		}
+
+		Json playersJson(const ChordPads& pads)
+		{
+			Json players = Json::array();
+			for (const ChordPlayer& player : pads.players)
+				players.push_back({{"name", player.name}, {"library", player.library}, {"style", player.style},
+					{"octaveOffset", player.octaveOffset}});
+			return players;
+		}
+
+		std::vector<ChordPlayer> playersFromJson(const Json& json)
+		{
+			std::vector<ChordPlayer> players;
+			const std::vector<std::string>& libraries = midi::voicingLibraries();
+			for (const Json& item : json.is_array() ? json : Json::array())
+			{
+				if (!item.is_object() || players.size() == 8)
+					continue;
+				ChordPlayer player;
+				player.library = item.value("library", std::string("basic"));
+				if (std::find(libraries.begin(), libraries.end(), player.library) == libraries.end())
+					player.library = "basic";
+				player.name = item.value("name", player.name);
+				player.style = item.value("style", std::string());
+				player.octaveOffset = std::clamp(item.value("octaveOffset", 0), -3, 3);
+				players.push_back(player);
+			}
+			return players;
+		}
+
 		// The inversion of a pad's basic voicing that its current voicing is, for a pad with adaptive voicing whose
 		// voicing changes by hand.
-		int inversionOf(const midi::ChordSymbol& chord, int octaveOffset, const std::vector<int>& voicing)
+		int inversionOf(const ChordPads& pads, const midi::ChordSymbol& chord, const std::vector<int>& voicing)
 		{
-			const std::vector<int> basic = midi::voiceChord(chord, {octaveOffset, false});
+			const std::vector<int> basic = playerVoicing(pads, chord);
 			const auto upper = static_cast<int>(basic.size()) - 1;
 			for (int steps = -2 * upper; steps <= 2 * upper; ++steps)
 				if (chordpads::inverted(basic, steps) == voicing)
@@ -392,7 +442,7 @@ namespace gnubase::engine
 	std::vector<std::vector<int>> chordPadVoicings(const ChordPads& pads)
 	{
 		const auto basic = [&pads](const ChordPad& pad)
-		{ return chordpads::inverted(midi::voiceChord(chordOf(pad.chord), {pads.octaveOffset, false}), pad.voicing); };
+		{ return chordpads::inverted(playerVoicing(pads, chordOf(pad.chord)), pad.voicing); };
 		const bool referenced = pads.reference >= 0 && pads.reference < static_cast<int>(pads.pads.size()) &&
 			!pads.pads[static_cast<size_t>(pads.reference)].chord.empty();
 		const std::vector<int> reference =
@@ -405,7 +455,7 @@ namespace gnubase::engine
 			if (pad.chord.empty())
 				voicings.emplace_back();
 			else if (referenced && pad.adaptive && static_cast<int>(i) != pads.reference)
-				voicings.push_back(midi::voiceChord(chordOf(pad.chord), {pads.octaveOffset, true}, reference));
+				voicings.push_back(playerVoicing(pads, chordOf(pad.chord), true, reference));
 			else
 				voicings.push_back(basic(pad));
 		}
@@ -462,12 +512,13 @@ namespace gnubase::engine
 				{"key", key <= pads.remoteEnd && key <= 127 ? Json(key) : Json(nullptr)}});
 		}
 		return {{"pads", list}, {"rootKey", pads.rootKey}, {"reference", pads.reference},
-			{"octaveOffset", pads.octaveOffset}, {"velocity", pads.velocity}, {"remote", pads.remote},
-			{"remoteStart", pads.remoteStart}, {"remoteEnd", pads.remoteEnd}, {"preset", pads.preset},
-			{"scale", pads.scale}, {"stepInput", pads.stepInput}, {"moveInsert", pads.moveInsert},
-			{"stepPosition", pads.stepPosition}, {"outputMode", pads.outputMode}, {"latch", pads.latch},
-			{"overlaps", pads.overlaps}, {"filterNotes", pads.filterNotes}, {"modifiers", pads.modifiers},
-			{"modifierKeys", modifierKeysJson(pads)}, {"remotePort", pads.remotePort}};
+			{"octaveOffset", playerOf(pads).octaveOffset}, {"players", playersJson(pads)}, {"player", pads.player},
+			{"velocity", pads.velocity}, {"remote", pads.remote}, {"remoteStart", pads.remoteStart},
+			{"remoteEnd", pads.remoteEnd}, {"preset", pads.preset}, {"scale", pads.scale},
+			{"stepInput", pads.stepInput}, {"moveInsert", pads.moveInsert}, {"stepPosition", pads.stepPosition},
+			{"outputMode", pads.outputMode}, {"latch", pads.latch}, {"overlaps", pads.overlaps},
+			{"filterNotes", pads.filterNotes}, {"modifiers", pads.modifiers}, {"modifierKeys", modifierKeysJson(pads)},
+			{"remotePort", pads.remotePort}};
 	}
 
 	void chordPadsFromJson(Project& project, const Json& json)
@@ -496,7 +547,13 @@ namespace gnubase::engine
 		pads.reference = json.value("reference", -1);
 		if (pads.reference < -1 || pads.reference >= static_cast<int>(pads.pads.size()))
 			pads.reference = -1;
-		pads.octaveOffset = std::clamp(json.value("octaveOffset", 0), -3, 3);
+		// A file from before the players has the basic player's octave offset only.
+		pads.players = playersFromJson(json.value("players", Json::array()));
+		if (pads.players.empty())
+			pads.players = {ChordPlayer()};
+		if (!json.contains("players"))
+			pads.players.front().octaveOffset = std::clamp(json.value("octaveOffset", 0), -3, 3);
+		pads.player = std::clamp(json.value("player", 0), 0, static_cast<int>(pads.players.size()) - 1);
 		pads.velocity = std::clamp(json.value("velocity", 100), 1, 127);
 		pads.remote = json.value("remote", false);
 		pads.remoteStart = std::clamp(json.value("remoteStart", 36), 0, 127);
@@ -533,16 +590,17 @@ namespace gnubase::engine
 		const Json padsResult = {{"type", "object"},
 			{"properties",
 				{{"pads", {{"type", "array"}}}, {"rootKey", integerSchema}, {"reference", integerSchema},
-					{"octaveOffset", integerSchema}, {"velocity", integerSchema}, {"remote", booleanSchema},
-					{"remoteStart", integerSchema}, {"remoteEnd", integerSchema}, {"preset", stringSchema},
-					{"scale", stringSchema}, {"stepInput", booleanSchema}, {"moveInsert", booleanSchema},
-					{"stepPosition", integerSchema}, {"outputMode", booleanSchema}, {"latch", booleanSchema},
-					{"overlaps", stringSchema}, {"filterNotes", booleanSchema}, {"modifiers", booleanSchema},
+					{"octaveOffset", integerSchema}, {"players", {{"type", "array"}}}, {"player", integerSchema},
+					{"velocity", integerSchema}, {"remote", booleanSchema}, {"remoteStart", integerSchema},
+					{"remoteEnd", integerSchema}, {"preset", stringSchema}, {"scale", stringSchema},
+					{"stepInput", booleanSchema}, {"moveInsert", booleanSchema}, {"stepPosition", integerSchema},
+					{"outputMode", booleanSchema}, {"latch", booleanSchema}, {"overlaps", stringSchema},
+					{"filterNotes", booleanSchema}, {"modifiers", booleanSchema},
 					{"modifierKeys", {{"type", "object"}}}, {"remotePort", stringSchema}}},
 			{"required",
-				{"pads", "rootKey", "reference", "octaveOffset", "velocity", "remote", "remoteStart", "remoteEnd",
-					"preset", "scale", "stepInput", "moveInsert", "stepPosition", "outputMode", "latch", "overlaps",
-					"filterNotes", "modifiers", "modifierKeys", "remotePort"}}};
+				{"pads", "rootKey", "reference", "octaveOffset", "players", "player", "velocity", "remote",
+					"remoteStart", "remoteEnd", "preset", "scale", "stepInput", "moveInsert", "stepPosition",
+					"outputMode", "latch", "overlaps", "filterNotes", "modifiers", "modifierKeys", "remotePort"}}};
 		// Each command that changes the pads announces them.
 		auto remote = std::make_shared<RemoteState>();
 		const auto changed = [](Project& project, CommandContext& context)
@@ -559,7 +617,9 @@ namespace gnubase::engine
 				"(the same in the Nashville Number System, such as 2m), pitches "
 				"(the voicing it plays, from the lowest up), voicing (the inversion of its basic voicing), adaptive "
 				"(adaptive voicing), locked and key (the remote key that triggers it, or null); rootKey (0 C to 11 "
-				"B); reference (the adaptive voicing reference pad, or -1); octaveOffset (the basic player's); "
+				"B); reference (the adaptive voicing reference pad, or -1); octaveOffset (the selected basic "
+				"player's); players (each "
+				"with its name, library, style and octaveOffset) and player (the selected one's index); "
 				"velocity (of pads triggered with the mouse); remote, remoteStart and remoteEnd (the pads' remote "
 				"keys); preset (the last loaded) and scale (its scale); stepInput, moveInsert and stepPosition "
 				"(ticks); outputMode, latch, "
@@ -576,7 +636,8 @@ namespace gnubase::engine
 			{"chordPads.set", 1,
 				"Changes the chord pads' settings: rootKey (0 C to 11 B; with transposePads the assigned unlocked pads "
 				"move with it, the nearer way, reference manual p. 1365, without only their degrees change, p. 1364); "
-				"padCount (1 to 32, the number of pads; pads beyond it go); octaveOffset (-3 to 3, the basic "
+				"padCount (1 to 32, the number of pads; pads beyond it go); player (the selected player, "
+				"chordPads.addPlayer); octaveOffset (-3 to 3, the selected basic "
 				"player's Octave Offset, p. 1377); velocity (1 to 127, Velocity on Mouse Click); remote (Pad Remote "
 				"Control: notes from MIDI inputs on the remote keys trigger the pads instead of playing, p. 1386), "
 				"remoteStart and remoteEnd (Pads Remote Range Start and End, MIDI notes: the first key triggers the "
@@ -598,10 +659,10 @@ namespace gnubase::engine
 				"one triggered last, and plays nothing. remotePort: the MIDI input whose notes trigger the pads, its "
 				"midi.portSettings key such as dummy/in/Keys (p. 1386); empty (the default) for all MIDI inputs.",
 				objectSchema({{"rootKey", integerSchema}, {"transposePads", booleanSchema}, {"padCount", integerSchema},
-					{"octaveOffset", integerSchema}, {"velocity", integerSchema}, {"remote", booleanSchema},
-					{"remoteStart", integerSchema}, {"remoteEnd", integerSchema}, {"stepInput", booleanSchema},
-					{"moveInsert", booleanSchema}, {"stepPosition", integerSchema}, {"stepBars", integerSchema},
-					{"outputMode", booleanSchema}, {"latch", booleanSchema},
+					{"octaveOffset", integerSchema}, {"player", integerSchema}, {"velocity", integerSchema},
+					{"remote", booleanSchema}, {"remoteStart", integerSchema}, {"remoteEnd", integerSchema},
+					{"stepInput", booleanSchema}, {"moveInsert", booleanSchema}, {"stepPosition", integerSchema},
+					{"stepBars", integerSchema}, {"outputMode", booleanSchema}, {"latch", booleanSchema},
 					{"overlaps", {{"type", "string"}, {"enum", overlapNames()}}}, {"filterNotes", booleanSchema},
 					{"modifiers", booleanSchema},
 					{"modifierKeys",
@@ -638,8 +699,19 @@ namespace gnubase::engine
 					if (pads.reference >= count)
 						pads.reference = -1;
 				}
-				pads.octaveOffset = parameters.value("octaveOffset", pads.octaveOffset);
-				require(pads.octaveOffset >= -3 && pads.octaveOffset <= 3, "octaveOffset must be -3 to 3");
+				if (parameters.contains("player"))
+				{
+					pads.player = parameters.at("player").get<int>();
+					require(pads.player >= 0 && pads.player < static_cast<int>(pads.players.size()),
+						"no chord pads player " + std::to_string(pads.player));
+				}
+				if (parameters.contains("octaveOffset"))
+				{
+					ChordPlayer& player = pads.players.at(static_cast<size_t>(pads.player));
+					require(player.library == "basic", "the octave offset is a basic player's");
+					player.octaveOffset = parameters.at("octaveOffset").get<int>();
+					require(player.octaveOffset >= -3 && player.octaveOffset <= 3, "octaveOffset must be -3 to 3");
+				}
 				pads.velocity = parameters.value("velocity", pads.velocity);
 				require(pads.velocity >= 1 && pads.velocity <= 127, "velocity must be 1 to 127");
 				pads.remote = parameters.value("remote", pads.remote);
@@ -686,6 +758,86 @@ namespace gnubase::engine
 					pads.stepPosition = signatures.barStart(
 						std::clamp<int64_t>(signatures.toBarsBeats(pads.stepPosition).bar + bars, 0, lastBar));
 				}
+				return changed(project, context);
+			});
+		add(engine,
+			{"chordPads.addPlayer", 1,
+				"Add Player (reference manual pp. 1376-1377): a basic, piano or guitar player (library) with a name "
+				"(default after its library) and, for piano and guitar, a voicing style (style, default the "
+				"library's first: chord.setTrack lists them), which becomes the selected player whose voicings the "
+				"pads play. At most 8.",
+				objectSchema({{"library", {{"type", "string"}, {"enum", midi::voicingLibraries()}}},
+								 {"name", stringSchema}, {"style", stringSchema}},
+					{"library"}),
+				padsResult, false},
+			[changed](Project& project, CommandContext& context)
+			{
+				const Json& parameters = context.parameters();
+				ChordPads& pads = project.chordPads;
+				require(pads.players.size() < 8, "the chord pads have 8 players already");
+				ChordPlayer player;
+				player.library = parameters.at("library").get<std::string>();
+				const std::string named = player.library == "basic" ? "Basic"
+					: player.library == "piano"                     ? "Piano"
+																	: "Guitar";
+				player.name = parameters.value("name", named + " Player");
+				player.style = parameters.value("style", std::string());
+				const std::vector<std::string>& styles = midi::voicingStyles(player.library);
+				require(player.style.empty() || std::find(styles.begin(), styles.end(), player.style) != styles.end(),
+					"no " + player.library + " voicing style " + player.style);
+				pads.players.push_back(player);
+				pads.player = static_cast<int>(pads.players.size()) - 1;
+				return changed(project, context);
+			});
+		add(engine,
+			{"chordPads.setPlayer", 1,
+				"Changes a chord pads player (player, default the selected one; reference manual p. 1377): name "
+				"(Rename Selected Player), style (Chord Voicing Style, piano and guitar players: their library's "
+				"styles), octaveOffset (-3 to 3, basic players).",
+				objectSchema({{"player", integerSchema}, {"name", stringSchema}, {"style", stringSchema},
+					{"octaveOffset", integerSchema}}),
+				padsResult, false},
+			[changed](Project& project, CommandContext& context)
+			{
+				const Json& parameters = context.parameters();
+				ChordPads& pads = project.chordPads;
+				const int index = parameters.value("player", pads.player);
+				require(index >= 0 && index < static_cast<int>(pads.players.size()),
+					"no chord pads player " + std::to_string(index));
+				ChordPlayer& player = pads.players.at(static_cast<size_t>(index));
+				player.name = parameters.value("name", player.name);
+				require(!player.name.empty(), "a player needs a name");
+				if (parameters.contains("style"))
+				{
+					player.style = parameters.at("style").get<std::string>();
+					const std::vector<std::string>& styles = midi::voicingStyles(player.library);
+					require(player.library != "basic" &&
+							std::find(styles.begin(), styles.end(), player.style) != styles.end(),
+						"no " + player.library + " voicing style " + player.style);
+				}
+				if (parameters.contains("octaveOffset"))
+				{
+					require(player.library == "basic", "the octave offset is a basic player's");
+					player.octaveOffset = parameters.at("octaveOffset").get<int>();
+					require(player.octaveOffset >= -3 && player.octaveOffset <= 3, "octaveOffset must be -3 to 3");
+				}
+				return changed(project, context);
+			});
+		add(engine,
+			{"chordPads.removePlayer", 1,
+				"Delete Selected Player (reference manual p. 1377): removes a chord pads player (player, default the "
+				"selected one), but not the last one. The one before it is selected.",
+				objectSchema({{"player", integerSchema}}), padsResult, false},
+			[changed](Project& project, CommandContext& context)
+			{
+				ChordPads& pads = project.chordPads;
+				const int index = context.parameters().value("player", pads.player);
+				require(index >= 0 && index < static_cast<int>(pads.players.size()),
+					"no chord pads player " + std::to_string(index));
+				require(pads.players.size() > 1, "the chord pads keep one player");
+				pads.players.erase(pads.players.begin() + index);
+				if (pads.player >= index && pads.player > 0)
+					--pads.player;
 				return changed(project, context);
 			});
 		add(engine,
@@ -751,7 +903,7 @@ namespace gnubase::engine
 					if (parameters.contains("voicing"))
 					{
 						if (pad.adaptive)
-							pad.voicing = inversionOf(chord, pads.octaveOffset, voicings[index.get<size_t>()]);
+							pad.voicing = inversionOf(pads, chord, voicings[index.get<size_t>()]);
 						pad.voicing = std::clamp(pad.voicing + parameters.at("voicing").get<int>(), -12, 12);
 						pad.adaptive = false;
 					}
@@ -894,7 +1046,17 @@ namespace gnubase::engine
 						pads.scale = "major";
 				}
 				if (load != "chords")
-					pads.octaveOffset = chords.empty() ? std::clamp(mine.value("octaveOffset", 0), -3, 3) : 0;
+				{
+					pads.players = chords.empty() ? playersFromJson(mine.value("players", Json::array()))
+												  : std::vector<ChordPlayer>{ChordPlayer()};
+					if (pads.players.empty()) // a preset from before the players
+					{
+						pads.players = {ChordPlayer()};
+						pads.players.front().octaveOffset = std::clamp(mine.value("octaveOffset", 0), -3, 3);
+					}
+					pads.player = std::clamp(
+						chords.empty() ? mine.value("player", 0) : 0, 0, static_cast<int>(pads.players.size()) - 1);
+				}
 				return changed(project, context);
 			});
 		add(engine,
@@ -931,7 +1093,7 @@ namespace gnubase::engine
 				for (const ChordPad& pad : pads.pads)
 					saved.push_back({{"chord", pad.chord}, {"voicing", pad.voicing}, {"adaptive", pad.adaptive}});
 				const Json preset = {{"pads", saved}, {"rootKey", pads.rootKey}, {"scale", pads.scale},
-					{"octaveOffset", pads.octaveOffset}};
+					{"players", playersJson(pads)}, {"player", pads.player}};
 				engine.modifySetting(context, g_presetsKey,
 					[&name, &preset](const Json& value)
 					{
@@ -1164,7 +1326,7 @@ namespace gnubase::engine
 				{
 					const midi::ChordSymbol symbol = chordFrom(parameters.at("chord").get<std::string>());
 					chord = midi::chordName(symbol);
-					pitches = midi::voiceChord(symbol, {pads.octaveOffset, false});
+					pitches = playerVoicing(pads, symbol);
 				}
 				if (pads.latch && index >= 0)
 				{

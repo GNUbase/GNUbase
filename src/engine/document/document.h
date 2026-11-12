@@ -910,6 +910,16 @@ namespace gnubase::engine
 		bool locked = false;
 	};
 
+	// A chord pads player (reference manual pp. 1376-1377): the voicings the pads play. A basic player has an octave
+	// offset, a piano or guitar player a voicing style of its library (midi::voicingStyles).
+	struct ChordPlayer
+	{
+		std::string name = "Basic Player";
+		std::string library = "basic"; // basic, piano or guitar
+		std::string style;             // of the library: empty for its first
+		int octaveOffset = 0;          // basic: -3 to 3
+	};
+
 	// The chord pads (#174, reference manual pp. 1346-1391), saved with the project. A new project has twelve pads with
 	// the major preset on C.
 	struct ChordPads
@@ -918,10 +928,11 @@ namespace gnubase::engine
 			{"F", 0, true, false}, {"G", 0, true, false}, {"Am", 0, true, false}, {"Bdim", 0, true, false},
 			{"", 0, true, false}, {"", 0, true, false}, {"", 0, true, false}, {"", 0, true, false},
 			{"", 0, true, false}};
-		int rootKey = 0;              // 0 C to 11 B
-		int reference = -1;           // the adaptive voicing reference pad, or -1
-		int octaveOffset = 0;         // the basic player's Octave Offset, -3 to 3
-		int velocity = 100;           // of pads triggered with the mouse
+		int rootKey = 0;                                    // 0 C to 11 B
+		int reference = -1;                                 // the adaptive voicing reference pad, or -1
+		std::vector<ChordPlayer> players = {ChordPlayer()}; // at least one
+		int player = 0;                                     // the selected player, whose voicings the pads play
+		int velocity = 100;                                 // of pads triggered with the mouse
 		bool remote = false;          // notes from MIDI inputs on the remote keys trigger the pads
 		int remoteStart = 36;         // C1: the first pad's remote key
 		int remoteEnd = 47;           // B1: the last remote key
@@ -1726,14 +1737,20 @@ namespace gnubase::engine
 		return std::tie(a.chord, a.voicing, a.adaptive, a.locked) == std::tie(b.chord, b.voicing, b.adaptive, b.locked);
 	}
 
+	inline bool operator==(const ChordPlayer& a, const ChordPlayer& b)
+	{
+		return std::tie(a.name, a.library, a.style, a.octaveOffset) ==
+			std::tie(b.name, b.library, b.style, b.octaveOffset);
+	}
+
 	inline bool operator==(const ChordPads& a, const ChordPads& b)
 	{
-		return std::tie(a.pads, a.rootKey, a.reference, a.octaveOffset, a.velocity, a.remote, a.remoteStart,
+		return std::tie(a.pads, a.rootKey, a.reference, a.players, a.player, a.velocity, a.remote, a.remoteStart,
 				   a.remoteEnd, a.preset, a.scale, a.stepInput, a.moveInsert, a.stepPosition, a.outputMode, a.latch,
 				   a.overlaps, a.filterNotes, a.modifiers, a.modifierKeys, a.remotePort) ==
-			std::tie(b.pads, b.rootKey, b.reference, b.octaveOffset, b.velocity, b.remote, b.remoteStart, b.remoteEnd,
-				b.preset, b.scale, b.stepInput, b.moveInsert, b.stepPosition, b.outputMode, b.latch, b.overlaps,
-				b.filterNotes, b.modifiers, b.modifierKeys, b.remotePort);
+			std::tie(b.pads, b.rootKey, b.reference, b.players, b.player, b.velocity, b.remote, b.remoteStart,
+				b.remoteEnd, b.preset, b.scale, b.stepInput, b.moveInsert, b.stepPosition, b.outputMode, b.latch,
+				b.overlaps, b.filterNotes, b.modifiers, b.modifierKeys, b.remotePort);
 	}
 
 	inline bool operator==(const AutomationTarget& a, const AutomationTarget& b)

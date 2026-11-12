@@ -14,8 +14,14 @@ assistants. They build on the chord track's music theory ([chord-track.md](chord
   `bVII`), its pitches and its remote key; `chordPads.changed` announces every change, also undo and redo. Every
   command that changes them is an undo step. A project file without pads keeps the twelve default ones, and an adaptive
   voicing reference that is no pad becomes none.
-- **Voicings** (pp. 1376-1377): the basic player's, the chord track's basic voicing (bass from C2, the chord from C3)
-  moved by its Octave Offset (`octaveOffset`) and inverted by the pad's voicing. A pad with adaptive voicing takes the
+- **Players** (pp. 1376-1377): the pads have players (`players`, at least one) and play the selected one's voicings
+  (`player`). A basic player has an Octave Offset (`octaveOffset`), a piano or guitar player a Chord Voicing Style of
+  the chord track's voicing libraries (`midi::voiceChord` with a `midi::VoicingStyle`, [chord-track.md](chord-track.md)).
+  `chordPads.addPlayer`, `chordPads.setPlayer` (name, style, octave offset) and `chordPads.removePlayer` (not the last)
+  are the Player Settings pane's Add, Rename and Delete; `chordPads.set` `player` selects one. A project file from
+  before the players has one basic player with its octave offset.
+- **Voicings** (pp. 1376-1377): the selected player's voicing: the basic player's is the chord track's basic voicing
+  (bass from C2, the chord from C3) moved by its Octave Offset, and each voicing is inverted by the pad's voicing. A pad with adaptive voicing takes the
   inversion nearest to the adaptive voicing reference pad's voicing (`chordPads.setPad` `reference`), as the chord
   track's adaptive voicings do; without a reference it plays its basic voicing. Changing a pad's voicing by hand turns
   its adaptive voicing off; locking a pad does too.
