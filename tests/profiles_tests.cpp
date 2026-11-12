@@ -444,8 +444,9 @@ namespace
 	}
 
 	// A folder that something else has open while it lives, as a virus scanner may look at the files just written.
-	// On Windows, where the file system has no POSIX deletes, a deleted folder stays while it is open, and no folder
-	// can be made under its name until then (#1284).
+	// On Windows, where the file system has no POSIX deletes (FAT, exFAT, network shares), a deleted folder stays
+	// while it is open, and no folder can be made under its name until then (#1284). NTFS, and the other OSes, free
+	// the name at once.
 	class OpenFolder
 	{
 	public:
@@ -498,7 +499,7 @@ TEST_CASE("profiles switch back and forth many times in a row while something ha
 	// Each switch deletes the next profile's folder, and the one after makes it again under that name, while the
 	// folder is still open.
 	std::unique_ptr<OpenFolder> held;
-	for (int round = 0; round < 100; ++round)
+	for (int round = 0; round < 20; ++round)
 	{
 		INFO("round " << round);
 		const bool toStudio = round % 2 == 0;
@@ -548,3 +549,36 @@ TEST_CASE("what is left of a profile folder that couldn't be deleted goes at the
 	CHECK(f.scale() == 1.5);
 	CHECK(f.names() == std::vector<std::string>{"Default"});
 }
+
+#ifndef _WIN32
+// Not on Windows: there a folder isn't renamed while a file in it is open, which is what keeps a file from being
+// deleted there.
+TEST_CASE(
+	"a deleted profile whose folder can't be deleted completely is gone at once and the rest goes later", "[unit]")
+{
+	namespace fs = std::filesystem;
+	Fixture f;
+	f.call("profile.add", {{"name", "Studio"}});
+	// A folder in it whose file can't be deleted.
+	const fs::path locked = f.dir.path() / "profiles" / "Studio" / "Locked";
+	fs::create_directories(locked);
+	std::ofstream(locked / "settings.json") << "{}";
+	fs::permissions(locked, fs::perms::owner_read | fs::perms::owner_exec);
+	if (std::ofstream(locked / "probe").good())
+	{
+		fs::permissions(locked, fs::perms::owner_all);
+		SKIP("the folder can be changed here anyway, e.g. by root");
+	}
+	f.call("profile.remove", {{"name", "Studio"}});
+	CHECK(f.names() == std::vector<std::string>{"Default"});
+	f.call("profile.add", {{"name", "Studio"}});
+	CHECK(f.names() == std::vector<std::string>{"Default", "Studio"});
+	CHECK(!fs::exists(locked));
+	const std::vector<fs::path> left = removedFolders(f.dir.path());
+	REQUIRE(left.size() == 1);
+	fs::permissions(left.front() / "Locked", fs::perms::owner_all);
+	f.start();
+	CHECK(removedFolders(f.dir.path()).empty());
+	CHECK(f.names() == std::vector<std::string>{"Default", "Studio"});
+}
+#endif

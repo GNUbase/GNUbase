@@ -175,10 +175,12 @@ namespace gnubase::engine::settings
 
 		// Deletes a folder with what is in it; error says what can't be deleted. Where a deleted folder stays until
 		// whatever still has it open lets go, such as a virus scanner looking at the files just written (Windows, on
-		// file systems without POSIX deletes), no folder can be made under its name meanwhile: a switch soon after,
-		// which makes the folder again, would fail (#1284). So the folder first gets a name of its own in the settings
-		// folder, which frees its name at once. One that can't be renamed, such as while a file in it is open, is
-		// deleted under its name. What stays of a renamed one goes at the next switch (removeLeftovers).
+		// file systems without POSIX deletes such as FAT, exFAT and network shares), no folder can be made under its
+		// name meanwhile: a switch soon after, which makes the folder again, would fail (#1284). And a folder of which
+		// something can't be deleted would stay under its name. So the folder first gets a name of its own in the
+		// settings folder, which frees its name at once; not in profiles, where it would be a profile. One that can't
+		// be renamed, such as while a file in it is open or when profiles is on another volume, is deleted under its
+		// name. What stays of a renamed one goes at the next switch (removeLeftovers).
 		void removeFolder(const fs::path& directory, const fs::path& folder, std::error_code& error)
 		{
 			// Two processes that pick the same name are no harm: the second rename fails, or replaces an empty folder.
@@ -322,7 +324,9 @@ namespace gnubase::engine::settings
 			// case: the switch would move the active profile's files over the next one's.
 			if (fs::exists(saved) && fs::equivalent(saved, next))
 				throw std::runtime_error("its folder is the active profile's " + state.active + " on this file system");
-			fs::remove_all(staging);
+			removeFolder(directory, staging, error);
+			if (error)
+				throw fs::filesystem_error("remove_all", staging, error);
 			copyFiles(directory, staging / "active", replacing);
 			copyFiles(next, staging / "next", replacing);
 			files::writeAtomically(staging / "active-profile", state.active); // from here on undoInterrupted's
