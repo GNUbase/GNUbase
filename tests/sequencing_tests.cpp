@@ -976,12 +976,10 @@ TEST_CASE("a project loaded in place of another doesn't get what the old one's M
 	run(song.client, "audio.render", {{"frames", 128}});
 	run(song.client, "channel.set", {{"channel", channel}, {"mute", false}});
 	run(song.client, "audio.render", {{"frames", 128}});
-	for (const Played& played : captured(song.client))
-	{
-		INFO(played);
-		CHECK(
-			!(played.bytes.size() == 3 && played.bytes[0] == 0xB0 && (played.bytes[1] == 64 || played.bytes[1] == 1)));
-	}
+	const auto oldValue = [](const Played& played)
+	{ return played.bytes.size() == 3 && played.bytes[0] == 0xB0 && (played.bytes[1] == 64 || played.bytes[1] == 1); };
+	const std::vector<Played> played = captured(song.client);
+	CHECK(std::none_of(played.begin(), played.end(), oldValue));
 }
 
 TEST_CASE(

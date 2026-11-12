@@ -2496,7 +2496,7 @@ TEST_CASE("what unmuting a MIDI track sends at the start of the next block goes 
 	// mute dropped goes out: CC 0, its latest kind, among it.
 	RenderAutomationLane lane;
 	lane.target = {AutomationTargetType::Controller, 0, 0, 0, 0};
-	lane.points = {{0, 0.0, AutomationShape::Step, 0.0}, {3 * g_midiBlock, 1.0, AutomationShape::Step, 0.0}};
+	lane.points = {{0, 0.0, AutomationShape::Step, 0.0}, {int64_t{3} * g_midiBlock, 1.0, AutomationShape::Step, 0.0}};
 	MidiStrip strip({{0, 1.0}, {(2 * g_midiBlock) + 10, 0.0}}, {lane});
 	dropControllers(strip);
 	CHECK(strip.play({}).size() == graph::g_maxEventsPerBlock);
