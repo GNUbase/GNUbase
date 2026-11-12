@@ -483,6 +483,10 @@ namespace gnubase::engine::settings
 					"The type of new tempo events (reference manual p. 1448): ramp changes the tempo gradually from "
 					"the event before, step jumps, auto takes the type of the event before (tempo.add, tempo.tap).",
 					Json{{"type", "string"}, {"enum", {"ramp", "step", "auto"}}}, "auto"},
+				{"editing.useDrumEditor",
+					"Use Drum Editor when Drum Map is assigned (reference manual p. 1603): a closed editor opens the "
+					"parts of a track with a drum map in the drum editor (editor.open).",
+					Json{{"type", "boolean"}}, true},
 				{"meter.resetOnStart",
 					"Reset on Start: the loudness meter, and the main mix's peak and RMS maxima, start over when "
 					"playback starts (see meter.get).",

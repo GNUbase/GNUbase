@@ -937,7 +937,7 @@ namespace gnubase::engine
 		{
 			const Json& channel = json.at("channel");
 			sound.channel = channel.is_null() ? -1 : channel.get<int>();
-			check(sound.channel >= -1 && sound.channel <= 15, "channel must be 0 to 15, or null for Any");
+			check(sound.channel >= -1 && sound.channel <= 15, "channel must be 0 to 15, or null or -1 for Any");
 		}
 		sound.output = json.value("output", sound.output);
 		return sound;
@@ -2384,9 +2384,12 @@ namespace gnubase::engine
 				note.id = n.at("id").get<ObjectId>();
 				note.position = n.at("position").get<time::Ticks>();
 				note.length = n.at("length").get<time::Ticks>();
-				note.pitch = n.at("pitch").get<uint8_t>();
+				// Checked as the DAWproject import does: drum maps and the editors take a pitch as an index (#882).
+				const std::string noteName =
+					"note " + std::to_string(note.id) + " of MIDI part " + std::to_string(part.id);
+				note.pitch = static_cast<uint8_t>(checkedNumber(n.at("pitch"), 0.0, 127.0, noteName + " pitch"));
 				note.velocity = velocityFrom(n.at("velocity"));
-				note.channel = n.at("channel").get<uint8_t>();
+				note.channel = static_cast<uint8_t>(checkedNumber(n.at("channel"), 0.0, 15.0, noteName + " channel"));
 				if (n.contains("releaseVelocity")) // projects saved before #137 don't have it
 					note.releaseVelocity =
 						static_cast<uint16_t>(std::lround(n.at("releaseVelocity").get<double>() * g_maxVelocity));

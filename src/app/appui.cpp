@@ -527,6 +527,7 @@ namespace gnubase::app
 					Rml::Element& page = editor || !m_trackVisibility ? element : m_trackVisibility->showPanel(element);
 					auto shown = std::make_shared<ui::MidiEditor>(
 						m_binding, page, "lower", editor ? ui::EditorPart::Editor : ui::EditorPart::Visibility);
+					shown->setDrumMapSetup([this] { m_shell.post([this] { openDrumMaps(m_main); }); });
 					if (editor)
 						m_lowerEditor = shown;
 					return std::shared_ptr<void>(shown);
@@ -1810,6 +1811,17 @@ namespace gnubase::app
 			}});
 		m_keys.add({"drumMap.save", "Saves the drum map of the editor's active track as a drum map file.",
 			[this](ui::Window& window, Rml::Element*) { saveDrumMap(window.id()); }});
+		// The Drum Map Setup (pp. 1235-1237), also from the drum editor's Map menu. Its Save chooses the file for the
+		// map it shows (gnubase.ui.saveDrumMap); its Load runs drumMap.load.
+		m_keys.add({"drumMap.setup",
+			"Opens the Drum Map Setup, which lists the project's drum maps and changes them and their sounds.",
+			[this](ui::Window& window, Rml::Element*) { openDrumMaps(window); }});
+		m_lua.addFunction("ui.saveDrumMap",
+			[this](const engine::Json& parameters)
+			{
+				chooseDrumMapFile(callingWindow().id(), parameters.value("map", uint64_t{0}));
+				return engine::Json::object();
+			});
 		// The pattern editor (#181, reference manual p. 895): the selected MIDI parts in the editor window's pattern
 		// editor, and Preset Management's Save Preset and Load Preset (pp. 932-933) for the editor's active track.
 		m_keys.add({"editor.openPattern", "Opens the selected MIDI parts in the pattern editor window.",
@@ -1937,6 +1949,16 @@ namespace gnubase::app
 		// Open in Lower Zone opens the Editor tab in the lower zone (reference manual, p. 1198).
 		m_editor.editor = std::make_unique<ui::MidiEditor>(
 			m_binding, *root, "window", ui::EditorPart::Editor, [this] { m_docking.open("editor"); });
+		m_editor.editor->setDrumMapSetup(
+			[this]
+			{
+				m_shell.post(
+					[this]
+					{
+						ui::Window* window = m_shell.find(m_editor.window);
+						openDrumMaps(window != nullptr ? *window : m_main);
+					});
+			});
 		m_docking.attach("editorWindow", *document);
 	}
 
@@ -2179,6 +2201,12 @@ namespace gnubase::app
 								chooseDrumMapFile(parent, each.at("drumMap").get<uint64_t>());
 					});
 			});
+	}
+
+	void AppUi::openDrumMaps(ui::Window& window)
+	{
+		// The editors' views say whose map to show first; the dialog reads them when it opens.
+		openOnce(window, "drum-maps.rml", m_drumMaps);
 	}
 
 	void AppUi::chooseDrumMapFile(ui::WindowId parent, uint64_t map)

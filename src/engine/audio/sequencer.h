@@ -101,8 +101,9 @@ namespace gnubase::engine
 										  // start
 		std::vector<ChaseLane> noteLanes; // filled in by setSequence: runs of noteOrder, by channel and pitch
 		midi::Modifiers modifiers;        // for the notes played into the track (input); notes has them applied
-		std::vector<LiveHarmony> liveInput; // Live Input: what the notes played into the track move to, by position
-		midi::EffectRack inserts;           // the track's MIDI inserts and sends (docs/features/midi-effects.md)
+		std::vector<LiveHarmony> liveInput;  // Live Input: what the notes played into the track move to, by position
+		std::vector<LiveDrumNote> drumInput; // the drum map's: what the notes played into the track play, or empty
+		midi::EffectRack inserts;            // the track's MIDI inserts and sends (docs/features/midi-effects.md)
 		midi::EffectRack sends;
 		// Filled in by setSequence: the inserts that play, in order, then the sends that play.
 		std::vector<RunningEffect> effects;

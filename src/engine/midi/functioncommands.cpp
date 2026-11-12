@@ -3,6 +3,7 @@
 
 #include "engine/document/projectmodel.h"
 #include "engine/document/serialize.h"
+#include "engine/midi/drummaps.h"
 #include "engine/midi/functions.h"
 
 #include <algorithm>
@@ -412,6 +413,21 @@ namespace gnubase::engine::midi
 				"Of notes with the same pitch, channel and position, keeps the longest (the first added on a tie).",
 				Json::object(), {}, true, [](const Json&) -> PartFunction
 				{ return [](Project&, MidiPart& part, const NoteSelection& notes) { deleteDoubles(part, notes); }; }},
+			{"midi.oNoteConversion", "O-Note conversion",
+				"O-Note Conversion (reference manual p. 1240): gives the notes of a track with a drum map their "
+				"sound's O-note as their pitch (drumMap.set), so that they play the same sounds without the map. "
+				"Notes of tracks without one stay.",
+				Json::object(), {}, true,
+				[](const Json&) -> PartFunction
+				{
+					return [](Project& project, MidiPart& part, const NoteSelection& notes)
+					{
+						if (const DrumMap* map = drumMapOf(project, part.track))
+							for (auto& entry : part.notes)
+								if (notes.contains(entry.first))
+									entry.second.pitch = map->sounds.at(entry.second.pitch).oNote;
+					};
+				}},
 			{"midi.deleteControllers", "Delete controllers",
 				"Removes control changes, pitch bend, channel and poly pressure; program changes and SysEx stay.",
 				Json::object(), {}, false, [](const Json&) -> PartFunction
