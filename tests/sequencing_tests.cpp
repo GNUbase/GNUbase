@@ -570,7 +570,7 @@ TEST_CASE("a MIDI track heard again after playback moved while it was silent cha
 	CHECK(played() == chased);
 
 	// Without chasing, the channel's values alone, as at a jump. Muted by its button, its strip sends the program and
-	// CC 7 that played into its mute, which it keeps as nothing chases them, before the channel's values.
+	// CC 7 that played into its mute, which it keeps as nothing chases them, after the channel's values, so they win.
 	for (const char* key : {"midi.chaseControllers", "midi.chasePrograms"})
 		run(song.client, "settings.set", {{"key", key}, {"value", false}});
 	mute(true);
@@ -578,8 +578,9 @@ TEST_CASE("a MIDI track heard again after playback moved while it was silent cha
 	run(song.client, "transport.play");
 	pastTheSecondCc7();
 	mute(false);
-	ControllerBytes unchased = button ? ControllerBytes{{0xC0, 9}, {0xB0, 7, 64}} : ControllerBytes{};
-	unchased.insert(unchased.end(), channelValues.begin(), channelValues.end());
+	ControllerBytes unchased = channelValues;
+	if (button)
+		unchased.insert(unchased.end(), {{0xC0, 9}, {0xB0, 7, 64}});
 	CHECK(played() == unchased);
 	for (const char* key : {"midi.chaseControllers", "midi.chasePrograms"})
 		run(song.client, "settings.reset", {{"key", key}});
@@ -624,6 +625,34 @@ TEST_CASE("a pedal that the chase of a MIDI track heard again presses goes up wh
 	run(song.client, "track.set", {{"track", song.midi}, {"enabled", true}});
 	CHECK(played() == ControllerBytes{{0xB0, 7, 50}, {0xB0, 64, 127}});
 	// Its mute releases the pedal, and unmuting presses it again.
+	mute(true);
+	CHECK(played() == ControllerBytes{{0xB0, 64, 0}});
+	mute(false);
+	CHECK(played() == ControllerBytes{{0xB0, 64, 127}});
+}
+
+TEST_CASE("a MIDI track heard again while the transport stands presses its pedal once, which its mute releases",
+	"[integration]")
+{
+	const int blockSize = GENERATE(17, 64);
+	CAPTURE(blockSize);
+	Song song(blockSize);
+	const ObjectId channel = channelOf(song.client, song.midi);
+	// The sustain pedal goes down before the cursor; the channel's MIDI volume goes out first.
+	run(song.client, "controller.add",
+		{{"part", song.part(1)}, {"controllers", {{{"position", ticks(100)}, {"number", 64}, {"value", 1.0}}}}});
+	run(song.client, "channel.set", {{"channel", channel}, {"midiVolume", 50}});
+	run(song.client, "track.set", {{"track", song.midi}, {"enabled", false}});
+	run(song.client, "midi.capture", {{"start", true}});
+	run(song.client, "transport.locate", {{"position", 1000}}); // a move while it is disabled
+	run(song.client, "audio.render", {{"frames", 128}});
+	run(song.client, "midi.capture");
+	const auto played = [&song] { return controllersPlayed(song.client, false); };
+	const auto mute = [&](bool on) { run(song.client, "channel.set", {{"channel", channel}, {"mute", on}}); };
+
+	run(song.client, "track.set", {{"track", song.midi}, {"enabled", true}});
+	CHECK(played() == ControllerBytes{{0xB0, 7, 50}, {0xB0, 64, 127}});
+	CHECK(played().empty());
 	mute(true);
 	CHECK(played() == ControllerBytes{{0xB0, 64, 0}});
 	mute(false);
@@ -792,20 +821,12 @@ TEST_CASE("unmuting a MIDI track sends the latest values of the controllers, pro
 		run(song.client, "audio.render", {{"frames", 2000}});
 	}
 
-	// In the order they first came: the button drops the controller at 500 already, which the one at 1400
+	// In the order of their latest events: the button drops the controller at 500 already, which the one at 1400
 	// replaces. Then the controller where it unmutes.
 	std::vector<Played> expected;
-	std::vector<std::vector<int>> sent{{0xE0}, {0xB0, 11, 100}, {0xC0, 7}};
-	if (button)
-	{
-		sent.insert(sent.begin(), {0xB0, 1, 127});
-	}
-	else
-	{
+	if (!button)
 		expected.push_back({500, {0xB0, 1, 32}});
-		sent.push_back({0xB0, 1, 127});
-	}
-	sent.push_back({0xB0, 2, 127});
+	const std::vector<std::vector<int>> sent{{0xE0}, {0xB0, 11, 100}, {0xC0, 7}, {0xB0, 1, 127}, {0xB0, 2, 127}};
 	for (const std::vector<int>& bytes : sent)
 		expected.push_back({1600, bytes});
 	expected.push_back({1800, {0xB0, 1, 0}});

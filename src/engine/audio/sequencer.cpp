@@ -608,15 +608,40 @@ namespace gnubase::engine
 		}
 
 		// The kinds found, in time order; at one position by track, then kind, so a bank select precedes its program.
+		// Per MIDI channel, the latest bank select (CC 0 or CC 32) chased for tracks heard again, known by the time its
+		// program comes: the controllers' kinds come before the programs'.
+		std::array<const Chased*, 16> bank{};
 		for (size_t kind = 0; kind < m_chased.size(); ++kind)
 		{
-			const Chased& found = m_chased[kind];
+			Chased& found = m_chased[kind];
 			// Heard again: the parts of a track that was soloed out or disabled, and the kinds the channels sent.
-			if (found.played || found.position == std::numeric_limits<int64_t>::min() ||
-				(heardAgain && heard(sequence.chase[found.track]) != HeardAgain::Quiet && !m_resent[kind]))
+			const bool none = found.played || found.position == std::numeric_limits<int64_t>::min();
+			bool skipped =
+				!none && heardAgain && heard(sequence.chase[found.track]) != HeardAgain::Quiet && !m_resent[kind];
+			const bool program = kind >= g_notes && kind < g_notes + 16;
+			if (skipped && program && bank[kind - g_notes] != nullptr)
+			{
+				// Another track's later program change on that MIDI channel follows the bank select, as at a jump;
+				// it would stay in the bank it had otherwise.
+				const Chased& select = *bank[kind - g_notes];
+				if (found.position < select.position)
+				{
+					found.position = select.position;
+					found.track = select.track;
+				}
+				skipped = false;
+			}
+			if (none || skipped)
 			{
 				m_chased[kind] = Chased();
 				continue;
+			}
+			const auto number = static_cast<uint8_t>(kind % 128);
+			if (heardAgain && kind < g_notes && (number == 0 || number == 32))
+			{
+				const Chased*& select = bank[kind / 128];
+				if (select == nullptr || select->position <= found.position)
+					select = &m_chased[m_chasedCount];
 			}
 			m_chased[m_chasedCount++] = m_chased[kind];
 			if (m_chasedCount - 1 != kind)

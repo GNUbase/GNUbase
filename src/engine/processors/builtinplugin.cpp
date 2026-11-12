@@ -211,13 +211,15 @@ namespace gnubase::engine::processors
 	{
 		constexpr size_t g_stateEntry = sizeof(uint32_t) + sizeof(double);
 
-		// A value from a state or a file for parameter, clamped to its range; none if it isn't a number, NaN or
-		// infinite, so that a damaged or hand-edited state plays and reports what the plugin can take.
+		// A value from a state or a file for parameter, clamped to its range and a stepped parameter's rounded to a
+		// step; none if it isn't a number, NaN or infinite, so that a damaged or hand-edited state plays and reports
+		// what the plugin can take.
 		std::optional<double> usable(const ParameterInfo& parameter, double value)
 		{
 			if (!std::isfinite(value))
 				return std::nullopt;
-			return std::clamp(value, parameter.minimum, parameter.maximum);
+			const double clamped = std::clamp(value, parameter.minimum, parameter.maximum);
+			return parameter.stepped ? std::round(clamped) : clamped;
 		}
 	}
 
