@@ -917,10 +917,10 @@ TEST_CASE("track.import moves the project end after what it imports", "[integrat
 	const Added cues = add(client, {{"type", "marker"}, {"name", "Cues"}, {"timeBase", "linear"}});
 	run(client, "marker.add",
 		{{"track", cues.track}, {"type", "cycle"}, {"position", 650 * 48000}, {"end", 705 * 48000}, {"name", "Outro"}});
-	// A musical part, from 710 to 712 seconds at 120 BPM.
+	// A musical part, from 710 to 712 seconds (1420 to 1424 quarters at 120 BPM).
 	const Added musical = add(client, {{"type", "instrument"}, {"name", "Musical"}});
 	run(client, "midiPart.add",
-		{{"track", musical.track}, {"position", 710 * 2 * gnubase::time::g_ticksPerQuarter},
+		{{"track", musical.track}, {"position", 1420 * gnubase::time::g_ticksPerQuarter},
 			{"length", 4 * gnubase::time::g_ticksPerQuarter}});
 	run(client, "project.save", {{"path", song.u8string()}});
 	const Json sources = run(client, "track.importSources", {{"path", song.u8string()}}).at("tracks");
