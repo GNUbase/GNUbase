@@ -289,10 +289,11 @@ namespace gnubase::engine
 						cue.settings = m_cueState.settings;
 						cue.arranger = m_cueState.arranger.get();
 						cue.arrangerState = m_transport.arranger();
-						// Read first: a request seen applied then shows where the audio thread went (transport.h).
+						// Read first: a request seen applied then shows where the audio thread went (transport.h). The
+						// count-in comes before the cursor because it ends after the cursor has moved.
 						const uint64_t applied = m_transport.appliedRequests();
-						cue.position = m_transport.position();
 						const time::Samples countInStart = m_transport.countInStart();
+						cue.position = m_transport.position();
 						// At a start the command thread cued, until the audio thread plays from there, and while it
 						// counts in, where playback starts after it. Either may begin while this cues: the voice it
 						// reads stays.
