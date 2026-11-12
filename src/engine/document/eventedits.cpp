@@ -611,9 +611,9 @@ namespace gnubase::engine
 				right.length -= frames;
 				right.fadeIn = Fade();
 				right.crossfade = Crossfade();
-				// A quantized event's piece after the split was as far from its own original as the event is from
-				// its one, so that resetting puts both pieces back (#910). An origin that has stopped counting, of
-				// an event moved by other means since, doesn't come along.
+				// The piece of a quantized event after the split was as far from its own original as the split is
+				// from where quantizing put the event, so that resetting puts both pieces back (#910). An origin
+				// that has stopped counting, of an event moved by other means since, doesn't come along.
 				if (right.quantizeOrigin && right.quantizeOrigin->quantized == event.position)
 				{
 					const int64_t moved = right.quantizeOrigin->quantized.value - right.quantizeOrigin->original.value;
@@ -2556,10 +2556,9 @@ namespace gnubase::engine
 				"unlocked one that a position cuts. A MIDI part's notes stay in the part they start in, or with "
 				"splitNotes are cut in two. With zeroCrossing, audio events split at the nearest point within 50 ms "
 				"and inside the event where their audio crosses zero. The pieces of a pattern event continue its "
-				"pattern (patternOffset). The piece of a quantized audio event after the split keeps where it was "
-				"before "
-				"quantizing, shifted by the split, so that quantize.reset puts both pieces back. Returns the new "
-				"events after the splits.",
+				"pattern (patternOffset). The piece of a quantized audio event after the split keeps where it "
+				"was before quantizing, shifted by the split, so that quantize.reset puts both pieces back. "
+				"Returns the new events after the splits.",
 				schema({{"events", events()}, {"positions", {{"type", "array"}, {"items", integer()}}},
 						   {"splitNotes", boolean()}, {"zeroCrossing", boolean()}},
 					{"positions"}),
