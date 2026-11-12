@@ -56,8 +56,9 @@ namespace gnubase::engine::midi
 		using PartFunction = std::function<void(Project& project, MidiPart& part, const NoteSelection& selection)>;
 		using Prepare = std::function<PartFunction(const Json& parameters)>;
 
-		// Checks the parameters, runs the function on every part and announces the parts it changed.
-		Json runOnParts(Project& project, CommandContext& context, const Prepare& prepare)
+		// Checks the parameters, runs the function on every part and announces the parts it changed. A note function
+		// leaves pattern events out, as they play their pattern's steps, not their notes; their controllers play.
+		Json runOnParts(Project& project, CommandContext& context, const Prepare& prepare, bool notes)
 		{
 			const Json& parameters = context.parameters();
 			const std::vector<MidiPart*> parts = partsOf(project, parameters);
@@ -66,7 +67,7 @@ namespace gnubase::engine::midi
 			Json changed = Json::array();
 			for (MidiPart* part : parts)
 			{
-				if (part->pattern != 0) // a pattern event plays its pattern's steps, not its notes
+				if (notes && part->pattern != 0)
 					continue;
 				const MidiPart before = *part;
 				function(project, *part, selection);
@@ -508,12 +509,15 @@ namespace gnubase::engine::midi
 			std::string description = command.description;
 			description += command.notes ? " Works on the MIDI parts in parts;" + std::string(selection)
 										 : " Works on the MIDI parts in parts.";
-			description += " Pattern events (pattern.add), which play their pattern's steps, stay as they are.";
+			description += command.notes
+				? " Pattern events (pattern.add), which play their pattern's steps, stay as they are."
+				: " Pattern events (pattern.add) play their own controllers too, and the function changes them.";
 			description += " Returns the parts it changed.";
 			model.addEdit(engine,
 				{command.name, 1, description, objectSchema(std::move(properties), required), partsResult, false},
-				command.action, [prepare = command.prepare](Project& project, CommandContext& context)
-				{ return runOnParts(project, context, prepare); });
+				command.action,
+				[prepare = command.prepare, notes = command.notes](Project& project, CommandContext& context)
+				{ return runOnParts(project, context, prepare, notes); });
 		}
 
 		const Json ids = arraySchema(idSchema);

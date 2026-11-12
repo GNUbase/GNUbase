@@ -233,12 +233,13 @@ namespace gnubase::ui
 		}
 		if (Rml::Element* message = dialog->GetElementById("prepare-archive-message"))
 			message->SetInnerRML(counted(static_cast<size_t>(external), "file") +
-				(external == 1 ? " of the project is outside the project folder. Copy it into its Audio folder?"
-							   : " of the project are outside the project folder. Copy them into its Audio folder?") +
+				(external == 1 ? " of the project is outside the project folder."
+							   : " of the project are outside the project folder.") +
 				(missing == 0 ? ""
 							  : " " + std::to_string(missing) +
 							(missing == 1 ? " more is missing and can't be copied."
-										  : " more are missing and can't be copied.")));
+										  : " more are missing and can't be copied.")) +
+				(external == 1 ? " Copy it into its Audio folder?" : " Copy them into its Audio folder?"));
 		m_question = dialog->GetObserverPtr();
 		dialog->AddEventListener(g_dialogCloseEvent, this);
 		dialog->Show(Rml::ModalFlag::Modal);
