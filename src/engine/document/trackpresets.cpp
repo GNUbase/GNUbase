@@ -592,10 +592,22 @@ namespace gnubase::engine
 		// Where track.import puts what the file's tracks hold (Import Position and Range, reference manual p. 204):
 		// only what starts within range, samples of the file from its start, if given; an audio event in a part goes
 		// with its part. That moves by offset samples of the project, musical positions by that time in its tempo.
-		// Refuses what would start before the project start.
+		// Refuses what would start before the project start. First leaves out what the import doesn't bring: what
+		// isn't on the tracks of the file that it copies (copied), and the events or automation that options leave out.
 		void place(Project& file, const Project& project, time::Samples offset,
-			const std::optional<std::pair<time::Samples, time::Samples>>& range)
+			const std::optional<std::pair<time::Samples, time::Samples>>& range, const std::set<ObjectId>& copied,
+			CopyOptions options)
 		{
+			const auto brought = [&copied](const auto& item) { return copied.count(item.track) != 0; };
+			const auto withEvents = [&](const auto& item) { return options.events && brought(item); };
+			keepIf(file.audioParts, withEvents);
+			keepIf(file.audioEvents, withEvents);
+			keepIf(file.midiParts, withEvents);
+			keepIf(file.markers, withEvents);
+			keepIf(file.automation, [&](const AutomationLane& lane) { return options.automation && brought(lane); });
+			for (auto& [id, track] : file.trackById)
+				if (!options.events || copied.count(id) == 0)
+					track.versions.clear();
 			const auto move = [&](time::Position& position)
 			{
 				if (offset == 0)
@@ -702,6 +714,9 @@ namespace gnubase::engine
 		void mergeTrack(ProjectModel& model, Project& project, ObjectId copy, ObjectId id, CopyOptions options,
 			Existing existing, CommandContext& inner)
 		{
+			// Positions are in the track's time base.
+			if (project.trackById.at(copy).timeBase != project.trackById.at(id).timeBase)
+				rebaseTrack(project, project.trackById.at(copy), project.trackById.at(id).timeBase, inner);
 			if (options.events)
 			{
 				if (existing == Existing::Version)
@@ -1040,12 +1055,14 @@ namespace gnubase::engine
 				"it that can be imported, in the file's order. They become new tracks below track in its folder or "
 				"else at the bottom of the track list (Import Position for New Tracks); marker tracks go to the top "
 				"level. destinations import some of tracks onto the project's tracks of their type instead "
-				"(Destination Track, p. 203), each source onto its track: a group, effect, folder, marker or ruler "
-				"track replaces the track, with the tracks inside it, and takes what played or sent into it; an "
+				"(Destination Track, p. 203), each source onto one track, not one inside a listed folder: a group, "
+				"effect, folder, marker or ruler track replaces the track, with the tracks inside it, and takes what "
+				"played or sent into it; an "
 				"audio, instrument or MIDI track gives the track its events and parts as existing says (On Import on "
 				"Existing Tracks: replace replaces the track's, add adds them, version, the default, puts them into a "
 				"new version), with its other versions after the track's, its settings and its automation, and the "
-				"track keeps its name and buttons. events (default true) brings their events, parts, markers and "
+				"track keeps its name and buttons, all in the track's time base. events (default true) brings their "
+				"events, parts, markers and "
 				"track versions, settings (default true) their channel settings and inserts, automation (default "
 				"true) their automation, replacing the track's. position (Import Position) puts the events where they "
 				"were in the file's timecode (absolute, the default: moved by the difference of the project start "
@@ -1101,7 +1118,6 @@ namespace gnubase::engine
 					offset = std::llround((file.setup.startTime - project.setup.startTime) * project.sampleRate);
 				else if (position == "cursor")
 					offset = context.call("transport.get").at("position").get<time::Samples>();
-				place(file, project, offset, range);
 				std::vector<ObjectId> tracks;
 				std::vector<ObjectId> skipped;
 				if (parameters.contains("tracks"))
@@ -1111,6 +1127,15 @@ namespace gnubase::engine
 						(importable(file.trackById.at(id).type) ? tracks : skipped).push_back(id);
 				const CopyOptions options{parameters.value("events", true), parameters.value("settings", true),
 					parameters.value("automation", true)};
+				std::set<ObjectId> brought; // the tracks of the file that are copied, as copyTracks copies them
+				for (const ObjectId id : file.trackOrder())
+				{
+					const Track& track = file.trackById.at(id);
+					if (std::find(tracks.begin(), tracks.end(), id) != tracks.end() ||
+						(brought.count(track.parent) != 0 && importable(track.type)))
+						brought.insert(id);
+				}
+				place(file, project, offset, range, brought, options);
 				const auto [parent, index] = below(project, parameters);
 				const Project before = project;
 				Copied copied = copyTracks(file, project, tracks, options, parent, index);
@@ -1120,6 +1145,7 @@ namespace gnubase::engine
 				else if (parameters.value("existing", "version") == "add")
 					existing = Existing::Add;
 				std::set<ObjectId> taken;
+				std::set<ObjectId> sources;
 				for (const Json& entry : parameters.value("destinations", Json::array()))
 				{
 					const auto source = entry.at("source").get<ObjectId>();
@@ -1135,10 +1161,16 @@ namespace gnubase::engine
 					require(taken.insert(id).second, "track " + std::to_string(id) + " is a destination twice");
 					require(project.trackById.count(id) != 0,
 						"track " + std::to_string(id) + " is inside a track that another one replaces");
+					require(sources.insert(source).second,
+						"track " + std::to_string(source) + " of the file is imported onto two tracks");
 					const ObjectId copy = copied.copies.at(source);
+					const auto top = std::find(copied.tracks.begin(), copied.tracks.end(), copy);
+					require(top != copied.tracks.end(),
+						"track " + std::to_string(source) +
+							" of the file is inside a folder that is imported: it comes along with the folder");
 					if (type == TrackType::Audio || type == TrackType::Instrument || type == TrackType::Midi)
 					{
-						copied.tracks.erase(std::find(copied.tracks.begin(), copied.tracks.end(), copy));
+						copied.tracks.erase(top);
 						mergeTrack(model, project, copy, id, options, existing, inner);
 					}
 					else

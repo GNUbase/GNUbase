@@ -68,7 +68,9 @@ they are.
   default, puts them into a new version of the track, as the manual's note on Events and Parts says), and its other
   versions after the track's; with `settings` its channel settings, inserts, routing and drum and articulation maps, the
   track's plugins going with their automation; with `automation` its automation in place of the track's. What played or
-  sent into the copy's channel, such as another imported track, goes into the track's.
+  sent into the copy's channel, such as another imported track, goes into the track's. Its events, parts, versions and
+  automation take the track's time base. A source goes onto one track, and not one inside a listed folder, which brings
+  it along.
 - **Where the events go** (Import Position, p. 204). `position` `absolute` (the default) puts them at the timecode
   they had in the file, so they move by the difference of the project start times (project setup's start); `relative`
   keeps them as far from the project start as from the file's; `cursor` puts them as far from the project cursor. That

@@ -5,6 +5,7 @@
 #include "engine/dawproject/dawproject.h"
 #include "engine/document/document.h"
 #include "engine/engine.h"
+#include "engine/time/tempomap.h"
 #include "testutils/testutils.h"
 #include "ui/automation.h"
 #include "ui/tracklist.h"
@@ -620,6 +621,122 @@ TEST_CASE("track.import places events at their absolute or relative position or 
 	CHECK_THAT(reject(client, "track.import", {{"path", song.u8string()}}), ContainsSubstring("project start"));
 }
 
+TEST_CASE("track.import places only what it imports", "[integration]")
+{
+	const test::TempDir dir;
+	const fs::path song = dir.path() / "Song.dawproject";
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	const Added early = add(client, {{"type", "instrument"}, {"name", "Early"}, {"timeBase", "linear"}});
+	run(client, "midiPart.add", {{"track", early.track}, {"position", 0}, {"length", 4800}});
+	const ObjectId lane = run(client, "automationLane.add", {{"track", early.track}, {"target", {{"type", "volume"}}}})
+							  .at("lane")
+							  .at("id")
+							  .get<ObjectId>();
+	run(client, "automationPoint.add", {{"lane", lane}, {"points", {{{"position", 0}, {"value", -6.0}}}}});
+	const Added late = add(client, {{"type", "midi"}, {"name", "Late"}, {"timeBase", "linear"}});
+	run(client, "midiPart.add", {{"track", late.track}, {"position", 60 * 48000}, {"length", 4800}});
+	run(client, "project.save", {{"path", song.u8string()}});
+	const Json sources = run(client, "track.importSources", {{"path", song.u8string()}}).at("tracks");
+	const auto source = [&sources](const std::string& name)
+	{ return trackNamed({{"tracks", sources}}, name).at("id"); };
+
+	// The project starts 30 seconds later: the early track's part and point would start before it, but they aren't
+	// imported.
+	run(client, "project.new");
+	run(client, "project.set", {{"startTime", 30.0}});
+	run(client, "track.import", {{"path", song.u8string()}, {"tracks", {source("Late")}}});
+	Json project = run(client, "project.get");
+	REQUIRE(project.at("midiParts").size() == 1);
+	CHECK(project.at("midiParts")[0].at("position") == 30 * 48000);
+	run(client, "history.undo");
+	run(client, "track.import",
+		{{"path", song.u8string()}, {"tracks", {source("Early")}}, {"events", false}, {"automation", false}});
+	project = run(client, "project.get");
+	CHECK(project.at("midiParts").empty());
+	CHECK(project.at("automation").empty());
+	run(client, "history.undo");
+	CHECK_THAT(reject(client, "track.import", {{"path", song.u8string()}, {"tracks", {source("Early")}}}),
+		ContainsSubstring("project start"));
+}
+
+TEST_CASE("track.import refuses a source onto two tracks or inside an imported folder, and merges in the track's time "
+		  "base",
+	"[integration]")
+{
+	const test::TempDir dir;
+	const fs::path song = dir.path() / "Song.dawproject";
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	const Added lead = add(client, {{"type", "midi"}, {"name", "Lead"}, {"timeBase", "linear"}});
+	run(client, "midiPart.add", {{"track", lead.track}, {"position", 48000}, {"length", 48000}});
+	const Added band = add(client, {{"type", "folder"}, {"name", "Band"}});
+	add(client, {{"type", "midi"}, {"name", "Bass"}, {"parent", band.track}});
+	run(client, "project.save", {{"path", song.u8string()}});
+	const Json sources = run(client, "track.importSources", {{"path", song.u8string()}}).at("tracks");
+	const auto source = [&sources](const std::string& name)
+	{ return trackNamed({{"tracks", sources}}, name).at("id"); };
+
+	run(client, "project.new");
+	const Added a = add(client, {{"type", "midi"}, {"name", "A"}}); // musical
+	const Added b = add(client, {{"type", "midi"}, {"name", "B"}});
+	const std::vector<std::string> before = outline(run(client, "project.get"));
+	CHECK_THAT(reject(client, "track.import",
+				   {{"path", song.u8string()}, {"tracks", {source("Lead")}},
+					   {"destinations",
+						   {{{"source", source("Lead")}, {"track", a.track}},
+							   {{"source", source("Lead")}, {"track", b.track}}}}}),
+		ContainsSubstring("onto two tracks"));
+	CHECK_THAT(reject(client, "track.import",
+				   {{"path", song.u8string()}, {"tracks", {source("Band"), source("Bass")}},
+					   {"destinations", {{{"source", source("Bass")}, {"track", a.track}}}}}),
+		ContainsSubstring("inside a folder that is imported"));
+	CHECK(outline(run(client, "project.get")) == before);
+
+	// The linear part merged onto the musical track is in ticks there: one second in, a second long, at 120 BPM.
+	run(client, "track.import",
+		{{"path", song.u8string()}, {"tracks", {source("Lead")}}, {"existing", "replace"},
+			{"destinations", {{{"source", source("Lead")}, {"track", a.track}}}}});
+	const Json project = run(client, "project.get");
+	REQUIRE(count(project, "midiParts", a.track) == 1);
+	CHECK(project.at("midiParts")[0].at("position") == 2 * gnubase::time::g_ticksPerQuarter);
+	CHECK(project.at("midiParts")[0].at("length") == 2 * gnubase::time::g_ticksPerQuarter);
+}
+
+TEST_CASE("track.import returns the media files it added, not the ones it shares with the project", "[integration]")
+{
+	const test::TempDir dir;
+	const fs::path shared = dir.path() / "shared.wav";
+	const fs::path added = dir.path() / "added.wav";
+	test::writeWav(shared, {std::vector<float>(4800, 0.25f), 1, 48000});
+	test::writeWav(added, {std::vector<float>(4800, 0.5f), 1, 48000});
+	const fs::path archive = dir.path() / "Takes.dawproject";
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	const Added take = add(client, {{"type", "audio"}, {"name", "Take"}});
+	int64_t position = 0;
+	for (const fs::path& wav : {shared, added})
+	{
+		const ObjectId media =
+			run(client, "media.add", {{"path", wav.u8string()}}).at("media").at("id").get<ObjectId>();
+		const ObjectId clip = run(client, "clip.add", {{"media", media}}).at("clip").at("id").get<ObjectId>();
+		run(client, "audioEvent.add",
+			{{"track", take.track}, {"clip", clip}, {"position", position}, {"offset", 0}, {"length", 4800}});
+		position += 4800;
+	}
+	run(client, "track.export", {{"tracks", {take.track}}, {"path", archive.u8string()}, {"copyMedia", false}});
+
+	run(client, "project.new");
+	const ObjectId mine = run(client, "media.add", {{"path", shared.u8string()}}).at("media").at("id").get<ObjectId>();
+	const Json media = run(client, "track.import", {{"path", archive.u8string()}}).at("media");
+	REQUIRE(media.size() == 1);
+	CHECK(media[0] != mine);
+	const Json project = run(client, "project.get");
+	CHECK(project.at("media").size() == 2);
+	CHECK(fs::equivalent(
+		fs::u8path(find(project.at("media"), media[0].get<ObjectId>()).at("path").get<std::string>()), added));
+}
+
 TEST_CASE("listing the tracks of a file reads no media file in its place", "[integration]")
 {
 	const test::TempDir dir;
@@ -774,6 +891,57 @@ TEST_CASE("File > Export > Selected Tracks and File > Import > Tracks go through
 	importTracks(dir.path() / "song.dawproject");
 	CHECK_THAT(text("#import-tracks"), ContainsSubstring("Faders (can't be imported yet)"));
 	click(app, "#track-import-dialog button[result=cancel]");
+}
+
+TEST_CASE("Import Options copies the imported media into the project folder, converting other sample rates", "[ui]")
+{
+	test::UiApp app{{1000, 700}};
+	const test::TempDir dir;
+	const fs::path low = dir.path() / "library" / "low.wav";
+	const fs::path high = dir.path() / "library" / "high.wav";
+	fs::create_directories(low.parent_path());
+	test::writeWav(low, {std::vector<float>(4410, 0.25f), 1, 44100});
+	test::writeWav(high, {std::vector<float>(4800, 0.5f), 1, 48000});
+	const fs::path archive = dir.path() / "takes.dawproject";
+	app.appUi().showProject();
+	app.call("project.set", {{"sampleRate", 44100.0}});
+	const ObjectId take =
+		app.call("track.add", {{"type", "audio"}, {"name", "Take"}}).at("track").at("id").get<ObjectId>();
+	int64_t position = 0;
+	for (const fs::path& wav : {low, high})
+	{
+		const ObjectId media = app.call("media.add", {{"path", wav.u8string()}}).at("media").at("id").get<ObjectId>();
+		const ObjectId clip = app.call("clip.add", {{"media", media}}).at("clip").at("id").get<ObjectId>();
+		app.call("audioEvent.add",
+			{{"track", take}, {"clip", clip}, {"position", position}, {"offset", 0}, {"length", 4410}});
+		position += 44100;
+	}
+	app.call("track.export", {{"tracks", {take}}, {"path", archive.u8string()}, {"copyMedia", false}});
+
+	app.call("project.new"); // at 48 kHz
+	const fs::path song = dir.path() / "song" / "Song.dawproject";
+	fs::create_directories(song.parent_path());
+	app.call("project.save", {{"path", song.u8string()}, {"embedMedia", false}});
+	app.keys().run("file.importTracks", Json::object(), app.main(), nullptr);
+	answer(app, archive);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#track-import-dialog"); }));
+	click(app, "#import-copy");
+	click(app, "#import-convert");
+	click(app, "#import-confirm");
+	// The file at 48 kHz is copied, the one at 44.1 kHz converted, both into the project's media folder.
+	const fs::path folder = song.parent_path() / "Audio";
+	const auto inFolder = [&folder](const Json& media)
+	{
+		const fs::path path = fs::u8path(media.at("path").get<std::string>());
+		return fs::exists(path) && fs::equivalent(path.parent_path(), folder) && media.at("sampleRate") == 48000.0;
+	};
+	REQUIRE(app.waitUntil(
+		[&app, &inFolder]
+		{
+			const Json media = app.call("project.get").at("media");
+			return media.size() == 2 && std::all_of(media.begin(), media.end(), inFolder);
+		}));
+	CHECK(fs::exists(folder / "high.wav"));
 }
 
 TEST_CASE("the track preset dialog saves, loads and adds track presets", "[ui]")

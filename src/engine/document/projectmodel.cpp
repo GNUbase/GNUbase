@@ -486,93 +486,93 @@ namespace gnubase::engine
 			}
 			track.timeOffsetOn = parameters.value("timeOffsetOn", track.timeOffsetOn);
 		}
+	}
 
-		void rebaseTrack(Project& project, Track& track, time::TimeBase base, CommandContext& context)
+	void rebaseTrack(Project& project, Track& track, time::TimeBase base, CommandContext& context)
+	{
+		for (auto& [id, event] : project.audioEvents)
+			if (event.track == track.id)
+			{
+				event.position = time::rebase(event.position, base, project.tempo, project.sampleRate);
+				context.emit("audioEvent.changed", {{"event", toJson(event)}});
+			}
+		for (auto& [id, part] : project.audioParts)
+			if (part.track == track.id)
+			{
+				const time::Position end = time::rebase(
+					{part.position.base, part.position.value + part.length}, base, project.tempo, project.sampleRate);
+				part.position = time::rebase(part.position, base, project.tempo, project.sampleRate);
+				part.length = end.value - part.position.value;
+				context.emit("audioPart.changed", {{"part", toJson(part)}});
+			}
+		for (auto& [id, part] : project.midiParts)
+			if (part.track == track.id)
+			{
+				const time::Position end = time::rebase(partEnd(part), base, project.tempo, project.sampleRate);
+				part.position = time::rebase(part.position, base, project.tempo, project.sampleRate);
+				part.length = end.value - part.position.value;
+				context.emit("midiPart.changed", {{"part", toJson(part)}});
+			}
+		for (auto& [id, marker] : project.markers)
+			if (marker.track == track.id)
+			{
+				marker.position = time::rebase(marker.position, base, project.tempo, project.sampleRate);
+				marker.end = time::rebase(marker.end, base, project.tempo, project.sampleRate);
+				keepMinimumLength(project, marker); // rounding may have left it shorter than a sample
+				context.emit("marker.changed", {{"marker", toJson(marker)}});
+			}
+		if (track.type == TrackType::Arranger && !project.arranger.events.empty())
 		{
-			for (auto& [id, event] : project.audioEvents)
-				if (event.track == track.id)
-				{
-					event.position = time::rebase(event.position, base, project.tempo, project.sampleRate);
-					context.emit("audioEvent.changed", {{"event", toJson(event)}});
-				}
-			for (auto& [id, part] : project.audioParts)
-				if (part.track == track.id)
-				{
-					const time::Position end = time::rebase({part.position.base, part.position.value + part.length},
-						base, project.tempo, project.sampleRate);
-					part.position = time::rebase(part.position, base, project.tempo, project.sampleRate);
-					part.length = end.value - part.position.value;
-					context.emit("audioPart.changed", {{"part", toJson(part)}});
-				}
-			for (auto& [id, part] : project.midiParts)
-				if (part.track == track.id)
-				{
-					const time::Position end = time::rebase(partEnd(part), base, project.tempo, project.sampleRate);
-					part.position = time::rebase(part.position, base, project.tempo, project.sampleRate);
-					part.length = end.value - part.position.value;
-					context.emit("midiPart.changed", {{"part", toJson(part)}});
-				}
-			for (auto& [id, marker] : project.markers)
-				if (marker.track == track.id)
-				{
-					marker.position = time::rebase(marker.position, base, project.tempo, project.sampleRate);
-					marker.end = time::rebase(marker.end, base, project.tempo, project.sampleRate);
-					keepMinimumLength(project, marker); // rounding may have left it shorter than a sample
-					context.emit("marker.changed", {{"marker", toJson(marker)}});
-				}
-			if (track.type == TrackType::Arranger && !project.arranger.events.empty())
+			for (ArrangerEvent& event : project.arranger.events)
 			{
-				for (ArrangerEvent& event : project.arranger.events)
-				{
-					event.position = time::rebase(event.position, base, project.tempo, project.sampleRate);
-					event.end = time::rebase(event.end, base, project.tempo, project.sampleRate);
-					keepMinimumLength(project, event);
-				}
-				context.emit("arranger.changed", arrangerJson(project));
+				event.position = time::rebase(event.position, base, project.tempo, project.sampleRate);
+				event.end = time::rebase(event.end, base, project.tempo, project.sampleRate);
+				keepMinimumLength(project, event);
 			}
-			if (track.type == TrackType::Transpose && !project.transpose.events.empty())
-			{
-				for (TransposeEvent& event : project.transpose.events)
-					event.position = time::rebase(event.position, base, project.tempo, project.sampleRate);
-				context.emit("transpose.changed", transposeJson(project));
-			}
-			if (track.type == TrackType::Chord)
-			{
-				for (std::vector<ChordEvent>* events : {&project.chords.events, &project.chords.scales})
-					for (ChordEvent& event : *events)
-						event.position = time::rebase(event.position, base, project.tempo, project.sampleRate);
-				context.emit("chord.changed", chordJson(project));
-			}
-			for (auto& [id, lane] : project.automation)
-				if (lane.track == track.id && !lane.points.empty())
-				{
-					for (auto& [pointId, point] : lane.points)
-						point.position = time::rebase(point.position, base, project.tempo, project.sampleRate);
-					context.emit("automationLane.changed", {{"lane", toJson(lane)}});
-				}
-			track.timeOffset =
-				time::rebase({track.timeBase, track.timeOffset}, base, project.tempo, project.sampleRate).value;
-			// The inactive versions' events and parts are in the track's time base too.
-			for (TrackVersion& version : track.versions)
-			{
-				for (AudioEvent& event : version.audioEvents)
-					event.position = time::rebase(event.position, base, project.tempo, project.sampleRate);
-				for (AudioPart& part : version.audioParts)
-				{
-					const time::Position end = time::rebase({part.position.base, part.position.value + part.length},
-						base, project.tempo, project.sampleRate);
-					part.position = time::rebase(part.position, base, project.tempo, project.sampleRate);
-					part.length = end.value - part.position.value;
-				}
-				for (MidiPart& part : version.midiParts)
-				{
-					const time::Position end = time::rebase(partEnd(part), base, project.tempo, project.sampleRate);
-					part.position = time::rebase(part.position, base, project.tempo, project.sampleRate);
-					part.length = end.value - part.position.value;
-				}
-			}
-			track.timeBase = base;
+			context.emit("arranger.changed", arrangerJson(project));
 		}
+		if (track.type == TrackType::Transpose && !project.transpose.events.empty())
+		{
+			for (TransposeEvent& event : project.transpose.events)
+				event.position = time::rebase(event.position, base, project.tempo, project.sampleRate);
+			context.emit("transpose.changed", transposeJson(project));
+		}
+		if (track.type == TrackType::Chord)
+		{
+			for (std::vector<ChordEvent>* events : {&project.chords.events, &project.chords.scales})
+				for (ChordEvent& event : *events)
+					event.position = time::rebase(event.position, base, project.tempo, project.sampleRate);
+			context.emit("chord.changed", chordJson(project));
+		}
+		for (auto& [id, lane] : project.automation)
+			if (lane.track == track.id && !lane.points.empty())
+			{
+				for (auto& [pointId, point] : lane.points)
+					point.position = time::rebase(point.position, base, project.tempo, project.sampleRate);
+				context.emit("automationLane.changed", {{"lane", toJson(lane)}});
+			}
+		track.timeOffset =
+			time::rebase({track.timeBase, track.timeOffset}, base, project.tempo, project.sampleRate).value;
+		// The inactive versions' events and parts are in the track's time base too.
+		for (TrackVersion& version : track.versions)
+		{
+			for (AudioEvent& event : version.audioEvents)
+				event.position = time::rebase(event.position, base, project.tempo, project.sampleRate);
+			for (AudioPart& part : version.audioParts)
+			{
+				const time::Position end = time::rebase(
+					{part.position.base, part.position.value + part.length}, base, project.tempo, project.sampleRate);
+				part.position = time::rebase(part.position, base, project.tempo, project.sampleRate);
+				part.length = end.value - part.position.value;
+			}
+			for (MidiPart& part : version.midiParts)
+			{
+				const time::Position end = time::rebase(partEnd(part), base, project.tempo, project.sampleRate);
+				part.position = time::rebase(part.position, base, project.tempo, project.sampleRate);
+				part.length = end.value - part.position.value;
+			}
+		}
+		track.timeBase = base;
 	}
 
 	void changeSampleRate(Project& project, double sampleRate, CommandContext& context)
