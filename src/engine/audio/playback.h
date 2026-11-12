@@ -64,16 +64,18 @@ namespace gnubase::engine
 	using PlaylistLayer = std::vector<PlaylistEntry>;
 
 	// What an audio track plays. The first layer is the front: where events overlap, the one with the highest front
-	// (frontOf: the one added last, or brought to the front last) plays. Muted events don't play and hide nothing. The
-	// layers after it hold what plays along with the front where events crossfade: the event that fades out under the
-	// one that fades in, or the one that fades in under the end of the one in front, and events joined to those by
-	// crossfades of their own.
+	// (frontOf: the one added last, or brought to the front last) plays. A muted event plays nothing; whether it hides
+	// what lies behind it follows treatMutedLikeDeleted: treated as deleted, it hides nothing and the event behind it
+	// plays, else it keeps its place in the stack and silences what lies behind it. The layers after the front hold
+	// what plays along with it where events crossfade: the event that fades out under the one that fades in, or the one
+	// that fades in under the end of the one in front, and events joined to those by crossfades of their own.
 	struct Playlist
 	{
 		std::vector<PlaylistLayer> layers;
 	};
 
-	Playlist makePlaylist(const RenderSnapshot& snapshot, const RenderChannel& channel);
+	// treatMutedLikeDeleted is the user setting editing.treatMutedAudioLikeDeleted (reference manual pp. 228, 1597).
+	Playlist makePlaylist(const RenderSnapshot& snapshot, const RenderChannel& channel, bool treatMutedLikeDeleted);
 
 	// Plays the clips of audio tracks from disk streams. Each track has a few voices: disk streams of its clips that
 	// the command thread positions ahead of time ("cueing") wherever playback enters a playlist entry: the cursor

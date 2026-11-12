@@ -24,12 +24,18 @@ own, and works the same on takes and overlapping events put on lanes by hand (`e
   MIDI part on the track at the range's start and end (project samples), as `range.split` does, then brings what
   lies on the lane between them to the front, as `event.toFront` does; one undo step "Comp". A lane with nothing in
   the range is refused, so nothing is split.
+- **Muted takes.** Whether a muted audio event hides what lies behind it is the user setting
+  `editing.treatMutedAudioLikeDeleted` (reference manual p. 1597; p. 228 advises turning it off when assembling
+  stacked takes). On, the default, a muted event is treated as deleted: it plays nothing and covers nothing, so the
+  event behind it plays (`makePlaylist` leaves it out). Off, it keeps its place in the stack: it plays nothing but
+  silences what lies behind it, so a muted take in front keeps covering the takes behind it.
 
 The acceptance test records nothing: it puts two takes of a ramp file on lanes 0 and 1, comps lane 0 from 300 to
 600 samples, renders through the dummy device and finds every sample of the first take in the range and of the
 second around it; undo brings back the second take everywhere, redo the comp (`tests/comping_tests.cpp`, which also
 checks `event.toFront` on audio and MIDI takes, splits, the project file and undo, the stack order of takes copied,
-pasted or brought to the front together, and `lane` on the commands that add events and parts).
+pasted or brought to the front together, `lane` on the commands that add events and parts, and that a muted take in
+front silences the take behind it only with `editing.treatMutedAudioLikeDeleted` off).
 
 ## Event display and track list
 
@@ -45,16 +51,19 @@ pasted or brought to the front together, and `lane` on the commands that add eve
   its lanes, with its automation rows below them.
 - **The comp result.** A track's own lane shows its audio events where none in front of them covers them, with
   their waveforms there, so it shows what plays; clicks there find the event in front. A muted event plays nothing
-  and covers no event that plays, as in `makePlaylist`: it shows, muted, where no other covers it. `EventWaveforms`
-  keeps an event's waves apart by their order, as an event can show on its track's lane and on its own.
+  and, with `editing.treatMutedAudioLikeDeleted` on (the default), covers no event that plays, as in `makePlaylist`:
+  it shows, muted, where no other covers it. With it off, a muted take in front covers what lies behind it and shows
+  muted there. `EventWaveforms` keeps an event's waves apart by their order, as an event can show on its track's lane
+  and on its own.
 - **The comp tool** (`comp`, the toolbar's and the toolbox's Comp, `tool.comp` without a key, after the range
   selection tool, as in the reference's toolbar): a click on a take brings it to the front (`event.toFront`), Shift
   and a click selects it, and a drag on a lane of a track whose lanes show comps the range dragged, its edges
   snapped (`event.comp`), showing it as `.tool-rectangle` while dragging. Its pointer is the OS's arrow.
 
 Tests: `tests/eventediting_tests.cpp` shows a track's lanes, checks that the track's lane shows only the take in
-front and that a muted take covers nothing, brings a take to the front with a click, comps a range with a drag and
-draws parts on lanes; `tests/fileimport_tests.cpp` drops a file on a lane.
+front and that a muted take covers nothing, and covers what lies behind it with `editing.treatMutedAudioLikeDeleted`
+off, brings a take to the front with a click, comps a range with a drag and draws parts on lanes;
+`tests/fileimport_tests.cpp` drops a file on a lane.
 
 ## Not yet
 
@@ -63,5 +72,4 @@ The reference's Show Lanes button among the track controls, and the lanes' own h
 resizing all takes with the same edges, adjusting and gluing splits, auditioning with Ctrl, p. 228) and merging
 adjacent takes of matching material in a comp; To Front and Set to Region in the event context menu and the stacked
 event's handle (p. 226), which needs regions in the pool; Clean Up Lanes, Delete Overlaps, Bounce Selection and
-Create Tracks from Lanes (p. 227); the comp tool in the audio part editor; the Treat Muted Audio Events like Deleted
-preference.
+Create Tracks from Lanes (p. 227); the comp tool in the audio part editor.
