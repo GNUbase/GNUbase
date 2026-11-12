@@ -110,7 +110,8 @@ namespace gnubase::app
 		// Shows the project window in the main window (resources/ui/project.rml), a docking window with the main menu
 		// bar (ui/mainmenu.h) and the track list beside the event display in its main zone, whose commands are key
 		// commands in the focus zone "project". Throws std::runtime_error if the document can't be loaded.
-		// Also displays the project markers and status line.
+		// Also displays the project markers and status line, and opens the Profile Manager if a profile switch is
+		// unfinished (profile.list).
 		ui::EventDisplay& showProject();
 		// The project window's track list, null before showProject.
 		ui::TrackList* trackList() { return m_trackList.get(); }
