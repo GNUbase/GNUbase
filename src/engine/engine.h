@@ -250,6 +250,10 @@ namespace gnubase::engine
 		// For tests: reads the samplers' samples asked for from now on with read instead of processors::sharedSample,
 		// e.g. to hold a read back (AudioEngine::setSampleReader). Any thread.
 		void setSampleReader(std::function<std::shared_ptr<const processors::Sample>(const std::string& path)> read);
+		// For tests: calls hook on a job's thread after each job.progress the job sends, outside every lock, e.g. to
+		// hold the job there until the test ran what must come before the job goes on (tests/testutils/heldjob.h).
+		// Events and commands go on meanwhile, unlike in a Listener that blocks. Empty for none. Any thread.
+		void setJobProgressHook(std::function<void(uint64_t job, const std::string& kind)> hook);
 
 	private:
 		friend class Client;

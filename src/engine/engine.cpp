@@ -364,6 +364,11 @@ namespace gnubase::engine
 		m_audio->setSampleReader(std::move(read));
 	}
 
+	void Engine::setJobProgressHook(std::function<void(uint64_t job, const std::string& kind)> hook)
+	{
+		m_jobs->setProgressHook(std::move(hook));
+	}
+
 	void Engine::readMeters(MeterFrame& frame)
 	{
 		m_audio->readMeters(frame);
