@@ -3,6 +3,7 @@
 #include "engine/document/stripparameters.h"
 #include "engine/processors/builtin.h"
 #include "engine/processors/builtinplugin.h"
+#include "engine/processors/midieffects.h"
 
 #include "engine/graph/graph.h"
 #include "engine/midi/midivalues.h"
@@ -363,6 +364,20 @@ namespace gnubase::engine
 				const double value = set != channel.instrumentParameters.end() ? set->second : parameter.defaultValue;
 				lanes.push_back({{AutomationTargetType::Instrument, parameter.id, 0, 0, 0}, Kind::Instrument,
 					parameter.id, value, parameter.minimum, parameter.maximum, {}});
+			}
+		// The parameters of the MIDI effects in its MIDI insert and send slots, for its sequencer.
+		if (channel.type == TrackType::Midi || channel.type == TrackType::Instrument)
+			for (uint8_t number = 0; number < 2 * midi::g_effectSlots; ++number)
+			{
+				const midi::EffectSlot& slot = (number < midi::g_effectSlots ? channel.midiInserts : channel.midiSends)
+												   .slots[number % midi::g_effectSlots];
+				if (const processors::BuiltinInfo* info = processors::findMidiEffect(slot.effect))
+					for (const processors::ParameterInfo& parameter : info->parameters)
+						lanes.push_back({{AutomationTargetType::MidiEffect, parameter.id, number, 0, 0},
+							Kind::MidiEffect, midi::g_effectEvents + (uint32_t{number} * 256) + parameter.id,
+							parameter.id < slot.parameters.size() ? slot.parameters[parameter.id]
+																  : parameter.defaultValue,
+							parameter.minimum, parameter.maximum, {}});
 			}
 		if (channel.format != ChannelFormat::None)
 			for (const processors::ParameterInfo& parameter : stripParameters())

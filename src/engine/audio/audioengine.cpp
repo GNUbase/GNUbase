@@ -262,10 +262,7 @@ namespace gnubase::engine
 		cue.playsOn = playsOn;
 		m_playback.cue(cue);
 		if (wait)
-		{
 			m_playback.waitUntilBuffered(g_startWait);
-			waitForSamples(g_startWait);
-		}
 	}
 
 	void AudioEngine::startCueing()
@@ -343,9 +340,9 @@ namespace gnubase::engine
 		const audio::MidiBuffer midiIn;
 		audio::MidiBuffer midiOut(g_offlineMidi);
 		uint64_t position = m_device->position();
-		// Every sampler plays its sample from the first block.
-		if (!waitForSamples(g_offlineWait))
-			logging::warning("Rendering before every sampler's sample was read: they may play silence");
+		// Every sampler plays its sample from the first block, however long its file takes to read (#1180).
+		while (!waitForSamples(g_offlineWait))
+			logging::warning("The render still waits for the samplers' samples to be read");
 		for (uint64_t done = 0; done < frames;)
 		{
 			const auto block = static_cast<uint32_t>(std::min<uint64_t>(format.blockSize, frames - done));
@@ -682,9 +679,14 @@ namespace gnubase::engine
 			sequence->controllers = channel.controllers;
 			sequence->modifiers = channel.modifiers;
 			sequence->liveInput = channel.liveInput;
+			sequence->articulations = channel.articulations;
 			sequence->drumInput = channel.drumInput;
 			sequence->inserts = channel.midiInserts;
 			sequence->sends = channel.midiSends;
+			sequence->preNotes = channel.preNotes;
+			for (size_t s = 0; s < channel.midiSendOutputs.size(); ++s)
+				if (const int output = channel.midiSendOutputs[s]; output >= 0)
+					sequence->sendOutputs[s] = snapshot.channels[static_cast<size_t>(output)].id;
 			// An instrument chases the controller events of the MIDI tracks routed to it with its own, so the latest of
 			// each kind wins, whichever track it is on; not those of a track that its mute button mutes (a mute lane's
 			// track it chases, not knowing where the lane mutes). A routed track chases its own into its strip alone
@@ -716,12 +718,13 @@ namespace gnubase::engine
 				if (old != m_instruments.end() && old->second.id == channel.instrument)
 				{
 					instrument = old->second;
+					instrument.sends.clear(); // those that stay come back below
 					// A MIDI track that left can't end its notes here any more: the audio thread ends them when it
 					// starts the new program, after the last block in which the track could still start notes.
 					for (const ObjectId source : instrument.sources)
 						if (from.count(source) == 0)
-							m_releases.push_back(
-								{channel.id, source, instrument.channel, m_sequencers.at(source), generation});
+							m_releases.push_back({channel.id, source, instrument.channel, m_sequencers.at(source),
+								nullptr, 0, generation});
 				}
 				else
 				{
@@ -761,6 +764,39 @@ namespace gnubase::engine
 			if (source >= 0)
 				desc.nodes[static_cast<size_t>(source)].processor = processor;
 		}
+
+		// The MIDI sends to other instrument tracks, in the order of their nodes (graph::describe). A send keeps its
+		// way while it plays to the same instrument; one that goes leaves its notes to end there.
+		size_t sendNode = 0;
+		for (const RenderChannel& channel : snapshot.channels)
+			for (size_t s = 0; s < channel.midiSendOutputs.size(); ++s)
+			{
+				if (channel.midiSendOutputs[s] < 0)
+					continue;
+				while (desc.nodes[sendNode].kind != graph::NodeKind::MidiSend)
+					++sendNode;
+				const ObjectId target = snapshot.channels[static_cast<size_t>(channel.midiSendOutputs[s])].id;
+				Instrument& instrument = instruments.at(target);
+				const std::pair<ObjectId, size_t> key{channel.id, s};
+				const auto old = m_instruments.find(target);
+				std::shared_ptr<MidiSendTap> tap;
+				if (old != m_instruments.end() && old->second.channel == instrument.channel)
+					if (const auto kept = old->second.sends.find(key); kept != old->second.sends.end())
+						tap = kept->second;
+				if (!tap)
+					tap = std::make_shared<MidiSendTap>(sequencers.at(channel.id), s);
+				instrument.sends[key] = tap;
+				desc.nodes[sendNode++].processor = tap;
+			}
+		for (const auto& [id, old] : m_instruments)
+		{
+			const auto now = instruments.find(id);
+			if (now == instruments.end() || now->second.channel != old.channel)
+				continue;
+			for (const auto& [key, tap] : old.sends)
+				if (now->second.sends.count(key) == 0)
+					m_releases.push_back({id, key.first, old.channel, nullptr, tap, key.second, generation});
+		}
 		m_sequencers = std::move(sequencers);
 		m_inputTransformers = std::move(transformers);
 		m_instruments = std::move(instruments);
@@ -768,7 +804,7 @@ namespace gnubase::engine
 		updateSamples();
 	}
 
-	void AudioEngine::updateSamples()
+	std::set<std::string> AudioEngine::updateSamples()
 	{
 		std::set<std::string> waiting;
 		for (auto& entry : m_instruments)
@@ -788,6 +824,7 @@ namespace gnubase::engine
 			}
 		}
 		m_sampleLoader.keepOnly(waiting);
+		return waiting;
 	}
 
 	void AudioEngine::setSampleReader(SampleLoader::Read read)
@@ -797,8 +834,8 @@ namespace gnubase::engine
 
 	bool AudioEngine::waitForSamples(std::chrono::milliseconds timeout)
 	{
-		updateSamples(); // first, so that it waits only for the files that samplers wait for
-		const bool read = m_sampleLoader.waitUntilRead(timeout);
+		// Only for the files that samplers wait for, not for one being read that none wants any more.
+		const bool read = m_sampleLoader.waitUntilRead(timeout, updateSamples());
 		updateSamples();
 		return read;
 	}
@@ -1057,7 +1094,9 @@ namespace gnubase::engine
 		{
 			const auto instrument = m_instruments.find(pending.instrument);
 			return pending.generation <= started || instrument == m_instruments.end() ||
-				instrument->second.channel != pending.channel || instrument->second.sources.count(pending.source) != 0;
+				instrument->second.channel != pending.channel ||
+				(pending.departedSend ? instrument->second.sends.count({pending.source, pending.sendSlot}) != 0
+									  : instrument->second.sources.count(pending.source) != 0);
 		};
 		m_releases.erase(std::remove_if(m_releases.begin(), m_releases.end(), done), m_releases.end());
 
@@ -1065,7 +1104,7 @@ namespace gnubase::engine
 		result.reserve(m_releases.size());
 		for (const PendingRelease& pending : m_releases)
 		{
-			Release release{pending.channel, pending.departed, {}};
+			Release release{pending.channel, pending.departed, pending.departedSend, {}};
 			for (const ObjectId source : m_instruments.at(pending.instrument).sources)
 				release.staying.push_back(m_sequencers.at(source));
 			result.push_back(std::move(release));
@@ -1083,7 +1122,10 @@ namespace gnubase::engine
 		{
 			m_running = program.generation;
 			for (const Release& release : program.releases)
-				release.channel->releaseNotesOf(*release.departed, release.staying);
+				if (release.departedSend)
+					release.channel->releaseNotesOf(*release.departedSend, release.staying);
+				else
+					release.channel->releaseNotesOf(*release.departed, release.staying);
 			for (size_t i = 0; i < program.sequencers.size(); ++i)
 				program.sequencers[i].second->playOn(program.destinations[i]);
 			m_started.store(program.generation, std::memory_order_release);
@@ -1115,9 +1157,12 @@ namespace gnubase::engine
 		for (size_t i = 0; i < program.sequencers.size() && i < program.inputTransformers.size(); ++i)
 			if (const InputTransform& transform = program.inputTransformers[i]; transform.processor)
 				transform.processor->process(program.sequencers[i].second->input(), transform.rules);
-		m_recorder.process(block, m_played, m_recordOffset.load(std::memory_order_relaxed), program.sequencers);
 		transport.tempo = program.tempo.bpmAt(program.tempo.toTicks(transport.position, program.sampleRate));
 		transport.tempoMap = &program.tempo;
+		// The MIDI inserts above the divider play the input before it is recorded.
+		for (const auto& [channel, sequencer] : program.sequencers)
+			sequencer->processInput(block.frames, transport);
+		m_recorder.process(block, m_played, m_recordOffset.load(std::memory_order_relaxed), program.sequencers);
 		program.graph.process(block.frames, transport, m_workers.get());
 		m_tap.capture(block.position, program.instruments);
 		m_playback.endBlock();
@@ -2566,7 +2611,11 @@ namespace gnubase::engine
 			}
 		}
 		if (m_device && !m_transport.playing())
+		{
 			cue(m_transport.startPosition(), false, m_device->format().blockSize, true, m_transport.playStart());
+			// Only starting playback waits for the samplers' samples, not locating or a count-in (#1180).
+			waitForSamples(g_startWait);
+		}
 		sent(m_transport.play());
 	}
 

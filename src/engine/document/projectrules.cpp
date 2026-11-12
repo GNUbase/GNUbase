@@ -988,7 +988,10 @@ namespace gnubase::engine
 		for (size_t i = 0; i < filters.size(); ++i)
 		{
 			const ProjectFilterLine line = filterFromJson(filters[i], "rules.filters[" + std::to_string(i) + "]");
-			depth += line.open - line.close;
+			depth += line.open;
+			if (depth > midi::g_maxLogicalBrackets)
+				throw std::invalid_argument("rules.filters: brackets nest at most 3 deep");
+			depth -= line.close;
 			if (depth < 0)
 				throw std::invalid_argument("rules.filters: a bracket closes that wasn't opened");
 			rules.filters.push_back(line);

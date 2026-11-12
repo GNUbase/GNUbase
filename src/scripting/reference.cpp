@@ -27,6 +27,8 @@ print(version, ok, problem)
 
 - `gnubase.on(name, handler)`: calls `handler(event)` for every event with that name, or `"*"` for all, while the
   script runs commands or waits.
+- `gnubase.off(name, handler)`: unsubscribes a handler that `gnubase.on` registered for that name, such as a UI
+  document's when it closes; the handlers of an event being dispatched still get it.
 - `gnubase.waitFor(name, seconds)`: takes the next event with that name, waiting up to `seconds` (default 10);
   `nil` on timeout.
 - `gnubase.events()`: takes every event that arrived and hasn't been taken.

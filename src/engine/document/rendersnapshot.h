@@ -202,6 +202,12 @@ namespace gnubase::engine
 		midi::Modifiers modifiers;    // MIDI and instrument channels: notes has them applied, live notes get them
 		midi::EffectRack midiInserts; // MIDI and instrument channels: the effects their sequencer runs
 		midi::EffectRack midiSends;
+		// MIDI and instrument channels: where each MIDI send's effect plays, an instrument channel's index, or -1 for
+		// the track's own output.
+		std::array<int, midi::g_effectSlots> midiSendOutputs{-1, -1, -1, -1};
+		// MIDI and instrument channels whose MIDI sends play before modifiers that change notes: the notes of their
+		// parts without the track's MIDI modifiers, sorted as notes; empty otherwise.
+		std::vector<RenderNote> preNotes;
 		// MIDI and instrument channels: the rules of their input transformer's modules that are on, the track's or
 		// the project's, in order; empty for none.
 		std::vector<midi::LogicalRules> inputTransformer;
@@ -209,6 +215,9 @@ namespace gnubase::engine
 		// scales that the notes played into the track move to, the nearest note of the one playing at the transport
 		// position; empty for none.
 		std::vector<LiveHarmony> liveInput;
+		// MIDI and instrument channels: the track's articulation map (#175), whose remote triggers select the sound
+		// slot of the notes played into the track; without slots for none.
+		ArticulationMap articulations;
 		// MIDI and instrument channels with a drum map: what each note played into the track plays, by its pitch (128
 		// of them); empty without one.
 		std::vector<LiveDrumNote> drumInput;
@@ -230,7 +239,7 @@ namespace gnubase::engine
 		bool listen = false; // also plays on the monitoring bus, after its fader (graph::NodeKind::ListenBus)
 		AutoFades autoFades; // audio tracks: their own settings or the project's
 		std::vector<RenderAudioEvent> audioEvents;    // sorted by start
-		std::vector<RenderNote> notes;                // sorted by start, then pitch
+		std::vector<RenderNote> notes;                // sorted by start, key switches first, then pitch
 		std::vector<RenderController> controllers;    // sorted by position
 		std::vector<RenderPart> midiParts;            // sorted by start
 		std::vector<RenderAutomationLane> automation; // in the order of the lanes' ids

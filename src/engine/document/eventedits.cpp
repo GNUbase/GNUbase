@@ -888,13 +888,14 @@ namespace gnubase::engine
 			{
 				if (item.audio != nullptr)
 				{
-					result["audioEvents"].push_back(toJson(*item.audio));
+					result["audioEvents"].push_back(
+						audioEventJson(copy, *item.audio)); // with a warped event's playedLength
 				}
 				else if (item.audioPart != nullptr)
 				{
 					result["audioParts"].push_back(toJson(*item.audioPart));
 					for (const AudioEvent* event : eventsIn(copy, item.audioPart->id))
-						result["audioEvents"].push_back(toJson(*event));
+						result["audioEvents"].push_back(audioEventJson(copy, *event));
 				}
 				else
 				{
@@ -2229,6 +2230,8 @@ namespace gnubase::engine
 				}
 				if (lane->target.type == AutomationTargetType::Instrument)
 					copied.processor = channel.instrument;
+				if (lane->target.type == AutomationTargetType::MidiEffect)
+					copied.processor = midiEffectSlot(channel, lane->target.number).effect;
 				if (!contains(clipboard.tracks, lane->track))
 					clipboard.tracks.push_back(lane->track);
 				clipboard.lanes.push_back(std::move(copied));
@@ -2274,6 +2277,10 @@ namespace gnubase::engine
 			case AutomationTargetType::PitchBend:
 			case AutomationTargetType::ChannelPressure:
 				has = track.type == TrackType::Midi || track.type == TrackType::Instrument;
+				break;
+			case AutomationTargetType::MidiEffect: // the same effect in the same slot
+				has = (track.type == TrackType::Midi || track.type == TrackType::Instrument) &&
+					midiEffectSlot(channel, target.number).effect == copied.processor;
 				break;
 			}
 			return has ? std::optional<AutomationTarget>(target) : std::nullopt;

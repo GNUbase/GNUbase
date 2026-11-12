@@ -110,7 +110,8 @@ namespace gnubase::app
 		// Shows the project window in the main window (resources/ui/project.rml), a docking window with the main menu
 		// bar (ui/mainmenu.h) and the track list beside the event display in its main zone, whose commands are key
 		// commands in the focus zone "project". Throws std::runtime_error if the document can't be loaded.
-		// Also displays the project markers and status line.
+		// Also displays the project markers and status line, and opens the Profile Manager if a profile switch is
+		// unfinished (profile.list).
 		ui::EventDisplay& showProject();
 		// The project window's track list, null before showProject.
 		ui::TrackList* trackList() { return m_trackList.get(); }
@@ -349,6 +350,8 @@ namespace gnubase::app
 		// The articulation map setup (resources/ui/articulation-maps.rml, #175) for a MIDI or instrument track, or with
 		// 0 for the first one selected in the track list, if any.
 		void openArticulationMaps(ui::Window& window, uint64_t track);
+		// Shows why an articulation map's import or export failed in the setup's message, if the setup is open.
+		void showArticulationMapError(const engine::Result& result);
 		// openDialog for a dialog whose Lua keeps its state in a global table, so that there is only one: while open
 		// is open, brings it to the front instead, as it is, and the attributes go unused.
 		Rml::ElementDocument& openOnce(ui::Window& window, const char* name, Rml::ObserverPtr<Rml::Element>& open,

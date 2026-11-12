@@ -215,6 +215,21 @@ TEST_CASE("the event display shows events and the project cursor where the engin
 	CHECK(fixture.left(".project-cursor") == Approx(1000.0).margin(0.5));
 }
 
+TEST_CASE("a warped event ends where its warp ends it", "[unit]")
+{
+	Fixture fixture;
+	fixture.addEvents();
+	const Json project = fixture.call("project.get");
+	const Json clip = project.at("clips").at(0).at("id");
+	// In musical mode at 60 BPM the clip plays twice as fast at the project's 120: its half second takes a quarter.
+	fixture.call("clip.setWarp", {{"clip", clip}, {"musical", true}});
+	fixture.call("clip.setWarp", {{"clip", clip}, {"tempo", 60.0}});
+	REQUIRE(fixture.waitUntil([&fixture] { return fixture.lanes()[0].events[0].length == Approx(0.25); }));
+	CHECK(fixture.lanes()[0].events[0].start == Approx(2.0));
+	fixture.call("project.set", {{"tempo", 60.0}});
+	REQUIRE(fixture.waitUntil([&fixture] { return fixture.lanes()[0].events[0].length == Approx(0.5); }));
+}
+
 namespace
 {
 	// The <waveform> elements over the audio events (#83).

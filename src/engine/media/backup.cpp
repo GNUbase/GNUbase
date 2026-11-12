@@ -278,10 +278,12 @@ namespace gnubase::engine
 
 		// Lists what is in listed, a folder in the Mixdown folder root, into mixdowns, with the folders in it and what
 		// they hold, but not skipped, the backup's own folder, nor links to folders. A folder that can't be listed goes
-		// into missing as {path} and is left out with what it holds; false if that is listed.
+		// into missing as {path, folder: true} and is left out with what it holds, also the folders in it that went
+		// into missing before its listing failed; false if that is listed.
 		bool listMixdowns(const fs::path& root, const fs::path& listed, const fs::path& skipped,
 			std::vector<Mixdown>& mixdowns, Json& missing)
 		{
+			const size_t reported = missing.size();
 			std::error_code error;
 			for (auto entry = fs::directory_iterator(listed, error); !error && entry != fs::directory_iterator();
 				entry.increment(error))
@@ -307,7 +309,10 @@ namespace gnubase::engine
 				}
 			}
 			if (error)
-				missing.push_back({{"path", listed.u8string()}});
+			{
+				missing.erase(missing.begin() + static_cast<std::ptrdiff_t>(reported), missing.end());
+				missing.push_back({{"path", listed.u8string()}, {"folder", true}});
+			}
 			return !error;
 		}
 
