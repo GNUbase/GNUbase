@@ -344,7 +344,7 @@ TEST_CASE("each input of the UI automation runs the shell's input handler once, 
 		std::vector<std::string>& m_happened;
 	} recorder(happened);
 	test::FakeUi fake({{1, "Monitor", {0, 0, 1920, 1080}, {0, 0, 1920, 1080}, 1.0F}});
-	ui::Window& window = fake.shell.open(ui::WindowSpec{});
+	const ui::Window& window = fake.shell.open(ui::WindowSpec{});
 	Rml::ElementDocument* document = window.context().LoadDocumentFromMemory(
 		R"(<rml><head><style>body { width: 100%; height: 100%; }</style></head><body/></rml>)");
 	REQUIRE(document != nullptr);
