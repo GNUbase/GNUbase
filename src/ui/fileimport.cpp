@@ -155,7 +155,9 @@ namespace gnubase::ui
 						import.lane = std::max(m_laneTakes[lane], 0);
 				}
 				else if (type == "midi" || type == "instrument")
+				{
 					import.midiTrack = track;
+				}
 			}
 			startImport(files, std::move(import));
 			return;
