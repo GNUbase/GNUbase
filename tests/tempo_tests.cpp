@@ -504,7 +504,7 @@ TEST_CASE("shared linear copies whose notes retime onto half a tick round alike 
 			.get<ObjectId>();
 	Json notes = Json::array();
 	for (int i = 0; i < 200; ++i)
-		notes.push_back({{"position", 2 + 32000 * i}, {"length", 1000}, {"pitch", 60}, {"velocity", 1.0}});
+		notes.push_back({{"position", 2 + (32000 * i)}, {"length", 1000}, {"pitch", 60}, {"velocity", 1.0}});
 	run(client, "note.add", {{"part", part}, {"notes", notes}});
 	const auto copy = [&client, part](int64_t delta)
 	{
