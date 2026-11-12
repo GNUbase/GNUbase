@@ -220,15 +220,15 @@ automation point on a linear track, a chord, a scale, a linear transpose event a
 the file's end, a linear audio event that ends after it only in the file's tempo, audio events and parts on another
 version of their track and an audio event on a musical track after a file slower than the project, audio events on
 musical tracks that end after the file's end only in the file's tempo (one that starts in the file, one that starts
-before it) and an audio event in musical mode on a linear track that ends after it only in the file's tempo, but not
-for content before the file's end, such as an audio event on a musical track that ends there in the file's tempo,
-also one that ends after it only in the project's, and one in musical mode on a linear track), undo and redo of
-such an import with the project's tempo, signatures and tempo mode, a type 0 file kept in one track, the whole file
-in one part on a new track and on an instrument track at a position and on a linear MIDI track in samples, refusing
-an audio track or `track` without `singlePart`, the first
-patch and volume and pan of channel 1 in a MIDI track's settings while other channels' and later events stay, none on
-instrument tracks, a track of nothing but those kept without a part, and controllers
-in automation lanes with the sustain pedal left in the part, in one undo step. `tests/fileimport_tests.cpp` runs
+before it) and audio events in musical mode on linear tracks that end after it only in the file's tempo (one that starts
+in the file, one that starts before it), but not for content before the file's end, such as an audio event on a musical
+track that ends there in the file's tempo, also one that ends after it only in the project's, and one in musical mode on
+a linear track), undo and redo of such an import with the project's tempo, signatures and tempo mode, a type 0 file kept
+in one track, the whole file in one part on a new track and on an instrument track at a position and on a linear MIDI
+track in samples, refusing an audio track or `track` without `singlePart`, the first patch and volume and pan of channel
+1 in a MIDI track's settings while other channels' and later events stay, none on instrument tracks, a track of nothing
+but those kept without a part, and controllers in automation lanes with the sustain pedal left in the part, in one undo
+step. `tests/fileimport_tests.cpp` runs
 File > Import > MIDI File: Cancel, No at the left locator keeping the project's tempo with Ignore Master Track
 Events on Merge, and Yes into a new project after the unsaved changes question, with the file's tempo; and drops
 MIDI files with the default settings (the part at the drop's bar, the first patch extracted), as a single part on
