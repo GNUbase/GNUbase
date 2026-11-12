@@ -137,8 +137,8 @@ namespace gnubase::ui
 		if (x < 0.0 || y < 0.0 || x > width() || y > height())
 		{
 			import.sample = std::max<int64_t>(m_cursorSample, 0);
-			// On a track's row in the track list, on that track as on its lane (its first), but not on its automation
-			// rows, which are lanes of their own.
+			// On a track's row in the track list, on that track as on its lane, but not on its automation rows, which
+			// are lanes of their own. Beside the lanes of a track whose lanes show, on the lane at the mouse's height.
 			const Rml::Element* row = on != m_root.get() ? event.GetTargetElement() : nullptr;
 			while (
 				row != nullptr && row != on && row->GetTagName() != "listitem" && !row->IsClassSet("automation-rows"))
@@ -148,7 +148,12 @@ namespace gnubase::ui
 				const auto track = static_cast<uint64_t>(row->GetAttribute<double>("value", 0.0));
 				const auto type = row->GetAttribute<Rml::String>("type", "");
 				if (type == "audio")
+				{
 					import.track = track;
+					if (const size_t lane = laneAt(y + m_view.top);
+						lane < m_laneTracks.size() && m_laneTracks[lane] == track && m_laneTypes[lane] == "audio")
+						import.lane = std::max(m_laneTakes[lane], 0);
+				}
 				else if (type == "midi" || type == "instrument")
 					import.midiTrack = track;
 			}
