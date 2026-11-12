@@ -360,6 +360,13 @@ namespace gnubase::engine
 			m_pre->setSequence(std::move(unmodified));
 			sequence->pre = m_pre;
 		}
+		if (sequence->articulations.id != m_mapId || sequence->articulations.slots != m_mapSlots)
+		{
+			m_mapId = sequence->articulations.id;
+			m_mapSlots = sequence->articulations.slots;
+			++m_slotsSerial;
+		}
+		sequence->slotsSerial = m_slotsSerial;
 		sequence->serial = ++m_sequenceSerial;
 		m_sequence.publish(std::move(sequence));
 	}
@@ -589,6 +596,14 @@ namespace gnubase::engine
 		const graph::TransportBlock& transport = context.transport;
 		if (!transport.playing && m_next >= 0) // a stop: the instrument ends what the input held
 			m_inputHeld.fill(false);
+		// Another map, or other slots: the slot selected before isn't the one of that index now, whose on events
+		// didn't go out.
+		if (sequence.slotsSerial != m_inputSlotsSerial)
+		{
+			m_inputSlotsSerial = sequence.slotsSerial;
+			m_inputSlot = -1;
+			m_inputSlotHeld = -1;
+		}
 		for (graph::ProcessEvent event : m_input)
 		{
 			if (triggerSlot(sequence, event, out))
@@ -936,6 +951,9 @@ namespace gnubase::engine
 		if (found == map.slots.end())
 			return false;
 		const auto slot = static_cast<int>(found - map.slots.begin());
+		// A key whose note-on played, before the map came or the key became a trigger: its note-off ends that note.
+		if (event.type == Type::NoteOff && m_inputDown[((event.channel % 16) * 128) + (event.key % 128)])
+			return false;
 		if (event.type == Type::NoteOff)
 		{
 			// Without latch the default slot comes back where the key is released, unless another came since.
