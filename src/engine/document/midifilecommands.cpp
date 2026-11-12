@@ -265,9 +265,13 @@ namespace gnubase::engine
 						extend({time::TimeBase::Musical, end});
 				}
 				else if (linear)
+				{
 					extend({time::TimeBase::Linear, span.end});
+				}
 				else
+				{
 					options.audioEvents.push_back({event.position.value, span.end - span.start});
+				}
 			});
 		for (const auto& [id, marker] : project.markers)
 			extend(marker.end);
