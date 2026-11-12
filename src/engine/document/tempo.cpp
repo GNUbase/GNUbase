@@ -425,7 +425,11 @@ namespace gnubase::engine
 			const double startBefore = before.toTicksExact(startSeconds);
 			const double start = project.tempo.toTicksExact(startSeconds);
 			const auto retime = [&](time::Ticks position) -> time::Ticks
-			{ return std::llround(project.tempo.toTicksExact(before.toSecondsExact(startBefore + position)) - start); };
+			{
+				return std::llround(
+					project.tempo.toTicksExact(before.toSecondsExact(startBefore + static_cast<double>(position))) -
+					start);
+			};
 			bool moved = false;
 			const auto update = [&moved](time::Ticks& value, time::Ticks to)
 			{

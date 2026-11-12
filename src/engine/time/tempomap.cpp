@@ -74,7 +74,7 @@ namespace gnubase::time
 		const double beats = segment.slope == 0.0 || offset < 0.0
 			? offset * segment.bpm / 60.0
 			: segment.bpm / segment.slope * std::expm1(segment.slope * offset / 60.0);
-		return segment.start + (beats * static_cast<double>(g_ticksPerQuarter));
+		return static_cast<double>(segment.start) + (beats * static_cast<double>(g_ticksPerQuarter));
 	}
 
 	Samples TempoMap::toSamples(Ticks tick, double sampleRate) const

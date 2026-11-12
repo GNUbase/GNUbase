@@ -511,7 +511,7 @@ TEST_CASE(
 	// the musical copy's notes don't move at all, so the first step splits the group, and no step may take the copy
 	// off its beat (#865).
 	for (int step = 1; step <= 300; ++step)
-		run(client, "project.set", {{"tempo", 120.0 + 0.0001 * step}});
+		run(client, "project.set", {{"tempo", 120.0 + (0.0001 * step)}});
 	const Json copyAfter = midiPartJson(client, copy);
 	CHECK(copyAfter.at("shared") == 0);
 	CHECK(copyAfter.at("notes").at(0).at("position") == g_ticksPerQuarter);
@@ -564,7 +564,8 @@ TEST_CASE("shared linear copies before and after a tempo event keep their time t
 	// Small steps of 0.0001 BPM at the event: the copy after it keeps its notes' time, so the first step already
 	// retimes it apart from the one before the event and they split, instead of sharing one another's drift (#865).
 	for (int step = 1; step <= 50; ++step)
-		run(client, "tempo.set", {{"events", {{{"position", 8 * g_ticksPerQuarter}, {"bpm", 120.0 + 0.0001 * step}}}}});
+		run(client, "tempo.set",
+			{{"events", {{{"position", 8 * g_ticksPerQuarter}, {"bpm", 120.0 + (0.0001 * step)}}}}});
 	CHECK(midiPartJson(client, part).at("shared") == 0);
 	CHECK(midiPartJson(client, later).at("shared") == 0);
 	CHECK(near(noteTimes(linear), times));
