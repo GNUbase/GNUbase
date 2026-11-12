@@ -18,6 +18,12 @@
 #include <utility>
 #include <vector>
 
+#ifdef _WIN32
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
+
 using Catch::Matchers::ContainsSubstring;
 using namespace gnubase;
 using engine::Json;
@@ -420,4 +426,117 @@ TEST_CASE("the safe start mode's Delete program preferences drops an unfinished 
 	CHECK(!std::filesystem::exists(f.dir.path() / "profile-switch"));
 	f.start();
 	CHECK(f.call("profile.list").at("active") == "Default");
+}
+
+namespace
+{
+	// The folders that the switches and profile.remove put aside to delete them, which are left if that failed.
+	std::vector<std::filesystem::path> removedFolders(const std::filesystem::path& dir)
+	{
+		std::vector<std::filesystem::path> folders;
+		for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(dir))
+			if (entry.path().filename().u8string().rfind("profile-removed-", 0) == 0)
+				folders.push_back(entry.path());
+		return folders;
+	}
+
+	// A folder that something else has open while it lives, as a virus scanner may look at the files just written.
+	// On Windows, a deleted folder stays while it is open where the file system has no POSIX deletes, and no folder
+	// can be made under its name until then (#1284). Elsewhere it does nothing.
+	class OpenFolder
+	{
+	public:
+		explicit OpenFolder(const std::filesystem::path& folder)
+		{
+#ifdef _WIN32
+			m_handle = CreateFileW(folder.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+				nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+			REQUIRE(m_handle != INVALID_HANDLE_VALUE);
+#else
+			REQUIRE(std::filesystem::is_directory(folder));
+#endif
+		}
+		~OpenFolder()
+		{
+#ifdef _WIN32
+			CloseHandle(m_handle);
+#endif
+		}
+		OpenFolder(const OpenFolder&) = delete;
+		OpenFolder& operator=(const OpenFolder&) = delete;
+		OpenFolder(OpenFolder&&) = delete;
+		OpenFolder& operator=(OpenFolder&&) = delete;
+
+	private:
+#ifdef _WIN32
+		HANDLE m_handle = INVALID_HANDLE_VALUE;
+#endif
+	};
+}
+
+TEST_CASE("profiles switch back and forth many times in a row while something has the deleted folders open", "[unit]")
+{
+	namespace fs = std::filesystem;
+	Fixture f;
+	f.setScale(2.0);
+	f.call("profile.duplicate", {{"name", "Default"}, {"newName", "Studio"}});
+	f.setScale(1.5);
+	f.client.reset();
+	f.engine.reset();
+	const fs::path dir = f.dir.path();
+	const std::string defaults = contents(dir / "settings.json");
+	const std::string studio = contents(dir / "profiles" / "Studio" / "settings.json");
+	REQUIRE(defaults != studio);
+	// Each switch deletes the next profile's folder, and the one after makes it again under that name, while the
+	// folder is still open.
+	std::unique_ptr<OpenFolder> open;
+	for (int round = 0; round < 100; ++round)
+	{
+		INFO("round " << round);
+		const bool toStudio = round % 2 == 0;
+		const std::string active = toStudio ? "Default" : "Studio";
+		const std::string next = toStudio ? "Studio" : "Default";
+		auto opened = std::make_unique<OpenFolder>(dir / "profiles" / next);
+		std::ofstream(dir / "profiles.json") << Json{{"active", active}, {"next", next}}.dump();
+		engine::settings::switchProfile(dir);
+		open = std::move(opened); // the one before stays open until this switch made its folder again
+		REQUIRE(Json::parse(contents(dir / "profiles.json")) == Json{{"active", next}, {"next", ""}});
+		REQUIRE(contents(dir / "settings.json") == (toStudio ? studio : defaults));
+		REQUIRE(contents(dir / "profiles" / active / "settings.json") == (toStudio ? defaults : studio));
+		REQUIRE(!fs::exists(dir / "profiles" / next));
+		REQUIRE(!fs::exists(dir / "profile-switch"));
+	}
+	open.reset();
+	f.start();
+	CHECK(f.call("profile.list").at("active") == "Default");
+	CHECK(f.scale() == 1.5);
+	CHECK(removedFolders(dir).empty());
+}
+
+TEST_CASE("a deleted profile can be added again under its name at once while its folder is still open", "[unit]")
+{
+	const Fixture f;
+	f.call("profile.add", {{"name", "Studio"}});
+	{
+		const OpenFolder open(f.dir.path() / "profiles" / "Studio");
+		f.call("profile.remove", {{"name", "Studio"}});
+		f.call("profile.add", {{"name", "Studio"}});
+	}
+	CHECK(f.names() == std::vector<std::string>{"Default", "Studio"});
+	CHECK(std::filesystem::is_directory(f.dir.path() / "profiles" / "Studio"));
+}
+
+TEST_CASE("what is left of a profile folder that couldn't be deleted goes at the next start", "[unit]")
+{
+	namespace fs = std::filesystem;
+	Fixture f;
+	f.setScale(1.5);
+	const fs::path left = f.dir.path() / "profile-removed-0123456789abcdef";
+	fs::create_directories(left / "folder");
+	std::ofstream(left / "settings.json") << "{}";
+	std::ofstream(f.dir.path() / "profile-removed-0000000000000001").close();
+	f.start();
+	CHECK(removedFolders(f.dir.path()).empty());
+	CHECK(f.scale() == 1.5);
+	CHECK(f.names() == std::vector<std::string>{"Default"});
 }

@@ -29,6 +29,11 @@ track presets and templates (p. 1579).
   active profile can't be renamed, as the next start would take its files in `profile-switch` for another profile's.
   The safe start mode's Delete program preferences drops `profile-switch` with the pending switch. A chosen profile
   whose folder the file system takes for the active profile's (see Names) isn't switched to.
+- **Deleting folders.** A folder that a switch or `profile.remove` deletes (the next profile's, `profile-switch`, a
+  deleted profile's) first gets a name of its own in the settings folder, `profile-removed-<16 hex digits>`, which
+  frees its name at once (#1284). Where a deleted folder stays while something such as a virus scanner still has it
+  open (Windows, on file systems without POSIX deletes), no folder could be made under its name meanwhile, so the next
+  switch, which makes it again, would fail. What of it can't be deleted goes at the next start.
 - **Names** are folder names on every OS: 1 to 100 characters, none of `< > : " / \ | ? *`, not ending with a dot or a
   space, and not a name that Windows keeps for devices (CON, CONIN$, CONOUT$, PRN, AUX, NUL, COM1 to COM9, LPT1 to
   LPT9 and COM¹ to COM³, LPT¹ to LPT³ with superscript digits, also with an extension). Since the folders aren't case-sensitive on Windows and macOS, a name that differs from another profile's
