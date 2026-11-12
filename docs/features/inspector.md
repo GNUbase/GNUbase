@@ -190,5 +190,6 @@ which is in the project window's document, doesn't open, waits for #517.
   them. A drag of the
   inspector's volume up to the project's maximum, wheel turns on the pan and a drag of the info line's volume are one
   undo step each, and a MIDI modifier and a part's transpose dragged back to where they started while the engine
-  answers late end there.
+  answers late end there. The info line's volume step that the engine refuses, one of the two selected events being
+  gone, shows in the command log, leaves no undo step and shows the engine's value again.
 - `tests/mixerwindow_tests.cpp`: a drag of a mixer fader is one undo step.

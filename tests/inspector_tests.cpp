@@ -1124,6 +1124,50 @@ TEST_CASE("the info line's volume turned or dragged while the engine answers lat
 	CHECK(window.historyPosition() == position + 1);
 }
 
+TEST_CASE("the info line's refused volume step shows the engine's value again", "[ui]")
+{
+	Window window;
+	const uint64_t audio = window.addTrack({{"type", "audio"}, {"timeBase", "linear"}});
+	const Json media =
+		window.call("media.add", {{"path", "take.wav"}, {"sampleRate", 48000}, {"channels", 1}, {"length", 480000}})
+			.at("media");
+	const Json clip = window.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	const auto addEvent = [&](int64_t at)
+	{
+		return window
+			.call("audioEvent.add", {{"track", audio}, {"clip", clip.at("id")}, {"position", at}, {"length", 24000}})
+			.at("event")
+			.at("id")
+			.get<uint64_t>();
+	};
+	const uint64_t first = addEvent(96000);
+	const uint64_t second = addEvent(192000);
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("audioEvents").size() == 2; }));
+	window.display.select({first, second});
+	REQUIRE(window.shows("#info-line textdisplay[field=name]", "take"));
+	const std::string field = "#info-line valuefield[field=volume]";
+	REQUIRE(window.shows(field, "0"));
+	const int64_t position = window.historyPosition();
+
+	// Two wheel turns: the first step goes, the second waits for its answer. Removing one of the events in between
+	// makes the engine refuse the second step: it changes an event that is gone.
+	window.app.ui().wheel(std::nullopt, {field, 0, std::nullopt}, 0.0F, 1.0F);
+	window.app.ui().wheel(std::nullopt, {field, 0, std::nullopt}, 0.0F, 1.0F);
+	window.call("audioEvent.remove", {{"event", second}});
+	REQUIRE(window.app.waitUntil(
+		[&]
+		{
+			const Json commands = window.call("engine.commandLog").at("commands");
+			return std::any_of(commands.begin(), commands.end(), [](const Json& command)
+				{ return command.at("command") == "history.transaction" && command.contains("error"); });
+		}));
+	// The refused step shows the events as they are again (m_loads = 0): the field shows the engine's volume, what
+	// the first turn took the event that is left to, not the refused second turn's.
+	CHECK(window.shows(field, "-0.5"));
+	CHECK(window.find("audioEvents", first).at("volume") == -0.5);
+	CHECK(window.historyPosition() == position + 2); // the gesture's step and the removal; the refused one left none
+}
+
 TEST_CASE("the inspector shows the channel as it is when a change is refused", "[ui]")
 {
 	Window window;

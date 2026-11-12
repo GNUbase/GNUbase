@@ -103,7 +103,10 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   the info line's) and turn the wheel while the engine answers late (`test::LateDrag`, `test::lateSteps` in
   `tests/uiapp.h`): the control never goes back toward an earlier step, and the engine and the control agree at the end;
   while a control moves faster than the engine answers, the other mixers and the inspector that show its channel follow
-  its steps. One test changes the transport through MCP and checks a document shows it, then clicks the document's
+  its steps. A mixer step and an info line volume step that the engine refuses, its track or one of the selected
+  events being gone, show in the command log, leave no undo step and let the control show the engine's value again; a
+  strip made again while its fader's step is in flight shows the engine's volume at once, not the widget's default.
+  One test changes the transport through MCP and checks a document shows it, then clicks the document's
   button and finds the command in `engine.commandLog`, sent by `ui`. Two more check drawing without input: a watched
   value draws its own window in the step it changed in, and no other window; events from MCP, results (a command's
   `done` or an `onResult` handler) and posted work draw every window once in the step they reach handlers, events or
