@@ -2231,6 +2231,59 @@ TEST_CASE("merge and bounce keep the parts' root key and Global Transpose settin
 		CHECK(storedPitches(part) == std::vector<int>{58, 59, 62, 62});
 	}
 
+	// Where a drum map or the chord track maps a note before the transpose and the global transposition, the notes
+	// can't hold them: each transpose and each root key and Global Transpose setting keeps a part of its own, which
+	// holds it, so that everything plays as before.
+	const auto bounceTwoSettings = [&](const Json& bounced)
+	{
+		REQUIRE(bounced.at("parts").size() == 2);
+		std::vector<std::pair<std::string, std::vector<int>>> made;
+		const Json project = run(client, "project.get");
+		for (const Json& id : bounced.at("parts"))
+			for (const Json& part : project.at("midiParts"))
+				if (part.at("id") == id)
+				{
+					CHECK(part.at("transpose") == 2);
+					made.emplace_back(part.at("rootKey").get<std::string>(), storedPitches(part));
+				}
+		std::sort(made.begin(), made.end());
+		CHECK(made == std::vector<std::pair<std::string, std::vector<int>>>{{"D", {60, 64, 64}}, {"F", {62}}});
+	};
+	const auto rootKeysOnTwoParts = [&](ObjectId second)
+	{
+		run(client, "midiPart.set", {{"part", fixture.part}, {"transpose", 2}});
+		run(client, "midiPart.set", {{"part", second}, {"transpose", 2}});
+		run(client, "project.set", {{"rootKey", "C"}});
+		run(client, "midiPart.set", {{"part", fixture.part}, {"rootKey", "D"}}); // plays 2 semitones lower
+		run(client, "midiPart.set", {{"part", second}, {"rootKey", "F"}});       // plays 5 semitones lower
+	};
+
+	SECTION("a bounced chord-following track keeps a part for each root key, as the notes can't hold the difference")
+	{
+		const ObjectId second = addOther(track, 8 * g_quarter, 62);
+		followChords(client, track);
+		rootKeysOnTwoParts(second);
+		const auto before = playedOn(fixture.engine, track);
+		REQUIRE(before ==
+			std::vector<std::vector<int64_t>>{{0, 65, 0}, {24000, 69, 0}, {24000, 69, 0}, {int64_t{8} * 24000, 62, 0}});
+		bounceTwoSettings(run(client, "midi.bounce", {{"parts", {fixture.part, second}}}));
+		CHECK(playedOn(fixture.engine, track) == before);
+	}
+
+	SECTION("a bounced drum map keeps a part for each root key, with the sounds' channels")
+	{
+		const ObjectId second = addOther(track, 8 * g_quarter, 62);
+		useDrumMap(client, track,
+			{{{"pitch", 60}, {"oNote", 30}}, {{"pitch", 62}, {"oNote", 90}, {"channel", 3}},
+				{{"pitch", 64}, {"oNote", 34}}, {{"pitch", 66}, {"oNote", 80}}});
+		rootKeysOnTwoParts(second);
+		const auto before = playedOn(fixture.engine, track);
+		REQUIRE(before ==
+			std::vector<std::vector<int64_t>>{{0, 30, 0}, {24000, 34, 0}, {24000, 34, 0}, {int64_t{8} * 24000, 87, 3}});
+		bounceTwoSettings(run(client, "midi.bounce", {{"parts", {fixture.part, second}}}));
+		CHECK(playedOn(fixture.engine, track) == before);
+	}
+
 	SECTION("merged parts with different root keys play their difference into the notes")
 	{
 		const ObjectId other = addInstrumentTrack(client);

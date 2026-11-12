@@ -817,10 +817,9 @@ namespace gnubase::engine::midi
 		};
 
 		// The parts, none muted, as one new part from the first one's start to the last one's end, on the lowest of
-		// their lanes. intoNotes: their transpose goes into the notes; otherwise they share it and the new part has it.
-		// The new part gets the settings' root key and Global Transpose setting; where a part's global transposition
-		// differs from it, the difference goes into its notes' pitches, so that they keep the pitches they played with
-		// (#954).
+		// their lanes, with the settings' root key and Global Transpose setting. intoNotes: their transpose and the
+		// difference each part's global transposition makes to the settings go into the notes, so that they keep the
+		// pitches they played with (#954); otherwise the parts share the settings and the new part has them.
 		MidiPart combine(Project& project, const std::vector<ObjectId>& parts, const TrackPitches& pitches,
 			bool intoNotes, const MidiPart& settings)
 		{
@@ -872,18 +871,7 @@ namespace gnubase::engine::midi
 					copy.length =
 						std::min(combinedStart + copy.position + note.length, partTo) - (combinedStart + copy.position);
 					if (intoNotes && !silent)
-					{
 						copy.pitch = static_cast<uint8_t>(note.pitch + fold);
-					}
-					else if (difference != 0 && !silent)
-					{
-						// The transpose stays on the part, which the track maps its notes through before it: only the
-						// difference goes into the notes, as a pitch that plays what played, where one does.
-						const int target = pitches.played(note.pitch, at) + difference;
-						if (target >= 0 && target <= 127)
-							copy.pitch = static_cast<uint8_t>(pitches.stored(
-								target, pitches.channel(note.pitch, note.channel), at, note.pitch + difference));
-					}
 					if (part.velocity != 0)
 					{
 						// As playback shifts it: in MIDI 1.0 velocities, a note-on staying at least 1.
@@ -1316,8 +1304,6 @@ namespace gnubase::engine::midi
 			for (const ObjectId id : playing)
 				sources.push_back(&project.midiParts.at(id));
 			const MidiPart settings = sharedTransposeSettings(project, sources);
-			// A drum map or the chord track maps a note before its part's transpose and the global transposition,
-			// which the notes' pitches can't always hold: then each transpose keeps a part of its own.
 			const TrackPitches pitches(project, project.midiParts.at(playing.front()).track);
 			const bool intoNotes = std::all_of(playing.begin(), playing.end(),
 				[&](ObjectId id)
@@ -1336,11 +1322,30 @@ namespace gnubase::engine::midi
 							return fold == 0 || pitches.transposesInNote(note.second, fold, at);
 						});
 				});
-			std::map<int, std::vector<ObjectId>> groups;
-			for (const ObjectId id : playing)
-				groups[intoNotes ? 0 : project.midiParts.at(id).transpose].push_back(id);
-			for (const auto& [transpose, group] : groups)
-				combined.push_back(combine(project, group, pitches, intoNotes, settings));
+			if (intoNotes)
+			{
+				combined.push_back(combine(project, playing, pitches, true, settings));
+			}
+			else
+			{
+				// A drum map or the chord track maps a note before its part's transpose and the global transposition,
+				// which the notes' pitches can't always hold: then each transpose keeps a part of its own, and so does
+				// each root key and Global Transpose setting (#954), which its part keeps, so that nothing has to go
+				// into the notes and everything plays as before.
+				std::map<std::tuple<int, int, bool>, std::vector<ObjectId>> groups;
+				for (const ObjectId id : playing)
+				{
+					const MidiPart& part = project.midiParts.at(id);
+					groups[{part.transpose, part.rootKey, part.independent}].push_back(id);
+				}
+				for (const auto& [key, group] : groups)
+				{
+					MidiPart groupSettings;
+					groupSettings.rootKey = std::get<1>(key);
+					groupSettings.independent = std::get<2>(key);
+					combined.push_back(combine(project, group, pitches, false, groupSettings));
+				}
+			}
 		}
 		for (const ObjectId id : changes.removedParts)
 			project.midiParts.erase(id);
