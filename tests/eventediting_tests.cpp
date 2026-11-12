@@ -659,6 +659,91 @@ TEST_CASE("Ctrl and a click adds to the selection also where Ctrl is a drag's to
 	CHECK(f.parts().size() == 1);
 }
 
+TEST_CASE("a Ctrl or Shift press that is also a drag's tool modifier leaves the selection alone until the drag starts",
+	"[unit]")
+{
+	Fixture f;
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	clock->freeze(true); // RmlUi's time stands still but for advance()
+	const std::shared_ptr<void> thaw(nullptr, [clock](void*) { clock->freeze(false); });
+	const auto shown = [&f]
+	{ return f.document.GetElementById("display")->GetAttribute<std::string>("selection", ""); };
+	f.click(150, 60);
+	REQUIRE(f.display.selection() == std::vector<uint64_t>{f.part});
+	clock->advance(1.0); // no double click with the next press
+	SECTION("Shift as Copy: held on the event that isn't selected, then a click and a drag")
+	{
+		f.call("settings.set", {{"key", "ui.toolModifiers"}, {"value", {{"dragDrop.copy", "shift"}}}});
+		f.step();
+		f.automation.press(std::nullopt, f.at(225, 20), ui::MouseButton::Left, {"shift"});
+		f.step();
+		CHECK(f.display.selection() == std::vector<uint64_t>{f.part});
+		CHECK(shown() == std::to_string(f.part));
+		f.automation.release(std::nullopt, f.at(225, 20), ui::MouseButton::Left, {"shift"});
+		f.step();
+		CHECK(f.display.selection() == std::vector<uint64_t>{f.event, f.part});
+		clock->advance(1.0);
+		f.click(225, 20, {"shift"});
+		CHECK(f.display.selection() == std::vector<uint64_t>{f.part});
+		// A drag copies only the event pressed.
+		f.drag(225, 20, 425, 20, {"shift"});
+		REQUIRE(f.waitUntil([&f] { return f.audioEvents().size() == 2; }));
+		CHECK(f.parts().size() == 1);
+	}
+	SECTION("Ctrl as Copy: moved past the drag threshold, released before the drag delay, is a click")
+	{
+		f.call("settings.set", {{"key", "ui.toolModifiers"}, {"value", {{"dragDrop.copy", "ctrl"}}}});
+		f.step();
+		f.automation.press(std::nullopt, f.at(225, 20), ui::MouseButton::Left, {"ctrl"});
+		f.automation.move(std::nullopt, f.at(245, 20), {"ctrl"});
+		f.step();
+		CHECK(f.display.selection() == std::vector<uint64_t>{f.part});
+		f.automation.release(std::nullopt, f.at(245, 20), ui::MouseButton::Left, {"ctrl"});
+		f.step();
+		CHECK(f.display.selection() == std::vector<uint64_t>{f.event, f.part});
+		f.run("edit.mute"); // after a copy, if the release had sent one
+		REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("mute") == true; }));
+		CHECK(f.audioEvents().size() == 1);
+	}
+	SECTION("Ctrl as Copy: moved past the drag threshold, released after the drag delay without a move since, copies")
+	{
+		f.call("settings.set", {{"key", "ui.toolModifiers"}, {"value", {{"dragDrop.copy", "ctrl"}}}});
+		f.step();
+		f.automation.press(std::nullopt, f.at(225, 20), ui::MouseButton::Left, {"ctrl"});
+		f.automation.move(std::nullopt, f.at(425, 20), {"ctrl"});
+		f.step();
+		clock->advance(1.0);
+		f.automation.release(std::nullopt, f.at(425, 20), ui::MouseButton::Left, {"ctrl"});
+		f.step();
+		// Only the event pressed is copied, not the part selected before.
+		REQUIRE(f.waitUntil([&f] { return f.audioEvents().size() == 2; }));
+		CHECK(f.parts().size() == 1);
+	}
+	SECTION("Ctrl as Copy: the release selects no event that went while the button was held")
+	{
+		f.call("settings.set", {{"key", "ui.toolModifiers"}, {"value", {{"dragDrop.copy", "ctrl"}}}});
+		f.step();
+		f.automation.press(std::nullopt, f.at(225, 20), ui::MouseButton::Left, {"ctrl"});
+		f.step();
+		f.call("event.remove", {{"events", {f.part}}});
+		REQUIRE(f.waitUntil([&f] { return f.lanes("events")[1].events.empty(); }));
+		f.automation.release(std::nullopt, f.at(225, 20), ui::MouseButton::Left, {"ctrl"});
+		f.step();
+		CHECK(f.display.selection() == std::vector<uint64_t>{f.event});
+		// The pressed event itself going: the release doesn't select it.
+		clock->advance(1.0);
+		f.click(150, 0); // nothing there
+		f.automation.press(std::nullopt, f.at(225, 20), ui::MouseButton::Left, {"ctrl"});
+		f.step();
+		f.call("event.remove", {{"events", {f.event}}});
+		REQUIRE(f.waitUntil([&f] { return f.lanes("events")[0].events.empty(); }));
+		f.automation.release(std::nullopt, f.at(225, 20), ui::MouseButton::Left, {"ctrl"});
+		f.step();
+		CHECK(f.display.selection().empty());
+	}
+}
+
 TEST_CASE("a double click on an audio event opens it in the sample editor, on an audio part in its editor", "[unit]")
 {
 	Fixture f;

@@ -642,7 +642,7 @@ namespace gnubase::ui
 		m_dragMoved = false;
 		m_dragStarted = false;
 		m_dragToggles = false;
-		m_clickSelection.reset();
+		m_clickToggles = false;
 		m_pressTime = now();
 		m_dragDx = 0.0;
 		m_dragLanes = 0;
@@ -679,8 +679,8 @@ namespace gnubase::ui
 		const bool atStart = edge < 0;
 		const bool atEnd = edge > 0;
 		// The tool modifiers for a press on an event (Set Cursor Position, Split Event, Copy, Shared Copy, and Disable
-		// Snapping at an edge) act on it rather than adding it to the selection, whatever keys they are set to; so
-		// does a copy's with Ctrl, a restricted copy.
+		// Snapping at an edge) act on it, whatever keys they are set to; so does a copy's with Ctrl, a restricted
+		// copy. A drag's tool modifiers that are Ctrl or Shift do so only when the press becomes a drag (#474).
 		const bool clickModifier = modifiers("select.setCursorPosition") || modifiers("select.splitEvent");
 		const bool toolModifier = clickModifier || copyKeys(m_pressed) || copyKeys(withoutCtrl(m_pressed)) ||
 			((atStart || atEnd) && modifiers("sizeObjects.disableSnapping"));
@@ -705,17 +705,10 @@ namespace gnubase::ui
 			return;
 		}
 		// Keys that are Ctrl or Shift and only a drag's tool modifier: released without a drag, the press adds the
-		// event to the selection or takes it out, as without them (#474).
-		if (add && !clickModifier)
-		{
-			std::vector<uint64_t> events = m_selection;
-			if (selected)
-				events.erase(std::remove(events.begin(), events.end(), shown->id), events.end());
-			else
-				events.push_back(shown->id);
-			m_clickSelection = std::move(events);
-		}
-		if (!selected)
+		// event to the selection or takes it out, as without them (#474). Until the drag starts the selection stays
+		// as it is (narrowToPressed).
+		m_clickToggles = add && !clickModifier;
+		if (!selected && !m_clickToggles)
 			select({shown->id});
 		if (atStart)
 			m_drag = Drag::ResizeStart;
@@ -803,6 +796,7 @@ namespace gnubase::ui
 			// The selection shows the size the release gives it, with the keys held now (#732).
 			m_pressed = modifiersOf(event);
 			m_resizeDx = dx;
+			narrowToPressed();
 			previewResize(resizeParameters(dx, m_drag));
 			return;
 		}
@@ -815,6 +809,7 @@ namespace gnubase::ui
 		if (!m_dragStarted && now() - m_pressTime < g_dragDelay)
 			return;
 		m_dragStarted = true;
+		narrowToPressed();
 		const std::pair<double, double> shift = restricted(dx, dy, constrained);
 		const bool vertical = constrained && shift.first == 0.0;
 		const auto moved = moveShift(vertical ? 0.0 : shift.first);
@@ -824,6 +819,15 @@ namespace gnubase::ui
 			: std::nullopt;
 		m_dragLanes = laneShift(shift.second);
 		setLanes();
+	}
+
+	// A press that left the selection as it was for a click (m_clickToggles) drags the pressed event, as a press
+	// without the keys does, unless it is selected (#1018).
+	void EventDisplay::narrowToPressed()
+	{
+		if (std::exchange(m_clickToggles, false) &&
+			!std::binary_search(m_selection.begin(), m_selection.end(), m_dragEvent))
+			selectWhere([this](const Shown& shown) { return shown.id == m_dragEvent; });
 	}
 
 	// Ctrl (Cmd) keeps a drag across or up and down, whichever it went further (reference manual pp. 256, 271).
@@ -920,7 +924,10 @@ namespace gnubase::ui
 		const bool moved = std::exchange(m_dragMoved, false);
 		const bool started = std::exchange(m_dragStarted, false) || now() - m_pressTime >= g_dragDelay;
 		const bool toggles = std::exchange(m_dragToggles, false);
-		std::optional<std::vector<uint64_t>> clicked = std::exchange(m_clickSelection, std::nullopt);
+		// A drag released after the drag delay with no move since: it moves the pressed event, as areaMove would.
+		if (drag == Drag::Events && moved && started)
+			narrowToPressed();
+		const bool clicked = std::exchange(m_clickToggles, false);
 		m_drag = Drag::None;
 		m_dragDx = 0.0;
 		m_dragLanes = 0;
@@ -935,7 +942,15 @@ namespace gnubase::ui
 		}
 		if (clicked && (!moved || (drag == Drag::Events && !started)))
 		{
-			select(std::move(*clicked));
+			// From the selection as it is now, of the events still there (#1018).
+			const bool selected = std::binary_search(m_selection.begin(), m_selection.end(), m_dragEvent);
+			selectWhere(
+				[this, selected](const Shown& shown)
+				{
+					return shown.id == m_dragEvent
+						? !selected
+						: std::binary_search(m_selection.begin(), m_selection.end(), shown.id);
+				});
 			return;
 		}
 		if (!moved)
