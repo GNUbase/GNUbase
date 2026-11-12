@@ -611,14 +611,19 @@ namespace gnubase::engine
 				right.length -= frames;
 				right.fadeIn = Fade();
 				right.crossfade = Crossfade();
-				// The piece of a quantized event after the split was as far from its own original as the split is
-				// from where quantizing put the event, so that resetting puts both pieces back (#910). An origin
-				// that has stopped counting, of an event moved by other means since, doesn't come along.
+				// The piece of a quantized event after the split was as far from its own original, in samples, as
+				// the split is from where quantizing put the event, so that resetting puts both pieces back
+				// (#910). It goes through samples: a musical event's position is in ticks, but its audio keeps its
+				// length in samples (#414), so how many ticks the piece lies after the start depends on the tempo
+				// there, which quantizing can have moved the event past. An origin that has stopped counting, of an
+				// event moved by other means since, doesn't come along.
 				if (right.quantizeOrigin && right.quantizeOrigin->quantized == event.position)
 				{
-					const int64_t moved = right.quantizeOrigin->quantized.value - right.quantizeOrigin->original.value;
+					const time::Samples original =
+						samples(project, right.quantizeOrigin->original) + (at - samples(project, event.position));
 					right.quantizeOrigin->quantized = right.position;
-					right.quantizeOrigin->original = {right.position.base, right.position.value - moved};
+					right.quantizeOrigin->original =
+						rebased(project, {time::TimeBase::Linear, original}, event.position.base);
 				}
 				else
 				{

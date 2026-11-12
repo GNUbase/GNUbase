@@ -98,14 +98,14 @@ namespace
 		ObjectId event = 0;
 	};
 
-	// The audio as a clip, and an event of it at position on a new linear audio track.
+	// The audio as a clip, and an event of it at position, in the track's time base, on a new audio track.
 	Loop addLoop(engine::Client& client, const test::TempDir& dir, const std::string& name, const test::Audio& audio,
-		int64_t position = 0)
+		int64_t position = 0, const std::string& timeBase = "linear")
 	{
 		const std::string file = (dir.path() / (name + ".wav")).u8string();
 		test::writeWav(file, audio);
 		Loop loop;
-		loop.track = run(client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}, {"channels", 1}})
+		loop.track = run(client, "track.add", {{"type", "audio"}, {"timeBase", timeBase}, {"channels", 1}})
 						 .at("track")
 						 .at("id")
 						 .get<ObjectId>();
@@ -286,6 +286,41 @@ TEST_CASE("splitting a quantized audio event keeps both pieces resettable", "[in
 	CHECK(positionOf(client, loop.event) == 2000);
 	CHECK(positionOf(client, right) == 14000);
 	CHECK(eventsOn(client, loop.track) == std::vector<std::vector<int64_t>>{{2000, 0, 12000}, {14000, 12000, 84000}});
+}
+
+TEST_CASE("splitting a quantized audio event of a musical track keeps both pieces resettable", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	// A musical track whose tempo halves at quarter 1. A piece's position is in ticks, but its audio keeps its length
+	// in samples (#414), so how far the piece after a split lies from the event's start depends on the tempo there:
+	// the origin has to be worked out through samples, not through the ticks quantizing moved the event by.
+	run(client, "project.set", {{"tempoTrackActive", true}});
+	run(client, "tempo.add", {{"position", time::g_ticksPerQuarter}, {"bpm", 60.0}, {"ramp", false}});
+	run(client, "quantize.set", {{"preset", "1/4"}});
+	const int64_t quarter = time::g_ticksPerQuarter;
+	const int64_t original = (6 * quarter) / 10;        // 0.6 quarter, sample 14400
+	const int64_t split = (1625 * quarter) / 1000;      // 1.625 quarters, sample 54000
+	const int64_t afterSplit = (1425 * quarter) / 1000; // 1.425 quarters, sample 44400
+	// The event starts at 0.6 quarter and quantizing takes it to quarter 1, sample 24000.
+	const Loop loop = addLoop(client, dir, "loop", clicks({1000}, 4 * g_quarter), original, "musical");
+	run(client, "quantize.apply", {{"events", {loop.event}}});
+	REQUIRE(positionOf(client, loop.event) == quarter);
+
+	// Split 30000 samples in: the piece after it was 30000 samples after the event's original start.
+	const Json pieces = run(client, "event.split", {{"events", {loop.event}}, {"positions", {54000}}}).at("events");
+	REQUIRE(pieces.size() == 1);
+	const auto right = pieces.at(0).get<ObjectId>();
+	CHECK(byId(client, "audioEvents", right).at("quantizeOrigin") ==
+		Json({{"original", afterSplit}, {"quantized", split}}));
+
+	run(client, "quantize.reset", {{"events", {loop.event, right}}});
+	CHECK(positionOf(client, loop.event) == original);
+	CHECK(positionOf(client, right) == afterSplit);
+	// The pieces tile again: the first plays samples 14400 to 44400, the second 44400 to 110400.
+	CHECK(eventsOn(client, loop.track) ==
+		std::vector<std::vector<int64_t>>{{original, 0, 30000}, {afterSplit, 30000, 66000}});
 }
 
 TEST_CASE("Warp quantizing aligns warp markers with the grid by time stretch", "[integration]")

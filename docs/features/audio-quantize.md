@@ -15,8 +15,11 @@ seeded by the position, not the event, so events at the same place move alike. L
 As with notes, an event keeps where it was before it was first quantized and where quantizing put it
 (`AudioEvent::quantizeOrigin`, saved in `gnubase.json`): quantizing again starts from the original unless it is soft,
 and `quantize.reset` puts it back. An event moved by other means since is where it is, and its origin no longer counts.
-Splitting a quantized event (`event.split`) gives the piece after the split an origin of its own, shifted by the split,
-so that resetting puts both pieces back where they were; a piece of an event moved by other means since keeps none.
+Splitting a quantized event (`event.split`) gives the piece after the split an origin of its own, so that resetting
+puts both pieces back where they were and they tile again: it was as far from its original, in samples, as the split is
+from where quantizing put the event. It goes through samples because a musical event's position is in ticks while its
+audio keeps its length in samples, so the tempo between the two counts. A piece of an event moved by other means since
+keeps no origin.
 `src/engine/document/audioquantize.cpp` has the functions; the commands stay in `midi/quantizecommands.cpp`.
 
 ## Warp quantizing
@@ -83,7 +86,8 @@ the Edit menu (`event.fromHitpoints` with `groove` makes it).
 
 `tests/audioquantize_tests.cpp`: event starts and snap points to the grid, strength, soft quantizing, reset, events
 moved since, audio parts, locked events, the catch range, errors and the origin saved with the project; splitting a
-quantized event and resetting both pieces; warp quantizing a loop played on eighths with a quarter grid, rendered, with
+quantized event and resetting both pieces, on a linear and on a musical track whose tempo changes under it; warp
+quantizing a loop played on eighths with a quarter grid, rendered, with
 reset and existing markers, and a musical clip whose project runs at half its own tempo; several tracks sliced by
 priority and range, quantized and crossfaded, then rendered with the second track's audio inverted: the sum is silence,
 so they stayed phase coherent; the range leaving a flam on one track two positions; slicing clearing the snap points it
