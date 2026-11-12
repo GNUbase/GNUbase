@@ -546,13 +546,15 @@ namespace gnubase::engine::midi
 				"modifiers, with "
 				"the random values playback draws), leaving out notes they filter out or move out of the range. "
 				"Without destination a new MIDI track is added at the end, routed "
-				"to the instrument of the first track merged. eraseDestination first removes the destination's parts "
+				"to the instrument of the first track merged, with the articulation map of the first merged track "
+				"that has one. eraseDestination first removes the destination's parts "
 				"that lie between start and end, and the events of its other parts that start there, which leave "
 				"their shared copies for it: their notes get new ids, so play probability, velocity variance and "
 				"random MIDI modifier values draw anew. includeChase "
 				"adds the last value of every controller and program before start at the new part's start. Either way "
-				"the new part starts with the directions of the tracks' articulation maps in effect at start, so that "
-				"its notes play the same sound slots." +
+				"the new part starts with the directions of the tracks' articulation maps in effect at start, and "
+				"each part that starts after start with a reset of each group of its track's map, so that the notes "
+				"play the same sound slots." +
 					returns,
 				objectSchema(
 					{{"start", integerSchema}, {"end", integerSchema}, {"tracks", ids}, {"destination", idSchema},

@@ -85,6 +85,11 @@ namespace gnubase::engine
 		// job.get, job.list and job.cancel.
 		void registerCommands(Engine& engine);
 
+		// Called on a job's thread after each job.progress it sends, outside every lock; see
+		// Engine::setJobProgressHook.
+		using ProgressHook = std::function<void(JobId job, const std::string& kind)>;
+		void setProgressHook(ProgressHook hook);
+
 	private:
 		struct Job;
 		class Context;
@@ -96,5 +101,6 @@ namespace gnubase::engine
 		mutable std::mutex m_mutex; // guards the jobs and their states
 		std::map<JobId, std::shared_ptr<Job>> m_jobs;
 		JobId m_nextId = 1;
+		ProgressHook m_progressHook; // for tests; empty for none
 	};
 }
