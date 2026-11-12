@@ -422,19 +422,17 @@ namespace gnubase::engine
 						!sameTiming(note.origin->quantized, other.origin->quantized)))
 					return false;
 			}
-			for (const auto& [id, controller] : a.controllers)
-			{
-				const auto found = b.controllers.find(id);
-				if (found == b.controllers.end())
-					return false;
-				const Controller& other = found->second;
-				if (controller.type != other.type || controller.number != other.number ||
-					controller.value != other.value || controller.channel != other.channel ||
-					controller.data != other.data || controller.articulation != other.articulation ||
-					!sameTime(controller.position, other.position))
-					return false;
-			}
-			return true;
+			return std::all_of(a.controllers.begin(), a.controllers.end(),
+				[&b, &sameTime](const auto& controller)
+				{
+					const auto found = b.controllers.find(controller.first);
+					if (found == b.controllers.end())
+						return false;
+					const Controller& x = controller.second;
+					const Controller& y = found->second;
+					return x.type == y.type && x.number == y.number && x.value == y.value && x.channel == y.channel &&
+						x.data == y.data && x.articulation == y.articulation && sameTime(x.position, y.position);
+				});
 		}
 
 		Json importTempo(Project& project, CommandContext& context)
@@ -571,7 +569,9 @@ namespace gnubase::engine
 						changed.insert(source.id);
 					}
 					else
+					{
 						takeTicks(*set);
+					}
 					continue;
 				}
 				renumber(project, source);
