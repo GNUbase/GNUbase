@@ -11,6 +11,7 @@
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <fstream>
@@ -346,8 +347,10 @@ TEST_CASE("New Map and New Copy for a track give it the map in one undo step", "
 	CHECK(f.maps().size() == 1);
 }
 
-TEST_CASE("a GNUbase entry with a note pitch beyond 0-127 doesn't load", "[integration]")
+TEST_CASE("a GNUbase entry with a note pitch beyond 0-127 or a channel beyond 0-15 doesn't load", "[integration]")
 {
+	const auto [key, value] = GENERATE(std::make_pair("pitch", 200), std::make_pair("channel", 16));
+	INFO(key);
 	Fixture f;
 	f.call("note.add",
 		{{"part", f.part}, {"notes", {{{"position", 0}, {"length", 60}, {"pitch", 36}, {"velocity", 0.5}}}}});
@@ -358,13 +361,14 @@ TEST_CASE("a GNUbase entry with a note pitch beyond 0-127 doesn't load", "[integ
 	Json extension = Json::parse(entries.at("gnubase.json"));
 	for (Json& part : extension.at("project").at("midiParts"))
 		for (Json& note : part.at("notes"))
-			note["pitch"] = 200;
+			note[key] = value;
 	entries["gnubase.json"] = extension.dump();
 	test::writeZip(file, entries);
 	// The GNUbase entry is damaged, so the project loads from project.xml, which has the note as it was.
 	f.call("project.load", {{"path", file}});
 	REQUIRE(f.notes().size() == 1);
 	CHECK(f.notes()[0].at("pitch") == 36);
+	CHECK(f.notes()[0].at("channel") == 0);
 }
 
 TEST_CASE("O-Note Conversion gives notes their sounds' O-notes as pitches", "[unit]")
