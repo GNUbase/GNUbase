@@ -10,6 +10,7 @@
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -230,6 +231,21 @@ TEST_CASE("project rules as JSON: factory presets round-trip, and wrong rules ar
 	CHECK(refused(many) != "accepted");
 }
 
+TEST_CASE("the project rule commands tell callers how deep brackets nest", "[integration]")
+{
+	// The generated Lua and MCP references show the refusal callers can get (#1203).
+	const Fixture f;
+	std::vector<std::string> described;
+	for (const CommandInfo& info : f.engine.commands())
+		if (info.description.find("nest at most 3 deep") != std::string::npos)
+			described.push_back(info.name);
+	for (const char* name : {"project.applyRules", "project.findByRules"})
+	{
+		INFO(name);
+		CHECK(std::find(described.begin(), described.end(), name) != described.end());
+	}
+}
+
 TEST_CASE("project.findByRules finds tracks, parts and events", "[integration]")
 {
 	Fixture f;
@@ -397,14 +413,20 @@ TEST_CASE("project.applyRules transforms and deletes in one undo step", "[integr
 	}
 	SECTION("without a seed, each Apply gives new random values")
 	{
+		// Two random positions out of 480001 agree about once in 480000: of three Applies, the last two agree with
+		// the first about once in 10^11 (#1203).
 		const Json move = {{"rules",
 			rules({filter("containerType", "equal", "part")}, "transform",
 				{action("position", "setRandom", 0, 480000)})}};
-		run(f.client, "project.applyRules", move);
-		const Json first = f.object("midiParts", f.full).at("position");
-		run(f.client, "history.undo");
-		run(f.client, "project.applyRules", move);
-		CHECK(f.object("midiParts", f.full).at("position") != first);
+		std::vector<Json> positions;
+		for (int i = 0; i < 3; ++i)
+		{
+			run(f.client, "project.applyRules", move);
+			positions.push_back(f.object("midiParts", f.full).at("position"));
+			run(f.client, "history.undo");
+		}
+		CHECK(std::any_of(positions.begin() + 1, positions.end(),
+			[&positions](const Json& position) { return position != positions.front(); }));
 	}
 	SECTION("generated names count only what is renamed")
 	{

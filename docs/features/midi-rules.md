@@ -113,10 +113,11 @@ removing, the file in the settings folder, a preset that can't be read); input t
 through `midi.inject` and `midi.capture` (note-offs following their note-ons while the rules change, modules in order,
 filter, insert, insert exclusive, a sustain pedal playing a bass drum), undo, saving and loading, and what
 `channel.set` refuses; an input transformer inserting past its buffers' capacity ending every note it plays; fresh
-seeds, very short notes, positions at the longest project and refused type changes (#966); the module that `midi.setInputTransformer`'s message names (#1143).
+seeds, very short notes, positions at the longest project and refused type changes (#966); the module that `midi.setInputTransformer`'s message names (#1143); the rule commands' descriptions naming the bracket depth (#1203).
 `tests/midieffects_tests.cpp`'s golden files check that the transformer effect plays as before.
 `tests/rtcheck_tests.cpp` runs input transformers without allocating. `tests/midirules_ui_tests.cpp` drives MIDI > Rule
 Editor (a factory preset, lines put together, Remove, select, a value that isn't a number, the asterisk, Save Preset),
 Project > Project Input Transformer (its preset list, modules keeping their edits, OK setting a module's edits while
 another one shows, the module the engine refuses showing with its message, the name field following the module) and the inspector's Input
-Transformer (modes, Open Panel... and the track's modules) in the app with `ui::Automation`.
+Transformer (modes, Open Panel..., the track's modules, a value that isn't a number and the module `channel.set`
+refuses showing with its message) in the app with `ui::Automation`.
