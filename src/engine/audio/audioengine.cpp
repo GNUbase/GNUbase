@@ -391,7 +391,7 @@ namespace gnubase::engine
 		audio::MidiBuffer midiOut(g_offlineMidi);
 		uint64_t position = m_device->position();
 		// Every sampler plays its sample from the first block, however long its file takes to read (#1180).
-		while (!waitForSamples(g_offlineWait))
+		while (!waitForSamples(m_offlineSampleWait))
 			logging::warning("The render still waits for the samplers' samples to be read");
 		for (uint64_t done = 0; done < frames;)
 		{

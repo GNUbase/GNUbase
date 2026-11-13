@@ -110,6 +110,9 @@ namespace gnubase::engine
 		void setChase(const MidiChase& chase);
 		// Any thread: reads the samplers' samples asked for from now on with read (SampleLoader::setRead).
 		void setSampleReader(SampleLoader::Read read);
+		// Any thread: how long an offline render waits for the samplers' samples before it logs a warning and waits
+		// again (30 s).
+		void setOfflineSampleWait(std::chrono::milliseconds wait) { m_offlineSampleWait = wait; }
 
 		// Command thread, after a command changed the user settings audio.portSettings (audioPorts) or
 		// midi.portSettings (midiPorts): emits the audio ports as audio.portsChanged, and the MIDI ports follow their
@@ -553,5 +556,6 @@ namespace gnubase::engine
 		// Reads the samplers' samples (#1122). Last, so that it stops first: it posts audio.updateSamples.
 		std::atomic<bool> m_updatingSamples{false}; // an audio.updateSamples it posted hasn't started yet
 		SampleLoader m_sampleLoader{[this] { postSampleUpdate(); }};
+		std::atomic<std::chrono::milliseconds> m_offlineSampleWait{std::chrono::seconds(30)};
 	};
 }

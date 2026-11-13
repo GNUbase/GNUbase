@@ -262,6 +262,9 @@ namespace gnubase::engine
 		// For tests: reads the samplers' samples asked for from now on with read instead of processors::sharedSample,
 		// e.g. to hold a read back (AudioEngine::setSampleReader). Any thread.
 		void setSampleReader(std::function<std::shared_ptr<const processors::Sample>(const std::string& path)> read);
+		// For tests: how long an offline render waits for the samplers' samples before it logs a warning and waits
+		// again, 30 s unless set (AudioEngine::setOfflineSampleWait). Any thread.
+		void setOfflineSampleWait(std::chrono::milliseconds wait);
 		// For tests: calls hook on a job's thread after each job.progress the job sends, outside every lock, e.g. to
 		// hold the job there until the test ran what must come before the job goes on (tests/testutils/heldjob.h).
 		// Events and commands go on meanwhile, unlike in a Listener that blocks; job.cancel, project.load and

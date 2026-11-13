@@ -104,7 +104,9 @@ root `.sampler-panel` has the class `.empty`):
   loads keep the settings with (`keepSettings`). The lock and the level are the user setting `ui.samplerPanel`
   (`lockParameters`, `normalizeLevel`; what later versions add to it is kept), so they stay as they were when the panel is made anew, e.g. in a window of its
   own. While the panel's own changes of it are on their way, e.g. during a drag of the level, the older ones that
-  `settings.changed` brings back don't set the field back. Why a load (a file that isn't audio) or Normalize Sample (a silent or missing sample) failed shows in the
+  `settings.changed` brings back don't set the field back. A change from elsewhere still shows: results and events
+  reach the panel in the engine's order, so one made after the panel's last `settings.set` comes after that save's
+  answer, when none of the panel's own is on its way. Why a load (a file that isn't audio) or Normalize Sample (a silent or missing sample) failed shows in the
   toolbar's message (`#sampler-message`, `.error`) until the next one succeeds or another track is shown.
 - **Waveform display** (`#sampler-display`): the sample's waveform from `media.peaks`, its parts before Start and
   after End shaded (`.sampler-outside`), the loop (`.sampler-loop`) and the markers (`.sampler-marker`, attribute
@@ -153,3 +155,6 @@ when the window loses the focus, the message going with another track and its to
 panel closed while the dialog was open.
 #1200 added recording from stop that waits for the samples unless a count-in plays, the handles apart on a narrow
 keyboard, and a change of the panel's setting from elsewhere right after the panel's own quick ones.
+#1343 added the warnings at every round of an offline render's wait for a sample, with rounds of 20 ms instead of
+30 s (`Engine::setOfflineSampleWait`), and checks that starting playback and recording from stop answer only after the
+held read is released.
