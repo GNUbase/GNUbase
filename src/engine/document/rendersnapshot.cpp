@@ -178,6 +178,31 @@ namespace gnubase::engine
 						controller.number, controller.value, controller.channel, controller.data, index});
 		}
 
+		// MPE's initial values: a note on a MIDI channel whose notes express tuning, pressure or brightness gets the
+		// initial value of each of them that has no point at its start, a centered bend, no pressure and CC 74 at 64,
+		// so that as MIDI 1.0 it doesn't start at what the channel's previous note left.
+		void addInitialExpressions(const std::vector<RenderNote>& notes, std::vector<RenderExpression>& expressions)
+		{
+			using plugin::NoteExpression;
+			constexpr std::array<std::pair<NoteExpression, double>, 3> initial = {
+				{{NoteExpression::Tuning, 0.0}, {NoteExpression::Pressure, 0.0}, {NoteExpression::Brightness, 0.5}}};
+			std::array<std::array<bool, initial.size()>, 16> expressed{}; // by MIDI channel
+			std::set<std::tuple<time::Samples, uint8_t, uint8_t, NoteExpression>> points;
+			for (const RenderExpression& point : expressions)
+				for (size_t i = 0; i < initial.size(); ++i)
+					if (point.type == initial.at(i).first)
+					{
+						expressed.at(point.channel % 16).at(i) = true;
+						points.emplace(point.position, point.pitch, point.channel, point.type);
+					}
+			for (const RenderNote& note : notes)
+				for (size_t i = 0; i < initial.size(); ++i)
+					if (!note.keySwitch && note.end > note.start && expressed.at(note.channel % 16).at(i) &&
+						points.count({note.start, note.pitch, note.channel, initial.at(i).first}) == 0)
+						expressions.push_back(
+							{note.start, note.pitch, note.channel, initial.at(i).first, initial.at(i).second});
+		}
+
 		// An audio part's event plays only within the part (#471): cut at its edges, where its fades are cut short. A
 		// muted part's events, and those it hides, don't play. Returns whether the event plays.
 		// ponytail: a fade cut by the part restarts from its beginning over what is left of it; a part that cuts its
@@ -715,6 +740,8 @@ namespace gnubase::engine
 			RenderChannel unmodified;
 			compilePart(project, id, compiled, follower(part.track), unmodified);
 			channel.preNotes.insert(channel.preNotes.end(), unmodified.notes.begin(), unmodified.notes.end());
+			channel.preExpressions.insert(
+				channel.preExpressions.end(), unmodified.expressions.begin(), unmodified.expressions.end());
 		}
 
 		std::map<ObjectId, Points> vcaCurves; // by the VCA fader's channel
@@ -779,8 +806,11 @@ namespace gnubase::engine
 					});
 			std::stable_sort(channel.controllers.begin(), channel.controllers.end(),
 				[](const RenderController& a, const RenderController& b) { return a.position < b.position; });
-			std::stable_sort(channel.expressions.begin(), channel.expressions.end(),
-				[](const RenderExpression& a, const RenderExpression& b) { return a.position < b.position; });
+			addInitialExpressions(channel.notes, channel.expressions);
+			addInitialExpressions(channel.preNotes, channel.preExpressions);
+			for (std::vector<RenderExpression>* expressions : {&channel.expressions, &channel.preExpressions})
+				std::stable_sort(expressions->begin(), expressions->end(),
+					[](const RenderExpression& a, const RenderExpression& b) { return a.position < b.position; });
 			// The parts by start; their controller events keep pointing at them.
 			std::vector<size_t> byStart(channel.midiParts.size());
 			std::iota(byStart.begin(), byStart.end(), size_t{0});

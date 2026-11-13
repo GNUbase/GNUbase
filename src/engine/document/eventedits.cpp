@@ -694,15 +694,20 @@ namespace gnubase::engine
 				}
 				if (splitNotes && note.position + note.length > offset)
 				{
-					// The rest of the note starts the part after the split.
+					// The rest of the note starts the part after the split, its expression from the split on.
 					Note rest = note;
 					rest.id = project.newId();
 					rest.position = 0;
 					rest.length = note.position + note.length - offset;
 					rest.origin.reset();
+					rest.expressions = expressionsFrom(note.expressions, offset - note.position);
 					right.notes[rest.id] = rest;
 					note.length = offset - note.position;
 					note.origin.reset();
+					note.expressions.erase(
+						std::remove_if(note.expressions.begin(), note.expressions.end(),
+							[&note](const ExpressionPoint& point) { return point.position >= note.length; }),
+						note.expressions.end());
 				}
 				++it;
 			}
@@ -2735,7 +2740,8 @@ namespace gnubase::engine
 			{"event.split", 1,
 				"Splits audio events and MIDI parts at positions (project samples): events, or without it every "
 				"unlocked one that a position cuts. A MIDI part's notes stay in the part they start in, or with "
-				"splitNotes are cut in two. With zeroCrossing, audio events split at the nearest point within 50 ms "
+				"splitNotes are cut in two, the rest with the expression from the cut on. With zeroCrossing, audio "
+				"events split at the nearest point within 50 ms "
 				"and inside the event where their audio crosses zero. The pieces of a pattern event continue its "
 				"pattern (patternOffset). The piece of a quantized audio event after the split keeps where it "
 				"was before quantizing, shifted by the split, so that quantize.reset puts both pieces back. "

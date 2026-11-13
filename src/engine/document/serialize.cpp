@@ -1791,7 +1791,7 @@ namespace gnubase::engine
 						{{"on", limiter.on}, {"threshold", limiter.threshold}, {"release", limiter.release}}}}}};
 	}
 
-	std::vector<ExpressionPoint> expressionsFromJson(const Json& json, const std::string& name)
+	std::vector<ExpressionPoint> expressionsFromJson(const Json& json, const std::string& name, bool loading)
 	{
 		std::vector<ExpressionPoint> points;
 		for (size_t i = 0; i < json.size(); ++i)
@@ -1802,11 +1802,15 @@ namespace gnubase::engine
 			// An index, not an iterator: it is a pointer in some standard libraries.
 			const auto index = static_cast<size_t>(
 				std::find(g_expressionNames.begin(), g_expressionNames.end(), type) - g_expressionNames.begin());
+			if (index == g_expressionNames.size() && loading)
+				continue;
 			if (index == g_expressionNames.size())
 				throw std::invalid_argument(where + ".type: there is no expression " += type);
 			ExpressionPoint point;
 			point.type = static_cast<plugin::NoteExpression>(index);
 			point.position = item.at("position").get<time::Ticks>();
+			if (point.position < 0 && loading)
+				point.position = 0;
 			if (point.position < 0)
 				throw std::invalid_argument(where + ".position must not be negative");
 			double minimum = 0.0;
@@ -1820,7 +1824,8 @@ namespace gnubase::engine
 			{
 				maximum = 4.0;
 			}
-			point.value = checkedNumber(item.at("value"), minimum, maximum, where + ".value");
+			point.value = loading ? std::clamp(item.at("value").get<double>(), minimum, maximum)
+								  : checkedNumber(item.at("value"), minimum, maximum, where + ".value");
 			points.push_back(point);
 		}
 		std::stable_sort(points.begin(), points.end(),
@@ -2519,7 +2524,7 @@ namespace gnubase::engine
 				note.velocityVariance = std::clamp(n.value("velocityVariance", 0.0), -1.0, 1.0);
 				note.articulations = n.value("articulations", std::vector<std::string>()); // before #175 none
 				note.expressions =
-					expressionsFromJson(n.value("expressions", Json::array()), noteName + " expressions");
+					expressionsFromJson(n.value("expressions", Json::array()), noteName + " expressions", true);
 				part.notes[note.id] = note;
 			}
 			for (const Json& c : item.at("controllers"))
