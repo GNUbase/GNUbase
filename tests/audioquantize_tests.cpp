@@ -730,6 +730,79 @@ TEST_CASE("Reset Quantize undoes what the panel's Crossfade step changed", "[int
 		CHECK(crossfades(client) == 0);
 	}
 
+	SECTION("splitting a slice inside the part the Crossfade step added to it leaves the piece after without an origin")
+	{
+		// The step grew the first slice by the crossfade into the next one: it is {0, 0, 6056}, its original was
+		// {0, 0, 5960}. A split at 6000 falls inside the added part, past the end of the original's content, so
+		// there is nothing of the original left for the piece after it: that piece keeps no origin and stays where
+		// it is, as a piece of an event moved by other means since does, the piece before it resets to the whole
+		// original slice, and no event may come out of a reset with a length of zero or less (#1333).
+		const ObjectId firstSlice = sliced.at("events").at(0).get<ObjectId>();
+		REQUIRE(eventsOn(client, loop.track).at(0) == std::vector<int64_t>{0, 0, 6056});
+		const Json pieces = run(client, "event.split", {{"events", {firstSlice}}, {"positions", {6000}}}).at("events");
+		REQUIRE(pieces.size() == 1);
+		const auto right = pieces.at(0).get<ObjectId>();
+		CHECK(!byId(client, "audioEvents", right).contains("quantizeOrigin"));
+
+		Json events = sliced.at("events");
+		events.push_back(right);
+		run(client, "quantize.reset", {{"events", events}});
+		const std::vector<std::vector<int64_t>> after = eventsOn(client, loop.track);
+		for (const std::vector<int64_t>& each : after)
+			CHECK(each.at(2) > 0);
+		CHECK(after ==
+			std::vector<std::vector<int64_t>>{{0, 0, 5960}, {5960, 5960, 19400}, {6000, 6000, 56},
+				{25360, 25360, 21700}, {47060, 47060, 25500}, {72560, 72560, 23440}});
+		CHECK(crossfades(client) == 0);
+	}
+
+	SECTION("a crossfade into the next slice follows a split that leaves the piece after without an origin")
+	{
+		// A split at 5960 falls exactly at the end of the first slice's original: the piece after it keeps no
+		// origin, but the second slice starts there, so its crossfade from the first follows the split onto that
+		// piece all the same, and its origin's crossfades follow with it: resetting still tells the crossfade the
+		// panel made from one made by hand and takes it out (#1333).
+		const ObjectId firstSlice = sliced.at("events").at(0).get<ObjectId>();
+		const Json pieces = run(client, "event.split", {{"events", {firstSlice}}, {"positions", {5960}}}).at("events");
+		REQUIRE(pieces.size() == 1);
+		const auto right = pieces.at(0).get<ObjectId>();
+		CHECK(!byId(client, "audioEvents", right).contains("quantizeOrigin"));
+		REQUIRE(crossfadeOf(client, sliced.at("events").at(1).get<ObjectId>()).at("from") == right);
+
+		Json events = sliced.at("events");
+		events.push_back(right);
+		run(client, "quantize.reset", {{"events", events}});
+		const std::vector<std::vector<int64_t>> after = eventsOn(client, loop.track);
+		for (const std::vector<int64_t>& each : after)
+			CHECK(each.at(2) > 0);
+		CHECK(after ==
+			std::vector<std::vector<int64_t>>{{0, 0, 5960}, {5960, 5960, 96}, {5960, 5960, 19400},
+				{25360, 25360, 21700}, {47060, 47060, 25500}, {72560, 72560, 23440}});
+		CHECK(crossfades(client) == 0);
+	}
+
+	SECTION("splitting a slice inside the stretch at its start keeps both pieces resettable")
+	{
+		// The mirror of the added part at the end: the step stretched the second slice's start by 5800 frames to
+		// close the gap. A split at 8960 falls inside the stretch; the piece after it plays from 3160 now but from
+		// 8960 in the original, and resetting gives both pieces their original offset and length back, so that
+		// they tile the original slice again (#1333).
+		const ObjectId second = sliced.at("events").at(1).get<ObjectId>();
+		const Json pieces = run(client, "event.split", {{"events", {second}}, {"positions", {8960}}}).at("events");
+		REQUIRE(pieces.size() == 1);
+		const auto right = pieces.at(0).get<ObjectId>();
+		CHECK(byId(client, "audioEvents", right).at("quantizeOrigin") ==
+			Json({{"original", originState(8960, 8960, 16400)}, {"quantized", originState(8960, 3160, 14896)}}));
+
+		Json events = sliced.at("events");
+		events.push_back(right);
+		run(client, "quantize.reset", {{"events", events}});
+		CHECK(eventsOn(client, loop.track) ==
+			std::vector<std::vector<int64_t>>{{0, 0, 5960}, {5960, 5960, 3000}, {8960, 8960, 16400},
+				{25360, 25360, 21700}, {47060, 47060, 25500}, {72560, 72560, 23440}});
+		CHECK(crossfades(client) == 0);
+	}
+
 	SECTION("reset keeps an end trimmed by hand on a slice the step stretched")
 	{
 		// Each part of the origin is judged by itself: the stretched offset goes back, the hand-trimmed length

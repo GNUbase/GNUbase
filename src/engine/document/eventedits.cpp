@@ -633,20 +633,30 @@ namespace gnubase::engine
 				// musical event's position is in ticks while its audio keeps its length in samples (#414), so the
 				// tempo between the two counts. Its original offset and length are the recorded original's, cut
 				// where the piece before it ends, not its current ones: with a start the Crossfade step stretched
-				// the two differ, and resetting would play the wrong clip section and leave a gap (#1333). An
-				// origin that has stopped counting, of an event moved by other means since, doesn't come along.
+				// the two differ, and resetting would play the wrong clip section and leave a gap (#1333). The
+				// panel can also have made the event longer than its original, so the piece before the split
+				// keeps at most the whole original, and a split past the original's end leaves nothing of it for
+				// the piece after, which then keeps no origin, as for an event moved by other means since (#1333).
+				// Such an origin, one that has stopped counting, doesn't come along either.
 				if (auto& origin = right.quantizeOrigin; origin && origin->quantized.position == event.position)
 				{
-					const time::Samples original =
-						samples(project, origin->original.position) + (at - samples(project, event.position));
-					const time::Position shifted =
-						rebased(project, {time::TimeBase::Linear, original}, event.position.base);
-					const EventTiming originalTiming{
-						shifted, origin->original.offset + frames, origin->original.length - frames, right.crossfade};
-					*origin = EventQuantizeOrigin{
-						originalTiming, EventTiming{right.position, right.offset, right.length, right.crossfade}};
-					event.quantizeOrigin->original.length = frames;
+					event.quantizeOrigin->original.length = std::min(frames, origin->original.length);
 					event.quantizeOrigin->quantized.length = frames;
+					if (frames < origin->original.length)
+					{
+						const time::Samples original =
+							samples(project, origin->original.position) + (at - samples(project, event.position));
+						const time::Position shifted =
+							rebased(project, {time::TimeBase::Linear, original}, event.position.base);
+						const EventTiming originalTiming{shifted, origin->original.offset + frames,
+							origin->original.length - frames, right.crossfade};
+						*origin = EventQuantizeOrigin{
+							originalTiming, EventTiming{right.position, right.offset, right.length, right.crossfade}};
+					}
+					else
+					{
+						right.quantizeOrigin.reset();
+					}
 				}
 				else
 				{
