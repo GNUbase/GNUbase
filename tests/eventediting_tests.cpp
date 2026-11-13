@@ -2879,6 +2879,44 @@ TEST_CASE("a muted take covers nothing on its track's lane, which shows what pla
 	CHECK(f.display.selection() == std::vector<uint64_t>{f.event});
 }
 
+TEST_CASE("with editing.treatMutedAudioLikeDeleted off, a muted take in front covers what lies behind it", "[unit]")
+{
+	Fixture f;
+	const auto audioTrack = f.call("project.get").at("tracks").at(0).at("id").get<uint64_t>();
+	// A second take from 2.1 to 2.3 seconds on lane 1, in front of the first but muted.
+	f.call("audioEvent.add",
+		{{"track", audioTrack}, {"clip", f.audioEvents()[0].at("clip")}, {"position", 100800}, {"length", 9600},
+			{"lane", 1}, {"mute", true}});
+	REQUIRE(f.waitUntil([&f] { return f.display.project().at("audioEvents").size() == 2; }));
+
+	// The default treats the muted take as deleted: the first plays all through and the muted one covers nothing.
+	REQUIRE(f.lanes("events")[0].events.size() == 1);
+	CHECK(std::abs(f.lanes("events")[0].events[0].start - 2.0) < 1e-6);
+	CHECK(std::abs(f.lanes("events")[0].events[0].end() - 2.5) < 1e-6);
+	CHECK(f.lanes("muted-events")[0].events.empty());
+
+	// With the preference off (reference manual p. 228), the muted take keeps its place: it covers the first from 2.1
+	// to 2.3 and shows muted there, so the track's lane shows the first take only around it.
+	f.call("settings.set", {{"key", "editing.treatMutedAudioLikeDeleted"}, {"value", false}});
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events")[0].events.size() == 3; }));
+	const std::vector<ui::TimeSpan>& shown = f.lanes("events")[0].events;
+	CHECK(std::abs(shown[0].start - 2.0) < 1e-6);
+	CHECK(std::abs(shown[0].end() - 2.1) < 1e-6);
+	CHECK(std::abs(shown[1].start - 2.1) < 1e-6);
+	CHECK(std::abs(shown[1].end() - 2.3) < 1e-6);
+	CHECK(std::abs(shown[2].start - 2.3) < 1e-6);
+	CHECK(std::abs(shown[2].end() - 2.5) < 1e-6);
+	const std::vector<ui::TimeSpan>& muted = f.lanes("muted-events")[0].events;
+	REQUIRE(muted.size() == 1);
+	CHECK(std::abs(muted[0].start - 2.1) < 1e-6);
+	CHECK(std::abs(muted[0].end() - 2.3) < 1e-6);
+
+	// Back on, the muted take hides nothing again.
+	f.call("settings.set", {{"key", "editing.treatMutedAudioLikeDeleted"}, {"value", true}});
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events")[0].events.size() == 1; }));
+	CHECK(f.lanes("muted-events")[0].events.empty());
+}
+
 TEST_CASE("the draw tool draws parts on the lane it draws on", "[unit]")
 {
 	Fixture f;
