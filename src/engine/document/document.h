@@ -12,6 +12,7 @@
 #include "engine/time/signaturemap.h"
 #include "engine/time/tempomap.h"
 #include "engine/time/timecode.h"
+#include "plugin/events.h"
 
 #include <array>
 #include <cstddef>
@@ -607,6 +608,25 @@ namespace gnubase::engine
 	// A note's release velocity unless it has one of its own: MIDI 1.0's 64, the center.
 	inline constexpr uint16_t g_defaultReleaseVelocity = 0x8000;
 
+	// A point of a note's per-note expression (#176): the value of one of the plugin API's common expressions from its
+	// position on, in ticks from the note's start, so that it moves with the note. Values are in the expression's
+	// unit: volume a linear gain 0-4, pan 0-1 (0.5 the center), tuning semitones from -120 to 120, the others 0-1.
+	struct ExpressionPoint
+	{
+		plugin::NoteExpression type = plugin::NoteExpression::Volume;
+		time::Ticks position = 0;
+		double value = 0.0;
+
+		bool operator==(const ExpressionPoint& other) const
+		{
+			return type == other.type && position == other.position && value == other.value;
+		}
+	};
+
+	// The expressions' names, by plugin::NoteExpression.
+	inline constexpr std::array<const char*, 7> g_expressionNames = {
+		"volume", "pan", "tuning", "vibrato", "expression", "brightness", "pressure"};
+
 	// Note and controller values have the resolution of MIDI 2.0 (#19): MIDI 1.0 values fit without loss.
 	struct Note
 	{
@@ -622,6 +642,7 @@ namespace gnubase::engine
 		double velocityVariance = 0.0; // -1 to 1, how far playback varies the velocity, up or down (#128)
 		// The attributes of the track's articulation map that the note has, by name (#175)
 		std::vector<std::string> articulations;
+		std::vector<ExpressionPoint> expressions; // its per-note expression (#176), sorted by position
 	};
 
 	// The MIDI events besides notes, all held as controller events.
@@ -1753,9 +1774,9 @@ namespace gnubase::engine
 	inline bool operator==(const Note& a, const Note& b)
 	{
 		return std::tie(a.id, a.position, a.length, a.pitch, a.velocity, a.channel, a.releaseVelocity, a.origin,
-				   a.probability, a.velocityVariance, a.articulations) ==
+				   a.probability, a.velocityVariance, a.articulations, a.expressions) ==
 			std::tie(b.id, b.position, b.length, b.pitch, b.velocity, b.channel, b.releaseVelocity, b.origin,
-				b.probability, b.velocityVariance, b.articulations);
+				b.probability, b.velocityVariance, b.articulations, b.expressions);
 	}
 
 	inline bool operator==(const Controller& a, const Controller& b)

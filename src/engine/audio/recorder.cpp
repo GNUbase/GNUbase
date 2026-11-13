@@ -3,6 +3,8 @@
 
 #include "engine/document/serialize.h"
 #include "engine/media/backup.h"
+#include "engine/midi/midivalues.h"
+#include "engine/settings/usersettings.h"
 #include "platform/log.h"
 #include "platform/rt/realtime.h"
 
@@ -34,6 +36,9 @@ namespace gnubase::engine
 		constexpr size_t g_eventsPerChunk = 256;
 
 		using EventType = graph::ProcessEvent::Type;
+
+		// The expressions of MPE's pitch bend, channel pressure and CC 74 (MidiTakeBuilder::m_mpeState).
+		constexpr std::array<const char*, 3> g_mpeExpressions = {"tuning", "pressure", "brightness"};
 
 		// A track name as a file name: characters that some file system doesn't take become "_".
 		std::string fileName(const std::string& name)
@@ -139,6 +144,35 @@ namespace gnubase::engine
 			(event.type != EventType::Controller || !controllers.test(event.key % 128U));
 	}
 
+	int mpePitchRange(const settings::Store& store)
+	{
+		if (!store.get(settings::g_midiMpeInput))
+			return 0;
+		return static_cast<int>(std::clamp<int64_t>(store.get(settings::g_midiMpePitchRange), 1, 96));
+	}
+
+	bool MidiTakeBuilder::addExpression(time::Samples position, const graph::ProcessEvent& event)
+	{
+		const uint8_t channel = event.channel % 16U;
+		if (m_mpeRange <= 0 || channel == 0) // the master channel's messages are the whole zone's
+			return false;
+		size_t index = 0; // into g_mpeExpressions
+		if (event.type == EventType::ChannelPressure)
+			index = 1;
+		else if (event.type == EventType::Controller && event.key == 74)
+			index = 2;
+		else if (event.type != EventType::PitchBend)
+			return false;
+		const double value =
+			index == 0 ? midi::bendToSemitones(event.value, m_mpeRange) : midi::controllerToUnit(event.value);
+		m_mpeState[channel][index] = value;
+		const Json point = {{"type", g_mpeExpressions.at(index)}, {"position", position}, {"value", value}};
+		for (size_t pitch = 0; pitch < 128; ++pitch)
+			if (Sounding& sounding = m_sounding[(size_t{channel} * 128) + pitch]; sounding.position >= 0)
+				sounding.expressions.push_back(point);
+		return true;
+	}
+
 	void MidiTakeBuilder::add(time::Samples position, const graph::ProcessEvent& event)
 	{
 		m_last = std::max(m_last, position);
@@ -147,16 +181,31 @@ namespace gnubase::engine
 		{
 			Sounding& sounding = m_sounding[(size_t{channel} * 128) + (event.key % 128U)];
 			if (sounding.position >= 0)
+			{
 				m_notes.push_back({{"position", sounding.position},
 					{"length", std::max<time::Samples>(position - sounding.position, 1)}, {"pitch", event.key % 128U},
 					{"velocity", sounding.velocity / g_maxVelocity},
 					{"releaseVelocity",
 						(event.type == EventType::NoteOff ? event.velocity : g_defaultReleaseVelocity) / g_maxVelocity},
 					{"channel", channel}, {"take", m_take}});
+				if (!sounding.expressions.empty())
+					m_notes.back()["expressions"] = std::move(sounding.expressions);
+			}
 			sounding.position = event.type == EventType::NoteOn ? position : -1;
 			sounding.velocity = event.velocity;
+			sounding.expressions = Json::array();
+			if (event.type == EventType::NoteOn && m_mpeRange > 0 && channel != 0)
+			{
+				// The channel's state is the note's initial expression.
+				for (size_t i = 0; i < g_mpeExpressions.size(); ++i)
+					if (const Json& value = m_mpeState[channel][i]; !value.is_null())
+						sounding.expressions.push_back(
+							{{"type", g_mpeExpressions.at(i)}, {"position", position}, {"value", value}});
+			}
 			return;
 		}
+		if (addExpression(position, event))
+			return;
 		Controller controller;
 		controller.channel = channel;
 		controller.value = event.value;
@@ -212,7 +261,8 @@ namespace gnubase::engine
 	Recorder::~Recorder()
 	{
 		{
-			const std::scoped_lock lock(m_mutex);
+			std::unique_lock lock(m_mutex);
+			m_wake.wait(lock, [this] { return !m_opening; });
 			m_notify = nullptr; // the engine is going: the files stay, but nothing is added to the project
 			try
 			{
@@ -233,8 +283,9 @@ namespace gnubase::engine
 	void Recorder::prepare(int channels, uint32_t maxFrames)
 	{
 		rt::assertNotRealtime("engine::Recorder::prepare");
-		const std::scoped_lock lock(m_mutex);
-		drain(); // what the audio thread sent before it stopped
+		std::unique_lock lock(m_mutex);
+		m_wake.wait(lock, [this] { return !m_opening; }); // the chunks go away
+		drain();                                          // what the audio thread sent before it stopped
 		applySetups(m_latestSetup.load(std::memory_order_acquire));
 		if (m_midiRecording)
 			endMidi();
@@ -291,7 +342,7 @@ namespace gnubase::engine
 
 	void Recorder::applySetups(uint64_t number)
 	{
-		if (number <= m_nextNumber)
+		if (m_opening || number <= m_nextNumber)
 			return;
 		RecordSetup next;
 		uint64_t nextNumber = 0;
@@ -470,6 +521,8 @@ namespace gnubase::engine
 
 	bool Recorder::drain()
 	{
+		if (m_opening)
+			return false; // the chunks behind the one that starts a recording wait for its files
 		bool handled = false;
 		Chunk* chunk = nullptr;
 		while (m_filled && m_filled->tryPop(chunk))
@@ -525,6 +578,19 @@ namespace gnubase::engine
 		m_deviceEnd = chunk.deviceFrame + chunk.frames;
 	}
 
+	Recorder::Unlocked::Unlocked(Recorder& recorder) : m_recorder(recorder)
+	{
+		m_recorder.m_opening = true;
+		m_recorder.m_mutex.unlock();
+	}
+
+	Recorder::Unlocked::~Unlocked()
+	{
+		m_recorder.m_mutex.lock();
+		m_recorder.m_opening = false;
+		m_recorder.m_wake.notify_all();
+	}
+
 	void Recorder::begin(const Chunk& chunk)
 	{
 		m_current = m_next;
@@ -532,13 +598,6 @@ namespace gnubase::engine
 		m_files.clear();
 		m_takes.clear();
 		m_written = 0;
-		if (!m_current.tracks.empty())
-		{
-			std::error_code error;
-			fs::create_directories(m_current.folder, error);
-			if (error)
-				fail("can't create the record folder " + m_current.folder.u8string() + ": " + error.message());
-		}
 		// Audio pre-record: the frames that came in just before, if none is missing in between.
 		const size_t capacity = m_channels > 0 ? m_history.size() / static_cast<size_t>(m_channels) : 0;
 		const size_t before = capacity > 0 && m_historyEnd == chunk.deviceFrame ? m_historyFrames : 0;
@@ -551,24 +610,36 @@ namespace gnubase::engine
 				static_cast<time::Samples>(before);
 			broadcast.timeReference = static_cast<uint64_t>(std::max<time::Samples>(first, 0));
 		}
-		// One listing for all tracks: the folder can hold thousands of recordings, and the lock is held meanwhile.
-		std::set<std::string> taken = takenNames(m_current.folder);
-		for (const RecordTrack& track : m_current.tracks)
 		{
-			try
+			// The folder and the files without the lock: the folder can hold thousands of recordings, and
+			// retrospective() shouldn't wait for them. Meanwhile no chunk is handled and no setup applied (m_opening),
+			// prepare and the destructor wait, and nothing else uses m_current, m_files or the pre-record history.
+			const Unlocked unlocked(*this);
+			if (!m_current.tracks.empty())
 			{
-				const std::string path = createFreeFile(
-					m_current.folder, fs::u8path(fileName(track.name) + extensionOf(m_current.format.format)), taken)
-											 .u8string();
-				WriteOptions options = m_current.format;
-				options.channels = static_cast<int>(track.ports.size());
-				if (options.broadcast)
-					options.broadcast->description = track.name.substr(0, 256);
-				m_files.push_back({track, path, AudioFileWriter::create(path, options)});
+				std::error_code error;
+				fs::create_directories(m_current.folder, error);
+				if (error)
+					fail("can't create the record folder " + m_current.folder.u8string() + ": " + error.message());
 			}
-			catch (const std::exception& error)
+			std::set<std::string> taken = takenNames(m_current.folder); // one listing for all tracks
+			for (const RecordTrack& track : m_current.tracks)
 			{
-				fail("can't record track " + track.name + ": " + error.what());
+				try
+				{
+					const std::string path = createFreeFile(m_current.folder,
+						fs::u8path(fileName(track.name) + extensionOf(m_current.format.format)), taken)
+												 .u8string();
+					WriteOptions options = m_current.format;
+					options.channels = static_cast<int>(track.ports.size());
+					if (options.broadcast)
+						options.broadcast->description = track.name.substr(0, 256);
+					m_files.push_back({track, path, AudioFileWriter::create(path, options)});
+				}
+				catch (const std::exception& error)
+				{
+					fail("can't record track " + track.name + ": " + error.what());
+				}
 			}
 		}
 
@@ -704,7 +775,7 @@ namespace gnubase::engine
 		m_midiTakes.assign(1, {chunk.position, static_cast<time::Samples>(chunk.deviceFrame), 0});
 		m_midiBuilders.clear();
 		for (const MidiRecordTrack& track : m_midiCurrent.midiTracks)
-			m_midiBuilders[track.channel];
+			m_midiBuilders[track.channel].setMpe(m_midiCurrent.mpePitchRange);
 		// The catch range: input that came just before recording started belongs to its start.
 		if (m_midiCurrent.catchFrames <= 0)
 			return;

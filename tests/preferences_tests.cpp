@@ -160,6 +160,8 @@ namespace
 			"meter.rmsAes17",                // the master meter's own settings
 			"meter.rmsResolution",           // the master meter's own settings
 			"midi.devices",                  // the MIDI device manager
+			"midi.mpeInput",                 // Studio Setup's note expression input device (#176)
+			"midi.mpePitchRange",            // Studio Setup's note expression input device (#176)
 			"midi.portSettings",             // Studio Setup
 			"preferences.presets",           // the dialog's presets themselves
 			"transport.cycleFollowsMarkers", // the markers window and the Transport menu

@@ -335,9 +335,11 @@ namespace gnubase::engine::settings
 					const std::optional<std::string> text = files::readFile(file);
 					require(text.has_value(), "can't read the key commands file " + file.u8string());
 					const Json contents = Json::parse(text.value_or(std::string()), nullptr, false);
-					require(contents.is_object() && contents.value("format", std::string()) == "gnubase.keyCommands",
+					// Compared as Json, so a format or version of another type is a readable error, not the JSON
+					// library's type error (Json::value throws on a type mismatch).
+					require(contents.is_object() && contents.value("format", Json()) == Json("gnubase.keyCommands"),
 						file.u8string() + " is no key commands file");
-					require(contents.value("version", 0) == 1,
+					require(contents.value("version", Json()) == Json(1),
 						file.u8string() + " is a key commands file of another version");
 					const Json saved = {{"keyCommands", contents.value("keyCommands", Json::array())},
 						{"macros", contents.value("macros", Json::array())}};
@@ -578,6 +580,15 @@ namespace gnubase::engine::settings
 					"Import to Left Locator (reference manual p. 365): File > Import > MIDI File places the file at "
 					"the left locator instead of the project start (midiFile.import position).",
 					Json{{"type", "boolean"}}, false},
+				{"midi.mpeInput",
+					"MPE input (reference manual pp. 1295-1298): MIDI recording takes its input as MPE's lower zone, "
+					"channel 1 the master channel and channels 2 to 16 the notes' own, whose pitch bend, channel "
+					"pressure and CC 74 record as the tuning, pressure and brightness of the note on their channel "
+					"(docs/features/note-expression.md).",
+					Json{{"type", "boolean"}}, false},
+				{"midi.mpePitchRange",
+					"The pitch range of MPE input's pitch bend on the notes' channels, in semitones (midi.mpeInput).",
+					Json{{"type", "integer"}, {"minimum", 1}, {"maximum", 96}}, 48},
 				{"midi.portSettings",
 					"The MIDI ports' settings (midi.setPort), by backend/in or out/port id, also for ports that aren't "
 					"connected: the name shown (showAs), whether it is visible, and for inputs whether it belongs to "

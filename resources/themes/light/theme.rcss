@@ -1253,6 +1253,18 @@
 	{
 		color: #566273;
 	}
+	.inspector .midi-effect-slot.off select
+	{
+		color: #566273;
+	}
+	.inspector .midi-effect-slot.recorded
+	{
+		border-left-color: #0969da;
+	}
+	.inspector .midi-divider.at .midi-divider-line
+	{
+		background-color: #0969da;
+	}
 	.pool-message.error
 	{
 		color: #c92d42;

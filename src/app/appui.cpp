@@ -2,6 +2,7 @@
 #include "app/appui.h"
 
 #include "app/uitools.h"
+#include "platform/files.h"
 #include "platform/log.h"
 #include "ui/chordpads.h"
 #include "ui/fonts.h"
@@ -54,6 +55,70 @@ namespace gnubase::app
 				names += (names.empty() ? "" : ", ") + track.at("name").get<std::string>();
 			return std::string(skipped.size() == 1 ? "the track " : "the tracks ") + names +
 				", which can't be imported or exported yet";
+		}
+
+		// The key command assignments as an HTML table (reference manual p. 1560): every command with the keys that run
+		// it, by category. File > Export > Key Command Assignments writes it.
+		std::string keyAssignmentsHtml(const engine::Json& assignments)
+		{
+			const auto escape = [](const std::string& text)
+			{
+				std::string escaped;
+				for (const char character : text)
+				{
+					if (character == '&')
+						escaped += "&amp;";
+					else if (character == '<')
+						escaped += "&lt;";
+					else if (character == '>')
+						escaped += "&gt;";
+					else if (character == '"')
+						escaped += "&quot;";
+					else
+						escaped += character;
+				}
+				return escaped;
+			};
+			const auto parameters = [](const engine::Json& values)
+			{
+				if (!values.is_object() || values.empty())
+					return std::string();
+				std::vector<std::string> names;
+				for (const auto& item : values.items())
+					names.push_back(item.key());
+				std::sort(names.begin(), names.end());
+				std::string text = " (";
+				bool first = true;
+				for (const std::string& name : names)
+				{
+					if (!first)
+						text += ", ";
+					first = false;
+					const engine::Json& value = values.at(name);
+					text += name + ": " + (value.is_string() ? value.get<std::string>() : value.dump());
+				}
+				return text + ")";
+			};
+			std::ostringstream html;
+			html << "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n"
+					"<title>Key Command Assignments</title>\n<style>\n"
+					"body { font-family: sans-serif; margin: 2em; }\n"
+					"table { border-collapse: collapse; }\n"
+					"th, td { border: 1px solid #808080; padding: 0.3em 0.8em; text-align: left; vertical-align: top; "
+					"}\n"
+					"th { background: #eeeeee; }\n</style>\n</head>\n<body>\n<h1>Key Command Assignments</h1>\n"
+					"<table>\n<thead><tr><th>Category</th><th>Command</th><th>Key</th></tr></thead>\n<tbody>\n";
+			for (const engine::Json& entry : assignments)
+			{
+				const std::string command = entry.at("command").get<std::string>();
+				std::string keys;
+				for (const engine::Json& key : entry.at("keys"))
+					keys += (keys.empty() ? "" : ", ") + escape(key.get<std::string>());
+				html << "<tr><td>" << escape(command.substr(0, command.find('.'))) << "</td><td>"
+					 << escape(command + parameters(entry.at("parameters"))) << "</td><td>" << keys << "</td></tr>\n";
+			}
+			html << "</tbody>\n</table>\n</body>\n</html>\n";
+			return html.str();
 		}
 
 		struct ProjectPanel
@@ -910,6 +975,15 @@ namespace gnubase::app
 				m_keys.run(command->get<std::string>(), commandParameters, callingWindow(), nullptr);
 				return engine::Json::object();
 			});
+		// Opens the confirmation dialog (resources/ui/confirm.rml) over the calling document: the caller sets the
+		// global ConfirmDialog to {title, message, ok, onOk} first, and the dialog runs onOk only for OK, not for
+		// Cancel.
+		m_lua.addFunction("ui.confirm",
+			[this](const engine::Json&)
+			{
+				openDialog(callingWindow(), "confirm.rml");
+				return engine::Json::object();
+			});
 		for (const ProjectCommand& command : g_projectCommands)
 		{
 			m_keys.add(
@@ -1120,6 +1194,38 @@ namespace gnubase::app
 									{{"path", file.u8string()}, {"name", file.stem().u8string()}});
 						});
 				}});
+		// File > Export > Key Command Assignments (reference manual p. 1560): an HTML list of every key that runs a
+		// command, which the user saves where they choose.
+		m_keys.add({"keyCommands.exportAssignments",
+			"Exports the list of every key command assignment as an HTML file that the user chooses.",
+			[this](ui::Window& window, Rml::Element* /*zone*/)
+			{
+				ui::FileDialog dialog;
+				dialog.kind = ui::FileDialogKind::Save;
+				dialog.title = "Export Key Command Assignments";
+				dialog.filters = {{"HTML files", "html"}};
+				dialog.parent = window.id();
+				m_shell.showFileDialog(dialog,
+					[this](const ui::FileDialogResult& result)
+					{
+						if (!result.error.empty())
+							logging::warning("The file dialog failed: {}", result.error);
+						if (result.files.empty())
+							return;
+						std::filesystem::path file = result.files.front();
+						if (file.extension().empty())
+							file += ".html";
+						try
+						{
+							files::writeAtomically(file, keyAssignmentsHtml(m_keys.assignments()));
+						}
+						catch (const std::exception& error)
+						{
+							logging::warning(
+								"Can't write the key command assignments {}: {}", file.u8string(), error.what());
+						}
+					});
+			}});
 		// For the dialog: the commands with their default keys, and keys as the settings and the platform write them.
 		m_lua.addFunction(
 			"ui.keyCommands", [this](const engine::Json&) { return engine::Json{{"commands", m_keys.commands()}}; });

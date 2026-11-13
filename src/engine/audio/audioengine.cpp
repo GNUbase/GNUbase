@@ -288,11 +288,18 @@ namespace gnubase::engine
 					Playback::Cue cue;
 					cue.window = static_cast<time::Samples>(g_cueSeconds * m_device->format().sampleRate);
 					{
-						// Held while it cues, so that a cue made before a start doesn't come after its exact cue.
-						const std::scoped_lock lock(m_cueMutex);
-						cue.playing = m_cueState.playing;
-						cue.settings = m_cueState.settings;
-						cue.arranger = m_cueState.arranger.get();
+						// Held while it cues, and taken by cueStart before it announces a start, so that a cue made
+						// before a start doesn't come after its exact cue. The state is only read under m_cueMutex:
+						// transport commands and rebuilds don't wait while this opens streams.
+						const std::scoped_lock order(m_cueOrderMutex);
+						CueState state;
+						{
+							const std::scoped_lock lock(m_cueMutex);
+							state = m_cueState; // keeps the arranger plan alive while it cues
+						}
+						cue.playing = state.playing;
+						cue.settings = state.settings;
+						cue.arranger = state.arranger.get();
 						cue.arrangerState = m_transport.arranger();
 						// Read first: a request seen applied then shows where the audio thread went (transport.h). The
 						// count-in comes before the cursor because it ends after the cursor has moved.
@@ -302,10 +309,10 @@ namespace gnubase::engine
 						// At a start the command thread cued, until the audio thread plays from there, and while it
 						// counts in, where playback starts after it. Either may begin while this cues: the voice it
 						// reads stays.
-						if (m_cueState.start >= 0 && applied < m_cueState.startRequests)
+						if (state.start >= 0 && applied < state.startRequests)
 						{
-							cue.position = m_cueState.start;
-							cue.enter = m_cueState.enter;
+							cue.position = state.start;
+							cue.enter = state.enter;
 							cue.playing = true;
 							cue.starting = true;
 						}
@@ -325,6 +332,7 @@ namespace gnubase::engine
 
 	void AudioEngine::cueStart(time::Samples start, time::Samples enter)
 	{
+		const std::scoped_lock order(m_cueOrderMutex); // after the cue the cue thread may be making (startCueing)
 		const std::scoped_lock lock(m_cueMutex);
 		m_cueState.start = start;
 		m_cueState.enter = enter;
@@ -473,6 +481,7 @@ namespace gnubase::engine
 		setup.retrospective =
 			static_cast<size_t>(std::max<int64_t>(m_settings.get(settings::g_midiRetrospectiveEvents), 0));
 		setup.pauseFrames = std::llround(30.0 * deviceRate); // reference manual p. 354
+		setup.mpePitchRange = mpePitchRange(m_settings);
 		// Each channel of a track's file records the channel of its input bus with the same number; a bus with fewer
 		// channels gives the others its last one, so a mono input fills a stereo track.
 		const RenderSnapshot& snapshot = m_snapshots.latest();
@@ -729,6 +738,7 @@ namespace gnubase::engine
 			auto sequence = std::make_unique<MidiSequence>();
 			sequence->notes = channel.notes;
 			sequence->controllers = channel.controllers;
+			sequence->expressions = channel.expressions;
 			sequence->modifiers = channel.modifiers;
 			sequence->liveInput = channel.liveInput;
 			sequence->articulations = channel.articulations;
@@ -1158,9 +1168,12 @@ namespace gnubase::engine
 		result.reserve(m_releases.size());
 		for (const PendingRelease& pending : m_releases)
 		{
-			Release release{pending.channel, pending.departed, pending.departedSend, {}};
-			for (const ObjectId source : m_instruments.at(pending.instrument).sources)
+			Release release{pending.channel, pending.departed, pending.departedSend, {}, {}};
+			const Instrument& instrument = m_instruments.at(pending.instrument);
+			for (const ObjectId source : instrument.sources)
 				release.staying.push_back(m_sequencers.at(source));
+			for (const auto& entry : instrument.sends)
+				release.stayingSends.push_back(entry.second);
 			result.push_back(std::move(release));
 		}
 		return result;
@@ -1177,9 +1190,9 @@ namespace gnubase::engine
 			m_running = program.generation;
 			for (const Release& release : program.releases)
 				if (release.departedSend)
-					release.channel->releaseNotesOf(*release.departedSend, release.staying);
+					release.channel->releaseNotesOf(*release.departedSend, release.staying, release.stayingSends);
 				else
-					release.channel->releaseNotesOf(*release.departed, release.staying);
+					release.channel->releaseNotesOf(*release.departed, release.staying, release.stayingSends);
 			for (size_t i = 0; i < program.sequencers.size(); ++i)
 				program.sequencers[i].second->playOn(program.destinations[i]);
 			m_started.store(program.generation, std::memory_order_release);
@@ -1235,11 +1248,10 @@ namespace gnubase::engine
 				transform.processor->process(program.sequencers[i].second->input(), transform.rules);
 		transport.tempo = program.tempo.bpmAt(program.tempo.toTicks(transport.position, program.sampleRate));
 		transport.tempoMap = &program.tempo;
-		// The MIDI inserts above the divider play the input before it is recorded.
-		for (const auto& [channel, sequencer] : program.sequencers)
-			sequencer->processInput(block.frames, transport);
-		m_recorder.process(block, m_played, m_recordOffset.load(std::memory_order_relaxed), program.sequencers);
 		program.graph.process(block.frames, transport, m_workers.get());
+		// After the graph: the MIDI inserts above the divider played the input there, with their automation, before
+		// it is recorded (MidiSequencer::process).
+		m_recorder.process(block, m_played, m_recordOffset.load(std::memory_order_relaxed), program.sequencers);
 		m_tap.capture(block.position, program.instruments);
 		m_playback.endBlock();
 		output(block, program);
@@ -2758,7 +2770,15 @@ namespace gnubase::engine
 	{
 		if (on && m_transport.countingIn())
 			return; // already on its way
-		sent(m_transport.record(on, on && !m_transport.playing() ? cueCountIn() : graph::CountIn{}));
+		graph::CountIn countIn;
+		if (on && !m_transport.playing())
+		{
+			countIn = cueCountIn();
+			// Playback that starts at once waits for the samplers' samples, as with play; a count-in doesn't (#1200).
+			if (m_device && countIn.length == 0)
+				waitForSamples(g_startWait);
+		}
+		sent(m_transport.record(on, countIn));
 	}
 
 	void AudioEngine::setTransportSettings(const TransportSettings& settings)

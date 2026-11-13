@@ -94,6 +94,8 @@ namespace gnubase::engine
 				note.velocityVariance = item.value("velocityVariance", note.velocityVariance);
 				require(std::abs(note.velocityVariance) <= 1.0, name + ".velocityVariance must be -1 to 1");
 				note.articulations = item.value("articulations", note.articulations);
+				if (item.contains("expressions"))
+					note.expressions = expressionsFromJson(item.at("expressions"), name + ".expressions");
 				notes.push_back(note);
 			}
 			// Changed only once every item is valid. ProjectModel::add would restore the project anyway.
@@ -259,13 +261,15 @@ namespace gnubase::engine
 			{"note.set", 1,
 				"Changes notes of a MIDI part: each change names a note by id and gives what changes, position and "
 				"length in ticks, pitch 0-127, velocity 0-1, release velocity 0-1, MIDI channel 0-15, play probability "
-				"0-1, velocity variance -1 to 1 or articulations, the attributes it has (see note.add). Returns the "
-				"changed notes.",
+				"0-1, velocity variance -1 to 1, articulations, the attributes it has, or expressions, which replace "
+				"its "
+				"expression points (see note.add). Returns the changed notes.",
 				changesSchema("notes",
 					{{"position", integer}, {"length", integer}, {"pitch", integer}, {"velocity", number},
 						{"releaseVelocity", number}, {"channel", integer}, {"probability", number},
 						{"velocityVariance", number},
-						{"articulations", {{"type", "array"}, {"items", {{"type", "string"}}}}}}),
+						{"articulations", {{"type", "array"}, {"items", {{"type", "string"}}}}},
+						{"expressions", expressionsSchema()}}),
 				resultSchema("notes"), false},
 			setNotes);
 		add(engine,

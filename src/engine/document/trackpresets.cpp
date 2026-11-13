@@ -870,8 +870,10 @@ namespace gnubase::engine
 			channel.midiChannel = sound.midiChannel;
 			channel.device = sound.device;
 			channel.modifiers = sound.modifiers;
+			const Channel before = channel;
 			channel.midiInserts = sound.midiInserts;
 			channel.midiSends = sound.midiSends;
+			removeMidiEffectLanes(project, context, before, channel);
 			for (midi::EffectSlot& slot : channel.midiSends.slots)
 				slot.output = 0; // the preset's tracks aren't this project's
 			if (channel.instrument != sound.instrument)

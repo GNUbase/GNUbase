@@ -428,7 +428,7 @@ namespace gnubase::engine
 	std::set<std::string> takenNames(const fs::path& folder)
 	{
 		// One listing instead of a failed create for every file of that name: a folder can hold thousands of
-		// recordings, and the recorder holds its lock meanwhile.
+		// recordings, and a recording's input waits for its files meanwhile.
 		std::set<std::string> taken;
 		std::error_code error;
 		for (fs::directory_iterator entry(folder, error), end; !error && entry != end; entry.increment(error))

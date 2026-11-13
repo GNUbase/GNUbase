@@ -2175,16 +2175,7 @@ namespace gnubase::engine
 			if (parameters.contains("sends"))
 				setSends(project, changed, parameters.at("sends"));
 			// A MIDI slot's automation goes with its effect when the slot gets another one (or none).
-			for (auto lane = project.automation.begin(); lane != project.automation.end();)
-			{
-				const AutomationTarget& target = lane->second.target;
-				const bool gone = lane->second.track == channel.track &&
-					target.type == AutomationTargetType::MidiEffect &&
-					midiEffectSlot(channel, target.number).effect != midiEffectSlot(changed, target.number).effect;
-				if (gone)
-					context.emit("automationLane.removed", {{"lane", lane->first}});
-				lane = gone ? project.automation.erase(lane) : std::next(lane);
-			}
+			removeMidiEffectLanes(project, context, channel, changed);
 			const Channel before = channel;
 			channel = changed;
 			const std::set<ObjectId> soloed = passOn(project, before, channel.id, parameters, context);
@@ -3060,6 +3051,7 @@ namespace gnubase::engine
 				note.velocityVariance = item.value("velocityVariance", 0.0);
 				require(std::abs(note.velocityVariance) <= 1.0, name + ".velocityVariance must be -1 to 1");
 				note.articulations = item.value("articulations", std::vector<std::string>());
+				note.expressions = expressionsFromJson(item.value("expressions", Json::array()), name + ".expressions");
 				notes.push_back(note);
 			}
 			Json added = Json::array();
@@ -3483,6 +3475,12 @@ namespace gnubase::engine
 					context.emit("project.changed", projectSettingsJson(project));
 				if (!(current.chordPads == previous.chordPads) || change.stepPositionBefore)
 					context.emit("chordPads.changed", chordPadsJson(project));
+				// The arranger and transpose events are settings, so undo and redo announce them here, as the commands
+				// that change them do (#896).
+				if (!(current.arranger == previous.arranger))
+					context.emit("arranger.changed", arrangerJson(project));
+				if (!(current.transpose == previous.transpose))
+					context.emit("transpose.changed", transposeJson(project));
 				announceBusses(previous.busses, current.busses, context);
 				reordered = current.tracks != previous.tracks;
 				activated = current.activeMarkerTrack != previous.activeMarkerTrack;
@@ -4660,7 +4658,7 @@ namespace gnubase::engine
 			objectSchema({{"position", integerSchema}, {"length", integerSchema}, {"pitch", integerSchema},
 							 {"velocity", numberSchema}, {"releaseVelocity", numberSchema}, {"channel", integerSchema},
 							 {"probability", numberSchema}, {"velocityVariance", numberSchema},
-							 {"articulations", arraySchema(stringSchema)}},
+							 {"articulations", arraySchema(stringSchema)}, {"expressions", expressionsSchema()}},
 				{"position", "length", "pitch", "velocity"});
 		add(engine,
 			{"note.add", 1,
@@ -4668,8 +4666,10 @@ namespace gnubase::engine
 				"0-1, release (note-off) velocity 0-1 (default 0.5), MIDI channel 0-15 (default 0), play probability "
 				"0-1, the chance that the note plays (default 1), and velocity variance -1 to 1, the share by which "
 				"playback raises (positive) or lowers (negative) its velocity at most (default 0). articulations are "
-				"the "
-				"attributes of the track's articulation map (articulationMap.add) that the note has, by name.",
+				"the attributes of the track's articulation map (articulationMap.add) that the note has, by name. "
+				"expressions are its per-note expression: points {type, position, value}, position in ticks from the "
+				"note's start, type volume (a linear gain 0-4), pan (0-1, 0.5 the center), tuning (semitones, -120 to "
+				"120), vibrato, expression, brightness or pressure (0-1).",
 				objectSchema({{"part", idSchema}, {"notes", arraySchema(note)}}, {"part", "notes"}),
 				{{"type", "object"}, {"properties", {{"notes", {{"type", "array"}}}}}, {"required", {"notes"}}}, false},
 			addNotes);

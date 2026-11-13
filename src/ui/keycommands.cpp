@@ -388,6 +388,38 @@ namespace gnubase::ui
 		return found;
 	}
 
+	Json KeyCommands::assignments() const
+	{
+		Json found = Json::array();
+		for (const Bound& bound : m_effective)
+		{
+			size_t index = found.size();
+			for (size_t each = 0; each < found.size(); ++each)
+				if (found[each].at("command") == bound.command && found[each].at("parameters") == bound.parameters)
+				{
+					index = each;
+					break;
+				}
+			if (index == found.size())
+			{
+				std::string about;
+				if (const auto engineCommand = m_engineCommands.find(bound.command);
+					engineCommand != m_engineCommands.end())
+					about = engineCommand->second.description;
+				else if (const auto ui = m_uiCommands.find(bound.command); ui != m_uiCommands.end())
+					about = ui->second.description;
+				else if (isMacro(bound.command))
+					about = "Runs the macro " + bound.command.substr(sizeof("macro.") - 1) + ".";
+				found.push_back({{"command", bound.command}, {"parameters", bound.parameters}, {"description", about},
+					{"zone", bound.zone}, {"keys", Json::array()}});
+			}
+			found[index]["keys"].push_back(keyName(bound.keys, m_platform));
+		}
+		std::stable_sort(found.begin(), found.end(), [](const Json& a, const Json& b)
+			{ return a.at("command").get<std::string>() < b.at("command").get<std::string>(); });
+		return found;
+	}
+
 	std::vector<std::string> KeyCommands::keysFor(const std::string& command, const Json& parameters) const
 	{
 		std::vector<std::string> names;
