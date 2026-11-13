@@ -7,6 +7,7 @@
 
 #include "engine/document/linkgroups.h"
 #include "engine/document/projectmodel.h"
+#include "engine/document/trackvisibility.h"
 #include "engine/midi/articulationmaps.h"
 #include "engine/midi/drummaps.h"
 #include "engine/midi/patterns.h"
@@ -1085,12 +1086,31 @@ namespace gnubase::engine
 	TrackVisibility trackVisibilityFromJson(const Json& json)
 	{
 		TrackVisibility visibility;
-		visibility.hidden = json.value("hidden", std::vector<ObjectId>());
-		visibility.sync = json.value("sync", std::string());
-		for (const Json& configuration : json.value("configurations", Json::array()))
-			visibility.configurations.push_back(
-				{configuration.value("name", std::string()), configuration.value("hidden", std::vector<ObjectId>())});
-		visibility.configuration = json.value("configuration", std::string());
+		const auto ids = [](const Json& object, const char* key)
+		{
+			std::vector<ObjectId> ids;
+			if (const auto found = object.find(key); found != object.end() && found->is_array())
+				for (const Json& id : *found)
+					if (id.is_number_unsigned())
+						ids.push_back(id.get<ObjectId>());
+			return ids;
+		};
+		visibility.hidden = ids(json, "hidden");
+		if (const auto sync = json.find("sync"); sync != json.end() && sync->is_string())
+			visibility.sync = sync->get<std::string>();
+		if (const auto configurations = json.find("configurations");
+			configurations != json.end() && configurations->is_array())
+			for (const Json& item : *configurations)
+			{
+				VisibilityConfiguration configuration;
+				if (const auto name = item.find("name"); name != item.end() && name->is_string())
+					configuration.name = name->get<std::string>();
+				configuration.hidden = ids(item, "hidden");
+				visibility.configurations.push_back(std::move(configuration));
+			}
+		if (const auto configuration = json.find("configuration");
+			configuration != json.end() && configuration->is_string())
+			visibility.configuration = configuration->get<std::string>();
 		return visibility;
 	}
 
@@ -2635,6 +2655,9 @@ namespace gnubase::engine
 							 }),
 				folded.end());
 		}
+		// A file's track visibility is checked as trackVisibility.set checks it, and hidden folders come in with
+		// the tracks inside them (#906).
+		sanitizeTrackVisibility(project);
 		// Files from before the metronome have none; values that aren't valid keep their defaults.
 		if (const auto found = json.find("metronome"); found != json.end())
 			metronome::apply(project.metronome, *found, false);

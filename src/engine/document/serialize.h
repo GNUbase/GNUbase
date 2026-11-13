@@ -107,7 +107,8 @@ namespace gnubase::engine
 	Json toJson(const AutomationLane& lane); // with its points, sorted by position
 	Json toJson(const MixerView& view);      // {"hidden": [ids], "hiddenTypes": [types]}
 	// {hidden, sync, configurations: [{name, hidden}], configuration}; trackVisibilityFromJson takes what is valid
-	// JSON.
+	// JSON and leaves out the rest, and the project load checks the values as trackVisibility.set does
+	// (sanitizeTrackVisibility).
 	Json toJson(const TrackVisibility& visibility);
 	TrackVisibility trackVisibilityFromJson(const Json& json);
 	// A track's height in the track list, in dp before vertical zoom: trackLayout.set's range.
