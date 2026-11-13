@@ -237,6 +237,10 @@ TEST_CASE("the chord assistant suggests chords after the selected pad's and assi
 {
 	Window window;
 	window.open();
+	// The lower zone is high enough for every suggestion and chord editor button: in a narrower window, such as CI's
+	// 1024 pixels, the toolbars take more rows and the suggestions under the assistant's fold aren't hit by a click.
+	window.app.appUi().docking().setSize("project", "lower", 400.0);
+	window.step();
 	window.call("chordPads.assign", {{"assignments", {{{"pad", 6}, {"chord", ""}}}}});
 	window.click("#chord-pads-assistant");
 	window.click(Window::pad(0));
@@ -262,10 +266,7 @@ TEST_CASE("the chord assistant suggests chords after the selected pad's and assi
 	window.step();
 	REQUIRE(window.app.waitUntil([&] { return window.pads()[7].at("chord") == "D"; }));
 
-	// The chord editor's buttons (#1089): the selected pad's chord lit, a button makes another chord. The lower zone
-	// is high enough for all of them.
-	window.app.appUi().docking().setSize("project", "lower", 400.0);
-	window.step();
+	// The chord editor's buttons (#1089): the selected pad's chord lit, a button makes another chord.
 	window.click("#chord-pads-page-editor");
 	REQUIRE(window.app.waitUntil(
 		[&] { return window.hasClass(".chord-editor-button[part=root][value=\"0\"]", "checked"); }));
@@ -747,7 +748,10 @@ TEST_CASE("pad modifier buttons play the pad, the keyboard shows the notes, and 
 	window.call("chordPads.remoteInput", {{"events", {{{"kind", "released"}, {"key", 39}}}}});
 	REQUIRE(window.app.waitUntil([&] { return !window.hasClass(Window::pad(3), "triggered"); }));
 
-	// An assistant's suggestion dragged onto a pad goes onto it.
+	// An assistant's suggestion dragged onto a pad goes onto it. The lower zone is high enough for the suggestion to be
+	// above the assistant's fold, in a narrow window too, where the toolbars take more rows.
+	window.app.appUi().docking().setSize("project", "lower", 400.0);
+	window.step();
 	window.click("#chord-pads-assistant");
 	window.click(Window::pad(0));
 	REQUIRE(window.app.waitUntil([&] { return window.elements(".chord-suggestion").size() == 24; }));

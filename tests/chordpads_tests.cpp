@@ -1534,10 +1534,11 @@ TEST_CASE("moving the step input position is no undo step, and undoing a step ta
 
 TEST_CASE("step input stays in range at very low sample rates and refuses to move far chord events", "[unit]")
 {
-	// #1174: at 100 Hz the longest project's ticks would leave int64_t; step input stops where it does at 8 kHz.
+	// #1174: at 100 Hz the longest project's ticks would leave int64_t; step input stops where it does at 8 kHz, the
+	// lowest rate project.set takes (#1126), and a project at 100 Hz does too.
 	Engine engine;
 	Client client(engine);
-	run(client, "project.set", {{"sampleRate", 100.0}});
+	run(client, "project.set", {{"sampleRate", g_lowestSampleRate}});
 	run(client, "chordPads.set", {{"stepInput", true}, {"stepBars", INT64_MAX}});
 	const auto last = run(client, "chordPads.get").at("stepPosition").get<int64_t>();
 	CHECK(last > 1000000 * g_bar);

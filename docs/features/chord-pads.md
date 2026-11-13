@@ -243,8 +243,9 @@ MIDI Learn; chords recorded on the record-enabled chord track from the mouse and
 Insert Mode, at a bar's start, over a chord that is there and moved by bars, also on a chord track in linear time base
 at a tempo whose bars start between samples and with Move Insert across a tempo change, `stepBars` of any size and a
 step position past the longest project's end, cursor moves without undo steps and steps undone with their chord, moved
-events, chord track and position, the step range at 100 Hz and Move Insert refused for a far event, and pads onto the
-chord track and a MIDI track; a file with no pads or a reference below -1; and saving and loading.
+events, chord track and position, the step range at 8 kHz and in a project at 100 Hz and Move Insert refused for a far
+event, and pads onto the chord track and a MIDI track; a file with no pads or a reference below -1; and saving and
+loading.
 `tests/keycommandsdialog_tests.cpp`: the key commands don't list `chordPads.trigger` without parameters.
 `tests/inspector_tests.cpp`: the Inspector's Input Routing of an instrument track choosing the chord pads.
 `tests/rtcheck_tests.cpp`: the remote keys for two players with Filter Notes, the chord modifiers and a control,
