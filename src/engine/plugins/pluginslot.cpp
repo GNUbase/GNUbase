@@ -273,6 +273,12 @@ namespace gnubase::engine::plugins
 			converted.value = event.parameterValue;
 			out.push(converted);
 			break;
+		case Type::NoteExpression:
+			converted.type = plugin::EventType::NoteExpression;
+			converted.expression = event.parameter;
+			converted.value = event.parameterValue;
+			out.push(converted);
+			break;
 		}
 	}
 

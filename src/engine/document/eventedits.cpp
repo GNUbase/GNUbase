@@ -1120,6 +1120,18 @@ namespace gnubase::engine
 			else
 			{
 				MidiPart& part = *first.part;
+				// The glued part keeps the first part's root key and Global Transpose, so a part that follows global
+				// transpose differently would play its notes at another pitch after the glue: refuse it (#896). Two
+				// parts follow the same way when they are Independent alike or, following, get the same step from the
+				// project root key; the transpose track's events then transpose them by the same at every position.
+				for (size_t i = 1; i < items.size(); ++i)
+				{
+					const MidiPart& other = *items[i].part;
+					require(other.independent == part.independent &&
+							rootKeyTranspose(project, other) == rootKeyTranspose(project, part),
+						"MIDI parts that follow global transpose differently, by their root key or Global Transpose, "
+						"don't glue");
+				}
 				const time::Ticks start = ticks(project, part.position);
 				// Pattern events that continue the first one's pattern, as after a split, with its transpose and
 				// velocity, glue into it. Otherwise the glued part is an ordinary one with the notes that each part
@@ -1895,6 +1907,74 @@ namespace gnubase::engine
 				{"lanes", clipboard.automation.size()}};
 		}
 
+		// The id of the transpose track, 0 for none. Its events are project.transpose, one list for the project.
+		ObjectId transposeTrackId(const Project& project)
+		{
+			for (const auto& [id, track] : project.trackById)
+				if (track.type == TrackType::Transpose)
+					return id;
+			return 0;
+		}
+
+		// Whether a range edit moves the transpose events: only when the transpose track is among the tracks and it is
+		// not locked (#896). Locked, its events stay where they are, as the transpose.* commands leave them.
+		bool movesTranspose(const Project& project, const std::vector<ObjectId>& tracks)
+		{
+			const ObjectId track = transposeTrackId(project);
+			return track != 0 && contains(tracks, track) && !project.transpose.lock;
+		}
+
+		// Delete Time: the transpose events in the range go with it, and those after it move back by the gap, so that
+		// they keep their place in the music, which moves back too (#896).
+		void closeTransposeEvents(Project& project, const std::vector<ObjectId>& tracks, const Range& range,
+			const Gap& gap, CommandContext& context)
+		{
+			if (!movesTranspose(project, tracks))
+				return;
+			std::vector<TransposeEvent>& events = project.transpose.events;
+			bool changed = false;
+			for (auto it = events.begin(); it != events.end();)
+			{
+				const time::Samples at = samples(project, it->position);
+				if (at >= range.start && at < range.end)
+				{
+					it = events.erase(it);
+					changed = true;
+					continue;
+				}
+				if (at >= range.end)
+				{
+					it->position.value -= gap.in(it->position.base);
+					changed = true;
+				}
+				++it;
+			}
+			if (changed)
+			{
+				std::stable_sort(events.begin(), events.end(), [](const TransposeEvent& a, const TransposeEvent& b)
+					{ return a.position.value < b.position.value; });
+				context.emit("transpose.changed", transposeJson(project));
+			}
+		}
+
+		// Insert Silence: the transpose events at or after the point the room is made at move later by the gap, with
+		// the music (#896).
+		void openTransposeEvents(Project& project, const std::vector<ObjectId>& tracks, time::Samples at,
+			const Gap& gap, CommandContext& context)
+		{
+			if (!movesTranspose(project, tracks))
+				return;
+			bool changed = false;
+			for (TransposeEvent& event : project.transpose.events)
+				if (samples(project, event.position) >= at)
+				{
+					event.position.value += gap.in(event.position.base);
+					changed = true;
+				}
+			if (changed)
+				context.emit("transpose.changed", transposeJson(project));
+		}
+
 		// Deletes what lies in a range; close (Delete Time) moves what comes after it back by its length.
 		void deleteRange(Project& project, const Range& range, bool close, CommandContext& context)
 		{
@@ -1903,7 +1983,11 @@ namespace gnubase::engine
 			for (const Item& item : within(project, range.tracks, range.start, range.end, false))
 				removeItem(project, item, 0, context);
 			if (close)
-				moveFrom(project, range.tracks, range.end, gapOf(project, range.start, range.end), -1, context);
+			{
+				const Gap gap = gapOf(project, range.start, range.end);
+				moveFrom(project, range.tracks, range.end, gap, -1, context);
+				closeTransposeEvents(project, range.tracks, range, gap, context);
+			}
 			cutAutomationIn(project, range, close, context);
 		}
 
@@ -1913,6 +1997,7 @@ namespace gnubase::engine
 		{
 			splitTracks(project, tracks, at, splitNotes, false, context);
 			moveFrom(project, tracks, at, gap, 1, context);
+			openTransposeEvents(project, tracks, at, gap, context);
 			for (auto& [id, lane] : project.automation)
 				if (contains(tracks, lane.track))
 				{
@@ -2810,7 +2895,9 @@ namespace gnubase::engine
 					"outside keeps its curve: the value it arrives at the start with holds up to the end; with virgin "
 					"territory (automation.set) the range becomes a gap instead, the point at its start a terminator. "
 					"time (Delete Time) closes the gap: what comes after the range on its tracks moves back by its "
-					"length, in ticks on musical tracks. Locked events stay. Without time, a cycle marker on a "
+					"length, in ticks on musical tracks, and the transpose events in the range go with it, those after "
+					"it moving back too, unless the transpose track is locked. Locked events stay. Without time, a "
+					"cycle marker on a "
 					"marker track among tracks that the range lies in loses the part in it (reference manual p. 425): "
 					"one "
 					"that starts or ends with the range gets shorter, one that it lies inside otherwise is split in "
@@ -2834,7 +2921,8 @@ namespace gnubase::engine
 				"Inserts silence as long as " + range +
 					" at its start: what lies on its tracks from the start on, cut there, moves later by the range's "
 					"length, in ticks on musical tracks, and the automation holds the value it arrives at the start "
-					"with over the silence. Locked events stay.",
+					"with over the silence. The transpose events from the start on move later too, unless the "
+					"transpose track is locked. Locked events stay.",
 				schema(rangeParameters, {}), {{"type", "object"}}, false},
 			"Insert Silence", insertSilence);
 

@@ -4,7 +4,8 @@
 // instrument track's built-in instrument, the channel strip's sections and the built-in plugins in its slots. They name
 // parameters by the targets automation lanes take, and give values with their display text. parameter.set is one undo
 // step and changes nothing if it fails (ProjectModel::add); playback takes the values from the render snapshot like
-// those of channel.set.
+// those of channel.set, and the parameters a link group links go on to the channel's other channels as channel.set
+// passes them on (docs/features/link-groups.md).
 #include "engine/document/document.h"
 #include "engine/document/projectmodel.h"
 #include "engine/document/serialize.h"
@@ -175,8 +176,17 @@ namespace gnubase::engine
 				require(!effect.empty(), "MIDI slot " + std::to_string(target.number) + " holds no effect");
 				throw CommandError(effect + " has no parameter " + std::to_string(target.parameter));
 			}
+			// A channel without the parameter: a VCA channel has only its fader, a MIDI channel only its mute.
 			if (target.type != AutomationTargetType::Instrument)
-				throw CommandError("a MIDI channel has no volume, pan or channel strip sections");
+			{
+				const bool vca = project.trackById.at(channel.track).type == TrackType::Vca;
+				if (target.type == AutomationTargetType::Strip)
+					throw CommandError(vca ? "a VCA channel has no channel strip sections"
+										   : "a MIDI channel has no channel strip sections");
+				if (target.type == AutomationTargetType::Mute)
+					throw CommandError("a VCA channel's mute isn't a parameter");
+				throw CommandError(vca ? "a VCA channel has no pan" : "a MIDI channel has no volume or pan");
+			}
 			require(!channel.instrument.empty(), "channel " + idText(channel.id) + " plays no instrument");
 			throw CommandError(channel.instrument + " has no parameter " + std::to_string(target.parameter));
 		}
@@ -266,6 +276,67 @@ namespace gnubase::engine
 				{"maximum", info.maximum}, {"default", info.defaultValue}, {"unit", info.unit},
 				{"stepped", info.stepped}, {"options", info.options}, {"value", current},
 				{"text", processors::valueToText(info, current)}};
+		}
+
+		// The channel.set key a parameter's change passes on as, or none for the parameters a link group doesn't link:
+		// an instrument's, a plugin's and a MIDI effect's, and the pre section's, which channel.set doesn't pass on
+		// either (docs/features/link-groups.md).
+		const char* linkKey(const AutomationTarget& target)
+		{
+			switch (target.type)
+			{
+			case AutomationTargetType::Volume:
+				return "volume";
+			case AutomationTargetType::Pan:
+				return "pan";
+			case AutomationTargetType::Mute:
+				return "mute";
+			case AutomationTargetType::Strip:
+				if (isPreSection(target.parameter))
+					return nullptr;
+				return target.parameter < StripParameter::GateOn ? "eq" : "strip";
+			default:
+				return nullptr;
+			}
+		}
+
+		// Passes a parameter's new value on to the channels linked to the channel's, as channel.set does: the fader
+		// and the pan by as much as they moved, stopping at their ends, the mute as it is now, and a section's
+		// parameter to every channel that has the sections. Announces every channel it changed.
+		void passOn(Project& project, const Channel& channel, const ChannelParameter& parameter, double before,
+			double newValue, bool linked, CommandContext& context)
+		{
+			const char* const key = linkKey(parameter.target);
+			if (key == nullptr)
+				return;
+			const auto isVca = [&project](const Channel& other)
+			{ return project.trackById.at(other.track).type == TrackType::Vca; };
+			for (const ObjectId other : linkedTo(project, channel.id, key, linked))
+			{
+				Channel& to = project.channels.at(other);
+				const Channel unchanged = to;
+				switch (parameter.target.type)
+				{
+				case AutomationTargetType::Volume:
+					if (to.format != ChannelFormat::None || isVca(to))
+						to.volume = std::clamp(to.volume + (newValue - before), g_minChannelVolume, project.maxVolume);
+					break;
+				case AutomationTargetType::Pan:
+					if (to.format != ChannelFormat::None)
+						to.pan = std::clamp(to.pan + (newValue - before), -1.0, 1.0);
+					break;
+				case AutomationTargetType::Mute:
+					to.mute = newValue != 0.0;
+					break;
+				default: // a section's parameter, which only a channel with audio has
+					if (to.format != ChannelFormat::None)
+						setStripValue(to.sections, parameter.target.parameter, newValue);
+					break;
+				}
+				if (to == unchanged)
+					continue;
+				context.emit("channel.changed", {{"channel", toJson(to)}});
+			}
 		}
 
 		// The mixer section a strip parameter is in.
@@ -373,11 +444,13 @@ namespace gnubase::engine
 					throw CommandError("text \"" + text + "\" isn't a value of " + info.name);
 				newValue = *parsed;
 			}
+			const double before = value(project, channel, parameter);
 			setValue(project, channel, parameter, newValue);
 			if (parameter.target.type == AutomationTargetType::Plugin)
 				context.emit("plugin.changed", {{"slot", model.describeSlot(project, parameter.target.slot)}});
 			else
 				context.emit("channel.changed", {{"channel", toJson(channel)}});
+			passOn(project, channel, parameter, before, newValue, parameters.value("linked", true), context);
 			return {{"parameter", describe(project, channel, parameter)}};
 		}
 	}
@@ -431,9 +504,12 @@ namespace gnubase::engine
 				"either value or text: the name of one of its options, or a number, optionally followed by its unit, "
 				"in any case (\"-6 dB\"). Values beyond the range stop at its ends, and stepped parameters round to "
 				"whole numbers. Volume and pan changes glide over 5 ms. A channel that gets another instrument "
-				"starts with its parameters at their defaults. Returns the parameter.",
+				"starts with its parameters at their defaults. On a channel in a link group (linkGroup.add) a change "
+				"of the fader's volume, pan or mute or of the strip's equalizer or dynamics goes on to its other "
+				"channels as channel.set passes it on, the fader and the pan by as much as they moved, unless linked "
+				"is false; all in the same undo step. Returns the parameter.",
 				objectSchema({{"channel", idSchema}, {"target", targetSchema}, {"value", {{"type", "number"}}},
-								 {"text", {{"type", "string"}}}},
+								 {"text", {{"type", "string"}}}, {"linked", {{"type", "boolean"}}}},
 					{"channel", "target"}),
 				parameterResult, false},
 			[this](Project& project, CommandContext& context) { return setParameter(project, context, *this); });

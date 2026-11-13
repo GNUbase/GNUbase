@@ -723,13 +723,13 @@ TEST_CASE("a send plays its effect to another instrument track, with the track's
 	CHECK(played[track.channel] == "10 90 3c 64\n20 b0 40 7f\n25 e0 00 50\n30 80 3c 40\n40 90 3e 64\n");
 	CHECK(played[other] == "10 90 48 64\n20 b0 40 7f\n25 e0 00 50\n30 80 48 40\n40 90 4a 64\n");
 
-	// Back to the track's output: the note it played there ends there.
+	// Back to the track's output: the note it played there ends there; the track's own note sounds on (#1157).
 	sent["output"] = 0;
 	track.set("midiSends", {{"slots", {sent}}});
 	track.render(64);
 	played = track.capturedBy();
 	CHECK(played[other] == "64 80 4a 00\n");
-	CHECK(played[track.channel] == "64 80 3e 00\n");
+	CHECK(played[track.channel].empty());
 }
 
 TEST_CASE(
@@ -813,4 +813,119 @@ TEST_CASE("automation plays a MIDI effect's parameters at their samples, and par
 	CHECK(run(track.client, "project.get").at("automation").empty());
 	run(track.client, "history.undo");
 	CHECK(run(track.client, "project.get").at("automation").size() == 1);
+}
+
+TEST_CASE("an effect after a changed insert starts afresh, without the notes the old chain gave it", "[integration]")
+{
+	EffectTrack track;
+	track.set("midiInserts",
+		{{"slots", {slot("chordGenerator", {{"chord", "Major"}}), slot("arpeggiator", {{"rate", "1/16"}})}}});
+	run(track.client, "transport.play");
+	track.inject({message(10, {0x90, 60, 100})});
+	track.render(g_beat);
+	// The chord generator goes while the note sounds: an arpeggiator that kept the chord's notes would step on
+	// through them after the note ends.
+	track.set("midiInserts", {{"slots", {slot("")}}});
+	track.render(g_beat);
+	track.inject({message(2 * g_beat, {0x80, 60, 64})});
+	track.render(2 * g_beat);
+	const std::string played = track.captured();
+	for (size_t line = 0; line < played.size(); line = played.find('\n', line) + 1)
+		if (std::stoll(played.substr(line)) > 2 * g_beat)
+			CHECK(played.compare(played.find(' ', line), 4, " 90 ") != 0);
+}
+
+TEST_CASE("a send whose source changes ends its own notes only, not the track's", "[integration]")
+{
+	EffectTrack track;
+	track.add({{0, 2, 60, 100}});
+	track.set("midiSends", {{"pre", true}, {"slots", {slot("transformer", {{"value", 12}})}}});
+	run(track.client, "transport.play");
+	track.render(g_beat);
+	CHECK(track.captured() == "0 90 3c 64\n0 90 48 64\n");
+	// Switching Pre gives the send a new instance: its note ends, the part's note sounds on to its end.
+	track.set("midiSends", {{"pre", false}});
+	track.render(g_beat + 64);
+	const std::string played = track.captured();
+	CHECK(played.find(std::to_string(g_beat) + " 80 48 00\n") == 0);
+	CHECK(played.find("80 3c") == played.find(std::to_string(2 * g_beat) + " 80 3c") + 6);
+}
+
+TEST_CASE("an effect that starts afresh takes its automated values, not the slot's", "[integration]")
+{
+	EffectTrack track;
+	track.set("midiInserts", {{"slots", {slot("transformer")}}});
+	const Json target = {{"type", "midiEffect"}, {"number", 0}, {"parameter", processors::Transformer::Value}};
+	const auto lane = run(track.client, "automationLane.add", {{"track", track.track}, {"target", target}})
+						  .at("lane")
+						  .at("id")
+						  .get<ObjectId>();
+	run(track.client, "automationPoint.add",
+		{{"lane", lane}, {"points", {{{"position", 0}, {"value", 12}, {"shape", "step"}}}}});
+	run(track.client, "transport.play");
+	track.render(64);
+	// Switched off and on, the slot plays a new instance, which the lane doesn't send its value again.
+	track.set("midiInserts", {{"slots", {{{"on", false}}}}});
+	track.render(64);
+	track.set("midiInserts", {{"slots", {{{"on", true}}}}});
+	track.render(64);
+	track.inject({message(200, {0x90, 60, 100})});
+	track.render(64);
+	CHECK(track.captured() == "200 90 48 64\n");
+}
+
+TEST_CASE("the inserts above the divider take their automation at its sample", "[integration]")
+{
+	EffectTrack track;
+	track.set("midiInserts", {{"divider", 1}, {"slots", {slot("transformer")}}});
+	const Json target = {{"type", "midiEffect"}, {"number", 0}, {"parameter", processors::Transformer::Value}};
+	const auto lane = run(track.client, "automationLane.add", {{"track", track.track}, {"target", target}})
+						  .at("lane")
+						  .at("id")
+						  .get<ObjectId>();
+	run(track.client, "automationPoint.add",
+		{{"lane", lane},
+			{"points",
+				{{{"position", 0}, {"value", 0}, {"shape", "step"}},
+					{{"position", g_beatTicks}, {"value", 12}, {"shape", "step"}}}}});
+	run(track.client, "transport.play");
+	track.render(g_beat);
+	// The value changes at the block's first sample, where the note comes.
+	track.inject({message(g_beat + 10, {0x90, 60, 100})});
+	track.render(64);
+	CHECK(track.captured() == std::to_string(g_beat + 10) + " 90 48 64\n");
+}
+
+TEST_CASE("a send that goes leaves the notes another track's send holds on the instrument", "[integration]")
+{
+	EffectTrack track;
+	const ObjectId second = track.addInstrument();
+	const ObjectId target = track.addInstrument();
+	Json sent = slot("transformer");
+	sent["output"] = target;
+	track.set("midiSends", {{"slots", {sent}}});
+	track.set("midiSends", {{"slots", {sent}}}, second);
+	track.inject({message(10, {0x90, 60, 100})});
+	run(track.client, "midi.inject", {{"channel", second}, {"messages", {message(20, {0x90, 60, 100})}}});
+	track.render(64);
+	CHECK(track.capturedBy()[target] == "10 90 3c 64\n20 90 3c 64\n");
+	// The second track goes with its send; the first one's still holds the note there.
+	const Json project = run(track.client, "project.get");
+	for (const Json& channel : project.at("channels"))
+		if (channel.at("id") == second)
+			run(track.client, "track.remove", {{"track", channel.at("track")}});
+	track.render(64);
+	CHECK(track.capturedBy()[target] == "");
+}
+
+TEST_CASE("a send slot that loses its effect loses its output, which then counts for no loop", "[integration]")
+{
+	EffectTrack track;
+	const ObjectId other = track.addInstrument();
+	Json sent = slot("transformer");
+	sent["output"] = other;
+	track.set("midiSends", {{"slots", {sent}}});
+	CHECK(track.set("midiSends", {{"slots", {slot("")}}}).at("slots")[0].at("output") == 0);
+	sent["output"] = track.channel;
+	CHECK(track.set("midiSends", {{"slots", {sent}}}, other).at("slots")[0].at("output") == track.channel);
 }

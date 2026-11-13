@@ -1798,3 +1798,66 @@ TEST_CASE("a backup started in another window while one's progress shows shows i
 	handleEarlierEvents(app);
 	CHECK(!shown(app, "#project-error-dialog"));
 }
+
+TEST_CASE("a backup whose progress's window closes is cancelled, and another one from there reports in the main window",
+	"[ui][slow]")
+{
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	const test::TempDir dir;
+	const fs::path take = dir.path() / "take.wav";
+	test::writeWav(take, {std::vector<float>(size_t{48000} * 10 * 2, 0.25f), 2, 48000}); // 10 s, 4 MB
+	app.call("media.add", {{"path", utf8(take)}});
+	app.call("media.add",
+		{{"path", utf8(dir.path() / "gone.wav")}, {"sampleRate", 48000.0}, {"channels", 2}, {"length", 48000}});
+	app.appUi().docking().setFloating("history", true);
+	const gnubase::ui::Window* floating = app.appUi().docking().windowOf("history");
+	REQUIRE(floating != nullptr);
+	const gnubase::ui::WindowId panel = floating->id();
+	gnubase::ui::Window* window = app.shell().find(panel);
+	REQUIRE(window != nullptr);
+	const auto shownInPanel = [&app, panel](const std::string& selector)
+	{
+		const Json found = app.ui().dom(panel, selector, 0).at("elements");
+		return found.size() == 1 && found[0].at("visible").get<bool>();
+	};
+	const auto backUpInPanel = [&app, &shownInPanel, window, panel](const fs::path& folder)
+	{
+		app.keys().run("file.backup", Json::object(), *window, nullptr);
+		answer(app, {folder});
+		REQUIRE(app.waitUntil([&shownInPanel] { return shownInPanel("#backup-project-dialog button.primary"); }));
+		app.ui().click(
+			panel, {"#backup-project-dialog button.primary", 0, std::nullopt}, gnubase::ui::MouseButton::Left, 1, {});
+		app.shell().step(std::chrono::milliseconds(0));
+	};
+
+	// Two backups asked for in the panel's own window: the first shows its progress there, the second runs without
+	// (#1109). Both are held at their first progress until the window closed, so that neither can end first.
+	test::HeldJob held(app.engine(), "project.backup", std::chrono::minutes(1), 2);
+	backUpInPanel(dir.path() / "First");
+	REQUIRE(app.waitUntil([&held] { return held.job() != 0; }, std::chrono::seconds(30)));
+	REQUIRE(app.waitUntil([&shownInPanel] { return shownInPanel("#backup-progress-dialog"); }));
+	backUpInPanel(dir.path() / "Second");
+	REQUIRE(app.waitUntil([&held] { return held.held(); }, std::chrono::seconds(30)));
+
+	// Closing that window, which docks the panel back, takes the progress with it: its backup stops, as its Cancel
+	// would, rather than run on unseen. The other one runs on and, its window gone, says in the main window that it
+	// couldn't read gone.wav (#1206).
+	app.shell().requestClose(panel);
+	REQUIRE(app.waitUntil([&app, panel] { return app.shell().find(panel) == nullptr; }));
+	REQUIRE(app.waitUntil([&app] { return ran(app, "job.cancel"); }));
+	CHECK(held.release());
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }, std::chrono::seconds(60)));
+	CHECK(errorMessage(app) == "The project was backed up without 1 file that couldn't be read: gone.wav.");
+	closeError(app);
+	lastJob(app); // once none runs
+	const Json jobs = app.call("job.list").at("jobs");
+	std::vector<std::string> states;
+	for (const Json& job : jobs)
+		if (job.at("kind") == "project.backup")
+			states.push_back(job.at("state").get<std::string>());
+	CHECK(states == std::vector<std::string>{"cancelled", "done"});
+	CHECK(!fs::exists(dir.path() / "First"));
+	CHECK(fs::exists(dir.path() / "Second" / "Audio" / "take.wav"));
+	CHECK(!shown(app, "#backup-progress-dialog"));
+}

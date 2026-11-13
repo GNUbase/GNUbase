@@ -153,16 +153,20 @@ namespace
 			"audio.listenLevel",             // the control room's listen settings
 			"audio.portSettings",            // Studio Setup
 			"audio.sampleRate",              // Studio Setup
+			"chordPads.presets",             // the chord pads' own presets
 			"editing.importAudioOneTrack",   // the Import Options dialog; not among the manual's preferences
 			"editing.tempoType",             // the tempo track's and tempo editor's type of new tempo events
 			"meter.resetOnStart",            // the loudness meter's own setting
 			"meter.rmsAes17",                // the master meter's own settings
 			"meter.rmsResolution",           // the master meter's own settings
 			"midi.devices",                  // the MIDI device manager
+			"midi.mpeInput",                 // Studio Setup's note expression input device (#176)
+			"midi.mpePitchRange",            // Studio Setup's note expression input device (#176)
 			"midi.portSettings",             // Studio Setup
 			"preferences.presets",           // the dialog's presets themselves
 			"transport.cycleFollowsMarkers", // the markers window and the Transport menu
 			"transport.tapTempoMode",        // the tempo track's Tap Tempo Mode menu
+			"ui.chordPads",                  // the chord pads zone's display settings
 			"ui.controllerLanePresets",      // the MIDI editors' controller lane presets
 			"ui.keyCommandPresets",          // the key commands dialog's presets
 			"ui.keyCommands",                // the key commands dialog

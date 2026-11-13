@@ -766,6 +766,13 @@ namespace gnubase::engine
 			json["velocityVariance"] = note.velocityVariance;
 		if (!note.articulations.empty())
 			json["articulations"] = note.articulations;
+		if (!note.expressions.empty())
+		{
+			Json& points = json["expressions"] = Json::array();
+			for (const ExpressionPoint& point : note.expressions)
+				points.push_back({{"type", g_expressionNames.at(static_cast<size_t>(point.type))},
+					{"position", point.position}, {"value", point.value}});
+		}
 		return json;
 	}
 
@@ -1784,6 +1791,53 @@ namespace gnubase::engine
 						{{"on", limiter.on}, {"threshold", limiter.threshold}, {"release", limiter.release}}}}}};
 	}
 
+	std::vector<ExpressionPoint> expressionsFromJson(const Json& json, const std::string& name)
+	{
+		std::vector<ExpressionPoint> points;
+		for (size_t i = 0; i < json.size(); ++i)
+		{
+			const Json& item = json.at(i);
+			const std::string where = name + "[" + std::to_string(i) + "]";
+			const auto type = item.at("type").get<std::string>();
+			// An index, not an iterator: it is a pointer in some standard libraries.
+			const auto index = static_cast<size_t>(
+				std::find(g_expressionNames.begin(), g_expressionNames.end(), type) - g_expressionNames.begin());
+			if (index == g_expressionNames.size())
+				throw std::invalid_argument(where + ".type: there is no expression " += type);
+			ExpressionPoint point;
+			point.type = static_cast<plugin::NoteExpression>(index);
+			point.position = item.at("position").get<time::Ticks>();
+			if (point.position < 0)
+				throw std::invalid_argument(where + ".position must not be negative");
+			double minimum = 0.0;
+			double maximum = 1.0;
+			if (point.type == plugin::NoteExpression::Tuning)
+			{
+				minimum = -120.0;
+				maximum = 120.0;
+			}
+			else if (point.type == plugin::NoteExpression::Volume)
+			{
+				maximum = 4.0;
+			}
+			point.value = checkedNumber(item.at("value"), minimum, maximum, where + ".value");
+			points.push_back(point);
+		}
+		std::stable_sort(points.begin(), points.end(),
+			[](const ExpressionPoint& a, const ExpressionPoint& b) { return a.position < b.position; });
+		return points;
+	}
+
+	Json expressionsSchema()
+	{
+		return {{"type", "array"},
+			{"items",
+				{{"type", "object"}, {"additionalProperties", false}, {"required", {"type", "position", "value"}},
+					{"properties",
+						{{"type", {{"type", "string"}, {"enum", g_expressionNames}}},
+							{"position", {{"type", "integer"}}}, {"value", {{"type", "number"}}}}}}}};
+	}
+
 	ChannelSections sectionsFromJson(const Json& json, const ChannelSections& fallback)
 	{
 		ChannelSections sections = fallback;
@@ -1971,6 +2025,10 @@ namespace gnubase::engine
 						".effect must be a built-in MIDI effect (midiEffect.list) or empty, not " + effect.dump());
 				if (id != slot.effect) // another effect starts from its defaults
 				{
+					// A send whose effect is removed plays nowhere: an output the inspector doesn't show any more
+					// mustn't count as a loop (#1149).
+					if (id.empty() && !given.contains("output"))
+						slot.output = 0;
 					slot.effect = id;
 					slot.parameters.clear();
 					if (info != nullptr)
@@ -2209,7 +2267,8 @@ namespace gnubase::engine
 			const bool buttons = type == TrackType::Audio || midi || type == TrackType::Vca;
 			channel.monitor = buttons && item.value("monitor", false);
 			channel.recordEnable = buttons && item.value("recordEnable", false);
-			channel.midiInput = midi && item.value("midiInput", std::string()) == "none" ? "none" : "all";
+			const std::string midiInput = item.value("midiInput", std::string());
+			channel.midiInput = midi && (midiInput == "none" || midiInput == "chordPads") ? midiInput : "all";
 			channel.mute = item.value("mute", false); // files from before mute and solo have neither
 			channel.solo = item.value("solo", false);
 			channel.soloDefeat = item.value("soloDefeat", false); // files from before #109 have neither
@@ -2459,6 +2518,8 @@ namespace gnubase::engine
 				note.probability = std::clamp(n.value("probability", 1.0), 0.0, 1.0);
 				note.velocityVariance = std::clamp(n.value("velocityVariance", 0.0), -1.0, 1.0);
 				note.articulations = n.value("articulations", std::vector<std::string>()); // before #175 none
+				note.expressions =
+					expressionsFromJson(n.value("expressions", Json::array()), noteName + " expressions");
 				part.notes[note.id] = note;
 			}
 			for (const Json& c : item.at("controllers"))
