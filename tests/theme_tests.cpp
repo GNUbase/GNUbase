@@ -127,8 +127,9 @@ TEST_CASE("every theme has the same assets, each a renderable SVG of its manifes
 		const std::filesystem::path dir = themesDir() / theme;
 		const nlohmann::json manifest = readJson(dir / "manifest.json");
 		CHECK(manifest.at("theme") == theme);
-		// The name the UI shows for the theme (ui::Themes::name), so that no document has to name one.
-		CHECK_FALSE(manifest.value("displayName", std::string()).empty());
+		// The name the UI shows for the theme (ui::Themes), so that no document has to name one.
+		// Not CHECK_FALSE: Catch2's ContinueOnFailure | FalseTest trips clang-analyzer's EnumCastOutOfRange check
+		CHECK(!manifest.value("displayName", std::string()).empty());
 		const nlohmann::json& assets = manifest.at("assets");
 		CHECK(assets.size() == reference.size());
 
