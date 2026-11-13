@@ -273,8 +273,12 @@ TEST_CASE("the chord assistant suggests chords after the selected pad's and assi
 	CHECK(window.hasClass(".chord-editor-button[part=type][value=maj]", "checked"));
 	window.click(".chord-editor-button[part=type][value=min]");
 	REQUIRE(window.app.waitUntil([&] { return window.pads()[0].at("chord") == "Cm"; }));
+	// The next click builds on the panel's copy of the pads, which can lag behind the engine: wait until the panel
+	// shows the chord. The buttons are toggles, so their own state changes with the click and proves nothing.
+	REQUIRE(window.app.waitUntil([&] { return window.text(Window::pad(0) + " .chord-pad-chord") == "Cm"; }));
 	window.click(".chord-editor-button[part=tension][value=\"7\"]");
 	REQUIRE(window.app.waitUntil([&] { return window.pads()[0].at("chord") == "Cm7"; }));
+	REQUIRE(window.app.waitUntil([&] { return window.text(Window::pad(0) + " .chord-pad-chord") == "Cm7"; }));
 	window.click(".chord-editor-button[part=bass][value=\"7\"]");
 
 	REQUIRE(window.app.waitUntil([&] { return window.pads()[0].at("chord") == "Cm7/G"; }));
@@ -285,7 +289,8 @@ TEST_CASE("the chord assistant suggests chords after the selected pad's and assi
 	// The Proximity assistant: rows by distance above the reference (#1089); the List's cadence types.
 	window.click("#chord-pads-page-proximity");
 	REQUIRE(window.app.waitUntil([&] { return window.elements(".chord-proximity-row").size() >= 2; }));
-	CHECK(window.text(".chord-proximity-reference") == "C");
+	// The panel shows the pad that chordPads.assign above put back once its event arrived.
+	REQUIRE(window.app.waitUntil([&] { return window.text(".chord-proximity-reference") == "C"; }));
 	CHECK(window.elements(".chord-proximity-row[distance=\"1\"] .chord-suggestion[chord=\"Am\"]").size() == 1);
 	window.click("#chord-pads-page-list");
 	REQUIRE(window.app.waitUntil([&] { return window.visible("#chord-pads-cadenceType"); }));
