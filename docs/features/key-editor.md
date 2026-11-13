@@ -65,6 +65,8 @@ the edits of several parts go in one `history.transaction`.
   .key-editor-body                    scrolls vertically
     .key-editor-keys                  the piano keyboard: 128 .key-editor-key[pitch], the 75 white keys first, then
                                       the 53 .black ones over them; C keys named, .selected for selected notes
+      .key-editor-keys-zoom           the keyboard's left part, where a drag zooms and scrolls (below); the pointer
+                                      is the four-point arrow over it
     .key-editor-grid                  128 .key-editor-row (.black); .key-editor-notes with a .key-note[part][note]
                                       per note (.selected, .inactive outside the part editing mode, .drawing);
                                       .key-editor-step-cursor (.off while step input is off)
@@ -80,16 +82,22 @@ in percent of the grid. Positions snap to the project's quantize grid; Ctrl (Cmd
 
 The keyboard beside the grid is a piano keyboard (p. 1204), as high as the grid's rows. Each black key is exactly its
 pitch's row and narrower than the white keys, drawn over them at the left. The 7 white keys of an octave span the
-keyboard's width and share the octave's 12 rows equally, from the bottom of the C's row up, so that the right part of
-a white key reaches into the rows of the black keys beside it; the top of the keyboard cuts G8, the highest key. Code
-places the keys' tops and heights in percent of the keyboard; `keyeditor.rcss` gives the widths and the themes the
-look, white keys light and black keys dark in every theme. A C key's name sits at its right, level with its own row.
-Pressing a key plays its pitch on the active part's track until the mouse is released, wherever that is: `midi.inject`
-sends a note on (velocity 100) into the track's channel as if from its MIDI input, so its instrument plays it, and then
-the note off, also whenever the key editor goes while the key is held: the editor window closing or being closed, the
-editor showing the list, pattern or audio part editor instead, the lower zone's Editor panel going (its tab hidden, the
-panel opened in a window of its own, or that window closed or docked again), an in-place editor closing, or the switch
-to the drum editor, which builds a key editor of its own. A press on a key selects and deselects no notes.
+keyboard's width and share the octave's 12 rows equally, from the bottom of the C's row up, so that the right part of a
+white key reaches into the rows of the black keys beside it; the top of the keyboard cuts G8, the highest key. Code
+places the keys' tops and heights in percent of the keyboard; `keyeditor.rcss` gives the widths and the themes the look,
+white keys light and black keys dark in every theme. A C key's name sits at its right, level with its own row. Over the
+keyboard's left part the pointer is the four-point arrow (`.key-editor-keys-zoom`): a drag to the right zooms the
+pitches vertically in and to the left out, doubling or halving the rows' height every 100 dp dragged, between a quarter
+and four times the height the style sheet gives them, and a drag up or down scrolls the note display by as much as the
+mouse went (p. 1261). The pitch row at the top of the view when the drag started stays there. The zoom is the editor's
+own state, like its scroll, and the keyboard's height follows the rows'. A press there plays the pitch under it as the
+rest of the keyboard does, and a drag of a few dp turns the press into the gesture. Pressing a key plays its pitch on
+the active part's track until the mouse is released, wherever that is: `midi.inject` sends a note on (velocity 100) into
+the track's channel as if from its MIDI input, so its instrument plays it, and then the note off, also whenever the key
+editor goes while the key is held: the editor window closing or being closed, the editor showing the list, pattern or
+audio part editor instead, the lower zone's Editor panel going (its tab hidden, the panel opened in a window of its own,
+or that window closed or docked again), an in-place editor closing, or the switch to the drum editor, which builds a key
+editor of its own. A press on a key selects and deselects no notes.
 
 | Tool | Gesture | Reference |
 |---|---|---|
@@ -121,11 +129,10 @@ mute yet), and the Line tool in the note display (it draws on the controller lan
 tool's drag across several notes and the draw tool's modifiers for velocity, pitch and position; key commands for the
 transpose palette and deleting; the nudge buttons, Solo Editor, Record in Editor, Acoustic Feedback, pitch visibility,
 the Scale Assistant, Indicate Transpositions, event colors, the status line and Set up Window Layout; horizontal zoom
-and scrolling; dragging at the keyboard's left edge to scroll and zoom it, and the key at the mouse's pitch lit while
-the mouse moves in the note display (p. 1204), and with vertical zoom the keyboard's height following the rows' (it
-is fixed at 128 rows of 10dp in `keyeditor.rcss`); drum map names in the key editor and articulation names; Add to
-Chord Track, Match with Chord Track, Create Chord Events and the chord insert tools; quantizing from the toolbar
-(#132) and the Length section's functions (#133); the key editor's context menu.
+and scrolling; the key at the mouse's pitch lit while the mouse moves in the note display (p. 1204); drum map names in
+the key editor and articulation names; Add to Chord Track, Match with Chord Track, Create Chord Events and the chord
+insert tools; quantizing from the toolbar (#132) and the Length section's functions (#133); the key editor's context
+menu.
 
 ## Checks
 
@@ -137,15 +144,15 @@ Chord Track, Match with Chord Track, Create Chord Events and the chord insert to
   and `note.voicing` with undo and their errors.
 - `tests/keyeditor_ui_tests.cpp` drives the app with `ui::Automation`: the keyboard and notes at their time and pitch,
   keys lit for selected notes; the piano keyboard at 1024x600, at dp ratios of 1.5 and 1: white keys of equal height
-  across the keyboard, black keys narrower on their rows, the mouse on the right part of a white key beside a black
-  key over the white key, and a golden image of two octaves with a black and a white key lit
-  (`tests/golden/ui/key-editor-keyboard.png`); pressing the right part of a white key beside a black key and the
-  black key playing their pitches on the track's instrument until the mouse is released, also outside the editor,
-  leaving the selected notes as they were, and a held key's pitch ending when the editor switches to the drum editor,
-  closes through the engine API or has its window closed, and when the lower zone's Editor panel in a window of its
-  own has that window closed or is docked again; the object selection tool selecting, deselecting, moving,
-  resizing, inserting and deleting; the draw tool with Quantize Link and an eighth from the Length Quantize menu; the
-  erase, trim (and with Alt), split and glue tools; the transpose palette
-  and typing a pitch on the info line; step input with its cursor, a click moving it, and MIDI input selecting the
-  next note; the Chord Editing section naming and changing a chord; the toolbox with the setting on and off, with and
-  without a modifier key, choosing tools.
+  across the keyboard, black keys narrower on their rows, the mouse on the right part of a white key beside a black key
+  over the white key, and a golden image of two octaves with a black and a white key lit
+  (`tests/golden/ui/key-editor-keyboard.png`); pressing the right part of a white key beside a black key and the black
+  key playing their pitches on the track's instrument until the mouse is released, also outside the editor, leaving the
+  selected notes as they were, and a held key's pitch ending when the editor switches to the drum editor, closes through
+  the engine API or has its window closed, and when the lower zone's Editor panel in a window of its own has that window
+  closed or is docked again; the object selection tool selecting, deselecting, moving, resizing, inserting and deleting;
+  the draw tool with Quantize Link and an eighth from the Length Quantize menu; the erase, trim (and with Alt), split
+  and glue tools; the transpose palette and typing a pitch on the info line; step input with its cursor, a click moving
+  it, and MIDI input selecting the next note; the Chord Editing section naming and changing a chord; the toolbox with
+  the setting on and off, with and without a modifier key, choosing tools; drags on the keyboard's left part zooming the
+  rows in and out between the limits and scrolling the note display, while a click there zooms nothing.

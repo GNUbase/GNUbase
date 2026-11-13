@@ -463,6 +463,34 @@ TEST_CASE("two in-place editors and the lower zone's key editor have menus and s
 	CHECK(f.elements("#key-length-menu").size() == 1);
 }
 
+TEST_CASE("dragging the keyboard's left part zooms the pitches of an in-place editor", "[ui]")
+{
+	// Reference manual p. 1261.
+	Fixture f;
+	f.app.keys().run("editor.openInPlace", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil([&] { return f.elements(f.editor() + " .key-note").size() == 2; }));
+	f.settle(2);
+	f.scroll(127); // the top of the pitches in view, where a zoom in keeps them
+	const Json keyboard = f.box(f.editor() + " .key-editor-keys");
+	const Json body = f.box(f.editor() + " .key-editor-body");
+	const int left = keyboard.at("x").get<int>() + 4; // the keyboard's left 12 dp
+	const int high = body.at("y").get<int>() + 100;
+	const double top = keyboard.at("y").get<double>();
+	CHECK(std::abs(f.box(f.editor() + " .key-editor-row").at("height").get<double>() - 10.0) <= 0.5);
+
+	// A drag 100 px to the right doubles the rows' height; the pitch at the top of the view stays there.
+	f.app.ui().drag(std::nullopt, {"", 0, ui::Point{left, high}}, {"", 0, ui::Point{left + 100, high}});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(std::abs(f.box(f.editor() + " .key-editor-row").at("height").get<double>() - 20.0) <= 0.5);
+	CHECK(std::abs(f.box(f.editor() + " .key-editor-keys").at("height").get<double>() - 2560.0) <= 1);
+	CHECK(std::abs(f.box(f.editor() + " .key-editor-key[pitch=\"127\"]").at("y").get<double>() - top) <= 1);
+
+	// A drag 80 px up scrolls the pitches down by as much.
+	f.app.ui().drag(std::nullopt, {"", 0, ui::Point{left, high}}, {"", 0, ui::Point{left, high - 80}});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(std::abs(f.box(f.editor() + " .key-editor-key[pitch=\"127\"]").at("y").get<double>() - (top - 80)) <= 1);
+}
+
 TEST_CASE("a key held in an in-place editor that closes ends its pitch", "[ui]")
 {
 	// A key of the keyboard plays its pitch until the mouse is released (p. 1204); the in-place editor closing ends it

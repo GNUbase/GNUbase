@@ -32,6 +32,12 @@ namespace gnubase::ui
 		constexpr float g_edge = 6.0F; // dp at a note's ends where the object selection tool resizes it
 		// dp the drumstick goes from its press before its release deletes the sound's later notes too (p. 1242)
 		constexpr float g_dragThreshold = 4.0F;
+		// The pitch rows' height the style sheet gives them (keyeditor.rcss), and the zoom the keyboard's left part
+		// drags (p. 1261): its limits, and the dp a drag goes to the right to double it.
+		constexpr float g_rowDp = 10.0F;
+		constexpr float g_minPitchZoom = 0.25F;
+		constexpr float g_maxPitchZoom = 4.0F;
+		constexpr float g_zoomDoubling = 100.0F;
 
 		constexpr std::array<std::pair<KeyTool, const char*>, 7> g_tools = {{
 			{KeyTool::ObjectSelection, "objectSelection"},
@@ -165,6 +171,11 @@ namespace gnubase::ui
 			return {static_cast<float>(value), Rml::Unit::PERCENT};
 		}
 
+		Rml::Property dp(float value)
+		{
+			return {value, Rml::Unit::DP};
+		}
+
 		int64_t ticksOf(const Json& track, int64_t value, const TimeContext& time)
 		{
 			if (track.value("timeBase", std::string("musical")) == "linear")
@@ -282,7 +293,8 @@ namespace gnubase::ui
 			R"(</div>)"
 			R"(<div class="info-line key-editor-info empty"><span class="info-empty">No Object Selected</span>)" +
 			info + R"(</div><div class="editor-parts"/><div class="key-editor-body"><div class="key-editor-keys">)" +
-			keys + R"(</div><div class="key-editor-grid"><div class="key-editor-rows">)" + rows +
+			keys + (drum ? std::string() : std::string(R"(<div class="key-editor-keys-zoom"/>)")) +
+			R"(</div><div class="key-editor-grid"><div class="key-editor-rows">)" + rows +
 			R"(</div><div class="key-editor-notes"/><div class="key-editor-step-cursor off"/></div></div>)"
 			R"(<div class="controller-lanes"/>)");
 		Rml::ElementList placed;
@@ -322,6 +334,7 @@ namespace gnubase::ui
 				 Rml::EventId::Click, Rml::EventId::Dblclick, Rml::EventId::Change})
 			root.AddEventListener(event, this);
 		document->AddEventListener(Rml::EventId::Mouseup, this);
+		document->AddEventListener(Rml::EventId::Mousemove, this);
 		document->AddEventListener(Rml::EventId::Mouseout, this);
 		m_document = document->GetObserverPtr();
 		setTool(KeyTool::ObjectSelection);
@@ -378,6 +391,7 @@ namespace gnubase::ui
 		if (Rml::Element* document = m_document.get())
 		{
 			document->RemoveEventListener(Rml::EventId::Mouseup, this);
+			document->RemoveEventListener(Rml::EventId::Mousemove, this);
 			document->RemoveEventListener(Rml::EventId::Mouseout, this);
 		}
 		if (Rml::Element* root = m_root.get())
@@ -531,6 +545,49 @@ namespace gnubase::ui
 		body->SetScrollTop(std::clamp(row - (client / 2.0F), 0.0F, std::max(height - client, 0.0F)));
 		m_scrolled = true; // a pitch scrolled to is where it stays
 		return true;
+	}
+
+	// The drag on the keyboard's left part (p. 1261): to the right it zooms the pitches vertically in, to the left
+	// out, and up or down it scrolls the note display. The pitch row at the top of the view when the drag started
+	// stays where it was, moved by as much as the mouse went.
+	void KeyEditor::zoomScroll(Rml::Event& event)
+	{
+		Rml::Element* root = m_root.get();
+		Rml::Element* body = root != nullptr ? root->QuerySelector(".key-editor-body") : nullptr;
+		if (body == nullptr)
+			return;
+		Rml::Context* context = root->GetContext();
+		const float ratio = context != nullptr ? context->GetDensityIndependentPixelRatio() : 1.0F;
+		const float dx = event.GetParameter("mouse_x", 0.0F) - m_pressedX;
+		const float dy = event.GetParameter("mouse_y", 0.0F) - m_pressedY;
+		if (!m_zoomDrag && std::abs(dx) < g_dragThreshold * ratio && std::abs(dy) < g_dragThreshold * ratio)
+			return; // still a click on a key
+		m_zoomDrag = true;
+		setPitchZoom(m_zoomStart * std::exp2(dx / ratio / g_zoomDoubling));
+		const float rowStart = g_rowDp * m_zoomStart * ratio;
+		const float rowNow = g_rowDp * m_pitchZoom * ratio;
+		body->SetScrollTop(m_scrollStart / rowStart * rowNow - dy);
+		if (context != nullptr)
+			context->RequestNextUpdate(0);
+	}
+
+	void KeyEditor::setPitchZoom(float zoom)
+	{
+		zoom = std::clamp(zoom, g_minPitchZoom, g_maxPitchZoom);
+		if (zoom == m_pitchZoom)
+			return;
+		m_pitchZoom = zoom;
+		Rml::Element* root = m_root.get();
+		if (root == nullptr || m_drum)
+			return;
+		// The keyboard and the rows follow the zoom; the keys, the notes and the cursor lie in percent of them, so
+		// they scale with them.
+		if (Rml::Element* keys = root->QuerySelector(".key-editor-keys"))
+			keys->SetProperty(Rml::PropertyId::Height, dp(static_cast<float>(g_pitches) * g_rowDp * zoom));
+		Rml::ElementList rows;
+		root->QuerySelectorAll(rows, ".key-editor-row");
+		for (Rml::Element* row : rows)
+			row->SetProperty(Rml::PropertyId::Height, dp(g_rowDp * zoom));
 	}
 
 	void KeyEditor::place(Rml::Element& element, int64_t start, int64_t length, int pitch) const
@@ -1044,19 +1101,29 @@ namespace gnubase::ui
 				press(event);
 			break;
 		case Rml::EventId::Mousemove:
-			drag(event);
+			// A keyboard drag hears the mouse in the whole document: zooming out to the left takes the mouse out of
+			// the editor. The root's pass and the document's compute the same absolute state, so both are harmless.
+			if (event.GetCurrentElement() == m_root.get() || m_gesture == Gesture::ZoomScroll)
+				drag(event);
 			break;
 		case Rml::EventId::Mouseup:
 			// A key's pitch ends wherever the mouse is released; the document hears that, the root only within.
 			sound(std::nullopt);
-			// A drumstick's deletion ends wherever the mouse is released; the other gestures only within.
-			if (event.GetCurrentElement() == m_root.get() || m_gesture == Gesture::Erase)
+			// A drumstick's deletion and a keyboard's drag end wherever the mouse is released; the other gestures
+			// only within.
+			if (event.GetCurrentElement() == m_root.get() || m_gesture == Gesture::Erase ||
+				m_gesture == Gesture::ZoomScroll)
 				release(event);
 			break;
 		case Rml::EventId::Mouseout:
 			// The mouse leaving the window ends the pitch too: the button going up out there sends no mouseup.
 			if (target == m_document.get())
+			{
 				sound(std::nullopt);
+				// The keyboard's drag ends too, for the same reason.
+				if (m_gesture == Gesture::ZoomScroll)
+					m_gesture = Gesture::None;
+			}
 			break;
 		case Rml::EventId::Dblclick:
 			doubleClick(event);
@@ -1084,6 +1151,25 @@ namespace gnubase::ui
 	{
 		Rml::Element* root = m_root.get();
 		Rml::Element* target = event.GetTargetElement();
+		// The keyboard's left part (p. 1261): a press plays the pitch under it as a key does, and a drag zooms the
+		// pitches and scrolls the note display.
+		if (!m_drum && target->IsClassSet("key-editor-keys-zoom"))
+		{
+			const Rml::Vector2f origin = target->GetAbsoluteOffset(Rml::BoxArea::Border);
+			const float high = target->GetBox().GetSize(Rml::BoxArea::Border).y;
+			const float y = event.GetParameter("mouse_y", 0.0F) - origin.y;
+			const int row =
+				std::clamp(static_cast<int>(std::floor(y / std::max(high, 1.0F) * g_pitches)), 0, g_pitches - 1);
+			sound(m_order.at(static_cast<size_t>(row)));
+			Rml::Element* body = root->QuerySelector(".key-editor-body");
+			m_gesture = Gesture::ZoomScroll;
+			m_zoomDrag = false;
+			m_pressedX = event.GetParameter("mouse_x", 0.0F);
+			m_pressedY = event.GetParameter("mouse_y", 0.0F);
+			m_zoomStart = m_pitchZoom;
+			m_scrollStart = body != nullptr ? body->GetScrollTop() : 0.0F;
+			return;
+		}
 		if (const Rml::Element* key = withAttribute(target, "pitch", root);
 			!m_drum && key != nullptr && key->IsClassSet("key-editor-key"))
 		{
@@ -1308,6 +1394,11 @@ namespace gnubase::ui
 	{
 		if (m_gesture == Gesture::None)
 			return;
+		if (m_gesture == Gesture::ZoomScroll)
+		{
+			zoomScroll(event);
+			return;
+		}
 		const auto [ticks, pitch] = at(event);
 		const Rml::Element* notes = m_root.get()->QuerySelector(".key-editor-notes");
 		if (notes == nullptr)

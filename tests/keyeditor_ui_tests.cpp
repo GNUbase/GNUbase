@@ -311,7 +311,8 @@ TEST_CASE("the key editor's keyboard is a piano keyboard aligned with the grid's
 			const Json& element = under.at("element");
 			return element.is_null() ? -1 : std::stoi(element.at("attributes").value("pitch", std::string("-1")));
 		};
-		const int left = x + 2;
+		// Just right of the keyboard's left part, where a drag zooms (p. 1261): over the keys themselves.
+		const int left = x + static_cast<int>(std::ceil(12.0 * ratio)) + 2;
 		const int right = x + width - 2;
 		CHECK(pitchAt(left, 1.3) == 61);   // C#3
 		CHECK(pitchAt(right, 1.3) == 60);  // C3, up to 12/7 rows
@@ -408,6 +409,50 @@ TEST_CASE("a click on a key of the keyboard plays its pitch on the track's instr
 	context.ProcessMouseButtonUp(0, 0);
 	f.app.shell().step(std::chrono::milliseconds(0));
 	CHECK(f.plays({{0x90, 62, 100}, {0x80, 62, 0}}));
+}
+
+TEST_CASE("dragging the keyboard's left part zooms the pitches and scrolls the note display", "[ui]")
+{
+	// Reference manual p. 1261: to the right or left it zooms vertically, up or down it scrolls.
+	Fixture f({1024, 600});
+	f.app.setDpRatio(1.0F);
+	f.add({{0, 60, g_quarter}, {g_quarter, 64, 2 * g_quarter}});
+	f.scroll(127); // the top of the pitches in view, where a zoom in keeps them
+	const Json keyboard = f.box(".key-editor-keys");
+	const Json body = f.box(".key-editor-body");
+	const int left = keyboard.at("x").get<int>() + 4; // the keyboard's left 12 dp
+	const double top = keyboard.at("y").get<double>();
+	const auto at = [&](int x, int y) { return ui::Target{"", 0, ui::Point{x, y}}; };
+	const int high = body.at("y").get<int>() + 150;
+	CHECK(std::abs(f.box(".key-editor-row").at("height").get<double>() - 10.0) <= 0.5);
+
+	// A drag 100 px to the right doubles the rows' height; the pitch at the top of the view stays there.
+	f.drag(at(left, high), at(left + 100, high));
+	CHECK(std::abs(f.box(".key-editor-row").at("height").get<double>() - 20.0) <= 0.5);
+	CHECK(std::abs(f.box(".key-editor-keys").at("height").get<double>() - 2560.0) <= 1);
+	CHECK(std::abs(f.box(".key-editor-grid").at("height").get<double>() - 2560.0) <= 1);
+	CHECK(std::abs(f.box(".key-editor-key[pitch=\"127\"]").at("y").get<double>() - top) <= 1);
+
+	// A drag 80 px up scrolls the pitches down by as much; the rows keep their height.
+	f.drag(at(left, high), at(left, high - 80));
+	CHECK(std::abs(f.box(".key-editor-row").at("height").get<double>() - 20.0) <= 0.5);
+	CHECK(std::abs(f.box(".key-editor-key[pitch=\"127\"]").at("y").get<double>() - (top - 80)) <= 1);
+
+	// Two drags 200 px to the left zoom out, the second to the least: rows of 2.5 dp.
+	f.drag(at(left, high), at(left - 200, high));
+	CHECK(std::abs(f.box(".key-editor-row").at("height").get<double>() - 5.0) <= 0.5);
+	f.drag(at(left, high), at(left - 200, high));
+	CHECK(std::abs(f.box(".key-editor-row").at("height").get<double>() - 2.5) <= 0.5);
+	CHECK(std::abs(f.box(".key-editor-keys").at("height").get<double>() - 320.0) <= 1);
+
+	// A drag 500 px to the right zooms in to the most: rows of 40 dp.
+	f.drag(at(left, high), at(left + 500, high));
+	CHECK(std::abs(f.box(".key-editor-row").at("height").get<double>() - 40.0) <= 0.5);
+	CHECK(std::abs(f.box(".key-editor-keys").at("height").get<double>() - 5120.0) <= 1);
+
+	// A click without a drag leaves the zoom as it is.
+	f.click(at(left, high));
+	CHECK(std::abs(f.box(".key-editor-row").at("height").get<double>() - 40.0) <= 0.5);
 }
 
 TEST_CASE("a key of the keyboard held while the key editor goes ends its pitch", "[ui]")
