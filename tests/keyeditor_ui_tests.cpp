@@ -455,6 +455,38 @@ TEST_CASE("dragging the keyboard's left part zooms the pitches and scrolls the n
 	CHECK(std::abs(f.box(".key-editor-row").at("height").get<double>() - 40.0) <= 0.5);
 }
 
+TEST_CASE("a click and a drag on the keyboard's left part leave the selected notes and the history alone", "[ui]")
+{
+	// The zoom gesture's release edits nothing, and no note an earlier press remembered (review of #1365).
+	Fixture f({1024, 600});
+	f.app.setDpRatio(1.0F);
+	const std::vector<uint64_t> ids = f.add({{0, 60, g_quarter}, {g_quarter, 64, 2 * g_quarter}});
+	// A click on the second note selects it; the press remembers it as the note pressed.
+	f.click(f.at(8.5, 64));
+	REQUIRE(f.app.waitUntil([&] { return f.selection() == std::vector<uint64_t>{ids[1]}; }));
+	f.scroll(127);
+	const Json before = f.partNotes();
+	const auto steps = f.app.call("history.get").at("steps").size();
+	const Json keyboard = f.box(".key-editor-keys");
+	const Json body = f.box(".key-editor-body");
+	const int left = keyboard.at("x").get<int>() + 4; // the keyboard's left 12 dp
+	const auto at = [&](int x, int y) { return ui::Target{"", 0, ui::Point{x, y}}; };
+	const int high = body.at("y").get<int>() + 100;
+
+	// A click there plays its pitch and edits nothing.
+	f.click(at(left, high));
+	CHECK(f.selection() == std::vector<uint64_t>{ids[1]});
+	CHECK(f.app.call("history.get").at("steps").size() == steps);
+	CHECK(f.partNotes() == before);
+
+	// A drag there zooms, and its release doesn't stretch the selected note to where the mouse went.
+	f.drag(at(left, high), at(left + 80, high + 60));
+	CHECK(f.box(".key-editor-row").at("height").get<double>() > 10.5);
+	CHECK(f.selection() == std::vector<uint64_t>{ids[1]});
+	CHECK(f.app.call("history.get").at("steps").size() == steps);
+	CHECK(f.partNotes() == before);
+}
+
 TEST_CASE("a key of the keyboard held while the key editor goes ends its pitch", "[ui]")
 {
 	Fixture f({1024, 600}, "instrument");

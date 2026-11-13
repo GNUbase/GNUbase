@@ -155,4 +155,5 @@ menu.
   and glue tools; the transpose palette and typing a pitch on the info line; step input with its cursor, a click moving
   it, and MIDI input selecting the next note; the Chord Editing section naming and changing a chord; the toolbox with
   the setting on and off, with and without a modifier key, choosing tools; drags on the keyboard's left part zooming the
-  rows in and out between the limits and scrolling the note display, while a click there zooms nothing.
+  rows in and out between the limits and scrolling the note display, while a click there zooms nothing, and a click and
+  a drag there leaving a note an earlier press selected and the history alone.

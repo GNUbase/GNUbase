@@ -1164,6 +1164,7 @@ namespace gnubase::ui
 			Rml::Element* body = root->QuerySelector(".key-editor-body");
 			m_gesture = Gesture::ZoomScroll;
 			m_zoomDrag = false;
+			m_pressed.reset(); // a note an earlier press remembered must not resize on this gesture's release
 			m_pressedX = event.GetParameter("mouse_x", 0.0F);
 			m_pressedY = event.GetParameter("mouse_y", 0.0F);
 			m_zoomStart = m_pitchZoom;
@@ -1467,6 +1468,12 @@ namespace gnubase::ui
 		const Gesture gesture = std::exchange(m_gesture, Gesture::None);
 		if (gesture == Gesture::None)
 			return;
+		// The keyboard's drag edits nothing; the note an earlier press remembered must not resize either.
+		if (gesture == Gesture::ZoomScroll)
+		{
+			m_pressed.reset();
+			return;
+		}
 		const auto [ticks, pitch] = at(event);
 		if (gesture == Gesture::Erase && m_pressed)
 		{
