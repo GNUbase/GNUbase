@@ -4,6 +4,7 @@
 #include <algorithm>
 
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 
 namespace gnubase::time
@@ -52,9 +53,12 @@ namespace gnubase::time
 
 	double TempoMap::toSecondsExact(double tick) const
 	{
-		// The segments start at whole ticks, so the floored tick finds the one the exact tick is in.
-		const Segment& segment =
-			detail::lastAtOrBefore(m_segments, &Segment::start, static_cast<Ticks>(std::floor(tick)));
+		// The segments start at whole ticks, so the floored tick finds the one the exact tick is in. A tick near the
+		// largest Ticks value rounds up to 2^63 as a double, past every Ticks value: the last segment holds it.
+		const double floored = std::floor(tick);
+		const auto largest = std::numeric_limits<Ticks>::max();
+		const Ticks whole = floored < static_cast<double>(largest) ? static_cast<Ticks>(floored) : largest;
+		const Segment& segment = detail::lastAtOrBefore(m_segments, &Segment::start, whole);
 		const double beats = toBeats(tick - static_cast<double>(segment.start));
 		if (segment.slope == 0.0 || beats < 0.0)
 			return segment.seconds + (beats * 60.0 / segment.bpm);

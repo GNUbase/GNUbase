@@ -526,6 +526,8 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
                                                     "stroke-color": "transparent"}),
         (".event-display ruler", {"background-color": c["surface"]}),
         (".event-display .project-cursor", {"background-color": c["text"]}),
+        # The chord pads' step input cursor and its handle in the ruler, in blue (reference manual p. 1369)
+        (".event-display .step-input-cursor, .event-display .step-input-handle", {"background-color": c["accent"]}),
         (".event-display .cross-hair-vertical, .event-display .cross-hair-horizontal",
          {"background-color": mix(c["background"], c["textMuted"], .5)}),
         # Markers (docs/features/markers.md): lines behind the events, marker events and labels on marker tracks
@@ -583,6 +585,26 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".chord-pad .chord-pad-adaptive", {"background-color": c["accent"],
                                             "border-radius": f"{theme['radii']['round']}dp"}),
         (".chord-pad.triggered", {"background-color": mix(c["surfaceRaised"], c["accent"], .45)}),
+        # Assign from MIDI Input's pad in red, the List assistant's colors along the bottom, the voicing indicator, the
+        # pads on black keys, and the zone's keyboard: played notes, the remote range in blue, the chord modifiers'
+        # keys in green and the hovered pad's key (reference manual pp. 1353-1355)
+        (".chord-pad.listening", {"border-color": c["danger"]}),
+        (".chord-pad.level-0", {"border-bottom-color": c["success"]}),
+        (".chord-pad.level-1", {"border-bottom-color": c["warning"]}),
+        (".chord-pad.level-2", {"border-bottom-color": c["danger"]}),
+        (".chord-pad .chord-pad-voicing", {"color": c["textMuted"], "font-size": f"{sizes['small']}dp"}),
+        (".chord-pad .chord-pad-progress", {"background-color": c["accent"]}),
+        (".chord-pad.black-key", {"background-color": mix(c["surfaceRaised"], c["background"], .6)}),
+        (".chord-pads-key.white", {"background-color": c["text"], "border-width": f"{widths['hairline']}dp",
+                                   "border-color": c["border"]}),
+        (".chord-pads-key.black", {"background-color": c["background"]}),
+        (".chord-pads-key.remote", {"background-color": mix(c["text"], c["accent"], .5)}),
+        (".chord-pads-key.black.remote", {"background-color": mix(c["background"], c["accent"], .6)}),
+        (".chord-pads-key.modifier", {"background-color": c["success"]}),
+        (".chord-pads-key.hover", {"background-color": c["warning"]}),
+        (".chord-pads-key.played", {"background-color": c["accent2"]}),
+        (".chord-proximity-reference", {"color": c["accent"]}),
+        (".chord-suggestion.recent .chord-suggestion-chord", {"font-weight": "bold"}),
         (".chord-suggestion", {"color": c["text"], "border-left-width": f"{widths['focus']}dp",
                                "border-left-color": c["border"]}),
         (".chord-suggestion.level-0", {"border-left-color": c["success"]}),
