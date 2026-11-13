@@ -352,7 +352,7 @@ namespace gnubase::ui
 			const Rml::Element* editor = nullptr;
 			bool footer = false;
 			bool button = false;
-			for (Rml::Element* up = event.GetTargetElement(); up != nullptr && up != m_area.get();
+			for (const Rml::Element* up = event.GetTargetElement(); up != nullptr && up != m_area.get();
 				up = up->GetParentNode())
 			{
 				if (up->IsClassSet("controller-lanes-footer"))
