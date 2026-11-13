@@ -161,7 +161,8 @@ namespace gnubase::engine
 			std::shared_ptr<InstrumentChannel> channel;
 			std::shared_ptr<MidiSequencer> departed; // or a MIDI send of another track that played there:
 			std::shared_ptr<MidiSendTap> departedSend;
-			std::vector<std::shared_ptr<MidiSequencer>> staying; // the MIDI tracks still routed to the instrument
+			std::vector<std::shared_ptr<MidiSequencer>> staying;    // the MIDI tracks still routed to the instrument
+			std::vector<std::shared_ptr<MidiSendTap>> stayingSends; // the other tracks' MIDI sends still playing there
 		};
 
 		// What the audio thread runs: the graph and its links to the device, and the releases to do before its first
