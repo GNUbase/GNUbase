@@ -398,18 +398,20 @@ TEST_CASE("the tempo track editor selects events with a rectangle, and Shift-cli
 
 	// A drag on an empty part of the curve selects the events in its rectangle (reference manual p. 1450); while it
 	// is dragged, the rectangle shows, laid out by tempo-editor.rml.
-	const ui::Target from = point((first.x + second.x) / 2.0, area->GetAbsoluteTop() + 4.0);
-	const ui::Target to = point(std::min(third.x + 30.0F, right - 4.0F), bottom - 4.0);
-	app.ui().press(window, from, ui::MouseButton::Left, {});
-	app.ui().move(window, to, {});
+	const int fromX = static_cast<int>((first.x + second.x) / 2.0F);
+	const int fromY = static_cast<int>(area->GetAbsoluteTop() + 4.0F);
+	const int toX = static_cast<int>(std::min(third.x + 30.0F, right - 4.0F));
+	const int toY = static_cast<int>(bottom - 4.0F);
+	app.ui().press(window, point(fromX, fromY), ui::MouseButton::Left, {});
+	app.ui().move(window, point(toX, toY), {});
 	app.shell().step(milliseconds(0));
 	Rml::Element* rectangle = document.QuerySelector(".tempo-curve .tool-rectangle");
 	REQUIRE(rectangle != nullptr);
 	CHECK(rectangle->IsClassSet("shown"));
-	CHECK(rectangle->GetAbsoluteLeft() == Approx(from.point->x).margin(2.0));
-	CHECK(rectangle->GetOffsetWidth() == Approx(to.point->x - from.point->x).margin(2.0));
+	CHECK(rectangle->GetAbsoluteLeft() == Approx(fromX).margin(2.0));
+	CHECK(rectangle->GetOffsetWidth() == Approx(toX - fromX).margin(2.0));
 	CHECK(curve->selection() == std::vector<int64_t>{200 * g_quarter, 400 * g_quarter});
-	app.ui().release(window, to, ui::MouseButton::Left, {});
+	app.ui().release(window, point(toX, toY), ui::MouseButton::Left, {});
 	app.shell().step(milliseconds(0));
 	CHECK(!rectangle->IsClassSet("shown"));
 	CHECK(curve->selection() == std::vector<int64_t>{200 * g_quarter, 400 * g_quarter});
