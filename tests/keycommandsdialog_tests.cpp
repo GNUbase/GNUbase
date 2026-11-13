@@ -5,6 +5,7 @@
 #include "uiapp.h"
 
 #include "engine/engine.h"
+#include "platform/files.h"
 #include "testutils/testutils.h"
 #include "ui/automation.h"
 #include "ui/enginebinding.h"
@@ -82,6 +83,13 @@ namespace
 	void click(test::UiApp& app, const std::string& selector, const Strings& modifiers = {})
 	{
 		app.ui().click(std::nullopt, {selector, 0, std::nullopt}, ui::MouseButton::Left, 1, modifiers);
+		app.shell().step(std::chrono::milliseconds(0));
+	}
+
+	// A double click, which RmlUi reports as a dblclick event (Automation::click holds its clock still for it).
+	void doubleClick(test::UiApp& app, const std::string& selector)
+	{
+		app.ui().click(std::nullopt, {selector, 0, std::nullopt}, ui::MouseButton::Left, 2, {});
 		app.shell().step(std::chrono::milliseconds(0));
 	}
 
@@ -174,6 +182,22 @@ namespace
 	{
 		click(app, "#keycommands-ok");
 		REQUIRE(closed(app));
+	}
+
+	// Clicks the confirmation dialog's OK button (confirm.rml), which Remove Key Command, Defaults and the tool
+	// modifiers' Assign open before they change anything.
+	void confirm(test::UiApp& app)
+	{
+		REQUIRE(app.waitUntil([&app] { return !elements(app, "#confirm-ok").empty(); }));
+		click(app, "#confirm-ok");
+	}
+
+	// Clicks the confirmation dialog's Cancel, which leaves everything as it was.
+	void cancelConfirm(test::UiApp& app)
+	{
+		REQUIRE(app.waitUntil([&app] { return !elements(app, "#confirm-cancel").empty(); }));
+		click(app, "#confirm-cancel");
+		REQUIRE(app.waitUntil([&app] { return elements(app, "#confirm-dialog").empty(); }));
 	}
 }
 
@@ -302,6 +326,18 @@ TEST_CASE("key commands presets and files are kept by the engine", "[unit]")
 	}
 	CHECK_THAT(reject(client, "keyCommands.import", {{"path", (dir.path() / "other.json").u8string()}, {"name", "X"}}),
 		ContainsSubstring("no key commands file"));
+	// A format or version of another type is the readable message, not the JSON library's type error.
+	{
+		std::ofstream format(dir.path() / "format.json");
+		format << R"({"format": 1, "version": 1})";
+		std::ofstream version(dir.path() / "version.json");
+		version << R"({"format": "gnubase.keyCommands", "version": "1"})";
+	}
+	CHECK_THAT(reject(client, "keyCommands.import", {{"path", (dir.path() / "format.json").u8string()}, {"name", "X"}}),
+		ContainsSubstring("no key commands file"));
+	CHECK_THAT(
+		reject(client, "keyCommands.import", {{"path", (dir.path() / "version.json").u8string()}, {"name", "X"}}),
+		ContainsSubstring("another version"));
 	CHECK_THAT(reject(client, "keyCommands.import", {{"path", (dir.path() / "none.json").u8string()}, {"name", "X"}}),
 		ContainsSubstring("can't read"));
 }
@@ -394,10 +430,14 @@ TEST_CASE("the key commands dialog finds, assigns, removes and resets keys", "[u
 	CHECK(std::find(unassigned.begin(), unassigned.end(), "history.undo") != unassigned.end());
 	choose(app, "#keycommands-filter", -3); // All
 
-	// Remove takes away the selected key, Reset brings back the defaults.
+	// Remove takes away the selected key, but asks first; Cancel keeps it. Reset brings back the defaults.
 	select(app, "transport.stop");
 	click(app, "#keycommands-keys listitem:last-child");
 	click(app, "#keycommands-remove");
+	cancelConfirm(app);
+	CHECK(shownKeys(app) == Strings{"Num0", shown("Mod+Shift+F12")});
+	click(app, "#keycommands-remove");
+	confirm(app);
 	CHECK(shownKeys(app) == Strings{"Num0"});
 	select(app, "history.undo");
 	click(app, "#keycommands-reset");
@@ -406,16 +446,30 @@ TEST_CASE("the key commands dialog finds, assigns, removes and resets keys", "[u
 	REQUIRE(app.waitUntil([&app] { return app.keys().keysFor("transport.stop") == Strings{"Num0"}; }));
 	CHECK(app.keys().keysFor("history.undo") == Strings{shown("Mod+Z")});
 
-	// Clear All removes every key, Defaults brings them all back; Cancel drops what changed.
+	// Clear All removes every key, also of an entry the dialog doesn't list (a command with parameters no default
+	// binding has); Defaults brings them back, but asks first, and Cancel drops what changed.
+	app.call("settings.set",
+		{{"values",
+			{{"ui.keyCommands",
+				Json::array({{{"command", "transport.locate"}, {"parameters", {{"target", "projectEnd"}}},
+					{"keys", {"F13"}}}})}}}});
+	REQUIRE(app.waitUntil(
+		[&app] { return app.keys().keysFor("transport.locate", {{"target", "projectEnd"}}) == Strings{"F13"}; }));
 	openDialog(app);
 	click(app, "#keycommands-clear-all");
 	select(app, "transport.toggle");
 	CHECK(shownKeys(app).empty());
-	click(app, "#keycommands-cancel");
-	REQUIRE(closed(app));
-	CHECK(app.keys().keysFor("transport.toggle") == Strings{"Space"});
+	ok(app);
+	// Clear All removed the unlisted entry's keys too.
+	REQUIRE(
+		app.waitUntil([&app] { return app.keys().keysFor("transport.locate", {{"target", "projectEnd"}}).empty(); }));
 	openDialog(app);
 	click(app, "#keycommands-defaults");
+	cancelConfirm(app);
+	select(app, "transport.toggle");
+	CHECK(shownKeys(app).empty()); // Cancel left it cleared
+	click(app, "#keycommands-defaults");
+	confirm(app);
 	ok(app);
 	CHECK(app.call("settings.get", {{"key", "ui.keyCommands"}}).at("value") == Json::array());
 	CHECK(app.waitUntil([&app] { return app.keys().keysFor("history.redo") == Strings{shown("Mod+Shift+Z")}; }));
@@ -497,6 +551,29 @@ TEST_CASE("the key commands dialog sets up macros", "[ui]")
 	REQUIRE(closed(app));
 }
 
+TEST_CASE("a macro is renamed by double-clicking it in the macros list", "[ui]")
+{
+	// Reference manual p. 1558: double-click the macro, enter a name for it, and press Return to confirm it.
+	test::UiApp app({1000, 760});
+	app.appUi().showProject();
+	openDialog(app);
+	click(app, "#keycommands-show-macros");
+	click(app, "#keycommands-new-macro"); // Macro 1, selected
+	REQUIRE(elements(app, "#keycommands-macros listitem").size() == 1);
+	// Double-clicking it focuses its name field, so selecting the name, typing and Rename Macro rename it. (That the
+	// typed text lands in the field shows the double-click focused it.)
+	doubleClick(app, "#keycommands-macros listitem");
+	CHECK(element(app, "#keycommands-macro-name").at("value") == "Macro 1");
+	app.ui().key(std::nullopt, "Mod+A");
+	app.ui().text(std::nullopt, "Restart");
+	click(app, "#keycommands-rename-macro");
+	CHECK(element(app, "#keycommands-macros listitem").value("text", std::string()) == "Restart");
+	ok(app);
+	const Json macros = app.call("settings.get", {{"key", "ui.macros"}}).at("value");
+	REQUIRE(macros.size() == 1);
+	CHECK(macros[0].at("name") == "Restart");
+}
+
 TEST_CASE("the key commands dialog saves, loads, deletes, exports and imports presets", "[ui]")
 {
 	test::UiApp app({1000, 760});
@@ -512,6 +589,7 @@ TEST_CASE("the key commands dialog saves, loads, deletes, exports and imports pr
 		Json({{"Mine", {{"keyCommands", mine}, {"macros", Json::array()}}}}));
 	CHECK(element(app, "#keycommands-preset").at("value") == "Mine");
 	click(app, "#keycommands-defaults");
+	confirm(app);
 	ok(app);
 	CHECK(app.call("settings.get", {{"key", "ui.keyCommands"}}).at("value") == Json::array());
 
@@ -547,6 +625,39 @@ TEST_CASE("the key commands dialog saves, loads, deletes, exports and imports pr
 	CHECK(closed(app));
 }
 
+TEST_CASE("File > Export > Key Command Assignments writes an HTML list of every key", "[ui]")
+{
+	// Reference manual pp. 1559-1560: a file that lists all key command assignments, exported as .html.
+	test::UiApp app({1000, 760});
+	app.appUi().showProject();
+	app.shell().showOsFileDialogs(false);
+	// The menu item is there, and a customized key shows up as the platform writes it.
+	REQUIRE(elements(app, "menuitem[command=\"keyCommands.exportAssignments\"]").size() == 1);
+	app.call("settings.set",
+		{{"values", {{"ui.keyCommands", Json::array({{{"command", "transport.stop"}, {"keys", {"F11"}}}})}}}});
+	REQUIRE(app.waitUntil([&app] { return app.keys().keysFor("transport.stop") == Strings{"F11"}; }));
+
+	const test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "assignments";
+	app.keys().run("keyCommands.exportAssignments", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return !app.shell().fileDialogs().empty(); }));
+	CHECK(app.shell().fileDialogs().begin()->second.kind == ui::FileDialogKind::Save);
+	app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, {file});
+	// A file without an extension gets .html.
+	const std::filesystem::path written = dir.path() / "assignments.html";
+	REQUIRE(app.waitUntil([&written] { return std::filesystem::exists(written); }));
+
+	const std::optional<std::string> html = files::readFile(written);
+	REQUIRE(html.has_value());
+	CHECK_THAT(html.value(), ContainsSubstring("<title>Key Command Assignments</title>"));
+	// Every assignment: the category, the command and the keys, including the customized one and a default.
+	CHECK_THAT(html.value(), ContainsSubstring("<td>transport</td>"));
+	CHECK_THAT(html.value(), ContainsSubstring("transport.stop"));
+	CHECK_THAT(html.value(), ContainsSubstring("F11"));
+	CHECK_THAT(html.value(), ContainsSubstring("Space")); // transport.toggle's default key
+	CHECK_THAT(html.value(), ContainsSubstring("</html>"));
+}
+
 TEST_CASE("tool modifiers are assigned by holding the keys and clicking Assign", "[ui]")
 {
 	// Reference manual p. 1574.
@@ -557,8 +668,14 @@ TEST_CASE("tool modifiers are assigned by holding the keys and clicking Assign",
 	click(app, "#pages-editing-tool-modifiers");
 	click(app, "#pref-tool-assign-dragDrop-copy", {"ctrl", "shift"});
 	CHECK(element(app, "#pref-tool-dragDrop-copy").at("value") == "ctrl+shift");
-	// Modifiers another action of the category has leave it without any.
+	// Modifiers another action of the category has need a confirmation; Cancel keeps both as they are.
 	click(app, "#pref-tool-assign-dragDrop-sharedCopy", {"ctrl", "shift"});
+	cancelConfirm(app);
+	CHECK(element(app, "#pref-tool-dragDrop-copy").at("value") == "ctrl+shift");
+	CHECK(element(app, "#pref-tool-dragDrop-sharedCopy").at("value") != "ctrl+shift");
+	// Overwrite takes them from the other action, which is left without any.
+	click(app, "#pref-tool-assign-dragDrop-sharedCopy", {"ctrl", "shift"});
+	confirm(app);
 	CHECK(element(app, "#pref-tool-dragDrop-sharedCopy").at("value") == "ctrl+shift");
 	CHECK(element(app, "#pref-tool-dragDrop-copy").at("value") == "");
 	click(app, "#preferences-ok");

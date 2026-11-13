@@ -144,6 +144,12 @@ namespace gnubase::ui
 		// them; macros aren't in it.
 		engine::Json commands() const;
 
+		// Every key that runs a command now, for the key commands assignments export: the effective bindings (the
+		// defaults with the user's key commands over them), grouped by command and parameters and sorted by command.
+		// Each is {command, parameters, description, zone, keys}, keys being the key names as the platform writes them
+		// (keyName), and a macro's description is "Runs the macro <name>.".
+		engine::Json assignments() const;
+
 		// Says when the command can run, for menu items (ui/mainmenu.h): enabled gets the window and the zone it
 		// would run in. Throws std::invalid_argument for a command it doesn't know.
 		void enableWhen(const std::string& command, std::function<bool(Window& window, Rml::Element* zone)> enabled);

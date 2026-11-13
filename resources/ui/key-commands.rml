@@ -357,7 +357,8 @@
 		local function showMacros(document)
 			local items = {}
 			for index, macro in ipairs(kc.macros) do
-				items[#items + 1] = '<listitem value="m' .. index .. '">' .. escape(macro.name) .. "</listitem>"
+				items[#items + 1] = '<listitem value="m' .. index ..
+					'" ondblclick="KeyCommands.editMacroName(document)">' .. escape(macro.name) .. "</listitem>"
 			end
 			local list = document:GetElementById("keycommands-macros")
 			list.inner_rml = table.concat(items)
@@ -551,10 +552,15 @@
 				report(document, "Select the key to remove")
 				return
 			end
-			local keys = copy(keysOf(entry))
-			table.remove(keys, index)
-			entry.keys = keys
-			refresh(document)
+			-- The reference asks before it removes (p. 1558); Cancel undoes it, as it drops the dialog's changes.
+			ConfirmDialog = {title = "Remove Key Command", message = "Remove this key command?", ok = "Remove",
+				onOk = function()
+					local keys = copy(keysOf(entry))
+					table.remove(keys, index)
+					entry.keys = keys
+					refresh(document)
+				end}
+			gnubase.ui.confirm{}
 		end
 
 		-- Reset: the command's default keys, taken back from the commands that have them now.
@@ -576,17 +582,24 @@
 
 		-- Defaults: every command's default keys; Clear All: no command has keys.
 		function kc.defaults(document)
-			for _, entry in ipairs(kc.entries) do
-				entry.keys = nil
-			end
-			kc.unlisted = {}
-			refresh(document)
+			-- The reference asks before it resets (p. 1560); Cancel undoes it, as it drops the dialog's changes.
+			ConfirmDialog = {title = "Reset Key Commands",
+				message = "Reset all key commands to their default settings?", ok = "Reset All",
+				onOk = function()
+					for _, entry in ipairs(kc.entries) do
+						entry.keys = nil
+					end
+					kc.unlisted = {}
+					refresh(document)
+				end}
+			gnubase.ui.confirm{}
 		end
 
 		function kc.clearAll(document)
 			for _, entry in ipairs(kc.entries) do
 				entry.keys = (#entry.defaults > 0 or #(entry.keys or {}) > 0) and {} or nil
 			end
+			kc.unlisted = {} -- Clear All removes every assignment, also those of commands the dialog doesn't list
 			refresh(document)
 		end
 
@@ -791,6 +804,12 @@
 				kc.macro, kc.step = index, nil
 				showMacros(document)
 			end
+		end
+
+		-- Double-clicking a macro in the list renames it (p. 1558): its name field takes the focus, ready for the new
+		-- name, which Rename Macro confirms. (Return activates the dialog's OK, as in every single-line field.)
+		function kc.editMacroName(document)
+			document:GetElementById("keycommands-macro-name"):Focus()
 		end
 
 		function kc.chooseStep(document)

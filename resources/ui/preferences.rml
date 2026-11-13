@@ -402,8 +402,8 @@
 				"</thead><tbody>" .. table.concat(rows) .. "</tbody></table>"
 		end
 
-		-- Assign (p. 1574): the modifier keys held while clicking it, for its action. Another action of the category
-		-- with the same modifiers is left without any.
+		-- Assign (p. 1574): the modifier keys held while clicking it, for its action. When another action of the
+		-- category already has them, the reference asks before it overwrites them, which leaves the other without any.
 		function prefs.assignModifiers(document, event, button)
 			local function held(name)
 				local state = event.parameters[name]
@@ -422,14 +422,35 @@
 			local assigned = table.concat(keys, "+")
 			local action = tostring(button:GetAttribute("action"))
 			local category = (modifierActions[action] or {action})[1]
-			for _, control in ipairs(document:QuerySelectorAll("select.preference[action]")) do
+			local controls = document:QuerySelectorAll("select.preference[action]")
+			local function ofOther(control)
 				local other = tostring(control:GetAttribute("action"))
-				if other == action then
-					control:SetAttribute("value", assigned)
-				elseif assigned ~= "" and (modifierActions[other] or {other})[1] == category and
-					tostring(control:GetAttribute("value") or "") == assigned then
-					control:SetAttribute("value", "")
+				return other ~= action and (modifierActions[other] or {other})[1] == category and
+					tostring(control:GetAttribute("value") or "") == assigned
+			end
+			local function assign()
+				for _, control in ipairs(controls) do
+					if tostring(control:GetAttribute("action")) == action then
+						control:SetAttribute("value", assigned)
+					elseif assigned ~= "" and ofOther(control) then
+						control:SetAttribute("value", "")
+					end
 				end
+			end
+			local conflict = assigned ~= ""
+			if conflict then
+				conflict = false
+				for _, control in ipairs(controls) do
+					conflict = conflict or ofOther(control)
+				end
+			end
+			if conflict then
+				ConfirmDialog = {title = "Tool Modifiers",
+					message = "Another action already uses these modifier keys. Overwrite them?", ok = "Overwrite",
+					onOk = assign}
+				gnubase.ui.confirm{}
+			else
+				assign()
 			end
 		end
 

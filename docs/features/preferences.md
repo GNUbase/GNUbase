@@ -35,8 +35,9 @@ scripts can do all it does. Its presets keep complete or partial sets of prefere
     Notes Only (`editing.legatoBetweenSelected`). Tool Modifiers: each action's modifier keys (`ui.toolModifiers`, over
     the defaults that `ui::EventDisplay::defaultToolModifiers` has; the dialog keeps only those that differ), chosen
     from a list or, as in the reference (p. 1574), by holding the keys and clicking the action's Assign (Ctrl or Cmd,
-    Alt, Shift); another action of the same category with those keys is then left without any. Tools: Show Toolbox on
-    Right-Click (`ui.toolboxOnRightClick`), Show Notification when Switching Tool Mode with Key Command
+    Alt, Shift); when another action of the same category already has those keys, the dialog asks before it overwrites
+    them, which leaves that other action without any. Tools: Show Toolbox on Right-Click (`ui.toolboxOnRightClick`),
+    Show Notification when Switching Tool Mode with Key Command
     (`ui.toolSwitchNotification`). Zoom: Zoom Tool Standard Mode: Horizontal Zooming Only (`ui.zoomToolHorizontalOnly`,
     [tools.md](tools.md)).
   - Event Display - Folders: Show Data on Folder Tracks (`ui.folderData`), Apply Color of Folder Track Automatically
