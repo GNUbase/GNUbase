@@ -1637,7 +1637,8 @@ TEST_CASE("an offline render logs a warning at every round of its wait for a sam
 	const gnubase::logging::Session log(logFile);
 	Client& client = session.client;
 	const auto track = run(client, "sampler.create").at("track").at("id").get<ObjectId>();
-	// Rounds of 20 ms instead of 30 s, so that a read held back for 200 ms takes several.
+	// Rounds of 20 ms instead of 30 s, so that a read held back for 100 ms takes several, but fewer than the 20
+	// after which the render gives up.
 	session.engine.setOfflineSampleWait(std::chrono::milliseconds(20));
 	HeldRead held(session.engine, session.file);
 	run(client, "sampler.load", {{"track", track}, {"clip", session.clip}});
@@ -1645,7 +1646,7 @@ TEST_CASE("an offline render logs a warning at every round of its wait for a sam
 	std::thread releasing(
 		[&held]
 		{
-			std::this_thread::sleep_for(std::chrono::milliseconds(200));
+			std::this_thread::sleep_for(std::chrono::milliseconds(100));
 			held.release();
 		});
 	run(client, "audio.render", {{"frames", 64}});
@@ -1660,7 +1661,27 @@ TEST_CASE("an offline render logs a warning at every round of its wait for a sam
 	CHECK(warnings >= 2);
 }
 
-TEST_CASE("an offline render waits for a sample however long its file takes", "[integration]")
+TEST_CASE("an offline render gives up with an error after its last round of waiting for a sample", "[integration]")
+{
+	Session session;
+	Client& client = session.client;
+	const auto track = run(client, "sampler.create").at("track").at("id").get<ObjectId>();
+	// 20 rounds of 20 ms instead of 30 s: a read that stalls fails the render after 400 ms, not 10 minutes.
+	session.engine.setOfflineSampleWait(std::chrono::milliseconds(20));
+	HeldRead held(session.engine, session.file);
+	run(client, "sampler.load", {{"track", track}, {"clip", session.clip}});
+	REQUIRE(held.reading());
+	const auto before = std::chrono::steady_clock::now();
+	CHECK_THAT(reject(client, "audio.render", {{"frames", 64}}),
+		ContainsSubstring("the render gave up waiting for the samplers' samples to be read"));
+	CHECK(std::chrono::steady_clock::now() - before >= std::chrono::milliseconds(400));
+	// Once the read ends, a render works again.
+	held.release();
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(held.reads() == std::vector<fs::path>{"sine.wav"});
+}
+
+TEST_CASE("an offline render waits for a sample whose file takes long to read", "[integration]")
 {
 	Session session;
 	Client& client = session.client;

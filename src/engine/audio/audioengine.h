@@ -111,7 +111,7 @@ namespace gnubase::engine
 		// Any thread: reads the samplers' samples asked for from now on with read (SampleLoader::setRead).
 		void setSampleReader(SampleLoader::Read read);
 		// Any thread: how long an offline render waits for the samplers' samples before it logs a warning and waits
-		// again (30 s).
+		// again (30 s), 20 rounds at most before it fails.
 		void setOfflineSampleWait(std::chrono::milliseconds wait) { m_offlineSampleWait = wait; }
 
 		// Command thread, after a command changed the user settings audio.portSettings (audioPorts) or

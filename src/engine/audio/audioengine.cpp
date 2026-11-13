@@ -36,8 +36,10 @@ namespace gnubase::engine
 		constexpr time::Samples g_maxRollAmount = time::Samples{3600} * 768000;
 		constexpr auto g_startWait = std::chrono::seconds(2);    // for the streams before playback starts or locates
 		constexpr auto g_offlineWait = std::chrono::seconds(30); // for the streams before an offline block
-		constexpr size_t g_offlineMidi = 1024;                   // MIDI messages per block another device renders
-		constexpr int64_t g_maxCaptureRead = int64_t{1} << 20;   // frames one audio.capture returns at most
+		// Rounds of the offline wait for the samplers' samples (10 minutes of 30 s) before a render gives up (#1343).
+		constexpr int g_offlineSampleRounds = 20;
+		constexpr size_t g_offlineMidi = 1024;                 // MIDI messages per block another device renders
+		constexpr int64_t g_maxCaptureRead = int64_t{1} << 20; // frames one audio.capture returns at most
 		constexpr int64_t g_maxThreads = 64;
 		constexpr int64_t g_maxLatency = 65536; // frames: the dummy device's latencies and the record shift
 		// Frames: the largest record offset, the latency each way and the record shift at their limits. The audio
@@ -390,9 +392,14 @@ namespace gnubase::engine
 		const audio::MidiBuffer midiIn;
 		audio::MidiBuffer midiOut(g_offlineMidi);
 		uint64_t position = m_device->position();
-		// Every sampler plays its sample from the first block, however long its file takes to read (#1180).
-		while (!waitForSamples(m_offlineSampleWait))
+		// Every sampler plays its sample from the first block (#1180). A file whose read stalls fails the render
+		// after the last round instead of holding it for good (#1343).
+		for (int round = 1; !waitForSamples(m_offlineSampleWait); ++round)
+		{
+			if (round == g_offlineSampleRounds)
+				throw CommandError("the render gave up waiting for the samplers' samples to be read");
 			logging::warning("The render still waits for the samplers' samples to be read");
+		}
 		for (uint64_t done = 0; done < frames;)
 		{
 			const auto block = static_cast<uint32_t>(std::min<uint64_t>(format.blockSize, frames - done));
