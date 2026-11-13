@@ -15,7 +15,7 @@
 		.row
 		{
 			display: flex;
-			margin: 8dp 12px 0 12px;
+			margin: 8dp 12dp 0 12dp;
 		}
 
 		#visibility-configuration-name
