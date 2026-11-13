@@ -119,12 +119,13 @@ sends engine commands, so whatever another client changes shows at once.
   (musical or linear, `.checked` when linear). A click sends `channel.set`, `automationLane.set` in one transaction,
   or `track.set`. Folders without a group channel and signature tracks show none. The tempo track's controls are
   `tempoTrack`, Activate Tempo Track (`project.set` `tempoTrackActive`), `currentTempo`, Current Tempo, a text field
-  with the tempo at the project cursor that takes a tempo typed with Enter, and `tempoType`, Type of New Tempo Points,
-  a drop-down list for `editing.tempoType` ([tempo-track.md](tempo-track.md)); ruler tracks have `timeFormat`,
-  `timeOffsetOn`, `timeOffset` and `setTimeOffset` ([ruler-tracks.md](ruler-tracks.md)), marker tracks
-  `addPositionMarker`, `addCycleMarker`, `activateMarkerTrack`, `markerLocate`, `markerCycle` and `markerZoom`
-  ([markers.md](markers.md)). The defaults: mute, solo, record, monitor and read on audio tracks; mute, solo and read
-  on the others with a channel; all three on the tempo track; all four on ruler tracks; all six on marker tracks.
+  with the tempo at the project cursor, following it during playback, that takes a tempo typed with Enter, and
+  `tempoType`, Type of New Tempo Points, a drop-down list for `editing.tempoType`
+  ([tempo-track.md](tempo-track.md)); ruler tracks have `timeFormat`, `timeOffsetOn`, `timeOffset` and `setTimeOffset`
+  ([ruler-tracks.md](ruler-tracks.md)), marker tracks `addPositionMarker`, `addCycleMarker`, `activateMarkerTrack`,
+  `markerLocate`, `markerCycle` and `markerZoom` ([markers.md](markers.md)). The defaults: mute, solo, record, monitor
+  and read on audio tracks; mute, solo and read on the others with a channel; all three on the tempo track; all four
+  on ruler tracks; all six on marker tracks.
 - **Selection** (pp. 218–219) is the list view's: a click selects a track, Ctrl-click adds or removes one,
   Shift-click selects a range, and Shift-click on a selected track deselects it (the list view's `shiftdeselects`,
   [widgets.md](widgets.md)). Up and Down step through the shown tracks, in the list and wherever the project window

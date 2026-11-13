@@ -1477,7 +1477,7 @@ namespace gnubase::app
 			throw std::runtime_error("cannot load the tempo track editor from " + file.u8string());
 		}
 		document->Show();
-		m_tempoEditor = std::make_unique<ui::TempoEditor>(m_binding, *document);
+		m_tempoEditor = std::make_unique<ui::TempoEditor>(m_engine, m_binding, *document);
 		m_docking.saveWindows();
 		return m_tempoEditor.get();
 	}

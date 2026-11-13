@@ -12,6 +12,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <utility>
@@ -133,9 +134,10 @@ namespace gnubase::ui
 		void layout();
 		void build();     // the rows, from the project
 		void showState(); // names, controls and state classes
-		void showTempo(); // the tempo track's Current Tempo and Type of New Tempo Points
-		void place();     // heights and scrolling, from the display's lanes
-		void hide();      // tells the display which tracks folded folders and the track visibility hide
+		bool showTempo(); // the tempo track's Current Tempo and Type of New Tempo Points; whether a text changed
+		void followTransport(const engine::Json& status); // Current Tempo, also while playing (#831)
+		void place();                                     // heights and scrolling, from the display's lanes
+		void hide(); // tells the display which tracks folded folders and the track visibility hide
 		void fold(std::set<uint64_t> folders); // folds those folders, unfolds the others, and tells the engine
 		// The heights and folded folders from trackLayout.get or trackLayout.changed; replace drops the other heights.
 		void loadLayout(const engine::Json& layout, bool replace);
@@ -248,6 +250,7 @@ namespace gnubase::ui
 		std::map<std::string, std::function<void()>> m_actions;
 		std::function<void(uint64_t, bool)> m_onMarker;
 		std::vector<Subscription> m_subscriptions;
+		std::optional<Subscription> m_playback; // while playing, Current Tempo follows the cursor (#831)
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 	};
 }
