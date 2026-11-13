@@ -349,7 +349,7 @@ namespace gnubase::ui
 		{
 			// A double click on the lanes' footer strip, the place below the controller display (p. 1261), closes
 			// the editor; one on the strip's buttons doesn't.
-			Rml::Element* editor = nullptr;
+			const Rml::Element* editor = nullptr;
 			bool footer = false;
 			bool button = false;
 			for (Rml::Element* up = event.GetTargetElement(); up != nullptr && up != m_area.get();
