@@ -3483,6 +3483,12 @@ namespace gnubase::engine
 					context.emit("project.changed", projectSettingsJson(project));
 				if (!(current.chordPads == previous.chordPads) || change.stepPositionBefore)
 					context.emit("chordPads.changed", chordPadsJson(project));
+				// The arranger and transpose events are settings, so undo and redo announce them here, as the commands
+				// that change them do (#896).
+				if (!(current.arranger == previous.arranger))
+					context.emit("arranger.changed", arrangerJson(project));
+				if (!(current.transpose == previous.transpose))
+					context.emit("transpose.changed", transposeJson(project));
 				announceBusses(previous.busses, current.busses, context);
 				reordered = current.tracks != previous.tracks;
 				activated = current.activeMarkerTrack != previous.activeMarkerTrack;
