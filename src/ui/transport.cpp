@@ -718,6 +718,14 @@ namespace gnubase::ui
 		for (Rml::Element* element : all("[format=timeDisplay]"))
 			for (int size = 0; size <= g_largestSize; ++size)
 				element->SetClass("size-" + std::to_string(size), size == m_size);
+		// Each time display's format as a state class, so that the stylesheets give it the width of the format's widest
+		// text and running the transport doesn't change it (#1335).
+		for (Rml::Element* element : all("[time]"))
+		{
+			const std::string name = timeFormatName(format(attribute(*element, "format", "primary")));
+			for (const char* each : {"barsBeats", "seconds", "timecode", "samples", "userFrames"})
+				element->SetClass(std::string("format-") + each, name == each);
+		}
 		showTime();
 	}
 
