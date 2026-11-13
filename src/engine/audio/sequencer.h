@@ -97,6 +97,7 @@ namespace gnubase::engine
 		midi::Modifiers modifiers;        // for the notes played into the track (input); notes has them applied
 		std::vector<LiveHarmony> liveInput;  // Live Input: what the notes played into the track move to, by position
 		std::vector<LiveDrumNote> drumInput; // the drum map's: what the notes played into the track play, or empty
+		int8_t inputChannel = -1; // the MIDI channel the events played into the track go out on, or -1 for theirs
 		// The track's articulation map (#175): its remote triggers select the sound slot of the notes played into the
 		// track; without slots for none.
 		ArticulationMap articulations;
@@ -274,7 +275,8 @@ namespace gnubase::engine
 		void remember(const MidiSequence& sequence, const graph::EventBuffer& events) noexcept;
 		// Forgets the notes the inserts and the sends to the track's output hold.
 		void forgetEffects() noexcept;
-		// An event of its input as the modifiers play it; false if left out. A second note-on for a held key whose
+		// An event of its input as the modifiers play it, on the track's MIDI channel if it has one
+		// (MidiSequence::inputChannel); false if left out. A second note-on for a held key whose
 		// note goes elsewhere this time sets ends to where the first one went, which still sounds: that note ends
 		// first, so that no note hangs, unless another held key plays it too: a note that several held keys play
 		// ends with the last of their note-offs (Live Input moves keys onto one note).

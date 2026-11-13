@@ -210,22 +210,18 @@ TEST_CASE("a MIDI track's patch, MIDI volume and pan go out on its MIDI channel"
 	track.set({{"midiChannel", 15}});
 	CHECK(track.played() == Bytes{{0xBF, 0, 2}, {0xBF, 32, 44}, {0xCF, 5}, {0xBF, 7, 90}, {0xBF, 10, 20}});
 
-	// Automation of CC 7 on its channel overrides its MIDI volume; on another channel it doesn't.
-	const auto lane = [&track](int channel)
-	{
-		const Json added = run(track.client, "automationLane.add",
-			{{"track", run(track.client, "project.get").at("channels")[1].at("track")},
-				{"target", {{"type", "controller"}, {"number", 7}, {"channel", channel}}}});
-		run(track.client, "automationPoint.add",
-			{{"lane", added.at("lane").at("id")}, {"points", {{{"position", 0}, {"value", 1.0}}}}});
-	};
-	lane(15);
-	lane(0);
+	// Automation of CC 7 plays on its channel too, as automationLane.targets offers it on channel 1, and overrides its
+	// MIDI volume.
+	const Json added = run(track.client, "automationLane.add",
+		{{"track", run(track.client, "project.get").at("channels")[1].at("track")},
+			{"target", {{"type", "controller"}, {"number", 7}, {"channel", 0}}}});
+	run(track.client, "automationPoint.add",
+		{{"lane", added.at("lane").at("id")}, {"points", {{{"position", 0}, {"value", 1.0}}}}});
 	run(track.client, "transport.play");
 	const Bytes playing = track.played();
 	CHECK(std::count(playing.begin(), playing.end(), std::vector<int>{0xBF, 7, 127}) == 1);
 	CHECK(std::count(playing.begin(), playing.end(), std::vector<int>{0xBF, 7, 90}) == 0);
-	CHECK(std::count(playing.begin(), playing.end(), std::vector<int>{0xB0, 7, 127}) == 1);
+	CHECK(std::count(playing.begin(), playing.end(), std::vector<int>{0xB0, 7, 127}) == 0);
 	run(track.client, "transport.stop");
 
 	CHECK_THAT(reject(track.client, "channel.set", {{"channel", track.channel}, {"midiChannel", 16}}),
@@ -245,4 +241,77 @@ TEST_CASE("a MIDI track's patch, MIDI volume and pan go out on its MIDI channel"
 	track.set({{"midiChannel", 3}});
 	run(track.client, "history.undo");
 	CHECK(run(track.client, "project.get").at("channels")[1].at("midiChannel") == 15);
+}
+
+TEST_CASE(
+	"a MIDI track's channel plays its parts', input and automation events on it, and Any keeps theirs", "[integration]")
+{
+	PatchTrack track;
+	constexpr int64_t quarter = 1720320; // ticks
+	const Json trackId = run(track.client, "project.get").at("channels")[1].at("track");
+	const Json part = run(track.client, "midiPart.add", {{"track", trackId}, {"position", 0}, {"length", 4 * quarter}})
+						  .at("part")
+						  .at("id");
+	run(track.client, "note.add",
+		{{"part", part},
+			{"notes", {{{"position", 0}, {"length", quarter}, {"pitch", 60}, {"velocity", 0.8}, {"channel", 5}}}}});
+	run(track.client, "controller.add",
+		{{"part", part},
+			{"controllers",
+				{{{"position", 0}, {"number", 1}, {"value", 1.0}, {"channel", 5}},
+					{{"position", 0}, {"type", "pitchBend"}, {"value", 1.0}, {"channel", 7}}}}});
+	const Json lane = run(track.client, "automationLane.add",
+		{{"track", trackId}, {"target", {{"type", "controller"}, {"number", 11}, {"channel", 0}}}});
+	run(track.client, "automationPoint.add",
+		{{"lane", lane.at("lane").at("id")}, {"points", {{{"position", 0}, {"value", 1.0}}}}});
+	// The status and first data byte of what the instrument got from the start of playback.
+	const auto played = [&track]
+	{
+		run(track.client, "transport.locate", {{"position", 0}});
+		track.played();
+		run(track.client, "transport.play");
+		Bytes heads;
+		for (const std::vector<int>& bytes : track.played())
+			heads.push_back({bytes[0], bytes[1]});
+		run(track.client, "transport.stop");
+		track.played();
+		std::sort(heads.begin(), heads.end());
+		return heads;
+	};
+
+	// Any: each event on its own channel, the automation on channel 1 (reference manual p. 351).
+	CHECK(played() == Bytes{{0x95, 60}, {0xB0, 11}, {0xB5, 1}, {0xE7, 127}});
+
+	// A channel: everything on it.
+	track.set({{"midiChannel", 2}});
+	CHECK(played() == Bytes{{0x92, 60}, {0xB2, 1}, {0xB2, 11}, {0xE2, 127}});
+
+	// What the track's input plays, also on it, as the transport stands.
+	track.set({{"monitor", true}});
+	track.played();
+	run(track.client, "midi.inject",
+		{{"channel", track.channel},
+			{"messages",
+				{{{"position", 0}, {"bytes", {0x94, 64, 100}}}, {{"position", 0}, {"bytes", {0xB6, 74, 10}}}}}});
+	CHECK(track.played() == Bytes{{0x92, 64, 100}, {0xB2, 74, 10}});
+	run(track.client, "midi.inject",
+		{{"channel", track.channel}, {"messages", {{{"position", 0}, {"bytes", {0x84, 64, 0}}}}}});
+	CHECK(track.played() == Bytes{{0x82, 64, 0}});
+	track.set({{"midiChannel", nullptr}});
+	track.played();
+	run(track.client, "midi.inject",
+		{{"channel", track.channel}, {"messages", {{{"position", 0}, {"bytes", {0x94, 64, 100}}}}}});
+	CHECK(track.played() == Bytes{{0x94, 64, 100}});
+	track.set({{"monitor", false}});
+
+	// A drum sound's own channel wins; one on Any plays on the track's.
+	const Json gm = run(track.client, "project.get").at("drumMaps").at(0).at("id");
+	const Json map = run(track.client, "drumMap.add", {{"copy", gm}, {"track", trackId}}).at("map").at("id");
+	run(track.client, "drumMap.set", {{"map", map}, {"sounds", {{{"pitch", 60}, {"channel", nullptr}}}}});
+	run(track.client, "note.add",
+		{{"part", part}, {"notes", {{{"position", 0}, {"length", quarter}, {"pitch", 36}, {"velocity", 0.8}}}}});
+	track.set({{"midiChannel", 2}});
+	const Bytes drums = played();
+	CHECK(std::count(drums.begin(), drums.end(), std::vector<int>{0x92, 60}) == 1);
+	CHECK(std::count(drums.begin(), drums.end(), std::vector<int>{0x99, 36}) == 1);
 }

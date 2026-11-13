@@ -178,7 +178,7 @@ TEST_CASE(
 
 	const Added piano = add(client, {{"type", "instrument"}, {"name", "Piano"}, {"color", "#336699"}});
 	const Added strings = add(client, {{"type", "midi"}, {"name", "Strings"}});
-	run(client, "channel.set", {{"channel", strings.channel}, {"program", 48}, {"midiVolume", 90}});
+	run(client, "channel.set", {{"channel", strings.channel}, {"program", 48}, {"midiVolume", 90}, {"midiChannel", 5}});
 	run(client, "track.savePreset", {{"tracks", {vocals.track, strings.track}}, {"name", "Band"}});
 
 	const Json presets = run(client, "track.presets").at("presets");
@@ -217,6 +217,7 @@ TEST_CASE(
 	project = run(client, "project.get");
 	CHECK(channelOf(project, "Keys").at("program") == 48);
 	CHECK(channelOf(project, "Keys").at("midiVolume") == 90);
+	CHECK(channelOf(project, "Keys").at("midiChannel") == 5);
 	CHECK(sound(channelOf(project, "Other")) == sound(channelOf(project, "Vocals")));
 }
 

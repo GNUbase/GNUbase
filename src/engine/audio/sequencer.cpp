@@ -991,8 +991,15 @@ namespace gnubase::engine
 	{
 		const midi::Modifiers& modifiers = sequence.modifiers;
 		using Type = graph::ProcessEvent::Type;
+		// The track's MIDI channel plays them on it (reference manual p. 351); the keys stay where they came in.
 		if (event.type != Type::NoteOn && event.type != Type::NoteOff && event.type != Type::PolyPressure)
+		{
+			if (sequence.inputChannel >= 0 &&
+				(event.type == Type::Controller || event.type == Type::PitchBend ||
+					event.type == Type::ChannelPressure || event.type == Type::Program))
+				event.channel = static_cast<uint8_t>(sequence.inputChannel);
 			return true;
+		}
 		const size_t from = ((event.channel % 16) * 128) + (event.key % 128);
 		// The key no longer holds the note it played (a second note-on, or its note-off).
 		const auto letGo = [this, from]
@@ -1006,7 +1013,7 @@ namespace gnubase::engine
 			const uint16_t before = m_inputTo[from];
 			letGo();
 			// A drum map plays the sound's O-note on its channel (MIDI thru, p. 1239), else Live Input moves it.
-			int channel = event.channel % 16;
+			int channel = sequence.inputChannel >= 0 ? sequence.inputChannel : event.channel % 16;
 			bool plays = true;
 			uint8_t pitch = 0;
 			if (sequence.drumInput.size() == static_cast<size_t>(g_drumSounds))

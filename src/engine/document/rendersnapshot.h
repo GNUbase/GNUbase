@@ -211,6 +211,7 @@ namespace gnubase::engine
 		std::optional<int> program; // MIDI channels: the program change to send, with bank select if bank is set
 		std::optional<int> bank;
 		uint8_t midiChannel = 0;      // MIDI channels: the MIDI channel the above go out on, 0 to 15 (Any: 0)
+		int8_t inputChannel = -1;     // MIDI channels: the one the events played into it go out on, -1 (Any) for theirs
 		midi::Modifiers modifiers;    // MIDI and instrument channels: notes has them applied, live notes get them
 		midi::EffectRack midiInserts; // MIDI and instrument channels: the effects their sequencer runs
 		midi::EffectRack midiSends;
