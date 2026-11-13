@@ -462,7 +462,8 @@ TEST_CASE("tab groups move, hide and step through their tabs and remember the ac
 	app.appUi().showProject();
 	app.appUi().docking().setVisible("project", "lower", true);
 	app.shell().step(std::chrono::milliseconds(0));
-	CHECK(tabs(app, "lower") == std::vector<std::string>{"editor", "mixer", "pool", "chordPads", "sampler", "drumMachine"});
+	CHECK(tabs(app, "lower") ==
+		std::vector<std::string>{"editor", "mixer", "pool", "chordPads", "sampler", "drumMachine"});
 
 	app.ui().click(std::nullopt, at("tab[panel=mixer]"), ui::MouseButton::Left, 1, {});
 	waitUntilSaved(app);
@@ -470,8 +471,12 @@ TEST_CASE("tab groups move, hide and step through their tabs and remember the ac
 
 	// Dragged onto another tab, a tab takes its place.
 	app.ui().drag(std::nullopt, middle(app, "tab[panel=mixer]"), middle(app, "tab[panel=editor]"));
-	REQUIRE(app.waitUntil([&app]
-		{ return tabs(app, "lower") == std::vector<std::string>{"mixer", "editor", "pool", "chordPads", "sampler", "drumMachine"}; }));
+	REQUIRE(app.waitUntil(
+		[&app]
+		{
+			return tabs(app, "lower") ==
+				std::vector<std::string>{"mixer", "editor", "pool", "chordPads", "sampler", "drumMachine"};
+		}));
 	CHECK(element(app, "tab[panel=mixer]").value("pseudoClasses", Json::array()).dump().find("selected") !=
 		std::string::npos);
 
@@ -480,9 +485,14 @@ TEST_CASE("tab groups move, hide and step through their tabs and remember the ac
 	CHECK(has(element(app, "#tab-menu-lower"), "open"));
 	app.ui().click(std::nullopt, at("menuitem[tab=editor]"), ui::MouseButton::Left, 1, {});
 	REQUIRE(app.waitUntil(
-		[&app] { return tabs(app, "lower") == std::vector<std::string>{"mixer", "pool", "chordPads", "sampler", "drumMachine"}; }));
+		[&app]
+		{
+			return tabs(app, "lower") ==
+				std::vector<std::string>{"mixer", "pool", "chordPads", "sampler", "drumMachine"};
+		}));
 	app.appUi().docking().setTabHidden("editor", false);
-	CHECK(tabs(app, "lower") == std::vector<std::string>{"mixer", "editor", "pool", "chordPads", "sampler", "drumMachine"});
+	CHECK(tabs(app, "lower") ==
+		std::vector<std::string>{"mixer", "editor", "pool", "chordPads", "sampler", "drumMachine"});
 
 	// The keys go through the tabs of the zone with the focus, which shows it.
 	app.ui().click(std::nullopt, at("#lower-zone panels"), ui::MouseButton::Left, 1, {});
@@ -497,6 +507,9 @@ TEST_CASE("tab groups move, hide and step through their tabs and remember the ac
 		app.appUi().docking().layout().at("windows").at("project").at("zones").at("lower").at("active") == "chordPads");
 	app.ui().key(std::nullopt, "Mod+Alt+Right");
 	CHECK(app.appUi().docking().layout().at("windows").at("project").at("zones").at("lower").at("active") == "sampler");
+	app.ui().key(std::nullopt, "Mod+Alt+Right");
+	CHECK(app.appUi().docking().layout().at("windows").at("project").at("zones").at("lower").at("active") ==
+		"drumMachine");
 	app.ui().key(std::nullopt, "Mod+Alt+Right"); // around to the first
 	CHECK(app.appUi().docking().layout().at("windows").at("project").at("zones").at("lower").at("active") == "mixer");
 	app.ui().click(std::nullopt, at("#event-display"), ui::MouseButton::Left, 1, {});
@@ -638,7 +651,8 @@ TEST_CASE("a panel moves between its zone and a window of its own", "[ui]")
 	app.ui().click(window, at("#dock"), ui::MouseButton::Left, 1, {});
 	REQUIRE(app.waitUntil([&docking] { return docking.windowOf("test") == nullptr; }));
 	CHECK(app.shell().find(window) == nullptr);
-	CHECK(tabs(app, "lower") == std::vector<std::string>{"editor", "mixer", "pool", "chordPads", "sampler", "drumMachine", "test"});
+	CHECK(tabs(app, "lower") ==
+		std::vector<std::string>{"editor", "mixer", "pool", "chordPads", "sampler", "drumMachine", "test"});
 	CHECK(*panel.alive == 1);
 
 	// So does closing its window, which keeps where it was for the next time.
@@ -692,8 +706,8 @@ TEST_CASE("documents that live reload loads again are docking windows again", "[
 		CHECK(shown(app, "#test-content"));
 		CHECK(docking.showing("test"));
 		CHECK(element(app, "#floating-content", window).at("visible") == true);
-		CHECK(
-			tabs(app, "lower") == std::vector<std::string>{"editor", "mixer", "pool", "chordPads", "sampler", "drumMachine", "test"});
+		CHECK(tabs(app, "lower") ==
+			std::vector<std::string>{"editor", "mixer", "pool", "chordPads", "sampler", "drumMachine", "test"});
 		CHECK(shown(app, "#lower-zone"));
 	}
 
@@ -754,15 +768,19 @@ TEST_CASE("documents that live reload loads again are docking windows again", "[
 	app.ui().click(std::nullopt, at("tab[panel=pool]"), ui::MouseButton::Right, 1, {});
 	CHECK(has(element(app, "#tab-menu-lower"), "open"));
 	app.ui().click(std::nullopt, at("menuitem[tab=pool]"), ui::MouseButton::Left, 1, {});
-	REQUIRE(app.waitUntil([&app]
-		{ return tabs(app, "lower") == std::vector<std::string>{"editor", "mixer", "chordPads", "sampler", "drumMachine", "test"}; }));
+	REQUIRE(app.waitUntil(
+		[&app]
+		{
+			return tabs(app, "lower") ==
+				std::vector<std::string>{"editor", "mixer", "chordPads", "sampler", "drumMachine", "test"};
+		}));
 
 	// The panel window's Dock button puts its panel back into its zone.
 	app.ui().click(window, at("#dock"), ui::MouseButton::Left, 1, {});
 	REQUIRE(app.waitUntil([&docking] { return docking.windowOf("floating") == nullptr; }));
 	CHECK(app.shell().find(window) == nullptr);
-	CHECK(
-		tabs(app, "lower") == std::vector<std::string>{"editor", "mixer", "chordPads", "sampler", "drumMachine", "test", "floating"});
+	CHECK(tabs(app, "lower") ==
+		std::vector<std::string>{"editor", "mixer", "chordPads", "sampler", "drumMachine", "test", "floating"});
 	CHECK(*floating.alive == 1);
 	CHECK(*docked.alive == 1);
 }
