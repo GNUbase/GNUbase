@@ -8,6 +8,7 @@
 #include "engine/midi/midivalues.h"
 #include "engine/settings/usersettings.h"
 #include "platform/midi/port.h"
+#include "plugin/events.h"
 
 #include <algorithm>
 #include <array>
@@ -134,6 +135,24 @@ namespace gnubase::engine
 					add(0xB0U, 32, 3, event.value);      // and LSB
 				}
 				add(0xC0U, event.key);
+				break;
+			case Type::NoteExpression:
+				// MPE on the note's channel (docs/features/note-expression.md); the other expressions have no MIDI
+				// 1.0 message.
+				if (event.parameter == plugin::expressionId(plugin::NoteExpression::Tuning))
+				{
+					const uint32_t bend =
+						midi::pitchBendToMidi1(midi::semitonesToBend(event.parameterValue, midi::g_mpePitchRange));
+					add(0xE0U, bend, 3, bend >> 7U);
+				}
+				else if (event.parameter == plugin::expressionId(plugin::NoteExpression::Pressure))
+				{
+					add(0xD0U, midi::controllerToMidi1(midi::controllerFromUnit(event.parameterValue)));
+				}
+				else if (event.parameter == plugin::expressionId(plugin::NoteExpression::Brightness))
+				{
+					add(0xB0U, 74, 3, midi::controllerToMidi1(midi::controllerFromUnit(event.parameterValue)));
+				}
 				break;
 			case Type::SysEx:
 			case Type::Parameter:
@@ -370,6 +389,7 @@ namespace gnubase::engine
 				const double ratio = m_snapshots.latest().sampleRate / m_device->format().sampleRate;
 				const time::Samples cursor = m_transport.position();
 				MidiTakeBuilder builder;
+				builder.setMpe(mpePitchRange(m_settings));
 				time::Samples start = -1;
 				int64_t stopped = -1; // the device frame of the first input in stop mode
 				for (const RetrospectiveEvent& kept : events)

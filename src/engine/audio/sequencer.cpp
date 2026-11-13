@@ -426,6 +426,7 @@ namespace gnubase::engine
 		case graph::ProcessEvent::Type::ChannelPressure:
 		case graph::ProcessEvent::Type::SysEx:
 		case graph::ProcessEvent::Type::Parameter:
+		case graph::ProcessEvent::Type::NoteExpression:
 			return false;
 		}
 		return false;
@@ -761,8 +762,11 @@ namespace gnubase::engine
 			[](const RenderNote& n, int64_t at) { return n.start < at; });
 		auto controller = std::lower_bound(sequence.controllers.begin(), sequence.controllers.end(), begin,
 			[](const RenderController& c, int64_t at) { return c.position < at; });
+		auto expression = std::lower_bound(sequence.expressions.begin(), sequence.expressions.end(), begin,
+			[](const RenderExpression& e, int64_t at) { return e.position < at; });
 
-		// Event by event in time order; at one sample note-offs, then controller events, then note-ons. A chase
+		// Event by event in time order; at one sample note-offs, then controller events, then note-ons, then the
+		// expression of the notes that sound (#176), which needs their note-ons. A chase
 		// takes place at the segment's start: its controller events before those at that position, its notes before
 		// the notes that start there. When the buffer is full, the rest of the segment is skipped.
 		for (;;)
@@ -772,9 +776,10 @@ namespace gnubase::engine
 				ending = std::min(ending, std::max(m_ends[m_sounding[i]], begin));
 			const int64_t starting = note != sequence.notes.end() ? note->start : g_never;
 			const int64_t changing = controller != sequence.controllers.end() ? controller->position : g_never;
+			const int64_t expressing = expression != sequence.expressions.end() ? expression->position : g_never;
 			const bool chased = m_chasedSent < m_chasedCount && !sequence.chaseIntoStrip; // still to send here
 			const int64_t chasing = chased || m_chaseNotes ? begin : g_never;
-			const int64_t at = std::min({ending, starting, changing, chasing});
+			const int64_t at = std::min({ending, starting, changing, expressing, chasing});
 			if (at >= end)
 				return;
 			const auto offset = segment.offset + static_cast<uint32_t>(at - begin);
@@ -806,11 +811,25 @@ namespace gnubase::engine
 					return;
 				m_chaseNotes = false;
 			}
-			else
+			else if (starting == at)
 			{
 				if (note->end > note->start && !noteOn(*note, offset, out))
 					return;
 				++note;
+			}
+			else
+			{
+				const auto index =
+					static_cast<uint16_t>(((expression->channel % 16) * 128) + (expression->pitch % 128));
+				if (sounds(index))
+				{
+					graph::ProcessEvent event = noteEvent(graph::ProcessEvent::Type::NoteExpression, index, offset);
+					event.parameter = plugin::expressionId(expression->type);
+					event.parameterValue = expression->value;
+					if (!out.add(event))
+						return;
+				}
+				++expression;
 			}
 		}
 	}
