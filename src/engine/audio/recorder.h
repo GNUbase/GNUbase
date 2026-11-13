@@ -193,12 +193,12 @@ namespace gnubase::engine
 		using Notify = std::function<void(const std::string& name, const Json& data)>;
 
 		explicit Recorder(Notify notify);
-		~Recorder(); // ends a recording that is still open
+		~Recorder(); // ends a recording that is still open, once its files are created
 		Recorder(const Recorder&) = delete;
 		Recorder& operator=(const Recorder&) = delete;
 
 		// Command thread, while no audio thread calls process: blocks of up to maxFrames frames of channels input
-		// channels from now on. Ends a recording that is still open.
+		// channels from now on. Ends a recording that is still open, once its files are created.
 		void prepare(int channels, uint32_t maxFrames);
 
 		// Command thread: what the next recording records and where it goes. The one that runs keeps its own, and so
@@ -216,9 +216,11 @@ namespace gnubase::engine
 		uint64_t dropped() const { return m_dropped.load(std::memory_order_relaxed); }
 
 		// Command thread: what the retrospective buffer of the channel holds, oldest first. The next input to it
-		// starts the buffer afresh.
+		// starts the buffer afresh. Doesn't wait while the disk thread lists the record folder and creates a
+		// recording's files: the input sent after the chunk that started the recording isn't in it yet then.
 		std::vector<RetrospectiveEvent> retrospective(ObjectId channel);
-		// Command thread: empties the channel's retrospective buffer, or every one for 0.
+		// Command thread: empties the channel's retrospective buffer, or every one for 0. Like retrospective, input
+		// still behind a recording's start comes in afterwards.
 		void clearRetrospective(ObjectId channel);
 
 	private:
@@ -263,6 +265,21 @@ namespace gnubase::engine
 		{
 			std::deque<RetrospectiveEvent> events;
 			bool taken = false; // retrospective() returned it: the next input starts afresh
+		};
+
+		// Releases m_mutex while a recording's files are created, with m_opening set.
+		class Unlocked
+		{
+		public:
+			explicit Unlocked(Recorder& recorder);
+			~Unlocked();
+			Unlocked(const Unlocked&) = delete;
+			Unlocked& operator=(const Unlocked&) = delete;
+			Unlocked(Unlocked&&) = delete;
+			Unlocked& operator=(Unlocked&&) = delete;
+
+		private:
+			Recorder& m_recorder;
 		};
 
 		void run();
@@ -318,6 +335,7 @@ namespace gnubase::engine
 		std::mutex m_mutex;
 		std::condition_variable m_wake;
 		bool m_stopping = false;
+		bool m_opening = false;    // begin creates the files without m_mutex: the chunks behind wait
 		RecordSetup m_next;        // for the next recording
 		uint64_t m_nextNumber = 0; // its number
 		RecordSetup m_current;     // the recording's
