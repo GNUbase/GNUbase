@@ -22,6 +22,7 @@
 #include "engine/document/timewarp.h"
 #include "engine/document/trackpresets.h"
 #include "engine/document/trackversions.h"
+#include "engine/document/trackvisibility.h"
 #include "engine/document/volumecurves.h"
 #include "engine/document/warp.h"
 #include "engine/document/workspaces.h"
@@ -488,93 +489,93 @@ namespace gnubase::engine
 			}
 			track.timeOffsetOn = parameters.value("timeOffsetOn", track.timeOffsetOn);
 		}
+	}
 
-		void rebaseTrack(Project& project, Track& track, time::TimeBase base, CommandContext& context)
+	void rebaseTrack(Project& project, Track& track, time::TimeBase base, CommandContext& context)
+	{
+		for (auto& [id, event] : project.audioEvents)
+			if (event.track == track.id)
+			{
+				event.position = time::rebase(event.position, base, project.tempo, project.sampleRate);
+				context.emit("audioEvent.changed", {{"event", toJson(event)}});
+			}
+		for (auto& [id, part] : project.audioParts)
+			if (part.track == track.id)
+			{
+				const time::Position end = time::rebase(
+					{part.position.base, part.position.value + part.length}, base, project.tempo, project.sampleRate);
+				part.position = time::rebase(part.position, base, project.tempo, project.sampleRate);
+				part.length = end.value - part.position.value;
+				context.emit("audioPart.changed", {{"part", toJson(part)}});
+			}
+		for (auto& [id, part] : project.midiParts)
+			if (part.track == track.id)
+			{
+				const time::Position end = time::rebase(partEnd(part), base, project.tempo, project.sampleRate);
+				part.position = time::rebase(part.position, base, project.tempo, project.sampleRate);
+				part.length = end.value - part.position.value;
+				context.emit("midiPart.changed", {{"part", toJson(part)}});
+			}
+		for (auto& [id, marker] : project.markers)
+			if (marker.track == track.id)
+			{
+				marker.position = time::rebase(marker.position, base, project.tempo, project.sampleRate);
+				marker.end = time::rebase(marker.end, base, project.tempo, project.sampleRate);
+				keepMinimumLength(project, marker); // rounding may have left it shorter than a sample
+				context.emit("marker.changed", {{"marker", toJson(marker)}});
+			}
+		if (track.type == TrackType::Arranger && !project.arranger.events.empty())
 		{
-			for (auto& [id, event] : project.audioEvents)
-				if (event.track == track.id)
-				{
-					event.position = time::rebase(event.position, base, project.tempo, project.sampleRate);
-					context.emit("audioEvent.changed", {{"event", toJson(event)}});
-				}
-			for (auto& [id, part] : project.audioParts)
-				if (part.track == track.id)
-				{
-					const time::Position end = time::rebase({part.position.base, part.position.value + part.length},
-						base, project.tempo, project.sampleRate);
-					part.position = time::rebase(part.position, base, project.tempo, project.sampleRate);
-					part.length = end.value - part.position.value;
-					context.emit("audioPart.changed", {{"part", toJson(part)}});
-				}
-			for (auto& [id, part] : project.midiParts)
-				if (part.track == track.id)
-				{
-					const time::Position end = time::rebase(partEnd(part), base, project.tempo, project.sampleRate);
-					part.position = time::rebase(part.position, base, project.tempo, project.sampleRate);
-					part.length = end.value - part.position.value;
-					context.emit("midiPart.changed", {{"part", toJson(part)}});
-				}
-			for (auto& [id, marker] : project.markers)
-				if (marker.track == track.id)
-				{
-					marker.position = time::rebase(marker.position, base, project.tempo, project.sampleRate);
-					marker.end = time::rebase(marker.end, base, project.tempo, project.sampleRate);
-					keepMinimumLength(project, marker); // rounding may have left it shorter than a sample
-					context.emit("marker.changed", {{"marker", toJson(marker)}});
-				}
-			if (track.type == TrackType::Arranger && !project.arranger.events.empty())
+			for (ArrangerEvent& event : project.arranger.events)
 			{
-				for (ArrangerEvent& event : project.arranger.events)
-				{
-					event.position = time::rebase(event.position, base, project.tempo, project.sampleRate);
-					event.end = time::rebase(event.end, base, project.tempo, project.sampleRate);
-					keepMinimumLength(project, event);
-				}
-				context.emit("arranger.changed", arrangerJson(project));
+				event.position = time::rebase(event.position, base, project.tempo, project.sampleRate);
+				event.end = time::rebase(event.end, base, project.tempo, project.sampleRate);
+				keepMinimumLength(project, event);
 			}
-			if (track.type == TrackType::Transpose && !project.transpose.events.empty())
-			{
-				for (TransposeEvent& event : project.transpose.events)
-					event.position = time::rebase(event.position, base, project.tempo, project.sampleRate);
-				context.emit("transpose.changed", transposeJson(project));
-			}
-			if (track.type == TrackType::Chord)
-			{
-				for (std::vector<ChordEvent>* events : {&project.chords.events, &project.chords.scales})
-					for (ChordEvent& event : *events)
-						event.position = time::rebase(event.position, base, project.tempo, project.sampleRate);
-				context.emit("chord.changed", chordJson(project));
-			}
-			for (auto& [id, lane] : project.automation)
-				if (lane.track == track.id && !lane.points.empty())
-				{
-					for (auto& [pointId, point] : lane.points)
-						point.position = time::rebase(point.position, base, project.tempo, project.sampleRate);
-					context.emit("automationLane.changed", {{"lane", toJson(lane)}});
-				}
-			track.timeOffset =
-				time::rebase({track.timeBase, track.timeOffset}, base, project.tempo, project.sampleRate).value;
-			// The inactive versions' events and parts are in the track's time base too.
-			for (TrackVersion& version : track.versions)
-			{
-				for (AudioEvent& event : version.audioEvents)
-					event.position = time::rebase(event.position, base, project.tempo, project.sampleRate);
-				for (AudioPart& part : version.audioParts)
-				{
-					const time::Position end = time::rebase({part.position.base, part.position.value + part.length},
-						base, project.tempo, project.sampleRate);
-					part.position = time::rebase(part.position, base, project.tempo, project.sampleRate);
-					part.length = end.value - part.position.value;
-				}
-				for (MidiPart& part : version.midiParts)
-				{
-					const time::Position end = time::rebase(partEnd(part), base, project.tempo, project.sampleRate);
-					part.position = time::rebase(part.position, base, project.tempo, project.sampleRate);
-					part.length = end.value - part.position.value;
-				}
-			}
-			track.timeBase = base;
+			context.emit("arranger.changed", arrangerJson(project));
 		}
+		if (track.type == TrackType::Transpose && !project.transpose.events.empty())
+		{
+			for (TransposeEvent& event : project.transpose.events)
+				event.position = time::rebase(event.position, base, project.tempo, project.sampleRate);
+			context.emit("transpose.changed", transposeJson(project));
+		}
+		if (track.type == TrackType::Chord)
+		{
+			for (std::vector<ChordEvent>* events : {&project.chords.events, &project.chords.scales})
+				for (ChordEvent& event : *events)
+					event.position = time::rebase(event.position, base, project.tempo, project.sampleRate);
+			context.emit("chord.changed", chordJson(project));
+		}
+		for (auto& [id, lane] : project.automation)
+			if (lane.track == track.id && !lane.points.empty())
+			{
+				for (auto& [pointId, point] : lane.points)
+					point.position = time::rebase(point.position, base, project.tempo, project.sampleRate);
+				context.emit("automationLane.changed", {{"lane", toJson(lane)}});
+			}
+		track.timeOffset =
+			time::rebase({track.timeBase, track.timeOffset}, base, project.tempo, project.sampleRate).value;
+		// The inactive versions' events and parts are in the track's time base too.
+		for (TrackVersion& version : track.versions)
+		{
+			for (AudioEvent& event : version.audioEvents)
+				event.position = time::rebase(event.position, base, project.tempo, project.sampleRate);
+			for (AudioPart& part : version.audioParts)
+			{
+				const time::Position end = time::rebase(
+					{part.position.base, part.position.value + part.length}, base, project.tempo, project.sampleRate);
+				part.position = time::rebase(part.position, base, project.tempo, project.sampleRate);
+				part.length = end.value - part.position.value;
+			}
+			for (MidiPart& part : version.midiParts)
+			{
+				const time::Position end = time::rebase(partEnd(part), base, project.tempo, project.sampleRate);
+				part.position = time::rebase(part.position, base, project.tempo, project.sampleRate);
+				part.length = end.value - part.position.value;
+			}
+		}
+		track.timeBase = base;
 	}
 
 	void changeSampleRate(Project& project, double sampleRate, CommandContext& context)
@@ -1611,6 +1612,20 @@ namespace gnubase::engine
 				project.audioEvents[event.id] = event;
 				added.emplace_back("audioEvent.added", Json{{"event", toJson(event)}});
 			}
+			// Its patterns, those no pattern event plays too, which its copied pattern events play.
+			std::map<ObjectId, ObjectId> patterns;
+			std::vector<Pattern> copiedPatterns;
+			for (const auto& [patternId, pattern] : project.patterns)
+				if (pattern.track == id)
+					copiedPatterns.push_back(pattern);
+			for (Pattern& pattern : copiedPatterns)
+			{
+				patterns[pattern.id] = project.newId();
+				pattern.id = patterns.at(pattern.id);
+				pattern.track = copy.id;
+				added.emplace_back("pattern.added", Json{{"pattern", toJson(pattern)}});
+				project.patterns[pattern.id] = std::move(pattern);
+			}
 			std::vector<MidiPart> parts;
 			for (const auto& [partId, part] : project.midiParts)
 				if (part.track == id)
@@ -1619,6 +1634,8 @@ namespace gnubase::engine
 			{
 				part.id = project.newId();
 				part.track = copy.id;
+				if (const auto pattern = patterns.find(part.pattern); pattern != patterns.end())
+					part.pattern = pattern->second;
 				if (part.shared == 0) // a shared copy stays one, with the notes and controllers it shares
 					renumber(project, part);
 				added.emplace_back("midiPart.added", Json{{"part", toJson(part)}});
@@ -2962,11 +2979,12 @@ namespace gnubase::engine
 			part.pattern = parameters.value("pattern", ObjectId{0});
 			require(part.pattern == 0 || project.patterns.count(part.pattern) != 0,
 				"no pattern " + std::to_string(part.pattern));
-			part.id = project.newId();
-			Json result = {{"part", toJson(part)}};
-			project.midiParts[part.id] = std::move(part);
-			context.emit("midiPart.added", result);
-			return result;
+			const ObjectId id = part.id = project.newId();
+			project.midiParts[id] = std::move(part);
+			context.emit("midiPart.added", {{"part", toJson(project.midiParts.at(id))}});
+			// A pattern of another track plays as the copy on the part's, which the result names.
+			midi::adoptPatterns(project, context);
+			return {{"part", toJson(project.midiParts.at(id))}};
 		}
 
 		Json addAudioPart(Project& project, CommandContext& context)
@@ -3025,13 +3043,17 @@ namespace gnubase::engine
 			}
 			if (parameters.contains("pattern"))
 			{
-				part.pattern = parameters.at("pattern").get<ObjectId>();
-				require(part.pattern == 0 || project.patterns.count(part.pattern) != 0,
-					"no pattern " + std::to_string(part.pattern));
+				const auto pattern = parameters.at("pattern").get<ObjectId>();
+				require(pattern == 0 || project.patterns.count(pattern) != 0, "no pattern " + std::to_string(pattern));
+				// Another pattern, or none, plays from the part's start.
+				if (pattern != part.pattern)
+					part.patternOffset = 0;
+				part.pattern = pattern;
 			}
-			Json result = {{"part", toJson(part)}};
-			context.emit("midiPart.changed", result);
-			return result;
+			context.emit("midiPart.changed", {{"part", toJson(part)}});
+			// A pattern of another track plays as the copy on the part's, which the result names.
+			midi::adoptPatterns(project, context);
+			return {{"part", toJson(part)}};
 		}
 
 		Json removeMidiPart(Project& project, CommandContext& context)
@@ -3207,7 +3229,8 @@ namespace gnubase::engine
 		{
 			const Json& parameters = context.parameters();
 			const double sampleRate = parameters.value("sampleRate", project.sampleRate);
-			require(sampleRate > 0.0, "sampleRate must be positive");
+			require(sampleRate >= g_lowestSampleRate && sampleRate <= g_highestSampleRate,
+				"sampleRate must be from 8000 to 768000 Hz");
 			const double maxVolume = parameters.value("maxVolume", project.maxVolume);
 			require(maxVolume == 6.0 || maxVolume == 12.0, "maxVolume must be 6 or 12 dB");
 			ProjectSetup setup;
@@ -3567,6 +3590,11 @@ namespace gnubase::engine
 	{
 	}
 
+	void ProjectModel::announceChange(const Project& before, const Project& after, CommandContext& context) const
+	{
+		announce(*this, after, difference(before, after), Direction::Redo, context);
+	}
+
 	void ProjectModel::add(Engine& engine, CommandInfo info, Handler handler)
 	{
 		std::string action = actionName(info.name);
@@ -3592,6 +3620,8 @@ namespace gnubase::engine
 				try
 				{
 					result = handler(m_project, context);
+					if (context.unchanged())
+						return result;
 					syncSharedParts(before.midiParts, m_project, context);
 					midi::adoptPatterns(m_project, context);
 				}
@@ -3705,6 +3735,10 @@ namespace gnubase::engine
 		}
 		announceWarpedEvents(before, m_project, context);
 		followTimeFormat(m_project, timeFormat, context);
+		// The project keeps the heights and fold states of removed tracks for undo: a track that comes back or goes
+		// brings its own back or takes them away (#1131).
+		if (Json now = trackLayoutJson(m_project); now != trackLayoutJson(before))
+			context.emit("trackLayout.changed", std::move(now));
 		announceHistory(context);
 		publish();
 		return {{"position", m_history.position()}};
@@ -4024,15 +4058,15 @@ namespace gnubase::engine
 			});
 		add(engine,
 			{"project.set", 1,
-				"Changes the project's name, sample rate, stereo pan law or maximum volume, or the other settings of "
-				"the project setup. Linear positions keep their time at a new sample rate; media files keep theirs "
+				"Changes the project's name, sample rate (8000 to 768000 Hz), stereo pan law or maximum volume, or "
+				"the other settings of the project setup. Linear positions keep their time at a new sample rate; media "
+				"files keep theirs "
 				"(see media.conform). panLaw is how much a mono channel panned to the center is turned down on "
 				"each side: 0dB, -3dB (the default), -4.5dB, -6dB or equalPower (-3.01 dB, the power stays the same "
 				"wherever it is panned); the side panned toward is always at 0 dB. maxVolume is the top of the "
 				"faders, 6 (the default) or 12 dB; faders, send levels and volume automation above a lower maximum "
-				"come "
-				"down to it. tempo (1 to 999 BPM) "
-				"and signature {numerator 1 to 99, denominator 1, 2, 4, 8 or 16} are the project's first tempo and "
+				"come down to it. tempo (1 to 999 BPM) and signature {numerator 1 to 99, denominator 1, 2, 4, 8 or 16} "
+				"are the project's first tempo and "
 				"time signature, as the transport bar sets them: the fixed tempo, or in tempo track mode the tempo "
 				"track's first event; later changes stay, and musical positions keep their ticks. tempoTrackActive "
 				"switches between fixed tempo mode (false, a new project's) and tempo track mode, in which the "
@@ -4328,7 +4362,7 @@ namespace gnubase::engine
 			removeEmptyTracks);
 		add(engine,
 			{"track.duplicate", 1,
-				"Duplicates a track below it: its channel with every setting, its events, parts, markers and "
+				"Duplicates a track below it: its channel with every setting, its events, parts, patterns, markers and "
 				"automation, and for a folder the tracks inside it, whose channels play through the copies of the "
 				"group channels they played through. Returns the copy.",
 				objectSchema({{"track", idSchema}}, {"track"}), resultSchema({"track"}), false},
@@ -4590,7 +4624,8 @@ namespace gnubase::engine
 				"Adds a MIDI part to a MIDI or instrument track. position and length are in the track's time base. "
 				"lane puts it on that lane of the track, from 0 (default), as event.set does. pattern makes it a "
 				"pattern event (#181), which plays that pattern (pattern.add) from its start over and over instead "
-				"of its notes.",
+				"of its notes; a pattern of another track plays as its copy on the part's track (pattern.add), which "
+				"the result names.",
 				objectSchema({{"track", idSchema}, {"position", integerSchema}, {"length", integerSchema},
 								 {"name", stringSchema}, {"lane", laneSchema}, {"pattern", idSchema}},
 					{"track", "position", "length"}),
@@ -4604,7 +4639,8 @@ namespace gnubase::engine
 				"rootKey is the part's root key (\"\" for none, C, C# and so on to B), which the project root key "
 				"transposes it to (project.set rootKey); globalTranspose follow (the default) or independent says "
 				"whether the project root key and the transpose track transpose it (transpose.add). pattern is the "
-				"pattern a pattern event plays (pattern.add, #181), 0 for an ordinary part.",
+				"pattern a pattern event plays (pattern.add, #181), 0 for an ordinary part: another one plays from "
+				"the part's start, and one of another track as its copy on the part's track, which the result names.",
 				objectSchema({{"part", idSchema}, {"name", stringSchema}, {"position", integerSchema},
 								 {"length", integerSchema}, {"transpose", integerSchema}, {"velocity", integerSchema},
 								 {"rootKey", enumSchema(rootKeyNames())},
@@ -4896,16 +4932,28 @@ namespace gnubase::engine
 				"undo step. The job's result lists the copies as copied, media files that couldn't be read as "
 				"missing (they keep their paths), and media whose path changed while the job ran as changed (they "
 				"keep the new path). The project must have been saved; save it again without embedding media to keep "
-				"the new paths.",
-				objectSchema({}), objectSchema({{"job", Jobs::schema()}}, {"job"}), false},
-			[this, &jobs](CommandContext&)
+				"the new paths. media limits it to those media files, such as the ones track.import added (Copy to "
+				"Active Project Folder, reference manual p. 205).",
+				objectSchema({{"media", {{"type", "array"}, {"items", integerSchema}}}}),
+				objectSchema({{"job", Jobs::schema()}}, {"job"}), false},
+			[this, &jobs](CommandContext& context)
 			{
 				require(
 					!m_file.empty(), "save the project first: media are copied into the folder of its project file");
 				const std::filesystem::path file = std::filesystem::u8path(m_file);
+				const Json& parameters = context.parameters();
+				for (const Json& id : parameters.value("media", Json::array()))
+					require(m_project.media.count(id.get<ObjectId>()) != 0, "no media file " + id.dump());
+				const auto chosen = [&parameters](ObjectId id)
+				{
+					if (!parameters.contains("media"))
+						return true;
+					const Json& media = parameters.at("media");
+					return std::find(media.begin(), media.end(), Json(id)) != media.end();
+				};
 				std::vector<MediaCopy> files;
 				for (const auto& [id, media] : m_project.media)
-					if (!isInside(media.path, file.parent_path()))
+					if (chosen(id) && !isInside(media.path, file.parent_path()))
 						files.push_back({id, media.path, {}});
 				return Json{{"job",
 					startMediaCopy(jobs, "media.prepareArchive", std::move(files), mediaFolderFor(file),

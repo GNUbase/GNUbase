@@ -701,6 +701,48 @@ namespace gnubase::engine
 		}
 	}
 
+	// ponytail: option (b) of #1190. Whether a range that covers a cycle marker whole or reaches out of it cuts it
+	// too is for a maintainer to decide; the manual only describes a range in the cycle marker.
+	void cutCycleMarkers(Project& project, time::Samples start, time::Samples end, const std::vector<ObjectId>& tracks,
+		CommandContext& context)
+	{
+		std::vector<ObjectId> cut;
+		for (const auto& [id, marker] : project.markers)
+		{
+			if (marker.type != MarkerType::Cycle ||
+				std::find(tracks.begin(), tracks.end(), marker.track) == tracks.end())
+				continue;
+			const time::Samples from = samples(project, marker.position);
+			const time::Samples to = samples(project, marker.end);
+			if (from <= start && end <= to && (from != start || to != end))
+				cut.push_back(id);
+		}
+		for (const ObjectId id : cut)
+		{
+			Marker& marker = project.markers.at(id);
+			const Track& track = project.trackById.at(marker.track);
+			const time::Samples from = samples(project, marker.position);
+			const time::Samples to = samples(project, marker.end);
+			if (from < start && end < to)
+			{
+				// The part after the range: a cycle marker of its own.
+				Marker after = marker;
+				after.id = project.newId();
+				after.position = fromSamples(project, track, end);
+				keepMinimumLength(project, after);
+				after.number = firstFreeNumber(project, after);
+				project.markers[after.id] = after;
+				context.emit("marker.added", {{"marker", toJson(after)}});
+			}
+			if (from < start)
+				marker.end = fromSamples(project, track, start);
+			else
+				marker.position = fromSamples(project, track, end);
+			keepMinimumLength(project, marker);
+			context.emit("marker.changed", {{"marker", toJson(marker)}});
+		}
+	}
+
 	void ProjectModel::registerMarkerCommands(Engine& engine)
 	{
 		const Json idSchema = {{"type", "integer"}};

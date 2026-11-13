@@ -1008,9 +1008,17 @@ namespace gnubase::engine::midifile
 		// Where the project's tempo changes after the start or the project has content after the file's end, it is
 		// the project's again from the file's end on; otherwise the file's last tempo goes on, as in a new project.
 		// Linear content keeps its samples, so it is compared with the file's end in the new tempo, which points
-		// already holds up to the end.
-		const bool keepsAfterEnd = options.contentEnd > end ||
-			options.contentEndSamples > time::TempoMap(points).toSamples(end, options.sampleRate);
+		// already holds up to the end; so is an audio event on a musical track, from its start in that tempo. One on a
+		// linear track whose clip plays in musical mode ends at its start in ticks in that tempo plus its length.
+		const time::TempoMap fileTempo(points);
+		const time::Samples endSamples = fileTempo.toSamples(end, options.sampleRate);
+		const bool keepsAfterEnd = options.contentEnd > end || options.contentEndSamples > endSamples ||
+			std::any_of(options.audioEvents.begin(), options.audioEvents.end(),
+				[&](const ImportOptions::AudioSpan& event)
+				{ return fileTempo.toSamples(event.start, options.sampleRate) + event.length > endSamples; }) ||
+			std::any_of(options.beatAudioEvents.begin(), options.beatAudioEvents.end(),
+				[&](const ImportOptions::BeatSpan& event)
+				{ return fileTempo.toTicks(event.start, options.sampleRate) + event.length > end; });
 		const auto afterEnd = std::find_if(projectTempo.begin(), projectTempo.end(),
 			[end](const time::TempoPoint& point) { return point.position > end; });
 		if (keepsAfterEnd ||

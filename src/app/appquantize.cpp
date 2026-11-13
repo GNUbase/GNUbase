@@ -2,6 +2,7 @@
 // Quantizing in the app (#132, docs/features/quantize.md, reference manual pp. 367-378): the quantize panel and the
 // Edit menu's quantize commands.
 #include "app/appui.h"
+#include "platform/log.h"
 
 #include <RmlUi/Core/Element.h>
 
@@ -167,12 +168,17 @@ namespace gnubase::app
 			m_binding.send(command, std::move(parameters));
 			return;
 		}
-		// Every slice is selected, so that Quantize and Crossfade go on with all of them (p. 370). Selected parts stay
+		// Every slice is selected, so that Quantize and Crossfade go on with all of them (p. 371). Selected parts stay
 		// selected for the slices in them, which the project window shows only as the parts' waveforms.
 		m_binding.send(command, std::move(parameters),
 			[this, parts](const engine::Result& result)
 			{
-				if (!result.ok() || !m_eventDisplay)
+				if (!result.ok())
+				{
+					logging::warning("Slicing audio events failed: {}", result.error);
+					return;
+				}
+				if (!m_eventDisplay)
 					return;
 				std::vector<uint64_t> selection = parts;
 				for (const Json& event : result.value.at("events"))

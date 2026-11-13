@@ -53,10 +53,10 @@ hands them on and sends `event.*`, `audioEvent.set`, `audition.*` and `editor.se
 ```
 
 The display fits the shown parts' range into its width; each event shows what its part lets play of it, at its time on
-its lane. An event moved out of its part, which the part hides entirely, shows whole, and the display reaches it, so
-that it can be selected and moved back. Code places the parts and the events in percent of the width and the lanes and
-events at their lane, 48 dp each. While the project's snap is on (`snap.set`), moves and splits snap to the project's
-quantize grid; with it off they go where the mouse is.
+its lane. An event moved out of its part, which the part hides entirely, shows whole and dimmed, like a muted one, and
+the display reaches it, so that it can be selected and moved back. Code places the parts and the events in percent of
+the width and the lanes and events at their lane, 48 dp each. While the project's snap is on (`snap.set`), moves and
+splits snap to the project's quantize grid; with it off they go where the mouse is.
 
 A gesture (a move or an audition) follows the drag events of an RmlUi drag element: the editable events with the object
 selection tool and the whole display with the play and scrub tools (`drag: drag` in the style sheet, by the `tool`
@@ -64,23 +64,30 @@ attribute). Nothing else in the display is one, so that a finger pan scrolls it 
 gesture's mouseup in the editor's whole document or the drag element's dragend ends it, so it ends wherever the button
 goes up, also outside the window, with its effect there. A press anywhere in the document while one goes on, whose end
 never came, ends it without its effect: a move moves nothing, an audition stops, and the events show where they are
-again. A move keeps the press as an offset into the pressed event and takes the event to where that point is under the
-mouse, on the grid as it is now; the other selected events move by as much. So the pressed point stays under the mouse
-whatever else changes during the drag: the display's range (an event moved out of its part), the event itself
-(`event.move` from MCP or Lua) and both together (a move of the part, or its undo, which moves its events and the
-range): the display shows what it showed and the event goes where the mouse is, not that much further. A command that
-moves the pressed event doesn't carry the move along; one that resizes or splits it isn't followed, as the offset is
-from the start the event had. The lanes go from the press's lane to the mouse's, from where the events are now, so a
-command that puts the pressed event onto another lane moves where the lane move goes from. While a move drags, the
-events it moves show where it takes them, also after the editor shows the project again (as when the selection of the
-press comes back, or after a change of snap, which shows at once) and after the display is laid out again: a window that
-changes its size, a wheel scroll of the lanes and the scrollbar that a new lane brings change which time and lane are
-under the mouse, and the move is worked out again then, before the mouse moves; other changes of layout, as of a docking
-zone, wait for the mouse. The pressed event's element stays when the events are drawn again during the drag, as when a
-command adds one to the part: RmlUi drops a drag without a dragend when its element goes. A command that removes the
-pressed event, or takes its part out of the part editing mode, ends the move without its effect. A click shows its
-selection at once, and a view that comes before the engine has answered it, which may be older than it, leaves that
-selection as it is.
+again. A move keeps the press as a time in the pressed event's clip and takes the event to where that point is under the
+mouse, on the grid as it is now, and onto the lane under the mouse; the other selected events move by as much. So the
+pressed point stays under the mouse on both axes whatever else changes during the drag: the display's range (an event
+moved out of its part), the event itself (`event.move`, `event.set` with a `lane` or `event.resize` of its start from
+MCP or Lua; normal sizing moves the event's start and leaves its content where it is) and both together (a move of the
+part, or its undo, which moves its events and the range; on a musical track a tempo change, which changes the events'
+time and the display's scale): the display shows what it showed and the event goes where the mouse is, not that much
+further. A command that moves the pressed event doesn't carry the move along, so the other selected events go back by as
+much as it moved it. A split of the pressed event goes on with the piece before the cut, which keeps the event's id, as
+if the pressed point were still in it. An event that plays another clip after a command (`audioEvent.set` with a `clip`,
+or flattening it into a new file) keeps the press where it was in the event. A drag with Ctrl that ends over the pressed
+event's own lane moves nothing and leaves the selection as it is: only a click with Ctrl adds the event or takes it out.
+A press on the pixel row at an event's bottom edge, which RmlUi's hit test gives the event and the display's lanes the
+next lane, or on its top row, which at a scale whose pixels aren't whole dp may read as the lane above, counts as on
+the lane the event shows on: a drag along that row leaves the event there, with and without Ctrl.
+While a move drags, the events it moves show where it takes them, also after the editor shows the project again (as when
+the selection of the press comes back, or after a change of snap, which shows at once) and after the display is laid out
+again: a window that changes its size, a wheel scroll of the lanes and the scrollbar that a new lane brings change which
+time and lane are under the mouse, and the move is worked out again then, before the mouse moves; other changes of
+layout, as of a docking zone, wait for the mouse. The pressed event's element stays when the events are drawn again
+during the drag, as when a command adds one to the part: RmlUi drops a drag without a dragend when its element goes. A
+command that removes the pressed event, or takes its part out of the part editing mode, ends the move without its
+effect. A click shows its selection at once, and a view that comes before the engine has answered it, which may be older
+than it, leaves that selection as it is.
 
 | Tool | Gesture | Reference |
 |---|---|---|
@@ -136,10 +143,14 @@ yet one of the lower zone's.
   and over an event outside the part editing mode scrolling the lanes; a render during a move keeping it shown, with a
   change of snap at once; a move going on when a command adds an event to the part during the drag, released outside the
   window, with its pressed point under the mouse when the display's range changes (its end, its start), when a command
-  moves its event off the grid and when the part moves with its events (a command, an undo), and after a wheel scroll of
-  the lanes during a Ctrl drag, a new lane's scrollbar and a window that changes its size; a Ctrl drag going on with its
-  event's new lane and its element in order; a move ending without its effect when its event is removed or leaves the
-  part editing mode, and a Ctrl drag of an event that isn't selected moving nothing when its part leaves the part
-  editing mode; a view the engine answered before a click leaving the click's selection, and a selection from the engine
-  showing once the click's is answered.
+  moves its event off the grid, resizes its start (normal sizing and sizing that moves the contents), splits it or gives
+  it another clip, when the part moves with its events (a command, an undo) and when the tempo changes on a musical
+  track, and after a wheel scroll of the lanes during a move and during a Ctrl drag, a new lane's scrollbar and a window
+  that changes its size; the other selected events going back by what a command moves the pressed one; a Ctrl drag going
+  on with its event's new lane, on the lane under the mouse, its element in order and the selection as it was, and a
+  Ctrl drag along its event's lane moving nothing and selecting nothing; a move and a Ctrl drag pressed on their event's
+  top or bottom row keeping its lane, at scale 1 and 1.2; a move ending without its effect when its event is removed or
+  leaves the part editing mode, and a Ctrl drag of an event that isn't selected moving nothing when its part leaves the
+  part editing mode; a view the engine answered before a click leaving the click's selection, and a selection from the
+  engine showing once the click's is answered.
 - `tests/eventediting_tests.cpp`: a double click on an audio part opens it in the audio part editor.

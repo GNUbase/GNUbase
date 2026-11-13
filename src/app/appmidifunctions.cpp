@@ -101,7 +101,7 @@ namespace gnubase::app
 		std::vector<std::pair<std::string, std::string>> attributes;
 		if (track != 0)
 			attributes.emplace_back("track", std::to_string(track));
-		m_articulationMaps = openDialog(window, "articulation-maps.rml", attributes).GetObserverPtr();
+		openOnce(window, "articulation-maps.rml", m_articulationMaps, attributes);
 	}
 
 	void AppUi::showArticulationMapError(const engine::Result& result)
@@ -351,7 +351,10 @@ namespace gnubase::app
 					openFunction(window, "dissolve", {{"parts", parts}});
 			}});
 		m_keys.enableWhen("midi.dissolvePart", hasParts);
-		m_keys.add({"midi.bounceMidi", "Combines the selected MIDI parts of each track into one part.",
+		m_keys.add({"midi.bounceMidi",
+			"Combines the selected MIDI parts of each track into one part with the first one's root key and Global "
+			"Transpose setting, and those whose transpose, velocity or global transpose the notes can't hold into one "
+			"for each.",
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/)
 			{
 				// The engine bounces the parts of one track; several tracks are one undo step.

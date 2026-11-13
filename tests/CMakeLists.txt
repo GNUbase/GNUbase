@@ -2,10 +2,11 @@
 add_library(gnubase-testutils STATIC
 	testutils/fakeui.cpp testutils/fakeui.h
 	testutils/goldenimage.cpp testutils/goldenimage.h
+	testutils/heldjob.cpp testutils/heldjob.h
 	testutils/testutils.cpp testutils/testutils.h)
 target_include_directories(gnubase-testutils PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(gnubase-testutils PUBLIC gnubase-ui)
-target_link_libraries(gnubase-testutils PRIVATE miniz)
+target_link_libraries(gnubase-testutils PRIVATE Catch2::Catch2 miniz)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 	target_sources(gnubase-testutils PRIVATE
 		testutils/fakertkit.cpp testutils/fakertkit.h)
@@ -75,6 +76,7 @@ add_executable(gnubase-tests
 	fade_tests.cpp
 	fades_ui_tests.cpp
 	fileimport_tests.cpp
+	files_tests.cpp
 	fonts_tests.cpp
 	graph_tests.cpp
 	harmony_tests.cpp

@@ -761,9 +761,11 @@ namespace
 		std::vector<double> between;
 	};
 
-	ToolbarGaps toolbarGaps(Window& window, const std::vector<std::string>& order)
+	// Steps the shell first, unless step is false, to measure what the last step drew.
+	ToolbarGaps toolbarGaps(Window& window, const std::vector<std::string>& order, bool step = true)
 	{
-		window.app.shell().step(std::chrono::milliseconds(0));
+		if (step)
+			window.app.shell().step(std::chrono::milliseconds(0));
 		ToolbarGaps result;
 		result.tightest = 1.0e9;
 		result.spacer = element(window.app, "#toolbar .spacer").at("box").at("width").get<double>();
@@ -803,7 +805,8 @@ namespace
 	void checkToolbarGaps(const ToolbarGaps& now, const ToolbarGaps& expected)
 	{
 		REQUIRE(!now.between.empty());
-		CHECK(now.between.front() > now.within + 1.0);
+		// 4 dp wider, which pixels round to less at small dp ratios: 3 against 2 pixels at 0.7.
+		CHECK(now.between.front() > now.within);
 		for (const double gap : now.between)
 			CHECK(std::abs(gap - now.between.front()) <= 1.0);
 		CHECK(std::abs(now.inset - expected.inset) <= 1.0);
@@ -908,50 +911,128 @@ TEST_CASE("the toolbar's setup pane shows, hides and orders its sections, with p
 	atEdges(quantizeFirst);
 }
 
-TEST_CASE("the toolbar's buttons fit in narrow windows and keep their gaps in every order", "[ui]")
+namespace
 {
-	// 840 dp is the narrowest window with room for every section the toolbar shows below 1000 dp: the Grid Type section
-	// is hidden below it, the quantize section below 1000 dp and the track visibility and root key sections below 1100
-	// dp.
-	for (const int width : {1024, 900, 840, 800})
+	// Checks what the room in the project window's toolbar shows of an order of its sections (#1178, #1188): the
+	// shown sections before the spacer come first, those the window has no room for (.no-room) after them, and the
+	// first of those would not fit where the spacer is; no button covers the next one, the gaps are those of the
+	// order `expected` measured, and the last section ends as far from the toolbar's right edge as the first button
+	// starts from its left one. Returns the sections shown. Steps the shell first, unless step is false.
+	std::vector<std::string> checkToolbarRoom(
+		Window& window, const std::vector<std::string>& order, const ToolbarGaps& expected, bool step = true)
+	{
+		const ToolbarGaps gaps = toolbarGaps(window, order, step);
+		if (gaps.between.empty())
+			CHECK(std::abs(gaps.inset - expected.inset) <= 1.0); // no gap between sections before the last place
+		else
+			checkToolbarGaps(gaps, expected);
+		CHECK(gaps.tightest >= 0.0);
+		CHECK(gaps.spacer >= 0.0);
+		const double ratio = window.app.main().dpRatio();
+		std::vector<std::string> shown;
+		bool roomLeft = true;
+		for (size_t i = 0; i + 1 < order.size(); ++i)
+		{
+			INFO("section " << order[i]);
+			const Json section = element(window.app, "#toolbar [section=" + order[i] + "]");
+			const bool noRoom = hasClass(window.app, "#toolbar [section=" + order[i] + "]", "no-room");
+			CHECK(section.at("visible").get<bool>() == !noRoom);
+			if (noRoom && roomLeft)
+			{
+				// With its 3 dp gap it needs more than the spacer's width.
+				CHECK(section.at("box").at("width").get<double>() + (3.0 * ratio) > gaps.spacer);
+				CHECK(section.at("box").at("width").get<double>() > 0.0); // laid out, where it can't be seen
+			}
+			CHECK((noRoom || roomLeft)); // the last before the spacer go first
+			roomLeft = roomLeft && !noRoom;
+			if (!noRoom)
+				shown.push_back(order[i]);
+		}
+		CHECK(!hasClass(window.app, "#toolbar [section=" + order.back() + "]", "no-room")); // after the spacer
+		shown.push_back(order.back());
+		const Json bar = element(window.app, "#toolbar").at("box");
+		const Json last = element(window.app, "#toolbar [section=" + order.back() + "]").at("box");
+		const double rightInset = bar.at("x").get<double>() + bar.at("width").get<double>() -
+			last.at("x").get<double>() - last.at("width").get<double>();
+		CHECK(std::abs(rightInset - gaps.inset) <= 1.0);
+		return shown;
+	}
+}
+
+TEST_CASE("the toolbar shows the sections it has room for, the last before the spacer going first", "[ui]")
+{
+	// The shell fits windows into their monitor, 1024 pixels wide on CI: smaller dp ratios give the wider dp widths,
+	// 0.7 about 1463 dp, 0.8 1280 dp and 0.9316 about 1099.2 dp, between the widths of whole dp (#1178).
+	for (const int width : {1024, 900, 840, 800, 700})
 	{
 		INFO("window width " << width);
 		Window window(width);
+		REQUIRE(window.app.main().pixelSize().width == width); // a smaller display would test something else
 		ui::Docking& docking = window.app.appUi().docking();
-		const std::vector<std::string> order = docking.sections("project", "toolbar");
-		window.app.shell().step(std::chrono::milliseconds(0));
-		for (const std::string& name : order)
+		const std::vector<std::string> defaults = docking.sections("project", "toolbar");
+		// Narrower in dp first, then wider: the sections the room hid show again.
+		std::vector<float> ratios = {1.25F, 1.0F};
+		if (width == 1024)
+			ratios.insert(ratios.end(), {0.9316F, 0.8F, 0.7F});
+		for (const float ratio : ratios)
 		{
-			INFO("section " << name);
-			const bool narrowGone = name == "trackVisibility" || name == "rootKey" ||
-				(width < 1000 && name == "quantize") || (width < 840 && name == "gridType");
-			CHECK(element(window.app, "#toolbar [section=" + name + "]").at("visible").get<bool>() == !narrowGone);
+			const double dp = width / static_cast<double>(ratio);
+			INFO("dp ratio " << ratio << ", " << dp << " dp");
+			window.app.setDpRatio(ratio);
+			docking.resetSections("project", "toolbar");
+			const ToolbarGaps reference = toolbarGaps(window, defaults);
+			const std::vector<std::string> shown = checkToolbarRoom(window, defaults, reference);
+			if (dp >= 1400.0)
+				CHECK(shown == defaults);
+			if (dp <= 840.0)
+				CHECK(shown.size() < defaults.size());
+
+			// Quantize first: its controls have no gap of their own before them.
+			docking.moveSection("project", "toolbar", "quantize", "tools");
+			checkToolbarRoom(window, docking.sections("project", "toolbar"), reference);
+
+			// The sections that go first in the default order, in places in the middle.
+			docking.moveSection("project", "toolbar", "rootKey", "tools");
+			docking.moveSection("project", "toolbar", "trackVisibility", "autoScroll");
+			const std::vector<std::string> inside = docking.sections("project", "toolbar");
+			REQUIRE(inside.at(1) == "rootKey");
+			checkToolbarRoom(window, inside, reference);
 		}
-		const ToolbarGaps reference = toolbarGaps(window, order);
-		const auto checkOrder = [&](const std::vector<std::string>& now, const std::string& what)
-		{
-			INFO("order " << what);
-			const ToolbarGaps gaps = toolbarGaps(window, now);
-			checkToolbarGaps(gaps, reference);
-			// The toolbar's room is tight at these widths: no button covers the next one, and the spacer has a few dp
-			// to spare.
-			CHECK(gaps.tightest >= 0.0);
-			CHECK(gaps.spacer >= 5.0);
-		};
-		checkOrder(order, "default");
+	}
+}
 
-		// Quantize first: its controls have no gap of their own before them.
-		docking.moveSection("project", "toolbar", "quantize", "tools");
-		const std::vector<std::string> quantizeFirst = docking.sections("project", "toolbar");
-		REQUIRE(quantizeFirst.front() == "quantize");
-		checkOrder(quantizeFirst, "quantize first");
+TEST_CASE("the toolbar makes room for its sections with the widest labels, and for those the user hides", "[ui]")
+{
+	for (const int width : {1024, 840})
+	{
+		INFO("window width " << width);
+		Window window(width);
+		REQUIRE(window.app.main().pixelSize().width == width);
+		ui::Docking& docking = window.app.appUi().docking();
+		const std::vector<std::string> defaults = docking.sections("project", "toolbar");
+		const ToolbarGaps reference = toolbarGaps(window, defaults);
+		const std::vector<std::string> before = checkToolbarRoom(window, defaults, reference);
 
-		// The sections that a narrow window hides, in places in the middle: they take no gap there.
-		docking.moveSection("project", "toolbar", "rootKey", "tools");
-		docking.moveSection("project", "toolbar", "trackVisibility", "autoScroll");
-		const std::vector<std::string> hiddenInside = docking.sections("project", "toolbar");
-		REQUIRE(hiddenInside.at(1) == "rootKey");
-		checkOrder(hiddenInside, "hidden sections inside");
+		// The snap type's and the grid type's longest names make their buttons wider (#1188).
+		window.call("snap.set", {{"type", "eventsGridCursor"}, {"grid", "adaptToZoom"}});
+		REQUIRE(window.app.waitUntil(
+			[&] { return element(window.app, "#grid-type").value("text", "") == "Adapt to Zoom"; }));
+		// Fitted in the step that shows the new labels, before the shell drew them.
+		const std::vector<std::string> wide = checkToolbarRoom(window, defaults, reference, false);
+		CHECK(wide.size() < before.size());
+
+		// A section the user hides in the setup pane makes room for the next one.
+		REQUIRE(wide.size() >= 5);
+		const std::string& next = defaults.at(wide.size() - 1); // the first one without room
+		docking.setSectionHidden("project", "toolbar", "zoomPresets", true);
+		docking.setSectionHidden("project", "toolbar", "autoScroll", true);
+		std::vector<std::string> order;
+		for (const std::string& name : defaults)
+			if (name != "zoomPresets" && name != "autoScroll")
+				order.push_back(name);
+		const std::vector<std::string> roomMade = checkToolbarRoom(window, order, reference);
+		CHECK(std::find(roomMade.begin(), roomMade.end(), next) != roomMade.end());
+		CHECK(!hasClass(window.app, "#toolbar [section=zoomPresets]", "no-room"));
 	}
 }
 
@@ -1124,6 +1205,50 @@ TEST_CASE("the info line's volume turned or dragged while the engine answers lat
 	CHECK(window.historyPosition() == position + 1);
 }
 
+TEST_CASE("the info line's refused volume step shows the engine's value again", "[ui]")
+{
+	Window window;
+	const uint64_t audio = window.addTrack({{"type", "audio"}, {"timeBase", "linear"}});
+	const Json media =
+		window.call("media.add", {{"path", "take.wav"}, {"sampleRate", 48000}, {"channels", 1}, {"length", 480000}})
+			.at("media");
+	const Json clip = window.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	const auto addEvent = [&](int64_t at)
+	{
+		return window
+			.call("audioEvent.add", {{"track", audio}, {"clip", clip.at("id")}, {"position", at}, {"length", 24000}})
+			.at("event")
+			.at("id")
+			.get<uint64_t>();
+	};
+	const uint64_t first = addEvent(96000);
+	const uint64_t second = addEvent(192000);
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("audioEvents").size() == 2; }));
+	window.display.select({first, second});
+	REQUIRE(window.shows("#info-line textdisplay[field=name]", "take"));
+	const std::string field = "#info-line valuefield[field=volume]";
+	REQUIRE(window.shows(field, "0"));
+	const int64_t position = window.historyPosition();
+
+	// Two wheel turns: the first step goes, the second waits for its answer. Removing one of the events in between
+	// makes the engine refuse the second step: it changes an event that is gone.
+	window.app.ui().wheel(std::nullopt, {field, 0, std::nullopt}, 0.0F, 1.0F);
+	window.app.ui().wheel(std::nullopt, {field, 0, std::nullopt}, 0.0F, 1.0F);
+	window.call("audioEvent.remove", {{"event", second}});
+	REQUIRE(window.app.waitUntil(
+		[&]
+		{
+			const Json commands = window.call("engine.commandLog").at("commands");
+			return std::any_of(commands.begin(), commands.end(), [](const Json& command)
+				{ return command.at("command") == "history.transaction" && command.contains("error"); });
+		}));
+	// The refused step shows the events as they are again (m_loads = 0): the field shows the engine's volume, what
+	// the first turn took the event that is left to, not the refused second turn's.
+	CHECK(window.shows(field, "-0.5"));
+	CHECK(window.find("audioEvents", first).at("volume") == -0.5);
+	CHECK(window.historyPosition() == position + 2); // the gesture's step and the removal; the refused one left none
+}
+
 TEST_CASE("the inspector shows the channel as it is when a change is refused", "[ui]")
 {
 	Window window;
@@ -1232,18 +1357,27 @@ TEST_CASE("the info line bounds typed start, end and length to the largest proje
 	const uint64_t midi = window.addTrack({{"type", "midi"}, {"timeBase", "linear"}});
 	const uint64_t part = window.addPart(midi, 48000, 48000, "Part");
 	window.call("project.set", {{"timeFormat", "seconds"}});
-	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("midiParts").size() == 1; }));
+	REQUIRE(window.app.waitUntil(
+		[&] { return window.display.project().is_object() && window.display.project().at("midiParts").size() == 1; }));
 	window.display.select({part});
 	REQUIRE(window.shows("#info-line textdisplay[field=start]", "0:00:01.000"));
+	// The info line edits from the events it last showed. Typed while it still has the clamped length, the same length
+	// would change nothing, so the next edit waits until it has shown the clamped length and then the undone one.
+	const auto undo = [&]
+	{
+		REQUIRE(window.app.waitUntil(
+			[&] { return attribute(window.app, "#info-line textdisplay[field=length]", "value") != "0:00:01.000"; }));
+		window.call("history.undo");
+		REQUIRE(window.app.waitUntil([&] { return window.part(part).at("length") == 48000; }));
+		REQUIRE(window.shows("#info-line textdisplay[field=length]", "0:00:01.000"));
+	};
 
 	window.type("#info-line textdisplay[field=end]", "999999999999999");
 	REQUIRE(window.app.waitUntil([&] { return window.part(part).at("length") == time::g_maxPosition - 48000; }));
-	window.call("history.undo");
-	REQUIRE(window.app.waitUntil([&] { return window.part(part).at("length") == 48000; }));
+	undo();
 	window.type("#info-line textdisplay[field=length]", "999999999999999");
 	REQUIRE(window.app.waitUntil([&] { return window.part(part).at("length") == time::g_maxPosition - 48000; }));
-	window.call("history.undo");
-	REQUIRE(window.app.waitUntil([&] { return window.part(part).at("length") == 48000; }));
+	undo();
 	window.type("#info-line textdisplay[field=start]", "999999999999999");
 	REQUIRE(window.app.waitUntil([&] { return window.part(part).at("position") == time::g_maxPosition; }));
 }

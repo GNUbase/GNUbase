@@ -670,10 +670,10 @@ namespace gnubase::ui
 	{
 		if (!m_binding.holding())
 			return;
-		// Settling hands on the answers, which run the actions; after the timeout they run on the range as it is, not
-		// on the one that the press starts.
-		m_binding.settle(g_waitingActionsTimeout);
-		m_binding.releaseHeld();
+		// Handing on the answers runs the actions; the press doesn't wait for what they send. After the timeout they
+		// run on the range as it is, not on the one that the press starts.
+		if (!m_binding.awaitHeld(g_waitingActionsTimeout))
+			m_binding.releaseHeld();
 	}
 
 	void EventDisplay::selectRange()

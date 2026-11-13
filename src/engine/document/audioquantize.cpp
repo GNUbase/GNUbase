@@ -17,6 +17,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -231,7 +232,9 @@ namespace gnubase::engine
 
 		// Where several tracks' events are sliced or get warp markers (pp. 378-380): at the hitpoints that count of
 		// the track with the highest priority (0 leaves a track out, default 1), then at those of the others that have
-		// none of a higher priority, or of the same priority earlier, within range. In project samples.
+		// none of a higher priority, or of the same priority earlier, within range. Range tells when hitpoints of
+		// different tracks mark the same beat; two of one track, such as a flam, stay two positions. In project
+		// samples.
 		std::vector<time::Samples> groupPositions(
 			const Project& project, const std::vector<ObjectId>& events, const Json& parameters)
 		{
@@ -246,7 +249,14 @@ namespace gnubase::engine
 			require(range >= 0.0 && range <= 1000.0, "range must be 0 to 1000 ms");
 			const auto distance = std::llround(range * project.sampleRate / 1000.0);
 
-			std::vector<std::pair<int, time::Samples>> candidates;
+			// A hitpoint that counts, where it plays: the negated priority sorts the highest first.
+			struct Candidate
+			{
+				int priority = 0;
+				time::Samples at = 0;
+				ObjectId track = 0;
+			};
+			std::vector<Candidate> candidates;
 			for (const ObjectId id : events)
 			{
 				const AudioEvent& event = project.audioEvents.at(id);
@@ -260,16 +270,21 @@ namespace gnubase::engine
 				{
 					const time::Samples frame = clip.hitpoints[i].position;
 					if (active[i] && frame >= event.offset && frame < event.offset + event.length)
-						candidates.emplace_back(-priority, sampleOf(project, event, frame));
+						candidates.push_back({-priority, sampleOf(project, event, frame), event.track});
 				}
 			}
-			std::sort(candidates.begin(), candidates.end());
+			std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b)
+				{ return std::tie(a.priority, a.at, a.track) < std::tie(b.priority, b.at, b.track); });
+			std::vector<Candidate> taken;
+			for (const Candidate& candidate : candidates)
+				if (std::none_of(taken.begin(), taken.end(), [&candidate, distance](const Candidate& each)
+						{ return each.track != candidate.track && std::llabs(each.at - candidate.at) <= distance; }))
+					taken.push_back(candidate);
+			std::sort(taken.begin(), taken.end(), [](const Candidate& a, const Candidate& b) { return a.at < b.at; });
 			std::vector<time::Samples> positions;
-			for (const auto& [priority, at] : candidates)
-				if (std::none_of(positions.begin(), positions.end(),
-						[at = at, distance](time::Samples taken) { return std::llabs(taken - at) <= distance; }))
-					positions.push_back(at);
-			std::sort(positions.begin(), positions.end());
+			positions.reserve(taken.size());
+			for (const Candidate& candidate : taken)
+				positions.push_back(candidate.at);
 			require(!positions.empty(),
 				"the events have no hitpoints that count on tracks with a priority above 0: detect them first");
 			return positions;
@@ -313,7 +328,8 @@ namespace gnubase::engine
 					pieces.insert(pieces.end(), added.begin(), added.end());
 				}
 				// Each slice snaps at its hitpoint, so that quantizing moves the slices of every track at the same
-				// place alike.
+				// place alike. A slice that starts at no position snaps at its start instead: the snap point
+				// event.split copied from the event is one of its own, and would take its track out of phase.
 				for (const Json& piece : pieces)
 				{
 					AudioEvent& each = project.audioEvents.at(piece.get<ObjectId>());
@@ -321,11 +337,11 @@ namespace gnubase::engine
 					const auto own = std::find_if(positions.begin(), positions.end(),
 						[&at](time::Samples position) { return position >= at.start && position < at.end; });
 					if (own != positions.end() && *own - offset <= at.start)
-					{
 						each.snapPoint = each.offset +
 							std::llround(eventFrames(project, each, static_cast<double>(*own - at.start)));
-						emitEvent(each, context);
-					}
+					else
+						each.snapPoint.reset();
+					emitEvent(each, context);
 					made.push_back(piece);
 				}
 			}
@@ -538,7 +554,9 @@ namespace gnubase::engine
 			"The positions are the hitpoints that count (see clip.setHitpoints) of the events' clips: first those of "
 			"the tracks with the highest priority in priorities ([{track, priority 0-5}], default 1; 0 leaves a "
 			"track's hitpoints out), then those of the others with none of a higher priority, or of the same priority "
-			"earlier, within range ms (default 20) of them. The audio on all tracks should start and end together.";
+			"earlier, within range ms (default 20) of them. Range tells when hitpoints of different tracks mark "
+			"the same beat; two of one track, such as a flam, stay two positions. The audio on all tracks should "
+			"start and end together.";
 		model.addEdit(engine,
 			{"quantize.slice", 1,
 				"Slices audio events of several tracks at the same positions, so that quantizing them keeps them phase "
@@ -546,8 +564,8 @@ namespace gnubase::engine
 					groupText +
 					" Every event is cut offset ms (default 0) before each position inside it, and each slice that "
 					"starts there snaps at it (its snap point), so that quantize.apply moves the slices of every track "
-					"at a position alike. Locked events stay whole. Returns the events, the slices included, and the "
-					"positions (project samples).",
+					"at a position alike; the other slices get no snap point, so they snap at their starts. Locked "
+					"events stay whole. Returns the events, the slices included, and the positions (project samples).",
 				objectSchema(
 					{{"events", ids}, {"priorities", priorities}, {"range", number}, {"offset", number}}, {"events"}),
 				objectSchema({{"events", ids}, {"positions", ids}}, {"events", "positions"}), false},

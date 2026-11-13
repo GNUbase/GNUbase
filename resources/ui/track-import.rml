@@ -1,0 +1,568 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The Import Options dialog for tracks (#1142, docs/features/track-presets.md, reference manual pp. 202-205):
+     app::AppUi opens it with the file chosen with File > Import > Tracks (path) and the first selected track (below).
+     Its Lua lists the file's tracks with track.importSources, each with whether it is imported and where to (New
+     Track or a track of the project of the same type), and on OK sends track.import with the options, then for Copy
+     to Active Project Folder media.conform for the imported media files at another sample rate (Convert Sample Rate,
+     available when the file has media files at another rate than the project's) and media.prepareArchive for the
+     others. Tracks that can't be imported yet show, disabled. The engine's message shows when it refuses, and the
+     dialog stays open. -->
+<rml>
+<head>
+	<title>Import Options</title>
+	<style>
+		dialog
+		{
+			width: 860dp;
+		}
+
+		.row
+		{
+			display: flex;
+			align-items: center;
+			margin: 6dp 12dp 0 12dp;
+		}
+
+		.row button
+		{
+			margin-right: 4dp;
+		}
+
+		#import-search
+		{
+			flex: 1;
+		}
+
+		#import-tracks
+		{
+			margin: 6dp 12dp 0 12dp;
+			height: 200dp;
+			overflow-y: auto;
+		}
+
+		.import-track
+		{
+			display: flex;
+			align-items: center;
+			height: 24dp;
+		}
+
+		.import-fold
+		{
+			width: 20dp;
+			min-width: 20dp;
+			padding: 0;
+		}
+
+		.import-name
+		{
+			flex: 1;
+			margin-left: 4dp;
+		}
+
+		.import-type
+		{
+			width: 80dp;
+		}
+
+		.import-destination
+		{
+			width: 200dp;
+		}
+
+		.import-children
+		{
+			margin-left: 20dp;
+		}
+
+		.import-children.collapsed, .import-track.filtered
+		{
+			display: none;
+		}
+
+		.content
+		{
+			display: flex;
+			margin: 6dp 12dp 0 12dp;
+		}
+
+		.column
+		{
+			flex: 1;
+		}
+
+		.column + .column
+		{
+			margin-left: 16dp;
+		}
+
+		.field
+		{
+			display: flex;
+			align-items: center;
+			height: 26dp;
+		}
+
+		.field .label
+		{
+			flex: 1;
+		}
+
+		.field select
+		{
+			width: 230dp;
+		}
+
+		.field input.text
+		{
+			width: 96dp;
+			margin-left: 4dp;
+		}
+
+		.settings
+		{
+			display: flex;
+			height: 22dp;
+		}
+
+		.settings span
+		{
+			flex: 1;
+		}
+
+		#import-message
+		{
+			flex: 1;
+		}
+
+		.buttons button
+		{
+			margin-left: 6dp;
+			margin-right: 0;
+		}
+	</style>
+	<script>
+		TrackImport = {}
+		local dialog = TrackImport
+
+		local function escape(text)
+			return (tostring(text):gsub('[&<>"]', {["&"] = "&amp;", ["<"] = "&lt;", [">"] = "&gt;", ['"'] = "&quot;"}))
+		end
+
+		local function element(id)
+			return dialog.document:GetElementById(id)
+		end
+
+		local function checked(id)
+			return element(id):HasAttribute("checked")
+		end
+
+		local function setChecked(target, on)
+			if on then
+				target:SetAttribute("checked", "")
+			else
+				target:RemoveAttribute("checked")
+			end
+		end
+
+		local function setDisabled(target, off)
+			if off then
+				target:SetAttribute("disabled", "")
+			else
+				target:RemoveAttribute("disabled")
+			end
+		end
+
+		local function value(id)
+			local result = element(id):GetAttribute("value")
+			return result ~= nil and tostring(result) or ""
+		end
+
+		local function timecode(seconds, frameRate)
+			return gnubase.ui.formatTimecode{seconds = seconds, frameRate = frameRate}.text
+		end
+
+		local function show(message)
+			element("import-message").inner_rml = escape(message)
+		end
+
+		-- Whether a track is inside a folder that is imported, so that it goes along with it.
+		local function insideImported(track)
+			local parent = dialog.byId[track.parent]
+			while parent ~= nil do
+				if checked("import-source-" .. parent.id) then
+					return true
+				end
+				parent = dialog.byId[parent.parent]
+			end
+			return false
+		end
+
+		-- Tracks inside an imported folder go along with it, so their own choices are disabled.
+		function dialog.update()
+			if dialog.file == nil then
+				return -- not loaded yet, or the file couldn't be read
+			end
+			for _, track in ipairs(dialog.sources) do
+				local along = insideImported(track)
+				setDisabled(element("import-source-" .. track.id), along or not track.importable)
+				setDisabled(element("import-destination-" .. track.id),
+					along or not track.importable or not checked("import-source-" .. track.id))
+			end
+			setDisabled(element("import-existing"), not checked("import-events"))
+			setDisabled(element("import-range-start"), not checked("import-range"))
+			setDisabled(element("import-range-end"), not checked("import-range"))
+			setDisabled(element("import-locators"), not checked("import-range"))
+			-- Convert Sample Rate only with Copy, for a file with media files at another sample rate than the project's
+			-- (reference manual p. 205), whatever the file's own rate.
+			setDisabled(element("import-convert"), not checked("import-copy") or not dialog.convertible)
+		end
+
+		local function row(track)
+			local folder = track.type == "folder"
+			local options = {'<option value="0">New Track</option>'}
+			for _, mine in ipairs(dialog.project.tracks) do
+				if mine.type == track.type then
+					options[#options + 1] = '<option value="' .. mine.id .. '">' .. escape(mine.name) .. "</option>"
+				end
+			end
+			local fold = folder and '<button class="import-fold" id="import-fold-' .. track.id ..
+				'" onclick="TrackImport.fold(' .. track.id .. ')">-</button>' or '<span class="import-fold"/>'
+			return '<div class="import-track" id="import-track-' .. track.id .. '">' .. fold ..
+				'<input type="checkbox" id="import-source-' .. track.id .. '" onchange="TrackImport.update()"' ..
+				(track.importable and " checked" or "") .. "/>" ..
+				'<span class="import-name">' .. escape(track.name) ..
+				(track.importable and "" or " (can't be imported yet)") .. "</span>" ..
+				'<span class="import-type">' .. escape(track.type) .. "</span>" ..
+				'<select class="import-destination" id="import-destination-' .. track.id .. '">' ..
+				table.concat(options) .. "</select></div>"
+		end
+
+		-- The tracks of the file as a tree: the tracks inside a folder in a container after it, which folds.
+		local function tree(parent)
+			local parts = {}
+			for _, track in ipairs(dialog.sources) do
+				if track.parent == parent then
+					parts[#parts + 1] = row(track)
+					if track.type == "folder" then
+						parts[#parts + 1] = '<div class="import-children" id="import-children-' .. track.id .. '">' ..
+							tree(track.id) .. "</div>"
+					end
+				end
+			end
+			return table.concat(parts)
+		end
+
+		local function settings(project, file)
+			return '<div class="settings"><span>' .. escape(file) .. "</span></div>" ..
+				'<div class="settings"><span>Sample Rate</span><span>' .. (math.tointeger(project.sampleRate) or
+				project.sampleRate) .. " Hz</span></div>" ..
+				'<div class="settings"><span>Frame Rate</span><span>' .. escape(project.frameRate) ..
+				" fps</span></div>" ..
+				'<div class="settings"><span>Start</span><span>' ..
+				escape(timecode(project.startTime, project.frameRate)) .. "</span></div>"
+		end
+
+		local function fileName(path)
+			return tostring(path):match("[^/\\]+$") or tostring(path)
+		end
+
+		function dialog.load(document)
+			dialog.document = document
+			dialog.file = nil
+			dialog.path = document:GetAttribute("path") or ""
+			dialog.below = math.tointeger(tonumber(document:GetAttribute("below") or ""))
+			dialog.project = gnubase.project.get()
+			dialog.location = gnubase.project.location().file
+			local ok, listed = pcall(gnubase.track.importSources, {path = dialog.path})
+			if not ok then
+				dialog.sources, dialog.byId = {}, {}
+				setDisabled(element("import-confirm"), true)
+				show(listed)
+				return
+			end
+			dialog.sources = listed.tracks
+			dialog.byId = {}
+			for _, track in ipairs(dialog.sources) do
+				dialog.byId[track.id] = track
+			end
+			element("import-tracks").inner_rml = tree(0)
+			element("import-source-settings").inner_rml = settings(listed.project, fileName(dialog.path))
+			element("import-active-settings").inner_rml =
+				settings(dialog.project, dialog.location and fileName(dialog.location) or dialog.project.name)
+			local transport = gnubase.transport.get()
+			dialog.locators = {transport.left, transport.right}
+			dialog.useLocators()
+			setDisabled(element("import-copy"), dialog.location == nil)
+			if dialog.below == nil then
+				element("import-new-position"):SetAttribute("value", "bottom")
+				setDisabled(element("import-new-position"), true)
+			end
+			dialog.convertible = false
+			for _, rate in ipairs(listed.mediaSampleRates) do
+				dialog.convertible = dialog.convertible or rate ~= dialog.project.sampleRate
+			end
+			dialog.file = listed.project -- once its rows are there, for update
+			dialog.update()
+		end
+
+		-- The tracks whose source is checked.
+		local function chosen()
+			local result = {}
+			for _, track in ipairs(dialog.sources) do
+				if track.importable and checked("import-source-" .. track.id) then
+					result[#result + 1] = track
+				end
+			end
+			return result
+		end
+
+		function dialog.selectAll(on)
+			for _, track in ipairs(dialog.sources) do
+				if track.importable then
+					setChecked(element("import-source-" .. track.id), on)
+				end
+			end
+			dialog.update()
+		end
+
+		function dialog.fold(id)
+			local children = element("import-children-" .. id)
+			local folded = not children:IsClassSet("collapsed")
+			children:SetClass("collapsed", folded)
+			element("import-fold-" .. id).inner_rml = folded and "+" or "-"
+		end
+
+		function dialog.foldAll(folded)
+			for _, track in ipairs(dialog.sources) do
+				if track.type == "folder" then
+					element("import-children-" .. track.id):SetClass("collapsed", folded)
+					element("import-fold-" .. track.id).inner_rml = folded and "+" or "-"
+				end
+			end
+		end
+
+		-- Select Matching: the project's first track of the same name and type for each chosen track that doesn't go
+		-- along with its folder, unless another chosen track has it or a folder around it already, as a track inside
+		-- a folder that another one replaces can't be a destination too: outer tracks first, then top to bottom.
+		-- Reset: New Track.
+		function dialog.match(matching)
+			local mine, order = {}, {}
+			for index, track in ipairs(dialog.project.tracks) do
+				mine[track.id], order[track.id] = track, index
+			end
+			local function depth(id)
+				local result, parent = 0, mine[id].parent
+				while parent ~= 0 and mine[parent] ~= nil do
+					result, parent = result + 1, mine[parent].parent
+				end
+				return result
+			end
+			local candidates = {}
+			for _, track in ipairs(chosen()) do
+				if matching and not insideImported(track) then
+					for _, other in ipairs(dialog.project.tracks) do
+						if other.name == track.name and other.type == track.type then
+							candidates[#candidates + 1] = {source = track.id, destination = other.id, row = #candidates}
+							break
+						end
+					end
+				end
+			end
+			table.sort(candidates, function(a, b)
+				local da, db = depth(a.destination), depth(b.destination)
+				if da ~= db then
+					return da < db
+				end
+				if a.destination ~= b.destination then
+					return order[a.destination] < order[b.destination]
+				end
+				return a.row < b.row -- the upper one of the file's tracks matching the same track keeps it
+			end)
+			local taken, found = {}, {}
+			for _, candidate in ipairs(candidates) do
+				local free, id = true, candidate.destination
+				while id ~= 0 and mine[id] ~= nil do
+					free, id = free and not taken[id], mine[id].parent
+				end
+				if free then
+					taken[candidate.destination], found[candidate.source] = true, candidate.destination
+				end
+			end
+			for _, track in ipairs(chosen()) do
+				element("import-destination-" .. track.id):SetAttribute("value", tostring(found[track.id] or 0))
+			end
+		end
+
+		function dialog.search()
+			local text = value("import-search"):lower()
+			for _, track in ipairs(dialog.sources) do
+				element("import-track-" .. track.id):SetClass("filtered",
+					text ~= "" and not track.name:lower():find(text, 1, true))
+			end
+		end
+
+		function dialog.clearSearch()
+			element("import-search"):SetAttribute("value", "")
+			dialog.search()
+		end
+
+		function dialog.useLocators()
+			local rate = dialog.project.sampleRate
+			element("import-range-start"):SetAttribute("value",
+				timecode(dialog.project.startTime + dialog.locators[1] / rate, dialog.project.frameRate))
+			element("import-range-end"):SetAttribute("value",
+				timecode(dialog.project.startTime + dialog.locators[2] / rate, dialog.project.frameRate))
+		end
+
+		-- A range field, a timecode of the file at the project's frame rate, as Use Locators fills it, as samples at
+		-- the project's sample rate from the file's start (track.import's range), or nil. The locators' timecodes in
+		-- the project are where Absolute Position puts what has that timecode in the file.
+		local function rangeValue(id)
+			local seconds = gnubase.ui.parseTimecode{text = value(id), frameRate = dialog.project.frameRate}.seconds
+			return seconds and math.floor((seconds - dialog.file.startTime) * dialog.project.sampleRate + 0.5)
+		end
+
+		function dialog.confirm()
+			local tracks, destinations = {}, {}
+			for _, track in ipairs(chosen()) do
+				if not insideImported(track) then
+					tracks[#tracks + 1] = track.id
+					local destination = math.tointeger(tonumber(value("import-destination-" .. track.id)))
+					if destination ~= nil and destination ~= 0 then
+						destinations[#destinations + 1] = {source = track.id, track = destination}
+					end
+				end
+			end
+			if #tracks == 0 then
+				show("Choose the tracks to import.")
+				return
+			end
+			local parameters = {path = dialog.path, tracks = tracks, events = checked("import-events"),
+				settings = checked("import-settings"), automation = checked("import-automation"),
+				existing = value("import-existing"), position = value("import-position")}
+			if #destinations > 0 then
+				parameters.destinations = destinations
+			end
+			if dialog.below ~= nil and value("import-new-position") == "below" then
+				parameters.track = dialog.below
+			end
+			if checked("import-range") then
+				local start, finish = rangeValue("import-range-start"), rangeValue("import-range-end")
+				if start == nil or finish == nil then
+					show("The range must be two timecodes.")
+					return
+				end
+				parameters.range = {start = start, ["end"] = finish}
+			end
+			local ok, result = pcall(gnubase.track.import, parameters)
+			if not ok then
+				show(result)
+				return
+			end
+			if checked("import-copy") and #result.media > 0 then
+				local rates = {}
+				for _, media in ipairs(gnubase.project.get().media) do
+					rates[media.id] = media.sampleRate
+				end
+				local convert, copy = {}, {}
+				for _, id in ipairs(result.media) do
+					local list = (checked("import-convert") and rates[id] ~= dialog.project.sampleRate) and convert or copy
+					list[#list + 1] = id
+				end
+				if #convert > 0 then
+					gnubase.ui.command{command = "media.conform", parameters = {media = convert}}
+				end
+				if #copy > 0 then
+					gnubase.ui.command{command = "media.prepareArchive", parameters = {media = copy}}
+				end
+			end
+			dialog.document:Close()
+		end
+	</script>
+</head>
+<body onshow="TrackImport.load(document)">
+	<dialog id="track-import-dialog">
+		<div class="dialog-titlebar">Import Options</div>
+		<div class="row">
+			<button id="import-select-all" onclick="TrackImport.selectAll(true)">Select All</button>
+			<button id="import-deselect-all" onclick="TrackImport.selectAll(false)">Deselect All</button>
+			<button id="import-expand-all" onclick="TrackImport.foldAll(false)">Expand All</button>
+			<button id="import-collapse-all" onclick="TrackImport.foldAll(true)">Collapse All</button>
+			<button id="import-select-matching" onclick="TrackImport.match(true)">Select Matching</button>
+			<button id="import-reset" onclick="TrackImport.match(false)">Reset</button>
+			<input type="text" id="import-search" onchange="TrackImport.search()"/>
+			<button id="import-clear-search" onclick="TrackImport.clearSearch()">Clear Search</button>
+		</div>
+		<div id="import-tracks"/>
+		<div class="content">
+			<div class="column">
+				<div class="field">
+					<label class="label" for="import-events">Events and Parts</label>
+					<input type="checkbox" id="import-events" checked="" onchange="TrackImport.update()"/>
+				</div>
+				<div class="field">
+					<span class="label">On Import on Existing Tracks</span>
+					<select id="import-existing">
+						<option value="version" selected="">Create a New Track Version</option>
+						<option value="replace">Replace All Events and Parts</option>
+						<option value="add">Add Events and Parts</option>
+					</select>
+				</div>
+				<div class="field">
+					<span class="label">Import Position</span>
+					<select id="import-position">
+						<option value="absolute" selected="">Absolute Position</option>
+						<option value="relative">Relative Position</option>
+						<option value="cursor">Cursor Position</option>
+					</select>
+				</div>
+				<div class="field">
+					<label class="label" for="import-range">Range</label>
+					<input type="checkbox" id="import-range" onchange="TrackImport.update()"/>
+					<input type="text" class="text" id="import-range-start"/>
+					<input type="text" class="text" id="import-range-end"/>
+				</div>
+				<div class="field">
+					<span class="label"/>
+					<button id="import-locators" onclick="TrackImport.useLocators()">Use Locators</button>
+				</div>
+				<div class="field">
+					<label class="label" for="import-settings">Channel and Inspector Settings</label>
+					<input type="checkbox" id="import-settings" checked=""/>
+				</div>
+				<div class="field">
+					<label class="label" for="import-automation">Automation</label>
+					<input type="checkbox" id="import-automation" checked=""/>
+				</div>
+				<div class="field">
+					<span class="label">Import Position for New Tracks</span>
+					<select id="import-new-position">
+						<option value="below" selected="">Below Selected Track</option>
+						<option value="bottom">Bottom of Track List</option>
+					</select>
+				</div>
+			</div>
+			<div class="column">
+				<div class="field"><span class="label">Source Project</span></div>
+				<div id="import-source-settings"/>
+				<div class="field"><span class="label">Active Project</span></div>
+				<div id="import-active-settings"/>
+				<div class="field">
+					<label class="label" for="import-copy">Copy to Active Project Folder</label>
+					<input type="checkbox" id="import-copy" onchange="TrackImport.update()"/>
+				</div>
+				<div class="field">
+					<label class="label" for="import-convert">Convert Sample Rate</label>
+					<input type="checkbox" id="import-convert"/>
+				</div>
+			</div>
+		</div>
+		<div class="row buttons">
+			<div id="import-message"/>
+			<button result="cancel">Cancel</button>
+			<button id="import-confirm" class="primary" onclick="TrackImport.confirm()">OK</button>
+		</div>
+	</dialog>
+</body>
+</rml>

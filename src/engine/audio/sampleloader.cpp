@@ -21,6 +21,7 @@ namespace gnubase::engine
 			m_stopping = true;
 		}
 		m_wake.notify_all();
+		m_done.notify_all();
 		if (m_thread.joinable())
 			m_thread.join();
 	}
@@ -72,6 +73,12 @@ namespace gnubase::engine
 					std::none_of(m_queue.begin(), m_queue.end(),
 						[&paths](const std::string& path) { return paths.count(path) != 0; });
 			});
+	}
+
+	void SampleLoader::waitUntilEnding()
+	{
+		std::unique_lock lock(m_mutex);
+		m_done.wait(lock, [this] { return m_stopping; });
 	}
 
 	void SampleLoader::setRead(Read read)

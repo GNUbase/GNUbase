@@ -56,8 +56,9 @@ namespace gnubase::engine::midi
 		using PartFunction = std::function<void(Project& project, MidiPart& part, const NoteSelection& selection)>;
 		using Prepare = std::function<PartFunction(const Json& parameters)>;
 
-		// Checks the parameters, runs the function on every part and announces the parts it changed.
-		Json runOnParts(Project& project, CommandContext& context, const Prepare& prepare)
+		// Checks the parameters, runs the function on every part and announces the parts it changed. A note function
+		// leaves pattern events out, as they play their pattern's steps, not their notes; their controllers play.
+		Json runOnParts(Project& project, CommandContext& context, const Prepare& prepare, bool notes)
 		{
 			const Json& parameters = context.parameters();
 			const std::vector<MidiPart*> parts = partsOf(project, parameters);
@@ -66,7 +67,7 @@ namespace gnubase::engine::midi
 			Json changed = Json::array();
 			for (MidiPart* part : parts)
 			{
-				if (part->pattern != 0) // a pattern event plays its pattern's steps, not its notes
+				if (notes && part->pattern != 0)
 					continue;
 				const MidiPart before = *part;
 				function(project, *part, selection);
@@ -508,12 +509,15 @@ namespace gnubase::engine::midi
 			std::string description = command.description;
 			description += command.notes ? " Works on the MIDI parts in parts;" + std::string(selection)
 										 : " Works on the MIDI parts in parts.";
-			description += " Pattern events (pattern.add), which play their pattern's steps, stay as they are.";
+			description += command.notes
+				? " Pattern events (pattern.add), which play their pattern's steps, stay as they are."
+				: " Pattern events (pattern.add) play their own controllers too, and the function changes them.";
 			description += " Returns the parts it changed.";
 			model.addEdit(engine,
 				{command.name, 1, description, objectSchema(std::move(properties), required), partsResult, false},
-				command.action, [prepare = command.prepare](Project& project, CommandContext& context)
-				{ return runOnParts(project, context, prepare); });
+				command.action,
+				[prepare = command.prepare, notes = command.notes](Project& project, CommandContext& context)
+				{ return runOnParts(project, context, prepare, notes); });
 		}
 
 		const Json ids = arraySchema(idSchema);
@@ -535,17 +539,26 @@ namespace gnubase::engine::midi
 				"them, after their tracks' drum maps and the chord track, so they are written as played; a destination "
 				"with a drum map or following the chord track gets a pitch that plays them, or if none does what "
 				"played, "
-				"which it then maps. includeInserts also plays their tracks' MIDI modifiers into them (channel.set "
-				"modifiers, with "
-				"the random values playback draws), leaving out notes they filter out or move out of the range. "
+				"which it then maps. The new part gets the root key and Global Transpose setting (midiPart.set "
+				"rootKey and globalTranspose) the parts its notes come from share, or, when they differ, the project "
+				"root key and follow; each note is written as it played, with its part's global transpose, less the "
+				"new part's where it lands, so that it keeps the pitch it played with, leaving out a note that this "
+				"takes beyond 0-127. includeInserts also plays their tracks' MIDI modifiers into them (channel.set "
+				"modifiers, with the random values playback draws, their note ranges on the pitch that plays, before "
+				"the new part's global transpose comes off), leaving out notes they filter out or move out of the "
+				"range; without it the modifiers stay on the track and play after the stored pitch, so only the "
+				"difference of the two global transposes goes into a note. The part's velocity is added before a "
+				"note's velocity variance, which playback applies first. "
 				"Without destination a new MIDI track is added at the end, routed "
-				"to the instrument of the first track merged. eraseDestination first removes the destination's parts "
+				"to the instrument of the first track merged, with the articulation map of the first merged track "
+				"that has one. eraseDestination first removes the destination's parts "
 				"that lie between start and end, and the events of its other parts that start there, which leave "
 				"their shared copies for it: their notes get new ids, so play probability, velocity variance and "
 				"random MIDI modifier values draw anew. includeChase "
 				"adds the last value of every controller and program before start at the new part's start. Either way "
-				"the new part starts with the directions of the tracks' articulation maps in effect at start, so that "
-				"its notes play the same sound slots." +
+				"the new part starts with the directions of the tracks' articulation maps in effect at start, and "
+				"each part that starts after start with a reset of each group of its track's map, so that the notes "
+				"play the same sound slots." +
 					returns,
 				objectSchema(
 					{{"start", integerSchema}, {"end", integerSchema}, {"tracks", ids}, {"destination", idSchema},
@@ -563,7 +576,8 @@ namespace gnubase::engine::midi
 				"instrument; to lanes on a new lane of the track, below the lanes its parts are on, named after the "
 				"part and the channel or pitch. Events of no channel or pitch (SysEx by channel, everything but notes "
 				"and poly pressure by pitch) go with the first new part of their part; a part with nothing to "
-				"separate stays as it is. New parts keep the part's mute, transpose and velocity; their events get new "
+				"separate stays as it is. New parts keep the part's mute, transpose, velocity, root key and Global "
+				"Transpose setting; their events get new "
 				"ids, so play probability and velocity variance draw anew. optimize (to tracks only) shortens the new "
 				"parts to the bars their events play in." +
 					returns,
@@ -574,13 +588,22 @@ namespace gnubase::engine::midi
 			"Dissolve part", runDissolve);
 		model.addEdit(engine,
 			{"midi.bounce", 1,
-				"Bounces MIDI parts on one track into a single part from the first one's start to the last one's "
-				"end, named after the first, on the lowest lane they are on. Muted parts are removed and add nothing. "
-				"Events keep their time; notes are cut where their part ended. The parts' transpose and velocity go "
-				"into the notes as playback applies them; a note transposed beyond 0-127, which doesn't play, is left "
-				"out. On a track whose drum map or chord track following plays a transposed note differently, the new "
-				"part keeps the transpose, and parts with different ones make a part for each. The copied notes "
-				"get new ids, so play probability and velocity variance draw anew." +
+				"Bounces MIDI parts on one track into one part, or one for each setting the notes can't hold (below), "
+				"from the first one's start to the last one's end, named after the first, on the lowest lane they are "
+				"on, with the root key and Global Transpose setting (midiPart.set) the parts share, or, when they "
+				"differ, the project root key and follow. Muted parts are removed and add nothing. Events keep their "
+				"time; notes are cut where their part ended. The parts' transpose, their difference in global "
+				"transpose and their velocity go into the notes as playback applies them, so that each keeps the "
+				"pitch it played with; a note that plays nowhere, also with the global transpose and the track's MIDI "
+				"modifiers' transpose and random pitch, stays transposed where that plays nowhere either, else it is "
+				"left out. A part whose notes can't hold this (a pitch beyond 0-127 that plays, or one the track's "
+				"drum map or chord track following, which map a note before the transpose and the global "
+				"transposition, plays differently) keeps its root key and Global Transpose setting, with its "
+				"transpose in the notes if they hold that, else on the part. A part whose notes can't hold its "
+				"velocity (which playback adds after the track's MIDI modifiers compress the notes' velocities and "
+				"after a note's velocity variance) keeps it. Each setting makes a part of its own, on a lane where "
+				"neither another new part nor a part that stays overlaps it. The copied notes get new ids, so play "
+				"probability, velocity variance and the track's random MIDI modifier values draw anew." +
 					returns,
 				objectSchema({{"parts", ids}}, {"parts"}), changesResult, false},
 			"Bounce MIDI", runBounce);

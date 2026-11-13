@@ -138,6 +138,17 @@ namespace gnubase::engine
 				m_unlogged = true;
 		}
 
+		// For a command registered with ProjectModel::addEdit that found nothing to change, such as a settings command
+		// given the values the project has: the project's revision stays, so that it doesn't count as modified, no
+		// undo step is recorded and no snapshot is published. The command must have changed nothing and emitted
+		// nothing. Inside another command, the outer one decides.
+		void markUnchanged()
+		{
+			if (m_outer == nullptr)
+				m_unchanged = true;
+		}
+		bool unchanged() const { return m_unchanged; }
+
 		// If the command fails, leaves the failure out of engine.commandLog and the error log: for a command that the
 		// engine runs on its own and whose failure was reported already, such as a due auto save that fails again.
 		// Inside another command, the outer one decides.
@@ -154,6 +165,7 @@ namespace gnubase::engine
 		CommandContext* m_outer = nullptr;
 		Engine* m_engine = nullptr; // set on the outermost context
 		std::vector<Event> m_events;
+		bool m_unchanged = false;    // markUnchanged
 		bool m_unlogged = false;     // leaveOutOfLog
 		bool m_quietFailure = false; // failQuietly
 	};
@@ -250,6 +262,14 @@ namespace gnubase::engine
 		// For tests: reads the samplers' samples asked for from now on with read instead of processors::sharedSample,
 		// e.g. to hold a read back (AudioEngine::setSampleReader). Any thread.
 		void setSampleReader(std::function<std::shared_ptr<const processors::Sample>(const std::string& path)> read);
+		// For tests: calls hook on a job's thread after each job.progress the job sends, outside every lock, e.g. to
+		// hold the job there until the test ran what must come before the job goes on (tests/testutils/heldjob.h).
+		// Events and commands go on meanwhile, unlike in a Listener that blocks; job.cancel, project.load and
+		// project.new don't wait for a job that the hook holds, but the engine's shutdown does, as it joins every job's
+		// thread. An exception from the hook comes out of the job's JobContext::progress, as if its work threw it
+		// there: uncaught, a std::exception ends the job as failed, JobCancelled as cancelled. Empty for none. Any
+		// thread.
+		void setJobProgressHook(std::function<void(uint64_t job, const std::string& kind)> hook);
 
 	private:
 		friend class Client;
