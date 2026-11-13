@@ -810,7 +810,9 @@ namespace gnubase::engine
 			}
 			case AutomationTargetType::Strip:
 				only({"parameter"});
-				require(channel.format != ChannelFormat::None, "a MIDI track has no channel strip sections");
+				require(channel.format != ChannelFormat::None,
+					track.type == TrackType::Vca ? "a VCA track has no channel strip sections"
+												 : "a MIDI track has no channel strip sections");
 				require(json.contains("parameter"), "target.parameter is required");
 				require(isParameterId(json.at("parameter")) &&
 						findStripParameter(json.at("parameter").get<uint32_t>()) != nullptr,
@@ -1904,52 +1906,6 @@ namespace gnubase::engine
 					send.level = std::clamp(item.at("level").get<double>(), g_minChannelVolume, project.maxVolume);
 				send.preFader = item.value("preFader", send.preFader);
 			}
-		}
-
-		// Whether a link group links a channel.set key (reference manual p. 458).
-		bool links(const LinkGroup& group, const std::string& key)
-		{
-			if (key == "volume")
-				return group.volume;
-			if (key == "pan")
-				return group.pan;
-			if (key == "monitor" || key == "recordEnable")
-				return group.record;
-			if (key == "eq")
-				return group.eq;
-			if (key == "strip")
-				return group.dynamics;
-			if (key == "sends")
-				return group.sends;
-			return group.mute; // mute, solo, soloDefeat and listen
-		}
-
-		// The channels a change of key on a channel goes on to (docs/features/link-groups.md): the other channels of
-		// its link group if the group links key (and linked), the channels of the group it controls if it is a VCA
-		// fader and key is one of its buttons, and from each of them on in the same way.
-		std::vector<ObjectId> linkedTo(const Project& project, ObjectId channel, const std::string& key, bool linked)
-		{
-			const bool button = key != "volume" && key != "pan" && key != "eq" && key != "strip" && key != "sends";
-			std::vector<ObjectId> result;
-			std::set<ObjectId> seen{channel};
-			std::vector<ObjectId> pending{channel};
-			while (!pending.empty())
-			{
-				const ObjectId at = pending.back();
-				pending.pop_back();
-				std::vector<ObjectId> next;
-				if (const LinkGroup* group = linkGroupOf(project, at); linked && group != nullptr && links(*group, key))
-					next = group->channels;
-				if (const LinkGroup* group = controlledBy(project, at); button && group != nullptr)
-					next.insert(next.end(), group->channels.begin(), group->channels.end());
-				for (const ObjectId id : next)
-					if (seen.insert(id).second)
-					{
-						result.push_back(id);
-						pending.push_back(id);
-					}
-			}
-			return result;
 		}
 
 		// Passes channel.set's fader, pan and buttons on to the channels linked to the channel: the fader and the pan
