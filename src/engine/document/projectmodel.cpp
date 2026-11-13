@@ -2097,7 +2097,8 @@ namespace gnubase::engine
 				*value = static_cast<int>(number);
 			}
 			for (const auto& [key, value, maximum] : {std::tuple{"program", &changed.program, int64_t{127}},
-					 std::tuple{"bank", &changed.bank, int64_t{g_maxBank}}})
+					 std::tuple{"bank", &changed.bank, int64_t{g_maxBank}},
+					 std::tuple{"midiChannel", &changed.midiChannel, int64_t{15}}})
 			{
 				if (!parameters.contains(key))
 					continue;
@@ -4386,11 +4387,13 @@ namespace gnubase::engine
 				"Destinations wider than stereo have no panner yet. Automation of volume, pan, panLeft and panRight "
 				"overrides them while it plays; changes glide over 5 ms. MIDI channels have no audio: midiVolume "
 				"and midiPan (0 to 127, 64 is the center pan, null for none, the default) are sent to the "
-				"instrument as MIDI volume (CC 7) and pan (CC 10) on MIDI channel 1, whenever they change and when "
-				"playback starts or jumps; automation of those controllers overrides them. program (0 to 127) and bank "
-				"(0 to 16383, null for none, the default) are a MIDI channel's patch: the program change, after bank "
-				"select MSB (CC 0) and LSB (CC 32) if bank is set, goes to the instrument on MIDI channel 1 whenever "
-				"they change and when playback starts or jumps; without a program nothing is sent. device names the "
+				"instrument as MIDI volume (CC 7) and pan (CC 10) on its midiChannel, whenever they change and when "
+				"playback starts or jumps; automation of those controllers on that channel overrides them. program (0 "
+				"to 127) and bank (0 to 16383, null for none, the default) are a MIDI channel's patch: the program "
+				"change, after bank select MSB (CC 0) and LSB (CC 32) if bank is set, goes to the instrument on its "
+				"midiChannel whenever they change and when playback starts or jumps; without a program nothing is "
+				"sent. midiChannel is the MIDI channel they go out on, 0 to 15, or null (Any, the default) for MIDI "
+				"channel 1. device names the "
 				"installed MIDI device (midiDevice.install) whose patches choose them, or is empty. monitor and "
 				"recordEnable are an audio track's buttons: monitor hears the input bus, recordEnable arms the track "
 				"for recording "
@@ -4463,14 +4466,15 @@ namespace gnubase::engine
 						{"panRight", numberSchema}, {"panBypass", booleanSchema},
 						{"midiVolume", {{"type", {"integer", "null"}}}}, {"midiPan", {{"type", {"integer", "null"}}}},
 						{"program", {{"type", {"integer", "null"}}}}, {"bank", {{"type", {"integer", "null"}}}},
-						{"device", stringSchema}, {"volume", numberSchema}, {"pan", numberSchema},
-						{"monitor", booleanSchema}, {"recordEnable", booleanSchema},
-						{"midiInput", enumSchema({"all", "none"})}, {"mute", booleanSchema}, {"solo", booleanSchema},
-						{"exclusive", booleanSchema}, {"soloDefeat", booleanSchema}, {"listen", booleanSchema},
-						{"notes", stringSchema}, {"linked", booleanSchema}, {"pre", {{"type", "object"}}},
-						{"eq", {{"type", "object"}}}, {"strip", {{"type", "object"}}},
-						{"modifiers", {{"type", "object"}}}, {"midiInserts", {{"type", "object"}}},
-						{"midiSends", {{"type", "object"}}}, {"inputTransformer", {{"type", "object"}}},
+						{"midiChannel", {{"type", {"integer", "null"}}}}, {"device", stringSchema},
+						{"volume", numberSchema}, {"pan", numberSchema}, {"monitor", booleanSchema},
+						{"recordEnable", booleanSchema}, {"midiInput", enumSchema({"all", "none"})},
+						{"mute", booleanSchema}, {"solo", booleanSchema}, {"exclusive", booleanSchema},
+						{"soloDefeat", booleanSchema}, {"listen", booleanSchema}, {"notes", stringSchema},
+						{"linked", booleanSchema}, {"pre", {{"type", "object"}}}, {"eq", {{"type", "object"}}},
+						{"strip", {{"type", "object"}}}, {"modifiers", {{"type", "object"}}},
+						{"midiInserts", {{"type", "object"}}}, {"midiSends", {{"type", "object"}}},
+						{"inputTransformer", {{"type", "object"}}},
 						{"sends",
 							arraySchema(
 								objectSchema({{"send", integerSchema}, {"destination", idSchema}, {"on", booleanSchema},
