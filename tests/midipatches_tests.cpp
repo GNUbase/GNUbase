@@ -315,3 +315,94 @@ TEST_CASE(
 	CHECK(std::count(drums.begin(), drums.end(), std::vector<int>{0x92, 60}) == 1);
 	CHECK(std::count(drums.begin(), drums.end(), std::vector<int>{0x99, 36}) == 1);
 }
+
+TEST_CASE("a MIDI track's channel plays its sound slots' output events, and a slot's own channel wins", "[integration]")
+{
+	PatchTrack track;
+	constexpr int64_t quarter = 1720320; // ticks
+	const Json trackId = run(track.client, "project.get").at("channels")[1].at("track");
+	// Arco, the default slot, switches with the key C0 (24); Staccato with controller 32 at 64, back to 0 when it
+	// ends; Pizzicato with the key C#0 on its own channel 7.
+	const Json map = run(track.client, "articulationMap.add",
+		{{"name", "Strings"}, {"groups", {"Technique", "Length"}},
+			{"articulations",
+				{{{"name", "Pizzicato"}, {"type", "direction"}, {"group", 0}},
+					{{"name", "Staccato"}, {"type", "attribute"}, {"group", 1}}}},
+			{"slots",
+				{{{"name", "Arco"}, {"trigger", 36},
+					 {"outputs", {{{"status", "note"}, {"data1", 24}, {"data2", 100}}}}},
+					{{"name", "Staccato"}, {"articulations", {"Staccato"}}, {"trigger", 38},
+						{"outputs",
+							{{{"status", "controller"}, {"data1", 32}, {"data2", 64}},
+								{{"status", "controller"}, {"data1", 32}, {"data2", 0}, {"off", true}}}}},
+					{{"name", "Pizzicato"}, {"articulations", {"Pizzicato"}}, {"trigger", 37}, {"channel", 6},
+						{"outputs", {{{"status", "note"}, {"data1", 25}, {"data2", 100}}}}}}}})
+						 .at("map")
+						 .at("id");
+	run(track.client, "track.set", {{"track", trackId}, {"articulationMap", map}});
+	track.set({{"midiChannel", 4}});
+	// The status and first data byte of each message.
+	const auto heads = [](const Bytes& played)
+	{
+		Bytes result;
+		for (const std::vector<int>& bytes : played)
+			result.push_back({bytes[0], bytes[1]});
+		return result;
+	};
+
+	SECTION("in playback")
+	{
+		const Json part = run(track.client, "midiPart.add", {{"track", trackId}, {"position", 0}, {"length", quarter}})
+							  .at("part")
+							  .at("id");
+		const auto note = [&](int64_t position, int pitch, Json articulations)
+		{
+			run(track.client, "note.add",
+				{{"part", part},
+					{"notes",
+						{{{"position", position}, {"length", quarter / 32}, {"pitch", pitch}, {"velocity", 0.8},
+							{"articulations", std::move(articulations)}}}}});
+		};
+		note(0, 60, Json::array());           // Arco
+		note(quarter / 16, 61, {"Staccato"}); // Staccato
+		note(quarter / 8, 62, Json::array()); // Pizzicato from the direction
+		run(track.client, "controller.add",
+			{{"part", part},
+				{"controllers",
+					{{{"position", quarter / 8}, {"type", "articulation"}, {"articulation", "Pizzicato"}}}}});
+		run(track.client, "transport.play");
+		const Bytes played = heads(track.played(4096));
+		run(track.client, "transport.stop");
+		const auto count = [&played](const std::vector<int>& head)
+		{ return std::count(played.begin(), played.end(), head); };
+		CHECK(count({0x94, 24}) == 1); // Arco's key switch on the track's channel
+		CHECK(count({0x94, 60}) == 1);
+		CHECK(count({0xB4, 32}) == 2); // Staccato's on and off events there too
+		CHECK(count({0x94, 61}) == 1);
+		CHECK(count({0x96, 25}) == 1); // Pizzicato's on its own channel
+		CHECK(count({0x96, 62}) == 1);
+		CHECK(count({0x90, 24}) + count({0xB0, 32}) + count({0x90, 60}) == 0);
+	}
+	SECTION("from triggers played into the track")
+	{
+		track.set({{"monitor", true}});
+		track.played();
+		const auto play = [&](const Bytes& messages)
+		{
+			Json injected = Json::array();
+			for (const std::vector<int>& bytes : messages)
+				injected.push_back({{"position", 0}, {"bytes", bytes}});
+			run(track.client, "midi.inject", {{"channel", track.channel}, {"messages", injected}});
+			return heads(track.played());
+		};
+		// D1 on channel 2 selects Staccato: controller 32 at 64 on the track's channel, as the notes after it.
+		CHECK(play({{0x91, 38, 100}, {0x81, 38, 0}, {0x91, 60, 100}, {0x81, 60, 0}}) ==
+			Bytes{{0xB4, 32}, {0x94, 60}, {0x84, 60}});
+		// C#1 selects Pizzicato: Staccato's off event on the track's channel, the key switch C#0 and the notes on the
+		// slot's own channel.
+		CHECK(play({{0x91, 37, 100}, {0x81, 37, 0}, {0x91, 60, 100}, {0x81, 60, 0}}) ==
+			Bytes{{0xB4, 32}, {0x96, 25}, {0x86, 25}, {0x96, 60}, {0x86, 60}});
+		// C1 selects Arco: its key switch C0 on the track's channel.
+		CHECK(play({{0x91, 36, 100}, {0x81, 36, 0}}) == Bytes{{0x94, 24}, {0x84, 24}});
+	}
+}

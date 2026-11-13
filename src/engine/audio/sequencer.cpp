@@ -1083,6 +1083,8 @@ namespace gnubase::engine
 		if (found == map.slots.end())
 			return false;
 		const auto slot = static_cast<int>(found - map.slots.begin());
+		// The track's MIDI channel, as for the notes after it, else the trigger's.
+		const auto channel = static_cast<uint8_t>(sequence.inputChannel >= 0 ? sequence.inputChannel : event.channel);
 		// A key whose note-on played, before the map came or the key became a trigger: its note-off ends that note.
 		if (event.type == Type::NoteOff && m_inputDown[((event.channel % 16) * 128) + (event.key % 128)])
 			return false;
@@ -1092,12 +1094,12 @@ namespace gnubase::engine
 			if (slot == m_inputSlotHeld)
 			{
 				m_inputSlotHeld = -1;
-				selectSlot(map, 0, event.channel, event.offset, out);
+				selectSlot(map, 0, channel, event.offset, out);
 			}
 			return true;
 		}
 		m_inputSlotHeld = event.type == Type::NoteOn && !map.latch ? slot : -1;
-		selectSlot(map, slot, event.channel, event.offset, out);
+		selectSlot(map, slot, channel, event.offset, out);
 		return true;
 	}
 
@@ -1107,7 +1109,8 @@ namespace gnubase::engine
 		if (slot == m_inputSlot)
 			return;
 		// As in playback (rendersnapshot.cpp): the off events on the channel the slot's on events went to, the on
-		// events on the slot's channel or the trigger's. A key switch is a note-on and its note-off.
+		// events on the slot's channel or else the given one (the track's or the trigger's). A key switch is a note-on
+		// and its note-off.
 		const auto send = [&](const SoundSlot& from, bool off, uint8_t on)
 		{
 			for (const OutputEvent& output : from.outputs)

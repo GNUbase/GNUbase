@@ -73,15 +73,15 @@ removed).
   aren't recorded; they select their slot instead: a direction for each group that has directions, the slot's own or
   a reset, where they come, and the slot's attributes on the notes that start while it is selected. Without latch
   the default slot comes back where the key is released.
-- **Remote triggers on the MIDI input** (pp. 1263, 1268; `MidiSequencer::triggerSlot`, on the audio thread). On a
-  track with a map, a trigger key or program played into the track (its MIDI input, `midi.inject`) doesn't reach the
-  instrument: it selects its slot, which sends the off events of the slot before and its own on events (a key switch
-  as a note-on and its note-off), on the slot's channel or else the trigger's. The notes played after it get the
-  slot's channel, transpose and velocity before the track's MIDI modifiers; the default slot's until a trigger
-  comes, and again once another map is assigned or the map's slots change. A trigger key's note-off still ends the
-  note its note-on played before the key became a trigger (a map assigned, or the key made a trigger, while it was
-  held). Without latch the default slot comes back where the key is released. What is recorded keeps the triggers
-  for `recording.add`, which turns them into directions and attributes.
+- **Remote triggers on the MIDI input** (pp. 1263, 1268; `MidiSequencer::triggerSlot`, on the audio thread). On a track
+  with a map, a trigger key or program played into the track (its MIDI input, `midi.inject`) doesn't reach the
+  instrument: it selects its slot, which sends the off events of the slot before and its own on events (a key switch as
+  a note-on and its note-off), on the slot's channel, else the MIDI track's channel, else the trigger's. The notes
+  played after it get the slot's channel, transpose and velocity before the track's MIDI modifiers; the default slot's
+  until a trigger comes, and again once another map is assigned or the map's slots change. A trigger key's note-off
+  still ends the note its note-on played before the key became a trigger (a map assigned, or the key made a trigger,
+  while it was held). Without latch the default slot comes back where the key is released. What is recorded keeps the
+  triggers for `recording.add`, which turns them into directions and attributes.
 - **Articulation map files** are JSON: the map as `articulationMap.set` takes it, with `"format":
   "gnubase.articulationMap"`. Track presets and track import bring a track's map along, or use the project's map
   that is the same (`src/engine/document/trackpresets.cpp`).
