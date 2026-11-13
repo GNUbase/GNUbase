@@ -46,8 +46,7 @@ and the toolbar's section.
   (`QuantizeGrid`, as quantizing finds them) with the catch range around each. Every change is a `quantize.set`. Apply
   and Reset run `edit.quantize` and `edit.resetQuantize`; with Auto Apply on, every change runs `edit.quantize` too.
 - **Toolbar.** Apply Quantize, the Quantize Presets menu, Soft Quantize and Open Quantize Panel, after the snap
-  controls. The section shows in windows at least 1000 dp wide (`resources/styles/quantize.rcss`), where the toolbar
-  has room for it.
+  controls. The section shows where the toolbar has room for it ([docking.md](docking.md)).
 
 Audio events and parts, Warp Quantize On/Off and the panel's section for several audio tracks are in
 [audio-quantize.md](audio-quantize.md).

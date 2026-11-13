@@ -148,6 +148,10 @@ namespace gnubase::engine
 		// which punching in and out and stopping after a punch out change on their own. Returns whether that changed
 		// anything.
 		bool sync();
+		// Command thread: how many requests were sent. Any thread: how many of them the audio thread has applied. It
+		// publishes the cursor and the count-in first: a thread that sees a request applied sees where it went.
+		uint64_t sentRequests() const { return m_sentRequests; }
+		uint64_t appliedRequests() const { return m_appliedRequests.load(std::memory_order_acquire); }
 		// Any thread: counts the blocks and requests after which the audio thread played or recorded differently, or
 		// applied a request: a thread that sees it change has the command thread sync.
 		uint64_t changes() const { return m_changes.load(std::memory_order_acquire); }

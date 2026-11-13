@@ -141,6 +141,10 @@ namespace gnubase::ui
 		void fold(std::set<uint64_t> folders); // folds those folders, unfolds the others, and tells the engine
 		// The heights and folded folders from trackLayout.get or trackLayout.changed; replace drops the other heights.
 		void loadLayout(const engine::Json& layout, bool replace);
+		void readLayout(bool replace); // trackLayout.get, into loadLayout
+		// trackLayout.set; if it fails, the list reads the project's layout again.
+		void setLayout(engine::Json parameters);
+		void endHeightDrag(); // sends the heights the drag changed
 		void loadControls(const engine::Json& value);
 		// A tempo typed into the tempo track's Current Tempo, or the type chosen in Type of New Tempo Points.
 		void tempoChanged(Rml::Element& field, const Rml::Event& event);
@@ -242,8 +246,8 @@ namespace gnubase::ui
 		float m_dragY = 0.0F;                     // where it started, in the window's pixels
 		double m_dragHeight = 0.0;                // the track's height then, before zoom
 		bool m_dragAll = false;                   // Ctrl: every track's height
-		std::map<uint64_t, double> m_dragHeights; // the display's own heights when a height drag started
-		std::set<uint64_t> m_dragTracks;          // the tracks whose heights it set
+		std::map<uint64_t, double> m_dragHeights; // the engine's heights, from when a height drag started and since
+		std::set<uint64_t> m_dragTracks;          // the tracks whose heights it set; empty unless m_drag is Height
 		uint64_t m_dropParent = 0;                // where a move drops
 		uint64_t m_dropBefore = 0;
 
@@ -252,5 +256,6 @@ namespace gnubase::ui
 		std::vector<Subscription> m_subscriptions;
 		std::optional<Subscription> m_playback; // while playing, Current Tempo follows the cursor (#831)
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
+		uint64_t m_addTrackMerges = 0; // addTrack's merge keys, one per double click
 	};
 }

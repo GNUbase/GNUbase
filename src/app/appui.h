@@ -348,7 +348,7 @@ namespace gnubase::app
 		// The Auto Fades dialog (resources/ui/auto-fades.rml) for the project, or for a track (not 0).
 		void openAutoFades(ui::Window& window, uint64_t track);
 		// The articulation map setup (resources/ui/articulation-maps.rml, #175) for a MIDI or instrument track, or with
-		// 0 for the first one selected in the track list, if any.
+		// 0 for the first one selected in the track list, if any; one at a time (openOnce).
 		void openArticulationMaps(ui::Window& window, uint64_t track);
 		// Shows why an articulation map's import or export failed in the setup's message, if the setup is open.
 		void showArticulationMapError(const engine::Result& result);
@@ -424,7 +424,7 @@ namespace gnubase::app
 		Rml::ObserverPtr<Rml::Element> m_autoFades;        // the open auto fades dialog's document
 		Rml::ObserverPtr<Rml::Element> m_addTrack;         // the open add track dialog's document
 		Rml::ObserverPtr<Rml::Element> m_midiFunction;     // the open dialog of the MIDI menu's
-		Rml::ObserverPtr<Rml::Element> m_articulationMaps; // the articulation map setup's last document
+		Rml::ObserverPtr<Rml::Element> m_articulationMaps; // the articulation map setup (openOnce)
 		Rml::ObserverPtr<Rml::Element> m_drumMaps;         // the open drum map setup's document
 		// A mixer window: open while the shell has it; the app lets go of the mixer once the user closed the window.
 		struct MixerWindow

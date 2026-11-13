@@ -250,14 +250,29 @@ namespace gnubase::ui
 
 	bool EngineBinding::settle(std::chrono::milliseconds timeout)
 	{
+		return handOnUntil(timeout,
+			[this]
+			{
+				// Only sooner: answerStep sends a waiting step once the one in flight is answered, which settle waits
+				// for.
+				sendWaitingSteps({});
+				return std::all_of(m_waiting.begin(), m_waiting.end(), [this](const auto& waiting)
+					{ return !waiting.second.awaited && m_queries.count(waiting.second.command) != 0; });
+			});
+	}
+
+	bool EngineBinding::awaitHeld(std::chrono::milliseconds timeout)
+	{
+		return handOnUntil(timeout, [this] { return m_held.empty(); });
+	}
+
+	bool EngineBinding::handOnUntil(std::chrono::milliseconds timeout, const std::function<bool()>& done)
+	{
 		const auto deadline = std::chrono::steady_clock::now() + timeout;
 		for (;;)
 		{
-			// Only sooner: answerStep sends a waiting step once the one in flight is answered, which settle waits for.
-			sendWaitingSteps({});
 			update();
-			if (std::all_of(m_waiting.begin(), m_waiting.end(), [this](const auto& waiting)
-					{ return !waiting.second.awaited && m_queries.count(waiting.second.command) != 0; }))
+			if (done())
 				return true;
 			const auto left =
 				std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
