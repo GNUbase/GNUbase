@@ -5,6 +5,7 @@
 #pragma once
 
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -19,28 +20,28 @@ namespace gnubase::test
 	class HeldJob
 	{
 	public:
-		// Holds the first job of the given kind, such as "media.locate", that sends a job.progress from now on, for a
-		// minute at most. One HeldJob per engine at a time: a second throws std::logic_error. It must not outlive the
-		// engine.
-		HeldJob(engine::Engine& engine, std::string kind);
+		// Holds the first job of the given kind, such as "media.locate", that sends a job.progress from now on, or the
+		// first jobs of the kind, each at its first job.progress, for a minute at most. One HeldJob per engine at a
+		// time: a second throws std::logic_error. It must not outlive the engine.
+		HeldJob(engine::Engine& engine, std::string kind, size_t jobs = 1);
 
-		// Releases the job and holds no other.
+		// Releases the jobs and holds no other.
 		~HeldJob();
 		HeldJob(const HeldJob&) = delete;
 		HeldJob& operator=(const HeldJob&) = delete;
 		HeldJob(HeldJob&&) = delete;
 		HeldJob& operator=(HeldJob&&) = delete;
 
-		// Whether the job got to its first job.progress, for tests that wait while doing something else.
+		// Whether all the jobs got to their first job.progress, for tests that wait while doing something else.
 		bool held() const;
 
-		// Waits until the job is at its first job.progress; false if it didn't get there in time.
+		// Waits until all the jobs are at their first job.progress; false if they didn't get there in time.
 		bool waitUntilHeld(std::chrono::milliseconds timeout = std::chrono::seconds(30));
 
-		// The held job's id; 0 until it is held.
+		// The first held job's id; 0 until one is held.
 		uint64_t job() const;
 
-		// Lets the job go on.
+		// Lets the jobs go on.
 		void release();
 
 	private:
