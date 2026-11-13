@@ -329,6 +329,137 @@ TEST_CASE("set definition from tempo makes audio play as before and follow the t
 	CHECK(byId(client, "tracks", other).at("timeBase") == "musical");
 }
 
+TEST_CASE("definition from tempo preserves off-beat events and separates shared clips", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	run(client, "project.set", {{"tempoTrackActive", true}});
+	run(client, "tempo.add", {{"position", 2 * g_q}, {"bpm", 60.0}});
+	const ObjectId clip = addClip(client, "off-beat.wav", 96000);
+	const ObjectId firstTrack = addTrack(client, {{"type", "audio"}, {"timeBase", "linear"}});
+	const ObjectId secondTrack = addTrack(client, {{"type", "audio"}, {"timeBase", "linear"}});
+	const ObjectId untouchedTrack = addTrack(client, {{"type", "audio"}, {"timeBase", "linear"}});
+	const ObjectId first = addEvent(client, firstTrack, clip, 12000, 9000, 87000);
+	const ObjectId second = addEvent(client, secondTrack, clip, 72000, 0, 96000);
+	const ObjectId untouched = addEvent(client, untouchedTrack, clip, 24000, 0, 96000);
+	const Json before = run(client, "project.get");
+	const Json result = run(client, "event.setDefinitionFromTempo", {{"events", {first, second, first}}});
+	CHECK(result.at("clips").size() == 2);
+	const ObjectId firstClip = byId(client, "audioEvents", first).at("clip").get<ObjectId>();
+	const ObjectId secondClip = byId(client, "audioEvents", second).at("clip").get<ObjectId>();
+	CHECK(firstClip != secondClip);
+	CHECK(firstClip != clip);
+	CHECK(secondClip != clip);
+	CHECK(byId(client, "clips", firstClip).at("warp").at("gridStart") == -3000);
+	// Later warp edits accept the definition's leading quarter before the audio starts.
+	run(client, "clip.setWarp", {{"clip", firstClip}, {"preset", "quality"}});
+	CHECK(byId(client, "audioEvents", untouched).at("clip") == clip);
+	CHECK_FALSE(byId(client, "clips", clip).at("warp").at("musical").get<bool>());
+	CHECK(rendered(engine, firstTrack).first == 12000);
+	CHECK(std::abs(rendered(engine, firstTrack).second - 87000) <= 1);
+	CHECK(rendered(engine, secondTrack).first == 72000);
+	CHECK(std::abs(rendered(engine, secondTrack).second - 96000) <= 1);
+	// Every sampled point, including the partial beat before the first quarter, still plays at its old time.
+	const RenderSnapshot& snapshot = engine.renderSnapshots().acquire();
+	for (const RenderMedia& media : snapshot.media)
+		if (media.id == first || media.id == second)
+			for (const auto& point : media.warp)
+				CHECK(std::abs(point.target - (point.source - (media.id == first ? 9000.0 : 0.0))) <= 1.0);
+	run(client, "history.undo");
+	const Json undone = run(client, "project.get");
+	CHECK(undone.at("clips") == before.at("clips"));
+	CHECK(undone.at("audioEvents") == before.at("audioEvents"));
+	run(client, "history.redo");
+	CHECK(std::abs(rendered(engine, firstTrack).second - 87000) <= 1);
+}
+
+TEST_CASE("definition from tempo leaves an inactive track version's clip unchanged", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId track = addTrack(client, {{"type", "audio"}, {"timeBase", "linear"}});
+	const ObjectId clip = addClip(client, "version.wav", 96000);
+	const ObjectId original = addEvent(client, track, clip, 12000, 0, 96000);
+	run(client, "trackVersion.duplicate", {{"tracks", {track}}});
+	const ObjectId copy = run(client, "project.get").at("audioEvents").at(0).at("id").get<ObjectId>();
+	REQUIRE(copy != original);
+	run(client, "event.setDefinitionFromTempo", {{"events", {copy}}});
+	CHECK(byId(client, "audioEvents", copy).at("clip") != clip);
+	CHECK_FALSE(byId(client, "clips", clip).at("warp").at("musical").get<bool>());
+	run(client, "trackVersion.activate", {{"tracks", {track}}, {"version", 1}});
+	CHECK(byId(client, "audioEvents", original).at("clip") == clip);
+}
+
+TEST_CASE("Free Warp maps project times through musical mode and existing markers", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId track = addTrack(client, {{"type", "audio"}, {"timeBase", "linear"}});
+	const ObjectId clip = addClip(client, "warped.wav", 96000);
+	const ObjectId event = addEvent(client, track, clip, 24000, 12000, 72000);
+	run(client, "clip.addWarpMarker", {{"clip", clip}, {"position", 24000}, {"target", 36000}});
+	int64_t stretch = 1;
+	SECTION("free warp markers")
+	{
+	}
+	SECTION("musical mode")
+	{
+		run(client, "clip.setWarp", {{"clip", clip}, {"tempo", 240.0}, {"musical", true}});
+		stretch = 2;
+	}
+	const Json before = byId(client, "clips", clip).at("warp");
+	const Json result = run(client, "audioEvent.addWarpMarker",
+		{{"event", event}, {"position", 24000 + (38000 * stretch)}, {"to", 24000 + (42000 * stretch)}});
+	CHECK(result.at("clip") == clip);
+	CHECK(result.at("warp").at("markers").at(1) == Json{{"position", 48000}, {"target", 60000}});
+	run(client, "history.undo");
+	CHECK(byId(client, "clips", clip).at("warp") == before);
+	run(client, "history.redo");
+	CHECK(byId(client, "clips", clip).at("warp").at("markers").size() == 2);
+	CHECK_THAT(reject(client, "audioEvent.addWarpMarker", {{"event", 99999}, {"position", 0}, {"to", 0}}),
+		ContainsSubstring("no audio event"));
+}
+
+TEST_CASE("Free Warp keeps a trimmed event's start fixed when inserting a marker in its first segment", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId track = addTrack(client, {{"type", "audio"}, {"timeBase", "linear"}});
+	const ObjectId clip = addClip(client, "trimmed.wav", 96000);
+	const ObjectId event = addEvent(client, track, clip, 24000, 12000, 72000);
+	run(client, "clip.addWarpMarker", {{"clip", clip}, {"position", 72000}, {"target", 60000}});
+	// Frame 48000 plays 30000 samples after the event's start. Move it another 4000 samples.
+	run(client, "audioEvent.addWarpMarker", {{"event", event}, {"position", 54000}, {"to", 58000}});
+	const RenderSnapshot& snapshot = engine.renderSnapshots().acquire();
+	const auto media = std::find_if(
+		snapshot.media.begin(), snapshot.media.end(), [event](const RenderMedia& each) { return each.id == event; });
+	REQUIRE(media != snapshot.media.end());
+	CHECK(std::abs(dsp::warpTarget(media->warp, 48000.0) - 34000.0) <= 1.0);
+	run(client, "history.undo");
+	CHECK(byId(client, "clips", clip).at("warp").at("markers").size() == 1);
+}
+
+TEST_CASE("pasting warp markers visits a shared destination clip once", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId track = addTrack(client, {{"type", "audio"}, {"timeBase", "linear"}});
+	const ObjectId source = addClip(client, "source.wav", 96000);
+	const ObjectId destination = addClip(client, "destination.wav", 120000);
+	const ObjectId from = addEvent(client, track, source, 0, 0, 96000);
+	const ObjectId first = addEvent(client, track, destination, 0, 10000, 96000);
+	const ObjectId second = addEvent(client, track, destination, 1000, 10000, 96000);
+	run(client, "clip.addWarpMarker", {{"clip", source}, {"position", 52000}, {"target", 49000}});
+	CHECK(
+		run(client, "event.pasteWarpMarkers", {{"from", from}, {"events", {first, second, first}}}).at("markers") == 1);
+	CHECK(byId(client, "clips", destination).at("warp").at("markers") ==
+		Json::array({{{"position", 62000}, {"target", 59000}}}));
+	run(client, "history.undo");
+	CHECK(byId(client, "clips", destination).at("warp").at("markers").empty());
+	run(client, "history.redo");
+	CHECK(byId(client, "clips", destination).at("warp").at("markers").size() == 1);
+}
+
 TEST_CASE("warp markers are pasted into other events at the same times", "[unit]")
 {
 	Engine engine;

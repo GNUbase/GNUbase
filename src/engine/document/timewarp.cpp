@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <map>
 #include <set>
 #include <string>
 #include <utility>
@@ -327,7 +328,7 @@ namespace gnubase::engine
 		};
 
 		// Set Definition from Tempo (reference manual pp. 1467-1468): the clip's definition grid on the project's
-		// quarters where the event plays them now, from the first after its start to the clip's end, in musical
+		// quarters where the event plays them now, from the one at or before the clip's start to its end, in musical
 		// mode, so that it plays as before and follows the tempo from then on.
 		void defineFromTempo(Project& project, const AudioEvent& event)
 		{
@@ -337,11 +338,11 @@ namespace gnubase::engine
 			const EventTime timing(project, event);
 			const auto frameAt = [&project, &timing](Ticks tick)
 			{ return timing.frameAt(project.tempo.toSeconds(tick) * project.sampleRate); };
-			const Ticks startTicks = time::toTicks(event.position, project.tempo, project.sampleRate);
 			const Ticks quarter = time::g_ticksPerQuarter;
-			const Ticks first = (std::max<Ticks>(0, startTicks) + quarter - 1) / quarter * quarter;
-			require(frameAt(first) < length,
-				"audio event " + std::to_string(event.id) + "'s clip ends before the next beat");
+			// Include the quarter before the audio starts, even if its frame is negative. Otherwise the partial
+			// first beat extrapolates at the final tempo, which moves an event starting between quarters.
+			const double startTicks = project.tempo.toTicksExact(timing.samplesAt(0.0) / project.sampleRate);
+			const Ticks first = static_cast<Ticks>(std::floor(startTicks / static_cast<double>(quarter))) * quarter;
 			ClipWarp& warp = clip.warp;
 			warp.musical = true;
 			warp.gridStart = std::llround(frameAt(first));
@@ -350,7 +351,6 @@ namespace gnubase::engine
 			for (; frameAt(first + (beat * quarter)) < length; ++beat)
 				warp.beats.push_back({beat, std::llround(frameAt(first + (beat * quarter)))});
 			// The clip's tempo holds beyond the beats edited: the tempo after the last one, before the clip ends.
-			// ponytail: so does it before the first beat; a beat edit before the grid start would need one there.
 			warp.tempo = project.tempo.bpmAt(first + ((beat - 1) * quarter));
 		}
 
@@ -358,8 +358,10 @@ namespace gnubase::engine
 		{
 			const Json& parameters = context.parameters();
 			std::vector<ObjectId> eventIds;
+			std::set<ObjectId> selected;
 			for (const AudioEvent* event : audioEventsOf(project, parameters.at("events")))
-				eventIds.push_back(event->id);
+				if (selected.insert(event->id).second)
+					eventIds.push_back(event->id);
 			// The tracks become musical first, keeping their time, so that the events start on ticks.
 			std::vector<ObjectId> linear = tracksIn(project, time::TimeBase::Linear);
 			if (!parameters.value("allTracks", false))
@@ -372,12 +374,30 @@ namespace gnubase::engine
 					linear.end());
 			}
 			setTimeBase(model, project, linear, "musical", context);
+			std::map<ObjectId, size_t> references;
+			forEveryAudioEvent(project, [&references](const AudioEvent& event) { ++references[event.clip]; });
+			forEverySamplerClip(project, [&references](ObjectId clip) { ++references[clip]; });
 			std::set<ObjectId> clips;
 			for (const ObjectId id : eventIds)
 			{
-				const AudioEvent& event = project.audioEvents.at(id);
-				if (clips.insert(event.clip).second)
-					defineFromTempo(project, event);
+				AudioEvent& event = project.audioEvents.at(id);
+				// Different placements need different grids; an unselected event must keep its original clip too.
+				const bool shared = references.at(event.clip) > 1;
+				if (shared)
+				{
+					--references.at(event.clip);
+					Clip copy = project.clips.at(event.clip);
+					copy.id = project.newId();
+					event.clip = copy.id;
+					project.clips[event.clip] = std::move(copy);
+				}
+				defineFromTempo(project, event);
+				clips.insert(event.clip);
+				if (shared)
+				{
+					context.emit("clip.added", {{"clip", toJson(project.clips.at(event.clip))}});
+					context.emit("audioEvent.changed", {{"event", audioEventJson(project, event)}});
+				}
 			}
 			Json result = Json::array();
 			for (const ObjectId id : clips)
@@ -417,10 +437,11 @@ namespace gnubase::engine
 			const EventTime from(project, source);
 			size_t pasted = 0;
 			std::set<ObjectId> changed;
+			std::set<ObjectId> visited;
 			for (const AudioEvent* event : audioEventsOf(project, parameters.at("events")))
 			{
 				Clip& clip = project.clips.at(event->clip);
-				if (clip.id == source.clip)
+				if (clip.id == source.clip || !visited.insert(clip.id).second)
 					continue; // the markers are there already
 				const time::Samples length = project.media.at(clip.media).length;
 				const EventTime to(project, *event);
@@ -510,7 +531,9 @@ namespace gnubase::engine
 				"(ids) the project's tempo as their definition, the grid on each quarter where the event plays it "
 				"now, and turns musical mode on, so that they play as before and follow tempo changes from then on. "
 				"The events' tracks, or with allTracks every track, become musical first, keeping their time. A clip "
-				"in musical mode already is refused. Returns the clips.",
+				"in musical mode already is refused. Shared clips are copied for independent definitions at each "
+				"selected placement; unselected events keep their clips. Repeated event ids are ignored. Returns the "
+				"clips.",
 				objectSchema({{"events", ids}, {"allTracks", boolean}}, {"events"}),
 				{{"type", "object"}, {"properties", {{"clips", ids}}}, {"required", {"clips"}}}, false},
 			"Set Definition from Tempo", [&model](Project& project, CommandContext& context)
@@ -523,7 +546,7 @@ namespace gnubase::engine
 				"1467): each at the same time as in from, where the event plays it unwarped, if that is within the "
 				"event, passes none of its clip's markers and makes no section around it play more than 4 times or "
 				"less than a quarter as long, the real-time stretcher's range. The markers there stay. Returns how "
-				"many it pasted.",
+				"many it pasted. Each destination clip is visited once, using its first event in events.",
 				objectSchema({{"from", integer}, {"events", ids}}, {"from", "events"}),
 				{{"type", "object"}, {"properties", {{"markers", integer}}}, {"required", {"markers"}}}, false},
 			"Paste Warp Markers", pasteWarpMarkers);
