@@ -33,6 +33,11 @@ THEMES = {
         "timeDisplaySizes": [32, 48, 64, 96, 128],
         "fontFamilies": {"ui": "Inter", "counter": "JetBrains Mono"},
         "glow": True,
+        # Events in the event display, tinted in their colors as the mockup shows (#1312): how opaque a body is, the
+        # tint laid over an event's color for its outline and waveform, the stroke that events without a color are
+        # outlined in, and the alpha of the selected events' light. None in the other themes: opaque events in their
+        # colors, outlined in the stroke color, selected ones painted over, as before.
+        "events": {"fillOpacity": 0.45, "tint": "#ffffff59", "stroke": ("#ffffff", .35), "selected": "29"},
     },
     "dark": {
         "colors": {
@@ -52,6 +57,7 @@ THEMES = {
         "timeDisplaySizes": [32, 48, 64, 96, 128],
         "fontFamilies": {"ui": "Inter", "counter": "JetBrains Mono"},
         "glow": False,
+        "events": None,
     },
     "light": {
         "colors": {
@@ -71,6 +77,7 @@ THEMES = {
         "timeDisplaySizes": [32, 48, 64, 96, 128],
         "fontFamilies": {"ui": "Inter", "counter": "JetBrains Mono"},
         "glow": False,
+        "events": None,
     },
     # Black, white and bright colors that meet WCAG's enhanced contrast (7:1) for text, white borders around every
     # control and a thicker focus ring (docs/features/accessibility.md).
@@ -93,6 +100,7 @@ THEMES = {
         "fontFamilies": {"ui": "Inter", "counter": "JetBrains Mono"},
         "glow": False,
         "focusRing": 2,
+        "events": None,
     },
 }
 
@@ -338,6 +346,20 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
     # The piano keyboard's light and dark colors, the same way round in light themes as in dark ones.
     ivory, ebony = sorted((c["text"], c["background"]), key=luminance, reverse=True)
 
+    events = theme["events"]
+    if events is None:
+        event_look = {"lanes": {"own-fill-opacity": "1", "own-color-tint": "none"}, "tint": "none", "inset": "0dp",
+                      "selected": {"color": mix(c["surfaceRaised"], c["accent"], .7), "stroke-color": c["text"]}}
+    else:
+        event_look = {
+            "lanes": {"color": c["accent"] + f"{round(events['fillOpacity'] * 255):02x}",
+                      "stroke-color": mix(c["accent"], *events["stroke"]),
+                      "own-fill-opacity": f"{events['fillOpacity']:g}", "own-color-tint": events["tint"]},
+            "tint": events["tint"],
+            "inset": "2dp",
+            "selected": {"color": c["text"] + events["selected"], "stroke-color": c["text"]},
+        }
+
     def skin(asset: str) -> str:
         item = assets[asset]
         if "slice" not in item:
@@ -478,6 +500,11 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
                    "font-size": f"{sizes['small']}dp"}),
         # The event display (docs/features/event-display.md): overview line, ruler, lanes and cursors
         (".event-display", {"background-color": c["background"]}),
+        # Events in their colors (#1312): the lanes' events, muted and selected ones and folder data blocks, off the
+        # lanes' edges in the default theme; the events tinted, their waveforms in their colors.
+        (".event-display .event-area event-lanes", {"event-inset": event_look["inset"]}),
+        (".event-display event-lanes.events", event_look["lanes"]),
+        (".event-display .waveforms waveform", {"own-color-tint": event_look["tint"]}),
         (".event-display .overview", {"background-color": c["surface"]}),
         (".event-display .overview event-lanes", {"color": mix(c["surface"], c["accent"], .45),
                                                   "stroke-color": "transparent"}),
@@ -486,8 +513,7 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         # Parts and events (docs/features/parts-and-events.md): muted ones greyed out, selected ones lit, over the rest
         (".event-display event-lanes.muted-events", {"color": mix(c["surface"], c["textMuted"], .25),
                                                      "stroke-color": mix(c["background"], c["textMuted"], .5)}),
-        (".event-display event-lanes.selected-events", {"color": mix(c["surfaceRaised"], c["accent"], .7),
-                                                        "stroke-color": c["text"]}),
+        (".event-display event-lanes.selected-events", event_look["selected"]),
         # Fades (docs/features/fades.md): fade lines over the waveforms, and the selected events' fade handles
         (".event-display fade-lines", {"color": c["text"], "stroke-color": c["text"],
                                        "stroke-width": f"{widths['hairline']}dp"}),

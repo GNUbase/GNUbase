@@ -465,15 +465,18 @@ namespace gnubase::ui
 			const auto found = takeLanes.find({event.at("track").get<uint64_t>(), event.value("lane", 0)});
 			return found == takeLanes.end() ? std::optional<size_t>() : found->second;
 		};
+		// An event's own color, or else its track's (reference manual p. 114).
+		const auto colorOf = [&colors](const Json& event)
+		{
+			const Json& own = event.at("color");
+			return own.is_string() ? spanColor(own.get<std::string>()) : colors[event.at("track").get<uint64_t>()];
+		};
 		// With onTrackLane false, the track's lane gets no span for it: audio events show there where they are in
 		// front.
 		const auto addEvent = [&](const Json& event, double start, double end, bool onTrackLane = true)
 		{
 			const auto track = event.at("track").get<uint64_t>();
-			// Its own color, or else its track's (reference manual p. 114).
-			const Json& own = event.at("color");
-			TimeSpan span{start, end - start};
-			span.color = own.is_string() ? spanColor(own.get<std::string>()) : colors[track];
+			const TimeSpan span{start, end - start, colorOf(event)};
 			// The folders around the track show it as a data block.
 			for (uint64_t folder = parents[track]; folder != 0; folder = parents[folder])
 				if (const auto lane = lanes.find(folder); lane != lanes.end() &&
@@ -546,8 +549,8 @@ namespace gnubase::ui
 				const double from = std::max(start, part->second.first);
 				const double to = std::min(start + length, part->second.second);
 				if (file != media.end() && rate > 0.0 && lanes.count(track) != 0 && to > from)
-					waves.push_back({event.at("id").get<uint64_t>(), lanes[track], {from, to - from}, file->first,
-						waveRate, file->second->at("channels").get<int>(),
+					waves.push_back({event.at("id").get<uint64_t>(), lanes[track], {from, to - from, colorOf(event)},
+						file->first, waveRate, file->second->at("channels").get<int>(),
 						event.at("offset").get<int64_t>() +
 							static_cast<int64_t>(std::llround((from - start) * waveRate))});
 				continue;
@@ -555,11 +558,9 @@ namespace gnubase::ui
 			addEvent(event, start, start + length, false);
 			if (lanes.count(track) != 0)
 			{
-				const Json& own = event.at("color");
-				Piece piece{{start, length, own.is_string() ? spanColor(own.get<std::string>()) : colors[track]}, {},
-					event.value("mute", false)};
+				Piece piece{{start, length, colorOf(event)}, {}, event.value("mute", false)};
 				if (file != media.end() && rate > 0.0)
-					piece.wave = {event.at("id").get<uint64_t>(), lanes[track], {start, length}, file->first, waveRate,
+					piece.wave = {event.at("id").get<uint64_t>(), lanes[track], piece.span, file->first, waveRate,
 						file->second->at("channels").get<int>(), event.at("offset").get<int64_t>()};
 				std::vector<Piece> covered;
 				for (const Piece& other : pieces[lanes[track]])
@@ -594,8 +595,8 @@ namespace gnubase::ui
 			if (rate > 0.0)
 				readFades(event, rate, waveRate);
 			if (const std::optional<size_t> taken = takeLane(event); taken && file != media.end() && rate > 0.0)
-				waves.push_back({event.at("id").get<uint64_t>(), *taken, {start, length}, file->first, waveRate,
-					file->second->at("channels").get<int>(), event.at("offset").get<int64_t>()});
+				waves.push_back({event.at("id").get<uint64_t>(), *taken, {start, length, colorOf(event)}, file->first,
+					waveRate, file->second->at("channels").get<int>(), event.at("offset").get<int64_t>()});
 		}
 		for (const auto& [lane, shown] : pieces)
 			for (const Piece& piece : shown)
@@ -607,7 +608,7 @@ namespace gnubase::ui
 					continue;
 				EventWaveforms::Event wave = piece.wave;
 				wave.offset += std::llround((piece.span.start - wave.time.start) * wave.sampleRate);
-				wave.time = {piece.span.start, piece.span.length};
+				wave.time = piece.span;
 				waves.push_back(wave);
 			}
 		m_waveforms->setEvents(waves);

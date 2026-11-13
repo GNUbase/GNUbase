@@ -445,6 +445,19 @@
 	{
 		background-color: #151617;
 	}
+	.event-display .event-area event-lanes
+	{
+		event-inset: 0dp;
+	}
+	.event-display event-lanes.events
+	{
+		own-fill-opacity: 1;
+		own-color-tint: none;
+	}
+	.event-display .waveforms waveform
+	{
+		own-color-tint: none;
+	}
 	.event-display .overview
 	{
 		background-color: #1e2022;
