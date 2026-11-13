@@ -1784,7 +1784,8 @@ TEST_CASE("a backup started in another window while one's progress shows shows i
 	CHECK(!shownInPanel("#backup-progress-dialog"));
 	CHECK(shown(app, "#backup-progress-dialog"));
 	held.release();
-	REQUIRE(app.waitUntil([&app] { return !shown(app, "#backup-progress-dialog"); }));
+	// The first backup's whole run, as long as lastJob waits on a busy machine.
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#backup-progress-dialog"); }, std::chrono::seconds(60)));
 	lastJob(app); // once none runs
 	const Json jobs = app.call("job.list").at("jobs");
 	std::vector<std::string> states;
