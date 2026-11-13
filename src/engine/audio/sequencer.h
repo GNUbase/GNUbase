@@ -82,6 +82,7 @@ namespace gnubase::engine
 	{
 		std::vector<RenderNote> notes;             // sorted by start, key switches first, then pitch
 		std::vector<RenderController> controllers; // sorted by position
+		std::vector<RenderExpression> expressions; // the notes' expression points, sorted by position (#176)
 		// The tracks whose controller events a jump chases here: an instrument track's own and those of the MIDI
 		// tracks routed to it that the mute button doesn't mute, so they are chased by time across them. A MIDI track
 		// routed to an instrument chases its own into its strip (chaseIntoStrip).
@@ -133,7 +134,8 @@ namespace gnubase::engine
 
 	// Plays a track's MIDI parts as events at their sample offsets, after the events it receives (from MIDI tracks
 	// routed to an instrument track). Where events meet at one sample, note-offs come first, then controller events,
-	// then note-ons; a note that starts while the same pitch sounds ends it first.
+	// then note-ons, then the expression of the notes that sound (#176); a note that starts while the same pitch sounds
+	// ends it first.
 	//
 	// It remembers which notes sound, and ends them where they end, where the transport stops and where playback
 	// jumps: a start, a locate or a cycle jump. The engine keeps one sequencer per channel across graph rebuilds, so a

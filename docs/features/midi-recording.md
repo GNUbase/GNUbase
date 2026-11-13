@@ -28,7 +28,8 @@ undo step.
   runs far ahead of the disk thread, doesn't run out of chunks. The disk thread pairs
   each note-on with the next note-off of its pitch and channel into a note (`MidiTakeBuilder`); a note-on of a pitch
   that sounds ends it first, and notes that still sound when a cycle lap or the recording ends end there. Other
-  channel messages become controller events. SysEx doesn't come from the inputs yet.
+  channel messages become controller events; with MPE input, those of the notes' channels become their per-note
+  expression ([note-expression.md](note-expression.md)). SysEx doesn't come from the inputs yet.
 - **Takes and parts.** Each run of consecutive positions is a take, as for audio. When the recording ends, the
   recorder hands each track that recorded anything to `recording.add` with its takes, notes and controller events in
   project samples. A recording of MIDI tracks only runs `recording.add` at once; with audio tracks, the MIDI tracks

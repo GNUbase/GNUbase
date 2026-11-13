@@ -7,6 +7,7 @@
 #include "engine/document/chordtrack.h"
 #include "engine/document/document.h"
 #include "engine/document/projectmodel.h"
+#include "engine/document/serialize.h"
 #include "engine/engine.h"
 #include "engine/midi/articulationmaps.h"
 #include "engine/midi/drummaps.h"
@@ -218,6 +219,10 @@ namespace gnubase::engine
 					Json item = note;
 					item["position"] = at - origin;
 					item["length"] = std::max<time::Ticks>(noteEnd - at, 1);
+					// Expression points from the note's start.
+					if (item.contains("expressions"))
+						for (Json& point : item.at("expressions"))
+							point["position"] = std::max<time::Ticks>(ticksAt(point) - at, 0);
 					added.push_back(std::move(item));
 				}
 				const Json result = run("note.add", {{"part", part}, {"notes", added}});
@@ -391,7 +396,8 @@ namespace gnubase::engine
 		const Json note = {{"type", "object"}, {"additionalProperties", false},
 			{"properties",
 				{{"position", integer}, {"length", integer}, {"pitch", integer}, {"velocity", number},
-					{"releaseVelocity", number}, {"channel", integer}, {"take", takeIndex}}},
+					{"releaseVelocity", number}, {"channel", integer}, {"take", takeIndex},
+					{"expressions", expressionsSchema()}}},
 			{"required", {"position", "length", "pitch", "velocity"}}};
 		const Json controller = {{"type", "object"}, {"properties", {{"take", takeIndex}}}, {"required", {"position"}}};
 		const Json track = {{"type", "object"}, {"additionalProperties", false},
@@ -415,7 +421,8 @@ namespace gnubase::engine
 				"after the highest one that the track's events where they lie are on; the last take plays where they "
 				"overlap. Per MIDI or instrument track the takes (position and length) "
 				"and what was recorded, all in project samples: notes as note.add takes them and controllers as "
-				"controller.add does, with positions and lengths in project samples, and each with take, the index "
+				"controller.add does, with positions and lengths in project samples (a note's expression points' "
+				"too), and each with take, the index "
 				"of the take it was recorded in (0 by default). They go into a MIDI part from "
 				"the first take's start to the last one's end, whole bars with snapToBars, by midiMode, the MIDI "
 				"record mode: newParts (the default) adds a part of their own; merge adds them to the first unlocked "
