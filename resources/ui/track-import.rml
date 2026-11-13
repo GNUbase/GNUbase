@@ -3,9 +3,10 @@
      app::AppUi opens it with the file chosen with File > Import > Tracks (path) and the first selected track (below).
      Its Lua lists the file's tracks with track.importSources, each with whether it is imported and where to (New
      Track or a track of the project of the same type), and on OK sends track.import with the options, then for Copy
-     to Active Project Folder media.conform for the imported media files at another sample rate (Convert Sample Rate)
-     and media.prepareArchive for the others. Tracks that can't be imported yet show, disabled. The engine's message
-     shows when it refuses, and the dialog stays open. -->
+     to Active Project Folder media.conform for the imported media files at another sample rate (Convert Sample Rate,
+     available when the file has media files at another rate than the project's) and media.prepareArchive for the
+     others. Tracks that can't be imported yet show, disabled. The engine's message shows when it refuses, and the
+     dialog stays open. -->
 <rml>
 <head>
 	<title>Import Options</title>
@@ -212,9 +213,9 @@
 			setDisabled(element("import-range-start"), not checked("import-range"))
 			setDisabled(element("import-range-end"), not checked("import-range"))
 			setDisabled(element("import-locators"), not checked("import-range"))
-			-- Convert Sample Rate only with Copy, for a file at another sample rate (reference manual p. 205).
-			local copy = checked("import-copy")
-			setDisabled(element("import-convert"), not copy or dialog.file.sampleRate == dialog.project.sampleRate)
+			-- Convert Sample Rate only with Copy, for a file with media files at another sample rate than the project's
+			-- (reference manual p. 205), whatever the file's own rate.
+			setDisabled(element("import-convert"), not checked("import-copy") or not dialog.convertible)
 		end
 
 		local function row(track)
@@ -297,6 +298,10 @@
 				element("import-new-position"):SetAttribute("value", "bottom")
 				setDisabled(element("import-new-position"), true)
 			end
+			dialog.convertible = false
+			for _, rate in ipairs(listed.mediaSampleRates) do
+				dialog.convertible = dialog.convertible or rate ~= dialog.project.sampleRate
+			end
 			dialog.file = listed.project -- once its rows are there, for update
 			dialog.update()
 		end
@@ -337,19 +342,55 @@
 			end
 		end
 
-		-- Select Matching: the project's track of the same name and type for each chosen track; Reset: New Track.
+		-- Select Matching: the project's first track of the same name and type for each chosen track that doesn't go
+		-- along with its folder, unless another chosen track has it or a folder around it already, as a track inside
+		-- a folder that another one replaces can't be a destination too: outer tracks first, then top to bottom.
+		-- Reset: New Track.
 		function dialog.match(matching)
+			local mine, order = {}, {}
+			for index, track in ipairs(dialog.project.tracks) do
+				mine[track.id], order[track.id] = track, index
+			end
+			local function depth(id)
+				local result, parent = 0, mine[id].parent
+				while parent ~= 0 and mine[parent] ~= nil do
+					result, parent = result + 1, mine[parent].parent
+				end
+				return result
+			end
+			local candidates = {}
 			for _, track in ipairs(chosen()) do
-				local destination = "0"
-				if matching then
-					for _, mine in ipairs(dialog.project.tracks) do
-						if mine.name == track.name and mine.type == track.type then
-							destination = tostring(mine.id)
+				if matching and not insideImported(track) then
+					for _, other in ipairs(dialog.project.tracks) do
+						if other.name == track.name and other.type == track.type then
+							candidates[#candidates + 1] = {source = track.id, destination = other.id, row = #candidates}
 							break
 						end
 					end
 				end
-				element("import-destination-" .. track.id):SetAttribute("value", destination)
+			end
+			table.sort(candidates, function(a, b)
+				local da, db = depth(a.destination), depth(b.destination)
+				if da ~= db then
+					return da < db
+				end
+				if a.destination ~= b.destination then
+					return order[a.destination] < order[b.destination]
+				end
+				return a.row < b.row -- the upper one of the file's tracks matching the same track keeps it
+			end)
+			local taken, found = {}, {}
+			for _, candidate in ipairs(candidates) do
+				local free, id = true, candidate.destination
+				while id ~= 0 and mine[id] ~= nil do
+					free, id = free and not taken[id], mine[id].parent
+				end
+				if free then
+					taken[candidate.destination], found[candidate.source] = true, candidate.destination
+				end
+			end
+			for _, track in ipairs(chosen()) do
+				element("import-destination-" .. track.id):SetAttribute("value", tostring(found[track.id] or 0))
 			end
 		end
 
@@ -374,8 +415,9 @@
 				timecode(dialog.project.startTime + dialog.locators[2] / rate, dialog.project.frameRate))
 		end
 
-		-- A range field, a timecode of the file, as samples from the file's start (track.import's range), or nil. The
-		-- locators' timecodes in the project are where Absolute Position puts what has that timecode in the file.
+		-- A range field, a timecode of the file at the project's frame rate, as Use Locators fills it, as samples at
+		-- the project's sample rate from the file's start (track.import's range), or nil. The locators' timecodes in
+		-- the project are where Absolute Position puts what has that timecode in the file.
 		local function rangeValue(id)
 			local seconds = gnubase.ui.parseTimecode{text = value(id), frameRate = dialog.project.frameRate}.seconds
 			return seconds and math.floor((seconds - dialog.file.startTime) * dialog.project.sampleRate + 0.5)

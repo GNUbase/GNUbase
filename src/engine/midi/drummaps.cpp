@@ -237,6 +237,17 @@ namespace gnubase::engine::midi
 		return played;
 	}
 
+	std::array<uint8_t, g_drumSounds> inputPitches(const DrumMap& map)
+	{
+		std::array<uint8_t, g_drumSounds> pitches{};
+		for (size_t played = 0; played < pitches.size(); ++played)
+			pitches.at(played) = static_cast<uint8_t>(played);
+		// From the top, so that the first sound by pitch with an I-note has it.
+		for (size_t pitch = map.sounds.size(); pitch-- > 0;)
+			pitches.at(map.sounds.at(pitch).iNote % pitches.size()) = static_cast<uint8_t>(pitch);
+		return pitches;
+	}
+
 	// <DrumMap> with the name, the snap values the sounds use (Quantize: Grid, the note value's denominator, and
 	// Type 0 straight, 1 triplet, 2 dotted), the sounds by pitch (Map), the drum sound list's order and the outputs
 	// the sounds' PortIndex names, the first being the track's (Default).
