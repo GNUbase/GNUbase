@@ -98,7 +98,7 @@
 		<button menu="window-menu">Window</button>
 	</menubar>
 	<!-- The toolbar's sections, which its setup pane #toolbar-setup shows, hides and orders (reference manual p. 1575). -->
-	<div id="toolbar" class="toolbar" strip="toolbar" sections="toolbar" contextmenu="toolbar-setup">
+	<div id="toolbar" class="toolbar" strip="toolbar" sections="toolbar" fit="room" contextmenu="toolbar-setup">
 		<div class="toolbar-section" section="tools" label="Tool Buttons">
 			<button id="combine-selection-tools" type="toggle" class="icon-only" title="Combine Selection Tools"><svg class="icon" src="../icons/tool-combine-selection.svg"/></button>
 			<button tool="objectSelection" tool-menu="object-selection-menu" class="icon-only" title="Object Selection"><svg class="icon" src="../icons/tool-pointer.svg"/></button>
@@ -137,11 +137,11 @@
 			<button id="select-color" class="icon-only" menu="color-menu" title="Select Color for Selected Tracks or Events"><svg class="icon" src="../icons/general-color.svg"/></button>
 		</div>
 		<div class="toolbar-section" section="trackVisibility" label="Track Visibility Configurations">
-			<button id="track-visibility-configurations" class="track-visibility-configurations" menu="track-visibility-configurations-menu" title="Track Visibility Configurations">Configurations</button>
+			<button id="track-visibility-configurations" menu="track-visibility-configurations-menu" title="Track Visibility Configurations">Configurations</button>
 		</div>
 		<div class="toolbar-section" section="rootKey" label="Project Root Key">
 			<!-- The Project Root Key (reference manual p. 414, docs/features/transpose.md), which the display shows -->
-			<button id="root-key" class="toolbar-root-key" menu="root-key-menu" title="Project Root Key">-</button>
+			<button id="root-key" menu="root-key-menu" title="Project Root Key">-</button>
 		</div>
 		<div class="spacer"/>
 		<div class="toolbar-section" section="zones" label="Window Zone Controls">

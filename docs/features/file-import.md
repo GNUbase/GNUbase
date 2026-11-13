@@ -64,11 +64,13 @@ The options of the reference's MIDI file import (reference manual pp. 364-365, #
   file's end counts. Content on linear tracks keeps its time in samples, so it counts by where the file ends in the
   file's tempo. An audio event on a musical track keeps its start in ticks and its length in samples, so it counts by
   its start in the file's tempo plus its length, wherever it starts; one whose clip plays in musical mode stretches
-  with the tempo and counts by its end in ticks in the project's tempo before the import. The project's tempo then goes on from the tempo it had at the end, with its later changes; the same
-  goes for its signatures, from the next bar start. Otherwise, in a new project for instance, the file's last tempo
-  and signature go on: there is nothing of the project's to keep, and the file's tempo then holds for what follows
-  it, as when the project is made from the file. Without `tempo` the file plays in the project's tempo from the
-  position.
+  with the tempo and counts by its end in ticks in the project's tempo before the import. On a linear track an audio
+  event whose clip plays in musical mode keeps its start in samples and its length in beats, so it counts by its
+  start in ticks in the file's tempo plus that length. The project's tempo then goes on from the tempo it had at the
+  end, with its later changes; the same goes for its signatures, from the next bar start. Otherwise, in a new
+  project for instance, the file's last tempo and signature go on: there is nothing of the project's to keep, and the
+  file's tempo then holds for what follows it, as when the project is made from the file. Without `tempo` the file
+  plays in the project's tempo from the position.
 - **dissolve** false keeps a type 0 file in one track with all its MIDI channels (Auto Dissolve Format 0 off).
 - **singlePart** puts the whole file into one part on one track (Import Dropped File as Single Part): **track**, a
   MIDI or instrument track of the project, or a new track named after the file. On a linear track of the project
@@ -107,7 +109,8 @@ All of it is the one undo step of the import.
     track").
   - Split Channels puts every channel of a file with several onto a new mono track of its own (p. 358), whatever is
     selected; mono files still go onto the selected track.
-  - New tracks go to the end of the project, as Add Track's do; below the selected track comes with #448.
+  - New tracks go to the end of the project: imports keep adding their tracks at the end, unlike Add Track, whose
+    tracks go below the selection ([add-track.md](add-track.md)).
 - **Drag and drop**: files dropped on the event display (the shell's `filedrop` event) go to the track of the lane
   under the mouse if it is an audio track, on a take lane of a track whose lanes show on that lane
   ([comping.md](comping.md)), else to new tracks, at the time under the mouse. Dropped outside the lanes, such as on
@@ -177,12 +180,12 @@ the next import.
 
 Of the MIDI file import options: Convert RPN/NRPN to Single Events, which needs RPN and NRPN events of their own (the
 project holds them as the control changes they are made of, #177), Import Karaoke Lyrics as Text, which needs lyric and
-text events (#719), Extract First Patch and Volume/Pan on other MIDI channels than 1, which needs an output channel
-for MIDI tracks ([mixer.md](mixer.md)), and the Destination that loads a multi-timbral instrument per channel, which needs plugin instruments; the
-export options of the MIDI File page. Import of audio CDs, audio from video and REX files. New tracks below the
-selected track (#448). Converting as a job: files are converted on the command thread, which waits for a long MP3 file
-(as for `media.convert`). Removing the files an unsaved project made (recordings and converted imports) when it is
-closed without saving.
+text events (#719), Extract First Patch and Volume/Pan on other MIDI channels than 1, which needs an output channel for
+MIDI tracks ([mixer.md](mixer.md)), and the Destination that loads a multi-timbral instrument per channel, which needs
+plugin instruments; the export options of the MIDI File page. Import of audio CDs, audio from video and REX files.
+Converting as a job: files are converted on the command thread, which waits for a long MP3 file (as for
+`media.convert`). Removing the files an unsaved project made (recordings and converted imports) when it is closed
+without saving.
 
 ## Checks
 
@@ -218,13 +221,15 @@ automation point on a linear track, a chord, a scale, a linear transpose event a
 the file's end, a linear audio event that ends after it only in the file's tempo, audio events and parts on another
 version of their track and an audio event on a musical track after a file slower than the project, audio events on
 musical tracks that end after the file's end only in the file's tempo (one that starts in the file, one that starts
-before it), but not for content before the file's end, such as an audio event on a musical track that ends there in
-the file's tempo, also one that ends after it only in the project's), undo and redo of such an import with the
-project's tempo, signatures and tempo mode, a type 0 file kept in one track, the whole file in one part on a new track and on an instrument track at a
-position and on a linear MIDI track in samples, refusing an audio track or `track` without `singlePart`, the first
-patch and volume and pan of channel 1 in a MIDI track's settings while other channels' and later events stay, none on
-instrument tracks, a track of nothing but those kept without a part, and controllers
-in automation lanes with the sustain pedal left in the part, in one undo step. `tests/fileimport_tests.cpp` runs
+before it) and audio events in musical mode on linear tracks that end after it only in the file's tempo (one that starts
+in the file, one that starts before it), but not for content before the file's end, such as an audio event on a musical
+track that ends there in the file's tempo, also one that ends after it only in the project's, and one in musical mode on
+a linear track), undo and redo of such an import with the project's tempo, signatures and tempo mode, a type 0 file kept
+in one track, the whole file in one part on a new track and on an instrument track at a position and on a linear MIDI
+track in samples, refusing an audio track or `track` without `singlePart`, the first patch and volume and pan of channel
+1 in a MIDI track's settings while other channels' and later events stay, none on instrument tracks, a track of nothing
+but those kept without a part, and controllers in automation lanes with the sustain pedal left in the part, in one undo
+step. `tests/fileimport_tests.cpp` runs
 File > Import > MIDI File: Cancel, No at the left locator keeping the project's tempo with Ignore Master Track
 Events on Merge, and Yes into a new project after the unsaved changes question, with the file's tempo; and drops
 MIDI files with the default settings (the part at the drop's bar, the first patch extracted), as a single part on
@@ -235,10 +240,11 @@ options (on one track in an unsaved project; split with a name format and copied
 off a 44.1 kHz file keeps its path and no copy job starts; with Convert alone it is converted into the project's `Audio`
 folder at the project's sample rate with no copy job; the pool's Import Medium imports without the dialog and keeps a
 file from outside the project where it is, with no copy job, as Copy off says; the selected track imports without the
-dialog with the stored options), the dialog starts from the settings and keeps its choices in them, Do not ask again
-skips the dialog next time and after a restart until the setting is reset, and each Name Format chosen in the dialog
-names the split files. The preferences' Editing > Audio page shows the settings, Use Settings imports with what it sets
-(a stereo file split as its Name Format says, with Copy off as the page set it: Split Channels writes into `Audio`
-whatever Copy says, as the Use Settings test shows with Copy on; and with Copy off a mono file that isn't split keeping
-its original path with no copy job), and its Open Options Dialog brings the dialog back, starting from the same
-settings.
+dialog with the stored options; and files dropped on an audio track's lane import without the dialog, keeping a file
+from outside the project where it is with Copy and Convert off and splitting a stereo file as the name format says), the
+dialog starts from the settings and keeps its choices in them, Do not ask again skips the dialog next time and after a
+restart until the setting is reset, and each Name Format chosen in the dialog names the split files. The preferences'
+Editing > Audio page shows the settings, Use Settings imports with what it sets (a stereo file split as its Name Format
+says, with Copy off as the page set it: Split Channels writes into `Audio` whatever Copy says, as the Use Settings test
+shows with Copy on; and with Copy off a mono file that isn't split keeping its original path with no copy job), and its
+Open Options Dialog brings the dialog back, starting from the same settings.

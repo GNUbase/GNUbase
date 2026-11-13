@@ -24,6 +24,10 @@ A project that is moved or archived needs its media with it (#170). `src/engine/
 - The UI keeps the job ids that its own `project.backup`s returned and reports only those jobs, in the window that asked: a backup that an MCP client or a Lua script starts shows nothing there (#944).
 - **Media > Prepare Archive** (`pool.prepareArchive`, `ui::PoolPanel::prepareArchive`) first asks, as the reference does (p. 135), when the project has files outside its folder that it can copy (`pool.get`'s `externalFiles` without its `missingExternalFiles`): `resources/ui/prepare-archive.rml` says how many, and how many more are missing, before it asks whether to copy them, and sends `media.prepareArchive` with Proceed. Without such files, or for a project without a file, which the engine refuses, it sends it at once. Its result shows in the pool's message line, as the other Media menu commands' do ([pool.md](pool.md)): its progress, then e.g. "Copied 2 files into the project folder; 1 missing file wasn't copied; 1 file changed meanwhile and was left as it is.", or why it failed, such as a project that was never saved.
 
+## Tests
+
+`tests/backup_tests.cpp` tests the commands, `tests/projectfiles_tests.cpp` the dialogs. What must happen while a backup or copy job runs, such as `job.cancel`, an edit that keeps `activate` from opening the backup, a relink by hand, or another backup into the folder the job writes into, happens while `test::HeldJob` (`tests/testutils/heldjob.h`) holds the job at its first `job.progress`, mostly through `test::whileHeld`, so that the job can't get further or end first, however the threads are scheduled (#1154). Only the job's thread waits: events and commands go on meanwhile, as `a job held at its first progress keeps no command or event waiting` shows; another test has a hold lapse and the job run free, held at its first `job.progress` only.
+
 ## Not yet
 
 Video files, which Prepare Archive copies into the project folder itself, come with video (#198).

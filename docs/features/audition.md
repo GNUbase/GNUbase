@@ -51,8 +51,11 @@ a media file or a clip of the project.
   block; a new audition holds the cue thread off until its own cue is in), and the audio thread plays one block at a
   time from there, in the device's block size. The cue thread cues as for a playing transport also before the audio
   thread has played a block of the audition: it may be in the middle of the first one, and an exact cue at the start
-  would move the stream it reads back there. What it plays is bit for bit what the track's player gives during
-  playback.
+  would move the stream it reads back there. Until then it cues as a start (`Cue::starting`): an entry at the start
+  that has no voice, as when every voice of the track is busy, still gets one there and not 0.1 seconds ahead. An
+  audition that starts at exactly the frame the one before reads next, or waits at, gets a voice of its own there,
+  while the one before plays that voice on until the new one is out. What it plays is bit for bit what the track's
+  player gives during playback.
 - **Scrubbing** can't stream from disk, since it goes backwards and at any speed. The command thread reads the
   track's front layer between the two positions from its clips (each clip frame to the nearest, with the events'
   volume and fades), reads that through at the speed it takes, with linear interpolation, and hands the result to
@@ -75,7 +78,7 @@ a media file or a clip of the project.
   half the project's sample rate, and its errors, also for a hand-edited project's file without a sample rate or
   length; a clip played and scrubbed with its fades; an audition whose first block plays while the cue thread cues
   it, between reading where the audio thread plays and cueing the streams (`Audition::playedRead`), playing on
-  without a gap.
+  without a gap (after waiting for the streams, so that a slow disk thread fails as that).
 - `tests/playback_tests.cpp`, in real time (`[realtime]`): stopping freeing what played also from the middle of an
   audio block; on the dummy device, scrubbing while the transport plays leaving the playback without dropouts, and an
   `audition.start` while another plays starting at its position without a frame left out (the cue thread held off,

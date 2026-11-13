@@ -430,6 +430,13 @@ namespace gnubase::app
 				if (keys.key == Rml::Input::KI_UNKNOWN)
 					m_winding.stop(); // the keyboard focus lost: also a button held
 			});
+		// What a script's click or key changed shows in the menu before the script reads the DOM, as after a step.
+		m_shell.onInputHandled(
+			[this]
+			{
+				if (m_menu)
+					m_menu->update();
+			});
 		m_keys.add({"window.markers", "Opens or closes the markers window.",
 			// Later in the step: the key may be the markers window's own, which closing it would destroy.
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_shell.post([this] { toggleMarkers(); }); }});
@@ -1621,7 +1628,7 @@ namespace gnubase::app
 		// Later in the step: the click may be in the channel settings window, which opening it would rebuild.
 		actions.editChannel = [this](uint64_t track) { m_shell.post([this, track] { openChannelSettings(track); }); };
 		// Add Effect Track to Send (p. 554): the add track dialog's effect page, in the mixer's window, later in the
-		// step, outside the drop-down list's event.
+		// step, outside the drop-down list's event. The new track goes below the track whose send it is.
 		actions.addEffectTrack = [this](Rml::Element& from, uint64_t track, int send)
 		{
 			for (const ui::Window* window : m_shell.windows())
@@ -1632,7 +1639,7 @@ namespace gnubase::app
 							if (ui::Window* found = m_shell.find(id))
 								openOnce(*found, "add-track.rml", m_addTrack,
 									{{"type", "effect"}, {"tracks", std::to_string(track)},
-										{"send", std::to_string(send)}});
+										{"send", std::to_string(send)}, {"below", std::to_string(track)}});
 						});
 		};
 		actions.wentTo = [this](uint64_t track)
