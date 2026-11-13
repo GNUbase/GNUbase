@@ -138,6 +138,17 @@ namespace gnubase::engine
 				m_unlogged = true;
 		}
 
+		// For a command registered with ProjectModel::addEdit that found nothing to change, such as a settings command
+		// given the values the project has: the project's revision stays, so that it doesn't count as modified, no
+		// undo step is recorded and no snapshot is published. The command must have changed nothing and emitted
+		// nothing. Inside another command, the outer one decides.
+		void markUnchanged()
+		{
+			if (m_outer == nullptr)
+				m_unchanged = true;
+		}
+		bool unchanged() const { return m_unchanged; }
+
 		// If the command fails, leaves the failure out of engine.commandLog and the error log: for a command that the
 		// engine runs on its own and whose failure was reported already, such as a due auto save that fails again.
 		// Inside another command, the outer one decides.
@@ -154,6 +165,7 @@ namespace gnubase::engine
 		CommandContext* m_outer = nullptr;
 		Engine* m_engine = nullptr; // set on the outermost context
 		std::vector<Event> m_events;
+		bool m_unchanged = false;    // markUnchanged
 		bool m_unlogged = false;     // leaveOutOfLog
 		bool m_quietFailure = false; // failQuietly
 	};

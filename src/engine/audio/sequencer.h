@@ -115,6 +115,9 @@ namespace gnubase::engine
 		std::shared_ptr<MidiSequencer> pre;
 		bool sendBuffers = false; // filled in by setSequence: MidiSequencer::sendOutput has room, from now on
 		uint64_t serial = 0;      // filled in by setSequence: counts the sequences it was given
+		// Filled in by setSequence: changes when another map is assigned or the map's slots change, so that the
+		// notes played into the track start from the default slot again.
+		uint64_t slotsSerial = 0;
 	};
 
 	// Which events a jump chases (the midi.chase* user settings): the controller events in effect where playback
@@ -151,10 +154,9 @@ namespace gnubase::engine
 	// of a kind its channel's values and automation have just sent (ChaseTrack::channelKinds), which come first, in its
 	// events; stopped, up to and including the cursor. A MIDI channel's bank select chased that way brings the
 	// channel's latest program after it, or after the earlier of CC 0 and CC 32, whichever track has it, as a jump
-	// sends them. A track that only its mute
-	// button muted had its parts in the sequence, and its strip sends what the mute dropped: only the kinds its channel
-	// sent are chased, whose dropped values the strip forgets. After a chase that didn't fit, it chases everything
-	// there again. Notes aren't chased.
+	// sends them. A track that only its mute button muted had its parts in the sequence, and its strip sends what the
+	// mute dropped: only the kinds its channel sent are chased, whose dropped values the strip forgets. After a chase
+	// that didn't fit, it chases everything there again. Notes aren't chased.
 	//
 	// The track's own events, those of its input and of its parts, go through its MIDI inserts in order, each effect
 	// playing what the one before it played, and each MIDI send plays its effect on them beside that, before or after
@@ -340,7 +342,8 @@ namespace gnubase::engine
 		int m_inputSlot = -1;
 		uint8_t m_inputSlotChannel = 0;
 		int m_inputSlotHeld = -1;
-		uint64_t m_instrument = 0; // playOn: where its notes went in the graph that runs
+		uint64_t m_inputSlotsSerial = 0; // the MidiSequence::slotsSerial they belong to
+		uint64_t m_instrument = 0;       // playOn: where its notes went in the graph that runs
 
 		// Command thread: the effect in each slot, the inserts' then the sends', while it plays.
 		struct SlotEffect
@@ -355,7 +358,11 @@ namespace gnubase::engine
 		std::array<SlotEffect, 2 * midi::g_effectSlots> m_slots;
 		uint64_t m_effectSerial = 0;   // the last RunningEffect::serial given
 		uint64_t m_sequenceSerial = 0; // the last MidiSequence::serial given
-		double m_sampleRate = 0.0;     // prepare's, for new effects; 0: not prepared yet
+		// The articulation map's id and slots of the last sequence given, and its MidiSequence::slotsSerial.
+		ObjectId m_mapId = 0;
+		std::vector<SoundSlot> m_mapSlots;
+		uint64_t m_slotsSerial = 0;
+		double m_sampleRate = 0.0; // prepare's, for new effects; 0: not prepared yet
 		uint32_t m_maxFrames = 0;
 		// Audio thread: allocated by setSequence before the first sequence with effects.
 		graph::EventBuffer m_own;    // the track's own events, for the effects
