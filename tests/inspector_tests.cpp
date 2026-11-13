@@ -965,6 +965,13 @@ namespace
 		{
 			CHECK(shown.size() == order.size());
 		}
+		// The shown sections fit inside the toolbar. x and width are rounded separately at fractional dp ratios, so
+		// the inset may differ by up to 2 px.
+		const Json bar = element(window.app, "#toolbar").at("box");
+		const Json last = element(window.app, "#toolbar [section=" + order.back() + "]").at("box");
+		const double rightInset = bar.at("x").get<double>() + bar.at("width").get<double>() -
+			last.at("x").get<double>() - last.at("width").get<double>();
+		CHECK(std::abs(rightInset - gaps.inset) <= 2.0);
 		return shown;
 	}
 }
