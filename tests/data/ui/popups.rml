@@ -1,9 +1,9 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- Menus, context menus and tooltips of the widget library (#54) for tests/widgets_tests.cpp: a menu button, a track
      with a context menu that has submenus (one with only a disabled item), a disabled item and a hidden one (#524), an
-     element whose right click with a modifier key opens another menu, elements with tooltips (one with a member), a notification, a menu
-     with nested controls and controls that aren't Tab stops (#826), and a menu bar whose File menu has a submenu and
-     whose Tools title is disabled. -->
+     element whose right click with a modifier key opens another menu, elements with tooltips (one with a member
+     without a title and one with a title of its own), a notification, a menu with nested controls and controls that
+     aren't Tab stops (#826), and a menu bar whose File menu has a submenu and whose Tools title is disabled. -->
 <rml>
 <head>
 	<title>Popups</title>
@@ -12,8 +12,9 @@
 		#track { position: absolute; left: 200dp; top: 100dp; width: 200dp; height: 40dp; }
 		#plain { position: absolute; left: 200dp; top: 200dp; width: 200dp; height: 40dp; }
 		#corner { position: absolute; right: 0; bottom: 0; width: 40dp; height: 20dp; }
-		#group { position: absolute; left: 450dp; top: 200dp; width: 200dp; height: 60dp; }
+		#group { position: absolute; left: 450dp; top: 200dp; width: 150dp; height: 60dp; }
 		#member { position: absolute; left: 10dp; top: 10dp; width: 40dp; height: 20dp; }
+		#titled { position: absolute; left: 70dp; top: 10dp; width: 40dp; height: 20dp; }
 		#modified { position: absolute; left: 450dp; top: 100dp; width: 100dp; height: 40dp; }
 		#menubar { position: absolute; left: 200dp; top: 300dp; }
 	</style>
@@ -24,7 +25,7 @@
 	<div id="track" class="panel" contextmenu="track-menu" title="Audio 01">Audio 01</div>
 	<div id="plain" class="panel">No menu</div>
 	<div id="corner" contextmenu="track-menu" title="A long tooltip near the window's corner"/>
-	<div id="group" title="Group"><div id="member"/></div>
+	<div id="group" title="Group"><div id="member"/><div id="titled" title="Titled"/></div>
 	<div id="modified" class="panel" contextmenu="track-menu" modifiercontextmenu="edit">Modified</div>
 	<notification id="message" duration="0.5"/>
 	<menu id="edit">
