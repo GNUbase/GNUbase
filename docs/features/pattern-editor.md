@@ -52,9 +52,12 @@ They emit `pattern.added`, `pattern.changed` and `pattern.removed` with the patt
 - **Other tracks** (pp. 936-937): a pattern event copied or moved to another track, or on a duplicated track, plays a
   copy of its pattern on its own track, whose pattern management lists it (`midi::adoptPatterns` after every edit). A
   track without pattern events of its own gets copies of all the patterns of the event's track, one with pattern
-  events only the event's pattern; a copy the track has already, unchanged, plays it again instead of another one
-  (#1091). `midiPart.add` and `midiPart.set` return the part with the copy. Duplicate Track copies all of the track's
-  patterns, those no event plays too. Removing a track removes its patterns.
+  events only the event's pattern; a copy the track has already, made from that pattern and unchanged since, plays it
+  again instead of another one (#1091). An equal pattern that isn't its copy doesn't count (#1202): equal patterns of
+  the event's track each get a copy, and a track's own pattern doesn't play events copied there. Which pattern a copy
+  was made from isn't saved, so in a loaded project the next copy is a new one. `midiPart.add` and `midiPart.set`
+  return the part with the copy. Duplicate Track copies all of the track's patterns, those no event plays too, and the
+  pattern events of all its versions play the copies (#1202). Removing a track removes its patterns.
 - **MIDI functions** read what a pattern event plays (`midi::playedNotes`): Merge, Dissolve Part and Bounce make notes
   of its steps. The functions that change notes (`midi.transpose` and the others) leave pattern events, whose steps
   the pattern editor edits, as they are; the controller functions (`midi.deleteControllers`,
@@ -119,7 +122,10 @@ part's pattern.
 - A gesture edits a copy of the pattern and changes only the steps' classes while it goes on, so that its mouseup
   reaches the elements it started on; it ends with one `pattern.set` in a `history.transaction`, one undo step. A
   project change that comes while it goes on (a script's, an MCP client's, an undo) shows when it ends, without dropping
-  what it changed: its `pattern.set` sends the lanes it edited and the others as the engine has them then (#1091); if the engine refuses its `pattern.set`, the engine's pattern shows again.
+  what it changed: its `pattern.set` sends the lanes it edited and the others as the engine has them then (#1091); if the engine refuses its `pattern.set`, the engine's pattern shows again. A project read before the last
+  `pattern.set` was answered (a `project.get` answered before it, or the project the editor has with a newer view)
+  doesn't have its lanes yet: the editor shows, and the next gesture sends, the lanes it sent instead of that
+  project's (#1202). `ui::MidiEditor` tells it when it read the project (`EngineBinding::handed`).
 - **Commands** (Edit menu, `app::AppUi`): `editor.openPattern` (Open Pattern Editor) opens the selected MIDI parts in
   the editor window's pattern editor; `pattern.loadPreset` and `pattern.savePreset` (Load and Save Pattern Preset...)
   load a preset into, and save the patterns of, the editor's active track through the OS's file dialogs.
@@ -148,12 +154,13 @@ read, which have the parts' own notes.
   ties, repeats, gate, offsets, swing, the play directions, a lane's own length and resolution, mute, solo, longer and
   muted events; split, sized and glued pattern events continuing their pattern, glued to ordinary parts, negative
   offsets at the event's edges; Bounce, Dissolve Part, Merge and the other functions on pattern events; pattern
-  events copied and moved to other tracks, copied again, Duplicate Track with patterns no event plays and removing a
-  track; the pattern offset after a change of pattern; a split's pieces against the whole event for a wrapping tie;
+  events copied and moved to other tracks, copied again, equal patterns that aren't copies, Duplicate Track with
+  patterns no event plays and other versions, and removing a track; the pattern offset after a change of pattern; a split's pieces against the whole event for a wrapping tie;
   the controller functions on pattern events; probability per repeat; Convert
   Pattern Event to MIDI Part; presets saved and loaded, with errors; the project file; the pattern editor content.
 - `tests/patterneditor_ui_tests.cpp` drives the app with `ui::Automation`: the lanes of a drum pattern, the draw
-  tool's click and drag with undo, a drag that the project changes under, on its lane and another, and one that is refused, mono mode over a
+  tool's click and drag with undo, a drag that the project changes under, on its lane and another, and one that is
+  refused, a project read before the last `pattern.set` shown with and without a gesture going on, mono mode over a
   tie, Double Resolution and Double Length with lanes of their own length and resolution, selecting, deleting and double-clicking steps, Tie and Split, mute, the parameter
   lane's velocity and probability, the toolbar's menus and Double Length, Add Lane and melodic mode; New Melodic
   Pattern for a plain part, the pattern menu choosing, duplicating and converting; Open Pattern Editor and the Edit

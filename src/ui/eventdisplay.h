@@ -630,9 +630,9 @@ namespace gnubase::ui
 		struct AudioFades
 		{
 			double rate = 0.0;
-			int64_t length = 0; // for the fades only
+			int64_t fadeRoom = 0; // the frames its fades may take together: on a warped event what it plays for
 			double timeRate = 0.0;
-			int64_t frames = 0;
+			int64_t length = 0; // in clip frames
 			engine::Fade in;
 			engine::Fade out;
 			engine::Crossfade crossfade;

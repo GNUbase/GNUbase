@@ -7,6 +7,7 @@
 #include "engine/schema.h"
 
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -24,36 +25,37 @@ namespace gnubase::test
 	class HeldJob
 	{
 	public:
-		// Holds the first job of the given kind, such as "media.locate", that sends a job.progress from now on, once,
-		// for hold at most: then the hold lapses, and the job goes on as if released and is held at none of its later
-		// job.progress events. One HeldJob per engine at a time: a second throws std::logic_error and leaves the first
-		// one holding. It must not outlive the engine.
-		HeldJob(engine::Engine& engine, std::string kind, std::chrono::milliseconds hold = std::chrono::minutes(1));
+		// Holds the first job of the given kind, such as "media.locate", that sends a job.progress from now on, or the
+		// first jobs of the kind, each at its first job.progress, once, for hold at most: then the hold lapses, and the
+		// job goes on as if released and is held at none of its later job.progress events. One HeldJob per engine at a
+		// time: a second throws std::logic_error and leaves the first one holding. It must not outlive the engine.
+		HeldJob(engine::Engine& engine, std::string kind, std::chrono::milliseconds hold = std::chrono::minutes(1),
+			size_t jobs = 1);
 
-		// Releases the job and holds no other.
+		// Releases the jobs and holds no other.
 		~HeldJob();
 		HeldJob(const HeldJob&) = delete;
 		HeldJob& operator=(const HeldJob&) = delete;
 		HeldJob(HeldJob&&) = delete;
 		HeldJob& operator=(HeldJob&&) = delete;
 
-		// Whether the job is held at its first job.progress now: not before it got there, nor once it was released or
-		// its hold lapsed.
+		// Whether all the jobs are held at their first job.progress now: not before they got there, nor once they were
+		// released or a hold lapsed.
 		bool held() const;
 
-		// Waits until the job is at its first job.progress and returns whether it is held there; false if it didn't
-		// get there in time, or if it was released or its hold lapsed already.
+		// Waits until all the jobs are at their first job.progress and returns whether they are held there; false if
+		// they didn't get there in time, or if they were released or a hold lapsed already.
 		bool waitUntilHeld(std::chrono::milliseconds timeout = std::chrono::seconds(30));
 
-		// The id of the job that got to its first job.progress, held there or not anymore; 0 until then.
+		// The id of the first job that got to its first job.progress, held there or not anymore; 0 until then.
 		uint64_t job() const;
 
-		// How often a job was held: 0 until the job got to its first job.progress, then 1, also after a release or a
-		// lapsed hold, since the job is held at none of its later job.progress events.
+		// How often a job was held: 0 until the job got to its first job.progress, then 1 per job that did, also after
+		// a release or a lapsed hold, since a job is held at none of its later job.progress events.
 		int holds() const;
 
-		// Lets the job go on and holds no other. Returns whether the job was held until now: false if it didn't get to
-		// its first job.progress yet or its hold lapsed, so that it may have gone on before what the test did.
+		// Lets the jobs go on and holds no other. Returns whether all the jobs were held until now: false if one didn't
+		// get to its first job.progress yet or a hold lapsed, so that it may have gone on before what the test did.
 		bool release();
 
 	private:

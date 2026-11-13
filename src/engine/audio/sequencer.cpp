@@ -222,18 +222,19 @@ namespace gnubase::engine
 			controller.channel = midiChannel;
 			sent.push_back(controller);
 		};
-		// The channel's own values go out on MIDI channel 1 (channelAutomation).
+		// The channel's own values go out on its MIDI channel (channelAutomation).
+		const uint8_t own = channel.midiChannel;
 		if (channel.program)
-			add(ControllerType::Program, 0, 0);
+			add(ControllerType::Program, 0, own);
 		if (channel.program && channel.bank)
 		{
-			add(ControllerType::Control, 0, 0);
-			add(ControllerType::Control, 32, 0);
+			add(ControllerType::Control, 0, own);
+			add(ControllerType::Control, 32, own);
 		}
 		if (channel.midiVolume)
-			add(ControllerType::Control, 7, 0);
+			add(ControllerType::Control, 7, own);
 		if (channel.midiPan)
-			add(ControllerType::Control, 10, 0);
+			add(ControllerType::Control, 10, own);
 		for (const RenderAutomationLane& lane : channel.automation)
 			if (lane.target.type == AutomationTargetType::Controller)
 				add(ControllerType::Control, lane.target.number, lane.target.channel);

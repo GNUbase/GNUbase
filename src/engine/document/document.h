@@ -232,6 +232,9 @@ namespace gnubase::engine
 		// (docs/features/midi-devices.md).
 		std::optional<int> program = std::nullopt;
 		std::optional<int> bank = std::nullopt;
+		// MIDI channels: the MIDI channel (0 to 15) that the program, bank, MIDI volume and pan go out on, or none:
+		// Any, which sends them on channel 1 (docs/features/mixer.md).
+		std::optional<int> midiChannel = std::nullopt;
 		// NOLINTNEXTLINE(readability-redundant-member-init): see instrumentParameters
 		std::string device = {};
 		// MIDI and instrument tracks: the MIDI modifiers, which change how the track's notes play
@@ -1298,12 +1301,17 @@ namespace gnubase::engine
 		PlayDirection direction = PlayDirection::Forward;
 		double swing = 0.0; // -1 to 1: how far every second step moves, in half steps
 		std::vector<PatternLane> lanes;
+		// The pattern of another track that midi::adoptPatterns made it a copy of, 0 for none. Not saved: in a loaded
+		// project no pattern is a copy.
+		ObjectId copiedFrom = 0;
 	};
 
 	inline bool operator==(const Pattern& a, const Pattern& b)
 	{
-		return std::tie(a.id, a.track, a.name, a.mode, a.length, a.resolution, a.direction, a.swing, a.lanes) ==
-			std::tie(b.id, b.track, b.name, b.mode, b.length, b.resolution, b.direction, b.swing, b.lanes);
+		return std::tie(a.id, a.track, a.name, a.mode, a.length, a.resolution, a.direction, a.swing, a.lanes,
+				   a.copiedFrom) ==
+			std::tie(
+				b.id, b.track, b.name, b.mode, b.length, b.resolution, b.direction, b.swing, b.lanes, b.copiedFrom);
 	}
 
 	// A color of the project's color set (reference manual pp. 115-118), which colors are picked from.
@@ -1594,15 +1602,15 @@ namespace gnubase::engine
 	inline bool operator==(const Channel& a, const Channel& b)
 	{
 		return std::tie(a.id, a.track, a.format, a.input, a.output, a.instrument, a.volume, a.pan, a.panner, a.panLeft,
-				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.program, a.bank, a.device, a.modifiers,
-				   a.midiInserts, a.midiSends, a.inputTransformer, a.instrumentParameters, a.sample, a.monitor,
-				   a.recordEnable, a.midiInput, a.mute, a.solo, a.soloDefeat, a.listen, a.slots, a.notes, a.sections,
-				   a.sends) ==
+				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.program, a.bank, a.midiChannel, a.device,
+				   a.modifiers, a.midiInserts, a.midiSends, a.inputTransformer, a.instrumentParameters, a.sample,
+				   a.monitor, a.recordEnable, a.midiInput, a.mute, a.solo, a.soloDefeat, a.listen, a.slots, a.notes,
+				   a.sections, a.sends) ==
 			std::tie(b.id, b.track, b.format, b.input, b.output, b.instrument, b.volume, b.pan, b.panner, b.panLeft,
-				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.program, b.bank, b.device, b.modifiers,
-				b.midiInserts, b.midiSends, b.inputTransformer, b.instrumentParameters, b.sample, b.monitor,
-				b.recordEnable, b.midiInput, b.mute, b.solo, b.soloDefeat, b.listen, b.slots, b.notes, b.sections,
-				b.sends);
+				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.program, b.bank, b.midiChannel, b.device,
+				b.modifiers, b.midiInserts, b.midiSends, b.inputTransformer, b.instrumentParameters, b.sample,
+				b.monitor, b.recordEnable, b.midiInput, b.mute, b.solo, b.soloDefeat, b.listen, b.slots, b.notes,
+				b.sections, b.sends);
 	}
 
 	inline bool operator==(const Slot& a, const Slot& b)

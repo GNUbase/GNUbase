@@ -691,6 +691,64 @@ TEST_CASE("Duplicate Track copies patterns no event plays, and a track's copy of
 	CHECK(f.namesOn(other) == std::vector<std::string>{"Pattern 1", "Fill", "Pattern 1"});
 }
 
+TEST_CASE("Duplicate Track gives the pattern events of the track's other versions its copies of the patterns", "[unit]")
+{
+	Fixture f;
+	f.call("trackVersion.duplicate", {{"tracks", Json::array({f.track})}});
+	const auto copy = f.call("track.duplicate", {{"track", f.track}}).at("track").at("id").get<uint64_t>();
+	REQUIRE(f.namesOn(copy).size() == 1);
+	Json copied;
+	for (const Json& each : f.patterns())
+		if (each.at("track") == copy)
+			copied = each;
+	// The copy's first version plays the copy's pattern as it was duplicated, not the original's as it is (#1202).
+	f.lanes({{{"pitch", 36}, {"steps", steps({0})}}});
+	f.call("trackVersion.activate", {{"tracks", Json::array({copy})}, {"version", 1}});
+	CHECK(f.namesOn(copy).size() == 1);
+	size_t parts = 0;
+	const Json project = f.call("project.get");
+	for (const Json& part : project.at("midiParts"))
+		if (part.at("track") == copy)
+		{
+			++parts;
+			CHECK(part.at("pattern") == copied.at("id"));
+		}
+	CHECK(parts == 1);
+	CHECK(f.patternJson(copied.at("id")) == copied);
+}
+
+TEST_CASE("only a copy made from a pattern counts as the track's copy of it, not an equal pattern", "[unit]")
+{
+	Fixture f;
+	// Equal patterns of the event's track each get a copy of their own (#1202).
+	const Json twin = f.call("pattern.add", {{"track", f.track}, {"name", "Pattern 1"}}).at("pattern");
+	Json same = twin;
+	same["id"] = f.pattern.at("id");
+	REQUIRE(same == f.pattern);
+	const uint64_t other = f.addTrack();
+	f.call("event.copy", {{"events", {f.part}}, {"track", other}});
+	CHECK(f.namesOn(other) == std::vector<std::string>{"Pattern 1", "Pattern 1"});
+
+	// A track's own pattern that is equal to the event's doesn't play it.
+	const uint64_t third = f.addTrack();
+	const auto own = f.call("midiPart.add", {{"track", third}, {"position", 0}, {"length", g_bar}})
+						 .at("part")
+						 .at("id")
+						 .get<uint64_t>();
+	const Json mine = f.call("pattern.add", {{"part", own}}).at("pattern");
+	const auto copied =
+		f.call("event.copy", {{"events", {f.part}}, {"track", third}}).at("events").at(0).get<uint64_t>();
+	CHECK(f.namesOn(third).size() == 2);
+	CHECK(f.partJson(copied).at("pattern") != mine.at("id"));
+	CHECK(f.partJson(own).at("pattern") == mine.at("id"));
+	// Copied again, the event plays the copy made the first time.
+	const Json played = f.partJson(copied).at("pattern");
+	const auto again =
+		f.call("event.copy", {{"events", {f.part}}, {"track", third}}).at("events").at(0).get<uint64_t>();
+	CHECK(f.namesOn(third).size() == 2);
+	CHECK(f.partJson(again).at("pattern") == played);
+}
+
 TEST_CASE("pattern events open in the pattern editor", "[unit]")
 {
 	Fixture f;

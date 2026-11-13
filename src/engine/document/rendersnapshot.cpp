@@ -573,6 +573,7 @@ namespace gnubase::engine
 			render.midiPan = channel.midiPan;
 			render.program = channel.program;
 			render.bank = channel.bank;
+			render.midiChannel = static_cast<uint8_t>(channel.midiChannel.value_or(0));
 			render.modifiers = channel.modifiers;
 			if (const ArticulationMap* articulations = midi::articulationMapOf(project, track.id))
 				render.articulations = *articulations;
