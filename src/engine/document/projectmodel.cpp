@@ -1547,8 +1547,18 @@ namespace gnubase::engine
 				added.emplace_back("chord.changed", Json());
 			}
 			copy.children.clear();
+			// Its patterns, those no pattern event plays too, which its copied pattern events play, in its other
+			// versions too.
+			std::map<ObjectId, ObjectId> patterns;
+			std::vector<Pattern> copiedPatterns;
+			for (const auto& [patternId, pattern] : project.patterns)
+				if (pattern.track == id)
+				{
+					copiedPatterns.push_back(pattern);
+					patterns[patternId] = project.newId();
+				}
 			for (TrackVersion& version : copy.versions)
-				version = copyVersion(project, version, copy.id);
+				version = copyVersion(project, version, copy.id, patterns);
 			std::map<ObjectId, ObjectId> slots; // each copied slot's copy
 			if (copy.channel != 0)
 			{
@@ -1612,15 +1622,8 @@ namespace gnubase::engine
 				project.audioEvents[event.id] = event;
 				added.emplace_back("audioEvent.added", Json{{"event", toJson(event)}});
 			}
-			// Its patterns, those no pattern event plays too, which its copied pattern events play.
-			std::map<ObjectId, ObjectId> patterns;
-			std::vector<Pattern> copiedPatterns;
-			for (const auto& [patternId, pattern] : project.patterns)
-				if (pattern.track == id)
-					copiedPatterns.push_back(pattern);
 			for (Pattern& pattern : copiedPatterns)
 			{
-				patterns[pattern.id] = project.newId();
 				pattern.id = patterns.at(pattern.id);
 				pattern.track = copy.id;
 				added.emplace_back("pattern.added", Json{{"pattern", toJson(pattern)}});
