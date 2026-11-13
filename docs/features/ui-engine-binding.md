@@ -35,7 +35,10 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   Lua, automation) show at once while no step of the control is under way; during a drag the widget itself keeps the
   drag's value until it ends. Each view begins its `what`s with a name of its own, `stepOwner(view)` (`mixer 3 `,
   `inspector 7 `), so only the view whose control sends waits: the other mixers and the inspector that show the same
-  channel follow each step the engine took, also during the drag.
+  channel follow each step the engine took, also during the drag. A control's steps leave nothing behind: the record
+  of them goes away in the `update` after the one that handed on its last step's answer (#746), so a session keeps no
+  entry for every channel and parameter a gesture touched; a view showing what that update handed on still asks
+  `sending` and `ahead` about it, and a later gesture makes the record again.
 - **Events.** `on(name, handler)` calls `handler` with every event of that name, from whichever client caused it: a
   change made through MCP, Lua or another window reaches the UI the same way as the UI's own. The returned
   `Subscription` ends the handler when it goes, so a view that closes stops listening; subscriptions must not outlive
@@ -94,7 +97,9 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   binding woke it, once for any number of messages; subscriptions end with their objects, also from inside a handler;
   results reach `onResult` handlers for the UI's own commands only; watched values arrive once an update, only when they
   changed; a gesture's steps go one at a time, the newest replacing those that wait, as one undo step, without holding
-  up another control's, and steps without a gesture or of another gesture are kept, also after a refused one;
+  up another control's, and steps without a gesture or of another gesture are kept, also after a refused one; the
+  record of a control's steps goes away in the update after the one that handed on their last answer, also after a
+  refused one, and a later gesture makes it again;
   settling sends the steps that wait and waits for commands that change things and for queries sent with
   `sendAwaited`, and for what their answers send; what `afterAwaited` holds runs after the answer, in order, what a
   held one runs itself at once, and after another awaited query that a held one sends. `tests/scripts_ui_tests.cpp`
@@ -104,7 +109,10 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   the info line's) and turn the wheel while the engine answers late (`test::LateDrag`, `test::lateSteps` in
   `tests/uiapp.h`): the control never goes back toward an earlier step, and the engine and the control agree at the end;
   while a control moves faster than the engine answers, the other mixers and the inspector that show its channel follow
-  its steps. One test changes the transport through MCP and checks a document shows it, then clicks the document's
+  its steps. A mixer step and an info line volume step that the engine refuses, its track or one of the selected
+  events being gone, show in the command log, leave no undo step and let the control show the engine's value again; a
+  strip made again while its fader's step is in flight shows the engine's volume at once, not the widget's default.
+  One test changes the transport through MCP and checks a document shows it, then clicks the document's
   button and finds the command in `engine.commandLog`, sent by `ui`. Two more check drawing without input: a watched
   value draws its own window in the step it changed in, and no other window; events from MCP, results (a command's
   `done` or an `onResult` handler) and posted work draw every window once in the step they reach handlers, events or

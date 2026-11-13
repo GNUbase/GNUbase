@@ -1018,6 +1018,85 @@ TEST_CASE("a bank select chased for a track heard again brings its MIDI channel'
 	CHECK(player.heard == expected);
 }
 
+namespace
+{
+	// Chases a track heard again (heard, which this sets up to be told) where another track has a program change on
+	// MIDI channel 0 at program, the heard track first unless heardFirst is false, and returns what the jump into the
+	// block where it is heard again chased.
+	std::vector<Heard> chaseHeard(ChaseTrack heard, int64_t program, HeardAgain how, bool heardFirst = true)
+	{
+		auto heardAgain = std::make_shared<std::atomic<HeardAgain>>(HeardAgain::No);
+		heard.heardAgain = heardAgain;
+		ChaseTrack other = makeChaseTrack({controller(program, ControllerType::Program, 4, 0)}, {});
+		auto sequence = std::make_unique<MidiSequence>();
+		if (heardFirst)
+		{
+			sequence->chase.push_back(std::move(heard));
+			sequence->chase.push_back(std::move(other));
+		}
+		else
+		{
+			sequence->chase.push_back(std::move(other));
+			sequence->chase.push_back(std::move(heard));
+		}
+		auto instrument = std::make_shared<MidiSequencer>();
+		instrument->setSequence(std::move(sequence));
+		instrument->setChase(chaseAll());
+		Player player(instrument, 16);
+		player.locate(100);
+		player.play(16);
+		player.heard.clear();
+		heardAgain->store(how);
+		player.play(16);
+		return player.heard;
+	}
+}
+
+TEST_CASE("a bank select's LSB chased alone for a track heard again brings a later program after it", "[unit]")
+{
+	const int64_t at = GENERATE(30, 50);
+	CAPTURE(at);
+	std::vector<Heard> expected{{16, Type::Controller, 0, 32, 1, {}}};
+	if (at > 40)
+		expected.push_back({16, Type::Program, 0, 4, 0, {}});
+	CHECK(chaseHeard(makeChaseTrack({control(40, 32, 1)}, {}), at, HeardAgain::Quiet) == expected);
+}
+
+TEST_CASE("a program change at the position of a bank select chased for a track heard again comes after it if its "
+		  "track comes after the heard one",
+	"[unit]")
+{
+	// A jump sends the events at one position by track: a program on an earlier track before the bank select.
+	const bool heardFirst = GENERATE(false, true);
+	CAPTURE(heardFirst);
+	std::vector<Heard> expected{{16, Type::Controller, 0, 0, 3, {}}};
+	if (heardFirst)
+		expected.push_back({16, Type::Program, 0, 4, 0, {}});
+	CHECK(chaseHeard(makeChaseTrack({control(40, 0, 3)}, {}), 40, HeardAgain::Quiet, heardFirst) == expected);
+}
+
+TEST_CASE("a track that only its mute button muted, heard again, has the bank select and program of its channel's "
+		  "kinds chased",
+	"[unit]")
+{
+	// Its channel has a program in a bank: the program and both bank selects are its channel's kinds, whichever track
+	// has the latest; its CC 1 isn't, which its strip sends from what its mute kept.
+	const int64_t at = GENERATE(30, 50);
+	CAPTURE(at);
+	RenderChannel channel;
+	channel.type = TrackType::Midi;
+	channel.program = 1;
+	channel.bank = 2;
+	ChaseTrack heard = makeChaseTrack({control(20, 1, 5), control(40, 0, 3)}, {});
+	heard.channelKinds = channelChaseKinds(channel);
+	const std::vector<Heard> program{{16, Type::Program, 0, 4, 0, {}}};
+	const std::vector<Heard> select{{16, Type::Controller, 0, 0, 3, {}}};
+	std::vector<Heard> expected = at < 40 ? program : select;
+	expected.push_back(at < 40 ? select.front() : program.front());
+	const std::vector<Heard> chased = chaseHeard(std::move(heard), at, HeardAgain::Muted);
+	CHECK(chased == expected);
+}
+
 TEST_CASE("a routed MIDI track heard again chases into its strip alone, in that block at its start", "[unit]")
 {
 	// Its own sequencer: the instrument chases it with the others, the strip learns its pedals from stripChase.

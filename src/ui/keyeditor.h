@@ -120,6 +120,10 @@ namespace gnubase::ui
 		void drag(Rml::Event& event);
 		void release(Rml::Event& event);
 		void doubleClick(Rml::Event& event);
+		// What a press on a note's box starts: a resize near its ends, else a move.
+		Gesture edgeGesture(Rml::Element* target, const Rml::Event& event) const;
+		// Starts drawing a note at the snapped position under the press, as the draw tool's press does.
+		void startDraw(double ticks);
 		// Plays the pitch on the active track's instrument, as a pressed key of the keyboard does (p. 1204), after
 		// ending the pitch played before; without one only ends it.
 		void sound(std::optional<int> pitch);
@@ -194,6 +198,7 @@ namespace gnubase::ui
 
 		Gesture m_gesture = Gesture::None;
 		std::pair<double, int> m_pressedAt;
+		float m_pressedX = 0.0F;       // the mouse's x at the press, in pixels
 		std::optional<Note> m_pressed; // the note pressed, as it was
 		bool m_snapOff = false;
 		Rml::ObserverPtr<Rml::Element> m_drawn;             // the note a draw drags out
