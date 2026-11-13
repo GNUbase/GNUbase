@@ -1211,12 +1211,17 @@ namespace gnubase::engine
 		PlayDirection direction = PlayDirection::Forward;
 		double swing = 0.0; // -1 to 1: how far every second step moves, in half steps
 		std::vector<PatternLane> lanes;
+		// The pattern of another track that midi::adoptPatterns made it a copy of, 0 for none. Not saved: in a loaded
+		// project no pattern is a copy.
+		ObjectId copiedFrom = 0;
 	};
 
 	inline bool operator==(const Pattern& a, const Pattern& b)
 	{
-		return std::tie(a.id, a.track, a.name, a.mode, a.length, a.resolution, a.direction, a.swing, a.lanes) ==
-			std::tie(b.id, b.track, b.name, b.mode, b.length, b.resolution, b.direction, b.swing, b.lanes);
+		return std::tie(a.id, a.track, a.name, a.mode, a.length, a.resolution, a.direction, a.swing, a.lanes,
+				   a.copiedFrom) ==
+			std::tie(
+				b.id, b.track, b.name, b.mode, b.length, b.resolution, b.direction, b.swing, b.lanes, b.copiedFrom);
 	}
 
 	// A color of the project's color set (reference manual pp. 115-118), which colors are picked from.
