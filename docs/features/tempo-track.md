@@ -90,13 +90,14 @@ The tempo track, its tempo events and ramps, the project tempo modes and tap tem
 - The track list's Duplicate Tracks, Move Selected Tracks to New Folder and drags into folders leave the tempo track
   out: the project has one, at the top level. Remove Empty Tracks, the engine command `track.removeEmpty`, never
   removes it.
-- **The tempo track editor** (`ui::TempoEditor`, `resources/ui/tempo-editor.rml`, pp. 1447-1449, 1455): Mod+T (the
-  UI command `window.tempoTrack`, also Project > Tempo Track > Open Tempo Track Editor) opens it in a window of its own
-  and closes it. The toolbar has Activate Tempo Track, the object selection, draw and erase tools, the type of new tempo
+- **The tempo track editor** (`ui::TempoEditor`, `resources/ui/tempo-editor.rml`, pp. 1447-1449, 1455): Mod+T (the UI
+  command `window.tempoTrack`, also Project > Tempo Track > Open Tempo Track Editor) opens it in a window of its own and
+  closes it. The toolbar has Activate Tempo Track, the object selection, draw and erase tools, the type of new tempo
   events (`editing.tempoType`) and Current Tempo: the fixed tempo, or in tempo track mode the tempo at the project
-  cursor, where a tempo typed changes the event at or before the cursor. Below them the info line shows the first
-  selected event's position, tempo and type, which change it (`tempo.set`); then a bars and beats ruler, the tempo scale
-  and the tempo curve of the whole project. Backspace and Delete remove the selected events.
+  cursor, where a tempo typed changes the event at or before the cursor; Enter ends the typing, so that the field goes
+  on following the cursor, and what isn't a tempo goes. Below them the info line shows the first selected event's
+  position, tempo and type, which change it (`tempo.set`); then a bars and beats ruler, the tempo scale and the tempo
+  curve of the whole project. Backspace and Delete remove the selected events.
 - Project > Add Track has a Tempo page.
 - The tempo track editor's time signature display, under its ruler, has the time signature events
   ([signature-track.md](signature-track.md)).
@@ -115,17 +116,19 @@ Tempo (Shift and Space) is not bound.
 
 `tests/tempo_tests.cpp`: the tempo track's limits, both modes keeping their tempo and undo, musical events moving and
 linear ones staying when tempo events are added, moved and removed, ramps, the first event, simultaneous moves, events
-at the cursor, `editing.tempoType`, every tap tempo mode, saving and loading, and tempo track files: the round trip with
-time signature events from fixed tempo mode, the tempo modes after an import, undo, the same file exported again, and
-files that aren't tempo track files. `tests/transport_tests.cpp`: the playback start in `transport.get`.
+at the cursor, `editing.tempoType`, every tap tempo mode, saving and loading, and tempo track files: the round trip
+with time signature events from fixed tempo mode, the tempo modes after an import, undo, the same file exported again,
+and files that aren't tempo track files. `tests/transport_tests.cpp`: the playback start in `transport.get`.
 `tests/tempotrack_ui_tests.cpp`: the visible tempos, the tapped tempo, the curve on the tempo track's lane with clicks
-that add, drag and erase events, the tempo track editor with Mod+T, its toolbar, info line and tools, Activate Tempo
-Track in the track list and the transport bar, Tap Tempo, also at a selected part, and File > Export and File > Import >
-Tempo Track through the file dialog. `tests/tracklist_tests.cpp`: the track list's commands leaving the tempo track out.
-`tests/tempocontrols_ui_tests.cpp` (#680, #831): Current Tempo and the command that changes it, in the transport bar,
-on the tempo track and in the tempo track editor, during playback as well as at the cursor, the Tap Tempo message for
-every mode, in the project window and in the transport panel, the fixed tempo line, selecting events with Shift, Ctrl
-and a rectangle, the Tap Tempo Mode menu with the message and `.tapping` while tapping, also with the user setting
-changed after the bar opened, the tempo track's Current Tempo and Type of New Tempo Points, Insert Tempo Event at
-Cursor with the dialog's message for a tempo it can't take, and Select All Events. `tests/transportbar_tests.cpp`: a
-drag and a wheel gesture on the tempo field, in fixed tempo mode and in tempo track mode, each one undo step.
+that add, drag and erase events, the tempo track editor with Mod+T, its toolbar, info line and tools, its Current Tempo
+following the cursor again after a tempo was typed in it, and its rectangle selecting events, Shift-click taking a
+selected one out, Activate Tempo Track in the track list and the transport bar, Tap Tempo, also at a selected part, and
+File > Export and File > Import > Tempo Track through the file dialog. `tests/tracklist_tests.cpp`: the track list's
+commands leaving the tempo track out. `tests/tempocontrols_ui_tests.cpp` (#680, #831): Current Tempo and the command
+that changes it, in the transport bar, on the tempo track and in the tempo track editor, during playback as well as at
+the cursor, the Tap Tempo message for every mode, in the project window and in the transport panel, the fixed tempo
+line, selecting events with Shift, Ctrl and a rectangle, also taking a selected event out with either, the Tap Tempo
+Mode menu with the message and `.tapping` while tapping, also with the user setting changed after the bar opened, the
+tempo track's Current Tempo and Type of New Tempo Points, Insert Tempo Event at Cursor with the dialog's message for a
+tempo it can't take, and Select All Events. `tests/transportbar_tests.cpp`: a drag and a wheel gesture on the tempo
+field, in fixed tempo mode and in tempo track mode, each one undo step.

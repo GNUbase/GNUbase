@@ -893,13 +893,18 @@ namespace gnubase::ui
 		const double bpm = std::strtod(value.c_str(), &end);
 		const bool number = end != value.c_str() && bpm >= time::g_minBpm && bpm <= time::g_maxBpm;
 		const bool entered = event.GetParameter<bool>("linebreak", false); // text fields change on Enter
-		if (id == "current-tempo" && number && entered)
+		if (id == "current-tempo" && entered)
 		{
-			if (rounded(bpm) != rounded(currentTempo(tempo.time, m_cursor)))
+			if (number && rounded(bpm) != rounded(currentTempo(tempo.time, m_cursor)))
 			{
 				const auto [command, parameters] = currentTempoCommand(tempo.time, tempo.active, m_cursor, bpm);
 				m_binding.send(command, parameters);
 			}
+			// Enter ends the typing: the field shows Current Tempo again, which the change updates, and what isn't a
+			// tempo goes, so that it keeps following the cursor (#831), as the track list's field does.
+			if (auto* field = dynamic_cast<Rml::ElementFormControl*>(event.GetTargetElement()))
+				field->Blur();
+			showCurrentTempo();
 			return;
 		}
 		if (id == "signature-value" && entered && m_signatures)

@@ -300,6 +300,13 @@ TEST_CASE("the tempo curve selects tempo events with Shift and Ctrl clicks and w
 	fixture.step();
 	CHECK(fixture.selection() == Positions{4 * g_quarter, 8 * g_quarter});
 	CHECK(fixture.points()[2]->IsClassSet("selected"));
+	// Shift-click on a selected event takes it out too (reference manual p. 1450).
+	fixture.automation.click(std::nullopt, centre(*fixture.points()[2]), ui::MouseButton::Left, 1, {"shift"});
+	fixture.step();
+	CHECK(fixture.selection() == Positions{4 * g_quarter});
+	fixture.automation.click(std::nullopt, centre(*fixture.points()[2]), ui::MouseButton::Left, 1, {"shift"});
+	fixture.step();
+	CHECK(fixture.selection() == Positions{4 * g_quarter, 8 * g_quarter});
 	fixture.automation.click(std::nullopt, centre(*fixture.points()[1]), ui::MouseButton::Left, 1, {"ctrl"});
 	fixture.step();
 	CHECK(fixture.selection() == Positions{8 * g_quarter});
