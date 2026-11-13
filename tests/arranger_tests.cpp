@@ -244,6 +244,28 @@ TEST_CASE("a real plan change during the pre-roll keeps the chain playing", "[un
 	CHECK(transport.arranger().step == 1); // on to C
 }
 
+TEST_CASE("a chain edit while the chain plays back into the project keeps the step and its repeat", "[unit]")
+{
+	const uint32_t blockSize = GENERATE(1u, 64u, 100u);
+	INFO("block size " << blockSize);
+	ArrangerPlan plan = abPlan();
+	plan.steps = {{2, 1, ArrangerRepeat::Normal}, {0, 2, ArrangerRepeat::Normal}}; // C, then A twice
+	Transport transport;
+	REQUIRE(transport.locate(3000)); // playback starts at C
+	REQUIRE(transport.play());
+	// C, then A: the chain jumps back to before the start, where the position stays while A plays.
+	CHECK(play(transport, plan, 900, blockSize) == path({{3000, 3500}, {1000, 1300}, {1000, 1100}}, 900));
+	CHECK(transport.arranger().step == 1);
+	CHECK(transport.arranger().repeat == 1);
+	// A real plan change while A plays (A gets one more repeat): the step playing and its repeat are kept, not
+	// re-found at the start position, which lies in C.
+	ArrangerPlan edited = plan;
+	edited.steps[1].repeats = 3;
+	CHECK(play(transport, edited, 450, blockSize) == path({{1100, 1300}, {1000, 1250}}, 450));
+	CHECK(transport.arranger().step == 1);
+	CHECK(transport.arranger().repeat == 2);
+}
+
 TEST_CASE("jump points for 4 bars, 2 bars, 1 bar and 1 beat from an event that starts in the middle of a bar", "[unit]")
 {
 	using gnubase::time::Position;
