@@ -443,8 +443,10 @@ TEST_CASE("on a narrow keyboard the handles lie apart too", "[ui]")
 	REQUIRE(f.app.waitUntil([&] { return box("#sampler-keyboard").at("width").get<double>() < 4.0 * 128; }));
 
 	// The three handles on one key, and the range's on keys side by side: none over another (#1200).
-	for (const auto& [low, high] : {std::pair{50.0, 50.0}, std::pair{50.0, 51.0}})
+	for (const auto& range : {std::pair{50.0, 50.0}, std::pair{50.0, 51.0}})
 	{
+		const double low = range.first;
+		const double high = range.second;
 		f.set("Key high", high);
 		f.set("Key low", low);
 		f.set("Root key", low);
