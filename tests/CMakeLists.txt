@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 add_library(gnubase-testutils STATIC
+	testutils/commandholds.h
 	testutils/fakeui.cpp testutils/fakeui.h
 	testutils/goldenimage.cpp testutils/goldenimage.h
 	testutils/heldjob.cpp testutils/heldjob.h

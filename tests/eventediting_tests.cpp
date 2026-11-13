@@ -4,6 +4,7 @@
 // the selection; snapping them (#87). tests/eventedit_tests.cpp checks the event.* commands themselves.
 #include "engine/engine.h"
 #include "engine/time/tempomap.h"
+#include "testutils/commandholds.h"
 #include "testutils/fakeui.h"
 #include "testutils/testutils.h"
 #include "ui/automation.h"
@@ -24,14 +25,11 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
-#include <limits>
 #include <memory>
-#include <mutex>
 #include <string>
 #include <thread>
 #include <utility>
@@ -616,57 +614,9 @@ TEST_CASE("a drag of an event's edge shows the size the release gives it at ever
 	CHECK(bothEnds(3.7, 4.2));
 }
 
-namespace
-{
-	// The runs of a command that holds the engine's command thread while it waits for the test to let it go: what
-	// the test sends meanwhile queues behind it, and the engine answers it only once the hold is released, however
-	// busy the machine is (#1272). The n-th run of the command waits for the n-th release.
-	struct CommandHolds
-	{
-		CommandHolds() = default;
-		CommandHolds(const CommandHolds&) = delete;
-		CommandHolds& operator=(const CommandHolds&) = delete;
-		// Lets every run go, so that a test that fails on the way doesn't leave the engine's thread waiting.
-		~CommandHolds() { release(std::numeric_limits<size_t>::max()); }
-
-		// The command's handler, on the engine's command thread. It gives up after 30 s, so that an engine that is
-		// stopping can end even if the test never releases it.
-		Json hold()
-		{
-			std::unique_lock lock(mutex);
-			const size_t own = entered++;
-			changed.notify_all();
-			changed.wait_for(lock, std::chrono::seconds(30), [this, own] { return released > own; });
-			return Json::object();
-		}
-
-		// Whether count runs have entered hold(), waiting up to 30 s for them.
-		[[nodiscard]] bool waitEntered(size_t count)
-		{
-			std::unique_lock lock(mutex);
-			return changed.wait_for(lock, std::chrono::seconds(30), [this, count] { return entered >= count; });
-		}
-
-		// Lets the first count runs go on.
-		void release(size_t count)
-		{
-			{
-				const std::scoped_lock lock(mutex);
-				released = count;
-			}
-			changed.notify_all();
-		}
-
-		std::mutex mutex;
-		std::condition_variable changed;
-		size_t entered = 0;  // the runs that have entered hold()
-		size_t released = 0; // the runs let go: release(n) frees the n-th
-	};
-}
-
 TEST_CASE("a second resize release can precede the first release's project", "[unit]")
 {
-	CommandHolds holds; // declared before the fixture: its engine's command thread waits in hold()
+	test::CommandHolds holds; // declared before the fixture: its engine's command thread waits in hold()
 	Fixture f;
 	// The engine answers only when the test lets it: a command that holds its command thread until it is released,
 	// so what queues behind it runs, and answers, in an order the test chooses, not one a busy machine chooses.
