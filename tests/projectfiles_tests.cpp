@@ -1602,6 +1602,64 @@ TEST_CASE("a quit question that waits and goes with its window lets the next qui
 	REQUIRE(app.waitUntil([&app] { return !app.shell().running(); }));
 }
 
+TEST_CASE(
+	"a quit question that opens after a newer question came still answers, so Cancel leaves quitting working", "[ui]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	const test::TempDir dir;
+	const fs::path file = dir.path() / "Song.dawproject";
+	app.call("project.save", {{"path", utf8(file)}});
+	app.call("track.add", {{"type", "audio"}});
+	const fs::path notFolder = dir.path() / "file";
+	std::ofstream(notFolder) << "not a folder";
+
+	// A failed save's error waits while Save as Template is open.
+	fileMenu(app, "file.saveTemplate");
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#save-template-dialog"); }));
+	app.keys().run("file.saveAs", Json::object(), app.main(), nullptr);
+	answer(app, {notFolder / "Other.dawproject"});
+	settle(app);
+	CHECK(elements(app, "#project-error-dialog").empty());
+
+	// Quit: Save as Template closes for the error, and the quit question waits behind the error.
+	app.keys().run("file.quit", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+	settle(app);
+	CHECK(elements(app, "#discard-changes-dialog").empty());
+
+	// File > Open comes before the error is dismissed: its question is the newer one, waiting behind the quit's.
+	app.keys().run("file.open", Json::object(), app.main(), nullptr);
+	answer(app, {file});
+	settle(app);
+	CHECK(elements(app, "#discard-changes-dialog").empty());
+
+	// The error is dismissed and the quit question opens, although a newer question came: its asked runs, so that
+	// Cancel doesn't leave GNUbase unable to quit.
+	closeError(app);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#discard-changes-dialog"); }));
+	settle(app); // the question's second look at project.revision answered by now
+	Rml::Element* first = question(app);
+	const Rml::ObserverPtr<Rml::Element> quitQuestion =
+		first != nullptr ? first->GetObserverPtr() : Rml::ObserverPtr<Rml::Element>();
+	REQUIRE(quitQuestion.get() != nullptr);
+	click(app, "#discard-changes-dialog button[result=cancel]");
+
+	// The newer question opens in its turn, another document; Cancel answers it too.
+	REQUIRE(app.waitUntil(
+		[&app, &quitQuestion] { return question(app) != nullptr && question(app) != quitQuestion.get(); }));
+	settle(app);
+	click(app, "#discard-changes-dialog button[result=cancel]");
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#discard-changes-dialog"); }));
+	REQUIRE(app.shell().running());
+
+	// The next quit request asks again, and Discard quits.
+	closeLastWindow(app);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#discard-changes-dialog"); }));
+	click(app, "#discard-changes");
+	REQUIRE(app.waitUntil([&app] { return !app.shell().running(); }));
+}
+
 TEST_CASE("a dialog that goes with its window lets the next one open", "[ui]")
 {
 	test::UiApp app({1200, 700});

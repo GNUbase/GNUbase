@@ -170,24 +170,24 @@ where their media and next auto saves go, the engine's own auto saves once the i
 their events and log entries, also when the reason or only the file changes (`Engine::advanceClock` moves the clock
 forward and returns once its tick ran, so no test waits), recent projects across restarts, and templates; and in the
 app's UI (`test::UiApp`, [ui-tests.md](ui-tests.md)) Save, Save As (also of a name with a dot, of one ending in a dot
-and of one with the extension in upper case) and Save New Version after each through file dialogs, Open and
-Revert with the unsaved changes dialog, Save asking for a file after Open of an auto save, quitting through the main
-window's close button and the OS's quit request with and without unsaved changes, SDL's close and quit requests for the
-last window and more requests while the question is open asking one question (the same document stays open) that
-Cancel and Discard answer, a question asked in a panel's own window that closes with it leaving the next quit request
-to ask again, the start screen's buttons and double clicks, Save as Template and Back up Project, and the error dialog
-for a failed save and backup, and for failed auto saves: once per reason and again after File > Save, in place of the
-open error when the reason changes, at the next failure if another project dialog kept it from showing, once the
-auto fades dialog and the studio setup over it closed, without another failure, but not after an auto save succeeded
-or the project was saved or reverted meanwhile, nor when a success follows the failure before the UI heard of either,
-not kept away by a modal dialog in a panel's own window, again after the unsaved changes question or a failed save's
-error took its place, the unsaved changes question and a failed save's error waiting for the start screen and Save
-as Template and opening in the order they came, an open dialog that goes with its window letting the next one open, a
-question that waited not asking once the project was saved meanwhile, an error whose window closed while it waited
-showing in the main window, a quit request dropping the questions and start screens that wait so that its own question
-is next, a quit question that waits behind an error and goes with its window leaving the next quit request to ask
-again, and with the quit question: the error makes way for it, an auto save failing while it is open leaves it open,
-and the error shows at the next failure after Cancel. `tests/uitools_tests.cpp` checks `ui_file_dialog` and
-`ui_close`, `tests/lua/ui/dialog.lua` the unsaved changes question through `gnubase.ui.close`, and
-`tests/widgets_tests.cpp` `ui::closeDialog`. `tests/clock_tests.cpp` checks the clock's ticks and `advance` on their
-own.
+and of one with the extension in upper case) and Save New Version after each through file dialogs, Open and Revert with
+the unsaved changes dialog, Save asking for a file after Open of an auto save, quitting through the main window's close
+button and the OS's quit request with and without unsaved changes, SDL's close and quit requests for the last window and
+more requests while the question is open asking one question (the same document stays open) that Cancel and Discard
+answer, a question asked in a panel's own window that closes with it leaving the next quit request to ask again, the
+start screen's buttons and double clicks, Save as Template and Back up Project, and the error dialog for a failed save
+and backup, and for failed auto saves: once per reason and again after File > Save, in place of the open error when the
+reason changes, at the next failure if another project dialog kept it from showing, once the auto fades dialog and the
+studio setup over it closed, without another failure, but not after an auto save succeeded or the project was saved or
+reverted meanwhile, nor when a success follows the failure before the UI heard of either, not kept away by a modal
+dialog in a panel's own window, again after the unsaved changes question or a failed save's error took its place, the
+unsaved changes question and a failed save's error waiting for the start screen and Save as Template and opening in the
+order they came, an open dialog that goes with its window letting the next one open, a question that waited not asking
+once the project was saved meanwhile, an error whose window closed while it waited showing in the main window, a quit
+request dropping the questions and start screens that wait so that its own question is next, a quit question that waits
+behind an error and goes with its window leaving the next quit request to ask again, a quit question that opens after
+a newer question came still answering, so that Cancel there leaves quitting working, and with the quit question: the
+error makes way for it, an auto save failing while it is open leaves it open, and the error shows at the
+next failure after Cancel. `tests/uitools_tests.cpp` checks `ui_file_dialog` and `ui_close`, `tests/lua/ui/dialog.lua`
+the unsaved changes question through `gnubase.ui.close`, and `tests/widgets_tests.cpp` `ui::closeDialog`.
+`tests/clock_tests.cpp` checks the clock's ticks and `advance` on their own.

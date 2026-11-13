@@ -738,7 +738,7 @@ namespace gnubase::ui
 						}
 						openDialog(
 							id, "discard-changes.rml",
-							[this, question, action, asked](Rml::ElementDocument* opened)
+							[this, action, asked](Rml::ElementDocument* opened)
 							{
 								if (opened == nullptr)
 								{
@@ -748,13 +748,12 @@ namespace gnubase::ui
 								}
 								// The question may have waited: the project can have been saved meanwhile, so ask
 								// the engine again now that it opens, and run the action at once if there is nothing
-								// left to discard (#985).
+								// left to discard (#985). asked runs whichever way this answers, so a quit question
+								// always clears m_quitting, and the next quit request asks again.
 								const Rml::ObserverPtr<Rml::Element> shown = opened->GetObserverPtr();
 								m_binding.send("project.revision", Json::object(),
-									[this, question, shown, action, asked](const engine::Result& result)
+									[this, shown, action, asked](const engine::Result& result)
 									{
-										if (question != m_questions)
-											return; // a newer question came: this one's asked is its own
 										auto* opened = dynamic_cast<Rml::ElementDocument*>(shown.get());
 										if (opened == nullptr || opened != m_dialog.get())
 										{
