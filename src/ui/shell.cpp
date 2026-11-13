@@ -401,6 +401,11 @@ namespace gnubase::ui
 			following = task() || following;
 		}
 		m_nextFrame = following ? Clock::now() + g_framePeriod : Clock::time_point::max();
+		for (size_t i = 0; i < m_beforeDraw.size() && m_running; ++i)
+		{
+			const std::function<void()> task = m_beforeDraw[i];
+			task();
+		}
 
 		now = Clock::now();
 		for (auto& [id, window] : m_open)

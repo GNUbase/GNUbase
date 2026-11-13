@@ -2030,6 +2030,8 @@ namespace gnubase::engine
 		Project project;
 		project.name = json.at("name").get<std::string>();
 		project.sampleRate = json.at("sampleRate").get<double>();
+		if (project.sampleRate < g_lowestSampleRate || project.sampleRate > g_highestSampleRate)
+			throw std::invalid_argument("the sample rate must be from 8000 to 768000 Hz");
 		project.tempo = tempoFromJson(json.at("tempo"));
 		// Files from before tempo modes (#155) follow their tempo changes, if they have any.
 		project.tempoTrackActive = json.value("tempoTrackActive", project.tempo.points().size() > 1);

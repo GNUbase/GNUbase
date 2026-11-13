@@ -64,6 +64,7 @@ namespace gnubase::engine
 		void progress(double fraction, const std::string& detail) override
 		{
 			Json event;
+			ProgressHook hook;
 			{
 				const std::scoped_lock lock(m_jobs.m_mutex);
 				m_job.progress = std::clamp(fraction, m_job.progress, 1.0); // never goes back
@@ -73,8 +74,11 @@ namespace gnubase::engine
 				m_job.announced = m_job.progress;
 				event = {
 					{"job", m_job.id}, {"kind", m_job.kind}, {"progress", m_job.progress}, {"detail", m_job.detail}};
+				hook = m_jobs.m_progressHook; // a copy, which stays valid while it runs
 			}
 			m_jobs.m_engine.broadcast("job.progress", std::move(event));
+			if (hook)
+				hook(m_job.id, m_job.kind);
 		}
 
 		Json command(std::string name, Json parameters) override
@@ -132,6 +136,12 @@ namespace gnubase::engine
 			event = {{"job", toJson(job)}};
 		}
 		m_engine.broadcast("job.finished", std::move(event));
+	}
+
+	void Jobs::setProgressHook(ProgressHook hook)
+	{
+		const std::scoped_lock lock(m_mutex);
+		m_progressHook = std::move(hook);
 	}
 
 	Json Jobs::schema()
