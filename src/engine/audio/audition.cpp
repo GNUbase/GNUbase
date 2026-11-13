@@ -265,8 +265,10 @@ namespace gnubase::engine
 		Playback::Cue cue;
 		// While the audio thread reads, as for a playing transport even before it has played a block of this state:
 		// it may be in the middle of the first one, or have just played it, after what was read here, and an exact
-		// cue at the start would then move the stream it reads back there. play() cued the start exactly.
+		// cue at the start would then move the stream it reads back there. play() cued the start exactly; until a
+		// block of it has played, a start that has no voice still gets one there (starting), not ahead.
 		cue.playing = reading;
+		cue.starting = reading && played != m_cueSerial;
 		cue.position = played == m_cueSerial ? position : m_cueStart;
 		cue.window = window;
 		m_playback.cue(cue);

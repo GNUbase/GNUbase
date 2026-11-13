@@ -80,8 +80,12 @@ namespace gnubase::ui
 		void afterAwaited(std::function<void()> run);
 		// Whether afterAwaited holds anything.
 		bool holding() const { return !m_held.empty(); }
-		// Runs what afterAwaited holds now, without waiting for the answers: e.g. once settle timed out.
+		// Runs what afterAwaited holds now, without waiting for the answers: e.g. once awaitHeld timed out.
 		void releaseHeld();
+		// Hands on results and events, as update() does, until afterAwaited holds nothing, for at most timeout; unlike
+		// settle, it doesn't wait for other commands out, such as those that the held ones send. Returns false if
+		// something is still held then.
+		bool awaitHeld(std::chrono::milliseconds timeout);
 
 		// Sends document commands ({"command", "parameters"} each) as a step of a value widget's gesture (the
 		// "gesture" parameter of its change event, ui/widgets.h): a history.transaction named description whose merge
@@ -217,6 +221,8 @@ namespace gnubase::ui
 			std::function<void(const engine::Result&)> done, bool quiet, bool awaited = false);
 		void sendNextStep(const std::string& what);
 		void answerStep(const std::string& what, const engine::Result& result);
+		// Hands on results and events until done returns true, for at most timeout; returns done().
+		bool handOnUntil(std::chrono::milliseconds timeout, const std::function<bool()>& done);
 		// Runs what afterAwaited holds while no awaited query is out (all of it with force); returns whether any ran.
 		bool runHeld(bool force);
 

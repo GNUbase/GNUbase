@@ -897,6 +897,7 @@ namespace gnubase::engine::midi
 		// What plays in the range, in project ticks, and the last value of every controller before it.
 		std::vector<Note> notes;
 		std::vector<Controller> controllers;
+		std::vector<Controller> resets; // where parts start in the range: they play from the default slot
 		std::map<LaneKey, Controller> chased;
 		std::map<LaneKey, Ticks> chasedAt;
 		const TrackPitches destinationPitches(project, settings.destination); // a new track maps nothing
@@ -915,6 +916,27 @@ namespace gnubase::engine::midi
 			Modifiers modifiers = settings.includeInserts && !trackModifiers.bypass ? trackModifiers : Modifiers();
 			modifiers.transpose += part.transpose;
 			modifiers.velocityShift += part.velocity;
+			// Playback resolves directions per part (#175): a reset of each group where a part starts in the range
+			// keeps the directions of the parts before it from its notes.
+			if (articulations != nullptr && sampleOf(partFrom) > settings.start && sampleOf(partFrom) < settings.end)
+				for (size_t group = 0; group < articulations->groups.size(); ++group)
+				{
+					const auto first = std::find_if(articulations->articulations.begin(),
+						articulations->articulations.end(),
+						[group](const Articulation& each)
+						{
+							return each.type == ArticulationType::Direction && static_cast<size_t>(each.group) == group;
+						});
+					if (first != articulations->articulations.end())
+					{
+						Controller reset;
+						reset.position = partFrom;
+						reset.type = ControllerType::Articulation;
+						reset.value = 1;
+						reset.articulation = first->name;
+						resets.push_back(reset);
+					}
+				}
 			for (const auto& [noteId, note] : playedNotes(project, part))
 			{
 				if (partFrom + note.position >= partTo || sourcePitches.silent(note.pitch))
@@ -984,6 +1006,13 @@ namespace gnubase::engine::midi
 			destination = addMidiTrack(
 				project, defaultMidiTrackName(project), 0, project.tracks.size(), instrument, time::TimeBase::Musical);
 			changes.tracks.push_back(destination);
+			// The articulation map of the first track that has one, so that the directions select its slots.
+			for (const ObjectId track : tracks)
+				if (const ArticulationMap* map = articulationMapOf(project, track); map != nullptr)
+				{
+					project.trackById.at(destination).articulationMap = map->id;
+					break;
+				}
 		}
 		else if (settings.eraseDestination)
 		{
@@ -1029,6 +1058,8 @@ namespace gnubase::engine::midi
 		part.track = destination;
 		part.name = settings.name.empty() ? project.trackById.at(destination).name : settings.name;
 		place(project, part, start, end);
+		// Before the directions at the same positions, which come after them (soundSlots goes by id there).
+		controllers.insert(controllers.begin(), resets.begin(), resets.end());
 		for (auto& [key, controller] : chased)
 		{
 			controller.position = start;

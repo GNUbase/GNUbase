@@ -6,6 +6,7 @@
 #include "engine/document/document.h"
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
+#include "testutils/heldjob.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -14,11 +15,10 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <condition_variable>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
-#include <mutex>
+#include <functional>
 #include <optional>
 #include <string>
 #include <thread>
@@ -130,26 +130,6 @@ namespace
 			run(client, "project.new");
 			run(client, "project.load", {{"path", utf8(file)}});
 		}
-
-		// Adds a long file at the project's sample rate for hold to convert: one undo step.
-		void prepareHold()
-		{
-			writeFile(library / "hold.wav", 240000, 1);
-			holdMedia = run(client, "media.add", {{"path", utf8(library / "hold.wav")}}).at("media").at("id");
-		}
-
-		// Sends a command that keeps the command thread busy for a while (media.convert of the file prepareHold
-		// added, which adds a media file and an undo step), so that the commands sent right after it queue up behind
-		// it and then run back to back, however the test's thread is scheduled: a job started by one of them can't
-		// get far before the next one runs.
-		void hold()
-		{
-			const fs::path to = dir.path() / ("held" + std::to_string(++holds) + ".wav");
-			client.send("media.convert", {{"media", holdMedia}, {"path", utf8(to)}, {"sampleRate", 96000.0}});
-		}
-
-		Json holdMedia;
-		int holds = 0;
 	};
 
 	// The WAV files in folder. The peak files that the peak worker writes next to them whenever it gets to them, and
@@ -215,91 +195,34 @@ namespace
 		}
 	}
 
-	// The id of the job that the command sent as request started, once its result came. Other messages that come
-	// first are dropped; waitForJob asks job.get for a job whose events went with them.
-	uint64_t startedJob(Client& client, RequestId request)
+	// Starts a job with the command and holds it at its first job.progress while during runs with its id, then lets it
+	// go on and returns the job once it ended (#1154): what during does comes before anything the job does after its
+	// first job.progress, however the threads are scheduled. Progress events go to progress, if given.
+	Json whileHeld(SavedProject& song, const std::string& command, Json parameters,
+		const std::function<void(uint64_t job)>& during, std::vector<Json>* progress = nullptr)
 	{
-		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-		uint64_t job = 0;
-		while (job == 0 && std::chrono::steady_clock::now() < deadline)
-		{
-			const std::optional<Message> message = client.wait(std::chrono::milliseconds(100));
-			const auto* result = message ? std::get_if<Result>(&*message) : nullptr;
-			if (result == nullptr || result->request != request)
-				continue;
-			INFO(result->error);
-			REQUIRE(result->ok());
-			job = result->value.at("job").at("id").get<uint64_t>();
-		}
-		INFO("no result for request " << request);
-		REQUIRE(job != 0);
-		return job;
+		test::HeldJob held(song.engine, command);
+		const Json started = run(song.client, command, std::move(parameters)).at("job");
+		CHECK(started.at("kind") == command);
+		const auto job = started.at("id").get<uint64_t>();
+		REQUIRE(held.waitUntilHeld());
+		CHECK(held.job() == job);
+		during(job);
+		CHECK(run(song.client, "job.get", {{"job", job}}).at("job").at("state") == "running");
+		held.release();
+		return waitForJob(song.client, job, progress);
 	}
 
-	// Holds a job of the given kind at its first job.progress until release, for a minute at most, so that it can't
-	// end before a job.cancel (#1079): a Listener runs on the thread that sends the event, here the job's. Meanwhile
-	// events wait for it, so the test sends only commands that send none until it releases the job.
-	class HeldJob
-	{
-	public:
-		HeldJob(Engine& engine, std::string kind)
-			: m_kind(std::move(kind)),
-			  m_listener(engine,
-				  [this](const Event& event)
-				  {
-					  if (event.name != "job.progress" || event.data.at("kind") != m_kind)
-						  return;
-					  std::unique_lock lock(m_mutex);
-					  m_held = true;
-					  m_changed.notify_all();
-					  m_changed.wait_for(lock, std::chrono::minutes(1), [this] { return m_released; });
-				  })
-		{
-		}
-
-		~HeldJob() { release(); }
-		HeldJob(const HeldJob&) = delete;
-		HeldJob& operator=(const HeldJob&) = delete;
-		HeldJob(HeldJob&&) = delete;
-		HeldJob& operator=(HeldJob&&) = delete;
-
-		// Waits until the job is at its first job.progress.
-		bool waitUntilHeld()
-		{
-			std::unique_lock lock(m_mutex);
-			return m_changed.wait_for(lock, std::chrono::seconds(30), [this] { return m_held; });
-		}
-
-		void release()
-		{
-			{
-				const std::scoped_lock lock(m_mutex);
-				m_released = true;
-			}
-			m_changed.notify_all();
-		}
-
-	private:
-		const std::string m_kind;
-		std::mutex m_mutex;
-		std::condition_variable m_changed;
-		bool m_held = false;
-		bool m_released = false;
-		Listener m_listener; // last, so that it stops before the rest goes
-	};
-
-	// Starts a job with the command, cancels it while it is held at its first progress, so that it can't end first, and
-	// returns the job once it ended. Job ids count from 1 in each engine, so the engine must not have started a job
-	// before.
+	// Starts a job with the command, cancels it while it is held at its first progress, so that it can't end first
+	// (#1079), and returns the job once it ended.
 	Json cancelJob(SavedProject& song, const std::string& command, Json parameters = Json::object())
 	{
-		REQUIRE(run(song.client, "job.list").at("jobs").empty());
-		HeldJob held(song.engine, command);
-		song.client.send(command, std::move(parameters));
-		REQUIRE(held.waitUntilHeld());
-		run(song.client, "job.cancel", {{"job", 1}});
-		held.release();
-		return waitForJob(song.client, 1);
+		return whileHeld(song, command, std::move(parameters),
+			[&song](uint64_t job)
+			{
+				const Json cancelling = run(song.client, "job.cancel", {{"job", job}});
+				CHECK(cancelling.at("job").at("state") == "running"); // still, as it is held
+			});
 	}
 
 	size_t steps(Client& client)
@@ -864,41 +787,12 @@ TEST_CASE("media.locate looks through a folder as a job, while other commands ar
 	fillFolder(moved, 50);
 	fs::rename(song.library / "kick.wav", moved / "folder49" / "kick.wav");
 	song.reopen();
-	song.prepareHold();
 
-	// transport.locate, sent right behind it, is answered before the job is done.
-	song.hold();
-	const RequestId locate = song.client.send("media.locate", {{"folder", utf8(moved)}});
-	const RequestId transport = song.client.send("transport.locate", {{"position", 0}});
-	bool answered = false;
-	Json finished;
+	// transport.locate is answered while the job looks.
 	std::vector<Json> progress;
-	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
-	while (finished.is_null() && std::chrono::steady_clock::now() < deadline)
-	{
-		const std::optional<Message> message = song.client.wait(std::chrono::milliseconds(100));
-		if (!message)
-			continue;
-		if (const auto* result = std::get_if<Result>(&*message))
-		{
-			INFO(result->error);
-			REQUIRE(result->ok());
-			if (result->request == locate)
-				CHECK(result->value.at("job").at("kind") == "media.locate");
-			if (result->request == transport)
-				answered = true;
-			continue;
-		}
-		const auto& event = std::get<Event>(*message);
-		if (event.name == "job.progress" && event.data.at("kind") == "media.locate")
-			progress.push_back(event.data);
-		if (event.name == "job.finished" && event.data.at("job").at("kind") == "media.locate")
-		{
-			CHECK(answered);
-			finished = event.data.at("job");
-		}
-	}
-	REQUIRE(!finished.is_null());
+	const Json finished = whileHeld(
+		song, "media.locate", {{"folder", utf8(moved)}},
+		[&song](uint64_t /*job*/) { run(song.client, "transport.locate", {{"position", 0}}); }, &progress);
 	INFO(finished.dump());
 	REQUIRE(finished.at("state") == "done");
 	CHECK(finished.at("result").at("relinked") == Json::array({kick}));
@@ -919,7 +813,6 @@ TEST_CASE("media.locate relinks the files it found but one that no longer fits, 
 	writeFile(song.library / "snare.wav", 48000, 1);
 	const uint64_t kick = song.mediaOf(song.clip(song.library / "kick.wav"));
 	const uint64_t snare = song.mediaOf(song.clip(song.library / "snare.wav"));
-	song.prepareHold();
 	song.settle();
 	// snare is pointed at a 44.1 kHz file at its path, which then goes missing with kick: media.locate looks for both
 	// and finds them in a folder of 2500 files.
@@ -932,12 +825,10 @@ TEST_CASE("media.locate relinks the files it found but one that no longer fits, 
 	fs::rename(song.library / "kick.wav", moved / "folder49" / "kick.wav");
 	fs::rename(song.library / "snare.wav", moved / "folder49" / "snare.wav");
 
-	// While the job looks, undo takes snare back to 48 kHz (and the hold's step): it keeps its path, so the job's
-	// entry for it still applies by from, but the file found no longer fits. The job relinks kick all the same.
-	song.hold();
-	const RequestId locate = song.client.send("media.locate", {{"folder", utf8(moved)}});
-	run(song.client, "history.undo", {{"steps", 2}});
-	const Json finished = waitForJob(song.client, startedJob(song.client, locate));
+	// While the job looks, undo takes snare back to 48 kHz: it keeps its path, so the job's entry for it still
+	// applies by from, but the file found no longer fits. The job relinks kick all the same.
+	const Json finished = whileHeld(song, "media.locate", {{"folder", utf8(moved)}},
+		[&song](uint64_t /*job*/) { run(song.client, "history.undo"); });
 	INFO(finished.dump());
 	REQUIRE(finished.at("state") == "done");
 	CHECK(finished.at("result").at("relinked") == Json::array({kick}));
@@ -1001,12 +892,9 @@ TEST_CASE("an edit made while media.locate or media.conform runs is kept", "[int
 		fillFolder(moved, 50);
 		fs::rename(song.library / "kick.wav", moved / "folder49" / "kick.wav");
 		song.reopen();
-		song.prepareHold();
 
-		song.hold();
-		const RequestId locate = song.client.send("media.locate", {{"folder", utf8(moved)}});
-		run(song.client, "media.removeMissing"); // runs while the job looks
-		const Json finished = waitForJob(song.client, startedJob(song.client, locate));
+		const Json finished = whileHeld(song, "media.locate", {{"folder", utf8(moved)}},
+			[&song](uint64_t /*job*/) { run(song.client, "media.removeMissing"); });
 		INFO(finished.dump());
 		REQUIRE(finished.at("state") == "done");
 		CHECK(finished.at("result").at("relinked").empty());
@@ -1022,13 +910,13 @@ TEST_CASE("an edit made while media.locate or media.conform runs is kept", "[int
 		writeFile(song.library / "slow.wav", 441000, 2, 44100.0);
 		writeFile(song.library / "other.wav", 4410, 2, 44100.0);
 		const uint64_t slow = song.mediaOf(song.clip(song.library / "slow.wav"));
-		song.prepareHold();
 
-		song.hold();
-		const RequestId conform = song.client.send("media.conform", {{"media", {slow}}});
-		run(song.client, "media.relink",
-			{{"files", Json::array({{{"media", slow}, {"path", utf8(song.library / "other.wav")}}})}});
-		const Json finished = waitForJob(song.client, startedJob(song.client, conform));
+		const Json finished = whileHeld(song, "media.conform", {{"media", {slow}}},
+			[&song, slow](uint64_t /*job*/)
+			{
+				run(song.client, "media.relink",
+					{{"files", Json::array({{{"media", slow}, {"path", utf8(song.library / "other.wav")}}})}});
+			});
 		INFO(finished.dump());
 		REQUIRE(finished.at("state") == "done");
 		CHECK(finished.at("result").at("media").empty());
@@ -1044,12 +932,9 @@ TEST_CASE("an edit made while media.locate or media.conform runs is kept", "[int
 		SavedProject song;
 		writeFile(song.library / "slow.wav", 441000, 2, 44100.0);
 		const uint64_t slow = song.mediaOf(song.clip(song.library / "slow.wav"));
-		song.prepareHold();
 
-		song.hold();
-		const RequestId conform = song.client.send("media.conform", {{"media", {slow}}});
-		run(song.client, "project.set", {{"sampleRate", 96000.0}});
-		const Json finished = waitForJob(song.client, startedJob(song.client, conform));
+		const Json finished = whileHeld(song, "media.conform", {{"media", {slow}}},
+			[&song](uint64_t /*job*/) { run(song.client, "project.set", {{"sampleRate", 96000.0}}); });
 		INFO(finished.dump());
 		REQUIRE(finished.at("state") == "done");
 		CHECK(finished.at("result").at("media").empty());
@@ -1195,24 +1080,21 @@ TEST_CASE("a job's final command leaves a project opened while the job runs alon
 	writeFile(song.library / "slow.wav", 441000, 2, 44100.0);
 	const uint64_t kick = song.mediaOf(song.clip(song.library / "kick.wav"));
 	const uint64_t slow = song.mediaOf(song.clip(song.library / "slow.wav"));
-	song.prepareHold();
 	song.save();
 	song.settle();
 	const fs::path other = song.folder / "Song-2.dawproject";
 	fs::copy_file(song.file, other);
 	const auto mediaPath = [&song](uint64_t media)
 	{ return byId(run(song.client, "project.get").at("media"), media).at("path").get<std::string>(); };
-	const auto openOther = [&song, &other] { run(song.client, "project.load", {{"path", utf8(other)}}); };
+	const auto openOther = [&song, &other](uint64_t /*job*/)
+	{ run(song.client, "project.load", {{"path", utf8(other)}}); };
 
 	SECTION("media.locate")
 	{
 		const fs::path moved = song.dir.path() / "moved";
 		fillFolder(moved, 50);
 		fs::rename(song.library / "kick.wav", moved / "folder49" / "kick.wav");
-		song.hold();
-		const RequestId locate = song.client.send("media.locate", {{"folder", utf8(moved)}, {"media", {kick}}});
-		openOther();
-		const Json finished = waitForJob(song.client, startedJob(song.client, locate));
+		const Json finished = whileHeld(song, "media.locate", {{"folder", utf8(moved)}, {"media", {kick}}}, openOther);
 		INFO(finished.dump());
 		REQUIRE(finished.at("state") == "done");
 		CHECK(finished.at("result").at("relinked").empty());
@@ -1221,10 +1103,7 @@ TEST_CASE("a job's final command leaves a project opened while the job runs alon
 	}
 	SECTION("media.conform")
 	{
-		song.hold();
-		const RequestId conform = song.client.send("media.conform", {{"media", {slow}}});
-		openOther();
-		const Json finished = waitForJob(song.client, startedJob(song.client, conform));
+		const Json finished = whileHeld(song, "media.conform", {{"media", {slow}}}, openOther);
 		INFO(finished.dump());
 		REQUIRE(finished.at("state") == "done");
 		CHECK(finished.at("result").at("media").empty());
@@ -1234,10 +1113,7 @@ TEST_CASE("a job's final command leaves a project opened while the job runs alon
 	}
 	SECTION("media.prepareArchive")
 	{
-		song.hold();
-		const RequestId archive = song.client.send("media.prepareArchive");
-		openOther();
-		const Json finished = waitForJob(song.client, startedJob(song.client, archive));
+		const Json finished = whileHeld(song, "media.prepareArchive", Json::object(), openOther);
 		INFO(finished.dump());
 		REQUIRE(finished.at("state") == "done");
 		CHECK(finished.at("result").at("copied").empty());

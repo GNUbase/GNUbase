@@ -42,7 +42,9 @@ and keyboard input. [mcp.md](../mcp.md#ui-tools) is the guide for agents.
   presses, moves, drags and wheel turns can hold modifiers, e.g. Shift for a fine drag. Keys are pressed and released
   with modifiers; they don't type text, which `ui_text` sends as text input, as the OS's text input does after a key
   press. A key that no element uses runs its key command, as the user's does ([key-commands.md](key-commands.md)). Each
-  input tool answers with the element under the mouse or with the focus, so a client sees what it hit.
+  input tool answers with the element under the mouse or with the focus, so a client sees what it hit. After each
+  input, outside the shell's steps, the shell's input handler runs (`Shell::inputHandled`): the app updates its main
+  menu's items there, so the DOM that `ui_dom` reads next shows what the input changed ([main-menu.md](main-menu.md)).
 - **Closing and quitting.** The window system's requests come from outside RmlUi, so input can't make them: `ui_close`
   asks to close a window as its title bar's close button or Alt+F4 does (`Shell::requestClose`): a panel's own window
   docks the panel again ([docking.md](docking.md)), and the main window asks to quit. With `quit` it asks to quit as

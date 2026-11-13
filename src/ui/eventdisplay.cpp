@@ -994,9 +994,9 @@ namespace gnubase::ui
 		setView(m_view);
 	}
 
-	void EventDisplay::setTrackHeights(double height)
+	void EventDisplay::setTrackHeights(const std::vector<uint64_t>& tracks, double height)
 	{
-		for (const uint64_t track : m_laneTracks)
+		for (const uint64_t track : tracks)
 			m_heights[track] = std::clamp(height, g_minTrackHeight, g_maxTrackHeight);
 		setLanes();
 		setView(m_view);

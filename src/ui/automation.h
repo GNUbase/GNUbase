@@ -48,7 +48,8 @@ namespace gnubase::ui
 
 	// Reads windows, documents and elements as JSON and injects input into a window's RmlUi context, the way the
 	// window system delivers the user's. Coordinates and boxes are in the window's pixels, as in its screenshots. A
-	// window that isn't given is the main window. Call every function on the UI thread (onUiThread runs them from
+	// window that isn't given is the main window. After each input, the shell's input handler runs
+	// (Shell::onInputHandled). Call every function on the UI thread (onUiThread runs them from
 	// others); they throw std::invalid_argument or std::runtime_error, saying why, for what they can't do.
 	class Automation
 	{

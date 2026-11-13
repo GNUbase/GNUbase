@@ -156,17 +156,20 @@ that the arrow keys select into view.
 - `tests/eventediting_tests.cpp` (fake window system, real engine): selecting with clicks and Ctrl, moving and copying
   with drags, shared copies with Alt and Shift, onto another track; drags restricted with Ctrl, across and down, moving
   and copying, and Ctrl and a click still deselecting; Ctrl and a click adding to the selection and taking out at an
-  edge (Disable Snapping) and with Ctrl as Copy, and a Ctrl drag then still copying; with Shift as Copy, the selection unchanged while the button is held, a Ctrl press moved past the drag threshold and released before the drag delay as a click, and no event that went while the button was held selected by the release; the drag delay (a drag released at once is a click, one held
-  past it shows and moves); a selection on two tracks moved two tracks down and copied back in one undo step each, and
-  only in time when a track's type doesn't fit; the arrow keys' commands along a track and at its ends; resizing at the edges, splitting with Alt, adding
-  parts with a double click at a bar and between the locators; the edit commands on the selection (delete, mute,
-  lock, nudging, duplicating, moving to the cursor, splitting at the cursor and the locators, gluing, filling the
-  locators with the last copy cut, converting a shared copy to a real one), the select submenu, muted events shown
-  greyed out and locked ones kept; a drag of an audio event's end and start showing, at every step, the box, waveform,
-  fades and volume line the release leaves: both edges in both sizing modes, snapped and with Disable Snapping
-  pressed and released mid-drag, while another client moves the event; an audio event and a MIDI part selected
-  together, and a second drag pressed before the display has the first one's project; a locked event staying as
-  it is; Escape cancelling it.
+  edge (Disable Snapping) and with Ctrl as Copy, and a Ctrl drag then still copying; with Shift as Copy, the selection
+  unchanged while the button is held, a Ctrl press moved past the drag threshold and released before the drag delay as a
+  click, one released after the drag delay without a move since copying only the pressed event, not the selection from
+  before the press, and no event that went while the button was held selected by the release; the drag delay (a drag
+  released at once is a click, one held past it shows and moves); a selection on two tracks moved two tracks down and
+  copied back in one undo step each, and only in time when a track's type doesn't fit; the arrow keys' commands along a
+  track and at its ends; resizing at the edges, splitting with Alt, adding parts with a double click at a bar and
+  between the locators; the edit commands on the selection (delete, mute, lock, nudging, duplicating, moving to the
+  cursor, splitting at the cursor and the locators, gluing, filling the locators with the last copy cut, converting a
+  shared copy to a real one), the select submenu, muted events shown greyed out and locked ones kept; a drag of an audio
+  event's end and start showing, at every step, the box, waveform, fades and volume line the release leaves: both edges
+  in both sizing modes, snapped and with Disable Snapping pressed and released mid-drag, while another client moves the
+  event; an audio event and a MIDI part selected together, and a second drag pressed before the display has the first
+  one's project; a locked event staying as it is; Escape cancelling it.
 - `tests/uiapp_tests.cpp` presses the default keys in the app's project window: select all, duplicate, mute, nudge
   and Backspace; Left and Right selecting parts, Up and Down stepping the tracks and selecting their first parts, also across a track
   without parts, and only the track with no part selected; and Mod+K,

@@ -193,10 +193,11 @@ TEST_CASE("a split, the project file and undo keep where audio events are in the
 	const int64_t front = f.take(track, clip, 0, 1000, 1);
 	CHECK(f.object("audioEvents", back).at("front") == 0); // its id orders it
 
-	// The piece after a split stays where the event was in the stack, behind the take in front.
+	// The piece after a split comes right in front of its event, and the take in front gets a place after it.
 	const Json pieces = f.call("event.split", {{"events", {back}}, {"positions", {500}}}).at("events");
 	REQUIRE(pieces.size() == 1);
-	CHECK(f.object("audioEvents", pieces.at(0)).at("front") == back);
+	CHECK(f.object("audioEvents", pieces.at(0)).at("front") == 0);
+	CHECK(f.object("audioEvents", front).at("front").get<int64_t>() > pieces.at(0).get<int64_t>());
 
 	f.call("event.toFront", {{"events", {back}}});
 	const Json moved = f.object("audioEvents", back).at("front");
@@ -209,6 +210,56 @@ TEST_CASE("a split, the project file and undo keep where audio events are in the
 	CHECK(f.object("audioEvents", back).at("front") == moved);
 	// New events still come in front of it.
 	CHECK(f.take(track, clip, 0, 100, 2) > moved.get<int64_t>());
+}
+
+TEST_CASE("a second split leaves what plays where the pieces of a split overlap, also after undo and loading",
+	"[integration]")
+{
+	const gnubase::test::TempDir dir;
+	Fixture f;
+	f.call("audio.setDevice", {{"blockSize", 64}, {"inputChannels", 0}, {"captureSeconds", 1}});
+	gnubase::test::Audio audio;
+	audio.sampleRate = 48000;
+	for (int64_t frame = 0; frame < 5000; ++frame)
+		audio.samples.push_back(ramp(frame));
+	const std::filesystem::path file = dir.path() / "ramp.wav";
+	gnubase::test::writeWav(file, audio);
+	const Json media = f.call("media.add", {{"path", file.u8string()}}).at("media");
+	const auto clip = f.call("clip.add", {{"media", media.at("id")}}).at("clip").at("id").get<int64_t>();
+	const int64_t track = f.track("audio");
+	// An event from 0 to 2000, and a take added after it from 1300 to 1400, in front of it, playing frame 3000 on.
+	const int64_t event = f.take(track, clip, 0, 2000, 0);
+	const int64_t later = f.take(track, clip, 3000, 100, 1);
+	f.call("event.move", {{"events", {later}}, {"delta", 1300}});
+	// Split at 1000 and the right piece moved left over the left one to 500: it plays in the overlap, the take in
+	// front of it from 1300 to 1400.
+	const Json right = f.call("event.split", {{"events", {event}}, {"positions", {1000}}}).at("events").at(0);
+	f.call("event.move", {{"events", {right}}, {"delta", -500}});
+	const auto plays = [](int64_t position) -> int64_t
+	{
+		if (position < 500)
+			return position;
+		if (position >= 1300 && position < 1400)
+			return 1700 + position;
+		return position < 1500 ? position + 500 : -1;
+	};
+	Fixture::check(f.render(2000), plays);
+
+	// Splitting the left piece before the overlap, and its piece after that inside it, changes nothing that plays.
+	const Json after = f.call("event.split", {{"events", {event}}, {"positions", {250}}}).at("events").at(0);
+	Fixture::check(f.render(2000), plays);
+	f.call("event.split", {{"events", {after}}, {"positions", {700}}});
+	Fixture::check(f.render(2000), plays);
+	f.call("history.undo");
+	f.call("history.undo");
+	Fixture::check(f.render(2000), plays);
+	f.call("history.redo");
+	f.call("history.redo");
+	Fixture::check(f.render(2000), plays);
+	const std::string path = (dir.path() / "split.dawproject").u8string();
+	f.call("project.save", {{"path", path}, {"embedMedia", false}});
+	f.call("project.load", {{"path", path}});
+	Fixture::check(f.render(2000), plays);
 }
 
 TEST_CASE("event.comp takes a piece of a clip at another sample rate that a split rounds past the range", "[unit]")
@@ -456,6 +507,50 @@ TEST_CASE("takes copied, duplicated, pasted or brought to the front together kee
 	CHECK(firstInFront(0));
 	f.call("event.comp", {{"track", track}, {"lane", 1}, {"start", 0}, {"end", 1000}});
 	CHECK(firstInFront(0));
+}
+
+TEST_CASE("overlapping pieces of a split copied or brought to the front keep their order in any order named", "[unit]")
+{
+	Fixture f;
+	const int64_t track = f.track("audio");
+	const Json media =
+		f.call("media.add", {{"path", "take.wav"}, {"sampleRate", 48000}, {"channels", 1}, {"length", 48000}})
+			.at("media");
+	const auto clip = f.call("clip.add", {{"media", media.at("id")}}).at("clip").at("id").get<int64_t>();
+	// Split at 1000 and the right piece moved left over the left one to 500: the right piece plays in the overlap.
+	const int64_t left = f.take(track, clip, 0, 2000, 0);
+	const auto right =
+		f.call("event.split", {{"events", {left}}, {"positions", {1000}}}).at("events").at(0).get<int64_t>();
+	f.call("event.move", {{"events", {right}}, {"delta", -500}});
+	// Whether, of the pieces at position (the left's) and 500 after it (the right's), the right one is in front.
+	const auto rightInFront = [&f](int64_t position)
+	{
+		int64_t leftPlace = -1;
+		int64_t rightPlace = -1;
+		const Json project = f.call("project.get");
+		for (const Json& event : project.at("audioEvents"))
+		{
+			const auto own = event.at("front").get<int64_t>();
+			const int64_t place = own != 0 ? own : event.at("id").get<int64_t>();
+			if (event.at("position") == position && event.at("offset") == 0)
+				leftPlace = place;
+			else if (event.at("position") == position + 500 && event.at("offset") == 1000)
+				rightPlace = place;
+		}
+		INFO("left " << leftPlace << ", right " << rightPlace);
+		return leftPlace > 0 && rightPlace > leftPlace;
+	};
+	REQUIRE(rightInFront(0));
+	int64_t delta = 0;
+	for (const Json& named : {Json{left, right}, Json{right, left}})
+	{
+		INFO("named " << named.dump());
+		delta += 48000;
+		f.call("event.copy", {{"events", named}, {"delta", delta}});
+		CHECK(rightInFront(delta));
+		f.call("event.toFront", {{"events", named}});
+		CHECK(rightInFront(0));
+	}
 }
 
 TEST_CASE("audio parts copied or brought to the front together keep their order in the stack", "[unit]")

@@ -969,7 +969,7 @@
 		background-color: #506176;
 		border-color: #f3f4f5;
 	}
-	.ape-event.muted, .ape-event.inactive
+	.ape-event.muted, .ape-event.inactive, .ape-event.outside
 	{
 		background-color: #4c4e51;
 		border-color: #b7bbc0;

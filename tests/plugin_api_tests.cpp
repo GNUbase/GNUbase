@@ -22,8 +22,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
+#include <map>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace gnubase;
@@ -373,6 +376,60 @@ TEST_CASE("the plugin API restores a plugin's state in another instance", "[unit
 	const std::vector<float> copyOut = copyRunner.process();
 	CHECK(sourceOut == copyOut);
 	CHECK_THAT(sourceOut[0], WithinAbs(0.25 * std::pow(10.0, -12.0 / 20.0), 1e-6));
+}
+
+TEST_CASE("a built-in plugin's state values are clamped, stepped ones rounded, and NaN, infinite ones and unknown ids "
+		  "skipped",
+	"[unit]")
+{
+	using engine::dsp::Delay;
+	using engine::processors::BuiltinPlugin;
+	// Pairs of id and value, as saveState writes them.
+	const auto stateOf = [](const std::vector<std::pair<uint32_t, double>>& values)
+	{
+		std::vector<uint8_t> state;
+		for (const auto& [id, value] : values)
+		{
+			const size_t at = state.size();
+			state.resize(at + sizeof(id) + sizeof(value));
+			std::memcpy(state.data() + at, &id, sizeof(id));
+			std::memcpy(state.data() + at + sizeof(id), &value, sizeof(value));
+		}
+		return state;
+	};
+	const std::vector<uint8_t> state = stateOf({{Delay::Time, 99999.0}, {Delay::Sync, 0.4}, {Delay::PingPong, 0.6},
+		{Delay::Note, std::nan("")}, {Delay::Feedback, -std::numeric_limits<double>::infinity()}, {999, 1.0}});
+
+	BuiltinFactory factory;
+	TestHost host;
+	const std::unique_ptr<Plugin> delay = createActive(factory, "builtin:delay", host);
+	REQUIRE(extension<State>(*delay)->loadState(state.data(), state.size(), StateContext::Project));
+	const auto valueOf = [&delay](uint32_t param)
+	{
+		double value = -1.0;
+		CHECK(extension<Params>(*delay)->paramValue(param, value));
+		return value;
+	};
+	const engine::processors::BuiltinInfo* info = engine::processors::findBuiltinPlugin("builtin:delay");
+	REQUIRE(info != nullptr);
+	const auto parameter = [info](uint32_t id) -> const engine::processors::ParameterInfo&
+	{
+		return *std::find_if(info->parameters.begin(), info->parameters.end(),
+			[id](const engine::processors::ParameterInfo& p) { return p.id == id; });
+	};
+	CHECK(valueOf(Delay::Time) == 5000.0);
+	CHECK(valueOf(Delay::Sync) == 0.0);
+	CHECK(valueOf(Delay::PingPong) == 1.0);
+	CHECK(valueOf(Delay::Note) == parameter(Delay::Note).defaultValue);
+	CHECK(valueOf(Delay::Feedback) == parameter(Delay::Feedback).defaultValue);
+
+	// Playback and parameter.get: a value set comes first, then the state's, then the default, each as loaded.
+	const std::map<uint32_t, double> set{{Delay::Time, -5.0}, {Delay::Sync, 0.7}, {Delay::PingPong, std::nan("")}};
+	CHECK(BuiltinPlugin::staticValue(parameter(Delay::Time), set, &state) == 1.0);
+	CHECK(BuiltinPlugin::staticValue(parameter(Delay::Sync), set, &state) == 1.0);
+	CHECK(BuiltinPlugin::staticValue(parameter(Delay::PingPong), set, &state) == 1.0);
+	CHECK(BuiltinPlugin::staticValue(parameter(Delay::Note), set, &state) == parameter(Delay::Note).defaultValue);
+	CHECK(BuiltinPlugin::staticValue(parameter(Delay::Sync), {}, nullptr) == parameter(Delay::Sync).defaultValue);
 }
 
 TEST_CASE("plugin events have one layout with room for namespaces and expression ids", "[unit]")
