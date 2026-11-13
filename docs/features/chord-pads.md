@@ -222,7 +222,8 @@ refuses, such as a remote start above the end, goes back to the one the pads hav
   farthest at the top, above the reference (`.chord-proximity-reference`). On the List page a Cadence Type menu goes
   with Cadence. A press auditions a chord; a double click assigns it to the first unassigned pad,
   and dropped on a pad it goes onto that one (pp. 1357-1359); a context click assigns it to the first unassigned pad
-  (p. 1375), and the last three auditioned show in bold (`.recent`).
+  (p. 1375), and the last three auditioned show in bold (`.recent`). An answer that arrives after its page was left is
+  dropped, so it never replaces the chord editor's buttons or another page's suggestions.
 
 ## Checks
 
@@ -254,17 +255,18 @@ Snap Playback, the pattern player and the sections player mode pass the RT check
 mouse recorded on a record-enabled track, a chord typed after a double click, pads swapped by dragging, the extended
 toolbar, the wheel with and without Shift, Select All with Remove Assignment past a locked pad, Load and the root key
 with Transpose Pads, the assistant's suggestions, circle and proximity rows with a double click that assigns, the
-cadence types and the chord editor's buttons, the padlock and adaptive voicing indicators with Lock on two pads as one
-undo step and its undo, the reference indicator beside them inside the pad and in its upper right corner, a refused
-remote start going back, the wheel over the root key, and Left and Right with step input, on a pad and on the Step
-Input button, as no undo step, but not in the velocity field, the chord field or the root key menu, or with Cmd; the
-toolbar's Output Mode, Snap and Enh. Shift and every settings pane (players with their style, name and track, the
-player modes with a pattern preset, Overlaps, Filter Notes, Latch Chords, the chord modifiers and their keys, MIDI
-Learn, the sections settings and keys, and the display settings with roman numerals, Nashville numbers, voicing
-indicators and the grid); saving a preset and stepping through the presets; the pads' key commands; a pad modifier
-button playing the pad while it is down, the keyboard's remote range, played notes and hovered key, a pad lit by a
-remote key, a suggestion dropped onto a pad, the List assistant's colors and Assign from MIDI Input's frame; a pad
-dropped onto an instrument track's lane and onto the chord track; and the step input cursor in the event display.
+cadence types and the chord editor's buttons, an answer for a page left before it arrived dropped, the padlock and
+adaptive voicing indicators with Lock on two pads as one undo step and its undo, the reference indicator beside them
+inside the pad and in its upper right corner, a refused remote start going back, the wheel over the root key, and Left
+and Right with step input, on a pad and on the Step Input button, as no undo step, but not in the velocity field, the
+chord field or the root key menu, or with Cmd; the toolbar's Output Mode, Snap and Enh. Shift and every settings pane
+(players with their style, name and track, the player modes with a pattern preset, Overlaps, Filter Notes, Latch Chords,
+the chord modifiers and their keys, MIDI Learn, the sections settings and keys, and the display settings with roman
+numerals, Nashville numbers, voicing indicators and the grid); saving a preset and stepping through the presets; the
+pads' key commands; a pad modifier button playing the pad while it is down, the keyboard's remote range, played notes
+and hovered key, a pad lit by a remote key, a suggestion dropped onto a pad, the List assistant's colors and Assign from
+MIDI Input's frame; a pad dropped onto an instrument track's lane and onto the chord track; and the step input cursor in
+the event display.
 
 ## Not yet
 

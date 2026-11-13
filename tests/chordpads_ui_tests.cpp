@@ -7,6 +7,7 @@
 #include "engine/engine.h"
 #include "ui/automation.h"
 #include "ui/docking.h"
+#include "ui/enginebinding.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -301,6 +302,35 @@ TEST_CASE("the chord assistant suggests chords after the selected pad's and assi
 	window.click("#chord-pads-cadenceType");
 	CHECK(window.app.waitUntil([&] { return window.elements(".chord-suggestion[chord=\"F\"]").empty(); }));
 	CHECK(window.app.waitUntil([&] { return window.elements(".chord-suggestion[chord=\"G\"]").size() == 1; }));
+}
+
+TEST_CASE("the chord assistant drops an answer for a page that was left before it arrived", "[ui]")
+{
+	Window window;
+	window.open();
+	window.app.appUi().docking().setSize("project", "lower", 400.0);
+	window.step();
+	window.click("#chord-pads-assistant");
+	window.click(Window::pad(0));
+	REQUIRE(window.app.waitUntil([&] { return window.elements(".chord-suggestion").size() == 24; }));
+	// Two page clicks with no step between them: the first page's question is answered after the second page opened.
+	const auto clickTwo = [&](const std::string& first, const std::string& second)
+	{
+		for (const std::string& selector : {first, second})
+			window.app.ui().click(std::nullopt, {selector, 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+		window.step();
+		REQUIRE(window.app.waitUntil([&] { return window.app.appUi().binding().waiting("chordPads.assistant") == 0; }));
+	};
+
+	// The Circle of Fifths' answer doesn't replace the chord editor's buttons.
+	clickTwo("#chord-pads-page-circle", "#chord-pads-page-editor");
+	CHECK(window.hasClass(".chord-editor-button[part=root][value=\"0\"]", "checked"));
+	CHECK(window.elements(".chord-circle-outer").empty());
+
+	// The List's answer isn't drawn as the Proximity page's rows.
+	clickTwo("#chord-pads-page-list", "#chord-pads-page-proximity");
+	CHECK(window.elements(".chord-proximity-row").size() >= 2);
+	CHECK(window.text(".chord-proximity-reference") == "C");
 }
 
 TEST_CASE("the pads show their lock and adaptive voicing, and Lock on several pads is one undo step", "[ui]")

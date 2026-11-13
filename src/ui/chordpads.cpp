@@ -721,14 +721,17 @@ namespace gnubase::ui
 			parameters["minor"] = find("chord-pads-mode")->GetAttribute<Rml::String>("value", "major") == "minor";
 		}
 		m_binding.send("chordPads.assistant", parameters,
-			[this, reference = parameters.value("chord", std::string()), alive = std::weak_ptr<bool>(m_alive)](
-				const engine::Result& result)
+			[this, page = m_page, reference = parameters.value("chord", std::string()),
+				alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
-				Rml::Element* suggestions = alive.expired() || !result.ok() ? nullptr : find("chord-pads-suggestions");
+				// An answer for a page that was left before it arrived isn't wanted: the page open now drew itself or
+				// asked again.
+				Rml::Element* suggestions =
+					alive.expired() || !result.ok() || m_page != page ? nullptr : find("chord-pads-suggestions");
 				if (suggestions == nullptr)
 					return;
 				std::string rml;
-				if (m_page == "proximity" && result.value.contains("suggestions"))
+				if (page == "proximity")
 				{
 					// The Proximity assistant (p. 1374): rows by distance, the farthest at the top, and the reference
 					// at the bottom in the middle.
