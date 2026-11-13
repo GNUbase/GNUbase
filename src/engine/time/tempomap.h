@@ -43,7 +43,11 @@ namespace gnubase::time
 		explicit TempoMap(const std::vector<TempoPoint>& points);
 
 		double toSeconds(Ticks tick) const;
+		// The same conversions without rounding to whole ticks, so callers that round a relative position once keep
+		// positions that are equal in time equal in ticks (#865).
+		double toSecondsExact(double tick) const;
 		Ticks toTicks(double seconds) const;
+		double toTicksExact(double seconds) const;
 		Samples toSamples(Ticks tick, double sampleRate) const;
 		Ticks toTicks(Samples sample, double sampleRate) const;
 		double bpmAt(Ticks tick) const;
