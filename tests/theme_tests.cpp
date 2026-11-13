@@ -337,6 +337,10 @@ TEST_CASE("the default theme's bars, tabs and inspector headers are flat, the ot
 			// Mixer channel strips as raised panels, the transport bar's time displays as plain digits.
 			CHECK(last(".mixer-channel").find("border-radius") != std::string::npos);
 			CHECK(last(".transport .display").find("decorator: none") != std::string::npos);
+			// A light fader cap with grip lines; a knob without a fixed accent arc.
+			CHECK(file("fader-cap.svg").find("linearGradient") != std::string::npos);
+			CHECK(file("knob-base.svg").find(readJson(dir / "tokens.json").at("accent").get<std::string>()) ==
+				std::string::npos);
 			for (const char* arrow : {"dropdown-button-normal.svg", "disclosure-open.svg", "disclosure-closed.svg"})
 			{
 				INFO(arrow);

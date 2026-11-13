@@ -1,4 +1,4 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 12" width="22" height="12">
-<rect x="0.5" y="0.5" width="21.0" height="11.0" rx="3" fill="#163045" stroke="#22839b" stroke-width="1"/><line x1="5" y1="6.5" x2="17" y2="6.5" stroke="#10dff2"/>
+<defs><linearGradient id="cap" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#dadfef"/><stop offset="100%" stop-color="#8e93a9"/></linearGradient></defs><rect x=".5" y=".5" width="21" height="11" rx="2.5" fill="url(#cap)" stroke="#262c43"/><line x1="5" y1="3.5" x2="17" y2="3.5" stroke="#090b18" opacity=".55"/><line x1="5" y1="6.5" x2="17" y2="6.5" stroke="#090b18" opacity=".55"/><line x1="5" y1="8.5" x2="17" y2="8.5" stroke="#090b18" opacity=".55"/>
 </svg>

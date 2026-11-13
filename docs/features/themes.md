@@ -30,8 +30,9 @@ how each state looks (CLAUDE.md, "UI conventions"). The code is in `src/ui/theme
   lanes are on the panels' surface with the track list a step lighter, track list rows are raised, a selected list
   item is tinted and outlined in the second accent, inspector section headers are bold names on a tile after a
   disclosure arrow, value and text fields and drop-down lists are raised fields lighter than their panel, without
-  the accent line, mute, solo and record buttons are filled boxes, mixer channel strips are raised panels, and the
-  transport bar's time displays are plain digits. The generator's `flat_rules` gives every
+  the accent line, mute, solo and record buttons are filled boxes, mixer channel strips are raised panels with light
+  fader caps over thin slots and knobs without the fixed accent arc, and the transport bar's time displays are plain
+  digits. The generator's `flat_rules` gives every
   theme the same selectors (the check below): the default theme its flat look, the others what their general rules
   already give, so they keep their framed look. Their drop-down button and disclosure skins are the plain button's.
   Rules for buttons in bars skip toggle and primary buttons (`:not(.toggle):not(.primary)`), which keep their skins.

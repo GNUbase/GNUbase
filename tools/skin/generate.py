@@ -244,7 +244,7 @@ def nine_svg(name: str, theme: dict) -> tuple[int, int, str, dict]:
         return w, h, svg_doc(w, h, arrow), {"left": 20, "top": 6, "right": 6, "bottom": 6}
     elif name.startswith("dropdown-button-"):
         # A menu button that shows a value: a field with the arrow in its right slice, which doesn't stretch across
-        bg = mix(c["background"], c["surface"], .28)
+        bg = mix(c["surface"], c["surfaceRaised"], .7)
         if name.endswith("hover"): border = mix(border, accent, .55)
         y = h / 2
         arrow = (f'<polyline points="{w-15},{y-2} {w-11},{y+2} {w-7},{y-2}" fill="none" stroke="{c["textMuted"]}" '
@@ -283,6 +283,10 @@ def nine_svg(name: str, theme: dict) -> tuple[int, int, str, dict]:
     elif name == "slider-fill":
         bg = accent; border = mix(accent, "#ffffff", .12); r = 4; inset = 1
         if theme["glow"]: extra = glow_rect(w, h, accent, 4)
+    elif name == "fader-track" and theme["flat"]:
+        # A thin slot down the middle, no box around it
+        bg = "none"; border = "none"; r = 0; inset = 2
+        extra = f'<rect x="{w/2-2}" y="2" width="4" height="{h-4}" rx="2" fill="{mix(c["background"], "#000000", .3)}"/>'
     elif name == "fader-track":
         bg = mix(c["background"], "#000000", .12); border = c["border"]; r = 4; inset = 2
         extra = f'<line x1="{w/2+.5}" y1="4" x2="{w/2+.5}" y2="{h-4}" stroke="{mix(c["border"], c["textMuted"], .3)}"/>'
@@ -313,9 +317,21 @@ def fixed_svg(name: str, theme: dict) -> tuple[int, int, str]:
         if theme["glow"]: body += f'<circle cx="8" cy="8" r="7" fill="{accent}" opacity=".14"/>'
         body += f'<circle cx="8" cy="8" r="5.5" fill="{accent}" stroke="{mix(accent,"#ffffff",.3)}"/>'
         body += '<circle cx="6.5" cy="6.5" r="1.2" fill="#ffffff" opacity=".6"/>'
+    elif name == "fader-cap" and theme["flat"]:
+        # A light cap with grip lines, as on a hardware fader
+        light = mix(c["text"], c["textMuted"], .35)
+        body = (f'<defs><linearGradient id="cap" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="{light}"/>'
+                f'<stop offset="100%" stop-color="{mix(light, c["border"], .45)}"/></linearGradient></defs>')
+        body += f'<rect x=".5" y=".5" width="{w-1}" height="{h-1}" rx="2.5" fill="url(#cap)" stroke="{mix(c["border"], "#000000", .2)}"/>'
+        body += "".join(f'<line x1="5" y1="{y+.5}" x2="{w-5}" y2="{y+.5}" stroke="{c["background"]}" opacity=".55"/>'
+                        for y in (3, h // 2, h - 4))
     elif name == "fader-cap":
         body = rect(w, h, mix(bg, accent, .10), mix(border, accent, .45), 3)
         body += f'<line x1="5" y1="{h/2+.5}" x2="{w-5}" y2="{h/2+.5}" stroke="{accent}"/>'
+    elif name == "knob-base" and theme["flat"]:
+        # A ring around a dark body, without the fixed accent arc and the gloss
+        body = f'<circle cx="20" cy="20" r="17" fill="none" stroke="{c["border"]}" stroke-width="3" stroke-dasharray="68 22" transform="rotate(135 20 20)" stroke-linecap="round"/>'
+        body += f'<circle cx="20" cy="20" r="13" fill="{mix(c["surface"], c["background"], .4)}" stroke="{mix(c["border"], c["surfaceRaised"], .3)}"/>'
     elif name == "knob-base":
         body = f'<circle cx="20" cy="20" r="17" fill="none" stroke="{c["border"]}" stroke-width="3" stroke-dasharray="68 22" transform="rotate(135 20 20)"/>'
         body += f'<circle cx="20" cy="20" r="13.5" fill="{mix(bg,c["background"],.22)}" stroke="{border}"/>'
