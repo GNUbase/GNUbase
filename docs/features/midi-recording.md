@@ -50,8 +50,9 @@ undo step.
   `recording.add` quantizes the recorded notes with the project's quantize settings, as `quantize.apply` does, so
   `quantize.reset` brings back what was played.
 - **Retrospective recording** (pp. 353-356). MIDI input that a track doesn't record, in stop mode or during playback,
-  goes into its retrospective buffer on the disk thread, which keeps the last `midi.retrospectiveEvents` events (10000
-  by default; 0 keeps none). `midi.insertRetrospective` inserts a track's buffer as one part through `recording.add`
+  also that of a track that only monitors while the chord track records (it makes chord events, no part), goes into
+  its retrospective buffer on the disk thread, which keeps the last `midi.retrospectiveEvents` events (10000 by
+  default; 0 keeps none). `midi.insertRetrospective` inserts a track's buffer as one part through `recording.add`
   in the new parts mode: input from playback where it played, input from stop mode at the project cursor with its
   timing. Input after an insert, or in stop mode after a pause of over 30 seconds, starts the buffer afresh.
   `midi.clearRetrospective` empties one track's buffer or all of them.
