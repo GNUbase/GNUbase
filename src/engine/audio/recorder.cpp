@@ -156,22 +156,15 @@ namespace gnubase::engine
 		const uint8_t channel = event.channel % 16U;
 		if (m_mpeRange <= 0 || channel == 0) // the master channel's messages are the whole zone's
 			return false;
-		size_t index = 0;
-		double value = 0.0;
-		if (event.type == EventType::PitchBend)
-			value = midi::bendToSemitones(event.value, m_mpeRange);
-		else if (event.type == EventType::ChannelPressure)
-		{
+		size_t index = 0; // into g_mpeExpressions
+		if (event.type == EventType::ChannelPressure)
 			index = 1;
-			value = midi::controllerToUnit(event.value);
-		}
 		else if (event.type == EventType::Controller && event.key == 74)
-		{
 			index = 2;
-			value = midi::controllerToUnit(event.value);
-		}
-		else
+		else if (event.type != EventType::PitchBend)
 			return false;
+		const double value =
+			index == 0 ? midi::bendToSemitones(event.value, m_mpeRange) : midi::controllerToUnit(event.value);
 		m_mpeState[channel][index] = value;
 		const Json point = {{"type", g_mpeExpressions.at(index)}, {"position", position}, {"value", value}};
 		for (size_t pitch = 0; pitch < 128; ++pitch)

@@ -146,9 +146,13 @@ namespace gnubase::engine
 					add(0xE0U, bend, 3, bend >> 7U);
 				}
 				else if (event.parameter == plugin::expressionId(plugin::NoteExpression::Pressure))
+				{
 					add(0xD0U, midi::controllerToMidi1(midi::controllerFromUnit(event.parameterValue)));
+				}
 				else if (event.parameter == plugin::expressionId(plugin::NoteExpression::Brightness))
+				{
 					add(0xB0U, 74, 3, midi::controllerToMidi1(midi::controllerFromUnit(event.parameterValue)));
+				}
 				break;
 			case Type::SysEx:
 			case Type::Parameter:

@@ -1779,17 +1779,25 @@ namespace gnubase::engine
 			const Json& item = json.at(i);
 			const std::string where = name + "[" + std::to_string(i) + "]";
 			const auto type = item.at("type").get<std::string>();
-			const auto found = std::find(g_expressionNames.begin(), g_expressionNames.end(), type);
+			const auto* const found = std::find(g_expressionNames.begin(), g_expressionNames.end(), type);
 			if (found == g_expressionNames.end())
-				throw std::invalid_argument(where + ".type: there is no expression " + type);
+				throw std::invalid_argument(where + ".type: there is no expression " += type);
 			ExpressionPoint point;
 			point.type = static_cast<plugin::NoteExpression>(found - g_expressionNames.begin());
 			point.position = item.at("position").get<time::Ticks>();
 			if (point.position < 0)
 				throw std::invalid_argument(where + ".position must not be negative");
-			const auto [minimum, maximum] = point.type == plugin::NoteExpression::Tuning ? std::pair(-120.0, 120.0)
-				: point.type == plugin::NoteExpression::Volume                           ? std::pair(0.0, 4.0)
-																						 : std::pair(0.0, 1.0);
+			double minimum = 0.0;
+			double maximum = 1.0;
+			if (point.type == plugin::NoteExpression::Tuning)
+			{
+				minimum = -120.0;
+				maximum = 120.0;
+			}
+			else if (point.type == plugin::NoteExpression::Volume)
+			{
+				maximum = 4.0;
+			}
 			point.value = checkedNumber(item.at("value"), minimum, maximum, where + ".value");
 			points.push_back(point);
 		}

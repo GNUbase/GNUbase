@@ -128,7 +128,7 @@ namespace gnubase::engine
 	}
 
 	// The pitch range of MPE input: midi.mpePitchRange with the user setting midi.mpeInput on, 0 with it off.
-	int mpePitchRange(const settings::Store& settings);
+	int mpePitchRange(const settings::Store& store);
 
 	// The format of the project's record files: the project setup's record file type and bit depth at the project's
 	// sample rate. A Broadcast Wave file gets a bext chunk; the recorder fills in what belongs to each file.
