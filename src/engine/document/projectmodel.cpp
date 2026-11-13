@@ -2841,7 +2841,9 @@ namespace gnubase::engine
 			find(project.clips, id, "clip");
 			forEveryAudioEvent(project, [id](const AudioEvent& event)
 				{ require(event.clip != id, "clip " + idText(id) + " is used by audio event " + idText(event.id)); });
-			for (const auto& [channelId, channel] : project.channels)
+			for (const auto& entry : project.channels)
+			{
+				const Channel& channel = entry.second; // C++17 lambdas can't capture structured bindings
 				forEveryInstrumentClip(channel,
 					[&](ObjectId clip)
 					{
@@ -2849,6 +2851,7 @@ namespace gnubase::engine
 							"clip " + idText(id) + " is played by " + (channel.sample == id ? "sampler" : "drum") +
 								" track " + idText(channel.track));
 					});
+			}
 			project.clips.erase(id);
 			context.emit("clip.removed", {{"clip", id}});
 			return Json::object();
