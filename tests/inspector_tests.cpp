@@ -1609,6 +1609,25 @@ TEST_CASE("a MIDI modifier or a part's transpose dragged back to where it starte
 		"#info-line valuefield[field=transpose]", [&] { return window.part(part).at("transpose").get<int64_t>(); });
 }
 
+TEST_CASE("the inspector routes a MIDI or instrument track's MIDI input from all MIDI inputs or the chord pads", "[ui]")
+{
+	// Reference manual p. 1367: Chord Pads as the input routing (#1089).
+	Window window;
+	const uint64_t keys = window.addTrack({{"type", "instrument"}, {"name", "Keys"}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 1; }));
+	window.list.select({keys});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Keys"));
+	CHECK_FALSE(hasClass(window.app, ".inspector [row=input]", "unavailable"));
+	REQUIRE(window.shows(".inspector select[control=input]", "all"));
+	window.click(".inspector select[control=input]");
+	window.app.ui().key(std::nullopt, "Down");
+	window.click(".inspector select[control=input]");
+	REQUIRE(window.app.waitUntil([&] { return window.channel(keys).at("midiInput") == "chordPads"; }));
+	// Another client's choice shows.
+	window.call("channel.set", {{"channel", window.channel(keys).at("id")}, {"midiInput", "none"}});
+	CHECK(window.shows(".inspector select[control=input]", "none"));
+}
+
 TEST_CASE("the inspector's MIDI Inserts and MIDI Sends sections show and change the track's MIDI effects", "[ui]")
 {
 	Window window;

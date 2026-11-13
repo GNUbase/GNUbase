@@ -592,12 +592,13 @@ namespace gnubase::engine
 			{"midiVolume", channel.midiVolume ? Json(*channel.midiVolume) : Json(nullptr)},
 			{"midiPan", channel.midiPan ? Json(*channel.midiPan) : Json(nullptr)},
 			{"program", channel.program ? Json(*channel.program) : Json(nullptr)},
-			{"bank", channel.bank ? Json(*channel.bank) : Json(nullptr)}, {"device", channel.device},
-			{"monitor", channel.monitor}, {"recordEnable", channel.recordEnable}, {"midiInput", channel.midiInput},
-			{"mute", channel.mute}, {"solo", channel.solo}, {"soloDefeat", channel.soloDefeat},
-			{"listen", channel.listen}, {"slots", channel.slots}, {"notes", channel.notes},
-			{"modifiers", toJson(channel.modifiers)}, {"midiInserts", toJson(channel.midiInserts, false)},
-			{"midiSends", toJson(channel.midiSends, true)},
+			{"bank", channel.bank ? Json(*channel.bank) : Json(nullptr)},
+			{"midiChannel", channel.midiChannel ? Json(*channel.midiChannel) : Json(nullptr)},
+			{"device", channel.device}, {"monitor", channel.monitor}, {"recordEnable", channel.recordEnable},
+			{"midiInput", channel.midiInput}, {"mute", channel.mute}, {"solo", channel.solo},
+			{"soloDefeat", channel.soloDefeat}, {"listen", channel.listen}, {"slots", channel.slots},
+			{"notes", channel.notes}, {"modifiers", toJson(channel.modifiers)},
+			{"midiInserts", toJson(channel.midiInserts, false)}, {"midiSends", toJson(channel.midiSends, true)},
 			{"inputTransformer", midi::toJson(channel.inputTransformer)}};
 		json.update(toJson(channel.sections));
 		Json sends = Json::array();
@@ -2185,6 +2186,9 @@ namespace gnubase::engine
 				channel.program = static_cast<int>(checkedNumber(stored, 0.0, 127.0, name + " program"));
 			if (const Json stored = item.value("bank", Json()); !stored.is_null())
 				channel.bank = static_cast<int>(checkedNumber(stored, 0.0, g_maxBank, name + " bank"));
+			// Files from before the MIDI channel have Any.
+			if (const Json stored = item.value("midiChannel", Json()); !stored.is_null())
+				channel.midiChannel = static_cast<int>(checkedNumber(stored, 0.0, 15.0, name + " midiChannel"));
 			channel.device = item.value("device", std::string());
 			// An instrument this build doesn't have, e.g. in a file from a newer one, or one on a track that doesn't
 			// play instruments: the channel plays none.
@@ -2205,7 +2209,8 @@ namespace gnubase::engine
 			const bool buttons = type == TrackType::Audio || midi || type == TrackType::Vca;
 			channel.monitor = buttons && item.value("monitor", false);
 			channel.recordEnable = buttons && item.value("recordEnable", false);
-			channel.midiInput = midi && item.value("midiInput", std::string()) == "none" ? "none" : "all";
+			const std::string midiInput = item.value("midiInput", std::string());
+			channel.midiInput = midi && (midiInput == "none" || midiInput == "chordPads") ? midiInput : "all";
 			channel.mute = item.value("mute", false); // files from before mute and solo have neither
 			channel.solo = item.value("solo", false);
 			channel.soloDefeat = item.value("soloDefeat", false); // files from before #109 have neither

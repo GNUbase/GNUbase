@@ -124,8 +124,9 @@ yet is in [warp.md](warp.md).
   Region and Remove Region with undo, a click on a region scrolling the display to it, typing a region's name, start
   and end, by Enter and by leaving the field, and Escape, wrong and unchanged values and regions changing meanwhile,
   a double click on another region right after typing; dragging the snap point, the zoom tool in and out, a click in
-  the overview, the play and scrub tools auditioning the clip past the event's end, the cursor following the scrub,
-  Play Region and the window layout's switches; Open/Close Editor without a selection closing it.
+  the overview, the play and scrub tools auditioning the clip past the event's end, `audition.changed` naming the clip
+  and its media file, the cursor following the scrub, Play Region and the window layout's switches; Open/Close
+  Editor without a selection closing it.
 - `tests/playback_tests.cpp`: auditioning and scrubbing a media file and a clip with its fades
   ([audition.md](audition.md)).
 - `tests/eventediting_tests.cpp`: a double click on an audio event opens it in the sample editor.

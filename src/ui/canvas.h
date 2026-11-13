@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -21,8 +22,12 @@ namespace gnubase::ui
 {
 	class RmlUi;
 
-	// Registers <event-lanes>, <waveform>, <curve>, <fade-lines> and <ruler>, and the style properties they draw with
-	// (stroke-color and stroke-width). ui::RmlUi does it when it starts, so every document has them.
+	// Registers <event-lanes>, <waveform>, <curve>, <fade-lines> and <ruler>, and the style properties they draw with:
+	// stroke-color and stroke-width, and how colors that are user data show (#1312): own-fill-opacity (a number, 1 by
+	// default) is how opaque an event's body is in its own color; own-color-tint (none by default, or a color) is laid
+	// over an own color by its alpha for the event's outline and for a waveform, which otherwise use stroke-color and
+	// color; event-inset (a length, 0 by default) keeps events that far off their lane's top and bottom. ui::RmlUi
+	// does it when it starts, so every document has them.
 	void registerCanvas(RmlUi& rmlui);
 
 	// A stretch of a timeline, in the units of whoever fills the element: ticks, samples or seconds. The elements only
@@ -31,8 +36,9 @@ namespace gnubase::ui
 	{
 		double start = 0.0;
 		double length = 0.0;
-		// <event-lanes>: a color that is user data, such as an event's or its track's color (#94), as 0xRRGGBBAA,
-		// drawn instead of the style sheet's color; 0 for the style sheet's.
+		// A color that is user data, such as an event's or its track's color (#94), as 0xRRGGBBAA, drawn instead of
+		// the style sheet's color as the style sheet's own-* properties say; 0 for the style sheet's. <event-lanes>
+		// fill events with it, a <waveform> draws in it if own-color-tint isn't none.
 		uint32_t color = 0;
 
 		double end() const { return start + length; }
@@ -87,6 +93,12 @@ namespace gnubase::ui
 		Rml::ColourbPremultiplied fill();
 		Rml::ColourbPremultiplied stroke();
 		float strokeWidth();
+		// An own color (TimeSpan::color) as a body: at own-fill-opacity.
+		Rml::ColourbPremultiplied ownFill(uint32_t rgba);
+		// An own color as a line, with own-color-tint over it; nothing if the tint is none.
+		std::optional<Rml::ColourbPremultiplied> ownLine(uint32_t rgba);
+		// event-inset in pixels.
+		float eventInset();
 
 		void OnRender() override;
 		void OnAttributeChange(const Rml::ElementAttributes& changed) override;
@@ -109,7 +121,8 @@ namespace gnubase::ui
 	};
 
 	// <event-lanes>: rows of rectangles, such as the events of tracks or the notes of a key editor (one lane per
-	// pitch). Fills them with color, or with their own color if they have one, outlined by stroke-color.
+	// pitch). Fills them with color, or with their own color if they have one at own-fill-opacity, outlined by
+	// stroke-color, or an own color with own-color-tint over it, event-inset off their lane's edges.
 	class EventLanes final : public Canvas
 	{
 	public:
@@ -141,7 +154,8 @@ namespace gnubase::ui
 		std::vector<int16_t> high;
 	};
 
-	// <waveform>: the peaks of one or more channels, one above the other, in color. A pixel shows the columns it
+	// <waveform>: the peaks of one or more channels, one above the other, in color, or in the span's own color with
+	// own-color-tint over it if that isn't none. A pixel shows the columns it
 	// covers; columns wider than a pixel are repeated.
 	class Waveform final : public Canvas
 	{
@@ -150,6 +164,8 @@ namespace gnubase::ui
 
 		// The columns cover span evenly.
 		void setPeaks(TimeSpan span, std::vector<PeakColumns> channels);
+		// The span's own color (TimeSpan::color) changes, the peaks stay.
+		void setColor(uint32_t color);
 		const TimeSpan& span() const { return m_span; }
 		const std::vector<PeakColumns>& channels() const { return m_channels; }
 

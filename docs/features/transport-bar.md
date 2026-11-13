@@ -162,13 +162,13 @@ following another client's changes, the marker buttons with and without markers,
 key, the time format menus, Exchange Time Formats by button and key, `ui.timeFormats` and the project's time format from
 the engine, also by undo and redo; in every format, the cursor's displays keeping their width and the controls to their
 right their place through positions with more and fewer digits, up to bar 1000, with their text inside; positions,
-locators and a length typed into the displays (also the position a display
-shows, from between its ticks), the tempo and signature fields with undo, every key command, the transport panel opened
-by F2, by an enter command and again after its window was closed, and the time display window with its context menu;
-Rewind, Forward and Fast Forward winding while their key or button is held and stopping when it goes up, also after
-Shift; Nudge Cursor on bar, beat and second grids and at the project start; the wheel on the position, locator and range
-displays in three formats, and past the largest project position, where positions, locators and a length typed stop too,
-also for turns far larger than a wheel's; a drag and wheel turns on the tempo field as one undo step each; a tempo with
+locators and a length typed into the displays (also the position a display shows, from between its ticks), the tempo and
+signature fields with undo, every key command, the transport panel opened by F2, by an enter command and again after its
+window was closed, and the time display window with its context menu; Rewind, Forward and Fast Forward winding while
+their key or button is held and stopping when it goes up, also after Shift; Nudge Cursor on bar, beat and second grids
+and at the project start; the wheel on the position, locator and range displays in three formats, and past the largest
+project position, where positions, locators and a length typed stop too, also for turns far larger than a wheel's; a
+drag and wheel turns on the tempo field as one undo step each, in fixed tempo mode and in tempo track mode; a tempo with
 more decimals than the field shows, kept when the field is left untouched and set when its number is typed; the position
 typed back into the primary display during playback; Show Beat Count Only and the window sizes, kept for the window
 opened again; and the setup panes of the transport bar and the panel, each with its own sections, and Show All. A button

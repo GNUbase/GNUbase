@@ -926,6 +926,47 @@ TEST_CASE("a drag or wheel gesture on the tempo field is one undo step", "[ui]")
 	REQUIRE(app.waitUntil([&app] { return element(app, "#tempo").at("attributes").at("value") == "120"; }));
 }
 
+TEST_CASE("a drag or wheel gesture on the tempo field in tempo track mode changes the event at the cursor", "[ui]")
+{
+	test::UiApp app({1024, 700});
+	showBar(app);
+	app.call("project.set", {{"tempoTrackActive", true}});
+	app.call("tempo.add", {{"position", 4 * g_quarter}, {"bpm", 100.0}, {"ramp", false}});
+	// The cursor after the event, three seconds in: the field shows its tempo, and a gesture changes that event,
+	// not the first one (reference manual p. 1446).
+	app.call("transport.locate", {{"position", 3 * 48000}});
+	REQUIRE(app.waitUntil([&app] { return element(app, "#tempo").at("attributes").at("value") == "100"; }));
+	const size_t before = undoSteps(app);
+	const auto events = [&app] { return app.call("project.get").at("tempo"); };
+
+	// A drag up raises the tempo of the event at the cursor in many steps of the field, and sets it once, at its end.
+	const Json box = element(app, "#tempo").at("box");
+	const int x = static_cast<int>(box.at("x").get<double>() + (box.at("width").get<double>() / 2));
+	const int y = static_cast<int>(box.at("y").get<double>() + (box.at("height").get<double>() / 2));
+	app.ui().drag(std::nullopt, at("#tempo"), {std::string(), 0, ui::Point{x, y - 40}});
+	REQUIRE(app.waitUntil([&events] { return events()[1].at("bpm").get<double>() > 100.0; }));
+	CHECK(events()[0].at("bpm").get<double>() == 120.0); // the first event stays
+	settle(app);
+	CHECK(undoSteps(app) == before + 1);
+	const double dragged = events()[1].at("bpm").get<double>();
+
+	// Turns of the wheel in a row are one step on the same event too.
+	for (int turn = 0; turn < 3; ++turn)
+		app.ui().wheel(std::nullopt, at("#tempo"), 0, -1);
+	REQUIRE(app.waitUntil(
+		[&events, dragged] { return std::abs(events()[1].at("bpm").get<double>() - (dragged + 3.0)) < 0.001; }));
+	CHECK(events()[0].at("bpm").get<double>() == 120.0);
+	settle(app);
+	CHECK(undoSteps(app) == before + 2);
+
+	app.call("history.undo");
+	REQUIRE(app.waitUntil([&events, dragged] { return events()[1].at("bpm").get<double>() == dragged; }));
+	app.call("history.undo");
+	REQUIRE(app.waitUntil([&events] { return events()[1].at("bpm").get<double>() == 100.0; }));
+	CHECK(events()[0].at("bpm").get<double>() == 120.0);
+	REQUIRE(app.waitUntil([&app] { return element(app, "#tempo").at("attributes").at("value") == "100"; }));
+}
+
 TEST_CASE("the tempo field changes the tempo only when a number is typed, also the one it shows", "[ui]")
 {
 	test::UiApp app({1024, 700});

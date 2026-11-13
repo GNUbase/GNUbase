@@ -102,6 +102,7 @@ namespace gnubase::engine
 			const auto inside = [&event, end](const WarpMarker& marker)
 			{ return marker.position > event.offset && marker.position < end; };
 			std::vector<WarpMarker>& markers = clip.warp.markers;
+			const std::vector<WarpMarker> unchanged = markers;
 			if (std::none_of(markers.begin(), markers.end(), inside))
 			{
 				const std::vector<bool> active = activeHitpoints(clip);
@@ -176,14 +177,24 @@ namespace gnubase::engine
 					markers.end(), [end](const WarpMarker& each) { return each.position >= end; });
 				const WarpMarker after = next == markers.end() ? WarpMarker{length, length} : *next;
 				const auto fromBefore = static_cast<double>(marker.position - before.position);
-				const auto toAfter = static_cast<double>(after.position - marker.position);
+				// The fewest and most target frames that the sections from it to after may play in, each within
+				// the range, so that the markers inside after it still find targets (#1129).
+				time::Samples leastAfter = 0;
+				time::Samples mostAfter = 0;
+				for (auto each = markers.begin() + static_cast<std::ptrdiff_t>(move.index); each != next; ++each)
+				{
+					const time::Samples ends = std::next(each) == next ? after.position : std::next(each)->position;
+					const auto section = static_cast<double>(ends - each->position);
+					leastAfter += static_cast<time::Samples>(std::ceil(section * dsp::g_minRealtimeRatio));
+					mostAfter += static_cast<time::Samples>(std::floor(section * dsp::g_maxRealtimeRatio));
+				}
 				const time::Samples lowest = std::max({before.target + 1,
 					before.target + static_cast<time::Samples>(std::ceil(fromBefore * dsp::g_minRealtimeRatio)),
-					after.target - static_cast<time::Samples>(std::floor(toAfter * dsp::g_maxRealtimeRatio))});
+					after.target - mostAfter});
 				time::Samples low = lowest;
 				time::Samples high = std::min({after.target - 1,
 					before.target + static_cast<time::Samples>(std::floor(fromBefore * dsp::g_maxRealtimeRatio)),
-					after.target - static_cast<time::Samples>(std::ceil(toAfter * dsp::g_minRealtimeRatio))});
+					after.target - leastAfter});
 				if (low > high)
 					continue;
 				const auto playsAt = [&](time::Samples target)
@@ -203,7 +214,7 @@ namespace gnubase::engine
 				const bool earlier = low > lowest && std::abs(playsAt(low - 1) - to) <= std::abs(playsAt(low) - to);
 				marker.target = earlier ? low - 1 : low;
 			}
-			checkMarkers(clip.warp, length);
+			checkMarkers(clip.warp, length, unchanged);
 		}
 
 		std::vector<ObjectId> eventList(const Project& project, const Json& ids)
