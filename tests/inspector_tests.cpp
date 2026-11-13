@@ -1313,22 +1313,27 @@ TEST_CASE("the info line bounds typed start, end and length to the largest proje
 	const uint64_t midi = window.addTrack({{"type", "midi"}, {"timeBase", "linear"}});
 	const uint64_t part = window.addPart(midi, 48000, 48000, "Part");
 	window.call("project.set", {{"timeFormat", "seconds"}});
-	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("midiParts").size() == 1; }));
+	REQUIRE(window.app.waitUntil(
+		[&] { return window.display.project().is_object() && window.display.project().at("midiParts").size() == 1; }));
 	window.display.select({part});
 	REQUIRE(window.shows("#info-line textdisplay[field=start]", "0:00:01.000"));
+	// The info line edits from the events it last showed. Typed while it still has the clamped length, the same length
+	// would change nothing, so the next edit waits until it has shown the clamped length and then the undone one.
+	const auto undo = [&]
+	{
+		REQUIRE(window.app.waitUntil(
+			[&] { return attribute(window.app, "#info-line textdisplay[field=length]", "value") != "0:00:01.000"; }));
+		window.call("history.undo");
+		REQUIRE(window.app.waitUntil([&] { return window.part(part).at("length") == 48000; }));
+		REQUIRE(window.shows("#info-line textdisplay[field=length]", "0:00:01.000"));
+	};
 
 	window.type("#info-line textdisplay[field=end]", "999999999999999");
 	REQUIRE(window.app.waitUntil([&] { return window.part(part).at("length") == time::g_maxPosition - 48000; }));
-	// The info line edits from the events it has: it shows the undone length before the next edit, or the typed length
-	// is the one it still has and changes nothing.
-	window.call("history.undo");
-	REQUIRE(window.app.waitUntil([&] { return window.part(part).at("length") == 48000; }));
-	REQUIRE(window.shows("#info-line textdisplay[field=length]", "0:00:01.000"));
+	undo();
 	window.type("#info-line textdisplay[field=length]", "999999999999999");
 	REQUIRE(window.app.waitUntil([&] { return window.part(part).at("length") == time::g_maxPosition - 48000; }));
-	window.call("history.undo");
-	REQUIRE(window.app.waitUntil([&] { return window.part(part).at("length") == 48000; }));
-	REQUIRE(window.shows("#info-line textdisplay[field=length]", "0:00:01.000"));
+	undo();
 	window.type("#info-line textdisplay[field=start]", "999999999999999");
 	REQUIRE(window.app.waitUntil([&] { return window.part(part).at("position") == time::g_maxPosition; }));
 }
