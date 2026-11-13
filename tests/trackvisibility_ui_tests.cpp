@@ -9,9 +9,11 @@
 #include "ui/docking.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <optional>
 #include <string>
 #include <vector>
@@ -249,4 +251,109 @@ TEST_CASE("the Track page keeps working after a hidden track is removed", "[ui]"
 	REQUIRE(app.waitUntil([&] { return elements(app, std::nullopt, ".track-visibility-item").size() == 1; }));
 	click(app, std::nullopt, item(guitar.track));
 	REQUIRE(app.waitUntil([&] { return hidden(app) == Json{guitar.track}; }));
+}
+
+// #906: a name that trackVisibility.set would refuse keeps the dialog open with the reason.
+TEST_CASE("the configuration name dialog stays open for a name that is taken or empty", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.setDpRatio(0.8F);
+	app.appUi().showProject();
+	const auto configurations = [&app] { return app.call("trackVisibility.get").at("configurations"); };
+	const auto choose = [&app](const std::string& selector)
+	{
+		click(app, std::nullopt, "#track-visibility-configurations");
+		click(app, std::nullopt, "#track-visibility-configurations-menu " + selector);
+	};
+	const auto dialogOpen = [&app]
+	{ return elements(app, std::nullopt, "#visibility-configuration-name").size() == 1; };
+	const auto error = [&app]
+	{ return elements(app, std::nullopt, "#visibility-configuration-error").at(0).value("text", ""); };
+	app.call("trackVisibility.set",
+		{{"configurations", {{{"name", "One"}, {"hidden", Json::array()}}}}, {"configuration", "One"}});
+	REQUIRE(app.waitUntil([&] { return configurations().size() == 1; }));
+
+	// Add Configuration with a name that is taken: the dialog stays open with the reason, and nothing is added.
+	choose("menuitem[visibility-configuration=add]");
+	REQUIRE(app.waitUntil(dialogOpen));
+	app.ui().text(std::nullopt, "One");
+	app.ui().key(std::nullopt, "Enter");
+	REQUIRE(app.waitUntil([&] { return !error().empty(); }));
+	CHECK_THAT(error(), Catch::Matchers::ContainsSubstring("One"));
+	CHECK(dialogOpen());
+	CHECK(configurations().size() == 1);
+
+	// With a name of its own it closes and adds the configuration.
+	app.ui().key(std::nullopt, "Mod+A");
+	app.ui().text(std::nullopt, "Two");
+	app.ui().key(std::nullopt, "Enter");
+	REQUIRE(app.waitUntil([&] { return configurations().size() == 2; }));
+	REQUIRE(app.waitUntil([&] { return !dialogOpen(); }));
+
+	// Rename Configuration to the other's name stays open too; to its own it closes and changes nothing.
+	REQUIRE(app.waitUntil([&] { return configurations().at(1).at("name") == "Two"; }));
+	choose("menuitem[visibility-configuration=rename]");
+	REQUIRE(app.waitUntil(dialogOpen));
+	app.ui().key(std::nullopt, "Mod+A");
+	app.ui().text(std::nullopt, "One");
+	app.ui().key(std::nullopt, "Enter");
+	REQUIRE(app.waitUntil([&] { return !error().empty(); }));
+	CHECK(dialogOpen());
+	app.ui().key(std::nullopt, "Mod+A");
+	app.ui().text(std::nullopt, "Two");
+	app.ui().key(std::nullopt, "Enter");
+	REQUIRE(app.waitUntil([&] { return !dialogOpen(); }));
+	CHECK(configurations().at(1).at("name") == "Two");
+
+	// A name that is empty keeps it open as well; Cancel closes it without a change.
+	choose("menuitem[visibility-configuration=add]");
+	REQUIRE(app.waitUntil(dialogOpen));
+	app.ui().key(std::nullopt, "Enter");
+	REQUIRE(app.waitUntil([&] { return !error().empty(); }));
+	CHECK(dialogOpen());
+	app.ui().key(std::nullopt, "Escape");
+	REQUIRE(app.waitUntil([&] { return !dialogOpen(); }));
+	CHECK(configurations().size() == 2);
+}
+
+// #906: the Track page indents tracks by their folder level, however deep the folders nest.
+TEST_CASE("the Track page indents tracks by their folder level, however deep", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	// Five folders, one in the next, and a track in the last: the levels 0 to 5.
+	std::vector<uint64_t> folders;
+	uint64_t parent = 0;
+	for (int depth = 1; depth <= 5; ++depth)
+	{
+		Json parameters = {{"type", "folder"}, {"name", "Folder " + std::to_string(depth)}};
+		if (parent != 0)
+		{
+			parameters["parent"] = parent;
+			parameters["index"] = 0;
+		}
+		parent = app.call("track.add", parameters).at("track").at("id").get<uint64_t>();
+		folders.push_back(parent);
+	}
+	const uint64_t deep = app.call("track.add", {{"type", "audio"}, {"name", "Deep"}, {"parent", parent}, {"index", 0}})
+							  .at("track")
+							  .at("id")
+							  .get<uint64_t>();
+	app.appUi().docking().open("visibility");
+	REQUIRE(app.waitUntil([&] { return elements(app, std::nullopt, ".track-visibility-item").size() == 6; }));
+	const auto indent = [&app](uint64_t track)
+	{
+		const Json found = elements(app, std::nullopt, item(track) + " .track-visibility-indent");
+		return found.empty() ? 0.0 : found.at(0).at("box").at("width").get<double>();
+	};
+	CHECK(indent(folders.at(0)) == 0.0); // the top level has no indent
+	double previous = 0.0;
+	for (const uint64_t track : std::vector<uint64_t>(folders.begin() + 1, folders.end()))
+	{
+		CHECK(indent(track) > previous);
+		previous = indent(track);
+	}
+	CHECK(indent(deep) > previous);
+	// The levels step alike: the deepest track indents five times as much as the first folder's track.
+	CHECK(std::abs(indent(deep) - 5.0 * indent(folders.at(1))) <= 1.0);
 }
