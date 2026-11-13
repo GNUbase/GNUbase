@@ -1521,66 +1521,104 @@ TEST_CASE("range.paste doesn't paste what was copied in another project", "[unit
 	CHECK_THAT(f.fails("range.paste", {{"position", 0}}), ContainsSubstring("nothing to paste"));
 }
 
-TEST_CASE(
-	"range.move and range.paste put what starts at the range's start exactly at position on musical tracks", "[unit]")
+TEST_CASE("range.move and range.paste put what starts at the range's start exactly at position on musical tracks, "
+		  "and what follows it the same number of ticks after it",
+	"[unit]")
 {
-	// At these tempos bars lie between samples, and some lie almost halfway: a part on a bar, in a range from where it
-	// starts in samples, would land a sample off a bar it is moved to by the gap between the two in ticks (#1261).
+	// At these tempos bars lie between samples, and some almost halfway: a range from where a part on a bar starts in
+	// samples starts up to half a sample before or after it in ticks. Moved by the gap between the range's start and
+	// the position in ticks, which are rounded apart, the part could land a sample off position; cut at the range's
+	// edges in ticks, it would leave a piece shorter than a sample behind with its first note (#1261).
 	for (const double bpm : {97.3, 133.7})
 	{
 		Fixture f;
 		f.call("project.set", {{"tempoTrackActive", true}});
 		f.call("tempo.add", {{"position", 0}, {"bpm", bpm}, {"ramp", false}});
 		const int64_t midi = f.track("midi");
+		const int64_t audio = f.track("audio");
+		const Json media =
+			f.call(
+				 "media.add", {{"path", "take.wav"}, {"sampleRate", 48000}, {"channels", 1}, {"length", 10 * g_second}})
+				.at("media");
+		const Json clip = f.call("clip.add", {{"media", media.at("id")}}).at("clip").at("id");
+		// A one-bar part at a position with a note on its downbeat.
 		const auto add = [&f, midi](int64_t position)
 		{
-			return f.call("midiPart.add", {{"track", midi}, {"position", position}, {"length", g_bar}})
-				.at("part")
-				.at("id")
-				.get<int64_t>();
+			const auto id = f.call("midiPart.add", {{"track", midi}, {"position", position}, {"length", g_bar}})
+								.at("part")
+								.at("id")
+								.get<int64_t>();
+			f.call("note.add",
+				{{"part", id},
+					{"notes", {{{"position", 0}, {"length", g_quarter}, {"pitch", 60}, {"velocity", 1.0}}}}});
+			return id;
 		};
-		// Where a part starts and ends, in project samples.
-		const auto span = [&f](const Json& id)
+		// Where an event or part starts, in project samples, and whether it is audio.
+		const auto start = [&f](const Json& id)
+		{ return f.call("event.get", {{"events", {id}}}).at("events").at(0).at("start").get<int64_t>(); };
+		const auto isAudio = [&f](const Json& id)
+		{ return f.call("event.get", {{"events", {id}}}).at("events").at(0).at("kind") == "audio"; };
+		// What landed: the audio event at position, the first part too, whole with its note and the second a bar after
+		// it in ticks; and no piece left behind.
+		const auto check = [&](const Json& events, int64_t at, size_t parts, bool whole)
 		{
-			const Json info = f.call("event.get", {{"events", {id}}}).at("events").at(0);
-			return std::make_pair(info.at("start").get<int64_t>(), info.at("end").get<int64_t>());
+			REQUIRE(events.size() == 3);
+			std::vector<Json> landed;
+			for (const Json& id : events)
+			{
+				if (isAudio(id))
+					CHECK(start(id) == at);
+				else
+					landed.push_back(f.midi(id));
+			}
+			REQUIRE(landed.size() == 2);
+			std::sort(landed.begin(), landed.end(),
+				[](const Json& a, const Json& b) { return a.at("position") < b.at("position"); });
+			CHECK(start(landed[0].at("id")) == at);
+			if (whole)
+			{
+				CHECK(landed[0].at("notes").size() == 1);
+				CHECK(landed[1].at("position").get<int64_t>() - landed[0].at("position").get<int64_t>() == g_bar);
+			}
+			CHECK(f.count("midiParts") == parts);
 		};
 		for (int64_t bar = 1; bar < 40; ++bar)
 		{
 			INFO(bpm << " BPM, bar " << bar);
-			const int64_t part = add(bar * g_bar);
+			// Two parts on bar and the next one, and on the audio track an event on bar.
+			const int64_t first = add(bar * g_bar);
+			const int64_t second = add((bar + 1) * g_bar);
+			const int64_t event =
+				f.call("audioEvent.add",
+					 {{"track", audio}, {"clip", clip}, {"position", bar * g_bar}, {"offset", 0}, {"length", g_second}})
+					.at("event")
+					.at("id")
+					.get<int64_t>();
 			// The start of a bar further on, and off the bars.
 			const int64_t target = add(((bar + 50 + ((bar * 7) % 13)) * g_bar) + (bar * 12345));
-			const int64_t at = span(target).first;
+			const int64_t at = start(target);
 			f.call("event.remove", {{"events", {target}}});
-			const auto [start, end] = span(part);
-			const Json range = {{"start", start}, {"end", end}, {"tracks", {midi}}};
+			const Json range = {{"start", start(first)},
+				{"end", f.call("event.get", {{"events", {second}}}).at("events").at(0).at("end")},
+				{"tracks", {midi, audio}}};
 			Json move = range;
 			move["position"] = at;
 
-			Json moved = f.call("range.move", move).at("events");
-			REQUIRE(moved.size() == 1);
-			CHECK(span(moved[0]).first == at);
+			check(f.call("range.move", move).at("events"), at, 2, true);
 			f.call("history.undo");
 			Json copy = move;
 			copy["copy"] = true;
-			moved = f.call("range.move", copy).at("events");
-			REQUIRE(moved.size() == 1);
-			CHECK(span(moved[0]).first == at);
+			check(f.call("range.move", copy).at("events"), at, 4, true);
 			f.call("history.undo");
 			f.call("range.copy", range);
-			moved = f.call("range.paste", {{"position", at}}).at("events");
-			REQUIRE(moved.size() == 1);
-			CHECK(span(moved[0]).first == at);
+			check(f.call("range.paste", {{"position", at}}).at("events"), at, 4, true);
 			f.call("history.undo");
-			// The piece of a part cut at the range's start lands there too, as it did before.
+			// A range that starts in the first part and the event cuts them there: their pieces land at position too.
 			Json cut = move;
-			cut["start"] = start + 777;
-			moved = f.call("range.move", cut).at("events");
-			REQUIRE(moved.size() == 1);
-			CHECK(span(moved[0]).first == at);
+			cut["start"] = start(first) + 777;
+			check(f.call("range.move", cut).at("events"), at, 3, false);
 			f.call("history.undo");
-			f.call("event.remove", {{"events", {part}}});
+			f.call("event.remove", {{"events", {first, second, event}}});
 		}
 	}
 }

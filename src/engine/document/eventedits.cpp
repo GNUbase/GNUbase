@@ -566,6 +566,15 @@ namespace gnubase::engine
 			part.length = length;
 		}
 
+		// Whether a position in samples lies inside a part from its start to end (in the start's time base), in
+		// samples: on a musical track a part's start or end in ticks can lie up to half a sample from where it shows,
+		// and a cut there would leave a piece shorter than a sample with what starts there, a note on its downbeat
+		// (#1261). Audio events are cut in samples too.
+		bool inside(const Project& project, const time::Position& start, int64_t end, time::Samples at)
+		{
+			return at > samples(project, start) && at < samples(project, {start.base, end});
+		}
+
 		// Splits an item at a position in samples and returns the new item after it, or nothing if the position
 		// isn't inside it.
 		Item splitAt(Project& project, const Item& item, time::Samples at, bool splitNotes, CommandContext& context)
@@ -576,7 +585,7 @@ namespace gnubase::engine
 				AudioPart& part = *item.audioPart;
 				const int64_t end = part.position.value + part.length;
 				const int64_t split = rebased(project, {time::TimeBase::Linear, at}, part.position.base).value;
-				if (split <= part.position.value || split >= end)
+				if (split <= part.position.value || split >= end || !inside(project, part.position, end, at))
 					return {};
 				AudioPart right = part;
 				right.id = project.newId();
@@ -657,7 +666,7 @@ namespace gnubase::engine
 			MidiPart& part = *item.part;
 			const int64_t end = part.position.value + part.length;
 			const int64_t split = rebased(project, {time::TimeBase::Linear, at}, part.position.base).value;
-			if (split <= part.position.value || split >= end)
+			if (split <= part.position.value || split >= end || !inside(project, part.position, end, at))
 				return {};
 			detach(project, part);
 			const time::Ticks offset = ticks(project, {part.position.base, split}) - ticks(project, part.position);
@@ -1586,18 +1595,45 @@ namespace gnubase::engine
 				ticks(project, {time::TimeBase::Linear, to}) - ticks(project, {time::TimeBase::Linear, from})};
 		}
 
-		// The shift that takes an item of a range that starts at from (ticks) to a range that starts at at (project
-		// samples): the gap between them. On a musical track an item that starts where the range starts goes to at
-		// exactly: by the gap in ticks, its start can land a sample off at, as from and at are rounded to ticks apart,
-		// and its own start lies up to half a sample from the range's (#1261).
-		Shift landing(const Project& project, const Item& item, const Gap& gap, time::Ticks from, time::Samples at)
+		// Where the items of a range that starts at from (ticks) go to land in a range that starts at at (project
+		// samples): by the gap between the two, in ticks on musical tracks. On a musical track that has an item that
+		// starts where the range starts, every musical item goes by the shift that puts the first of those at at
+		// exactly, so that they keep their distances in ticks: by the gap, as from and at are rounded to ticks apart
+		// and the item's start in ticks lies up to half a sample from the range's, it could land a sample off at
+		// (#1261).
+		class Landing
 		{
-			const time::Position& position = item.position();
-			if (position.base != time::TimeBase::Musical ||
-				samples(project, position) != samples(project, {time::TimeBase::Musical, from}))
-				return gap.shift(position.base, 1);
-			return {ticks(project, {time::TimeBase::Linear, at}) - position.value, true};
-		}
+		public:
+			Landing(const Project& project, const std::vector<Item>& items, const Gap& gap, time::Ticks from,
+				time::Samples at)
+				: m_gap(gap)
+			{
+				const time::Samples start = samples(project, {time::TimeBase::Musical, from});
+				const time::Ticks to = ticks(project, {time::TimeBase::Linear, at});
+				for (const Item& item : items)
+				{
+					const time::Position& position = item.position();
+					if (position.base != time::TimeBase::Musical || samples(project, position) != start)
+						continue;
+					const auto [found, added] = m_anchored.emplace(item.track(), to - position.value);
+					if (!added)
+						found->second = std::max(found->second, to - position.value);
+				}
+			}
+
+			Shift of(const Item& item) const
+			{
+				const time::TimeBase base = item.position().base;
+				const auto anchored = m_anchored.find(item.track());
+				if (base != time::TimeBase::Musical || anchored == m_anchored.end())
+					return m_gap.shift(base, 1);
+				return {anchored->second, true};
+			}
+
+		private:
+			Gap m_gap;
+			std::map<ObjectId, time::Ticks> m_anchored; // the shift in ticks of each track that has an item at from
+		};
 
 		// Moves the unlocked events and parts on the tracks that lie after a position they were split at by a gap, with
 		// sign 1 later, with -1 earlier.
@@ -2069,15 +2105,8 @@ namespace gnubase::engine
 				return tracks.at(static_cast<size_t>(index));
 			};
 			const Gap shift{at - clipboard.start, ticks(project, {time::TimeBase::Linear, at}) - clipboard.startTicks};
+			// The copies, where they were copied, until they all are there and go to where they land.
 			std::vector<Item> added;
-			const auto paste = [&](const Item& item)
-			{
-				const ObjectId track = onto(item.track());
-				checkTrack(project, item, track);
-				place(project, item, landing(project, item, shift, clipboard.startTicks, at), track);
-				announce(project, context, item, "added");
-				added.push_back(item);
-			};
 			// Audio parts, then their events, which they then take along to where they land.
 			std::map<ObjectId, ObjectId> parts;
 			std::vector<AudioPart*> pastedParts;
@@ -2111,10 +2140,10 @@ namespace gnubase::engine
 				event.part = part == parts.end() ? 0 : part->second;
 				AudioEvent& pasted = project.audioEvents[event.id] = event;
 				if (pasted.part == 0)
-					paste(audioItem(pasted));
+					added.push_back(audioItem(pasted));
 			}
 			for (AudioPart* part : pastedParts)
-				paste(audioPartItem(*part));
+				added.push_back(audioPartItem(*part));
 			for (const MidiPart& copied : clipboard.midiParts)
 			{
 				MidiPart part = copied;
@@ -2123,7 +2152,15 @@ namespace gnubase::engine
 				part.shared = 0;
 				renumber(project, part);
 				const ObjectId id = part.id;
-				paste({nullptr, &(project.midiParts[id] = std::move(part))});
+				added.push_back({nullptr, &(project.midiParts[id] = std::move(part))});
+			}
+			const Landing landing(project, added, shift, clipboard.startTicks, at);
+			for (const Item& item : added)
+			{
+				const ObjectId track = onto(item.track());
+				checkTrack(project, item, track);
+				place(project, item, landing.of(item), track);
+				announce(project, context, item, "added");
 			}
 			// ponytail: automation lands only on lanes of the same parameter that the tracks already have.
 			for (const AutomationLane& copied : clipboard.automation)
@@ -2139,10 +2176,10 @@ namespace gnubase::engine
 		// range.move without copy: what lies in the range, cut at its edges, moves to at on its tracks. It keeps its
 		// ids, so that an editor open on a moved part keeps it, a crossfade between two moved events stays and a shared
 		// copy of a MIDI part stays one (one cut at an edge is a real copy, as range.split makes it). A cut gives the
-		// piece after it the new id: of what starts before the range the moved piece is new, of what ends after it the
-		// piece that stays. A crossfade between a moved event and one that stays ends. Its audio comes in front where
-		// it lands, as range.paste puts it. The automation in the range moves as range.cut and range.paste move it.
-		// Returns what moved.
+		// piece after it the new id: of what starts before the range the moved piece is new, of what starts in it and
+		// ends after it the piece that stays. A crossfade between a moved event and one that stays ends. Its audio
+		// comes in front where it lands, as range.paste puts it. The automation in the range moves as range.cut and
+		// range.paste move it. Returns what moved.
 		Json moveRange(Project& project, const Range& range, time::Samples at, CommandContext& context)
 		{
 			const std::vector<AutomationLane> automation = automationIn(project, range);
@@ -2173,10 +2210,10 @@ namespace gnubase::engine
 				event->front = project.newId();
 				movedEvents.insert(event->id);
 			}
-			const time::Ticks from = ticks(project, {time::TimeBase::Linear, range.start});
+			const Landing landing(project, items, shift, ticks(project, {time::TimeBase::Linear, range.start}), at);
 			for (const Item& item : items)
 			{
-				place(project, item, landing(project, item, shift, from, at), item.track());
+				place(project, item, landing.of(item), item.track());
 				announce(project, context, item, "changed");
 			}
 			for (auto& [id, event] : project.audioEvents)
@@ -2819,17 +2856,15 @@ namespace gnubase::engine
 				"Deletes what lies in " + range +
 					": the audio events and MIDI parts in it, cut at its edges (splitNotes as in range.split), and the "
 					"automation in it: its points, and the curve between two points that goes across it. The "
-					"automation "
-					"outside keeps its curve: the value it arrives at the start with holds up to the end; with virgin "
-					"territory (automation.set) the range becomes a gap instead, the point at its start a terminator. "
-					"time (Delete Time) closes the gap: what comes after the range on its tracks moves back by its "
-					"length, in ticks on musical tracks. Locked events stay. Without time it also takes the range out "
-					"of the cycle markers that it lies in, on the marker tracks among its tracks (reference manual p. "
-					"425): a cycle marker that starts or ends where the range does gets shorter, and one that reaches "
-					"past both of its edges is split in two, the part after the range a new cycle marker with the "
-					"first "
-					"free number and the same name and color. Position markers stay, and so do cycle markers that the "
-					"range covers whole or reaches out of; with time every marker stays.",
+					"automation outside keeps its curve: the value it arrives at the start with holds up to the end; "
+					"with virgin territory (automation.set) the range becomes a gap instead, the point at its start a "
+					"terminator. time (Delete Time) closes the gap: what comes after the range on its tracks moves "
+					"back by its length, in ticks on musical tracks. Locked events stay. Without time it also takes "
+					"the range out of the cycle markers that it lies in, on the marker tracks among its tracks "
+					"(reference manual p. 425): a cycle marker that starts or ends where the range does gets shorter, "
+					"and one that reaches past both of its edges is split in two, the part after the range a new cycle "
+					"marker with the first free number and the same name and color. Position markers stay, and so do "
+					"cycle markers that the range covers whole or reaches out of; with time every marker stays.",
 				schema(withTime, {}), {{"type", "object"}}, false},
 			"Delete",
 			[](Project& project, CommandContext& context)
@@ -2894,10 +2929,10 @@ namespace gnubase::engine
 				"Pastes the range clipboard (range.copy, range.cut) at position (project samples, default the project "
 				"cursor): onto the tracks it was copied from, or onto track and the tracks below it in the project's "
 				"order, one for each copied track, which must take the copied events. What started where the copied "
-				"range starts lands at position exactly, and the rest keeps its distance from it, in ticks on musical "
-				"tracks. Audio events and MIDI parts come as unlocked real copies; automation replaces the curve where "
-				"it lands, on a lane of the same parameter. time (Paste Time) first makes room as long as the copied "
-				"range, as range.insertSilence does. Returns the new events.",
+				"range starts lands at position exactly, and on its track the rest keeps its distance from it, in "
+				"ticks on musical tracks. Audio events and MIDI parts come as unlocked real copies; automation "
+				"replaces the curve where it lands, on a lane of the same parameter. time (Paste Time) first makes "
+				"room as long as the copied range, as range.insertSilence does. Returns the new events.",
 				schema({{"position", integer()}, {"track", integer()}, {"time", boolean()}}, {}), eventsResult(),
 				false},
 			"Paste",
@@ -2911,18 +2946,17 @@ namespace gnubase::engine
 				"Moves what lies in " + range +
 					" to position (project samples) on the same tracks, as dragging a selection range does (reference "
 					"manual p. 291), without the range clipboard: cut at its edges (splitNotes as in range.split), "
-					"what lies in it moves by position minus start, in ticks on musical tracks, and what starts at "
-					"start lands at position exactly. What moves keeps its id, but the cuts make new pieces: of an "
-					"event or part that starts before the range the piece in it is new, of one that ends after it the "
-					"piece after the range. The crossfades between moved events stay, and so do shared copies of MIDI "
-					"parts that the range holds whole; a crossfade between a moved event and one that stays ends, and "
-					"a "
-					"shared copy cut at an edge becomes a real copy. The automation in it is cut out as range.delete "
-					"does and pasted at position as range.paste does. copy (Alt, p. 432) leaves the range as it is and "
-					"pastes a copy as range.paste does: real copies with new ids. Either way the audio that lands "
-					"comes "
-					"in front of the events there, in the order it was stacked. Locked events stay where they are and "
-					"aren't copied. Returns the moved events, or the copies.",
+					"what lies in it moves by position minus start, in ticks on musical tracks, where what starts at "
+					"start lands at position exactly and the rest keeps its distance from it in ticks. What moves "
+					"keeps its id, but the cuts make new pieces: of an event or part that starts before the range the "
+					"piece in it is new, of one that ends after it the piece after the range. The crossfades between "
+					"moved events stay, and so do shared copies of MIDI parts that the range holds whole; a crossfade "
+					"between a moved event and one that stays ends, and a shared copy cut at an edge becomes a real "
+					"copy. The automation in it is cut out as range.delete does and pasted at position as range.paste "
+					"does. copy (Alt, p. 432) leaves the range as it is and pastes a copy as range.paste does: real "
+					"copies with new ids. Either way the audio that lands comes in front of the events there, in the "
+					"order it was stacked. Locked events stay where they are and aren't copied. Returns the moved "
+					"events, or the copies.",
 				schema(withPosition, {"position"}), eventsResult(), false},
 			"Move Range",
 			[](Project& project, CommandContext& context)

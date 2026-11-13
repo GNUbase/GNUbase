@@ -25,7 +25,8 @@ Each command is one undo step and changes nothing if it fails; `range.copy` chan
 - **Cuts at the edges.** Events and parts that cross an edge are split there first, as `event.split` splits them, so
   only what lies in the range is affected (p. 291). A MIDI part's notes across an edge stay in the part they start in,
   or with `splitNotes` (the reference's Split MIDI Events preference, p. 287) are cut in two. Locked events stay
-  whole, aren't deleted and don't move.
+  whole, aren't deleted and don't move. Events and parts are cut where they show, in samples: an edge in the sample a
+  part on a musical track starts or ends in, which in ticks can lie up to half a sample from it, doesn't cut it.
 - **Time.** Closing a gap and making room move what follows by the range's length: in ticks on musical tracks, so that
   it moves exactly by beats, in samples on linear ones.
 - **Automation.** The automation lanes of the range's tracks are edited with their events, and the curve outside the
@@ -46,22 +47,24 @@ Each command is one undo step and changes nothing if it fails; `range.copy` chan
   stay.
 - **Moving** (`range.move`) cuts what lies in the range at its edges and moves it to `position`, in one undo step and
   leaving the clipboard as it is. What moves keeps its id, so an editor open on a moved part keeps it, a crossfade
-  between two moved events stays, also one between an audio part's event and an event outside the part when both
-  move, and a shared copy of a MIDI part that lies in the range whole stays one (a part cut at an edge is a real copy,
-  as `range.split` makes it); a crossfade between a moved event and one that stays ends. A cut gives the piece after
-  it the new id, as `event.split` does: of an event or part that starts before the range, the piece that moves is new
-  and the one that stays keeps the id; of one that ends after the range, the piece that moves keeps it and the one
-  that stays is new, so an editor open on such a part follows the moved piece. The automation moves as `range.cut`
-  and `range.paste` would move it. With `copy` the range stays and a copy is pasted at `position` as `range.paste`
-  pastes, with new ids. Either way the audio that lands comes in front of the events there, every event in the order
-  it was stacked, so that the events of an audio part keep their places among the others. Locked events stay where
-  they are and aren't copied. The event display does it when the range is dragged by the marker track
+  between two moved events stays, also one between an audio part's event and an event outside the part when both move,
+  and a shared copy of a MIDI part that lies in the range whole stays one (a part cut at an edge is a real copy, as
+  `range.split` makes it); a crossfade between a moved event and one that stays ends. A cut gives the piece after it the
+  new id, as `event.split` does: of an event or part that starts before the range, the piece that moves is new and the
+  one before the range keeps the id; of one that starts in the range and ends after it, the piece that moves keeps it
+  and the one after the range is new, so an editor open on such a part follows the moved piece. The automation moves as
+  `range.cut` and `range.paste` would move it. With `copy` the range stays and a copy is pasted at `position` as
+  `range.paste` pastes, with new ids. Either way the audio that lands comes in front of the events there, every event in
+  the order it was stacked, so that the events of an audio part keep their places among the others. Locked events stay
+  where they are and aren't copied. The event display does it when the range is dragged by the marker track
   ([markers.md](markers.md), p. 432).
 - **Where it lands.** On musical tracks what lies in the range moves by the gap between `start` and `position` in
   ticks, so that it keeps its distance from the range's start in beats. What starts where the range starts lands at
   `position` exactly, a piece cut there and an event that starts there alike: an event's start in ticks can lie up to
   half a sample from the range's start, and the gap, with both ends rounded to ticks, could otherwise put it a sample
-  off `position` at some tempos. `range.paste` lands the same way at its `position`.
+  off `position` at some tempos. So on a musical track with such an event everything moves by the shift that puts the
+  first of them at `position`, and keeps its distance from it in ticks. `range.paste` lands the same way at its
+  `position`.
 - **Global copy** copies every track between the locators: the events, parts and automation. Markers, the tempo and
   the signatures stay where they are.
 
@@ -101,6 +104,8 @@ line's range fields, the range in the editors (they come with their tickets), an
   move, also onto the range's own later or earlier half; which piece of an event cut at either edge keeps its id; a
   crossfade from an audio part's event to an event outside it, kept when both move and ended when either stays; a
   shared copy cut at an edge becoming a real copy while the copies in the range stay shared; and at tempos whose bars
-  lie between samples, a part on a bar moved, copied and pasted onto another bar landing on its sample.
+  lie between samples, two parts on consecutive bars and an audio event on a musical track moved, copied and pasted
+  by a range from the first part's start sample: the first part and the event landing on the position's sample with
+  the part's first note, the second part a bar after the first in ticks, and no piece left behind.
 - `tests/eventediting_tests.cpp` (fake window system, real engine): the commands exist; split, Delete Time, cut and
   paste on a selection range, which stays; paste at the cursor without a range, selecting what it pasted.

@@ -638,7 +638,8 @@ TEST_CASE("a range cuts every cycle marker on a track that it lies in, also on a
 	run(client, "history.undo");
 	CHECK(byNumber(musical) == std::vector<Cycle>{{1, 4, 12, "Verse", ""}, {2, 2, 14, "Song", ""}});
 
-	// On a linear marker track the cycle marker's parts keep their positions in samples.
+	// On a linear marker track the cycle marker's parts are in samples, and stay where they are when the tempo
+	// changes.
 	const ObjectId linear = addMarkerTrack(client, {{"timeBase", "linear"}});
 	addMarker(client,
 		{{"track", linear}, {"type", "cycle"}, {"position", 4 * g_quarterSamples}, {"end", 12 * g_quarterSamples},
@@ -653,6 +654,9 @@ TEST_CASE("a range cuts every cycle marker on a track that it lies in, also on a
 	CHECK(markers[1].at("position") == 8 * g_quarterSamples);
 	CHECK(markers[1].at("end") == 12 * g_quarterSamples);
 	CHECK(byNumber(musical).size() == 4);
+	run(client, "project.set", {{"tempoTrackActive", true}});
+	run(client, "tempo.add", {{"position", 0}, {"bpm", 97.3}, {"ramp", false}});
+	CHECK(byNumber(linear) == std::vector<Cycle>{{1, 4, 6, "Linear", ""}, {2, 8, 12, "Linear", ""}});
 }
 
 TEST_CASE("marker.put puts position marker N at the cursor, moving it or adding it", "[unit]")
