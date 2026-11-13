@@ -207,7 +207,10 @@ namespace gnubase::ui
 		}
 		for (const auto& backup : m_backups)
 			if (Rml::Element* progress = backup.second.progress.get())
+			{
 				progress->RemoveEventListener(g_dialogCloseEvent, this);
+				progress->RemoveEventListener(Rml::EventId::Unload, this);
+			}
 	}
 
 	void ProjectFiles::openStartScreen(Window& window)
@@ -356,13 +359,15 @@ namespace gnubase::ui
 		// The progress isn't one of the dialogs that take turns (openDialog): while the backup runs, the other project
 		// dialogs still open, over it, and quitting closes them, not the backup (#1001). Each window shows one backup's
 		// progress at a time, so that a backup asked for in another window meanwhile shows its own (#1109). Closed
-		// before the backup ended, by Cancel or otherwise, it stops it (ProcessEvent); the backup may end before
-		// job.cancel comes.
+		// before the backup ended, by Cancel or otherwise, or gone with its window, it stops it (ProcessEvent), so that
+		// no backup runs on unseen with its outcome nowhere to show (#1206); the backup may end before job.cancel
+		// comes.
 		const bool showing = std::any_of(m_backups.begin(), m_backups.end(),
 			[window](const auto& other) { return other.second.window == window && other.second.progress; });
 		if (Rml::ElementDocument* dialog = showing ? nullptr : loadDialog(window, "backup-progress.rml"))
 		{
 			backup.progress = dialog->GetObserverPtr();
+			dialog->AddEventListener(Rml::EventId::Unload, this);
 			if (Rml::Element* bar = dialog->GetElementById("backup-progress"))
 				bar->SetAttribute("value", job.at("progress").get<double>());
 		}
@@ -381,12 +386,19 @@ namespace gnubase::ui
 		const auto found = m_backups.find(id);
 		if (found == m_backups.end())
 			return; // another client's, or reported already
-		const WindowId window = found->second.window;
+		WindowId window = found->second.window;
+		// Its window may have gone meanwhile, such as a panel's own window with a backup that ran without progress
+		// there: the main window shows what it has to say (#1206).
+		if (m_shell.find(window) == nullptr)
+			for (const Window* open : m_shell.windows())
+				if (open->main())
+					window = open->id();
 		auto* progress = dynamic_cast<Rml::ElementDocument*>(found->second.progress.get());
 		m_backups.erase(found);
 		if (progress != nullptr)
 		{
 			progress->RemoveEventListener(g_dialogCloseEvent, this);
+			progress->RemoveEventListener(Rml::EventId::Unload, this);
 			ui::closeDialog(*progress, g_backupDone);
 		}
 		// A backup runs as a job, so most of its failures come after project.backup returned. So do the files it
@@ -426,6 +438,20 @@ namespace gnubase::ui
 			problems += (problems.empty() ? "" : " ") + activation.get<std::string>();
 		if (!problems.empty())
 			showError(window, problems);
+	}
+
+	bool ProjectFiles::cancelBackupOf(Rml::Element* progress)
+	{
+		for (auto& backup : m_backups)
+			if (backup.second.progress.get() == progress)
+			{
+				progress->RemoveEventListener(g_dialogCloseEvent, this);
+				progress->RemoveEventListener(Rml::EventId::Unload, this);
+				backup.second.progress.reset();
+				m_binding.send("job.cancel", {{"job", backup.first}}, [](const engine::Result&) {});
+				return true;
+			}
+		return false;
 	}
 
 	void ProjectFiles::openDialog(WindowId window, const char* file, Shown shown, Closed closed, bool wait)
@@ -489,6 +515,8 @@ namespace gnubase::ui
 	// event and unloading, and the dialogs that keep a failed auto save's error away hiding or unloading.
 	void ProjectFiles::ProcessEvent(Rml::Event& event)
 	{
+		if (event.GetId() == Rml::EventId::Unload && cancelBackupOf(event.GetCurrentElement()))
+			return;
 		if (event.GetId() == Rml::EventId::Hide || event.GetId() == Rml::EventId::Unload)
 		{
 			// The dialog is still in its context while it unloads.
@@ -519,14 +547,8 @@ namespace gnubase::ui
 			return;
 		const auto result = event.GetParameter<Rml::String>("result", "");
 		// A backup's progress that closes before the backup ended (backupEnded closes it unheard).
-		for (auto& backup : m_backups)
-			if (backup.second.progress.get() == dialog)
-			{
-				dialog->RemoveEventListener(g_dialogCloseEvent, this);
-				backup.second.progress.reset();
-				m_binding.send("job.cancel", {{"job", backup.first}}, [](const engine::Result&) {});
-				return;
-			}
+		if (cancelBackupOf(dialog))
+			return;
 		dialog->RemoveEventListener(Rml::EventId::Dblclick, this);
 		dialog->RemoveEventListener(g_dialogCloseEvent, this);
 		m_dialog.reset();
