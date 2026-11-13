@@ -137,6 +137,11 @@
 	{
 		decorator: svg-ninepatch(list-item-selected.svg, 6 6 6 6);
 	}
+	/* The arranger chain step or event that is playing (docs/features/arranger.md). */
+	.arranger-row.current
+	{
+		decorator: svg-ninepatch(list-item-selected.svg, 6 6 6 6);
+	}
 	listview thead td.sorted
 	{
 		color: #5ea7b3;

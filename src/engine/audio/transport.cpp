@@ -352,7 +352,9 @@ namespace gnubase::engine
 		else if (m_arranger.entering)
 			m_arranger = arrangerEnter(*plan, m_arranger, m_start);
 		else if (plan != m_plan)
-			m_arranger = arrangerEnter(*plan, m_arranger, m_position);
+			// A new plan finds the step playing again. During the pre-roll the position is before the start, where no
+			// step's event holds it yet, so enter at the start without the pre-roll to keep the chain playing (#885).
+			m_arranger = arrangerEnter(*plan, m_arranger, std::max(m_position, m_start));
 		m_plan = plan;
 		GNUBASE_ASSERT(frames <= m_segments.size());
 		frames = std::min(frames, static_cast<uint32_t>(m_segments.size()));
