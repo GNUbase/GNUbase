@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cmath>
 #include <iomanip>
 #include <locale>
 #include <optional>
@@ -107,6 +108,34 @@ namespace gnubase::ui
 				element.SetAttribute("checked", "");
 			else
 				element.RemoveAttribute("checked");
+		}
+
+		// Whether a color, "#rrggbb", is bright: by its relative luminance (WCAG 2.2), dark text over it has more
+		// contrast than light text.
+		bool bright(const std::string& color)
+		{
+			if (color.size() != 7 || color[0] != '#')
+				return false;
+			const auto digit = [](char c)
+			{
+				const int lower = std::tolower(static_cast<unsigned char>(c));
+				if (lower >= '0' && lower <= '9')
+					return lower - '0';
+				return lower >= 'a' && lower <= 'f' ? lower - 'a' + 10 : -1;
+			};
+			const std::array<double, 3> weights = {0.2126, 0.7152, 0.0722};
+			double luminance = 0.0;
+			for (size_t i = 0; i < weights.size(); ++i)
+			{
+				const int high = digit(color.at(1 + (2 * i)));
+				const int low = digit(color.at(2 + (2 * i)));
+				if (high < 0 || low < 0)
+					return false;
+				const double channel = ((high * 16) + low) / 255.0;
+				luminance +=
+					weights.at(i) * (channel <= 0.04045 ? channel / 12.92 : std::pow((channel + 0.055) / 1.055, 2.4));
+			}
+			return luminance > 0.179; // where black and white text have the same contrast
 		}
 
 		bool endsWith(const std::string& text, const std::string& end)
@@ -311,8 +340,8 @@ namespace gnubase::ui
 		{
 			for (const Json& bus : project.at("busses"))
 				if (bus.at("direction") == direction && bus.at("parent") == 0)
-					result.push_back(
-						{bus.at("id").get<uint64_t>(), 0, direction, bus.at("name").get<std::string>(), nullptr, {}});
+					result.push_back({bus.at("id").get<uint64_t>(), 0, direction, bus.at("name").get<std::string>(),
+						nullptr, {}, {}});
 		};
 		busses("input");
 		std::map<uint64_t, const Json*> channels;
@@ -323,9 +352,10 @@ namespace gnubase::ui
 			const auto channel = channels.find(track.at("channel").get<uint64_t>());
 			if (channel == channels.end())
 				continue;
-			result.push_back(
-				{channel->first, track.at("id").get<uint64_t>(), trackType(track.at("type").get<std::string>()),
-					track.at("name").get<std::string>(), channel->second, track.value("picture", std::string())});
+			const Json color = track.value("color", Json());
+			result.push_back({channel->first, track.at("id").get<uint64_t>(),
+				trackType(track.at("type").get<std::string>()), track.at("name").get<std::string>(), channel->second,
+				track.value("picture", std::string()), color.is_string() ? color.get<std::string>() : std::string()});
 		}
 		busses("output");
 		return result;
@@ -657,7 +687,21 @@ namespace gnubase::ui
 	void Mixer::updateStrip(Rml::Element& strip, const MixerChannel& channel)
 	{
 		if (Rml::Element* name = strip.QuerySelector(".mixer-channel-name"))
+		{
 			setText(*name, channel.name);
+			// The track's color (reference manual p. 1621) is user data, which the style sheets don't know; they
+			// style the text over it by the classes.
+			if (name->GetAttribute<Rml::String>("color", "") != channel.color)
+			{
+				name->SetAttribute("color", channel.color);
+				if (channel.color.empty())
+					name->RemoveProperty("background-color");
+				else
+					name->SetProperty("background-color", channel.color);
+				name->SetClass("colored", !channel.color.empty());
+				name->SetClass("bright", bright(channel.color));
+			}
+		}
 		if (Rml::Element* picture = strip.QuerySelector(".mixer-picture");
 			picture != nullptr && attribute(*picture, "picture") != channel.picture)
 		{

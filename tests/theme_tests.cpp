@@ -258,6 +258,42 @@ TEST_CASE("every theme's piano keyboard has light white keys and dark black keys
 	}
 }
 
+TEST_CASE("every theme's mixer strip names are legible on every color of its track palette", "[unit]")
+{
+	// A strip's name on its track's color (docs/features/mixer-window.md): light text, or dark text where the mixer
+	// marks the color .bright, by the same luminance as ui::Mixer (dark text has more contrast there).
+	for (const char* theme : g_themes)
+	{
+		INFO("theme " << theme);
+		std::string light;
+		std::string dark;
+		for (const auto& [selector, declarations] : rules(gnubase::test::readText(themesDir() / theme / "theme.rcss")))
+		{
+			const size_t first = selector.find_first_not_of(" 	");
+			const std::string name = selector.substr(first, selector.find_last_not_of(" 	") + 1 - first);
+			const size_t at = declarations.find("color: #");
+			if (at == std::string::npos)
+				continue;
+			const std::string color = declarations.substr(at + std::string_view("color: ").size(), 7);
+			if (name == ".mixer-channel-name.colored")
+				light = color;
+			else if (name == ".mixer-channel-name.colored.bright")
+				dark = color;
+		}
+		REQUIRE(light.size() == 7);
+		REQUIRE(dark.size() == 7);
+		CHECK(luminance(light) > luminance(dark));
+		const nlohmann::json tokens = readJson(themesDir() / theme / "tokens.json");
+		const double least = std::string_view(theme) == "high-contrast" ? 7.0 : 3.0;
+		for (const nlohmann::json& item : tokens.at("trackPalette"))
+		{
+			const std::string color = item.get<std::string>();
+			INFO("track color " << color);
+			CHECK(contrast(color, luminance(color) > 0.179 ? dark : light) >= least);
+		}
+	}
+}
+
 TEST_CASE("every theme dims the audio part editor's events that their part hides entirely", "[unit]")
 {
 	// The audio part editor (docs/features/audio-part-editor.md): an event out of its part doesn't play there, so it
