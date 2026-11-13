@@ -212,7 +212,8 @@ namespace gnubase::engine
 	Recorder::~Recorder()
 	{
 		{
-			const std::scoped_lock lock(m_mutex);
+			std::unique_lock lock(m_mutex);
+			m_wake.wait(lock, [this] { return !m_opening; });
 			m_notify = nullptr; // the engine is going: the files stay, but nothing is added to the project
 			try
 			{
@@ -233,8 +234,9 @@ namespace gnubase::engine
 	void Recorder::prepare(int channels, uint32_t maxFrames)
 	{
 		rt::assertNotRealtime("engine::Recorder::prepare");
-		const std::scoped_lock lock(m_mutex);
-		drain(); // what the audio thread sent before it stopped
+		std::unique_lock lock(m_mutex);
+		m_wake.wait(lock, [this] { return !m_opening; }); // the chunks go away
+		drain();                                          // what the audio thread sent before it stopped
 		applySetups(m_latestSetup.load(std::memory_order_acquire));
 		if (m_midiRecording)
 			endMidi();
@@ -291,7 +293,7 @@ namespace gnubase::engine
 
 	void Recorder::applySetups(uint64_t number)
 	{
-		if (number <= m_nextNumber)
+		if (m_opening || number <= m_nextNumber)
 			return;
 		RecordSetup next;
 		uint64_t nextNumber = 0;
@@ -470,6 +472,8 @@ namespace gnubase::engine
 
 	bool Recorder::drain()
 	{
+		if (m_opening)
+			return false; // the chunks behind the one that starts a recording wait for its files
 		bool handled = false;
 		Chunk* chunk = nullptr;
 		while (m_filled && m_filled->tryPop(chunk))
@@ -525,6 +529,19 @@ namespace gnubase::engine
 		m_deviceEnd = chunk.deviceFrame + chunk.frames;
 	}
 
+	Recorder::Unlocked::Unlocked(Recorder& recorder) : m_recorder(recorder)
+	{
+		m_recorder.m_opening = true;
+		m_recorder.m_mutex.unlock();
+	}
+
+	Recorder::Unlocked::~Unlocked()
+	{
+		m_recorder.m_mutex.lock();
+		m_recorder.m_opening = false;
+		m_recorder.m_wake.notify_all();
+	}
+
 	void Recorder::begin(const Chunk& chunk)
 	{
 		m_current = m_next;
@@ -532,13 +549,6 @@ namespace gnubase::engine
 		m_files.clear();
 		m_takes.clear();
 		m_written = 0;
-		if (!m_current.tracks.empty())
-		{
-			std::error_code error;
-			fs::create_directories(m_current.folder, error);
-			if (error)
-				fail("can't create the record folder " + m_current.folder.u8string() + ": " + error.message());
-		}
 		// Audio pre-record: the frames that came in just before, if none is missing in between.
 		const size_t capacity = m_channels > 0 ? m_history.size() / static_cast<size_t>(m_channels) : 0;
 		const size_t before = capacity > 0 && m_historyEnd == chunk.deviceFrame ? m_historyFrames : 0;
@@ -551,24 +561,36 @@ namespace gnubase::engine
 				static_cast<time::Samples>(before);
 			broadcast.timeReference = static_cast<uint64_t>(std::max<time::Samples>(first, 0));
 		}
-		// One listing for all tracks: the folder can hold thousands of recordings, and the lock is held meanwhile.
-		std::set<std::string> taken = takenNames(m_current.folder);
-		for (const RecordTrack& track : m_current.tracks)
 		{
-			try
+			// The folder and the files without the lock: the folder can hold thousands of recordings, and
+			// retrospective() shouldn't wait for them. Meanwhile no chunk is handled and no setup applied (m_opening),
+			// prepare and the destructor wait, and nothing else uses m_current, m_files or the pre-record history.
+			const Unlocked unlocked(*this);
+			if (!m_current.tracks.empty())
 			{
-				const std::string path = createFreeFile(
-					m_current.folder, fs::u8path(fileName(track.name) + extensionOf(m_current.format.format)), taken)
-											 .u8string();
-				WriteOptions options = m_current.format;
-				options.channels = static_cast<int>(track.ports.size());
-				if (options.broadcast)
-					options.broadcast->description = track.name.substr(0, 256);
-				m_files.push_back({track, path, AudioFileWriter::create(path, options)});
+				std::error_code error;
+				fs::create_directories(m_current.folder, error);
+				if (error)
+					fail("can't create the record folder " + m_current.folder.u8string() + ": " + error.message());
 			}
-			catch (const std::exception& error)
+			std::set<std::string> taken = takenNames(m_current.folder); // one listing for all tracks
+			for (const RecordTrack& track : m_current.tracks)
 			{
-				fail("can't record track " + track.name + ": " + error.what());
+				try
+				{
+					const std::string path = createFreeFile(m_current.folder,
+						fs::u8path(fileName(track.name) + extensionOf(m_current.format.format)), taken)
+												 .u8string();
+					WriteOptions options = m_current.format;
+					options.channels = static_cast<int>(track.ports.size());
+					if (options.broadcast)
+						options.broadcast->description = track.name.substr(0, 256);
+					m_files.push_back({track, path, AudioFileWriter::create(path, options)});
+				}
+				catch (const std::exception& error)
+				{
+					fail("can't record track " + track.name + ": " + error.what());
+				}
 			}
 		}
 

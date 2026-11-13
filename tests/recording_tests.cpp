@@ -185,6 +185,40 @@ namespace
 	{
 		return {{"processor", "sine"}, {"parameters", {{"Frequency", 440.0}, {"Level", 0.5}}}};
 	}
+
+	// Hands a Recorder prepared for one channel and g_blockFrames frames block number index of the device's input,
+	// recorded at its own position or not recorded.
+	constexpr uint32_t g_blockFrames = 64;
+
+	void processBlock(
+		gnubase::engine::Recorder& recorder, gnubase::engine::PlayedPositions& played, uint64_t index, bool recording)
+	{
+		namespace engine = gnubase::engine;
+		std::vector<float> input(g_blockFrames, 0.25f);
+		const float* const inputs[] = {input.data()};
+		const gnubase::audio::MidiBuffer midiIn;
+		gnubase::audio::MidiBuffer midiOut;
+		const engine::MidiTap::Sequencers sequencers;
+		const uint64_t position = index * g_blockFrames;
+		const engine::graph::TransportSegment segment{0, g_blockFrames, static_cast<int64_t>(position), recording};
+		engine::graph::TransportBlock transport;
+		transport.playing = true;
+		transport.segments = &segment;
+		transport.segmentCount = 1;
+		transport.recording = recording;
+		played.add(position, g_blockFrames, transport);
+		recorder.process({inputs, nullptr, g_blockFrames, position, 0, midiIn, midiOut}, played, 0, sequencers);
+	}
+
+	// A setup that records one mono track into folder.
+	gnubase::engine::RecordSetup recordInto(const std::filesystem::path& folder)
+	{
+		gnubase::engine::RecordSetup setup;
+		setup.folder = folder;
+		setup.format.sampleFormat = gnubase::engine::SampleFormat::Float32;
+		setup.tracks = {{1, "Audio", {0}}};
+		return setup;
+	}
 }
 
 TEST_CASE("recording through the dummy device matches its input sample-exactly", "[integration]")
@@ -702,7 +736,7 @@ TEST_CASE("the audio record mode is a transport setting", "[integration]")
 	CHECK(run(client, "transport.get").at("audioRecordMode") == "cycleHistoryReplace");
 }
 
-TEST_CASE("Recorder::setup doesn't wait for the disk thread, which creates the files under its lock", "[unit]")
+TEST_CASE("Recorder::setup doesn't wait for the disk thread, which reports a recording under its lock", "[unit]")
 {
 	using namespace std::chrono_literals;
 	namespace engine = gnubase::engine;
@@ -713,8 +747,7 @@ TEST_CASE("Recorder::setup doesn't wait for the disk thread, which creates the f
 	bool setUp = false;
 	bool sawSetUp = false;
 	{
-		// The disk thread holds its lock while it reports the recording, as while it lists the folder and creates
-		// the files: it waits there for setup to come back.
+		// The disk thread holds its lock while it reports the recording: it waits there for setup to come back.
 		engine::Recorder recorder(
 			[&](const std::string& name, const Json&)
 			{
@@ -725,32 +758,13 @@ TEST_CASE("Recorder::setup doesn't wait for the disk thread, which creates the f
 				changed.notify_all();
 				sawSetUp = changed.wait_for(lock, 5s, [&] { return setUp; });
 			});
-		constexpr uint32_t frames = 64;
-		recorder.prepare(1, frames);
-		engine::RecordSetup setup;
-		setup.folder = dir.path();
-		setup.format.sampleFormat = engine::SampleFormat::Float32;
-		setup.tracks = {{1, "Audio", {0}}};
-		recorder.setup(setup);
+		recorder.prepare(1, g_blockFrames);
+		recorder.setup(recordInto(dir.path()));
 
 		// A recorded block, then one that isn't: the recording ends.
-		std::vector<float> input(frames, 0.25f);
-		const float* const inputs[] = {input.data()};
-		const gnubase::audio::MidiBuffer midiIn;
-		gnubase::audio::MidiBuffer midiOut;
-		engine::PlayedPositions played(size_t{4} * frames);
-		const engine::MidiTap::Sequencers sequencers;
-		for (uint64_t block = 0; block < 2; ++block)
-		{
-			const engine::graph::TransportSegment segment{0, frames, static_cast<int64_t>(block * frames), block == 0};
-			engine::graph::TransportBlock transport;
-			transport.playing = true;
-			transport.segments = &segment;
-			transport.segmentCount = 1;
-			transport.recording = segment.recording;
-			played.add(block * frames, frames, transport);
-			recorder.process({inputs, nullptr, frames, block * frames, 0, midiIn, midiOut}, played, 0, sequencers);
-		}
+		engine::PlayedPositions played(size_t{4} * g_blockFrames);
+		processBlock(recorder, played, 0, true);
+		processBlock(recorder, played, 1, false);
 		{
 			std::unique_lock lock(mutex);
 			REQUIRE(changed.wait_for(lock, 5s, [&] { return finishing; }));
@@ -763,4 +777,99 @@ TEST_CASE("Recorder::setup doesn't wait for the disk thread, which creates the f
 		changed.notify_all();
 	}
 	CHECK(sawSetUp);
+}
+
+TEST_CASE("a recording the audio thread started keeps its setup when the next one comes first", "[unit]")
+{
+	using namespace std::chrono_literals;
+	namespace engine = gnubase::engine;
+	const gnubase::test::TempDir dir;
+	const std::filesystem::path first = dir.path() / "first";
+	const std::filesystem::path second = dir.path() / "second";
+	std::mutex mutex;
+	std::condition_variable changed;
+	std::vector<std::filesystem::path> paths;
+	bool released = false;
+	{
+		// The disk thread waits in the report of the first recording while the audio thread starts the second one
+		// and the next setup comes.
+		engine::Recorder recorder(
+			[&](const std::string& name, const Json& data)
+			{
+				if (name != "recording.finished")
+					return;
+				std::unique_lock lock(mutex);
+				for (const Json& track : data.at("tracks"))
+					paths.push_back(std::filesystem::u8path(track.at("path").get<std::string>()));
+				changed.notify_all();
+				changed.wait_for(lock, 5s, [&] { return released; });
+			});
+		recorder.prepare(1, g_blockFrames);
+		recorder.setup(recordInto(first));
+		engine::PlayedPositions played(size_t{8} * g_blockFrames);
+		processBlock(recorder, played, 0, true);
+		processBlock(recorder, played, 1, false);
+		{
+			std::unique_lock lock(mutex);
+			REQUIRE(changed.wait_for(lock, 5s, [&] { return !paths.empty(); }));
+		}
+		processBlock(recorder, played, 2, true);
+		recorder.setup(recordInto(second));
+		processBlock(recorder, played, 3, false);
+		{
+			std::unique_lock lock(mutex);
+			released = true;
+			changed.notify_all();
+			REQUIRE(changed.wait_for(lock, 5s, [&] { return paths.size() == 2; }));
+		}
+	}
+	for (const std::filesystem::path& path : paths)
+		CHECK(path.parent_path() == first);
+	CHECK(!std::filesystem::exists(second));
+}
+
+TEST_CASE("the retrospective buffer doesn't wait while the disk thread creates a recording's files", "[unit]")
+{
+	using namespace std::chrono_literals;
+	namespace engine = gnubase::engine;
+	const gnubase::test::TempDir dir;
+	// A file where the record folder should be: the disk thread reports the failure while it creates the files, and
+	// waits there for the retrospective buffer to answer.
+	const std::filesystem::path notAFolder = dir.path() / "file";
+	std::ofstream(notAFolder) << "not a folder";
+	std::mutex mutex;
+	std::condition_variable changed;
+	bool failing = false;
+	bool answered = false;
+	bool sawAnswer = false;
+	{
+		engine::Recorder recorder(
+			[&](const std::string& name, const Json&)
+			{
+				if (name != "recording.failed")
+					return;
+				std::unique_lock lock(mutex);
+				if (failing)
+					return;
+				failing = true;
+				changed.notify_all();
+				sawAnswer = changed.wait_for(lock, 5s, [&] { return answered; });
+			});
+		recorder.prepare(1, g_blockFrames);
+		recorder.setup(recordInto(notAFolder));
+		engine::PlayedPositions played(size_t{4} * g_blockFrames);
+		processBlock(recorder, played, 0, true);
+		{
+			std::unique_lock lock(mutex);
+			REQUIRE(changed.wait_for(lock, 5s, [&] { return failing; }));
+		}
+		CHECK(recorder.retrospective(1).empty());
+		recorder.clearRetrospective(0);
+		{
+			const std::scoped_lock lock(mutex);
+			answered = true;
+		}
+		changed.notify_all();
+	}
+	CHECK(sawAnswer);
 }
