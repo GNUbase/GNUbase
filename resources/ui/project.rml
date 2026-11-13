@@ -218,6 +218,7 @@
 				<menuitem command="file.exportTempo">Tempo Track...</menuitem>
 				<menuitem command="file.exportMarkers">Markers...</menuitem>
 				<menuitem command="file.exportTracks">Selected Tracks...</menuitem>
+				<menuitem command="keyCommands.exportAssignments">Key Command Assignments...</menuitem>
 			</menu>
 		</menuitem>
 		<menuseparator/>

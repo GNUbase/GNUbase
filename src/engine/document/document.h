@@ -12,6 +12,7 @@
 #include "engine/time/signaturemap.h"
 #include "engine/time/tempomap.h"
 #include "engine/time/timecode.h"
+#include "plugin/events.h"
 
 #include <array>
 #include <cstddef>
@@ -232,6 +233,9 @@ namespace gnubase::engine
 		// (docs/features/midi-devices.md).
 		std::optional<int> program = std::nullopt;
 		std::optional<int> bank = std::nullopt;
+		// MIDI channels: the MIDI channel (0 to 15) that the program, bank, MIDI volume and pan go out on, or none:
+		// Any, which sends them on channel 1 (docs/features/mixer.md).
+		std::optional<int> midiChannel = std::nullopt;
 		// NOLINTNEXTLINE(readability-redundant-member-init): see instrumentParameters
 		std::string device = {};
 		// MIDI and instrument tracks: the MIDI modifiers, which change how the track's notes play
@@ -261,7 +265,8 @@ namespace gnubase::engine
 		// (docs/features/latency-and-monitoring.md, docs/features/midi-recording.md).
 		bool monitor = false;
 		bool recordEnable = false;
-		// MIDI and instrument tracks: where their MIDI input comes from, "all" (all MIDI inputs) or "none".
+		// MIDI and instrument tracks: where their MIDI input comes from, "all" (all MIDI inputs), "chordPads" (only
+		// the chord pads, reference manual p. 1367) or "none".
 		std::string midiInput = "all";
 		// The mute and solo buttons (docs/features/solo-mute-listen.md): a muted channel is silent, unless mute
 		// automation plays (docs/features/automation.md); while any channel is soloed, only soloed ones, where they
@@ -599,6 +604,25 @@ namespace gnubase::engine
 	// A note's release velocity unless it has one of its own: MIDI 1.0's 64, the center.
 	inline constexpr uint16_t g_defaultReleaseVelocity = 0x8000;
 
+	// A point of a note's per-note expression (#176): the value of one of the plugin API's common expressions from its
+	// position on, in ticks from the note's start, so that it moves with the note. Values are in the expression's
+	// unit: volume a linear gain 0-4, pan 0-1 (0.5 the center), tuning semitones from -120 to 120, the others 0-1.
+	struct ExpressionPoint
+	{
+		plugin::NoteExpression type = plugin::NoteExpression::Volume;
+		time::Ticks position = 0;
+		double value = 0.0;
+
+		bool operator==(const ExpressionPoint& other) const
+		{
+			return type == other.type && position == other.position && value == other.value;
+		}
+	};
+
+	// The expressions' names, by plugin::NoteExpression.
+	inline constexpr std::array<const char*, 7> g_expressionNames = {
+		"volume", "pan", "tuning", "vibrato", "expression", "brightness", "pressure"};
+
 	// Note and controller values have the resolution of MIDI 2.0 (#19): MIDI 1.0 values fit without loss.
 	struct Note
 	{
@@ -614,6 +638,7 @@ namespace gnubase::engine
 		double velocityVariance = 0.0; // -1 to 1, how far playback varies the velocity, up or down (#128)
 		// The attributes of the track's articulation map that the note has, by name (#175)
 		std::vector<std::string> articulations;
+		std::vector<ExpressionPoint> expressions; // its per-note expression (#176), sorted by position
 	};
 
 	// The MIDI events besides notes, all held as controller events.
@@ -945,30 +970,105 @@ namespace gnubase::engine
 	struct ChordPad
 	{
 		std::string chord;
-		int voicing = 0; // -12 to 12
+		// Per player (ChordPads::players), the inversion of its voicing, -12 to 12; a player beyond the list has 0.
+		// Changing the voicing changes the selected player's only (reference manual p. 1378).
+		std::vector<int> voicings;
 		bool adaptive = true;
 		bool locked = false;
+	};
+
+	// A chord pads player (reference manual pp. 1376-1377): the voicings the pads play. A basic player has an octave
+	// offset, a piano or guitar player a voicing style of its library (midi::voicingStyles).
+	struct ChordPlayer
+	{
+		std::string name = "Basic Player";
+		std::string library = "basic"; // basic, piano or guitar
+		std::string style;             // of the library: empty for its first
+		int octaveOffset = 0;          // basic: -3 to 3
+		bool muted = false;            // Select/Mute Player (p. 1389): a muted player plays nothing
+		// The MIDI or instrument track the player plays (p. 1377): it gets this player's voicings, the other tracks
+		// the selected player's; 0 for none.
+		ObjectId track = 0;
+	};
+
+	// The chord pads' pattern (reference manual pp. 1379-1380): notes on the voices of the chord, from the lowest (0,
+	// the bass) up, that repeat every length ticks while a pad plays.
+	struct PadPatternNote
+	{
+		time::Ticks position = 0; // from the pattern's start
+		time::Ticks length = 0;
+		int voice = 0;
+		int velocity = 100; // 1 to 127
+	};
+
+	struct PadPattern
+	{
+		std::string name;
+		time::Ticks length = 0; // 0: none
+		int voices = 0;         // 3 to 5
+		std::vector<PadPatternNote> notes;
 	};
 
 	// The chord pads (#174, reference manual pp. 1346-1391), saved with the project. A new project has twelve pads with
 	// the major preset on C.
 	struct ChordPads
 	{
-		std::vector<ChordPad> pads = {{"C", 0, true, false}, {"Dm", 0, true, false}, {"Em", 0, true, false},
-			{"F", 0, true, false}, {"G", 0, true, false}, {"Am", 0, true, false}, {"Bdim", 0, true, false},
-			{"", 0, true, false}, {"", 0, true, false}, {"", 0, true, false}, {"", 0, true, false},
-			{"", 0, true, false}};
-		int rootKey = 0;              // 0 C to 11 B
-		int reference = -1;           // the adaptive voicing reference pad, or -1
-		int octaveOffset = 0;         // the basic player's Octave Offset, -3 to 3
-		int velocity = 100;           // of pads triggered with the mouse
+		std::vector<ChordPad> pads = {{"C", {}, true, false}, {"Dm", {}, true, false}, {"Em", {}, true, false},
+			{"F", {}, true, false}, {"G", {}, true, false}, {"Am", {}, true, false}, {"Bdim", {}, true, false},
+			{"", {}, true, false}, {"", {}, true, false}, {"", {}, true, false}, {"", {}, true, false},
+			{"", {}, true, false}};
+		int rootKey = 0;                                    // 0 C to 11 B
+		int reference = -1;                                 // the adaptive voicing reference pad, or -1
+		std::vector<ChordPlayer> players = {ChordPlayer()}; // at least one
+		int player = 0;                                     // the selected player, whose voicings the pads play
+		int velocity = 100;                                 // of pads triggered with the mouse
 		bool remote = false;          // notes from MIDI inputs on the remote keys trigger the pads
 		int remoteStart = 36;         // C1: the first pad's remote key
 		int remoteEnd = 47;           // B1: the last remote key
-		std::string preset = "major"; // the preset loaded last
+		std::string preset = "major"; // the preset loaded last, a scale-based one or the user's (chordPads.presets)
+		std::string scale = "major";  // its scale, which the degrees and the assistant's levels are in
 		bool stepInput = false;       // triggered pads become chord events (chordPads.step)
 		bool moveInsert = false;
 		time::Ticks stepPosition = 0;
+		// Chord Pad Output Mode (reference manual p. 1347): on, the pads play into every MIDI and instrument track
+		// that monitors or is record-enabled; off, only into those whose MIDI input is the chord pads.
+		bool outputMode = true;
+		bool latch = false;                 // Latch Chords (p. 1386): a pad plays until it is triggered again
+		std::string overlaps = "holdFirst"; // holdFirst, legato or stopFirst (p. 1379)
+		bool filterNotes = false;           // Filter Notes From MIDI Thru: remote keys without a chord play nothing
+		// The chord modifiers' remote keys (p. 1387) and whether they are active: previous and next voicing, fewer
+		// and more tensions, transpose down and up, by default C2 to F2, above the pads' range.
+		bool modifiers = false;
+		std::array<int, 6> modifierKeys = {48, 49, 50, 51, 52, 53};
+		std::string remotePort;    // the MIDI input the remote keys come from (midi.portSettings key), empty for all
+		bool snapPlayback = false; // Snap Playback to Musical Grid (p. 1349): to the quantize grid while playing
+		// The player mode (p. 1378): plainChords or pattern, which plays the pattern with the chord's notes, with the
+		// velocities of the pattern or of the MIDI keyboard (velocityFromKeyboard).
+		std::string mode = "plainChords";
+		PadPattern pattern;
+		bool velocityFromKeyboard = false;
+		bool flats = false; // Enh. Shift (p. 1363): the pads spell their notes with flats, such as Db for C#
+		// The sections player mode (mode "sections", pp. 1381-1385) and the Player Remote Control tab (p. 1389): the
+		// remote keys of the five sections (-1 for none), from the chord's lowest note up, and of five subsections,
+		// each a section moved by an offset in semitones; sectionPlay sections (a pad key and a section key),
+		// chordPads (a section key plays the section of the pad triggered last) or combination (either first);
+		// latchPads (Latch Chord Pads: the sections go on after the pad key goes up); spread (Chord Note
+		// Distribution: a chord of more notes than sections spreads them over the sections, else the top section
+		// takes the rest); the muted sections; and the remote keys that select the previous and the next player and
+		// mute the selected one.
+		std::array<int, 5> sectionKeys = {55, 56, 57, 58, 59}; // G2 to B2
+		std::array<int, 5> subsectionKeys = {-1, -1, -1, -1, -1};
+		std::array<int, 5> subsectionSections = {0, 1, 2, 3, 4};
+		std::array<int, 5> subsectionOffsets = {12, 12, 12, 12, 12};
+		std::string sectionPlay = "sections";
+		bool latchPads = false;
+		bool spread = false;
+		std::array<bool, 5> mutedSections = {false, false, false, false, false};
+		std::array<int, 3> playerKeys = {-1, -1, -1}; // previous, next, mute
+		// Modify All Pad Voicings, Modify All Pad Tensions and Transpose All Pads (p. 1387): what moves them, none,
+		// aftertouch (channel pressure), pitchBend or controller, with its number.
+		std::array<std::string, 3> controlSources = {"none", "none", "none"};
+		std::array<int, 3> controlNumbers = {1, 1, 1};
 	};
 
 	// What an automation lane changes.
@@ -1243,12 +1343,17 @@ namespace gnubase::engine
 		PlayDirection direction = PlayDirection::Forward;
 		double swing = 0.0; // -1 to 1: how far every second step moves, in half steps
 		std::vector<PatternLane> lanes;
+		// The pattern of another track that midi::adoptPatterns made it a copy of, 0 for none. Not saved: in a loaded
+		// project no pattern is a copy.
+		ObjectId copiedFrom = 0;
 	};
 
 	inline bool operator==(const Pattern& a, const Pattern& b)
 	{
-		return std::tie(a.id, a.track, a.name, a.mode, a.length, a.resolution, a.direction, a.swing, a.lanes) ==
-			std::tie(b.id, b.track, b.name, b.mode, b.length, b.resolution, b.direction, b.swing, b.lanes);
+		return std::tie(a.id, a.track, a.name, a.mode, a.length, a.resolution, a.direction, a.swing, a.lanes,
+				   a.copiedFrom) ==
+			std::tie(
+				b.id, b.track, b.name, b.mode, b.length, b.resolution, b.direction, b.swing, b.lanes, b.copiedFrom);
 	}
 
 	// A color of the project's color set (reference manual pp. 115-118), which colors are picked from.
@@ -1459,6 +1564,12 @@ namespace gnubase::engine
 	// ends it.
 	std::vector<ObjectId> vcaChain(const Project& project, ObjectId channel);
 
+	// The channels a change of key on a channel goes on to (docs/features/link-groups.md): the other channels of its
+	// link group if the group links key (and linked), the channels of the group it controls if it is a VCA fader and
+	// key is one of its buttons, and from each of them on in the same way. key is one channel.set changes: volume,
+	// pan, eq, strip, sends, or one of its buttons (mute, solo, soloDefeat, listen, monitor, recordEnable).
+	std::vector<ObjectId> linkedTo(const Project& project, ObjectId channel, const std::string& key, bool linked);
+
 	// Gives a part's notes and controllers new ids.
 	void renumber(Project& project, MidiPart& part);
 
@@ -1539,15 +1650,15 @@ namespace gnubase::engine
 	inline bool operator==(const Channel& a, const Channel& b)
 	{
 		return std::tie(a.id, a.track, a.format, a.input, a.output, a.instrument, a.volume, a.pan, a.panner, a.panLeft,
-				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.program, a.bank, a.device, a.modifiers,
-				   a.midiInserts, a.midiSends, a.inputTransformer, a.instrumentParameters, a.sample, a.monitor,
-				   a.recordEnable, a.midiInput, a.mute, a.solo, a.soloDefeat, a.listen, a.slots, a.notes, a.sections,
-				   a.sends) ==
+				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.program, a.bank, a.midiChannel, a.device,
+				   a.modifiers, a.midiInserts, a.midiSends, a.inputTransformer, a.instrumentParameters, a.sample,
+				   a.monitor, a.recordEnable, a.midiInput, a.mute, a.solo, a.soloDefeat, a.listen, a.slots, a.notes,
+				   a.sections, a.sends) ==
 			std::tie(b.id, b.track, b.format, b.input, b.output, b.instrument, b.volume, b.pan, b.panner, b.panLeft,
-				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.program, b.bank, b.device, b.modifiers,
-				b.midiInserts, b.midiSends, b.inputTransformer, b.instrumentParameters, b.sample, b.monitor,
-				b.recordEnable, b.midiInput, b.mute, b.solo, b.soloDefeat, b.listen, b.slots, b.notes, b.sections,
-				b.sends);
+				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.program, b.bank, b.midiChannel, b.device,
+				b.modifiers, b.midiInserts, b.midiSends, b.inputTransformer, b.instrumentParameters, b.sample,
+				b.monitor, b.recordEnable, b.midiInput, b.mute, b.solo, b.soloDefeat, b.listen, b.slots, b.notes,
+				b.sections, b.sends);
 	}
 
 	inline bool operator==(const Slot& a, const Slot& b)
@@ -1679,9 +1790,9 @@ namespace gnubase::engine
 	inline bool operator==(const Note& a, const Note& b)
 	{
 		return std::tie(a.id, a.position, a.length, a.pitch, a.velocity, a.channel, a.releaseVelocity, a.origin,
-				   a.probability, a.velocityVariance, a.articulations) ==
+				   a.probability, a.velocityVariance, a.articulations, a.expressions) ==
 			std::tie(b.id, b.position, b.length, b.pitch, b.velocity, b.channel, b.releaseVelocity, b.origin,
-				b.probability, b.velocityVariance, b.articulations);
+				b.probability, b.velocityVariance, b.articulations, b.expressions);
 	}
 
 	inline bool operator==(const Controller& a, const Controller& b)
@@ -1774,15 +1885,41 @@ namespace gnubase::engine
 
 	inline bool operator==(const ChordPad& a, const ChordPad& b)
 	{
-		return std::tie(a.chord, a.voicing, a.adaptive, a.locked) == std::tie(b.chord, b.voicing, b.adaptive, b.locked);
+		return std::tie(a.chord, a.voicings, a.adaptive, a.locked) ==
+			std::tie(b.chord, b.voicings, b.adaptive, b.locked);
+	}
+
+	inline bool operator==(const PadPatternNote& a, const PadPatternNote& b)
+	{
+		return std::tie(a.position, a.length, a.voice, a.velocity) ==
+			std::tie(b.position, b.length, b.voice, b.velocity);
+	}
+
+	inline bool operator==(const PadPattern& a, const PadPattern& b)
+	{
+		return std::tie(a.name, a.length, a.voices, a.notes) == std::tie(b.name, b.length, b.voices, b.notes);
+	}
+
+	inline bool operator==(const ChordPlayer& a, const ChordPlayer& b)
+	{
+		return std::tie(a.name, a.library, a.style, a.octaveOffset, a.track, a.muted) ==
+			std::tie(b.name, b.library, b.style, b.octaveOffset, b.track, b.muted);
 	}
 
 	inline bool operator==(const ChordPads& a, const ChordPads& b)
 	{
-		return std::tie(a.pads, a.rootKey, a.reference, a.octaveOffset, a.velocity, a.remote, a.remoteStart,
-				   a.remoteEnd, a.preset, a.stepInput, a.moveInsert, a.stepPosition) ==
-			std::tie(b.pads, b.rootKey, b.reference, b.octaveOffset, b.velocity, b.remote, b.remoteStart, b.remoteEnd,
-				b.preset, b.stepInput, b.moveInsert, b.stepPosition);
+		return std::tie(a.pads, a.rootKey, a.reference, a.players, a.player, a.velocity, a.remote, a.remoteStart,
+				   a.remoteEnd, a.preset, a.scale, a.stepInput, a.moveInsert, a.stepPosition, a.outputMode, a.latch,
+				   a.overlaps, a.filterNotes, a.modifiers, a.modifierKeys, a.remotePort, a.snapPlayback, a.mode,
+				   a.pattern, a.velocityFromKeyboard, a.flats, a.sectionKeys, a.subsectionKeys, a.subsectionSections,
+				   a.subsectionOffsets, a.sectionPlay, a.latchPads, a.spread, a.mutedSections, a.playerKeys,
+				   a.controlSources, a.controlNumbers) ==
+			std::tie(b.pads, b.rootKey, b.reference, b.players, b.player, b.velocity, b.remote, b.remoteStart,
+				b.remoteEnd, b.preset, b.scale, b.stepInput, b.moveInsert, b.stepPosition, b.outputMode, b.latch,
+				b.overlaps, b.filterNotes, b.modifiers, b.modifierKeys, b.remotePort, b.snapPlayback, b.mode, b.pattern,
+				b.velocityFromKeyboard, b.flats, b.sectionKeys, b.subsectionKeys, b.subsectionSections,
+				b.subsectionOffsets, b.sectionPlay, b.latchPads, b.spread, b.mutedSections, b.playerKeys,
+				b.controlSources, b.controlNumbers);
 	}
 
 	inline bool operator==(const AutomationTarget& a, const AutomationTarget& b)

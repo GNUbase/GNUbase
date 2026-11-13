@@ -21,6 +21,24 @@ namespace gnubase::engine
 				appendTracks(project, project.trackById.at(id).children, order);
 			}
 		}
+
+		// Whether a link group links a key (reference manual p. 458).
+		bool links(const LinkGroup& group, const std::string& key)
+		{
+			if (key == "volume")
+				return group.volume;
+			if (key == "pan")
+				return group.pan;
+			if (key == "monitor" || key == "recordEnable")
+				return group.record;
+			if (key == "eq")
+				return group.eq;
+			if (key == "strip")
+				return group.dynamics;
+			if (key == "sends")
+				return group.sends;
+			return group.mute; // mute, solo, soloDefeat and listen
+		}
 	}
 
 	std::vector<ProjectColor> factoryColors()
@@ -125,6 +143,31 @@ namespace gnubase::engine
 			group = linkGroupOf(project, group->vca))
 			chain.push_back(group->vca);
 		return chain;
+	}
+
+	std::vector<ObjectId> linkedTo(const Project& project, ObjectId channel, const std::string& key, bool linked)
+	{
+		const bool button = key != "volume" && key != "pan" && key != "eq" && key != "strip" && key != "sends";
+		std::vector<ObjectId> result;
+		std::set<ObjectId> seen{channel};
+		std::vector<ObjectId> pending{channel};
+		while (!pending.empty())
+		{
+			const ObjectId at = pending.back();
+			pending.pop_back();
+			std::vector<ObjectId> next;
+			if (const LinkGroup* group = linkGroupOf(project, at); linked && group != nullptr && links(*group, key))
+				next = group->channels;
+			if (const LinkGroup* group = controlledBy(project, at); button && group != nullptr)
+				next.insert(next.end(), group->channels.begin(), group->channels.end());
+			for (const ObjectId id : next)
+				if (seen.insert(id).second)
+				{
+					result.push_back(id);
+					pending.push_back(id);
+				}
+		}
+		return result;
 	}
 
 	time::Ticks longestProjectTicks(const Project& project)

@@ -167,6 +167,10 @@ namespace gnubase::engine
 				const time::Ticks noteEnd = std::min(start + position + length, end);
 				channel.notes.push_back({toSamples(project, start + position), toSamples(project, noteEnd), pitch,
 					velocity, playedChannel(note, sound, slot), false});
+				for (const ExpressionPoint& point : note.expressions)
+					if (start + position + point.position < noteEnd)
+						channel.expressions.push_back({toSamples(project, start + position + point.position), pitch,
+							channel.notes.back().channel, point.type, point.value});
 			}
 			for (const auto& [id, controller] : part.controllers)
 				if (controller.position < end - start && controller.type != ControllerType::Articulation)
@@ -263,6 +267,7 @@ namespace gnubase::engine
 			channel.instrumentParameters.clear();
 			channel.sample.clear();
 			channel.midiThru = false;
+			channel.padThru = false;
 			channel.autoFades = AutoFades();
 			channel.sections.gain = 0.0;
 			channel.sections.phase = false;
@@ -509,6 +514,8 @@ namespace gnubase::engine
 		if (outputs.empty() && mainMix(project) != 0)
 			outputs.push_back(mainMix(project)); // the default output, also when the chosen busses are gone
 		snapshot->chordPadKeys = chordPadKeys(project.chordPads);
+		if (project.chordPads.snapPlayback)
+			snapshot->chordPadKeys.snapTicks = project.quantize.grid.ticks();
 		snapshot->panLaw = project.panLaw;
 		snapshot->maxVolume = project.maxVolume;
 		snapshot->recordBitDepth = project.setup.recordBitDepth;
@@ -570,6 +577,7 @@ namespace gnubase::engine
 			render.midiPan = channel.midiPan;
 			render.program = channel.program;
 			render.bank = channel.bank;
+			render.midiChannel = static_cast<uint8_t>(channel.midiChannel.value_or(0));
 			render.modifiers = channel.modifiers;
 			if (const ArticulationMap* articulations = midi::articulationMapOf(project, track.id))
 				render.articulations = *articulations;
@@ -587,6 +595,11 @@ namespace gnubase::engine
 			render.listen = channel.listen;
 			render.midiThru = (track.type == TrackType::Midi || track.type == TrackType::Instrument) &&
 				channel.midiInput == "all" && (channel.monitor || channel.recordEnable);
+			render.padThru = (track.type == TrackType::Midi || track.type == TrackType::Instrument) &&
+				channel.midiInput == "chordPads" && (channel.monitor || channel.recordEnable);
+			for (size_t player = 0; player < project.chordPads.players.size(); ++player)
+				if (project.chordPads.players[player].track == track.id && track.id != 0)
+					render.padPlayer = static_cast<int>(player);
 			if (const DrumMap* map = midi::drumMapOf(project, track.id))
 				for (const uint8_t pitch : midi::inputPitches(*map))
 				{
@@ -766,6 +779,8 @@ namespace gnubase::engine
 					});
 			std::stable_sort(channel.controllers.begin(), channel.controllers.end(),
 				[](const RenderController& a, const RenderController& b) { return a.position < b.position; });
+			std::stable_sort(channel.expressions.begin(), channel.expressions.end(),
+				[](const RenderExpression& a, const RenderExpression& b) { return a.position < b.position; });
 			// The parts by start; their controller events keep pointing at them.
 			std::vector<size_t> byStart(channel.midiParts.size());
 			std::iota(byStart.begin(), byStart.end(), size_t{0});

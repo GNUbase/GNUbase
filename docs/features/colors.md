@@ -35,7 +35,9 @@ its track's.
 - **Event display** ([event-display.md](event-display.md)): `<event-lanes>` fills each event and part with its own
   color, or else its track's, and with the style sheet's `color` when neither has one (`TimeSpan::color`,
   [canvas.md](canvas.md)); folder data blocks and the overview line show the same colors. Muted and selected events
-  are drawn over them by the style sheets as before.
+  are drawn over them by the style sheets as before. Audio events' waveforms are in the same color where the theme
+  tints own colors. The default theme shows events tinted: a translucent body in the color, the outline and the
+  waveform in a lighter shade of it, and selected events lit over it (#1312); the other themes fill events opaque.
 - **Select Color for Selected Tracks or Events** (pp. 112–115): the toolbar's `#select-color` opens `#color-menu`,
   which `ui::ColorMenu` (`src/ui/colormenu.h`) fills from the color set each time it opens, a swatch and the name per
   color. With events selected in the display, a color goes to them (`event.set`) and the first item, Set Event Color

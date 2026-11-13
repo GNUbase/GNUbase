@@ -22,6 +22,9 @@ namespace gnubase::engine::graph
 			Program,         // key: the program; value: the bank, or 0xFFFFFFFF for none
 			SysEx,           // data and size: the whole message, from 0xF0 to 0xF7
 			Parameter,
+			// A note's per-note expression (#176): key and channel are the note's, parameter the expression's id
+			// (plugin::NoteExpression), parameterValue its value in that expression's unit.
+			NoteExpression,
 		};
 
 		uint32_t offset = 0; // frame within the block

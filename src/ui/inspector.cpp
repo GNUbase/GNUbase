@@ -17,6 +17,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <limits>
 #include <set>
 #include <string>
 #include <utility>
@@ -58,6 +59,8 @@ namespace gnubase::ui
 			R"(<select control="input" title="Input Routing"/></div>)"
 			R"(<div class="inspector-row" row="output"><span class="inspector-label">Output</span>)"
 			R"(<select control="output" title="Output Routing"/></div>)"
+			R"(<div class="inspector-row" row="midiChannel"><span class="inspector-label">Channel</span>)"
+			R"(<select control="midiChannel" title="MIDI Channel"/></div>)"
 			R"(<div class="inspector-row" row="device"><span class="inspector-label">Device</span>)"
 			R"(<select control="device" title="MIDI Device"/></div>)"
 			R"(<div class="inspector-row" row="bank"><span class="inspector-label">Bank</span>)"
@@ -219,7 +222,8 @@ namespace gnubase::ui
 		// midiInserts and midiSends in channel.set, the section, then the slot's index and its field or "parameter-"
 		// and a parameter's key ("midiInserts-0-effect", "midiSends-1-parameter-rate"), or the section's own field
 		// ("midiInserts-bypass", "midiInserts-divider", "midiSends-pre"). Each slot has the control panel of its effect
-		// below it, which its edit button opens and closes.
+		// below it, which its edit button opens and closes. The inserts have the divider between their slots too, a
+		// line in a grip at each of its five places, shown at the one it is at, which is dragged to another (p. 1105).
 		std::string midiEffectsRml(bool sends)
 		{
 			const std::string section = sends ? "midiSends" : "midiInserts";
@@ -234,9 +238,16 @@ namespace gnubase::ui
 			if (!sends)
 				rml += row("divider", "Divider",
 					R"(<select control="midiInserts-divider" title="Divider: the inserts above it are recorded"/>)");
+			const auto divider = [](size_t gap)
+			{
+				return R"(<div class="midi-divider" gap=")" + std::to_string(gap) +
+					R"(" title="Divider: drag it to record the inserts above it"><div class="midi-divider-line"/></div>)";
+			};
 			for (size_t slot = 0; slot < 4; ++slot)
 			{
 				const std::string name = section + "-" + std::to_string(slot);
+				if (!sends)
+					rml += divider(slot);
 				rml += R"(<div class="midi-effect-slot" slot=")";
 				rml += std::to_string(slot);
 				rml += R"("><div class="inspector-row"><button type="toggle" class="toggle" control=")";
@@ -252,6 +263,8 @@ namespace gnubase::ui
 					rml += row("output", "Output", R"(<select control=")" + name + R"(-output" title="Send Output"/>)");
 				rml += R"(<div class="midi-effect-panel"/></div>)";
 			}
+			if (!sends)
+				rml += divider(4);
 			return rml + "</div>";
 		}
 
@@ -516,6 +529,8 @@ namespace gnubase::ui
 		root.AddEventListener(Rml::EventId::Change, this);
 		root.AddEventListener(Rml::EventId::Blur, this, true);    // blur doesn't bubble
 		root.AddEventListener(Rml::EventId::Keydown, this, true); // Escape leaves the notepad
+		for (const Rml::EventId id : {Rml::EventId::Dragstart, Rml::EventId::Drag, Rml::EventId::Dragend})
+			root.AddEventListener(id, this); // the MIDI inserts' divider
 
 		readInPlace(); // the in-place editors open already (reference manual p. 1259)
 		// The MIDI devices are a user setting (reference manual p. 1109); the next update shows them.
@@ -547,6 +562,8 @@ namespace gnubase::ui
 		m_root->RemoveEventListener(Rml::EventId::Change, this);
 		m_root->RemoveEventListener(Rml::EventId::Blur, this, true);
 		m_root->RemoveEventListener(Rml::EventId::Keydown, this, true);
+		for (const Rml::EventId id : {Rml::EventId::Dragstart, Rml::EventId::Drag, Rml::EventId::Dragend})
+			m_root->RemoveEventListener(id, this);
 	}
 
 	void Inspector::update(const std::vector<uint64_t>& tracks, const Json& project, uint64_t loads, uint64_t read)
@@ -747,12 +764,13 @@ namespace gnubase::ui
 		}
 		available("[row=volume]", audio || vca);
 		available("[row=pan]", audio);
-		available("[row=input]", type == "audio");
+		available("[row=input]", type == "audio" || noteTrack);
 		// A MIDI track's patch (pp. 1108, 1113): by its device's patches, or by bank and program without one.
 		const Json* device = nullptr;
 		if (channel != nullptr && type == "midi")
 			if (const auto found = m_devices.find(channel->value("device", std::string())); found != m_devices.end())
 				device = &*found;
+		available("[row=midiChannel]", type == "midi");
 		available("[row=device]", type == "midi");
 		available("[row=bank]", type == "midi" && device == nullptr);
 		available("[row=program]", type == "midi");
@@ -790,8 +808,23 @@ namespace gnubase::ui
 					*output, outputs(*m_project, type, id), std::to_string(channel->at("output").get<uint64_t>()));
 			if (Rml::Element* input = element("select[control=input]"); input != nullptr && type == "audio")
 				widgets::fill(*input, inputs(*m_project), std::to_string(channel->at("input").get<uint64_t>()));
+			// A MIDI or instrument track's MIDI input: all MIDI inputs, the chord pads (reference manual p. 1367) or
+			// none.
+			if (Rml::Element* input = element("select[control=input]");
+				input != nullptr && (type == "midi" || type == "instrument"))
+				widgets::fill(*input,
+					{{"all", "All MIDI Inputs"}, {"chordPads", "Chord Pads"}, {"none", "Not Connected"}},
+					channel->value("midiInput", std::string("all")));
 			if (type == "midi")
 			{
+				// The MIDI channel its patch, MIDI volume and pan go out on (reference manual p. 349): Any or 1-16.
+				Options midiChannels{{"any", "Any"}};
+				for (int number = 0; number < 16; ++number)
+					midiChannels.emplace_back(std::to_string(number), std::to_string(number + 1));
+				const Json midiChannel = channel->value("midiChannel", Json());
+				if (Rml::Element* select = element("select[control=midiChannel]"))
+					widgets::fill(*select, midiChannels,
+						midiChannel.is_number_integer() ? std::to_string(midiChannel.get<int>()) : "any");
 				const std::string named = channel->value("device", std::string());
 				Options devices{{"", "No Device"}};
 				for (const auto& [name, value] : m_devices.items())
@@ -956,6 +989,8 @@ namespace gnubase::ui
 				{{"0", "Above Slot 1"}, {"1", "Below Slot 1"}, {"2", "Below Slot 2"}, {"3", "Below Slot 3"},
 					{"4", "Below Slot 4"}},
 				std::to_string(divider));
+		if (!sends && m_dividerTo < 0)
+			showDivider(divider);
 		Options effects = {{"", "No Effect"}};
 		for (const Json& effect : m_midiEffects)
 			effects.emplace_back(effect.at("id").get<std::string>(), effect.at("name").get<std::string>());
@@ -1175,6 +1210,11 @@ namespace gnubase::ui
 			if (target->IsClassSet("notepad") && !m_dropping)
 				saveNotes();
 			break;
+		case Rml::EventId::Dragstart:
+		case Rml::EventId::Drag:
+		case Rml::EventId::Dragend:
+			dragDivider(*target, event);
+			break;
 		case Rml::EventId::Keydown:
 			if (target->IsClassSet("notepad") &&
 				event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN) == Rml::Input::KI_ESCAPE)
@@ -1186,6 +1226,50 @@ namespace gnubase::ui
 		default:
 			break;
 		}
+	}
+
+	void Inspector::showDivider(int gap)
+	{
+		Rml::ElementList gaps;
+		m_root->QuerySelectorAll(gaps, ".midi-divider");
+		for (Rml::Element* each : gaps)
+			setClass(*each, "at", each->GetAttribute<int>("gap", -1) == gap);
+	}
+
+	void Inspector::dragDivider(Rml::Element& target, const Rml::Event& event)
+	{
+		if (event == Rml::EventId::Dragstart)
+		{
+			const Rml::Element* grip = target.IsClassSet("midi-divider") ? &target : target.GetParentNode();
+			if (grip == nullptr || !grip->IsClassSet("midi-divider") || !m_channel.contains("midiInserts"))
+				return;
+			m_dividerTo = m_channel.at("midiInserts").at("divider").get<int>();
+			return;
+		}
+		if (m_dividerTo < 0)
+			return;
+		// The divider goes to the place nearest to the mouse; the drag's end moves it there (p. 1105).
+		const float mouse = event.GetParameter("mouse_y", 0.0F);
+		Rml::ElementList gaps;
+		m_root->QuerySelectorAll(gaps, ".midi-divider");
+		float nearest = std::numeric_limits<float>::max();
+		for (Rml::Element* each : gaps)
+		{
+			const float middle = each->GetAbsoluteOffset(Rml::BoxArea::Border).y +
+				(each->GetBox().GetSize(Rml::BoxArea::Border).y / 2.0F);
+			if (std::abs(middle - mouse) < nearest)
+			{
+				nearest = std::abs(middle - mouse);
+				m_dividerTo = each->GetAttribute<int>("gap", m_dividerTo);
+			}
+		}
+		showDivider(m_dividerTo);
+		if (!(event == Rml::EventId::Dragend))
+			return;
+		const int to = m_dividerTo;
+		m_dividerTo = -1;
+		if (m_channel.at("midiInserts").at("divider") != to)
+			sendChannel({{"midiInserts", {{"divider", to}}}});
 	}
 
 	void Inspector::change(Rml::Element& control, const Rml::Event& event)
@@ -1331,6 +1415,12 @@ namespace gnubase::ui
 			key = name == "record" ? "recordEnable" : name;
 			value = event.GetParameter<bool>("value", false);
 		}
+		else if (const auto picked = event.GetParameter<Rml::String>("value", "");
+			name == "input" && (picked == "all" || picked == "chordPads" || picked == "none"))
+		{
+			key = "midiInput"; // a MIDI or instrument track's
+			value = picked;
+		}
 		else if (name == "input" || name == "output")
 		{
 			value = std::strtoull(event.GetParameter<Rml::String>("value", "0").c_str(), nullptr, 10);
@@ -1338,6 +1428,14 @@ namespace gnubase::ui
 		else if (name == "device")
 		{
 			value = event.GetParameter<Rml::String>("value", "");
+		}
+		else if (name == "midiChannel")
+		{
+			const auto chosen = event.GetParameter<Rml::String>("value", "any");
+			const Json midiChannel = chosen == "any" ? Json(nullptr) : Json(std::stoi(chosen));
+			if (m_channel.value("midiChannel", Json()) != midiChannel)
+				sendChannel({{"midiChannel", midiChannel}});
+			return;
 		}
 		else if (name == "bank")
 		{

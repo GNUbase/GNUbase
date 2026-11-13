@@ -357,7 +357,8 @@
 		local function showMacros(document)
 			local items = {}
 			for index, macro in ipairs(kc.macros) do
-				items[#items + 1] = '<listitem value="m' .. index .. '">' .. escape(macro.name) .. "</listitem>"
+				items[#items + 1] = '<listitem value="m' .. index ..
+					'" ondblclick="KeyCommands.editMacroName(document)">' .. escape(macro.name) .. "</listitem>"
 			end
 			local list = document:GetElementById("keycommands-macros")
 			list.inner_rml = table.concat(items)
@@ -551,10 +552,15 @@
 				report(document, "Select the key to remove")
 				return
 			end
-			local keys = copy(keysOf(entry))
-			table.remove(keys, index)
-			entry.keys = keys
-			refresh(document)
+			-- The reference asks before it removes (p. 1558); Cancel undoes it, as it drops the dialog's changes.
+			ConfirmDialog = {title = "Remove Key Command", message = "Remove this key command?", ok = "Remove",
+				onOk = function()
+					local keys = copy(keysOf(entry))
+					table.remove(keys, index)
+					entry.keys = keys
+					refresh(document)
+				end}
+			gnubase.ui.confirm{}
 		end
 
 		-- Reset: the command's default keys, taken back from the commands that have them now.
@@ -576,17 +582,24 @@
 
 		-- Defaults: every command's default keys; Clear All: no command has keys.
 		function kc.defaults(document)
-			for _, entry in ipairs(kc.entries) do
-				entry.keys = nil
-			end
-			kc.unlisted = {}
-			refresh(document)
+			-- The reference asks before it resets (p. 1560); Cancel undoes it, as it drops the dialog's changes.
+			ConfirmDialog = {title = "Reset Key Commands",
+				message = "Reset all key commands to their default settings?", ok = "Reset All",
+				onOk = function()
+					for _, entry in ipairs(kc.entries) do
+						entry.keys = nil
+					end
+					kc.unlisted = {}
+					refresh(document)
+				end}
+			gnubase.ui.confirm{}
 		end
 
 		function kc.clearAll(document)
 			for _, entry in ipairs(kc.entries) do
 				entry.keys = (#entry.defaults > 0 or #(entry.keys or {}) > 0) and {} or nil
 			end
+			kc.unlisted = {} -- Clear All removes every assignment, also those of commands the dialog doesn't list
 			refresh(document)
 		end
 
@@ -615,8 +628,17 @@
 			return #custom > 0 and custom or nil, #macros > 0 and macros or nil
 		end
 
+		-- Defined with the macro functions below; apply needs it to commit a rename typed into the name field.
+		local renameSelected
+
 		-- Sends what the dialog shows: settings.set, or settings.reset for none. Returns an error.
-		local function apply()
+		local function apply(document)
+			-- A double-click focuses the selected macro's name field to rename it (p. 1558), and Return there is the
+			-- dialog's OK: commit that rename first, and stay open with the message if the name is taken.
+			local problem = renameSelected(document)
+			if problem then
+				return problem
+			end
 			local custom, macros = settings()
 			local values = {}
 			for key, shown in pairs({["ui.keyCommands"] = custom or false, ["ui.macros"] = macros or false}) do
@@ -641,11 +663,11 @@
 		end
 
 		function kc.apply(document)
-			report(document, apply())
+			report(document, apply(document))
 		end
 
 		function kc.ok(document)
-			local problem = apply()
+			local problem = apply(document)
 			if problem then
 				report(document, problem)
 			else
@@ -673,7 +695,7 @@
 				report(document, "Enter the preset's name")
 				return
 			end
-			local problem = apply()
+			local problem = apply(document)
 			if not problem then
 				local ok, failed = pcall(gnubase.keyCommands.savePreset, {name = name})
 				problem = not ok and tostring(failed) or nil
@@ -696,7 +718,7 @@
 
 		-- Export writes the applied key commands and macros; Import makes a preset of a file.
 		function kc.exportFile(document)
-			local problem = apply()
+			local problem = apply(document)
 			if problem then
 				report(document, problem)
 			else
@@ -762,16 +784,20 @@
 			end
 		end
 
-		function kc.renameMacro(document)
+		-- Renames the selected macro to the name in its field, if it differs. Returns an error message, or nil if it
+		-- renamed or there was nothing to rename. Rename Macro uses it, and so does apply, for a name typed after a
+		-- double-click focused the field and confirmed with Return, which is the dialog's OK (p. 1558).
+		renameSelected = function(document)
+			if not kc.macro then
+				return nil
+			end
 			local name = value(document:GetElementById("keycommands-macro-name"))
-			if not kc.macro or name == "" then
-				report(document, "Select a macro and enter its name")
-				return
+			if name == "" or name == kc.macros[kc.macro].name then
+				return nil
 			end
 			for index, macro in ipairs(kc.macros) do
 				if macro.name == name and index ~= kc.macro then
-					report(document, "There is a macro " .. name .. " already")
-					return
+					return "There is a macro " .. name .. " already"
 				end
 			end
 			local old = macroId(kc.macros[kc.macro].name)
@@ -782,7 +808,15 @@
 			end
 			kc.macros[kc.macro].name = name
 			macrosChanged(document)
-			report(document, "")
+			return nil
+		end
+
+		function kc.renameMacro(document)
+			if not kc.macro or value(document:GetElementById("keycommands-macro-name")) == "" then
+				report(document, "Select a macro and enter its name")
+				return
+			end
+			report(document, renameSelected(document) or "")
 		end
 
 		function kc.chooseMacro(document)
@@ -791,6 +825,12 @@
 				kc.macro, kc.step = index, nil
 				showMacros(document)
 			end
+		end
+
+		-- Double-clicking a macro in the list renames it (p. 1558): its name field takes the focus, ready for the new
+		-- name, which Rename Macro or Return confirms (Return is the dialog's OK, which commits the rename first).
+		function kc.editMacroName(document)
+			document:GetElementById("keycommands-macro-name"):Focus()
 		end
 
 		function kc.chooseStep(document)

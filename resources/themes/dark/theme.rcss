@@ -137,6 +137,10 @@
 	{
 		decorator: svg-ninepatch(list-item-selected.svg, 6 6 6 6);
 	}
+	.arranger-row.current
+	{
+		decorator: svg-ninepatch(list-item-selected.svg, 6 6 6 6);
+	}
 	listview thead td.sorted
 	{
 		color: #5ea7b3;
@@ -445,6 +449,20 @@
 	{
 		background-color: #151617;
 	}
+	.event-display event-lanes.events, .event-display event-lanes.muted-events, .event-display event-lanes.selected-events, .event-display event-lanes.folder-data
+	{
+		event-inset: 0dp;
+	}
+	.event-display event-lanes.events
+	{
+		own-fill-opacity: 1;
+		own-color-tint: none;
+	}
+	.event-display .waveforms waveform
+	{
+		own-color-tint: none;
+		padding: 2dp 0;
+	}
 	.event-display .overview
 	{
 		background-color: #1e2022;
@@ -488,6 +506,10 @@
 	.event-display .project-cursor
 	{
 		background-color: #f3f4f5;
+	}
+	.event-display .step-input-cursor, .event-display .step-input-handle
+	{
+		background-color: #5ea7b3;
 	}
 	.event-display .cross-hair-vertical, .event-display .cross-hair-horizontal
 	{
@@ -634,6 +656,73 @@
 	.chord-pad.triggered
 	{
 		background-color: #41636a;
+	}
+	.chord-pad.listening
+	{
+		border-color: #d76a73;
+	}
+	.chord-pad.level-0
+	{
+		border-bottom-color: #67ad8b;
+	}
+	.chord-pad.level-1
+	{
+		border-bottom-color: #cda85f;
+	}
+	.chord-pad.level-2
+	{
+		border-bottom-color: #d76a73;
+	}
+	.chord-pad .chord-pad-voicing
+	{
+		color: #b7bbc0;
+		font-size: 11dp;
+	}
+	.chord-pad .chord-pad-progress
+	{
+		background-color: #5ea7b3;
+	}
+	.chord-pad.black-key
+	{
+		background-color: #1d1f21;
+	}
+	.chord-pads-key.white
+	{
+		background-color: #f3f4f5;
+		border-width: 1dp;
+		border-color: #484c50;
+	}
+	.chord-pads-key.black
+	{
+		background-color: #151617;
+	}
+	.chord-pads-key.remote
+	{
+		background-color: #a8ced4;
+	}
+	.chord-pads-key.black.remote
+	{
+		background-color: #416d75;
+	}
+	.chord-pads-key.modifier
+	{
+		background-color: #67ad8b;
+	}
+	.chord-pads-key.hover
+	{
+		background-color: #cda85f;
+	}
+	.chord-pads-key.played
+	{
+		background-color: #7896bd;
+	}
+	.chord-proximity-reference
+	{
+		color: #5ea7b3;
+	}
+	.chord-suggestion.recent .chord-suggestion-chord
+	{
+		font-weight: bold;
 	}
 	.chord-suggestion
 	{
@@ -1167,6 +1256,18 @@
 	.inspector .insert.bypassed, .inspector .insert.inactive
 	{
 		color: #b7bbc0;
+	}
+	.inspector .midi-effect-slot.off select
+	{
+		color: #b7bbc0;
+	}
+	.inspector .midi-effect-slot.recorded
+	{
+		border-left-color: #5ea7b3;
+	}
+	.inspector .midi-divider.at .midi-divider-line
+	{
+		background-color: #5ea7b3;
 	}
 	.pool-message.error
 	{

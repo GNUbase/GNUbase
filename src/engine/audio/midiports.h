@@ -57,14 +57,47 @@ namespace gnubase::engine
 
 		// Audio thread, once per block: the messages that arrived for this block go into allInputs if their port
 		// belongs to all MIDI inputs, and to the monitor (midi.monitor) at their frame position. While the chord pads'
-		// remote is active, a port's note on a remote key plays the pad's pitches instead (#174), the highest on MIDI
-		// channel 1, the next on channel 2 and so on; its note-off ends the pitches its note-on played.
-		void take(const audio::DeviceBlock& block, double sampleRate, audio::MidiBuffer& allInputs,
+		// remote is active, a port's note on a remote key plays the pad's pitches into pads instead (#174), the
+		// highest on MIDI channel 1, the next on channel 2 and so on, over the chords that sound as padKeys' overlap
+		// says (midi::PadVoices); its note-off ends them, or with latch its next note-on. With filter, the remote
+		// keys without a chord play nothing (#1089). pads also gets what playPads plays.
+		// pads has a buffer per player (ChordPadKeys::players): each player's voicings go into its own.
+		using PadBuffers = std::array<audio::MidiBuffer, ChordPadKeys::g_maxPlayers>;
+		void take(const audio::DeviceBlock& block, double sampleRate, audio::MidiBuffer& allInputs, PadBuffers& pads,
 			const ChordPadKeys& padKeys) noexcept;
 
 		// Any thread but an audio thread: a message from the on-screen keyboard (midi.keyboard), which belongs to all
 		// MIDI inputs and arrives now, as a port's would. False if the input queue is full.
 		bool play(const audio::MidiMessage& message) { return m_queue.push(g_keyboardSlot, message, hostTime()); }
+		// The same for the chord pads' notes (chordPads.trigger), which go where the chord pads play (take's pads).
+		bool playPads(const audio::MidiMessage& message, size_t player = 0)
+		{
+			return m_queue.push(g_padsSlot - static_cast<int>(player), message, hostTime());
+		}
+
+		// What the chord pads' remote keys did on the audio thread (#1089), for the command thread to apply
+		// (chordPads.remoteInput): a key that triggered or released its pad, a chord modifier's key, and while
+		// listenForPads is on, every port's note.
+		struct PadEvent
+		{
+			enum class Kind : uint8_t
+			{
+				Triggered,
+				Released,
+				Modifier,
+				Note,
+				Player,  // a key of Select/Mute Player
+				Control, // what moves all pads (key: 0 voicings, 1 tensions, 2 transposition; velocity: 0 to 127)
+			};
+			Kind kind = Kind::Note;
+			uint8_t key = 0;
+			uint8_t velocity = 0; // 0 for a note-off
+		};
+		// One thread, the audio engine's cue thread: the next event the audio thread found. False if there is none.
+		bool takePadEvent(PadEvent& event) { return m_padEvents.tryPop(event); }
+		// Command thread: while on, every port's note goes to takePadEvent as it plays on, and no remote key triggers
+		// a pad (Assign from MIDI Input, MIDI Learn: chordPads.listen).
+		void listenForPads(bool on) { m_padListen.store(on, std::memory_order_relaxed); }
 
 		// Drops the input that waits for the audio thread. Only while no audio thread takes.
 		void clear() { m_queue.clear(); }
@@ -74,6 +107,7 @@ namespace gnubase::engine
 
 	private:
 		static constexpr int g_keyboardSlot = -1; // the on-screen keyboard's in the input queue
+		static constexpr int g_padsSlot = -2;     // the chord pads' first player's, the others' below it
 		struct Port
 		{
 			gnubase::midi::Backend* backend = nullptr;
@@ -91,9 +125,9 @@ namespace gnubase::engine
 			audio::MidiMessage message;
 		};
 
-		// A port's message on a chord pad's remote key goes into allInputs as the pad's notes; false for others.
-		bool playPad(
-			const audio::MidiMessage& message, const ChordPadKeys& keys, audio::MidiBuffer& allInputs) noexcept;
+		// A port's message on a chord pad's remote key goes into pads as the pad's notes, or nowhere for a remote key
+		// that Filter Notes keeps; false for others.
+		bool playPad(const audio::MidiMessage& message, const ChordPadKeys& keys, PadBuffers& pads) noexcept;
 		void open(Port& port);
 		void listOnce();
 		bool listHardware();   // adds new ports, marks the others present or not; true if that changed any
@@ -116,8 +150,17 @@ namespace gnubase::engine
 		std::array<std::atomic<bool>, g_maxInputs> m_allInputs{};
 		rt::SpscQueue<Received> m_monitor;
 		// Audio thread: the pitches each remote key's note-on played, until its note-off.
-		std::array<uint8_t, 128> m_padCounts{};
-		std::array<std::array<uint8_t, ChordPadKeys::g_maxPitches>, 128> m_padPitches{};
+		std::array<midi::PadVoices, ChordPadKeys::g_maxPlayers> m_padVoices; // per player
+		// The sections player mode: the pad key that is down or was last, whether it is down, and the section keys
+		// that play.
+		int m_sectionPad = -1;
+		bool m_sectionPadDown = false;
+		// The sections player mode's keys: a section or subsection key's notes for the pad that plays them.
+		bool playSection(const audio::MidiMessage& message, const ChordPadKeys& keys, PadBuffers& pads) noexcept;
+		rt::SpscQueue<PadEvent> m_padEvents{512};
+		std::atomic<bool> m_padListen{false};
+		// Per input slot, chordPadPortHash of its port's key, for the MIDI input that the remote keys come from.
+		std::array<std::atomic<uint64_t>, g_maxInputs> m_slotHashes{};
 		std::atomic<size_t> m_monitorDropped{0};
 	};
 }

@@ -49,7 +49,8 @@ namespace gnubase::ui
 	//                                and the mouse wheel moves it by a beat (bars and beats), a frame (timecode,
 	//                                user frames) or a second. Those in the slot timeDisplay follow ui.timeDisplay:
 	//                                only the beat in its bar with beatCountOnly, and the state class size-0 to
-	//                                size-4 of its size
+	//                                size-4 of its size. Each has the state class of its format, such as
+	//                                format-barsBeats, for the stylesheets to give it the format's width
 	//   field="tempo"                a <valuefield> with Current Tempo in BPM (ui::currentTempo): the fixed tempo,
 	//                                or in tempo track mode the tempo at the project cursor, also while playing,
 	//                                which it changes on the tempo event at or before the cursor (reference manual p.

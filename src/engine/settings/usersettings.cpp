@@ -335,9 +335,11 @@ namespace gnubase::engine::settings
 					const std::optional<std::string> text = files::readFile(file);
 					require(text.has_value(), "can't read the key commands file " + file.u8string());
 					const Json contents = Json::parse(text.value_or(std::string()), nullptr, false);
-					require(contents.is_object() && contents.value("format", std::string()) == "gnubase.keyCommands",
+					// Compared as Json, so a format or version of another type is a readable error, not the JSON
+					// library's type error (Json::value throws on a type mismatch).
+					require(contents.is_object() && contents.value("format", Json()) == Json("gnubase.keyCommands"),
 						file.u8string() + " is no key commands file");
-					require(contents.value("version", 0) == 1,
+					require(contents.value("version", Json()) == Json(1),
 						file.u8string() + " is a key commands file of another version");
 					const Json saved = {{"keyCommands", contents.value("keyCommands", Json::array())},
 						{"macros", contents.value("macros", Json::array())}};
@@ -427,6 +429,10 @@ namespace gnubase::engine::settings
 					Json{{"type", "boolean"}}, false},
 				{"audio.sampleRate", "The audio device's sample rate in Hz.",
 					Json{{"type", "number"}, {"minimum", 8000}, {"maximum", 768000}}, 48000.0},
+				{"chordPads.presets",
+					"The user's own chord pads presets by name (chordPads.savePreset): each with pads (chord, voicing "
+					"and adaptive of each pad), rootKey, scale and octaveOffset.",
+					Json{{"type", "object"}}, Json::object()},
 				{"editing.applyFolderColor",
 					"Folder tracks give their color to the tracks inside them: when the folder's color changes and "
 					"when tracks are added or moved into it.",
@@ -574,6 +580,15 @@ namespace gnubase::engine::settings
 					"Import to Left Locator (reference manual p. 365): File > Import > MIDI File places the file at "
 					"the left locator instead of the project start (midiFile.import position).",
 					Json{{"type", "boolean"}}, false},
+				{"midi.mpeInput",
+					"MPE input (reference manual pp. 1295-1298): MIDI recording takes its input as MPE's lower zone, "
+					"channel 1 the master channel and channels 2 to 16 the notes' own, whose pitch bend, channel "
+					"pressure and CC 74 record as the tuning, pressure and brightness of the note on their channel "
+					"(docs/features/note-expression.md).",
+					Json{{"type", "boolean"}}, false},
+				{"midi.mpePitchRange",
+					"The pitch range of MPE input's pitch bend on the notes' channels, in semitones (midi.mpeInput).",
+					Json{{"type", "integer"}, {"minimum", 1}, {"maximum", 96}}, 48},
 				{"midi.portSettings",
 					"The MIDI ports' settings (midi.setPort), by backend/in or out/port id, also for ports that aren't "
 					"connected: the name shown (showAs), whether it is visible, and for inputs whether it belongs to "
@@ -706,6 +721,24 @@ namespace gnubase::engine::settings
 					Json{{"type", "boolean"}}, true},
 				{"ui.scale", "The UI scale, applied on top of each monitor's own scale.",
 					Json{{"type", "number"}, {"minimum", 0.5}, {"maximum", 4}}, 1.0},
+				{"ui.chordPads",
+					"The chord pads zone's display settings (reference manual pp. 1390-1391): primary and secondary, "
+					"the chord symbols' types (noteName, roman, nashville; the secondary also none), layout keyboard "
+					"or "
+					"grid with columns (1 to 16), listColors (the List assistant's colors on the pads), "
+					"voicingIndicators and patternProgress (Show Pattern Play Progress). What it leaves out has its "
+					"default: note names over roman numerals, the "
+					"keyboard layout, six columns, no colors and voicing indicators.",
+					Json{{"type", "object"},
+						{"properties",
+							{{"primary", {{"type", "string"}, {"enum", {"noteName", "roman", "nashville"}}}},
+								{"secondary",
+									{{"type", "string"}, {"enum", {"none", "noteName", "roman", "nashville"}}}},
+								{"layout", {{"type", "string"}, {"enum", {"keyboard", "grid"}}}},
+								{"columns", {{"type", "integer"}, {"minimum", 1}, {"maximum", 16}}},
+								{"listColors", {{"type", "boolean"}}}, {"voicingIndicators", {{"type", "boolean"}}},
+								{"patternProgress", {{"type", "boolean"}}}}}},
+					Json::object()},
 				{"ui.showVersionName",
 					"Whether the track list shows the active version's name after the name of a track with more than "
 					"one version: Show Version Name in Track List in the Track Versions pop-up menu (reference manual "
