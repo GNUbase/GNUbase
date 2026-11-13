@@ -539,7 +539,10 @@ namespace gnubase::engine::midi
 				"them, after their tracks' drum maps and the chord track, so they are written as played; a destination "
 				"with a drum map or following the chord track gets a pitch that plays them, or if none does what "
 				"played, "
-				"which it then maps. includeInserts also plays their tracks' MIDI modifiers into them (channel.set "
+				"which it then maps. The new part gets the root key and Global Transpose setting (midiPart.set) the "
+				"parts its notes come from share, or, when they differ, the project root key and follow, and each "
+				"note the difference its part's global transposition makes, so that it keeps the pitch it played "
+				"with. includeInserts also plays their tracks' MIDI modifiers into them (channel.set "
 				"modifiers, with "
 				"the random values playback draws), leaving out notes they filter out or move out of the range. "
 				"Without destination a new MIDI track is added at the end, routed "
@@ -584,8 +587,12 @@ namespace gnubase::engine::midi
 				"end, named after the first, on the lowest lane they are on. Muted parts are removed and add nothing. "
 				"Events keep their time; notes are cut where their part ended. The parts' transpose and velocity go "
 				"into the notes as playback applies them; a note transposed beyond 0-127, which doesn't play, is left "
-				"out. On a track whose drum map or chord track following plays a transposed note differently, the new "
-				"part keeps the transpose, and parts with different ones make a part for each. The copied notes "
+				"out. The new part gets the root key and Global Transpose setting (midiPart.set) the parts share, or, "
+				"when they differ, the project root key and follow, and each note the difference its part's global "
+				"transposition makes, so that it keeps the pitch it played with. On a track whose drum map or chord "
+				"track following plays a transposed note differently, the notes can't hold that: the new part keeps "
+				"the transpose, and parts with a different transpose, root key or Global Transpose setting make a "
+				"part for each, which keeps them. The copied notes "
 				"get new ids, so play probability and velocity variance draw anew." +
 					returns,
 				objectSchema({{"parts", ids}}, {"parts"}), changesResult, false},
