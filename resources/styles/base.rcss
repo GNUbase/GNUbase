@@ -309,9 +309,10 @@ tabset tab
 	margin-right: 0;
 }
 
-/* A section the toolbar has no room for: out of the flow and unseen, so it takes no room and no gap, and still laid
-   out, so the docking system knows the width it needs to show again. */
-.toolbar-section.no-room
+/* A section the toolbar has no room for, or a part it gives up first (fit="spare", such as Warp Quantize On/Off): out
+   of the flow and unseen, so it takes no room and no gap, and still laid out, so the docking system knows the width it
+   needs to show again. */
+.toolbar-section.no-room, .toolbar-section .no-room
 {
 	position: absolute;
 	left: 0;

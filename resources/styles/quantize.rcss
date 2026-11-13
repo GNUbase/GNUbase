@@ -2,7 +2,8 @@
 /* The quantize panel and the toolbar's quantize section (ui/quantizepanel.h, docs/features/quantize.md): rows of
    controls, the grid's or the groove's settings (the other one gets .hidden) and the grid display, where code places
    the grid positions' lines and the catch range around them in percent of a bar. The themes color the display. The
-   toolbar's section shows where the toolbar has room for it (docs/features/docking.md). The panel's section for
+   toolbar's section shows where the toolbar has room for it, and gives up Warp Quantize On/Off first (fit="spare",
+   docs/features/docking.md). The panel's section for
    several audio tracks (#145) lays out like its settings. */
 .quantize-panel
 {
@@ -94,18 +95,4 @@
 .toolbar-quantize button
 {
 	margin-right: 2dp;
-}
-
-/* Warp Quantize On/Off (#145) in windows at least 1100 dp wide, so that the quantize section fits at 1024 dp. */
-#toolbar-quantize-warp
-{
-	display: none;
-}
-
-@media (min-width: 1100dp)
-{
-	#toolbar-quantize-warp
-	{
-		display: block;
-	}
 }

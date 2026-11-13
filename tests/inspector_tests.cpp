@@ -802,11 +802,12 @@ namespace
 
 	// Every gap between sections is the same and wider than one inside a section, and the first button stands as far
 	// from the toolbar's edge as in the order `expected` measured, whichever sections stand where.
-	void checkToolbarGaps(const ToolbarGaps& now, const ToolbarGaps& expected)
+	void checkToolbarGaps(const ToolbarGaps& now, const ToolbarGaps& expected, double ratio)
 	{
 		REQUIRE(!now.between.empty());
-		// 4 dp wider, which pixels round to less at small dp ratios: 3 against 2 pixels at 0.7.
-		CHECK(now.between.front() > now.within);
+		// 4 dp wider, which pixels round to less at small dp ratios: 3 against 2 pixels at 0.7, so wider by more than a
+		// dp (#1239).
+		CHECK(now.between.front() > now.within + ratio);
 		for (const double gap : now.between)
 			CHECK(std::abs(gap - now.between.front()) <= 1.0);
 		CHECK(std::abs(now.inset - expected.inset) <= 1.0);
@@ -845,7 +846,7 @@ TEST_CASE("the toolbar's setup pane shows, hides and orders its sections, with p
 		// Every place between sections has the same gap, whichever sections are in it, and the first button the same
 		// distance from the toolbar's left edge, as the user sees them (#1050).
 		const ToolbarGaps now = toolbarGaps(window, order);
-		checkToolbarGaps(now, reference);
+		checkToolbarGaps(now, reference, window.app.main().dpRatio());
 		CHECK(now.tightest >= 0.0);
 		CHECK(now.spacer >= 1.0);
 		CHECK(std::abs(rightInset(order) - rightEdge) <= 1.0);
@@ -922,22 +923,23 @@ namespace
 		Window& window, const std::vector<std::string>& order, const ToolbarGaps& expected, bool step = true)
 	{
 		const ToolbarGaps gaps = toolbarGaps(window, order, step);
+		const double ratio = window.app.main().dpRatio();
 		if (gaps.between.empty())
 			CHECK(std::abs(gaps.inset - expected.inset) <= 1.0); // no gap between sections before the last place
 		else
-			checkToolbarGaps(gaps, expected);
+			checkToolbarGaps(gaps, expected, ratio);
 		CHECK(gaps.tightest >= 0.0);
 		CHECK(gaps.spacer >= 0.0);
-		const double ratio = window.app.main().dpRatio();
 		std::vector<std::string> shown;
 		bool roomLeft = true;
+		const bool warpGone = hasClass(window.app, "#toolbar-quantize-warp", "no-room");
 		for (size_t i = 0; i + 1 < order.size(); ++i)
 		{
 			INFO("section " << order[i]);
 			const Json section = element(window.app, "#toolbar [section=" + order[i] + "]");
 			const bool noRoom = hasClass(window.app, "#toolbar [section=" + order[i] + "]", "no-room");
 			CHECK(section.at("visible").get<bool>() == !noRoom);
-			if (noRoom && roomLeft)
+			if (noRoom && roomLeft && !warpGone) // else the room the quantize section's toggle gave up is in the spacer
 			{
 				// With its 3 dp gap it needs more than the spacer's width.
 				CHECK(section.at("box").at("width").get<double>() + (3.0 * ratio) > gaps.spacer);
@@ -950,6 +952,17 @@ namespace
 		}
 		CHECK(!hasClass(window.app, "#toolbar [section=" + order.back() + "]", "no-room")); // after the spacer
 		shown.push_back(order.back());
+		// The quantize section gives up Warp Quantize On/Off before it goes, after the sections behind it (#1234).
+		if (warpGone)
+		{
+			const auto quantize = std::find(shown.begin(), shown.end(), "quantize");
+			REQUIRE(quantize != shown.end());
+			CHECK(quantize + 2 == shown.end()); // only the last place after it
+			// With its 2 dp margin it needs more than the spacer's width.
+			CHECK(element(window.app, "#toolbar-quantize-warp").at("box").at("width").get<double>() + (2.0 * ratio) >
+				gaps.spacer);
+			CHECK(!element(window.app, "#toolbar-quantize-warp").at("visible").get<bool>());
+		}
 		const Json bar = element(window.app, "#toolbar").at("box");
 		const Json last = element(window.app, "#toolbar [section=" + order.back() + "]").at("box");
 		const double rightInset = bar.at("x").get<double>() + bar.at("width").get<double>() -
@@ -999,6 +1012,49 @@ TEST_CASE("the toolbar shows the sections it has room for, the last before the s
 			checkToolbarRoom(window, inside, reference);
 		}
 	}
+}
+
+TEST_CASE("the quantize section gives up Warp Quantize On/Off before it goes, after the sections behind it", "[ui]")
+{
+	// The reference's toolbar hides its items one after another as the window narrows (the reference manual, p. 65).
+	Window window(1024);
+	ui::Docking& docking = window.app.appUi().docking();
+	const std::vector<std::string> defaults = docking.sections("project", "toolbar");
+	const ToolbarGaps reference = toolbarGaps(window, defaults);
+	const auto noRoom = [&window](const std::string& selector) { return hasClass(window.app, selector, "no-room"); };
+	const std::string quantize = "#toolbar [section=quantize]";
+	const std::string warp = "#toolbar-quantize-warp";
+	// Narrower in dp step by step, from about 1463 dp, until the quantize section goes.
+	bool warpGone = false;
+	for (int step = 0;; ++step)
+	{
+		const float ratio = 0.7F + (0.01F * static_cast<float>(step));
+		REQUIRE(ratio < 2.0F);
+		INFO("dp ratio " << ratio);
+		window.app.setDpRatio(ratio);
+		window.app.shell().step(std::chrono::milliseconds(0));
+		if (noRoom(quantize))
+		{
+			CHECK(!noRoom(warp)); // the section's parts show with it again
+			break;
+		}
+		if (warpGone)
+			CHECK(noRoom(warp)); // once gone, it stays gone in narrower windows
+		if (noRoom(warp))
+		{
+			for (const char* behind : {"color", "trackVisibility", "rootKey"})
+				CHECK(noRoom("#toolbar [section=" + std::string(behind) + "]"));
+			checkToolbarRoom(window, defaults, reference, false);
+			warpGone = true;
+		}
+	}
+	CHECK(warpGone);
+
+	// Wider again: the section and its toggle show.
+	window.app.setDpRatio(0.7F);
+	window.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(element(window.app, warp).at("visible").get<bool>());
+	CHECK(!noRoom(warp));
 }
 
 TEST_CASE("the toolbar makes room for its sections with the widest labels, and for those the user hides", "[ui]")

@@ -340,9 +340,22 @@ namespace gnubase::ui
 		}
 	}
 
-	void Shell::draw(Window& window)
+	void Shell::update(Window& window)
 	{
 		window.m_context->Update();
+		bool again = false;
+		for (size_t i = 0; i < m_afterUpdate.size(); ++i) // a task may add tasks
+		{
+			const std::function<bool(Window&)> task = m_afterUpdate[i];
+			again = task(window) || again;
+		}
+		if (again)
+			window.m_context->Update();
+	}
+
+	void Shell::draw(Window& window)
+	{
+		update(window);
 		if (!m_renderer.present(window.m_id, *window.m_context))
 			logging::warning("Window {} couldn't be drawn", window.m_id);
 		++window.m_frames;
@@ -401,11 +414,6 @@ namespace gnubase::ui
 			following = task() || following;
 		}
 		m_nextFrame = following ? Clock::now() + g_framePeriod : Clock::time_point::max();
-		for (size_t i = 0; i < m_beforeDraw.size() && m_running; ++i)
-		{
-			const std::function<void()> task = m_beforeDraw[i];
-			task();
-		}
 
 		now = Clock::now();
 		for (auto& [id, window] : m_open)
@@ -505,7 +513,7 @@ namespace gnubase::ui
 		Window* window = find(id);
 		if (window == nullptr)
 			return std::nullopt;
-		window->m_context->Update();
+		update(*window);
 		return m_renderer.capture(id, *window->m_context);
 	}
 }

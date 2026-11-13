@@ -111,14 +111,18 @@ and hidden sections (Reset All, p. 1576), and the presets (p. 1575) save and rec
   section hidden in the setup pane or by a narrow window takes no gap.
 - **Room.** A toolbar with `fit="room"` shows the sections it has room for, as the reference's toolbar hides its
   items one after another in a narrower window and shows them again in a wider one (pp. 57, 65). Sections keep the
-  width they need (`flex-shrink: 0`); before the shell draws, the docking system lays the window out and gives the
+  width they need (`flex-shrink: 0`); whenever the shell lays a window out to draw it, the docking system gives the
   shown sections before the spacer that don't fit the state class `.no-room`, the last of the order first, so the
   user's order says what goes first and a section hidden in the setup pane makes room for the next one. The style
   takes a section with `.no-room` out of the flow and doesn't show it (`resources/styles/base.rcss`), but lays it out,
   so its width, with its labels as they are now, says when it fits again. The section after the spacer always shows.
   So the room, not a fixed width, decides: at another UI scale, with wider labels such as the snap type Events + Grid
-  + Cursor, and after the setup pane hid sections. The toolbar's own width rule is Warp Quantize On/Off, shown in
-  windows at least 1100 dp wide ([audio-quantize.md](audio-quantize.md)).
+  + Cursor, and after the setup pane hid sections. A section's parts with `fit="spare"`, such as the quantize
+  section's Warp Quantize On/Off ([audio-quantize.md](audio-quantize.md)), go before the section does, its last one
+  first: they get `.no-room` while the section fits only without them, and the style keeps their width the same
+  way. If the room changed the classes, the shell lays the window out again before drawing it, so it draws no frame
+  with sections over each other, and fitting costs no layout of its own: it reads the widths of the layout the
+  draw makes anyway, and windows that don't draw aren't fitted.
 - **Defaults.** The set's first container in the document says which sections there are, their default order and which
   are hidden by default; the other containers are expected to have the same sections.
 - **Containers that come later.** Containers added or rebuilt after `attach`, such as the mixer's channels as tracks
@@ -256,8 +260,11 @@ or from a channel in a docked panel's content; a setup pane added later gets its
 the pane with Reset All, also the order after a reorder, recalls the preset and follows another client's presets;
 `tests/inspector_tests.cpp` and `tests/mixerwindow_tests.cpp` do the same for the inspector's, the toolbar's, the info
 line's and the mixer's setup panes, with the dialog's OK disabled until a name is typed. `tests/inspector_tests.cpp`
-also checks the toolbar's room in windows from 700 to 1400 pixels at UI scales of 100 and 125 %, in three orders:
+also checks the toolbar's room in windows from 700 to 1024 pixels at dp ratios of 1.25 and 1, and in the 1024 pixel
+window at 0.9316, 0.8 and 0.7 (about 560 to 1463 dp, with 1099.2 dp between whole dp), in three orders:
 the shown sections come first and the next one wouldn't fit, no button covers the next, the gaps stay the same, the
 last section ends as far from the right edge as the first button starts from the left one, and a wider window shows
 the sections again; with the snap and grid types' longest names fewer sections show, and sections hidden in the setup
-pane make room for the next one.
+pane make room for the next one. As the window narrows, the quantize section gives up Warp Quantize On/Off before it
+goes, after the sections behind it. `tests/shell_tests.cpp` checks that the shell lays a window out again before drawing
+it when the fit changed it, and fits only windows it draws.
