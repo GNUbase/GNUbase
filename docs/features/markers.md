@@ -186,7 +186,8 @@ also snapped from a press off the grid, Shift+Alt-click and Shift+Ctrl-drag addi
 and without Alt, and with another key as the tool modifier; a drag released outside the window ending at the next
 press; the range tool's double click between markers, also injected with a first press whose frame takes longer than
 the double click time, and on RmlUi's frozen clock its limits: presses 0.6 s or 4 dp apart are two clicks, 0.4 s or 2
-dp apart one double click; its drag by the marker track moving and, with Alt, copying the range's contents, a click
+dp apart one double click; an action right after the double click waiting for its range (`marker.range`) and finding
+the range between the markers; its drag by the marker track moving and, with Alt, copying the range's contents, a click
 in the range, a drag there straight up and Shift and a drag there selecting ranges as on another lane, and a range drag released outside the
 window putting the range back at the next press without moving anything. In the
 app's UI: the marker track's controls adding markers (Shift-click renaming), activating the track and locating,
