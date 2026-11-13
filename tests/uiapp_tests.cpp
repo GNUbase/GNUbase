@@ -114,7 +114,7 @@ namespace
 	// The project window in a main window of 800 by 300 dp, at a dp ratio of 1.
 	struct ProjectWindow
 	{
-		// The toolbar has room for its Grid Type section from 840 dp (#1050).
+		// The toolbar has room for its sections up to Grid Type at 800 dp (#1178).
 		explicit ProjectWindow(int width = 800) : app{{width, 300}}, display(app.appUi().showProject())
 		{
 			app.setDpRatio(1.0F);
@@ -535,7 +535,8 @@ TEST_CASE("the auto-scroll button switches auto-scroll, its menu sets the mode, 
 
 TEST_CASE("the snap buttons, the snap and grid type menus and J change the project's snap settings", "[ui]")
 {
-	ProjectWindow window(900);
+	// Wide enough for the grid type's section next to the snap type's longest name.
+	ProjectWindow window(1024);
 	test::UiApp& app = window.app;
 	ui::EventDisplay& display = window.display;
 	const auto snap = [&app] { return app.call("snap.get"); };

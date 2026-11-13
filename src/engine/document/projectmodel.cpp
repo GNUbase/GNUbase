@@ -22,6 +22,7 @@
 #include "engine/document/timewarp.h"
 #include "engine/document/trackpresets.h"
 #include "engine/document/trackversions.h"
+#include "engine/document/trackvisibility.h"
 #include "engine/document/volumecurves.h"
 #include "engine/document/warp.h"
 #include "engine/document/workspaces.h"
@@ -3228,7 +3229,8 @@ namespace gnubase::engine
 		{
 			const Json& parameters = context.parameters();
 			const double sampleRate = parameters.value("sampleRate", project.sampleRate);
-			require(sampleRate > 0.0, "sampleRate must be positive");
+			require(sampleRate >= g_lowestSampleRate && sampleRate <= g_highestSampleRate,
+				"sampleRate must be from 8000 to 768000 Hz");
 			const double maxVolume = parameters.value("maxVolume", project.maxVolume);
 			require(maxVolume == 6.0 || maxVolume == 12.0, "maxVolume must be 6 or 12 dB");
 			ProjectSetup setup;
@@ -3618,6 +3620,8 @@ namespace gnubase::engine
 				try
 				{
 					result = handler(m_project, context);
+					if (context.unchanged())
+						return result;
 					syncSharedParts(before.midiParts, m_project, context);
 					midi::adoptPatterns(m_project, context);
 				}
@@ -3731,6 +3735,10 @@ namespace gnubase::engine
 		}
 		announceWarpedEvents(before, m_project, context);
 		followTimeFormat(m_project, timeFormat, context);
+		// The project keeps the heights and fold states of removed tracks for undo: a track that comes back or goes
+		// brings its own back or takes them away (#1131).
+		if (Json now = trackLayoutJson(m_project); now != trackLayoutJson(before))
+			context.emit("trackLayout.changed", std::move(now));
 		announceHistory(context);
 		publish();
 		return {{"position", m_history.position()}};
@@ -4050,8 +4058,9 @@ namespace gnubase::engine
 			});
 		add(engine,
 			{"project.set", 1,
-				"Changes the project's name, sample rate, stereo pan law or maximum volume, or the other settings of "
-				"the project setup. Linear positions keep their time at a new sample rate; media files keep theirs "
+				"Changes the project's name, sample rate (8000 to 768000 Hz), stereo pan law or maximum volume, or "
+				"the other settings of the project setup. Linear positions keep their time at a new sample rate; media "
+				"files keep theirs "
 				"(see media.conform). panLaw is how much a mono channel panned to the center is turned down on "
 				"each side: 0dB, -3dB (the default), -4.5dB, -6dB or equalPower (-3.01 dB, the power stays the same "
 				"wherever it is panned); the side panned toward is always at 0 dB. maxVolume is the top of the "

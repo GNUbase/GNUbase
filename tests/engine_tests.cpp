@@ -12,6 +12,7 @@
 #include <atomic>
 #include <chrono>
 #include <future>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <numeric>
@@ -515,6 +516,18 @@ TEST_CASE("numbers are checked against the schema's minimum and maximum", "[unit
 	CHECK(validate(0.25, schema, "scale") == "scale must be at least 0.5");
 	CHECK(validate(5, schema, "scale") == "scale must be at most 4");
 	CHECK(validate("big", Json::parse(R"({"minimum": 1})"), "name").empty()); // only numbers have a minimum
+}
+
+// JSON has no NaN, but an in-process client (Lua's 0/0) can send one: every comparison with it is false, so a check
+// written as "less than the minimum" lets it through (#1131).
+TEST_CASE("a NaN is outside every minimum and maximum", "[unit]")
+{
+	const double nan = std::numeric_limits<double>::quiet_NaN();
+	CHECK(validate(nan, Json::parse(R"({"type": "number", "minimum": 0.5, "maximum": 4})"), "scale") ==
+		"scale must be at least 0.5");
+	CHECK(validate(nan, Json::parse(R"({"type": "number", "minimum": 0.5})"), "scale") == "scale must be at least 0.5");
+	CHECK(validate(nan, Json::parse(R"({"type": "number", "maximum": 4})"), "scale") == "scale must be at most 4");
+	CHECK(validate(nan, Json::parse(R"({"type": "number"})"), "scale").empty()); // no bounds, nothing to break
 }
 
 TEST_CASE("the schema's minLength, minItems, maxItems and exclusive bounds are checked", "[unit]")
