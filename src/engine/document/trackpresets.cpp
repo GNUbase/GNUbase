@@ -120,7 +120,9 @@ namespace gnubase::engine
 					track.activeVersion = 1;
 				}
 				else
+				{
 					copyPatterns(id, track.id);
+				}
 				for (TrackVersion& version : track.versions)
 				{
 					version = copyVersion(m_to, version, track.id);
