@@ -707,6 +707,39 @@ TEST_CASE("Reset Quantize undoes what the panel's Crossfade step changed", "[int
 		CHECK(eventsOn(client, loop.track) == before);
 		CHECK(crossfades(client) == 0);
 	}
+
+	SECTION("splitting a slice whose start the Crossfade step stretched keeps both pieces resettable")
+	{
+		// The step stretched the second slice's start: it plays from 160 instead of 5960 (#1333). The piece after a
+		// split at 10000 gets its original offset and length from the recorded original's, cut where the piece
+		// before it ends, so resetting plays the right clip section and the pieces tile the original slice again.
+		const ObjectId second = sliced.at("events").at(1).get<ObjectId>();
+		REQUIRE(eventsOn(client, loop.track).at(1) == std::vector<int64_t>{5960, 160, 17896});
+		const Json pieces = run(client, "event.split", {{"events", {second}}, {"positions", {10000}}}).at("events");
+		REQUIRE(pieces.size() == 1);
+		const auto right = pieces.at(0).get<ObjectId>();
+		CHECK(byId(client, "audioEvents", right).at("quantizeOrigin") ==
+			Json({{"original", originState(10000, 10000, 15360)}, {"quantized", originState(10000, 4200, 13856)}}));
+
+		Json events = sliced.at("events");
+		events.push_back(right);
+		run(client, "quantize.reset", {{"events", events}});
+		CHECK(eventsOn(client, loop.track) ==
+			std::vector<std::vector<int64_t>>{{0, 0, 5960}, {5960, 5960, 4040}, {10000, 10000, 15360},
+				{25360, 25360, 21700}, {47060, 47060, 25500}, {72560, 72560, 23440}});
+		CHECK(crossfades(client) == 0);
+	}
+
+	SECTION("reset keeps an end trimmed by hand on a slice the step stretched")
+	{
+		// Each part of the origin is judged by itself: the stretched offset goes back, the hand-trimmed length
+		// stays, so the slice's end moves in the clip by the stretch.
+		const ObjectId second = sliced.at("events").at(1).get<ObjectId>();
+		run(client, "event.resize", {{"events", {second}}, {"edge", "end"}, {"delta", -1000}});
+		REQUIRE(eventsOn(client, loop.track).at(1) == std::vector<int64_t>{5960, 160, 16896});
+		run(client, "quantize.reset", {{"events", sliced.at("events")}});
+		CHECK(eventsOn(client, loop.track).at(1) == std::vector<int64_t>{5960, 5960, 16896});
+	}
 }
 
 TEST_CASE("Reset Quantize keeps a crossfade the event had before quantizing", "[integration]")
