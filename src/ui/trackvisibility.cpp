@@ -347,7 +347,9 @@ namespace gnubase::ui
 		const std::string name = field != nullptr ? field->GetValue() : std::string();
 		std::string problem;
 		if (name.empty())
+		{
 			problem = "A configuration needs a name.";
+		}
 		else
 		{
 			const auto active = m_visibility.at("configuration").get<std::string>();
@@ -399,7 +401,7 @@ namespace gnubase::ui
 		{
 			if (event.GetType() == g_dialogCloseEvent)
 				closedDialog(event);
-			else if (Rml::Element* target = event.GetTargetElement(); event.GetId() == Rml::EventId::Click &&
+			else if (const Rml::Element* target = event.GetTargetElement(); event.GetId() == Rml::EventId::Click &&
 				target != nullptr && target->GetId() == "visibility-configuration-ok")
 				dialogOk();
 			return;

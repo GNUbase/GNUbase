@@ -355,5 +355,5 @@ TEST_CASE("the Track page indents tracks by their folder level, however deep", "
 	}
 	CHECK(indent(deep) > previous);
 	// The levels step alike: the deepest track indents five times as much as the first folder's track.
-	CHECK(std::abs(indent(deep) - 5.0 * indent(folders.at(1))) <= 1.0);
+	CHECK(std::abs(indent(deep) - (5.0 * indent(folders.at(1)))) <= 1.0);
 }
