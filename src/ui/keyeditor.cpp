@@ -566,7 +566,7 @@ namespace gnubase::ui
 		setPitchZoom(m_zoomStart * std::exp2(dx / ratio / g_zoomDoubling));
 		const float rowStart = g_rowDp * m_zoomStart * ratio;
 		const float rowNow = g_rowDp * m_pitchZoom * ratio;
-		body->SetScrollTop(m_scrollStart / rowStart * rowNow - dy);
+		body->SetScrollTop(((m_scrollStart / rowStart) * rowNow) - dy);
 		if (context != nullptr)
 			context->RequestNextUpdate(0);
 	}
