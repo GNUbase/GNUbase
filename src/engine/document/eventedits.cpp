@@ -126,7 +126,7 @@ namespace gnubase::engine
 		{
 			std::vector<AudioEvent*> events = eventsIn(project, part);
 			std::stable_sort(events.begin(), events.end(),
-				[](const AudioEvent* a, const AudioEvent* b) { return frontOf(*a) < frontOf(*b); });
+				[](const AudioEvent* a, const AudioEvent* b) { return stackKey(*a) < stackKey(*b); });
 			return events;
 		}
 
@@ -135,7 +135,7 @@ namespace gnubase::engine
 		// order keeps it among them.
 		std::vector<size_t> stackOrder(Project& project, const std::vector<Item>& items)
 		{
-			std::vector<std::pair<ObjectId, ObjectId>> places(items.size());
+			std::vector<std::tuple<ObjectId, int64_t, ObjectId>> places(items.size());
 			for (size_t index = 0; index < items.size(); ++index)
 			{
 				const Item& item = items[index];
@@ -605,20 +605,27 @@ namespace gnubase::engine
 					return {};
 				AudioEvent right = event;
 				right.id = project.newId();
-				// The piece after the split comes right in front of its event, as its id is the newest place, and
-				// what was in front of the event stays in front of it: new places after it, in the order it had
-				// (#1189), so that a second split of a piece doesn't bring it in front of the piece after it.
-				right.front = 0;
-				std::vector<AudioEvent*> inFront;
+				// The piece after the split comes right in front of its event, behind whatever was in front of it: at
+				// its event's place, ranked right after it (#1189, #1281). Only the events at that place, the pieces
+				// of the event, get new ranks; ties from before ranks go by id, as stackKey orders them.
+				right.front = frontOf(event);
+				std::vector<AudioEvent*> place;
 				for (auto& [id, other] : project.audioEvents)
-					if (other.track == event.track && stackKey(other) > stackKey(event))
-						inFront.push_back(&other);
-				std::sort(inFront.begin(), inFront.end(),
+					if (frontOf(other) == right.front)
+						place.push_back(&other);
+				std::sort(place.begin(), place.end(),
 					[](const AudioEvent* a, const AudioEvent* b) { return stackKey(*a) < stackKey(*b); });
-				for (AudioEvent* other : inFront)
+				int64_t rank = 0;
+				for (AudioEvent* other : place)
 				{
-					other->front = project.newId();
-					context.emit("audioEvent.changed", {{"event", toJson(*other)}});
+					if (other->rank != rank)
+					{
+						other->rank = rank;
+						context.emit("audioEvent.changed", {{"event", toJson(*other)}});
+					}
+					if (other == &event)
+						right.rank = ++rank;
+					++rank;
 				}
 				right.position = rebased(project, {time::TimeBase::Linear, at}, event.position.base);
 				right.offset += frames;
@@ -1881,7 +1888,7 @@ namespace gnubase::engine
 			clipboard.automation = automationIn(project, range);
 			// In stack order: pasted copies stack in the order they are added, and a split moves no piece in the stack.
 			std::stable_sort(clipboard.audioEvents.begin(), clipboard.audioEvents.end(),
-				[](const AudioEvent& a, const AudioEvent& b) { return frontOf(a) < frontOf(b); });
+				[](const AudioEvent& a, const AudioEvent& b) { return stackKey(a) < stackKey(b); });
 			return clipboard;
 		}
 
@@ -2084,7 +2091,7 @@ namespace gnubase::engine
 			std::vector<size_t> stacked(copiedEvents.size());
 			std::iota(stacked.begin(), stacked.end(), size_t{0});
 			std::stable_sort(stacked.begin(), stacked.end(),
-				[&copiedEvents](size_t a, size_t b) { return frontOf(copiedEvents[a]) < frontOf(copiedEvents[b]); });
+				[&copiedEvents](size_t a, size_t b) { return stackKey(copiedEvents[a]) < stackKey(copiedEvents[b]); });
 			std::vector<ObjectId> newIds(copiedEvents.size());
 			for (const size_t index : stacked)
 				newIds[index] = project.newId();
@@ -2154,7 +2161,7 @@ namespace gnubase::engine
 				}
 			}
 			std::stable_sort(movedAudio.begin(), movedAudio.end(),
-				[](const AudioEvent* a, const AudioEvent* b) { return frontOf(*a) < frontOf(*b); });
+				[](const AudioEvent* a, const AudioEvent* b) { return stackKey(*a) < stackKey(*b); });
 			std::set<ObjectId> movedEvents;
 			for (AudioEvent* event : movedAudio)
 			{

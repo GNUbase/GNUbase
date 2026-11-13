@@ -80,6 +80,7 @@ namespace gnubase::engine
 		Crossfade crossfade;                // only one that applies (crossfadeApplies)
 		std::vector<GainPoint> volumeCurve; // in the media file's sample frames
 		ObjectId front = 0;                 // frontOf: where events overlap, the highest plays
+		int64_t rank = 0;                   // of events at the same front, the highest plays (AudioEvent::rank)
 		// An event of a warped clip (RenderMedia::warp): where its clip's start and end play, in its media file's
 		// frames, for the clip fades. Other events' clips start and end with their media files.
 		time::Samples clipStart = 0;

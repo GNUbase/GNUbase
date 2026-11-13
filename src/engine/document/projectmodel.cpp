@@ -1597,7 +1597,7 @@ namespace gnubase::engine
 			for (const AudioEvent& event : audio)
 				stacked.push_back(&event);
 			std::stable_sort(stacked.begin(), stacked.end(),
-				[](const AudioEvent* a, const AudioEvent* b) { return frontOf(*a) < frontOf(*b); });
+				[](const AudioEvent* a, const AudioEvent* b) { return stackKey(*a) < stackKey(*b); });
 			for (const AudioEvent* event : stacked)
 				events[event->id] = project.newId();
 			for (AudioEvent& event : audio)
