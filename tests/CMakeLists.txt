@@ -64,6 +64,8 @@ add_executable(gnubase-tests
 	docking_tests.cpp
 	document_tests.cpp
 	drumeditor_ui_tests.cpp
+	drummachine_tests.cpp
+	drummachine_ui_tests.cpp
 	drummaps_tests.cpp
 	editors_tests.cpp
 	effects_tests.cpp

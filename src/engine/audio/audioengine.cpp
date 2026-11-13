@@ -6,6 +6,7 @@
 #include "engine/engine.h"
 #include "engine/plugins/slotinstances.h"
 #include "engine/processors/builtin.h"
+#include "engine/processors/drummachine.h"
 #include "engine/processors/sampler.h"
 #include "engine/settings/usersettings.h"
 #include "platform/hosttime.h"
@@ -760,30 +761,39 @@ namespace gnubase::engine
 					instrument.id = channel.instrument;
 					std::shared_ptr<graph::Processor> played;
 					if (channel.instrument == "sampler")
-						played = instrument.sampler = std::make_shared<processors::Sampler>();
+						played = instrument.player = std::make_shared<processors::Sampler>();
+					else if (channel.instrument == "drumMachine")
+						played = instrument.player = std::make_shared<processors::DrumMachine>();
 					else if (processors::isInstrument(channel.instrument))
 						played = processors::createBuiltin(channel.instrument);
 					instrument.channel =
 						std::make_shared<InstrumentChannel>(sequencer, std::move(played), ++m_instrumentSerial);
 				}
-				// The sampler swaps its sample while it plays (sample hot swap). The sample loader reads a new one on
-				// its own thread, and the sampler plays the one before, or nothing, until updateSamples hands it over
-				// (#1122). A sampler of another project, which took over the instrument of a channel with the same id,
-				// plays nothing until then: the sample before is the other project's. The sampler lets go of a sample
-				// once the audio thread has moved on, by the next update.
-				if (instrument.sampler)
+				// The sampler swaps its sample while it plays (sample hot swap), the drum machine its pads'. The sample
+				// loader reads a new one on its own thread, and the instrument plays the one before, or nothing, until
+				// updateSamples hands it over (#1122). An instrument of another project, which took over the
+				// instrument of a channel with the same id, plays nothing until then: the sample before is the other
+				// project's. It lets go of a sample once the audio thread has moved on, by the next update.
+				if (instrument.player)
 				{
-					instrument.sampler->collect();
-					if (channel.sample != instrument.loaded && !instrument.loaded.empty() &&
-						(channel.sample.empty() || replaced))
+					instrument.player->collect();
+					instrument.loaded.resize(channel.samples.size());
+					for (size_t slot = 0; slot < channel.samples.size(); ++slot)
 					{
-						instrument.sampler->setSample(std::make_shared<const processors::Sample>());
-						instrument.loaded.clear();
+						const std::string& sample = channel.samples[slot];
+						std::string& loaded = instrument.loaded[slot];
+						if (sample != loaded && !loaded.empty() && (sample.empty() || replaced))
+						{
+							instrument.player->setSample(slot, std::make_shared<const processors::Sample>());
+							loaded.clear();
+						}
+						if (sample != loaded)
+							m_sampleLoader.request(sample);
 					}
-					if (channel.sample != instrument.loaded)
-						m_sampleLoader.request(channel.sample);
 				}
-				instrument.sample = channel.sample;
+				instrument.samples = channel.samples;
+				if (auto* drums = dynamic_cast<processors::DrumMachine*>(instrument.player.get()))
+					drums->setPadValues(channel.instrumentParameters, automatedInstrumentParameters(channel));
 				instrument.sources = from;
 				processor = instrument.channel;
 				instruments[channel.id] = instrument;
@@ -838,17 +848,23 @@ namespace gnubase::engine
 		for (auto& entry : m_instruments)
 		{
 			Instrument& instrument = entry.second;
-			if (!instrument.sampler || instrument.loaded == instrument.sample)
+			if (!instrument.player || instrument.loaded == instrument.samples)
 				continue;
-			if (std::shared_ptr<const processors::Sample> sample = m_sampleLoader.sample(instrument.sample))
+			instrument.player->collect();
+			for (size_t slot = 0; slot < instrument.samples.size(); ++slot)
 			{
-				instrument.sampler->collect();
-				instrument.sampler->setSample(std::move(sample));
-				instrument.loaded = instrument.sample;
-			}
-			else
-			{
-				waiting.insert(instrument.sample);
+				const std::string& path = instrument.samples[slot];
+				if (instrument.loaded[slot] == path)
+					continue;
+				if (std::shared_ptr<const processors::Sample> sample = m_sampleLoader.sample(path))
+				{
+					instrument.player->setSample(slot, std::move(sample));
+					instrument.loaded[slot] = path;
+				}
+				else
+				{
+					waiting.insert(path);
+				}
 			}
 		}
 		m_sampleLoader.keepOnly(waiting);

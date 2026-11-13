@@ -131,6 +131,7 @@ add_library(gnubase-engine STATIC
 	document/chordpads.cpp document/chordpads.h
 	document/chordtrack.cpp document/chordtrack.h
 	document/document.cpp document/document.h
+	document/drumtrack.cpp document/drumtrack.h
 	document/editors.cpp document/editors.h
 	document/eventedits.cpp
 	document/fadeedits.cpp
@@ -210,6 +211,7 @@ add_library(gnubase-engine STATIC
 	plugins/slotinstances.cpp plugins/slotinstances.h
 	processors/builtin.cpp processors/builtin.h
 	processors/builtinplugin.cpp processors/builtinplugin.h
+	processors/drummachine.cpp processors/drummachine.h
 	processors/effects.h
 	processors/gainpan.cpp processors/gainpan.h
 	processors/generators.cpp processors/generators.h

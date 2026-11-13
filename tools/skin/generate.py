@@ -709,6 +709,18 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".sampler-handle.root", {"background-color": c["accent"]}),
         (".sampler-handle.dragged", {"background-color": c["text"]}),
         (".sampler-message.error", {"color": c["danger"]}),
+        # The drum machine panel (docs/features/drum-track.md): pads raised when they play something, the selected
+        # one framed, muted and soloed-out ones dimmed, soloed ones in the second accent; the selected group and page
+        # in the accent, and the toolbar's message standing out
+        (".drum-pad", {"color": c["textMuted"], "background-color": c["surface"],
+                       "border-color": c["border"], "border-radius": f"{theme['radii']['small']}dp"}),
+        (".drum-pad.assigned", {"color": c["text"], "background-color": c["surfaceRaised"]}),
+        (".drum-pad.selected", {"border-color": c["accent"]}),
+        (".drum-pad.muted, .drum-pad.soloed-out", {"color": c["textMuted"], "background-color": c["background"]}),
+        (".drum-pad.soloed", {"border-color": c["accent2"]}),
+        (".drum-pad-note, .drum-label", {"color": c["textMuted"], "font-size": f"{sizes['small']}dp"}),
+        (".drum-group.selected, .drum-page-tab.selected", {"color": c["accent"]}),
+        (".drum-message.error", {"color": c["danger"]}),
         # The audio functions (docs/features/audio-functions.md): Detect Silence's sections along the event, the
         # Spectrum Analyzer's bars with the one D is measured from in the second accent, the Statistics' headings
         (".ds-display, .sa-graph", {"background-color": c["surface"]}),

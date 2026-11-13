@@ -13,6 +13,7 @@
 #include "engine/midi/drummaps.h"
 #include "engine/midi/midivalues.h"
 #include "engine/midi/patterns.h"
+#include "engine/processors/drummachine.h"
 
 #include <algorithm>
 #include <array>
@@ -21,6 +22,7 @@
 #include <map>
 #include <numeric>
 #include <set>
+#include <string>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -261,7 +263,7 @@ namespace gnubase::engine
 			channel.type = TrackType::Audio;
 			channel.instrument.clear();
 			channel.instrumentParameters.clear();
-			channel.sample.clear();
+			channel.samples.clear();
 			channel.midiThru = false;
 			channel.autoFades = AutoFades();
 			channel.sections.gain = 0.0;
@@ -550,8 +552,19 @@ namespace gnubase::engine
 			render.format = channel.format;
 			render.instrument = channel.instrument;
 			render.instrumentParameters = channel.instrumentParameters;
-			if (const auto clip = project.clips.find(channel.sample); clip != project.clips.end())
-				render.sample = project.media.at(clip->second.media).path;
+			const auto path = [&project](ObjectId id)
+			{
+				const auto clip = project.clips.find(id);
+				return clip != project.clips.end() ? project.media.at(clip->second.media).path : std::string();
+			};
+			if (channel.instrument == "sampler")
+				render.samples = {path(channel.sample)};
+			else if (channel.instrument == "drumMachine")
+			{
+				render.samples.resize(processors::g_drumPads);
+				for (const auto& [pad, drum] : channel.pads)
+					render.samples.at(static_cast<size_t>(pad)) = path(drum.sample);
+			}
 			for (const ObjectId id : channel.slots)
 			{
 				const Slot& slot = project.slots.at(id);

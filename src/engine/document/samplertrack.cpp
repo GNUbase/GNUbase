@@ -48,62 +48,8 @@ namespace gnubase::engine
 			return channel->second;
 		}
 
-		// The clip that the parameters name with clip or event, and the section of it to play in its frames: start
-		// and end if given, else the event's or the whole clip.
-		struct Section
-		{
-			ObjectId clip = 0;
-			time::Samples start = 0;
-			time::Samples end = 0;
-			time::Samples length = 0; // the clip's
-		};
-
-		Section sectionOf(const Project& project, const Json& parameters)
-		{
-			require(parameters.contains("event") != parameters.contains("clip"), "give one of event, clip and path");
-			Section section;
-			if (parameters.contains("event"))
-			{
-				const auto id = parameters.at("event").get<ObjectId>();
-				const auto event = project.audioEvents.find(id);
-				require(event != project.audioEvents.end(), "no audio event " + std::to_string(id));
-				section.clip = event->second.clip;
-				section.start = event->second.offset;
-				section.end = event->second.offset + event->second.length;
-			}
-			else
-			{
-				section.clip = parameters.at("clip").get<ObjectId>();
-				require(project.clips.count(section.clip) != 0, "no clip " + std::to_string(section.clip));
-			}
-			section.length = project.media.at(project.clips.at(section.clip).media).length;
-			if (parameters.contains("clip"))
-				section.end = section.length;
-			section.start = parameters.value("start", section.start);
-			section.end = parameters.value("end", section.end);
-			require(section.start >= 0 && section.start < section.end && section.end <= section.length,
-				"start and end must be within the clip, start before end");
-			return section;
-		}
-
-		// The parameters with a file (path) put into the pool as a clip (Import Audio File, or a file dropped on the
-		// sampler panel, reference manual pp. 710, 713).
-		Json withClip(ProjectModel& model, Project& project, const Json& parameters, CommandContext& context)
-		{
-			if (!parameters.contains("path"))
-				return parameters;
-			require(!parameters.contains("event") && !parameters.contains("clip"), "give one of event, clip and path");
-			const Json media = model.runEdit("media.add", project, {{"path", parameters.at("path")}}, context);
-			Json changed = parameters;
-			changed.erase("path");
-			changed["clip"] = model.runEdit("clip.add", project, {{"media", media.at("media").at("id")}}, context)
-								  .at("clip")
-								  .at("id");
-			return changed;
-		}
-
 		// Loads the section into the sampler: its clip, and its start and end as the sampler's.
-		void load(Channel& channel, const Section& section)
+		void load(Channel& channel, const SampleSection& section)
 		{
 			channel.sample = section.clip;
 			const auto length = static_cast<double>(section.length);
@@ -115,21 +61,6 @@ namespace gnubase::engine
 				channel.instrumentParameters[Sampler::Start] = start;
 			if (end < 1.0)
 				channel.instrumentParameters[Sampler::End] = end;
-		}
-
-		// Sampler 01, Sampler 02 and so on: the first number that no track's name has.
-		std::string nextName(const Project& project)
-		{
-			std::set<std::string> taken;
-			for (const auto& entry : project.trackById)
-				taken.insert(entry.second.name);
-			for (int number = 1;; ++number)
-			{
-				const std::string digits = std::to_string(number);
-				std::string name = "Sampler" + std::string(digits.size() < 2 ? " 0" : " ") + digits;
-				if (taken.count(name) == 0)
-					return name;
-			}
 		}
 
 		double parameter(const Channel& channel, uint32_t id, double defaultValue)
@@ -145,6 +76,61 @@ namespace gnubase::engine
 			json["track"] = toJson(project.trackById.at(channel.track));
 			return json;
 		}
+	}
+
+	std::string numberedTrackName(const Project& project, const std::string& prefix)
+	{
+		std::set<std::string> taken;
+		for (const auto& entry : project.trackById)
+			taken.insert(entry.second.name);
+		for (int number = 1;; ++number)
+		{
+			const std::string digits = std::to_string(number);
+			std::string name = prefix + std::string(digits.size() < 2 ? " 0" : " ") + digits;
+			if (taken.count(name) == 0)
+				return name;
+		}
+	}
+
+	SampleSection sampleSection(const Project& project, const Json& parameters)
+	{
+		require(parameters.contains("event") != parameters.contains("clip"), "give one of event, clip and path");
+		SampleSection section;
+		if (parameters.contains("event"))
+		{
+			const auto id = parameters.at("event").get<ObjectId>();
+			const auto event = project.audioEvents.find(id);
+			require(event != project.audioEvents.end(), "no audio event " + std::to_string(id));
+			section.clip = event->second.clip;
+			section.start = event->second.offset;
+			section.end = event->second.offset + event->second.length;
+		}
+		else
+		{
+			section.clip = parameters.at("clip").get<ObjectId>();
+			require(project.clips.count(section.clip) != 0, "no clip " + std::to_string(section.clip));
+		}
+		section.length = project.media.at(project.clips.at(section.clip).media).length;
+		if (parameters.contains("clip"))
+			section.end = section.length;
+		section.start = parameters.value("start", section.start);
+		section.end = parameters.value("end", section.end);
+		require(section.start >= 0 && section.start < section.end && section.end <= section.length,
+			"start and end must be within the clip, start before end");
+		return section;
+	}
+
+	Json withSampleClip(ProjectModel& model, Project& project, const Json& parameters, CommandContext& context)
+	{
+		if (!parameters.contains("path"))
+			return parameters;
+		require(!parameters.contains("event") && !parameters.contains("clip"), "give one of event, clip and path");
+		const Json media = model.runEdit("media.add", project, {{"path", parameters.at("path")}}, context);
+		Json changed = parameters;
+		changed.erase("path");
+		changed["clip"] =
+			model.runEdit("clip.add", project, {{"media", media.at("media").at("id")}}, context).at("clip").at("id");
+		return changed;
 	}
 
 	void registerSamplerCommands(ProjectModel& model, Engine& engine)
@@ -174,12 +160,13 @@ namespace gnubase::engine
 			"Create sampler track",
 			[&model](Project& project, CommandContext& context)
 			{
-				const Json parameters = withClip(model, project, context.parameters(), context);
+				const Json parameters = withSampleClip(model, project, context.parameters(), context);
 				const bool sample = parameters.contains("event") || parameters.contains("clip");
 				require(sample || (!parameters.contains("start") && !parameters.contains("end")),
 					"start and end need event, clip or path");
-				const Section section = sample ? sectionOf(project, parameters) : Section();
-				Json track = {{"type", "instrument"}, {"instrument", "sampler"}, {"name", nextName(project)}};
+				const SampleSection section = sample ? sampleSection(project, parameters) : SampleSection();
+				Json track = {
+					{"type", "instrument"}, {"instrument", "sampler"}, {"name", numberedTrackName(project, "Sampler")}};
 				for (const char* key : {"name", "parent", "index", "output"})
 					if (parameters.contains(key))
 						track[key] = parameters.at(key);
@@ -205,9 +192,9 @@ namespace gnubase::engine
 			"Load sample",
 			[&model](Project& project, CommandContext& context)
 			{
-				const Json parameters = withClip(model, project, context.parameters(), context);
+				const Json parameters = withSampleClip(model, project, context.parameters(), context);
 				Channel& channel = samplerChannel(project, parameters.at("track").get<ObjectId>());
-				const Section section = sectionOf(project, parameters);
+				const SampleSection section = sampleSection(project, parameters);
 				if (parameters.value("keepSettings", false))
 					for (const uint32_t id : {Sampler::RootKey, Sampler::LoopStart, Sampler::LoopEnd})
 						channel.instrumentParameters.erase(id);

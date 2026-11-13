@@ -1036,6 +1036,44 @@
 	{
 		color: #ff8c8c;
 	}
+	.drum-pad
+	{
+		color: #c8c8c8;
+		background-color: #000000;
+		border-color: #ffffff;
+		border-radius: 2dp;
+	}
+	.drum-pad.assigned
+	{
+		color: #ffffff;
+		background-color: #0d0d0d;
+	}
+	.drum-pad.selected
+	{
+		border-color: #ffff00;
+	}
+	.drum-pad.muted, .drum-pad.soloed-out
+	{
+		color: #c8c8c8;
+		background-color: #000000;
+	}
+	.drum-pad.soloed
+	{
+		border-color: #00ffff;
+	}
+	.drum-pad-note, .drum-label
+	{
+		color: #c8c8c8;
+		font-size: 11dp;
+	}
+	.drum-group.selected, .drum-page-tab.selected
+	{
+		color: #ffff00;
+	}
+	.drum-message.error
+	{
+		color: #ff8c8c;
+	}
 	.ds-display, .sa-graph
 	{
 		background-color: #000000;
