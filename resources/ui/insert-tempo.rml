@@ -1,7 +1,8 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- Insert Tempo Event at Cursor (docs/features/tempo-track.md, reference manual pp. 1452-1453): app::AppUi opens it
      with the UI command tempo.insertAtCursor and the tempo at the project cursor in the document's attribute bpm. OK
-     adds a tempo event with the tempo in #insert-tempo-value at the cursor (tempo.add), or changes the one there. -->
+     adds a tempo event with the tempo in #insert-tempo-value at the cursor (tempo.add), or changes the one there.
+     Text that isn't a tempo, or a tempo the engine refuses, shows #insert-tempo-message and keeps the dialog open. -->
 <rml>
 <head>
 	<title>Insert Tempo Event at Cursor</title>
@@ -21,6 +22,12 @@
 		.row label
 		{
 			flex: 1;
+		}
+
+		#insert-tempo-value
+		{
+			width: 100dp;
+			text-align: right;
 		}
 
 		#insert-tempo-message
@@ -69,7 +76,7 @@
 		<div class="dialog-titlebar">Insert Tempo Event at Cursor</div>
 		<div class="row">
 			<label for="insert-tempo-value">Tempo (BPM)</label>
-			<valuefield id="insert-tempo-value" value="120" min="1" max="999" step="1" decimals="3" autofocus="autofocus"/>
+			<input type="text" id="insert-tempo-value" value="120" autofocus="autofocus"/>
 		</div>
 		<div class="row buttons">
 			<div id="insert-tempo-message"/>

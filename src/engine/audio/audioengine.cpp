@@ -204,6 +204,8 @@ namespace gnubase::engine
 		  m_midi(settings, std::move(midiBackends)), m_midiInput(graph::g_maxEventsPerBlock),
 		  m_generatorEvents(graph::g_maxEventsPerBlock), m_generatorOut(graph::g_maxEventsPerBlock)
 	{
+		for (audio::MidiBuffer& buffer : m_padOutput)
+			buffer = audio::MidiBuffer(graph::g_maxEventsPerBlock);
 	}
 
 	AudioEngine::~AudioEngine()
@@ -280,6 +282,9 @@ namespace gnubase::engine
 						changes = now;
 						m_engine->post("transport.update");
 					}
+					// What the chord pads' remote keys did goes to the command thread, which applies it (#1089).
+					if (Json events = padEvents(); !events.is_null() && m_engine != nullptr)
+						m_engine->post("chordPads.remoteInput", {{"events", std::move(events)}});
 					Playback::Cue cue;
 					cue.window = static_cast<time::Samples>(g_cueSeconds * m_device->format().sampleRate);
 					{
@@ -341,6 +346,18 @@ namespace gnubase::engine
 			stopCueing(); // a later start would start a second cue thread
 			throw;
 		}
+	}
+
+	Json AudioEngine::padEvents()
+	{
+		static constexpr std::array<const char*, 6> kinds = {
+			"triggered", "released", "modifier", "note", "player", "control"};
+		Json events;
+		MidiPorts::PadEvent event;
+		while (m_midi.takePadEvent(event))
+			events.push_back({{"kind", kinds.at(static_cast<size_t>(event.kind))}, {"key", event.key},
+				{"velocity", event.velocity}});
+		return events;
 	}
 
 	void AudioEngine::stopCueing()
@@ -575,6 +592,13 @@ namespace gnubase::engine
 			const auto found = std::find_if(snapshot.channels.begin(), snapshot.channels.end(),
 				[channel = channel](const RenderChannel& candidate) { return candidate.id == channel; });
 			program->thru.push_back(static_cast<uint8_t>(found != snapshot.channels.end() && found->midiThru));
+			// With Chord Pad Output Mode on the pads play into the tracks of all MIDI inputs too, each its player's
+			// notes: those of the player whose track it is, or the selected player's (#1089).
+			const bool pads = found != snapshot.channels.end() &&
+				(found->padThru || (snapshot.chordPadKeys.output && found->midiThru));
+			const int player = pads && found->padPlayer >= 0 ? found->padPlayer : snapshot.chordPadKeys.selected;
+			for (size_t i = 0; i < program->padThru.size(); ++i)
+				program->padThru.at(i).push_back(static_cast<uint8_t>(pads && static_cast<int>(i) == player));
 			const auto transformer = m_inputTransformers.find(channel);
 			program->inputTransformers.push_back(
 				{transformer != m_inputTransformers.end() ? transformer->second : nullptr,
@@ -1164,7 +1188,9 @@ namespace gnubase::engine
 		}
 		const audio::DeviceFormat& format = m_device->format();
 		m_midiInput.clear();
-		m_midi.take(block, format.sampleRate, m_midiInput, program.chordPadKeys);
+		for (audio::MidiBuffer& buffer : m_padOutput)
+			buffer.clear();
+		m_midi.take(block, format.sampleRate, m_midiInput, m_padOutput, program.chordPadKeys);
 		const size_t bytes = block.frames * sizeof(float);
 		for (const BusLink& link : program.inputs)
 		{
@@ -1184,6 +1210,26 @@ namespace gnubase::engine
 		captureInput(block);
 		m_tap.deliver(block.position, block.frames, program.sequencers);
 		MidiTap::thru(m_midiInput, program.sequencers, program.thru);
+		// Snap Playback to Musical Grid: the pads' note-ons wait for the next grid position while playing (#1089).
+		const int64_t snap = program.chordPadKeys.snapTicks;
+		// The pattern player mode plays the pattern at the tempo where the transport is (#1089).
+		const double ticksPerFrame =
+			program.tempo.bpmAt(program.tempo.toTicks(transport.position, program.sampleRate)) / 60.0 *
+			static_cast<double>(time::g_ticksPerQuarter) / program.sampleRate;
+		for (size_t player = 0; player < m_padOutput.size(); ++player)
+		{
+			m_padSnap.at(player).process(m_padOutput.at(player), snap > 0,
+				transport.playing && transport.countInFrames == 0, transport.position, block.frames,
+				[&program, snap](int64_t sample)
+				{
+					const time::Ticks ticks = program.tempo.toTicks(sample, program.sampleRate);
+					const time::Ticks grid = ((ticks + snap - 1) / snap) * snap;
+					return program.tempo.toSamples(grid, program.sampleRate);
+				});
+			m_padPattern.at(player).process(
+				m_padOutput.at(player), program.chordPadKeys.pattern, block.frames, ticksPerFrame);
+			MidiTap::thru(m_padOutput.at(player), program.sequencers, program.padThru.at(player));
+		}
 		for (size_t i = 0; i < program.sequencers.size() && i < program.inputTransformers.size(); ++i)
 			if (const InputTransform& transform = program.inputTransformers[i]; transform.processor)
 				transform.processor->process(program.sequencers[i].second->input(), transform.rules);
@@ -2473,6 +2519,9 @@ namespace gnubase::engine
 				render(static_cast<uint64_t>(frames));
 				if (syncTransport()) // punched in or out, or stopped after a punch out
 					context.emit("transport.changed", transportStatus());
+				// No cue thread runs offline: what the chord pads' remote keys did applies now.
+				if (Json events = padEvents(); !events.is_null())
+					context.call("chordPads.remoteInput", {{"events", std::move(events)}});
 				Json result = status();
 				context.emit("audio.changed", result);
 				return result;
@@ -2709,7 +2758,15 @@ namespace gnubase::engine
 	{
 		if (on && m_transport.countingIn())
 			return; // already on its way
-		sent(m_transport.record(on, on && !m_transport.playing() ? cueCountIn() : graph::CountIn{}));
+		graph::CountIn countIn;
+		if (on && !m_transport.playing())
+		{
+			countIn = cueCountIn();
+			// Playback that starts at once waits for the samplers' samples, as with play; a count-in doesn't (#1200).
+			if (m_device && countIn.length == 0)
+				waitForSamples(g_startWait);
+		}
+		sent(m_transport.record(on, countIn));
 	}
 
 	void AudioEngine::setTransportSettings(const TransportSettings& settings)

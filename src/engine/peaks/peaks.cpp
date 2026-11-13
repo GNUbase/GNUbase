@@ -531,6 +531,27 @@ namespace gnubase::engine::peaks
 		}
 		std::error_code error;
 		std::filesystem::rename(temporary, file, error);
+#ifdef _WIN32
+		std::error_code status;
+		if (error && std::filesystem::is_regular_file(file, status))
+		{
+			// Windows doesn't replace a file that another handle has open, not even one that shares deletion; moving
+			// an open file aside does work. So take the old file out of the way under a temporary name and try again:
+			// a reader in it reads on, the remove below ends the aside, and should that fail, the cache's worker
+			// cleans it up like a temporary a crash left behind (#963). Anything that isn't a regular file, such as
+			// a directory in the way, keeps failing the write.
+			std::filesystem::path aside = file;
+			aside += "." + hex(std::random_device()()) + ".tmp";
+			std::error_code moved;
+			std::filesystem::rename(file, aside, moved);
+			if (!moved)
+			{
+				std::filesystem::rename(temporary, file, error);
+				std::error_code ignored;
+				std::filesystem::remove(aside, ignored);
+			}
+		}
+#endif
 		if (error)
 		{
 			std::error_code ignored;
@@ -541,10 +562,12 @@ namespace gnubase::engine::peaks
 
 	PeakFile readPeakFile(const std::filesystem::path& file)
 	{
-		std::ifstream stream(file, std::ios::binary | std::ios::ate);
-		if (!stream)
+		// Opened as the readers open files, so that the file can be renamed or deleted while it is read, on Windows
+		// too: writePeakFile renames over a peak file that another thread may be reading (#951, #963).
+		const detail::File handle = detail::openFile(file.u8string(), "rb");
+		if (!handle)
 			throw PeakFileError("can't open " + file.u8string());
-		const std::streamoff end = stream.tellg();
+		const int64_t end = detail::seekFile(handle.get(), 0, SEEK_END) ? detail::tellFile(handle.get()) : -1;
 		if (end < 0)
 			throw PeakFileError("can't read " + file.u8string());
 		const auto fileSize = static_cast<uint64_t>(end);
@@ -553,9 +576,8 @@ namespace gnubase::engine::peaks
 		const auto headerSize = static_cast<size_t>(std::min<uint64_t>(
 			fileSize, g_fixedHeader + g_maxSourceLength + (static_cast<uint64_t>(g_maxLevels) * g_levelEntry)));
 		std::string header(headerSize, '\0');
-		stream.seekg(0);
-		stream.read(header.data(), static_cast<std::streamsize>(header.size()));
-		if (static_cast<size_t>(stream.gcount()) != header.size())
+		if (!detail::seekFile(handle.get(), 0, SEEK_SET) ||
+			std::fread(header.data(), 1, header.size(), handle.get()) != header.size())
 			throw PeakFileError("can't read " + file.u8string());
 		Reader in(header, file);
 
@@ -604,9 +626,8 @@ namespace gnubase::engine::peaks
 			in.fail(left < values * 2 ? "it is too short" : "it is too long");
 
 		std::string body(static_cast<size_t>(left), '\0');
-		stream.seekg(static_cast<std::streamoff>(in.offset()));
-		stream.read(body.data(), static_cast<std::streamsize>(body.size()));
-		if (static_cast<size_t>(stream.gcount()) != body.size())
+		if (!detail::seekFile(handle.get(), static_cast<int64_t>(in.offset()), SEEK_SET) ||
+			std::fread(body.data(), 1, body.size(), handle.get()) != body.size())
 			throw PeakFileError("can't read " + file.u8string());
 		Reader rest(body, file);
 		for (Level& level : data.levels)

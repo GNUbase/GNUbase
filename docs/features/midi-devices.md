@@ -3,16 +3,16 @@
 MIDI devices stand for external instruments with their patches by name, and a MIDI track chooses its patch, the
 program and bank it sends to its instrument (#136, reference manual pp. 1108–1114).
 
-- **A MIDI track's patch** (p. 1108). `channel.set` `program` (0 to 127) and `bank` (0 to 16383), `null` for none,
-  the default, are a MIDI channel's patch. The channel sends it to its instrument as a program change on MIDI
-  channel 1, after bank select MSB (CC 0) and LSB (CC 32) when it has a bank: whenever they change, also while the
-  transport stands, and again where playback starts, locates or jumps, so the instrument has the patch wherever
-  playback begins. A silent MIDI track (muted, soloed out or disabled) sends neither, and once it is heard again
-  only a patch that changed meanwhile ([track-list.md](track-list.md)). Without a program nothing is sent, also with
-  a bank. It is a static lane of the channel's automation, before the MIDI volume and pan
+- **A MIDI track's patch** (p. 1108). `channel.set` `program` (0 to 127) and `bank` (0 to 16383), `null` for none, the
+  default, are a MIDI channel's patch. The channel sends it to its instrument as a program change on its MIDI channel
+  (`midiChannel`, channel 1 for Any, [mixer.md](mixer.md)), after bank select MSB (CC 0) and LSB (CC 32) when it has a
+  bank: whenever they change, also while the transport stands, and again where playback starts, locates or jumps, so the
+  instrument has the patch wherever playback begins. A silent MIDI track (muted, soloed out or disabled) sends neither,
+  and once it is heard again only a patch that changed meanwhile ([track-list.md](track-list.md)). Without a program
+  nothing is sent, also with a bank. It is a static lane of the channel's automation, before the MIDI volume and pan
   (`PlayedLane::Kind::Program` in `src/engine/audio/automation.h`), so the audio thread only emits an event it was
-  given; a program change of a part plays over it where it is. `project.get`
-  shows them with the channel, the project file keeps them in GNUbase's entry, and undo takes them back.
+  given; a program change of a part plays over it where it is. `project.get` shows them with the channel, the project
+  file keeps them in GNUbase's entry, and undo takes them back.
 - **MIDI devices** (pp. 1109–1114) are the user setting `midi.devices`, so they belong to the user, not to a project,
   as in the reference: devices by name, each with banks, each bank a name and patches, each patch a name, a program,
   an optional bank and an optional folder it is listed in. `midiDevice.install` installs one: with `template` `gm`
@@ -40,8 +40,7 @@ program and bank it sends to its instrument (#136, reference manual pp. 1108–1
 
 - Devices playing through a MIDI output port: MIDI tracks don't play to MIDI ports yet, so a device has no Output
   and doesn't replace the track's output routing as in the reference (p. 1113); the track names it beside its output.
-- The tracks' MIDI output channel (the patch goes to channel 1, as the MIDI volume and pan do) and so the per-channel
-  Bank Assignment (p. 1109).
+- The per-channel Bank Assignment (p. 1109), which picks a device's bank by the track's MIDI channel.
 - Editing banks, folders and patches in the manager (Enable Edit, Create Bank, New Folder, New Preset, Add Multiple
   Presets, renaming, drag and drop; pp. 1111–1112): `settings.set` does it for now. Preset events other than bank
   select MSB and LSB and program change (p. 1112), the reference's other device scripts (XG and the instruments'),

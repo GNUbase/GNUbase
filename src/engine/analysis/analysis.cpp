@@ -88,6 +88,66 @@ namespace gnubase::engine::analysis
 		{
 			return 10.0 * std::log10(power);
 		}
+
+		// A biquad that filters samples one by one, in transposed direct form II, which keeps rounding low for the
+		// K-weighting's low corner frequency.
+		class BiquadFilter
+		{
+		public:
+			explicit BiquadFilter(const Biquad& coefficients) : m_c(coefficients) {}
+
+			double process(double x)
+			{
+				const double y = (m_c.b0 * x) + m_z1;
+				m_z1 = (m_c.b1 * x) - (m_c.a1 * y) + m_z2;
+				m_z2 = (m_c.b2 * x) - (m_c.a2 * y);
+				return y;
+			}
+
+		private:
+			Biquad m_c;
+			double m_z1 = 0.0;
+			double m_z2 = 0.0;
+		};
+
+		// The integrated loudness in LUFS of the K-weighted squares of every channel added up per 100 ms step of step
+		// frames.
+		std::optional<double> integratedLoudness(const std::vector<double>& stepSquares, int64_t step)
+		{
+			if (stepSquares.size() < 4 || step <= 0)
+				return std::nullopt;
+			const size_t blocks = stepSquares.size() - 3;
+			const double blockLength = 4.0 * static_cast<double>(step);
+			std::vector<double> meanSquares(blocks);
+			for (size_t j = 0; j < blocks; ++j)
+				meanSquares[j] =
+					(stepSquares[j] + stepSquares[j + 1] + stepSquares[j + 2] + stepSquares[j + 3]) / blockLength;
+
+			// The mean square of the blocks louder than the threshold, or nothing if there are none.
+			const auto gated = [&meanSquares](double threshold) -> std::optional<double>
+			{
+				double sum = 0.0;
+				size_t count = 0;
+				for (const double meanSquare : meanSquares)
+				{
+					if (meanSquare > 0.0 && toLoudness(meanSquare) > threshold)
+					{
+						sum += meanSquare;
+						++count;
+					}
+				}
+				if (count == 0)
+					return std::nullopt;
+				return sum / static_cast<double>(count);
+			};
+			const std::optional<double> aboveGate = gated(g_gate);
+			if (!aboveGate)
+				return std::nullopt;
+			const std::optional<double> aboveRelativeGate = gated(toLoudness(*aboveGate) - g_relativeGate);
+			if (!aboveRelativeGate)
+				return std::nullopt;
+			return toLoudness(*aboveRelativeGate);
+		}
 	}
 
 	Levels levels(const std::vector<float>& samples)
@@ -145,13 +205,6 @@ namespace gnubase::engine::analysis
 		return {shelf, highPass};
 	}
 
-	std::optional<double> loudness(double meanSquare)
-	{
-		if (!(meanSquare > 0.0))
-			return std::nullopt;
-		return toLoudness(meanSquare);
-	}
-
 	std::optional<double> integratedLoudness(const std::vector<std::vector<float>>& channels, double sampleRate)
 	{
 		// A block is four steps of 100 ms; the sum of the K-weighted squares of every channel per step.
@@ -176,43 +229,6 @@ namespace gnubase::engine::analysis
 			}
 		}
 		return integratedLoudness(stepSquares, static_cast<int64_t>(step));
-	}
-
-	std::optional<double> integratedLoudness(const std::vector<double>& stepSquares, int64_t step)
-	{
-		if (stepSquares.size() < 4 || step <= 0)
-			return std::nullopt;
-		const size_t blocks = stepSquares.size() - 3;
-		const double blockLength = 4.0 * static_cast<double>(step);
-		std::vector<double> meanSquares(blocks);
-		for (size_t j = 0; j < blocks; ++j)
-			meanSquares[j] =
-				(stepSquares[j] + stepSquares[j + 1] + stepSquares[j + 2] + stepSquares[j + 3]) / blockLength;
-
-		// The mean square of the blocks louder than the threshold, or nothing if there are none.
-		const auto gated = [&meanSquares](double threshold) -> std::optional<double>
-		{
-			double sum = 0.0;
-			size_t count = 0;
-			for (const double meanSquare : meanSquares)
-			{
-				if (meanSquare > 0.0 && toLoudness(meanSquare) > threshold)
-				{
-					sum += meanSquare;
-					++count;
-				}
-			}
-			if (count == 0)
-				return std::nullopt;
-			return sum / static_cast<double>(count);
-		};
-		const std::optional<double> aboveGate = gated(g_gate);
-		if (!aboveGate)
-			return std::nullopt;
-		const std::optional<double> aboveRelativeGate = gated(toLoudness(*aboveGate) - g_relativeGate);
-		if (!aboveRelativeGate)
-			return std::nullopt;
-		return toLoudness(*aboveRelativeGate);
 	}
 
 	void PowerSpectrum::feed(const float* samples, size_t count, size_t stride)

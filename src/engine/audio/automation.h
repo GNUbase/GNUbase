@@ -102,8 +102,8 @@ namespace gnubase::engine
 
 	// What a channel's automation plays: the fader's, the instrument's and the slots' built-in plugins' parameters
 	// with their static values or curves, a MIDI channel's program (with its bank) and volume and pan as controllers 7
-	// and 10 on MIDI channel 1 when it has them, and the MIDI controllers that have curves. maxVolume is the project's,
-	// in dB.
+	// and 10 on its MIDI channel (RenderChannel::midiChannel) when it has them, and the MIDI controllers that have
+	// curves. maxVolume is the project's, in dB.
 	std::unique_ptr<ChannelAutomation> channelAutomation(const RenderChannel& channel, double maxVolume);
 
 	// The value of a curve at a project position (see AutomationLane): before the first point its value, after the

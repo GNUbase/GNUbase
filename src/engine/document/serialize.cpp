@@ -185,6 +185,23 @@ namespace gnubase::engine
 				velocityFrom(json.at("velocity"))};
 		}
 
+		Json eventTimingJson(const EventTiming& timing)
+		{
+			return {{"position", timing.position.value}, {"offset", timing.offset}, {"length", timing.length},
+				{"crossfade", toJson(timing.crossfade)}};
+		}
+
+		// An audio event's quantize timing. A file from before #910 has a bare position for each state: no offset,
+		// length or crossfade to put back, so resetting such an event leaves them as they are. One written while
+		// #910 was in progress has no crossfade either.
+		EventTiming eventTimingFrom(const Json& json, const AudioEvent& event)
+		{
+			if (!json.is_object())
+				return {{event.position.base, json.get<int64_t>()}, event.offset, event.length, event.crossfade};
+			return {{event.position.base, json.at("position").get<int64_t>()}, json.at("offset").get<time::Samples>(),
+				json.at("length").get<time::Samples>(), crossfadeFrom(json.value("crossfade", Json()))};
+		}
+
 		constexpr const char* g_base64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 		// Standard base64 with padding, as a slot's state is stored in the project.
@@ -575,12 +592,13 @@ namespace gnubase::engine
 			{"midiVolume", channel.midiVolume ? Json(*channel.midiVolume) : Json(nullptr)},
 			{"midiPan", channel.midiPan ? Json(*channel.midiPan) : Json(nullptr)},
 			{"program", channel.program ? Json(*channel.program) : Json(nullptr)},
-			{"bank", channel.bank ? Json(*channel.bank) : Json(nullptr)}, {"device", channel.device},
-			{"monitor", channel.monitor}, {"recordEnable", channel.recordEnable}, {"midiInput", channel.midiInput},
-			{"mute", channel.mute}, {"solo", channel.solo}, {"soloDefeat", channel.soloDefeat},
-			{"listen", channel.listen}, {"slots", channel.slots}, {"notes", channel.notes},
-			{"modifiers", toJson(channel.modifiers)}, {"midiInserts", toJson(channel.midiInserts, false)},
-			{"midiSends", toJson(channel.midiSends, true)},
+			{"bank", channel.bank ? Json(*channel.bank) : Json(nullptr)},
+			{"midiChannel", channel.midiChannel ? Json(*channel.midiChannel) : Json(nullptr)},
+			{"device", channel.device}, {"monitor", channel.monitor}, {"recordEnable", channel.recordEnable},
+			{"midiInput", channel.midiInput}, {"mute", channel.mute}, {"solo", channel.solo},
+			{"soloDefeat", channel.soloDefeat}, {"listen", channel.listen}, {"slots", channel.slots},
+			{"notes", channel.notes}, {"modifiers", toJson(channel.modifiers)},
+			{"midiInserts", toJson(channel.midiInserts, false)}, {"midiSends", toJson(channel.midiSends, true)},
 			{"inputTransformer", midi::toJson(channel.inputTransformer)}};
 		json.update(toJson(channel.sections));
 		Json sends = Json::array();
@@ -719,9 +737,11 @@ namespace gnubase::engine
 			{"volumeCurve", toJson(event.volumeCurve)}, {"front", event.front}};
 		// Only an origin in the event's time base still counts (#145): one from before the track's time base changed
 		// is gone, as the event isn't where quantizing put it.
-		if (const auto& origin = event.quantizeOrigin;
-			origin && origin->original.base == event.position.base && origin->quantized.base == event.position.base)
-			json["quantizeOrigin"] = {{"original", origin->original.value}, {"quantized", origin->quantized.value}};
+		if (const auto& origin = event.quantizeOrigin; origin &&
+			origin->original.position.base == event.position.base &&
+			origin->quantized.position.base == event.position.base)
+			json["quantizeOrigin"] = {
+				{"original", eventTimingJson(origin->original)}, {"quantized", eventTimingJson(origin->quantized)}};
 		return json;
 	}
 
@@ -2166,6 +2186,9 @@ namespace gnubase::engine
 				channel.program = static_cast<int>(checkedNumber(stored, 0.0, 127.0, name + " program"));
 			if (const Json stored = item.value("bank", Json()); !stored.is_null())
 				channel.bank = static_cast<int>(checkedNumber(stored, 0.0, g_maxBank, name + " bank"));
+			// Files from before the MIDI channel have Any.
+			if (const Json stored = item.value("midiChannel", Json()); !stored.is_null())
+				channel.midiChannel = static_cast<int>(checkedNumber(stored, 0.0, 15.0, name + " midiChannel"));
 			channel.device = item.value("device", std::string());
 			// An instrument this build doesn't have, e.g. in a file from a newer one, or one on a track that doesn't
 			// play instruments: the channel plays none.
@@ -2186,7 +2209,8 @@ namespace gnubase::engine
 			const bool buttons = type == TrackType::Audio || midi || type == TrackType::Vca;
 			channel.monitor = buttons && item.value("monitor", false);
 			channel.recordEnable = buttons && item.value("recordEnable", false);
-			channel.midiInput = midi && item.value("midiInput", std::string()) == "none" ? "none" : "all";
+			const std::string midiInput = item.value("midiInput", std::string());
+			channel.midiInput = midi && (midiInput == "none" || midiInput == "chordPads") ? midiInput : "all";
 			channel.mute = item.value("mute", false); // files from before mute and solo have neither
 			channel.solo = item.value("solo", false);
 			channel.soloDefeat = item.value("soloDefeat", false); // files from before #109 have neither
@@ -2359,8 +2383,8 @@ namespace gnubase::engine
 			event.lane = std::max(0, item.value("lane", 0)); // files from before #98 have no lanes
 			event.front = item.value("front", ObjectId{0});  // nor from before #99 a stack order
 			if (const auto origin = item.find("quantizeOrigin"); origin != item.end()) // files from before #145
-				event.quantizeOrigin = EventQuantizeOrigin{{event.position.base, origin->at("original").get<int64_t>()},
-					{event.position.base, origin->at("quantized").get<int64_t>()}};
+				event.quantizeOrigin = EventQuantizeOrigin{
+					eventTimingFrom(origin->at("original"), event), eventTimingFrom(origin->at("quantized"), event)};
 			return event;
 		};
 		for (const Json& item : json.at("audioEvents"))
