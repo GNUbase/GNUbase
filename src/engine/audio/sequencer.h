@@ -177,6 +177,9 @@ namespace gnubase::engine
 	{
 	public:
 		static constexpr size_t g_notes = size_t{16} * 128; // a note per MIDI channel and pitch
+		// The parameter ids below it, per effect, whose automated values a new instance of the effect takes (a test
+		// checks that every MIDI effect's are).
+		static constexpr size_t g_automated = 16;
 		// What is chased by itself: a control change per channel and number, a program and a pitch bend per channel.
 		static constexpr size_t g_chased = g_notes + (size_t{16} * 2);
 
@@ -394,7 +397,6 @@ namespace gnubase::engine
 		std::array<bool, g_notes> m_insertsHeld{};
 		// Per slot, the inserts' then the sends', the values the automation sent its effect's parameters last (NaN:
 		// none), and the effect they were for.
-		static constexpr size_t g_automated = 16; // parameters per effect; ponytail: more once an effect has more
 		std::array<std::array<double, g_automated>, 2 * midi::g_effectSlots> m_automated{};
 		std::array<const processors::BuiltinInfo*, 2 * midi::g_effectSlots> m_automatedEffect{};
 		MidiChase m_chaseSetting;             // setChase's, for the sequencer of the sends before the modifiers

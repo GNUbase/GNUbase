@@ -2162,6 +2162,8 @@ namespace gnubase::engine
 				}
 				for (const midi::EffectSlot& slot : rack.slots)
 				{
+					// A send without an effect plays nowhere, so it makes no send and counts for no loop (#1149).
+					require(slot.output == 0 || !slot.effect.empty(), "a MIDI send without an effect has no output");
 					const auto target = project.channels.find(slot.output);
 					require(slot.output == 0 ||
 							(target != project.channels.end() &&
@@ -4431,8 +4433,9 @@ namespace gnubase::engine
 				"the track live, before it records, and not its parts), slots: [{effect (an id, or empty for none; "
 				"another effect starts from its defaults), on, parameters {key: value, a number or an option's "
 				"name}, output (sends only: an instrument track's channel the effect plays to, 0 for the track's own "
-				"output)}]}. The inserts play in order, each on what the one before it played; each send plays its "
-				"effect's events beside them. Changing which effects play ends the notes the track sounds. The channel "
+				"output; a slot without an effect has none: 0, which removing its effect sets)}]}. The inserts play in "
+				"order, each on what the one before it played; each send plays its effect's events beside them. "
+				"Changing which effects play ends the notes the track sounds. The channel "
 				"strip's sections (audio channels only; "
 				"each object changes only what it has, as project.get shows them) run before the fader: pre "
 				"{gain (dB, -24 to 24), phase (inverts the polarity), lowCut and highCut {on, frequency (Hz, 20 or "
