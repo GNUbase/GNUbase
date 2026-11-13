@@ -58,7 +58,8 @@ and on its time axis. It shows the project and the view as the key editor hands 
                                       Velocity Variance)
       .controller-lane-area[lane]     .controller-bar[part][note] per note (note lanes), .controller-step[part]
                                       [controller] per event, as wide as until the next one; .selected, .inactive
-  .controller-lanes-footer
+  .controller-lanes-footer            in an in-place editor a double click on the strip, not on its buttons,
+                                      closes the editor (p. 1261, in-place-editor.md)
     #controller-lane-create           Create Controller Lane, menu #controller-create-menu: the lane types,
                                       named controllers and all 128 in Continuous Controllers; Show Used
                                       Controllers, Show Velocity Lane Only, Show/Hide Controller Lanes

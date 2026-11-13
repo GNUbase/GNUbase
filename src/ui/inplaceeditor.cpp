@@ -345,6 +345,28 @@ namespace gnubase::ui
 		}
 		// The key editor below has seen it; the event display mustn't select or edit what is under the editor.
 		event.StopPropagation();
+		if (event.GetId() == Rml::EventId::Dblclick)
+		{
+			// A double click on the lanes' footer strip, the place below the controller display (p. 1261), closes
+			// the editor; one on the strip's buttons doesn't.
+			Rml::Element* editor = nullptr;
+			bool footer = false;
+			bool button = false;
+			for (Rml::Element* up = event.GetTargetElement(); up != nullptr && up != m_area.get();
+				up = up->GetParentNode())
+			{
+				if (up->IsClassSet("controller-lanes-footer"))
+					footer = true;
+				else if (up->GetTagName() == "button")
+					button = true;
+				else if (up->IsClassSet("in-place-editor"))
+					editor = up;
+			}
+			if (editor != nullptr && footer && !button)
+				m_binding.send("editor.inPlace",
+					{{"tracks", {std::stoull(editor->GetAttribute<Rml::String>("track", "0"))}}, {"open", false}});
+			return;
+		}
 		if (event.GetId() != Rml::EventId::Click)
 			return;
 		Rml::Element* editor = nullptr;

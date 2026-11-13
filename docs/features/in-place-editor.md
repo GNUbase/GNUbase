@@ -71,21 +71,23 @@ menu#in-place-editing-mode-menu-inPlace-<track>, menu#in-place-active-part-menu-
   the focus in it takes its selected notes, or all of its notes, never the project window's selected parts under it.
   The Edit and MIDI menus run in the project window's zone and take its selection.
 - **Opening and closing.** MIDI > Open In-Place Editor (`editor.openInPlace`) opens it for the selected MIDI and
-  instrument tracks, Edit In-Place (`editor.editInPlace`, Mod+Shift+I, p. 1261) opens or closes each one, both
-  disabled until such a track is selected, and the inspector's Edit In-Place button (`button[control=editInPlace]`,
-  [inspector.md](inspector.md)) the selected track's, checked while it is open.
+  instrument tracks, Edit In-Place (`editor.editInPlace`, Mod+Shift+I, p. 1261) opens or closes each one, both disabled
+  until such a track is selected, and the inspector's Edit In-Place button (`button[control=editInPlace]`,
+  [inspector.md](inspector.md)) the selected track's, checked while it is open. A double click on the controller lanes'
+  footer strip, the place below the controller display (p. 1261, [controller-lanes.md](controller-lanes.md)), closes
+  that track's editor too; one on the strip's Create and Setup buttons doesn't.
 
 `resources/styles/keyeditor.rcss` lays the editors out; the themes give them an opaque background over the events
 (`tools/skin/generate.py`).
 
 ## Not yet
 
- Tracked in #1158: the setup panes of the toolbar and the info line (p. 1575), which only the project window has so far
+Tracked in #1158: the setup panes of the toolbar and the info line (p. 1575), which only the project window has so far
 ([docking.md](docking.md)); the project window's info line showing the selected note (the editor's own info line shows
-it with the toolbar); a tempo-mapped time axis; closing with a double click below the controller display; dragging notes
-from one in-place editor to another; the keyboard in the track list's column; Edit In-Place in the track list's
-controls, with the toolbar's triangle at the upper right of the track's row in the track list (p. 1259) instead of over
-the editor; the toolbar's Acoustic Feedback, Indicate Transpositions and Event Colors (the key editor has none yet).
+it with the toolbar); a tempo-mapped time axis; dragging notes from one in-place editor to another; the keyboard in the
+track list's column; Edit In-Place in the track list's controls, with the toolbar's triangle at the upper right of the
+track's row in the track list (p. 1259) instead of over the editor; the toolbar's Acoustic Feedback, Indicate
+Transpositions and Event Colors (the key editor has none yet).
 
 ## Checks
 
@@ -106,5 +108,6 @@ the editor; the toolbar's Acoustic Feedback, Indicate Transpositions and Event C
   the track's lanes keeping their height, a folded folder hiding the editor; a time-linear track's notes on the
   timeline; a key of the keyboard held while the editor closes ending its pitch (key-editor.md); Q in the editor
   quantizing its selected note and not the selected part; a drag on the keyboard's left part zooming the pitches and
-  scrolling them; the menu commands waiting for a MIDI or instrument track; a note being drawn moving with the notes
-  while the project window zooms.
+  scrolling them; a double click on the lanes' footer strip closing it, and one on the strip's buttons not; the menu
+  commands waiting for a MIDI or instrument track; a note being drawn moving with the notes while the project window
+  zooms.

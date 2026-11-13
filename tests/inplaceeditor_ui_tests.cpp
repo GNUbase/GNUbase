@@ -491,6 +491,32 @@ TEST_CASE("dragging the keyboard's left part zooms the pitches of an in-place ed
 	CHECK(std::abs(f.box(f.editor() + " .key-editor-key[pitch=\"127\"]").at("y").get<double>() - (top - 80)) <= 1);
 }
 
+TEST_CASE("a double click on the lanes' footer closes the in-place editor", "[ui]")
+{
+	// Reference manual p. 1261: a double click below the controller display closes it; the footer strip under the
+	// lanes is that place.
+	Fixture f;
+	f.app.keys().run("editor.openInPlace", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil([&] { return f.elements(f.editor() + " .key-note").size() == 2; }));
+
+	// A double click on the footer's empty place, right of its buttons, closes the editor.
+	const Json footer = f.box(f.editor() + " .controller-lanes-footer");
+	const ui::Target empty{"", 0,
+		ui::Point{footer.at("x").get<int>() + footer.at("width").get<int>() - 10,
+			footer.at("y").get<int>() + (footer.at("height").get<int>() / 2)}};
+	f.click(empty, 2);
+	REQUIRE(f.app.waitUntil([&] { return f.elements(f.editor()).empty(); }));
+	CHECK_FALSE(f.view().at("open").get<bool>());
+
+	// A double click on one of the footer's buttons doesn't close it.
+	f.app.call("editor.inPlace", {{"tracks", {f.track}}, {"open", true}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(f.editor() + " .key-note").size() == 2; }));
+	f.click(ui::Target{f.editor() + " #controller-lane-create", 0, std::nullopt}, 2);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.elements(f.editor()).size() == 1);
+	CHECK(f.view().at("open").get<bool>());
+}
+
 TEST_CASE("a key held in an in-place editor that closes ends its pitch", "[ui]")
 {
 	// A key of the keyboard plays its pitch until the mouse is released (p. 1204); the in-place editor closing ends it
