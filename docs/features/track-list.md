@@ -227,13 +227,12 @@ Width (`#track-name-width`, global), held at the setting's limits. OK saves ever
 
 ## Not yet
 
-The Show Lanes control and the lanes' headers ([comping.md](comping.md)), write automation (#122),
-dividing the track list, track visibility agents and the track type
-filter, track presets, track pictures, the lock control, edit channel settings, volume and pan in the track list,
-the settings dialog's groups, controls area preview, presets, Reset All and the MIDI tracks' Output Group and
-Channel Width (p. 191), the track height presets menu, snap track heights, the preferences dialog's
-page for `ui.removeTracksWarning` and `ui.upDownSelectsTracksOnly` (#162). Folders' group channels, data blocks and Move Selected Tracks to
-New Folder are in [folder-tracks.md](folder-tracks.md).
+The Show Lanes control and the lanes' headers ([comping.md](comping.md)), write automation (#122), dividing the track
+list, track visibility agents and the track type filter, track presets, track pictures, the lock control, edit channel
+settings, volume and pan in the track list, the settings dialog's groups, controls area preview, presets, Reset All and
+the MIDI tracks' Output Group and Channel Width (p. 191), the track height presets menu, snap track heights, the
+preferences dialog's page for `ui.removeTracksWarning` and `ui.upDownSelectsTracksOnly` (#162). Folders' group channels,
+data blocks and Move Selected Tracks to New Folder are in [folder-tracks.md](folder-tracks.md).
 
 ## Checks
 

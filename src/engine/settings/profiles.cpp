@@ -6,10 +6,15 @@
 #include "platform/log.h"
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <cstdint>
+#include <cstdio>
 #include <functional>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <vector>
 
@@ -165,6 +170,50 @@ namespace gnubase::engine::settings
 			return name == state.active ? directory : folderOf(directory, name);
 		}
 
+		// What removeFolder renames the folders it deletes to, in the settings folder: profile-removed-<16 hex digits>.
+		constexpr std::string_view g_removedPrefix = "profile-removed-";
+
+		// Deletes a folder with what is in it; error says what can't be deleted. Where a deleted folder stays until
+		// whatever still has it open lets go, such as a virus scanner looking at the files just written (Windows, on
+		// file systems without POSIX deletes such as FAT, exFAT and network shares), no folder can be made under its
+		// name meanwhile: a switch soon after, which makes the folder again, would fail (#1284). And a folder of which
+		// something can't be deleted would stay under its name. So the folder first gets a name of its own in the
+		// settings folder, which frees its name at once; not in profiles, where it would be a profile. One that can't
+		// be renamed, such as while a file in it is open or when profiles is on another volume, is deleted under its
+		// name. What stays of a renamed one goes at the next start (removeLeftovers, from switchProfile).
+		void removeFolder(const fs::path& directory, const fs::path& folder, std::error_code& error)
+		{
+			// Two processes that pick the same name are no harm: the second rename fails, or replaces an empty folder.
+			static std::atomic<uint64_t> counter{0};
+			const auto time = static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
+			const uint64_t unique = time + (counter++ << 40U);
+			char hex[17] = {};
+			std::snprintf(hex, sizeof(hex), "%016llx", static_cast<unsigned long long>(unique));
+			const fs::path removed = directory / (std::string(g_removedPrefix) + hex);
+			std::error_code renamed;
+			fs::rename(folder, removed, renamed);
+			if (renamed)
+			{
+				fs::remove_all(folder, error);
+				return;
+			}
+			error.clear();
+			std::error_code ignored;
+			fs::remove_all(removed, ignored);
+		}
+
+		// Deletes what removeFolder couldn't delete of the folders it renamed.
+		void removeLeftovers(const fs::path& directory)
+		{
+			std::error_code error;
+			std::vector<fs::path> leftovers;
+			for (fs::directory_iterator entry(directory, error), end; !error && entry != end; entry.increment(error))
+				if (entry->path().filename().u8string().compare(0, g_removedPrefix.size(), g_removedPrefix) == 0)
+					leftovers.push_back(entry->path());
+			for (const fs::path& leftover : leftovers)
+				fs::remove_all(leftover, error);
+		}
+
 		// Moves the profile files from one folder to another, replacing what is there; a file that from lacks goes
 		// from to as well, so that its defaults count. replacing, if any, comes before each file (switchProfile).
 		void moveFiles(const fs::path& from, const fs::path& to, const Replacing& replacing)
@@ -213,7 +262,7 @@ namespace gnubase::engine::settings
 				if (files::readFile(staging / "active-profile") == active)
 				{
 					copyFiles(staging / "active", directory);
-					fs::remove_all(folderOf(directory, active), error);
+					removeFolder(directory, folderOf(directory, active), error);
 					logging::warning("Put the profile {}'s settings back after a switch that didn't finish", active);
 				}
 			}
@@ -225,7 +274,7 @@ namespace gnubase::engine::settings
 					active, failure.what());
 				return false;
 			}
-			fs::remove_all(staging, error);
+			removeFolder(directory, staging, error);
 			return true;
 		}
 
@@ -252,6 +301,7 @@ namespace gnubase::engine::settings
 	{
 		if (directory.empty())
 			return;
+		removeLeftovers(directory);
 		State state = readState(directory);
 		// Copies of both profiles' files, so that a switch that fails on the way puts the active one's back.
 		const fs::path staging = stagingOf(directory);
@@ -275,7 +325,9 @@ namespace gnubase::engine::settings
 			// case: the switch would move the active profile's files over the next one's.
 			if (fs::exists(saved) && fs::equivalent(saved, next))
 				throw std::runtime_error("its folder is the active profile's " + state.active + " on this file system");
-			fs::remove_all(staging);
+			removeFolder(directory, staging, error);
+			if (error)
+				throw fs::filesystem_error("remove_all", staging, error);
 			copyFiles(directory, staging / "active", replacing);
 			copyFiles(next, staging / "next", replacing);
 			files::writeAtomically(staging / "active-profile", state.active); // from here on undoInterrupted's
@@ -290,24 +342,24 @@ namespace gnubase::engine::settings
 				restored = false; // the next start tries again if this fails
 				copyFiles(staging / "active", directory, replacing);
 				restored = true;
-				fs::remove_all(saved, error);
+				removeFolder(directory, saved, error);
 				throw;
 			}
 			logging::info("Switched from the profile {} to {}", state.active, state.next);
-			fs::remove_all(next, error);
+			removeFolder(directory, next, error);
 		}
 		catch (const std::exception& failure)
 		{
 			logging::error("Cannot switch to the profile {}: {}", state.next, failure.what());
 		}
 		if (restored)
-			fs::remove_all(staging, error);
+			removeFolder(directory, staging, error);
 	}
 
 	void cancelProfileSwitch(const fs::path& directory)
 	{
 		std::error_code error;
-		fs::remove_all(stagingOf(directory), error);
+		removeFolder(directory, stagingOf(directory), error);
 		State state = readState(directory);
 		if (state.next.empty())
 			return;
@@ -438,7 +490,10 @@ namespace gnubase::engine::settings
 				const auto removed = parameters.at("name").get<std::string>();
 				require(removed != state.active, "the active profile can't be deleted");
 				require(exists(directory, state, removed), "no profile " + removed);
-				fs::remove_all(folderOf(directory, removed));
+				std::error_code error;
+				removeFolder(directory, folderOf(directory, removed), error);
+				if (error)
+					throw fs::filesystem_error("remove_all", folderOf(directory, removed), error);
 				if (state.next == removed)
 				{
 					state.next.clear();

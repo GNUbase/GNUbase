@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <iterator>
 #include <optional>
 #include <utility>
 #include <variant>
@@ -147,7 +148,7 @@ namespace gnubase::ui
 		Step step = std::move(steps.waiting.front());
 		steps.waiting.pop_front();
 		steps.inFlight.push_back(std::move(step.done));
-		// The map's entries stay for the binding's life, so the key outlives the answer.
+		// An entry goes only in update() and only once no step of it waits for its answer, so the key outlives it.
 		const std::string* key = &entry->first;
 		transmit(
 			"history.transaction",
@@ -224,6 +225,13 @@ namespace gnubase::ui
 
 	bool EngineBinding::update()
 	{
+		// The records of controls whose steps have all been answered go away, so a session leaves no entry per channel
+		// and parameter a gesture touched (#746). One update late, so that the views showing what the last update
+		// handed on still ask sending() and ahead() about them; a step in flight keeps its record, so the keys the
+		// answers carry outlive them (sendNextStep).
+		for (auto entry = m_steps.begin(); entry != m_steps.end();)
+			entry = entry->second.inFlight.empty() && entry->second.waiting.empty() ? m_steps.erase(entry)
+																					: std::next(entry);
 		m_woken = false; // before taking the messages, so one that arrives meanwhile wakes the UI again
 		bool handled = false;
 		while (std::optional<engine::Message> message = m_client.poll())

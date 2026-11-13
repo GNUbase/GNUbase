@@ -54,9 +54,9 @@ hands them on and sends `event.*`, `audioEvent.set`, `audition.*` and `editor.se
 
 The display fits the shown parts' range into its width; each event shows what its part lets play of it, at its time on
 its lane. An event moved out of its part, which the part hides entirely, shows whole and dimmed, like a muted one, and
-the display reaches it, so that it can be selected and moved back. Code places the parts and the events in percent of the width and the lanes and
-events at their lane, 48 dp each. While the project's snap is on (`snap.set`), moves and splits snap to the project's
-quantize grid; with it off they go where the mouse is.
+the display reaches it, so that it can be selected and moved back. Code places the parts and the events in percent of
+the width and the lanes and events at their lane, 48 dp each. While the project's snap is on (`snap.set`), moves and
+splits snap to the project's quantize grid; with it off they go where the mouse is.
 
 A gesture (a move or an audition) follows the drag events of an RmlUi drag element: the editable events with the object
 selection tool and the whole display with the play and scrub tools (`drag: drag` in the style sheet, by the `tool`

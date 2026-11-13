@@ -4,6 +4,7 @@
 // inspector's Chord Editing section. tests/keyeditor_tests.cpp checks the engine's side.
 #include "engine/time/tempomap.h"
 #include "ui/automation.h"
+#include "ui/docking.h"
 #include "ui/keyeditor.h"
 #include "ui/midieditor.h"
 #include "uiapp.h"
@@ -184,33 +185,23 @@ namespace
 			REQUIRE(has(".key-tool[key-tool=" + name + "]", "checked"));
 		}
 
-		// Gives the track the instrument noteProbe and renders by hand, so that plays() hears what the keyboard's keys
-		// play (reference manual p. 1204).
-		void probe()
-		{
-			app.call("audio.setDevice", {{"blockSize", 128}, {"inputChannels", 0}, {"captureSeconds", 1}});
-			app.call("channel.set",
-				{{"channel", app.call("project.get").at("tracks").at(0).at("channel")}, {"instrument", "noteProbe"}});
-			app.call("audio.render", {{"frames", 128}}); // the new graph
-			app.call("midi.capture", {{"start", true}});
-		}
+		// Gives the track the instrument noteProbe, so that plays() hears what the keyboard's keys play (reference
+		// manual p. 1204).
+		void probe() { sound.emplace(app, track); }
 
-		// Renders until the note ons and offs the instrument played since played was last cleared are expected.
+		// Renders until the note ons and offs the instrument played since the last clearSound() are the expected ones.
 		bool plays(const std::vector<std::vector<int>>& expected)
 		{
-			return app.waitUntil(
-				[&]
-				{
-					app.call("audio.render", {{"frames", 128}});
-					const Json captured = app.call("midi.capture");
-					for (const Json& message : captured.at("captured"))
-					{
-						const auto bytes = message.at("bytes").get<std::vector<int>>();
-						if ((bytes.at(0) & 0xE0) == 0x80)
-							played.push_back(bytes);
-					}
-					return played == expected;
-				});
+			if (!sound)
+				FAIL("probe() first");
+			return sound->plays(expected);
+		}
+
+		void clearSound()
+		{
+			if (!sound)
+				FAIL("probe() first");
+			sound->clear();
 		}
 
 		// A point on the keyboard: x across the window, in the middle of the pitch's row.
@@ -225,7 +216,7 @@ namespace
 		std::optional<ui::WindowId> window;
 		uint64_t track = 0;
 		uint64_t part = 0;
-		std::vector<std::vector<int>> played; // the note ons and offs that plays() heard
+		std::optional<test::NoteProbe> sound;
 	};
 }
 
@@ -395,7 +386,7 @@ TEST_CASE("a click on a key of the keyboard plays its pitch on the track's instr
 
 	// At the left of that row the black key, C#3; released outside the key editor, over the editor window's toolbar,
 	// it ends too. Neither click selects or deselects a note.
-	f.played.clear();
+	f.clearSound();
 	f.app.ui().press(f.window, f.key(left, 61), ui::MouseButton::Left, {});
 	f.app.shell().step(std::chrono::milliseconds(0));
 	CHECK(f.plays({{0x90, 61, 100}}));
@@ -405,7 +396,7 @@ TEST_CASE("a click on a key of the keyboard plays its pitch on the track's instr
 	CHECK(f.selection() == std::vector<uint64_t>{ids[0]});
 
 	// Released outside the window, where no mouseup arrives, D3 ends when the mouse leaves the window.
-	f.played.clear();
+	f.clearSound();
 	f.app.ui().press(f.window, f.key(right, 62), ui::MouseButton::Left, {});
 	f.app.shell().step(std::chrono::milliseconds(0));
 	CHECK(f.plays({{0x90, 62, 100}}));
@@ -452,7 +443,7 @@ TEST_CASE("a key of the keyboard held while the key editor goes ends its pitch",
 	}
 
 	// The editor closing through the engine API, as a key command closes it, ends the pitch with the editor window.
-	f.played.clear();
+	f.clearSound();
 	f.app.call("editor.set", {{"editor", "window"}, {"content", "key"}});
 	REQUIRE(f.app.waitUntil([&] { return keyEditor() != nullptr && !keyEditor()->drum(); }));
 	press(62);
@@ -464,7 +455,7 @@ TEST_CASE("a key of the keyboard held while the key editor goes ends its pitch",
 	// The user closing the editor window, as its close button does: the shell drops the window and its document first.
 	// The document's mouseout, which RmlUi sends it as it goes, ends the pitch while the key editor is still there, and
 	// the destructor, which runs after the window, is the backstop; the check holds either one, not each alone.
-	f.played.clear();
+	f.clearSound();
 	f.app.call("editor.open", {{"editor", "window"}, {"parts", Json::array({f.part})}});
 	REQUIRE(f.app.waitUntil([&] { return keyEditor() != nullptr; }));
 	f.window = f.app.appUi().editorWindowId();
@@ -475,6 +466,57 @@ TEST_CASE("a key of the keyboard held while the key editor goes ends its pitch",
 	f.app.ui().close(f.window, false);
 	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().editorWindow() == nullptr; }));
 	CHECK(f.plays({{0x90, 64, 100}, {0x80, 64, 0}}));
+}
+
+TEST_CASE("a key of the keyboard held while the lower zone's Editor panel goes ends its pitch", "[ui]")
+{
+	// The docking system owns the Editor panel and its key editor. A key held in the panel's window ends its pitch when
+	// that window is closed, as its close button does, and when the panel is docked again. Docking::applyFloating drops
+	// the panel's content before the shell closes the window of a panel docked again, so there the key editor's
+	// destructor sends the note off; the editor window's check can't hold that.
+	Fixture f({1024, 600}, "instrument");
+	f.app.setDpRatio(1.0F);
+	f.probe();
+	f.app.call("editor.close", {{"editor", "window"}});
+	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().editorWindow() == nullptr; }));
+	f.app.appUi().showProject();
+	ui::Docking& docking = f.app.appUi().docking();
+	const auto keyEditor = [&]() -> ui::KeyEditor*
+	{
+		ui::MidiEditor* editor = f.app.appUi().lowerZoneEditor();
+		return editor != nullptr ? editor->keyEditor() : nullptr;
+	};
+	// The part in the lower zone's editor, the Editor panel in a window of its own and C3 held on its keyboard. The
+	// panel's key editor is new each time: the editor view is opened again, as the panel going closes it.
+	const auto floatAndPress = [&]
+	{
+		docking.setFloating("editor", true);
+		f.app.shell().step(std::chrono::milliseconds(0));
+		REQUIRE(docking.windowOf("editor") != nullptr);
+		f.window = docking.windowOf("editor")->id();
+		f.app.call("editor.open", {{"editor", "lower"}, {"parts", Json::array({f.part})}});
+		REQUIRE(f.app.waitUntil([&] { return keyEditor() != nullptr; }));
+		REQUIRE(f.app.waitUntil([&] { return f.elements(".key-editor-keys").size() == 1; }));
+		REQUIRE(f.app.waitUntil([&] { return keyEditor() != nullptr && keyEditor()->scrollToPitch(60); }));
+		f.app.shell().step(std::chrono::milliseconds(0));
+		const Json keyboard = f.box(".key-editor-keys");
+		f.app.ui().press(f.window, f.key(keyboard.at("x").get<int>() + 2, 60), ui::MouseButton::Left, {});
+		f.app.shell().step(std::chrono::milliseconds(0));
+		CHECK(f.plays({{0x90, 60, 100}}));
+	};
+
+	// The panel's window closed, as its close button does: the panel is docked again by the shell's close request.
+	floatAndPress();
+	f.app.ui().close(f.window, false);
+	REQUIRE(f.app.waitUntil([&] { return docking.windowOf("editor") == nullptr; }));
+	CHECK(f.plays({{0x90, 60, 100}, {0x80, 60, 0}}));
+
+	// The panel docked again, as the window's Dock button does.
+	f.clearSound();
+	floatAndPress();
+	docking.setFloating("editor", false);
+	REQUIRE(f.app.waitUntil([&] { return docking.windowOf("editor") == nullptr; }));
+	CHECK(f.plays({{0x90, 60, 100}, {0x80, 60, 0}}));
 }
 
 TEST_CASE("the object selection tool selects, moves, resizes, inserts and deletes notes", "[ui]")

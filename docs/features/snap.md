@@ -75,15 +75,15 @@ the project start. The sample grids count from the project start, as the samples
   the audio when the event is resized or split; a snap point outside the event counts as none. `event.setSnapPoint`
   sets them at a position, by default the project cursor (Snap Point to Cursor). Moving an audio event snaps its snap
   point instead of its start, and snap points attract with `events`.
-- **Shuffle** (`event.shuffle`, p. 106): adjoining events on one track go where the position puts them among the
-  events that adjoin them, after each one whose middle the position is past; the others close up and make room, so the
-  row keeps its start and has no gaps. Locked events end the row. Each event goes after the one before at its length
-  where it goes: audio events keep their length in samples, so on a musical track their length in ticks is worked out
-  at their new start, and the row has no gaps or overlaps across tempo changes (#414). The middle the position is
-  compared with is measured at that length where the event goes, not at the length at its old position.
-  A row keeps its start, and it keeps its end when its events all keep their length in the same unit: audio events
-  alone (samples) or parts alone (ticks). A row of both can end somewhere else after a shuffle across a tempo change,
-  and can then overlap a locked event behind it; that overlap is the row's new layout, not an error (#873).
+- **Shuffle** (`event.shuffle`, p. 106): adjoining events on one track go where the position puts them among the events
+  that adjoin them, after each one whose middle the position is past; the others close up and make room, so the row
+  keeps its start and has no gaps. Locked events end the row. Each event goes after the one before at its length where
+  it goes: audio events keep their length in samples, so on a musical track their length in ticks is worked out at their
+  new start, and the row has no gaps or overlaps across tempo changes (#414). The middle the position is compared with
+  is measured at that length where the event goes, not at the length at its old position. A row keeps its start, and it
+  keeps its end when its events all keep their length in the same unit: audio events alone (samples) or parts alone
+  (ticks). A row of both can end somewhere else after a shuffle across a tempo change, and can then overlap a locked
+  event behind it; that overlap is the row's new layout, not an error (#873).
 - **Snap to zero crossing** (p. 105): `event.split` and normal sizing in `event.resize` with `zeroCrossing` move an
   audio event's cut to the nearest frame within 50 ms where the sum of its channels changes sign, the one of the two
   nearer to zero. A split only looks inside the event, and only at events the position cuts. The file is read on the
@@ -147,16 +147,16 @@ Not yet: grid lines and snap point lines in the event display, the editors' own 
   with what `snap.get` returned, and a `grid` read when the format's entry is unusable; damaged entries left out; the
   frame grids at the project's frame rate, with pull-down, and user frames at 30 fps; a new project time format
   switching the snap format, also on undo and redo, and a format set after it staying; snap points set and refused;
-  shuffling forwards, backwards, to the end and to the front, its errors and a locked neighbour, audio events on a
-  musical track across a tempo change, the middle decision at the length where an event goes, and a row of an audio
-  part and audio events whose end moves across a tempo change, overlapping a locked event; splitting and resizing at
-  zero crossings of a real file, not when sizing moves
-  the contents or the file is missing; a split near an event's start still splits it, and one just outside an event
-  leaves it alone; `snap.zeroCrossings` inside an event, outside it and on tracks without audio, and following the
-  event in front, not a muted one, nor one outside its part or in a muted part; a position moving only to where that
-  event plays, not past its part's end, under an event in front of it, nor between two such events; of the two
-  overlapping pieces of a split event the one playback plays in front, in the overlap and just before it; a
-  position kept strictly inside a part whose start a file at another sample rate rounds a crossing onto.
+shuffling forwards, backwards, to the end and to the front, its errors and a locked neighbour, audio events on a musical
+  track across a tempo change, the middle decision at the length where an event goes, and a row of an audio part and
+  audio events whose end moves across a tempo change, overlapping a locked event; splitting and resizing at zero
+  crossings of a real file, not when sizing moves the contents or the file is missing; a split near an event's start
+  still splits it, and one just outside an event leaves it alone; `snap.zeroCrossings` inside an event, outside it and
+  on tracks without audio, and following the event in front, not a muted one, nor one outside its part or in a muted
+  part; a position moving only to where that event plays, not past its part's end, under an event in front of it, nor
+  between two such events; of the two overlapping pieces of a split event the one playback plays in front, in the
+  overlap and just before it; a position kept strictly inside a part whose start a file at another sample rate rounds a
+  crossing onto.
 - `tests/eventediting_tests.cpp` (fake window system, real engine): with snap on, a drag, a resize and an Alt click land
   on bars, shuffle swaps two parts, events, a position marker and the cursor attract, a position marker and a cycle
   marker's end on a linear marker track that isn't active attract a drag where `snap.position` puts it, a snap point set

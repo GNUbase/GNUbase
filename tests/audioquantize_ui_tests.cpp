@@ -3,6 +3,7 @@
 // drive it: Edit > Quantize and Reset Quantize on the project window's selected audio events, Warp Quantize On/Off in
 // the quantize panel and the toolbar, and the panel's section for several audio tracks: Slice, Create and Crossfade.
 // tests/audioquantize_tests.cpp checks the engine's side.
+#include "platform/log.h"
 #include "ui/eventdisplay.h"
 #include "ui/keycommands.h"
 #include "uiapp.h"
@@ -194,6 +195,22 @@ TEST_CASE("the quantize panel slices, quantizes and crossfades several audio tra
 			return std::count_if(now.at("audioEvents").begin(), now.at("audioEvents").end(),
 					   [](const Json& event) { return event.at("crossfade").is_object(); }) == 6;
 		}));
+}
+
+TEST_CASE("a refused Slice in the quantize panel is logged", "[ui]")
+{
+	const test::TempDir folder;
+	const std::filesystem::path file = folder.path() / "quantize.log";
+	const logging::Session log(file);
+	Fixture f;
+	for (const uint64_t clip : f.clips)
+		f.app.call("clip.setHitpoints", {{"clip", clip}, {"hitpoints", Json::array()}});
+	f.display.select(f.events);
+	f.openPanel();
+	f.click("#quantize-slice");
+	REQUIRE(f.app.waitUntil(
+		[&] { return test::readText(file).find("Slicing audio events failed:") != std::string::npos; }));
+	CHECK(test::readText(file).find("the events have no hitpoints that count") != std::string::npos);
 }
 
 TEST_CASE("the quantize panel slices audio parts and quantizes and crossfades every slice in them", "[ui]")

@@ -8,6 +8,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -617,4 +618,39 @@ TEST_CASE("a duplicated track's takes come in front, keeping their order in the 
 	}
 	CHECK(secondPlace > 0);
 	CHECK(firstPlace > secondPlace);
+}
+
+TEST_CASE("a muted take in front silences what lies behind it only with editing.treatMutedAudioLikeDeleted off",
+	"[integration]")
+{
+	const gnubase::test::TempDir dir;
+	Fixture f;
+	f.call("audio.setDevice", {{"blockSize", 64}, {"inputChannels", 0}, {"captureSeconds", 1}});
+	gnubase::test::Audio audio;
+	audio.sampleRate = 48000;
+	for (int64_t frame = 0; frame < 5000; ++frame)
+		audio.samples.push_back(ramp(frame));
+	const std::filesystem::path file = dir.path() / "ramp.wav";
+	gnubase::test::writeWav(file, audio);
+	const Json media = f.call("media.add", {{"path", file.u8string()}}).at("media");
+	const auto clip = f.call("clip.add", {{"media", media.at("id")}}).at("clip").at("id").get<int64_t>();
+	const int64_t track = f.track("audio");
+	// Two takes over the same place: the second, added last, is in front. Mute it.
+	f.take(track, clip, 0, 1000, 0);
+	const int64_t front = f.take(track, clip, 2000, 1000, 1);
+	f.call("event.set", {{"events", {front}}, {"mute", true}});
+
+	// The default treats the muted take as deleted, so the take behind it plays.
+	const std::vector<float> behind = f.render(1000);
+	Fixture::check(behind, [](int64_t position) { return position; });
+
+	// With the preference off (reference manual p. 228), the muted take keeps its place and silences the one behind.
+	f.call("settings.set", {{"key", "editing.treatMutedAudioLikeDeleted"}, {"value", false}});
+	const std::vector<float> silenced = f.render(1000);
+	CHECK(std::all_of(silenced.begin(), silenced.end(), [](float sample) { return sample == 0.0f; }));
+	CHECK(silenced != behind);
+
+	// And back on, the take behind plays again.
+	f.call("settings.set", {{"key", "editing.treatMutedAudioLikeDeleted"}, {"value", true}});
+	Fixture::check(f.render(1000), [](int64_t position) { return position; });
 }
