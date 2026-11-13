@@ -433,10 +433,6 @@ namespace gnubase::engine
 		time::Samples target = 0;
 	};
 
-	// How a clip's audio is warped in real time (#144, docs/features/warp.md). Its definition is its tempo (BPM of
-	// quarter notes; 0 until one is set or musical mode is turned on), beats per bar, the clip frame of its first beat
-	// and the beats edited from there. In musical mode its beats follow the project's tempo. Its warp markers move
-	// sections of its audio in time. preset is the time stretch algorithm (dsp::stretchPresetNames()).
 	// The warp markers a clip had before warp quantizing (#145) first changed them, and what it made of them.
 	// While the clip still has those, quantizing starts from the original ones and resetting puts them back.
 	struct WarpQuantizeOrigin
@@ -445,6 +441,10 @@ namespace gnubase::engine
 		std::vector<WarpMarker> quantized;
 	};
 
+	// How a clip's audio is warped in real time (#144, docs/features/warp.md). Its definition is its tempo (BPM of
+	// quarter notes; 0 until one is set or musical mode is turned on), beats per bar, the clip frame of its first beat
+	// and the beats edited from there. In musical mode its beats follow the project's tempo. Its warp markers move
+	// sections of its audio in time. preset is the time stretch algorithm (dsp::stretchPresetNames()).
 	struct ClipWarp
 	{
 		bool musical = false;
@@ -496,13 +496,14 @@ namespace gnubase::engine
 		double curve = 0.0;
 	};
 
-	// Plays a section of a clip on an audio track.
+	// An audio event's original and quantized starts (#145), while its quantized position has not been changed again.
 	struct EventQuantizeOrigin
 	{
 		time::Position original;
 		time::Position quantized;
 	};
 
+	// Plays a section of a clip on an audio track.
 	struct AudioEvent
 	{
 		ObjectId id = 0;
