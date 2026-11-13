@@ -410,6 +410,38 @@ TEST_CASE("in the default theme a full-scale waveform stays inside its event's b
 	CHECK(top(wave, line[3]) < top(lanes, body[3]));
 }
 
+TEST_CASE("in the default theme selected events are lit over their tint, in their events' boxes", "[unit]")
+{
+	// #1312: the selection overlay is translucent, so the event's own color shows through, and inset as the events.
+	OneWindow fixture;
+	std::ifstream file(std::filesystem::path(GNUBASE_RESOURCES_DIR) / "themes" / "gnubase" / "theme.rcss");
+	REQUIRE(file);
+	const std::string theme{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+	fixture.ui.shell.setTheme("gnubase");
+	fixture.show(theme + " event-lanes { position: absolute; left: 0; top: 0; width: 4dp; height: 40dp; }",
+		R"(<div class="event-display"><div class="event-area"><event-lanes id="events" class="events" scale="100"/>)"
+		R"(<event-lanes id="selected" class="selected-events" scale="100"/></div></div>)");
+	ui::TimeSpan event{0.0, 400.0};
+	event.color = 0x00ff00ffU;
+	fixture.element<ui::EventLanes>("events").setLanes({{40.0F, {event}}});
+	fixture.element<ui::EventLanes>("selected").setLanes({{40.0F, {{0.0, 400.0}}}}); // the overlay has no color
+	const std::vector<Rml::Vertex> vertices = fixture.draw();
+
+	// The event's body in its color at the theme's opacity, inside its outline 2 off the lane's edges.
+	const std::vector<float> body = extent(vertices, Colour{0, 115, 0, 115});
+	REQUIRE(body[1] < body[3]);
+	// The overlay: translucent white in the same box, outlined in the text color where the event is.
+	std::vector<Rml::Vertex> light;
+	std::copy_if(vertices.begin(), vertices.end(), std::back_inserter(light),
+		[](const Rml::Vertex& v) { return v.colour.alpha == 0x29; });
+	REQUIRE(!light.empty());
+	const Colour lit = light.front().colour;
+	CHECK(extent(vertices, lit) == body);
+	const std::vector<float> ring = extent(vertices, Colour{241, 244, 255, 255});
+	CHECK(ring[1] == body[1] - 1.0F);
+	CHECK(ring[3] == body[3] + 1.0F);
+}
+
 TEST_CASE("a curve builds only the segments around the view", "[unit]")
 {
 	OneWindow fixture;

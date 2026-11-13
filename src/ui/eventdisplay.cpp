@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <optional>
@@ -496,15 +497,22 @@ namespace gnubase::ui
 			}
 			m_end = std::max(m_end, end);
 		};
-		// Audio parts (#471) show as parts; their events only as the waveforms within them.
-		std::map<uint64_t, std::pair<double, double>> audioParts;
+		// Audio parts (#471) show as parts; their events only as the waveforms within them, in the part's color
+		// (#1312).
+		struct AudioPart
+		{
+			double start = 0.0;
+			double end = 0.0;
+			uint32_t color = 0;
+		};
+		std::map<uint64_t, AudioPart> audioParts;
 		for (const Json& part : project.at("audioParts"))
 		{
 			const auto track = part.at("track").get<uint64_t>();
 			const auto position = part.at("position").get<int64_t>();
 			const double start = seconds(position, linear[track]);
 			const double end = seconds(position + part.at("length").get<int64_t>(), linear[track]);
-			audioParts[part.at("id").get<uint64_t>()] = {start, end};
+			audioParts[part.at("id").get<uint64_t>()] = {start, end, colorOf(part)};
 			addEvent(part, start, end);
 		}
 		std::vector<EventWaveforms::Event> waves;
@@ -546,13 +554,14 @@ namespace gnubase::ui
 				played != event.end() && length > 0.0 ? event.at("length").get<double>() / length : rate;
 			if (const auto part = audioParts.find(event.value("part", uint64_t{0})); part != audioParts.end())
 			{
-				const double from = std::max(start, part->second.first);
-				const double to = std::min(start + length, part->second.second);
+				const double from = std::max(start, part->second.start);
+				const double to = std::min(start + length, part->second.end);
 				if (file != media.end() && rate > 0.0 && lanes.count(track) != 0 && to > from)
-					waves.push_back({event.at("id").get<uint64_t>(), lanes[track], {from, to - from, colorOf(event)},
-						file->first, waveRate, file->second->at("channels").get<int>(),
-						event.at("offset").get<int64_t>() +
-							static_cast<int64_t>(std::llround((from - start) * waveRate))});
+					waves.push_back(
+						{event.at("id").get<uint64_t>(), lanes[track], {from, to - from, part->second.color},
+							file->first, waveRate, file->second->at("channels").get<int>(),
+							event.at("offset").get<int64_t>() +
+								static_cast<int64_t>(std::llround((from - start) * waveRate))});
 				continue;
 			}
 			addEvent(event, start, start + length, false);
