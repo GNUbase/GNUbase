@@ -1,5 +1,6 @@
 {
   "theme": "high-contrast",
+  "displayName": "High Contrast",
   "units": "dp",
   "assets": {
     "dialog": {

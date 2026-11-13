@@ -677,9 +677,16 @@ namespace gnubase::app
 			"Opens the preferences dialog, which shows and changes the user's preferences, page by page, and their "
 			"presets.",
 			[this](ui::Window& window, Rml::Element* /*zone*/) { openPreferences(window); }});
-		// For the preferences dialog: the themes there are, and the tool modifiers that ui.toolModifiers overrides.
-		m_lua.addFunction(
-			"ui.themes", [this](const engine::Json&) { return engine::Json{{"themes", m_themes.names()}}; });
+		// For the preferences dialog: the themes there are, each with the name the UI shows for it, and the tool
+		// modifiers that ui.toolModifiers overrides.
+		m_lua.addFunction("ui.themes",
+			[this](const engine::Json&)
+			{
+				engine::Json themes = engine::Json::array();
+				for (const ui::Theme& theme : m_themes.themes())
+					themes.push_back({{"id", theme.id}, {"name", theme.name}});
+				return engine::Json{{"themes", std::move(themes)}};
+			});
 		m_lua.addFunction("ui.toolModifierDefaults",
 			[](const engine::Json&) { return engine::Json{{"modifiers", ui::EventDisplay::defaultToolModifiers()}}; });
 		// For the add track dialog's Time Offset: a position typed in a time format, as position displays show it in
