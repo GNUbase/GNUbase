@@ -406,6 +406,8 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".list-item:hover, listitem:hover, listview tbody tr:hover", {"decorator": skin("list-item-hover")}),
         (".list-item.selected, listitem.selected, listview tr.selected, select selectbox option:checked",
          {"decorator": skin("list-item-selected")}),
+        # The row of the arranger chain step or event that is playing (docs/features/arranger.md)
+        (".arranger-row.current", {"decorator": skin("list-item-selected")}),
         ("listview thead td.sorted", {"color": c["accent"]}),
         # Tabs
         ("tabset tabs", {"decorator": skin("tabbar")}),

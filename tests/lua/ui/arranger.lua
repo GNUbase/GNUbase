@@ -77,3 +77,51 @@ test.case("the arranger editor builds a chain from the events and plays its step
 	pcall(ui.wait, {selector = "#no-such-element", seconds = 0.1})
 	test.equal(arrangerWindow(), nil)
 end)
+
+test.case("the editor disables its step buttons outside arranger mode and shows every locate arrow", function()
+	test.cleanup(function()
+		if #ui.windows().windows > 1 then ui.command{command = "window.arranger"} end
+	end)
+	gnubase.track.add{type = "arranger", timeBase = "linear"}
+	local a = gnubase.arranger.add{position = 0, ["end"] = 48000}.event
+	local b = gnubase.arranger.add{position = 48000, ["end"] = 96000}.event
+	gnubase.arranger.setChain{steps = {{event = b.id}, {event = a.id}}} -- two steps, but arranger mode stays off
+	ui.command{command = "window.arranger"}
+	local window = openedWindow()
+	test.ok(window)
+	ui.wait{window = window, selector = "#step-1"}
+
+	-- A toolbar button's disabled state, polled until it settles: a refresh that follows an engine event lands a UI
+	-- step later. Reading the attribute through ui.dom doesn't need the button to be unclipped in the narrow window.
+	local function disabled(id, want)
+		for _ = 1, 50 do
+			local element = ui.dom{window = window, selector = "#" .. id}.elements[1]
+			local isDisabled = element ~= nil and element.attributes ~= nil and element.attributes.disabled ~= nil
+			if isDisabled == want then return true end
+			pcall(ui.wait, {window = window, selector = "#no-such-element", seconds = 0.05})
+		end
+		return false
+	end
+
+	-- Outside arranger mode the chain step buttons call arranger.goToStep, which refuses: they are disabled (#880).
+	for _, id in ipairs({"first-step", "previous-step", "next-step", "first-repeat", "last-repeat"}) do
+		test.ok(disabled(id, true), id .. " is disabled outside arranger mode")
+	end
+	-- The locate arrow shows on every row, not just the one playing, so each row's locate button is a real target (#880).
+	for _, row in ipairs({"#step-0", "#step-1"}) do
+		local arrow = ui.dom{window = window, selector = row .. " .locate-arrow"}.elements[1]
+		test.ok(arrow ~= nil and arrow.visible, "the locate arrow shows on " .. row)
+	end
+
+	-- Arranger mode on: the step buttons that only need a chain work again.
+	ui.click{window = window, selector = "#arranger-mode"}
+	ui.wait{window = window, selector = "#arranger-mode.checked"}
+	for _, id in ipairs({"first-step", "previous-step", "next-step"}) do
+		test.ok(disabled(id, false), id .. " works in arranger mode")
+	end
+	-- First and Last Repeat also need a step of the chain playing: goToStep puts one there, and then they work.
+	gnubase.arranger.goToStep{step = 0}
+	ui.wait{window = window, selector = "#step-0.current"}
+	test.ok(disabled("first-repeat", false), "first-repeat works with a step playing")
+	test.ok(disabled("last-repeat", false), "last-repeat works with a step playing")
+end)

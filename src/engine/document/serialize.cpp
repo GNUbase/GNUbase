@@ -1617,7 +1617,7 @@ namespace gnubase::engine
 					const auto mode = indexOf(g_arrangerRepeatModes, step.value("mode", std::string("normal")));
 					const auto event = step.at("event").get<ObjectId>();
 					if (events.count(event) != 0)
-						chain.steps.push_back({event, std::max(1, step.value("repeats", 1)),
+						chain.steps.push_back({event, std::clamp(step.value("repeats", 1), 1, 999),
 							static_cast<ArrangerRepeat>(mode.value_or(0))});
 				}
 				project.arranger.chains.push_back(std::move(chain));
