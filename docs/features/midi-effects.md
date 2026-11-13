@@ -17,7 +17,7 @@ The MIDI insert and send slots of MIDI and instrument tracks, and GNUbase's buil
 
 ## Not yet
 
-The effects through the plugin API (`BuiltinPlugin` leaves them out of `builtin:` plugins, #1144); sends to MIDI output ports, which MIDI tracks don't play to yet ([midi-devices.md](midi-devices.md)); more effects and an arpeggiator that follows the bars instead of its first note.
+The effects through the plugin API (`BuiltinPlugin` leaves them out of `builtin:` plugins, #1380); sends to MIDI output ports, which MIDI tracks don't play to yet ([midi-devices.md](midi-devices.md)); more effects and an arpeggiator that follows the bars instead of its first note.
 
 ## Checks
 
