@@ -2709,7 +2709,15 @@ namespace gnubase::engine
 	{
 		if (on && m_transport.countingIn())
 			return; // already on its way
-		sent(m_transport.record(on, on && !m_transport.playing() ? cueCountIn() : graph::CountIn{}));
+		graph::CountIn countIn;
+		if (on && !m_transport.playing())
+		{
+			countIn = cueCountIn();
+			// Playback that starts at once waits for the samplers' samples, as with play; a count-in doesn't (#1200).
+			if (m_device && countIn.length == 0)
+				waitForSamples(g_startWait);
+		}
+		sent(m_transport.record(on, countIn));
 	}
 
 	void AudioEngine::setTransportSettings(const TransportSettings& settings)
