@@ -344,11 +344,8 @@ namespace gnubase::ui
 	{
 		window.m_context->Update();
 		bool again = false;
-		for (size_t i = 0; i < m_afterUpdate.size(); ++i) // a task may add tasks
-		{
-			const std::function<bool(Window&)> task = m_afterUpdate[i];
+		for (const std::function<bool(Window&)>& task : m_afterUpdate)
 			again = task(window) || again;
-		}
 		if (again)
 			window.m_context->Update();
 	}

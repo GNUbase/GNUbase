@@ -67,9 +67,9 @@ namespace gnubase::ui
 	//                                 sections before its .spacer that don't fit in its width get the state class
 	//                                 .no-room, the last first, and show again once it has room for them. Its style
 	//                                 must keep the widths they need, so they stay laid out, out of the flow
-	//   fit="spare"                   an element in a section of a fit="room" container that the section gives up
-	//                                 before it goes itself, its last one first: it gets .no-room while the section
-	//                                 has room only without it, and its style keeps its width the same way
+	//   fit="spare"                   an element in a section of a fit="room" container that goes before any
+	//                                 section does, the last one first: it gets .no-room while the sections fit only
+	//                                 without it, and its style keeps its width the same way
 	//   setup="channel"               a setup pane's list of the set's sections, which the docking system fills with a
 	//                                 toggle button per section (setup-section="eq"); a button dragged onto another
 	//                                 moves its section there

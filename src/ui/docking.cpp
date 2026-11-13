@@ -421,26 +421,32 @@ namespace gnubase::ui
 					setNoRoom(*spare, false);
 			}
 		}
-		// The last go first: a section shows while it and those before it fit, within rounding. Before it goes, it
-		// gives up its spare parts, its last one first, and those after it have no room then either, as if each part
-		// were the section's own end.
+		// The sections' spare parts go first, the last one first, until the sections fit; a part without room is out of
+		// its section's flow, so not in its width.
+		std::vector<std::pair<Rml::Element*, Rml::Element*>> spares; // each with its section
+		for (Rml::Element* section : sections)
+			for (Rml::Element* spare : elements(*section, "[fit=spare]"))
+			{
+				spares.emplace_back(spare, section);
+				if (spare->IsClassSet("no-room"))
+					room -= width(*spare);
+			}
+		float need = 0.0F;
+		for (Rml::Element* section : sections)
+			need += width(*section);
+		size_t given = 0;
+		for (; need - room >= 0.01F && given < spares.size(); ++given)
+			room += width(*spares[spares.size() - 1 - given].first);
+		// Then the last sections go first: a section shows while it and those before it fit, within rounding.
 		bool fits = true;
 		for (Rml::Element* section : sections)
 		{
-			const std::vector<Rml::Element*> spares = elements(*section, "[fit=spare]");
 			room -= width(*section);
-			for (Rml::Element* spare : spares)
-				if (spare->IsClassSet("no-room"))
-					room -= width(*spare); // out of the section's flow, so not in its width
-			size_t given = 0;
-			while (fits && room <= -0.01F && given < spares.size())
-				room += width(*spares[spares.size() - ++given]);
-			const bool shows = fits && room > -0.01F;
-			setNoRoom(*section, !shows);
-			for (size_t i = 0; i < spares.size(); ++i)
-				setNoRoom(*spares[i], shows && i + given >= spares.size());
-			fits = shows && given == 0;
+			fits = fits && room > -0.01F;
+			setNoRoom(*section, !fits);
 		}
+		for (size_t i = 0; i < spares.size(); ++i) // shown with a section without room, for when it shows again
+			setNoRoom(*spares[i].first, i + given >= spares.size() && !spares[i].second->IsClassSet("no-room"));
 		return changed;
 	}
 

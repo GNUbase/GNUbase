@@ -117,9 +117,9 @@ and hidden sections (Reset All, p. 1576), and the presets (p. 1575) save and rec
   takes a section with `.no-room` out of the flow and doesn't show it (`resources/styles/base.rcss`), but lays it out,
   so its width, with its labels as they are now, says when it fits again. The section after the spacer always shows.
   So the room, not a fixed width, decides: at another UI scale, with wider labels such as the snap type Events + Grid
-  + Cursor, and after the setup pane hid sections. A section's parts with `fit="spare"`, such as the quantize
-  section's Warp Quantize On/Off ([audio-quantize.md](audio-quantize.md)), go before the section does, its last one
-  first: they get `.no-room` while the section fits only without them, and the style keeps their width the same
+  + Cursor, and after the setup pane hid sections. Parts of sections with `fit="spare"`, such as the quantize
+  section's Warp Quantize On/Off ([audio-quantize.md](audio-quantize.md)), go before any section does, the last one
+  first: they get `.no-room` while the shown sections fit only without them, and the style keeps their width the same
   way. If the room changed the classes, the shell lays the window out again before drawing it, so it draws no frame
   with sections over each other, and fitting costs no layout of its own: it reads the widths of the layout the
   draw makes anyway, and windows that don't draw aren't fitted.
@@ -265,6 +265,6 @@ window at 0.9316, 0.8 and 0.7 (about 560 to 1463 dp, with 1099.2 dp between whol
 the shown sections come first and the next one wouldn't fit, no button covers the next, the gaps stay the same, the
 last section ends as far from the right edge as the first button starts from the left one, and a wider window shows
 the sections again; with the snap and grid types' longest names fewer sections show, and sections hidden in the setup
-pane make room for the next one. As the window narrows, the quantize section gives up Warp Quantize On/Off before it
-goes, after the sections behind it. `tests/shell_tests.cpp` checks that the shell lays a window out again before drawing
+pane make room for the next one. As the window narrows, Warp Quantize On/Off goes before any section, and it stays gone
+while the quantize section shows. `tests/shell_tests.cpp` checks that the shell lays a window out again before drawing
 it when the fit changed it, and fits only windows it draws.

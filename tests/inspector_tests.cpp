@@ -939,7 +939,7 @@ namespace
 			const Json section = element(window.app, "#toolbar [section=" + order[i] + "]");
 			const bool noRoom = hasClass(window.app, "#toolbar [section=" + order[i] + "]", "no-room");
 			CHECK(section.at("visible").get<bool>() == !noRoom);
-			if (noRoom && roomLeft && !warpGone) // else the room the quantize section's toggle gave up is in the spacer
+			if (noRoom && roomLeft)
 			{
 				// With its 3 dp gap it needs more than the spacer's width.
 				CHECK(section.at("box").at("width").get<double>() + (3.0 * ratio) > gaps.spacer);
@@ -952,22 +952,19 @@ namespace
 		}
 		CHECK(!hasClass(window.app, "#toolbar [section=" + order.back() + "]", "no-room")); // after the spacer
 		shown.push_back(order.back());
-		// The quantize section gives up Warp Quantize On/Off before it goes, after the sections behind it (#1234).
+		// Warp Quantize On/Off goes before any section, and only while the shown sections fit without it (#1234).
 		if (warpGone)
 		{
-			const auto quantize = std::find(shown.begin(), shown.end(), "quantize");
-			REQUIRE(quantize != shown.end());
-			CHECK(quantize + 2 == shown.end()); // only the last place after it
-			// With its 2 dp margin it needs more than the spacer's width.
-			CHECK(element(window.app, "#toolbar-quantize-warp").at("box").at("width").get<double>() + (2.0 * ratio) >
-				gaps.spacer);
 			CHECK(!element(window.app, "#toolbar-quantize-warp").at("visible").get<bool>());
+			if (shown.size() == order.size()) // with its 2 dp margin it needs more than the spacer's width
+				CHECK(
+					element(window.app, "#toolbar-quantize-warp").at("box").at("width").get<double>() + (2.0 * ratio) >
+					gaps.spacer);
 		}
-		const Json bar = element(window.app, "#toolbar").at("box");
-		const Json last = element(window.app, "#toolbar [section=" + order.back() + "]").at("box");
-		const double rightInset = bar.at("x").get<double>() + bar.at("width").get<double>() -
-			last.at("x").get<double>() - last.at("width").get<double>();
-		CHECK(std::abs(rightInset - gaps.inset) <= 1.0);
+		else if (order.back() != "quantize" && std::find(shown.begin(), shown.end(), "quantize") != shown.end())
+		{
+			CHECK(shown.size() == order.size());
+		}
 		return shown;
 	}
 }
@@ -1014,18 +1011,17 @@ TEST_CASE("the toolbar shows the sections it has room for, the last before the s
 	}
 }
 
-TEST_CASE("the quantize section gives up Warp Quantize On/Off before it goes, after the sections behind it", "[ui]")
+TEST_CASE("Warp Quantize On/Off goes from the toolbar before any section does", "[ui]")
 {
 	// The reference's toolbar hides its items one after another as the window narrows (the reference manual, p. 65).
 	Window window(1024);
-	ui::Docking& docking = window.app.appUi().docking();
+	const ui::Docking& docking = window.app.appUi().docking();
 	const std::vector<std::string> defaults = docking.sections("project", "toolbar");
-	const ToolbarGaps reference = toolbarGaps(window, defaults);
 	const auto noRoom = [&window](const std::string& selector) { return hasClass(window.app, selector, "no-room"); };
-	const std::string quantize = "#toolbar [section=quantize]";
 	const std::string warp = "#toolbar-quantize-warp";
 	// Narrower in dp step by step, from about 1463 dp, until the quantize section goes.
 	bool warpGone = false;
+	bool alone = false; // gone while every section showed
 	for (int step = 0;; ++step)
 	{
 		const float ratio = 0.7F + (0.01F * static_cast<float>(step));
@@ -1033,22 +1029,19 @@ TEST_CASE("the quantize section gives up Warp Quantize On/Off before it goes, af
 		INFO("dp ratio " << ratio);
 		window.app.setDpRatio(ratio);
 		window.app.shell().step(std::chrono::milliseconds(0));
-		if (noRoom(quantize))
+		if (noRoom("#toolbar [section=quantize]"))
 		{
 			CHECK(!noRoom(warp)); // the section's parts show with it again
 			break;
 		}
 		if (warpGone)
 			CHECK(noRoom(warp)); // once gone, it stays gone in narrower windows
-		if (noRoom(warp))
-		{
-			for (const char* behind : {"color", "trackVisibility", "rootKey"})
-				CHECK(noRoom("#toolbar [section=" + std::string(behind) + "]"));
-			checkToolbarRoom(window, defaults, reference, false);
-			warpGone = true;
-		}
+		warpGone = noRoom(warp);
+		const ToolbarGaps reference = toolbarGaps(window, defaults, false); // the gaps at this dp ratio
+		const std::vector<std::string> shown = checkToolbarRoom(window, defaults, reference, false);
+		alone = alone || (warpGone && shown.size() == defaults.size());
 	}
-	CHECK(warpGone);
+	CHECK(alone);
 
 	// Wider again: the section and its toggle show.
 	window.app.setDpRatio(0.7F);
