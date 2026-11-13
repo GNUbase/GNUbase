@@ -882,6 +882,19 @@ namespace gnubase::engine::midi
 				globalAt(project, other, at);
 		}
 
+		// The root key and Global Transpose setting (#954) of a part made from source parts: the one they all share,
+		// so that playback transposes the notes as it did, or else the project root key and follow, which each note's
+		// difference to it goes into, so that it keeps the pitch it played with. Without sources, no root key.
+		GlobalSetting sharedSetting(const Project& project, const std::vector<const MidiPart*>& sources)
+		{
+			if (sources.empty())
+				return {};
+			const GlobalSetting front{sources.front()->rootKey, sources.front()->independent};
+			const bool shared = std::all_of(sources.begin(), sources.end(),
+				[&](const MidiPart* part) { return GlobalSetting{part->rootKey, part->independent} == front; });
+			return shared ? front : GlobalSetting{project.rootKey, false};
+		}
+
 		// A part to bounce, and what of its transpose, Global Transpose and velocity goes into its notes.
 		struct Bounced
 		{
@@ -1036,8 +1049,19 @@ namespace gnubase::engine::midi
 		const Ticks end = project.tempo.toTicks(settings.end, project.sampleRate);
 		const std::vector<ObjectId> tracks = settings.tracks.empty() ? playingTracks(project) : settings.tracks;
 
-		// What plays in the range, in project ticks, and the last value of every controller before it.
-		std::vector<Note> notes;
+		// What plays in the range, in project ticks, and the last value of every controller before it. A note waits
+		// as a candidate until the new part's root key and Global Transpose setting is known, which the parts its
+		// notes come from decide (#954): the global transposition's difference goes through modifyNote like the rest.
+		struct Candidate
+		{
+			Note note;           // as its track plays it, at its place in the project
+			uint64_t seed;       // its part's and its own id, as playback draws them
+			Modifiers modifiers; // its track's and part's, without the global transposition
+			const MidiPart* source;
+			Ticks sourceAt;   // where it is stored in its part, as playback sees the global transposition there
+			uint8_t ownPitch; // the pitch it is stored with, which a destination's map prefers
+		};
+		std::vector<Candidate> candidates;
 		std::vector<Controller> controllers;
 		std::vector<Controller> resets; // where parts start in the range: they play from the default slot
 		std::map<LaneKey, Controller> chased;
@@ -1045,16 +1069,6 @@ namespace gnubase::engine::midi
 		const TrackPitches destinationPitches(project, settings.destination); // a new track maps nothing
 		const auto merged = [&](const MidiPart& part)
 		{ return !part.mute && std::find(tracks.begin(), tracks.end(), part.track) != tracks.end(); };
-		// The new part has the root key and Global Transpose setting of the first part that plays in the range; for
-		// the others, the difference in global transpose goes into the notes.
-		const MidiPart* first = nullptr;
-		for (const auto& [id, part] : project.midiParts)
-			if (merged(part) && sampleOf(partStart(project, part)) < settings.end &&
-				sampleOf(partEnd(project, part)) > settings.start &&
-				(first == nullptr || partStart(project, part) < partStart(project, *first)))
-				first = &part;
-		const GlobalSetting main =
-			first != nullptr ? GlobalSetting{first->rootKey, first->independent} : GlobalSetting();
 		for (const auto& [id, part] : project.midiParts)
 		{
 			if (!merged(part))
@@ -1104,34 +1118,10 @@ namespace gnubase::engine::midi
 				const Ticks at = partFrom + std::max({moved, Ticks{0}, -partFrom});
 				if (at >= partTo || !inRange(at))
 					continue;
-				const int global = globalAt(project, {part.rootKey, part.independent}, partFrom + note.position);
-				const int newGlobal = globalAt(project, main, at);
-				Modifiers transposed = modifiers;
-				if (settings.includeInserts)
-				{
-					// With its global transpose before the modifiers' note ranges, as playback adds it, then less the
-					// new part's where it lands: the new part can't play a pitch that this takes beyond 0-127.
-					transposed.transpose += global;
-					if (!modifyNote(transposed, seed, copy.pitch, copy.velocity))
-						continue;
-					const int pitch = copy.pitch - newGlobal;
-					if (pitch < 0 || pitch > 127)
-						continue;
-					copy.pitch = static_cast<uint8_t>(pitch);
-				}
-				else
-				{
-					// The track's modifiers stay on the track and play after the stored pitch, so nothing lies between
-					// the two global transposes: only their difference goes into the note.
-					transposed.transpose += global - newGlobal;
-					if (!modifyNote(transposed, seed, copy.pitch, copy.velocity))
-						continue;
-				}
 				const Ticks length = note.length > 0 ? modifyLength(modifiers, seed, note.length) : 0;
 				copy.position = at;
 				copy.length = std::min(at + length, partTo) - at;
-				copy.pitch = static_cast<uint8_t>(destinationPitches.stored(copy.pitch, copy.channel, at, note.pitch));
-				notes.push_back(copy);
+				candidates.push_back({copy, seed, modifiers, &part, partFrom + note.position, note.pitch});
 			}
 			for (const auto& [controllerId, controller] : part.controllers)
 			{
@@ -1171,6 +1161,47 @@ namespace gnubase::engine::midi
 					}
 				}
 			}
+		}
+
+		// The new part's root key and Global Transpose setting and the notes as they play with it (#954): where a
+		// source part's global transposition differs from the new part's, the difference goes into the note, so that
+		// it keeps the pitch it played with; a note it takes beyond 0-127 doesn't play and is left out.
+		std::vector<const MidiPart*> sources;
+		for (const Candidate& candidate : candidates)
+			if (std::find(sources.begin(), sources.end(), candidate.source) == sources.end())
+				sources.push_back(candidate.source);
+		const GlobalSetting newSetting = sharedSetting(project, sources);
+		std::vector<Note> notes;
+		for (const Candidate& candidate : candidates)
+		{
+			Note copy = candidate.note;
+			const MidiPart& source = *candidate.source;
+			const int global = globalAt(project, {source.rootKey, source.independent}, candidate.sourceAt);
+			const int newGlobal = globalAt(project, newSetting, copy.position);
+			Modifiers transposed = candidate.modifiers;
+			if (settings.includeInserts)
+			{
+				// With its global transpose before the modifiers' note ranges, as playback adds it, then less the new
+				// part's where it lands: the new part can't play a pitch that this takes beyond 0-127.
+				transposed.transpose += global;
+				if (!modifyNote(transposed, candidate.seed, copy.pitch, copy.velocity))
+					continue;
+				const int pitch = copy.pitch - newGlobal;
+				if (pitch < 0 || pitch > 127)
+					continue;
+				copy.pitch = static_cast<uint8_t>(pitch);
+			}
+			else
+			{
+				// The track's modifiers stay on the track and play after the stored pitch, so nothing lies between the
+				// two global transposes: only their difference goes into the note.
+				transposed.transpose += global - newGlobal;
+				if (!modifyNote(transposed, candidate.seed, copy.pitch, copy.velocity))
+					continue;
+			}
+			copy.pitch = static_cast<uint8_t>(
+				destinationPitches.stored(copy.pitch, copy.channel, copy.position, candidate.ownPitch));
+			notes.push_back(copy);
 		}
 
 		PartChanges changes;
@@ -1232,8 +1263,8 @@ namespace gnubase::engine::midi
 		part.id = project.newId();
 		part.track = destination;
 		part.name = settings.name.empty() ? project.trackById.at(destination).name : settings.name;
-		part.rootKey = main.rootKey;
-		part.independent = main.independent;
+		part.rootKey = newSetting.rootKey;
+		part.independent = newSetting.independent;
 		place(project, part, start, end);
 		// Before the directions at the same positions, which come after them (soundSlots goes by id there).
 		controllers.insert(controllers.begin(), resets.begin(), resets.end());
@@ -1435,16 +1466,14 @@ namespace gnubase::engine::midi
 			const ObjectId track = project.midiParts.at(playing.front()).track;
 			const TrackPitches pitches(project, track);
 			const Modifiers modifiers = trackModifiers(project, track);
-			// The new part has the first part's root key and Global Transpose setting, of the lower id among parts
-			// that start together, as merge takes it; for the other parts, the difference in global transpose goes
-			// into the notes with their transpose.
-			const auto startOf = [&](const MidiPart& part)
-			{ return std::make_pair(partStart(project, part), part.id); };
-			const MidiPart* first = &project.midiParts.at(playing.front());
+			// The new part has the root key and Global Transpose setting the parts share, or else the project root
+			// key and follow, as merge takes it (#954); for each part, the difference in global transpose goes into
+			// the notes with its transpose.
+			std::vector<const MidiPart*> sources;
+			sources.reserve(playing.size());
 			for (const ObjectId id : playing)
-				if (const MidiPart& part = project.midiParts.at(id); startOf(part) < startOf(*first))
-					first = &part;
-			const GlobalSetting main{first->rootKey, first->independent};
+				sources.push_back(&project.midiParts.at(id));
+			const GlobalSetting shared = sharedSetting(project, sources);
 			// A drum map or the chord track maps a note before its part's transpose, and the track's MIDI modifiers
 			// add to it before checking the range and compress the velocity before the part's velocity, which the
 			// notes can't always hold: then the part keeps them, in a new part for each setting.
@@ -1493,11 +1522,11 @@ namespace gnubase::engine::midi
 				const GlobalSetting own{part.rootKey, part.independent};
 				// Against the first part's global setting, else its own with only its transpose in the notes, else
 				// none of them.
-				Bounced bounced{id, true, main, velocitiesHold(part)};
-				if (!pitchesHold(part, main))
+				Bounced bounced{id, true, shared, velocitiesHold(part)};
+				if (!pitchesHold(part, shared))
 				{
 					bounced.against = own;
-					bounced.pitchInNotes = !(own == main) && pitchesHold(part, own);
+					bounced.pitchInNotes = !(own == shared) && pitchesHold(part, own);
 				}
 				BouncedSetting setting{bounced.pitchInNotes ? 0 : part.transpose, 0, bounced.against};
 				if (!bounced.velocityInNotes)
