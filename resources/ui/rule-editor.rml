@@ -742,12 +742,9 @@
 		end
 
 		local function apply(document)
-			local rules = engineRules(read(document, true))
-			if editor.project then
-				return applyProject(rules)
-			end
 			if editor.input then
-				-- Every module edited, up to the last one; the ones before it that weren't stay as they are.
+				-- Every module edited, up to the last one; the ones before it that weren't stay as they are. The shown
+				-- module is read once, by keepModule (#1203).
 				local current = engineModules()
 				if not keepModule(document) then
 					return false
@@ -783,6 +780,10 @@
 					error(failure, 0)
 				end
 				return true
+			end
+			local rules = engineRules(read(document, true))
+			if editor.project then
+				return applyProject(rules)
 			end
 			local parameters = {parts = editor.parts, rules = rules}
 			if #editor.notes > 0 then
