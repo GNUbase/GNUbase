@@ -361,9 +361,13 @@ TEST_CASE("two overlapping events at one place in the stack, as a file from befo
 	}
 	entries["gnubase.json"] = extension.dump();
 	gnubase::test::writeZip(path, entries);
-	f.call("project.new");
-	f.call("project.load", {{"path", path}});
-	REQUIRE(f.object("audioEvents", b).at("front") == a);
+	const auto load = [&f, &path, a, b]
+	{
+		f.call("project.new");
+		f.call("project.load", {{"path", path}});
+		REQUIRE(f.object("audioEvents", b).at("front") == a);
+	};
+	load();
 
 	// b plays in the overlap, and zero crossings there are b's.
 	const std::vector<float> output = f.render(5000);
@@ -377,7 +381,8 @@ TEST_CASE("two overlapping events at one place in the stack, as a file from befo
 	CHECK(wrong == 0);
 	CHECK(f.call("snap.zeroCrossings", {{"positions", {1030}}, {"tracks", {track}}}).at("positions").at(0) == 1050);
 
-	// Copies and events brought to the front keep b in front of a, named in either order.
+	// Copies and events brought to the front keep b in front of a, named in either order. Each order loads the file
+	// again, so it meets the tie: the first order's toFront gives a and b places of their own.
 	const auto bInFront = [&f](int64_t position)
 	{
 		std::optional<std::array<int64_t, 3>> aPlace;
@@ -392,14 +397,13 @@ TEST_CASE("two overlapping events at one place in the stack, as a file from befo
 		}
 		return aPlace && bPlace && *bPlace > *aPlace;
 	};
-	REQUIRE(bInFront(0));
-	int64_t delta = 0;
 	for (const Json& named : {Json{a, b}, Json{b, a}})
 	{
 		INFO("named " << named.dump());
-		delta += 48000;
-		f.call("event.copy", {{"events", named}, {"delta", delta}});
-		CHECK(bInFront(delta));
+		load();
+		REQUIRE(bInFront(0));
+		f.call("event.copy", {{"events", named}, {"delta", 48000}});
+		CHECK(bInFront(48000));
 		f.call("event.toFront", {{"events", named}});
 		CHECK(bInFront(0));
 	}
