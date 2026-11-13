@@ -303,6 +303,10 @@ namespace gnubase::engine
 		void render(uint64_t frames, const std::function<void(uint32_t)>& rendered = {});
 		void cue(time::Samples position, bool playing, time::Samples window, bool wait, time::Samples enter = -1,
 			time::Samples playsOn = -1);
+		// Command thread, before it cues a start from stop exactly, a play or a recording, and sends the request:
+		// from then on, until the audio thread has applied that request, the cue thread cues there too, as for a
+		// playing transport that starts there, and not where the cursor is.
+		void cueStart(time::Samples start, time::Samples enter);
 		void startCueing();
 		void stopCueing();
 		void startDevice();
@@ -361,7 +365,8 @@ namespace gnubase::engine
 		AutoMonitoring m_autoMonitoring = AutoMonitoring::TapeMachine; // the graph's
 		ListenGains m_listenGains;                                     // the graph's
 		bool m_mutePreSends = false;                                   // the graph's audio.mutePreSends
-		float m_dim = 1.0f; // audio thread: the main mix's gain at the end of the last block
+		bool m_treatMutedAudioLikeDeleted = true; // the playlists' editing.treatMutedAudioLikeDeleted
+		float m_dim = 1.0f;                       // audio thread: the main mix's gain at the end of the last block
 
 		Engine* m_engine = nullptr;
 		std::vector<std::unique_ptr<audio::Backend>> m_backends;
@@ -517,8 +522,13 @@ namespace gnubase::engine
 			bool playing = false;
 			TransportSettings settings;
 			std::shared_ptr<const ArrangerPlan> arranger = std::make_shared<const ArrangerPlan>();
+			// A start that the command thread cues exactly (-1 for none), where an arranger chain enters with it, and
+			// how many requests the audio thread applies before it plays from there (cueStart).
+			time::Samples start = -1;
+			time::Samples enter = -1;
+			uint64_t startRequests = 0;
 		};
-		std::mutex m_cueMutex;             // guards m_cueState
+		std::mutex m_cueMutex;             // guards m_cueState; the cue thread holds it while it cues
 		ArrangerState m_announcedArranger; // as transport.changed last announced it
 		CueState m_cueState;
 		std::atomic<bool> m_cueing{false};

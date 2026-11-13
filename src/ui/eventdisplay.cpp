@@ -201,6 +201,11 @@ namespace gnubase::ui
 					m_zoomHorizontalOnly = zoom->get<bool>();
 					m_zoomHorizontalOnlyKnown = true;
 				}
+				if (const auto muted = values.find("editing.treatMutedAudioLikeDeleted"); muted != values.end())
+				{
+					m_treatMutedKnown = true;
+					setTreatMutedAudioLikeDeleted(muted->get<bool>());
+				}
 			}));
 		const std::weak_ptr<bool> alive = m_alive;
 		requestProject();
@@ -250,6 +255,12 @@ namespace gnubase::ui
 			{
 				if (!alive.expired() && result.ok() && !m_zoomHorizontalOnlyKnown)
 					m_zoomHorizontalOnly = result.value.at("value").get<bool>();
+			});
+		m_binding.send("settings.get", {{"key", "editing.treatMutedAudioLikeDeleted"}},
+			[this, alive](const engine::Result& result)
+			{
+				if (!alive.expired() && result.ok() && !m_treatMutedKnown) // newer changes win
+					setTreatMutedAudioLikeDeleted(result.value.at("value").get<bool>());
 			});
 		requestMarkers();
 		showAutoScroll();
@@ -505,15 +516,18 @@ namespace gnubase::ui
 			addEvent(part, start, end);
 		}
 		std::vector<EventWaveforms::Event> waves;
-		// Audio events in the order they are stacked, the one in front last, so that a click finds it (#99). Muted
-		// ones play nothing and hide nothing (makePlaylist): they come behind every other.
+		// Audio events in the order they are stacked, the one in front last, so that a click finds it (#99). With
+		// editing.treatMutedAudioLikeDeleted, muted ones play nothing and hide nothing (makePlaylist): they come behind
+		// every other. Without it, they keep their place in the stack and silence what lies behind them.
 		std::vector<const Json*> stacked;
 		for (const Json& event : project.at("audioEvents"))
 			stacked.push_back(&event);
-		const auto front = [](const Json* event)
+		const bool asDeleted = m_treatMutedAudioLikeDeleted;
+		const auto front = [asDeleted](const Json* event)
 		{
 			const auto own = event->value("front", uint64_t{0});
-			return std::make_pair(!event->value("mute", false), own != 0 ? own : event->at("id").get<uint64_t>());
+			return std::make_pair(
+				asDeleted && !event->value("mute", false), own != 0 ? own : event->at("id").get<uint64_t>());
 		};
 		std::stable_sort(
 			stacked.begin(), stacked.end(), [&front](const Json* a, const Json* b) { return front(a) < front(b); });
@@ -949,9 +963,9 @@ namespace gnubase::ui
 		setView(m_view);
 	}
 
-	void EventDisplay::setTrackHeights(double height)
+	void EventDisplay::setTrackHeights(const std::vector<uint64_t>& tracks, double height)
 	{
-		for (const uint64_t track : m_laneTracks)
+		for (const uint64_t track : tracks)
 			m_heights[track] = std::clamp(height, g_minTrackHeight, g_maxTrackHeight);
 		setLanes();
 		setView(m_view);
@@ -992,6 +1006,14 @@ namespace gnubase::ui
 		if (mode == m_folderMode)
 			return;
 		m_folderMode = mode;
+		showProject();
+	}
+
+	void EventDisplay::setTreatMutedAudioLikeDeleted(bool on)
+	{
+		if (on == m_treatMutedAudioLikeDeleted)
+			return;
+		m_treatMutedAudioLikeDeleted = on;
 		showProject();
 	}
 

@@ -910,7 +910,7 @@ TEST_CASE("a save or backup that fails shows its error", "[ui]")
 	click(app, "#backup-project-dialog button.primary");
 	REQUIRE(app.waitUntil([&held] { return held.held(); }, std::chrono::seconds(30)));
 	app.call("project.set", {{"name", "Edited"}});
-	held.release();
+	CHECK(held.release());
 	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }, std::chrono::seconds(30)));
 	CHECK_THAT(elements(app, "#project-error-message").at(0).at("text").get<std::string>(),
 		ContainsSubstring("wasn't opened"));
@@ -1648,7 +1648,7 @@ TEST_CASE("Back up Project shows its own backups' progress and outcome, and Canc
 	CHECK(elements(app, "#backup-progress").size() == 1);
 	click(app, "#backup-progress-dialog button[result=cancel]");
 	REQUIRE(app.waitUntil([&app] { return ran(app, "job.cancel"); }));
-	held.release();
+	CHECK(held.release());
 	REQUIRE(app.waitUntil([&app] { return !shown(app, "#backup-progress-dialog"); }));
 	const Json cancelled = lastJob(app);
 	CHECK(cancelled.at("kind") == "project.backup");
@@ -1702,7 +1702,7 @@ TEST_CASE(
 	REQUIRE(app.shell().running());
 	CHECK(shown(app, "#backup-progress-dialog"));
 	CHECK(!ran(app, "job.cancel"));
-	held.release();
+	CHECK(held.release());
 	REQUIRE(app.waitUntil([&app] { return !shown(app, "#backup-progress-dialog"); }));
 	CHECK(lastJob(app).at("state") == "done");
 	CHECK(!shown(app, "#project-error-dialog"));
@@ -1731,73 +1731,6 @@ TEST_CASE("a backup that couldn't read a folder in the Mixdown folder counts it 
 	closeError(app);
 }
 
-namespace
-{
-	// Holds the first backup at its first job.progress until next(), and then, once a second backup started, every
-	// backup at its next job.progress until release, for a minute at most each time. A held backup holds the events
-	// of every other (HeldBackup), so the second backup's project.backup can return only between the two holds, and
-	// the first one still runs then: it can't end while the second is held.
-	class TwoBackups
-	{
-	public:
-		explicit TwoBackups(Engine& engine)
-			: m_listener(engine,
-				  [this](const Event& event)
-				  {
-					  std::unique_lock lock(m_mutex);
-					  if (event.name == "job.started" && event.data.at("job").at("kind") == "project.backup")
-						  ++m_started;
-					  if (event.name != "job.progress" || event.data.at("kind") != "project.backup")
-						  return;
-					  if (m_stage == 0)
-					  {
-						  m_held = 1;
-						  m_changed.wait_for(lock, std::chrono::minutes(1), [this] { return m_stage > 0; });
-					  }
-					  if (m_stage == 1 && m_started >= 2)
-					  {
-						  m_held = 2;
-						  m_changed.wait_for(lock, std::chrono::minutes(1), [this] { return m_stage > 1; });
-					  }
-				  })
-		{
-		}
-
-		~TwoBackups() { advance(2); }
-		TwoBackups(const TwoBackups&) = delete;
-		TwoBackups& operator=(const TwoBackups&) = delete;
-		TwoBackups(TwoBackups&&) = delete;
-		TwoBackups& operator=(TwoBackups&&) = delete;
-
-		// 1 once the first backup is held, 2 once a backup is held after the second one started.
-		int held()
-		{
-			const std::scoped_lock lock(m_mutex);
-			return m_held;
-		}
-
-		void next() { advance(1); }
-		void release() { advance(2); }
-
-	private:
-		void advance(int stage)
-		{
-			{
-				const std::scoped_lock lock(m_mutex);
-				m_stage = std::max(m_stage, stage);
-			}
-			m_changed.notify_all();
-		}
-
-		std::mutex m_mutex;
-		std::condition_variable m_changed;
-		int m_stage = 0;
-		int m_started = 0; // the backups' job.started events
-		int m_held = 0;
-		Listener m_listener; // last, so that it stops before the rest goes
-	};
-}
-
 TEST_CASE("a backup started in another window while one's progress shows shows its own progress there", "[ui][slow]")
 {
 	test::UiApp app({1200, 700});
@@ -1806,18 +1739,21 @@ TEST_CASE("a backup started in another window while one's progress shows shows i
 	const fs::path take = dir.path() / "take.wav";
 	test::writeWav(take, {std::vector<float>(size_t{48000} * 10 * 2, 0.25f), 2, 48000}); // 10 s, 4 MB
 	app.call("media.add", {{"path", utf8(take)}});
-	// A panel in a window of its own, made before a backup is held, which would hold the commands that docking sends.
+	// A panel in a window of its own.
 	app.appUi().docking().setFloating("history", true);
 	const gnubase::ui::Window* floating = app.appUi().docking().windowOf("history");
 	REQUIRE(floating != nullptr);
 	const gnubase::ui::WindowId panel = floating->id();
 	gnubase::ui::Window* window = app.shell().find(panel);
 	REQUIRE(window != nullptr);
-	TwoBackups held(app.engine());
+	// Both backups are held at their first progress until the second one was cancelled, so that the first can't end
+	// before and the second still runs then. Only the jobs wait: the commands that the UI sends meanwhile, such as
+	// the window layout that docking saves, go on (#1272).
+	test::HeldJob held(app.engine(), "project.backup", std::chrono::minutes(1), 2);
 	fileMenu(app, "file.backup");
 	answer(app, {dir.path() / "First"});
 	click(app, "#backup-project-dialog button.primary");
-	REQUIRE(app.waitUntil([&held] { return held.held() == 1; }, std::chrono::seconds(30)));
+	REQUIRE(app.waitUntil([&held] { return held.job() != 0; }, std::chrono::seconds(30)));
 	REQUIRE(app.waitUntil([&app] { return shown(app, "#backup-progress-dialog"); }));
 
 	// File > Back up Project in the panel's own window, while the first backup's progress shows in the main window
@@ -1836,8 +1772,9 @@ TEST_CASE("a backup started in another window while one's progress shows shows i
 	app.keys().run("file.backup", Json::object(), *window, nullptr);
 	answer(app, {dir.path() / "Second"});
 	clickInPanel("#backup-project-dialog button.primary");
-	held.next();
-	REQUIRE(app.waitUntil([&held] { return held.held() == 2; }, std::chrono::seconds(30)));
+	REQUIRE(app.waitUntil([&held] { return held.held(); }, std::chrono::seconds(30)));
+	// A command that sends an event, as docking's layout saves do, isn't held behind the backups.
+	app.call("settings.set", {{"key", "ui.removeTracksWarning"}, {"value", false}});
 
 	// Each window shows its own backup's progress, and the second's Cancel stops only that one.
 	REQUIRE(app.waitUntil([&shownInPanel] { return shownInPanel("#backup-progress-dialog"); }));
@@ -1847,7 +1784,8 @@ TEST_CASE("a backup started in another window while one's progress shows shows i
 	CHECK(!shownInPanel("#backup-progress-dialog"));
 	CHECK(shown(app, "#backup-progress-dialog"));
 	held.release();
-	REQUIRE(app.waitUntil([&app] { return !shown(app, "#backup-progress-dialog"); }));
+	// The first backup's whole run, as long as lastJob waits on a busy machine.
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#backup-progress-dialog"); }, std::chrono::seconds(60)));
 	lastJob(app); // once none runs
 	const Json jobs = app.call("job.list").at("jobs");
 	std::vector<std::string> states;

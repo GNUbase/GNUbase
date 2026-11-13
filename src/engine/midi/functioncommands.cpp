@@ -539,9 +539,16 @@ namespace gnubase::engine::midi
 				"them, after their tracks' drum maps and the chord track, so they are written as played; a destination "
 				"with a drum map or following the chord track gets a pitch that plays them, or if none does what "
 				"played, "
-				"which it then maps. includeInserts also plays their tracks' MIDI modifiers into them (channel.set "
-				"modifiers, with "
-				"the random values playback draws), leaving out notes they filter out or move out of the range. "
+				"which it then maps. The new part gets the root key and Global Transpose setting (midiPart.set "
+				"rootKey and globalTranspose) the parts its notes come from share, or, when they differ, the project "
+				"root key and follow; each note is written as it played, with its part's global transpose, less the "
+				"new part's where it lands, so that it keeps the pitch it played with, leaving out a note that this "
+				"takes beyond 0-127. includeInserts also plays their tracks' MIDI modifiers into them (channel.set "
+				"modifiers, with the random values playback draws, their note ranges on the pitch that plays, before "
+				"the new part's global transpose comes off), leaving out notes they filter out or move out of the "
+				"range; without it the modifiers stay on the track and play after the stored pitch, so only the "
+				"difference of the two global transposes goes into a note. The part's velocity is added before a "
+				"note's velocity variance, which playback applies first. "
 				"Without destination a new MIDI track is added at the end, routed "
 				"to the instrument of the first track merged, with the articulation map of the first merged track "
 				"that has one. eraseDestination first removes the destination's parts "
@@ -569,7 +576,8 @@ namespace gnubase::engine::midi
 				"instrument; to lanes on a new lane of the track, below the lanes its parts are on, named after the "
 				"part and the channel or pitch. Events of no channel or pitch (SysEx by channel, everything but notes "
 				"and poly pressure by pitch) go with the first new part of their part; a part with nothing to "
-				"separate stays as it is. New parts keep the part's mute, transpose and velocity; their events get new "
+				"separate stays as it is. New parts keep the part's mute, transpose, velocity, root key and Global "
+				"Transpose setting; their events get new "
 				"ids, so play probability and velocity variance draw anew. optimize (to tracks only) shortens the new "
 				"parts to the bars their events play in." +
 					returns,
@@ -580,13 +588,22 @@ namespace gnubase::engine::midi
 			"Dissolve part", runDissolve);
 		model.addEdit(engine,
 			{"midi.bounce", 1,
-				"Bounces MIDI parts on one track into a single part from the first one's start to the last one's "
-				"end, named after the first, on the lowest lane they are on. Muted parts are removed and add nothing. "
-				"Events keep their time; notes are cut where their part ended. The parts' transpose and velocity go "
-				"into the notes as playback applies them; a note transposed beyond 0-127, which doesn't play, is left "
-				"out. On a track whose drum map or chord track following plays a transposed note differently, the new "
-				"part keeps the transpose, and parts with different ones make a part for each. The copied notes "
-				"get new ids, so play probability and velocity variance draw anew." +
+				"Bounces MIDI parts on one track into one part, or one for each setting the notes can't hold (below), "
+				"from the first one's start to the last one's end, named after the first, on the lowest lane they are "
+				"on, with the root key and Global Transpose setting (midiPart.set) the parts share, or, when they "
+				"differ, the project root key and follow. Muted parts are removed and add nothing. Events keep their "
+				"time; notes are cut where their part ended. The parts' transpose, their difference in global "
+				"transpose and their velocity go into the notes as playback applies them, so that each keeps the "
+				"pitch it played with; a note that plays nowhere, also with the global transpose and the track's MIDI "
+				"modifiers' transpose and random pitch, stays transposed where that plays nowhere either, else it is "
+				"left out. A part whose notes can't hold this (a pitch beyond 0-127 that plays, or one the track's "
+				"drum map or chord track following, which map a note before the transpose and the global "
+				"transposition, plays differently) keeps its root key and Global Transpose setting, with its "
+				"transpose in the notes if they hold that, else on the part. A part whose notes can't hold its "
+				"velocity (which playback adds after the track's MIDI modifiers compress the notes' velocities and "
+				"after a note's velocity variance) keeps it. Each setting makes a part of its own, on a lane where "
+				"neither another new part nor a part that stays overlaps it. The copied notes get new ids, so play "
+				"probability, velocity variance and the track's random MIDI modifier values draw anew." +
 					returns,
 				objectSchema({{"parts", ids}}, {"parts"}), changesResult, false},
 			"Bounce MIDI", runBounce);

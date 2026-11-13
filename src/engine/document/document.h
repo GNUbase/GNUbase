@@ -21,6 +21,7 @@
 #include <optional>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 // The project document: a tree of objects with stable ids. Only the engine's command thread reads and changes it,
@@ -432,10 +433,6 @@ namespace gnubase::engine
 		time::Samples target = 0;
 	};
 
-	// How a clip's audio is warped in real time (#144, docs/features/warp.md). Its definition is its tempo (BPM of
-	// quarter notes; 0 until one is set or musical mode is turned on), beats per bar, the clip frame of its first beat
-	// and the beats edited from there. In musical mode its beats follow the project's tempo. Its warp markers move
-	// sections of its audio in time. preset is the time stretch algorithm (dsp::stretchPresetNames()).
 	// The warp markers a clip had before warp quantizing (#145) first changed them, and what it made of them.
 	// While the clip still has those, quantizing starts from the original ones and resetting puts them back.
 	struct WarpQuantizeOrigin
@@ -444,6 +441,10 @@ namespace gnubase::engine
 		std::vector<WarpMarker> quantized;
 	};
 
+	// How a clip's audio is warped in real time (#144, docs/features/warp.md). Its definition is its tempo (BPM of
+	// quarter notes; 0 until one is set or musical mode is turned on), beats per bar, the clip frame of its first beat
+	// and the beats edited from there. In musical mode its beats follow the project's tempo. Its warp markers move
+	// sections of its audio in time. preset is the time stretch algorithm (dsp::stretchPresetNames()).
 	struct ClipWarp
 	{
 		bool musical = false;
@@ -495,13 +496,25 @@ namespace gnubase::engine
 		double curve = 0.0;
 	};
 
-	// Plays a section of a clip on an audio track.
-	struct EventQuantizeOrigin
+	// What quantizing and the quantize panel's length changes make of an audio event (#910): where it plays, the
+	// section of its clip it plays, and the crossfade into it from the event before. As a note's timing, so that
+	// resetting can put all of it back.
+	struct EventTiming
 	{
-		time::Position original;
-		time::Position quantized;
+		time::Position position; // in the track's time base
+		time::Samples offset = 0;
+		time::Samples length = 0;
+		Crossfade crossfade;
 	};
 
+	// An audio event's original and quantized timings (#145), while its quantized position has not been changed again.
+	struct EventQuantizeOrigin
+	{
+		EventTiming original;
+		EventTiming quantized;
+	};
+
+	// Plays a section of a clip on an audio track.
 	struct AudioEvent
 	{
 		ObjectId id = 0;
@@ -530,15 +543,22 @@ namespace gnubase::engine
 		// Where it is in the stack of its track's events (#99): where events overlap, the one whose frontOf is highest
 		// plays. 0 orders it by its id, so an event added later is in front; event.toFront gives it a new id here.
 		ObjectId front = 0;
-		// Where it was before quantizing (#145) first moved it, and where quantizing put it. While it is there,
-		// quantizing starts from the original position and resetting puts it back; moved by other means, it is
-		// where it is.
+		// Where it was before quantizing (#145) first moved it, and where quantizing and the quantize panel's
+		// length changes (#910) left it. While it is there, quantizing starts from the original position and
+		// resetting puts it back; moved by other means, it is where it is.
 		std::optional<EventQuantizeOrigin> quantizeOrigin;
 	};
 
 	inline ObjectId frontOf(const AudioEvent& event)
 	{
 		return event.front != 0 ? event.front : event.id;
+	}
+
+	// Its place in the stack with its id, to order events by: of events at the same place, such as the pieces of an
+	// event split before #1189, the one with the higher id is in front, as in playback (makePlaylist).
+	inline std::pair<ObjectId, ObjectId> stackKey(const AudioEvent& event)
+	{
+		return {frontOf(event), event.id};
 	}
 
 	// A container of audio events on an audio track (#471, reference manual p. 250). Its events are the audio events
@@ -1597,6 +1617,12 @@ namespace gnubase::engine
 	inline bool operator==(const VolumePoint& a, const VolumePoint& b)
 	{
 		return std::tie(a.position, a.volume, a.curve) == std::tie(b.position, b.volume, b.curve);
+	}
+
+	inline bool operator==(const EventTiming& a, const EventTiming& b)
+	{
+		return std::tie(a.position, a.offset, a.length, a.crossfade) ==
+			std::tie(b.position, b.offset, b.length, b.crossfade);
 	}
 
 	inline bool operator==(const EventQuantizeOrigin& a, const EventQuantizeOrigin& b)

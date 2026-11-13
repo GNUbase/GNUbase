@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <map>
 #include <set>
 #include <string>
 #include <utility>
@@ -187,6 +188,59 @@ namespace
 		return starts;
 	}
 
+	// How many of the project's audio events crossfade from another one.
+	size_t crossfades(engine::Client& client)
+	{
+		size_t found = 0;
+		const Json project = run(client, "project.get");
+		for (const Json& event : project.at("audioEvents"))
+			if (event.at("crossfade").is_object())
+				++found;
+		return found;
+	}
+
+	Json crossfadeOf(engine::Client& client, ObjectId event)
+	{
+		return byId(client, "audioEvents", event).at("crossfade");
+	}
+
+	// One state of an event's quantize origin as the project gives it, without a crossfade in it.
+	Json originState(int64_t position, int64_t offset, int64_t length)
+	{
+		return {{"position", position}, {"offset", offset}, {"length", length}, {"crossfade", nullptr}};
+	}
+
+	// A new linear audio track, a clip of the audio, and an event of length frames of it at position playing the
+	// clip from offset.
+	struct Track
+	{
+		ObjectId track = 0;
+		ObjectId clip = 0;
+
+		ObjectId add(engine::Client& client, int64_t position, int64_t offset, int64_t length) const
+		{
+			return run(client, "audioEvent.add",
+				{{"track", track}, {"clip", clip}, {"position", position}, {"offset", offset}, {"length", length}})
+				.at("event")
+				.at("id")
+				.get<ObjectId>();
+		}
+	};
+
+	Track addTrack(engine::Client& client, const test::TempDir& dir, const std::string& name, const test::Audio& audio)
+	{
+		const std::string file = (dir.path() / (name + ".wav")).u8string();
+		test::writeWav(file, audio);
+		Track added;
+		added.track = run(client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}, {"channels", 1}})
+						  .at("track")
+						  .at("id")
+						  .get<ObjectId>();
+		const ObjectId media = run(client, "media.add", {{"path", file}}).at("media").at("id").get<ObjectId>();
+		added.clip = run(client, "clip.add", {{"media", media}}).at("clip").at("id").get<ObjectId>();
+		return added;
+	}
+
 	std::string lastStep(engine::Client& client)
 	{
 		return run(client, "history.get").at("steps").back().at("action").get<std::string>();
@@ -280,7 +334,8 @@ TEST_CASE("splitting a quantized audio event keeps both pieces resettable", "[in
 	const Json pieces = run(client, "event.split", {{"events", {loop.event}}, {"positions", {12000}}}).at("events");
 	REQUIRE(pieces.size() == 1);
 	const auto right = pieces.at(0).get<ObjectId>();
-	CHECK(byId(client, "audioEvents", right).at("quantizeOrigin") == Json({{"original", 14000}, {"quantized", 12000}}));
+	CHECK(byId(client, "audioEvents", right).at("quantizeOrigin") ==
+		Json({{"original", originState(14000, 12000, 84000)}, {"quantized", originState(12000, 12000, 84000)}}));
 
 	run(client, "quantize.reset", {{"events", {loop.event, right}}});
 	CHECK(positionOf(client, loop.event) == 2000);
@@ -313,7 +368,7 @@ TEST_CASE("splitting a quantized audio event of a musical track keeps both piece
 	REQUIRE(pieces.size() == 1);
 	const auto right = pieces.at(0).get<ObjectId>();
 	CHECK(byId(client, "audioEvents", right).at("quantizeOrigin") ==
-		Json({{"original", afterSplit}, {"quantized", split}}));
+		Json({{"original", originState(afterSplit, 30000, 66000)}, {"quantized", originState(split, 30000, 66000)}}));
 
 	run(client, "quantize.reset", {{"events", {loop.event, right}}});
 	CHECK(positionOf(client, loop.event) == original);
@@ -606,6 +661,210 @@ TEST_CASE("Crossfade leaves a gap that the later event's audio can't close", "[i
 	const Json project = run(client, "project.get");
 	for (const Json& event : project.at("audioEvents"))
 		CHECK(!event.at("crossfade").is_object());
+}
+
+TEST_CASE("Reset Quantize undoes what the panel's Crossfade step changed", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	// Sliced, quantized to 1/8 and crossfaded: two slices are stretched and moved where a gap closed and cut short
+	// again where they then overlapped the next one, and every slice but the first crossfades into the one before it.
+	// Resetting puts each back to its position, offset and length and removes the crossfades, so the slices tile
+	// again: Reset Quantize also resets the length changes made in the quantize panel (reference manual pp. 367, 379).
+	const std::vector<int64_t> played{6200, 25600, 47300, 72800};
+	const Loop loop = addLoop(client, dir, "loop", clicks(played, 4 * g_quarter));
+	setHitpoints(client, loop.clip, played);
+	const Json sliced = run(client, "quantize.slice", {{"events", {loop.event}}, {"offset", 5.0}});
+	const std::vector<std::vector<int64_t>> before = eventsOn(client, loop.track);
+	REQUIRE(before ==
+		std::vector<std::vector<int64_t>>{
+			{0, 0, 5960}, {5960, 5960, 19400}, {25360, 25360, 21700}, {47060, 47060, 25500}, {72560, 72560, 23440}});
+	run(client, "quantize.set", {{"preset", "1/8"}});
+	run(client, "quantize.apply", {{"events", sliced.at("events")}});
+	run(client, "quantize.crossfade", {{"events", sliced.at("events")}, {"length", 2.0}});
+	REQUIRE(eventsOn(client, loop.track) ==
+		std::vector<std::vector<int64_t>>{
+			{0, 0, 6056}, {5960, 160, 17896}, {23760, 25360, 21796}, {45460, 44760, 26396}, {71760, 72560, 23440}});
+	REQUIRE(crossfades(client) == 4);
+
+	SECTION("reset puts every slice back")
+	{
+		run(client, "quantize.reset", {{"events", sliced.at("events")}});
+		CHECK(lastStep(client) == "Reset quantize");
+		CHECK(eventsOn(client, loop.track) == before);
+		CHECK(crossfades(client) == 0);
+	}
+
+	SECTION("a project saved after the crossfade keeps it")
+	{
+		const std::string file = (dir.path() / "crossfaded.dawproject").u8string();
+		run(client, "project.save", {{"path", file}, {"embedMedia", false}});
+		run(client, "project.new");
+		run(client, "project.load", {{"path", file}});
+		REQUIRE(eventsOn(client, loop.track).size() == 5);
+		run(client, "quantize.reset", {{"events", sliced.at("events")}});
+		CHECK(eventsOn(client, loop.track) == before);
+		CHECK(crossfades(client) == 0);
+	}
+}
+
+TEST_CASE("Reset Quantize keeps a crossfade the event had before quantizing", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	// Three overlapping events of one clip, the first crossfading into the second by hand before quantizing.
+	// Quantizing moves them, and the panel's Crossfade step cuts and stretches them and crossfades the second into
+	// the third. Resetting returns to the state before quantizing (reference manual p. 367), which that crossfade is
+	// part of: the one made by hand comes back and the one the step made goes.
+	const Track loop = addTrack(client, dir, "loop", clicks({1000}, 4 * g_quarter));
+	const ObjectId track = loop.track;
+	const ObjectId first = loop.add(client, 1000, 0, 30000);
+	const ObjectId second = loop.add(client, 25000, 24000, 30000);
+	const ObjectId third = loop.add(client, 49000, 48000, 30000);
+	run(client, "crossfade.set", {{"from", first}, {"to", second}, {"mode", "equalPower"}});
+	REQUIRE(crossfadeOf(client, second).at("mode") == "equalPower");
+	const std::vector<std::vector<int64_t>> before = eventsOn(client, track);
+	REQUIRE(
+		before == std::vector<std::vector<int64_t>>{{1000, 0, 30000}, {25000, 24000, 30000}, {49000, 48000, 30000}});
+
+	run(client, "quantize.set", {{"preset", "1/4"}});
+	const Json events = Json::array({first, second, third});
+	run(client, "quantize.apply", {{"events", events}});
+	run(client, "quantize.crossfade", {{"events", events}});
+	REQUIRE(crossfadeOf(client, second).at("mode") == "equalPower");
+	REQUIRE(crossfadeOf(client, third).at("from") == second);
+
+	SECTION("reset puts the hand-made crossfade back and removes the one the step made")
+	{
+		run(client, "quantize.reset", {{"events", events}});
+		CHECK(eventsOn(client, track) == before);
+		const Json kept = crossfadeOf(client, second);
+		REQUIRE(kept.is_object());
+		CHECK(kept.at("from") == first);
+		CHECK(kept.at("mode") == "equalPower");
+		CHECK(!crossfadeOf(client, third).is_object());
+	}
+
+	SECTION("a project saved after the crossfade keeps it")
+	{
+		const std::string saved = (dir.path() / "crossfaded.dawproject").u8string();
+		run(client, "project.save", {{"path", saved}, {"embedMedia", false}});
+		run(client, "project.new");
+		run(client, "project.load", {{"path", saved}});
+		REQUIRE(eventsOn(client, track).size() == 3);
+		run(client, "quantize.reset", {{"events", events}});
+		CHECK(eventsOn(client, track) == before);
+		CHECK(crossfadeOf(client, second).at("mode") == "equalPower");
+		CHECK(!crossfadeOf(client, third).is_object());
+	}
+}
+
+TEST_CASE("Reset Quantize keeps an end trimmed by hand after quantizing", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	run(client, "quantize.set", {{"preset", "1/4"}});
+	const Loop loop = addLoop(client, dir, "loop", clicks({1000}, 4 * g_quarter), 2000);
+	run(client, "quantize.apply", {{"events", {loop.event}}});
+	REQUIRE(eventsOn(client, loop.track) == std::vector<std::vector<int64_t>>{{0, 0, 4 * g_quarter}});
+	// Trimming the end by hand is a length change of the user's own, not one the quantize panel made, so resetting
+	// leaves it, as a note's length changed by other means stays.
+	run(client, "event.resize", {{"events", {loop.event}}, {"edge", "end"}, {"delta", -30000}});
+	REQUIRE(eventsOn(client, loop.track) == std::vector<std::vector<int64_t>>{{0, 0, 66000}});
+
+	run(client, "quantize.reset", {{"events", {loop.event}}});
+	CHECK(eventsOn(client, loop.track) == std::vector<std::vector<int64_t>>{{2000, 0, 66000}});
+
+	// Quantizing again goes on from the trimmed length too, and keeps the original position.
+	run(client, "quantize.apply", {{"events", {loop.event}}});
+	CHECK(eventsOn(client, loop.track) == std::vector<std::vector<int64_t>>{{0, 0, 66000}});
+	run(client, "quantize.reset", {{"events", {loop.event}}});
+	CHECK(eventsOn(client, loop.track) == std::vector<std::vector<int64_t>>{{2000, 0, 66000}});
+}
+
+TEST_CASE("Reset Quantize keeps a crossfade made by hand after quantizing", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	// Two overlapping events of one clip, quantized and then crossfaded by hand: that crossfade is a change of the
+	// user's own, not one the quantize panel made, so resetting leaves it.
+	const Track loop = addTrack(client, dir, "loop", clicks({1000}, 4 * g_quarter));
+	const ObjectId first = loop.add(client, 1000, 0, 30000);
+	const ObjectId second = loop.add(client, 25000, 24000, 30000);
+	run(client, "quantize.set", {{"preset", "1/4"}});
+	const Json events = Json::array({first, second});
+	run(client, "quantize.apply", {{"events", events}});
+	REQUIRE(eventsOn(client, loop.track) == std::vector<std::vector<int64_t>>{{0, 0, 30000}, {24000, 24000, 30000}});
+	run(client, "crossfade.set", {{"from", first}, {"to", second}, {"mode", "equalPower"}});
+	REQUIRE(crossfadeOf(client, second).at("mode") == "equalPower");
+
+	run(client, "quantize.reset", {{"events", events}});
+	CHECK(eventsOn(client, loop.track) == std::vector<std::vector<int64_t>>{{1000, 0, 30000}, {25000, 24000, 30000}});
+	const Json kept = crossfadeOf(client, second);
+	REQUIRE(kept.is_object());
+	CHECK(kept.at("from") == first);
+	CHECK(kept.at("mode") == "equalPower");
+}
+
+TEST_CASE("a project file from before the origin kept the offset and length still loads", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	run(client, "quantize.set", {{"preset", "1/4"}});
+	const Loop loop = addLoop(client, dir, "loop", clicks({1000}, 4 * g_quarter), 2000);
+	run(client, "quantize.apply", {{"events", {loop.event}}});
+	REQUIRE(positionOf(client, loop.event) == 0);
+	const std::string file = (dir.path() / "quantized.dawproject").u8string();
+	run(client, "project.save", {{"path", file}, {"embedMedia", false}});
+
+	// An origin as GNUbase wrote it before it kept the offset and length too: a bare position for each state.
+	std::map<std::string, std::string> entries = test::readZip(file);
+	Json extension = Json::parse(entries.at("gnubase.json"));
+	size_t origins = 0;
+	for (Json& event : extension.at("project").at("audioEvents"))
+		if (const auto origin = event.find("quantizeOrigin"); origin != event.end())
+		{
+			*origin = {{"original", origin->at("original").at("position")},
+				{"quantized", origin->at("quantized").at("position")}};
+			++origins;
+		}
+	REQUIRE(origins == 1);
+	entries["gnubase.json"] = extension.dump();
+	test::writeZip(file, entries);
+
+	run(client, "project.new");
+	run(client, "project.load", {{"path", file}});
+	// Resetting puts the position back; the offset and length, which the file doesn't have, stay.
+	run(client, "quantize.reset", {{"events", {loop.event}}});
+	CHECK(eventsOn(client, loop.track) == std::vector<std::vector<int64_t>>{{2000, 0, 4 * g_quarter}});
+}
+
+TEST_CASE("Hitpoints of one track at the same place give one position", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	// Two events of one track playing the same clip at the same place: their hitpoints coincide. The range merges
+	// hitpoints of different tracks only, so without dropping equal neighbours each position would come twice.
+	const std::vector<int64_t> played{25600, 47300};
+	const Loop loop = addLoop(client, dir, "loop", clicks(played, 4 * g_quarter));
+	setHitpoints(client, loop.clip, played);
+	const ObjectId again = run(client, "audioEvent.add",
+		{{"track", loop.track}, {"clip", loop.clip}, {"position", 0}, {"offset", 0},
+			{"length", static_cast<int64_t>(4 * g_quarter)}})
+							   .at("event")
+							   .at("id")
+							   .get<ObjectId>();
+	const Json events = Json::array({loop.event, again});
+	// The markers first: slicing cuts the events at the positions, so their hitpoints stop being inside them.
+	CHECK(
+		run(client, "quantize.createWarpMarkers", {{"events", events}}).at("positions") == Json::array({25600, 47300}));
+	CHECK(run(client, "quantize.slice", {{"events", events}}).at("positions") == Json::array({25600, 47300}));
 }
 
 TEST_CASE("warp markers for several audio tracks come from the hitpoints of the highest priority", "[integration]")

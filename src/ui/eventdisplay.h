@@ -170,7 +170,7 @@ namespace gnubase::ui
 		double trackHeight(uint64_t track) const;
 		double ownHeight(uint64_t track) const;
 		void setTrackHeight(uint64_t track, double height);
-		void setTrackHeights(double height); // every track's
+		void setTrackHeights(const std::vector<uint64_t>& tracks, double height); // those tracks' (clamped)
 		// The heights tracks have of their own, by track, and replacing them all (the project's, trackLayout.get).
 		const std::map<uint64_t, double>& ownTrackHeights() const { return m_heights; }
 		void setOwnTrackHeights(std::map<uint64_t, double> heights);
@@ -286,6 +286,11 @@ namespace gnubase::ui
 		// without the range selection tool. Choosing another tool selects the events in the range instead.
 		const std::optional<RangeSelection>& range() const { return m_range; }
 		void setRange(std::optional<RangeSelection> range);
+		// What a press and release with the range selection tool do on any lane, for a press that the display didn't
+		// get: the marker track's press in the selection range, released without a drag across (ui/markers.h). A range
+		// from the press to the release, with the release's modifier keys: of no length at a click, over the lanes
+		// between them after a drag up or down.
+		void clickRange(Rml::Vector2f press, Rml::Event& release);
 		// Importing files (#92, fileimport.cpp, docs/features/file-import.md). MIDI files (.mid, .midi, .smf) are
 		// imported with midiFile.import. Audio files open the Import Options dialog (import-options.rml next to the
 		// document), or with the user setting editing.onImportAudio at useSettings are imported at once with the
@@ -470,6 +475,7 @@ namespace gnubase::ui
 		void showProject();
 		void loadProject(const engine::Json& project);
 		void setFolderMode(const std::string& mode); // ui.folderData
+		void setTreatMutedAudioLikeDeleted(bool on); // editing.treatMutedAudioLikeDeleted
 		void setLanes();
 		void followTransport(const engine::Json& status);
 		void setCursor(int64_t sample);
@@ -707,8 +713,8 @@ namespace gnubase::ui
 		// and afterAwaited).
 		void zeroCrossRange();
 		// Runs the actions that wait for zeroCrossRange's answers before a press, which may start another range, so
-		// that they edit the range they were run on (#1086): the binding settles, handing the answers on, for at most
-		// a few seconds; actions still waiting then run on the range as it is.
+		// that they edit the range they were run on (#1086): the binding hands the answers on until nothing is held,
+		// for at most a few seconds (EngineBinding::awaitHeld); actions still waiting then run on the range as it is.
 		void runWaitingActions();
 		// The rectangle that a tool drags, dp in the event lanes; hidden when not shown.
 		void showRectangle(bool shown, double left = 0.0, double top = 0.0, double right = 0.0, double bottom = 0.0);
@@ -909,6 +915,8 @@ namespace gnubase::ui
 		bool m_notifiesKnown = false;
 		bool m_zoomHorizontalOnly = true; // ui.zoomToolHorizontalOnly
 		bool m_zoomHorizontalOnlyKnown = false;
+		bool m_treatMutedAudioLikeDeleted = true; // editing.treatMutedAudioLikeDeleted
+		bool m_treatMutedKnown = false;
 		std::optional<std::pair<double, double>> m_mouse; // over the lanes, in dp, while the mouse is there
 		std::string m_held;           // the modifier keys held, as modifiersOf joins them, for the pointer
 		std::set<int> m_modifierKeys; // the modifier keys seen going down and not up (Rml::Input::KeyIdentifier)

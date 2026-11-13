@@ -64,16 +64,18 @@ namespace gnubase::engine
 	using PlaylistLayer = std::vector<PlaylistEntry>;
 
 	// What an audio track plays. The first layer is the front: where events overlap, the one with the highest front
-	// (frontOf: the one added last, or brought to the front last) plays. Muted events don't play and hide nothing. The
-	// layers after it hold what plays along with the front where events crossfade: the event that fades out under the
-	// one that fades in, or the one that fades in under the end of the one in front, and events joined to those by
-	// crossfades of their own.
+	// (frontOf: the one added last, or brought to the front last) plays. A muted event plays nothing; whether it hides
+	// what lies behind it follows treatMutedLikeDeleted: treated as deleted, it hides nothing and the event behind it
+	// plays, else it keeps its place in the stack and silences what lies behind it. The layers after the front hold
+	// what plays along with it where events crossfade: the event that fades out under the one that fades in, or the one
+	// that fades in under the end of the one in front, and events joined to those by crossfades of their own.
 	struct Playlist
 	{
 		std::vector<PlaylistLayer> layers;
 	};
 
-	Playlist makePlaylist(const RenderSnapshot& snapshot, const RenderChannel& channel);
+	// treatMutedLikeDeleted is the user setting editing.treatMutedAudioLikeDeleted (reference manual pp. 228, 1597).
+	Playlist makePlaylist(const RenderSnapshot& snapshot, const RenderChannel& channel, bool treatMutedLikeDeleted);
 
 	// Plays the clips of audio tracks from disk streams. Each track has a few voices: disk streams of its clips that
 	// the command thread positions ahead of time ("cueing") wherever playback enters a playlist entry: the cursor
@@ -99,6 +101,10 @@ namespace gnubase::engine
 			// playing or an audition that replaces another makes: the voices it reads and those waiting just ahead of
 			// it stay where they are, and the cue gets others. -1 for none.
 			time::Samples playsOn = -1;
+			// With playing: playback starts at position, or has only just started there, as when a count-in ends, a
+			// transport start goes out or an audition plays its first block meanwhile. An entry at the cursor keeps a
+			// voice the audio thread reads near it or one waiting exactly there, and else gets one there, not ahead.
+			bool starting = false;
 		};
 
 		struct Track
@@ -175,7 +181,8 @@ namespace gnubase::engine
 
 	protected:
 		// cue() calls this after reading where every voice is and before acting on it. The audio thread goes on
-		// meanwhile; tests override it to play blocks at that moment.
+		// meanwhile; tests override it to play blocks at that moment. It runs with the playback's mutex held: an
+		// override may run the audio thread's side (beginBlock, take, endBlock), but not the command side.
 		virtual void voicesRead() {}
 
 	private:

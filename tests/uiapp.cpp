@@ -13,6 +13,7 @@
 #include <link.h>
 #endif
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -193,6 +194,35 @@ namespace gnubase::test
 				throw std::invalid_argument("no such window");
 			return found->context();
 		}
+	}
+
+	NoteProbe::NoteProbe(UiApp& app, uint64_t track) : m_app(app)
+	{
+		app.call("audio.setDevice", {{"blockSize", 128}, {"inputChannels", 0}, {"captureSeconds", 1}});
+		const engine::Json tracks = app.call("project.get").at("tracks");
+		const auto found = std::find_if(tracks.begin(), tracks.end(),
+			[track](const engine::Json& each) { return each.at("id").get<uint64_t>() == track; });
+		REQUIRE(found != tracks.end());
+		app.call("channel.set", {{"channel", found->at("channel")}, {"instrument", "noteProbe"}});
+		app.call("audio.render", {{"frames", 128}}); // the new graph
+		app.call("midi.capture", {{"start", true}});
+	}
+
+	bool NoteProbe::plays(const std::vector<std::vector<int>>& expected)
+	{
+		return m_app.waitUntil(
+			[&]
+			{
+				m_app.call("audio.render", {{"frames", 128}});
+				const engine::Json captured = m_app.call("midi.capture");
+				for (const engine::Json& message : captured.at("captured"))
+				{
+					const auto bytes = message.at("bytes").get<std::vector<int>>();
+					if ((bytes.at(0) & 0xE0) == 0x80)
+						m_played.push_back(bytes);
+				}
+				return m_played == expected;
+			});
 	}
 
 	double controlValue(UiApp& app, std::optional<ui::WindowId> window, const std::string& selector)

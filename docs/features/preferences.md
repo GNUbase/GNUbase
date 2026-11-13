@@ -28,16 +28,17 @@ scripts can do all it does. Its presets keep complete or partial sets of prefere
   check box, a drop-down list or a number field, from its setting's schema, labelled as in the manual:
   - Editing: Display Warning before Deleting Non-Empty Tracks (`ui.removeTracksWarning`), Default Track Time Type
     (`editing.defaultTimeBase`), Use Up/Down Navigation Commands for Selecting Tracks only
-    (`ui.upDownSelectsTracksOnly`). Audio: On Import Audio Files (`editing.onImportAudio`) and its settings, Copy
-    Files to Project Folder, Convert to Project Sample Rate, Split Channels and Name Format (`editing.importAudio*`,
+    (`ui.upDownSelectsTracksOnly`). Audio: Treat Muted Audio Events like Deleted (`editing.treatMutedAudioLikeDeleted`,
+    [comping.md](comping.md)), On Import Audio Files (`editing.onImportAudio`) and its settings, Copy Files to Project
+    Folder, Convert to Project Sample Rate, Split Channels and Name Format (`editing.importAudio*`,
     [file-import.md](file-import.md)). MIDI: Legato Overlap (`editing.legatoOverlap`), Legato Mode: Between Selected
-    Notes Only (`editing.legatoBetweenSelected`). Tool Modifiers: each action's
-    modifier keys (`ui.toolModifiers`, over the defaults that `ui::EventDisplay::defaultToolModifiers` has; the
-    dialog keeps only those that differ), chosen from a list or, as in the reference (p. 1574), by holding the keys
-    and clicking the action's Assign (Ctrl or Cmd, Alt, Shift); another action of the same category with those keys
-    is then left without any. Tools: Show Toolbox on Right-Click (`ui.toolboxOnRightClick`), Show
-    Notification when Switching Tool Mode with Key Command (`ui.toolSwitchNotification`). Zoom: Zoom Tool Standard Mode:
-    Horizontal Zooming Only (`ui.zoomToolHorizontalOnly`, [tools.md](tools.md)).
+    Notes Only (`editing.legatoBetweenSelected`). Tool Modifiers: each action's modifier keys (`ui.toolModifiers`, over
+    the defaults that `ui::EventDisplay::defaultToolModifiers` has; the dialog keeps only those that differ), chosen
+    from a list or, as in the reference (p. 1574), by holding the keys and clicking the action's Assign (Ctrl or Cmd,
+    Alt, Shift); another action of the same category with those keys is then left without any. Tools: Show Toolbox on
+    Right-Click (`ui.toolboxOnRightClick`), Show Notification when Switching Tool Mode with Key Command
+    (`ui.toolSwitchNotification`). Zoom: Zoom Tool Standard Mode: Horizontal Zooming Only (`ui.zoomToolHorizontalOnly`,
+    [tools.md](tools.md)).
   - Event Display - Folders: Show Data on Folder Tracks (`ui.folderData`), Apply Color of Folder Track Automatically
     (`editing.applyFolderColor`). Markers: Show Marker Lines (`ui.markerLines`).
   - General: Auto Save, Auto Save Interval, Maximum Number of Auto Save Files (`project.autoSave*`).

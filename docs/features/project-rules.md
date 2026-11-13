@@ -76,7 +76,7 @@ and post lists and a command browser.
 ## Checks
 
 `tests/projectrules_tests.cpp`: every factory preset round-tripping through JSON with pre and post commands, and the
-rules JSON refuses (brackets nesting too deep among it); `project.findByRules` on every filter target, brackets, properties and the selection;
+rules JSON refuses (brackets nesting too deep among it), which the commands' descriptions name; `project.findByRules` on every filter target, brackets, properties and the selection;
 `project.applyRules` moving, resizing, renaming and coloring parts and markers, track names, mute, solo, time domain
 and colors, delete with folders, locked parts, audio parts that hold locked events and the active marker track last,
 generated names without gaps, new random values without a seed, positions and lengths at the longest project, also
