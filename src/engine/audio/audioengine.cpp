@@ -2645,7 +2645,9 @@ namespace gnubase::engine
 					arrange(next); // at the next jump point, or at once with the jump mode none
 				}
 				else
+				{
 					sent(m_transport.arrange(ArrangerState(), false)); // past the chain: on linearly from here
+				}
 				return;
 			}
 		}
