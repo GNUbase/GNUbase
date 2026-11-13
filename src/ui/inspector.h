@@ -63,6 +63,10 @@ namespace gnubase::ui
 		// control panels, and send a control's change (channel.set midiInserts and midiSends).
 		void showMidiEffects(const std::string& section, const engine::Json& rack);
 		void changeMidiEffect(const std::string& control, const Rml::Event& event);
+		// Shows the MIDI inserts' divider at a place, 0 above the first slot to 4 below the last.
+		void showDivider(int gap);
+		// A drag of the divider: it follows the mouse, and its end sends where it went (channel.set midiInserts).
+		void dragDivider(Rml::Element& target, const Rml::Event& event);
 		void saveNotes();
 		// Sends a change of the channel (channel.set).
 		void sendChannel(engine::Json parameters);
@@ -89,6 +93,7 @@ namespace gnubase::ui
 		bool m_showing = false;        // while show sets the controls, whose changes aren't the user's
 		bool m_dropping = false;       // while dropEdits ends edits, which then aren't taken
 		bool m_stale = false;          // a change was refused: show again
+		int m_dividerTo = -1;          // while the divider is dragged, where it goes
 		Subscription m_reset;          // project.reset
 		Subscription m_devicesChanged; // settings.changed with midi.devices
 		bool m_devicesKnown = false;   // settings.changed came before settings.get's answer

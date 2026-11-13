@@ -1168,6 +1168,18 @@
 	{
 		color: #c8c8c8;
 	}
+	.inspector .midi-effect-slot.off select
+	{
+		color: #c8c8c8;
+	}
+	.inspector .midi-effect-slot.recorded
+	{
+		border-left-color: #ffff00;
+	}
+	.inspector .midi-divider.at .midi-divider-line
+	{
+		background-color: #ffff00;
+	}
 	.pool-message.error
 	{
 		color: #ff8c8c;

@@ -753,6 +753,11 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".info-line.multiple .info-field", {"color": c["accent"]}),
         (".info-line .info-label, .inspector-label", {"color": c["textMuted"]}),
         (".inspector .insert.bypassed, .inspector .insert.inactive", {"color": c["textMuted"]}),
+        # The MIDI effect slots: switched-off ones dimmed, those above the divider, which are recorded, marked at their
+        # side, and the divider where it is
+        (".inspector .midi-effect-slot.off select", {"color": c["textMuted"]}),
+        (".inspector .midi-effect-slot.recorded", {"border-left-color": c["accent"]}),
+        (".inspector .midi-divider.at .midi-divider-line", {"background-color": c["accent"]}),
         # The pool's message line (docs/features/pool.md): why a pool command failed stands out
         (".pool-message.error", {"color": c["danger"]}),
         # The edit history (docs/features/edit-history.md): undone steps dimmed, and the separator after the done ones

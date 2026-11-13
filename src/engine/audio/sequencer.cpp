@@ -299,7 +299,7 @@ namespace gnubase::engine
 			SlotEffect& kept = m_slots[index];
 			const processors::BuiltinInfo* info = processors::findMidiEffect(slot.effect);
 			sequence->slotEffects[index] = info;
-			const bool before = sends ? (sequence->sends.pre ? inputNew : insertsNew) : insertsNew;
+			const bool before = (sends && sequence->sends.pre) ? inputNew : insertsNew;
 			const bool wasInput = kept.effect && kept.input;
 			if (rack.bypass || !slot.on || info == nullptr)
 			{

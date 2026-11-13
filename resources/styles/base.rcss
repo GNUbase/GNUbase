@@ -2112,6 +2112,31 @@ splitter.column .splitter-grip-horizontal
 	visibility: hidden;
 }
 
+/* The slots above the divider, which are recorded, have a line at their side; the divider is a line in a grip at each
+   of its places, which shows at the one it is at and is dragged to another. */
+.midi-effect-slot
+{
+	padding-left: 2dp;
+}
+
+.midi-effect-slot.recorded
+{
+	padding-left: 0;
+	border-left-width: 2dp;
+}
+
+.midi-divider
+{
+	padding: 2dp 0;
+	drag: drag;
+	focus: none;
+}
+
+.midi-divider-line
+{
+	height: 2dp;
+}
+
 .inspector textarea.notepad
 {
 	width: 100%;
