@@ -1522,6 +1522,12 @@ namespace gnubase::engine
 	// ends it.
 	std::vector<ObjectId> vcaChain(const Project& project, ObjectId channel);
 
+	// The channels a change of key on a channel goes on to (docs/features/link-groups.md): the other channels of its
+	// link group if the group links key (and linked), the channels of the group it controls if it is a VCA fader and
+	// key is one of its buttons, and from each of them on in the same way. key is one channel.set changes: volume,
+	// pan, eq, strip, sends, or one of its buttons (mute, solo, soloDefeat, listen, monitor, recordEnable).
+	std::vector<ObjectId> linkedTo(const Project& project, ObjectId channel, const std::string& key, bool linked);
+
 	// Gives a part's notes and controllers new ids.
 	void renumber(Project& project, MidiPart& part);
 
