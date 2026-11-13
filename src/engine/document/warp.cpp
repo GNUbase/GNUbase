@@ -308,22 +308,19 @@ namespace gnubase::engine
 		map.push_back({static_cast<double>(length), static_cast<double>(length)});
 		std::sort(map.begin(), map.end(),
 			[](const dsp::WarpPoint& a, const dsp::WarpPoint& b) { return a.source < b.source; });
+		// Within half a frame of the map: no further than rounding puts a marker inserted on it (#1266).
 		const auto onMap = [&map](const WarpMarker& marker)
 		{
 			return std::abs(static_cast<double>(marker.target) -
-					   dsp::warpTarget(map, static_cast<double>(marker.position))) <= 1.0;
+					   dsp::warpTarget(map, static_cast<double>(marker.position))) <= 0.5;
 		};
-		// Whether the section from one marker to the next plays as before, give or take a frame's rounding, as the
-		// sections of a marker inserted where it changes nothing do.
+		// Whether the section from one marker to the next plays as before, give or take that rounding: both ends on
+		// the map with no point of it in between (the map is sorted: a binary search, as dsp::warpTarget's).
 		const auto asBefore = [&map, &onMap](const WarpMarker& from, const WarpMarker& to)
 		{
-			return onMap(from) && onMap(to) &&
-				std::none_of(map.begin(), map.end(),
-					[&from, &to](const dsp::WarpPoint& point)
-					{
-						return point.source > static_cast<double>(from.position) &&
-							point.source < static_cast<double>(to.position);
-					});
+			const auto next = std::upper_bound(map.begin(), map.end(), static_cast<double>(from.position),
+				[](double source, const dsp::WarpPoint& point) { return source < point.source; });
+			return next != map.end() && next->source >= static_cast<double>(to.position) && onMap(from) && onMap(to);
 		};
 		WarpMarker before;
 		for (const WarpMarker& marker : warp.markers)
