@@ -12,6 +12,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <vector>
 
 namespace Rml
 {
@@ -46,10 +47,11 @@ namespace gnubase::ui
 		Inspector(Inspector&&) = delete;
 		Inspector& operator=(Inspector&&) = delete;
 
-		// Shows a track (0: none) of the project as project.get returned it, the loads-th answer, which the binding
-		// handed on as EngineBinding::handed() returned read; call it once per step, it does nothing while neither
-		// changed. The project must stay until the next call.
-		void update(uint64_t track, const engine::Json& project, uint64_t loads, uint64_t read);
+		// Shows the first of the tracks (none when it is empty) of the project as project.get returned it, the loads-th
+		// answer, which the binding handed on as EngineBinding::handed() returned read; call it once per step, it does
+		// nothing while neither changed. The Track Versions section works on every one of the tracks. The project must
+		// stay until the next call.
+		void update(const std::vector<uint64_t>& tracks, const engine::Json& project, uint64_t loads, uint64_t read);
 
 	private:
 		void ProcessEvent(Rml::Event& event) override;
@@ -63,6 +65,10 @@ namespace gnubase::ui
 		// control panels, and send a control's change (channel.set midiInserts and midiSends).
 		void showMidiEffects(const std::string& section, const engine::Json& rack);
 		void changeMidiEffect(const std::string& control, const Rml::Event& event);
+		// The Track Versions section (pp. 231-232): the active version's name and ID, and the list of them all.
+		void showVersions(const engine::Json& track);
+		// A version command on every selected track, one undo step.
+		void versionCommand(const char* command);
 		void saveNotes();
 		// Sends a change of the channel (channel.set).
 		void sendChannel(engine::Json parameters);
@@ -80,6 +86,7 @@ namespace gnubase::ui
 		std::function<void(uint64_t track)> m_setupArticulations;
 		std::function<void(uint64_t track, bool project)> m_openInputTransformer;
 		uint64_t m_track = 0;
+		std::vector<uint64_t> m_selected; // the tracks the inspector shows, the first one's details
 		uint64_t m_loads = 0;
 		uint64_t m_read = 0;
 		const engine::Json* m_project = nullptr;            // update's

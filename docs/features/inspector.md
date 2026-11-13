@@ -87,6 +87,10 @@ one it has the class `empty` and says "No Track Selected".
     [section=chords]               MIDI and instrument tracks with a chord track: select[control=followChords]
     [section=articulations]        MIDI and instrument tracks: select[control=articulationMap],
                                    button.inspector-articulation-setup
+    [section=trackVersions]        audio, instrument and MIDI tracks: textdisplay[control=versionName],
+                                   .inspector-version-id, .inspector-version-indicator (.multiple on the section),
+                                   .inspector-version[version] per version (.selected on the active one), and
+                                   button.inspector-version-add, -duplicate and -remove
     [section=inserts]              .insert per plugin slot, .bypassed and .inactive
     [section=notepad]              textarea.notepad
 ```
@@ -135,6 +139,11 @@ one it has the class `empty` and says "No Track Selected".
   (`chord.setTrack`).
 - **Articulation Map** (pp. 1263, 1286, [articulation-maps.md](articulation-maps.md)): MIDI and instrument tracks'
   map, or No Map (`track.set` `articulationMap`), and Setup..., which opens the articulation map setup for the track.
+- **Track Versions** (pp. 231-232, [track-versions.md](track-versions.md)): the first selected track's active
+  version, its name, which a double click changes for every selected track (`trackVersion.set`), and its ID, an
+  indicator while the track has more than one version, the list of them all, in which a click activates one on every
+  selected track (`trackVersion.activate`), and New, Duplicate and Delete (`trackVersion.add`, `.duplicate` and
+  `.remove`), which work on them all; Delete only while there is a version to delete.
 - **Inserts**: an overview of the channel's plugin slots by name, top to bottom (`plugin.*` changes them).
 - **Notepad** (p. 168): the channel's notes. What is typed goes to the engine when the field loses the focus, also
   with Escape (`channel.set` `notes`, one undo step). When another track shows while the notepad or the name is being
@@ -156,15 +165,14 @@ one it has the class `empty` and says "No Track Selected".
 
 ## Not yet
 
-The info line's other fields (offset, fades, snap point; audio events' global transpose and root key), hiding fields from its
-context menu, and its own modifier setting (Preferences, Editing - Tool Modifiers); the inspector's other sections
-(track versions, chords, articulations, equalizer, fader, cue sends, remote controls), dragging the MIDI inserts'
-divider between the slots,
-sends (#108), the MIDI tracks' MIDI volume and pan, the folder track inspector's list of the tracks inside, the
-editor tab and the tempo, signature and marker track inspectors,
-Expand Sections Exclusively, and the Channel zone's channel strip (#107). Record and monitor on instrument and MIDI
-tracks (pp. 173–176) wait for #97. Set up Sections for the inspector in a window of its own, where `#inspector-setup`,
-which is in the project window's document, doesn't open, waits for #517.
+The info line's other fields (offset, fades, snap point; audio events' global transpose and root key), hiding fields
+from its context menu, and its own modifier setting (Preferences, Editing - Tool Modifiers); the inspector's other
+sections (chords, articulations, equalizer, fader, cue sends, remote controls), dragging the MIDI inserts' divider
+between the slots, sends (#108), the MIDI tracks' MIDI volume and pan, the folder track inspector's list of the tracks
+inside, the editor tab and the tempo, signature and marker track inspectors, Expand Sections Exclusively, and the
+Channel zone's channel strip (#107). Record and monitor on instrument and MIDI tracks (pp. 173–176) wait for #97. Set up
+Sections for the inspector in a window of its own, where `#inspector-setup`, which is in the project window's document,
+doesn't open, waits for #517.
 
 ## Checks
 

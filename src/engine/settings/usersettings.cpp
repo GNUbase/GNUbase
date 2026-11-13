@@ -706,6 +706,11 @@ namespace gnubase::engine::settings
 					Json{{"type", "boolean"}}, true},
 				{"ui.scale", "The UI scale, applied on top of each monitor's own scale.",
 					Json{{"type", "number"}, {"minimum", 0.5}, {"maximum", 4}}, 1.0},
+				{"ui.showVersionName",
+					"Whether the track list shows the active version's name after the name of a track with more than "
+					"one version: Show Version Name in Track List in the Track Versions pop-up menu (reference manual "
+					"p. 231).",
+					Json{{"type", "boolean"}}, true},
 				{"ui.theme", "The theme's folder name in resources/themes.", Json{{"type", "string"}}, "gnubase"},
 				{"ui.timeDisplay",
 					"The time display window's options: beatCountOnly shows only the beat in its bar, size is the "
