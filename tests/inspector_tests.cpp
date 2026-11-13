@@ -1553,6 +1553,25 @@ TEST_CASE("a MIDI modifier or a part's transpose dragged back to where it starte
 		"#info-line valuefield[field=transpose]", [&] { return window.part(part).at("transpose").get<int64_t>(); });
 }
 
+TEST_CASE("the inspector routes a MIDI or instrument track's MIDI input from all MIDI inputs or the chord pads", "[ui]")
+{
+	// Reference manual p. 1367: Chord Pads as the input routing (#1089).
+	Window window;
+	const uint64_t keys = window.addTrack({{"type", "instrument"}, {"name", "Keys"}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 1; }));
+	window.list.select({keys});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Keys"));
+	CHECK_FALSE(hasClass(window.app, ".inspector [row=input]", "unavailable"));
+	REQUIRE(window.shows(".inspector select[control=input]", "all"));
+	window.click(".inspector select[control=input]");
+	window.app.ui().key(std::nullopt, "Down");
+	window.click(".inspector select[control=input]");
+	REQUIRE(window.app.waitUntil([&] { return window.channel(keys).at("midiInput") == "chordPads"; }));
+	// Another client's choice shows.
+	window.call("channel.set", {{"channel", window.channel(keys).at("id")}, {"midiInput", "none"}});
+	CHECK(window.shows(".inspector select[control=input]", "none"));
+}
+
 TEST_CASE("the inspector's MIDI Inserts and MIDI Sends sections show and change the track's MIDI effects", "[ui]")
 {
 	Window window;
@@ -1596,6 +1615,17 @@ TEST_CASE("the inspector's MIDI Inserts and MIDI Sends sections show and change 
 	choose(".inspector select[control=midiInserts-divider]", 1);
 	REQUIRE(window.app.waitUntil([&] { return inserts().at("divider") == 1; }));
 	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, first, "recorded"); }));
+	// Dragged below the third slot, the divider goes there in one step (p. 1105).
+	const int64_t beforeDrag = window.historyPosition();
+	CHECK(hasClass(window.app, ".inspector .midi-divider[gap=1]", "at"));
+	window.app.ui().drag(std::nullopt, {".inspector .midi-divider[gap=1]", 0, std::nullopt},
+		{".inspector .midi-divider[gap=3]", 0, std::nullopt});
+	REQUIRE(window.app.waitUntil([&] { return inserts().at("divider") == 3; }));
+	CHECK(window.historyPosition() == beforeDrag + 1);
+	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, ".inspector .midi-divider[gap=3]", "at"); }));
+	CHECK_FALSE(hasClass(window.app, ".inspector .midi-divider[gap=1]", "at"));
+	REQUIRE(window.app.waitUntil([&]
+		{ return hasClass(window.app, ".inspector [section=midiInserts] .midi-effect-slot[slot=2]", "recorded"); }));
 	// The edit button closes the control panel.
 	window.click(first + " .midi-effect-edit");
 	CHECK_FALSE(hasClass(window.app, first, "open"));

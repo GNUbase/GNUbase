@@ -189,10 +189,11 @@
 		local modifierChoices = {{"", "None"}, {"ctrl", "Ctrl"}, {"alt", "Alt"}, {"shift", "Shift"},
 			{"ctrl+alt", "Ctrl-Alt"}, {"ctrl+shift", "Ctrl-Shift"}, {"alt+shift", "Alt-Shift"},
 			{"ctrl+alt+shift", "Ctrl-Alt-Shift"}}
-		-- The tool modifiers' categories and actions (p. 1601); an action this list lacks shows its name.
+		-- The tool modifiers' categories and actions (p. 1601); an action this list lacks shows its name. The names
+		-- are plain text: the page escapes them, and the question that asks before it takes another action's keys too.
 		local modifierActions = {
-			["dragDrop.copy"] = {"Drag &amp; Drop", "Copy"},
-			["dragDrop.sharedCopy"] = {"Drag &amp; Drop", "Shared Copy"},
+			["dragDrop.copy"] = {"Drag & Drop", "Copy"},
+			["dragDrop.sharedCopy"] = {"Drag & Drop", "Shared Copy"},
 			["erase.deleteLaterEvents"] = {"Erase Tool", "Delete later events"},
 			["glue.glueAllFollowing"] = {"Glue Tool", "Glue All Following Events"},
 			["range.selectFullVertical"] = {"Range Tool", "Select Full Vertical"},
@@ -380,6 +381,90 @@
 
 		local custom = {}
 
+		-- The tool an action belongs to: its category, or the action itself for one the page doesn't know.
+		local function toolOf(action)
+			local names = modifierActions[action]
+			return names and names[1] or action
+		end
+
+		-- The name the page shows for an action.
+		local function actionName(action)
+			local names = modifierActions[action]
+			return names and names[2] or action
+		end
+
+		-- What the modifier list shows for modifier keys.
+		local function keysText(keys)
+			for _, choice in ipairs(modifierChoices) do
+				if choice[1] == keys then
+					return choice[2]
+				end
+			end
+			return keys
+		end
+
+		-- The modifier keys a control shows.
+		local function controlKeys(control)
+			local text = control:GetAttribute("value")
+			return text ~= nil and tostring(text) or ""
+		end
+
+		-- The Tool Modifiers page's controls, by action. Queried fresh each time, since the page can be rendered again
+		-- while a question is open (a change of ui.toolModifiers from a script or MCP).
+		local function modifierControls(document)
+			local controls = {}
+			for _, control in ipairs(document:QuerySelectorAll("#page-editing-tool-modifiers select.preference[action]")) do
+				controls[tostring(control:GetAttribute("action"))] = control
+			end
+			return controls
+		end
+
+		-- The other actions of the action's tool that show these modifier keys already (p. 1602), sorted.
+		local function takenBy(document, action, keys)
+			local others = {}
+			if keys == "" then
+				return others
+			end
+			local own = toolOf(action)
+			for other, control in pairs(modifierControls(document)) do
+				if other ~= action and toolOf(other) == own and controlKeys(control) == keys then
+					others[#others + 1] = other
+				end
+			end
+			table.sort(others)
+			return others
+		end
+
+		-- Asks whether an action may take the modifier keys other actions of its tool have (p. 1602). The action keeps
+		-- what it has until the question is answered; onCancel runs for Cancel or Escape.
+		local function askReplace(document, action, keys, others, onCancel)
+			local names = {}
+			for _, other in ipairs(others) do
+				names[#names + 1] = actionName(other)
+			end
+			ConfirmDialog = {title = "Tool Modifiers",
+				message = toolOf(action) .. ": " .. table.concat(names, ", ") ..
+					(#others == 1 and " has " or " have ") .. keysText(keys) ..
+					" already. Replace the modifier keys?",
+				ok = "Replace",
+				onOk = function()
+					-- The action gets the keys, and the actions of its tool that had them are left without any.
+					local controls = modifierControls(document)
+					for _, other in ipairs(others) do
+						if controls[other] ~= nil then
+							controls[other]:SetAttribute("value", "")
+						end
+						prefs.shown[other] = ""
+					end
+					if controls[action] ~= nil then
+						controls[action]:SetAttribute("value", keys)
+					end
+					prefs.shown[action] = keys
+				end,
+				onCancel = onCancel}
+			gnubase.ui.confirm{}
+		end
+
 		-- Editing - Tool Modifiers (p. 1601): the modifier keys of each action, ui.toolModifiers over the defaults.
 		function custom.toolModifiers(values)
 			local set = values["ui.toolModifiers"] or {}
@@ -388,13 +473,16 @@
 				actions[#actions + 1] = action
 			end
 			table.sort(actions)
+			prefs.shown = {} -- what each control shows, to put it back when a question is cancelled
 			local rows = {}
 			for _, action in ipairs(actions) do
-				local names = modifierActions[action] or {"", escape(action)}
 				local id = action:gsub("%.", "-")
-				rows[#rows + 1] = "<tr><td>" .. names[1] .. "</td><td>" .. names[2] .. "</td><td>" ..
-					dropDown(attributes("pref-tool-" .. id, "ui.toolModifiers") ..
-						' action="' .. action .. '"', modifierChoices, set[action] or prefs.toolDefaults[action]) ..
+				local keys = set[action] or prefs.toolDefaults[action] or ""
+				prefs.shown[action] = keys
+				rows[#rows + 1] = "<tr><td>" .. escape(toolOf(action)) .. "</td><td>" .. escape(actionName(action)) ..
+					"</td><td>" ..
+					dropDown(attributes("pref-tool-" .. id, "ui.toolModifiers") .. ' action="' .. action ..
+						'" onchange="Preferences.modifiers(document, element)"', modifierChoices, keys) ..
 					'</td><td><button id="pref-tool-assign-' .. id .. '" action="' .. action ..
 					'" onclick="Preferences.assignModifiers(document, event, element)">Assign</button></td></tr>'
 			end
@@ -402,8 +490,27 @@
 				"</thead><tbody>" .. table.concat(rows) .. "</tbody></table>"
 		end
 
-		-- Assign (p. 1574): the modifier keys held while clicking it, for its action. Another action of the category
-		-- with the same modifiers is left without any.
+		-- The list chose modifier keys for an action: they are its, unless another action of its tool has them already,
+		-- which the reference asks about first (p. 1602); the action keeps what it had until the question is answered.
+		function prefs.modifiers(document, control)
+			local action = tostring(control:GetAttribute("action"))
+			local keys = controlKeys(control)
+			local others = takenBy(document, action, keys)
+			if #others == 0 then
+				prefs.shown[action] = keys
+				return
+			end
+			local previous = prefs.shown[action] or ""
+			askReplace(document, action, keys, others, function()
+				local controls = modifierControls(document) -- Cancel: put the list back to what it showed
+				if controls[action] ~= nil then
+					controls[action]:SetAttribute("value", previous)
+				end
+			end)
+		end
+
+		-- Assign (p. 1574): the modifier keys held while clicking it, for its action. When another action of the tool
+		-- already has them, the reference asks before it overwrites them (p. 1602).
 		function prefs.assignModifiers(document, event, button)
 			local function held(name)
 				local state = event.parameters[name]
@@ -421,16 +528,16 @@
 			end
 			local assigned = table.concat(keys, "+")
 			local action = tostring(button:GetAttribute("action"))
-			local category = (modifierActions[action] or {action})[1]
-			for _, control in ipairs(document:QuerySelectorAll("select.preference[action]")) do
-				local other = tostring(control:GetAttribute("action"))
-				if other == action then
-					control:SetAttribute("value", assigned)
-				elseif assigned ~= "" and (modifierActions[other] or {other})[1] == category and
-					tostring(control:GetAttribute("value") or "") == assigned then
-					control:SetAttribute("value", "")
-				end
+			local others = takenBy(document, action, assigned)
+			if #others > 0 then
+				askReplace(document, action, assigned, others, nil)
+				return
 			end
+			local controls = modifierControls(document)
+			if controls[action] ~= nil then
+				controls[action]:SetAttribute("value", assigned)
+			end
+			prefs.shown[action] = assigned
 		end
 
 		local function controllerItems(controllers)

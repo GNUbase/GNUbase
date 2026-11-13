@@ -10,6 +10,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
@@ -23,6 +24,7 @@
 #include <optional>
 #include <random>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -519,6 +521,64 @@ TEST_CASE("peak files round trip, and damaged ones are rejected", "[unit]")
 	damage(newer, "a newer version");
 	damage("", "empty");
 	CHECK_THROWS_AS(peaks::readPeakFile(dir.path() / "missing.gbpeaks"), peaks::PeakFileError);
+}
+
+TEST_CASE("a peak file being read can be renamed over, on Windows too", "[integration]")
+{
+	// writePeakFile renames over a peak file another thread may be reading, such as when the cache rebuilds the peaks
+	// while the old ones are still read: the read has to share deletion, which std::ifstream doesn't do on Windows,
+	// and there the rename takes the file being read out of the way first (#963). One level of one peak per frame, so
+	// a read takes long enough to overlap the renames.
+	const test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "take.gbpeaks";
+	const peaks::PeakData data = build(testSignal(1, 200000, 5), 1, {1});
+	peaks::writePeakFile(file, "take.wav", {1, 2, 3}, data);
+
+	std::atomic<bool> done{false};
+	std::string readerError;
+	std::thread reader(
+		[&]
+		{
+			try
+			{
+				while (!done)
+				{
+					try
+					{
+						if (peaks::readPeakFile(file).data != data)
+							readerError = "the peaks read back aren't the ones written";
+					}
+					catch (const peaks::PeakFileError& e)
+					{
+						// On Windows the replacement moves the old file aside and puts the new one in its place, so
+						// an open between the two renames finds no file; reading either file has to work.
+						if (std::string(e.what()).find("can't open") == std::string::npos)
+							readerError = e.what();
+					}
+				}
+			}
+			catch (const std::exception& e)
+			{
+				readerError = e.what();
+			}
+		});
+	std::string writerError;
+	try
+	{
+		for (int i = 0; i < 100; ++i)
+			peaks::writePeakFile(file, "take.wav", {1, 2, 3}, data);
+	}
+	catch (const std::exception& e)
+	{
+		writerError = e.what();
+	}
+	done = true;
+	reader.join();
+	CHECK(writerError == std::string());
+	CHECK(readerError == std::string());
+	CHECK(peaks::readPeakFile(file).data == data);
+	// Only the peak file itself: the replacements left no temporary file behind.
+	CHECK(std::distance(std::filesystem::directory_iterator(dir.path()), std::filesystem::directory_iterator()) == 1);
 }
 
 TEST_CASE("a peak file far larger than its header says is rejected without reading it", "[unit]")

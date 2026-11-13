@@ -810,7 +810,9 @@ namespace gnubase::engine
 			}
 			case AutomationTargetType::Strip:
 				only({"parameter"});
-				require(channel.format != ChannelFormat::None, "a MIDI track has no channel strip sections");
+				require(channel.format != ChannelFormat::None,
+					track.type == TrackType::Vca ? "a VCA track has no channel strip sections"
+												 : "a MIDI track has no channel strip sections");
 				require(json.contains("parameter"), "target.parameter is required");
 				require(isParameterId(json.at("parameter")) &&
 						findStripParameter(json.at("parameter").get<uint32_t>()) != nullptr,
@@ -1909,52 +1911,6 @@ namespace gnubase::engine
 			}
 		}
 
-		// Whether a link group links a channel.set key (reference manual p. 458).
-		bool links(const LinkGroup& group, const std::string& key)
-		{
-			if (key == "volume")
-				return group.volume;
-			if (key == "pan")
-				return group.pan;
-			if (key == "monitor" || key == "recordEnable")
-				return group.record;
-			if (key == "eq")
-				return group.eq;
-			if (key == "strip")
-				return group.dynamics;
-			if (key == "sends")
-				return group.sends;
-			return group.mute; // mute, solo, soloDefeat and listen
-		}
-
-		// The channels a change of key on a channel goes on to (docs/features/link-groups.md): the other channels of
-		// its link group if the group links key (and linked), the channels of the group it controls if it is a VCA
-		// fader and key is one of its buttons, and from each of them on in the same way.
-		std::vector<ObjectId> linkedTo(const Project& project, ObjectId channel, const std::string& key, bool linked)
-		{
-			const bool button = key != "volume" && key != "pan" && key != "eq" && key != "strip" && key != "sends";
-			std::vector<ObjectId> result;
-			std::set<ObjectId> seen{channel};
-			std::vector<ObjectId> pending{channel};
-			while (!pending.empty())
-			{
-				const ObjectId at = pending.back();
-				pending.pop_back();
-				std::vector<ObjectId> next;
-				if (const LinkGroup* group = linkGroupOf(project, at); linked && group != nullptr && links(*group, key))
-					next = group->channels;
-				if (const LinkGroup* group = controlledBy(project, at); button && group != nullptr)
-					next.insert(next.end(), group->channels.begin(), group->channels.end());
-				for (const ObjectId id : next)
-					if (seen.insert(id).second)
-					{
-						result.push_back(id);
-						pending.push_back(id);
-					}
-			}
-			return result;
-		}
-
 		// Passes channel.set's fader, pan and buttons on to the channels linked to the channel: the fader and the pan
 		// by as much as they moved, stopping at their ends, the buttons as they are now; and its eq, strip and sends
 		// as they were given, to each channel that can take them. Returns the channels the solo went on to.
@@ -2219,16 +2175,7 @@ namespace gnubase::engine
 			if (parameters.contains("sends"))
 				setSends(project, changed, parameters.at("sends"));
 			// A MIDI slot's automation goes with its effect when the slot gets another one (or none).
-			for (auto lane = project.automation.begin(); lane != project.automation.end();)
-			{
-				const AutomationTarget& target = lane->second.target;
-				const bool gone = lane->second.track == channel.track &&
-					target.type == AutomationTargetType::MidiEffect &&
-					midiEffectSlot(channel, target.number).effect != midiEffectSlot(changed, target.number).effect;
-				if (gone)
-					context.emit("automationLane.removed", {{"lane", lane->first}});
-				lane = gone ? project.automation.erase(lane) : std::next(lane);
-			}
+			removeMidiEffectLanes(project, context, channel, changed);
 			const Channel before = channel;
 			channel = changed;
 			const std::set<ObjectId> soloed = passOn(project, before, channel.id, parameters, context);
@@ -3445,6 +3392,11 @@ namespace gnubase::engine
 			{"chordPads.loadPreset", "Load chord pads preset"},
 			{"chordPads.step", "Insert chord from pad"},
 			{"chordPads.toTrack", "Chord pad to track"},
+			{"chordPads.recordChord", "Record chord from pad"},
+			{"chordPads.addPlayer", "Add chord pads player"},
+			{"chordPads.setPattern", "Set chord pads pattern"},
+			{"chordPads.setPlayer", "Change chord pads player"},
+			{"chordPads.removePlayer", "Delete chord pads player"},
 			{"automationLane.add", "Add automation lane"},
 			{"automationLane.set", "Change automation lane"},
 			{"automationLane.remove", "Remove automation lane"},
@@ -3520,15 +3472,24 @@ namespace gnubase::engine
 					!(current.setup == previous.setup) || current.rootKey != previous.rootKey ||
 					change.timeFormatBefore)
 					context.emit("project.changed", projectSettingsJson(project));
-				if (!(current.chordPads == previous.chordPads))
+				if (!(current.chordPads == previous.chordPads) || change.stepPositionBefore)
 					context.emit("chordPads.changed", chordPadsJson(project));
+				// The arranger and transpose events are settings, so undo and redo announce them here, as the commands
+				// that change them do (#896).
+				if (!(current.arranger == previous.arranger))
+					context.emit("arranger.changed", arrangerJson(project));
+				if (!(current.transpose == previous.transpose))
+					context.emit("transpose.changed", transposeJson(project));
 				announceBusses(previous.busses, current.busses, context);
 				reordered = current.tracks != previous.tracks;
 				activated = current.activeMarkerTrack != previous.activeMarkerTrack;
 			}
-			else if (change.timeFormatBefore)
+			else
 			{
-				context.emit("project.changed", projectSettingsJson(project));
+				if (change.timeFormatBefore)
+					context.emit("project.changed", projectSettingsJson(project));
+				if (change.stepPositionBefore)
+					context.emit("chordPads.changed", chordPadsJson(project));
 			}
 			for (const ObjectChange<Track>& track : change.tracks)
 				reordered = reordered || !track.before || !track.after || track.before->parent != track.after->parent ||
@@ -3690,6 +3651,20 @@ namespace gnubase::engine
 				change.timeFormatBefore.reset();
 				change.timeFormatAfter.reset();
 			}
+			// And only the step positions the gesture's commands moved, not the cursor moves between them.
+			change.stepPositionBefore = steps.back().change.stepPositionBefore;
+			change.stepPositionAfter = steps.back().change.stepPositionAfter;
+			if (before.chordPads.stepPosition != m_project.chordPads.stepPosition)
+			{
+				if (!change.stepPositionBefore)
+					change.stepPositionBefore = before.chordPads.stepPosition;
+				change.stepPositionAfter = m_project.chordPads.stepPosition;
+			}
+			if (change.stepPositionBefore == change.stepPositionAfter)
+			{
+				change.stepPositionBefore.reset();
+				change.stepPositionAfter.reset();
+			}
 			if (change.empty())
 				m_history.removeLast();
 			else
@@ -3824,6 +3799,21 @@ namespace gnubase::engine
 		{
 			change.timeFormatBefore.reset();
 			change.timeFormatAfter.reset();
+		}
+		// And the step positions its steps moved, not the cursor moves between them.
+		change.stepPositionBefore.reset();
+		change.stepPositionAfter.reset();
+		for (size_t i = first; i < position; ++i)
+			if (steps[i].change.stepPositionBefore)
+			{
+				if (!change.stepPositionBefore)
+					change.stepPositionBefore = steps[i].change.stepPositionBefore;
+				change.stepPositionAfter = steps[i].change.stepPositionAfter;
+			}
+		if (change.stepPositionBefore == change.stepPositionAfter)
+		{
+			change.stepPositionBefore.reset();
+			change.stepPositionAfter.reset();
 		}
 		std::optional<HistoryStep> joined;
 		if (!change.empty())
@@ -4404,7 +4394,9 @@ namespace gnubase::engine
 				"whileRecording while the transport records, tapeMachine while it stands or records (the default). "
 				"Monitoring glides in and out over one audio block. MIDI and instrument tracks have them too: "
 				"recordEnable arms the track for MIDI recording, and while either is on, the track plays what comes "
-				"from its MIDI input, midiInput: all (all MIDI inputs, the default) or none. inputTransformer (MIDI "
+				"from its MIDI input, midiInput: all (all MIDI inputs, the default), chordPads (only the chord pads, "
+				"which play into it also with Chord Pad Output Mode off, chordPads.set outputMode) or none. "
+				"inputTransformer (MIDI "
 				"and instrument tracks): {mode, modules}, mode off, track (its own modules) or project (those of "
 				"midi.setInputTransformer), modules as midi.setInputTransformer takes them; the modules that are on "
 				"change what the track's MIDI input plays, before it plays and records it. monitor and "
@@ -4471,7 +4463,7 @@ namespace gnubase::engine
 						{"program", {{"type", {"integer", "null"}}}}, {"bank", {{"type", {"integer", "null"}}}},
 						{"midiChannel", {{"type", {"integer", "null"}}}}, {"device", stringSchema},
 						{"volume", numberSchema}, {"pan", numberSchema}, {"monitor", booleanSchema},
-						{"recordEnable", booleanSchema}, {"midiInput", enumSchema({"all", "none"})},
+						{"recordEnable", booleanSchema}, {"midiInput", enumSchema({"all", "chordPads", "none"})},
 						{"mute", booleanSchema}, {"solo", booleanSchema}, {"exclusive", booleanSchema},
 						{"soloDefeat", booleanSchema}, {"listen", booleanSchema}, {"notes", stringSchema},
 						{"linked", booleanSchema}, {"pre", {{"type", "object"}}}, {"eq", {{"type", "object"}}},
