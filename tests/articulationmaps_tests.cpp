@@ -708,6 +708,44 @@ TEST_CASE("Merge MIDI in Loop starts each part with the default slot, on a new t
 		std::vector<std::tuple<int64_t, std::string, bool>>{{0, "Pizzicato", false}, {g_bar, "Arco", true}});
 }
 
+TEST_CASE("Merge MIDI in Loop adds resets only where a direction of their group is in effect", "[unit]")
+{
+	Fixture f;
+	f.strings();
+	// Part B, bar 2, starts where no direction of Technique is in effect in the merged part: A has none, or a
+	// reset of its own before B.
+	SECTION("a part with attributes only")
+	{
+		f.call("note.add",
+			{{"part", f.part},
+				{"notes",
+					{{{"position", 0}, {"length", 60}, {"pitch", 60}, {"velocity", 0.5},
+						{"articulations", {"Staccato"}}}}}});
+	}
+	SECTION("a part that resets its direction")
+	{
+		f.call("controller.add",
+			{{"part", f.part},
+				{"controllers",
+					{{{"position", 0}, {"type", "articulation"}, {"articulation", "Pizzicato"}},
+						{{"position", g_quarter}, {"type", "articulation"}, {"articulation", "Arco"},
+							{"reset", true}}}}});
+	}
+	const Json b =
+		f.call("midiPart.add", {{"track", f.track}, {"position", g_bar}, {"length", g_bar}}).at("part").at("id");
+	f.call("note.add", {{"part", b}, {"notes", {{{"position", 0}, {"length", 60}, {"pitch", 60}, {"velocity", 0.5}}}}});
+	// At 120 BPM and 48 kHz a bar is 96000 samples: bars 1 and 2.
+	const Json changes = f.call("midi.merge", {{"start", 0}, {"end", 192000}});
+	Json merged;
+	const Json project = f.call("project.get");
+	for (const Json& part : project.at("midiParts"))
+		if (part.at("id") == changes.at("parts").at(0))
+			merged = part;
+	REQUIRE(merged.is_object());
+	for (const Json& controller : merged.at("controllers"))
+		CHECK(controller.at("position").get<int64_t>() < g_bar); // A's own, no reset where B starts
+}
+
 TEST_CASE("track presets and track import bring a track's articulation map along", "[integration]")
 {
 	const test::TempDir dir;
@@ -854,6 +892,19 @@ TEST_CASE("remote triggers played into a track select sound slots", "[integratio
 		call("articulationMap.set", {{"map", copy}, {"slots", slots}});
 		call("audio.render", {{"frames", 64}});
 		CHECK(play({{0x90, 60, 100}, {0x80, 60, 0}}) == Played{{0x90, 60}, {0x80, 60}});
+	}
+	SECTION("renaming or recoloring a slot keeps the one selected")
+	{
+		// Pizzicato selected, then the setup renames and recolors it: the notes still play on its channel 3.
+		CHECK(play({{0x90, 37, 100}, {0x80, 37, 0}}) == Played{{0x92, 25}, {0x82, 25}});
+		Json slots = stringsSettings().at("slots");
+		slots[1]["name"] = "Pizz.";
+		slots[1]["color"] = "#ff0000";
+		slots[1]["length"] = 80;                   // the notes played in don't end yet
+		slots[2]["articulations"] = Json::array(); // what notes select it with doesn't play from the input either
+		call("articulationMap.set", {{"map", map}, {"slots", slots}});
+		call("audio.render", {{"frames", 64}});
+		CHECK(play({{0x90, 60, 100}, {0x80, 60, 0}}) == Played{{0x92, 60}, {0x82, 60}});
 	}
 	SECTION("a trigger key's note-off ends the note its note-on played")
 	{
