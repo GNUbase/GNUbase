@@ -1457,6 +1457,209 @@ TEST_CASE("the unsaved changes question and a failed command's error wait while 
 	CHECK(location(app) == utf8(fs::absolute(file)));
 }
 
+namespace
+{
+	// The history panel in a window of its own, as the tests around here take a panel's own window.
+	gnubase::ui::Window& panelWindow(test::UiApp& app)
+	{
+		app.appUi().docking().setFloating("history", true);
+		const gnubase::ui::Window* floating = app.appUi().docking().windowOf("history");
+		REQUIRE(floating != nullptr);
+		gnubase::ui::Window* window = app.shell().find(floating->id());
+		REQUIRE(window != nullptr);
+		return *window;
+	}
+
+	// Lets the shell run what it posted and the engine answered before, as the waiting tests above do.
+	void settle(test::UiApp& app)
+	{
+		app.call("project.revision"); // after the engine answered whatever the UI asked
+		for (int i = 0; i < 5; ++i)
+			app.shell().step(std::chrono::milliseconds(0));
+	}
+}
+
+TEST_CASE("a quit request drops the questions and start screens that wait, so that its question is next", "[ui]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	const test::TempDir dir;
+	const fs::path file = dir.path() / "Song.dawproject";
+	app.call("project.save", {{"path", utf8(file)}});
+	app.call("track.add", {{"type", "audio"}});
+
+	// File > Open's question waits while the start screen is open.
+	app.appUi().openStartScreen();
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#start-screen"); }));
+	app.keys().run("file.open", Json::object(), app.main(), nullptr);
+	answer(app, {file});
+	settle(app);
+	CHECK(elements(app, "#discard-changes-dialog").empty());
+
+	// The quit request closes the start screen and drops the question that waits: its own question opens, and one
+	// Discard quits instead of opening the project the dropped question was about and asking again.
+	closeLastWindow(app);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#discard-changes-dialog"); }));
+	click(app, "#discard-changes");
+	REQUIRE(app.waitUntil([&app] { return !app.shell().running(); }));
+}
+
+TEST_CASE("an error whose window closed while it waited shows in the main window", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	const test::TempDir dir;
+	const fs::path notFolder = dir.path() / "file";
+	std::ofstream(notFolder) << "not a folder";
+
+	// A save asked for in a panel's own window fails while the start screen is open: its error waits for it.
+	gnubase::ui::Window& panel = panelWindow(app);
+	const gnubase::ui::WindowId panelId = panel.id();
+	app.appUi().openStartScreen();
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#start-screen"); }));
+	app.keys().run("file.saveAs", Json::object(), panel, nullptr);
+	answer(app, {notFolder / "Song.dawproject"});
+	settle(app);
+	CHECK(elements(app, "#project-error-dialog").empty());
+
+	// Closing the panel window takes the error's window along before the start screen closes: the error shows in
+	// the main window instead of only being logged, so that the failed save isn't taken for done.
+	app.ui().close(panelId, false);
+	REQUIRE(app.waitUntil([&app, panelId] { return app.shell().find(panelId) == nullptr; }));
+	click(app, "#start-screen button[result=cancel]");
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+	CHECK(!errorMessage(app).empty());
+	closeError(app);
+}
+
+TEST_CASE("a question that waited doesn't ask once the project was saved meanwhile", "[ui]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	const test::TempDir dir;
+	const fs::path other = dir.path() / "Other.dawproject";
+	app.call("track.add", {{"type", "audio"}});
+	app.call("project.save", {{"path", utf8(other)}}); // one track
+	app.call("project.new");
+	app.call("track.add", {{"type", "audio"}});
+	app.call("track.add", {{"type", "audio"}});
+
+	// File > Open's question waits while the start screen is open.
+	app.appUi().openStartScreen();
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#start-screen"); }));
+	app.keys().run("file.open", Json::object(), app.main(), nullptr);
+	answer(app, {other});
+	settle(app);
+	CHECK(elements(app, "#discard-changes-dialog").empty());
+
+	// The project is saved while the question waits: once the start screen closes, there is nothing left to
+	// discard, so the project opens without the question.
+	app.call("project.save", {{"path", utf8(dir.path() / "Song.dawproject")}});
+	click(app, "#start-screen button[result=cancel]");
+	REQUIRE(app.waitUntil([&app, &other] { return location(app) == utf8(fs::absolute(other)); }));
+	CHECK(app.call("project.get").at("tracks").size() == 1);
+	CHECK(!shown(app, "#discard-changes-dialog"));
+}
+
+TEST_CASE("a quit question that waits and goes with its window lets the next quit request ask again", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	const test::TempDir dir;
+	const fs::path notFolder = dir.path() / "file";
+	std::ofstream(notFolder) << "not a folder";
+	app.call("track.add", {{"type", "audio"}});
+
+	// A save that fails leaves its error waiting while Save as Template is open.
+	fileMenu(app, "file.saveTemplate");
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#save-template-dialog"); }));
+	app.keys().run("file.saveAs", Json::object(), app.main(), nullptr);
+	answer(app, {notFolder / "Song.dawproject"});
+	settle(app);
+	CHECK(elements(app, "#project-error-dialog").empty());
+
+	// Quit in a panel's own window: the error stays and opens as Save as Template closes, and the question waits
+	// behind it for the panel's window.
+	gnubase::ui::Window& panel = panelWindow(app);
+	const gnubase::ui::WindowId panelId = panel.id();
+	app.keys().run("file.quit", Json::object(), panel, nullptr);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+	settle(app);
+	CHECK(elements(app, "#discard-changes-dialog").empty());
+
+	// Closing the panel window takes the question that waits along: it is skipped, which leaves GNUbase running
+	// and lets the next quit request ask again.
+	app.ui().close(panelId, false);
+	REQUIRE(app.waitUntil([&app, panelId] { return app.shell().find(panelId) == nullptr; }));
+	closeError(app);
+	settle(app);
+	REQUIRE(app.shell().running());
+	CHECK(elements(app, "#discard-changes-dialog").empty());
+
+	closeLastWindow(app);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#discard-changes-dialog"); }));
+	click(app, "#discard-changes");
+	REQUIRE(app.waitUntil([&app] { return !app.shell().running(); }));
+}
+
+TEST_CASE("a dialog that goes with its window lets the next one open", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	const test::TempDir dir;
+	const fs::path file = dir.path() / "Song.dawproject";
+	app.call("project.save", {{"path", utf8(file)}});
+	app.call("track.add", {{"type", "audio"}});
+
+	// The start screen in a panel's own window keeps File > Open's question in the main window waiting.
+	gnubase::ui::Window& panel = panelWindow(app);
+	const gnubase::ui::WindowId panelId = panel.id();
+	app.keys().run("file.new", Json::object(), panel, nullptr);
+	REQUIRE(app.waitUntil(
+		[&app, panelId] { return app.ui().dom(panelId, "#start-screen", 0).at("elements").size() == 1; }));
+	app.keys().run("file.open", Json::object(), app.main(), nullptr);
+	answer(app, {file});
+	settle(app);
+	CHECK(elements(app, "#discard-changes-dialog").empty());
+
+	// Closing the panel window takes the start screen along: the question opens in the main window.
+	app.ui().close(panelId, false);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#discard-changes-dialog"); }));
+	click(app, "#discard-changes");
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("tracks").empty(); }));
+}
+
+TEST_CASE("the dialogs that wait open in the order they came", "[ui]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	const test::TempDir dir;
+	const fs::path file = dir.path() / "Song.dawproject";
+	app.call("project.save", {{"path", utf8(file)}});
+	app.call("track.add", {{"type", "audio"}});
+	const fs::path notFolder = dir.path() / "file";
+	std::ofstream(notFolder) << "not a folder";
+
+	// While the start screen is open, File > Open's question comes first and a failed save's error second.
+	app.appUi().openStartScreen();
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#start-screen"); }));
+	app.keys().run("file.open", Json::object(), app.main(), nullptr);
+	answer(app, {file});
+	app.keys().run("file.saveAs", Json::object(), app.main(), nullptr);
+	answer(app, {notFolder / "Other.dawproject"});
+	settle(app);
+	CHECK(elements(app, "#discard-changes-dialog").empty());
+	CHECK(elements(app, "#project-error-dialog").empty());
+
+	// Once the start screen closes, the question opens first, and the error follows it.
+	click(app, "#start-screen button[result=cancel]");
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#discard-changes-dialog"); }));
+	CHECK(elements(app, "#project-error-dialog").empty());
+	click(app, "#discard-changes-dialog button[result=cancel]");
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+	closeError(app);
+}
+
 TEST_CASE("the start screen creates projects, from templates too, and opens recent ones", "[ui]")
 {
 	test::UiApp app({900, 640});

@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <set>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -24,6 +25,8 @@ namespace gnubase::ui
 	{
 		// The result of a dialog that closed to make way for another one.
 		constexpr const char* g_replaced = "replaced";
+		// The document that shows an error or a notice (showError, showNotice).
+		constexpr const char* g_errorDialog = "project-error.rml";
 		// The result with which a backup's progress dialog closes once the backup ended.
 		constexpr const char* g_backupDone = "done";
 
@@ -441,7 +444,8 @@ namespace gnubase::ui
 			return;
 		}
 		// One at a time, and the others wait, so that nothing the user is to answer or learn is dropped (#485).
-		m_waitingDialogs.push_back({window, file, std::move(shown), std::move(closed)});
+		m_waitingDialogs.push_back(
+			{window, file, std::string_view(file) == g_errorDialog, std::move(shown), std::move(closed)});
 		openWaiting();
 	}
 
@@ -452,6 +456,11 @@ namespace gnubase::ui
 			WaitingDialog next = std::move(m_waitingDialogs.front());
 			m_waitingDialogs.pop_front();
 			Rml::ElementDocument* dialog = loadDialog(next.window, next.file);
+			// An error or notice whose window went while it waited still shows, in the main window instead, so that
+			// the failed save it reports isn't taken for done (#985).
+			if (dialog == nullptr && next.error)
+				if (const Window* main = mainWindow(); main != nullptr)
+					dialog = loadDialog(main->id(), next.file);
 			if (dialog == nullptr)
 			{
 				if (next.shown)
@@ -491,6 +500,10 @@ namespace gnubase::ui
 	{
 		if (event.GetId() == Rml::EventId::Hide || event.GetId() == Rml::EventId::Unload)
 		{
+			// A document that unloads mustn't keep this as a listener: RmlUi releases the document at the context's
+			// next update and calls OnDetach on its listeners then, which may be after the teardown (#985).
+			if (event.GetId() == Rml::EventId::Unload)
+				event.GetCurrentElement()->RemoveEventListener(Rml::EventId::Unload, this);
 			// The dialog is still in its context while it unloads.
 			m_shell.post(
 				[this]
@@ -570,7 +583,7 @@ namespace gnubase::ui
 			[this, window, title, message]
 			{
 				openDialog(
-					window, "project-error.rml",
+					window, g_errorDialog,
 					[title, message](Rml::ElementDocument* dialog)
 					{
 						if (dialog == nullptr)
@@ -604,7 +617,7 @@ namespace gnubase::ui
 				}
 				// Any other error waits for the project dialog that is open.
 				openDialog(
-					window, "project-error.rml",
+					window, g_errorDialog,
 					[this, error, autoSave](Rml::ElementDocument* dialog)
 					{
 						if (dialog == nullptr)
@@ -677,6 +690,14 @@ namespace gnubase::ui
 			ui::closeDialog(*dialog, result);
 	}
 
+	Window* ProjectFiles::mainWindow()
+	{
+		for (Window* window : m_shell.windows())
+			if (window->main())
+				return window;
+		return nullptr;
+	}
+
 	void ProjectFiles::autoSaveFailed(const Json& failure)
 	{
 		// The engine logged the failure already, if it was new.
@@ -684,20 +705,17 @@ namespace gnubase::ui
 			m_autoSaveFailureShown = false;
 		if (m_autoSaveFailureShown)
 			return;
-		for (const Window* window : m_shell.windows())
-			if (window->main())
-			{
-				openError(
-					window->id(), "The project can't be auto saved: " + failure.at("error").get<std::string>(), true);
-				return;
-			}
+		if (const Window* main = mainWindow(); main != nullptr)
+			openError(main->id(), "The project can't be auto saved: " + failure.at("error").get<std::string>(), true);
 	}
 
 	void ProjectFiles::unlessUnsaved(
 		Window& window, std::function<void()> action, std::function<void(Rml::ElementDocument*)> asked)
 	{
+		const uint64_t question = ++m_questions;
 		m_binding.send("project.revision", Json::object(),
-			[this, id = window.id(), action = std::move(action), asked = std::move(asked)](const engine::Result& result)
+			[this, question, id = window.id(), action = std::move(action), asked = std::move(asked)](
+				const engine::Result& result)
 			{
 				if (!result.ok() || !result.value.at("modified").get<bool>())
 				{
@@ -708,9 +726,55 @@ namespace gnubase::ui
 				}
 				// The dialog that asked may still be closing. The question waits for a project dialog that is open.
 				m_shell.post(
-					[this, id, action, asked]
+					[this, question, id, action, asked]
 					{
-						openDialog(id, "discard-changes.rml", asked,
+						if (question != m_questions)
+						{
+							// A newer question came, such as a quit's while this one was still coming: this one
+							// doesn't open, and its action doesn't run (#985).
+							if (asked)
+								asked(nullptr);
+							return;
+						}
+						openDialog(
+							id, "discard-changes.rml",
+							[this, question, action, asked](Rml::ElementDocument* opened)
+							{
+								if (opened == nullptr)
+								{
+									if (asked)
+										asked(nullptr);
+									return;
+								}
+								// The question may have waited: the project can have been saved meanwhile, so ask
+								// the engine again now that it opens, and run the action at once if there is nothing
+								// left to discard (#985).
+								const Rml::ObserverPtr<Rml::Element> shown = opened->GetObserverPtr();
+								m_binding.send("project.revision", Json::object(),
+									[this, question, shown, action, asked](const engine::Result& result)
+									{
+										if (question != m_questions)
+											return; // a newer question came: this one's asked is its own
+										auto* opened = dynamic_cast<Rml::ElementDocument*>(shown.get());
+										if (opened == nullptr || opened != m_dialog.get())
+										{
+											// answered or gone with its window while the engine was asked
+											if (asked)
+												asked(nullptr);
+											return;
+										}
+										if (result.ok() && !result.value.at("modified").get<bool>())
+										{
+											ui::closeDialog(*opened, "cancel");
+											if (asked)
+												asked(nullptr);
+											action();
+											return;
+										}
+										if (asked)
+											asked(opened);
+									});
+							},
 							[action](Rml::ElementDocument&, const std::string& answer)
 							{
 								if (answer == "ok")
@@ -729,6 +793,20 @@ namespace gnubase::ui
 			return;
 		// A dialog that is open, such as the start screen, would keep the question from opening: quitting cancels it.
 		closeDialog("cancel");
+		// The questions and start screens that wait for it go too, so that the quit question is next instead of one
+		// of them: their asked hears that they won't open, and an error stays, as what it says may bear on the
+		// answer (#985).
+		for (auto waiting = m_waitingDialogs.begin(); waiting != m_waitingDialogs.end();)
+		{
+			if (waiting->error)
+			{
+				++waiting;
+				continue;
+			}
+			if (waiting->shown)
+				waiting->shown(nullptr);
+			waiting = m_waitingDialogs.erase(waiting);
+		}
 		m_quitting = true;
 		// Quitting closes every window, so it waits until the event that asked for it is done with them.
 		unlessUnsaved(
