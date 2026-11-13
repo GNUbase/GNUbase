@@ -458,15 +458,17 @@ TEST_CASE("midi.applyRules applies rules and presets to parts in one undo step",
 	}
 	SECTION("without a seed, each Apply gives new random values")
 	{
-		// Three velocities humanized by up to 10 agree between two Applies about once in 9000: of four Applies, the
-		// last three agree with the first about once in 10^12 (#1203).
+		// Three velocities humanized by up to 10 agree between two Applies about once in 8,400: of four Applies, the
+		// last three agree with the first about once in 6 * 10^11 (#1203). An Apply that changes nothing, such as
+		// three offsets of 0, records no undo step, so only an Apply that changed something is undone.
 		const Json humanize = {{"parts", Json::array({f.part})}, {"preset", "Transform/Humanize velocities"}};
 		std::vector<std::vector<std::string>> applied;
 		for (int i = 0; i < 4; ++i)
 		{
-			run(f.client, "midi.applyRules", humanize);
+			const Json result = run(f.client, "midi.applyRules", humanize);
 			applied.push_back(f.notes());
-			run(f.client, "history.undo");
+			if (!result.at("parts").empty())
+				run(f.client, "history.undo");
 		}
 		CHECK(std::any_of(applied.begin() + 1, applied.end(),
 			[&applied](const std::vector<std::string>& notes) { return notes != applied.front(); }));
