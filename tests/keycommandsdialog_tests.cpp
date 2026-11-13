@@ -649,13 +649,14 @@ TEST_CASE("File > Export > Key Command Assignments writes an HTML list of every 
 
 	const std::optional<std::string> html = files::readFile(written);
 	REQUIRE(html.has_value());
-	CHECK_THAT(html.value(), ContainsSubstring("<title>Key Command Assignments</title>"));
+	const std::string content = html.value_or(std::string());
+	CHECK_THAT(content, ContainsSubstring("<title>Key Command Assignments</title>"));
 	// Every assignment: the category, the command and the keys, including the customized one and a default.
-	CHECK_THAT(html.value(), ContainsSubstring("<td>transport</td>"));
-	CHECK_THAT(html.value(), ContainsSubstring("transport.stop"));
-	CHECK_THAT(html.value(), ContainsSubstring("F11"));
-	CHECK_THAT(html.value(), ContainsSubstring("Space")); // transport.toggle's default key
-	CHECK_THAT(html.value(), ContainsSubstring("</html>"));
+	CHECK_THAT(content, ContainsSubstring("<td>transport</td>"));
+	CHECK_THAT(content, ContainsSubstring("transport.stop"));
+	CHECK_THAT(content, ContainsSubstring("F11"));
+	CHECK_THAT(content, ContainsSubstring("Space")); // transport.toggle's default key
+	CHECK_THAT(content, ContainsSubstring("</html>"));
 }
 
 TEST_CASE("tool modifiers are assigned by holding the keys and clicking Assign", "[ui]")
