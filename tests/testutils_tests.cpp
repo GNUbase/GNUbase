@@ -58,6 +58,15 @@ TEST_CASE("TempDir creates a folder and deletes it with its contents", "[unit]")
 	REQUIRE_FALSE(std::filesystem::exists(path));
 }
 
+TEST_CASE("runCommand runs a command line with quoted paths of any characters and returns its exit code", "[unit]")
+{
+	const TempDir dir;
+	const std::filesystem::path file = dir.path() / std::filesystem::u8path(u8"ä 日.txt");
+	CHECK(runCommand("echo hello> \"" + file.u8string() + "\"") == 0);
+	CHECK(readText(file).rfind("hello", 0) == 0);
+	CHECK(runCommand("exit 3") == 3);
+}
+
 TEST_CASE("writeZip and readZip write and read a zip archive's entries", "[unit]")
 {
 	const TempDir dir;
