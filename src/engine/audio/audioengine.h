@@ -370,7 +370,8 @@ namespace gnubase::engine
 		AutoMonitoring m_autoMonitoring = AutoMonitoring::TapeMachine; // the graph's
 		ListenGains m_listenGains;                                     // the graph's
 		bool m_mutePreSends = false;                                   // the graph's audio.mutePreSends
-		float m_dim = 1.0f; // audio thread: the main mix's gain at the end of the last block
+		bool m_treatMutedAudioLikeDeleted = true; // the playlists' editing.treatMutedAudioLikeDeleted
+		float m_dim = 1.0f;                       // audio thread: the main mix's gain at the end of the last block
 
 		Engine* m_engine = nullptr;
 		std::vector<std::unique_ptr<audio::Backend>> m_backends;

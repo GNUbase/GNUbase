@@ -45,6 +45,7 @@ and keyboard input. [mcp.md](../mcp.md#ui-tools) is the guide for agents.
   input tool answers with the element under the mouse or with the focus, so a client sees what it hit. After each
   input, outside the shell's steps, the shell's input handler runs (`Shell::inputHandled`): the app updates its main
   menu's items there, so the DOM that `ui_dom` reads next shows what the input changed ([main-menu.md](main-menu.md)).
+  It runs once per input, after the input's listeners; `tests/mainmenu_tests.cpp` checks that for every input.
 - **Closing and quitting.** The window system's requests come from outside RmlUi, so input can't make them: `ui_close`
   asks to close a window as its title bar's close button or Alt+F4 does (`Shell::requestClose`): a panel's own window
   docks the panel again ([docking.md](docking.md)), and the main window asks to quit. With `quit` it asks to quit as

@@ -752,9 +752,11 @@ TEST_CASE("the sample loader waits only for the files asked for, and its end for
 	CHECK(loader->waitUntilRead(std::chrono::milliseconds(0), {"other.wav"}));
 	CHECK(!loader->waitUntilRead(std::chrono::milliseconds(20), {"next.wav"}));
 
-	// Its end waits for the file it reads and leaves the others unread.
+	// Its end waits for the file it reads and leaves the others unread. The read stays held back until the end has
+	// begun, so that the check doesn't rely on the ending thread winning a race against a sleep (#1272).
+	SampleLoader* const endingLoader = loader.get();
 	std::thread ending([&loader] { loader.reset(); });
-	std::this_thread::sleep_for(std::chrono::milliseconds(20));
+	endingLoader->waitUntilEnding();
 	{
 		const std::scoped_lock lock(mutex);
 		open = true;

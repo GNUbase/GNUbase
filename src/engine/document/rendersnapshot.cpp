@@ -596,10 +596,9 @@ namespace gnubase::engine
 				if (project.chordPads.players[player].track == track.id && track.id != 0)
 					render.padPlayer = static_cast<int>(player);
 			if (const DrumMap* map = midi::drumMapOf(project, track.id))
-				for (int played = 0; played < g_drumSounds; ++played)
+				for (const uint8_t pitch : midi::inputPitches(*map))
 				{
-					const DrumSound& sound =
-						map->sounds.at(midi::inputPitch(project, track.id, static_cast<uint8_t>(played)));
+					const DrumSound& sound = map->sounds.at(pitch);
 					render.drumInput.push_back({sound.oNote, static_cast<int8_t>(sound.channel), sound.mute});
 				}
 			render.autoFades = track.autoFades.value_or(project.autoFades);

@@ -332,12 +332,32 @@ TEST_CASE("the inspector's Input Transformer sets a track's mode and opens its p
 	CHECK(f.text("#rule-editor-title") == "Track Input Transformer");
 	f.click("#rule-editor-on");
 	f.click("#rule-editor-insert-action");
+	// A value that isn't a number keeps the dialog open with the message.
+	f.write("#rule-editor-action-1-p1", "x");
+	f.click("#rule-editor-apply");
+	CHECK(
+		f.app.waitUntil([&] { return f.text("#rule-editor-message").find("must be a number") != std::string::npos; }));
+	CHECK(f.shown("#rule-editor"));
 	f.write("#rule-editor-action-1-p1", "12");
+	// Module 2: a bracket that isn't closed, which only the engine refuses. As for the project's input transformer,
+	// OK shows that module with the engine's message (#1203).
+	f.choose("#rule-editor-module", 1);
+	f.click("#rule-editor-insert-filter");
+	f.choose("#rule-editor-filter-1-open", 1);
+	f.choose("#rule-editor-module", -1);
+	f.click("#rule-editor-apply");
+	CHECK(f.app.waitUntil([&] { return f.text("#rule-editor-message").find("not closed") != std::string::npos; }));
+	CHECK(f.text("#rule-editor-message").find("modules[") == std::string::npos);
+	CHECK(f.value("#rule-editor-module") == "2");
+	CHECK(f.value("#rule-editor-filter-1-open") == "1");
+	CHECK(!f.trackTransformer().at("modules")[0].at("on").get<bool>()); // nothing set
+	f.choose("#rule-editor-filter-1-open", -1);
 	f.click("#rule-editor-apply");
 	REQUIRE(f.app.waitUntil([&] { return f.elements("#rule-editor").empty(); }));
 	const Json modules = f.trackTransformer().at("modules");
 	CHECK(modules[0].at("on") == true);
 	CHECK(modules[0].at("rules").at("actions")[0].at("parameter1") == 12);
+	CHECK(modules[1].at("rules").at("filters")[0].at("open") == 0);
 	CHECK(f.trackTransformer().at("mode") == "track"); // Open Panel... left the mode as it was
 
 	f.choose(select, -2); // Off

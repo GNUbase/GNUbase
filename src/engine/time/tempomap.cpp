@@ -10,9 +10,9 @@ namespace gnubase::time
 {
 	namespace
 	{
-		double toBeats(Ticks ticks)
+		double toBeats(double ticks)
 		{
-			return static_cast<double>(ticks) / static_cast<double>(g_ticksPerQuarter);
+			return ticks / static_cast<double>(g_ticksPerQuarter);
 		}
 	}
 
@@ -36,7 +36,8 @@ namespace gnubase::time
 				if (point.position <= previous.start)
 					throw std::invalid_argument("tempo points must be in increasing order");
 				if (point.ramp)
-					previous.slope = (point.bpm - previous.bpm) / toBeats(point.position - previous.start);
+					previous.slope =
+						(point.bpm - previous.bpm) / toBeats(static_cast<double>(point.position - previous.start));
 			}
 			// The segments up to this point are complete, so toSeconds can already measure it.
 			const double seconds = m_segments.empty() ? 0.0 : toSeconds(point.position);
@@ -46,8 +47,15 @@ namespace gnubase::time
 
 	double TempoMap::toSeconds(Ticks tick) const
 	{
-		const Segment& segment = detail::lastAtOrBefore(m_segments, &Segment::start, tick);
-		const double beats = toBeats(tick - segment.start);
+		return toSecondsExact(static_cast<double>(tick));
+	}
+
+	double TempoMap::toSecondsExact(double tick) const
+	{
+		// The segments start at whole ticks, so the floored tick finds the one the exact tick is in.
+		const Segment& segment =
+			detail::lastAtOrBefore(m_segments, &Segment::start, static_cast<Ticks>(std::floor(tick)));
+		const double beats = toBeats(tick - static_cast<double>(segment.start));
 		if (segment.slope == 0.0 || beats < 0.0)
 			return segment.seconds + (beats * 60.0 / segment.bpm);
 		// The tempo grows linearly per beat, so the time is the integral of 60 / tempo.
@@ -56,12 +64,17 @@ namespace gnubase::time
 
 	Ticks TempoMap::toTicks(double seconds) const
 	{
+		return std::llround(toTicksExact(seconds));
+	}
+
+	double TempoMap::toTicksExact(double seconds) const
+	{
 		const Segment& segment = detail::lastAtOrBefore(m_segments, &Segment::seconds, seconds);
 		const double offset = seconds - segment.seconds;
 		const double beats = segment.slope == 0.0 || offset < 0.0
 			? offset * segment.bpm / 60.0
 			: segment.bpm / segment.slope * std::expm1(segment.slope * offset / 60.0);
-		return segment.start + std::llround(beats * static_cast<double>(g_ticksPerQuarter));
+		return static_cast<double>(segment.start) + (beats * static_cast<double>(g_ticksPerQuarter));
 	}
 
 	Samples TempoMap::toSamples(Ticks tick, double sampleRate) const
@@ -84,7 +97,7 @@ namespace gnubase::time
 	double TempoMap::bpmAt(Ticks tick) const
 	{
 		const Segment& segment = detail::lastAtOrBefore(m_segments, &Segment::start, tick);
-		const double beats = toBeats(tick - segment.start);
+		const double beats = toBeats(static_cast<double>(tick - segment.start));
 		return beats < 0.0 ? segment.bpm : segment.bpm + (segment.slope * beats);
 	}
 }

@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-<!-- The Drum Map Setup (#882, docs/features/drum-editor.md, reference manual pp. 1235-1237). app::AppUi opens it (Edit >
+<!-- The Drum Map Setup (#882, docs/features/drum-editor.md, reference manual pp. 1235-1237). app::AppUi opens it (MIDI >
      Drum Map Setup..., the UI command drumMap.setup, and the drum editor's Map menu). Its Lua shows the project's drum
      maps from project.get, the map of the editor's active track first, and changes them right away, each change one
      undo step: New Map, New Copy and Remove run drumMap.add and drumMap.remove; Save chooses a file for the map

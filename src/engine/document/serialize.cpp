@@ -185,6 +185,23 @@ namespace gnubase::engine
 				velocityFrom(json.at("velocity"))};
 		}
 
+		Json eventTimingJson(const EventTiming& timing)
+		{
+			return {{"position", timing.position.value}, {"offset", timing.offset}, {"length", timing.length},
+				{"crossfade", toJson(timing.crossfade)}};
+		}
+
+		// An audio event's quantize timing. A file from before #910 has a bare position for each state: no offset,
+		// length or crossfade to put back, so resetting such an event leaves them as they are. One written while
+		// #910 was in progress has no crossfade either.
+		EventTiming eventTimingFrom(const Json& json, const AudioEvent& event)
+		{
+			if (!json.is_object())
+				return {{event.position.base, json.get<int64_t>()}, event.offset, event.length, event.crossfade};
+			return {{event.position.base, json.at("position").get<int64_t>()}, json.at("offset").get<time::Samples>(),
+				json.at("length").get<time::Samples>(), crossfadeFrom(json.value("crossfade", Json()))};
+		}
+
 		constexpr const char* g_base64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 		// Standard base64 with padding, as a slot's state is stored in the project.
@@ -719,9 +736,11 @@ namespace gnubase::engine
 			{"volumeCurve", toJson(event.volumeCurve)}, {"front", event.front}};
 		// Only an origin in the event's time base still counts (#145): one from before the track's time base changed
 		// is gone, as the event isn't where quantizing put it.
-		if (const auto& origin = event.quantizeOrigin;
-			origin && origin->original.base == event.position.base && origin->quantized.base == event.position.base)
-			json["quantizeOrigin"] = {{"original", origin->original.value}, {"quantized", origin->quantized.value}};
+		if (const auto& origin = event.quantizeOrigin; origin &&
+			origin->original.position.base == event.position.base &&
+			origin->quantized.position.base == event.position.base)
+			json["quantizeOrigin"] = {
+				{"original", eventTimingJson(origin->original)}, {"quantized", eventTimingJson(origin->quantized)}};
 		return json;
 	}
 
@@ -2360,8 +2379,8 @@ namespace gnubase::engine
 			event.lane = std::max(0, item.value("lane", 0)); // files from before #98 have no lanes
 			event.front = item.value("front", ObjectId{0});  // nor from before #99 a stack order
 			if (const auto origin = item.find("quantizeOrigin"); origin != item.end()) // files from before #145
-				event.quantizeOrigin = EventQuantizeOrigin{{event.position.base, origin->at("original").get<int64_t>()},
-					{event.position.base, origin->at("quantized").get<int64_t>()}};
+				event.quantizeOrigin = EventQuantizeOrigin{
+					eventTimingFrom(origin->at("original"), event), eventTimingFrom(origin->at("quantized"), event)};
 			return event;
 		};
 		for (const Json& item : json.at("audioEvents"))

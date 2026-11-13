@@ -487,6 +487,12 @@ namespace gnubase::engine::settings
 					"The type of new tempo events (reference manual p. 1448): ramp changes the tempo gradually from "
 					"the event before, step jumps, auto takes the type of the event before (tempo.add, tempo.tap).",
 					Json{{"type", "string"}, {"enum", {"ramp", "step", "auto"}}}, "auto"},
+				{"editing.treatMutedAudioLikeDeleted",
+					"Treat Muted Audio Events like Deleted (reference manual p. 1597): a muted audio event plays "
+					"nothing and hides nothing, so where it lies in front of another, that one plays. Off, a muted "
+					"event keeps its place in the stack and silences what lies behind it, which p. 228 advises when "
+					"assembling stacked takes.",
+					Json{{"type", "boolean"}}, true},
 				{"editing.useDrumEditor",
 					"Use Drum Editor when Drum Map is assigned (reference manual p. 1603): a closed editor opens the "
 					"parts of a track with a drum map in the drum editor (editor.open).",

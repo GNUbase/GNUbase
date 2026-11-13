@@ -154,10 +154,9 @@ namespace gnubase::engine
 	// of a kind its channel's values and automation have just sent (ChaseTrack::channelKinds), which come first, in its
 	// events; stopped, up to and including the cursor. A MIDI channel's bank select chased that way brings the
 	// channel's latest program after it, or after the earlier of CC 0 and CC 32, whichever track has it, as a jump
-	// sends them. A track that only its mute
-	// button muted had its parts in the sequence, and its strip sends what the mute dropped: only the kinds its channel
-	// sent are chased, whose dropped values the strip forgets. After a chase that didn't fit, it chases everything
-	// there again. Notes aren't chased.
+	// sends them. A track that only its mute button muted had its parts in the sequence, and its strip sends what the
+	// mute dropped: only the kinds its channel sent are chased, whose dropped values the strip forgets. After a chase
+	// that didn't fit, it chases everything there again. Notes aren't chased.
 	//
 	// The track's own events, those of its input and of its parts, go through its MIDI inserts in order, each effect
 	// playing what the one before it played, and each MIDI send plays its effect on them beside that, before or after
