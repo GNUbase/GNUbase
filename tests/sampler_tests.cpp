@@ -748,6 +748,8 @@ TEST_CASE("the sample loader waits only for the files asked for, and its end for
 		REQUIRE(wake.wait_for(lock, std::chrono::seconds(30), [&] { return reading; }));
 	}
 	loader->request("next.wav");
+	// Not ending yet: the wait for the end gives up rather than hanging the run (#1337).
+	CHECK(!loader->waitUntilEnding(std::chrono::milliseconds(0)));
 	// No wait for a file that is read but not asked for (#1180); one for the file behind it.
 	CHECK(loader->waitUntilRead(std::chrono::milliseconds(0), {"other.wav"}));
 	CHECK(!loader->waitUntilRead(std::chrono::milliseconds(20), {"next.wav"}));
@@ -756,13 +758,15 @@ TEST_CASE("the sample loader waits only for the files asked for, and its end for
 	// begun, so that the check doesn't rely on the ending thread winning a race against a sleep (#1272).
 	SampleLoader* const endingLoader = loader.get();
 	std::thread ending([&loader] { loader.reset(); });
-	endingLoader->waitUntilEnding();
+	// The read is let go whether the wait failed or not, so that a lost notify fails the test rather than hanging it.
+	const bool ended = endingLoader->waitUntilEnding(std::chrono::seconds(30));
 	{
 		const std::scoped_lock lock(mutex);
 		open = true;
 	}
 	wake.notify_all();
 	ending.join();
+	REQUIRE(ended);
 	CHECK(read == std::vector<std::string>{"slow.wav"});
 }
 
