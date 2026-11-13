@@ -703,7 +703,9 @@ namespace gnubase::ui
 					});
 		}
 		else
+		{
 			m_playback.reset();
+		}
 		show();
 	}
 

@@ -1100,7 +1100,9 @@ namespace gnubase::ui
 					m_root.get(), [this] { return m_display.cursor(); }, [this](const double&) { return showTempo(); });
 		}
 		else
+		{
 			m_playback.reset();
+		}
 		showTempo();
 	}
 
