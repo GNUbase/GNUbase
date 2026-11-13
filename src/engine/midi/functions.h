@@ -254,7 +254,9 @@ namespace gnubase::engine::midi
 	// own gets the pitch that plays them, if one does, else what played, which it then maps. The new part gets the
 	// root key and Global Transpose setting the parts its notes come from share, or, when they differ, the project
 	// root key and follow, and then each note the difference its part's global transposition makes transposed into
-	// it, so that it keeps the pitch it played with (#954). eraseDestination first
+	// it, so that it keeps the pitch it played with (#954): with includeInserts the modifiers' note ranges see the
+	// pitch that plays, with the source part's global transpose, before the new part's comes off; without it only the
+	// difference goes into the note, as the modifiers stay on the track. eraseDestination first
 	// removes the destination track's parts that lie in the range and the events of other parts that start in it, a
 	// shared copy leaving its copies for that: its notes get new ids, so their play probability, velocity variance and
 	// random MIDI modifier values draw anew. includeChase adds the last controller value of every controller, program
@@ -278,7 +280,8 @@ namespace gnubase::engine::midi
 	// Copies the events of the parts into new parts at the same place, one per channel or pitch found in the parts of
 	// a track, on a new track or lane for each, and mutes the parts (reference manual pp. 1121-1122). Events that
 	// belong to no channel or pitch go with the first new part of their part, so none is lost; a
-	// part with nothing to separate stays as it is. The new parts keep the part's mute, transpose and velocity, on
+	// part with nothing to separate stays as it is. The new parts keep the part's mute, transpose, velocity, root key
+	// and Global Transpose setting, on
 	// lanes also its name, with the channel or pitch added, and color. optimize shortens new parts on tracks to the
 	// bars their events play in; parts on lanes keep the part's place.
 	PartChanges dissolve(Project& project, const std::vector<ObjectId>& parts, DissolveBy by, bool optimize,
@@ -287,14 +290,15 @@ namespace gnubase::engine::midi
 	// Combines parts on one track into a single part from the first one's start to the last one's end, named after
 	// the earliest, on the lowest lane they are on (reference manual p. 1123). Muted parts are removed and add
 	// nothing. Events keep their time; notes are cut where their part ended. The parts' transpose and velocity go into
-	// the notes as playback applies them, and a note transposed beyond 0 to 127, which doesn't play, is left out.
-	// The new part gets the root key and Global Transpose setting the parts share, or, when they differ, the project
-	// root key and follow, and then each note the difference its part's global transposition makes played into its
-	// pitch, so that it keeps the pitch it played with (#954). Where a drum map or the chord track would then play
-	// another pitch, because they map a note before the part's transpose and the global transposition, the notes
-	// can't hold them: the new part keeps the transpose, and parts with a different transpose, root key or Global
-	// Transpose setting make a part for each, which keeps them (#954). The track's MIDI modifiers stay on the track,
-	// and the copied notes get new ids, so the play probability and velocity variance of a note, drawn from its part's
-	// and its own id, draw anew.
+	// the notes as playback applies them. The new part gets the root key and Global Transpose setting the parts
+	// share, or, when they differ, the project root key and follow, and then each note the difference its part's
+	// global transposition makes played into its pitch, so that it keeps the pitch it played with (#954). What the
+	// notes of a part can't hold stays on a part of its own, for each part on its own (#1064): a pitch beyond 0-127
+	// that plays, or one a drum map or the chord track, which map a note before the part's transpose and the global
+	// transposition, would play differently, keeps the part's root key and Global Transpose setting, and its
+	// transpose too unless the notes hold that alone; a velocity the track's MIDI modifiers would play differently
+	// keeps the part's velocity. Each setting makes a new part, on a lane free of the others and of the parts that
+	// stay. The track's MIDI modifiers stay on the track, and the copied notes get new ids, so the play probability
+	// and velocity variance of a note, drawn from its part's and its own id, draw anew.
 	PartChanges bounce(Project& project, const std::vector<ObjectId>& parts);
 }

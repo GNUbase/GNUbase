@@ -62,29 +62,6 @@ namespace gnubase::engine
 			return *versionOf(track, track.activeVersion);
 		}
 
-		// An ID that no version of any track has: versions made together get one.
-		int newVersionId(const Project& project)
-		{
-			int highest = 1; // every track's first version
-			for (const auto& [id, track] : project.trackById)
-				for (const TrackVersion& version : track.versions)
-					highest = std::max(highest, version.id);
-			return highest + 1;
-		}
-
-		// vN, N one more than the number of the track's versions, or the next number none of their names has.
-		std::string defaultName(const Track& track)
-		{
-			const auto taken = [&track](const std::string& name)
-			{
-				return std::any_of(track.versions.begin(), track.versions.end(),
-					[&name](const TrackVersion& version) { return version.name == name; });
-			};
-			for (size_t number = track.versions.size() + 1;; ++number)
-				if (const std::string name = "v" + std::to_string(number); !taken(name))
-					return name;
-		}
-
 		// Moves the track's events and parts out of the project into its active version, which holds them while
 		// another one is active. Its MIDI parts are no longer shared copies of parts that play.
 		void stash(Project& project, Track& track, CommandContext& context)
@@ -162,7 +139,7 @@ namespace gnubase::engine
 				Track& track = project.trackById.at(trackId);
 				TrackVersion version;
 				version.id = id;
-				version.name = context.parameters().value("name", defaultName(track));
+				version.name = context.parameters().value("name", newVersionName(track));
 				require(!version.name.empty(), "name must not be empty");
 				stash(project, track, context);
 				if (duplicate)
@@ -251,6 +228,27 @@ namespace gnubase::engine
 			}
 			return versionsResult(project, tracks);
 		}
+	}
+
+	int newVersionId(const Project& project)
+	{
+		int highest = 1; // every track's first version
+		for (const auto& [id, track] : project.trackById)
+			for (const TrackVersion& version : track.versions)
+				highest = std::max(highest, version.id);
+		return highest + 1;
+	}
+
+	std::string newVersionName(const Track& track)
+	{
+		const auto taken = [&track](const std::string& name)
+		{
+			return std::any_of(track.versions.begin(), track.versions.end(),
+				[&name](const TrackVersion& version) { return version.name == name; });
+		};
+		for (size_t number = track.versions.size() + 1;; ++number)
+			if (const std::string name = "v" + std::to_string(number); !taken(name))
+				return name;
 	}
 
 	TrackVersion copyVersion(Project& project, const TrackVersion& version, ObjectId track)
