@@ -175,6 +175,7 @@ namespace
 			"ui.noWorkspaceLayout",          // the workspaces' No Workspace
 			"ui.samplerPanel",               // the sampler panel's toolbar
 			"ui.setupPresets",               // the setup panes' presets
+			"ui.showVersionName",            // the Track Versions pop-up menu's Show Version Name in Track List
 			"ui.timeDisplay",                // the time display window
 			"ui.timeFormats",                // the transport bar's displays
 			"ui.trackControls",              // the track controls settings dialog
