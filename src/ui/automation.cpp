@@ -237,9 +237,10 @@ namespace gnubase::ui
 			SystemInterface* m_clock;
 		};
 
-		// The element under the mouse after input, which the window draws again.
-		Json under(Window& window)
+		// The element under the mouse after input, which the window draws again, once the shell's input handler ran.
+		Json under(Shell& shell, Window& window)
 		{
+			shell.inputHandled();
 			window.requestRender();
 			return {{"element", nodeOrNull(window.context().GetHoverElement())}};
 		}
@@ -328,7 +329,7 @@ namespace gnubase::ui
 		Window& shown = resolve(window);
 		const Point at = targetPoint(shown, to);
 		updated(shown).ProcessMouseMove(at.x, at.y, modifierState(modifiers));
-		return under(shown);
+		return under(m_shell, shown);
 	}
 
 	Json Automation::click(std::optional<WindowId> window, const Target& target, MouseButton button, int count,
@@ -350,7 +351,7 @@ namespace gnubase::ui
 			context.ProcessMouseButtonDown(buttonIndex(button), state);
 			context.ProcessMouseButtonUp(buttonIndex(button), state);
 		}
-		return under(shown);
+		return under(m_shell, shown);
 	}
 
 	Json Automation::drag(
@@ -369,7 +370,7 @@ namespace gnubase::ui
 			context.ProcessMouseMove(start.x + ((end.x - start.x) * step / g_dragSteps),
 				start.y + ((end.y - start.y) * step / g_dragSteps), state);
 		context.ProcessMouseButtonUp(0, state);
-		return under(shown);
+		return under(m_shell, shown);
 	}
 
 	Json Automation::press(
@@ -379,7 +380,7 @@ namespace gnubase::ui
 		const int state = modifierState(modifiers);
 		Rml::Context& context = movedTo(shown, at, state);
 		context.ProcessMouseButtonDown(buttonIndex(button), state);
-		return under(shown);
+		return under(m_shell, shown);
 	}
 
 	Json Automation::release(
@@ -389,7 +390,7 @@ namespace gnubase::ui
 		const int state = modifierState(modifiers);
 		Rml::Context& context = movedTo(shown, at, state);
 		context.ProcessMouseButtonUp(buttonIndex(button), state);
-		return under(shown);
+		return under(m_shell, shown);
 	}
 
 	Json Automation::wheel(
@@ -399,7 +400,7 @@ namespace gnubase::ui
 		const int state = modifierState(modifiers);
 		Rml::Context& context = movedTo(shown, at, state);
 		context.ProcessMouseWheel(Rml::Vector2f(dx, dy), state);
-		return under(shown);
+		return under(m_shell, shown);
 	}
 
 	Json Automation::drop(
@@ -414,6 +415,7 @@ namespace gnubase::ui
 		Json result = {
 			{"element", nodeOrNull(context.GetElementAtPoint({static_cast<float>(at.x), static_cast<float>(at.y)}))}};
 		dropFiles(shown, at, files);
+		m_shell.inputHandled();
 		return result;
 	}
 
@@ -429,6 +431,7 @@ namespace gnubase::ui
 			context.ProcessKeyUp(pressed.key, pressed.modifiers);
 			m_shell.keyReleased(shown, pressed);
 		}
+		m_shell.inputHandled();
 		shown.requestRender();
 		return {{"focus", nodeOrNull(context.GetFocusElement())}};
 	}
@@ -438,6 +441,7 @@ namespace gnubase::ui
 		Window& shown = resolve(window);
 		Rml::Context& context = updated(shown);
 		context.ProcessTextInput(text);
+		m_shell.inputHandled();
 		shown.requestRender();
 		return {{"focus", nodeOrNull(context.GetFocusElement())}};
 	}

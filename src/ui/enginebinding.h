@@ -80,8 +80,12 @@ namespace gnubase::ui
 		void afterAwaited(std::function<void()> run);
 		// Whether afterAwaited holds anything.
 		bool holding() const { return !m_held.empty(); }
-		// Runs what afterAwaited holds now, without waiting for the answers: e.g. once settle timed out.
+		// Runs what afterAwaited holds now, without waiting for the answers: e.g. once awaitHeld timed out.
 		void releaseHeld();
+		// Hands on results and events, as update() does, until afterAwaited holds nothing, for at most timeout; unlike
+		// settle, it doesn't wait for other commands out, such as those that the held ones send. Returns false if
+		// something is still held then.
+		bool awaitHeld(std::chrono::milliseconds timeout);
 
 		// Sends document commands ({"command", "parameters"} each) as a step of a value widget's gesture (the
 		// "gesture" parameter of its change event, ui/widgets.h): a history.transaction named description whose merge
@@ -105,7 +109,8 @@ namespace gnubase::ui
 
 		// Whether the control that sends the steps of what is ahead of the engine's answer that update() handed on as
 		// handed() returned read: a step of it is on its way, or the last one that the engine took was answered after
-		// that answer. A refused step changes nothing, so it doesn't count.
+		// that answer. A refused step changes nothing, so it doesn't count. Once what's last step is answered, its
+		// record goes away in the next update(), so it is ahead of no answer from then on.
 		bool ahead(const std::string& what, uint64_t read) const;
 
 		// A name for one view to begin the whats of its steps with, e.g. "mixer 3 ", a new one for each call. Views
@@ -196,7 +201,7 @@ namespace gnubase::ui
 		};
 
 		// The steps of one thing: the dones of those in flight, in order, those that wait, and when the engine last
-		// took one.
+		// took one. A record with nothing in flight or waiting goes away in the next update().
 		struct Steps
 		{
 			std::deque<std::function<void(const engine::Result&)>> inFlight;
@@ -217,6 +222,8 @@ namespace gnubase::ui
 			std::function<void(const engine::Result&)> done, bool quiet, bool awaited = false);
 		void sendNextStep(const std::string& what);
 		void answerStep(const std::string& what, const engine::Result& result);
+		// Hands on results and events until done returns true, for at most timeout; returns done().
+		bool handOnUntil(std::chrono::milliseconds timeout, const std::function<bool()>& done);
 		// Runs what afterAwaited holds while no awaited query is out (all of it with force); returns whether any ran.
 		bool runHeld(bool force);
 
@@ -227,7 +234,7 @@ namespace gnubase::ui
 		std::map<uint64_t, Handler> m_handlers;
 		std::map<uint64_t, Waiting> m_resultHandlers; // onResult's, by subscription
 		std::map<uint64_t, std::function<void()>> m_watches;
-		std::map<std::string, Steps> m_steps;     // sendStep's, by what they change; entries are never erased
+		std::map<std::string, Steps> m_steps;     // sendStep's, by what they change; update() erases drained entries
 		std::set<std::string> m_queries;          // the engine's commands that only read
 		size_t m_awaited = 0;                     // queries sent with sendAwaited and not answered yet
 		std::deque<std::function<void()>> m_held; // afterAwaited's, in order

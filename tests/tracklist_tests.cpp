@@ -4,6 +4,7 @@
 // selected, renamed, moved, sized, folded, duplicated, disabled and removed.
 #include "uiapp.h"
 
+#include "engine/document/serialize.h"
 #include "engine/engine.h"
 #include "engine/time/tempomap.h"
 #include "ui/automation.h"
@@ -663,16 +664,16 @@ TEST_CASE("the main menu's items follow what a key or a click changed without a 
 	REQUIRE(tracks.list.selection().empty());
 	REQUIRE(disabled());
 
-	// A key that selects a track on its press: the items follow when it is released, and not before. Dropping the key
-	// release from the events that update the menu leaves them as they were.
+	// A key that selects a track on its press: the items follow at once, before the key is released (#1173), and stay
+	// so after its release.
 	tracks.app.ui().key(std::nullopt, "Down", ui::KeyAction::Down);
 	REQUIRE(tracks.list.selection().size() == 1);
-	CHECK(disabled());
+	CHECK(!disabled());
 	tracks.app.ui().key(std::nullopt, "Down", ui::KeyAction::Up);
 	CHECK(!disabled());
 
-	// A click selects its row after the mouse button is released and after every listener of the click ran, and the
-	// list view says so with a change event: the items follow it at once.
+	// A click selects its row in the click's default action, after the mouse button is released and after every
+	// listener of the click ran: the items follow it at once.
 	tracks.app.ui().click(std::nullopt, {row(b) + " .track-name", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
 	REQUIRE(tracks.list.selection() == std::vector<uint64_t>{b});
 	CHECK(!disabled());
@@ -779,9 +780,9 @@ TEST_CASE("the track list sends the engine only the track heights and folded fol
 				++changes;
 		});
 	const uint64_t folder = tracks.add({{"type", "folder"}});
-	tracks.add({{"type", "audio"}, {"parent", folder}});
+	const uint64_t inside = tracks.add({{"type", "audio"}, {"parent", folder}});
 	const uint64_t second = tracks.add({{"type", "folder"}});
-	tracks.add({{"type", "audio"}, {"parent", second}});
+	const uint64_t insideSecond = tracks.add({{"type", "audio"}, {"parent", second}});
 	const uint64_t audio = tracks.add({{"type", "audio"}});
 	const uint64_t other = tracks.add({{"type", "audio"}});
 	tracks.rows(6);
@@ -863,7 +864,8 @@ TEST_CASE("the track list sends the engine only the track heights and folded fol
 	REQUIRE(tracks.app.waitUntil(
 		[&] { return heights() == Json{height(audio, ui::g_trackHeight + 40.0), height(other, 150.0)}; }));
 
-	// With Ctrl it sends the heights of the tracks it changed: those shown.
+	// With Ctrl it sends every track's height (reference manual p. 217: all tracks), also those of the tracks inside
+	// the folded folders (#1131).
 	tracks.app.shell().step(std::chrono::milliseconds(0));
 	lower = edge();
 	tracks.app.ui().drag(std::nullopt, {"", 0, lower}, {"", 0, ui::Point{lower.x, lower.y + 10}}, {"ctrl"});
@@ -871,8 +873,11 @@ TEST_CASE("the track list sends the engine only the track heights and folded fol
 	REQUIRE(tracks.app.waitUntil(
 		[&]
 		{
-			return heights() == Json{height(folder, all), height(second, all), height(audio, all), height(other, all)};
+			return heights() ==
+				Json{height(folder, all), height(inside, all), height(second, all), height(insideSecond, all),
+					height(audio, all), height(other, all)};
 		}));
+	CHECK(tracks.display.ownHeight(inside) == Approx(all));
 
 	// A drag that loading a project interrupts sends nothing to the loaded project, whose tracks have the same ids.
 	tracks.app.shell().step(std::chrono::milliseconds(0));
@@ -887,6 +892,219 @@ TEST_CASE("the track list sends the engine only the track heights and folded fol
 	REQUIRE(
 		tracks.app.waitUntil([&] { return tracks.app.call("trackLayout.get").at("folded") == Json{folder, second}; }));
 	CHECK(heights() == Json::array());
+}
+
+namespace
+{
+	Json layoutHeight(uint64_t track, double dp)
+	{
+		return {{"track", track}, {"height", dp}};
+	}
+
+	// Three audio tracks and height drags by hand on their lower edges (#1131).
+	struct HeightDrag
+	{
+		HeightDrag()
+			: audio(tracks.add({{"type", "audio"}})), other(tracks.add({{"type", "audio"}})),
+			  third(tracks.add({{"type", "audio"}}))
+		{
+			tracks.rows(3);
+		}
+
+		// The point on the track's lower edge; steps the shell first, which lays the rows out.
+		ui::Point edge(uint64_t track)
+		{
+			tracks.app.shell().step(std::chrono::milliseconds(0));
+			const Json box = tracks.box(row(track));
+			return {box.at("x").get<int>() + 40, box.at("y").get<int>() + box.at("height").get<int>() - 2};
+		}
+
+		void press(ui::Point at, const std::vector<std::string>& modifiers = {})
+		{
+			tracks.app.ui().press(std::nullopt, {"", 0, at}, ui::MouseButton::Left, modifiers);
+		}
+
+		void move(ui::Point to, const std::vector<std::string>& modifiers = {})
+		{
+			tracks.app.ui().move(std::nullopt, {"", 0, to}, modifiers);
+		}
+
+		void release(ui::Point at) { tracks.app.ui().release(std::nullopt, {"", 0, at}, ui::MouseButton::Left); }
+
+		double shown(uint64_t track) const { return tracks.display.ownHeight(track); }
+		Json heights() { return tracks.app.call("trackLayout.get").at("heights"); }
+		uint64_t revision() { return tracks.app.call("project.revision").at("revision").get<uint64_t>(); }
+
+		Tracks tracks;
+		uint64_t audio;
+		uint64_t other;
+		uint64_t third;
+	};
+}
+
+// #1131: a drag that ends at the height it started with sends nothing, unless another client gave the track another
+// height meanwhile: the release compares with the heights the engine has.
+TEST_CASE("a height drag compares its end with the heights the engine has, also those that came during it", "[ui]")
+{
+	HeightDrag drag;
+	const uint64_t revision = drag.revision();
+	const ui::Point at = drag.edge(drag.audio);
+
+	// Back where it started: nothing to send.
+	drag.press(at);
+	drag.move({at.x, at.y + 20});
+	CHECK(drag.shown(drag.audio) == Approx(ui::g_trackHeight + 20.0));
+	drag.move(at);
+	drag.release(at);
+	CHECK(drag.shown(drag.audio) == Approx(ui::g_trackHeight));
+	CHECK(drag.revision() == revision);
+	CHECK(drag.heights() == Json::array());
+
+	// Another client sets the track's height during the drag, which the drag keeps; another track's it takes at once,
+	// which shows that the change has come. Ending at the height it started with is a change then.
+	drag.press(at);
+	drag.move({at.x, at.y + 20});
+	drag.tracks.app.call(
+		"trackLayout.set", {{"heights", {layoutHeight(drag.audio, 100.0), layoutHeight(drag.other, 120.0)}}});
+	REQUIRE(drag.tracks.app.waitUntil([&] { return drag.shown(drag.other) == Approx(120.0); }));
+	CHECK(drag.shown(drag.audio) == Approx(ui::g_trackHeight + 20.0));
+	drag.move(at);
+	drag.release(at);
+	REQUIRE(drag.tracks.app.waitUntil(
+		[&]
+		{
+			return drag.heights() == Json{layoutHeight(drag.audio, ui::g_trackHeight), layoutHeight(drag.other, 120.0)};
+		}));
+	CHECK(drag.shown(drag.audio) == Approx(ui::g_trackHeight));
+}
+
+// #1131: the limits keep a drag at the height the track has, which is nothing to send.
+TEST_CASE("a height drag that stays at the smallest or the largest height sends nothing", "[ui]")
+{
+	HeightDrag drag;
+	drag.tracks.app.call("trackLayout.set",
+		{{"heights",
+			{layoutHeight(drag.audio, engine::g_minTrackHeight), layoutHeight(drag.other, engine::g_maxTrackHeight)}}});
+	REQUIRE(drag.tracks.app.waitUntil([&] { return drag.shown(drag.other) == Approx(engine::g_maxTrackHeight); }));
+	const uint64_t revision = drag.revision();
+
+	// The smallest: down shows that the press is on the edge, and up again goes past the limit to where it started.
+	const ui::Point small = drag.edge(drag.audio);
+	drag.press(small);
+	drag.move({small.x, small.y + 30});
+	REQUIRE(drag.shown(drag.audio) == Approx(engine::g_minTrackHeight + 30.0));
+	drag.move({small.x, small.y - 15});
+	CHECK(drag.shown(drag.audio) == Approx(engine::g_minTrackHeight));
+	drag.release({small.x, small.y - 15});
+
+	// The largest, whose lower edge the display scrolls to, the other way round.
+	drag.tracks.display.scrollVertically(engine::g_minTrackHeight + 100.0);
+	const ui::Point large = drag.edge(drag.other);
+	drag.press(large);
+	drag.move({large.x, large.y - 30});
+	REQUIRE(drag.shown(drag.other) == Approx(engine::g_maxTrackHeight - 30.0));
+	drag.move({large.x, large.y + 15});
+	CHECK(drag.shown(drag.other) == Approx(engine::g_maxTrackHeight));
+	drag.release({large.x, large.y + 15});
+	CHECK(drag.revision() == revision);
+	CHECK(drag.heights() ==
+		Json{layoutHeight(drag.audio, engine::g_minTrackHeight), layoutHeight(drag.other, engine::g_maxTrackHeight)});
+}
+
+// #1131: a release that doesn't reach the list's document leaves the drag under way; the next press ends it, with the
+// heights it changed, and the heights from the engine are no longer held back.
+TEST_CASE("a height drag whose release never came ends with the next press", "[ui]")
+{
+	HeightDrag drag;
+	const ui::Point at = drag.edge(drag.audio);
+	drag.press(at);
+	drag.move({at.x, at.y + 20});
+	drag.press({at.x, at.y + 20}); // on the lower edge again, where the drag left the mouse
+	drag.release({at.x, at.y + 20});
+	REQUIRE(drag.tracks.app.waitUntil(
+		[&] { return drag.heights() == Json::array({layoutHeight(drag.audio, ui::g_trackHeight + 20.0)}); }));
+	drag.tracks.app.call("trackLayout.set", {{"heights", {layoutHeight(drag.audio, 100.0)}}});
+	REQUIRE(drag.tracks.app.waitUntil([&] { return drag.shown(drag.audio) == Approx(100.0); }));
+
+	// The same when the next press is on a track's name, not on a lower edge: the stale set of tracks held its heights
+	// back until then.
+	drag.tracks.app.shell().step(std::chrono::milliseconds(0));
+	const ui::Point again = drag.edge(drag.audio);
+	drag.press(again);
+	drag.move({again.x, again.y + 20});
+	drag.tracks.click(row(drag.other) + " .track-name");
+	drag.tracks.app.call("trackLayout.set", {{"heights", {layoutHeight(drag.audio, 150.0)}}});
+	REQUIRE(drag.tracks.app.waitUntil([&] { return drag.shown(drag.audio) == Approx(150.0); }));
+}
+
+// #1131: a set that fails, here because another client removed a track that the list doesn't know of yet, changes
+// nothing in the project; the list shows the project's heights and folded folders again.
+TEST_CASE("the track list shows the engine's heights and folded folders again when a set fails", "[ui]")
+{
+	HeightDrag drag;
+	const ui::Point at = drag.edge(drag.audio);
+	drag.press(at, {"ctrl"});
+	drag.move({at.x, at.y + 20}, {"ctrl"});
+	CHECK(drag.shown(drag.third) == Approx(ui::g_trackHeight + 20.0));
+	drag.tracks.app.call("track.remove", {{"track", drag.third}}); // the list hears of it after the release
+	// Released where the drag left the mouse, so that it ends with heights the engine has not got: the set is sent and
+	// fails.
+	drag.release({at.x, at.y + 20});
+	CHECK(drag.shown(drag.audio) == Approx(ui::g_trackHeight + 20.0));
+	REQUIRE(drag.tracks.app.waitUntil(
+		[&]
+		{
+			return drag.shown(drag.audio) == Approx(ui::g_trackHeight) &&
+				drag.shown(drag.other) == Approx(ui::g_trackHeight);
+		}));
+	CHECK(drag.heights() == Json::array());
+
+	// The same for a folded folder that was removed.
+	drag.tracks.rows(2);
+	const uint64_t folder = drag.tracks.add({{"type", "folder"}});
+	drag.tracks.rows(3);
+	drag.tracks.app.call("track.remove", {{"track", folder}});
+	drag.tracks.list.setFolded(folder, true);
+	REQUIRE(drag.tracks.app.waitUntil([&] { return !drag.tracks.list.folded(folder); }));
+	CHECK(drag.tracks.app.call("trackLayout.get").at("folded") == Json::array());
+}
+
+// #1131: the engine keeps a removed folder's fold state for undo, and the list has to show it when the folder comes
+// back, whatever the list did meanwhile.
+TEST_CASE("a folded folder that undo brings back is folded in the list", "[ui]")
+{
+	Tracks tracks;
+	const uint64_t folder = tracks.add({{"type", "folder"}});
+	const uint64_t inside = tracks.add({{"type", "audio"}, {"parent", folder}});
+	const uint64_t other = tracks.add({{"type", "audio"}});
+	tracks.rows(3);
+	tracks.click(row(folder) + " .tree-toggle");
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.app.call("trackLayout.get").at("folded") == Json{folder}; }));
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.display.laneTracks() == std::vector<uint64_t>{folder, other}; }));
+
+	// Remove the folder (and the track inside) and choose Unfold Tracks, which sends nothing with the folder gone.
+	tracks.app.call("track.remove", {{"track", folder}});
+	tracks.rows(1);
+	tracks.app.keys().run("track.unfoldAll", Json::object(), tracks.app.main(), nullptr);
+	REQUIRE(tracks.app.waitUntil([&] { return !tracks.list.folded(folder); }));
+	tracks.app.call("history.undo");
+	tracks.rows(3);
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.list.folded(folder); }));
+	CHECK(tracks.app.call("trackLayout.get").at("folded") == Json{folder});
+	CHECK(tracks.display.laneTracks() == std::vector<uint64_t>{folder, other});
+	CHECK(tracks.order() == std::vector<uint64_t>{folder, inside, other});
+
+	// A track's height that changes while the folder is gone makes the list take the engine's layout, which leaves the
+	// folder out: undo brings it back folded just the same.
+	tracks.app.call("history.redo");
+	tracks.rows(1);
+	tracks.app.call("trackLayout.set", {{"heights", {{{"track", other}, {"height", 70.0}}}}});
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.display.ownHeight(other) == Approx(70.0); }));
+	tracks.app.call("history.undo");
+	tracks.rows(3);
+	REQUIRE(tracks.app.waitUntil([&] { return tracks.list.folded(folder); }));
+	CHECK(tracks.display.ownHeight(other) == Approx(70.0));
+	CHECK(tracks.display.laneTracks() == std::vector<uint64_t>{folder, other});
 }
 
 TEST_CASE("Remove Empty Tracks keeps an instrument track without parts that a MIDI track plays", "[ui]")

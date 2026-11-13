@@ -109,7 +109,8 @@ All of it is the one undo step of the import.
     track").
   - Split Channels puts every channel of a file with several onto a new mono track of its own (p. 358), whatever is
     selected; mono files still go onto the selected track.
-  - New tracks go to the end of the project, as Add Track's do; below the selected track comes with #448.
+  - New tracks go to the end of the project: imports keep adding their tracks at the end, unlike Add Track, whose
+    tracks go below the selection ([add-track.md](add-track.md)).
 - **Drag and drop**: files dropped on the event display (the shell's `filedrop` event) go to the track of the lane
   under the mouse if it is an audio track, on a take lane of a track whose lanes show on that lane
   ([comping.md](comping.md)), else to new tracks, at the time under the mouse. Dropped outside the lanes, such as on
@@ -181,8 +182,7 @@ Of the MIDI file import options: Convert RPN/NRPN to Single Events, which needs 
 project holds them as the control changes they are made of, #177), Import Karaoke Lyrics as Text, which needs lyric and
 text events (#719), Extract First Patch and Volume/Pan on other MIDI channels than 1, which needs an output channel
 for MIDI tracks ([mixer.md](mixer.md)), and the Destination that loads a multi-timbral instrument per channel, which needs plugin instruments; the
-export options of the MIDI File page. Import of audio CDs, audio from video and REX files. New tracks below the
-selected track (#448). Converting as a job: files are converted on the command thread, which waits for a long MP3 file
+export options of the MIDI File page. Import of audio CDs, audio from video and REX files. Converting as a job: files are converted on the command thread, which waits for a long MP3 file
 (as for `media.convert`). Removing the files an unsaved project made (recordings and converted imports) when it is
 closed without saving.
 
@@ -239,7 +239,9 @@ options (on one track in an unsaved project; split with a name format and copied
 off a 44.1 kHz file keeps its path and no copy job starts; with Convert alone it is converted into the project's `Audio`
 folder at the project's sample rate with no copy job; the pool's Import Medium imports without the dialog and keeps a
 file from outside the project where it is, with no copy job, as Copy off says; the selected track imports without the
-dialog with the stored options), the dialog starts from the settings and keeps its choices in them, Do not ask again
+dialog with the stored options; and files dropped on an audio track's lane import without the dialog, keeping a file
+from outside the project where it is with Copy and Convert off and splitting a stereo file as the name format says),
+the dialog starts from the settings and keeps its choices in them, Do not ask again
 skips the dialog next time and after a restart until the setting is reset, and each Name Format chosen in the dialog
 names the split files. The preferences' Editing > Audio page shows the settings, Use Settings imports with what it sets
 (a stereo file split as its Name Format says, with Copy off as the page set it: Split Channels writes into `Audio`

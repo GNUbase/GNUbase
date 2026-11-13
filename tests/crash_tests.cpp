@@ -5,7 +5,6 @@
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
-#include <cstdlib>
 #include <filesystem>
 #include <string>
 
@@ -16,13 +15,8 @@ namespace
 	// Runs gnubase-crashtest, which opens a log session in the folder and crashes the way it is told.
 	int crash(const std::filesystem::path& dir, const std::string& how)
 	{
-		const std::string command = "\"" + std::string(GNUBASE_CRASHTEST) + "\" \"" + dir.string() + "\" " + how;
-#ifdef _WIN32
-		// cmd.exe removes the outer quotes.
-		return std::system(("\"" + command + "\"").c_str()); // NOLINT(bugprone-command-processor): fixed helper command
-#else
-		return std::system(command.c_str()); // NOLINT(bugprone-command-processor): fixed helper command
-#endif
+		return gnubase::test::runCommand(
+			"\"" + std::string(GNUBASE_CRASHTEST) + "\" \"" + dir.u8string() + "\" " + how);
 	}
 }
 
