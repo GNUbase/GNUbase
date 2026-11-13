@@ -66,7 +66,9 @@ namespace
 		}
 
 		// Whether a drop-down list offers an option, whose options aren't in the DOM that the UI tools see.
-		bool offers(const std::string& selector, const std::string& value)
+		bool offers(const std::string& selector, const std::string& value) { return optionIndex(selector, value) >= 0; }
+		// The index of a drop-down list's option, -1 if it has none with that value.
+		int optionIndex(const std::string& selector, const std::string& value)
 		{
 			Rml::Element* element = nullptr;
 			for (int i = 0; element == nullptr && i < app.main().context().GetNumDocuments(); ++i)
@@ -75,8 +77,13 @@ namespace
 			REQUIRE(select != nullptr);
 			for (int i = 0; i < select->GetNumOptions(); ++i)
 				if (select->GetOption(i)->GetAttribute<Rml::String>("value", "") == value)
-					return true;
-			return false;
+					return i;
+			return -1;
+		}
+		std::string value(const std::string& selector)
+		{
+			const Json found = elements(selector);
+			return found.empty() ? std::string() : found[0].value("value", std::string());
 		}
 
 		void click(const std::string& selector)
@@ -268,6 +275,40 @@ TEST_CASE("Project > Project Input Transformer sets the project's modules", "[ui
 	CHECK(f.elements("#rule-editor-on").at(0).at("attributes").contains("checked"));
 	CHECK(f.shown("#rule-editor-action-1-p1"));
 	f.click("#rule-editor-cancel");
+}
+
+TEST_CASE("the input transformer's OK sets every module edited and shows the module the engine refuses", "[ui]")
+{
+	Fixture f;
+	f.open("project-menu", "project.inputTransformer", "Project Input Transformer");
+	// Module 1: a preset, whose name the name field takes, and on.
+	f.choose("#rule-editor-preset", f.optionIndex("#rule-editor-preset", "Transform/Octave up"));
+	f.click("#rule-editor-on");
+	CHECK(f.value("#rule-editor-name") == "Transform/Octave up");
+	// Module 2: a bracket that isn't closed, which only the engine refuses. The name field follows the module's
+	// preset (#1143).
+	f.choose("#rule-editor-module", 1);
+	CHECK(f.value("#rule-editor-name").empty());
+	f.click("#rule-editor-insert-filter");
+	f.choose("#rule-editor-filter-1-open", 1);
+	f.choose("#rule-editor-module", 1); // module 3
+	f.choose("#rule-editor-module", -2);
+	CHECK(f.value("#rule-editor-name") == "Transform/Octave up");
+	f.choose("#rule-editor-module", 2);
+	f.click("#rule-editor-apply");
+	// OK shows module 2 with the engine's message.
+	CHECK(f.app.waitUntil([&] { return f.text("#rule-editor-message").find("not closed") != std::string::npos; }));
+	CHECK(f.text("#rule-editor-message").find("modules[") == std::string::npos);
+	CHECK(f.value("#rule-editor-module") == "2");
+	CHECK(f.value("#rule-editor-filter-1-open") == "1");
+	f.choose("#rule-editor-filter-1-open", -1);
+	f.choose("#rule-editor-module", 1); // module 3
+	f.apply();
+	// Module 1's edits came while module 3 showed.
+	const Json modules = f.app.call("project.get").at("inputTransformer");
+	CHECK(modules[0].at("on") == true);
+	CHECK(modules[0].at("rules").at("actions")[0].at("parameter1") == 12);
+	CHECK(modules[1].at("rules").at("filters")[0].at("open") == 0);
 }
 
 TEST_CASE("the inspector's Input Transformer sets a track's mode and opens its panel", "[ui]")

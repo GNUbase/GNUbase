@@ -83,7 +83,8 @@ left it.
   events and audio parts too, with its MIDI parts in one `quantize.apply` or `quantize.reset`. Quantize MIDI Event
   Ends and Lengths and Freeze MIDI Quantize stay MIDI only.
 - **Warp Quantize On/Off**: `#quantize-warp` in the panel, next to the strength, and `#toolbar-quantize-warp` in the
-  toolbar's quantize section, which shows it in windows at least 1100 dp wide only, where the toolbar has room for it.
+  toolbar's quantize section, which shows it in windows at least 1100 dp wide only, so that the section fits at
+  1024 dp (`resources/styles/quantize.rcss`).
   Both are `.checked` while `warpQuantize` is on and switch it with `quantize.set`.
 - **Several audio tracks** (`#quantize-tracks`, below Apply): Range (`#quantize-range`) and Offset
   (`#quantize-offset`) in ms, Slice (`#quantize-slice`), or with warp quantizing on Create

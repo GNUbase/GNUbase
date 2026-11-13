@@ -30,6 +30,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -2034,6 +2035,75 @@ TEST_CASE(
 	const auto range = [&f] { return f.display.range().value_or(ui::RangeSelection{}); };
 	REQUIRE(f.waitUntil([&range] { return range().start == 297570; }));
 	CHECK(range().end == 307170);
+}
+
+TEST_CASE("a press runs the edits still waiting for a range's zero crossings after two seconds on the range as it is",
+	"[unit][slow]")
+{
+	// As above: a sine crossing zero every 100 frames, in an audio event from 6 to 7 seconds playing from frame 30.
+	const test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "sine.wav";
+	test::Audio sine;
+	for (int frame = 0; frame < 96000; ++frame)
+		sine.samples.push_back(static_cast<float>(0.5 * std::sin(frame * 3.14159265358979323846 / 100.0)));
+	test::writeWav(file, sine);
+	Fixture f;
+	const uint64_t audio = f.call("project.get").at("tracks")[0].at("id").get<uint64_t>();
+	const Json media =
+		f.call("media.add", {{"path", file.u8string()}, {"sampleRate", 48000}, {"channels", 1}, {"length", 96000}})
+			.at("media");
+	const Json clip = f.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	f.call("audioEvent.add",
+		{{"track", audio}, {"clip", clip.at("id")}, {"position", 288000}, {"offset", 30}, {"length", 48000}});
+	f.call("snap.set", {{"zeroCrossing", true}});
+	REQUIRE(f.waitUntil([&f] { return f.display.snap().zeroCrossing && f.lanes("events")[0].events.size() == 2; }));
+	f.display.setTool(ui::Tool::RangeSelection);
+	// A command that keeps the engine busy for three seconds, so that the zero crossings answer after the press gave
+	// up on them.
+	f.engine.registerCommand(
+		{"test.busy", 1, "Takes three seconds.", engine::CommandInfo{}.parameters, Json::object(), false},
+		[](engine::CommandContext&)
+		{
+			std::this_thread::sleep_for(std::chrono::seconds(3));
+			return Json::object();
+		});
+	f.engine.post("test.busy");
+
+	// Crop Range right after the release of a drag from 6.1 to 6.5 seconds, then a press: the crop keeps frames 4830
+	// to 24030 of the event, the range as dragged.
+	f.automation.drag(std::nullopt, f.at(610, 20), f.at(650, 20), {});
+	REQUIRE(f.binding.waiting("snap.zeroCrossings") == 1);
+	f.display.actions().at("edit.cropRange")();
+	REQUIRE(f.binding.holding());
+	f.click(620, 20);
+	CHECK(!f.binding.holding());
+	const auto cropped = [&f]
+	{
+		for (const Json& event : f.audioEvents())
+			if (event.at("id") != f.event)
+				return event;
+		return Json::object();
+	};
+	REQUIRE(f.waitUntil([&cropped] { return cropped().value("offset", 0) != 30; }));
+	CHECK(cropped().at("offset") == 4830);
+	CHECK(cropped().at("length") == 19200);
+}
+
+TEST_CASE("an action that waits for zero crossings does nothing once its event display is gone", "[unit]")
+{
+	Fixture f;
+	// A second event display, whose action waits for an awaited query that the binding hasn't handed on yet.
+	Rml::Element* element = f.document.AppendChild(f.document.CreateElement("div"));
+	auto other = std::make_unique<ui::EventDisplay>(f.engine, f.binding, *element);
+	bool answered = false;
+	f.binding.sendAwaited(
+		"snap.get", Json::object(), [&answered](const engine::Result& /*result*/) { answered = true; });
+	other->actions().at("zoom.in")();
+	REQUIRE(f.binding.holding());
+	other.reset();
+	CHECK(f.binding.settle(std::chrono::seconds(10)));
+	CHECK(answered);
+	CHECK(!f.binding.holding());
 }
 
 TEST_CASE("the object selection tool with Alt draws an empty MIDI part on an empty spot", "[unit]")

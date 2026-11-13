@@ -58,15 +58,15 @@ namespace gnubase::engine::processors
 		bool paramTextToValue(uint32_t param, std::string_view text, double& value) const override;
 		void flushParams(const plugin::EventList& in, plugin::EventList& out) noexcept override;
 
-		// State: the parameter values, as pairs of id and value. Loading clamps them to their parameters' ranges and
-		// skips NaN and infinite ones and unknown ids.
+		// State: the parameter values, as pairs of id and value. Loading clamps them to their parameters' ranges,
+		// rounds a stepped parameter's to a step, and skips NaN and infinite ones and unknown ids.
 		bool saveState(std::vector<uint8_t>& data, plugin::StateContext context) override;
 		bool loadState(const uint8_t* data, size_t size, plugin::StateContext context) override;
 		// The parameter values a state holds, by id, the last of an id winning; none if it isn't one of these states.
 		static std::map<uint32_t, double> stateValues(const std::vector<uint8_t>& state);
 		// A slot's static value for one of its parameters: the value set for it (Slot::parameters), else its state's
-		// (Slot::state, none if null), else its default. Values are clamped to the parameter's range, and NaN or
-		// infinite ones are skipped. Playback and parameter.get both take it.
+		// (Slot::state, none if null), else its default. Values are clamped to the parameter's range, a stepped one's
+		// rounded to a step, and NaN or infinite ones are skipped. Playback and parameter.get both take it.
 		static double staticValue(
 			const ParameterInfo& parameter, const std::map<uint32_t, double>& set, const std::vector<uint8_t>* state);
 

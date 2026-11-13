@@ -175,7 +175,8 @@ TEST_CASE("Sync Visibility of Project and Mixer links the track visibility with 
 TEST_CASE("Track Visibility Configurations add, apply, update, rename and delete configurations", "[ui]")
 {
 	test::UiApp app({1200, 700});
-	// The toolbar shows the configurations from 1100 dp on; CI's Linux display makes the window 1024 pixels wide.
+	// The toolbar has room for the configurations at this dp ratio, also where CI's Linux display makes the window 1024
+	// pixels wide.
 	app.setDpRatio(0.8F);
 	app.appUi().showProject();
 	const Added guitar = addTrack(app, "audio", "Guitar");

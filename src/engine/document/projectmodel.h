@@ -43,6 +43,10 @@ namespace gnubase::engine
 	// keep their time.
 	void changeSampleRate(Project& project, double sampleRate, CommandContext& context);
 
+	// Changes a track's time base (projectmodel.cpp): its events, parts, markers, automation points and other
+	// versions' events and parts keep their place in the new one.
+	void rebaseTrack(Project& project, Track& track, time::TimeBase base, CommandContext& context);
+
 	// The project's tempo as project.get and the tempo.changed event report it (tempo.cpp): the tempo it plays, whether
 	// the tempo track is active, the tempo track's events and the fixed tempo.
 	Json tempoJson(const Project& project);
@@ -64,6 +68,15 @@ namespace gnubase::engine
 	// compares a part with its earlier self only if that was in the same group, so a part that isn't shared yet needn't
 	// be copied: one that becomes shared in the command gives no edit to its new group either way.
 	std::map<ObjectId, MidiPart> sharedPartsOf(const std::map<ObjectId, MidiPart>& parts);
+
+	// Cutting a range in a cycle marker (markers.cpp, reference manual p. 425), for range.cut and range.delete: the
+	// part of the range from start to end (project samples) is taken out of each cycle marker on the marker tracks
+	// among tracks that the range lies in without covering it whole. One that starts or ends with the range gets
+	// shorter; one that it lies inside otherwise is split in two, the part after the range a new cycle marker with the
+	// first free number, the same name and color. Position markers stay, as do cycle markers that the range covers
+	// whole or reaches out of.
+	void cutCycleMarkers(Project& project, time::Samples start, time::Samples end, const std::vector<ObjectId>& tracks,
+		CommandContext& context);
 
 	// What range.copy and range.cut keep for range.paste (eventedits.cpp): the events, parts and automation of a
 	// selection range, cut at its edges, where they were. Not part of the project or of undo.
@@ -152,6 +165,9 @@ namespace gnubase::engine
 		// A slot of the project as the plugin.* commands and their plugin.changed events describe it, with its index
 		// and status; null for no such slot. Only on the command thread.
 		Json describeSlot(const Project& project, ObjectId slot) const;
+		// Announces what changed from before to after with the events that redoing it would send, for an edit that
+		// changes much at once, such as track.import.
+		void announceChange(const Project& before, const Project& after, CommandContext& context) const;
 
 	private:
 		// Registers a query, or a command that changes the project. Such a command runs on the project, and if it

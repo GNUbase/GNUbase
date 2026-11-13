@@ -225,6 +225,14 @@ namespace gnubase::ui
 						return;
 					}
 			});
+		// In every step, after the step tasks and right before the shell draws: the window's size, the UI scale, a
+		// label the engine binding changed or the shown sections may have changed the room.
+		m_shell.beforeDraw(
+			[this, alive = std::weak_ptr<bool>(m_alive)]
+			{
+				if (!alive.expired())
+					fitSections();
+			});
 		// Windows the user moved, resized, opened or closed: kept for when they open again, and for workspaces.
 		m_shell.every(std::chrono::milliseconds(500),
 			[this, alive = std::weak_ptr<bool>(m_alive)]
@@ -284,7 +292,9 @@ namespace gnubase::ui
 		Attached& attached = m_windows[name];
 		if (Rml::Element* old = attached.document.get())
 			listen(*old, false);
-		attached = Attached{document.GetObserverPtr(), {}, {}};
+		attached = Attached{document.GetObserverPtr(), {}, {}, {}};
+		for (Rml::Element* container : elements(document, "[fit=room]"))
+			attached.fits.push_back(container->GetObserverPtr());
 		for (Rml::Element* zone : elements(document, "[zone]"))
 		{
 			const std::string zoneName = attribute(*zone, "zone");
@@ -364,6 +374,65 @@ namespace gnubase::ui
 		else
 			applySections(attached->first, attached->second, element);
 		document->GetContext()->RequestNextUpdate(0);
+	}
+
+	void Docking::fitSections()
+	{
+		for (auto& [name, attached] : m_windows)
+		{
+			auto* document = dynamic_cast<Rml::ElementDocument*>(attached.document.get());
+			if (document == nullptr || attached.fits.empty() || !document->IsVisible())
+				continue;
+			// The room as it is now, which the last drawing may not have had yet. ponytail: a layout pass per step,
+			// which costs little while nothing changed; listen for the changes if it shows in a profile.
+			document->UpdateDocument();
+			bool changed = false;
+			for (const Rml::ObserverPtr<Rml::Element>& container : attached.fits)
+				if (Rml::Element* element = container.get())
+					changed = fit(*element) || changed;
+			if (changed)
+				document->GetContext()->RequestNextUpdate(0);
+		}
+	}
+
+	bool Docking::fit(Rml::Element& container)
+	{
+		// What a child takes of the container's width, with its margins; a section without room is laid out out of the
+		// flow, so this is what it would take.
+		const auto width = [](Rml::Element& child) { return child.GetBox().GetSize(Rml::BoxArea::Margin).x; };
+		std::vector<Rml::Element*> sections; // the shown ones before the spacer, which can go
+		float room = container.GetBox().GetSize(Rml::BoxArea::Content).x;
+		bool beforeSpacer = true;
+		bool changed = false;
+		for (int i = 0; i < container.GetNumChildren(); ++i)
+		{
+			Rml::Element* child = container.GetChild(i);
+			const bool section = child->HasAttribute("section");
+			if (child->IsClassSet("spacer"))
+				beforeSpacer = false;
+			else if (section && beforeSpacer && !child->IsClassSet("hidden"))
+				sections.push_back(child);
+			else if (child->GetComputedValues().display() != Rml::Style::Display::None)
+				room -= width(*child);
+			if (section && (child->IsClassSet("hidden") || !beforeSpacer) && child->IsClassSet("no-room"))
+			{
+				child->SetClass("no-room", false);
+				changed = true;
+			}
+		}
+		// The last go first: a section shows while it and those before it fit, within rounding.
+		bool fits = true;
+		for (Rml::Element* section : sections)
+		{
+			room -= width(*section);
+			fits = fits && room > -0.01F;
+			if (section->IsClassSet("no-room") == fits)
+			{
+				section->SetClass("no-room", !fits);
+				changed = true;
+			}
+		}
+		return changed;
 	}
 
 	// The zones' tab menus: Open in Separate Window, then an item to show or hide each tab. Made once per panel, since

@@ -131,6 +131,23 @@ namespace
 		CHECK(!app.ui().drop(std::nullopt, {"", 0, at}, paths).at("element").is_null());
 		app.shell().step(std::chrono::milliseconds(0));
 	}
+
+	// Drops files on the middle of the element that selector finds, through ui_drop.
+	void dropOn(test::UiApp& app, const std::vector<std::string>& files, const std::string& selector)
+	{
+		REQUIRE(elements(app, selector).size() == 1);
+		std::vector<std::filesystem::path> paths;
+		paths.reserve(files.size());
+		for (const std::string& file : files)
+			paths.push_back(std::filesystem::u8path(file));
+		CHECK(!app.ui().drop(std::nullopt, {selector, 0, std::nullopt}, paths).at("element").is_null());
+		app.shell().step(std::chrono::milliseconds(0));
+	}
+
+	std::string row(const Json& track)
+	{
+		return "#track-list listitem[value=\"" + std::to_string(track.get<uint64_t>()) + "\"]";
+	}
 }
 
 TEST_CASE("File > Import > Audio File imports through the Import Options dialog at the project cursor", "[ui]")
@@ -270,6 +287,77 @@ TEST_CASE("files dropped on a lane of a track whose lanes show go on that lane",
 	const Json dropped = app.call("project.get").at("audioEvents")[1];
 	CHECK(dropped.at("track") == track);
 	CHECK(dropped.at("lane") == 1);
+
+	// On the track's row in the track list beside lane 1: on that lane too, at the project cursor.
+	drop(app, {take}, -40.0, 200.0);
+	REQUIRE(app.waitUntil([&app] { return dialogShown(app); }));
+	click(app, "#import-options-dialog button.primary");
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("audioEvents").size() == 3; }));
+	const Json onRow = app.call("project.get").at("audioEvents")[2];
+	CHECK(onRow.at("track") == track);
+	CHECK(onRow.at("lane") == 1);
+	CHECK(onRow.at("position") == 0);
+}
+
+TEST_CASE("files dropped on a track list row go on its track only where they would go on its lane", "[ui]")
+{
+	const test::TempDir dir;
+	const std::string take = writeAudio(dir.path() / "take.wav", 4800);
+	const std::string song = writeMidi(dir.path() / "song.mid", 1);
+	test::UiApp app({900, 640});
+	ui::EventDisplay& display = app.appUi().showProject();
+	app.call("settings.set", {{"values", {{"editing.onImportAudio", "useSettings"}, {"midi.importSinglePart", true}}}});
+	const auto add = [&app](const char* type) { return app.call("track.add", {{"type", type}}).at("track").at("id"); };
+	const Json audio = add("audio");
+	const Json keys = add("midi");
+	const Json synth = add("instrument");
+	const Json folder = add("folder");
+	REQUIRE(app.waitUntil([&app] { return elements(app, "#track-list listitem").size() == 4; }));
+	const auto project = [&app] { return app.call("project.get"); };
+	// The track the last of the project's parts or events of a kind is on.
+	const auto lastOn = [&project](const char* kind) { return project().at(kind).back().at("track"); };
+	const auto isNew = [&](const Json& track)
+	{ return track != audio && track != keys && track != synth && track != folder; };
+
+	// A single-part MIDI file on the instrument track's row: on that track.
+	dropOn(app, {song}, row(synth));
+	REQUIRE(app.waitUntil([&project] { return project().at("midiParts").size() == 1; }));
+	CHECK(lastOn("midiParts") == synth);
+	CHECK(project().at("tracks").size() == 4);
+
+	// On a folder's row and on an audio track's row: on a new track.
+	dropOn(app, {song}, row(folder));
+	REQUIRE(app.waitUntil([&project] { return project().at("midiParts").size() == 2; }));
+	CHECK(isNew(lastOn("midiParts")));
+	dropOn(app, {song}, row(audio));
+	REQUIRE(app.waitUntil([&project] { return project().at("midiParts").size() == 3; }));
+	CHECK(isNew(lastOn("midiParts")));
+	CHECK(project().at("tracks").size() == 6);
+
+	// An audio file on the MIDI track's row: on a new audio track.
+	dropOn(app, {take}, row(keys));
+	REQUIRE(app.waitUntil([&project] { return project().at("audioEvents").size() == 1; }));
+	CHECK(isNew(lastOn("audioEvents")));
+	CHECK(project().at("tracks").size() == 7);
+
+	// A MIDI file on the MIDI track's row without Import Dropped File as Single Part: a new track per file track.
+	app.call("settings.set", {{"key", "midi.importSinglePart"}, {"value", false}});
+	dropOn(app, {song}, row(keys));
+	REQUIRE(app.waitUntil([&project] { return project().at("midiParts").size() == 5; }));
+	const Json parts = project().at("midiParts");
+	CHECK(project().at("tracks").size() == 9);
+	for (const Json& part : parts)
+		CHECK(part.at("track") != keys);
+
+	// An audio file on the audio track's automation row: on a new track, not on the audio track.
+	app.call("automationLane.add", {{"track", audio}, {"target", {{"type", "volume"}}}});
+	REQUIRE(app.waitUntil([&display] { return display.project().at("automation").size() == 1; }));
+	display.showAutomation(audio.get<uint64_t>(), true);
+	REQUIRE(app.waitUntil([&app] { return elements(app, ".automation-row").size() == 1; }));
+	dropOn(app, {take}, ".automation-row");
+	REQUIRE(app.waitUntil([&project] { return project().at("audioEvents").size() == 2; }));
+	CHECK(isNew(lastOn("audioEvents")));
+	CHECK(project().at("tracks").size() == 10);
 }
 
 TEST_CASE("File > Import > Audio File puts the files on the selected audio track, else on new tracks", "[ui]")
@@ -464,6 +552,59 @@ TEST_CASE("Use Settings imports audio files without the Import Options dialog, w
 	set("editing.onImportAudio", "openOptionsDialog");
 	display.importFiles({kick});
 	REQUIRE(app.waitUntil([&app] { return dialogShown(app); }));
+}
+
+TEST_CASE(
+	"Files dropped on the event display import without the dialog under Use Settings, with the stored options", "[ui]")
+{
+	const test::TempDir dir;
+	test::UiApp app({900, 640});
+	const ui::EventDisplay& display = app.appUi().showProject();
+	const auto set = [&app](const char* key, const Json& value)
+	{ app.call("settings.set", {{"key", key}, {"value", value}}); };
+	set("editing.onImportAudio", "useSettings");
+	// A saved project, so Copy, Convert and Split Channels apply to the dropped files as they would in the dialog.
+	const std::filesystem::path folder = dir.path() / "project";
+	std::filesystem::create_directories(folder);
+	app.call("project.save", {{"path", (folder / "Song.dawproject").u8string()}, {"embedMedia", false}});
+	const Json track = app.call("track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track");
+	REQUIRE(app.waitUntil(
+		[&app]
+		{
+			auto* lanes =
+				dynamic_cast<ui::EventLanes*>(app.main().context().GetDocument(0)->QuerySelector("event-lanes.events"));
+			return lanes != nullptr && lanes->lanes().size() == 1;
+		}));
+	const auto events = [&app] { return app.call("project.get").at("audioEvents"); };
+	const auto media = [&app] { return app.call("project.get").at("media"); };
+	const double x = (2.0 - display.view().start) / display.view().scale;
+
+	// Copy and Convert off: a file from outside the project stays where it is and no copy job starts, with no dialog.
+	set("editing.importAudioCopy", false);
+	set("editing.importAudioConvert", false);
+	const std::string slow = writeAudio(dir.path() / "slow.wav", 4410, 1, 44100);
+	const size_t jobs = app.call("job.list").at("jobs").size();
+	drop(app, {slow}, x, 20.0);
+	REQUIRE(app.waitUntil([&events] { return events().size() == 1; }));
+	CHECK(!dialogShown(app));
+	CHECK(events()[0].at("track") == track.at("id"));
+	CHECK(media()[0].at("path") == slow);
+	CHECK(app.call("job.list").at("jobs").size() == jobs);
+
+	// Split Channels on with a name format: the dropped stereo file splits into mono media named as the setting says,
+	// still with no dialog.
+	set("editing.importAudioCopy", true);
+	set("editing.importAudioConvert", true);
+	set("editing.importAudioSplitChannels", true);
+	set("editing.importAudioNameFormat", "dot");
+	const std::string take = writeAudio(dir.path() / "take.wav", 4800, 2);
+	drop(app, {take}, x, 20.0);
+	REQUIRE(app.waitUntil([&events] { return events().size() == 3; }));
+	CHECK(!dialogShown(app));
+	const Json pool = media();
+	REQUIRE(pool.size() == 3);
+	CHECK(pool[1].at("path") == (folder / "Audio" / "take.L.wav").u8string());
+	CHECK(pool[2].at("path") == (folder / "Audio" / "take.R.wav").u8string());
 }
 
 TEST_CASE("Do not ask again in the Import Options dialog switches to Use Settings with its choices", "[ui]")

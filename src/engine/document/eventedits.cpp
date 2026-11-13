@@ -135,15 +135,15 @@ namespace gnubase::engine
 		// order keeps it among them.
 		std::vector<size_t> stackOrder(Project& project, const std::vector<Item>& items)
 		{
-			std::vector<ObjectId> places(items.size(), 0);
+			std::vector<std::pair<ObjectId, ObjectId>> places(items.size());
 			for (size_t index = 0; index < items.size(); ++index)
 			{
 				const Item& item = items[index];
 				if (item.audio != nullptr)
-					places[index] = frontOf(*item.audio);
+					places[index] = stackKey(*item.audio);
 				else if (item.audioPart != nullptr)
 					for (const AudioEvent* event : eventsIn(project, item.audioPart->id))
-						places[index] = std::max(places[index], frontOf(*event));
+						places[index] = std::max(places[index], stackKey(*event));
 			}
 			std::vector<size_t> order(items.size());
 			std::iota(order.begin(), order.end(), size_t{0});
@@ -605,7 +605,21 @@ namespace gnubase::engine
 					return {};
 				AudioEvent right = event;
 				right.id = project.newId();
-				right.front = frontOf(event); // the piece after the split stays where the event is in the stack
+				// The piece after the split comes right in front of its event, as its id is the newest place, and
+				// what was in front of the event stays in front of it: new places after it, in the order it had
+				// (#1189), so that a second split of a piece doesn't bring it in front of the piece after it.
+				right.front = 0;
+				std::vector<AudioEvent*> inFront;
+				for (auto& [id, other] : project.audioEvents)
+					if (other.track == event.track && stackKey(other) > stackKey(event))
+						inFront.push_back(&other);
+				std::sort(inFront.begin(), inFront.end(),
+					[](const AudioEvent* a, const AudioEvent* b) { return stackKey(*a) < stackKey(*b); });
+				for (AudioEvent* other : inFront)
+				{
+					other->front = project.newId();
+					context.emit("audioEvent.changed", {{"event", toJson(*other)}});
+				}
 				right.position = rebased(project, {time::TimeBase::Linear, at}, event.position.base);
 				right.offset += frames;
 				right.length -= frames;
@@ -1807,6 +1821,32 @@ namespace gnubase::engine
 			context.emit("automationLane.changed", {{"lane", toJson(lane)}});
 		}
 
+		// The automation in a range, as the clipboard keeps it: of each lane with points on its tracks.
+		std::vector<AutomationLane> automationIn(const Project& project, const Range& range)
+		{
+			std::vector<AutomationLane> lanes;
+			for (const auto& [id, lane] : project.automation)
+				if (contains(range.tracks, lane.track) && !lane.points.empty())
+				{
+					const time::TimeBase base = project.trackById.at(lane.track).timeBase;
+					lanes.push_back(automationWithin(
+						project, lane, inBase(project, range.start, base), inBase(project, range.end, base)));
+				}
+			return lanes;
+		}
+
+		// Cuts the automation on a range's tracks out of it; close (Delete Time) closes the gap.
+		void cutAutomationIn(Project& project, const Range& range, bool close, CommandContext& context)
+		{
+			for (auto& [id, lane] : project.automation)
+				if (contains(range.tracks, lane.track))
+				{
+					const time::TimeBase base = project.trackById.at(lane.track).timeBase;
+					cutAutomation(project, lane, inBase(project, range.start, base), inBase(project, range.end, base),
+						close, context);
+				}
+		}
+
 		// What a range holds, for the clipboard. The cuts at its edges are made in a copy of the project.
 		RangeClipboard copyRange(const Project& project, const Range& range)
 		{
@@ -1838,13 +1878,7 @@ namespace gnubase::engine
 					clipboard.midiParts.push_back(*item.part);
 				}
 			}
-			for (const auto& [id, lane] : project.automation)
-				if (contains(range.tracks, lane.track) && !lane.points.empty())
-				{
-					const time::TimeBase base = project.trackById.at(lane.track).timeBase;
-					clipboard.automation.push_back(automationWithin(
-						project, lane, inBase(project, range.start, base), inBase(project, range.end, base)));
-				}
+			clipboard.automation = automationIn(project, range);
 			// In stack order: pasted copies stack in the order they are added, and a split moves no piece in the stack.
 			std::stable_sort(clipboard.audioEvents.begin(), clipboard.audioEvents.end(),
 				[](const AudioEvent& a, const AudioEvent& b) { return frontOf(a) < frontOf(b); });
@@ -1870,13 +1904,7 @@ namespace gnubase::engine
 				removeItem(project, item, 0, context);
 			if (close)
 				moveFrom(project, range.tracks, range.end, gapOf(project, range.start, range.end), -1, context);
-			for (auto& [id, lane] : project.automation)
-				if (contains(range.tracks, lane.track))
-				{
-					const time::TimeBase base = project.trackById.at(lane.track).timeBase;
-					cutAutomation(project, lane, inBase(project, range.start, base), inBase(project, range.end, base),
-						close, context);
-				}
+			cutAutomationIn(project, range, close, context);
 		}
 
 		// Makes room of a gap at a position on the tracks: what starts there or later moves later, cut there first.
@@ -2098,6 +2126,60 @@ namespace gnubase::engine
 			return added;
 		}
 
+		// range.move without copy: what lies in the range, cut at its edges, moves to at on its tracks. It keeps its
+		// ids, so that an editor open on a moved part keeps it, a crossfade between two moved events stays and a shared
+		// copy of a MIDI part stays one (one cut at an edge is a real copy, as range.split makes it). A crossfade
+		// between a moved event and one that stays ends. Its audio comes in front where it lands, as range.paste puts
+		// it. The automation in the range moves as range.cut and range.paste move it. Returns what moved.
+		Json moveRange(Project& project, const Range& range, time::Samples at, CommandContext& context)
+		{
+			const std::vector<AutomationLane> automation = automationIn(project, range);
+			splitTracks(project, range.tracks, range.start, range.splitNotes, false, context);
+			splitTracks(project, range.tracks, range.end, range.splitNotes, false, context);
+			const std::vector<Item> items = within(project, range.tracks, range.start, range.end, false);
+			const Gap shift = gapOf(project, range.start, at);
+			// Every moved audio event, loose or in a moved part, comes in front of the events where it lands, as
+			// range.paste puts it, in the order it was stacked: a part's events keep their places among the others.
+			std::vector<AudioEvent*> movedAudio;
+			for (const Item& item : items)
+			{
+				if (item.audio != nullptr)
+				{
+					movedAudio.push_back(item.audio);
+				}
+				else if (item.audioPart != nullptr)
+				{
+					const std::vector<AudioEvent*> inPart = eventsIn(project, item.id());
+					movedAudio.insert(movedAudio.end(), inPart.begin(), inPart.end());
+				}
+			}
+			std::stable_sort(movedAudio.begin(), movedAudio.end(),
+				[](const AudioEvent* a, const AudioEvent* b) { return frontOf(*a) < frontOf(*b); });
+			std::set<ObjectId> movedEvents;
+			for (AudioEvent* event : movedAudio)
+			{
+				event->front = project.newId();
+				movedEvents.insert(event->id);
+			}
+			for (const Item& item : items)
+			{
+				place(project, item, shift.shift(item.position().base, 1), item.track());
+				announce(project, context, item, "changed");
+			}
+			for (auto& [id, event] : project.audioEvents)
+				if (event.crossfade.from != 0 && movedEvents.count(id) != movedEvents.count(event.crossfade.from))
+				{
+					event.crossfade = Crossfade();
+					context.emit("audioEvent.changed", {{"event", toJson(event)}});
+				}
+			cutAutomationIn(project, range, false, context);
+			for (const AutomationLane& copied : automation)
+				for (auto& [id, lane] : project.automation)
+					if (lane.track == copied.track && lane.target == copied.target)
+						pasteAutomation(project, lane, copied, shift, context);
+			return {{"events", idsOf(items)}};
+		}
+
 		Json pasteRange(Project& project, CommandContext& context, const std::optional<RangeClipboard>& stored)
 		{
 			if (!stored)
@@ -2251,6 +2333,8 @@ namespace gnubase::engine
 				}
 				if (lane->target.type == AutomationTargetType::Instrument)
 					copied.processor = channel.instrument;
+				if (lane->target.type == AutomationTargetType::MidiEffect)
+					copied.processor = midiEffectSlot(channel, lane->target.number).effect;
 				if (!contains(clipboard.tracks, lane->track))
 					clipboard.tracks.push_back(lane->track);
 				clipboard.lanes.push_back(std::move(copied));
@@ -2296,6 +2380,10 @@ namespace gnubase::engine
 			case AutomationTargetType::PitchBend:
 			case AutomationTargetType::ChannelPressure:
 				has = track.type == TrackType::Midi || track.type == TrackType::Instrument;
+				break;
+			case AutomationTargetType::MidiEffect: // the same effect in the same slot
+				has = (track.type == TrackType::Midi || track.type == TrackType::Instrument) &&
+					midiEffectSlot(channel, target.number).effect == copied.processor;
 				break;
 			}
 			return has ? std::optional<AutomationTarget>(target) : std::nullopt;
@@ -2721,14 +2809,23 @@ namespace gnubase::engine
 					"automation "
 					"outside keeps its curve: the value it arrives at the start with holds up to the end; with virgin "
 					"territory (automation.set) the range becomes a gap instead, the point at its start a terminator. "
-					"time (Delete Time) closes the gap: what comes after the range on "
-					"its tracks moves back by its length, in ticks on musical tracks. Locked events stay.",
+					"time (Delete Time) closes the gap: what comes after the range on its tracks moves back by its "
+					"length, in ticks on musical tracks. Locked events stay. Without time, a cycle marker on a "
+					"marker track among tracks that the range lies in loses the part in it (reference manual p. 425): "
+					"one "
+					"that starts or ends with the range gets shorter, one that it lies inside otherwise is split in "
+					"two, the part after it a new cycle marker with the first free number, the same name and color. "
+					"Other markers stay, as do cycle markers that the range covers whole or reaches out of, and all "
+					"of them with time.",
 				schema(withTime, {}), {{"type", "object"}}, false},
 			"Delete",
 			[](Project& project, CommandContext& context)
 			{
-				deleteRange(
-					project, rangeFrom(project, context, true), context.parameters().value("time", false), context);
+				const Range range = rangeFrom(project, context, true);
+				const bool closes = context.parameters().value("time", false);
+				deleteRange(project, range, closes, context);
+				if (!closes)
+					cutCycleMarkers(project, range.start, range.end, range.tracks, context);
 				return Json::object();
 			});
 
@@ -2761,14 +2858,19 @@ namespace gnubase::engine
 			{"range.cut", 1,
 				"Copies " + range +
 					" to the range clipboard as range.copy does, then deletes it as range.delete does; time (Cut "
-					"Time) closes the gap. Returns how many events and parts and automation lanes it copied.",
+					"Time) closes the gap. Without time it cuts the range out of the cycle markers that it lies in as "
+					"range.delete does; markers don't go to the clipboard. Returns how many events and parts and "
+					"automation lanes it copied.",
 				schema(withTime, {}), copiedResult, false},
 			"Cut",
 			[this](Project& project, CommandContext& context)
 			{
 				const Range cut = rangeFrom(project, context, true);
+				const bool closes = context.parameters().value("time", false);
 				RangeClipboard clipboard = copyRange(project, cut);
-				deleteRange(project, cut, context.parameters().value("time", false), context);
+				deleteRange(project, cut, closes, context);
+				if (!closes)
+					cutCycleMarkers(project, cut.start, cut.end, cut.tracks, context);
 				Json result = clipboardInfo(clipboard);
 				m_clipboard = std::move(clipboard);
 				return result;
@@ -2794,10 +2896,14 @@ namespace gnubase::engine
 			{"range.move", 1,
 				"Moves what lies in " + range +
 					" to position (project samples) on the same tracks, as dragging a selection range does (reference "
-					"manual p. 291): cut at its edges (splitNotes as in range.split), deleted from the range as "
-					"range.delete does and pasted at position as range.paste does, without the range clipboard. copy "
-					"(Alt, p. 432) leaves the range as it is and pastes a copy. Locked events stay where they are and "
-					"aren't copied. Returns the new events.",
+					"manual p. 291), without the range clipboard: cut at its edges (splitNotes as in range.split), "
+					"what lies in it moves by position minus start, keeping its ids, the crossfades between moved "
+					"events and shared copies of MIDI parts that it holds whole; a crossfade between a moved event "
+					"and one that stays ends. The automation in it is cut out as range.delete does and pasted at "
+					"position as range.paste does. copy (Alt, p. 432) leaves the range as it is and pastes a copy as "
+					"range.paste does: real copies with new ids. Either way the audio that lands comes in front of "
+					"the events there, in the order it was stacked. Locked events stay where they are and aren't "
+					"copied. Returns the moved events, or the copies.",
 				schema(withPosition, {"position"}), eventsResult(), false},
 			"Move Range",
 			[](Project& project, CommandContext& context)
@@ -2805,25 +2911,25 @@ namespace gnubase::engine
 				const Range range = rangeFrom(project, context, true);
 				const auto at = context.parameters().at("position").get<time::Samples>();
 				require(at >= 0, "position must not be before the project start");
-				RangeClipboard moved = copyRange(project, range);
-				// Locked events stay, as range.delete leaves them; so do the events of a locked audio part.
+				if (!context.parameters().value("copy", false))
+					return moveRange(project, range, at, context);
+				RangeClipboard copied = copyRange(project, range);
+				// Locked events aren't copied, as they don't move; nor are the events of a locked audio part.
 				std::set<ObjectId> lockedParts;
-				for (const AudioPart& part : moved.audioParts)
+				for (const AudioPart& part : copied.audioParts)
 					if (part.lock)
 						lockedParts.insert(part.id);
 				const auto locked = [](const auto& item) { return item.lock; };
-				moved.audioParts.erase(
-					std::remove_if(moved.audioParts.begin(), moved.audioParts.end(), locked), moved.audioParts.end());
-				moved.midiParts.erase(
-					std::remove_if(moved.midiParts.begin(), moved.midiParts.end(), locked), moved.midiParts.end());
-				moved.audioEvents.erase(
-					std::remove_if(moved.audioEvents.begin(), moved.audioEvents.end(),
+				copied.audioParts.erase(std::remove_if(copied.audioParts.begin(), copied.audioParts.end(), locked),
+					copied.audioParts.end());
+				copied.midiParts.erase(
+					std::remove_if(copied.midiParts.begin(), copied.midiParts.end(), locked), copied.midiParts.end());
+				copied.audioEvents.erase(
+					std::remove_if(copied.audioEvents.begin(), copied.audioEvents.end(),
 						[&lockedParts](const AudioEvent& event)
 						{ return event.part == 0 ? event.lock : lockedParts.count(event.part) != 0; }),
-					moved.audioEvents.end());
-				if (!context.parameters().value("copy", false))
-					deleteRange(project, range, false, context);
-				return Json{{"events", idsOf(pasteClipboard(project, moved, range.tracks, at, context))}};
+					copied.audioEvents.end());
+				return Json{{"events", idsOf(pasteClipboard(project, copied, range.tracks, at, context))}};
 			});
 
 		addEdit(engine,

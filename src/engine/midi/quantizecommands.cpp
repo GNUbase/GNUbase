@@ -659,10 +659,9 @@ namespace gnubase::engine::midi
 				"Takes the notes of part (only notes, if given) or of "
 				"every part in parts and returns the notes that changed. Audio events (events, and those of the audio "
 				"parts in audioParts) go back to their positions, offsets, lengths and crossfades before quantizing, "
-				"so the "
-				"crossfades quantize.crossfade made go and the ones they had before come back, and their clips go back "
-				"to their warp markers before warp quantizing, unless they were changed by other means since; returns "
-				"those events and clips too.",
+				"so the crossfades quantize.crossfade made go and the ones they had before come back, and their "
+				"clips go back to their warp markers before warp quantizing, unless they were changed by other means "
+				"since; returns those events and clips too.",
 				objectSchema(audioProperties), audioResult, false},
 			"Reset quantize",
 			[](Project& project, CommandContext& context)

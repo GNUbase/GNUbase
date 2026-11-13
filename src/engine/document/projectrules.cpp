@@ -10,6 +10,7 @@
 #include <array>
 #include <cmath>
 #include <initializer_list>
+#include <map>
 #include <memory>
 #include <set>
 #include <stdexcept>
@@ -766,6 +767,9 @@ namespace gnubase::engine
 			// become. They may go below the project's start between two actions.
 			const double longest = static_cast<double>(longestProjectTicks(project)) / g_logicalTick;
 			const auto bounded = [longest](double value) { return std::clamp(value, -longest, longest); };
+			// The time base a marker track has once its track.set ran: tracks come first, and marker.set takes
+			// positions in it.
+			std::map<ObjectId, time::TimeBase> timeBases;
 			Commands commands;
 			for (const Element* element : found.elements)
 			{
@@ -839,6 +843,9 @@ namespace gnubase::engine
 						track["name"] = name;
 					if (recolored)
 						track["color"] = color;
+					if (track.contains("timeBase"))
+						timeBases[element->id] =
+							track.at("timeBase") == "linear" ? time::TimeBase::Linear : time::TimeBase::Musical;
 					if (!track.empty())
 					{
 						track["track"] = element->id;
@@ -886,21 +893,25 @@ namespace gnubase::engine
 						set["name"] = name;
 					if (recolored)
 						set["color"] = color;
+					const auto newBase = timeBases.find(marker.track);
+					const time::TimeBase base = newBase != timeBases.end() ? newBase->second : marker.position.base;
 					const auto at = [&](double logical)
 					{
 						const time::Position ticks{
 							time::TimeBase::Musical, std::llround(std::max(logical, 0.0) * g_logicalTick)};
-						return time::rebase(ticks, marker.position.base, project.tempo, project.sampleRate).value;
+						return time::rebase(ticks, base, project.tempo, project.sampleRate).value;
 					};
 					if (position != element->position || length != element->length)
 					{
+						// Stopped at the project's start, a cycle marker keeps its length, as a part does.
+						position = std::max(position, 0.0);
 						set["position"] = at(position);
 						if (marker.type == MarkerType::Cycle)
 						{
 							// At least one sample long, as marker.set wants it, also on a musical track.
 							Marker moved = marker;
-							moved.position.value = at(position);
-							moved.end = {marker.position.base, at(position + std::max(length, 0.0))};
+							moved.position = {base, at(position)};
+							moved.end = {base, at(position + std::max(length, 0.0))};
 							keepMinimumLength(project, moved);
 							set["end"] = moved.end.value;
 						}
@@ -977,7 +988,10 @@ namespace gnubase::engine
 		for (size_t i = 0; i < filters.size(); ++i)
 		{
 			const ProjectFilterLine line = filterFromJson(filters[i], "rules.filters[" + std::to_string(i) + "]");
-			depth += line.open - line.close;
+			depth += line.open;
+			if (depth > midi::g_maxLogicalBrackets)
+				throw std::invalid_argument("rules.filters: brackets nest at most 3 deep");
+			depth -= line.close;
 			if (depth < 0)
 				throw std::invalid_argument("rules.filters: a bracket closes that wasn't opened");
 			rules.filters.push_back(line);

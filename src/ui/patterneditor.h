@@ -26,8 +26,9 @@ namespace gnubase::ui
 	// pattern management, Number of Steps, Step Resolution, Pattern Play Direction and the edit functions), the step
 	// display with a step lane per drum sound or pitch, and the parameter lane of the selected lane. show() gives it
 	// the project and the engine's editor view whenever they change. A gesture edits a copy of the pattern, which goes
-	// to the engine as one pattern.set when it ends; the engine's pattern shows again if that is refused, or if the
-	// project changed while the gesture went on and it changed nothing. Use it on the UI thread; the binding must
+	// to the engine as one pattern.set when it ends, with the lanes it didn't edit as the project has them then; the
+	// engine's pattern shows again if that is refused, or if the project changed while the gesture went on and it
+	// changed nothing. Use it on the UI thread; the binding must
 	// outlive it.
 	class PatternEditor final : private Rml::EventListener
 	{
@@ -40,6 +41,8 @@ namespace gnubase::ui
 		PatternEditor& operator=(PatternEditor&&) = delete;
 
 		void show(const engine::Json& project, const engine::Json& view);
+		// The project as show() gave it last.
+		const engine::Json& project() const { return m_project; }
 
 	private:
 		enum class Gesture : uint8_t
@@ -75,6 +78,9 @@ namespace gnubase::ui
 		void addStep(int pitch, int index);
 		void removeStep(int pitch, int index);
 		void setValue(int index, double value);
+		// The lanes a gesture didn't edit as the project has them now: a script, an MCP client or an undo may have
+		// changed them while it went on.
+		void takeOtherLanes();
 		// Sends the lanes as they are now in one pattern.set, an undo step named description; if it is refused, the
 		// engine's pattern shows again.
 		void sendLanes(const std::string& description);
@@ -96,6 +102,7 @@ namespace gnubase::ui
 		Gesture m_gesture = Gesture::None;
 		bool m_changed = false; // by the gesture going on
 		bool m_stale = false;   // the project changed while it went on
+		std::set<int> m_edited; // the pitches of the lanes it changed
 		Rml::ObserverPtr<Rml::Element> m_document;
 		std::vector<Rml::ObserverPtr<Rml::Element>> m_menus;
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it's gone

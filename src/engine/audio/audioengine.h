@@ -159,7 +159,8 @@ namespace gnubase::engine
 		struct Release
 		{
 			std::shared_ptr<InstrumentChannel> channel;
-			std::shared_ptr<MidiSequencer> departed;
+			std::shared_ptr<MidiSequencer> departed; // or a MIDI send of another track that played there:
+			std::shared_ptr<MidiSendTap> departedSend;
 			std::vector<std::shared_ptr<MidiSequencer>> staying; // the MIDI tracks still routed to the instrument
 		};
 
@@ -209,6 +210,8 @@ namespace gnubase::engine
 			ObjectId source = 0;     // the MIDI channel that left it
 			std::shared_ptr<InstrumentChannel> channel;
 			std::shared_ptr<MidiSequencer> departed;
+			std::shared_ptr<MidiSendTap> departedSend; // or the MIDI send of source's channel that left it
+			size_t sendSlot = 0;
 			uint64_t generation = 0; // the first program that has it
 		};
 
@@ -300,6 +303,10 @@ namespace gnubase::engine
 		void render(uint64_t frames, const std::function<void(uint32_t)>& rendered = {});
 		void cue(time::Samples position, bool playing, time::Samples window, bool wait, time::Samples enter = -1,
 			time::Samples playsOn = -1);
+		// Command thread, before it cues a start from stop exactly, a play or a recording, and sends the request:
+		// from then on, until the audio thread has applied that request, the cue thread cues there too, as for a
+		// playing transport that starts there, and not where the cursor is.
+		void cueStart(time::Samples start, time::Samples enter);
 		void startCueing();
 		void stopCueing();
 		void startDevice();
@@ -425,6 +432,8 @@ namespace gnubase::engine
 		{
 			std::string id;             // the built-in instrument, or empty
 			std::set<ObjectId> sources; // the MIDI channels routed to it
+			// The MIDI sends of other tracks that play to it, by channel and slot.
+			std::map<std::pair<ObjectId, size_t>, std::shared_ptr<MidiSendTap>> sends;
 			std::shared_ptr<InstrumentChannel> channel;
 			std::shared_ptr<processors::Sampler> sampler; // the sampler's, which loads its sample when it changes
 			std::string sample;                           // the media file that sampler is to play
@@ -512,8 +521,13 @@ namespace gnubase::engine
 			bool playing = false;
 			TransportSettings settings;
 			std::shared_ptr<const ArrangerPlan> arranger = std::make_shared<const ArrangerPlan>();
+			// A start that the command thread cues exactly (-1 for none), where an arranger chain enters with it, and
+			// how many requests the audio thread applies before it plays from there (cueStart).
+			time::Samples start = -1;
+			time::Samples enter = -1;
+			uint64_t startRequests = 0;
 		};
-		std::mutex m_cueMutex;             // guards m_cueState
+		std::mutex m_cueMutex;             // guards m_cueState; the cue thread holds it while it cues
 		ArrangerState m_announcedArranger; // as transport.changed last announced it
 		CueState m_cueState;
 		std::atomic<bool> m_cueing{false};

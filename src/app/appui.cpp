@@ -430,6 +430,13 @@ namespace gnubase::app
 				if (keys.key == Rml::Input::KI_UNKNOWN)
 					m_winding.stop(); // the keyboard focus lost: also a button held
 			});
+		// What a script's click or key changed shows in the menu before the script reads the DOM, as after a step.
+		m_shell.onInputHandled(
+			[this]
+			{
+				if (m_menu)
+					m_menu->update();
+			});
 		m_keys.add({"window.markers", "Opens or closes the markers window.",
 			// Later in the step: the key may be the markers window's own, which closing it would destroy.
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_shell.post([this] { toggleMarkers(); }); }});
@@ -1621,7 +1628,7 @@ namespace gnubase::app
 		// Later in the step: the click may be in the channel settings window, which opening it would rebuild.
 		actions.editChannel = [this](uint64_t track) { m_shell.post([this, track] { openChannelSettings(track); }); };
 		// Add Effect Track to Send (p. 554): the add track dialog's effect page, in the mixer's window, later in the
-		// step, outside the drop-down list's event.
+		// step, outside the drop-down list's event. The new track goes below the track whose send it is.
 		actions.addEffectTrack = [this](Rml::Element& from, uint64_t track, int send)
 		{
 			for (const ui::Window* window : m_shell.windows())
@@ -1632,7 +1639,7 @@ namespace gnubase::app
 							if (ui::Window* found = m_shell.find(id))
 								openOnce(*found, "add-track.rml", m_addTrack,
 									{{"type", "effect"}, {"tracks", std::to_string(track)},
-										{"send", std::to_string(send)}});
+										{"send", std::to_string(send)}, {"below", std::to_string(track)}});
 						});
 		};
 		actions.wentTo = [this](uint64_t track)
@@ -2069,10 +2076,11 @@ namespace gnubase::app
 		const auto selection = [this]
 		{ return m_trackList != nullptr ? m_trackList->selection() : std::vector<uint64_t>(); };
 		const auto hasSelection = [selection](ui::Window&, Rml::Element*) { return !selection().empty(); };
-		// File > Import > Tracks from Project or Track Archive (reference manual pp. 201-202): below the first
-		// selected track, or at the bottom.
+		// File > Import > Tracks from Project or Track Archive (reference manual pp. 201-205): the file chosen opens in
+		// the Import Options dialog, which imports below the first selected track or at the bottom.
 		m_keys.add({"file.importTracks",
-			"Imports the tracks of a project or track archive below the first selected track, or at the bottom.",
+			"Imports tracks of a project or track archive through the Import Options dialog, below the first selected "
+			"track or at the bottom.",
 			[this, selection](ui::Window& window, Rml::Element* /*zone*/)
 			{
 				ui::FileDialog dialog;
@@ -2085,20 +2093,12 @@ namespace gnubase::app
 					{
 						if (!chosen.error.empty())
 							logging::warning("The file dialog failed: {}", chosen.error);
-						if (chosen.files.empty())
+						ui::Window* parent = m_shell.find(id);
+						if (chosen.files.empty() || parent == nullptr)
 							return;
-						engine::Json parameters = {{"path", chosen.files.front().u8string()}};
-						if (!below.empty())
-							parameters["track"] = below.front();
-						// The engine's refusal shows, and the tracks it left out.
-						m_binding.send("track.import", parameters,
-							[this, id](const engine::Result& result)
-							{
-								if (!result.ok())
-									m_files.showError(id, result.error);
-								else if (const std::string left = leftOut(result.value); !left.empty())
-									m_files.showError(id, "The tracks were imported without " + left + ".");
-							});
+						openDialog(*parent, "track-import.rml",
+							{{"path", chosen.files.front().u8string()},
+								{"below", below.empty() ? std::string() : std::to_string(below.front())}});
 					});
 			}});
 		// File > Export > Selected Tracks (reference manual pp. 205-206): a track archive, with copies of the media.
@@ -2127,7 +2127,8 @@ namespace gnubase::app
 								if (!result.ok())
 									m_files.showError(id, result.error);
 								else if (const std::string left = leftOut(result.value); !left.empty())
-									m_files.showError(id, "The tracks were exported without " + left + ".");
+									m_files.showNotice(
+										id, "Export Selected Tracks", "The tracks were exported without " + left + ".");
 							});
 					});
 			}});
