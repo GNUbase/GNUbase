@@ -62,9 +62,10 @@ Each command is one undo step and changes nothing if it fails; `range.copy` chan
   ticks, so that it keeps its distance from the range's start in beats. What starts where the range starts lands at
   `position` exactly, a piece cut there and an event that starts there alike: an event's start in ticks can lie up to
   half a sample from the range's start, and the gap, with both ends rounded to ticks, could otherwise put it a sample
-  off `position` at some tempos. So on a musical track with such an event everything moves by the shift that puts the
-  first of them at `position`, and keeps its distance from it in ticks. `range.paste` lands the same way at its
-  `position`.
+  off `position` at some tempos. So when such an event lies on a musical track, everything on the range's musical tracks
+  moves by the one shift in ticks that puts the first of them in ticks at `position`, on every track alike: what lay on
+  one tick, on one track or on several, still does, and the others that start in the range's start sample keep their
+  distance of less than a sample from it. `range.paste` lands the same way at its `position`.
 - **Global copy** copies every track between the locators: the events, parts and automation. Markers, the tempo and
   the signatures stay where they are.
 
@@ -104,8 +105,10 @@ line's range fields, the range in the editors (they come with their tickets), an
   move, also onto the range's own later or earlier half; which piece of an event cut at either edge keeps its id; a
   crossfade from an audio part's event to an event outside it, kept when both move and ended when either stays; a
   shared copy cut at an edge becoming a real copy while the copies in the range stay shared; and at tempos whose bars
-  lie between samples, two parts on consecutive bars and an audio event on a musical track moved, copied and pasted
-  by a range from the first part's start sample: the first part and the event landing on the position's sample with
-  the part's first note, the second part a bar after the first in ticks, and no piece left behind.
+  lie between samples, two parts on consecutive bars, a part on the second bar on another MIDI track, an audio event
+  and an audio part on musical tracks moved, copied and pasted by a range from the first part's start sample: the
+  first part, the audio event and the audio part with its event landing on the position's sample with the part's first
+  note, the second part a bar after the first in ticks, the other track's part on the second part's tick, and no piece
+  left behind.
 - `tests/eventediting_tests.cpp` (fake window system, real engine): the commands exist; split, Delete Time, cut and
   paste on a selection range, which stays; paste at the cursor without a range, selecting what it pasted.
