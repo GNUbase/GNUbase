@@ -910,7 +910,7 @@ TEST_CASE("a save or backup that fails shows its error", "[ui]")
 	click(app, "#backup-project-dialog button.primary");
 	REQUIRE(app.waitUntil([&held] { return held.held(); }, std::chrono::seconds(30)));
 	app.call("project.set", {{"name", "Edited"}});
-	held.release();
+	CHECK(held.release());
 	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }, std::chrono::seconds(30)));
 	CHECK_THAT(elements(app, "#project-error-message").at(0).at("text").get<std::string>(),
 		ContainsSubstring("wasn't opened"));
@@ -1648,7 +1648,7 @@ TEST_CASE("Back up Project shows its own backups' progress and outcome, and Canc
 	CHECK(elements(app, "#backup-progress").size() == 1);
 	click(app, "#backup-progress-dialog button[result=cancel]");
 	REQUIRE(app.waitUntil([&app] { return ran(app, "job.cancel"); }));
-	held.release();
+	CHECK(held.release());
 	REQUIRE(app.waitUntil([&app] { return !shown(app, "#backup-progress-dialog"); }));
 	const Json cancelled = lastJob(app);
 	CHECK(cancelled.at("kind") == "project.backup");
@@ -1702,7 +1702,7 @@ TEST_CASE(
 	REQUIRE(app.shell().running());
 	CHECK(shown(app, "#backup-progress-dialog"));
 	CHECK(!ran(app, "job.cancel"));
-	held.release();
+	CHECK(held.release());
 	REQUIRE(app.waitUntil([&app] { return !shown(app, "#backup-progress-dialog"); }));
 	CHECK(lastJob(app).at("state") == "done");
 	CHECK(!shown(app, "#project-error-dialog"));
@@ -1749,7 +1749,7 @@ TEST_CASE("a backup started in another window while one's progress shows shows i
 	// Both backups are held at their first progress until the second one was cancelled, so that the first can't end
 	// before and the second still runs then. Only the jobs wait: the commands that the UI sends meanwhile, such as
 	// the window layout that docking saves, go on (#1272).
-	test::HeldJob held(app.engine(), "project.backup", 2);
+	test::HeldJob held(app.engine(), "project.backup", std::chrono::minutes(1), 2);
 	fileMenu(app, "file.backup");
 	answer(app, {dir.path() / "First"});
 	click(app, "#backup-project-dialog button.primary");

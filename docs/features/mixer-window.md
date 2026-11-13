@@ -56,7 +56,9 @@ engine commands, so whichever client changes the project or the view, the mixer 
   A drag, wheel turns or a held arrow key on the fader, a knob or a value field is one undo step, sent with
   `EngineBinding::sendStep`; while its steps are on their way, the project read in between doesn't set the control,
   and during a drag the control keeps the mouse's value, so it never jumps back (#716,
-  [ui-engine-binding.md](ui-engine-binding.md)). The dB text follows the fader as it moves.
+  [ui-engine-binding.md](ui-engine-binding.md)). A control made again has no value of its own yet and shows the
+  engine's right away, also while a step is on its way; a step the engine refuses reads the project again, so the
+  control shows the engine's value. The dB text follows the fader as it moves.
   New strips go through `Docking::arrangeSections`, so they get the user's order and hidden sections.
 - **Visibility and filter** (pp. 442, 454–456). The channel type filter's menu has a check item per type; the agents'
   menu has Show All Channels, which shows every hidden channel again. In a window, the left zone's Visibility tab
@@ -109,4 +111,7 @@ windows' places are kept in `ui.layout` and workspaces ([workspaces.md](workspac
   setup pane's Pictures, Notepad and Fader, notes from the engine and typed in the notepad, a picture shown and
   removed, and channel names dragged onto others reordering the tracks, while busses stay. A fader and a send's level
   dragged and the panner turned while the engine answers late follow the mouse, never back, end where the engine is,
-  and are one undo step; values set through MCP show at once, and during a drag when it ends.
+  and are one undo step; values set through MCP show at once, and during a drag when it ends. A fader step the engine
+  refuses, its track being gone, shows in the command log, leaves no undo step and, once an undo brings the track
+  back, the strip made again shows the engine's volume; a strip made again while its fader's step is in flight shows
+  the engine's volume at once, not the widget's default.

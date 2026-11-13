@@ -24,11 +24,14 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <limits>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <utility>
@@ -613,9 +616,64 @@ TEST_CASE("a drag of an event's edge shows the size the release gives it at ever
 	CHECK(bothEnds(3.7, 4.2));
 }
 
+namespace
+{
+	// The runs of a command that holds the engine's command thread while it waits for the test to let it go: what
+	// the test sends meanwhile queues behind it, and the engine answers it only once the hold is released, however
+	// busy the machine is (#1272). The n-th run of the command waits for the n-th release.
+	struct CommandHolds
+	{
+		CommandHolds() = default;
+		CommandHolds(const CommandHolds&) = delete;
+		CommandHolds& operator=(const CommandHolds&) = delete;
+		// Lets every run go, so that a test that fails on the way doesn't leave the engine's thread waiting.
+		~CommandHolds() { release(std::numeric_limits<size_t>::max()); }
+
+		// The command's handler, on the engine's command thread. It gives up after 30 s, so that an engine that is
+		// stopping can end even if the test never releases it.
+		Json hold()
+		{
+			std::unique_lock lock(mutex);
+			const size_t own = entered++;
+			changed.notify_all();
+			changed.wait_for(lock, std::chrono::seconds(30), [this, own] { return released > own; });
+			return Json::object();
+		}
+
+		// Whether count runs have entered hold(), waiting up to 30 s for them.
+		[[nodiscard]] bool waitEntered(size_t count)
+		{
+			std::unique_lock lock(mutex);
+			return changed.wait_for(lock, std::chrono::seconds(30), [this, count] { return entered >= count; });
+		}
+
+		// Lets the first count runs go on.
+		void release(size_t count)
+		{
+			{
+				const std::scoped_lock lock(mutex);
+				released = count;
+			}
+			changed.notify_all();
+		}
+
+		std::mutex mutex;
+		std::condition_variable changed;
+		size_t entered = 0;  // the runs that have entered hold()
+		size_t released = 0; // the runs let go: release(n) frees the n-th
+	};
+}
+
 TEST_CASE("a second resize release can precede the first release's project", "[unit]")
 {
+	CommandHolds holds; // declared before the fixture: its engine's command thread waits in hold()
 	Fixture f;
+	// The engine answers only when the test lets it: a command that holds its command thread until it is released,
+	// so what queues behind it runs, and answers, in an order the test chooses, not one a busy machine chooses.
+	f.engine.registerCommand(
+		{"test.hold", 1, "Waits for the test to release it.", engine::CommandInfo{}.parameters, Json::object(), false},
+		[&holds](engine::CommandContext&) { return holds.hold(); });
+	engine::Client holder(f.engine, "holder");
 	f.display.select({f.part});
 	REQUIRE(f.waitUntil([&f] { return f.lanes("selected-events")[1].events.size() == 1; }));
 	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
@@ -629,21 +687,39 @@ TEST_CASE("a second resize release can precede the first release's project", "[u
 	f.automation.press(std::nullopt, f.at(298, 60), ui::MouseButton::Left);
 	f.automation.move(std::nullopt, f.at(348, 60));
 	REQUIRE(f.waitUntil([&bothEnds] { return bothEnds(3.5); }));
+	// A project answer that reaches the display during the drag asks its preview again (resizeProjectChanged), so
+	// wait until no preview and no project are on their way: a leftover preview would be what waiting() counts
+	// below, not the second drag's, and the second drag's would queue behind the second hold.
+	REQUIRE(f.waitUntil(
+		[&f] { return f.binding.waiting("event.previewResize") == 0 && f.binding.waiting("project.get") == 0; }));
+	// The first release's resize queues behind a hold: it can't run, and its project can't reach the display, until
+	// the test lets the engine go on.
+	holder.send("test.hold");
+	REQUIRE(holds.waitEntered(1));
 	f.automation.release(std::nullopt, f.at(348, 60), ui::MouseButton::Left);
 	// No shell step has handed the first release's project to the display yet.
 	REQUIRE(f.display.project().at("midiParts")[0].at("length") == 4 * g_quarter);
 	clock->advance(1.0);
 	f.automation.press(std::nullopt, f.at(348, 60), ui::MouseButton::Left);
 	f.automation.move(std::nullopt, f.at(368, 60));
+	REQUIRE(f.binding.waiting("event.previewResize") == 1); // the second drag's preview queues behind the resize
+	// A second hold queues behind the preview: once the first is released, the engine answers the resize and the
+	// preview and waits again, so the project that the resize announces can't reach the display before the second
+	// release went out, either.
+	holder.send("test.hold");
+	holds.release(1);
+	REQUIRE(holds.waitEntered(2)); // both answers are in the binding's mailbox, and stay out of the display's reach
 	const auto previewDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
 	while (!bothEnds(3.7))
 	{
 		REQUIRE(std::chrono::steady_clock::now() < previewDeadline);
 		f.ui.shell.step(milliseconds(5));
+		// The first release's project stays out: the project.get its history.changed sends queues behind the hold.
 		REQUIRE(f.display.project().at("midiParts")[0].at("length") == 4 * g_quarter);
 	}
 	f.automation.release(std::nullopt, f.at(368, 60), ui::MouseButton::Left);
 	REQUIRE(f.display.project().at("midiParts")[0].at("length") == 4 * g_quarter);
+	holds.release(2);
 	const auto settled = [&f]
 	{
 		return f.binding.waiting("event.resize") == 0 && f.binding.waiting("project.get") == 0 &&
@@ -2801,6 +2877,44 @@ TEST_CASE("a muted take covers nothing on its track's lane, which shows what pla
 	CHECK(f.display.selection() == std::vector<uint64_t>{second});
 	f.click(205, 20);
 	CHECK(f.display.selection() == std::vector<uint64_t>{f.event});
+}
+
+TEST_CASE("with editing.treatMutedAudioLikeDeleted off, a muted take in front covers what lies behind it", "[unit]")
+{
+	Fixture f;
+	const auto audioTrack = f.call("project.get").at("tracks").at(0).at("id").get<uint64_t>();
+	// A second take from 2.1 to 2.3 seconds on lane 1, in front of the first but muted.
+	f.call("audioEvent.add",
+		{{"track", audioTrack}, {"clip", f.audioEvents()[0].at("clip")}, {"position", 100800}, {"length", 9600},
+			{"lane", 1}, {"mute", true}});
+	REQUIRE(f.waitUntil([&f] { return f.display.project().at("audioEvents").size() == 2; }));
+
+	// The default treats the muted take as deleted: the first plays all through and the muted one covers nothing.
+	REQUIRE(f.lanes("events")[0].events.size() == 1);
+	CHECK(std::abs(f.lanes("events")[0].events[0].start - 2.0) < 1e-6);
+	CHECK(std::abs(f.lanes("events")[0].events[0].end() - 2.5) < 1e-6);
+	CHECK(f.lanes("muted-events")[0].events.empty());
+
+	// With the preference off (reference manual p. 228), the muted take keeps its place: it covers the first from 2.1
+	// to 2.3 and shows muted there, so the track's lane shows the first take only around it.
+	f.call("settings.set", {{"key", "editing.treatMutedAudioLikeDeleted"}, {"value", false}});
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events")[0].events.size() == 3; }));
+	const std::vector<ui::TimeSpan>& shown = f.lanes("events")[0].events;
+	CHECK(std::abs(shown[0].start - 2.0) < 1e-6);
+	CHECK(std::abs(shown[0].end() - 2.1) < 1e-6);
+	CHECK(std::abs(shown[1].start - 2.1) < 1e-6);
+	CHECK(std::abs(shown[1].end() - 2.3) < 1e-6);
+	CHECK(std::abs(shown[2].start - 2.3) < 1e-6);
+	CHECK(std::abs(shown[2].end() - 2.5) < 1e-6);
+	const std::vector<ui::TimeSpan>& muted = f.lanes("muted-events")[0].events;
+	REQUIRE(muted.size() == 1);
+	CHECK(std::abs(muted[0].start - 2.1) < 1e-6);
+	CHECK(std::abs(muted[0].end() - 2.3) < 1e-6);
+
+	// Back on, the muted take hides nothing again.
+	f.call("settings.set", {{"key", "editing.treatMutedAudioLikeDeleted"}, {"value", true}});
+	REQUIRE(f.waitUntil([&f] { return f.lanes("events")[0].events.size() == 1; }));
+	CHECK(f.lanes("muted-events")[0].events.empty());
 }
 
 TEST_CASE("the draw tool draws parts on the lane it draws on", "[unit]")

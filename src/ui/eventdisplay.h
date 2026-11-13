@@ -475,6 +475,7 @@ namespace gnubase::ui
 		void showProject();
 		void loadProject(const engine::Json& project);
 		void setFolderMode(const std::string& mode); // ui.folderData
+		void setTreatMutedAudioLikeDeleted(bool on); // editing.treatMutedAudioLikeDeleted
 		void setLanes();
 		void followTransport(const engine::Json& status);
 		void setCursor(int64_t sample);
@@ -914,6 +915,8 @@ namespace gnubase::ui
 		bool m_notifiesKnown = false;
 		bool m_zoomHorizontalOnly = true; // ui.zoomToolHorizontalOnly
 		bool m_zoomHorizontalOnlyKnown = false;
+		bool m_treatMutedAudioLikeDeleted = true; // editing.treatMutedAudioLikeDeleted
+		bool m_treatMutedKnown = false;
 		std::optional<std::pair<double, double>> m_mouse; // over the lanes, in dp, while the mouse is there
 		std::string m_held;           // the modifier keys held, as modifiersOf joins them, for the pointer
 		std::set<int> m_modifierKeys; // the modifier keys seen going down and not up (Rml::Input::KeyIdentifier)

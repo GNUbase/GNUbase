@@ -430,7 +430,8 @@ namespace gnubase::engine
 			announceSlots(nullptr);
 		if (m_device &&
 			(m_snapshots.latest().revision != m_revision || autoMonitoring() != m_autoMonitoring ||
-				listenGains() != m_listenGains || m_settings.get(settings::g_audioMutePreSends) != m_mutePreSends))
+				listenGains() != m_listenGains || m_settings.get(settings::g_audioMutePreSends) != m_mutePreSends ||
+				m_settings.get(settings::g_editingTreatMutedAudioLikeDeleted) != m_treatMutedAudioLikeDeleted))
 			rebuild();
 		updateRecorder();
 	}
@@ -503,6 +504,7 @@ namespace gnubase::engine
 		m_autoMonitoring = autoMonitoring();
 		m_listenGains = listenGains();
 		m_mutePreSends = m_settings.get(settings::g_audioMutePreSends);
+		m_treatMutedAudioLikeDeleted = m_settings.get(settings::g_editingTreatMutedAudioLikeDeleted);
 		const audio::DeviceFormat& format = m_device->format();
 		graph::GraphDesc desc = graph::describe(snapshot);
 		m_sourceNodes.clear();
@@ -531,7 +533,8 @@ namespace gnubase::engine
 		{
 			if (channel.type != TrackType::Audio)
 				continue;
-			auto playlist = std::make_shared<const Playlist>(makePlaylist(snapshot, channel));
+			auto playlist =
+				std::make_shared<const Playlist>(makePlaylist(snapshot, channel, m_treatMutedAudioLikeDeleted));
 			const int source = sourceNode(channel.id);
 			if (source >= 0)
 				desc.nodes[static_cast<size_t>(source)].processor =
@@ -960,6 +963,7 @@ namespace gnubase::engine
 					kinds.push_back(chaseKindEvent(kind));
 				sourceStrip->chasedWhenHeard(std::move(kinds), sequencer->second);
 				sourceStrip->playsProject(snapshot.opened);
+				sourceStrip->playsMidiTrack();
 			}
 			if (const auto tap = m_renderTaps.find(channel.id); tap != m_renderTaps.end())
 				(tap->second.point == RenderPoint::Source ? sourceStrip : fader)
