@@ -112,6 +112,7 @@
 			<button tool="zoom" class="icon-only" title="Zoom"><svg class="icon" src="../icons/tool-zoom.svg"/></button>
 			<button tool="line" tool-menu="line-menu" class="icon-only" title="Line"><svg class="icon" src="../icons/tool-line.svg"/></button>
 			<button tool="play" tool-menu="play-menu" class="icon-only" title="Play"><svg class="icon" src="../icons/tool-audition.svg"/></button>
+			<button tool="timeWarp" tool-menu="time-warp-toolbar-menu" class="icon-only" title="Time Warp"><svg class="icon" src="../icons/tool-timewarp.svg"/></button>
 		</div>
 		<div class="toolbar-section" section="autoScroll" label="Auto-Scroll">
 			<button id="auto-scroll" type="toggle" title="Auto-Scroll">Auto-Scroll</button>
@@ -741,6 +742,11 @@
 		<menuitem line-mode="triangle">Triangle</menuitem>
 		<menuitem line-mode="square">Square</menuitem>
 	</menu>
+	<menu id="time-warp-toolbar-menu">
+		<menuitem warp-mode="warpGrid">Warp Grid</menuitem>
+		<menuitem warp-mode="warpGridFollow">Warp Grid (musical events follow)</menuitem>
+		<menuitem warp-mode="freeWarp">Free Warp</menuitem>
+	</menu>
 	<menu id="play-menu">
 		<menuitem play-mode="play">Play</menuitem>
 		<menuitem play-mode="scrub">Scrub</menuitem>
@@ -776,8 +782,7 @@
 				<menuitem tool="line">Line</menuitem>
 				<menuitem tool="play">Play</menuitem>
 				<menuitem tool="timeWarp">Time Warp</menuitem>
-				<!-- The time warp tool's modes (reference manual p. 1465, docs/features/time-warp.md), here rather than
-				     behind a toolbar button, which the toolbar has no room for at 1024 pixels -->
+				<!-- The time warp tool's modes, also behind its toolbar button (reference manual p. 1465). -->
 				<menuitem id="time-warp-submenu">Time Warp Mode
 					<menu id="time-warp-menu">
 						<menuitem warp-mode="warpGrid">Warp Grid</menuitem>

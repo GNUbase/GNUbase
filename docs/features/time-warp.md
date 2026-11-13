@@ -29,23 +29,29 @@ signature events ([signature-track.md](signature-track.md)) and the clips' warp 
   events by them; `delete` removes the bars and moves those after back; `replace` gives the bars the time signature
   at the same tempo; `reinterpret` too, with the tempo scaled so that they last as long as before, and what musical
   tracks hold keeps its time. `range.insertSilence` and `range.delete` with `time` move the events too.
-- **Set Definition from Tempo** makes a clip's definition grid the project's quarters from the first after the event's
-  start to the clip's end, each edited onto the clip frame where the event plays it now (`ClipWarp::beats`), and its
+- **Set Definition from Tempo** makes a clip's definition grid the project's quarters from the one at or before the
+  clip's start to its end, each edited onto the clip frame where the event plays it now (`ClipWarp::beats`), and its
   tempo the project's after the last one. In musical mode the event then plays as before, and follows the tempo from
-  then on. A clip in musical mode already is refused; where an event plays a clip frame is taken unwarped.
+  then on, including an event that starts between quarters. Beat 0 can precede the clip's first frame. Selected
+  events sharing a clip get independent clips, so each placement gets its own definition and unselected events
+  keep theirs. A clip in musical mode already is refused; where an event plays a clip frame is taken unwarped.
 - **Pasted warp markers** go where the source event plays the marker's frames unwarped, into the frames that the
   destination event plays then; those outside the destination event or passing one of its clip's markers are left
-  out, and its markers stay.
+  out, and its markers stay. Each destination clip is visited once, using its first event in the request.
 
 ## UI
 
-- **The time warp tool** (`Tool::TimeWarp`, `timeWarp`, `src/ui/eventtimewarp.cpp`): the toolbox and the context
-  menu's Tools, or `tool.timeWarp`, choose it. The context menu's Tools > Time Warp Mode (`#time-warp-menu`) chooses
-  it with one of the modes Warp Grid, Warp Grid (musical events follow) and Free Warp (`EventDisplay::setWarpMode`),
-  checked as chosen. It has no toolbar button: the toolbar has no room for one at 1024 pixels, the width of CI's
-  displays. In the grid modes a drag sends `tempo.warp` on release, from the position pressed,
+- **The time warp tool** (`Tool::TimeWarp`, `timeWarp`, `src/ui/eventtimewarp.cpp`): the toolbar button, toolbox and
+  context menu's Tools, or `tool.timeWarp`, choose it. A second click opens its modes (`#time-warp-toolbar-menu`);
+  the context menu's Tools > Time Warp Mode (`#time-warp-menu`) chooses them too: Warp Grid, Warp Grid (musical
+  events follow) and Free Warp (`EventDisplay::setWarpMode`), checked as chosen. The toolbar hides sections that no
+  longer fit in a narrow window. In the grid modes a drag sends `tempo.warp` on release, from the position pressed,
   snapped, to the time released, with `follow` in the second mode. In Free Warp a press on an audio event inserts a
-  warp marker at the clip frame pressed that plays at the frame released (`clip.addWarpMarker`).
+  warp marker at the clip frame pressed that plays at the time released (`audioEvent.addWarpMarker`). The engine
+  maps the project sample positions through musical mode and existing markers, so the marker moves the audio
+  under the pointer even in an already warped event. It anchors a trimmed event's offset if inserting the marker
+  would otherwise change its mapping. This command returns the clip's id and warp, as `clip.addWarpMarker` does,
+  and is one undo step.
 - **Project > Tempo Track > Process Tempo...** (`tempo.openProcessTempo`) opens `resources/ui/process-tempo.rml`: the
   locator range in seconds, New End Position `#pt-new-end` and New Length `#pt-new-length`, each following the other,
   and the Equivalent Tempo Scaling `#pt-scaling`; Process sends `tempo.process`.
@@ -62,17 +68,17 @@ signature events ([signature-track.md](signature-track.md)) and the clips' warp 
 ## Not yet
 
 The ruler's and the events' tempo flags while the time warp tool is chosen, the ruler switching to bars and beats,
-showing the warp while dragging and snapping the release to events; a toolbar button with the modes behind it once
-the toolbar has room; Free Warp snapping to hitpoints and magnetic
+showing the warp while dragging and snapping the release to events; Free Warp snapping to hitpoints and magnetic
 markers; the Process Tempo and Process Bars buttons of the tempo track editor, the dialogs' bars and beats and other
-time formats; Write Definition to Audio Files; a definition grid for the stretch before the first beat when the tempo
-changes there.
+time formats; Write Definition to Audio Files.
 
 ## Tests
 
 `tests/timewarp_tests.cpp`: time warp in both grid modes, with a later tempo event and its limits; Process Tempo by
 length and end, from the locators and with a ramp across the range's end; every Process Bars type and its errors;
-Set Definition from Tempo playing as before and following a tempo change, for the events' tracks or all; pasting warp
-markers at the same times, keeping those there, and undo. `tests/timewarp_ui_tests.cpp`: the tool's Warp Grid and
-Free Warp drags and its modes in the context menu, the Process Tempo and Process Bars dialogs, and Audio > Advanced's Set Definition from
-Tempo and Copy and Paste Warp Markers.
+Set Definition from Tempo playing as before and following a tempo change, for the events' tracks or all, with off-beat
+starts and shared clips, including inactive track versions; pasting warp markers once per clip, keeping those there,
+and undo; Free Warp through musical mode, existing markers and trimmed events. `tests/timewarp_ui_tests.cpp`:
+the tool's toolbar button and second-click modes,
+Warp Grid and Free Warp drags on plain and warped clips, its modes in the context menu, the Process Tempo and
+Process Bars dialogs, and Audio > Advanced's Set Definition from Tempo and Copy and Paste Warp Markers.

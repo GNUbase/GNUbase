@@ -140,6 +140,7 @@ namespace gnubase::ui
 		m_lineMenu = m_document->GetElementById("line-menu");
 		m_playMenu = m_document->GetElementById("play-menu");
 		m_timeWarpMenu = m_document->GetElementById("time-warp-menu");
+		m_timeWarpToolbarMenu = m_document->GetElementById("time-warp-toolbar-menu");
 		m_toolbox = m_document->GetElementById("toolbox");
 		m_contextMenu = m_document->GetElementById("event-display-menu");
 		m_notification = m_document->GetElementById("tool-notification");
@@ -268,7 +269,7 @@ namespace gnubase::ui
 		{
 			setPlayMode(item->GetAttribute<Rml::String>("play-mode", "") == "scrub" ? PlayMode::Scrub : PlayMode::Play);
 		}
-		else if (menu == m_timeWarpMenu)
+		else if (menu == m_timeWarpMenu || menu == m_timeWarpToolbarMenu)
 		{
 			const auto mode = item->GetAttribute<Rml::String>("warp-mode", "");
 			for (size_t i = 0; i < g_warpModes.size(); ++i)
@@ -618,12 +619,13 @@ namespace gnubase::ui
 					check(*item,
 						item->GetAttribute<Rml::String>("play-mode", "") ==
 							g_playModes.at(static_cast<size_t>(m_playMode)));
-		if (m_timeWarpMenu != nullptr)
-			for (int i = 0; i < m_timeWarpMenu->GetNumChildren(); ++i)
-				if (Rml::Element* item = m_timeWarpMenu->GetChild(i); item->HasAttribute("warp-mode"))
-					check(*item,
-						item->GetAttribute<Rml::String>("warp-mode", "") ==
-							g_warpModes.at(static_cast<size_t>(m_warpMode)));
+		for (const Rml::Element* menu : {m_timeWarpMenu, m_timeWarpToolbarMenu})
+			if (menu != nullptr)
+				for (int i = 0; i < menu->GetNumChildren(); ++i)
+					if (Rml::Element* item = menu->GetChild(i); item->HasAttribute("warp-mode"))
+						check(*item,
+							item->GetAttribute<Rml::String>("warp-mode", "") ==
+								g_warpModes.at(static_cast<size_t>(m_warpMode)));
 	}
 
 	void EventDisplay::showAutoScroll()

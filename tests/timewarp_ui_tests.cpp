@@ -153,6 +153,59 @@ TEST_CASE("the time warp tool warps the grid by its modes, and Free Warp puts wa
 	CHECK(f.app.call("project.get").at("tempoTrack").at(0).at("bpm") == bpm);
 }
 
+TEST_CASE("the time warp toolbar button selects the tool and opens its modes on the second click", "[ui]")
+{
+	Fixture f;
+	const std::string button = "#toolbar button[tool=timeWarp]";
+	REQUIRE(elements(f.app, button).size() == 1);
+	const Json box = elements(f.app, button).at(0).at("box");
+	CHECK(box.at("x").get<int>() >= 0);
+	CHECK(box.at("x").get<int>() + box.at("width").get<int>() <= 1000);
+	click(f.app, button);
+	CHECK(f.display.tool() == ui::Tool::TimeWarp);
+	CHECK(elements(f.app, button).at(0).at("attributes").at("menu") == "time-warp-toolbar-menu");
+	click(f.app, button);
+	click(f.app, "#time-warp-toolbar-menu menuitem[warp-mode=freeWarp]");
+	CHECK(f.display.warpMode() == ui::WarpMode::Free);
+	CHECK(elements(f.app, "#time-warp-menu menuitem[warp-mode=freeWarp]").at(0).at("attributes").contains("checked"));
+	click(f.app, button);
+	click(f.app, "#time-warp-toolbar-menu menuitem[warp-mode=warpGridFollow]");
+	CHECK(f.display.warpMode() == ui::WarpMode::GridFollow);
+	CHECK(elements(f.app, "#time-warp-toolbar-menu menuitem[warp-mode=warpGridFollow]")
+			.at(0)
+			.at("attributes")
+			.contains("checked"));
+}
+
+TEST_CASE("Free Warp finds the audio under the pointer in an already warped event", "[ui]")
+{
+	Fixture f;
+	f.app.call("clip.addWarpMarker", {{"clip", f.clip}, {"position", 24000}, {"target", 36000}});
+	double stretch = 1.0;
+	SECTION("free warp markers")
+	{
+	}
+	SECTION("musical mode and free warp markers")
+	{
+		f.app.call("clip.setWarp", {{"clip", f.clip}, {"tempo", 240.0}, {"musical", true}});
+		stretch = 2.0;
+	}
+	REQUIRE(f.app.waitUntil([&f, stretch]
+		{ return f.display.project().at("audioEvents").at(0).value("playedLength", 0.0) == 96000 * stretch; }));
+	f.display.setWarpMode(ui::WarpMode::Free);
+	f.display.setTool(ui::Tool::TimeWarp);
+	step(f.app);
+	// The source frame 48000 currently plays at target frame 56000; drag it to target frame 60000.
+	f.drag(stretch * 56000.0 / 48000.0, stretch * 60000.0 / 48000.0);
+	REQUIRE(f.app.waitUntil([&f] { return f.warp().at("markers").size() == 2; }));
+	const Json marker = f.warp().at("markers").at(1);
+	const double tolerance = 2.0 * f.display.view().scale * 48000.0 / stretch;
+	CHECK(std::abs(marker.at("position").get<double>() - 48000.0) <= tolerance);
+	CHECK(std::abs(marker.at("target").get<double>() - 60000.0) <= tolerance);
+	f.app.call("history.undo");
+	CHECK(f.warp().at("markers").size() == 1);
+}
+
 TEST_CASE("Project > Tempo Track > Process Tempo and Process Bars process the tempo track", "[ui]")
 {
 	Fixture f;

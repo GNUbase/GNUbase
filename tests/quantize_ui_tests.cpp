@@ -404,6 +404,9 @@ TEST_CASE("the quantize panel's Apply, Reset and Auto Apply quantize the selecte
 TEST_CASE("the toolbar's quantize section applies, chooses presets, switches soft quantize and opens the panel", "[ui]")
 {
 	Fixture f;
+	// Keep the complete Quantize section in view at the CI window width as the tool buttons take more room.
+	f.app.appUi().docking().setSectionHidden("project", "toolbar", "autoScroll", true);
+	f.app.shell().step(std::chrono::milliseconds(0));
 	f.display.select({f.part});
 	f.click("#toolbar-quantize-presets");
 	f.click("menuitem[toolbar-preset=\"1/8\"]");

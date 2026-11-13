@@ -12,7 +12,7 @@ A clip's `warp` (`ClipWarp` in `document.h`), saved with the clip in `gnubase.js
 | `musical` | Musical mode: the clip's beats follow the project's tempo |
 | `tempo` | The clip's tempo, in BPM of quarter notes; 0 until one is set or musical mode is turned on |
 | `beatsPerBar` | Quarters per bar, for bars and beats and Auto Adjust |
-| `gridStart` | The clip frame of beat 0 |
+| `gridStart` | The clip frame of beat 0; may be negative when a definition from project tempo starts before the audio |
 | `beats` | Beats (quarters from the grid start) that Auto Adjust or Manual Adjust put elsewhere than the tempo would: `beat` and `frame` |
 | `markers` | Free warp markers: the audio at clip frame `position` plays where clip frame `target` would without it |
 | `preset` | The time stretch algorithm preset of real-time warping |
@@ -69,6 +69,7 @@ Each is one undo step and emits `clip.changed`, except `event.flatten`, which em
 | `clip.autoAdjust` | The tempo and grid start from a section (`start`, `end`; default the clip) that starts and ends at a barline and is `bars` bars long (default: the nearest whole bars), and every beat with a hitpoint that counts within a quarter beat of it edited onto that hitpoint; the snap point of `event` (the sample editor's) moves to the section's start | pp. 651-652 |
 | `clip.adjustGrid` | Manual Adjust: `mode` `start` (Set Grid Start), `stretch` (Stretch Grid: beat `beat`, default the second bar, at `frame` by the tempo), `bar` (Set Bar Position: the beats edited after it move with it), `beat` (Set Beat Position), `remove` (Remove Beat Edit) | pp. 652-654 |
 | `clip.addWarpMarker`, `clip.setWarpMarker` | Inserts a warp marker at `position` playing at `target`, moves one; markers can't pass each other, and no section between two markers, or a marker and the clip's ends, may play more than 4 times or less than a quarter as long, the real-time stretcher's range (`checkMarkers`, which warp quantizing and `event.pasteWarpMarkers` keep to as well) | pp. 654-656 |
+| `audioEvent.addWarpMarker` | Inserts a marker under the audio event at `position` and moves it to `to`, both project sample positions, through its musical mode, definition and existing markers; returns the clip's id and warp | p. 1467 |
 | `clip.removeWarpMarkers` | Removes those at `positions`, or all (Reset: musical mode and the definition stay) | p. 656 |
 | `event.unstretch` | Unstretch Audio: musical mode off and no markers in the events' clips | pp. 657-658 |
 | `event.flatten` | Flatten Real Time Processing: renders each event of a warped clip as it plays now (with `preset`, default the clip's) with its clip's fades into a 32-bit float WAV file in the project's media folder, and makes the event play a new clip of it; its own fades keep their lengths. When an event fails, the files rendered for the others go | p. 657 |
