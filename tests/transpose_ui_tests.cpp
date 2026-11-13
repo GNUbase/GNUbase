@@ -113,15 +113,21 @@ TEST_CASE("the toolbar sets the project root key, the info line a part's root ke
 	// Independent parts show a mark in their upper right corner (p. 421), and nothing that the root key adds.
 	const std::string mark = ".part-mark.independent[part=" + std::to_string(part) + "]";
 	CHECK(window.app.ui().dom(std::nullopt, mark, 0).at("elements").empty());
+	// The Global Transpose button reads the value it holds: Follow, then Independent while it is checked (p. 421).
+	const auto globalTransposeLabel = [&window]
+	{ return window.element("#info-line button[field=globalTranspose]").value("text", std::string()); };
+	CHECK(globalTransposeLabel() == "Follow");
 	window.click("#info-line button[field=globalTranspose]");
 	REQUIRE(window.app.waitUntil([&] { return window.part(part).at("globalTranspose") == "independent"; }));
 	CHECK(window.app.waitUntil([&] { return window.hasClass("#info-line button[field=globalTranspose]", "checked"); }));
+	CHECK(window.app.waitUntil([&] { return globalTransposeLabel() == "Independent"; }));
 	CHECK(window.app.waitUntil([&] { return step().empty(); }));
 	REQUIRE(
 		window.app.waitUntil([&] { return window.app.ui().dom(std::nullopt, mark, 0).at("elements").size() == 1; }));
 	CHECK(window.element(mark).at("visible") == true);
 	window.click("#info-line button[field=globalTranspose]");
 	CHECK(window.app.waitUntil([&] { return window.app.ui().dom(std::nullopt, mark, 0).at("elements").empty(); }));
+	CHECK(window.app.waitUntil([&] { return globalTransposeLabel() == "Follow"; }));
 }
 
 TEST_CASE("the transpose track's context menu sets the root key for unassigned events", "[ui]")

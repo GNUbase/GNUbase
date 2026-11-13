@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 using namespace gnubase::engine;
@@ -201,6 +202,88 @@ TEST_CASE("Set Root Key for Unassigned Events gives parts without a root key the
 	CHECK(song.partJson().at("rootKey") == "");
 }
 
+TEST_CASE("glue refuses MIDI parts that follow global transpose differently", "[integration]")
+{
+	Song song;
+	const ObjectId other = run(song.client, "midiPart.add",
+		{{"track", song.track}, {"position", 4 * g_beatTicks}, {"length", 4 * g_beatTicks}})
+							   .at("part")
+							   .at("id")
+							   .get<ObjectId>();
+	// Two parts that follow the same way glue: both without a root key, both following.
+	run(song.client, "event.glue", {{"events", {song.part, other}}});
+	CHECK(run(song.client, "project.get").at("midiParts").size() == 1);
+
+	// A part with another root key doesn't glue with one that follows differently (#896): the glued part keeps the
+	// first one's root key, so the other's notes would play at another pitch.
+	run(song.client, "history.undo");
+	run(song.client, "project.set", {{"rootKey", "D"}});
+	run(song.client, "midiPart.set", {{"part", song.part}, {"rootKey", "C"}});
+	run(song.client, "midiPart.set", {{"part", other}, {"rootKey", "D"}});
+	CHECK(reject(song.client, "event.glue", {{"events", {song.part, other}}}).find("Global Transpose") !=
+		std::string::npos);
+	// The same root key glues again.
+	run(song.client, "midiPart.set", {{"part", other}, {"rootKey", "C"}});
+	run(song.client, "event.glue", {{"events", {song.part, other}}});
+	CHECK(run(song.client, "project.get").at("midiParts").size() == 1);
+
+	// An Independent part doesn't glue with one that follows.
+	run(song.client, "history.undo");
+	run(song.client, "midiPart.set", {{"part", other}, {"globalTranspose", "independent"}});
+	CHECK(reject(song.client, "event.glue", {{"events", {song.part, other}}}).find("Global Transpose") !=
+		std::string::npos);
+	// Two Independent parts glue, whatever their root keys: neither is transposed.
+	run(song.client, "midiPart.set", {{"part", song.part}, {"globalTranspose", "independent"}});
+	run(song.client, "event.glue", {{"events", {song.part, other}}});
+	CHECK(run(song.client, "project.get").at("midiParts").size() == 1);
+}
+
+TEST_CASE("Set Root Key for Unassigned Events reaches the parts of inactive track versions", "[integration]")
+{
+	Song song;
+	run(song.client, "project.set", {{"rootKey", "E"}});
+	// A new version stashes the part with the version that was active; the part is no longer in project.midiParts.
+	run(song.client, "trackVersion.add", {{"tracks", {song.track}}});
+	CHECK(run(song.client, "project.get").at("midiParts").empty());
+	run(song.client, "transpose.assignRootKey");
+	// Activating the stashed version brings the part back, with the project root key (#896).
+	run(song.client, "trackVersion.activate", {{"tracks", {song.track}}, {"version", 1}});
+	CHECK(song.partJson().at("rootKey") == "E");
+}
+
+TEST_CASE("Delete Time and Insert Silence move the transpose events with the music", "[integration]")
+{
+	Song song;
+	const auto positions = [&song]
+	{
+		std::vector<int64_t> result;
+		const Json transpose = run(song.client, "transpose.get");
+		for (const Json& event : transpose.at("events"))
+			result.push_back(event.at("position").get<int64_t>());
+		return result;
+	};
+	run(song.client, "transpose.add", {{"position", 0}, {"value", 2}});
+	run(song.client, "transpose.add", {{"position", 2 * g_beatTicks}, {"value", 5}});
+	run(song.client, "transpose.add", {{"position", 8 * g_beatTicks}, {"value", -1}});
+	CHECK(positions() == std::vector<int64_t>{0, 2 * g_beatTicks, 8 * g_beatTicks});
+
+	// Delete Time over beats 1 to 3: the event at 2 goes with the range, the one at 8 moves back by two beats.
+	run(song.client, "range.delete", {{"start", g_beat}, {"end", 3 * g_beat}, {"time", true}});
+	CHECK(positions() == std::vector<int64_t>{0, 6 * g_beatTicks});
+	run(song.client, "history.undo");
+	CHECK(positions() == std::vector<int64_t>{0, 2 * g_beatTicks, 8 * g_beatTicks});
+
+	// Insert Silence of two beats at beat 1: the events at and after it move later by two beats.
+	run(song.client, "range.insertSilence", {{"start", g_beat}, {"end", 3 * g_beat}});
+	CHECK(positions() == std::vector<int64_t>{0, 4 * g_beatTicks, 10 * g_beatTicks});
+	run(song.client, "history.undo");
+
+	// A locked transpose track keeps its events where they are.
+	run(song.client, "transpose.setTrack", {{"lock", true}});
+	run(song.client, "range.delete", {{"start", g_beat}, {"end", 3 * g_beat}, {"time", true}});
+	CHECK(positions() == std::vector<int64_t>{0, 2 * g_beatTicks, 8 * g_beatTicks});
+}
+
 TEST_CASE("recorded parts follow the root key without transpose events, and are independent with them", "[integration]")
 {
 	Song song;
@@ -225,6 +308,58 @@ TEST_CASE("recorded parts follow the root key without transpose events, and are 
 	part = record(16 * g_beat);
 	CHECK(part.at("rootKey") == "");
 	CHECK(part.at("globalTranspose") == "independent");
+}
+
+TEST_CASE("undo and redo of a transpose change announce transpose.changed", "[integration]")
+{
+	Song song;
+	Client listener{song.engine};
+	const auto names = [&listener]
+	{
+		std::vector<std::string> result;
+		while (const auto message = listener.poll())
+			if (const auto* event = std::get_if<Event>(&*message))
+				result.push_back(event->name);
+		return result;
+	};
+	const auto has = [](const std::vector<std::string>& list, const char* name)
+	{ return std::find(list.begin(), list.end(), name) != list.end(); };
+
+	run(song.client, "transpose.add", {{"position", 0}, {"value", 3}});
+	CHECK(has(names(), "transpose.changed")); // the command announces it
+	// Undo and redo announce it too, so a client that follows the event keeps the right state (#896).
+	run(song.client, "history.undo");
+	CHECK(has(names(), "transpose.changed"));
+	CHECK(run(song.client, "transpose.get").at("events").empty());
+	run(song.client, "history.redo");
+	const std::vector<std::string> redone = names();
+	CHECK(has(redone, "transpose.changed"));
+	CHECK(run(song.client, "transpose.get").at("events").size() == 1);
+}
+
+TEST_CASE("undo and redo of an arranger change announce arranger.changed", "[integration]")
+{
+	Song song;
+	Client listener{song.engine};
+	const auto names = [&listener]
+	{
+		std::vector<std::string> result;
+		while (const auto message = listener.poll())
+			if (const auto* event = std::get_if<Event>(&*message))
+				result.push_back(event->name);
+		return result;
+	};
+	const auto has = [](const std::vector<std::string>& list, const char* name)
+	{ return std::find(list.begin(), list.end(), name) != list.end(); };
+
+	run(song.client, "arranger.add", {{"position", 0}, {"end", 4 * g_beatTicks}});
+	CHECK(has(names(), "arranger.changed"));
+	run(song.client, "history.undo");
+	CHECK(has(names(), "arranger.changed"));
+	CHECK(run(song.client, "arranger.get").at("events").empty());
+	run(song.client, "history.redo");
+	CHECK(has(names(), "arranger.changed"));
+	CHECK(run(song.client, "arranger.get").at("events").size() == 1);
 }
 
 TEST_CASE("the root key and the transpose track are saved with the project", "[integration]")

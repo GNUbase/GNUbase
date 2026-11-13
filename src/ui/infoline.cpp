@@ -70,7 +70,7 @@ namespace gnubase::ui
 			R"(<select field="rootKey" title="Root Key"/></div>)"
 			R"(<div class="info-field" info-field="globalTranspose" section="globalTranspose" label="Global Transpose">)"
 			R"(<button type="toggle" field="globalTranspose")"
-			R"( title="Global Transpose: Independent">Independent</button></div>)";
+			R"( title="Global Transpose: Follow">Follow</button></div>)";
 
 		// The root keys, as midiPart.set takes them.
 		const widgets::Options& rootKeys()
@@ -323,7 +323,15 @@ namespace gnubase::ui
 		if (Rml::Element* key = root.QuerySelector("select[field=rootKey]"))
 			widgets::fill(*key, rootKeys(), part->value("rootKey", std::string()));
 		if (Rml::Element* button = root.QuerySelector("button[field=globalTranspose]"))
-			setFlag(*button, "checked", part->value("globalTranspose", std::string()) == "independent");
+		{
+			const bool independent = part->value("globalTranspose", std::string()) == "independent";
+			setFlag(*button, "checked", independent);
+			// The button reads the value it holds (p. 421): Independent while checked, else Follow.
+			setText(button, independent ? "Independent" : "Follow");
+			const Rml::String title = independent ? "Global Transpose: Independent" : "Global Transpose: Follow";
+			if (button->GetAttribute<Rml::String>("title", "") != title)
+				button->SetAttribute("title", title);
+		}
 	}
 
 	void InfoLine::ProcessEvent(Rml::Event& event)
