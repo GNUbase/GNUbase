@@ -4,6 +4,7 @@
 // screen in the app's UI.
 #include "engine/engine.h"
 #include "platform/log.h"
+#include "testutils/heldjob.h"
 #include "testutils/testutils.h"
 #include "ui/automation.h"
 #include "uiapp.h"
@@ -19,7 +20,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <condition_variable>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -897,19 +897,20 @@ TEST_CASE("a save or backup that fails shows its error", "[ui]")
 	click(app, "#project-error-dialog button[result=ok]");
 	REQUIRE(app.waitUntil([&app] { return !shown(app, "#project-error-dialog"); }));
 
-	// A backup that is to be opened isn't if the project changed while the job ran, and says so.
-	test::writeWav(dir.path() / "take.wav", {std::vector<float>(5760000, 0.25f), 2, 48000}); // 1 min
+	// A backup that is to be opened isn't if the project changed while the job ran, and says so. The job is held at
+	// its first progress until the edit ran, so that it can't ask to open the backup first (#1154).
+	test::writeWav(dir.path() / "take.wav", {std::vector<float>(96000, 0.25f), 2, 48000}); // 1 s
 	app.call("media.add", {{"path", utf8(dir.path() / "take.wav")}});
 	app.call("project.save", Json::object());
 	const Json song = location(app);
+	test::HeldJob held(app.engine(), "project.backup");
 	fileMenu(app, "file.backup");
 	answer(app, {dir.path() / "Opened"});
 	click(app, "#backup-keep-active");
-	// Without click's step, so that the edit is queued right after project.backup, before the job can ask to open
-	// the backup.
-	app.ui().click(std::nullopt, {"#backup-project-dialog button.primary", 0, std::nullopt},
-		gnubase::ui::MouseButton::Left, 1, {});
+	click(app, "#backup-project-dialog button.primary");
+	REQUIRE(app.waitUntil([&held] { return held.held(); }, std::chrono::seconds(30)));
 	app.call("project.set", {{"name", "Edited"}});
+	held.release();
 	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }, std::chrono::seconds(30)));
 	CHECK_THAT(elements(app, "#project-error-message").at(0).at("text").get<std::string>(),
 		ContainsSubstring("wasn't opened"));
@@ -1591,55 +1592,6 @@ namespace
 		return std::any_of(
 			log.begin(), log.end(), [&command](const Json& entry) { return entry.at("command") == command; });
 	}
-
-	// Holds a backup at its first job.progress until release, for a minute at most, so that it can't end before a
-	// job.cancel: a Listener runs on the thread that sends the event, here the job's. Meanwhile events wait for it,
-	// also a command's, so the test sends only queries until it releases the job.
-	class HeldBackup
-	{
-	public:
-		explicit HeldBackup(Engine& engine)
-			: m_listener(engine,
-				  [this](const Event& event)
-				  {
-					  if (event.name != "job.progress" || event.data.at("kind") != "project.backup")
-						  return;
-					  std::unique_lock lock(m_mutex);
-					  m_held = true;
-					  m_changed.wait_for(lock, std::chrono::minutes(1), [this] { return m_released; });
-				  })
-		{
-		}
-
-		~HeldBackup() { release(); }
-		HeldBackup(const HeldBackup&) = delete;
-		HeldBackup& operator=(const HeldBackup&) = delete;
-		HeldBackup(HeldBackup&&) = delete;
-		HeldBackup& operator=(HeldBackup&&) = delete;
-
-		// Whether the backup got to its first job.progress.
-		bool held()
-		{
-			const std::scoped_lock lock(m_mutex);
-			return m_held;
-		}
-
-		void release()
-		{
-			{
-				const std::scoped_lock lock(m_mutex);
-				m_released = true;
-			}
-			m_changed.notify_all();
-		}
-
-	private:
-		std::mutex m_mutex;
-		std::condition_variable m_changed;
-		bool m_held = false;
-		bool m_released = false;
-		Listener m_listener; // last, so that it stops before the rest goes
-	};
 }
 
 TEST_CASE("Back up Project shows its own backups' progress and outcome, and Cancel stops them", "[ui][slow]")
@@ -1687,7 +1639,7 @@ TEST_CASE("Back up Project shows its own backups' progress and outcome, and Canc
 	const fs::path take = dir.path() / "take.wav";
 	test::writeWav(take, {std::vector<float>(size_t{48000} * 10 * 2, 0.25f), 2, 48000}); // 10 s, 4 MB
 	app.call("media.add", {{"path", utf8(take)}});
-	HeldBackup held(app.engine());
+	test::HeldJob held(app.engine(), "project.backup");
 	fileMenu(app, "file.backup");
 	answer(app, {dir.path() / "Cancelled"});
 	click(app, "#backup-project-dialog button.primary");
@@ -1727,7 +1679,7 @@ TEST_CASE(
 	const fs::path take = dir.path() / "take.wav";
 	test::writeWav(take, {std::vector<float>(size_t{48000} * 10 * 2, 0.25f), 2, 48000}); // 10 s, 4 MB
 	app.call("media.add", {{"path", utf8(take)}});
-	HeldBackup held(app.engine());
+	test::HeldJob held(app.engine(), "project.backup");
 	fileMenu(app, "file.backup");
 	answer(app, {dir.path() / "Backup"});
 	click(app, "#backup-project-dialog button.primary");

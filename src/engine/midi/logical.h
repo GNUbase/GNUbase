@@ -254,8 +254,8 @@ namespace gnubase::engine::midi
 		int between(int low, int high) noexcept;
 	};
 
-	// A seed for a command that isn't given one: each call returns another, so that each Apply of random operations
-	// gives new values.
+	// A seed for a command that isn't given one: each call returns another, counting from a random value when GNUbase
+	// starts, so that each Apply of random operations gives new values, in every session.
 	uint64_t nextLogicalSeed() noexcept;
 
 	// Applies the actions in order, then keeps the values in their ranges: pitches beyond 0 to 127 delete the note,

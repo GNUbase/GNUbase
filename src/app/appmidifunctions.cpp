@@ -101,7 +101,7 @@ namespace gnubase::app
 		std::vector<std::pair<std::string, std::string>> attributes;
 		if (track != 0)
 			attributes.emplace_back("track", std::to_string(track));
-		m_articulationMaps = openDialog(window, "articulation-maps.rml", attributes).GetObserverPtr();
+		openOnce(window, "articulation-maps.rml", m_articulationMaps, attributes);
 	}
 
 	void AppUi::showArticulationMapError(const engine::Result& result)

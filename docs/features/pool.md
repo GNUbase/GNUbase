@@ -146,8 +146,8 @@ saved project's files are moved into another folder while it is closed, the load
 event plays the same section, the saved project keeps the new path, and undo brings back the old one. Another test
 has `media.locate` skip a same-named file of another length, prefer the same spelling over another case, match ASCII
 letters in any case but not Ö for ö, and look for a media file given twice once. Both run as jobs, which the tests
-wait for: `transport.locate` sent right behind `media.locate` on a folder of 2500 files is answered before the job
-ends, whose progress names the folder; `job.cancel` stops `media.locate` and `media.conform` with nothing changed
+wait for: `transport.locate` is answered while `media.locate` on a folder of 2500 files runs, whose progress names
+the folder; `job.cancel` stops `media.locate` and `media.conform` with nothing changed
 and no file left in the media folder; a missing file removed while `media.locate` looks for it, a media file
 relinked by hand while `media.conform` converts it, and a new project sample rate set meanwhile keep the edit, and
 the conformed file is removed; `media.locate` relinks a file it found although another one it found no longer fits by the time of the relink (undo took its media file back to another sample rate while the job looked), which it reports as `changed`; `media.relinkResampled` refuses unknown media files, files of another channel count,
@@ -159,8 +159,10 @@ another length or doesn't fit, relinking the others, and every entry for another
 while `media.locate`, `media.conform` or `media.prepareArchive` runs (another version of the song, same media ids
 and paths) is left as it was and unmodified, the job's files removed. Only WAV files count as files in the media
 folder, not the peak files the peak worker writes next to conformed files whenever it gets to them. The
-commands that must run while a job works are sent behind a `media.convert` of a long file, which keeps the command
-thread busy, so they run right after the command that started the job, however the test's thread is scheduled.
+commands that must run while a job works, `job.cancel` among them, run while `test::HeldJob`
+(`tests/testutils/heldjob.h`) holds the job at its first `job.progress`, so that the job can't get further first,
+however the threads are scheduled (#1154). It holds only the job's thread, through `Engine::setJobProgressHook`, which
+runs on the job's thread outside every lock: events and commands, also those that send events, go on meanwhile.
 `tests/poolpanel_tests.cpp` drives the panel in the app's UI with `ui::Automation`: Media > Open Pool Window and its
 key, the rows and columns, renaming
 by typing, dragging a clip onto a folder, New Folder and Remove Unused Media with its message, undo from another

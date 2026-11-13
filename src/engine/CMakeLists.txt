@@ -101,6 +101,7 @@ add_library(gnubase-engine STATIC
 	audio/audition.cpp audio/audition.h
 	audio/automation.cpp audio/automation.h
 	audio/fades.cpp audio/fades.h
+	audio/heardagain.h
 	audio/metercommands.cpp
 	audio/meters.cpp audio/meters.h
 	audio/midiports.cpp audio/midiports.h

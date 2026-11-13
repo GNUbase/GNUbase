@@ -17,11 +17,13 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <cmath>
 #include <map>
 #include <memory>
 #include <optional>
 #include <string>
+#include <system_error>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -210,17 +212,22 @@ namespace gnubase::engine
 			return g_inPlace + std::to_string(track);
 		}
 
-		// lower, window, or inPlace: and a MIDI or instrument track's id.
+		// lower, window, or inPlace: and a MIDI or instrument track's id: digits of a 64-bit number, so up to 20 since
+		// track ids come from the project file (#1159), and without leading zeros, so that a track's editor has one
+		// name.
 		void requireEditor(const Project& project, const std::string& editor)
 		{
 			if (editor == "lower" || editor == "window")
 				return;
 			const std::string prefix = g_inPlace;
-			const std::string digits = editor.substr(std::min(editor.size(), prefix.size()));
-			require(editor.rfind(prefix, 0) == 0 && !digits.empty() && digits.size() < 20 &&
-					std::all_of(digits.begin(), digits.end(), [](char c) { return c >= '0' && c <= '9'; }),
+			const char* digits = editor.data() + std::min(editor.size(), prefix.size());
+			const char* end = editor.data() + editor.size();
+			ObjectId track = 0;
+			const std::from_chars_result parsed = std::from_chars(digits, end, track);
+			require(editor.rfind(prefix, 0) == 0 && digits != end && parsed.ec == std::errc() && parsed.ptr == end &&
+					editor == inPlaceName(track),
 				"editor must be lower, window or inPlace:<track>, not " + editor);
-			requireNoteTrack(project, inPlaceTrack(editor));
+			requireNoteTrack(project, track);
 		}
 
 		// Every MIDI part of a track, in order.
@@ -466,9 +473,9 @@ namespace gnubase::engine
 	{
 		auto views = std::make_shared<Views>();
 		// The names, so that MCP clients and Lua see them: lower, window or inPlace:<track> (#131). At most inPlace:
-		// and the 19 digits requireEditor takes, so that the pattern never has to match a long string (#1059).
+		// and the 20 digits of a 64-bit track id, so that the pattern never has to match a long string (#1059, #1159).
 		const Json editorSchema = {
-			{"type", "string"}, {"pattern", "^(lower|window|inPlace:[0-9]+)$"}, {"maxLength", 27}};
+			{"type", "string"}, {"pattern", "^(lower|window|inPlace:[0-9]+)$"}, {"maxLength", 28}};
 		const Json modeSchema = {
 			{"type", "string"}, {"enum", std::vector<std::string>(g_editingModes.begin(), g_editingModes.end())}};
 		const Json idsSchema = {{"type", "array"}, {"items", {{"type", "integer"}}}};

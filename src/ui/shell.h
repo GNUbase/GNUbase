@@ -175,6 +175,10 @@ namespace gnubase::ui
 		// the playback position, the shell steps at least once a frame (g_framePeriod).
 		void eachStep(std::function<bool()> task);
 
+		// Runs task in every step after the eachStep tasks, right before drawing, e.g. to fit a layout to what they
+		// changed.
+		void beforeDraw(std::function<void()> task) { m_beforeDraw.push_back(std::move(task)); }
+
 		// Runs handler for every key pressed in a window that none of its elements used, e.g. for key commands
 		// (ui/keycommands.h). Elements that use a key stop its propagation.
 		void onUnusedKey(std::function<void(Window&, const KeyPress&)> handler) { m_unusedKey = std::move(handler); }
@@ -192,6 +196,13 @@ namespace gnubase::ui
 		// Hands a released key to that handler; the shell calls it for the window system's input, and ui::Automation
 		// for the keys it releases.
 		void keyReleased(Window& window, const KeyPress& keys);
+
+		// Runs handler after each input that ui::Automation hands to a window's context, once its listeners and default
+		// actions have run, e.g. so that the main menu's items show what the input changed before a script reads the
+		// DOM (ui/mainmenu.h). The window system's input arrives in a step, whose eachStep tasks run after it.
+		void onInputHandled(std::function<void()> handler) { m_inputHandled = std::move(handler); }
+		// Runs that handler; ui::Automation calls it after each input.
+		void inputHandled();
 
 		// From any thread: makes the shell step soon, e.g. when the engine sent the UI something.
 		void wake() { m_windows.wake(); }
@@ -241,9 +252,11 @@ namespace gnubase::ui
 		std::mutex m_postedMutex; // guards m_posted, which other threads add to
 		std::vector<std::function<void()>> m_posted;
 		std::vector<std::function<bool()>> m_stepTasks;
+		std::vector<std::function<void()>> m_beforeDraw;
 		Clock::time_point m_nextFrame = Clock::time_point::max(); // when a step task that follows values runs again
 		std::function<void(Window&, const KeyPress&)> m_unusedKey;
 		std::function<void(Window&, const KeyPress&)> m_keyReleased;
+		std::function<void()> m_inputHandled;
 		std::function<void(Window&)> m_closeRequest;
 		std::function<void(Window&)> m_quitRequest;
 	};

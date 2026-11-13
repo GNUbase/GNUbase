@@ -36,7 +36,10 @@ scripts plug into. The code is `src/app/appscripts.cpp` (`app::AppUi`), the cons
   with each step, so this holds when the maximum number of undo steps drops the oldest ones meanwhile. The UI's own
   commands, which `gnubase.ui.command` sends without waiting, settle (`EngineBinding::settle`) before `history.get`
   and before `history.join`: steps of a control that wait are sent and results handed on until no command that isn't
-  a query is out, including those that the results' handlers send. So what the user did before the script stays
+  a query, nor a query that what the user does waits for (`sendAwaited`, such as `snap.zeroCrossings`), is out,
+  including those that the results' handlers send. Only the UI's own commands wait for those answers: a script's
+  calls of the engine (`gnubase.*` outside `gnubase.ui`) go at once, before what `gnubase.ui.command` left waiting,
+  and so do the UI commands of views other than the event display ([key-commands.md](key-commands.md)). So what the user did before the script stays
   apart, and what the script ran through the UI, such as engine key commands, is in its step.
 - **Output.** What the UI's Lua prints goes to GNUbase's standard output and into the console (`app::ScriptOutput`, the
   last 64 KiB), and so do the scripts' errors with their traceback. The console adds what is new in each UI step as a

@@ -219,7 +219,8 @@ TEST_CASE("a user script's undo step has what it sent through the UI, and not wh
 	CHECK(app.call("project.get").at("tracks").size() == 2);
 }
 
-TEST_CASE("a user script that draws a range and deletes it through the UI has the delete in its undo step", "[ui]")
+TEST_CASE(
+	"a user script that draws a range and deletes it through the UI has the delete in its undo step", "[ui][slow]")
 {
 	// With Snap to Zero Crossing on, the drag sends snap.zeroCrossings, and Delete waits for its answer, which comes
 	// after the script has ended: settling waits for it and for the delete (#1086).

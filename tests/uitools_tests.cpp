@@ -6,6 +6,7 @@
 #include "engine/engine.h"
 #include "mcp/server.h"
 #include "testutils/fakeui.h"
+#include "testutils/slowframe.h"
 #include "ui/fonts.h"
 #include "ui/renderer.h"
 #include "ui/rmlui.h"
@@ -406,23 +407,14 @@ TEST_CASE("ui_click with a count of 2 is a double click however long the frames 
 	Recorder recorder;
 	fixture.main->AddEventListener(Rml::EventId::Dblclick, &recorder);
 	// The first press's frame takes longer than RmlUi's double click time, as in a slow build on a busy machine.
-	struct SlowFrame final : Rml::EventListener
-	{
-		void ProcessEvent(Rml::Event& /*event*/) override
-		{
-			if (std::exchange(slow, false))
-				std::this_thread::sleep_for(milliseconds(600));
-		}
-		bool slow = true;
-	} frame;
-	fixture.main->AddEventListener(Rml::EventId::Mouseup, &frame);
+	test::SlowFrame frame(*fixture.main);
 
 	fixture.call("ui_click", {{"selector", "#target"}, {"count", 2}});
 	CHECK(recorder.events.at("dblclick").at("target") == "target");
 
 	// The clock runs on afterwards: two clicks that are that far apart are two clicks.
 	recorder.events = Json::object();
-	frame.slow = true;
+	frame.again();
 	fixture.call("ui_click", {{"selector", "#target"}});
 	fixture.call("ui_click", {{"selector", "#target"}});
 	CHECK(!recorder.events.contains("dblclick"));

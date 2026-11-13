@@ -98,6 +98,7 @@ namespace gnubase::engine
 			{AutomationTargetType::Controller, "controller"},
 			{AutomationTargetType::PitchBend, "pitchBend"},
 			{AutomationTargetType::ChannelPressure, "channelPressure"},
+			{AutomationTargetType::MidiEffect, "midiEffect"},
 		};
 
 		constexpr struct
@@ -1010,6 +1011,10 @@ namespace gnubase::engine
 		case AutomationTargetType::ChannelPressure:
 			json["channel"] = target.channel;
 			break;
+		case AutomationTargetType::MidiEffect:
+			json["number"] = target.number;
+			json["parameter"] = target.parameter;
+			break;
 		}
 		return json;
 	}
@@ -1491,6 +1496,12 @@ namespace gnubase::engine
 			case AutomationTargetType::PitchBend:
 			case AutomationTargetType::ChannelPressure:
 				break;
+			case AutomationTargetType::MidiEffect:
+				// The effect's range applies when it plays; the slot may hold another effect since.
+				fits = track.type == TrackType::Midi || track.type == TrackType::Instrument;
+				minimum = std::numeric_limits<double>::lowest();
+				maximum = std::numeric_limits<double>::max();
+				break;
 			}
 			if (!fits)
 				throw std::invalid_argument(name + " has a target that track " + std::to_string(track.id) + " lacks");
@@ -1869,10 +1880,14 @@ namespace gnubase::engine
 						: Json(slot.parameters[i]);
 				}
 			slots.push_back({{"effect", slot.effect}, {"on", slot.on}, {"parameters", std::move(parameters)}});
+			if (sends)
+				slots.back()["output"] = slot.output;
 		}
 		Json json = {{"bypass", rack.bypass}, {"slots", std::move(slots)}};
 		if (sends)
 			json["pre"] = rack.pre;
+		else
+			json["divider"] = rack.divider;
 		return json;
 	}
 
@@ -1886,6 +1901,17 @@ namespace gnubase::engine
 		if (!sends && json.contains("pre"))
 			throw std::invalid_argument(section + ".pre: only the MIDI sends play before the inserts");
 		read(json, "pre", rack.pre, section);
+		if (sends && json.contains("divider"))
+			throw std::invalid_argument(section + ".divider: only the MIDI inserts have a divider");
+		if (json.contains("divider"))
+		{
+			const Json& divider = json.at("divider");
+			if (!divider.is_number_integer() || divider.get<int64_t>() < 0 ||
+				divider.get<int64_t>() > static_cast<int64_t>(midi::g_effectSlots))
+				throw std::invalid_argument(
+					section + ".divider must be a whole number from 0 to " + std::to_string(midi::g_effectSlots));
+			rack.divider = static_cast<uint8_t>(divider.get<int64_t>());
+		}
 		if (!json.contains("slots"))
 			return rack;
 		const Json& slots = json.at("slots");
@@ -1906,6 +1932,15 @@ namespace gnubase::engine
 				throw std::invalid_argument(name + " must be an object");
 			midi::EffectSlot& slot = rack.slots[s];
 			read(given, "on", slot.on, name);
+			if (given.contains("output"))
+			{
+				const Json& output = given.at("output");
+				if (!sends)
+					throw std::invalid_argument(name + ".output: only the MIDI sends play to another output");
+				if (!output.is_number_integer() || output.get<int64_t>() < 0)
+					throw std::invalid_argument(name + ".output must be a channel id, or 0 for the track's output");
+				slot.output = output.get<uint64_t>();
+			}
 			if (given.contains("effect"))
 			{
 				const Json& effect = given.at("effect");
@@ -1995,6 +2030,8 @@ namespace gnubase::engine
 		Project project;
 		project.name = json.at("name").get<std::string>();
 		project.sampleRate = json.at("sampleRate").get<double>();
+		if (project.sampleRate < g_lowestSampleRate || project.sampleRate > g_highestSampleRate)
+			throw std::invalid_argument("the sample rate must be from 8000 to 768000 Hz");
 		project.tempo = tempoFromJson(json.at("tempo"));
 		// Files from before tempo modes (#155) follow their tempo changes, if they have any.
 		project.tempoTrackActive = json.value("tempoTrackActive", project.tempo.points().size() > 1);

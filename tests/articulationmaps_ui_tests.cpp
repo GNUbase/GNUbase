@@ -225,3 +225,42 @@ TEST_CASE("the articulation map setup shows changes from elsewhere, and imports 
 	f.answer(dir.path() / "missing" / "Strings");
 	REQUIRE(f.app.waitUntil([&f] { return f.message().find("can't write") != std::string::npos; }));
 }
+
+TEST_CASE("opening the setup, the profile manager or the workspaces organizer again keeps one set of handlers", "[ui]")
+{
+	Fixture f;
+	// How many gnubase.on handlers the UI's Lua has for an event: the count comes back as the message of a run that
+	// fails on purpose, between two #.
+	const auto handlers = [&f](const std::string& event)
+	{
+		const std::string error =
+			f.app.lua()
+				.run("error('#' .. #(debug.getregistry()['gnubase.handlers']['" + event + "'] or {}) .. '#', 0)",
+					"count")
+				.value_or("");
+		const size_t from = error.find('#') + 1;
+		REQUIRE(from > 0);
+		return std::stoi(error.substr(from, error.find('#', from) - from));
+	};
+	// Each dialog: its UI command, its document, its close button, and an event its Lua follows.
+	const std::vector<std::vector<std::string>> dialogs = {
+		{"midi.articulationMapSetup", "#articulation-maps-dialog", "#articulation-maps-close", "articulationMap.added"},
+		{"window.profiles", "#profiles-dialog", "#profile-close", "profile.changed"},
+		{"window.workspaces", "#workspaces-dialog", "#workspaces-close", "workspace.changed"}};
+	for (const std::vector<std::string>& dialog : dialogs)
+	{
+		INFO(dialog[0]);
+		const int before = handlers(dialog[3]);
+		for (int open = 0; open < 2; ++open)
+		{
+			f.app.keys().run(dialog[0], Json::object(), f.app.main(), nullptr);
+			REQUIRE(f.app.waitUntil([&] { return f.shown(dialog[1]); }));
+			f.app.shell().step(std::chrono::milliseconds(0));
+			CHECK(f.elements(dialog[1]).size() == 1);
+			CHECK(handlers(dialog[3]) == before + 1);
+		}
+		f.click(dialog[2]);
+		REQUIRE(f.app.waitUntil([&] { return f.elements(dialog[1]).empty(); }));
+		CHECK(handlers(dialog[3]) == before);
+	}
+}

@@ -28,6 +28,7 @@ using Catch::Approx;
 using Catch::Matchers::ContainsSubstring;
 using gnubase::engine::Client;
 using gnubase::engine::Engine;
+using gnubase::engine::g_maxMeterChannels;
 using gnubase::engine::Json;
 using gnubase::engine::LevelMeter;
 using gnubase::engine::LevelReading;
@@ -881,51 +882,63 @@ TEST_CASE("a frame loses no peak to a block that ends while it reads", "[unit]")
 TEST_CASE("a frame loses no peak of the first block after a reset, also when it is quieter than the held one", "[unit]")
 {
 	// Each round a loud block is held, a reset follows, as Reset on Start does it on the audio thread, and then a
-	// quieter block, while one frame's read races them; that frame or the next one has the quieter block's peak, which
-	// the first block after a reset hands over in place of the held one. Before it did, a frame that took the loud peak
-	// could read the reset's maximum of 0 instead of the quieter block's, which then never reached a frame; that needs
-	// the audio thread's store and load to be reordered within nanoseconds, which nothing can force, so this test
-	// checks the handover rather than reproducing the reordering.
+	// quieter block, while the reader reads frames all the time; one of the round's frames has the quieter block's
+	// peak, which the first block after a reset hands over in place of the held one. Raising the held peak instead, the
+	// quieter block wrote nothing, and a frame that took the loud peak could read the reset's maximum of 0 while the
+	// block's maximum still waited in the audio thread's store buffer, so that its peak never reached a frame. Nothing
+	// can force that reordering, but this gives it room: all channels play and the last one is checked, so that only
+	// the loads in read() lie between the reader taking the peak and loading the maximum, and the reader keeps the
+	// maxima's cache line contended. With raise in place of the handover it failed in nearly every run of optimized
+	// builds on x86-64 (MSVC, GCC and Clang), though not in unoptimized ones.
 	constexpr int rounds = 50000;
-	constexpr float loudLevel = 0.9f;
+	constexpr auto last = static_cast<size_t>(g_maxMeterChannels - 1);
+	// Both levels are new every round, so that a frame with the quieter peak, whether it took it or limited the loud
+	// one to it, took a peak written after the round began, and reads the round from playing.
+	const auto loudLevel = [](int round) { return 0.5f + (0.5f * static_cast<float>(round) / rounds); };
 	const auto quietLevel = [](int round) { return 0.5f * static_cast<float>(round) / rounds; };
 	LevelMeter meter;
 	std::atomic<bool> done{false};
-	std::atomic<int> started{0};
-	std::atomic<int> played{0};
-	std::atomic<int> checked{0};
-	std::atomic<int> lost{0};
+	std::atomic<int> playing{0};     // the round whose blocks play
+	std::atomic<uint32_t> frames{0}; // read so far, wrapping around
+	std::atomic<int> heard{0};       // the last round whose quieter peak a frame had
 	std::thread reader(
 		[&]
 		{
-			for (int round = 1; round <= rounds; ++round)
+			do
 			{
-				while (started < round && !done)
+				const float peak = meter.readFrame().peak[last];
+				// The round can't end before this frame counts, so a frame with its quieter peak still finds it here.
+				if (const int round = playing; peak == quietLevel(round))
+					heard = round;
+				// Now and then the reader lets the audio thread run, should they share a core (CI runs tests in
+				// parallel); otherwise each round could take the reader's whole time slice.
+				if (++frames % 16 == 0)
 					std::this_thread::yield();
-				const float racing = meter.readFrame().peak[0];
-				while (played < round && !done)
-					std::this_thread::yield();
-				const float after = meter.readFrame().peak[0];
-				if (racing != quietLevel(round) && after != quietLevel(round) && !done)
-					++lost;
-				checked = round;
-			}
+			} while (!done);
 		});
 	const StopAndJoin stop(done, reader);
+	int lost = 0;
 	for (int round = 1; round <= rounds; ++round)
 	{
-		const float loud = loudLevel;
+		const float loud = loudLevel(round);
 		const float quiet = quietLevel(round);
-		const float* const loudChannel = &loud;
-		const float* const quietChannel = &quiet;
-		started = round;
-		meter.process(&loudChannel, 1, 1, g_rate);
+		std::array<const float*, g_maxMeterChannels> loudChannels{};
+		std::array<const float*, g_maxMeterChannels> quietChannels{};
+		loudChannels.fill(&loud);
+		quietChannels.fill(&quiet);
+		playing = round;
+		meter.process(loudChannels.data(), g_maxMeterChannels, 1, g_rate);
 		meter.reset();
-		meter.process(&quietChannel, 1, 1, g_rate);
-		played = round;
-		while (checked < round)
+		meter.process(quietChannels.data(), g_maxMeterChannels, 1, g_rate);
+		// A read-modify-write, which orders the blocks before the frames counted after it: the frame under way may
+		// have taken the peaks before the quieter block, the next one takes its peak if no frame did.
+		const uint32_t read = frames.fetch_add(0);
+		while (frames - read < 2)
 			std::this_thread::yield();
+		if (heard != round)
+			++lost;
 	}
+	done = true;
 	reader.join();
 	CHECK(lost == 0);
 }

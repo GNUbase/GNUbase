@@ -83,7 +83,9 @@ namespace gnubase::engine
 
 	protected:
 		// cue() calls this after reading where the audio thread plays and before cueing the streams from there. The
-		// audio thread goes on meanwhile; tests override it to play blocks at that moment.
+		// audio thread goes on meanwhile; tests override it to play blocks at that moment. It runs with the
+		// audition's mutex held: an override may run the audio thread's side (process), but play, scrub and stop
+		// take that mutex and would deadlock in it.
 		virtual void playedRead() {}
 
 	private:
