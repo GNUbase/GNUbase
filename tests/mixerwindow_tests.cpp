@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -793,4 +794,87 @@ TEST_CASE("a VCA strip has a fader and buttons and picks the link group it contr
 	// What another client changes shows.
 	app.call("linkGroup.set", {{"group", group}, {"vca", 0}});
 	REQUIRE(app.waitUntil([&] { return element(app, window, select).at("attributes").at("value") == "0"; }));
+}
+
+TEST_CASE("a mixer step the engine refuses shows the engine's value again and leaves no undo step", "[ui]")
+{
+	test::UiApp app({1024, 600});
+	app.appUi().showProject();
+	const Added guitar = addTrack(app, "audio", "Guitar");
+	const Window window = openMixer(app, 1);
+	const std::string fader = strip(guitar.channel) + " fader";
+	REQUIRE(app.waitUntil([&] { return elements(app, window, fader).size() == 1; }));
+	app.call("channel.set", {{"channel", guitar.channel}, {"volume", -12.0}});
+	REQUIRE(app.waitUntil([&] { return valueOf(app, window, fader) == -12.0; }));
+	const int64_t position = historyPosition(app);
+
+	// Two wheel turns: the first step goes, the second waits for its answer. Removing the track in between makes the
+	// engine refuse the second: the channel its command changes is gone.
+	app.ui().wheel(window, {fader, 0, std::nullopt}, 0.0F, 1.0F);
+	app.ui().wheel(window, {fader, 0, std::nullopt}, 0.0F, 1.0F);
+	app.call("track.remove", {{"track", guitar.track}});
+	REQUIRE(app.waitUntil([&] { return elements(app, window, strip(guitar.channel)).empty(); }));
+	// The refused step shows in the command log, as the inspector's refused change does.
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			const Json commands = app.call("engine.commandLog").at("commands");
+			return std::any_of(commands.begin(), commands.end(), [](const Json& command)
+				{ return command.at("command") == "history.transaction" && command.contains("error"); });
+		}));
+
+	// Undo brings the track back: the strip is built again and its fader shows the engine's volume, the value the
+	// first turn took, not the refused second's and not the widget's default.
+	app.call("history.undo");
+	REQUIRE(app.waitUntil([&] { return elements(app, window, fader).size() == 1; }));
+	REQUIRE(app.waitUntil([&] { return valueOf(app, window, fader) == Catch::Approx(-12.1).margin(1e-4); }));
+	CHECK(channelJson(app, guitar.channel).at("volume").get<double>() == Catch::Approx(-12.1).margin(1e-4));
+	CHECK(historyPosition(app) == position + 1); // the gesture's one step; the refused one left none
+}
+
+TEST_CASE("a strip made again while its fader's step is in flight shows the engine's volume at once", "[ui]")
+{
+	test::UiApp app({1024, 600});
+	app.appUi().showProject();
+	const Added guitar = addTrack(app, "audio", "Guitar");
+	const Window window = openMixer(app, 1);
+	const std::string fader = strip(guitar.channel) + " fader";
+	REQUIRE(app.waitUntil([&] { return elements(app, window, fader).size() == 1; }));
+	app.call("channel.set", {{"channel", guitar.channel}, {"volume", -12.0}});
+	REQUIRE(app.waitUntil([&] { return valueOf(app, window, fader) == -12.0; }));
+	const int64_t position = historyPosition(app);
+
+	// A slow query, sent just before the shell step: the engine runs everything the UI sends after it only once it is
+	// through, so the step hands on just what is queued already, the wheel turns' steps and the visibility changes,
+	// and none of the project reads they bring on their way. What the rebuilt strip shows can be checked then.
+	app.engine().registerCommand(
+		{"test.slowRead", 1, "Reads slowly.", engine::CommandInfo{}.parameters, Json::object(), true},
+		[](engine::CommandContext&)
+		{
+			std::this_thread::sleep_for(std::chrono::milliseconds(500));
+			return Json::object();
+		});
+
+	// Two wheel turns: the first step goes and runs, the second waits for the first's answer. Hiding and showing the
+	// output bus makes every strip again while the second step is still in flight, since its answer waits behind the
+	// slow query.
+	app.ui().wheel(window, {fader, 0, std::nullopt}, 0.0F, 1.0F);
+	app.ui().wheel(window, {fader, 0, std::nullopt}, 0.0F, 1.0F);
+	REQUIRE(app.appUi().binding().waiting("history.transaction") == 1);
+	const uint64_t output = bus(app, "output");
+	app.call("mixer.set", {{"mixer", "window1"}, {"hidden", {output}}});
+	app.call("mixer.set", {{"mixer", "window1"}, {"hidden", Json::array()}});
+	engine::Client(app.engine()).send("test.slowRead");
+	app.shell().step(std::chrono::milliseconds(0));
+
+	// The new fader has no value of its own, so it shows the engine's volume as the mixer's project has it, right
+	// away, instead of the widget's default of 0 until the step in flight is answered (the HasAttribute exceptions
+	// in Mixer::updateStrip).
+	REQUIRE(app.waitUntil([&] { return elements(app, window, fader).size() == 1; }));
+	CHECK(valueOf(app, window, fader) == -12.0);
+
+	// Once the slow query is through, the fader follows the answered step and the engine and the control agree.
+	REQUIRE(app.waitUntil([&] { return valueOf(app, window, fader) == Catch::Approx(-12.2).margin(1e-4); }));
+	CHECK(channelJson(app, guitar.channel).at("volume").get<double>() == Catch::Approx(-12.2).margin(1e-4));
+	CHECK(historyPosition(app) == position + 1); // the gesture's one undo step; visibility isn't one
 }
