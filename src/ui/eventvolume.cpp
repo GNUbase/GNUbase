@@ -150,7 +150,7 @@ namespace gnubase::ui
 		}
 		const double seconds = m_view.start + ((fromX + m_dragDx) * m_view.scale);
 		const int64_t frame = fades.offset +
-			std::clamp<int64_t>(std::llround((seconds - shown->start) * fades.timeRate), 0, fades.frames);
+			std::clamp<int64_t>(std::llround((seconds - shown->start) * fades.timeRate), 0, fades.length);
 		const double volume = engine::volumeDb(fraction * g_volumeLineTop / gain(fades.volume));
 		if (m_dragPoint)
 		{

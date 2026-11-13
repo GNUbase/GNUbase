@@ -180,16 +180,17 @@ namespace gnubase::ui
 	// resources/ui/tempo-editor.rml and follows the project through the binding. #tempo-track-active switches the
 	// tempo mode; the buttons [tempo-tool] pick the tool (select, draw, erase); #tempo-type is the type of new tempo
 	// events (the user setting editing.tempoType); #current-tempo the fixed tempo, or in tempo track mode the tempo at
-	// the project cursor. #tempo-curve-area holds the tempo curve of the whole project, #tempo-ruler a bars and beats
-	// ruler over it and #tempo-scale the tempos, as .tempo-scale-label elements. The info line shows the first selected
-	// event: #tempo-position, #tempo-value (its tempo, typed) and #tempo-ramp (ramp or jump). #signature-area under the
-	// ruler is the time signature display, a ui::SignatureRow with the editor's tools (pp. 1468-1469); #signature-info
-	// shows its first selected event instead: #signature-position (its bar) and #signature-value (its signature,
-	// typed). Backspace and Delete remove the selected events. Use it on the UI thread; the binding must outlive it.
+	// the project cursor, also while playing, when it follows the playback position once a frame. #tempo-curve-area
+	// holds the tempo curve of the whole project, #tempo-ruler a bars and beats ruler over it and #tempo-scale the
+	// tempos, as .tempo-scale-label elements. The info line shows the first selected event: #tempo-position,
+	// #tempo-value (its tempo, typed) and #tempo-ramp (ramp or jump). #signature-area under the ruler is the time
+	// signature display, a ui::SignatureRow with the editor's tools (pp. 1468-1469); #signature-info shows its first
+	// selected event instead: #signature-position (its bar) and #signature-value (its signature, typed). Backspace and
+	// Delete remove the selected events. Use it on the UI thread; the engine and the binding must outlive it.
 	class TempoEditor final : private Rml::EventListener
 	{
 	public:
-		TempoEditor(EngineBinding& binding, Rml::ElementDocument& document);
+		TempoEditor(engine::Engine& engine, EngineBinding& binding, Rml::ElementDocument& document);
 		~TempoEditor() override;
 		TempoEditor(const TempoEditor&) = delete;
 		TempoEditor& operator=(const TempoEditor&) = delete;
@@ -203,9 +204,12 @@ namespace gnubase::ui
 	private:
 		void ProcessEvent(Rml::Event& event) override;
 		void requestProject();
+		void followTransport(const engine::Json& status); // the cursor, also while playing (#831)
 		void show();
+		bool showCurrentTempo(); // #current-tempo; whether its text changed
 		void place();
 
+		engine::Engine& m_engine;
 		EngineBinding& m_binding;
 		Rml::ObserverPtr<Rml::Element> m_document;
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
@@ -218,5 +222,6 @@ namespace gnubase::ui
 		bool m_loading = false;
 		bool m_stale = false;
 		std::vector<Subscription> m_subscriptions;
+		std::optional<Subscription> m_playback; // while playing
 	};
 }

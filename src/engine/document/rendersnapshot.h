@@ -4,6 +4,7 @@
 #include "engine/audio/fades.h"
 #include "engine/document/document.h"
 #include "engine/dsp/warp.h"
+#include "engine/midi/padvoices.h"
 
 #include <array>
 #include <cstddef>
@@ -200,6 +201,7 @@ namespace gnubase::engine
 		std::optional<int> midiPan;
 		std::optional<int> program; // MIDI channels: the program change to send, with bank select if bank is set
 		std::optional<int> bank;
+		uint8_t midiChannel = 0;      // MIDI channels: the MIDI channel the above go out on, 0 to 15 (Any: 0)
 		midi::Modifiers modifiers;    // MIDI and instrument channels: notes has them applied, live notes get them
 		midi::EffectRack midiInserts; // MIDI and instrument channels: the effects their sequencer runs
 		midi::EffectRack midiSends;
@@ -227,6 +229,10 @@ namespace gnubase::engine
 		// MIDI and instrument tracks: they play what comes from all MIDI inputs (MIDI thru), since they monitor or
 		// are record-enabled and their MIDI input is all MIDI inputs.
 		bool midiThru = false;
+		// MIDI and instrument tracks whose MIDI input is the chord pads, and that monitor or are record-enabled: they
+		// play the chord pads (#1089).
+		bool padThru = false;
+		int padPlayer = -1; // the chord pads' player whose track it is, or -1 for the selected one
 		// Muted, silenced by another channel's solo, or on a disabled track: outputs silence. A quiet MIDI channel
 		// has no notes or controllers, and a disabled track no events or parts.
 		bool silent = false;
@@ -259,10 +265,58 @@ namespace gnubase::engine
 	struct ChordPadKeys
 	{
 		static constexpr size_t g_maxPitches = 8;
+		static constexpr size_t g_maxPlayers = 8; // the chord pads' players (#1089)
 		bool active = false;
-		std::array<uint8_t, 128> counts{};
-		std::array<std::array<uint8_t, g_maxPitches>, 128> pitches{};
+		uint8_t start = 36; // the remote range, which Filter Notes keeps from playing itself
+		uint8_t end = 47;
+		bool latch = false;
+		bool filter = false;
+		midi::PadOverlap overlap = midi::PadOverlap::HoldFirst;
+		bool output = true; // Chord Pad Output Mode: the pads play into the tracks of all MIDI inputs too
+		// The chord modifiers' remote keys (p. 1387), while they are active: previous and next voicing, fewer and more
+		// tensions, transpose down and up. They play nothing; the command thread applies them (chordPads.remoteInput).
+		bool modifiers = false;
+		std::array<uint8_t, 6> modifierKeys{};
+		// The MIDI input that the remote keys come from (p. 1386), chordPadPortHash of its midi.portSettings key such
+		// as "dummy/in/Keys"; 0 for all inputs that belong to all MIDI inputs.
+		uint64_t portHash = 0;
+		// Snap Playback to Musical Grid (p. 1349): the grid in ticks, the quantize grid's; 0 while it's off.
+		int64_t snapTicks = 0;
+		// The pattern player mode (pp. 1379-1380): the pattern the pads' chords play while it's on.
+		midi::PadPatternSteps pattern;
+		// The sections player mode (pp. 1381-1385, 1389): its remote keys (255 for none), as ChordPads has them.
+		bool sections = false;
+		std::array<uint8_t, 5> sectionKeys{};
+		std::array<uint8_t, 5> subsectionKeys{};
+		std::array<uint8_t, 5> subsectionSections{};
+		std::array<int16_t, 5> subsectionOffsets{};
+		uint8_t sectionPlay = 0; // 0 sections, 1 chordPads, 2 combination
+		bool latchPads = false;
+		bool spread = false;
+		std::array<bool, 5> mutedSections{};
+		std::array<uint8_t, 3> playerKeys{}; // previous, next, mute player
+		// What moves all pads' voicings, tensions and transposition (p. 1387): 0 nothing, 1 channel pressure, 2 pitch
+		// bend, 3 a controller of controlNumbers.
+		std::array<uint8_t, 3> controlSources{};
+		std::array<uint8_t, 3> controlNumbers{};
+		// Per player and key, as the player voices the pad's chord. The selected player and those with a track play
+		// (players, a bit per player).
+		std::array<std::array<uint8_t, 128>, g_maxPlayers> counts{};
+		std::array<std::array<std::array<uint8_t, g_maxPitches>, 128>, g_maxPlayers> pitches{};
+		uint8_t players = 1;
+		uint8_t selected = 0;
 	};
+
+	// A MIDI port's key (backend/in/id) as ChordPadKeys::portHash has it: FNV-1a, 0 for none.
+	inline uint64_t chordPadPortHash(const std::string& key)
+	{
+		if (key.empty())
+			return 0;
+		uint64_t hash = 14695981039346656037ULL;
+		for (const char letter : key)
+			hash = (hash ^ static_cast<unsigned char>(letter)) * 1099511628211ULL;
+		return hash == 0 ? 1 : hash;
+	}
 
 	// What the audio thread needs from the project, compiled by the command thread after every change and handed
 	// over with rt::SnapshotPublisher. Objects refer to each other by index and every position is in the project's

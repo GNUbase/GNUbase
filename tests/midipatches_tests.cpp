@@ -7,6 +7,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <utility>
@@ -191,4 +192,57 @@ TEST_CASE("other changes of a MIDI track's channel don't send its patch again", 
 	// A new program goes out at once, with the controllers after it.
 	track.set({{"program", 6}});
 	CHECK(track.played() == Bytes{{0xB0, 0, 2}, {0xB0, 32, 44}, {0xC0, 6}, {0xB0, 7, 100}});
+}
+
+TEST_CASE("a MIDI track's patch, MIDI volume and pan go out on its MIDI channel", "[integration]")
+{
+	PatchTrack track;
+	CHECK(run(track.client, "project.get").at("channels")[1].at("midiChannel").is_null());
+	const Json set =
+		track.set({{"midiChannel", 4}, {"program", 5}, {"bank", 300}, {"midiVolume", 90}, {"midiPan", 20}});
+	CHECK(set.at("midiChannel") == 4);
+	CHECK(track.played() == Bytes{{0xB4, 0, 2}, {0xB4, 32, 44}, {0xC4, 5}, {0xB4, 7, 90}, {0xB4, 10, 20}});
+	CHECK(track.played().empty());
+
+	// On another channel they go out again, there: Any plays them on channel 1.
+	track.set({{"midiChannel", nullptr}});
+	CHECK(track.played() == Bytes{{0xB0, 0, 2}, {0xB0, 32, 44}, {0xC0, 5}, {0xB0, 7, 90}, {0xB0, 10, 20}});
+	track.set({{"midiChannel", 15}});
+	CHECK(track.played() == Bytes{{0xBF, 0, 2}, {0xBF, 32, 44}, {0xCF, 5}, {0xBF, 7, 90}, {0xBF, 10, 20}});
+
+	// Automation of CC 7 on its channel overrides its MIDI volume; on another channel it doesn't.
+	const auto lane = [&track](int channel)
+	{
+		const Json added = run(track.client, "automationLane.add",
+			{{"track", run(track.client, "project.get").at("channels")[1].at("track")},
+				{"target", {{"type", "controller"}, {"number", 7}, {"channel", channel}}}});
+		run(track.client, "automationPoint.add",
+			{{"lane", added.at("lane").at("id")}, {"points", {{{"position", 0}, {"value", 1.0}}}}});
+	};
+	lane(15);
+	lane(0);
+	run(track.client, "transport.play");
+	const Bytes playing = track.played();
+	CHECK(std::count(playing.begin(), playing.end(), std::vector<int>{0xBF, 7, 127}) == 1);
+	CHECK(std::count(playing.begin(), playing.end(), std::vector<int>{0xBF, 7, 90}) == 0);
+	CHECK(std::count(playing.begin(), playing.end(), std::vector<int>{0xB0, 7, 127}) == 1);
+	run(track.client, "transport.stop");
+
+	CHECK_THAT(reject(track.client, "channel.set", {{"channel", track.channel}, {"midiChannel", 16}}),
+		ContainsSubstring("midiChannel"));
+	const Json instrument = run(track.client, "project.get").at("channels")[0];
+	CHECK_THAT(reject(track.client, "channel.set", {{"channel", instrument.at("id")}, {"midiChannel", 1}}),
+		ContainsSubstring("only MIDI channels"));
+
+	// Saved with the project, and undone.
+	const Json before = run(track.client, "project.get");
+	const gnubase::test::TempDir dir;
+	const std::string file = (dir.path() / "channel.dawproject").u8string();
+	run(track.client, "project.save", {{"path", file}});
+	run(track.client, "project.new");
+	run(track.client, "project.load", {{"path", file}});
+	CHECK(run(track.client, "project.get").at("channels") == before.at("channels"));
+	track.set({{"midiChannel", 3}});
+	run(track.client, "history.undo");
+	CHECK(run(track.client, "project.get").at("channels")[1].at("midiChannel") == 15);
 }

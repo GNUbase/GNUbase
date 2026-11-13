@@ -144,17 +144,14 @@ namespace gnubase::engine
 			for (size_t i = 0; i < events.size(); ++i)
 			{
 				Placed& in = events[i];
-				if (in.muted) // a muted event is silent: it never crossfades, so nothing behind it plays through
-					continue;
 				const Crossfade& crossfade = in.event->crossfade;
 				const auto from = index.find(crossfade.from);
 				if (crossfade.from == 0 || from == index.end())
 					continue;
 				Placed& out = events[from->second];
-				if (out.muted)
-					continue;
-				// The snapshot only has crossfades that apply (crossfadeApplies): between events that overlap, the
-				// second one starting inside the first and ending after it. An edit that ends this rests a crossfade.
+				// The snapshot only has crossfades that apply (crossfadeApplies): between unmuted events that overlap,
+				// the second one starting inside the first and ending after it, so a muted event never crossfades and
+				// nothing behind it plays through. An edit that ends this rests a crossfade.
 				if (out.crossfadeOut || out.end <= in.start)
 					continue;
 				const time::Samples overlap = out.end - in.start;

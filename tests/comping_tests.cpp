@@ -797,3 +797,39 @@ TEST_CASE("a muted take in front silences what lies behind it only with editing.
 	f.call("settings.set", {{"key", "editing.treatMutedAudioLikeDeleted"}, {"value", true}});
 	Fixture::check(f.render(1000), [](int64_t position) { return position; });
 }
+
+TEST_CASE("a muted take never crossfades: with editing.treatMutedAudioLikeDeleted off it silences the take behind it "
+		  "from its start",
+	"[integration]")
+{
+	const gnubase::test::TempDir dir;
+	Fixture f;
+	f.call("audio.setDevice", {{"blockSize", 64}, {"inputChannels", 0}, {"captureSeconds", 1}});
+	gnubase::test::Audio audio;
+	audio.sampleRate = 48000;
+	for (int64_t frame = 0; frame < 5000; ++frame)
+		audio.samples.push_back(ramp(frame));
+	const std::filesystem::path file = dir.path() / "ramp.wav";
+	gnubase::test::writeWav(file, audio);
+	const Json media = f.call("media.add", {{"path", file.u8string()}}).at("media");
+	const auto clip = f.call("clip.add", {{"media", media.at("id")}}).at("clip").at("id").get<int64_t>();
+	const int64_t track = f.track("audio");
+	// The take behind from 0 to 1000, the one in front from 500 to 1500, crossfaded from the one behind, then muted.
+	const int64_t behind = f.take(track, clip, 0, 1000, 0);
+	const auto front = f.call("audioEvent.add",
+							{{"track", track}, {"clip", clip}, {"position", 500}, {"offset", 2000}, {"length", 1000}})
+						   .at("event")
+						   .at("id")
+						   .get<int64_t>();
+	f.call("crossfade.set", {{"from", behind}, {"to", front}});
+	f.call("event.set", {{"events", {front}}, {"mute", true}});
+
+	// Treated as deleted, the muted take doesn't crossfade: the take behind plays to its end without fading out.
+	Fixture::check(f.render(1000), [](int64_t position) { return position; });
+
+	// Off, it keeps its place in the stack but plays nothing, crossfade or not: silence from where it starts.
+	f.call("settings.set", {{"key", "editing.treatMutedAudioLikeDeleted"}, {"value", false}});
+	const std::vector<float> output = f.render(1000);
+	Fixture::check({output.begin(), output.begin() + 500}, [](int64_t position) { return position; });
+	CHECK(std::all_of(output.begin() + 500, output.end(), [](float sample) { return sample == 0.0f; }));
+}

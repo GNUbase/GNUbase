@@ -589,8 +589,8 @@ namespace gnubase::ui
 
 	// The editor.
 
-	TempoEditor::TempoEditor(EngineBinding& binding, Rml::ElementDocument& document)
-		: m_binding(binding), m_document(document.GetObserverPtr())
+	TempoEditor::TempoEditor(engine::Engine& engine, EngineBinding& binding, Rml::ElementDocument& document)
+		: m_engine(engine), m_binding(binding), m_document(document.GetObserverPtr())
 	{
 		if (Rml::Element* area = document.GetElementById("tempo-curve-area"))
 		{
@@ -622,12 +622,8 @@ namespace gnubase::ui
 			document.AddEventListener(id, this);
 		for (const char* event : {"history.changed", "project.reset"})
 			m_subscriptions.push_back(m_binding.on(event, [this](const engine::Event&) { requestProject(); }));
-		m_subscriptions.push_back(m_binding.on("transport.changed",
-			[this](const engine::Event& event)
-			{
-				m_cursor = event.data.at("position").get<int64_t>();
-				show();
-			}));
+		m_subscriptions.push_back(
+			m_binding.on("transport.changed", [this](const engine::Event& event) { followTransport(event.data); }));
 		m_subscriptions.push_back(m_binding.on("settings.changed",
 			[this](const engine::Event& event)
 			{
@@ -651,8 +647,7 @@ namespace gnubase::ui
 			{
 				if (alive.expired() || !result.ok())
 					return;
-				m_cursor = result.value.at("position").get<int64_t>();
-				show();
+				followTransport(result.value);
 			});
 		requestProject();
 	}
@@ -691,6 +686,44 @@ namespace gnubase::ui
 			});
 	}
 
+	void TempoEditor::followTransport(const Json& status)
+	{
+		m_cursor = status.at("position").get<int64_t>();
+		// While playing the cursor moves without events: Current Tempo reads the playback position once a frame
+		// (#831), as the transport bar's tempo field does.
+		if (status.at("playing").get<bool>())
+		{
+			if (!m_playback)
+				m_playback = m_binding.watch<int64_t>(
+					m_document.get(), [this] { return m_engine.playbackPosition(); },
+					[this](const int64_t& sample)
+					{
+						m_cursor = sample;
+						return showCurrentTempo();
+					});
+		}
+		else
+		{
+			m_playback.reset();
+		}
+		show();
+	}
+
+	bool TempoEditor::showCurrentTempo()
+	{
+		Rml::Element* document = m_document.get();
+		if (document == nullptr || !m_curve)
+			return false;
+		auto* control = dynamic_cast<Rml::ElementFormControl*>(document->GetElementById("current-tempo"));
+		const std::string value = tempoText(currentTempo(m_curve->tempo().time, m_cursor));
+		if (control == nullptr || control->IsPseudoClassSet("focus") || control->GetValue() == value)
+			return false; // what is being typed stays
+		m_showing = true;
+		control->SetValue(value);
+		m_showing = false;
+		return true;
+	}
+
 	void TempoEditor::show()
 	{
 		Rml::Element* document = m_document.get();
@@ -715,8 +748,7 @@ namespace gnubase::ui
 		for (Rml::Element* button : tools)
 			button->SetClass("checked", attribute(*button, "tempo-tool") == toolName(m_tool));
 		set("tempo-type", m_type);
-		// The fixed tempo, or the tempo at the cursor.
-		set("current-tempo", tempoText(currentTempo(tempo.time, m_cursor)));
+		showCurrentTempo(); // the fixed tempo, or the tempo at the cursor
 		// The info line: the first selected event.
 		const std::vector<int64_t>& selection = m_curve->selection();
 		const std::vector<time::TempoPoint>& points = tempo.tempoTrack.points();
@@ -861,13 +893,18 @@ namespace gnubase::ui
 		const double bpm = std::strtod(value.c_str(), &end);
 		const bool number = end != value.c_str() && bpm >= time::g_minBpm && bpm <= time::g_maxBpm;
 		const bool entered = event.GetParameter<bool>("linebreak", false); // text fields change on Enter
-		if (id == "current-tempo" && number && entered)
+		if (id == "current-tempo" && entered)
 		{
-			if (rounded(bpm) != rounded(currentTempo(tempo.time, m_cursor)))
+			if (number && rounded(bpm) != rounded(currentTempo(tempo.time, m_cursor)))
 			{
 				const auto [command, parameters] = currentTempoCommand(tempo.time, tempo.active, m_cursor, bpm);
 				m_binding.send(command, parameters);
 			}
+			// Enter ends the typing: the field shows Current Tempo again, which the change updates, and what isn't a
+			// tempo goes, so that it keeps following the cursor (#831), as the track list's field does.
+			if (auto* field = dynamic_cast<Rml::ElementFormControl*>(event.GetTargetElement()))
+				field->Blur();
+			showCurrentTempo();
 			return;
 		}
 		if (id == "signature-value" && entered && m_signatures)

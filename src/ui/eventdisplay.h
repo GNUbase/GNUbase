@@ -185,6 +185,10 @@ namespace gnubase::ui
 		uint64_t read() const { return m_read; }
 		// The tempo map and signatures of project(), read once per answer.
 		const TimeContext& time() const { return m_time; }
+		// The track whose lane is at a point of the window (pixels, as mouse_x and mouse_y), with the time there in
+		// ticks, for something dropped there such as a chord pad (docs/features/chord-pads.md); none outside the
+		// lanes.
+		std::optional<std::pair<uint64_t, int64_t>> trackAt(float x, float y) const;
 		// Folder tracks' data blocks (reference manual p. 226, docs/features/folder-tracks.md): per lane, the events
 		// and parts of the tracks inside a folder's lane, by the user setting ui.folderData (always, never, or
 		// hideWhenExpanded: while the folder is folded); empty for the other lanes.
@@ -626,9 +630,9 @@ namespace gnubase::ui
 		struct AudioFades
 		{
 			double rate = 0.0;
-			int64_t length = 0; // for the fades only
+			int64_t fadeRoom = 0; // the frames its fades may take together: on a warped event what it plays for
 			double timeRate = 0.0;
-			int64_t frames = 0;
+			int64_t length = 0; // in clip frames
 			engine::Fade in;
 			engine::Fade out;
 			engine::Crossfade crossfade;
@@ -791,6 +795,13 @@ namespace gnubase::ui
 		Rml::Element* m_crossVertical = nullptr;
 		Rml::Element* m_crossHorizontal = nullptr;
 		Rml::Element* m_cursorLine = nullptr;
+		// The chord pads' step input cursor (reference manual p. 1369): a line with a handle in the ruler, while step
+		// input is on, at the step position in ticks (chordPads.get).
+		Rml::Element* m_stepCursor = nullptr;
+		bool m_stepInput = false;
+		int64_t m_stepTicks = 0;
+		void followChordPads(const engine::Json& pads);
+		void placeStepCursor();
 
 		TimeContext m_time;
 		std::vector<EventLanes::Lane> m_tracks; // events in seconds, heights before zoom

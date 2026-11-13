@@ -986,7 +986,8 @@ namespace gnubase::engine
 				if (crossfadeApplies(m_project, event))
 					return crossfadeSeconds(
 						event.crossfade.length, in.rate, seconds(m_project.audioEvents.at(event.crossfade.from)), in);
-				return static_cast<double>(std::min(event.fadeIn.length, event.length)) / in.rate; // as it plays
+				return static_cast<double>(std::min(event.fadeIn.length, fadeRoom(m_project, event))) /
+					in.rate; // as it plays
 			}
 
 			double fadeOutSeconds(const AudioEvent& event) const
@@ -995,7 +996,7 @@ namespace gnubase::engine
 				for (const auto& [id, to] : m_project.audioEvents)
 					if (to.crossfade.from == event.id && crossfadeApplies(m_project, to))
 						return crossfadeSeconds(to.crossfade.outLength, out.rate, out, seconds(to));
-				return static_cast<double>(std::min(event.fadeOut.length, event.length)) / out.rate;
+				return static_cast<double>(std::min(event.fadeOut.length, fadeRoom(m_project, event))) / out.rate;
 			}
 
 			void writeMidiClip(pugi::xml_node clips, const Track& track, const MidiPart& part)
@@ -1112,6 +1113,7 @@ namespace gnubase::engine
 				for (const pugi::xml_node lanes : arrangement.children("Lanes"))
 					readLanes(lanes, {});
 				readMarkers(arrangement.child("Markers"));
+				shareWarpedClips();
 				joinCrossfades();
 				return std::move(m_project);
 			}
@@ -1666,6 +1668,8 @@ namespace gnubase::engine
 						AudioEvent* event = addAudioEvent(lane, start, duration, offset, audio, content);
 						if (event != nullptr && name == "Warps")
 							readWarps(child, *event, {lane.seconds, content.seconds, start, duration, playStart});
+						if (event != nullptr)
+							fitFades(*event);
 					}
 				}
 			}
@@ -1837,16 +1841,25 @@ namespace gnubase::engine
 				event.offset = std::clamp<time::Samples>(
 					std::llround(offset * media.sampleRate), 0, std::max<time::Samples>(0, media.length - 1));
 				const double seconds = secondsBetween(start, start + duration, lane.seconds);
-				event.length =
-					std::min<time::Samples>(std::llround(seconds * media.sampleRate), media.length - event.offset);
-				// Linear fades, shortened to fit if they don't.
+				const time::Samples played = std::llround(seconds * media.sampleRate);
+				event.length = std::min<time::Samples>(played, media.length - event.offset);
+				// Linear fades, within what the clip plays for: fitFades shortens them to the event's room.
 				event.fadeIn.length = std::clamp<time::Samples>(
-					std::llround(content.fadeIn * media.sampleRate), 0, std::max<time::Samples>(0, event.length));
+					std::llround(content.fadeIn * media.sampleRate), 0, std::max<time::Samples>(0, played));
 				event.fadeOut.length = std::clamp<time::Samples>(std::llround(content.fadeOut * media.sampleRate), 0,
-					std::max<time::Samples>(0, event.length - event.fadeIn.length));
+					std::max<time::Samples>(0, played - event.fadeIn.length));
 				if (event.length <= 0)
 					return nullptr;
 				return &(m_project.audioEvents[event.id] = event);
+			}
+
+			// Shortens an event's fades to fit if they don't: into its length, or on a warped event what it plays
+			// for, where they play (fadeRoom, #1183).
+			void fitFades(AudioEvent& event) const
+			{
+				const time::Samples room = fadeRoom(m_project, event);
+				event.fadeIn.length = std::min(event.fadeIn.length, room);
+				event.fadeOut.length = std::min(event.fadeOut.length, room - event.fadeIn.length);
 			}
 
 			// Where a clip with Warps lies: its lane's and its content's units, its start and duration in the lane's
@@ -1893,11 +1906,18 @@ namespace gnubase::engine
 				else if (where.laneSeconds)
 					end = where.playStart + toBeats(m_project.tempo.toTicks(where.start + where.duration)) -
 						toBeats(m_project.tempo.toTicks(where.start));
-				const auto offset = std::llround(frameAt(where.playStart));
-				const time::Samples length =
-					std::min<time::Samples>(std::llround(frameAt(end)) - offset, media.length - offset);
-				if (offset < 0 || offset >= media.length || length <= 0)
+				// Untrusted values: within the audio before they are rounded (#1184).
+				const double first = frameAt(where.playStart);
+				const double last = frameAt(end);
+				const auto frames = static_cast<double>(media.length);
+				if (!std::isfinite(first) || !std::isfinite(last) || first < 0.0 || first >= frames || last <= first)
 					return;
+				const auto offset = std::llround(first);
+				const time::Samples length =
+					std::min<time::Samples>(std::llround(std::min(last, frames)) - offset, media.length - offset);
+				if (offset >= media.length || length <= 0)
+					return;
+				const ObjectId shared = clip.id;
 				clip.id = m_project.newId();
 				clip.warp = {};
 				if (beats &&
@@ -1917,7 +1937,7 @@ namespace gnubase::engine
 					}
 					try
 					{
-						checkMarkers(clip.warp, media.length);
+						checkMarkers(clip.warp, media.length, {});
 					}
 					catch (const CommandError&)
 					{
@@ -1925,11 +1945,49 @@ namespace gnubase::engine
 					}
 				}
 				m_project.clips[clip.id] = clip;
+				m_warpedCopies[shared].push_back(clip.id);
 				event.clip = clip.id;
 				event.offset = offset;
 				event.length = length;
-				event.fadeIn.length = std::min(event.fadeIn.length, length);
-				event.fadeOut.length = std::min(event.fadeOut.length, length - event.fadeIn.length);
+			}
+
+			// readWarps gives each warped event a copy of its file's clip: events whose copies warp alike share one,
+			// and a file's clip that no event plays any more takes the warp of the first copy (#1183).
+			void shareWarpedClips()
+			{
+				for (const auto& [shared, copies] : m_warpedCopies)
+				{
+					const ObjectId file = shared;
+					const bool played = std::any_of(m_project.audioEvents.begin(), m_project.audioEvents.end(),
+						[file](const auto& entry) { return entry.second.clip == file; });
+					std::map<ObjectId, ObjectId> into; // a copy that goes, and the clip its events play instead
+					std::vector<ObjectId> kept;
+					for (const ObjectId copy : copies)
+					{
+						const ClipWarp& warp = m_project.clips.at(copy).warp;
+						const auto same = std::find_if(kept.begin(), kept.end(),
+							[this, &warp](ObjectId each) { return m_project.clips.at(each).warp == warp; });
+						if (same != kept.end())
+						{
+							into[copy] = *same;
+						}
+						else if (!played && kept.empty())
+						{
+							m_project.clips.at(file).warp = warp;
+							into[copy] = file;
+							kept.push_back(file);
+						}
+						else
+						{
+							kept.push_back(copy);
+						}
+					}
+					for (auto& entry : m_project.audioEvents)
+						if (const auto found = into.find(entry.second.clip); found != into.end())
+							entry.second.clip = found->second;
+					for (const auto& entry : into)
+						m_project.clips.erase(entry.first);
+				}
 			}
 
 			// Musical mode with a definition whose beat 0 is the content's first whole beat within the audio, its tempo
@@ -2019,7 +2077,8 @@ namespace gnubase::engine
 				std::string destination;
 			};
 			std::vector<SendDestination> m_sendDestinations;
-			std::map<std::string, ObjectId> m_clips; // media path in project.xml -> clip
+			std::map<std::string, ObjectId> m_clips;                  // media path in project.xml -> clip
+			std::map<ObjectId, std::vector<ObjectId>> m_warpedCopies; // a file's clip -> the copies readWarps made
 			// project.xml parameter id -> the track whose channel has it, and which one it is
 			std::map<std::string, std::pair<ObjectId, AutomationTargetType>> m_parameters;
 			std::map<std::string, std::string> m_resolved; // media path in project.xml -> path on disk

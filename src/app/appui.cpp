@@ -564,8 +564,17 @@ namespace gnubase::app
 				return pool;
 			}});
 		// The chord pads (reference manual pp. 1346-1391, docs/features/chord-pads.md) in the lower zone.
-		m_docking.add({"chordPads", "Chord Pads", "project", "lower",
-			[this](Rml::Element& element) { return std::make_shared<ui::ChordPadsPanel>(m_binding, element); }});
+		m_docking.add({"chordPads", "Chord Pads", "project", "lower", [this](Rml::Element& element)
+			{
+				return std::make_shared<ui::ChordPadsPanel>(
+					m_binding, element,
+					[this](float x, float y)
+					{
+						return m_eventDisplay ? m_eventDisplay->trackAt(x, y)
+											  : std::optional<std::pair<uint64_t, int64_t>>();
+					},
+					[this] { return m_eventDisplay ? m_eventDisplay->selection() : std::vector<uint64_t>(); });
+			}});
 		// The sampler panel (reference manual pp. 710-730, docs/features/sampler-track.md) in the lower zone, for the
 		// selected sampler track. Import Audio File asks for the file in the window it shows in.
 		m_docking.add({"sampler", "Sampler", "project", "lower", [this](Rml::Element& element)
@@ -1484,7 +1493,7 @@ namespace gnubase::app
 			throw std::runtime_error("cannot load the tempo track editor from " + file.u8string());
 		}
 		document->Show();
-		m_tempoEditor = std::make_unique<ui::TempoEditor>(m_binding, *document);
+		m_tempoEditor = std::make_unique<ui::TempoEditor>(m_engine, m_binding, *document);
 		m_docking.saveWindows();
 		return m_tempoEditor.get();
 	}

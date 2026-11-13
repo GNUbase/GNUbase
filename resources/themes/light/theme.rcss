@@ -445,6 +445,20 @@
 	{
 		background-color: #eef1f5;
 	}
+	.event-display event-lanes.events, .event-display event-lanes.muted-events, .event-display event-lanes.selected-events, .event-display event-lanes.folder-data
+	{
+		event-inset: 0dp;
+	}
+	.event-display event-lanes.events
+	{
+		own-fill-opacity: 1;
+		own-color-tint: none;
+	}
+	.event-display .waveforms waveform
+	{
+		own-color-tint: none;
+		padding: 2dp 0;
+	}
 	.event-display .overview
 	{
 		background-color: #ffffff;
@@ -488,6 +502,10 @@
 	.event-display .project-cursor
 	{
 		background-color: #17202d;
+	}
+	.event-display .step-input-cursor, .event-display .step-input-handle
+	{
+		background-color: #0969da;
 	}
 	.event-display .cross-hair-vertical, .event-display .cross-hair-horizontal
 	{
@@ -634,6 +652,73 @@
 	.chord-pad.triggered
 	{
 		background-color: #8cb8ed;
+	}
+	.chord-pad.listening
+	{
+		border-color: #c92d42;
+	}
+	.chord-pad.level-0
+	{
+		border-bottom-color: #157f5b;
+	}
+	.chord-pad.level-1
+	{
+		border-bottom-color: #9a6500;
+	}
+	.chord-pad.level-2
+	{
+		border-bottom-color: #c92d42;
+	}
+	.chord-pad .chord-pad-voicing
+	{
+		color: #566273;
+		font-size: 11dp;
+	}
+	.chord-pad .chord-pad-progress
+	{
+		background-color: #0969da;
+	}
+	.chord-pad.black-key
+	{
+		background-color: #f2f4f8;
+	}
+	.chord-pads-key.white
+	{
+		background-color: #17202d;
+		border-width: 1dp;
+		border-color: #b9c1cc;
+	}
+	.chord-pads-key.black
+	{
+		background-color: #eef1f5;
+	}
+	.chord-pads-key.remote
+	{
+		background-color: #104484;
+	}
+	.chord-pads-key.black.remote
+	{
+		background-color: #659fe5;
+	}
+	.chord-pads-key.modifier
+	{
+		background-color: #157f5b;
+	}
+	.chord-pads-key.hover
+	{
+		background-color: #9a6500;
+	}
+	.chord-pads-key.played
+	{
+		background-color: #6554c0;
+	}
+	.chord-proximity-reference
+	{
+		color: #0969da;
+	}
+	.chord-suggestion.recent .chord-suggestion-chord
+	{
+		font-weight: bold;
 	}
 	.chord-suggestion
 	{

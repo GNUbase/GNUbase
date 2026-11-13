@@ -2674,6 +2674,30 @@ TEST_CASE("volume curve points on a warped event go where its waveform shows the
 	CHECK(f.audioEvents()[0].at("volumeCurve").size() == 1);
 }
 
+TEST_CASE("the time warp tool's Free Warp on a warped event puts the marker at the clip frames it drags", "[unit]")
+{
+	Fixture f;
+	// At 240 BPM in musical mode the event's 24000 clip frames play from 2 to 3 seconds, at 24000 a second (#1184).
+	const Json clip = f.audioEvents()[0].at("clip");
+	f.call("clip.setWarp", {{"clip", clip}, {"musical", true}});
+	f.call("clip.setWarp", {{"clip", clip}, {"tempo", 240.0}});
+	REQUIRE(f.waitUntil([&f] { return std::abs(f.lanes("events")[0].events[0].length - 1.0) < 1e-6; }));
+	f.display.setTool(ui::Tool::TimeWarp);
+	f.display.setWarpMode(ui::WarpMode::Free);
+	const auto markers = [&f, &clip]
+	{
+		const Json project = f.call("project.get");
+		for (const Json& each : project.at("clips"))
+			if (each.at("id") == clip)
+				return each.at("warp").at("markers");
+		return Json::array();
+	};
+	// A drag from a quarter through the event to half way: clip frame 6000 plays where 12000 did.
+	f.drag(225, 30, 250, 30);
+	REQUIRE(f.waitUntil([&markers] { return markers().size() == 1; }));
+	CHECK(markers()[0] == Json{{"position", 6000}, {"target", 12000}});
+}
+
 TEST_CASE("the draw tool's click near a curve point leaves it, a drag moves it by the drag's distance", "[unit]")
 {
 	Fixture f;
