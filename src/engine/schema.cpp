@@ -90,9 +90,13 @@ namespace gnubase::engine
 		if (value.is_number())
 		{
 			const auto number = value.get<double>();
-			if (const auto minimum = schema.find("minimum"); minimum != schema.end() && number < minimum->get<double>())
+			// Written so that a NaN, which an in-process client such as Lua can send, is outside the range: every
+			// comparison with it is false (#1131).
+			if (const auto minimum = schema.find("minimum");
+				minimum != schema.end() && !(number >= minimum->get<double>()))
 				return name + " must be at least " + minimum->dump();
-			if (const auto maximum = schema.find("maximum"); maximum != schema.end() && number > maximum->get<double>())
+			if (const auto maximum = schema.find("maximum");
+				maximum != schema.end() && !(number <= maximum->get<double>()))
 				return name + " must be at most " + maximum->dump();
 			if (const auto minimum = schema.find("exclusiveMinimum");
 				minimum != schema.end() && number <= minimum->get<double>())

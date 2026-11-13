@@ -21,6 +21,7 @@
 #include <optional>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 // The project document: a tree of objects with stable ids. Only the engine's command thread reads and changes it,
@@ -539,6 +540,13 @@ namespace gnubase::engine
 	inline ObjectId frontOf(const AudioEvent& event)
 	{
 		return event.front != 0 ? event.front : event.id;
+	}
+
+	// Its place in the stack with its id, to order events by: of events at the same place, such as the pieces of an
+	// event split before #1189, the one with the higher id is in front, as in playback (makePlaylist).
+	inline std::pair<ObjectId, ObjectId> stackKey(const AudioEvent& event)
+	{
+		return {frontOf(event), event.id};
 	}
 
 	// A container of audio events on an audio track (#471, reference manual p. 250). Its events are the audio events

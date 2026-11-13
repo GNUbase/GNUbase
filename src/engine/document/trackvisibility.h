@@ -19,6 +19,10 @@ namespace gnubase::engine
 	// theirs. Emits trackVisibility.changed and mixer.changed for what changed.
 	void followMixer(Project& project, const std::string& mixer, CommandContext& context);
 
+	// As trackLayout.get returns it: the heights and folded folders of the tracks that are in the project. The project
+	// keeps those of removed tracks too, for undo.
+	Json trackLayoutJson(const Project& project);
+
 	// trackVisibility.get and trackVisibility.set.
 	void registerTrackVisibilityCommands(ProjectModel& model, Engine& engine);
 	// trackLayout.get and trackLayout.set: the track list's track heights and folded folders (#491).

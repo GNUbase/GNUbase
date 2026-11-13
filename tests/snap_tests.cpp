@@ -940,8 +940,8 @@ TEST_CASE("snap.zeroCrossings moves a position only to where the event playing t
 
 TEST_CASE("snap.zeroCrossings takes the piece of a split event that plays in front, as playback does", "[unit]")
 {
-	// The sine crosses zero every 100 frames. The piece after the split has its event's place in the stack; of the
-	// two, playback plays the one with the higher id, the right piece.
+	// The sine crosses zero every 100 frames. The piece after the split comes right in front of its event in the
+	// stack, as playback plays it.
 	const test::TempDir dir;
 	const std::filesystem::path file = dir.path() / "sine.wav";
 	test::Audio sine;
@@ -970,4 +970,38 @@ TEST_CASE("snap.zeroCrossings takes the piece of a split event that plays in fro
 	CHECK(moved(1080) == 1090);
 	// Just before it the left piece plays, up to 990: its crossing at 900, not the one at 1000 under the right piece.
 	CHECK(moved(960) == 900);
+}
+
+TEST_CASE(
+	"snap.zeroCrossings keeps a position strictly inside where the event plays when the file's rate differs", "[unit]")
+{
+	// A 44.1 kHz file in the 48 kHz project, positive but for frame 44101, which is nearer to zero than the frame after
+	// it: the only crossing. The event's part starts at sample 48001, frame 44100.92 of the file, so the first frame
+	// it plays is 44101, which rounds back to sample 48001: the part's start, where the event doesn't play yet.
+	const test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "crossing.wav";
+	test::Audio audio;
+	audio.sampleRate = 44100;
+	audio.samples.assign(88200, 0.5F);
+	audio.samples[44101] = -0.01F;
+	test::writeWav(file, audio);
+
+	Fixture f;
+	const int64_t audioTrack = f.track("audio", "linear");
+	const Json media =
+		f.call("media.add", {{"path", file.u8string()}, {"sampleRate", 44100}, {"channels", 1}, {"length", 88200}})
+			.at("media");
+	const Json clip = f.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	const auto event =
+		f.call("audioEvent.add", {{"track", audioTrack}, {"clip", clip.at("id")}, {"position", 0}, {"length", 88200}})
+			.at("event")
+			.at("id")
+			.get<int64_t>();
+	const Json part = f.call("event.toPart", {{"events", {event}}}).at("events").at(0);
+	f.call("event.resize", {{"events", {part}}, {"edge", "start"}, {"delta", 48001}});
+	REQUIRE(f.object("audioParts", part.get<int64_t>()).at("position") == 48001);
+	REQUIRE(f.object("audioEvents", event).at("position") == 0);
+	const Json moved =
+		f.call("snap.zeroCrossings", {{"positions", {48201}}, {"tracks", {audioTrack}}}).at("positions").at(0);
+	CHECK(moved == 48002);
 }

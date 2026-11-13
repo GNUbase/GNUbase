@@ -10,8 +10,10 @@ own, and works the same on takes and overlapping events put on lanes by hand (`e
   its track's stack, `front` in `project.get` and the events' announcements: 0 orders it by its id, so the event
   added last is in front, as before; a number brings it before every event added until then. The render snapshot
   orders a track's events by it (`frontOf` in `document.h`), and the playlist's front layer follows
-  (`makePlaylist`). A split leaves the piece after it where the event was in the stack (its `front` is the event's
-  place), so splitting a take behind another doesn't bring half of it to the front; a copy or a pasted event comes in
+  (`makePlaylist`). A split puts the piece after it right in front of its event and behind whatever was in front of
+  the event, which gets new places after the piece in the order it had (#1189), so splitting a take behind another
+  doesn't bring half of it to the front, and a second split of a piece doesn't bring it in front of the piece after
+  it where the two overlap; a copy or a pasted event comes in
   front, as added last. Events copied, duplicated or pasted together, the events of a copied audio part and those
   of a duplicated track keep the order they were stacked in among them, and so do takes that `event.toFront` or
   `event.comp` bring to the front together. The project file keeps `front` in GNUbase's entry; ids loaded go on after
