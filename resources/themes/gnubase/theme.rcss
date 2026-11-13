@@ -1229,10 +1229,14 @@
 	{
 		decorator: svg(dropdown-arrow.svg);
 	}
+	menubar
+	{
+		background-color: #0c0f1e;
+	}
 	.toolbar
 	{
 		decorator: none;
-		background-color: #101426;
+		background-color: #0c0f1e;
 	}
 	.toolbar button:not(.toggle):not(.primary), .transport button:not(.toggle):not(.primary)
 	{
@@ -1341,12 +1345,12 @@
 	}
 	.transport #record svg.icon
 	{
-		image-color: #ff5270;
+		image-color: #e12ad8;
 	}
 	.transport #record.checked
 	{
 		decorator: none;
-		background-color: #ff5270;
+		background-color: #e12ad8;
 	}
 	.transport #record.checked svg.icon
 	{
@@ -1392,20 +1396,27 @@
 		border-color: #10dff28c;
 		border-radius: 6dp;
 	}
+	.event-display
+	{
+		background-color: #101426;
+	}
+	.track-list
+	{
+		background-color: #14182c;
+	}
 	.track-list listitem
 	{
-		background-color: #1b2036;
+		background-color: #171c32;
 		border-bottom-color: #090b18;
 	}
 	.track-list listitem:hover
 	{
 		decorator: none;
-		background-color: #24283e;
+		background-color: #20253a;
 	}
 	.track-list listitem.selected
 	{
-		decorator: none;
-		background-color: #193f54;
+		decorator: svg-ninepatch(list-item-selected.svg, 6 6 6 6);
 	}
 	.inspector-section button.section-header
 	{

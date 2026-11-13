@@ -328,6 +328,12 @@ TEST_CASE("the default theme's bars, tabs and inspector headers are flat, the ot
 			CHECK(last("tabset tab").find("decorator: none") != std::string::npos);
 			CHECK(last(header).find("disclosure-open.svg") != std::string::npos);
 			CHECK(last(collapsed).find("disclosure-closed.svg") != std::string::npos);
+			// Lanes and the track list on the panels' surface over the window's background, the selected row outlined.
+			const std::string background = readJson(dir / "tokens.json").at("background").get<std::string>();
+			CHECK(last(".event-display").find("background-color: " + background) == std::string::npos);
+			CHECK(last(".track-list").find("background-color: " + background) == std::string::npos);
+			CHECK(last(".track-list listitem.selected").find("list-item-selected.svg") != std::string::npos);
+			CHECK(file("list-item-selected.svg").find("stroke=") != std::string::npos);
 			for (const char* arrow : {"dropdown-button-normal.svg", "disclosure-open.svg", "disclosure-closed.svg"})
 			{
 				INFO(arrow);
@@ -339,6 +345,11 @@ TEST_CASE("the default theme's bars, tabs and inspector headers are flat, the ot
 			CHECK(last(bar).find("button-normal.svg") != std::string::npos);
 			CHECK(last("tabset tab").find("tab-normal.svg") != std::string::npos);
 			CHECK(last(".toolbar").find("toolbar.svg") != std::string::npos);
+			const std::string background = readJson(dir / "tokens.json").at("background").get<std::string>();
+			// The lanes stay on the window's background.
+			for (const auto& [name, declarations] : found)
+				if (name == ".event-display" && declarations.find("background-color") != std::string::npos)
+					CHECK(declarations.find("background-color: " + background) != std::string::npos);
 			CHECK(file("dropdown-button-normal.svg") == file("button-normal.svg"));
 			CHECK(file("dropdown-button-hover.svg") == file("button-hover.svg"));
 			CHECK(file("disclosure-open.svg") == file("button-normal.svg"));

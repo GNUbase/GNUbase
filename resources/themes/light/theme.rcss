@@ -1229,6 +1229,9 @@
 	{
 		decorator: svg(dropdown-arrow.svg);
 	}
+	menubar
+	{
+	}
 	.toolbar
 	{
 		decorator: svg-ninepatch(toolbar.svg, 6 6 6 6);
@@ -1360,6 +1363,12 @@
 	{
 	}
 	.docking .zone-frame
+	{
+	}
+	.event-display
+	{
+	}
+	.track-list
 	{
 	}
 	.track-list listitem

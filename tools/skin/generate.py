@@ -258,6 +258,9 @@ def nine_svg(name: str, theme: dict) -> tuple[int, int, str, dict]:
     elif name == "menu-separator":
         bg = "none"; border = "none"; r = 0; inset = 2
         extra = f'<line x1="2" y1="{h/2+.5}" x2="{w-2}" y2="{h/2+.5}" stroke="{c["border"]}"/>'
+    elif name == "list-item-selected" and theme["flat"]:
+        # The mockup's selection: a tint of the second accent, outlined in it
+        bg = mix(c["surfaceRaised"], c["accent2"], .2); border = mix(c["accent2"], c["text"], .1); r = 3
     elif name == "list-item-selected":
         bg = mix(c["surfaceRaised"], accent, .25); border = accent; r = 2
         extra = f'<rect x=".5" y="2" width="2" height="{h-4}" rx="1" fill="{accent}"/>'
@@ -371,7 +374,10 @@ def flat_rules(theme: dict, skin, on_accent: str) -> list:
     ring = skin("focus-ring")
     dim = mix(c["textMuted"], c["surface"], .45)
     pressed = mix(c["background"], accent, .24)
-    row = mix(c["surfaceRaised"], c["text"], .02)
+    row = c["surfaceRaised"]
+    bar_tone = mix(c["background"], c["surface"], .4)
+    # Record in the second accent, as the mockup has it
+    record = c["accent2"]
 
     def bars(more: str = "", state: str = "", tail: str = "") -> str:
         """The plain buttons in toolbars and the transport bar, with more classes or attributes, a state and a tail."""
@@ -380,7 +386,9 @@ def flat_rules(theme: dict, skin, on_accent: str) -> list:
 
     pairs = [
         # Toolbars and the transport bar on the panels' surface
-        (".toolbar", {"decorator": "none", "background-color": c["surface"]}, {"decorator": skin("toolbar")}),
+        # Menu bar and toolbars in the window's dark tone, the zones' panels lighter below them
+        ("menubar", {"background-color": bar_tone}, {}),
+        (".toolbar", {"decorator": "none", "background-color": bar_tone}, {"decorator": skin("toolbar")}),
         # Their buttons: no frame, muted until the mouse is over them, a soft fill under it, the accent when checked
         (bars(), {"decorator": "none", "background-color": "transparent", "border-radius": f"{r['control']}dp",
                   "color": c["textMuted"]},
@@ -418,8 +426,8 @@ def flat_rules(theme: dict, skin, on_accent: str) -> list:
         (".transport #start.checked", {"decorator": "none", "background-color": accent},
          {"decorator": skin("button-checked")}),
         (".transport #start.checked svg.icon", {"image-color": on_accent}, {"image-color": c["text"]}),
-        (".transport #record svg.icon", {"image-color": c["danger"]}, {"image-color": c["text"]}),
-        (".transport #record.checked", {"decorator": "none", "background-color": c["danger"]},
+        (".transport #record svg.icon", {"image-color": record}, {"image-color": c["text"]}),
+        (".transport #record.checked", {"decorator": "none", "background-color": record},
          {"decorator": skin("button-checked")}),
         (".transport #record.checked svg.icon", {"image-color": "#ffffff"}, {"image-color": c["text"]}),
         (".transport .primary-time", {"color": c["text"], "font-size": f"{theme['fontSizes']['title'] + 2}dp",
@@ -438,12 +446,14 @@ def flat_rules(theme: dict, skin, on_accent: str) -> list:
         (".docking [zone]", {"background-color": c["surface"], "border-radius": f"{r['panel']}dp"}, {}),
         (".docking .zone-frame", {"border-width": f"{widths['hairline']}dp", "border-color": accent + "8c",
                                   "border-radius": f"{r['panel']}dp"}, {}),
+        # The event display's lanes on the panels' surface, the track list beside them a step lighter
+        (".event-display", {"background-color": c["surface"]}, {}),
+        (".track-list", {"background-color": mix(c["surface"], c["surfaceRaised"], .5)}, {}),
         # Track list rows: each a raised row, the window's background between them, the selected one lit
         (".track-list listitem", {"background-color": row, "border-bottom-color": c["background"]}, {}),
         (".track-list listitem:hover", {"decorator": "none", "background-color": mix(row, c["text"], .04)},
          {}),
-        (".track-list listitem.selected", {"decorator": "none", "background-color": mix(row, accent, .16)},
-         {}),
+        (".track-list listitem.selected", {"decorator": skin("list-item-selected")}, {}),
         # Inspector sections: a bold name after a disclosure arrow, pointing down while the section is open
         (".inspector-section button.section-header",
          {"decorator": skin("disclosure-open"), "background-color": "transparent", "color": c["text"],

@@ -24,10 +24,12 @@ how each state looks (CLAUDE.md, "UI conventions"). The code is in `src/ui/theme
   The default theme's glows are part of its skins, so they cost no extra render passes.
 - **Flat widgets.** The default theme follows the mockup `art/mockups/main-window.webp` (#1311, #1328); the elements
   and layout stay as they are. Its toolbar and transport buttons have no frame: muted until the mouse is over them, a
-  soft fill under it, the accent when checked, Start in the accent and Record in the danger color. Menu buttons that
-  show a value look like drop-down fields with an arrow, tabs are names over an accent line, zones are rounded panels
-  over the window's background, track list rows are raised with the selected one lit, inspector section headers are
-  bold names after a disclosure arrow, and value fields have no accent line. The generator's `flat_rules` gives every
+  soft fill under it, the accent when checked, Start in the accent and Record in the second accent. The menu bar and
+  toolbars are in the window's dark tone. Menu buttons that show a value look like drop-down fields with an arrow,
+  tabs are names over an accent line, zones are rounded panels over the window's background, the event display's
+  lanes are on the panels' surface with the track list a step lighter, track list rows are raised, a selected list
+  item is tinted and outlined in the second accent, inspector section headers are bold names after a disclosure
+  arrow, and value fields have no accent line. The generator's `flat_rules` gives every
   theme the same selectors (the check below): the default theme its flat look, the others what their general rules
   already give, so they keep their framed look. Their drop-down button and disclosure skins are the plain button's.
   Rules for buttons in bars skip toggle and primary buttons (`:not(.toggle):not(.primary)`), which keep their skins.
@@ -86,7 +88,7 @@ The theme styles RmlUi's controls by their tags and states, and GNUbase's contai
   white keys lighter than its black keys, dims the audio part editor's events that their part hides entirely, and the
   high contrast theme meets WCAG's contrast ratios. The default theme's bar buttons, tabs and inspector headers are
   flat, the other themes' framed, their arrow skins the plain button's, and no bar rule reaches toggle or primary
-  buttons.
+  buttons; the default theme's lanes and track list are off the window's background, the other themes' lanes on it.
 - `tests/stylerules_tests.cpp`: C++ and Lua code (`src`, `resources`, `tests/lua`) never sets a style property other
   than geometry from data (position, size, transform), and documents and shared style sheets never name a theme.
 - `tests/window_tests.cpp`: a page of widgets (`tests/data/ui/widgets.rml`) in every theme, and in the default theme
