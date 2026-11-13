@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -343,6 +344,46 @@ TEST_CASE("audio events show their waveforms from the engine's waveform overview
 	// Removing the event removes its waveform, through any client.
 	fixture.call("history.undo");
 	REQUIRE(fixture.waitUntil([&] { return waveforms(fixture.document).empty(); }));
+}
+
+TEST_CASE("audio events' waveforms are in their events' colors, or else their tracks'", "[unit]")
+{
+	// #1312: the event display gives each waveform the color its event shows in.
+	const test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "take.wav";
+	test::Audio audio;
+	audio.samples.assign(4800, 0.5F);
+	test::writeWav(file, audio);
+
+	Fixture fixture;
+	const Json track =
+		fixture.call("track.add", {{"type", "audio"}, {"timeBase", "linear"}, {"color", "#204060"}}).at("track");
+	const Json media = fixture.call("media.add", {{"path", file.u8string()}}).at("media");
+	const Json clip = fixture.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	const Json event = fixture
+						   .call("audioEvent.add",
+							   {{"track", track.at("id")}, {"clip", clip.at("id")}, {"position", 0}, {"length", 4800}})
+						   .at("event");
+	const auto colored = [&](uint32_t color)
+	{
+		return fixture.waitUntil(
+			[&]
+			{
+				const std::vector<ui::Waveform*> list = waveforms(fixture.document);
+				return list.size() == 1 && list[0]->span().color == color;
+			});
+	};
+	REQUIRE(colored(0x204060ffU));
+	const ui::Waveform* wave = waveforms(fixture.document)[0];
+
+	// A color of its own, on the same element; back to the track's, which follows the track.
+	fixture.call("event.set", {{"events", {event.at("id")}}, {"color", "#a0c0e0"}});
+	REQUIRE(colored(0xa0c0e0ffU));
+	CHECK(waveforms(fixture.document)[0] == wave);
+	fixture.call("event.set", {{"events", {event.at("id")}}, {"color", nullptr}});
+	REQUIRE(colored(0x204060ffU));
+	fixture.call("track.set", {{"track", track.at("id")}, {"color", "#ffffff"}});
+	REQUIRE(colored(0xffffffffU));
 }
 
 TEST_CASE("waveforms of lanes scrolled out of view are clipped to the event area", "[unit]")

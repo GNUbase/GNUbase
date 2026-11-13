@@ -445,7 +445,7 @@
 	{
 		background-color: #eef1f5;
 	}
-	.event-display .event-area event-lanes
+	.event-display event-lanes.events, .event-display event-lanes.muted-events, .event-display event-lanes.selected-events, .event-display event-lanes.folder-data
 	{
 		event-inset: 0dp;
 	}
@@ -457,6 +457,7 @@
 	.event-display .waveforms waveform
 	{
 		own-color-tint: none;
+		padding: 2dp 0;
 	}
 	.event-display .overview
 	{

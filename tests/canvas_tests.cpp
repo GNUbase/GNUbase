@@ -18,6 +18,8 @@
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <set>
 #include <string>
 #include <utility>
@@ -358,9 +360,54 @@ TEST_CASE("a waveform with a color of its own shows in it when the style sheet t
 	vertices = fixture.draw();
 	CHECK(count(vertices, green()) == 0);
 	CHECK(count(vertices, Colour{255, 128, 128, 255}) == 4);
+	// A new color for the same peaks, as when the event's or its track's color changes.
+	wave.setColor(0x0000ffffU);
+	vertices = fixture.draw();
+	CHECK(count(vertices, Colour{128, 128, 255, 255}) == 4);
+	CHECK(wave.channels().size() == 1);
 	// Without an own color, the style sheet's.
 	wave.setPeaks({0.0, 400.0}, {peaks});
 	CHECK(count(fixture.draw(), green()) == 4);
+}
+
+TEST_CASE("in the default theme a full-scale waveform stays inside its event's body", "[unit]")
+{
+	// The theme keeps events off their lanes' edges and pads waveforms by more (#1312).
+	OneWindow fixture;
+	std::ifstream file(std::filesystem::path(GNUBASE_RESOURCES_DIR) / "themes" / "gnubase" / "theme.rcss");
+	REQUIRE(file);
+	const std::string theme{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+	fixture.ui.shell.setTheme("gnubase");
+	fixture.show(theme +
+			" event-lanes, waveform { position: absolute; left: 0; top: 0; width: 4dp; height: 40dp;"
+			" box-sizing: border-box; }",
+		R"(<div class="event-display"><div class="event-area"><event-lanes id="lanes" class="events" scale="100"/>)"
+		R"(<div class="waveforms"><waveform id="wave" scale="100"/></div></div></div>)");
+	auto& lanes = fixture.element<ui::EventLanes>("lanes");
+	auto& wave = fixture.element<ui::Waveform>("wave");
+	ui::TimeSpan event{0.0, 400.0};
+	event.color = 0x00ff00ffU;
+	lanes.setLanes({{40.0F, {event}}});
+	ui::PeakColumns peaks;
+	peaks.low = {-32768, -32768, -32768, -32768};
+	peaks.high = {32767, 32767, 32767, 32767};
+	wave.setPeaks({0.0, 400.0, 0xff0000ffU}, {peaks});
+	const std::vector<Rml::Vertex> vertices = fixture.draw();
+
+	// Canvases build around their view, a view's height above it: from vertex to element coordinates.
+	const auto top = [](Rml::Element& element, float y)
+	{
+		const Rml::Box& box = element.GetBox();
+		return y - box.GetSize(Rml::BoxArea::Content).y + box.GetPosition(Rml::BoxArea::Content).y;
+	};
+	const std::vector<float> body = extent(vertices, Colour{0, 115, 0, 115});   // green at the theme's opacity
+	const std::vector<float> line = extent(vertices, Colour{255, 89, 89, 255}); // red tinted
+	REQUIRE(body[1] < body[3]);
+	REQUIRE(line[1] < line[3]);
+	CHECK(top(lanes, body[1]) == 3.0F); // inside the outline, 2 off the lane's edges
+	CHECK(top(lanes, body[3]) == 37.0F);
+	CHECK(top(wave, line[1]) > top(lanes, body[1]));
+	CHECK(top(wave, line[3]) < top(lanes, body[3]));
 }
 
 TEST_CASE("a curve builds only the segments around the view", "[unit]")

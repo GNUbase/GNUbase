@@ -349,6 +349,7 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
     events = theme["events"]
     if events is None:
         event_look = {"lanes": {"own-fill-opacity": "1", "own-color-tint": "none"}, "tint": "none", "inset": "0dp",
+                      "wave": "2dp 0",
                       "selected": {"color": mix(c["surfaceRaised"], c["accent"], .7), "stroke-color": c["text"]}}
     else:
         event_look = {
@@ -357,6 +358,7 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
                       "own-fill-opacity": f"{events['fillOpacity']:g}", "own-color-tint": events["tint"]},
             "tint": events["tint"],
             "inset": "2dp",
+            "wave": "4dp 0",  # the inset and the 2dp every theme keeps between a waveform and its event's edges
             "selected": {"color": c["text"] + events["selected"], "stroke-color": c["text"]},
         }
 
@@ -502,9 +504,11 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".event-display", {"background-color": c["background"]}),
         # Events in their colors (#1312): the lanes' events, muted and selected ones and folder data blocks, off the
         # lanes' edges in the default theme; the events tinted, their waveforms in their colors.
-        (".event-display .event-area event-lanes", {"event-inset": event_look["inset"]}),
+        (".event-display event-lanes.events, .event-display event-lanes.muted-events, "
+         ".event-display event-lanes.selected-events, .event-display event-lanes.folder-data",
+         {"event-inset": event_look["inset"]}),
         (".event-display event-lanes.events", event_look["lanes"]),
-        (".event-display .waveforms waveform", {"own-color-tint": event_look["tint"]}),
+        (".event-display .waveforms waveform", {"own-color-tint": event_look["tint"], "padding": event_look["wave"]}),
         (".event-display .overview", {"background-color": c["surface"]}),
         (".event-display .overview event-lanes", {"color": mix(c["surface"], c["accent"], .45),
                                                   "stroke-color": "transparent"}),
