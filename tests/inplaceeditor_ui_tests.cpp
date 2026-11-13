@@ -242,6 +242,19 @@ TEST_CASE("the in-place editor edits notes as the key editor does, and the event
 	f.scroll(62);
 	f.click(f.at(g_bar + (3 * g_quarter) + (g_sixteenth / 2), 62));
 	f.settle(4);
+	// While a note is being drawn, zooming the project window moves the notes and the drawn one with the timeline.
+	f.app.ui().press(std::nullopt, f.at(g_bar + (g_sixteenth / 2), 63), ui::MouseButton::Left, {});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const std::string drawn = f.editor() + " .key-note.drawing";
+	REQUIRE(f.elements(drawn).size() == 1);
+	f.display.zoomIn();
+	f.settle(5); // the four notes and the one being drawn
+	CHECK(std::abs(f.box(drawn).at("x").get<double>() - f.timelineX(g_bar)) <= 1.5);
+	f.app.ui().release(std::nullopt, f.at(g_bar + (g_sixteenth / 2), 63), ui::MouseButton::Left, {});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.elements(drawn).empty());
+	f.display.zoomOut(); // the part added next in view again
+	f.settle(5);
 	// A part added to the track shows in the row of parts; a click on it activates it.
 	const uint64_t later =
 		f.app.call("midiPart.add", {{"track", f.track}, {"position", 3 * g_bar}, {"length", g_bar}, {"name", "More"}})
@@ -448,6 +461,73 @@ TEST_CASE("two in-place editors and the lower zone's key editor have menus and s
 	CHECK(f.elements("#in-place-active-part-menu" + suffix).empty());
 	CHECK(f.elements("#key-length-menu-inPlace-" + std::to_string(strings)).size() == 1);
 	CHECK(f.elements("#key-length-menu").size() == 1);
+}
+
+TEST_CASE("a key held in an in-place editor that closes ends its pitch", "[ui]")
+{
+	// A key of the keyboard plays its pitch until the mouse is released (p. 1204); the in-place editor closing ends it
+	// with the editor.
+	Fixture f;
+	const uint64_t strings = f.app.call("track.add", {{"type", "instrument"}}).at("track").at("id").get<uint64_t>();
+	f.app.call("midiPart.add", {{"track", strings}, {"position", g_bar}, {"length", g_bar}, {"name", "Strings"}});
+	REQUIRE(f.app.waitUntil([&] { return f.display.project().at("midiParts").size() == 2; }));
+	// The instrument noteProbe, rendered by hand, so that the notes the keyboard sends are heard.
+	f.app.call("audio.setDevice", {{"blockSize", 128}, {"inputChannels", 0}, {"captureSeconds", 1}});
+	const Json tracks = f.app.call("project.get").at("tracks");
+	const auto instrument =
+		std::find_if(tracks.begin(), tracks.end(), [&](const Json& each) { return each.at("id") == strings; });
+	REQUIRE(instrument != tracks.end());
+	f.app.call("channel.set", {{"channel", instrument->at("channel")}, {"instrument", "noteProbe"}});
+	f.app.call("audio.render", {{"frames", 128}}); // the new graph
+	f.app.call("midi.capture", {{"start", true}});
+	std::vector<std::vector<int>> played;
+	const auto plays = [&](const std::vector<std::vector<int>>& expected)
+	{
+		return f.app.waitUntil(
+			[&]
+			{
+				f.app.call("audio.render", {{"frames", 128}});
+				const Json captured = f.app.call("midi.capture");
+				for (const Json& message : captured.at("captured"))
+				{
+					const auto bytes = message.at("bytes").get<std::vector<int>>();
+					if ((bytes.at(0) & 0xE0) == 0x80)
+						played.push_back(bytes);
+				}
+				return played == expected;
+			});
+	};
+
+	f.app.appUi().trackList()->select({strings});
+	f.app.call("editor.inPlace", {{"tracks", {strings}}, {"open", true}});
+	const std::string lane = ".in-place-editor[track=\"" + std::to_string(strings) + "\"]";
+	REQUIRE(f.app.waitUntil([&] { return f.elements(lane + " .key-editor-keys").size() == 1; }));
+	// The lane in view, and C3 in its rows.
+	const std::vector<uint64_t>& lanes = f.display.laneTracks();
+	const auto found = std::find(lanes.begin(), lanes.end(), strings);
+	REQUIRE(found != lanes.end());
+	f.display.scrollVertically(f.display.laneTops().at(static_cast<size_t>(found - lanes.begin())));
+	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().inPlaceEditors()->keyEditor(strings)->scrollToPitch(60); }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const Json keyboard = f.box(lane + " .key-editor-keys");
+	const Json grid = f.box(lane + " .key-editor-grid");
+	const double y = grid.at("y").get<double>() + ((127.5 - 60) / 128.0 * grid.at("height").get<double>());
+	// The key is in view: inside the lane's box and the window, wherever the lower zone and the window's size leave it.
+	const Json shown = f.box(lane);
+	const Json area = f.box(".event-area");
+	REQUIRE(y >= shown.at("y").get<double>());
+	REQUIRE(y <= shown.at("y").get<double>() + shown.at("height").get<double>());
+	REQUIRE(y >= area.at("y").get<double>());
+	REQUIRE(y <= area.at("y").get<double>() + area.at("height").get<double>());
+	f.app.ui().press(std::nullopt,
+		{"", 0, ui::Point{keyboard.at("x").get<int>() + 2, static_cast<int>(std::lround(y))}}, ui::MouseButton::Left,
+		{});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(plays({{0x90, 60, 100}}));
+
+	f.app.call("editor.inPlace", {{"tracks", {strings}}, {"open", false}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(lane).empty(); }));
+	CHECK(plays({{0x90, 60, 100}, {0x80, 60, 0}}));
 }
 
 TEST_CASE("only a track's own lane grows for its in-place editor, which a folded folder hides", "[ui]")

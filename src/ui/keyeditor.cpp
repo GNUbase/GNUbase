@@ -3,6 +3,7 @@
 
 #include "engine/midi/chords.h"
 #include "engine/midi/quantizesettings.h"
+#include "platform/log.h"
 #include "ui/controllerlanes.h"
 #include "ui/timeformat.h"
 
@@ -15,6 +16,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <exception>
 #include <map>
 #include <tuple>
 #include <utility>
@@ -268,6 +270,12 @@ namespace gnubase::ui
 			R"( title="Insert Velocity"/>)" +
 			(drum ? R"(<span class="separator"/><button id="drum-map" menu="drum-map-menu)" + m_menuSuffix +
 						R"(" title="Drum Map"/>)"
+						R"(<button class="key-input" setting="pitchVisibility" title="Pitch Visibility On/Off">)"
+						R"(Pitch Visibility</button><button id="drum-pitch-options" menu="drum-pitch-menu)" +
+						m_menuSuffix +
+						R"(" title="Select Pitch Visibility Options">Options</button>)"
+						R"(<button class="key-input" setting="showNoteLength" title="Show Note Length On/Off">)"
+						R"(Note Length</button>)"
 				  : "") +
 			R"(</div>)"
 			R"(<div class="info-line key-editor-info empty"><span class="info-empty">No Object Selected</span>)" +
@@ -299,7 +307,9 @@ namespace gnubase::ui
 		holder->SetInnerRML(R"(<menu id="key-length-menu)" + m_menuSuffix + R"(">)" + items +
 			R"(</menu><menu id="key-line-menu)" + m_menuSuffix + R"(">)" + modes +
 			R"(</menu><menu id="key-editor-toolbox)" + m_menuSuffix + R"(" class="toolbox">)" + toolbox + "</menu>" +
-			(drum ? R"(<menu id="drum-map-menu)" + m_menuSuffix + R"("/>)" : std::string()));
+			(drum ? R"(<menu id="drum-map-menu)" + m_menuSuffix + R"("/><menu id="drum-pitch-menu)" + m_menuSuffix +
+						R"("><menuitem type="toggle" setting="reverseSounds">Reverse Drum Sound List</menuitem></menu>)"
+				  : std::string()));
 		while (holder->HasChildNodes())
 		{
 			Rml::Element* menu = document->AppendChild(holder->RemoveChild(holder->GetFirstChild()));
@@ -351,6 +361,18 @@ namespace gnubase::ui
 
 	KeyEditor::~KeyEditor()
 	{
+		// A key held while the editor goes ends its pitch, whichever way the editor goes: closing, its window closed,
+		// another editor shown instead, the lower zone's panel or an in-place editor going, or the switch between the
+		// key and drum editor, which builds a key editor of its own. Sending may throw, which a destructor must not
+		// pass on.
+		try
+		{
+			sound(std::nullopt);
+		}
+		catch (const std::exception& error)
+		{
+			logging::warning("The key editor cannot end the pitch of its pressed key: {}", error.what());
+		}
 		if (Rml::Element* document = m_document.get())
 		{
 			document->RemoveEventListener(Rml::EventId::Mouseup, this);
@@ -561,7 +583,7 @@ namespace gnubase::ui
 		// The selection only changes classes, so that a press that selects keeps the element under the mouse.
 		std::string rml;
 		for (const Note& note : m_notes)
-			rml += R"(<div class="key-note)" + std::string(m_drum ? " drum-note" : "") +
+			rml += R"(<div class="key-note)" + std::string(diamonds() ? " drum-note" : "") +
 				(note.editable ? "" : " inactive") + R"(" part=")" + std::to_string(note.part) + R"(" note=")" +
 				std::to_string(note.id) + R"("/>)";
 		// Compared with what was set last: the element's own RML has the classes set since.
@@ -601,6 +623,19 @@ namespace gnubase::ui
 			menu->QuerySelectorAll(items, "menuitem");
 			for (Rml::Element* item : items)
 				if ((attribute(*item, "length") == length) != item->HasAttribute("checked"))
+				{
+					if (item->HasAttribute("checked"))
+						item->RemoveAttribute("checked");
+					else
+						item->SetAttribute("checked", "");
+				}
+		}
+		if (Rml::Element* menu = m_menus.size() > 4 ? m_menus[4].get() : nullptr)
+		{
+			Rml::ElementList items;
+			menu->QuerySelectorAll(items, "menuitem[setting]");
+			for (Rml::Element* item : items)
+				if (m_view.value(attribute(*item, "setting"), false) != item->HasAttribute("checked"))
 				{
 					if (item->HasAttribute("checked"))
 						item->RemoveAttribute("checked");
@@ -652,11 +687,25 @@ namespace gnubase::ui
 			for (const Part& part : m_parts)
 				if (part.id == idAttribute(*element, "part"))
 					place(*element, part.start, part.end - part.start, -1);
-		// The notes' elements are in m_notes' order (render).
-		const Rml::Element* notes = root->QuerySelector(".key-editor-notes");
-		if (notes != nullptr && static_cast<size_t>(notes->GetNumChildren()) == m_notes.size())
-			for (size_t i = 0; i < m_notes.size(); ++i)
-				place(*notes->GetChild(static_cast<int>(i)), m_notes[i].start, m_notes[i].length, m_notes[i].pitch);
+		// The notes' elements are in m_notes' order (render), and a note being drawn after them (press).
+		if (const Rml::Element* notes = root->QuerySelector(".key-editor-notes"))
+		{
+			const Rml::Element* drawn = m_drawn.get();
+			size_t next = 0;
+			for (int i = 0; i < notes->GetNumChildren(); ++i)
+			{
+				Rml::Element& child = *notes->GetChild(i);
+				if (&child == drawn)
+				{
+					place(child, std::llround(m_pressedAt.first), m_drawnLength, m_pressedAt.second);
+				}
+				else if (next < m_notes.size())
+				{
+					place(child, m_notes[next].start, m_notes[next].length, m_notes[next].pitch);
+					++next;
+				}
+			}
+		}
 		if (Rml::Element* cursor = root->QuerySelector(".key-editor-step-cursor");
 			cursor != nullptr && m_view.value("stepInput", false))
 			place(*cursor, m_view.value("stepPosition", int64_t{0}), 0, -1);
@@ -1038,6 +1087,16 @@ namespace gnubase::ui
 			sound(std::stoi(attribute(*key, "pitch")));
 			return;
 		}
+		// A click on a drum sound's pitch auditions it: its I-note, which the track's map plays as the sound
+		// (#882, p. 1236).
+		if (const Rml::Element* row = withAttribute(target, "pitch", root);
+			m_drum && row != nullptr && target->IsClassSet("drum-sound-pitch"))
+		{
+			const int pitch = std::stoi(attribute(*row, "pitch"));
+			const Json* map = activeMap();
+			sound(map != nullptr ? map->at("sounds").at(static_cast<size_t>(pitch)).at("iNote").get<int>() : pitch);
+			return;
+		}
 		const Rml::Element* area = root->QuerySelector(".key-editor-grid");
 		bool inGrid = false;
 		for (const Rml::Element* each = target; each != nullptr && each != root; each = each->GetParentNode())
@@ -1104,9 +1163,7 @@ namespace gnubase::ui
 			// A click draws a note of the length quantize's length, a drag a multiple of it (p. 1212). The drumstick
 			// deletes the note clicked (p. 1242).
 			if (pressed != nullptr && m_drum)
-				edit("Erase",
-					Json::array({{{"command", "note.remove"},
-						{"parameters", {{"part", pressed->part}, {"notes", Json::array({pressed->id})}}}}}));
+				m_gesture = Gesture::Erase;
 			if (pressed != nullptr)
 				return;
 			const int64_t start = snap(ticks - (m_snapOff ? 0.0 : static_cast<double>(grid()) / 2.0), m_snapOff);
@@ -1117,10 +1174,11 @@ namespace gnubase::ui
 			Rml::Element* notes = root->QuerySelector(".key-editor-notes");
 			Rml::ElementPtr drawn = root->GetOwnerDocument()->CreateElement("div");
 			drawn->SetClass("key-note", true);
-			drawn->SetClass("drum-note", m_drum);
+			drawn->SetClass("drum-note", diamonds());
 			drawn->SetClass("drawing", true);
 			Rml::Element* added = notes->AppendChild(std::move(drawn));
-			place(*added, start, lengthQuantize(m_pressedAt.second), m_pressedAt.second);
+			m_drawnLength = lengthQuantize(m_pressedAt.second);
+			place(*added, start, m_drawnLength, m_pressedAt.second);
 			m_drawn = added->GetObserverPtr();
 			return;
 		}
@@ -1242,11 +1300,12 @@ namespace gnubase::ui
 				const int64_t step = lengthQuantize(m_pressedAt.second);
 				const auto steps = std::max<int64_t>(
 					1, static_cast<int64_t>(std::ceil((ticks - m_pressedAt.first) / static_cast<double>(step))));
-				place(*drawn, std::llround(m_pressedAt.first), steps * step, m_pressedAt.second);
+				m_drawnLength = steps * step;
+				place(*drawn, std::llround(m_pressedAt.first), m_drawnLength, m_pressedAt.second);
 			}
 			return;
 		}
-		if (!m_pressed)
+		if (!m_pressed || m_gesture == Gesture::Erase)
 			return;
 		const int64_t dt = delta(m_gesture, ticks);
 		const int rows = m_gesture == Gesture::Move
@@ -1299,6 +1358,22 @@ namespace gnubase::ui
 		if (gesture == Gesture::None)
 			return;
 		const auto [ticks, pitch] = at(event);
+		if (gesture == Gesture::Erase && m_pressed)
+		{
+			// The drumstick deletes the note clicked, and with a drag to the right the notes of its sound up to
+			// where it is released (p. 1242).
+			std::map<uint64_t, Json> removed;
+			const int64_t until = std::max(static_cast<int64_t>(std::llround(ticks)), m_pressed->start);
+			for (const Note& each : m_notes)
+				if (each.editable && each.pitch == m_pressed->pitch &&
+					(each.id == m_pressed->id || (each.start >= m_pressed->start && each.start <= until)))
+					removed[each.part].push_back(each.id);
+			Json commands = Json::array();
+			for (const auto& [part, notes] : removed)
+				commands.push_back({{"command", "note.remove"}, {"parameters", {{"part", part}, {"notes", notes}}}});
+			edit("Erase", std::move(commands));
+			return;
+		}
 		if (gesture == Gesture::Draw)
 		{
 			Rml::Element* drawn = m_drawn.get();
@@ -1435,6 +1510,8 @@ namespace gnubase::ui
 			for (int pitch = 0; pitch < g_pitches; ++pitch)
 				m_order.push_back(m_drum ? pitch : g_pitches - 1 - pitch);
 		}
+		if (m_drum && m_view.value("pitchVisibility", false) && m_view.value("reverseSounds", false))
+			std::reverse(m_order.begin(), m_order.end());
 		m_rowOf.assign(static_cast<size_t>(g_pitches), 0);
 		for (size_t row = 0; row < m_order.size(); ++row)
 			m_rowOf.at(static_cast<size_t>(m_order[row])) = static_cast<int>(row);
@@ -1459,6 +1536,7 @@ namespace gnubase::ui
 			{
 				const Json& sound = map->at("sounds").at(static_cast<size_t>(pitch));
 				const Json& channel = sound.at("channel");
+				const std::string output = sound.at("output").get<std::string>();
 				rml += std::string(R"(<button class="drum-sound-mute)") +
 					(sound.at("mute").get<bool>() ? " checked" : "") + R"(" title="Mute">M</button>)" +
 					R"(<textdisplay class="drum-sound-name" sound-field="name" title="Drum Sound" value=")" +
@@ -1467,7 +1545,8 @@ namespace gnubase::ui
 					field("iNote", "I-Note", engine::midi::pitchName(sound.at("iNote").get<int>())) +
 					field("oNote", "O-Note", engine::midi::pitchName(sound.at("oNote").get<int>())) +
 					field("channel", "Channel",
-						channel.is_null() ? std::string("Any") : std::to_string(channel.get<int>() + 1));
+						channel.is_null() ? std::string("Any") : std::to_string(channel.get<int>() + 1)) +
+					field("output", "Output", output.empty() ? std::string("Default") : output);
 			}
 			rml += "</div>";
 		}
@@ -1499,6 +1578,7 @@ namespace gnubase::ui
 		if (map != nullptr)
 			rml += R"(<menuitem drum-map-action="copy">New Copy</menuitem>)"
 				   R"(<menuitem drum-map-action="remove">Remove</menuitem>)";
+		rml += R"(<menuseparator/><menuitem drum-map-action="setup">Drum Map Setup...</menuitem>)";
 		if (Rml::Element* menu = m_menus.size() > 3 ? m_menus[3].get() : nullptr;
 			menu != nullptr && rml != m_mapMenuRml)
 		{
@@ -1507,11 +1587,18 @@ namespace gnubase::ui
 		}
 	}
 
-	// A map chosen in the Map menu becomes the active track's; New Map and New Copy add one that does, Remove removes
-	// the track's.
+	// A map chosen in the Map menu becomes the active track's; New Map and New Copy add one that does, in the same undo
+	// step, Remove removes the track's; Drum Map Setup opens the setup.
 	void KeyEditor::drumMapMenu(Rml::Element& target)
 	{
 		const Json track = m_view.value("activeTrack", Json(0));
+		const std::string action = attribute(target, "drum-map-action");
+		if (action == "setup")
+		{
+			if (m_drumMapSetup)
+				m_drumMapSetup();
+			return;
+		}
 		if (track == 0)
 			return;
 		if (target.HasAttribute("drum-map"))
@@ -1519,22 +1606,16 @@ namespace gnubase::ui
 			m_binding.send("track.set", {{"track", track}, {"drumMap", idAttribute(target, "drum-map")}});
 			return;
 		}
-		const std::string action = attribute(target, "drum-map-action");
 		const Json* map = activeMap();
 		if (action == "remove" && map != nullptr)
 		{
 			m_binding.send("drumMap.remove", {{"map", map->at("id")}});
 			return;
 		}
-		Json parameters = Json::object();
+		Json parameters = {{"track", track}};
 		if (action == "copy" && map != nullptr)
 			parameters["copy"] = map->at("id");
-		m_binding.send("drumMap.add", parameters,
-			[this, track, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
-			{
-				if (!alive.expired() && result.ok())
-					m_binding.send("track.set", {{"track", track}, {"drumMap", result.value.at("map").at("id")}});
-			});
+		m_binding.send("drumMap.add", parameters);
 	}
 
 	// A drum sound's setting typed into the list: its name, snap (a note value), I-note and O-note (a pitch name or
@@ -1561,6 +1642,10 @@ namespace gnubase::ui
 			if (!note)
 				return;
 			sound[field] = *note;
+		}
+		else if (field == "output")
+		{
+			sound["output"] = text == "Default" ? std::string() : text;
 		}
 		else if (field == "channel")
 		{

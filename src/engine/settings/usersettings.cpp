@@ -483,6 +483,10 @@ namespace gnubase::engine::settings
 					"The type of new tempo events (reference manual p. 1448): ramp changes the tempo gradually from "
 					"the event before, step jumps, auto takes the type of the event before (tempo.add, tempo.tap).",
 					Json{{"type", "string"}, {"enum", {"ramp", "step", "auto"}}}, "auto"},
+				{"editing.useDrumEditor",
+					"Use Drum Editor when Drum Map is assigned (reference manual p. 1603): a closed editor opens the "
+					"parts of a track with a drum map in the drum editor (editor.open).",
+					Json{{"type", "boolean"}}, true},
 				{"meter.resetOnStart",
 					"Reset on Start: the loudness meter, and the main mix's peak and RMS maxima, start over when "
 					"playback starts (see meter.get).",
@@ -504,7 +508,10 @@ namespace gnubase::engine::settings
 					"change's last value before that position.",
 					Json{{"type", "boolean"}}, true},
 				{"midi.chaseNotes",
-					"Where playback starts or jumps, MIDI tracks start the notes that sound at that position.",
+					"Where playback starts or jumps, MIDI tracks start the notes that sound at that position, after "
+					"the "
+					"last key switch of each pitch before it that an articulation map's sound slots played, for a "
+					"sample, so that the instrument plays the articulation it had there.",
 					Json{{"type", "boolean"}}, true},
 				{"midi.chasePitchBend",
 					"Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each "
@@ -813,6 +820,16 @@ namespace gnubase::engine::settings
 																		{"maximum", 127}}}}}}}}}}},
 								{"required", Json::array({"name", "lanes"})}}}},
 					Json::array()},
+				{"ui.samplerPanel",
+					"The sampler panel's toolbar (#1122, reference manual pp. 712, 735): lockParameters, Lock "
+					"Parameter Settings, whether a sample loaded into the sampler keeps its settings, and "
+					"normalizeLevel, the Normalization Level in dBFS that Normalize Sample brings the peak to. Other "
+					"properties, from later versions, are kept.",
+					Json{{"type", "object"},
+						{"properties",
+							{{"lockParameters", {{"type", "boolean"}}},
+								{"normalizeLevel", {{"type", "number"}, {"minimum", -96}, {"maximum", 0}}}}}},
+					Json{{"lockParameters", false}, {"normalizeLevel", 0}}},
 				{"ui.setupPresets",
 					"The setup panes' presets (reference manual p. 1575, docs/features/docking.md), by set of "
 					"sections (transport, inspector, channel): each a name, the order of the set's sections and those "

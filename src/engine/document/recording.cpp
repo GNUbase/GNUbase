@@ -398,7 +398,8 @@ namespace gnubase::engine
 			{"properties",
 				{{"track", integer}, {"path", {{"type", "string"}}}, {"takes", {{"type", "array"}, {"items", take}}},
 					{"notes", {{"type", "array"}, {"items", note}}},
-					{"controllers", {{"type", "array"}, {"items", controller}}}}},
+					{"controllers", {{"type", "array"}, {"items", controller}}},
+					{"chordsOnly", {{"type", "boolean"}}}}},
 			{"required", {"track", "takes"}}};
 
 		add(engine,
@@ -428,6 +429,15 @@ namespace gnubase::engine
 				"each on a lane of its own as for audio, and mutes all of them but the last; mixStacked does too "
 				"without muting. A single take is added by midiMode alone, whatever the cycleMode. With the project's "
 				"auto quantize (quantize.set) the recorded notes are quantized. "
+				"On a track with an articulation map (track.set articulationMap), the remote triggers of its sound "
+				"slots aren't recorded: the notes whose pitch is a slot's trigger (remoteTrigger keySwitch) or the "
+				"program changes whose program is one (programChange) select their slot instead, as directions "
+				"(articulation controller events) where they come and as the slot's attributes on the notes that "
+				"start while it is selected; without latch the default slot comes back where the key is released. "
+				"With the chord track record-enabled (chord.setTrack recordEnable, reference manual p. 1345), the "
+				"chords that each take's notes make replace the chord events over that take, take after take; a MIDI "
+				"or instrument track with chordsOnly only monitored while the chord track recorded: its notes make "
+				"chord events and no part. "
 				"One undo step. "
 				"Announces recording.added with the result: the media files, clips and events added and the MIDI "
 				"parts recorded into. project, as project.revision reports it, is the project the recording was made "
@@ -504,6 +514,8 @@ namespace gnubase::engine
 			{
 				require(!entry.contains("path"),
 					"track " + std::to_string(trackId) + " isn't an audio track: it records MIDI, not a file");
+				if (entry.value("chordsOnly", false))
+					continue; // its notes only make chord events, below
 				for (const Json& part : addMidiRecording(project, run, found->second, entry, midiMode, cycleMode, snap))
 					parts.push_back(part);
 				continue;
@@ -567,31 +579,42 @@ namespace gnubase::engine
 			}
 		}
 		// Recording chord events (#933, reference manual p. 1345): with the chord track record-enabled, the chords
-		// that the recorded notes make replace the chord events over the takes.
+		// that the notes recorded in each take make replace the chord events over that take, so that the laps of a
+		// cycle recording don't mix and the last lap that recorded notes wins.
 		if (project.chords.recordEnable)
 		{
-			std::vector<ChordNote> notes;
-			time::Samples from = std::numeric_limits<time::Samples>::max();
-			time::Samples to = std::numeric_limits<time::Samples>::min();
+			struct Lap
+			{
+				std::vector<ChordNote> notes;
+				time::Samples from = std::numeric_limits<time::Samples>::max();
+				time::Samples to = std::numeric_limits<time::Samples>::min();
+			};
+			std::vector<Lap> laps;
 			const auto ticks = [&project](time::Samples samples)
 			{ return project.tempo.toTicks(samples, project.sampleRate); };
 			for (const Json& entry : parameters.at("tracks"))
 			{
-				for (const Json& item : entry.at("takes"))
+				const Json& takes = entry.at("takes");
+				if (laps.size() < takes.size())
+					laps.resize(takes.size());
+				for (size_t i = 0; i < takes.size(); ++i)
 				{
-					const auto position = item.at("position").get<time::Samples>();
-					from = std::min(from, position);
-					to = std::max(to, position + item.at("length").get<time::Samples>());
+					const auto position = takes[i].at("position").get<time::Samples>();
+					laps[i].from = std::min(laps[i].from, position);
+					laps[i].to = std::max(laps[i].to, position + takes[i].at("length").get<time::Samples>());
 				}
 				for (const Json& note : entry.value("notes", Json::array()))
 				{
+					const auto take = note.value("take", size_t{0});
 					const auto position = note.at("position").get<time::Samples>();
-					notes.push_back({ticks(position), ticks(position + note.at("length").get<time::Samples>()),
-						note.at("pitch").get<int>()});
+					if (take < takes.size())
+						laps[take].notes.push_back({ticks(position),
+							ticks(position + note.at("length").get<time::Samples>()), note.at("pitch").get<int>()});
 				}
 			}
-			if (!notes.empty())
-				recordChordEvents(project, notes, ticks(from), ticks(to), context);
+			for (const Lap& lap : laps)
+				if (!lap.notes.empty())
+					recordChordEvents(project, lap.notes, ticks(lap.from), ticks(lap.to), context);
 		}
 		Json result = {{"media", media}, {"clips", clips}, {"events", events}, {"parts", parts}};
 		context.emit("recording.added", result);

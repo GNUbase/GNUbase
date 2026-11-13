@@ -97,10 +97,27 @@ namespace gnubase::engine::midi
 			Json changes = parameters;
 			changes.erase("copy");
 			changes.erase("id");
+			changes.erase("track");
 			change(map, changes);
+			Track* track = nullptr;
+			if (parameters.contains("track"))
+			{
+				const auto id = parameters.at("track").get<ObjectId>();
+				const auto found = project.trackById.find(id);
+				require(found != project.trackById.end(), "no track " + std::to_string(id));
+				track = &found->second;
+				require(track->type == TrackType::Midi || track->type == TrackType::Instrument,
+					"only MIDI and instrument tracks have a drum map");
+			}
 			map.id = project.newId();
 			project.drumMaps[map.id] = map;
-			return announce(map, "drumMap.added", context);
+			Json result = announce(map, "drumMap.added", context);
+			if (track != nullptr)
+			{
+				track->drumMap = map.id;
+				context.emit("track.changed", {{"track", toJson(*track)}});
+			}
+			return result;
 		}
 
 		Json setMap(Project& project, CommandContext& context)
@@ -351,7 +368,8 @@ namespace gnubase::engine::midi
 			"it has: name; snap, the note value (such as 1/16, 1/8T or 1/4.) that the drum editor snaps to and that "
 			"is the length of the sound's new notes with lengthQuantize drumMap; mute, it doesn't play; iNote, the "
 			"note played in (editor.input, recording) that becomes the pitch; oNote, the note that plays; channel, "
-			"0-15, the MIDI channel it plays on, or null for Any, the note's own; output, the MIDI output it plays on, "
+			"0-15, the MIDI channel it plays on, or null (or -1) for Any, the note's own; output, the MIDI output it "
+			"plays on, "
 			"or empty for the track's (Default). The map is {id, name, sounds: [{pitch, name, snap, mute, iNote, "
 			"oNote, channel, output}], order}, as project.get lists the project's drumMaps; tracks use one with "
 			"track.set drumMap.";
@@ -363,12 +381,14 @@ namespace gnubase::engine::midi
 
 		Json addProperties = settings;
 		addProperties["copy"] = idSchema;
+		addProperties["track"] = idSchema;
 		model.addEdit(engine,
 			{"drumMap.add", 1,
 				"Adds a drum map to the project: New Map, Empty Map with the sounds Sound 1 to Sound 128 on their own "
 				"pitch and the track's channel, or New Copy of the map copy (named after it, with Copy) (p. 1236), "
-				"then changed by what is given. " +
-					mapText + " Emits drumMap.added and returns the map.",
+				"then changed by what is given. track, a MIDI or instrument track, then uses the map, in the same "
+				"undo step (track.set drumMap). " +
+					mapText + " Emits drumMap.added, track.changed for track, and returns the map.",
 				object(addProperties, {}), mapResult, false},
 			"Add drum map", addMap);
 		Json setProperties = settings;

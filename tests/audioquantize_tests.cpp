@@ -98,14 +98,14 @@ namespace
 		ObjectId event = 0;
 	};
 
-	// The audio as a clip, and an event of it at position on a new linear audio track.
+	// The audio as a clip, and an event of it at position, in the track's time base, on a new audio track.
 	Loop addLoop(engine::Client& client, const test::TempDir& dir, const std::string& name, const test::Audio& audio,
-		int64_t position = 0)
+		int64_t position = 0, const std::string& timeBase = "linear")
 	{
 		const std::string file = (dir.path() / (name + ".wav")).u8string();
 		test::writeWav(file, audio);
 		Loop loop;
-		loop.track = run(client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}, {"channels", 1}})
+		loop.track = run(client, "track.add", {{"type", "audio"}, {"timeBase", timeBase}, {"channels", 1}})
 						 .at("track")
 						 .at("id")
 						 .get<ObjectId>();
@@ -176,6 +176,15 @@ namespace
 					event.at("length").get<int64_t>()});
 		std::sort(events.begin(), events.end());
 		return events;
+	}
+
+	// The starts of a track's events, by position.
+	std::vector<int64_t> startsOn(engine::Client& client, ObjectId track)
+	{
+		std::vector<int64_t> starts;
+		for (const std::vector<int64_t>& event : eventsOn(client, track))
+			starts.push_back(event[0]);
+		return starts;
 	}
 
 	std::string lastStep(engine::Client& client)
@@ -257,6 +266,63 @@ TEST_CASE("quantizing audio events moves their snap points to the grid", "[integ
 	CHECK_THAT(reject(client, "quantize.apply"), ContainsSubstring("give"));
 }
 
+TEST_CASE("splitting a quantized audio event keeps both pieces resettable", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	run(client, "quantize.set", {{"preset", "1/4"}});
+	// Quantizing takes the event from 2000 to the grid at 0; splitting it at 12000 leaves the piece after the split
+	// where it was before quantizing, 14000, so that resetting puts both pieces back.
+	const Loop loop = addLoop(client, dir, "loop", clicks({1000}, 4 * g_quarter), 2000);
+	run(client, "quantize.apply", {{"events", {loop.event}}});
+	REQUIRE(positionOf(client, loop.event) == 0);
+	const Json pieces = run(client, "event.split", {{"events", {loop.event}}, {"positions", {12000}}}).at("events");
+	REQUIRE(pieces.size() == 1);
+	const auto right = pieces.at(0).get<ObjectId>();
+	CHECK(byId(client, "audioEvents", right).at("quantizeOrigin") == Json({{"original", 14000}, {"quantized", 12000}}));
+
+	run(client, "quantize.reset", {{"events", {loop.event, right}}});
+	CHECK(positionOf(client, loop.event) == 2000);
+	CHECK(positionOf(client, right) == 14000);
+	CHECK(eventsOn(client, loop.track) == std::vector<std::vector<int64_t>>{{2000, 0, 12000}, {14000, 12000, 84000}});
+}
+
+TEST_CASE("splitting a quantized audio event of a musical track keeps both pieces resettable", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	// A musical track whose tempo halves at quarter 1. A piece's position is in ticks, but its audio keeps its length
+	// in samples (#414), so how far the piece after a split lies from the event's start depends on the tempo there:
+	// the origin has to be worked out through samples, not through the ticks quantizing moved the event by.
+	run(client, "project.set", {{"tempoTrackActive", true}});
+	run(client, "tempo.add", {{"position", time::g_ticksPerQuarter}, {"bpm", 60.0}, {"ramp", false}});
+	run(client, "quantize.set", {{"preset", "1/4"}});
+	const int64_t quarter = time::g_ticksPerQuarter;
+	const int64_t original = (6 * quarter) / 10;        // 0.6 quarter, sample 14400
+	const int64_t split = (1625 * quarter) / 1000;      // 1.625 quarters, sample 54000
+	const int64_t afterSplit = (1425 * quarter) / 1000; // 1.425 quarters, sample 44400
+	// The event starts at 0.6 quarter and quantizing takes it to quarter 1, sample 24000.
+	const Loop loop = addLoop(client, dir, "loop", clicks({1000}, 4 * g_quarter), original, "musical");
+	run(client, "quantize.apply", {{"events", {loop.event}}});
+	REQUIRE(positionOf(client, loop.event) == quarter);
+
+	// Split 30000 samples in: the piece after it was 30000 samples after the event's original start.
+	const Json pieces = run(client, "event.split", {{"events", {loop.event}}, {"positions", {54000}}}).at("events");
+	REQUIRE(pieces.size() == 1);
+	const auto right = pieces.at(0).get<ObjectId>();
+	CHECK(byId(client, "audioEvents", right).at("quantizeOrigin") ==
+		Json({{"original", afterSplit}, {"quantized", split}}));
+
+	run(client, "quantize.reset", {{"events", {loop.event, right}}});
+	CHECK(positionOf(client, loop.event) == original);
+	CHECK(positionOf(client, right) == afterSplit);
+	// The pieces tile again: the first plays samples 14400 to 44400, the second 44400 to 110400.
+	CHECK(eventsOn(client, loop.track) ==
+		std::vector<std::vector<int64_t>>{{original, 0, 30000}, {afterSplit, 30000, 66000}});
+}
+
 TEST_CASE("Warp quantizing aligns warp markers with the grid by time stretch", "[integration]")
 {
 	const test::TempDir dir;
@@ -306,6 +372,32 @@ TEST_CASE("Warp quantizing aligns warp markers with the grid by time stretch", "
 		run(client, "quantize.reset", {{"events", {loop.event}}});
 		CHECK(markersOf(client, loop.clip) == Json::array({{{"position", 47000}, {"target", 47000}}}));
 	}
+}
+
+TEST_CASE("Warp quantizing a musical clip follows the project's tempo", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	run(client, "audio.setDevice", {{"blockSize", 256}, {"inputChannels", 0}, {"captureSeconds", 6}});
+	// The loop above, but its clip is in musical mode at 120 BPM while the project runs at 60: every clip frame takes
+	// two project samples, so finding the markers' targets has to go through the warp.
+	const Loop loop = addLoop(client, dir, "musical", clicks({1000, 25000, 36500, 47000, 73000}, 4 * g_quarter));
+	setHitpoints(client, loop.clip, {25000, 36500, 47000, 73000});
+	run(client, "project.set", {{"tempo", 60.0}});
+	run(client, "clip.setWarp", {{"clip", loop.clip}, {"musical", true}});
+	run(client, "clip.setWarp", {{"clip", loop.clip}, {"tempo", 120.0}});
+	run(client, "quantize.set", {{"preset", "1/4"}, {"settings", {{"warpQuantize", true}}}});
+	checkClicks(render(client, 8 * g_quarter), {2000.0, 50000.0, 73000.0, 94000.0, 146000.0});
+
+	// A quarter is 48000 samples now, so the clicks land on twice the places the same clip quantizes to at 120 BPM.
+	run(client, "quantize.apply", {{"events", {loop.event}}});
+	const double eighth = (2 * g_quarter) + (23000.0 * 48000.0 / 44000.0);
+	checkClicks(render(client, 8 * g_quarter), {1920.0, 48000.0, eighth, 96000.0, 144000.0});
+
+	run(client, "quantize.reset", {{"events", {loop.event}}});
+	CHECK(markersOf(client, loop.clip).empty());
+	checkClicks(render(client, 8 * g_quarter), {2000.0, 50000.0, 73000.0, 94000.0, 146000.0});
 }
 
 TEST_CASE("quantizing several audio tracks keeps them phase coherent", "[integration]")
@@ -385,6 +477,112 @@ TEST_CASE("quantizing several audio tracks keeps them phase coherent", "[integra
 				   {{"events", {close.event}}, {"priorities", {{{"track", close.track}, {"priority", 6}}}}}),
 		ContainsSubstring("0 to 5"));
 	CHECK_THAT(reject(client, "quantize.crossfade", {{"events", {999}}}), ContainsSubstring("no audio event 999"));
+}
+
+TEST_CASE("The slice range merges hitpoints of different tracks only", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	// A flam on the priority track, 5 ms apart, and one hitpoint of the other track between them. The range says when
+	// two hitpoints on different tracks mark the same beat (reference manual pp. 378, 380), so the flam stays two
+	// positions and the other track's hitpoint merges with the first of them.
+	const std::vector<int64_t> flam{25000, 25100, 25240};
+	const Loop drums = addLoop(client, dir, "drums", clicks(flam, 2 * g_quarter));
+	const Loop room = addLoop(client, dir, "room", clicks(flam, 2 * g_quarter));
+	setHitpoints(client, drums.clip, {25000, 25240});
+	setHitpoints(client, room.clip, {25100});
+
+	const Json result = run(client, "quantize.slice",
+		{{"events", {drums.event, room.event}},
+			{"priorities", {{{"track", drums.track}, {"priority", 2}}, {{"track", room.track}, {"priority", 1}}}},
+			{"range", 20.0}});
+	CHECK(result.at("positions") == Json::array({25000, 25240}));
+	// Both tracks are cut at both of them.
+	const std::vector<std::vector<int64_t>> slices = eventsOn(client, drums.track);
+	REQUIRE(slices.size() == 3);
+	CHECK(slices == eventsOn(client, room.track));
+}
+
+TEST_CASE("Slicing clears the snap point of the slices it doesn't give one", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	// Each track's event snaps at a place of its own before the first hitpoint. The slice before it starts at no
+	// position, so it gets no snap point: keeping the one event.split copied would move the two tracks apart there.
+	const std::vector<int64_t> played{25600, 47300};
+	const Loop drums = addLoop(client, dir, "drums", clicks(played, 4 * g_quarter), 2 * g_quarter);
+	const Loop room = addLoop(client, dir, "room", clicks(played, 4 * g_quarter), 2 * g_quarter);
+	setHitpoints(client, drums.clip, played);
+	setHitpoints(client, room.clip, played);
+	run(client, "event.setSnapPoint", {{"events", {drums.event}}, {"position", (2 * g_quarter) + 1000}});
+	run(client, "event.setSnapPoint", {{"events", {room.event}}, {"position", (2 * g_quarter) + 5000}});
+
+	const Json result = run(client, "quantize.slice", {{"events", {drums.event, room.event}}});
+	REQUIRE(result.at("positions") == Json::array({(2 * g_quarter) + 25600, (2 * g_quarter) + 47300}));
+	// Neither first slice, which starts at no position, keeps the snap point its event had.
+	size_t first = 0;
+	const Json project = run(client, "project.get");
+	for (const Json& event : project.at("audioEvents"))
+		if (event.at("position").get<int64_t>() == 2 * g_quarter)
+		{
+			CHECK(event.at("snapPoint").is_null());
+			++first;
+		}
+	REQUIRE(first == 2);
+
+	// Without a snap point the slices before the first position stay where they are, on both tracks alike.
+	run(client, "quantize.set", {{"preset", "1/4"}});
+	run(client, "quantize.apply", {{"events", result.at("events")}});
+	const std::vector<std::vector<int64_t>> quantized = eventsOn(client, drums.track);
+	REQUIRE(quantized.size() == 3);
+	CHECK(quantized == eventsOn(client, room.track));
+	CHECK(quantized[0][0] == 2 * g_quarter);
+}
+
+TEST_CASE("soft and rough quantizing move the slices of several tracks alike", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	// Two tracks of the same loop sliced at the same positions: the randomizing is seeded by position, so the slices
+	// at the same place move by the same amount, and soft quantizing goes on from there on both tracks alike.
+	const std::vector<int64_t> played{6200, 25600, 47300, 72800};
+	const Loop drums = addLoop(client, dir, "drums", clicks(played, 4 * g_quarter));
+	const Loop room = addLoop(client, dir, "room", clicks(played, 4 * g_quarter));
+	setHitpoints(client, drums.clip, played);
+	setHitpoints(client, room.clip, played);
+	const Json sliced = run(client, "quantize.slice", {{"events", {drums.event, room.event}}, {"offset", 5.0}});
+
+	// Rough quantizing to 1/8, by up to an eighth of a quarter (750 samples) off the grid.
+	run(client, "quantize.set", {{"preset", "1/8"}, {"settings", {{"randomize", time::g_ticksPerQuarter / 32}}}});
+	run(client, "quantize.apply", {{"events", sliced.at("events")}});
+	const std::vector<int64_t> rough = startsOn(client, drums.track);
+	REQUIRE(rough.size() == 5);
+	// Where plain quantizing to 1/8 would put the slices: their snap points, the hitpoints, on the grid.
+	const std::vector<int64_t> plain{
+		0, (g_quarter / 2) - 240, g_quarter - 240, (2 * g_quarter) - 240, (3 * g_quarter) - 240};
+	for (size_t i = 0; i < rough.size(); ++i)
+	{
+		CAPTURE(i);
+		CHECK(std::abs(rough[i] - plain[i]) <= 750);
+	}
+	// The randomizing moved them off the grid, and on both tracks alike: it is seeded by position.
+	CHECK(rough != plain);
+	CHECK(startsOn(client, room.track) == rough);
+
+	// Soft quantizing goes on from there, halfway to the grid, on both tracks alike.
+	run(client, "quantize.apply",
+		{{"events", sliced.at("events")}, {"settings", {{"soft", true}, {"strength", 0.5}, {"randomize", 0}}}});
+	const std::vector<int64_t> soft = startsOn(client, drums.track);
+	CHECK(startsOn(client, room.track) == soft);
+	REQUIRE(soft.size() == rough.size());
+	for (size_t i = 0; i < soft.size(); ++i)
+	{
+		CAPTURE(i);
+		CHECK(std::abs(soft[i] - ((rough[i] + plain[i]) / 2)) <= 2);
+	}
 }
 
 TEST_CASE("Crossfade leaves a gap that the later event's audio can't close", "[integration]")

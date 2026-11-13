@@ -79,6 +79,7 @@
 		local pages = {
 			audio = {"input", "format", "output", "name", "count"},
 			instrument = {"instrument", "output", "name", "count"},
+			sampler = {"output", "name", "count"}, -- reference manual pp. 143-144
 			midi = {"output", "name", "count"},
 			group = {"format", "output", "projectFolder", "name", "count"},
 			effect = {"format", "output", "projectFolder", "name", "count"},
@@ -279,7 +280,8 @@
 		-- track.add's parameters for what the page shows.
 		local function parameters(document)
 			local type = dialog.type
-			local result = {type = type}
+			-- A sampler track is an instrument track that plays the sampler, which sampler.create names.
+			local result = {type = type ~= "sampler" and type or nil}
 			local name = valueOf(document, "track-name")
 			if name ~= nil and name ~= "" then
 				result.name = name
@@ -353,8 +355,10 @@
 
 		-- Add Track: Count tracks in one undo step, below the selected track in the order they were added. The dialog
 		-- stays open with Keep Dialog Open, its next tracks below these, and when the engine refuses, with its message.
-		-- The selected tracks go to the first new track only, once: each new group would take them from the one
-		-- before, each new effect track another send of every one of them.
+		-- Tracks into the project's Group or FX folder leave dialog.below where it was, so the next tracks of the open
+		-- dialog go below the selection, not into the folder. The selected tracks go to the first new track only,
+		-- once: each new group would take them from the one before, each new effect track another send of every one
+		-- of them.
 		function dialog.add(document)
 			local track, problem = parameters(document)
 			if track == nil then
@@ -374,13 +378,13 @@
 					end
 				end
 				each.index = index and index + i - 1
-				commands[i] = {command = "track.add", parameters = each}
+				commands[i] = {command = dialog.type == "sampler" and "sampler.create" or "track.add", parameters = each}
 			end
 			local ok, result = pcall(gnubase.history.transaction, {description = "Add Track", commands = commands})
 			if not ok then
 				document:GetElementById("add-track-message").inner_rml = escape(result)
 			elseif document:GetElementById("keep-open"):HasAttribute("checked") then
-				if dialog.below ~= nil then
+				if dialog.below ~= nil and not track.projectFolder then
 					dialog.below = result.results[count].track.id
 				end
 				dialog.tracks = {}
@@ -399,6 +403,7 @@
 			<listview id="track-types" value="audio" onchange="AddTrack.show(document, element:GetAttribute('value'))">
 				<listitem id="type-audio" value="audio" class="selected">Audio</listitem>
 				<listitem id="type-instrument" value="instrument">Instrument</listitem>
+				<listitem id="type-sampler" value="sampler">Sampler</listitem>
 				<listitem id="type-midi" value="midi">MIDI</listitem>
 				<listitem id="type-group" value="group">Group</listitem>
 				<listitem id="type-effect" value="effect">Effect</listitem>

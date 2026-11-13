@@ -84,12 +84,12 @@ namespace
 		return peak;
 	}
 
-	// How far a render is from another one turned down by dB: 0 when actual is original turned down by dB, to float
-	// precision. A freeze that is rendered before its plugin plays comes out unchanged, which is 0 dB.
-	float turnedDownBy(const std::vector<float>& actual, const std::vector<float>& original, float dB)
+	// How far a render is from the original reduced by reductionDb dB: 0 when actual has that reduction, to float
+	// precision. A freeze rendered before its plugin plays is unchanged, corresponding to 0 dB reduction.
+	float turnedDownBy(const std::vector<float>& actual, const std::vector<float>& original, float reductionDb)
 	{
 		std::vector<float> expected = original;
-		const float factor = std::pow(10.0f, dB / 20.0f);
+		const float factor = std::pow(10.0f, -reductionDb / 20.0f);
 		for (float& sample : expected)
 			sample *= factor;
 		return nullTest(actual, expected);
@@ -345,7 +345,7 @@ TEST_CASE("undo brings back the freeze file that was frozen then", "[integration
 	const std::vector<float> secondFile =
 		samplesOf(second.at("tracks").at(0).at("frozen").at("path").get<std::string>());
 	REQUIRE(peakOf(firstFile) > 0.1f);
-	REQUIRE(turnedDownBy(secondFile, firstFile, -12.0f) < 1e-5f); // -18 dB instead of -6 dB
+	REQUIRE(turnedDownBy(secondFile, firstFile, 12.0f) < 1e-5f); // -18 dB instead of -6 dB
 	CHECK(nullTest(project.mainMix(), frozen) > 0.1f);
 
 	for (int step = 0; step < 3; ++step) // the freeze, the gain and the unfreeze
@@ -414,7 +414,7 @@ TEST_CASE("scrubbing a frozen track reads the freeze file of that time", "[integ
 	REQUIRE(secondPath != first.at("tracks").at(0).at("frozen").at("path"));
 	const std::vector<float> secondFile = samplesOf(secondPath);
 	REQUIRE(peakOf(firstFile) > 0.1f);
-	REQUIRE(turnedDownBy(secondFile, firstFile, -12.0f) < 1e-5f); // -18 dB instead of -6 dB
+	REQUIRE(turnedDownBy(secondFile, firstFile, 12.0f) < 1e-5f); // -18 dB instead of -6 dB
 	CHECK(scrubs(1000, secondFile));
 
 	// Undone back to the first freeze, it reads the first file again.
@@ -526,6 +526,52 @@ TEST_CASE("freeze files of the same name, also in another case, keep apart in th
 	CHECK(firstDifference(samplesOf(loaded(two.track)), twoSamples) == -1);
 	// The missing one is still referred to where it was, not to another track's file.
 	CHECK(fs::u8path(loaded(three.track)) == gone);
+}
+
+TEST_CASE("freeze files that differ only in the case of a non-ASCII letter keep apart on load", "[integration]")
+{
+	Session project;
+	const Session::Track one = project.addTrack("One");
+	project.insertGain(one.channel, -6.0);
+	const Session::Track two = project.addTrack("Two");
+	run(project.client, "audio.render", {{"frames", 4096}});
+	const Json frozen = run(project.client, "track.freeze", {{"tracks", {one.track, two.track}}, {"tail", 0}});
+	const auto pathOf = [&frozen](size_t i)
+	{ return fs::u8path(frozen.at("tracks").at(i).at("frozen").at("path").get<std::string>()); };
+
+	// Übung.wav and übung.wav in two folders go into the file as two entries, which the zip tells apart, but the
+	// file systems of Windows and macOS see as one name: loading must not extract the second over the first. On
+	// Linux, where the names are two files, this passes also without that care.
+	run(project.client, "project.save", {{"embedMedia", false}});
+	const fs::path saved = project.media.path() / "project.dawproject";
+	const gnubase::test::TempDir first;
+	const gnubase::test::TempDir second;
+	const fs::path oneName = fs::u8path("Übung.wav");
+	const fs::path twoName = fs::u8path("übung.wav");
+	fs::copy_file(pathOf(0), first.path() / oneName);
+	fs::copy_file(pathOf(1), second.path() / twoName);
+	const std::vector<float> oneSamples = samplesOf((first.path() / oneName).u8string());
+	const std::vector<float> twoSamples = samplesOf((second.path() / twoName).u8string());
+	REQUIRE(firstDifference(oneSamples, twoSamples) >= 0);
+	Project file = loadDawProject(saved.u8string(), (project.folder.path() / "media").u8string());
+	const auto refer = [&file](ObjectId track, const fs::path& path)
+	{
+		std::optional<Freeze>& freeze = file.trackById.at(track).frozen;
+		REQUIRE(freeze.has_value());
+		if (freeze)
+			freeze->path = path.u8string();
+	};
+	refer(one.track, first.path() / oneName);
+	refer(two.track, second.path() / twoName);
+	DawProjectSaveOptions options;
+	options.embedMedia = true;
+	saveDawProject(file, saved.u8string(), options);
+
+	run(project.client, "project.load", {{"path", saved.u8string()}});
+	const auto loaded = [&project](ObjectId track)
+	{ return project.track(track).at("frozen").at("path").get<std::string>(); };
+	CHECK(firstDifference(samplesOf(loaded(one.track)), oneSamples) == -1);
+	CHECK(firstDifference(samplesOf(loaded(two.track)), twoSamples) == -1);
 }
 
 TEST_CASE("a backup carries the freeze files along", "[integration]")
@@ -804,4 +850,30 @@ TEST_CASE("render in place refuses what it can't render", "[integration]")
 	CHECK_THAT(reject(project.client, "track.renderInPlace", {{"tracks", {audio.track}}, {"processing", "dry"}}),
 		ContainsSubstring("frozen"));
 	CHECK(tracks() == 3);
+}
+
+TEST_CASE("a frozen instrument track's MIDI send to another instrument track stays out of the graph", "[integration]")
+{
+	Session project;
+	const Session::Track synth = project.addSynth();
+	const Session::Track other = project.addSynth();
+	REQUIRE(run(project.client, "track.freeze", {{"tracks", {synth.track}}, {"tail", 0}}).at("tracks").size() == 1);
+	run(project.client, "channel.set",
+		{{"channel", synth.channel},
+			{"midiSends",
+				{{"slots",
+					{{{"effect", "transformer"}, {"parameters", {{"value", 1}}}, {"output", other.channel}}}}}}});
+	run(project.client, "midi.capture", {{"start", true}});
+	run(project.client, "transport.locate", {{"position", 0}});
+	run(project.client, "transport.play");
+	run(project.client, "audio.render", {{"frames", 48000}});
+	// The other track plays its own notes, none a semitone up from the frozen one's.
+	const Json captured = run(project.client, "midi.capture").at("captured");
+	INFO(captured.dump());
+	CHECK(!captured.empty());
+	for (const Json& message : captured)
+		CHECK(message.at("bytes").at(1).get<int>() % 12 != 1);
+	// The send keeps its output, which plays again once the track is unfrozen.
+	run(project.client, "track.unfreeze", {{"tracks", {synth.track}}});
+	run(project.client, "audio.render", {{"frames", 4096}});
 }

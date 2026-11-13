@@ -106,7 +106,8 @@
 			local first = nil
 			for _, event in ipairs(project.audioEvents) do
 				if wanted[event.id] then
-					dialog.events[#dialog.events + 1] = {id = event.id, length = event.length,
+					-- A warped event's fades fit into what it plays for (fadeRoom).
+					dialog.events[#dialog.events + 1] = {id = event.id, length = event.fadeRoom or event.length,
 						rate = framesPerMs(project, event)}
 					first = first or {event = event, rate = framesPerMs(project, event)}
 				end

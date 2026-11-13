@@ -20,15 +20,39 @@ the project (#491).
   (`markSilent` in `src/engine/document/rendersnapshot.cpp`), and each silent channel's strip (`ChannelStrip`) glides
   its output to silence over one audio block, and back, so switching doesn't click; the mute button mutes through
   the fader's mute instead, gliding over 5 ms like mute automation, so that switching between the two is seamless. A
-  silent MIDI track's notes and controllers are left out of the snapshot, as a muted part's are, so they don't reach
-  its instrument, and its mute ends the notes that sound. Nor do its controller, pitch bend and channel pressure
-  automation, its MIDI volume and pan (CC 7 and CC 10) and its program: its automation is marked `silent`
-  (`channelAutomation` in `src/engine/audio/automation.cpp`) and `AutomationPlayer` plays none of its MIDI lanes, so
-  a muted or disabled MIDI track doesn't change the instrument that other tracks play. Once it is heard again, its
-  automation curves send their values at once, but its MIDI volume, pan and program only what changed while it was
-  silent (a new program with the MIDI volume and pan after it), so a program change or CC 7 a part played before it
-  went silent stays; if playback started, located or jumped meanwhile, or the instrument changed, it sends them all,
-  as a jump does. Silent channels don't monitor their input directly either.
+  soloed-out or disabled MIDI track's notes and controllers are left out of the snapshot, as a muted part's are, so
+  they don't reach its instrument. A muted MIDI track's play into its strip, whose mute drops them, and so do the
+  events of the MIDI input it monitors: the reference manual (p. 466) only says that mute silences a channel, and a
+  muted audio track doesn't pass its input either. Its mute ends the notes that sound and releases the pedals that
+  hold notes, and unmuting sends the latest controllers, programs and pitch bends that the mute dropped, after the
+  channel's values that the automation sends again at that sample, and sets the pedals back to their values, as a
+  locate chases them ([automation.md](automation.md)). On a locate while its button mutes it, its instrument doesn't
+  chase its controller events, and its strip keeps the track's own chase for unmuting. Like a
+  muted audio track's events, a muted MIDI track's notes count for the project's end and where an export starts, and
+  render in place and freeze span those of a routed one (`spanOf` in `src/engine/document/renderinplace.cpp`). A
+  silent MIDI track doesn't send its controller, pitch bend and channel pressure automation, its MIDI volume and pan
+  (CC 7 and CC 10) and its program either: its automation is marked `silent` (`channelAutomation` in
+  `src/engine/audio/automation.cpp`) and `AutomationPlayer` plays none of its MIDI lanes, so a muted or disabled MIDI
+  track doesn't change the instrument that other tracks play. Once it is heard again, its automation curves send their
+  values at once, but its MIDI volume, pan and program only what changed while it was silent (a new program with the
+  MIDI volume and pan after it), so a program change or CC 7 a part played before it went silent stays; if playback
+  started, stopped, located or jumped meanwhile, or the instrument changed, it sends them all, as a jump does. A value
+  changed and changed back while it was silent, e.g. by undo, didn't change: the player compares with the lanes of the
+  automation last heard. A soloed-out or disabled track's parts weren't in the snapshot when playback moved, so once it
+  is heard again they are chased as the jump would have with the chase settings: in that block its automation raises
+  `AutomationPlayer::heardAgain`, and the sequencer that chases the track at jumps (`MidiSequencer`: its
+  instrument's, or its own if it isn't routed to one) sends, after the channel's values, the latest controller event
+  of each kind before the position (stopped: up to and including the cursor) where that is the track's, or where it is
+  of a kind the channel's program, MIDI volume, pan or MIDI automation has just sent, whichever track it is on. A later
+  event of another track on the instrument keeps its value: one the channel didn't touch isn't sent again, one it
+  overrode comes back. A bank select (CC 0 or CC 32) chased that way brings its MIDI channel's latest program if that
+  comes after it, or after the earlier of the two when both are chased, whichever track has it, as a jump sends them. After a move while only its mute button muted it, its
+  parts played into the mute: the sequencer chases only the kinds the channel sent, whichever track has the latest, and
+  the strip sends the rest of what the mute dropped. A routed track's own sequencer chases it into its strip in that
+  block too (`MidiSequencer::stripChase`, with the same kinds), so the strip learns the pedals that the instrument's
+  chase presses and, before it sends what waits, forgets what the mute kept of every kind of that chase and of the kinds
+  the channel sent, so each goes out once, with the chased value. Notes that started while it was silent aren't chased.
+  Silent channels don't monitor their input directly either.
 - **Disabled tracks** (p. 219): `track.set` `enabled` false disables an audio, instrument or MIDI track. It keeps its
   events, parts and channel settings, but the snapshot leaves its events and parts out (no disk streaming) and its
   channel is silent. Other track types refuse it.
@@ -43,9 +67,16 @@ the project (#491).
   vertical zoom (20 to 400), by track, and `folded`, the folded folder tracks. `heights` sets the given tracks' and
   leaves the others; `folded` replaces the list, and refuses tracks that aren't folders. Like the track visibility they
   are settings, not undo steps, and saved with the project in GNUbase's extra entry (`trackLayout` in `project.get`),
-  empty for files from before; tracks that are gone are left out of what `trackLayout.get` returns. Every change
-  emits `trackLayout.changed`. A file's heights are brought into the range and its folded tracks that aren't folders
-  left out (#991).
+  empty for files from before; tracks that are gone are left out of what `trackLayout.get` returns, though the
+  project keeps their heights and fold states for undo, until the next `trackLayout.set` with `folded` replaces the
+  folded folders (a set of heights keeps them), so undo and redo emit
+  `trackLayout.changed` too when a track with a height or a fold state comes back or goes (#1131). Every change
+  emits `trackLayout.changed`; a set that gives the layout the project has changes nothing: no event, the project's
+  revision stays and it doesn't count as modified (`CommandContext::markUnchanged`). A height that isn't a number
+  (a NaN from an in-process client) is refused like one out of range: the schema check's `minimum` and `maximum`
+  hold for every command. A file's heights are brought into the range, its heights of tracks that aren't in the
+  project (the ones that were removed when it was saved) and its folded tracks that aren't folders are left out,
+  as are heights that aren't finite (#991, #1131).
 - **DAWproject:** a channel's mute is its `Mute` parameter, solo its `solo` attribute, and a disabled track has
   `loaded="false"`; all three come back from `project.xml` without GNUbase's entry.
 
@@ -119,14 +150,22 @@ sends engine commands, so whatever another client changes shows at once.
   last, on the middle of the folder's row. The moves are `track.move` commands in one `history.transaction`, "Move
   Tracks", so one undo restores the order.
 - **Heights** (p. 217): dragging a row's lower edge (its last 4 dp) sets its track's height, with Ctrl (Cmd) every
-  track's; releasing the mouse sends the heights the drag changed with `trackLayout.set`, and nothing for a press
-  that changed none. Heights are the project's, saved with it, but not in its undo history.
+  track's: all the tracks of the project, as the manual says, also those inside folded folders and those the track
+  visibility hides (#1131). Releasing the mouse sends the heights the drag changed with `trackLayout.set`, and nothing
+  for a press that changed none or a drag that ends at the heights the engine has (also at the limit of 20 or 400 dp). A
+  drag under way keeps the heights it gave its tracks through `trackLayout.changed`, but takes the other tracks'
+  heights, and its release compares with the engine's heights, also those that came during the drag. A press on the list
+  while a drag is still under way (its release never reached the list's document) ends it, and `project.reset` ends it
+  without sending anything. Heights are the project's, saved with it, but not in its undo history.
 - **Folding** (p. 225): a folder's toggle, or Right and Left on the selected folder, folds and unfolds it; the tracks
   inside a folded folder leave the list and the event display (`EventDisplay::setHiddenTracks`) and still play.
   Project > Track Folding: Toggle Selected Track, Fold Tracks, Unfold Tracks and Flip Fold States
   (`track.toggleFolding`, `track.foldAll`, `track.unfoldAll`, `track.flipFolding`). Each sends the folded folders
-  with one `trackLayout.set` when they changed: they are the project's, like the heights, and every set advances the
-  project's revision, which makes it count as modified (#991).
+  with one `trackLayout.set` when they changed: they are the project's, like the heights, and every set that changes
+  something advances the project's revision, which makes it count as modified (#991). A set that fails, such as one
+  that names a track another client removed before the list heard of it, changes nothing in the project, and the list
+  reads `trackLayout.get` again and shows what the project has (#1131). The list also hears of the fold states that
+  undo and redo bring back with a track (`trackLayout.changed`, #1131).
 - **Another project** (#491): the list follows `trackLayout.changed` and, on `project.reset` (`project.new`,
   `project.load`), takes the new project's heights and folded folders from `trackLayout.get` and drops the old ones,
   and the selection: the new project's tracks can have the old ones' ids.
@@ -189,7 +228,7 @@ dividing the track list, track visibility agents and the track type
 filter, track presets, track pictures, the lock control, edit channel settings, volume and pan in the track list,
 the settings dialog's groups, controls area preview, presets, Reset All and the MIDI tracks' Output Group and
 Channel Width (p. 191), the track height presets menu, snap track heights, the preferences dialog's
-page for `ui.removeTracksWarning` and `ui.upDownSelectsTracksOnly` (#162). Adding a track below the selected one is #448. Folders' group channels, data blocks and Move Selected Tracks to
+page for `ui.removeTracksWarning` and `ui.upDownSelectsTracksOnly` (#162). Folders' group channels, data blocks and Move Selected Tracks to
 New Folder are in [folder-tracks.md](folder-tracks.md).
 
 ## Checks
@@ -200,11 +239,23 @@ New Folder are in [folder-tracks.md](folder-tracks.md).
 - `tests/mixer_tests.cpp` renders muted and soloed tracks and the glide; `tests/sequencing_tests.cpp` plays a muted, a
   disabled and a soloed MIDI track into an instrument, and checks that muted, soloed-out and disabled ones send it no
   automation (controller, pitch bend and channel pressure), MIDI volume, pan or program, and that one heard again
-  keeps its part's program and CC 7 and sends what changed meanwhile, each once, also while the transport stands;
+  keeps its part's program and CC 7 and sends what changed meanwhile, each once, also while the transport stands,
+  nothing for values changed back by undo, and after playback started, stopped, located or jumped meanwhile the
+  channel's values, then its parts' chase, disabled or muted, also stopped at the cursor, not without the chase
+  settings, and with another track's later program change, which comes back after the channel's, and CC 1, which
+  isn't sent again, a pedal the chase presses that its mute releases, playing and while the transport stands, and a
+  track disabled at one move and muted by its button at a later one chased in full; `tests/midi_tests.cpp` chases a
+  track heard again in the sequencer, playing, stopped, with its channel's kinds, muted only by its button, with a cycle
+  jump in the same block, without chase settings and after a chase that didn't fit, a bank select with another track's
+  program, also between the select's MSB and LSB, and a routed track's chase into its strip alone, in that block;
+  `tests/automation_tests.cpp` has the strip forget what the mute kept of the kinds chased for a track heard again;
   `tests/dawproject_tests.cpp` saves and loads mute, solo and disabled tracks, also from `project.xml` alone.
 - `tests/tracklayout_tests.cpp`: `trackLayout.set` setting heights and replacing the folded folders, refusing unknown
-  tracks, folded tracks that aren't folders and heights out of range, not an undo step, without tracks that are gone,
-  and saved and loaded with the project; a new project starts without.
+  tracks, folded tracks that aren't folders and heights out of range or not a number, not an undo step, without
+  tracks that are gone, and saved and loaded with the project; a new project starts without; undo and redo announcing
+  the layout when a removed folder with a fold state comes back or goes; a set that changes nothing leaving the
+  revision and the events alone; `trackLayoutFromJson` with heights that aren't finite. `tests/engine_tests.cpp`: a
+  NaN outside every minimum and maximum.
 - `tests/tracklist_tests.cpp` drives the app's project window with `ui::Automation`: rows level with the lanes and
   each type's controls; every control's button and the engine's state both ways; selection with clicks, modifiers,
   Shift-click deselecting, the arrow keys and the key commands; Up, Down and Alt+F2 pressed with the focus in the
@@ -223,4 +274,9 @@ New Folder are in [folder-tracks.md](folder-tracks.md).
   what the setting leaves out, the setting's unknown keys kept, the controls on more lines in a narrow controls area at
   any track list width, and the name giving way deep in folders and in a narrow track list; heights, folded folders and
   the selection not taken into a new project's tracks with the same ids, and heights and folded folders back after
-  saving and loading the project.
+  saving and loading the project; sending only the changes; Ctrl setting every track's height, also inside folded
+  folders; a drag that ends where it started, also after another client gave the track another height meanwhile, and
+  one that stays at the limit sending nothing; a drag whose release never came ending with the next press; a failed
+  set (a track removed meanwhile, a folded folder removed meanwhile) showing the project's heights and folded
+  folders again; and a folded folder that undo brings back being folded in the list, also when the list took the
+  engine's layout meanwhile.

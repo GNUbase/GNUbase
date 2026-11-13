@@ -15,6 +15,19 @@
 
 namespace gnubase::ui
 {
+	double clampPositionSeconds(double seconds, double sampleRate)
+	{
+		if (!(seconds > 0.0) || !(sampleRate > 0.0))
+			return 0.0;
+		return std::min(seconds, static_cast<double>(time::g_maxPosition) / sampleRate);
+	}
+
+	time::Samples positionSamples(double seconds, double sampleRate)
+	{
+		const double frames = clampPositionSeconds(seconds, sampleRate) * sampleRate;
+		return std::llround(std::min(frames, static_cast<double>(time::g_maxPosition)));
+	}
+
 	namespace
 	{
 		constexpr std::array<TimeFormat, 5> g_formats{TimeFormat::BarsBeats, TimeFormat::Seconds, TimeFormat::Timecode,

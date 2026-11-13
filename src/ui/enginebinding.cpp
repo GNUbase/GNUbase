@@ -70,6 +70,41 @@ namespace gnubase::ui
 		transmit(std::move(command), std::move(parameters), std::move(done), true);
 	}
 
+	engine::RequestId EngineBinding::sendAwaited(
+		std::string command, engine::Json parameters, std::function<void(const engine::Result&)> done)
+	{
+		sendWaitingSteps(command);
+		return transmit(std::move(command), std::move(parameters), std::move(done), false, true);
+	}
+
+	void EngineBinding::afterAwaited(std::function<void()> run)
+	{
+		if (m_awaited == 0 && (m_held.empty() || m_runningHeld))
+			run();
+		else
+			m_held.push_back(std::move(run));
+	}
+
+	void EngineBinding::releaseHeld()
+	{
+		runHeld(true);
+	}
+
+	bool EngineBinding::runHeld(bool force)
+	{
+		bool ran = false;
+		while (!m_held.empty() && (force || m_awaited == 0))
+		{
+			const std::function<void()> run = std::move(m_held.front());
+			m_held.pop_front();
+			const bool running = std::exchange(m_runningHeld, true);
+			run();
+			m_runningHeld = running;
+			ran = true;
+		}
+		return ran;
+	}
+
 	void EngineBinding::sendWaitingSteps(const std::string& before)
 	{
 		// A command that may change something goes after the steps the user made before it, e.g. an undo right after a
@@ -80,12 +115,14 @@ namespace gnubase::ui
 					sendNextStep(what);
 	}
 
-	engine::RequestId EngineBinding::transmit(
-		std::string command, engine::Json parameters, std::function<void(const engine::Result&)> done, bool quiet)
+	engine::RequestId EngineBinding::transmit(std::string command, engine::Json parameters,
+		std::function<void(const engine::Result&)> done, bool quiet, bool awaited)
 	{
 		std::string name = command;
 		const engine::RequestId id = m_client.send(std::move(command), std::move(parameters));
-		m_waiting.emplace(id, Waiting{std::move(name), std::move(done), quiet});
+		m_waiting.emplace(id, Waiting{std::move(name), std::move(done), quiet, awaited});
+		if (awaited)
+			++m_awaited;
 		return id;
 	}
 
@@ -167,7 +204,7 @@ namespace gnubase::ui
 	Subscription EngineBinding::onResult(std::string command, std::function<void(const engine::Result&)> handler)
 	{
 		const uint64_t id = m_nextId++;
-		m_resultHandlers.emplace(id, Waiting{std::move(command), std::move(handler), false});
+		m_resultHandlers.emplace(id, Waiting{std::move(command), std::move(handler), false, false});
 		return {*this, id};
 	}
 
@@ -213,13 +250,29 @@ namespace gnubase::ui
 
 	bool EngineBinding::settle(std::chrono::milliseconds timeout)
 	{
+		return handOnUntil(timeout,
+			[this]
+			{
+				// Only sooner: answerStep sends a waiting step once the one in flight is answered, which settle waits
+				// for.
+				sendWaitingSteps({});
+				return std::all_of(m_waiting.begin(), m_waiting.end(), [this](const auto& waiting)
+					{ return !waiting.second.awaited && m_queries.count(waiting.second.command) != 0; });
+			});
+	}
+
+	bool EngineBinding::awaitHeld(std::chrono::milliseconds timeout)
+	{
+		return handOnUntil(timeout, [this] { return m_held.empty(); });
+	}
+
+	bool EngineBinding::handOnUntil(std::chrono::milliseconds timeout, const std::function<bool()>& done)
+	{
 		const auto deadline = std::chrono::steady_clock::now() + timeout;
 		for (;;)
 		{
-			sendWaitingSteps({}); // as before a command that isn't a query
 			update();
-			if (std::all_of(m_waiting.begin(), m_waiting.end(),
-					[this](const auto& waiting) { return m_queries.count(waiting.second.command) != 0; }))
+			if (done())
 				return true;
 			const auto left =
 				std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
@@ -246,6 +299,8 @@ namespace gnubase::ui
 			return false;
 		const Waiting waiting = std::move(found->second);
 		m_waiting.erase(found);
+		if (waiting.awaited)
+			--m_awaited;
 		if (waiting.done)
 			waiting.done(result);
 		else if (!result.ok())
@@ -266,7 +321,9 @@ namespace gnubase::ui
 			if (handler = m_resultHandlers.find(id); handler != m_resultHandlers.end())
 				handler->second.done = std::move(call);
 		}
-		return handled;
+		// What the user did meanwhile, once the last awaited answer is in and its done has run.
+		const bool ranHeld = waiting.awaited && runHeld(false);
+		return handled || ranHeld;
 	}
 
 	bool EngineBinding::dispatch(const engine::Event& event)

@@ -321,14 +321,10 @@ namespace gnubase::ui
 			}
 		// ponytail: the key editor's axis is linear in ticks, so it matches the ruler at the edges and wherever the
 		// tempo doesn't change in the view; a tempo-mapped axis in KeyEditor when tempo changes need it.
-		if (m_timeLoads != m_display.loads())
-		{
-			m_time = projectTime(project);
-			m_timeLoads = m_display.loads();
-		}
+		const TimeContext& time = m_display.time();
 		const double start = view.start + (offset * view.scale);
 		editor.keys->setTimeRange(
-			std::make_pair(m_time.tempo.toTicks(start), m_time.tempo.toTicks(start + (width * view.scale))));
+			std::make_pair(time.tempo.toTicks(start), time.tempo.toTicks(start + (width * view.scale))));
 	}
 
 	void InPlaceEditors::ProcessEvent(Rml::Event& event)

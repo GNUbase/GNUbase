@@ -24,6 +24,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace gnubase::engine
@@ -41,13 +42,19 @@ namespace gnubase::engine
 		}
 	};
 
-	// A record-enabled MIDI or instrument track: what its channel's MIDI input plays is recorded.
+	// A record-enabled MIDI or instrument track: what its channel's MIDI input plays is recorded. chordsOnly: a track
+	// that only monitors while the chord track is record-enabled, whose notes only make chord events (reference
+	// manual p. 1345).
 	struct MidiRecordTrack
 	{
 		ObjectId track = 0;
 		ObjectId channel = 0;
+		bool chordsOnly = false;
 
-		bool operator==(const MidiRecordTrack& other) const { return track == other.track && channel == other.channel; }
+		bool operator==(const MidiRecordTrack& other) const
+		{
+			return track == other.track && channel == other.channel && chordsOnly == other.chordsOnly;
+		}
 	};
 
 	// The MIDI messages that MIDI recording leaves out (the user setting midi.recordFilter, reference manual p. 1613):
@@ -171,7 +178,9 @@ namespace gnubase::engine
 		// channels from now on. Ends a recording that is still open.
 		void prepare(int channels, uint32_t maxFrames);
 
-		// Command thread: what the next recording records and where it goes. The one that runs keeps its own.
+		// Command thread: what the next recording records and where it goes. The one that runs keeps its own, and so
+		// does one the audio thread started before. Doesn't wait for the disk thread, which can be listing the record
+		// folder and creating the files.
 		void setup(RecordSetup setup);
 
 		// Audio thread: a block of the device's input, each frame of which belongs where played says the transport
@@ -209,6 +218,7 @@ namespace gnubase::engine
 			bool midi = false;          // MIDI input instead
 			std::vector<MidiInput> events;
 			size_t eventCount = 0;
+			uint64_t setup = 0; // the latest setup when it was sent (m_setupCount)
 		};
 
 		// A file being written.
@@ -245,6 +255,8 @@ namespace gnubase::engine
 		void beginMidi(const Chunk& chunk);
 		void endMidi();
 		void keepRetrospective(const MidiInput& input, uint64_t deviceFrame);
+		// Makes the latest setup up to number the next recording's.
+		void applySetups(uint64_t number);
 		// Audio thread: hands frames frames from offset in the block on, or false if no chunk is free.
 		bool send(const audio::DeviceBlock& block, uint32_t offset, uint32_t frames, time::Samples position) noexcept;
 		void processMidi(const audio::DeviceBlock& block, const PlayedPositions& played,
@@ -271,13 +283,21 @@ namespace gnubase::engine
 		std::atomic<bool> m_armed{false};
 		std::atomic<bool> m_midiArmed{false};
 		std::atomic<uint64_t> m_dropped{0};
+		std::atomic<uint64_t> m_latestSetup{0}; // the number of the latest setup, which the chunks get
+
+		// Setups not yet applied, numbered from 1 on, oldest first: the command thread adds them, the disk thread
+		// applies them as the chunks sent after them come.
+		std::mutex m_setupMutex;
+		std::deque<std::pair<uint64_t, RecordSetup>> m_setups;
+		uint64_t m_setupCount = 0;
 
 		// Disk thread, and the command thread while it holds m_mutex.
 		std::mutex m_mutex;
 		std::condition_variable m_wake;
 		bool m_stopping = false;
-		RecordSetup m_next;    // for the next recording
-		RecordSetup m_current; // the recording's
+		RecordSetup m_next;        // for the next recording
+		uint64_t m_nextNumber = 0; // its number
+		RecordSetup m_current;     // the recording's
 		bool m_recording = false;
 		std::vector<File> m_files;
 		std::vector<Take> m_takes;

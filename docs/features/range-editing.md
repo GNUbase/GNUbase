@@ -15,11 +15,12 @@ Each command is one undo step and changes nothing if it fails; `range.copy` chan
 |---|---|---|
 | `range.split` | Splits the events and parts at the range's edges (at its start for a range of no length) | p. 293 |
 | `range.crop` | Cuts the events and parts that cross an edge to the range; those inside or outside stay | pp. 293-294 |
-| `range.delete` | Deletes what is in the range; `time` (Delete Time) closes the gap | p. 292 |
+| `range.delete` | Deletes what is in the range, and the part of the cycle markers it lies in; `time` (Delete Time) closes the gap | pp. 292, 425 |
 | `range.insertSilence` | Moves what starts at the range's start or later on by the range's length | pp. 292-293 |
 | `range.copy` | Copies the range to the range clipboard; without a range everything between the locators (Global Copy) | p. 292 |
-| `range.cut` | `range.copy`, then `range.delete`; `time` (Cut Time) closes the gap | p. 292 |
+| `range.cut` | `range.copy`, then `range.delete`; `time` (Cut Time) closes the gap | pp. 292, 425 |
 | `range.paste` | Pastes the clipboard at `position` (default the cursor); `time` (Paste Time) first makes room | p. 292 |
+| `range.move` | Moves what is in the range to `position` on the same tracks, without the clipboard; `copy` leaves it and pastes a copy | pp. 291, 432 |
 
 - **Cuts at the edges.** Events and parts that cross an edge are split there first, as `event.split` splits them, so
   only what lies in the range is affected (p. 291). A MIDI part's notes across an edge stay in the part they start in,
@@ -40,6 +41,17 @@ Each command is one undo step and changes nothing if it fails; `range.copy` chan
   onto the tracks the range was copied from, or with `track` onto that track and the ones below it in the project's
   order, one for each copied track; their types must take the copied events. Pasted events are unlocked real copies;
   a copied audio event whose clip was removed from the pool can't be pasted.
+- **Cycle markers.** Without `time`, `range.delete` and `range.cut` take the range out of a cycle marker on a marker
+  track in the range that it lies in (p. 425): shortened, or split in two ([markers.md](markers.md)). Other markers stay.
+- **Moving** (`range.move`) cuts what lies in the range at its edges and moves it to `position`, in one undo step and
+  leaving the clipboard as it is. What moves keeps its id, so an editor open on a moved part keeps it, a crossfade
+  between two moved events stays, and a shared copy of a MIDI part that lies in the range whole stays one (a part cut
+  at an edge is a real copy, as `range.split` makes it); a crossfade between a moved event and one that stays ends. The
+  automation moves as `range.cut` and `range.paste` would move it. With `copy` the range stays and a copy is pasted at
+  `position` as `range.paste` pastes, with new ids. Either way the audio that lands comes in front of the events there,
+  every event in the order it was stacked, so that the events of an audio part keep their places among the others.
+  Locked events stay where they are and aren't copied. The event display does it when the range is dragged by the
+  marker track ([markers.md](markers.md), p. 432).
 - **Global copy** copies every track between the locators: the events, parts and automation. Markers, the tempo and
   the signatures stay where they are.
 
@@ -61,7 +73,7 @@ The main menu's Edit menu has Cut, Copy and Paste, and the Range submenu Global 
 Time, Split, Crop and Insert Silence.
 
 Not yet: copying and pasting selected events without a range, Paste at Origin and Paste Relative to Cursor, moving and
-duplicating a range's contents by dragging it, nudging its edges, Range Tool Splits Partly Selected Events, the info
+duplicating a range's contents by dragging it on other tracks than marker tracks, nudging its edges, Range Tool Splits Partly Selected Events, the info
 line's range fields, the range in the editors (they come with their tickets), and the controller events at the edges of a range inside a part.
 
 ## Checks
@@ -71,6 +83,10 @@ line's range fields, the range in the editors (they come with their tickets), an
   with controller automation, and undo; inserting silence; cropping, with and without splitting notes; copying (no
   undo step), pasting onto the same tracks with the automation replacing the curve, Cut Time and Paste Time, pasting
   onto other tracks and the errors for a wrong type, too few tracks and nothing copied; global copy and a pasted clip
-  that is gone.
+  that is gone; moving and copying a range with `range.move`, in one undo step, without the clipboard and leaving a
+  locked event, moving the automation as `range.cut` and `range.paste` move it, keeping the ids of what moves, the
+  crossfade between two moved events and a shared copy, bringing the moved audio to the front in its order, also an
+  event stacked between two of an audio part's and two audio parts whose events interleave, undo and redo, and ending
+  the crossfade between a moved event and one that stays, either way round.
 - `tests/eventediting_tests.cpp` (fake window system, real engine): the commands exist; split, Delete Time, cut and
   paste on a selection range, which stays; paste at the cursor without a range, selecting what it pasted.

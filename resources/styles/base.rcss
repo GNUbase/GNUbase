@@ -292,11 +292,31 @@ tabset tab
 	box-sizing: border-box;
 }
 
-/* A section of the project window's toolbar, which its setup pane shows, hides and orders. */
+/* A section of the project window's toolbar, which its setup pane shows, hides and orders. The gap after it belongs to
+   the section, not to one of its buttons, and every section has the same, so it is the same in every order; the last
+   one, which the toolbar's padding follows, has none. Sections keep their width: the toolbar hides those it has no
+   room for (fit="room", docs/features/docking.md). */
 .toolbar-section
 {
 	display: flex;
 	align-items: center;
+	flex-shrink: 0;
+	margin-right: 3dp;
+}
+
+.toolbar-section:last-child
+{
+	margin-right: 0;
+}
+
+/* A section the toolbar has no room for: out of the flow and unseen, so it takes no room and no gap, and still laid
+   out, so the docking system knows the width it needs to show again. */
+.toolbar-section.no-room
+{
+	position: absolute;
+	left: 0;
+	top: 0;
+	visibility: hidden;
 }
 
 .display, .tooltip
@@ -1044,13 +1064,27 @@ meter .meter-peak
 	height: 52dp;
 }
 
-/* The adaptive voicing indicator and the padlock in a pad's upper right corner (reference manual pp. 1353-1354). */
-.chord-pad .chord-pad-adaptive, .chord-pad svg.chord-pad-lock
+/* The adaptive voicing reference indicator, the adaptive voicing indicator and the padlock side by side in a pad's
+   upper right corner (reference manual pp. 1353-1354). */
+.chord-pad .chord-pad-indicators
 {
-	display: none;
 	position: absolute;
 	top: 3dp;
 	right: 3dp;
+	display: flex;
+	align-items: center;
+	gap: 2dp;
+}
+
+.chord-pad .chord-pad-reference, .chord-pad .chord-pad-adaptive, .chord-pad svg.chord-pad-lock
+{
+	display: none;
+}
+
+.chord-pad .chord-pad-reference
+{
+	width: 6dp;
+	height: 6dp;
 }
 
 .chord-pad .chord-pad-adaptive
@@ -1065,7 +1099,7 @@ meter .meter-peak
 	height: 10dp;
 }
 
-.chord-pad.adaptive .chord-pad-adaptive, .chord-pad.locked svg.chord-pad-lock
+.chord-pad.reference .chord-pad-reference, .chord-pad.adaptive .chord-pad-adaptive, .chord-pad.locked svg.chord-pad-lock
 {
 	display: block;
 }
@@ -1128,20 +1162,6 @@ meter .meter-peak
 {
 	width: 12dp;
 	height: 12dp;
-}
-
-/* The toolbar's Project Root Key, in project windows wide enough for it next to the quantize section. */
-.toolbar-root-key
-{
-	display: none;
-}
-
-@media (min-width: 1100dp)
-{
-	.toolbar-root-key
-	{
-		display: inline-block;
-	}
 }
 
 /* The tools (docs/features/tools.md): the selection range, at least a line wide, and the rectangle a tool drags. Code
@@ -1299,21 +1319,6 @@ meter .meter-peak
 .track-list listitem.filtered
 {
 	display: none;
-}
-
-/* The toolbar's Track Visibility Configurations, in windows at least 1100 dp wide: in narrower ones the toolbar has no
-   room for it next to the quantize section (docs/features/track-visibility.md). */
-.track-visibility-configurations
-{
-	display: none;
-}
-
-@media (min-width: 1100dp)
-{
-	.track-visibility-configurations
-	{
-		display: inline-block;
-	}
 }
 
 /* The project window's Visibility tab (docs/features/track-visibility.md): the Track and Editor pages above the
@@ -2088,6 +2093,23 @@ splitter.column .splitter-grip-horizontal
 .insert
 {
 	padding: 2dp 6dp;
+}
+
+/* The MIDI Inserts and MIDI Sends sections: a slot's control panel shows while its edit button opened it. */
+.midi-effect-panel
+{
+	display: none;
+	padding-left: 8dp;
+}
+
+.midi-effect-slot.open .midi-effect-panel
+{
+	display: block;
+}
+
+.midi-effect-slot.empty .midi-effect-edit
+{
+	visibility: hidden;
 }
 
 .inspector textarea.notepad

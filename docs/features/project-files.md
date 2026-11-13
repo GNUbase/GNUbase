@@ -128,7 +128,10 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
   over it, so that it doesn't come between the user and a dialog they work in: it waits and shows as soon as the last
   of those dialogs closed, unless an auto save succeeded or the project was saved or opened meanwhile, which makes it
   out of date. Modal dialogs in other windows, such as a panel's own window, don't keep it away. If another project
-  dialog, such as the start screen, is open, the error shows at the next failure instead.
+  dialog, such as the start screen, is open, the error shows at the next failure instead. The other File menu
+  commands that read or write files use the dialog too: File > Export > Selected Tracks shows the engine's refusal
+  in it, and under the title Export Selected Tracks (`ProjectFiles::showNotice`) the tracks an export that worked
+  left out ([track-presets.md](track-presets.md)).
 - **One dialog at a time.** The project dialogs open one at a time, and one that comes while another is open waits
   for it and opens once it closed or went with its window, in the order they came (#485): the unsaved changes question
   of a project opened through File > Open's key in a panel's own window, MCP or Lua while the start screen or Save as

@@ -9,12 +9,15 @@
 #include "engine/time/tempomap.h"
 #include "ui/automation.h"
 #include "ui/eventdisplay.h"
+#include "ui/rmlui.h"
 
+#include <RmlUi/Core/Core.h>
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -130,10 +133,10 @@ TEST_CASE("the transpose track's context menu sets the root key for unassigned e
 						  .at("part")
 						  .at("id")
 						  .get<uint64_t>();
-	window.call("project.set", {{"rootKey", "E"}});
 	const std::string item = R"(#track-list-menu > [command="transpose.assignRootKey"])";
 	const auto menu = [&window, &item](uint64_t track)
 	{
+		window.app.ui().key(std::nullopt, "Escape");
 		window.app.ui().click(std::nullopt,
 			{"#track-list listitem[value=\"" + std::to_string(track) + "\"] .track-name", 0, std::nullopt},
 			ui::MouseButton::Right, 1, {});
@@ -141,8 +144,12 @@ TEST_CASE("the transpose track's context menu sets the root key for unassigned e
 		REQUIRE(window.element("#track-list-menu").at("visible") == true);
 		return !window.element(item).at("attributes").contains("disabled");
 	};
-	// Only for the transpose track.
+	// The transpose track needs a project root key before its events can be assigned one.
 	REQUIRE(window.app.waitUntil([&] { return window.display.laneTracks().size() == 2; }));
+	CHECK_FALSE(menu(transpose));
+	window.call("project.set", {{"rootKey", "E"}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("rootKey") == "E"; }));
+	// Only for the transpose track.
 	CHECK_FALSE(menu(midi));
 	REQUIRE(menu(transpose));
 	window.click(item);
@@ -227,4 +234,24 @@ TEST_CASE("a double click on a transpose event opens its value for typing", "[ui
 	window.app.ui().key(std::nullopt, "Enter");
 	CHECK(window.app.waitUntil([&] { return window.call("transpose.get").at("events").at(0).at("value") == -7; }));
 	CHECK(window.call("transpose.get").at("events").at(0).at("position") == 0);
+}
+
+TEST_CASE("two presses on a transpose event open it only less than half a second apart", "[ui]")
+{
+	Window window;
+	addEvent(window);
+	// RmlUi's clock, which times the presses, stands still but for advance().
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	clock->freeze(true);
+	const std::shared_ptr<void> thaw(nullptr, [clock](void*) { clock->freeze(false); });
+
+	clock->advance(1.0);
+	window.click(".transpose-event");
+	clock->advance(0.6);
+	window.click(".transpose-event");
+	CHECK(!window.hasClass(".transpose-field", "shown"));
+	clock->advance(0.4);
+	window.click(".transpose-event");
+	CHECK(window.app.waitUntil([&] { return window.hasClass(".transpose-field", "shown"); }));
 }

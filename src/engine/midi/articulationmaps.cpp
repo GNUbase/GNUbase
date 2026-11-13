@@ -16,6 +16,7 @@
 #include <iterator>
 #include <limits>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <tuple>
@@ -237,12 +238,99 @@ namespace gnubase::engine::midi
 			return announce(map, "articulationMap.added", context);
 		}
 
+		// Renames (to the new name) or removes (to "") a part's directions and its notes' attributes.
+		void rename(MidiPart& part, const std::map<std::string, std::string>& renamed, CommandContext* context)
+		{
+			Json changed = Json::array();
+			Json removed = Json::array();
+			for (auto it = part.controllers.begin(); it != part.controllers.end();)
+			{
+				Controller& controller = it->second;
+				const auto found = renamed.find(controller.articulation);
+				if (controller.type != ControllerType::Articulation || found == renamed.end())
+				{
+					++it;
+					continue;
+				}
+				if (found->second.empty())
+				{
+					removed.push_back(controller.id);
+					it = part.controllers.erase(it);
+					continue;
+				}
+				controller.articulation = found->second;
+				changed.push_back(toJson(controller));
+				++it;
+			}
+			Json notes = Json::array();
+			for (auto& [id, note] : part.notes)
+			{
+				std::vector<std::string> kept;
+				for (const std::string& name : note.articulations)
+				{
+					const auto found = renamed.find(name);
+					if (found == renamed.end())
+						kept.push_back(name);
+					else if (!found->second.empty())
+						kept.push_back(found->second);
+				}
+				if (kept == note.articulations)
+					continue;
+				note.articulations = std::move(kept);
+				notes.push_back(toJson(note));
+			}
+			if (context == nullptr)
+				return;
+			if (!changed.empty())
+				context->emit("controller.changed", {{"part", part.id}, {"controllers", changed}});
+			if (!removed.empty())
+				context->emit("controller.removed", {{"part", part.id}, {"controllers", removed}});
+			if (!notes.empty())
+				context->emit("note.changed", {{"part", part.id}, {"notes", notes}});
+		}
+
+		// Renaming or removing articulations does so in the parts of the tracks that use the map, and in their
+		// shared copies and other track versions: an articulation is renamed where the list is as long as before, it
+		// has a new name at its place and its old one is gone; one whose name is gone otherwise is removed.
+		void followArticulations(
+			Project& project, const ArticulationMap& before, const ArticulationMap& after, CommandContext& context)
+		{
+			std::map<std::string, std::string> renamed;
+			for (size_t i = 0; i < before.articulations.size(); ++i)
+			{
+				const std::string& name = before.articulations[i].name;
+				if (findArticulation(after, name) != nullptr)
+					continue;
+				const bool moved = before.articulations.size() == after.articulations.size() &&
+					findArticulation(before, after.articulations[i].name) == nullptr;
+				renamed[name] = moved ? after.articulations[i].name : std::string();
+			}
+			if (renamed.empty())
+				return;
+			std::set<ObjectId> shared;
+			for (auto& [id, track] : project.trackById)
+				if (track.articulationMap == after.id)
+				{
+					for (TrackVersion& version : track.versions)
+						for (MidiPart& part : version.midiParts)
+							rename(part, renamed, nullptr);
+					for (const auto& [partId, part] : project.midiParts)
+						if (part.track == id && part.shared != 0)
+							shared.insert(part.shared);
+				}
+			for (auto& [id, part] : project.midiParts)
+				if (articulationMapOf(project, part.track) == &after || shared.count(part.shared) != 0)
+					rename(part, renamed, &context);
+		}
+
 		Json setMap(Project& project, CommandContext& context)
 		{
 			Json changes = context.parameters();
 			ArticulationMap& map = findMap(project, changes);
+			const ArticulationMap before = map;
 			changes.erase("map");
 			change(map, changes);
+			followArticulations(project, before, map, context);
 			return announce(map, "articulationMap.changed", context);
 		}
 
@@ -576,7 +664,13 @@ namespace gnubase::engine::midi
 		model.addEdit(engine,
 			{"articulationMap.set", 1,
 				"Changes an articulation map: what isn't given stays; the changes go to every track using it. " +
-					mapText + " Emits articulationMap.changed and returns the map.",
+					mapText +
+					" An articulation renamed at its place in articulations (as long a list as before, its old name "
+					"gone and the new one not the map's before) is renamed in the parts of the tracks that use the "
+					"map, their directions and their notes' attributes; one left out is removed from them (emitting "
+					"controller.changed, controller.removed and note.changed). Emits articulationMap.changed and "
+					"returns "
+					"the map.",
 				object(setProperties, {"map"}), mapResult, false},
 			"Change articulation map", setMap);
 		model.addEdit(engine,

@@ -6,6 +6,8 @@
 #include "engine/engine.h"
 #include "engine/midi/midivalues.h"
 #include "engine/time/tempomap.h"
+#include "platform/audio/device.h"
+#include "platform/midi/dummyport.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -13,7 +15,9 @@
 
 #include <algorithm>
 #include <fstream>
+#include <memory>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -456,5 +460,409 @@ TEST_CASE("remote triggers in a recording select sound slots", "[unit]")
 		CHECK(part.at("notes").size() == 1); // without key switches, notes stay notes
 		CHECK(directions(part) == Directions{{"Pizzicato", false}});
 		CHECK(part.at("controllers").size() == 2); // program 9 triggers nothing
+	}
+}
+
+TEST_CASE("renaming or removing an articulation does so in the parts of the tracks that use the map", "[unit]")
+{
+	Fixture f;
+	const auto id = f.strings();
+	// Another track with a part that has the same names, without the map: it keeps them.
+	const auto other = f.call("track.add", {{"type", "midi"}}).at("track").at("id");
+	const auto otherPart =
+		f.call("midiPart.add", {{"track", other}, {"position", 0}, {"length", g_bar}}).at("part").at("id");
+	for (const Json& part : {Json(f.part), otherPart})
+	{
+		f.call("controller.add",
+			{{"part", part},
+				{"controllers", {{{"position", 0}, {"type", "articulation"}, {"articulation", "Pizzicato"}}}}});
+		f.call("note.add",
+			{{"part", part},
+				{"notes",
+					{{{"position", 0}, {"length", 60}, {"pitch", 60}, {"velocity", 0.5},
+						{"articulations", {"Staccato"}}}}}});
+	}
+	const auto partNamed = [&f](const Json& id)
+	{
+		Json found;
+		const Json project = f.call("project.get");
+		for (const Json& part : project.at("midiParts"))
+			if (part.at("id") == id)
+				found = part;
+		REQUIRE(found.is_object());
+		return found;
+	};
+	const Json before = partNamed(f.part);
+
+	// Renamed where they are in the list, as the setup renames them: Pizzicato to Pizz, Staccato to Stacc.
+	Json settings = stringsSettings();
+	settings["articulations"][1]["name"] = "Pizz";
+	settings["articulations"][2]["name"] = "Stacc";
+	settings["slots"][1]["articulations"] = {"Pizz"};
+	settings["slots"][2]["articulations"] = {"Stacc"};
+	settings["slots"][3]["articulations"] = {"Pizz", "Stacc"};
+	settings["map"] = id;
+	f.call("articulationMap.set", settings);
+	CHECK(partNamed(f.part).at("controllers").at(0).at("articulation") == "Pizz");
+	CHECK(partNamed(f.part).at("notes").at(0).at("articulations") == Json{"Stacc"});
+	CHECK(partNamed(otherPart).at("controllers").at(0).at("articulation") == "Pizzicato");
+	CHECK(partNamed(otherPart).at("notes").at(0).at("articulations") == Json{"Staccato"});
+	f.call("history.undo"); // with the map, in one step
+	CHECK(partNamed(f.part) == before);
+
+	// Removed: the directions go, and the notes lose the attribute.
+	f.call("articulationMap.set",
+		{{"map", id}, {"articulations", {stringsSettings().at("articulations").at(0)}},
+			{"slots", {stringsSettings().at("slots").at(0)}}});
+	CHECK(partNamed(f.part).at("controllers").empty());
+	CHECK(!partNamed(f.part).at("notes").at(0).contains("articulations"));
+	CHECK(partNamed(otherPart).at("controllers").size() == 1);
+	f.call("history.undo");
+	CHECK(partNamed(f.part) == before);
+}
+
+TEST_CASE("renaming or removing an articulation does so in shared copies and other track versions", "[unit]")
+{
+	Fixture f;
+	const auto id = f.strings();
+	f.call("controller.add",
+		{{"part", f.part},
+			{"controllers", {{{"position", 0}, {"type", "articulation"}, {"articulation", "Pizzicato"}}}}});
+	f.call("note.add",
+		{{"part", f.part},
+			{"notes",
+				{{{"position", 0}, {"length", 60}, {"pitch", 60}, {"velocity", 0.5},
+					{"articulations", {"Staccato"}}}}}});
+	// Pizzicato renamed to Pizz and Staccato to Stacc, as the setup renames them, or both removed.
+	Json renamed = stringsSettings();
+	renamed["articulations"][1]["name"] = "Pizz";
+	renamed["articulations"][2]["name"] = "Stacc";
+	renamed["slots"][1]["articulations"] = {"Pizz"};
+	renamed["slots"][2]["articulations"] = {"Stacc"};
+	renamed["slots"][3]["articulations"] = {"Pizz", "Stacc"};
+	renamed["map"] = id;
+	const Json removed = {{"map", id}, {"articulations", {stringsSettings().at("articulations").at(0)}},
+		{"slots", {stringsSettings().at("slots").at(0)}}};
+	// The direction's name, or empty without one, and the note's attributes, of the part on a track.
+	const auto onTrack = [&f](const Json& track)
+	{
+		std::pair<std::string, Json> found;
+		const Json project = f.call("project.get");
+		for (const Json& part : project.at("midiParts"))
+			if (part.at("track") == track)
+			{
+				const Json& controllers = part.at("controllers");
+				found.first = controllers.empty() ? "" : controllers.at(0).at("articulation").get<std::string>();
+				found.second = part.at("notes").at(0).value("articulations", Json::array());
+			}
+		return found;
+	};
+	using Found = std::pair<std::string, Json>;
+
+	SECTION("a shared copy on a track without the map")
+	{
+		const auto other = f.call("track.add", {{"type", "instrument"}}).at("track").at("id");
+		f.call("event.copy", {{"events", {f.part}}, {"ticks", g_bar}, {"track", other}, {"shared", true}});
+		f.call("articulationMap.set", renamed);
+		CHECK(onTrack(other) == Found{"Pizz", {"Stacc"}});
+		f.call("history.undo");
+		CHECK(onTrack(other) == Found{"Pizzicato", {"Staccato"}});
+		f.call("articulationMap.set", removed);
+		CHECK(onTrack(other) == Found{"", Json::array()});
+	}
+	SECTION("the track's other version")
+	{
+		// The second version, a copy of the first, is active; the first one keeps the part.
+		f.call("trackVersion.duplicate", {{"tracks", {f.track}}});
+		const auto second = f.trackJson().at("activeVersion");
+		f.call("articulationMap.set", renamed);
+		f.call("trackVersion.activate", {{"tracks", {f.track}}, {"version", 1}});
+		CHECK(onTrack(f.track) == Found{"Pizz", {"Stacc"}});
+		f.call("articulationMap.set", removed);
+		f.call("trackVersion.activate", {{"tracks", {f.track}}, {"version", second}});
+		CHECK(onTrack(f.track) == Found{"", Json::array()});
+	}
+}
+
+TEST_CASE("a key switch plays before the note it comes with, whatever its pitch", "[unit]")
+{
+	Fixture f;
+	f.strings();
+	// At the project's start the key switch C#0 (25) can't come a sample before the note, which is lower.
+	f.call("controller.add",
+		{{"part", f.part},
+			{"controllers", {{{"position", 0}, {"type", "articulation"}, {"articulation", "Pizzicato"}}}}});
+	f.call("note.add",
+		{{"part", f.part}, {"notes", {{{"position", 0}, {"length", 60}, {"pitch", 20}, {"velocity", 0.5}}}}});
+	const engine::RenderChannel channel = f.rendered();
+	REQUIRE(channel.notes.size() == 2);
+	CHECK(channel.notes[0].pitch == 25);
+	CHECK(channel.notes[0].keySwitch);
+	CHECK(channel.notes[1].pitch == 20);
+	CHECK(channel.notes[0].start == channel.notes[1].start);
+}
+
+TEST_CASE("notes that don't play send no output events", "[unit]")
+{
+	Fixture f;
+	f.strings();
+	// A Staccato note that never plays, then an Arco one.
+	Json silent = {{"position", 0}, {"length", 60}, {"pitch", 61}, {"velocity", 0.5}, {"articulations", {"Staccato"}}};
+	SECTION("its probability")
+	{
+		silent["probability"] = 0.0;
+	}
+	SECTION("a muted drum sound")
+	{
+		const auto drums = f.call("drumMap.add", {{"name", "Kit"}}).at("map").at("id");
+		f.call("drumMap.set", {{"map", drums}, {"sounds", {{{"pitch", 61}, {"mute", true}}}}});
+		f.call("track.set", {{"track", f.track}, {"drumMap", drums}});
+	}
+	f.call("note.add",
+		{{"part", f.part},
+			{"notes", {silent, {{"position", g_quarter}, {"length", 60}, {"pitch", 60}, {"velocity", 0.5}}}}});
+	const engine::RenderChannel channel = f.rendered();
+	CHECK(channel.controllers.empty()); // neither Staccato's controller 32 nor its off event
+	REQUIRE(channel.notes.size() == 2);
+	CHECK(notePlaying(channel, 24).end == notePlaying(channel, 60).start); // C0, Arco's key switch, before it
+}
+
+TEST_CASE("Merge MIDI in Loop takes the directions in effect where the range starts", "[unit]")
+{
+	Fixture f;
+	f.strings();
+	f.call("controller.add",
+		{{"part", f.part},
+			{"controllers",
+				{{{"position", 0}, {"type", "articulation"}, {"articulation", "Arco"}},
+					{{"position", 10}, {"type", "articulation"}, {"articulation", "Pizzicato"}}}}});
+	f.call("note.add",
+		{{"part", f.part},
+			{"notes", {{{"position", 2 * g_quarter}, {"length", 60}, {"pitch", 60}, {"velocity", 0.5}}}}});
+	// At 120 BPM and 48 kHz: from an eighth to the bar's end.
+	const Json changes = f.call("midi.merge", {{"start", 12000}, {"end", 96000}});
+	Json merged;
+	const Json project = f.call("project.get");
+	for (const Json& part : project.at("midiParts"))
+		if (part.at("id") == changes.at("parts").at(0))
+			merged = part;
+	REQUIRE(merged.at("controllers").size() == 1); // Pizzicato, the last of its group before the range
+	CHECK(merged.at("controllers").at(0).at("articulation") == "Pizzicato");
+	CHECK(merged.at("controllers").at(0).at("position") == 0);
+	CHECK(merged.at("notes").size() == 1);
+}
+
+TEST_CASE("Merge MIDI in Loop takes no directions from parts that end before the range", "[unit]")
+{
+	Fixture f;
+	f.strings();
+	// Part A, bar 1, with Pizzicato; part B, bar 3, with a note and no directions: B plays Arco.
+	f.call("controller.add",
+		{{"part", f.part},
+			{"controllers", {{{"position", 0}, {"type", "articulation"}, {"articulation", "Pizzicato"}}}}});
+	const Json b =
+		f.call("midiPart.add", {{"track", f.track}, {"position", 2 * g_bar}, {"length", g_bar}}).at("part").at("id");
+	f.call("note.add", {{"part", b}, {"notes", {{{"position", 0}, {"length", 60}, {"pitch", 60}, {"velocity", 0.5}}}}});
+	// At 120 BPM and 48 kHz a bar is 96000 samples: bar 3.
+	const Json changes = f.call("midi.merge", {{"start", 192000}, {"end", 288000}});
+	Json merged;
+	const Json project = f.call("project.get");
+	for (const Json& part : project.at("midiParts"))
+		if (part.at("id") == changes.at("parts").at(0))
+			merged = part;
+	CHECK(merged.at("controllers").empty());
+	CHECK(merged.at("notes").size() == 1);
+}
+
+TEST_CASE("Merge MIDI in Loop starts each part with the default slot, on a new track with the map", "[unit]")
+{
+	Fixture f;
+	const auto map = f.strings();
+	// Part A, bar 1, plays Pizzicato; part B, bar 2, has no directions: it plays Arco.
+	f.call("controller.add",
+		{{"part", f.part},
+			{"controllers", {{{"position", 0}, {"type", "articulation"}, {"articulation", "Pizzicato"}}}}});
+	const Json b =
+		f.call("midiPart.add", {{"track", f.track}, {"position", g_bar}, {"length", g_bar}}).at("part").at("id");
+	for (const Json& part : {Json(f.part), b})
+		f.call("note.add",
+			{{"part", part}, {"notes", {{{"position", 0}, {"length", 60}, {"pitch", 60}, {"velocity", 0.5}}}}});
+	// At 120 BPM and 48 kHz a bar is 96000 samples: bars 1 and 2, onto a new track.
+	const Json changes = f.call("midi.merge", {{"start", 0}, {"end", 192000}});
+	const Json project = f.call("project.get");
+	Json merged;
+	for (const Json& part : project.at("midiParts"))
+		if (part.at("id") == changes.at("parts").at(0))
+			merged = part;
+	REQUIRE(merged.at("track") == changes.at("tracks").at(0));
+	for (const Json& track : project.at("tracks"))
+		if (track.at("id") == merged.at("track"))
+			CHECK(track.at("articulationMap") == map);
+	// Pizzicato for A's note, a reset of its group where B starts.
+	std::vector<std::tuple<int64_t, std::string, bool>> directions;
+	for (const Json& controller : merged.at("controllers"))
+		directions.emplace_back(controller.at("position").get<int64_t>(),
+			controller.at("articulation").get<std::string>(), controller.at("reset").get<bool>());
+	std::sort(directions.begin(), directions.end());
+	CHECK(directions ==
+		std::vector<std::tuple<int64_t, std::string, bool>>{{0, "Pizzicato", false}, {g_bar, "Arco", true}});
+}
+
+TEST_CASE("track presets and track import bring a track's articulation map along", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine(audio::makeBackends(), dir.path() / "settings");
+	engine::Client client(engine);
+	const auto call = [&client](const std::string& command, Json parameters = Json::object())
+	{
+		const engine::Result result = client.call(command, std::move(parameters));
+		INFO(command << " failed: " << result.error);
+		REQUIRE(result.ok());
+		return result.value;
+	};
+	const auto track = call("track.add", {{"type", "midi"}, {"name", "Strings"}}).at("track").at("id");
+	const auto map = call("articulationMap.add", stringsSettings()).at("map");
+	call("track.set", {{"track", track}, {"articulationMap", map.at("id")}});
+	call("track.savePreset", {{"tracks", {track}}, {"name", "Strings"}});
+	const std::string archive = (dir.path() / "Strings.dawproject").u8string();
+	call("track.export", {{"tracks", {track}}, {"path", archive}});
+	// The map that the track has, but for its id.
+	const auto mapOf = [&call](size_t index)
+	{
+		const Json project = call("project.get");
+		const auto id = project.at("tracks").at(index).at("articulationMap");
+		for (Json each : project.at("articulationMaps"))
+			if (each.at("id") == id)
+			{
+				each.erase("id");
+				return each;
+			}
+		return Json();
+	};
+	Json expected = map;
+	expected.erase("id");
+
+	SECTION("presets")
+	{
+		call("project.new");
+		call("track.addFromPreset", {{"name", "Strings"}});
+		CHECK(mapOf(0) == expected);
+		// A second track from the preset uses the same map.
+		call("track.addFromPreset", {{"name", "Strings"}});
+		CHECK(call("project.get").at("articulationMaps").size() == 1);
+		CHECK(mapOf(1) == expected);
+	}
+	SECTION("track import")
+	{
+		call("project.new");
+		call("track.import", {{"path", archive}});
+		CHECK(mapOf(0) == expected);
+		call("track.import", {{"path", archive}});
+		CHECK(call("project.get").at("articulationMaps").size() == 1);
+		CHECK(mapOf(1) == expected);
+	}
+}
+
+TEST_CASE("remote triggers played into a track select sound slots", "[integration]")
+{
+	// An instrument track that monitors, playing the note probe with the map Strings, on the dummy device.
+	engine::Engine engine(audio::makeBackends(), {}, std::vector<std::unique_ptr<midi::Backend>>());
+	engine::Client client(engine);
+	const auto call = [&client](const std::string& command, Json parameters = Json::object())
+	{
+		const engine::Result result = client.call(command, std::move(parameters));
+		INFO(command << " failed: " << result.error);
+		REQUIRE(result.ok());
+		return result.value;
+	};
+	call("audio.setDevice", {{"blockSize", 64}, {"inputChannels", 0}});
+	const Json added = call("track.add", {{"type", "instrument"}});
+	const auto track = added.at("track").at("id");
+	const auto channel = added.at("channel").at("id");
+	call("channel.set", {{"channel", channel}, {"instrument", "noteProbe"}, {"monitor", true}});
+	const auto map = call("articulationMap.add", stringsSettings()).at("map").at("id");
+	call("track.set", {{"track", track}, {"articulationMap", map}});
+	call("audio.render", {{"frames", 64}}); // the new graph
+	call("midi.capture", {{"start", true}});
+	// Plays MIDI messages into the track: what the instrument gets, each message's first two bytes, and a control
+	// change's value.
+	const auto play = [&](const std::vector<std::vector<int>>& messages)
+	{
+		Json injected = Json::array();
+		for (const std::vector<int>& bytes : messages)
+			injected.push_back({{"position", 0}, {"bytes", bytes}});
+		call("midi.inject", {{"channel", channel}, {"messages", injected}});
+		call("audio.render", {{"frames", 64}});
+		std::vector<std::vector<int>> played;
+		const Json capture = call("midi.capture");
+		for (const Json& captured : capture.at("captured"))
+		{
+			const Json& bytes = captured.at("bytes");
+			std::vector<int> message = {bytes.at(0).get<int>(), bytes.at(1).get<int>()};
+			if ((message[0] & 0xF0) == 0xB0)
+				message.push_back(bytes.at(2).get<int>());
+			played.push_back(message);
+		}
+		return played;
+	};
+	using Played = std::vector<std::vector<int>>;
+
+	SECTION("key switches")
+	{
+		// C#1 selects Pizzicato: its key switch C#0, then the notes on channel 3; the trigger doesn't play.
+		CHECK(play({{0x90, 37, 100}, {0x80, 37, 0}, {0x90, 60, 100}, {0x80, 60, 0}}) ==
+			Played{{0x92, 25}, {0x82, 25}, {0x92, 60}, {0x82, 60}});
+		// D1 selects Staccato: controller 32 at 64, the notes on their own channel again. The same key again
+		// sends nothing.
+		CHECK(play({{0x90, 38, 100}, {0x80, 38, 0}, {0x90, 38, 100}, {0x80, 38, 0}, {0x91, 61, 100}, {0x81, 61, 0}}) ==
+			Played{{0xB0, 32, 64}, {0x91, 61}, {0x81, 61}});
+		// Without latch the default slot, Arco, comes back where the key is released: Staccato's off event, then
+		// Arco's key switch C0.
+		call("articulationMap.set", {{"map", map}, {"latch", false}});
+		call("audio.render", {{"frames", 64}});
+		CHECK(play({{0x90, 37, 100}, {0x90, 62, 100}, {0x80, 62, 0}, {0x80, 37, 0}, {0x90, 63, 100}, {0x80, 63, 0}}) ==
+			Played{{0xB0, 32, 0}, {0x92, 25}, {0x82, 25}, {0x92, 62}, {0x82, 62}, {0x90, 24}, {0x80, 24}, {0x90, 63},
+				{0x80, 63}});
+	}
+	SECTION("program changes")
+	{
+		call("articulationMap.set",
+			{{"map", map}, {"remoteTrigger", "programChange"},
+				{"slots",
+					{{{"name", "Arco"}, {"trigger", 0}},
+						{{"name", "Pizzicato"}, {"articulations", {"Pizzicato"}}, {"trigger", 1}, {"transpose", 12},
+							{"outputs", {{{"status", "program"}, {"data1", 40}}}}}}}});
+		call("audio.render", {{"frames", 64}});
+		// Program 2 selects Pizzicato, which sends program 41 and plays the notes an octave up; program 10 is no
+		// trigger and plays; key switches are notes again.
+		CHECK(play({{0xC0, 1}, {0x90, 37, 100}, {0x80, 37, 0}, {0xC0, 9}}) ==
+			Played{{0xC0, 40}, {0x90, 49}, {0x80, 49}, {0xC0, 9}});
+	}
+	SECTION("another map or other slots start from the default slot")
+	{
+		// Pizzicato selected, then another map with the same slots: the notes play the default slot, Arco, on their
+		// own channel, until C#1 selects Pizzicato of the new map, with its key switch.
+		CHECK(play({{0x90, 37, 100}, {0x80, 37, 0}}) == Played{{0x92, 25}, {0x82, 25}});
+		const auto copy = call("articulationMap.add", {{"copy", map}}).at("map").at("id");
+		call("track.set", {{"track", track}, {"articulationMap", copy}});
+		call("audio.render", {{"frames", 64}});
+		CHECK(play({{0x90, 60, 100}, {0x80, 60, 0}, {0x90, 37, 100}, {0x80, 37, 0}}) ==
+			Played{{0x90, 60}, {0x80, 60}, {0x92, 25}, {0x82, 25}});
+		// Other slots in the map: the default slot again.
+		Json slots = stringsSettings().at("slots");
+		slots[1]["transpose"] = 12;
+		call("articulationMap.set", {{"map", copy}, {"slots", slots}});
+		call("audio.render", {{"frames", 64}});
+		CHECK(play({{0x90, 60, 100}, {0x80, 60, 0}}) == Played{{0x90, 60}, {0x80, 60}});
+	}
+	SECTION("a trigger key's note-off ends the note its note-on played")
+	{
+		// C#1 pressed without a map plays; with the map assigned while it is held, its release still ends it.
+		call("track.set", {{"track", track}, {"articulationMap", 0}});
+		call("audio.render", {{"frames", 64}});
+		CHECK(play({{0x90, 37, 100}}) == Played{{0x90, 37}});
+		call("track.set", {{"track", track}, {"articulationMap", map}});
+		call("audio.render", {{"frames", 64}});
+		CHECK(play({{0x80, 37, 0}}) == Played{{0x80, 37}});
 	}
 }

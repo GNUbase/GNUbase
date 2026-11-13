@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Audio recording (#96, reference manual pp. 335-346): record-enabled tracks record their input bus into files
 // written off the audio thread, cycle laps become takes, the audio record modes, and audio pre-record.
+#include "engine/audio/recorder.h"
 #include "engine/audiofile/audiofile.h"
 #include "engine/document/document.h"
 #include "engine/engine.h"
@@ -13,9 +14,13 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
+#include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <variant>
@@ -491,6 +496,30 @@ TEST_CASE("only record-enabled audio tracks record, and nothing records without 
 	CHECK(std::filesystem::directory_iterator(setup.dir.path() / "Audio") != std::filesystem::directory_iterator());
 }
 
+TEST_CASE("tracks of the same name record into files of their own, next to the ones in the folder", "[integration]")
+{
+	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
+	Client& client = setup.client;
+	const Json other = run(client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}, {"channels", 2}});
+	run(client, "channel.set", {{"channel", other.at("channel").at("id")}, {"recordEnable", true}});
+	const std::vector<ObjectId> tracks{setup.track, idOf(other, "track")};
+	for (const ObjectId track : tracks)
+		run(client, "track.set", {{"track", track}, {"name", "Vocals"}});
+	const std::filesystem::path audio = setup.dir.path() / "Audio";
+	std::filesystem::create_directories(audio);
+	std::ofstream(audio / "VOCALS.wav") << "there"; // differs only in case: taken on every file system
+	run(client, "transport.record");
+	run(client, "audio.render", {{"frames", 640}});
+	REQUIRE(setup.stop().is_object());
+
+	std::set<std::string> names;
+	for (const ObjectId track : tracks)
+		for (const Json& event : eventsOn(client, track))
+			names.insert(std::filesystem::u8path(pathOf(client, event)).filename().u8string());
+	CHECK(names == std::set<std::string>{"Vocals-2.wav", "Vocals-3.wav"});
+	CHECK(gnubase::test::readText(audio / "VOCALS.wav") == "there");
+}
+
 TEST_CASE("a recording isn't added to a project opened while it was recorded", "[integration]")
 {
 	Setup setup({{"blockSize", 64}, {"captureSeconds", 1}, {"input", sineInput()}});
@@ -671,4 +700,67 @@ TEST_CASE("the audio record mode is a transport setting", "[integration]")
 		"cycleHistoryReplace");
 	CHECK_THAT(reject(client, "transport.set", {{"audioRecordMode", "merge"}}), ContainsSubstring("audioRecordMode"));
 	CHECK(run(client, "transport.get").at("audioRecordMode") == "cycleHistoryReplace");
+}
+
+TEST_CASE("Recorder::setup doesn't wait for the disk thread, which creates the files under its lock", "[unit]")
+{
+	using namespace std::chrono_literals;
+	namespace engine = gnubase::engine;
+	const gnubase::test::TempDir dir;
+	std::mutex mutex;
+	std::condition_variable changed;
+	bool finishing = false;
+	bool setUp = false;
+	bool sawSetUp = false;
+	{
+		// The disk thread holds its lock while it reports the recording, as while it lists the folder and creates
+		// the files: it waits there for setup to come back.
+		engine::Recorder recorder(
+			[&](const std::string& name, const Json&)
+			{
+				if (name != "recording.finished")
+					return;
+				std::unique_lock lock(mutex);
+				finishing = true;
+				changed.notify_all();
+				sawSetUp = changed.wait_for(lock, 5s, [&] { return setUp; });
+			});
+		constexpr uint32_t frames = 64;
+		recorder.prepare(1, frames);
+		engine::RecordSetup setup;
+		setup.folder = dir.path();
+		setup.format.sampleFormat = engine::SampleFormat::Float32;
+		setup.tracks = {{1, "Audio", {0}}};
+		recorder.setup(setup);
+
+		// A recorded block, then one that isn't: the recording ends.
+		std::vector<float> input(frames, 0.25f);
+		const float* const inputs[] = {input.data()};
+		const gnubase::audio::MidiBuffer midiIn;
+		gnubase::audio::MidiBuffer midiOut;
+		engine::PlayedPositions played(size_t{4} * frames);
+		const engine::MidiTap::Sequencers sequencers;
+		for (uint64_t block = 0; block < 2; ++block)
+		{
+			const engine::graph::TransportSegment segment{0, frames, static_cast<int64_t>(block * frames), block == 0};
+			engine::graph::TransportBlock transport;
+			transport.playing = true;
+			transport.segments = &segment;
+			transport.segmentCount = 1;
+			transport.recording = segment.recording;
+			played.add(block * frames, frames, transport);
+			recorder.process({inputs, nullptr, frames, block * frames, 0, midiIn, midiOut}, played, 0, sequencers);
+		}
+		{
+			std::unique_lock lock(mutex);
+			REQUIRE(changed.wait_for(lock, 5s, [&] { return finishing; }));
+		}
+		recorder.setup({});
+		{
+			const std::scoped_lock lock(mutex);
+			setUp = true;
+		}
+		changed.notify_all();
+	}
+	CHECK(sawSetUp);
 }

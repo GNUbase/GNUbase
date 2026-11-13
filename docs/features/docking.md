@@ -53,7 +53,9 @@ Editor and Mixer in the lower zone, and Media and Meter on the right (pp. 75–9
 fill them (the Editor panel is the lower zone editor's, [midi-editors.md](midi-editors.md), the Visibility panel has
 the track visibility and the lower zone editor's, [track-visibility.md](track-visibility.md)), the Pool in the lower zone
 ([pool.md](pool.md), `window.pool`, Mod+P), the chord pads in the lower zone
-([chord-pads.md](chord-pads.md), `window.chordPads`) and the edit history on the right ([edit-history.md](edit-history.md)).
+([chord-pads.md](chord-pads.md), `window.chordPads`), the sampler panel in the lower zone
+([sampler-track.md](sampler-track.md), `window.sampler`) and the edit history on the right
+([edit-history.md](edit-history.md)).
 `open` shows a panel as its zone's active tab, with the zone shown; a panel in a window of its own stays there, and
 its window comes to the front with the keyboard focus, restored if it is minimized, so commands such as
 `window.history` show it even when it is behind another window. The OS has the last word: it may refuse the focus to
@@ -101,7 +103,22 @@ and hidden sections (Reset All, p. 1576), and the presets (p. 1575) save and rec
 - **Show and hide.** A section's button shows or hides that section in every container of its set; hidden sections
   get the state class `.hidden`.
 - **Reorder.** A button dragged onto another moves its section to that one's place, in the pane and in every container.
-  The sections stay where they were among the container's other children, such as a channel's name above them.
+  Children that aren't sections, such as a channel's name above them, keep their places between the sections, and the
+  sections fill their own places in the new order. So a toolbar whose spacer stands before its last place has the
+  last section of the order at its right end, whichever section that is, if it is shown. The gap after a toolbar
+  section is the same for every section (`.toolbar-section` in `base.rcss`; the last one has none, the toolbar's
+  padding follows it), so it doesn't depend on the order and no section's controls bring a gap of their own. A
+  section hidden in the setup pane or by a narrow window takes no gap.
+- **Room.** A toolbar with `fit="room"` shows the sections it has room for, as the reference's toolbar hides its
+  items one after another in a narrower window and shows them again in a wider one (pp. 57, 65). Sections keep the
+  width they need (`flex-shrink: 0`); before the shell draws, the docking system lays the window out and gives the
+  shown sections before the spacer that don't fit the state class `.no-room`, the last of the order first, so the
+  user's order says what goes first and a section hidden in the setup pane makes room for the next one. The style
+  takes a section with `.no-room` out of the flow and doesn't show it (`resources/styles/base.rcss`), but lays it out,
+  so its width, with its labels as they are now, says when it fits again. The section after the spacer always shows.
+  So the room, not a fixed width, decides: at another UI scale, with wider labels such as the snap type Events + Grid
+  + Cursor, and after the setup pane hid sections. The toolbar's own width rule is Warp Quantize On/Off, shown in
+  windows at least 1100 dp wide ([audio-quantize.md](audio-quantize.md)).
 - **Defaults.** The set's first container in the document says which sections there are, their default order and which
   are hidden by default; the other containers are expected to have the same sections.
 - **Containers that come later.** Containers added or rebuilt after `attach`, such as the mixer's channels as tracks
@@ -198,7 +215,7 @@ and a panel in a window of its own, whose document has no zones. Ctrl+Tab, Alt+T
 ## Not yet
 
 Removing and renaming setup pane presets; the setup panes of the editors' toolbars and info lines (p. 1575: the key,
-drum, list, audio part and in-place editors), which have no sections yet; the toolbar's Left and Right Divider (p. 65). Sections in a panel that shows in a window of its own keep the document's order; the Channel zone's contents (p. 73)
+drum, list, audio part and in-place editors), which have no sections yet; the toolbar's Left and Right Divider (p. 65), which would keep the sections outside them shown. Sections in a panel that shows in a window of its own keep the document's order; the Channel zone's contents (p. 73)
 with the channel strip (#107), shown as its zone's one tab until then; a theme look for tabs at the bottom, whose
 active tab has its marker on the side away from the panels; dragging a tab out of its zone to open it in a window; the
 editor in the lower zone taking the focus when it opens (p. 100), once editors open there; and after live reload, what
@@ -238,4 +255,9 @@ or from a channel in a docked panel's content; a setup pane added later gets its
 `tests/transportbar_tests.cpp` saves a setup pane preset through the Save Preset dialog into `ui.setupPresets`, resets
 the pane with Reset All, also the order after a reorder, recalls the preset and follows another client's presets;
 `tests/inspector_tests.cpp` and `tests/mixerwindow_tests.cpp` do the same for the inspector's, the toolbar's, the info
-line's and the mixer's setup panes, with the dialog's OK disabled until a name is typed.
+line's and the mixer's setup panes, with the dialog's OK disabled until a name is typed. `tests/inspector_tests.cpp`
+also checks the toolbar's room in windows from 700 to 1400 pixels at UI scales of 100 and 125 %, in three orders:
+the shown sections come first and the next one wouldn't fit, no button covers the next, the gaps stay the same, the
+last section ends as far from the right edge as the first button starts from the left one, and a wider window shows
+the sections again; with the snap and grid types' longest names fewer sections show, and sections hidden in the setup
+pane make room for the next one.

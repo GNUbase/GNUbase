@@ -8,8 +8,10 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
 - **One client.** `ui::EngineBinding` owns an engine client named `ui` and is used on the UI thread only. The UI
   module links the engine's API, never its internals: no document, audio graph or command handler is reachable from
   `src/ui`, and the engine never depends on the UI (`gnubase_require_no_ui`).
-- **Commands.** `send(command, parameters, done)` queues a command and returns at once; the UI thread never waits for
-  the engine. `done` runs on the UI thread with the result. A failed command without `done` is logged.
+- **Commands.** `send(command, parameters, done)` queues a command and returns at once; the UI thread doesn't wait for
+  the engine, with two exceptions: a press in the event display waits up to two seconds for the answers that held
+  actions wait for (`awaitHeld`, below), and a user script settles (`settle`, [scripts.md](scripts.md)). `done` runs
+  on the UI thread with the result. A failed command without `done` is logged.
   `waiting(command)` counts the commands of that name still waiting for their results, so tests can check how many
   queries a view keeps open (queries don't show in `engine.commandLog`). `onResult(command, handler)` hears the result
   of every command of that name the UI sent, after the sender's `done`, for as long as its `Subscription` exists:
@@ -43,6 +45,18 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   into SDL's event queue; more messages before the next update don't wake it again, so a burst of events can't fill
   SDL's queue. In each step the shell calls `EngineBinding::update` (`Shell::eachStep`), which hands everything that
   arrived to its handlers, in the order the engine sent it.
+- **Settling.** `settle` sends the steps that wait and hands on results and events until no command that isn't a query
+  is out, including those that the handlers send, e.g. around a user script, so that what it ran through the UI is in
+  its undo step ([scripts.md](scripts.md)). A query that what the user does next waits for goes out with
+  `sendAwaited`, and settling waits for it too. Meanwhile `afterAwaited` holds what the user does, the event display's
+  actions and engine key commands, and runs it in order once the answers are in, after their handlers: Delete right
+  after a range is drawn edits the range where `snap.zeroCrossings` moves its edges, an undo after it comes after it,
+  a script that draws a range and deletes it has the delete in its step, and a press while they wait waits for them
+  before it starts another range ([tools.md](tools.md), #1086): `awaitHeld` hands on results and events until nothing
+  is held, for at most two seconds, not for other commands out, and what is still held then runs on the range as it
+  is (#1179). Only the event display's actions and engine key commands wait so; the UI commands of other views, such
+  as the track list's, run at once ([key-commands.md](key-commands.md)), and so do a user script's own engine calls
+  ([scripts.md](scripts.md)). The marker lane's double click asks for its range with `sendAwaited` too.
 - **Frame rate.** Views update data models in their handlers; the window draws once in the step, after all of them,
   and drawing waits for vsync. However many events arrive between two frames, the UI lays out and draws once.
 - **Drawing what arrived.** The shell draws a window only when something asks for it (docs/architecture.md,
@@ -80,7 +94,12 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   binding woke it, once for any number of messages; subscriptions end with their objects, also from inside a handler;
   results reach `onResult` handlers for the UI's own commands only; watched values arrive once an update, only when they
   changed; a gesture's steps go one at a time, the newest replacing those that wait, as one undo step, without holding
-  up another control's, and steps without a gesture or of another gesture are kept, also after a refused one.
+  up another control's, and steps without a gesture or of another gesture are kept, also after a refused one;
+  settling sends the steps that wait and waits for commands that change things and for queries sent with
+  `sendAwaited`, and for what their answers send; what `afterAwaited` holds runs after the answer, in order, what a
+  held one runs itself at once, and after another awaited query that a held one sends. `tests/scripts_ui_tests.cpp`
+  has a user script draw a range with Snap to Zero Crossing on and delete it through the UI: the delete is in the
+  script's undo step, and an undo after it undoes the delete.
   `tests/mixerwindow_tests.cpp` and `tests/inspector_tests.cpp` drag faders, knobs and value fields (the inspector's and
   the info line's) and turn the wheel while the engine answers late (`test::LateDrag`, `test::lateSteps` in
   `tests/uiapp.h`): the control never goes back toward an earlier step, and the engine and the control agree at the end;

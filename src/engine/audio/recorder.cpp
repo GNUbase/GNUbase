@@ -12,6 +12,7 @@
 #include <cmath>
 #include <ctime>
 #include <exception>
+#include <set>
 #include <string_view>
 #include <system_error>
 #include <tuple>
@@ -234,6 +235,7 @@ namespace gnubase::engine
 		rt::assertNotRealtime("engine::Recorder::prepare");
 		const std::scoped_lock lock(m_mutex);
 		drain(); // what the audio thread sent before it stopped
+		applySetups(m_latestSetup.load(std::memory_order_acquire));
 		if (m_midiRecording)
 			endMidi();
 		if (m_recording)
@@ -273,16 +275,43 @@ namespace gnubase::engine
 	void Recorder::setup(RecordSetup setup)
 	{
 		rt::assertNotRealtime("engine::Recorder::setup");
-		const std::scoped_lock lock(m_mutex);
-		drain(); // a recording that the audio thread started already starts with the setup it started with
-		if (setup.preRecordFrames != m_next.preRecordFrames)
+		// Numbered instead of applied here: the chunks sent before it still get the setup before, but the disk thread
+		// can hold m_mutex for a while.
+		const bool armed = !setup.tracks.empty();
+		const bool midiArmed = !setup.midiTracks.empty();
 		{
-			m_history.assign(static_cast<size_t>(setup.preRecordFrames) * static_cast<size_t>(m_channels), 0.0f);
+			const std::scoped_lock lock(m_setupMutex);
+			m_setups.emplace_back(++m_setupCount, std::move(setup));
+			m_latestSetup.store(m_setupCount, std::memory_order_release);
+		}
+		// After the number: the chunks that this arms get it.
+		m_armed.store(armed, std::memory_order_release);
+		m_midiArmed.store(midiArmed, std::memory_order_release);
+	}
+
+	void Recorder::applySetups(uint64_t number)
+	{
+		if (number <= m_nextNumber)
+			return;
+		RecordSetup next;
+		uint64_t nextNumber = 0;
+		{
+			const std::scoped_lock lock(m_setupMutex);
+			for (; !m_setups.empty() && m_setups.front().first <= number; m_setups.pop_front())
+			{
+				nextNumber = m_setups.front().first;
+				next = std::move(m_setups.front().second);
+			}
+		}
+		if (nextNumber == 0)
+			return;
+		if (next.preRecordFrames != m_next.preRecordFrames)
+		{
+			m_history.assign(static_cast<size_t>(next.preRecordFrames) * static_cast<size_t>(m_channels), 0.0f);
 			m_historyFrames = 0;
 		}
-		m_armed = !setup.tracks.empty();
-		m_midiArmed = !setup.midiTracks.empty();
-		m_next = std::move(setup);
+		m_next = std::move(next);
+		m_nextNumber = nextNumber;
 	}
 
 	std::vector<RetrospectiveEvent> Recorder::retrospective(ObjectId channel)
@@ -314,7 +343,7 @@ namespace gnubase::engine
 		if (!m_filled)
 			return;
 		processMidi(block, played, sequencers); // first: a MIDI recording ends before the audio one it goes with
-		if (!m_armed.load(std::memory_order_relaxed))
+		if (!m_armed.load(std::memory_order_acquire))
 		{
 			// Disarmed while recording: the disk thread ends the recording on a chunk that isn't recorded.
 			if (m_sending && send(block, 0, 0, -1))
@@ -348,6 +377,7 @@ namespace gnubase::engine
 		chunk->deviceFrame = block.position + offset;
 		chunk->position = position;
 		chunk->frames = frames;
+		chunk->setup = m_latestSetup.load(std::memory_order_relaxed); // at least the one that armed it (acquire)
 		size_t n = 0;
 		for (uint32_t i = 0; i < frames; ++i)
 			for (int c = 0; c < m_channels; ++c)
@@ -363,7 +393,7 @@ namespace gnubase::engine
 		// offset: MIDI input belongs where the transport plays as it comes. A run is sent only for its input, where
 		// the positions jump (a recording starts, a cycle lap) or where a recording ends: the disk thread counts
 		// the frames in between, so a recording takes few chunks.
-		const bool armed = m_midiArmed.load(std::memory_order_relaxed);
+		const bool armed = m_midiArmed.load(std::memory_order_acquire);
 		const auto deviceFrame = static_cast<int64_t>(block.position);
 		const auto recordedAt = [&](uint32_t i)
 		{ return armed ? played.recordedAt(deviceFrame + i) : time::Samples{-1}; };
@@ -408,6 +438,7 @@ namespace gnubase::engine
 		chunk->deviceFrame = block.position + offset;
 		chunk->position = position;
 		chunk->frames = frames;
+		chunk->setup = m_latestSetup.load(std::memory_order_relaxed);
 		chunk->eventCount = 0;
 		for (const auto& [channel, sequencer] : sequencers)
 			for (const graph::ProcessEvent& event : sequencer->input())
@@ -430,7 +461,10 @@ namespace gnubase::engine
 		{
 			// ponytail: polls, since the audio thread can't wake it; a semaphore if 2 ms ever matters.
 			if (!drain())
+			{
+				applySetups(m_latestSetup.load(std::memory_order_acquire)); // for the chunks to come
 				m_wake.wait_for(lock, g_idle);
+			}
 		}
 	}
 
@@ -440,6 +474,7 @@ namespace gnubase::engine
 		Chunk* chunk = nullptr;
 		while (m_filled && m_filled->tryPop(chunk))
 		{
+			applySetups(chunk->setup);
 			if (chunk->midi)
 			{
 				handleMidi(*chunk);
@@ -516,12 +551,14 @@ namespace gnubase::engine
 				static_cast<time::Samples>(before);
 			broadcast.timeReference = static_cast<uint64_t>(std::max<time::Samples>(first, 0));
 		}
+		// One listing for all tracks: the folder can hold thousands of recordings, and the lock is held meanwhile.
+		std::set<std::string> taken = takenNames(m_current.folder);
 		for (const RecordTrack& track : m_current.tracks)
 		{
 			try
 			{
 				const std::string path = createFreeFile(
-					m_current.folder, fs::u8path(fileName(track.name) + extensionOf(m_current.format.format)))
+					m_current.folder, fs::u8path(fileName(track.name) + extensionOf(m_current.format.format)), taken)
 											 .u8string();
 				WriteOptions options = m_current.format;
 				options.channels = static_cast<int>(track.ports.size());
@@ -697,9 +734,12 @@ namespace gnubase::engine
 		{
 			MidiTakeBuilder& builder = m_midiBuilders[track.channel];
 			builder.endNotes(last.position + last.length);
-			if (!builder.empty() && !takes.empty())
-				tracks.push_back({{"track", track.track}, {"takes", takes}, {"notes", builder.notes()},
-					{"controllers", builder.controllers()}});
+			if (builder.empty() || takes.empty())
+				continue;
+			tracks.push_back({{"track", track.track}, {"takes", takes}, {"notes", builder.notes()},
+				{"controllers", builder.controllers()}});
+			if (track.chordsOnly)
+				tracks.back()["chordsOnly"] = true;
 		}
 		m_midiBuilders.clear();
 		if (tracks.empty())

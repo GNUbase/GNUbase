@@ -21,18 +21,26 @@ transport's record state and the record mode setting.
   to the recorder's disk thread through lock-free queues (`Recorder` in `src/engine/audio/recorder.h`). It sends
   chunks only while some track is armed. A block that finds no free chunk is lost and counted; if a later chunk shows
   that the take just went on, the gap is written as silence, so the take keeps its timing. The disk thread polls
-  every 2 ms, since the audio thread can't wake it; the pool holds over a second of input.
+  every 2 ms, since the audio thread can't wake it; the pool holds over a second of input. What the next recording
+  records and where (`Recorder::setup`) is numbered when the engine hands it over, not applied: each chunk carries the
+  latest number, and the disk thread applies a setup when a chunk sent after it comes, or when it finds none. So a
+  recording that the audio thread started before keeps the setup it started with, and handing a setup over never
+  waits for the disk thread, which holds its lock while it lists the folder and creates a recording's files.
 - **Files.** The disk thread writes one file per track, named after the track (`Audio 1.wav`, `Audio 1-2.wav` if
   that is taken; characters that file systems refuse become `_`), into the project's media folder `Audio`; an unsaved
   project records into `Recordings` in the settings folder (the temporary folder without one; `unsavedMediaFolder`,
   where its imported MP3 and Ogg Vorbis files are converted too, [file-import.md](file-import.md)), and its files are
-  referenced from there. The format comes from one function, `recordFormat`: the project setup's record file type and
-  bit depth ([project-setup.md](project-setup.md), p. 342) at the project's sample rate, read when a recording
-  starts. Wave and Broadcast Wave files end in `.wav`, AIFF in `.aif`, FLAC in `.flac`. A Broadcast Wave file has a
-  bext chunk with the track name as its description, GNUbase as its originator, the local date and time the recording
-  started, and as its time reference the position of the file's first frame (pre-recorded input included) plus the
-  project's start time, in samples since midnight. A file is complete once the recording ends; after a crash the
-  frames written so far are in it, as the reference describes (p. 347).
+  referenced from there. A name that differs only in case from a file in the folder, or from another track's, counts
+  as taken on every file system, also on those that tell them apart, so that the files can be copied to one that
+  doesn't (`createFreeFile`). One listing of the folder when a recording starts finds the free names of all tracks;
+  a file made after it is still found when the file is created, and a file whose name can't be read as text (an
+  invalid UTF-16 name on Windows) doesn't count. The format comes from one function, `recordFormat`: the project
+  setup's record file type and bit depth ([project-setup.md](project-setup.md), p. 342) at the project's sample
+  rate, read when a recording starts. Wave and Broadcast Wave files end in `.wav`, AIFF in `.aif`, FLAC in `.flac`.
+  A Broadcast Wave file has a bext chunk with the track name as its description, GNUbase as its originator, the
+  local date and time the recording started, and as its time reference the position of the file's first frame
+  (pre-recorded input included) plus the project's start time, in samples since midnight. A file is complete once
+  the recording ends; after a crash the frames written so far are in it, as the reference describes (p. 347).
 - **Takes.** A file holds everything recorded from the start of the recording to its end. Each run of consecutive
   project positions is a take: a cycle lap, or what was recorded between punching in and out
   (`transport.record` with `record: false` or a punch out at the right locator ends a recording, and recording again

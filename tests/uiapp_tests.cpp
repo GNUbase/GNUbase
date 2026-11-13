@@ -32,7 +32,6 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
-#include <fstream>
 #include <memory>
 #include <optional>
 #include <string>
@@ -115,13 +114,14 @@ namespace
 	// The project window in a main window of 800 by 300 dp, at a dp ratio of 1.
 	struct ProjectWindow
 	{
-		ProjectWindow() : display(app.appUi().showProject())
+		// The toolbar has room for its sections up to Grid Type at 800 dp (#1178).
+		explicit ProjectWindow(int width = 800) : app{{width, 300}}, display(app.appUi().showProject())
 		{
 			app.setDpRatio(1.0F);
 			app.shell().step(std::chrono::milliseconds(0));
 		}
 
-		test::UiApp app{{800, 300}};
+		test::UiApp app;
 		ui::EventDisplay& display;
 	};
 }
@@ -167,17 +167,9 @@ TEST_CASE("UI tests click through GNUbase's UI and read it back, as MCP's UI too
 
 TEST_CASE("UI tests run the UI from another resources folder, which a restart keeps", "[ui]")
 {
-	// A copy of GNUbase's resources with a button in the transport controls that has a command that doesn't exist.
 	const test::TempDir folder;
-	const std::filesystem::path resources = folder.path() / "resources";
-	std::filesystem::copy(GNUBASE_RESOURCES_DIR, resources, std::filesystem::copy_options::recursive);
-	const std::filesystem::path file = resources / "ui" / "transport.rml";
-	std::string text = test::readText(file);
-	const std::string from = R"(command="locate.nextMarker")";
-	const size_t at = text.find(from);
-	REQUIRE(at != std::string::npos);
-	text.replace(at, from.size(), R"(command="locate.nextMarkr")");
-	std::ofstream(file, std::ios::binary) << text;
+	const std::filesystem::path resources = test::patchedResources(
+		folder.path(), "transport.rml", R"(command="locate.nextMarker")", R"(command="locate.nextMarkr")");
 
 	// The transport panel's controls are refused, so it closes again; the time display, whose controls are fine,
 	// opens from the same copy. A restart that fell back to GNUbase's resources would open the transport panel.
@@ -543,7 +535,8 @@ TEST_CASE("the auto-scroll button switches auto-scroll, its menu sets the mode, 
 
 TEST_CASE("the snap buttons, the snap and grid type menus and J change the project's snap settings", "[ui]")
 {
-	ProjectWindow window;
+	// Wide enough for the grid type's section next to the snap type's longest name.
+	ProjectWindow window(1024);
 	test::UiApp& app = window.app;
 	ui::EventDisplay& display = window.display;
 	const auto snap = [&app] { return app.call("snap.get"); };
@@ -610,7 +603,7 @@ TEST_CASE("the snap buttons, the snap and grid type menus and J change the proje
 // #565: the grid type menu has the engine's grid types of the ruler's format, and a pick sends that format with it.
 TEST_CASE("the grid type menu has the format's grid types and picks them in the format shown", "[ui]")
 {
-	ProjectWindow window;
+	ProjectWindow window(900);
 	test::UiApp& app = window.app;
 	ui::EventDisplay& display = window.display;
 	const auto snap = [&app] { return app.call("snap.get"); };

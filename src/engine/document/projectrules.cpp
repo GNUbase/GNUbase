@@ -10,6 +10,7 @@
 #include <array>
 #include <cmath>
 #include <initializer_list>
+#include <map>
 #include <memory>
 #include <set>
 #include <stdexcept>
@@ -763,14 +764,12 @@ namespace gnubase::engine
 				if (element->kind == Kind::AudioPart && !element->locked)
 					parts.insert(element->id);
 			// Each action's result stops at the longest project, so that values stay finite and fit the ticks they
-			// become. They may go below the project's start between two actions. The longest project is
-			// g_maxPosition samples long, but below 8 kHz, the lowest common sample rate, it lasts as long as at 8 kHz:
-			// at 999 BPM that is about 10^18 ticks, while at a few hundred hertz the ticks would leave an int64_t.
-			constexpr double lowestRate = 8000.0;
-			const double longest = static_cast<double>(project.tempo.toTicks(static_cast<double>(time::g_maxPosition) /
-									   std::max(project.sampleRate, lowestRate))) /
-				g_logicalTick;
+			// become. They may go below the project's start between two actions.
+			const double longest = static_cast<double>(longestProjectTicks(project)) / g_logicalTick;
 			const auto bounded = [longest](double value) { return std::clamp(value, -longest, longest); };
+			// The time base a marker track has once its track.set ran: tracks come first, and marker.set takes
+			// positions in it.
+			std::map<ObjectId, time::TimeBase> timeBases;
 			Commands commands;
 			for (const Element* element : found.elements)
 			{
@@ -844,6 +843,9 @@ namespace gnubase::engine
 						track["name"] = name;
 					if (recolored)
 						track["color"] = color;
+					if (track.contains("timeBase"))
+						timeBases[element->id] =
+							track.at("timeBase") == "linear" ? time::TimeBase::Linear : time::TimeBase::Musical;
 					if (!track.empty())
 					{
 						track["track"] = element->id;
@@ -891,21 +893,25 @@ namespace gnubase::engine
 						set["name"] = name;
 					if (recolored)
 						set["color"] = color;
+					const auto newBase = timeBases.find(marker.track);
+					const time::TimeBase base = newBase != timeBases.end() ? newBase->second : marker.position.base;
 					const auto at = [&](double logical)
 					{
 						const time::Position ticks{
 							time::TimeBase::Musical, std::llround(std::max(logical, 0.0) * g_logicalTick)};
-						return time::rebase(ticks, marker.position.base, project.tempo, project.sampleRate).value;
+						return time::rebase(ticks, base, project.tempo, project.sampleRate).value;
 					};
 					if (position != element->position || length != element->length)
 					{
+						// Stopped at the project's start, a cycle marker keeps its length, as a part does.
+						position = std::max(position, 0.0);
 						set["position"] = at(position);
 						if (marker.type == MarkerType::Cycle)
 						{
 							// At least one sample long, as marker.set wants it, also on a musical track.
 							Marker moved = marker;
-							moved.position.value = at(position);
-							moved.end = {marker.position.base, at(position + std::max(length, 0.0))};
+							moved.position = {base, at(position)};
+							moved.end = {base, at(position + std::max(length, 0.0))};
 							keepMinimumLength(project, moved);
 							set["end"] = moved.end.value;
 						}
@@ -982,7 +988,10 @@ namespace gnubase::engine
 		for (size_t i = 0; i < filters.size(); ++i)
 		{
 			const ProjectFilterLine line = filterFromJson(filters[i], "rules.filters[" + std::to_string(i) + "]");
-			depth += line.open - line.close;
+			depth += line.open;
+			if (depth > midi::g_maxLogicalBrackets)
+				throw std::invalid_argument("rules.filters: brackets nest at most 3 deep");
+			depth -= line.close;
 			if (depth < 0)
 				throw std::invalid_argument("rules.filters: a bracket closes that wasn't opened");
 			rules.filters.push_back(line);
@@ -1121,7 +1130,7 @@ namespace gnubase::engine
 				"that stay, except that a locked event moves with an audio part that moves; delete keeps an audio "
 				"part that holds a locked event. Audio events keep their clip's name, track operations change tracks "
 				"only. Positions and lengths stop at the longest project. seed makes the random operations "
-				"repeatable." +
+				"repeatable; without it each call gives new random values." +
 					rulesText + " Use project.findByRules for select and deselect. Returns what the filters found.",
 				objectSchema(properties), foundSchema, false},
 			"Project Rule Editor",
@@ -1135,7 +1144,9 @@ namespace gnubase::engine
 				const Found found = find(project, rules, elements);
 				const Commands commands = rules.function == ProjectFunction::Delete
 					? deleting(project, found)
-					: transforming(project, rules, found, parameters.value("seed", uint64_t{0}));
+					: transforming(project, rules, found,
+						  parameters.contains("seed") ? parameters.at("seed").get<uint64_t>()
+													  : midi::nextLogicalSeed());
 				const Json result = found.json();
 				for (const auto& [command, commandParameters] : commands)
 					model.runEdit(command, project, commandParameters, context);

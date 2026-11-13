@@ -4,6 +4,7 @@
 #include "engine/document/projectmodel.h"
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
+#include "engine/midi/functioncommands.h"
 #include "engine/midi/midivalues.h"
 #include "engine/rulepresets.h"
 #include "engine/schema.h"
@@ -34,17 +35,6 @@ namespace gnubase::engine::midi
 				throw CommandError(message);
 		}
 
-		Json objectSchema(Json properties, const std::vector<std::string>& required = {})
-		{
-			return {{"type", "object"}, {"properties", std::move(properties)}, {"required", required},
-				{"additionalProperties", false}};
-		}
-
-		Json arraySchema(Json items)
-		{
-			return {{"type", "array"}, {"items", std::move(items)}};
-		}
-
 		using PresetLibrary = RulePresets<LogicalPreset>;
 
 		// The rules given, or a preset's.
@@ -63,37 +53,6 @@ namespace gnubase::engine::midi
 			{
 				throw CommandError(error.what());
 			}
-		}
-
-		std::vector<MidiPart*> partsOf(Project& project, const Json& parameters)
-		{
-			const auto ids = parameters.at("parts").get<std::vector<ObjectId>>();
-			require(!ids.empty(), "parts must name at least one MIDI part");
-			std::vector<MidiPart*> parts;
-			for (const ObjectId id : ids)
-			{
-				const auto found = project.midiParts.find(id);
-				require(found != project.midiParts.end(), "no MIDI part " + std::to_string(id));
-				require(std::find(parts.begin(), parts.end(), &found->second) == parts.end(),
-					"MIDI part " + std::to_string(id) + " is named twice");
-				parts.push_back(&found->second);
-			}
-			return parts;
-		}
-
-		NoteSelection selectionOf(const std::vector<MidiPart*>& parts, const Json& parameters)
-		{
-			if (!parameters.contains("notes"))
-				return {};
-			std::set<ObjectId> notes;
-			for (const ObjectId id : parameters.at("notes").get<std::vector<ObjectId>>())
-			{
-				require(std::any_of(parts.begin(), parts.end(),
-							[id](const MidiPart* part) { return part->notes.count(id) != 0; }),
-					"no note " + std::to_string(id) + " in the MIDI parts");
-				notes.insert(id);
-			}
-			return NoteSelection(std::move(notes));
 		}
 
 		double toLogicalTicks(Ticks ticks)
@@ -122,40 +81,32 @@ namespace gnubase::engine::midi
 		// False for SysEx, which the rules don't see.
 		bool controllerEvent(const Controller& controller, Ticks start, LogicalEvent& event)
 		{
-			event = LogicalEvent{};
-			event.channel = controller.channel + 1;
-			event.subtype = controller.number;
-			event.position = toLogicalTicks(start + controller.position);
+			LogicalType type = LogicalType::Controller;
 			switch (controller.type)
 			{
 			case ControllerType::Control:
-				event.type = LogicalType::Controller;
-				event.mainValue = controllerToMidi1(controller.value);
-				return true;
+				break;
 			case ControllerType::PolyPressure:
-				event.type = LogicalType::PolyPressure;
-				event.mainValue = controllerToMidi1(controller.value);
-				return true;
+				type = LogicalType::PolyPressure;
+				break;
 			case ControllerType::Program:
-				event.type = LogicalType::Program;
-				return true;
+				type = LogicalType::Program;
+				break;
 			case ControllerType::ChannelPressure:
-				event.type = LogicalType::Aftertouch;
-				event.subtype = controllerToMidi1(controller.value);
-				return true;
+				type = LogicalType::Aftertouch;
+				break;
 			case ControllerType::PitchBend:
-			{
-				const uint16_t bend = pitchBendToMidi1(controller.value);
-				event.type = LogicalType::PitchBend;
-				event.subtype = static_cast<int>(bend & 0x7FU);
-				event.mainValue = static_cast<int>(bend >> 7U);
-				return true;
-			}
+				type = LogicalType::PitchBend;
+				break;
 			case ControllerType::SysEx:
 			case ControllerType::Articulation:
 				return false;
 			}
-			return false;
+			event = LogicalEvent{};
+			event.channel = controller.channel + 1;
+			event.position = toLogicalTicks(start + controller.position);
+			setLogicalValues(type, controller.number, controller.value, event);
+			return true;
 		}
 
 		Ticks positionIn(const LogicalEvent& changed, const LogicalEvent& original, Ticks old, Ticks start)
@@ -179,46 +130,30 @@ namespace gnubase::engine::midi
 				note.releaseVelocity = velocityFromMidi1(static_cast<uint8_t>(changed.secondaryValue));
 		}
 
-		void writeController(Controller& controller, LogicalEvent changed, const LogicalEvent& original, Ticks start)
+		void writeController(
+			Controller& controller, const LogicalEvent& changed, const LogicalEvent& original, Ticks start)
 		{
-			if (changed.type == LogicalType::Note) // controllers don't turn into notes in parts
-				changed.type = original.type;
 			controller.position = positionIn(changed, original, controller.position, start);
 			controller.channel = static_cast<uint8_t>(changed.channel - 1);
-			const bool sameType = changed.type == original.type;
-			const bool subtypeSame = sameType && changed.subtype == original.subtype;
-			const bool mainSame = sameType && changed.mainValue == original.mainValue;
-			const auto main = static_cast<uint8_t>(changed.mainValue);
-			const auto subtype = static_cast<uint8_t>(changed.subtype);
+			logicalValues(changed, original, controller.number, controller.value);
 			switch (changed.type)
 			{
 			case LogicalType::Controller:
+				controller.type = ControllerType::Control;
+				break;
 			case LogicalType::PolyPressure:
-				controller.type =
-					changed.type == LogicalType::Controller ? ControllerType::Control : ControllerType::PolyPressure;
-				controller.number = subtype;
-				if (!mainSame)
-					controller.value = controllerFromMidi1(main);
+				controller.type = ControllerType::PolyPressure;
 				break;
 			case LogicalType::Program:
 				controller.type = ControllerType::Program;
-				controller.number = subtype;
-				if (!sameType)
-					controller.value = g_noBank;
 				break;
 			case LogicalType::Aftertouch:
 				controller.type = ControllerType::ChannelPressure;
-				controller.number = 0;
-				if (!subtypeSame)
-					controller.value = controllerFromMidi1(subtype);
 				break;
 			case LogicalType::PitchBend:
 				controller.type = ControllerType::PitchBend;
-				controller.number = 0;
-				if (!subtypeSame || !mainSame)
-					controller.value = pitchBendFromMidi1(static_cast<uint16_t>((main << 7U) | subtype));
 				break;
-			case LogicalType::Note:
+			case LogicalType::Note: // not reached: parts refuse the change (applyLogical)
 				break;
 			}
 		}
@@ -235,15 +170,25 @@ namespace gnubase::engine::midi
 		LogicalResult result;
 		const auto found = [&rules](const LogicalEvent& event)
 		{ return matches(rules.filters.data(), rules.filters.size(), event); };
-		// Whether the event stays, after changing it if it is found.
+		const double longest = static_cast<double>(longestProjectTicks(project)) / g_ticksPerLogicalTick;
+		// Whether the event stays, after changing it if it is found. Positions and lengths stop at the longest project.
 		const auto apply = [&](bool isFound, LogicalEvent& event)
 		{
 			if (!isFound)
 				return function != LogicalFunction::InsertExclusive;
 			if (function == LogicalFunction::Delete)
 				return false;
-			return !transforms || transform(rules.actions.data(), rules.actions.size(), event, random);
+			if (!transforms)
+				return true;
+			const bool kept = transform(rules.actions.data(), rules.actions.size(), event, random);
+			event.position = std::min(event.position, longest);
+			event.length = std::min(event.length, longest);
+			return kept;
 		};
+		// In parts, notes don't turn into other events or the other way round: such an event stays as it is, and
+		// insert adds no copy of it.
+		const auto refused = [](const LogicalEvent& changed, const LogicalEvent& original)
+		{ return (changed.type == LogicalType::Note) != (original.type == LogicalType::Note); };
 
 		std::vector<Note> added;
 		for (auto it = part.notes.begin(); it != part.notes.end();)
@@ -265,7 +210,11 @@ namespace gnubase::engine::midi
 			}
 			LogicalEvent changed = original;
 			const bool keep = apply(isFound, changed);
-			changed.type = LogicalType::Note; // notes don't turn into other events in parts
+			if (refused(changed, original))
+			{
+				++it;
+				continue;
+			}
 			if (function == LogicalFunction::Insert)
 			{
 				if (keep)
@@ -312,6 +261,11 @@ namespace gnubase::engine::midi
 			}
 			LogicalEvent changed = original;
 			const bool keep = apply(isFound, changed);
+			if (refused(changed, original))
+			{
+				++it;
+				continue;
+			}
 			if (function == LogicalFunction::Insert)
 			{
 				if (keep)
@@ -382,7 +336,10 @@ namespace gnubase::engine::midi
 				"removes the events the filters find, transform changes them by the actions, insert adds changed "
 				"copies, insertExclusive changes them and removes the others. Pitches leaving 0 to 127 delete notes, "
 				"velocities stay from 1 to 127, events don't move before their part's start and notes don't turn "
-				"into other events or the other way round. seed makes the random operations repeatable." +
+				"into other events or the other way round (such events stay as they are). Positions and lengths stop "
+				"at the "
+				"longest project. seed makes the random operations repeatable; without it each call gives new random "
+				"values." +
 					rulesText +
 					" Use midi.findByRules for select. Returns the parts it changed and how many events "
 					"it found.",
@@ -398,7 +355,8 @@ namespace gnubase::engine::midi
 				require(rules.function != LogicalFunction::Select, "midi.findByRules selects");
 				const std::vector<MidiPart*> parts = partsOf(project, parameters);
 				const NoteSelection selection = selectionOf(parts, parameters);
-				LogicalRandom random{parameters.value("seed", uint64_t{0})};
+				LogicalRandom random{
+					parameters.contains("seed") ? parameters.at("seed").get<uint64_t>() : nextLogicalSeed()};
 				Json changed = Json::array();
 				size_t found = 0;
 				for (MidiPart* part : parts)

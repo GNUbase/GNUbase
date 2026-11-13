@@ -170,7 +170,7 @@ namespace gnubase::ui
 		double trackHeight(uint64_t track) const;
 		double ownHeight(uint64_t track) const;
 		void setTrackHeight(uint64_t track, double height);
-		void setTrackHeights(double height); // every track's
+		void setTrackHeights(const std::vector<uint64_t>& tracks, double height); // those tracks' (clamped)
 		// The heights tracks have of their own, by track, and replacing them all (the project's, trackLayout.get).
 		const std::map<uint64_t, double>& ownTrackHeights() const { return m_heights; }
 		void setOwnTrackHeights(std::map<uint64_t, double> heights);
@@ -183,6 +183,8 @@ namespace gnubase::ui
 		const engine::Json& project() const { return m_project; }
 		uint64_t loads() const { return m_loads; }
 		uint64_t read() const { return m_read; }
+		// The tempo map and signatures of project(), read once per answer.
+		const TimeContext& time() const { return m_time; }
 		// Folder tracks' data blocks (reference manual p. 226, docs/features/folder-tracks.md): per lane, the events
 		// and parts of the tracks inside a folder's lane, by the user setting ui.folderData (always, never, or
 		// hideWhenExpanded: while the folder is folded); empty for the other lanes.
@@ -269,6 +271,9 @@ namespace gnubase::ui
 		// modifier Split Event.
 		void setTool(Tool tool);
 		Tool tool() const { return m_tool; }
+		// Whether the modifier keys of a mouse event are those the user setting ui.toolModifiers gives the action, e.g.
+		// erase.deleteLaterEvents.
+		bool toolModifier(const char* action, Rml::Event& event) const;
 		void setCombineSelectionTools(bool on);
 		bool combineSelectionTools() const { return m_combine; }
 		void setLineMode(LineMode mode);
@@ -281,6 +286,11 @@ namespace gnubase::ui
 		// without the range selection tool. Choosing another tool selects the events in the range instead.
 		const std::optional<RangeSelection>& range() const { return m_range; }
 		void setRange(std::optional<RangeSelection> range);
+		// What a press and release with the range selection tool do on any lane, for a press that the display didn't
+		// get: the marker track's press in the selection range, released without a drag across (ui/markers.h). A range
+		// from the press to the release, with the release's modifier keys: of no length at a click, over the lanes
+		// between them after a drag up or down.
+		void clickRange(Rml::Vector2f press, Rml::Event& release);
 		// Importing files (#92, fileimport.cpp, docs/features/file-import.md). MIDI files (.mid, .midi, .smf) are
 		// imported with midiFile.import. Audio files open the Import Options dialog (import-options.rml next to the
 		// document), or with the user setting editing.onImportAudio at useSettings are imported at once with the
@@ -299,8 +309,8 @@ namespace gnubase::ui
 		// user settings midi.import*, at the left locator with midi.importToLeftLocator, else at the project start.
 		// Into a new project (newProject), the file's tempo always replaces the project's. MIDI files dropped on the
 		// event lanes go where they are dropped instead (elsewhere on the display, such as the track list, to the
-		// project cursor), and with midi.importSinglePart into one part, on the MIDI or instrument track they are
-		// dropped on if any.
+		// project cursor), and with midi.importSinglePart into one part, on the MIDI or instrument track whose lane
+		// or track list row they are dropped on if any.
 		void importMidi(const std::vector<std::string>& files, bool newProject = false);
 
 		// The commands that key commands bind to, by id: zoom.in, zoom.out, zoom.inVertically, zoom.outVertically,
@@ -545,6 +555,8 @@ namespace gnubase::ui
 		// A right click that opens the context menu selects the event there, unless it's selected already.
 		void areaRightDown(Rml::Event& event, double x, double y);
 		void areaMove(Rml::Event& event, double dx, double dy);
+		// A Ctrl/Shift press left for a click: drags the pressed event once the drag starts.
+		void narrowToPressed();
 		// Whether the keys are exactly the tool modifier of Copy or Shared Copy.
 		bool copyKeys(const std::string& keys) const;
 		// Whether the keys held restrict a drag of events: Ctrl (Cmd), unless they are a copy's tool modifier.
@@ -607,11 +619,15 @@ namespace gnubase::ui
 		void scrubEdge(uint64_t clip, int64_t offset, int64_t length);
 
 		// Fades and crossfades (eventfades.cpp): an audio event's fades and crossfade as project.get has them, its
-		// media file's sample rate, its offset and length in clip frames, and its volume and volume curve.
+		// media file's sample rate, the frames its fades may take together (fadeRoom), the clip frames a second it is
+		// drawn at (its waveform's rate, which a warped event's warp changes), its offset and length in clip frames,
+		// and its volume and volume curve.
 		struct AudioFades
 		{
 			double rate = 0.0;
-			int64_t length = 0;
+			int64_t length = 0; // for the fades only
+			double timeRate = 0.0;
+			int64_t frames = 0;
 			engine::Fade in;
 			engine::Fade out;
 			engine::Crossfade crossfade;
@@ -621,7 +637,7 @@ namespace gnubase::ui
 			std::vector<engine::VolumePoint> curve;
 		};
 		void addFadeActions();
-		void readFades(const engine::Json& event, double rate);
+		void readFades(const engine::Json& event, double rate, double timeRate);
 		// The fade handle of the event at x and y dp in the event lanes: -1 its fade in's, 1 its fade out's, 0 none.
 		int fadeHandleAt(const Shown& shown, double x, double y) const;
 		// Starts dragging a fade handle when x and y dp in the event lanes are at one of the pressed event's.
@@ -692,8 +708,13 @@ namespace gnubase::ui
 		void selectRange();                       // the events in it, when another tool takes over
 		void showRange();
 		// Moves the range's edges to zero crossings of the audio on its tracks (reference manual p. 285), with Snap to
-		// Zero Crossing on: snap.zeroCrossings answers later, and actions wait until it has (m_afterZeroCrossings).
+		// Zero Crossing on: snap.zeroCrossings answers later, and actions wait until it has (EngineBinding::sendAwaited
+		// and afterAwaited).
 		void zeroCrossRange();
+		// Runs the actions that wait for zeroCrossRange's answers before a press, which may start another range, so
+		// that they edit the range they were run on (#1086): the binding hands the answers on until nothing is held,
+		// for at most a few seconds (EngineBinding::awaitHeld); actions still waiting then run on the range as it is.
+		void runWaitingActions();
 		// The rectangle that a tool drags, dp in the event lanes; hidden when not shown.
 		void showRectangle(bool shown, double left = 0.0, double top = 0.0, double right = 0.0, double bottom = 0.0);
 		void setToolModifiers(const engine::Json& value);
@@ -822,8 +843,9 @@ namespace gnubase::ui
 		double m_dragDx = 0.0;              // dp, while moving, snapped
 		std::optional<int64_t> m_dragTicks; // a musical move's offset, for each event's preview
 		int m_dragLanes = 0;
-		// What a Ctrl/Shift click selects whose keys are also a drag's tool modifier, e.g. Copy (#474).
-		std::optional<std::vector<uint64_t>> m_clickSelection;
+		// A Ctrl/Shift press whose keys are also a drag's tool modifier, e.g. Copy (#474): a click adds the pressed
+		// event to the selection or takes it out, a drag narrows the selection to it first (#1018).
+		bool m_clickToggles = false;
 		double m_dragLaneY = 0.0; // where a drag of events started, in dp from the top of the first lane
 		double m_end = 0.0;       // of the last event
 		double m_length = g_defaultProjectLength; // the project setup's
@@ -940,8 +962,6 @@ namespace gnubase::ui
 		std::map<uint64_t, std::set<uint64_t>> m_pointsBase; // the selection a rectangle with Ctrl or Shift adds to
 
 		std::map<std::string, std::function<void()>> m_actions;
-		size_t m_zeroCrossings = 0;                              // zeroCrossRange's requests not answered yet
-		std::vector<std::function<void()>> m_afterZeroCrossings; // the actions run meanwhile, which then run
 		std::map<std::string, bool> m_rangeActions; // the actions that need a range (canRun), whether with a length
 		std::vector<std::function<void()>> m_viewListeners;
 		std::vector<Subscription> m_subscriptions;

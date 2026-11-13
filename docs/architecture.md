@@ -77,7 +77,7 @@ flowchart TD
 
 | Thread | Runs | Rules |
 |---|---|---|
-| UI (main thread) | SDL event loop, RmlUi layout and rendering, Lua UI scripts | Sends commands, renders from events, never blocks on the engine |
+| UI (main thread) | SDL event loop, RmlUi layout and rendering, Lua UI scripts | Sends commands, renders from events, doesn't block on the engine; exceptions: a press in the event display waits up to two seconds for answers that held actions wait for, a user script settles (docs/features/ui-engine-binding.md) |
 | Engine command thread | Every command: document changes, undo, building render snapshots, user settings | The only thread that writes the document and the user settings |
 | Engine clock | Posts the check for a due auto save every 30 seconds (`Clock` in `src/engine/clock.h`, whose time tests move forward) | Only posts commands |
 | Audio thread | The device callback, one processing cycle at a time | Real-time rules |
@@ -89,6 +89,7 @@ flowchart TD
 | Plugin monitor | Notices remote plugins that failed and has the engine report them | Low priority, every 20 ms |
 | Plugin retirer | Waits until the audio thread runs a graph without the slots' plugins that left it, then queues their deactivation, reactivation or destruction as plugin jobs (`SlotInstances`, [plugin slots](features/plugin-slots.md)) | Sleeps on a semaphore that the audio thread releases when it starts a newer graph; never polls |
 | Background threads | Peak files (the peak cache's worker), analysis, saving projects, plugin scan coordination | Low priority |
+| Sample loader | Reads the samples of sampler tracks (`SampleLoader`, [sampler tracks](features/sampler-track.md)), one file after another, and posts `audio.updateSamples` after each | Never holds up the command thread, which only waits for it to start playback or render offline |
 | Job threads | Background jobs such as backups, one thread each (`src/engine/jobs`) | Normal priority, never wait for the command thread |
 | Log writer | Writes what audio threads logged, every 10 ms (#8) | Low priority |
 | MCP I/O thread | The MCP server's HTTP or stdio transport | Only forwards to the command thread |
@@ -127,7 +128,7 @@ sequenceDiagram
 ```
 
 - The API is `gnubase::engine::Engine` and `Client` (`src/engine/engine.h`). Commands are asynchronous: `send` returns a request id, then the events and the result arrive in the client's queue; `call` sends and waits for the result. A client has a name (`ui`, `mcp`, `lua`), which the command log (`engine.commandLog`) shows next to each command it sent, and can be told when a message arrives, as the UI is ([features/ui-engine-binding.md](features/ui-engine-binding.md)).
-- Parameters are checked against the command's JSON schema before it runs, and results against theirs; a failure becomes an error result with the reason. A command's events reach every client before its result reaches the sender, and a failed command emits none.
+- Parameters are checked against the command's JSON schema before it runs, and results against theirs; a failure becomes an error result with the reason. `validate` (`src/engine/schema.h`) checks every keyword the commands' and settings' schemas use, and a test fails on one it doesn't know. It matches a `pattern` on at most `g_patternMaxLength` characters, whatever the schema's `maxLength`. A command's events reach every client before its result reaches the sender, and a failed command emits none.
 - **Events** name what changed (object ids and properties), so a client updates only what it shows.
 - A command can run another command as part of it with `CommandContext::call`: the parameters and result are checked against that command's schemas, its events go out with the outer command's, and its failure fails the outer command. It is for commands outside the document, such as the transport; document commands combine through `history.transaction` instead, so each undo step stays one command or one transaction.
 - **Meters and the playback position** are not events and never JSON. The audio thread writes them into lock-free buffers, holding each meter's peak until it is read so none is lost between frames, and the UI reads all of them at once per frame (#111). MCP and Lua get them through a query when they need them.

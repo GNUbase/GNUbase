@@ -738,6 +738,55 @@ TEST_CASE("event.shuffle lays out audio events on musical tracks by their length
 	CHECK(near(span(b).first, g_second / 2));
 	CHECK(near(span(c).first, 3 * g_second / 2));
 	CHECK(near(span(c).second, 5 * g_second / 2));
+
+	// A position between the two middles decides at the length where B goes (#873): closed up at the start,
+	// B's middle is 0.75 quarter at that length, but 0.5 quarter at the length at its old position, so 0.6
+	// quarter (0.3 s) keeps A in front of B.
+	f.call("event.shuffle", {{"events", {a}}, {"position", 3 * g_second / 10}});
+	CHECK(near(span(a).first, 0));
+	CHECK(near(span(b).first, g_second / 2));
+	CHECK(near(span(c).first, 3 * g_second / 2));
+	CHECK(near(span(c).second, 5 * g_second / 2));
+}
+
+TEST_CASE("event.shuffle moves a row's end when an audio part and audio events cross a tempo change", "[unit]")
+{
+	// Audio parts keep their length in ticks and audio events in samples, so a row with both ends somewhere
+	// else after a shuffle across a tempo change, and may overlap the locked event that ends the row; that is
+	// the row's new layout, not an error (#873). 120 BPM for a quarter (24000 samples), then 60 BPM.
+	Fixture f;
+	f.call("project.set", {{"tempoTrackActive", true}});
+	f.call("tempo.add", {{"position", g_quarter}, {"bpm", 60.0}, {"ramp", false}});
+	const int64_t audio = f.track("audio");
+	// Part P over the first quarter, audio event E (half a second) right after it, locked L from sample
+	// 48000 on (positions in ticks).
+	const int64_t p = f.call("audioPart.add", {{"track", audio}, {"position", 0}, {"length", g_quarter}})
+						  .at("part")
+						  .at("id")
+						  .get<int64_t>();
+	const int64_t e = f.audioEvent(audio, "e.wav", g_second, g_quarter, 0, g_second / 2);
+	const int64_t l = f.audioEvent(audio, "l.wav", g_second, 3 * g_quarter / 2, 0, g_second / 2);
+	f.call("event.set", {{"events", {l}}, {"lock", true}});
+	const auto span = [&f](int64_t id)
+	{
+		const Json info = f.call("event.get", {{"events", {id}}}).at("events").at(0);
+		return std::pair<int64_t, int64_t>{info.at("start").get<int64_t>(), info.at("end").get<int64_t>()};
+	};
+	const auto near = [](int64_t actual, int64_t expected) { return std::abs(actual - expected) <= 1; };
+	// The row is P and E; the locked L ends it, and the row ends at sample 48000.
+	CHECK(near(span(p).second, g_second / 2));
+	CHECK(near(span(e).second, g_second));
+
+	// E to the front: P follows at its length in ticks where it goes, from sample 24000 to 72000, so the
+	// row's end moves to 72000, half a second into L, which doesn't move.
+	f.call("event.shuffle", {{"events", {e}}, {"position", 0}});
+	CHECK(near(span(e).first, 0));
+	CHECK(near(span(e).second, g_second / 2));
+	CHECK(f.object("audioParts", p).at("position").get<int64_t>() == g_quarter);
+	CHECK(near(span(p).first, g_second / 2));
+	CHECK(near(span(p).second, 3 * g_second / 2));
+	CHECK(near(span(l).first, g_second));
+	CHECK(near(span(l).second, 3 * g_second / 2));
 }
 
 TEST_CASE("splitting and resizing audio events snap to zero crossings", "[unit]")
@@ -845,4 +894,114 @@ TEST_CASE("snap.zeroCrossings follows the audio event that plays: in front, unmu
 	CHECK(moved() == onA);
 	f.call("event.set", {{"events", {part}}, {"mute", true}});
 	CHECK(moved() == onB);
+}
+
+TEST_CASE("snap.zeroCrossings moves a position only to where the event playing there plays", "[unit]")
+{
+	// A sine that crosses zero every 100 frames, in an event A from a second on. 1080 samples into A, the crossing at
+	// 1100 is the nearest, the one at 1000 the next.
+	const test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "sine.wav";
+	test::Audio sine;
+	for (int frame = 0; frame < 9600; ++frame)
+		sine.samples.push_back(static_cast<float>(0.5 * std::sin(frame * 3.14159265358979323846 / 100.0)));
+	test::writeWav(file, sine);
+
+	Fixture f;
+	const int64_t audio = f.track("audio", "linear");
+	const int64_t a = f.audioEvent(audio, file.u8string(), 9600, g_second, 0, 4800);
+	const auto moved = [&f, audio]
+	{
+		return f.call("snap.zeroCrossings", {{"positions", {g_second + 1080}}, {"tracks", {audio}}})
+			.at("positions")
+			.at(0)
+			.get<int64_t>();
+	};
+	CHECK(moved() == g_second + 1100);
+	// A's part ends at 1090: A doesn't play at 1100.
+	const Json part = f.call("event.toPart", {{"events", {a}}}).at("events").at(0);
+	f.call("event.resize", {{"events", {part}}, {"edge", "end"}, {"delta", 1090 - 4800}});
+	CHECK(moved() == g_second + 1000);
+	f.call("event.resize", {{"events", {part}}, {"edge", "end"}, {"delta", 4800 - 1090}});
+	CHECK(moved() == g_second + 1100);
+
+	// Nor under an event in front of it, B from 1090 on.
+	const int64_t b = f.audioEvent(audio, file.u8string(), 9600, g_second + 1090, 50, 1000);
+	CHECK(moved() == g_second + 1000);
+	// Behind A, B hides nothing.
+	f.call("event.toFront", {{"events", {a}}});
+	CHECK(moved() == g_second + 1100);
+	f.call("event.toFront", {{"events", {b}}});
+	// With C in front of A from 900 to 1060 too, A plays from 1060 to 1090, where the audio doesn't cross zero: the
+	// position stays.
+	f.audioEvent(audio, file.u8string(), 9600, g_second + 900, 0, 160);
+	CHECK(moved() == g_second + 1080);
+}
+
+TEST_CASE("snap.zeroCrossings takes the piece of a split event that plays in front, as playback does", "[unit]")
+{
+	// The sine crosses zero every 100 frames. The piece after the split comes right in front of its event in the
+	// stack, as playback plays it.
+	const test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "sine.wav";
+	test::Audio sine;
+	for (int frame = 0; frame < 9600; ++frame)
+		sine.samples.push_back(static_cast<float>(0.5 * std::sin(frame * 3.14159265358979323846 / 100.0)));
+	test::writeWav(file, sine);
+
+	Fixture f;
+	const int64_t audio = f.track("audio", "linear");
+	const int64_t left = f.audioEvent(audio, file.u8string(), 9600, g_second, 0, 4800);
+	const Json right = f.call("event.split", {{"events", {left}}, {"positions", {g_second + 2000}}}).at("events").at(0);
+	REQUIRE(right.get<int64_t>() > left);
+	// The right piece, from frame 2000 of the file on, moves left over the left one to 990: its crossings are at 990
+	// plus a multiple of 100, the left piece's at multiples of 100.
+	f.call("event.move", {{"events", {right}}, {"delta", -1010}});
+	REQUIRE(f.object("audioEvents", right.get<int64_t>()).at("position") == g_second + 990);
+	const auto moved = [&f, audio](int64_t position)
+	{
+		return f.call("snap.zeroCrossings", {{"positions", {g_second + position}}, {"tracks", {audio}}})
+				   .at("positions")
+				   .at(0)
+				   .get<int64_t>() -
+			g_second;
+	};
+	// In the overlap the right piece plays: its crossing at 1090, not the left piece's at 1100.
+	CHECK(moved(1080) == 1090);
+	// Just before it the left piece plays, up to 990: its crossing at 900, not the one at 1000 under the right piece.
+	CHECK(moved(960) == 900);
+}
+
+TEST_CASE(
+	"snap.zeroCrossings keeps a position strictly inside where the event plays when the file's rate differs", "[unit]")
+{
+	// A 44.1 kHz file in the 48 kHz project, positive but for frame 44101, which is nearer to zero than the frame after
+	// it: the only crossing. The event's part starts at sample 48001, frame 44100.92 of the file, so the first frame
+	// it plays is 44101, which rounds back to sample 48001: the part's start, where the event doesn't play yet.
+	const test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "crossing.wav";
+	test::Audio audio;
+	audio.sampleRate = 44100;
+	audio.samples.assign(88200, 0.5F);
+	audio.samples[44101] = -0.01F;
+	test::writeWav(file, audio);
+
+	Fixture f;
+	const int64_t audioTrack = f.track("audio", "linear");
+	const Json media =
+		f.call("media.add", {{"path", file.u8string()}, {"sampleRate", 44100}, {"channels", 1}, {"length", 88200}})
+			.at("media");
+	const Json clip = f.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	const auto event =
+		f.call("audioEvent.add", {{"track", audioTrack}, {"clip", clip.at("id")}, {"position", 0}, {"length", 88200}})
+			.at("event")
+			.at("id")
+			.get<int64_t>();
+	const Json part = f.call("event.toPart", {{"events", {event}}}).at("events").at(0);
+	f.call("event.resize", {{"events", {part}}, {"edge", "start"}, {"delta", 48001}});
+	REQUIRE(f.object("audioParts", part.get<int64_t>()).at("position") == 48001);
+	REQUIRE(f.object("audioEvents", event).at("position") == 0);
+	const Json moved =
+		f.call("snap.zeroCrossings", {{"positions", {48201}}, {"tracks", {audioTrack}}}).at("positions").at(0);
+	CHECK(moved == 48002);
 }

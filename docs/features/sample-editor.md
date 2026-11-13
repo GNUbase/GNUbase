@@ -21,8 +21,8 @@ Each emits `sampleEditor.changed` with the view. Positions in the editor are cli
 from the clip's start (p. 626).
 
 **Regions** (pp. 624-626) are in the project: a clip's `regions`, each with an id, a name and its start and end in
-clip frames, by start. They are saved in `gnubase.json`; DAWproject has no place for them, and loading leaves out regions that
-aren't sections of the clip's media file. Each command is one undo step and emits `clip.changed`.
+clip frames, by start. They are saved in `gnubase.json`; DAWproject has no place for them, and loading leaves out
+regions that aren't sections of the clip's media file. Each command is one undo step and emits `clip.changed`.
 
 | Command | What it does | Reference |
 |---|---|---|
@@ -107,8 +107,8 @@ zoom tool and the overview; the Zoom submenu; Solo Editor, Audition, auto-scroll
 toolbar's context menu; positions in the project's time format, and typing them; the Draw tool's volume curve and
 sample editing; moving regions' edges with the mouse and dragging regions into the project window; the clip's snap
 point when opened from the pool; the Process section's Cut, Copy, Paste, Delete and Insert Silence (pp. 619-620).
-Hooks for other tickets: offline processing (#141) and
-making a sampler track of the range; what warping doesn't have yet is in [warp.md](warp.md).
+Hooks for other tickets: offline processing (#141) and making a sampler track of the range; what warping doesn't have
+yet is in [warp.md](warp.md).
 
 ## Checks
 
@@ -124,8 +124,8 @@ making a sampler track of the range; what warping doesn't have yet is in [warp.m
   Region and Remove Region with undo, a click on a region scrolling the display to it, typing a region's name, start
   and end, by Enter and by leaving the field, and Escape, wrong and unchanged values and regions changing meanwhile,
   a double click on another region right after typing; dragging the snap point, the zoom tool in and out, a click in
-  the overview, the play and scrub tools auditioning the clip past the event's end, the cursor following the scrub, Play Region and the window layout's switches;
-  Open/Close Editor without a selection closing it.
+  the overview, the play and scrub tools auditioning the clip past the event's end, the cursor following the scrub,
+  Play Region and the window layout's switches; Open/Close Editor without a selection closing it.
 - `tests/playback_tests.cpp`: auditioning and scrubbing a media file and a clip with its fades
   ([audition.md](audition.md)).
 - `tests/eventediting_tests.cpp`: a double click on an audio event opens it in the sample editor.

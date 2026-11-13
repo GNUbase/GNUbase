@@ -42,11 +42,6 @@
 			margin-right: 2dp;
 		}
 
-		#toolbar #auto-scroll-settings, #toolbar #play-tool
-		{
-			margin-right: 12dp;
-		}
-
 		#toolbar .spacer
 		{
 			flex: 1 1 0;
@@ -103,7 +98,7 @@
 		<button menu="window-menu">Window</button>
 	</menubar>
 	<!-- The toolbar's sections, which its setup pane #toolbar-setup shows, hides and orders (reference manual p. 1575). -->
-	<div id="toolbar" class="toolbar" strip="toolbar" sections="toolbar" contextmenu="toolbar-setup">
+	<div id="toolbar" class="toolbar" strip="toolbar" sections="toolbar" fit="room" contextmenu="toolbar-setup">
 		<div class="toolbar-section" section="tools" label="Tool Buttons">
 			<button id="combine-selection-tools" type="toggle" class="icon-only" title="Combine Selection Tools"><svg class="icon" src="../icons/tool-combine-selection.svg"/></button>
 			<button tool="objectSelection" tool-menu="object-selection-menu" class="icon-only" title="Object Selection"><svg class="icon" src="../icons/tool-pointer.svg"/></button>
@@ -116,7 +111,7 @@
 			<button tool="mute" class="icon-only" title="Mute"><svg class="icon" src="../icons/tool-mute.svg"/></button>
 			<button tool="zoom" class="icon-only" title="Zoom"><svg class="icon" src="../icons/tool-zoom.svg"/></button>
 			<button tool="line" tool-menu="line-menu" class="icon-only" title="Line"><svg class="icon" src="../icons/tool-line.svg"/></button>
-			<button id="play-tool" tool="play" tool-menu="play-menu" class="icon-only" title="Play"><svg class="icon" src="../icons/tool-audition.svg"/></button>
+			<button tool="play" tool-menu="play-menu" class="icon-only" title="Play"><svg class="icon" src="../icons/tool-audition.svg"/></button>
 		</div>
 		<div class="toolbar-section" section="autoScroll" label="Auto-Scroll">
 			<button id="auto-scroll" type="toggle" title="Auto-Scroll">Auto-Scroll</button>
@@ -142,11 +137,11 @@
 			<button id="select-color" class="icon-only" menu="color-menu" title="Select Color for Selected Tracks or Events"><svg class="icon" src="../icons/general-color.svg"/></button>
 		</div>
 		<div class="toolbar-section" section="trackVisibility" label="Track Visibility Configurations">
-			<button id="track-visibility-configurations" class="track-visibility-configurations" menu="track-visibility-configurations-menu" title="Track Visibility Configurations">Configurations</button>
+			<button id="track-visibility-configurations" menu="track-visibility-configurations-menu" title="Track Visibility Configurations">Configurations</button>
 		</div>
 		<div class="toolbar-section" section="rootKey" label="Project Root Key">
 			<!-- The Project Root Key (reference manual p. 414, docs/features/transpose.md), which the display shows -->
-			<button id="root-key" class="toolbar-root-key" menu="root-key-menu" title="Project Root Key">-</button>
+			<button id="root-key" menu="root-key-menu" title="Project Root Key">-</button>
 		</div>
 		<div class="spacer"/>
 		<div class="toolbar-section" section="zones" label="Window Zone Controls">
@@ -358,6 +353,8 @@
 	<menu id="color-menu"/>
 	<menu id="project-menu">
 		<menuitem command="project.addTrack">Add Track...</menuitem>
+		<!-- Sampler tracks (reference manual pp. 143-144, docs/features/sampler-track.md) -->
+		<menuitem command="project.addSamplerTrack">Add Sampler Track...</menuitem>
 		<menuseparator/>
 		<menuitem command="project.colorsSetup">Project Colors Setup...</menuitem>
 		<!-- docs/features/midi-rules.md -->
@@ -390,6 +387,8 @@
 		</menuitem>
 		<!-- The chord pads (reference manual p. 1346, docs/features/chord-pads.md) -->
 		<menuitem command="window.chordPads">Show/Hide Chord Pads</menuitem>
+		<!-- The sampler panel (reference manual p. 712, docs/features/sampler-track.md) -->
+		<menuitem command="window.sampler">Show Sampler</menuitem>
 		<menuseparator/>
 		<menuitem command="track.removeSelected">Remove Selected Tracks</menuitem>
 		<menuitem command="track.removeEmpty">Remove Empty Tracks</menuitem>
@@ -485,6 +484,9 @@
 		<menuitem command="midi.ruleEditor">Rule Editor...</menuitem>
 		<!-- docs/features/articulation-maps.md -->
 		<menuitem command="midi.articulationMapSetup">Articulation Map Setup...</menuitem>
+		<!-- docs/features/drum-editor.md -->
+		<menuitem command="drumMap.setup">Drum Map Setup...</menuitem>
+		<menuitem command="midi.convertONotes">O-Note Conversion</menuitem>
 		<menuseparator/>
 		<menuitem command="midi.mergeInLoop">Merge MIDI in Loop...</menuitem>
 		<menuitem command="midi.dissolvePart">Dissolve Part...</menuitem>
@@ -517,6 +519,7 @@
 	</menu>
 	<menu id="track-list-menu">
 		<menuitem command="project.addTrack">Add Track...</menuitem>
+		<menuitem command="project.addSamplerTrack">Add Sampler Track...</menuitem>
 		<!-- Track presets (reference manual pp. 199, 238-243, docs/features/track-presets.md) -->
 		<menuitem command="project.addTrackFromPreset">Add Track from Preset...</menuitem>
 		<menuitem command="track.saveTrackPreset">Save Track Preset...</menuitem>

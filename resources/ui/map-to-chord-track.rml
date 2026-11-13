@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- The Map to Chord Track dialog (docs/features/chord-track.md, reference manual p. 1341): ui::TrackList opens it with
-     Project > Chord Track > Map to Chord Track for the selected MIDI and instrument tracks, and on OK moves the notes
-     of their parts to the chord track's chords with chord.map in the mapping mode chosen. -->
+     Project > Chord Track > Map to Chord Track for the selected MIDI parts (or tracks), and on OK moves the notes
+     to the chord track's chords with chord.map in the mapping mode chosen. -->
 <rml>
 <head>
 	<title>Map to Chord Track</title>

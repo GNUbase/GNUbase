@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <iterator>
 #include <memory>
@@ -873,6 +874,205 @@ TEST_CASE("an instrument chases its MIDI tracks' controller events with its own,
 	CHECK(player.heard == std::vector<Heard>{{0, Type::Controller, 0, 1, 2, {}}, {0, Type::Controller, 0, 7, 30, {}}});
 }
 
+TEST_CASE(
+	"a track heard again after playback moved is chased where playback is, the kinds it has the latest of", "[unit]")
+{
+	// As an instrument chases the MIDI tracks routed to it. The track heard again has the older CC 7, the later CC 1,
+	// and CC 10 alone.
+	auto heardAgain = std::make_shared<std::atomic<HeardAgain>>(HeardAgain::No);
+	auto sequence = std::make_unique<MidiSequence>();
+	sequence->chase.push_back(makeChaseTrack({control(10, 1, 1), control(30, 7, 100)}, {}));
+	ChaseTrack track = makeChaseTrack({control(5, 7, 30), control(20, 1, 2), control(50, 10, 5)}, {});
+	track.heardAgain = heardAgain;
+	sequence->chase.push_back(std::move(track));
+	auto instrument = std::make_shared<MidiSequencer>();
+	instrument->setSequence(std::move(sequence));
+	instrument->setChase(chaseAll());
+	Player player(instrument, 16);
+	const auto heardAt = [](int64_t frame)
+	{ return std::vector<Heard>{{frame, Type::Controller, 0, 1, 2, {}}, {frame, Type::Controller, 0, 10, 5, {}}}; };
+
+	SECTION("playing")
+	{
+		player.locate(100);
+		player.play(16);
+		player.heard.clear();
+		heardAgain->store(HeardAgain::Quiet);
+		player.play(16);
+		heardAgain->store(HeardAgain::No);
+		player.play(16);
+		CHECK(player.heard == heardAt(16));
+	}
+	SECTION("stopped")
+	{
+		player.locate(50);
+		player.stop();
+		heardAgain->store(HeardAgain::Quiet);
+		player.stop();
+		CHECK(player.heard == heardAt(16));
+	}
+	SECTION("the kinds its channel sends, whichever track has the latest")
+	{
+		auto withKinds = std::make_unique<MidiSequence>();
+		withKinds->chase.push_back(makeChaseTrack({control(10, 1, 1), control(30, 7, 100)}, {}));
+		ChaseTrack heard = makeChaseTrack({control(5, 7, 30), control(20, 1, 2), control(50, 10, 5)}, {});
+		heard.heardAgain = heardAgain;
+		heard.channelKinds = {7};
+		withKinds->chase.push_back(std::move(heard));
+		instrument->setSequence(std::move(withKinds));
+		player.locate(100);
+		player.play(16);
+		player.heard.clear();
+		heardAgain->store(HeardAgain::Quiet);
+		player.play(16);
+		CHECK(player.heard ==
+			std::vector<Heard>{{16, Type::Controller, 0, 1, 2, {}}, {16, Type::Controller, 0, 7, 100, {}},
+				{16, Type::Controller, 0, 10, 5, {}}});
+	}
+	SECTION("only its mute button muted it: the kinds its channel sends")
+	{
+		// Its strip sends its own CC 1 and CC 10, which played into the mute.
+		auto withKinds = std::make_unique<MidiSequence>();
+		withKinds->chase.push_back(makeChaseTrack({control(10, 1, 1), control(30, 7, 100)}, {}));
+		ChaseTrack heard = makeChaseTrack({control(5, 7, 30), control(20, 1, 2), control(50, 10, 5)}, {});
+		heard.heardAgain = heardAgain;
+		heard.channelKinds = {7};
+		withKinds->chase.push_back(std::move(heard));
+		instrument->setSequence(std::move(withKinds));
+		player.locate(100);
+		player.play(16);
+		player.heard.clear();
+		heardAgain->store(HeardAgain::Muted);
+		player.play(16);
+		CHECK(player.heard == std::vector<Heard>{{16, Type::Controller, 0, 7, 100, {}}});
+	}
+	SECTION("a cycle jump in the same block chases again at the left locator")
+	{
+		player.setCycle(60, 108);
+		player.locate(100);
+		player.play(4);
+		player.heard.clear();
+		heardAgain->store(HeardAgain::Quiet);
+		player.play(16); // 104 to 108, then 60 to 72
+		const std::vector<Heard> atTheJump = {{8, Type::Controller, 0, 1, 2, {}}, {8, Type::Controller, 0, 7, 100, {}},
+			{8, Type::Controller, 0, 10, 5, {}}};
+		std::vector<Heard> expected = {{4, Type::Controller, 0, 1, 2, {}}, {4, Type::Controller, 0, 10, 5, {}}};
+		expected.insert(expected.end(), atTheJump.begin(), atTheJump.end());
+		CHECK(player.heard == expected);
+	}
+	SECTION("not chasing controllers")
+	{
+		instrument->setChase(MidiChase());
+		player.locate(100);
+		player.play(16);
+		heardAgain->store(HeardAgain::Quiet);
+		player.play(16);
+		CHECK(player.heard.empty());
+	}
+	SECTION("after a chase that didn't fit, everything is chased again")
+	{
+		fillInputBut(player, 1);
+		player.locate(100);
+		player.play(16); // room for CC 1 alone
+		heardAgain->store(HeardAgain::Quiet);
+		player.play(16);
+		CHECK(ofType(player.heard, Type::Controller) ==
+			std::vector<Heard>{{0, Type::Controller, 0, 1, 2, {}}, {16, Type::Controller, 0, 1, 2, {}},
+				{16, Type::Controller, 0, 7, 100, {}}, {16, Type::Controller, 0, 10, 5, {}}});
+	}
+}
+
+TEST_CASE("a bank select chased for a track heard again brings its MIDI channel's later program after it", "[unit]")
+{
+	// Another track has the programs: on MIDI channel 1 alone, and on channel 0 before or after the heard track's bank
+	// select at 40. A jump sends the earlier one before the bank select, which then changes nothing: it isn't sent
+	// again. With a bank select's LSB (CC 32) at 60 too, a jump sends the program at 50 between the two, which changes
+	// the bank to the MSB's: it is sent again between them.
+	const int64_t at = GENERATE(30, 50);
+	const bool lsb = GENERATE(false, true);
+	CAPTURE(at, lsb);
+	auto heardAgain = std::make_shared<std::atomic<HeardAgain>>(HeardAgain::No);
+	auto sequence = std::make_unique<MidiSequence>();
+	sequence->chase.push_back(makeChaseTrack(
+		{controller(5, ControllerType::Program, 2, 0, 1), controller(at, ControllerType::Program, 4, 0)}, {}));
+	std::vector<RenderController> selects{control(40, 0, 3)};
+	if (lsb)
+		selects.push_back(control(60, 32, 1));
+	ChaseTrack track = makeChaseTrack(selects, {});
+	track.heardAgain = heardAgain;
+	sequence->chase.push_back(std::move(track));
+	auto instrument = std::make_shared<MidiSequencer>();
+	instrument->setSequence(std::move(sequence));
+	instrument->setChase(chaseAll());
+	Player player(instrument, 16);
+	player.locate(100);
+	player.play(16);
+	player.heard.clear();
+	heardAgain->store(HeardAgain::Quiet);
+	player.play(16);
+	std::vector<Heard> expected{{16, Type::Controller, 0, 0, 3, {}}};
+	if (at > 40)
+		expected.push_back({16, Type::Program, 0, 4, 0, {}});
+	if (lsb)
+		expected.push_back({16, Type::Controller, 0, 32, 1, {}});
+	CHECK(player.heard == expected);
+}
+
+TEST_CASE("a routed MIDI track heard again chases into its strip alone, in that block at its start", "[unit]")
+{
+	// Its own sequencer: the instrument chases it with the others, the strip learns its pedals from stripChase.
+	auto heardAgain = std::make_shared<std::atomic<HeardAgain>>(HeardAgain::No);
+	auto sequence = std::make_unique<MidiSequence>();
+	ChaseTrack track = makeChaseTrack({control(5, 7, 30), control(20, 64, 127), control(50, 10, 5)}, {});
+	track.heardAgain = heardAgain;
+	track.channelKinds = {7};
+	sequence->chase.push_back(std::move(track));
+	sequence->chaseIntoStrip = true;
+	auto sequencer = std::make_shared<MidiSequencer>();
+	sequencer->setSequence(std::move(sequence));
+	sequencer->setChase(chaseAll());
+	Player player(sequencer, 16);
+	const auto stripChase = [&sequencer]
+	{
+		std::vector<Heard> chased;
+		for (const ProcessEvent& event : *sequencer->stripChase())
+			chased.push_back({event.offset, event.type, event.channel, event.key, event.value, {}});
+		return chased;
+	};
+	const std::vector<Heard> all = {{0, Type::Controller, 0, 7, 30, {}}, {0, Type::Controller, 0, 64, 127, {}},
+		{0, Type::Controller, 0, 10, 5, {}}};
+	const HeardAgain how = GENERATE(HeardAgain::Quiet, HeardAgain::Muted);
+	CAPTURE(static_cast<int>(how));
+	// Muted by its button alone, the strip sends what the mute kept: only the kinds its channel sends are chased.
+	const std::vector<Heard> expected =
+		how == HeardAgain::Quiet ? all : std::vector<Heard>{{0, Type::Controller, 0, 7, 30, {}}};
+
+	SECTION("playing")
+	{
+		player.locate(100);
+		player.play(16);
+		CHECK(stripChase().size() == all.size()); // the jump's chase
+		heardAgain->store(how);
+		player.play(16);
+		heardAgain->store(HeardAgain::No);
+		CHECK(stripChase() == expected);
+		player.play(16);
+		CHECK(stripChase().empty());
+	}
+	SECTION("stopped")
+	{
+		player.locate(100);
+		player.stop();
+		player.stop();
+		CHECK(stripChase().empty());
+		heardAgain->store(how);
+		player.stop();
+		heardAgain->store(HeardAgain::No);
+		CHECK(stripChase() == expected);
+	}
+	CHECK(ofType(player.heard, Type::Controller).empty());
+}
+
 TEST_CASE("a chase that doesn't fit into the event buffer goes on in the next blocks, each event once", "[unit]")
 {
 	SECTION("room for some")
@@ -925,8 +1125,9 @@ TEST_CASE("a chase that doesn't fit into the event buffer goes on in the next bl
 
 TEST_CASE("a routed MIDI track's controller event at the jump position wins over an older chased one", "[unit]")
 {
-	// As AudioEngine::attachMidi sets them up: the MIDI track's sequencer chases no controller events, the
-	// instrument's chases the MIDI track's. The MIDI track's events reach the instrument through its input.
+	// As AudioEngine::attachMidi sets them up: the MIDI track's sequencer chases its controller events into its strip
+	// alone (none here: MidiSequence::chaseIntoStrip isn't set), the instrument's chases the MIDI track's. The MIDI
+	// track's events reach the instrument through its input.
 	const uint32_t blockSize = GENERATE(1U, 64U);
 	CAPTURE(blockSize);
 	const std::vector<RenderController> controllers = {control(1000, 7, 100),

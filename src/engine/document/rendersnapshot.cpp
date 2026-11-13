@@ -54,11 +54,14 @@ namespace gnubase::engine
 		// the on events of the new one, on the channel of the note. Key switches play for a sample, ending where the
 		// note starts; a jump after them sends them again (MidiSequencer::chaseNotes).
 		void addOutputEvents(const Project& project, const MidiPart& part, time::Ticks start, time::Ticks end,
-			int32_t index, const ArticulationMap& map, const std::map<ObjectId, size_t>& slots, RenderChannel& channel)
+			int32_t index, const ArticulationMap& map, const std::map<ObjectId, size_t>& slots, const DrumMap* drums,
+			RenderChannel& channel)
 		{
+			// Notes that don't play (their probability, a muted drum sound) select no slot.
 			std::vector<const Note*> notes;
 			for (const auto& [id, note] : part.notes)
-				if (note.position < end - start && slots.count(id) != 0)
+				if (note.position < end - start && slots.count(id) != 0 && midi::notePlays(note, part.id) &&
+					(drums == nullptr || !drums->sounds.at(note.pitch).mute))
 					notes.push_back(&note);
 			std::stable_sort(
 				notes.begin(), notes.end(), [](const Note* a, const Note* b) { return a->position < b->position; });
@@ -98,8 +101,9 @@ namespace gnubase::engine
 
 		// Adds a part's notes and controllers, cut at the part's end, the notes as the chord track maps them if the
 		// track follows it (#173), then as the channel's MIDI modifiers, the part's transpose and velocity and global
-		// transposition (#168) at their start play them.
-		void compilePart(const Project& project, ObjectId partId, const MidiPart& part, RenderChannel& channel)
+		// transposition (#168) at their start play them. follower is the part's track's.
+		void compilePart(const Project& project, ObjectId partId, const MidiPart& part, const ChordFollower& follower,
+			RenderChannel& channel)
 		{
 			const time::Ticks start = time::toTicks(part.position, project.tempo, project.sampleRate);
 			const time::Position endPosition{part.position.base, part.position.value + part.length};
@@ -113,7 +117,6 @@ namespace gnubase::engine
 			// The track's drum map plays each note's sound: its O-note, on its channel unless that is Any, and not
 			// at all if it is muted (#129). The modifiers then apply to the O-note.
 			const DrumMap* map = midi::drumMapOf(project, part.track);
-			const ChordFollower follower(project, part.track);
 			// The track's articulation map plays each note's sound slot (#175): the slot's output events where the
 			// slot changes, and the slot's MIDI modifiers.
 			const ArticulationMap* articulations = midi::articulationMapOf(project, part.track);
@@ -126,7 +129,7 @@ namespace gnubase::engine
 																		: nullptr;
 			};
 			if (articulations != nullptr && !slots.empty())
-				addOutputEvents(project, part, start, end, index, *articulations, slots, channel);
+				addOutputEvents(project, part, start, end, index, *articulations, slots, map, channel);
 			for (const auto& [id, note] : part.notes)
 			{
 				// Notes the part hides beyond its end don't play, wherever a random position would move them.
@@ -481,10 +484,11 @@ namespace gnubase::engine
 	}
 
 	std::unique_ptr<const RenderSnapshot> compile(
-		const Project& project, uint64_t revision, const RenderSnapshot* previous)
+		const Project& project, uint64_t revision, const RenderSnapshot* previous, uint64_t opened)
 	{
 		auto snapshot = std::make_unique<RenderSnapshot>();
 		snapshot->revision = revision;
+		snapshot->opened = opened;
 		snapshot->sampleRate = project.sampleRate;
 		snapshot->tempo = project.tempo;
 		snapshot->signatures = project.signatures;
@@ -567,6 +571,8 @@ namespace gnubase::engine
 			render.program = channel.program;
 			render.bank = channel.bank;
 			render.modifiers = channel.modifiers;
+			if (const ArticulationMap* articulations = midi::articulationMapOf(project, track.id))
+				render.articulations = *articulations;
 			render.midiInserts = channel.midiInserts;
 			render.midiSends = channel.midiSends;
 			if (channel.inputTransformer.mode != midi::InputTransformerMode::Off)
@@ -581,6 +587,13 @@ namespace gnubase::engine
 			render.listen = channel.listen;
 			render.midiThru = (track.type == TrackType::Midi || track.type == TrackType::Instrument) &&
 				channel.midiInput == "all" && (channel.monitor || channel.recordEnable);
+			if (const DrumMap* map = midi::drumMapOf(project, track.id))
+				for (int played = 0; played < g_drumSounds; ++played)
+				{
+					const DrumSound& sound =
+						map->sounds.at(midi::inputPitch(project, track.id, static_cast<uint8_t>(played)));
+					render.drumInput.push_back({sound.oNote, static_cast<int8_t>(sound.channel), sound.mute});
+				}
 			render.autoFades = track.autoFades.value_or(project.autoFades);
 			if (const auto input = busIndex.find(channel.input); input != busIndex.end())
 				render.input = input->second;
@@ -606,6 +619,17 @@ namespace gnubase::engine
 					pannerFor(render.format, snapshot->channels[static_cast<size_t>(channel->second)].format);
 				feeds[static_cast<size_t>(channelIndex.at(render.id))].push_back(static_cast<size_t>(channel->second));
 			}
+			// A MIDI send to the instrument the track plays anyway plays to its own output.
+			int own = render.output.kind == RenderTarget::Kind::Channel ? render.output.index : -1;
+			if (render.type == TrackType::Instrument)
+				own = channelIndex.at(render.id);
+			const bool notes = render.type == TrackType::Midi || render.type == TrackType::Instrument; // not frozen
+			for (size_t s = 0; s < render.midiSends.slots.size() && notes; ++s)
+				if (const auto target = channelIndex.find(render.midiSends.slots[s].output);
+					target != channelIndex.end() && target->second != own &&
+					snapshot->channels[static_cast<size_t>(target->second)].type == TrackType::Instrument &&
+					!midiSendLoops(project, render.id, target->first))
+					render.midiSendOutputs[s] = target->second;
 			const std::array<Send, g_maxSends>& sends = project.channels.at(render.id).sends;
 			for (size_t s = 0; s < sends.size() && render.format != ChannelFormat::None; ++s)
 			{
@@ -643,22 +667,42 @@ namespace gnubase::engine
 				continue;
 			snapshot->channels[trackChannel.at(event.track)].audioEvents.push_back(std::move(render));
 		}
+		// MIDI sends before the modifiers (p. 1106) get the parts' notes without them, where the modifiers play.
+		const auto preNotes = [](const RenderChannel& channel)
+		{
+			const midi::EffectRack& sends = channel.midiSends;
+			return sends.pre && !sends.bypass && !channel.modifiers.bypass &&
+				!(channel.modifiers == midi::Modifiers()) &&
+				std::any_of(sends.slots.begin(), sends.slots.end(),
+					[](const midi::EffectSlot& slot) { return slot.on && !slot.effect.empty(); });
+		};
+		// What each track's notes play as it follows the chord track, made once per track, not once per part.
+		std::map<ObjectId, ChordFollower> followers;
+		const auto follower = [&](ObjectId track) -> const ChordFollower&
+		{ return followers.try_emplace(track, project, track).first->second; };
 		for (const auto& [id, part] : project.midiParts)
 		{
 			RenderChannel& channel = snapshot->channels[static_cast<size_t>(trackChannel.at(part.track))];
-			// A silent MIDI track's notes would still reach its instrument.
-			if (part.mute || !plays(part.track) || (channel.silent && channel.type == TrackType::Midi))
+			// A soloed-out or disabled MIDI track's notes would still reach its instrument. A muted one's play into its
+			// strip, whose mute drops them and keeps the latest controller values for unmuting (ChannelStrip).
+			if (part.mute || !plays(part.track) || (channel.quiet && channel.type == TrackType::Midi))
 				continue;
-			if (project.patterns.count(part.pattern) == 0)
+			const bool isPattern = project.patterns.count(part.pattern) != 0;
+			MidiPart played;
+			if (isPattern)
 			{
-				compilePart(project, id, part, channel);
-				continue;
+				// A pattern event (#181) plays its pattern's notes instead of its own.
+				// ponytail: pattern events that overlap on a track all play, not only the topmost (p. 935).
+				played = part;
+				played.notes = midi::playedNotes(project, part);
 			}
-			// A pattern event (#181) plays its pattern's notes instead of its own.
-			// ponytail: pattern events that overlap on a track all play, not only the topmost (p. 935).
-			MidiPart played = part;
-			played.notes = midi::playedNotes(project, part);
-			compilePart(project, id, played, channel);
+			const MidiPart& compiled = isPattern ? played : part;
+			compilePart(project, id, compiled, follower(part.track), channel);
+			if (!preNotes(channel))
+				continue;
+			RenderChannel unmodified;
+			compilePart(project, id, compiled, follower(part.track), unmodified);
+			channel.preNotes.insert(channel.preNotes.end(), unmodified.notes.begin(), unmodified.notes.end());
 		}
 
 		std::map<ObjectId, Points> vcaCurves; // by the VCA fader's channel
@@ -713,8 +757,14 @@ namespace gnubase::engine
 		{
 			std::stable_sort(channel.audioEvents.begin(), channel.audioEvents.end(),
 				[](const RenderAudioEvent& a, const RenderAudioEvent& b) { return a.start < b.start; });
-			std::stable_sort(channel.notes.begin(), channel.notes.end(), [](const RenderNote& a, const RenderNote& b)
-				{ return std::tie(a.start, a.pitch) < std::tie(b.start, b.pitch); });
+			// At one sample key switches come first (#175): at the project's start one can't come a sample before.
+			for (std::vector<RenderNote>* notes : {&channel.notes, &channel.preNotes})
+				std::stable_sort(notes->begin(), notes->end(),
+					[](const RenderNote& a, const RenderNote& b)
+					{
+						return std::make_tuple(a.start, !a.keySwitch, a.pitch) <
+							std::make_tuple(b.start, !b.keySwitch, b.pitch);
+					});
 			std::stable_sort(channel.controllers.begin(), channel.controllers.end(),
 				[](const RenderController& a, const RenderController& b) { return a.position < b.position; });
 			// The parts by start; their controller events keep pointing at them.

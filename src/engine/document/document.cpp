@@ -127,6 +127,12 @@ namespace gnubase::engine
 		return chain;
 	}
 
+	time::Ticks longestProjectTicks(const Project& project)
+	{
+		return project.tempo.toTicks(
+			static_cast<double>(time::g_maxPosition) / std::max(project.sampleRate, g_lowestSampleRate));
+	}
+
 	ObjectId mainMix(const Project& project)
 	{
 		const auto bus = std::find_if(
@@ -304,6 +310,26 @@ namespace gnubase::engine
 			return false;
 		const TrackType type = project.trackById.at(found->second.track).type;
 		return type == TrackType::Group || type == TrackType::Effect || type == TrackType::Folder;
+	}
+
+	bool midiSendLoops(const Project& project, ObjectId channel, ObjectId to)
+	{
+		std::vector<ObjectId> pending{to};
+		std::set<ObjectId> seen;
+		while (!pending.empty())
+		{
+			const ObjectId next = pending.back();
+			pending.pop_back();
+			if (next == channel)
+				return true;
+			const auto found = project.channels.find(next);
+			if (!seen.insert(next).second || found == project.channels.end())
+				continue;
+			for (const midi::EffectSlot& slot : found->second.midiSends.slots)
+				if (slot.output != 0)
+					pending.push_back(slot.output);
+		}
+		return false;
 	}
 
 	bool routingLoops(const Project& project, ObjectId channel, ObjectId to)

@@ -160,7 +160,6 @@ namespace gnubase::engine
 		bool preFader = false;
 	};
 
-	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
 	// A chord or scale of the chord track from start (samples) on, until the next: its pitch classes, bit n for
 	// pitch class n (C is 0).
 	struct LiveHarmony
@@ -169,6 +168,16 @@ namespace gnubase::engine
 		uint16_t classes = 0;
 	};
 
+	// What a note played into a track with a drum map plays (#882, reference manual pp. 1239-1240): through the I-notes
+	// to the sound's pitch, then the sound's O-note on its channel, unless it is muted.
+	struct LiveDrumNote
+	{
+		uint8_t key = 0;
+		int8_t channel = -1; // 0-15, or -1 for the note's own (Any)
+		bool mute = false;
+	};
+
+	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
 	struct RenderChannel
 	{
 		ObjectId id = 0;
@@ -193,6 +202,12 @@ namespace gnubase::engine
 		midi::Modifiers modifiers;    // MIDI and instrument channels: notes has them applied, live notes get them
 		midi::EffectRack midiInserts; // MIDI and instrument channels: the effects their sequencer runs
 		midi::EffectRack midiSends;
+		// MIDI and instrument channels: where each MIDI send's effect plays, an instrument channel's index, or -1 for
+		// the track's own output.
+		std::array<int, midi::g_effectSlots> midiSendOutputs{-1, -1, -1, -1};
+		// MIDI and instrument channels whose MIDI sends play before modifiers that change notes: the notes of their
+		// parts without the track's MIDI modifiers, sorted as notes; empty otherwise.
+		std::vector<RenderNote> preNotes;
 		// MIDI and instrument channels: the rules of their input transformer's modules that are on, the track's or
 		// the project's, in order; empty for none.
 		std::vector<midi::LogicalRules> inputTransformer;
@@ -200,12 +215,18 @@ namespace gnubase::engine
 		// scales that the notes played into the track move to, the nearest note of the one playing at the transport
 		// position; empty for none.
 		std::vector<LiveHarmony> liveInput;
+		// MIDI and instrument channels: the track's articulation map (#175), whose remote triggers select the sound
+		// slot of the notes played into the track; without slots for none.
+		ArticulationMap articulations;
+		// MIDI and instrument channels with a drum map: what each note played into the track plays, by its pitch (128
+		// of them); empty without one.
+		std::vector<LiveDrumNote> drumInput;
 		bool monitor = false; // the monitor and record enable buttons
 		bool recordEnable = false;
 		// MIDI and instrument tracks: they play what comes from all MIDI inputs (MIDI thru), since they monitor or
 		// are record-enabled and their MIDI input is all MIDI inputs.
 		bool midiThru = false;
-		// Muted, silenced by another channel's solo, or on a disabled track: outputs silence. A silent MIDI channel
+		// Muted, silenced by another channel's solo, or on a disabled track: outputs silence. A quiet MIDI channel
 		// has no notes or controllers, and a disabled track no events or parts.
 		bool silent = false;
 		// Silenced by another channel's solo or on a disabled track: silent but for the mute button. Its strips output
@@ -218,7 +239,7 @@ namespace gnubase::engine
 		bool listen = false; // also plays on the monitoring bus, after its fader (graph::NodeKind::ListenBus)
 		AutoFades autoFades; // audio tracks: their own settings or the project's
 		std::vector<RenderAudioEvent> audioEvents;    // sorted by start
-		std::vector<RenderNote> notes;                // sorted by start, then pitch
+		std::vector<RenderNote> notes;                // sorted by start, key switches first, then pitch
 		std::vector<RenderController> controllers;    // sorted by position
 		std::vector<RenderPart> midiParts;            // sorted by start
 		std::vector<RenderAutomationLane> automation; // in the order of the lanes' ids
@@ -248,6 +269,7 @@ namespace gnubase::engine
 	struct RenderSnapshot
 	{
 		uint64_t revision = 0; // counts the snapshots compiled for an engine
+		uint64_t opened = 0; // the open project (ProjectModel::openedRevision): another one when a project replaces it
 		double sampleRate = 48000.0;
 		time::TempoMap tempo{120.0}; // for processors that follow the tempo, e.g. a synced delay
 		time::SignatureMap signatures;
@@ -265,9 +287,9 @@ namespace gnubase::engine
 	};
 
 	// previous is the snapshot published before: its arranger plan stays if the new one plays the same, since the
-	// transport finds its place again in every new plan.
+	// transport finds its place again in every new plan. opened identifies the project (RenderSnapshot::opened).
 	std::unique_ptr<const RenderSnapshot> compile(
-		const Project& project, uint64_t revision, const RenderSnapshot* previous = nullptr);
+		const Project& project, uint64_t revision, const RenderSnapshot* previous = nullptr, uint64_t opened = 0);
 
 	// The arranger plan of a project: its arranger events and the active chain's steps in samples (arranger.cpp).
 	ArrangerPlan arrangerPlan(const Project& project);

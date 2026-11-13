@@ -24,7 +24,9 @@ so MCP and Lua scripts can do all it does.
 - They are saved in the project file's GNUbase entry (`gnubase.json` in the DAWproject container, as `toJson(Project)`
   writes it); files from before have the defaults. Undo and redo restore them with the other project settings
   (`ProjectSettings` in `history.h`) and announce them with `project.changed`.
-- **A new sample rate** keeps linear positions at their time, as before; media files keep their sample rate and play
+- **A new sample rate**, from 8000 to 768000 Hz (`g_lowestSampleRate`, `g_highestSampleRate`; so does a loaded
+  project's, since far outside them positions in ticks or samples leave an int64), keeps linear positions at their
+  time, as before; media files keep their sample rate and play
   at the wrong speed until they are conformed with `media.conform` ([pool.md](pool.md)). The dialog does both, as
   one undo step (below).
 - **The record bit depth** is in the render snapshot, so `audio.get` has it as `recordBitDepth` next to

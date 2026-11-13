@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The drum editor in the app (#129, docs/features/drum-editor.md), driven with ui::Automation as MCP's UI tools drive
 // it: the drum sound list of the track's drum map, its notes as diamonds on the sounds' rows, the drumstick, the Map
-// menu and Drum-Map Link. tests/drummaps_tests.cpp checks the engine's side.
+// menu and Drum-Map Link, Pitch Visibility, Show Note Length, auditioning sounds and the Drum Map Setup.
+// tests/drummaps_tests.cpp checks the engine's side.
 #include "engine/time/tempomap.h"
 #include "ui/automation.h"
 #include "ui/eventdisplay.h"
@@ -40,9 +41,9 @@ namespace
 	// in the drum editor.
 	struct Fixture
 	{
-		Fixture()
+		explicit Fixture(const std::string& type = "midi")
 		{
-			track = app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+			track = app.call("track.add", {{"type", type}}).at("track").at("id").get<uint64_t>();
 			const Json project = app.call("project.get");
 			map = app.call("drumMap.add", {{"copy", project.at("drumMaps").at(0).at("id")}, {"name", "Kit"}})
 					  .at("map")
@@ -131,6 +132,24 @@ namespace
 					const Json found = elements(selector);
 					return !found.empty() && found.at(0).at("attributes").value("value", "") == shown;
 				}));
+		}
+
+		// Types into a text field of the Drum Map Setup and presses Enter.
+		void write(const std::string& selector, const std::string& text)
+		{
+			INFO(selector);
+			REQUIRE(app.waitUntil([&] { return !elements(selector).empty(); }));
+			click(of(selector));
+			app.ui().key(window, "Mod+A");
+			app.ui().text(window, text);
+			app.ui().key(window, "Enter");
+			app.shell().step(std::chrono::milliseconds(0));
+		}
+
+		std::string value(const std::string& selector)
+		{
+			const Json found = elements(selector);
+			return found.empty() ? std::string() : found.at(0).at("attributes").value("value", std::string());
 		}
 
 		test::UiApp app{{1200, 800}};
@@ -249,6 +268,21 @@ TEST_CASE("Open Drum Editor opens the selected MIDI parts in the drum editor win
 				  .dom(std::nullopt, std::string("#edit-menu menuitem[command=\"") + command + "\"]", 0)
 				  .at("elements")
 				  .size() == 1);
+	// The MIDI menu's Drum Map Setup and O-Note Conversion (pp. 1235, 1240).
+	for (const char* command : {"drumMap.setup", "midi.convertONotes"})
+		CHECK(app.ui()
+				  .dom(std::nullopt, std::string("#midi-menu menuitem[command=\"") + command + "\"]", 0)
+				  .at("elements")
+				  .size() == 1);
+	const Json gm = app.call("project.get").at("drumMaps").at(0).at("id");
+	app.call("drumMap.set", {{"map", gm}, {"sounds", {{{"pitch", 36}, {"oNote", 24}}}}});
+	app.call("track.set", {{"track", track}, {"drumMap", gm}});
+	app.call("note.add",
+		{{"part", part}, {"notes", {{{"position", 0}, {"length", g_sixteenth}, {"pitch", 36}, {"velocity", 0.5}}}}});
+	app.keys().run("midi.convertONotes", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil(
+		[&] { return app.call("project.get").at("midiParts").at(0).at("notes").at(0).at("pitch") == 24; }));
+	app.call("track.set", {{"track", track}, {"drumMap", 0}});
 	app.keys().run("editor.openDrum", Json::object(), app.main(), nullptr);
 	REQUIRE(app.waitUntil([&] { return app.appUi().editorWindow() != nullptr; }));
 	CHECK(app.call("editor.get", {{"editor", "window"}}).at("content") == "drum");
@@ -256,4 +290,127 @@ TEST_CASE("Open Drum Editor opens the selected MIDI parts in the drum editor win
 	// Without a drum map the list names the pitches only.
 	REQUIRE(app.waitUntil([&] { return app.ui().dom(window, ".drum-sound", 0).at("elements").size() == 128; }));
 	CHECK(app.ui().dom(window, ".drum-sound-name", 0).at("elements").empty());
+}
+
+TEST_CASE("the drum sound list types an output, reverses with Pitch Visibility and auditions sounds", "[ui]")
+{
+	Fixture f("instrument");
+	f.scroll(36);
+	f.type(sound(36) + " textdisplay[sound-field=output]", "Module", "Module");
+	REQUIRE(f.app.waitUntil([&] { return f.drumMap().at("sounds").at(36).at("output") == "Module"; }));
+	f.type(sound(36) + " textdisplay[sound-field=output]", "Default", "Default");
+	REQUIRE(f.app.waitUntil([&] { return f.drumMap().at("sounds").at(36).at("output").get<std::string>().empty(); }));
+
+	// Pitch Visibility's Reverse Drum Sound List (pp. 1223-1224, 1234): the list from the bottom.
+	CHECK(f.elements(".drum-sound").at(0).at("attributes").at("pitch") == "0");
+	f.click(of("#drum-pitch-options"));
+	f.click(of("#drum-pitch-menu menuitem[setting=reverseSounds]"));
+	REQUIRE(
+		f.app.waitUntil([&] { return f.app.call("editor.get", {{"editor", "window"}}).at("reverseSounds") == true; }));
+	CHECK(f.elements(".drum-sound").at(0).at("attributes").at("pitch") == "0"); // Pitch Visibility is off
+	f.click(of(".key-input[setting=pitchVisibility]"));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-sound").at(0).at("attributes").at("pitch") == "127"; }));
+
+	// A click on a sound's pitch plays it as its I-note comes in: the O-note on the sound's channel (p. 1236).
+	f.app.call("drumMap.set",
+		{{"map", f.map},
+			{"sounds",
+				{{{"pitch", 36}, {"iNote", 45}, {"oNote", 35}, {"channel", 3}}, {{"pitch", 45}, {"iNote", 100}}}}});
+	f.app.call("audio.setDevice", {{"blockSize", 128}, {"inputChannels", 0}, {"captureSeconds", 1}});
+	f.app.call("channel.set",
+		{{"channel", f.app.call("project.get").at("tracks").at(0).at("channel")}, {"instrument", "noteProbe"}});
+	f.app.call("audio.render", {{"frames", 128}}); // the new graph
+	f.app.call("midi.capture", {{"start", true}});
+	f.scroll(36);
+	f.click(of(sound(36) + " .drum-sound-pitch"));
+	std::vector<std::vector<int>> played;
+	CHECK(f.app.waitUntil(
+		[&]
+		{
+			f.app.call("audio.render", {{"frames", 128}});
+			const Json captured = f.app.call("midi.capture");
+			INFO(captured.dump());
+			for (const Json& message : captured.at("captured"))
+			{
+				const auto bytes = message.at("bytes").get<std::vector<int>>();
+				if ((bytes.at(0) & 0xE0) == 0x80)
+					played.push_back({bytes.at(0), bytes.at(1)});
+			}
+			return played == std::vector<std::vector<int>>{{0x93, 35}, {0x83, 35}};
+		}));
+}
+
+TEST_CASE("Show Note Length shows boxes, and the drumstick deletes a sound's notes with a drag", "[ui]")
+{
+	Fixture f;
+	f.app.call("note.add",
+		{{"part", f.part},
+			{"notes",
+				{{{"position", 0}, {"length", g_sixteenth}, {"pitch", 36}, {"velocity", 0.5}},
+					{{"position", g_sixteenth}, {"length", g_sixteenth}, {"pitch", 36}, {"velocity", 0.5}},
+					{{"position", 2 * g_sixteenth}, {"length", g_sixteenth}, {"pitch", 38}, {"velocity", 0.5}},
+					{{"position", 3 * g_sixteenth}, {"length", g_sixteenth}, {"pitch", 36}, {"velocity", 0.5}},
+					{{"position", 8 * g_sixteenth}, {"length", g_sixteenth}, {"pitch", 36}, {"velocity", 0.5}}}}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-note").size() == 5; }));
+	f.click(of(".key-input[setting=showNoteLength]"));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-note").empty() && f.elements(".key-note").size() == 5; }));
+	f.click(of(".key-input[setting=showNoteLength]"));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-note").size() == 5; }));
+
+	// From the first note to the fourth sixteenth: the bass drum's notes there go, the snare's and the later one stay.
+	f.scroll(37);
+	f.click(of(".key-tool[key-tool=draw]"));
+	f.app.ui().drag(f.window, f.at(0.0, 36), f.at(3.5, 36));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 2; }));
+	CHECK(f.partNotes()[0].at("pitch") == 38);
+	CHECK(f.partNotes()[1].at("position") == 8 * g_sixteenth);
+	f.app.call("history.undo"); // one undo step
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 5; }));
+}
+
+TEST_CASE("the Drum Map Setup lists the maps, renames them and changes their sounds", "[ui]")
+{
+	Fixture f;
+	f.click(of("#drum-map"));
+	f.click(of("#drum-map-menu menuitem[drum-map-action=setup]"));
+	REQUIRE(f.app.waitUntil([&] { return f.elements("#drum-maps listitem").size() == 2; })); // GM Map, Kit
+	// The editor's track's map shows.
+	REQUIRE(f.app.waitUntil([&] { return f.value("#drum-map-name") == "Kit"; }));
+	f.write("#drum-map-name", "Rock Kit");
+	REQUIRE(f.app.waitUntil([&] { return f.drumMap().at("name") == "Rock Kit"; }));
+	REQUIRE(f.app.waitUntil([&] { return f.elements("#drum-maps listitem").at(1).value("text", "") == "Rock Kit"; }));
+
+	// A sound at the top of the list, where it shows without scrolling.
+	const std::string kick = ".sound-row[pitch=\"2\"] ";
+	f.write(kick + "input[key=oNote]", "C2");
+	REQUIRE(f.app.waitUntil([&] { return f.drumMap().at("sounds").at(2).at("oNote") == 48; }));
+	f.write(kick + "input[key=iNote]", "40");
+	REQUIRE(f.app.waitUntil([&] { return f.drumMap().at("sounds").at(2).at("iNote") == 40; }));
+	f.write(kick + "input[key=channel]", "Any");
+	REQUIRE(f.app.waitUntil([&] { return f.drumMap().at("sounds").at(2).at("channel").is_null(); }));
+	f.write(kick + "input[key=channel]", "3");
+	REQUIRE(f.app.waitUntil([&] { return f.drumMap().at("sounds").at(2).at("channel") == 2; }));
+	f.write(kick + "input[key=output]", "Module");
+	REQUIRE(f.app.waitUntil([&] { return f.drumMap().at("sounds").at(2).at("output") == "Module"; }));
+	f.write(kick + "input[key=name]", "Kick");
+	REQUIRE(f.app.waitUntil([&] { return f.drumMap().at("sounds").at(2).at("name") == "Kick"; }));
+	f.write(kick + "input[key=snap]", "1/8");
+	REQUIRE(f.app.waitUntil([&] { return f.drumMap().at("sounds").at(2).at("snap") == "1/8"; }));
+	f.click(of(kick + "input[key=mute]"));
+	REQUIRE(f.app.waitUntil([&] { return f.drumMap().at("sounds").at(2).at("mute") == true; }));
+	// A snap that isn't a note value: the engine's message, and the field as it was.
+	f.write(kick + "input[key=snap]", "1/7");
+	REQUIRE(f.app.waitUntil([&] { return !f.elements("#drum-maps-message").at(0).value("text", "").empty(); }));
+	CHECK(f.value(kick + "input[key=snap]") == "1/8");
+
+	// New Map adds a map and shows it; Remove removes it.
+	f.click(of("#drum-map-new"));
+	REQUIRE(f.app.waitUntil([&] { return f.app.call("project.get").at("drumMaps").size() == 3; }));
+	REQUIRE(f.app.waitUntil([&] { return f.value("#drum-map-name") == "Empty Map"; }));
+	f.click(of("#drum-map-remove"));
+	REQUIRE(f.app.waitUntil([&] { return f.app.call("project.get").at("drumMaps").size() == 2; }));
+	// A map added elsewhere shows.
+	f.app.call("drumMap.add", {{"name", "From Lua"}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements("#drum-maps listitem").size() == 3; }));
 }

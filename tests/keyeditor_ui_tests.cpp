@@ -4,6 +4,8 @@
 // inspector's Chord Editing section. tests/keyeditor_tests.cpp checks the engine's side.
 #include "engine/time/tempomap.h"
 #include "ui/automation.h"
+#include "ui/keyeditor.h"
+#include "ui/midieditor.h"
 #include "uiapp.h"
 
 #include <RmlUi/Core/Context.h>
@@ -182,10 +184,48 @@ namespace
 			REQUIRE(has(".key-tool[key-tool=" + name + "]", "checked"));
 		}
 
+		// Gives the track the instrument noteProbe and renders by hand, so that plays() hears what the keyboard's keys
+		// play (reference manual p. 1204).
+		void probe()
+		{
+			app.call("audio.setDevice", {{"blockSize", 128}, {"inputChannels", 0}, {"captureSeconds", 1}});
+			app.call("channel.set",
+				{{"channel", app.call("project.get").at("tracks").at(0).at("channel")}, {"instrument", "noteProbe"}});
+			app.call("audio.render", {{"frames", 128}}); // the new graph
+			app.call("midi.capture", {{"start", true}});
+		}
+
+		// Renders until the note ons and offs the instrument played since played was last cleared are expected.
+		bool plays(const std::vector<std::vector<int>>& expected)
+		{
+			return app.waitUntil(
+				[&]
+				{
+					app.call("audio.render", {{"frames", 128}});
+					const Json captured = app.call("midi.capture");
+					for (const Json& message : captured.at("captured"))
+					{
+						const auto bytes = message.at("bytes").get<std::vector<int>>();
+						if ((bytes.at(0) & 0xE0) == 0x80)
+							played.push_back(bytes);
+					}
+					return played == expected;
+				});
+		}
+
+		// A point on the keyboard: x across the window, in the middle of the pitch's row.
+		ui::Target key(int x, int pitch)
+		{
+			const Json grid = box(".key-editor-grid");
+			const double y = grid.at("y").get<double>() + ((127.5 - pitch) / 128.0 * grid.at("height").get<double>());
+			return {"", 0, ui::Point{x, static_cast<int>(std::lround(y))}};
+		}
+
 		test::UiApp app;
 		std::optional<ui::WindowId> window;
 		uint64_t track = 0;
 		uint64_t part = 0;
+		std::vector<std::vector<int>> played; // the note ons and offs that plays() heard
 	};
 }
 
@@ -332,65 +372,43 @@ TEST_CASE("a click on a key of the keyboard plays its pitch on the track's instr
 	// Reference manual p. 1204.
 	Fixture f({1024, 600}, "instrument");
 	f.app.setDpRatio(1.0F);
-	f.app.call("audio.setDevice", {{"blockSize", 128}, {"inputChannels", 0}, {"captureSeconds", 1}});
-	f.app.call("channel.set",
-		{{"channel", f.app.call("project.get").at("tracks").at(0).at("channel")}, {"instrument", "noteProbe"}});
-	f.app.call("audio.render", {{"frames", 128}}); // the new graph
-	f.app.call("midi.capture", {{"start", true}});
-	std::vector<std::vector<int>> played; // the note ons and offs the instrument played
-	const auto plays = [&](const std::vector<std::vector<int>>& expected)
-	{
-		return f.app.waitUntil(
-			[&]
-			{
-				f.app.call("audio.render", {{"frames", 128}});
-				const Json captured = f.app.call("midi.capture");
-				for (const Json& message : captured.at("captured"))
-				{
-					const auto bytes = message.at("bytes").get<std::vector<int>>();
-					if ((bytes.at(0) & 0xE0) == 0x80)
-						played.push_back(bytes);
-				}
-				return played == expected;
-			});
-	};
+	f.probe();
+	// Notes of the keys' pitches, C3 selected: a click on a key leaves the selection as it was. The selection goes
+	// first, as the inspector's sections change with it and could move the note display.
+	const std::vector<uint64_t> ids = f.add({{0, 60, g_quarter}, {g_quarter, 61, g_quarter}});
+	f.app.call(
+		"editor.set", {{"editor", "window"}, {"selection", Json::array({{{"part", f.part}, {"note", ids[0]}}})}});
+	REQUIRE(f.app.waitUntil([&] { return f.has(".key-editor-key[pitch=\"60\"]", "selected"); }));
 	f.scroll(60);
 	const Json keyboard = f.box(".key-editor-keys");
-	const Json grid = f.box(".key-editor-grid");
-	const double row = grid.at("height").get<double>() / 128;
-	const auto point = [&](int x, int pitch)
-	{
-		const double y = grid.at("y").get<double>() + ((127.5 - pitch) * row);
-		return ui::Target{"", 0, ui::Point{x, static_cast<int>(std::lround(y))}};
-	};
 	const int left = keyboard.at("x").get<int>() + 2;
 	const int right = keyboard.at("x").get<int>() + keyboard.at("width").get<int>() - 2;
 
 	// The right part of a white key beside a black key: in C#3's row, at the keyboard's right, C3 plays until the
 	// mouse is released.
-	f.app.ui().press(f.window, point(right, 61), ui::MouseButton::Left, {});
+	f.app.ui().press(f.window, f.key(right, 61), ui::MouseButton::Left, {});
 	f.app.shell().step(std::chrono::milliseconds(0));
-	CHECK(plays({{0x90, 60, 100}}));
-	f.app.ui().release(f.window, point(right, 61), ui::MouseButton::Left, {});
+	CHECK(f.plays({{0x90, 60, 100}}));
+	f.app.ui().release(f.window, f.key(right, 61), ui::MouseButton::Left, {});
 	f.app.shell().step(std::chrono::milliseconds(0));
-	CHECK(plays({{0x90, 60, 100}, {0x80, 60, 0}}));
+	CHECK(f.plays({{0x90, 60, 100}, {0x80, 60, 0}}));
 
 	// At the left of that row the black key, C#3; released outside the key editor, over the editor window's toolbar,
-	// it ends too. Neither click selects anything.
-	played.clear();
-	f.app.ui().press(f.window, point(left, 61), ui::MouseButton::Left, {});
+	// it ends too. Neither click selects or deselects a note.
+	f.played.clear();
+	f.app.ui().press(f.window, f.key(left, 61), ui::MouseButton::Left, {});
 	f.app.shell().step(std::chrono::milliseconds(0));
-	CHECK(plays({{0x90, 61, 100}}));
+	CHECK(f.plays({{0x90, 61, 100}}));
 	f.app.ui().release(f.window, of("#editor-keep-contents"), ui::MouseButton::Left, {});
 	f.app.shell().step(std::chrono::milliseconds(0));
-	CHECK(plays({{0x90, 61, 100}, {0x80, 61, 0}}));
-	CHECK(f.selection().empty());
+	CHECK(f.plays({{0x90, 61, 100}, {0x80, 61, 0}}));
+	CHECK(f.selection() == std::vector<uint64_t>{ids[0]});
 
 	// Released outside the window, where no mouseup arrives, D3 ends when the mouse leaves the window.
-	played.clear();
-	f.app.ui().press(f.window, point(right, 62), ui::MouseButton::Left, {});
+	f.played.clear();
+	f.app.ui().press(f.window, f.key(right, 62), ui::MouseButton::Left, {});
 	f.app.shell().step(std::chrono::milliseconds(0));
-	CHECK(plays({{0x90, 62, 100}}));
+	CHECK(f.plays({{0x90, 62, 100}}));
 	ui::Window* window = f.app.shell().find(f.app.appUi().editorWindowId());
 	REQUIRE(window != nullptr);
 	Rml::Context& context = window->context();
@@ -398,7 +416,65 @@ TEST_CASE("a click on a key of the keyboard plays its pitch on the track's instr
 	context.ProcessMouseLeave();
 	context.ProcessMouseButtonUp(0, 0);
 	f.app.shell().step(std::chrono::milliseconds(0));
-	CHECK(plays({{0x90, 62, 100}, {0x80, 62, 0}}));
+	CHECK(f.plays({{0x90, 62, 100}, {0x80, 62, 0}}));
+}
+
+TEST_CASE("a key of the keyboard held while the key editor goes ends its pitch", "[ui]")
+{
+	Fixture f({1024, 600}, "instrument");
+	f.app.setDpRatio(1.0F);
+	f.probe();
+	const auto keyEditor = [&]() -> ui::KeyEditor*
+	{
+		ui::MidiEditor* window = f.app.appUi().editorWindow();
+		return window != nullptr ? window->keyEditor() : nullptr;
+	};
+	const auto press = [&](int pitch)
+	{
+		f.scroll(pitch);
+		const Json keyboard = f.box(".key-editor-keys");
+		f.app.ui().press(f.window, f.key(keyboard.at("x").get<int>() + 2, pitch), ui::MouseButton::Left, {});
+		f.app.shell().step(std::chrono::milliseconds(0));
+	};
+
+	// The editor switching to the drum editor builds a key editor of its own: the key's pitch ends with the old one,
+	// and the mouse going up in the new one ends nothing more.
+	press(60);
+	CHECK(f.plays({{0x90, 60, 100}}));
+	f.app.call("editor.set", {{"editor", "window"}, {"content", "drum"}});
+	REQUIRE(f.app.waitUntil([&] { return keyEditor() != nullptr && keyEditor()->drum(); }));
+	CHECK(f.plays({{0x90, 60, 100}, {0x80, 60, 0}}));
+	f.app.ui().release(f.window, of(".key-editor-grid"), ui::MouseButton::Left, {});
+	for (int block = 0; block < 4; ++block) // what the release could send has arrived after a few UI steps and blocks
+	{
+		f.app.shell().step(std::chrono::milliseconds(0));
+		CHECK(f.plays({{0x90, 60, 100}, {0x80, 60, 0}}));
+	}
+
+	// The editor closing through the engine API, as a key command closes it, ends the pitch with the editor window.
+	f.played.clear();
+	f.app.call("editor.set", {{"editor", "window"}, {"content", "key"}});
+	REQUIRE(f.app.waitUntil([&] { return keyEditor() != nullptr && !keyEditor()->drum(); }));
+	press(62);
+	CHECK(f.plays({{0x90, 62, 100}}));
+	f.app.call("editor.close", {{"editor", "window"}});
+	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().editorWindow() == nullptr; }));
+	CHECK(f.plays({{0x90, 62, 100}, {0x80, 62, 0}}));
+
+	// The user closing the editor window, as its close button does: the shell drops the window and its document first.
+	// The document's mouseout, which RmlUi sends it as it goes, ends the pitch while the key editor is still there, and
+	// the destructor, which runs after the window, is the backstop; the check holds either one, not each alone.
+	f.played.clear();
+	f.app.call("editor.open", {{"editor", "window"}, {"parts", Json::array({f.part})}});
+	REQUIRE(f.app.waitUntil([&] { return keyEditor() != nullptr; }));
+	f.window = f.app.appUi().editorWindowId();
+	// The key editor is built before the engine answers: a press needs its view.
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".editor-part").size() == 1; }));
+	press(64);
+	CHECK(f.plays({{0x90, 64, 100}}));
+	f.app.ui().close(f.window, false);
+	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().editorWindow() == nullptr; }));
+	CHECK(f.plays({{0x90, 64, 100}, {0x80, 64, 0}}));
 }
 
 TEST_CASE("the object selection tool selects, moves, resizes, inserts and deletes notes", "[ui]")

@@ -15,6 +15,7 @@
 
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <optional>
 #include <sstream>
@@ -51,6 +52,21 @@ namespace gnubase::test
 			},
 			nullptr);
 #endif
+	}
+
+	std::filesystem::path patchedResources(const std::filesystem::path& folder, const std::string& document,
+		const std::string& from, const std::string& to)
+	{
+		const std::filesystem::path resources = folder / "resources";
+		std::filesystem::copy(GNUBASE_RESOURCES_DIR, resources, std::filesystem::copy_options::recursive);
+		const std::filesystem::path file = resources / "ui" / document;
+		std::string text = readText(file);
+		const size_t at = text.find(from);
+		INFO(file.u8string());
+		REQUIRE(at != std::string::npos);
+		text.replace(at, from.size(), to);
+		std::ofstream(file, std::ios::binary) << text;
+		return resources;
 	}
 
 	UiApp::UiApp(ui::Size size, std::vector<std::unique_ptr<midi::Backend>> midiBackends,

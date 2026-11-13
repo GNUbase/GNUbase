@@ -15,6 +15,7 @@
 #include <array>
 #include <cmath>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <stdexcept>
@@ -128,14 +129,17 @@ namespace gnubase::ui
 		addTimeWarpActions();
 		addAutomationActions();
 		// While Snap to Zero Crossing is still moving the range's edges, actions wait, so that an edit right after a
-		// range is drawn, such as Delete, edits the range where its edges go.
+		// range is drawn, such as Delete, edits the range where its edges go; engine key commands wait with them.
 		for (auto& [name, action] : m_actions)
 			action = [this, run = std::move(action)]
 			{
-				if (m_zeroCrossings == 0)
-					run();
-				else
-					m_afterZeroCrossings.push_back(run);
+				// The binding holds it, which may outlive the display.
+				m_binding.afterAwaited(
+					[run, alive = std::weak_ptr<bool>(m_alive)]
+					{
+						if (!alive.expired())
+							run();
+					});
 			};
 		setToolModifiers(Json::object());
 
@@ -528,15 +532,24 @@ namespace gnubase::ui
 			const auto file = media.find(clipMedia[event.at("clip").get<uint64_t>()]);
 			const double rate = file == media.end() ? 0.0 : file->second->at("sampleRate").get<double>();
 			const double start = seconds(event.at("position").get<int64_t>(), linear[track]);
-			const double length = rate > 0.0 ? event.at("length").get<double>() / rate : 0.0;
+			// A warped event ends where its warp puts its end (playedLength, in project samples); its waveform is
+			// drawn stretched evenly to fit, at waveRate clip frames a second.
+			// ponytail: an even stretch, not the warp's own, until the waveforms follow the warp map.
+			const auto played = event.find("playedLength");
+			double length = rate > 0.0 ? event.at("length").get<double>() / rate : 0.0;
+			if (played != event.end())
+				length = played->get<double>() / m_time.sampleRate;
+			const double waveRate =
+				played != event.end() && length > 0.0 ? event.at("length").get<double>() / length : rate;
 			if (const auto part = audioParts.find(event.value("part", uint64_t{0})); part != audioParts.end())
 			{
 				const double from = std::max(start, part->second.first);
 				const double to = std::min(start + length, part->second.second);
 				if (file != media.end() && rate > 0.0 && lanes.count(track) != 0 && to > from)
-					waves.push_back({event.at("id").get<uint64_t>(), lanes[track], {from, to - from}, file->first, rate,
-						file->second->at("channels").get<int>(),
-						event.at("offset").get<int64_t>() + static_cast<int64_t>(std::llround((from - start) * rate))});
+					waves.push_back({event.at("id").get<uint64_t>(), lanes[track], {from, to - from}, file->first,
+						waveRate, file->second->at("channels").get<int>(),
+						event.at("offset").get<int64_t>() +
+							static_cast<int64_t>(std::llround((from - start) * waveRate))});
 				continue;
 			}
 			addEvent(event, start, start + length, false);
@@ -546,7 +559,7 @@ namespace gnubase::ui
 				Piece piece{{start, length, own.is_string() ? spanColor(own.get<std::string>()) : colors[track]}, {},
 					event.value("mute", false)};
 				if (file != media.end() && rate > 0.0)
-					piece.wave = {event.at("id").get<uint64_t>(), lanes[track], {start, length}, file->first, rate,
+					piece.wave = {event.at("id").get<uint64_t>(), lanes[track], {start, length}, file->first, waveRate,
 						file->second->at("channels").get<int>(), event.at("offset").get<int64_t>()};
 				std::vector<Piece> covered;
 				for (const Piece& other : pieces[lanes[track]])
@@ -574,14 +587,14 @@ namespace gnubase::ui
 			const Json& snapPoint = event.at("snapPoint");
 			const double into = snapPoint.is_null() || rate <= 0.0
 				? -1.0
-				: (snapPoint.get<double>() - event.at("offset").get<double>()) / rate;
+				: (snapPoint.get<double>() - event.at("offset").get<double>()) / waveRate;
 			for (auto shown = m_events.rbegin(); shown != m_events.rend() && shown->id == event.at("id"); ++shown)
 				if (into >= 0.0 && into < length)
 					shown->snapPoint = start + into;
 			if (rate > 0.0)
-				readFades(event, rate);
+				readFades(event, rate, waveRate);
 			if (const std::optional<size_t> taken = takeLane(event); taken && file != media.end() && rate > 0.0)
-				waves.push_back({event.at("id").get<uint64_t>(), *taken, {start, length}, file->first, rate,
+				waves.push_back({event.at("id").get<uint64_t>(), *taken, {start, length}, file->first, waveRate,
 					file->second->at("channels").get<int>(), event.at("offset").get<int64_t>()});
 		}
 		for (const auto& [lane, shown] : pieces)
@@ -936,9 +949,9 @@ namespace gnubase::ui
 		setView(m_view);
 	}
 
-	void EventDisplay::setTrackHeights(double height)
+	void EventDisplay::setTrackHeights(const std::vector<uint64_t>& tracks, double height)
 	{
-		for (const uint64_t track : m_laneTracks)
+		for (const uint64_t track : tracks)
 			m_heights[track] = std::clamp(height, g_minTrackHeight, g_maxTrackHeight);
 		setLanes();
 		setView(m_view);
@@ -1119,6 +1132,9 @@ namespace gnubase::ui
 		case Rml::EventId::Mousedown:
 			if (inInPlaceEditor(target))
 				break; // the editor's (ui/inplaceeditor.h)
+			runWaitingActions();
+			if (!alive())
+				break;
 			if (target != nullptr && event.GetParameter<int>("button", 0) == 0)
 				mouseDown(event, *target);
 			else if (event.GetParameter<int>("button", 0) == 1 && inside(target, m_area))
@@ -1220,7 +1236,7 @@ namespace gnubase::ui
 			m_dragAt = dpFrom(*m_ruler, x);
 			m_dragTime = m_view.start + (m_dragAt * m_view.scale);
 			m_drag = Drag::Ruler;
-			m_binding.send("transport.locate", {{"position", std::llround(m_dragTime * m_time.sampleRate)}});
+			m_binding.send("transport.locate", {{"position", positionSamples(m_dragTime, m_time.sampleRate)}});
 		}
 		else if (inside(&target, m_overview))
 		{

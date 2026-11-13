@@ -21,6 +21,7 @@
 #include <windows.h>
 #else
 #include <sys/stat.h>
+#include <sys/wait.h>
 #endif
 
 namespace gnubase::test
@@ -320,6 +321,18 @@ namespace gnubase::test
 	std::filesystem::path outputDirectory()
 	{
 		return GNUBASE_TEST_OUTPUT_DIR;
+	}
+
+	int runCommand(const std::string& command)
+	{
+#ifdef _WIN32
+		// cmd.exe removes the outer quotes. As UTF-16, so that paths with any characters come through.
+		// NOLINTNEXTLINE(bugprone-command-processor): the tests' own commands
+		return _wsystem(std::filesystem::u8path("\"" + command + "\"").wstring().c_str());
+#else
+		const int status = std::system(command.c_str()); // NOLINT(bugprone-command-processor): the tests' own commands
+		return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+#endif
 	}
 
 	std::map<std::string, std::string> readZip(const std::string& path)

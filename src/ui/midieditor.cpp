@@ -331,7 +331,15 @@ namespace gnubase::ui
 			// The drum editor (#129) is the key editor with the drum map's sounds as its rows.
 			added->SetClass("key-editor", true);
 			m_keys = std::make_unique<KeyEditor>(m_binding, *added, m_name, shown == "drum");
+			m_keys->setDrumMapSetup(m_drumMapSetup);
 		}
+	}
+
+	void MidiEditor::setDrumMapSetup(std::function<void()> open)
+	{
+		m_drumMapSetup = std::move(open);
+		if (m_keys)
+			m_keys->setDrumMapSetup(m_drumMapSetup);
 	}
 
 	// The chord the selected notes make, as the Chord Editing section's Chord Type field shows it (p. 1216).

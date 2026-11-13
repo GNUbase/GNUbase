@@ -2,6 +2,7 @@
 add_library(gnubase-testutils STATIC
 	testutils/fakeui.cpp testutils/fakeui.h
 	testutils/goldenimage.cpp testutils/goldenimage.h
+	testutils/heldjob.cpp testutils/heldjob.h
 	testutils/testutils.cpp testutils/testutils.h)
 target_include_directories(gnubase-testutils PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(gnubase-testutils PUBLIC gnubase-ui)
@@ -75,6 +76,7 @@ add_executable(gnubase-tests
 	fade_tests.cpp
 	fades_ui_tests.cpp
 	fileimport_tests.cpp
+	files_tests.cpp
 	fonts_tests.cpp
 	graph_tests.cpp
 	harmony_tests.cpp
@@ -161,6 +163,7 @@ add_executable(gnubase-tests
 	sampleeditor_tests.cpp
 	sampleeditor_ui_tests.cpp
 	sampler_tests.cpp
+	sampler_ui_tests.cpp
 	scripting_tests.cpp
 	scripts_ui_tests.cpp
 	sequencing_tests.cpp
@@ -224,7 +227,6 @@ target_link_libraries(gnubase-tests PRIVATE
 	gnubase-pluginhost-core
 	gnubase-scripting
 	gnubase-testutils
-	miniz
 	pugixml::pugixml)
 
 # The UI's tests (#48, #49) use SDL directly.
@@ -242,6 +244,8 @@ add_executable(gnubase-ipcpeer ipcpeer.cpp)
 target_link_libraries(gnubase-ipcpeer PRIVATE gnubase-ipc)
 gnubase_target_defaults(gnubase-ipcpeer)
 target_compile_definitions(gnubase-tests PRIVATE GNUBASE_IPCPEER="$<TARGET_FILE:gnubase-ipcpeer>")
+# The test of the test run's temp folder runs a test case of its own in a child process (tests/testrun_tempfolder.cpp).
+target_compile_definitions(gnubase-tests PRIVATE GNUBASE_TESTS="$<TARGET_FILE:gnubase-tests>")
 add_dependencies(gnubase-tests gnubase-ipcpeer)
 # The test plugins and the loader tests that load them into the test process (plugins/README.md).
 if(GNUBASE_TEST_PLUGINS)

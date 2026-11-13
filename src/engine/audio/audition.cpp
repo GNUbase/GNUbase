@@ -261,8 +261,14 @@ namespace gnubase::engine
 		if (!m_cuePlaying)
 			return;
 		const auto [played, position] = m_played.load();
+		playedRead();
 		Playback::Cue cue;
-		cue.playing = reading && played == m_cueSerial;
+		// While the audio thread reads, as for a playing transport even before it has played a block of this state:
+		// it may be in the middle of the first one, or have just played it, after what was read here, and an exact
+		// cue at the start would then move the stream it reads back there. play() cued the start exactly; until a
+		// block of it has played, a start that has no voice still gets one there (starting), not ahead.
+		cue.playing = reading;
+		cue.starting = reading && played != m_cueSerial;
 		cue.position = played == m_cueSerial ? position : m_cueStart;
 		cue.window = window;
 		m_playback.cue(cue);
@@ -324,8 +330,8 @@ namespace gnubase::engine
 	void AudioEngine::registerAuditionCommands(Engine& engine)
 	{
 		const Json status = Json::parse(R"({"type": "object", "additionalProperties": false,
-			"required": ["track", "media", "mode"], "properties": {"track": {"type": "integer"},
-			"media": {"type": "integer"}, "mode": {"type": "string", "enum": ["off", "play", "scrub"]}}})");
+			"required": ["track", "media", "clip", "mode"], "properties": {"track": {"type": "integer"},
+			"media": {"type": "integer"}, "clip": {"type": "integer"}, "mode": {"type": "string", "enum": ["off", "play", "scrub"]}}})");
 		const Json parameters = Json::parse(R"({"type": "object", "additionalProperties": false,
 			"required": ["position"], "properties": {"track": {"type": "integer"}, "media": {"type": "integer"},
 			"clip": {"type": "integer"}, "position": {"type": "integer"}}})");
@@ -339,7 +345,7 @@ namespace gnubase::engine
 			std::string mode = "off";
 			if (subject != Audition::Subject())
 				mode = m_audition.scrubbing() ? "scrub" : "play";
-			Json result = {{"track", subject.track}, {"media", subject.media}, {"mode", mode}};
+			Json result = {{"track", subject.track}, {"media", subject.media}, {"clip", subject.clip}, {"mode", mode}};
 			context.emit("audition.changed", result);
 			return result;
 		};
@@ -443,7 +449,8 @@ namespace gnubase::engine
 				"audition.stop or another audition. A mono clip plays on every channel. Or, instead of track, a media "
 				"file on its own: position and end are then its sample frames, from 0 to its length, without the "
 				"events that play it. Or, instead of either, a clip: its media file so, with the clip's fades, as the "
-				"sample editor plays its clip; media is then the clip's media file. Ends what was auditioned before. "
+				"sample editor plays its clip; the result's clip is then the clip, and media its media file. Ends what "
+				"was auditioned before. "
 				"Announces audition.changed.",
 				startParameters, status, false},
 			[this, source, report](CommandContext& context)

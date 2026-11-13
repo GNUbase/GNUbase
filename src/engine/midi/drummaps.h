@@ -16,7 +16,7 @@ namespace gnubase::engine
 namespace gnubase::engine::midi
 {
 	// The GM Map (p. 1237): General MIDI's percussion names, every I-note and O-note its own pitch, channel 10 and a
-	// 1/16 snap. Its id is 0.
+	// 1/16 snap. Its id is 0 until it gets the project's (0 is no map).
 	DrumMap gmDrumMap();
 	// New Map (p. 1236): "Empty Map", the sounds named Sound 1, Sound 2 and so on, on the track's channel.
 	DrumMap emptyDrumMap();

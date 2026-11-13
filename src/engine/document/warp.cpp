@@ -219,25 +219,6 @@ namespace gnubase::engine
 					std::to_string(ratio) + " times as long");
 		}
 
-		void checkMarkers(ClipWarp& warp, time::Samples length)
-		{
-			std::sort(warp.markers.begin(), warp.markers.end(),
-				[](const WarpMarker& a, const WarpMarker& b) { return a.position < b.position; });
-			WarpMarker before;
-			for (const WarpMarker& marker : warp.markers)
-			{
-				require(marker.position > 0 && marker.position < length && marker.target > 0 && marker.target < length,
-					"a warp marker and where it goes must be within the clip (1 to " + std::to_string(length - 1) +
-						")");
-				require(marker.position > before.position && marker.target > before.target,
-					"warp markers can't pass each other: the marker at " + std::to_string(marker.position) +
-						" must go after " + std::to_string(before.target));
-				checkRatio(before, marker);
-				before = marker;
-			}
-			checkRatio(before, {length, length});
-		}
-
 		WarpMarker& markerAt(ClipWarp& warp, time::Samples position)
 		{
 			const auto found = std::find_if(warp.markers.begin(), warp.markers.end(),
@@ -313,6 +294,52 @@ namespace gnubase::engine
 			AudioFileInfo written = info;
 			written.frames = info.frames - left;
 			return written;
+		}
+	}
+
+	void checkMarkers(ClipWarp& warp, time::Samples length)
+	{
+		std::sort(warp.markers.begin(), warp.markers.end(),
+			[](const WarpMarker& a, const WarpMarker& b) { return a.position < b.position; });
+		WarpMarker before;
+		for (const WarpMarker& marker : warp.markers)
+		{
+			require(marker.position > 0 && marker.position < length && marker.target > 0 && marker.target < length,
+				"a warp marker and where it goes must be within the clip (1 to " + std::to_string(length - 1) + ")");
+			require(marker.position > before.position && marker.target > before.target,
+				"warp markers can't pass each other: the marker at " + std::to_string(marker.position) +
+					" must go after " + std::to_string(before.target));
+			checkRatio(before, marker);
+			before = marker;
+		}
+		checkRatio(before, {length, length});
+	}
+
+	Json audioEventJson(const Project& project, const AudioEvent& event)
+	{
+		Json json = toJson(event);
+		if (warped(project.clips.at(event.clip)))
+		{
+			const EventSpan span = eventSpan(project, event);
+			json["playedLength"] = span.end - span.start;
+			json["fadeRoom"] = fadeRoom(project, event);
+		}
+		return json;
+	}
+
+	void announceWarpedEvents(const Project& before, const Project& after, CommandContext& context)
+	{
+		for (const auto& [id, event] : after.audioEvents)
+		{
+			const auto previous = before.audioEvents.find(id);
+			const bool now = warped(after.clips.at(event.clip));
+			const bool was = previous != before.audioEvents.end() && warped(before.clips.at(previous->second.clip));
+			if (!now && !was)
+				continue;
+			const Json json = audioEventJson(after, event);
+			if (previous != before.audioEvents.end() && json == audioEventJson(before, previous->second))
+				continue;
+			context.emit("audioEvent.changed", {{"event", json}});
 		}
 	}
 
@@ -426,6 +453,9 @@ namespace gnubase::engine
 			"than the tempo would, each at a clip frame), its free warp markers (each plays the audio at its "
 			"position where the clip frame target would play without it) and preset, the time stretch algorithm of "
 			"real-time warping. Emits clip.changed. Returns the clip's id and its warp.";
+		const std::string markerRules =
+			"Markers can't pass each other, and no section between two of them, or one and the clip's start or end, "
+			"may play more than 4 times or less than a quarter as long, the real-time stretcher's range. ";
 
 		addEdit(engine,
 			{"clip.setWarp", 1,
@@ -633,8 +663,8 @@ namespace gnubase::engine
 		addEdit(engine,
 			{"clip.addWarpMarker", 1,
 				"Inserts a free warp marker into a clip at position (a clip frame) that plays it at target, default "
-				"position (Free Warp, reference manual pp. 654-655). Markers can't pass each other. " +
-					warpText,
+				"position (Free Warp, reference manual pp. 654-655). " +
+					markerRules + warpText,
 				objectSchema({{"clip", integer}, {"position", integer}, {"target", integer}}, {"clip", "position"}),
 				resultSchema, false},
 			"Insert warp marker",
@@ -654,8 +684,8 @@ namespace gnubase::engine
 		addEdit(engine,
 			{"clip.setWarpMarker", 1,
 				"Moves the free warp marker of a clip at position so that it plays at target, a clip frame "
-				"(Correcting Warp Marker Positions, reference manual p. 656). Markers can't pass each other. " +
-					warpText,
+				"(Correcting Warp Marker Positions, reference manual p. 656). " +
+					markerRules + warpText,
 				objectSchema(
 					{{"clip", integer}, {"position", integer}, {"target", integer}}, {"clip", "position", "target"}),
 				resultSchema, false},

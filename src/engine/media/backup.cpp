@@ -78,20 +78,6 @@ namespace gnubase::engine
 			throw std::runtime_error("can't create " + file.u8string() + ": " + problem);
 		}
 
-		// createFreeFile, skipping names that differ only in case from the ones in taken, and adding the new one.
-		fs::path createFreeFile(const fs::path& folder, const fs::path& name, std::set<std::string>& taken)
-		{
-			for (int number = 1;; ++number)
-			{
-				const fs::path candidate = numbered(name, number);
-				if (taken.count(foldedName(candidate)) == 0 && createExclusively(folder / candidate))
-				{
-					taken.insert(foldedName(candidate));
-					return folder / candidate;
-				}
-			}
-		}
-
 		// Copies a file in chunks, so that a job can report progress and stop in between. Throws std::runtime_error.
 		void copyFile(const fs::path& from, const fs::path& to, const std::function<void(size_t)>& copied)
 		{
@@ -292,10 +278,12 @@ namespace gnubase::engine
 
 		// Lists what is in listed, a folder in the Mixdown folder root, into mixdowns, with the folders in it and what
 		// they hold, but not skipped, the backup's own folder, nor links to folders. A folder that can't be listed goes
-		// into missing as {path} and is left out with what it holds; false if that is listed.
+		// into missing as {path, folder: true} and is left out with what it holds, also the folders in it that went
+		// into missing before its listing failed; false if that is listed.
 		bool listMixdowns(const fs::path& root, const fs::path& listed, const fs::path& skipped,
 			std::vector<Mixdown>& mixdowns, Json& missing)
 		{
+			const size_t reported = missing.size();
 			std::error_code error;
 			for (auto entry = fs::directory_iterator(listed, error); !error && entry != fs::directory_iterator();
 				entry.increment(error))
@@ -321,7 +309,10 @@ namespace gnubase::engine
 				}
 			}
 			if (error)
-				missing.push_back({{"path", listed.u8string()}});
+			{
+				missing.erase(missing.begin() + static_cast<std::ptrdiff_t>(reported), missing.end());
+				missing.push_back({{"path", listed.u8string()}, {"folder", true}});
+			}
 			return !error;
 		}
 
@@ -434,15 +425,44 @@ namespace gnubase::engine
 		return !relative.empty() && *relative.begin() != fs::path("..") && relative != fs::path(".");
 	}
 
-	fs::path createFreeFile(const fs::path& folder, const fs::path& name)
+	std::set<std::string> takenNames(const fs::path& folder)
 	{
 		// One listing instead of a failed create for every file of that name: a folder can hold thousands of
-		// recordings, and the recorder holds its lock meanwhile. If the listing fails, creating the file still finds
-		// out what's taken.
+		// recordings, and the recorder holds its lock meanwhile.
 		std::set<std::string> taken;
 		std::error_code error;
 		for (fs::directory_iterator entry(folder, error), end; !error && entry != end; entry.increment(error))
-			taken.insert(foldedName(entry->path().filename()));
+		{
+			std::string name;
+			try
+			{
+				name = foldedName(entry->path().filename());
+			}
+			catch (const std::system_error&)
+			{
+				continue; // not valid UTF-16 (Windows): no name made here can match it
+			}
+			taken.insert(std::move(name));
+		}
+		return taken;
+	}
+
+	fs::path createFreeFile(const fs::path& folder, const fs::path& name, std::set<std::string>& taken)
+	{
+		for (int number = 1;; ++number)
+		{
+			const fs::path candidate = numbered(name, number);
+			if (taken.count(foldedName(candidate)) == 0 && createExclusively(folder / candidate))
+			{
+				taken.insert(foldedName(candidate));
+				return folder / candidate;
+			}
+		}
+	}
+
+	fs::path createFreeFile(const fs::path& folder, const fs::path& name)
+	{
+		std::set<std::string> taken = takenNames(folder);
 		return createFreeFile(folder, name, taken);
 	}
 
@@ -480,6 +500,7 @@ namespace gnubase::engine
 			fs::create_directories(folder, error);
 			if (error)
 				throw std::runtime_error("can't create " + folder.u8string() + ": " + error.message());
+			std::set<std::string> taken = takenNames(folder);
 			std::uintmax_t finished = 0; // bytes of the files done
 			for (size_t i = 0; i < files.size(); ++i)
 			{
@@ -490,7 +511,7 @@ namespace gnubase::engine
 					const fs::path source = pathOf(file.from);
 					const std::string detail = source.filename().u8string();
 					job.progress(static_cast<double>(finished) / static_cast<double>(total), detail);
-					const fs::path target = createFreeFile(folder, source.filename());
+					const fs::path target = createFreeFile(folder, source.filename(), taken);
 					made.push_back(target.u8string());
 					std::uintmax_t done = finished;
 					copyFile(source, target,

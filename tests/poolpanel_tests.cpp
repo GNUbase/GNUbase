@@ -325,8 +325,8 @@ TEST_CASE(
 	prepareArchive();
 	REQUIRE(app.waitUntil([&app] { return !elements(app, "#prepare-archive-dialog").empty(); }));
 	CHECK(elements(app, "#prepare-archive-message").at(0).value("text", "") ==
-		"1 file of the project is outside the project folder. Copy it into its Audio folder? 1 more is missing and "
-		"can't be copied.");
+		"1 file of the project is outside the project folder. 1 more is missing and can't be copied. Copy it into its "
+		"Audio folder?");
 	click(app, "#prepare-archive-dialog button[result=cancel]");
 	REQUIRE(app.waitUntil([&app] { return elements(app, "#prepare-archive-dialog").empty(); }));
 	CHECK(message(app) == before);

@@ -30,6 +30,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -612,6 +613,53 @@ TEST_CASE("a drag of an event's edge shows the size the release gives it at ever
 	CHECK(bothEnds(3.7, 4.2));
 }
 
+TEST_CASE("a second resize release can precede the first release's project", "[unit]")
+{
+	Fixture f;
+	f.display.select({f.part});
+	REQUIRE(f.waitUntil([&f] { return f.lanes("selected-events")[1].events.size() == 1; }));
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	const auto bothEnds = [&f](double end)
+	{
+		return std::abs(f.lanes("events")[1].events[0].end() - end) < 1e-6 &&
+			std::abs(f.lanes("selected-events")[1].events[0].end() - end) < 1e-6;
+	};
+	clock->advance(1.0);
+	f.automation.press(std::nullopt, f.at(298, 60), ui::MouseButton::Left);
+	f.automation.move(std::nullopt, f.at(348, 60));
+	REQUIRE(f.waitUntil([&bothEnds] { return bothEnds(3.5); }));
+	f.automation.release(std::nullopt, f.at(348, 60), ui::MouseButton::Left);
+	// No shell step has handed the first release's project to the display yet.
+	REQUIRE(f.display.project().at("midiParts")[0].at("length") == 4 * g_quarter);
+	clock->advance(1.0);
+	f.automation.press(std::nullopt, f.at(348, 60), ui::MouseButton::Left);
+	f.automation.move(std::nullopt, f.at(368, 60));
+	const auto previewDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+	while (!bothEnds(3.7))
+	{
+		REQUIRE(std::chrono::steady_clock::now() < previewDeadline);
+		f.ui.shell.step(milliseconds(5));
+		REQUIRE(f.display.project().at("midiParts")[0].at("length") == 4 * g_quarter);
+	}
+	f.automation.release(std::nullopt, f.at(368, 60), ui::MouseButton::Left);
+	REQUIRE(f.display.project().at("midiParts")[0].at("length") == 4 * g_quarter);
+	const auto settled = [&f]
+	{
+		return f.binding.waiting("event.resize") == 0 && f.binding.waiting("project.get") == 0 &&
+			f.display.project().at("midiParts")[0].at("length") == (27 * g_quarter) / 5;
+	};
+	const auto settleDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+	while (!settled())
+	{
+		REQUIRE(bothEnds(3.7)); // neither release's project may make the second preview disappear
+		REQUIRE(std::chrono::steady_clock::now() < settleDeadline);
+		f.ui.shell.step(milliseconds(5));
+	}
+	CHECK(bothEnds(3.7));
+	CHECK(f.parts()[0].at("length") == (27 * g_quarter) / 5);
+}
+
 TEST_CASE("the object selection tool's modifiers act on events whatever keys they are set to", "[unit]")
 {
 	Fixture f;
@@ -657,6 +705,91 @@ TEST_CASE("Ctrl and a click adds to the selection also where Ctrl is a drag's to
 	f.drag(225, 20, 425, 20, {"ctrl"});
 	REQUIRE(f.waitUntil([&f] { return f.audioEvents().size() == 2; }));
 	CHECK(f.parts().size() == 1);
+}
+
+TEST_CASE("a Ctrl or Shift press that is also a drag's tool modifier leaves the selection alone until the drag starts",
+	"[unit]")
+{
+	Fixture f;
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	clock->freeze(true); // RmlUi's time stands still but for advance()
+	const std::shared_ptr<void> thaw(nullptr, [clock](void*) { clock->freeze(false); });
+	const auto shown = [&f]
+	{ return f.document.GetElementById("display")->GetAttribute<std::string>("selection", ""); };
+	f.click(150, 60);
+	REQUIRE(f.display.selection() == std::vector<uint64_t>{f.part});
+	clock->advance(1.0); // no double click with the next press
+	SECTION("Shift as Copy: held on the event that isn't selected, then a click and a drag")
+	{
+		f.call("settings.set", {{"key", "ui.toolModifiers"}, {"value", {{"dragDrop.copy", "shift"}}}});
+		f.step();
+		f.automation.press(std::nullopt, f.at(225, 20), ui::MouseButton::Left, {"shift"});
+		f.step();
+		CHECK(f.display.selection() == std::vector<uint64_t>{f.part});
+		CHECK(shown() == std::to_string(f.part));
+		f.automation.release(std::nullopt, f.at(225, 20), ui::MouseButton::Left, {"shift"});
+		f.step();
+		CHECK(f.display.selection() == std::vector<uint64_t>{f.event, f.part});
+		clock->advance(1.0);
+		f.click(225, 20, {"shift"});
+		CHECK(f.display.selection() == std::vector<uint64_t>{f.part});
+		// A drag copies only the event pressed.
+		f.drag(225, 20, 425, 20, {"shift"});
+		REQUIRE(f.waitUntil([&f] { return f.audioEvents().size() == 2; }));
+		CHECK(f.parts().size() == 1);
+	}
+	SECTION("Ctrl as Copy: moved past the drag threshold, released before the drag delay, is a click")
+	{
+		f.call("settings.set", {{"key", "ui.toolModifiers"}, {"value", {{"dragDrop.copy", "ctrl"}}}});
+		f.step();
+		f.automation.press(std::nullopt, f.at(225, 20), ui::MouseButton::Left, {"ctrl"});
+		f.automation.move(std::nullopt, f.at(245, 20), {"ctrl"});
+		f.step();
+		CHECK(f.display.selection() == std::vector<uint64_t>{f.part});
+		f.automation.release(std::nullopt, f.at(245, 20), ui::MouseButton::Left, {"ctrl"});
+		f.step();
+		CHECK(f.display.selection() == std::vector<uint64_t>{f.event, f.part});
+		f.run("edit.mute"); // after a copy, if the release had sent one
+		REQUIRE(f.waitUntil([&f] { return f.parts()[0].at("mute") == true; }));
+		CHECK(f.audioEvents().size() == 1);
+	}
+	SECTION("Ctrl as Copy: moved past the drag threshold, released after the drag delay without a move since, copies")
+	{
+		f.call("settings.set", {{"key", "ui.toolModifiers"}, {"value", {{"dragDrop.copy", "ctrl"}}}});
+		f.step();
+		f.automation.press(std::nullopt, f.at(225, 20), ui::MouseButton::Left, {"ctrl"});
+		f.automation.move(std::nullopt, f.at(425, 20), {"ctrl"});
+		f.step();
+		clock->advance(1.0);
+		f.automation.release(std::nullopt, f.at(425, 20), ui::MouseButton::Left, {"ctrl"});
+		f.step();
+		// Only the event pressed is copied, not the part selected before.
+		REQUIRE(f.waitUntil([&f] { return f.audioEvents().size() == 2; }));
+		CHECK(f.parts().size() == 1);
+	}
+	SECTION("Ctrl as Copy: the release selects no event that went while the button was held")
+	{
+		f.call("settings.set", {{"key", "ui.toolModifiers"}, {"value", {{"dragDrop.copy", "ctrl"}}}});
+		f.step();
+		f.automation.press(std::nullopt, f.at(225, 20), ui::MouseButton::Left, {"ctrl"});
+		f.step();
+		f.call("event.remove", {{"events", {f.part}}});
+		REQUIRE(f.waitUntil([&f] { return f.lanes("events")[1].events.empty(); }));
+		f.automation.release(std::nullopt, f.at(225, 20), ui::MouseButton::Left, {"ctrl"});
+		f.step();
+		CHECK(f.display.selection() == std::vector<uint64_t>{f.event});
+		// The pressed event itself going: the release doesn't select it.
+		clock->advance(1.0);
+		f.click(150, 0); // nothing there
+		f.automation.press(std::nullopt, f.at(225, 20), ui::MouseButton::Left, {"ctrl"});
+		f.step();
+		f.call("event.remove", {{"events", {f.event}}});
+		REQUIRE(f.waitUntil([&f] { return f.lanes("events")[0].events.empty(); }));
+		f.automation.release(std::nullopt, f.at(225, 20), ui::MouseButton::Left, {"ctrl"});
+		f.step();
+		CHECK(f.display.selection().empty());
+	}
 }
 
 TEST_CASE("a double click on an audio event opens it in the sample editor, on an audio part in its editor", "[unit]")
@@ -1859,6 +1992,120 @@ TEST_CASE("with Snap to Zero Crossing, a range's edges move to zero crossings of
 	CHECK(cropped().at("length") == 19200);
 }
 
+TEST_CASE(
+	"an edit that waits for a range's zero crossings edits that range, also when a press starts another", "[unit]")
+{
+	// As above: a sine crossing zero every 100 frames, in an audio event from 6 to 7 seconds playing from frame 30.
+	const test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "sine.wav";
+	test::Audio sine;
+	for (int frame = 0; frame < 96000; ++frame)
+		sine.samples.push_back(static_cast<float>(0.5 * std::sin(frame * 3.14159265358979323846 / 100.0)));
+	test::writeWav(file, sine);
+	Fixture f;
+	const uint64_t audio = f.call("project.get").at("tracks")[0].at("id").get<uint64_t>();
+	const Json media =
+		f.call("media.add", {{"path", file.u8string()}, {"sampleRate", 48000}, {"channels", 1}, {"length", 96000}})
+			.at("media");
+	const Json clip = f.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	f.call("audioEvent.add",
+		{{"track", audio}, {"clip", clip.at("id")}, {"position", 288000}, {"offset", 30}, {"length", 48000}});
+	f.call("snap.set", {{"zeroCrossing", true}});
+	REQUIRE(f.waitUntil([&f] { return f.display.snap().zeroCrossing && f.lanes("events")[0].events.size() == 2; }));
+	f.display.setTool(ui::Tool::RangeSelection);
+
+	// Crop Range right after the release of a drag from 6.1 to 6.5 seconds, and a drag from 6.2 to 6.4 seconds before
+	// the answer: the crop keeps frames 4800 to 24000 of the event, where the first range's edges went, not 9600 to
+	// 19200.
+	f.automation.drag(std::nullopt, f.at(610, 20), f.at(650, 20), {});
+	REQUIRE(f.binding.waiting("snap.zeroCrossings") == 1);
+	f.display.actions().at("edit.cropRange")();
+	f.automation.drag(std::nullopt, f.at(620, 20), f.at(640, 20), {});
+	const auto cropped = [&f]
+	{
+		for (const Json& event : f.audioEvents())
+			if (event.at("id") != f.event)
+				return event;
+		return Json::object();
+	};
+	REQUIRE(f.waitUntil([&cropped] { return cropped().value("offset", 0) != 30; }));
+	CHECK(cropped().at("offset") == 4800);
+	CHECK(cropped().at("length") == 19200);
+	// The second range is the one shown, at its zero crossings: 6.2 and 6.4 seconds are frames 9630 and 19230.
+	const auto range = [&f] { return f.display.range().value_or(ui::RangeSelection{}); };
+	REQUIRE(f.waitUntil([&range] { return range().start == 297570; }));
+	CHECK(range().end == 307170);
+}
+
+TEST_CASE("a press runs the edits still waiting for a range's zero crossings after two seconds on the range as it is",
+	"[unit][slow]")
+{
+	// As above: a sine crossing zero every 100 frames, in an audio event from 6 to 7 seconds playing from frame 30.
+	const test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "sine.wav";
+	test::Audio sine;
+	for (int frame = 0; frame < 96000; ++frame)
+		sine.samples.push_back(static_cast<float>(0.5 * std::sin(frame * 3.14159265358979323846 / 100.0)));
+	test::writeWav(file, sine);
+	Fixture f;
+	const uint64_t audio = f.call("project.get").at("tracks")[0].at("id").get<uint64_t>();
+	const Json media =
+		f.call("media.add", {{"path", file.u8string()}, {"sampleRate", 48000}, {"channels", 1}, {"length", 96000}})
+			.at("media");
+	const Json clip = f.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	f.call("audioEvent.add",
+		{{"track", audio}, {"clip", clip.at("id")}, {"position", 288000}, {"offset", 30}, {"length", 48000}});
+	f.call("snap.set", {{"zeroCrossing", true}});
+	REQUIRE(f.waitUntil([&f] { return f.display.snap().zeroCrossing && f.lanes("events")[0].events.size() == 2; }));
+	f.display.setTool(ui::Tool::RangeSelection);
+	// A command that keeps the engine busy for three seconds, so that the zero crossings answer after the press gave
+	// up on them.
+	f.engine.registerCommand(
+		{"test.busy", 1, "Takes three seconds.", engine::CommandInfo{}.parameters, Json::object(), false},
+		[](engine::CommandContext&)
+		{
+			std::this_thread::sleep_for(std::chrono::seconds(3));
+			return Json::object();
+		});
+	f.engine.post("test.busy");
+
+	// Crop Range right after the release of a drag from 6.1 to 6.5 seconds, then a press: the crop keeps frames 4830
+	// to 24030 of the event, the range as dragged.
+	f.automation.drag(std::nullopt, f.at(610, 20), f.at(650, 20), {});
+	REQUIRE(f.binding.waiting("snap.zeroCrossings") == 1);
+	f.display.actions().at("edit.cropRange")();
+	REQUIRE(f.binding.holding());
+	f.click(620, 20);
+	CHECK(!f.binding.holding());
+	const auto cropped = [&f]
+	{
+		for (const Json& event : f.audioEvents())
+			if (event.at("id") != f.event)
+				return event;
+		return Json::object();
+	};
+	REQUIRE(f.waitUntil([&cropped] { return cropped().value("offset", 0) != 30; }));
+	CHECK(cropped().at("offset") == 4830);
+	CHECK(cropped().at("length") == 19200);
+}
+
+TEST_CASE("an action that waits for zero crossings does nothing once its event display is gone", "[unit]")
+{
+	Fixture f;
+	// A second event display, whose action waits for an awaited query that the binding hasn't handed on yet.
+	Rml::Element* element = f.document.AppendChild(f.document.CreateElement("div"));
+	auto other = std::make_unique<ui::EventDisplay>(f.engine, f.binding, *element);
+	bool answered = false;
+	f.binding.sendAwaited(
+		"snap.get", Json::object(), [&answered](const engine::Result& /*result*/) { answered = true; });
+	other->actions().at("zoom.in")();
+	REQUIRE(f.binding.holding());
+	other.reset();
+	CHECK(f.binding.settle(std::chrono::seconds(10)));
+	CHECK(answered);
+	CHECK(!f.binding.holding());
+}
+
 TEST_CASE("the object selection tool with Alt draws an empty MIDI part on an empty spot", "[unit]")
 {
 	Fixture f;
@@ -2147,6 +2394,17 @@ TEST_CASE("fade handles at the top corners of audio events drag the selected eve
 	// Lower down, the event's edge still resizes it.
 	f.drag(248, 20, 268, 20);
 	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("length") == 24000 + 9600; }));
+
+	// A stretched warped event's fades fit into what it plays for (#965): at 240 BPM in musical mode the clip plays
+	// at half speed at the project's 120, so the event plays from 2 to 3.4 seconds. Its fade in goes to a second,
+	// longer than its 33600 clip frames.
+	const Json clip = f.audioEvents()[0].at("clip");
+	f.call("clip.setWarp", {{"clip", clip}, {"musical", true}});
+	f.call("clip.setWarp", {{"clip", clip}, {"tempo", 240.0}});
+	REQUIRE(f.waitUntil([&f] { return std::abs(f.lanes("events")[0].events[0].length - 1.4) < 1e-6; }));
+	f.display.select({f.event});
+	f.drag(210, 3, 300, 3);
+	REQUIRE(f.waitUntil([&f] { return fadeLength(f.audioEvents()[0], "fadeIn") == 48000; }));
 }
 
 TEST_CASE("a fade handle drag ends without changes when the pressed event goes during it", "[unit]")
@@ -2300,6 +2558,34 @@ TEST_CASE("the draw tool adds and drags volume curve points, the erase tool remo
 	f.click(230, 10);
 	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("volumeCurve").size() == 1; }));
 	CHECK(f.audioEvents()[0].at("volumeCurve")[0].at("position") == 19200);
+}
+
+TEST_CASE("volume curve points on a warped event go where its waveform shows their clip frames", "[unit]")
+{
+	Fixture f;
+	// At 240 BPM in musical mode the clip plays at half speed at the project's 120: the event's 24000 clip frames
+	// play from 2 to 3 seconds, at 24000 clip frames a second (#965).
+	const Json clip = f.audioEvents()[0].at("clip");
+	f.call("clip.setWarp", {{"clip", clip}, {"musical", true}});
+	f.call("clip.setWarp", {{"clip", clip}, {"tempo", 240.0}});
+	REQUIRE(f.waitUntil([&f] { return std::abs(f.lanes("events")[0].events[0].length - 1.0) < 1e-6; }));
+	f.display.setTool(ui::Tool::Draw);
+	// A click half way through the event adds a point at its middle clip frame, drawn there.
+	f.click(250, 30);
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("volumeCurve").size() == 1; }));
+	CHECK(f.audioEvents()[0].at("volumeCurve")[0].at("position") == 12000);
+	REQUIRE(f.waitUntil([&f] { return !fadeLines(f).lanes().empty() && fadeLines(f).lanes()[0].volumes.size() == 1; }));
+	const ui::VolumeLine line = fadeLines(f).lanes()[0].volumes[0];
+	CHECK(std::abs(line.rate - 24000.0) < 1e-6);
+	CHECK(std::abs(line.start + (static_cast<double>(12000 - line.offset) / line.rate) - 2.5) < 1e-6);
+	// Dragged a quarter of a second on, it is three quarters through; dragged past the event's end, at its end.
+	f.drag(250, 30, 275, 30);
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("volumeCurve")[0].at("position") == 18000; }));
+	REQUIRE(f.waitUntil(
+		[&f] { return f.display.project().at("audioEvents")[0].at("volumeCurve")[0].at("position") == 18000; }));
+	f.drag(275, 30, 400, 30);
+	REQUIRE(f.waitUntil([&f] { return f.audioEvents()[0].at("volumeCurve")[0].at("position") == 24000; }));
+	CHECK(f.audioEvents()[0].at("volumeCurve").size() == 1);
 }
 
 TEST_CASE("the draw tool's click near a curve point leaves it, a drag moves it by the drag's distance", "[unit]")

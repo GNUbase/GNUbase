@@ -23,8 +23,10 @@ namespace gnubase::engine::processors
 		int64_t frames() const { return static_cast<int64_t>(left.size()); }
 	};
 
-	// The first two channels of an audio file, or an empty sample if it can't be read. Not real-time safe.
-	std::unique_ptr<const Sample> loadSample(const std::string& path);
+	// The first two channels of an audio file, or an empty sample if it can't be read. A file is read once while
+	// something holds its sample, e.g. a sampler that plays it and sampler.normalize, and again once it changed. Not
+	// real-time safe; thread-safe.
+	std::shared_ptr<const Sample> sharedSample(const std::string& path);
 
 	inline constexpr int g_samplerVoices = 128;
 
@@ -85,7 +87,10 @@ namespace gnubase::engine::processors
 		Sampler();
 
 		// Command thread: the sample to play from the next block on. Voices that play keep their positions.
-		void setSample(std::unique_ptr<const Sample> sample);
+		void setSample(std::shared_ptr<const Sample> sample);
+
+		// Command thread: lets go of the samples played before the last setSample once the audio thread has moved on.
+		void collect();
 
 		void process(const graph::ProcessContext& context) noexcept override;
 		void reset() noexcept override;
@@ -128,8 +133,10 @@ namespace gnubase::engine::processors
 
 		void noteOn(uint8_t channel, uint8_t note, uint16_t velocity) noexcept;
 		void noteOff(uint8_t channel, uint8_t note) noexcept;
-		void start(Voice& voice, uint8_t channel, uint8_t note, uint16_t velocity, const Sample& sample) noexcept;
+		void start(uint8_t channel, uint8_t note, uint16_t velocity, const Sample& sample) noexcept;
 		void release(Voice& voice) noexcept;
+		void fadeOut(Voice& voice) const noexcept;
+		Voice* monophonicVoice() noexcept;
 		void setParameter(uint32_t id, double value) noexcept;
 		void render(const graph::ProcessContext& context, uint32_t begin, uint32_t end, const Sample& sample) noexcept;
 		bool advance(Voice& voice, double step, double frames) const noexcept;
@@ -137,13 +144,13 @@ namespace gnubase::engine::processors
 		double envelope(Voice& voice) noexcept;
 		dsp::Biquad filterFor(const Voice& voice) const noexcept;
 
-		rt::SnapshotPublisher<Sample> m_sample;
+		rt::SnapshotPublisher<std::shared_ptr<const Sample>> m_sample;
 		const Sample* m_playing = nullptr; // what the block that runs plays: m_sample's, acquired once per block
 		double m_sampleRate = 48000.0;
 		std::array<double, Gain + 1> m_values{};
 		double m_bend = 0.0; // -1 to 1
 		uint64_t m_notes = 0;
-		// Monophonic mode: when each key went down (0: up), so releasing the playing note goes back to the latest held.
+		// When each key went down (0: up), so releasing the monophonic note goes back to the latest held.
 		std::array<uint64_t, 128> m_heldSince{};
 		std::array<Voice, g_samplerVoices> m_voices{};
 	};
