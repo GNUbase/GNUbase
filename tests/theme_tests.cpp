@@ -129,7 +129,7 @@ TEST_CASE("every theme has the same assets, each a renderable SVG of its manifes
 		CHECK(manifest.at("theme") == theme);
 		// The name the UI shows for the theme (ui::Themes::name), so that no document has to name one.
 		CHECK_FALSE(manifest.value("displayName", std::string()).empty());
-		const nlohmann::json assets = manifest.at("assets");
+		const nlohmann::json& assets = manifest.at("assets");
 		CHECK(assets.size() == reference.size());
 
 		for (const auto& [name, asset] : assets.items())

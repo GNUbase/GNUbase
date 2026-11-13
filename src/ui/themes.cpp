@@ -107,19 +107,18 @@ namespace gnubase::ui
 		// that documents never name a theme (docs/features/themes.md).
 		std::string displayName(const std::filesystem::path& folder)
 		{
-			const std::string id = folder.filename().u8string();
+			std::string id = folder.filename().u8string();
 			const std::filesystem::path file = folder / "manifest.json";
 			const std::optional<std::string> text = files::readFile(file);
 			const engine::Json manifest = text ? engine::Json::parse(*text, nullptr, false) : engine::Json();
-			if (!manifest.is_object())
+			if (manifest.is_object())
 			{
-				logging::warning("The theme {} has no manifest {} to take its name from", id, file.u8string());
-				return id;
+				const auto name = manifest.find("displayName");
+				if (name != manifest.end() && name->is_string() && !name->get<std::string>().empty())
+					return name->get<std::string>();
 			}
-			const auto name = manifest.find("displayName");
-			return name != manifest.end() && name->is_string() && !name->get<std::string>().empty()
-				? name->get<std::string>()
-				: id;
+			logging::warning("The theme {} has no manifest {} with a name to show for it", id, file.u8string());
+			return id;
 		}
 	}
 
