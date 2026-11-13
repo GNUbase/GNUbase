@@ -682,9 +682,11 @@ namespace gnubase::engine
 				"Where Snap to Zero Crossing moves positions (project samples) on tracks, as the edges of a selection "
 				"range: each to the nearest point within 50 ms where the audio event playing there crosses zero, on "
 				"the first of the tracks where one plays, and where that event plays: inside it and its audio part, "
-				"and not under an event in front of it. The event that plays is unmuted, within its audio part, which "
-				"isn't muted, and where events overlap the one in front (event.toFront). A position where no audio "
-				"event plays, or without a zero crossing near, stays. Returns positions in the same order.",
+				"and not under an event in front of it. The event that plays is within its audio part, which isn't "
+				"muted, and where events overlap the one in front (event.toFront). A muted event plays nothing; as in "
+				"playback, it hides nothing with the user setting editing.treatMutedAudioLikeDeleted on, and silences "
+				"what lies behind it with it off. A position where no audio event plays, or without a zero crossing "
+				"near, stays. Returns positions in the same order.",
 				{{"type", "object"}, {"properties", {{"positions", integers}, {"tracks", integers}}},
 					{"required", {"positions", "tracks"}}, {"additionalProperties", false}},
 				{{"type", "object"}, {"properties", {{"positions", integers}}}, {"required", {"positions"}}}, true},
@@ -693,8 +695,13 @@ namespace gnubase::engine
 			{
 				const Json& parameters = context.parameters();
 				const auto tracks = parameters.at("tracks").get<std::vector<ObjectId>>();
-				// Where the audio events on each of the tracks play (#99): unmuted, within their audio part, which
-				// isn't muted.
+				// Where the audio events on each of the tracks play (#99): within their audio part, which isn't
+				// muted. A muted event is left out when treated as deleted, else it stays in the stack, where it plays
+				// nothing but covers what lies behind it, as in playback (makePlaylist).
+				const bool mutedLikeDeleted =
+					context.call("settings.get", {{"key", "editing.treatMutedAudioLikeDeleted"}})
+						.at("value")
+						.get<bool>();
 				struct Plays
 				{
 					const AudioEvent* event = nullptr;
@@ -707,7 +714,7 @@ namespace gnubase::engine
 				for (const auto& [id, event] : project.audioEvents)
 				{
 					const auto track = std::find(tracks.begin(), tracks.end(), event.track);
-					if (track == tracks.end() || event.mute)
+					if (track == tracks.end() || (event.mute && mutedLikeDeleted))
 						continue;
 					EventSpan span = eventSpan(project, event);
 					if (const auto part = project.audioParts.find(event.part); part != project.audioParts.end())
@@ -737,7 +744,7 @@ namespace gnubase::engine
 							if (each.start < at && at < each.end &&
 								(playing == nullptr || stackPlace(each) > stackPlace(*playing)))
 								playing = &each;
-						if (playing == nullptr)
+						if (playing == nullptr || playing->event->mute)
 							continue;
 						// It plays from where the nearest event in front of it before the position ends to where the
 						// nearest one after it starts.

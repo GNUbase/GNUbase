@@ -30,14 +30,20 @@ own, and works the same on takes and overlapping events put on lanes by hand (`e
   `editing.treatMutedAudioLikeDeleted` (reference manual p. 1597; p. 228 advises turning it off when assembling
   stacked takes). On, the default, a muted event is treated as deleted: it plays nothing and covers nothing, so the
   event behind it plays (`makePlaylist` leaves it out). Off, it keeps its place in the stack: it plays nothing but
-  silences what lies behind it, so a muted take in front keeps covering the takes behind it.
+  silences what lies behind it, so a muted take in front keeps covering the takes behind it. A muted event never
+  crossfades, whatever the setting (`crossfadeApplies`): with the setting off, the take behind a muted one crossfaded
+  from it stops where the muted one starts. The setting covers audio events only, as p. 1597 names them: a muted
+  audio part plays nothing and covers nothing either way, so the events behind it play (`inPart` in
+  `rendersnapshot.cpp`). Snap to Zero Crossing follows the setting as playback does (`snap.zeroCrossings`,
+  [snap.md](snap.md)).
 
 The acceptance test records nothing: it puts two takes of a ramp file on lanes 0 and 1, comps lane 0 from 300 to
 600 samples, renders through the dummy device and finds every sample of the first take in the range and of the
 second around it; undo brings back the second take everywhere, redo the comp (`tests/comping_tests.cpp`, which also
 checks `event.toFront` on audio and MIDI takes, splits, the project file and undo, the stack order of takes copied,
 pasted or brought to the front together, `lane` on the commands that add events and parts, and that a muted take in
-front silences the take behind it only with `editing.treatMutedAudioLikeDeleted` off).
+front silences the take behind it only with `editing.treatMutedAudioLikeDeleted` off, also where the take behind
+crossfades into it).
 
 ## Event display and track list
 
