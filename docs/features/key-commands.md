@@ -145,8 +145,8 @@ a modal dialog keep their keys, while Space after a click on a toolbar or transp
 `tests/keycommandsdialog_tests.cpp` checks the user's key commands and macros, their presets and files (including an
 import whose `format` or `version` has the wrong type), and the dialog below: its confirmations before Remove Key
 Command and Defaults, Clear All also clearing the assignments of commands the dialog doesn't list, renaming a macro by
-double-clicking it, File > Export > Key Command Assignments, and the tool modifiers' Assign asking before it overwrites
-another action's keys.
+double-clicking it and pressing Return, File > Export > Key Command Assignments, and the tool modifiers asking before
+one action takes another's keys, from Assign and from the list.
 
 ## The user's key commands and macros
 
@@ -205,12 +205,15 @@ own).
   assignment, also those of commands the dialog doesn't list (its `kc.unlisted`).
 - **Macros.** Macros shows the macros section: New Macro, Duplicate Macro, Delete Macro, and Rename Macro with the
   name in the field; double-clicking a macro in the list focuses that field to rename it, as in the reference (p.
-  1558). Add Command adds the command selected in the list after the selected command of the macro, or at its end;
-  Remove Command, Move Up and Move Down change the macro's commands. Macros are in the list under `macro`, so they get
-  keys like any command. Run Macro runs the selected macro's commands as the dialog shows them.
+  1558), and Return there (the dialog's OK) or Rename Macro confirms the new name, which a name another macro has is
+  refused with a message. Add Command adds the command selected in the list after the selected command of the macro,
+  or at its end; Remove Command, Move Up and Move Down change the macro's commands. Macros are in the list under
+  `macro`, so they get keys like any command. Run Macro runs the selected macro's commands as the dialog shows them.
 - **Apply, OK, Cancel.** Apply sends what the dialog shows, in one `settings.set` with `ui.keyCommands` and
   `ui.macros`, or `settings.reset` for one that the dialog leaves empty (an empty Lua table would reach the engine as
-  an object); OK does the same and closes; Cancel and Escape drop it.
+  an object); OK does the same and closes; Cancel and Escape drop it. Both first rename the selected macro to the name
+  in its field if it differs, so Return after a double-click rename confirms it, and stay open with the message if the
+  name is taken.
 - **Presets.** The presets list, a name field, Save (applies what the dialog shows, then `keyCommands.savePreset`),
   Delete, and Import... and Export... (the file dialogs; Export applies first). Choosing a preset puts its key commands
   and macros into the dialog, for Apply or OK.

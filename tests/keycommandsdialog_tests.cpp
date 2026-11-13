@@ -551,27 +551,42 @@ TEST_CASE("the key commands dialog sets up macros", "[ui]")
 	REQUIRE(closed(app));
 }
 
-TEST_CASE("a macro is renamed by double-clicking it in the macros list", "[ui]")
+TEST_CASE("a macro is renamed by double-clicking it and pressing Return", "[ui]")
 {
-	// Reference manual p. 1558: double-click the macro, enter a name for it, and press Return to confirm it.
+	// Reference manual p. 1558: double-click the macro, enter a name for it, and press Return to confirm it. Return is
+	// the dialog's OK, which commits the rename of the selected macro to the name in its field first.
 	test::UiApp app({1000, 760});
 	app.appUi().showProject();
 	openDialog(app);
 	click(app, "#keycommands-show-macros");
 	click(app, "#keycommands-new-macro"); // Macro 1, selected
 	REQUIRE(elements(app, "#keycommands-macros listitem").size() == 1);
-	// Double-clicking it focuses its name field, so selecting the name, typing and Rename Macro rename it. (That the
-	// typed text lands in the field shows the double-click focused it.)
+	// Double-clicking it focuses its name field; that the typed text lands there shows the double-click focused it.
 	doubleClick(app, "#keycommands-macros listitem");
 	CHECK(element(app, "#keycommands-macro-name").at("value") == "Macro 1");
 	app.ui().key(std::nullopt, "Mod+A");
 	app.ui().text(std::nullopt, "Restart");
-	click(app, "#keycommands-rename-macro");
-	CHECK(element(app, "#keycommands-macros listitem").value("text", std::string()) == "Restart");
-	ok(app);
-	const Json macros = app.call("settings.get", {{"key", "ui.macros"}}).at("value");
+	press(app, "Enter"); // Return: the dialog's OK renames the macro and closes
+	REQUIRE(closed(app));
+	Json macros = app.call("settings.get", {{"key", "ui.macros"}}).at("value");
 	REQUIRE(macros.size() == 1);
 	CHECK(macros[0].at("name") == "Restart");
+
+	// A name another macro has is refused: Return leaves the dialog open with the message and renames nothing.
+	openDialog(app);
+	click(app, "#keycommands-show-macros");
+	click(app, "#keycommands-new-macro"); // Macro 1, selected, after Restart
+	doubleClick(app, "#keycommands-macros listitem:last-child");
+	app.ui().key(std::nullopt, "Mod+A");
+	app.ui().text(std::nullopt, "Restart"); // taken by the first macro
+	press(app, "Enter");
+	CHECK(open(app)); // refused, so the dialog stayed open
+	CHECK_THAT(text(app, "#keycommands-message"), ContainsSubstring("already"));
+	click(app, "#keycommands-cancel");
+	REQUIRE(closed(app));
+	macros = app.call("settings.get", {{"key", "ui.macros"}}).at("value");
+	REQUIRE(macros.size() == 1);
+	CHECK(macros[0].at("name") == "Restart"); // Cancel dropped the new macro
 }
 
 TEST_CASE("the key commands dialog saves, loads, deletes, exports and imports presets", "[ui]")
@@ -659,28 +674,52 @@ TEST_CASE("File > Export > Key Command Assignments writes an HTML list of every 
 	CHECK_THAT(content, ContainsSubstring("</html>"));
 }
 
-TEST_CASE("tool modifiers are assigned by holding the keys and clicking Assign", "[ui]")
+TEST_CASE("tool modifiers ask before an action takes another's keys, from Assign and from the list", "[ui]")
 {
-	// Reference manual p. 1574.
+	// Reference manual pp. 1574 and 1602. By default dragDrop.copy is Alt and dragDrop.sharedCopy is Alt-Shift, both of
+	// the Drag & Drop tool (ui/eventtools.cpp); the modifier list's choices are None, Ctrl, Alt, Shift, Ctrl-Alt,
+	// Ctrl-Shift, Alt-Shift, Ctrl-Alt-Shift, in that order.
 	test::UiApp app({1000, 760});
 	app.keys().run("window.preferences", Json::object(), app.main(), nullptr);
 	REQUIRE(app.waitUntil([&app] { return !elements(app, "#preferences").empty(); }));
 	app.shell().step(std::chrono::milliseconds(0));
 	click(app, "#pages-editing-tool-modifiers");
+	CHECK(element(app, "#pref-tool-dragDrop-copy").at("value") == "alt");
+	CHECK(element(app, "#pref-tool-dragDrop-sharedCopy").at("value") == "alt+shift");
+
+	// Assign (p. 1574) Ctrl-Shift to copy, which nothing else of the tool has yet, so it doesn't ask.
 	click(app, "#pref-tool-assign-dragDrop-copy", {"ctrl", "shift"});
 	CHECK(element(app, "#pref-tool-dragDrop-copy").at("value") == "ctrl+shift");
-	// Modifiers another action of the category has need a confirmation; Cancel keeps both as they are.
-	click(app, "#pref-tool-assign-dragDrop-sharedCopy", {"ctrl", "shift"});
+
+	// The drop-down list (p. 1602): moving sharedCopy one step, from Alt-Shift onto copy's Ctrl-Shift, asks first.
+	click(app, "#pref-tool-dragDrop-sharedCopy"); // opens the list
+	press(app, "Up");                             // Alt-Shift -> Ctrl-Shift
+	REQUIRE(app.waitUntil([&app] { return !elements(app, "#confirm-ok").empty(); }));
+	CHECK_THAT(text(app, "#confirm-message"), ContainsSubstring("Copy"));
+	CHECK_THAT(text(app, "#confirm-message"), ContainsSubstring("Ctrl-Shift"));
+	// Cancel puts the list back to what it showed; sharedCopy keeps its keys and copy keeps theirs.
 	cancelConfirm(app);
+	CHECK(element(app, "#pref-tool-dragDrop-sharedCopy").at("value") == "alt+shift");
 	CHECK(element(app, "#pref-tool-dragDrop-copy").at("value") == "ctrl+shift");
-	CHECK(element(app, "#pref-tool-dragDrop-sharedCopy").at("value") != "ctrl+shift");
-	// Overwrite takes them from the other action, which is left without any.
-	click(app, "#pref-tool-assign-dragDrop-sharedCopy", {"ctrl", "shift"});
+	// Replace takes the keys and leaves copy without any.
+	click(app, "#pref-tool-dragDrop-sharedCopy");
+	press(app, "Up");
 	confirm(app);
 	CHECK(element(app, "#pref-tool-dragDrop-sharedCopy").at("value") == "ctrl+shift");
 	CHECK(element(app, "#pref-tool-dragDrop-copy").at("value") == "");
+
+	// Assign asks the same: copy takes the Ctrl-Shift keys sharedCopy has; Cancel keeps both, Replace takes them.
+	click(app, "#pref-tool-assign-dragDrop-copy", {"ctrl", "shift"});
+	cancelConfirm(app);
+	CHECK(element(app, "#pref-tool-dragDrop-copy").at("value") == "");
+	CHECK(element(app, "#pref-tool-dragDrop-sharedCopy").at("value") == "ctrl+shift");
+	click(app, "#pref-tool-assign-dragDrop-copy", {"ctrl", "shift"});
+	confirm(app);
+	CHECK(element(app, "#pref-tool-dragDrop-copy").at("value") == "ctrl+shift");
+	CHECK(element(app, "#pref-tool-dragDrop-sharedCopy").at("value") == "");
+
 	click(app, "#preferences-ok");
 	REQUIRE(app.waitUntil([&app] { return elements(app, "#preferences").empty(); }));
 	CHECK(app.call("settings.get", {{"key", "ui.toolModifiers"}}).at("value") ==
-		Json({{"dragDrop.copy", ""}, {"dragDrop.sharedCopy", "ctrl+shift"}}));
+		Json({{"dragDrop.copy", "ctrl+shift"}, {"dragDrop.sharedCopy", ""}}));
 }
