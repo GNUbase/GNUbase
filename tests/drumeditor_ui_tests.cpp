@@ -4,15 +4,20 @@
 // menu and Drum-Map Link, Pitch Visibility, Show Note Length, auditioning sounds and the Drum Map Setup.
 // tests/drummaps_tests.cpp checks the engine's side.
 #include "engine/time/tempomap.h"
+#include "testutils/testutils.h"
 #include "ui/automation.h"
 #include "ui/eventdisplay.h"
+#include "ui/rmlui.h"
 #include "uiapp.h"
 
+#include <RmlUi/Core/Core.h>
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -110,6 +115,51 @@ namespace
 			const double x = grid.at("x").get<double>() + (sixteenths / 16.0 * grid.at("width").get<double>());
 			const double y = row.at("y").get<double>() + (row.at("height").get<double>() / 2.0);
 			return {"", 0, ui::Point{static_cast<int>(std::lround(x)), static_cast<int>(std::lround(y))}};
+		}
+
+		// A point inside an element's box, dx from its left edge, in the middle of its height.
+		ui::Target inside(const std::string& selector, double dx)
+		{
+			const Json found = box(selector);
+			return {"", 0,
+				ui::Point{static_cast<int>(std::lround(found.at("x").get<double>() + dx)),
+					static_cast<int>(
+						std::lround(found.at("y").get<double>() + (found.at("height").get<double>() / 2.0)))}};
+		}
+
+		std::string noteSelector(size_t index)
+		{
+			return "[note=\"" + std::to_string(partNotes()[index].at("id").get<uint64_t>()) + "\"]";
+		}
+
+		// Answers the OS's file dialog that is open with a file.
+		void answer(const std::filesystem::path& file)
+		{
+			REQUIRE(app.waitUntil([this] { return app.shell().fileDialogs().size() == 1; }));
+			app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, {file});
+		}
+
+		// A double click at from whose second press drags to to, through via.
+		void doubleClickDrag(const ui::Target& from, const ui::Target& via, const ui::Target& to)
+		{
+			auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+			REQUIRE(clock != nullptr);
+			clock->freeze(true); // the two presses are within the double click time however long a frame takes
+			const std::shared_ptr<void> thaw(nullptr, [clock](void*) { clock->freeze(false); });
+			app.ui().click(window, from, ui::MouseButton::Left, 1, {});
+			app.ui().press(window, from, ui::MouseButton::Left);
+			app.ui().move(window, via);
+			app.ui().release(window, to, ui::MouseButton::Left);
+			app.shell().step(std::chrono::milliseconds(0));
+		}
+
+		// Drags a note's end, then waits until the editor shows the new length in its info line.
+		void resize(const ui::Target& from, const ui::Target& to)
+		{
+			const std::string before = value("textdisplay[field=length]");
+			app.ui().drag(window, from, to);
+			app.shell().step(std::chrono::milliseconds(0));
+			REQUIRE(app.waitUntil([&] { return value("textdisplay[field=length]") != before; }));
 		}
 
 		void click(const ui::Target& target, int count = 1)
@@ -412,5 +462,102 @@ TEST_CASE("the Drum Map Setup lists the maps, renames them and changes their sou
 	REQUIRE(f.app.waitUntil([&] { return f.app.call("project.get").at("drumMaps").size() == 2; }));
 	// A map added elsewhere shows.
 	f.app.call("drumMap.add", {{"name", "From Lua"}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements("#drum-maps listitem").size() == 3; }));
+}
+
+TEST_CASE("with Show Note Length the object selection tool and the drumstick resize notes at their ends", "[ui]")
+{
+	Fixture f;
+	f.app.call("note.add",
+		{{"part", f.part}, {"notes", {{{"position", 0}, {"length", g_quarter}, {"pitch", 36}, {"velocity", 0.5}}}}});
+	f.click(of(".key-input[setting=showNoteLength]"));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-note").empty() && f.elements(".key-note").size() == 1; }));
+	f.scroll(36);
+	const auto end = [&] { return f.inside(".key-note", f.box(".key-note").at("width").get<double>() - 2.0); };
+	// The object selection tool drags the end to the sixth sixteenth (p. 1242).
+	f.click(of(".key-note"));
+	f.resize(end(), f.at(6.0, 36));
+	CHECK(f.partNotes()[0].at("length") == 6 * g_sixteenth);
+	// The drumstick changes the length at the note's ends too, and still deletes the note in its middle.
+	f.click(of(".key-tool[key-tool=draw]"));
+	f.resize(end(), f.at(8.0, 36));
+	CHECK(f.partNotes()[0].at("length") == 8 * g_sixteenth);
+	CHECK(f.partNotes()[0].at("position") == 0);
+	f.resize(f.inside(".key-note", 2.0), f.at(2.0, 36));
+	CHECK(f.partNotes()[0].at("position") == 2 * g_sixteenth);
+	CHECK(f.partNotes()[0].at("length") == 6 * g_sixteenth);
+	f.click(f.at(4.0, 36));
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().empty(); }));
+}
+
+TEST_CASE("the drumstick's click deletes only the note clicked, and a drag also when released outside", "[ui]")
+{
+	Fixture f;
+	// A double and a close flam of the bass drum, and two more notes.
+	f.app.call("note.add",
+		{{"part", f.part},
+			{"notes",
+				{{{"position", 0}, {"length", g_sixteenth}, {"pitch", 36}, {"velocity", 0.5}},
+					{{"position", 0}, {"length", g_sixteenth}, {"pitch", 36}, {"velocity", 0.5}},
+					{{"position", 10}, {"length", g_sixteenth}, {"pitch", 36}, {"velocity", 0.5}},
+					{{"position", 4 * g_sixteenth}, {"length", g_sixteenth}, {"pitch", 36}, {"velocity", 0.5}},
+					{{"position", 8 * g_sixteenth}, {"length", g_sixteenth}, {"pitch", 36}, {"velocity", 0.5}}}}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-note").size() == 5; }));
+	f.scroll(36);
+	f.click(of(".key-tool[key-tool=draw]"));
+	// A click without a drag, right of the note's start, deletes only that note (p. 1242).
+	const double width = f.box(".drum-note" + f.noteSelector(0)).at("width").get<double>();
+	f.click(f.inside(".drum-note" + f.noteSelector(0), (width / 2.0) + 4.0));
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 4; }));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-note").size() == 4; }));
+	// A drag from a note to the right that ends above the editor deletes the sound's notes up to there.
+	const ui::Point later = f.at(9.0, 36).point.value_or(ui::Point{});
+	const ui::Target outside{"", 0, ui::Point{later.x, f.box(".key-editor").at("y").get<int>() - 4}};
+	f.app.ui().drag(f.window, f.at(0.0, 36), outside);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().empty(); }));
+}
+
+TEST_CASE("the object selection tool's double click and drag inserts and deletes several notes of a sound", "[ui]")
+{
+	Fixture f;
+	f.scroll(36);
+	// Double click in the empty grid and drag to the right: a note at every step of the grid (p. 1241).
+	f.doubleClickDrag(f.at(0.2, 36), f.at(2.0, 36), f.at(3.5, 36));
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 4; }));
+	CHECK(f.partNotes()[3].at("position") == 3 * g_sixteenth);
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-note").size() == 4; }));
+	// Double click the second note and drag to the right: it and the later ones go, in one undo step (p. 1242).
+	f.doubleClickDrag(f.at(1.0, 36), f.at(2.0, 36), f.at(3.2, 36));
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 1; }));
+	CHECK(f.partNotes()[0].at("position") == 0);
+	f.app.call("history.undo");
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 4; }));
+	// A double click without a drag deletes the note alone.
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-note").size() == 4; }));
+	f.click(f.at(2.0, 36), 2);
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 3; }));
+}
+
+TEST_CASE("the Drum Map Setup saves a map to a file and loads it", "[ui]")
+{
+	Fixture f;
+	f.click(of("#drum-map"));
+	f.click(of("#drum-map-menu menuitem[drum-map-action=setup]"));
+	REQUIRE(f.app.waitUntil([&] { return f.value("#drum-map-name") == "Kit"; }));
+	f.app.call("drumMap.set", {{"map", f.map}, {"sounds", {{{"pitch", 36}, {"oNote", 24}}}}});
+	// Save... writes the map shown, with the extension the user left out.
+	const test::TempDir dir;
+	f.click(of("#drum-map-save"));
+	f.answer(dir.path() / "Kit");
+	const std::filesystem::path file = dir.path() / "Kit.drm";
+	REQUIRE(f.app.waitUntil([&file] { return std::filesystem::exists(file); }));
+	// Load... adds it to the project as a new map, which the setup lists.
+	f.click(of("#drum-map-load"));
+	f.answer(file);
+	REQUIRE(f.app.waitUntil([&] { return f.app.call("project.get").at("drumMaps").size() == 3; }));
+	const Json loaded = f.app.call("project.get").at("drumMaps").at(2);
+	CHECK(loaded.at("name") == "Kit");
+	CHECK(loaded.at("sounds").at(36).at("oNote") == 24);
 	REQUIRE(f.app.waitUntil([&] { return f.elements("#drum-maps listitem").size() == 3; }));
 }
