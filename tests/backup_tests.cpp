@@ -902,7 +902,7 @@ TEST_CASE("a job held at its first progress keeps no command or event waiting", 
 	// longer than waitForJob waits, the job ends only if it does.
 	uint64_t dropped = 0;
 	{
-		test::HeldJob held(song.engine, "project.backup", std::chrono::minutes(5));
+		test::HeldJob held(song.engine, "project.backup", std::chrono::minutes(2));
 		dropped = run(song.client, "project.backup", {{"folder", utf8(dir.path() / "dropped")}})
 					  .at("job")
 					  .at("id")
@@ -919,9 +919,9 @@ TEST_CASE("a job whose hold lapsed runs free, and its HeldJob tells", "[integrat
 	Song song;
 	song.addEvent(song.addClip(song.addMedia(dir.path() / "take.wav")), 0, 0, 4800);
 
-	// Its hold lapses at once: the job goes on and is held at none of its later progress events. The HeldJob no longer
-	// says it holds the job, and release says that it didn't, so that a test sees that the job may have gone on
-	// before what it did meanwhile.
+	// Its hold lapses at once: the job goes on and is held at none of its later progress events, so the HeldJob held
+	// it once among several progress events. The HeldJob no longer says it holds the job, and release says that it
+	// didn't, so that a test sees that the job may have gone on before what it did meanwhile.
 	test::HeldJob held(song.engine, "project.backup", std::chrono::milliseconds(0));
 	std::vector<Json> progress;
 	const uint64_t job = run(song.client, "project.backup", {{"folder", utf8(dir.path() / "backup")}})
@@ -931,6 +931,7 @@ TEST_CASE("a job whose hold lapsed runs free, and its HeldJob tells", "[integrat
 	CHECK(waitForJob(song.client, job, &progress).at("state") == "done");
 	CHECK(progress.size() > 1);
 	CHECK(held.job() == job);
+	CHECK(held.holds() == 1);
 	CHECK(!held.held());
 	CHECK(!held.waitUntilHeld(std::chrono::milliseconds(0)));
 	CHECK(!held.release());

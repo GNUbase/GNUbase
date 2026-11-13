@@ -48,6 +48,10 @@ namespace gnubase::test
 		// The id of the job that got to its first job.progress, held there or not anymore; 0 until then.
 		uint64_t job() const;
 
+		// How often a job was held: 0 until the job got to its first job.progress, then 1, also after a release or a
+		// lapsed hold, since the job is held at none of its later job.progress events.
+		int holds() const;
+
 		// Lets the job go on and holds no other. Returns whether the job was held until now: false if it didn't get to
 		// its first job.progress yet or its hold lapsed, so that it may have gone on before what the test did.
 		bool release();

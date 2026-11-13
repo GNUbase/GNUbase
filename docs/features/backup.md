@@ -26,7 +26,7 @@ A project that is moved or archived needs its media with it (#170). `src/engine/
 
 ## Tests
 
-`tests/backup_tests.cpp` tests the commands, `tests/projectfiles_tests.cpp` the dialogs. What must happen while a backup or copy job runs, such as `job.cancel`, an edit that keeps `activate` from opening the backup, a relink by hand, or another backup into the folder the job writes into, happens while `test::HeldJob` (`tests/testutils/heldjob.h`) holds the job at its first `job.progress`, mostly through `test::whileHeld`, so that the job can't get further or end first, however the threads are scheduled (#1154). Only the job's thread waits: events and commands go on meanwhile, as `a job held at its first progress keeps no command or event waiting` shows; another test has a hold lapse and the job run free.
+`tests/backup_tests.cpp` tests the commands, `tests/projectfiles_tests.cpp` the dialogs. What must happen while a backup or copy job runs, such as `job.cancel`, an edit that keeps `activate` from opening the backup, a relink by hand, or another backup into the folder the job writes into, happens while `test::HeldJob` (`tests/testutils/heldjob.h`) holds the job at its first `job.progress`, mostly through `test::whileHeld`, so that the job can't get further or end first, however the threads are scheduled (#1154). Only the job's thread waits: events and commands go on meanwhile, as `a job held at its first progress keeps no command or event waiting` shows; another test has a hold lapse and the job run free, held at its first `job.progress` only.
 
 ## Not yet
 

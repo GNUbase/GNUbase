@@ -49,6 +49,7 @@ namespace gnubase::test
 		uint64_t job = 0;      // the one that got to its first job.progress, once it did
 		bool released = false; // by the test
 		bool lapsed = false;   // the hold, before the test released the job
+		int holds = 0;         // how often the hook held a job
 
 		bool holding() const { return job != 0 && !released && !lapsed; }
 	};
@@ -73,6 +74,7 @@ namespace gnubase::test
 				if (state->released || state->job != 0) // one job, once
 					return;
 				state->job = job;
+				++state->holds;
 				state->changed.notify_all();
 				if (!state->changed.wait_for(lock, state->hold, [&state] { return state->released; }))
 				{
@@ -107,6 +109,12 @@ namespace gnubase::test
 	{
 		const std::scoped_lock lock(m_state->mutex);
 		return m_state->job;
+	}
+
+	int HeldJob::holds() const
+	{
+		const std::scoped_lock lock(m_state->mutex);
+		return m_state->holds;
 	}
 
 	bool HeldJob::release()
