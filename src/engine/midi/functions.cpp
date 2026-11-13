@@ -1075,19 +1075,19 @@ namespace gnubase::engine::midi
 			if (articulations != nullptr && sampleOf(partFrom) > settings.start && sampleOf(partFrom) < settings.end)
 				for (size_t group = 0; group < articulations->groups.size(); ++group)
 				{
-					const auto first = std::find_if(articulations->articulations.begin(),
+					const auto direction = std::find_if(articulations->articulations.begin(),
 						articulations->articulations.end(),
 						[group](const Articulation& each)
 						{
 							return each.type == ArticulationType::Direction && static_cast<size_t>(each.group) == group;
 						});
-					if (first != articulations->articulations.end())
+					if (direction != articulations->articulations.end())
 					{
 						Controller reset;
 						reset.position = partFrom;
 						reset.type = ControllerType::Articulation;
 						reset.value = 1;
-						reset.articulation = first->name;
+						reset.articulation = direction->name;
 						resets.push_back(reset);
 					}
 				}
