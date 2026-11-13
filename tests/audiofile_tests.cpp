@@ -312,20 +312,22 @@ TEST_CASE("the format is recognized from the content, not the file name", "[inte
 TEST_CASE("a file being read can be deleted, and reads on", "[integration]")
 {
 	// As on the other platforms, so that a file the engine plays, such as a frozen track's freeze file, can be removed
-	// meanwhile (#951).
+	// meanwhile (#951). Much larger than stdio's first-read buffer, so the reads after the remove come from the file
+	// itself and show that a deleted file reads on (#963).
 	const test::TempDir dir;
 	const std::string path = utf8(dir.path() / "open.wav");
-	const test::Audio audio = testSignal(1, 48000, 1000);
+	const test::Audio audio = testSignal(1, 48000, 48000);
 	writeFile(path, audio, {});
 	const auto reader = AudioFileReader::open(path);
-	std::vector<float> buffer(1000);
+	std::vector<float> buffer(48000);
 	REQUIRE(reader->read(buffer.data(), 500) == 500);
 	std::error_code error;
 	CHECK(std::filesystem::remove(std::filesystem::u8path(path), error));
 	CHECK_FALSE(error);
 	CHECK_FALSE(std::filesystem::exists(std::filesystem::u8path(path)));
-	CHECK(reader->read(buffer.data() + 500, 500) == 500);
-	CHECK(std::abs(buffer[999] - audio.samples[999]) < 1e-4f);
+	CHECK(reader->read(buffer.data() + 500, 47500) == 47500);
+	CHECK(std::abs(buffer[5000] - audio.samples[5000]) < 1e-4f);
+	CHECK(std::abs(buffer[47999] - audio.samples[47999]) < 1e-4f);
 }
 
 TEST_CASE("the decoders leave the files that the readers hand them open", "[integration]")
