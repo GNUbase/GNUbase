@@ -178,11 +178,12 @@ the next import.
 
 Of the MIDI file import options: Convert RPN/NRPN to Single Events, which needs RPN and NRPN events of their own (the
 project holds them as the control changes they are made of, #177), Import Karaoke Lyrics as Text, which needs lyric and
-text events (#719), Extract First Patch and Volume/Pan on other MIDI channels than 1, which needs an output channel
-for MIDI tracks ([mixer.md](mixer.md)), and the Destination that loads a multi-timbral instrument per channel, which needs plugin instruments; the
-export options of the MIDI File page. Import of audio CDs, audio from video and REX files. Converting as a job: files are converted on the command thread, which waits for a long MP3 file
-(as for `media.convert`). Removing the files an unsaved project made (recordings and converted imports) when it is
-closed without saving.
+text events (#719), Extract First Patch and Volume/Pan on other MIDI channels than 1, which needs an output channel for
+MIDI tracks ([mixer.md](mixer.md)), and the Destination that loads a multi-timbral instrument per channel, which needs
+plugin instruments; the export options of the MIDI File page. Import of audio CDs, audio from video and REX files.
+Converting as a job: files are converted on the command thread, which waits for a long MP3 file (as for
+`media.convert`). Removing the files an unsaved project made (recordings and converted imports) when it is closed
+without saving.
 
 ## Checks
 
@@ -236,11 +237,10 @@ off a 44.1 kHz file keeps its path and no copy job starts; with Convert alone it
 folder at the project's sample rate with no copy job; the pool's Import Medium imports without the dialog and keeps a
 file from outside the project where it is, with no copy job, as Copy off says; the selected track imports without the
 dialog with the stored options; and files dropped on an audio track's lane import without the dialog, keeping a file
-from outside the project where it is with Copy and Convert off and splitting a stereo file as the name format says),
-the dialog starts from the settings and keeps its choices in them, Do not ask again
-skips the dialog next time and after a restart until the setting is reset, and each Name Format chosen in the dialog
-names the split files. The preferences' Editing > Audio page shows the settings, Use Settings imports with what it sets
-(a stereo file split as its Name Format says, with Copy off as the page set it: Split Channels writes into `Audio`
-whatever Copy says, as the Use Settings test shows with Copy on; and with Copy off a mono file that isn't split keeping
-its original path with no copy job), and its Open Options Dialog brings the dialog back, starting from the same
-settings.
+from outside the project where it is with Copy and Convert off and splitting a stereo file as the name format says), the
+dialog starts from the settings and keeps its choices in them, Do not ask again skips the dialog next time and after a
+restart until the setting is reset, and each Name Format chosen in the dialog names the split files. The preferences'
+Editing > Audio page shows the settings, Use Settings imports with what it sets (a stereo file split as its Name Format
+says, with Copy off as the page set it: Split Channels writes into `Audio` whatever Copy says, as the Use Settings test
+shows with Copy on; and with Copy off a mono file that isn't split keeping its original path with no copy job), and its
+Open Options Dialog brings the dialog back, starting from the same settings.
