@@ -1229,6 +1229,165 @@
 	{
 		decorator: svg(dropdown-arrow.svg);
 	}
+	.toolbar
+	{
+		decorator: svg-ninepatch(toolbar.svg, 6 6 6 6);
+	}
+	.toolbar button:not(.toggle):not(.primary), .transport button:not(.toggle):not(.primary)
+	{
+		decorator: svg-ninepatch(button-normal.svg, 6 6 6 6);
+		color: #17202d;
+	}
+	.toolbar button:not(.toggle):not(.primary) svg.icon, .transport button:not(.toggle):not(.primary) svg.icon
+	{
+		image-color: #17202d;
+	}
+	.toolbar button[menu]:not(.toggle):not(.primary), .transport button[menu]:not(.toggle):not(.primary)
+	{
+		decorator: svg-ninepatch(dropdown-button-normal.svg, 6 6 6 6);
+	}
+	.toolbar button.icon-only[menu]:not(.toggle):not(.primary), .transport button.icon-only[menu]:not(.toggle):not(.primary)
+	{
+	}
+	.toolbar button:not(.toggle):not(.primary):hover, .transport button:not(.toggle):not(.primary):hover
+	{
+		decorator: svg-ninepatch(button-hover.svg, 6 6 6 6);
+	}
+	.toolbar button:not(.toggle):not(.primary):hover svg.icon, .transport button:not(.toggle):not(.primary):hover svg.icon
+	{
+		image-color: #17202d;
+	}
+	.toolbar button[menu]:not(.toggle):not(.primary):hover, .transport button[menu]:not(.toggle):not(.primary):hover
+	{
+		decorator: svg-ninepatch(dropdown-button-hover.svg, 6 6 6 6);
+	}
+	.toolbar button.icon-only[menu]:not(.toggle):not(.primary):hover, .transport button.icon-only[menu]:not(.toggle):not(.primary):hover
+	{
+	}
+	.toolbar button:not(.toggle):not(.primary):active, .transport button:not(.toggle):not(.primary):active
+	{
+		decorator: svg-ninepatch(button-pressed.svg, 6 6 6 6);
+	}
+	.toolbar button[menu]:not(.toggle):not(.primary):active, .transport button[menu]:not(.toggle):not(.primary):active
+	{
+		decorator: svg-ninepatch(button-pressed.svg, 6 6 6 6);
+	}
+	.toolbar button.checked[menu]:not(.toggle):not(.primary), .transport button.checked[menu]:not(.toggle):not(.primary)
+	{
+		decorator: svg-ninepatch(button-checked.svg, 6 6 6 6);
+	}
+	.toolbar button.checked:not(.toggle):not(.primary), .transport button.checked:not(.toggle):not(.primary)
+	{
+		decorator: svg-ninepatch(button-checked.svg, 6 6 6 6);
+	}
+	.toolbar button.checked:not(.toggle):not(.primary) svg.icon, .transport button.checked:not(.toggle):not(.primary) svg.icon
+	{
+		image-color: #17202d;
+	}
+	.toolbar button.suspended:not(.toggle):not(.primary), .transport button.suspended:not(.toggle):not(.primary)
+	{
+		decorator: svg-ninepatch(button-normal.svg, 6 6 6 6);
+		color: #9a6500;
+	}
+	.toolbar button.tapping:not(.toggle):not(.primary), .transport button.tapping:not(.toggle):not(.primary)
+	{
+		decorator: svg-ninepatch(button-pressed.svg, 6 6 6 6);
+	}
+	.toolbar button:not(.toggle):not(.primary):disabled, .transport button:not(.toggle):not(.primary):disabled
+	{
+		decorator: svg-ninepatch(button-disabled.svg, 6 6 6 6);
+		color: #566273;
+	}
+	.toolbar button:not(.toggle):not(.primary):disabled svg.icon, .transport button:not(.toggle):not(.primary):disabled svg.icon
+	{
+		image-color: #566273;
+	}
+	.toolbar button:not(.toggle):not(.primary):focus-visible, .transport button:not(.toggle):not(.primary):focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(button-normal.svg, 6 6 6 6);
+	}
+	.toolbar button.checked:not(.toggle):not(.primary):focus-visible, .transport button.checked:not(.toggle):not(.primary):focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(button-checked.svg, 6 6 6 6);
+	}
+	.transport #start svg.icon
+	{
+		image-color: #17202d;
+	}
+	.transport #start.checked
+	{
+		decorator: svg-ninepatch(button-checked.svg, 6 6 6 6);
+	}
+	.transport #start.checked svg.icon
+	{
+		image-color: #17202d;
+	}
+	.transport #record svg.icon
+	{
+		image-color: #17202d;
+	}
+	.transport #record.checked
+	{
+		decorator: svg-ninepatch(button-checked.svg, 6 6 6 6);
+	}
+	.transport #record.checked svg.icon
+	{
+		image-color: #17202d;
+	}
+	.transport .primary-time
+	{
+	}
+	tabset tabs
+	{
+		decorator: svg-ninepatch(tabbar.svg, 6 6 6 6);
+	}
+	tabset tab
+	{
+		decorator: svg-ninepatch(tab-normal.svg, 6 6 6 6);
+		color: #566273;
+	}
+	tabset tab:hover
+	{
+		decorator: svg-ninepatch(tab-hover.svg, 6 6 6 6);
+		color: #17202d;
+	}
+	tabset tab:selected
+	{
+		decorator: svg-ninepatch(tab-active.svg, 6 6 6 6);
+		color: #17202d;
+	}
+	.docking [zone]
+	{
+	}
+	.docking .zone-frame
+	{
+	}
+	.track-list listitem
+	{
+	}
+	.track-list listitem:hover
+	{
+	}
+	.track-list listitem.selected
+	{
+	}
+	.inspector-section button.section-header
+	{
+		decorator: svg-ninepatch(disclosure-open.svg, 6 6 6 6);
+		color: #17202d;
+	}
+	.inspector-section.collapsed button.section-header
+	{
+		decorator: svg-ninepatch(disclosure-closed.svg, 6 6 6 6);
+	}
+	.inspector-section button.section-header:hover
+	{
+		decorator: svg-ninepatch(button-hover.svg, 6 6 6 6);
+	}
+	.inspector-section button.section-header:active
+	{
+		decorator: svg-ninepatch(button-pressed.svg, 6 6 6 6);
+	}
 	.time-display.size-0
 	{
 		font-size: 32dp;
@@ -1333,5 +1492,13 @@
 	menubar button:focus-visible
 	{
 		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6);
+	}
+	.inspector-section button.section-header:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(disclosure-open.svg, 6 6 6 6);
+	}
+	.inspector-section.collapsed button.section-header:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(disclosure-closed.svg, 6 6 6 6);
 	}
 }

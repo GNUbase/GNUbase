@@ -312,23 +312,45 @@
     },
     "dropdown-button-normal": {
       "file": "dropdown-button-normal.svg",
-      "width": 40,
+      "width": 24,
       "height": 24,
       "slice": {
         "left": 6,
         "top": 6,
-        "right": 20,
+        "right": 6,
         "bottom": 6
       }
     },
     "dropdown-button-hover": {
       "file": "dropdown-button-hover.svg",
-      "width": 40,
+      "width": 24,
       "height": 24,
       "slice": {
         "left": 6,
         "top": 6,
-        "right": 20,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "disclosure-open": {
+      "file": "disclosure-open.svg",
+      "width": 24,
+      "height": 24,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "disclosure-closed": {
+      "file": "disclosure-closed.svg",
+      "width": 24,
+      "height": 24,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
         "bottom": 6
       }
     },

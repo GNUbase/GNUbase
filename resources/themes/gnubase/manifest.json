@@ -332,6 +332,28 @@
         "bottom": 6
       }
     },
+    "disclosure-open": {
+      "file": "disclosure-open.svg",
+      "width": 40,
+      "height": 24,
+      "slice": {
+        "left": 20,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "disclosure-closed": {
+      "file": "disclosure-closed.svg",
+      "width": 40,
+      "height": 24,
+      "slice": {
+        "left": 20,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
     "menu": {
       "file": "menu.svg",
       "width": 24,

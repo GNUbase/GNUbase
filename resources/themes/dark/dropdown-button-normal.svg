@@ -1,4 +1,4 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 24" width="40" height="24">
-<rect x="0.5" y="0.5" width="39.0" height="23.0" rx="4" fill="#18191a" stroke="#484c50" stroke-width="1"/><polyline points="25,10.0 29,14.0 33,10.0" fill="none" stroke="#b7bbc0" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+<rect x="0.5" y="0.5" width="23.0" height="23.0" rx="4" fill="#292c2f" stroke="#484c50" stroke-width="1"/>
 </svg>
