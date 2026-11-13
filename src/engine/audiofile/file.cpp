@@ -10,7 +10,7 @@
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-// io.h and fcntl.h after windows.h, as elsewhere.
+// io.h and fcntl.h after windows.h.
 #include <fcntl.h>
 #include <io.h>
 #endif
