@@ -241,7 +241,7 @@ TEST_CASE("a channel strip's name shows its track's color, which the style sheet
 	// Back to the default color: the theme's again.
 	app.call("track.set", {{"track", track}, {"color", nullptr}});
 	REQUIRE(app.waitUntil([&] { return !has(element(app, window, guitar), "colored"); }));
-	CHECK(!element(app, window, guitar).at("attributes").contains("color"));
+	CHECK(!element(app, window, guitar).value("attributes", Json::object()).contains("color"));
 	CHECK(!has(element(app, window, guitar), "bright"));
 	name = findElement(app, window, guitar);
 	REQUIRE(name != nullptr);
