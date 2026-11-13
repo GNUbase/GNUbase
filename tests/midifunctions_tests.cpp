@@ -3204,7 +3204,8 @@ TEST_CASE("merge and bounce take the global transpose at each note's position", 
 	{
 		const auto before = playedOn(fixture.engine, track);
 		REQUIRE(before ==
-			std::vector<std::vector<int64_t>>{{0, 64, 0}, {4 * 24000, 60, 0}, {6 * 24000, 65, 0}, {10 * 24000, 64, 0}});
+			std::vector<std::vector<int64_t>>{
+				{0, 64, 0}, {int64_t{4} * 24000, 60, 0}, {int64_t{6} * 24000, 65, 0}, {int64_t{10} * 24000, 64, 0}});
 		run(client, "midi.bounce", {{"parts", {independent, following}}});
 		CHECK(playedOn(fixture.engine, track) == before);
 		const Json part = onlyPartJson(client, track);
@@ -3218,7 +3219,8 @@ TEST_CASE("merge and bounce take the global transpose at each note's position", 
 		// The filter leaves out the following part's 60 and passes its 60 + 5.
 		setModifiers(client, track, Json{{"range", {{{"target", "noteFilter"}, {"minimum", 63}, {"maximum", 127}}}}});
 		const auto before = playedOn(fixture.engine, track);
-		REQUIRE(before == std::vector<std::vector<int64_t>>{{0, 64, 0}, {6 * 24000, 65, 0}, {10 * 24000, 64, 0}});
+		REQUIRE(before ==
+			std::vector<std::vector<int64_t>>{{0, 64, 0}, {int64_t{6} * 24000, 65, 0}, {int64_t{10} * 24000, 64, 0}});
 		const Json merged = run(client, "midi.merge",
 			{{"start", 0}, {"end", 2 * g_eightQuarters}, {"tracks", {track}}, {"includeInserts", true}});
 		const auto added = merged.at("tracks").at(0).get<ObjectId>();
