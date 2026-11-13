@@ -599,7 +599,9 @@ namespace gnubase::ui
 		{
 		case Rml::EventId::Mousedown:
 			if (const Rml::Element* button = withAttribute(target, "lane-menu", m_root.get()))
+			{
 				m_menuLane = static_cast<size_t>(std::stoul(attribute(*button, "lane-menu")));
+			}
 			else if (event.GetParameter("button", 0) == 1)
 			{
 				// A right click below a lane's name opens that lane's context menu (p. 1261), which the document's
@@ -608,7 +610,9 @@ namespace gnubase::ui
 					m_menuLane = static_cast<size_t>(std::stoul(attribute(*lane, "lane")));
 			}
 			else if (event.GetParameter("button", 0) == 0)
+			{
 				press(event);
+			}
 			break;
 		case Rml::EventId::Mousemove:
 			drag(event);
