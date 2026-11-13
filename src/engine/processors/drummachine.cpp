@@ -116,7 +116,7 @@ namespace gnubase::engine::processors
 	uint32_t DrumMachine::tail() const
 	{
 		// The longest decay, and what the effects hold after it.
-		const uint32_t voices = static_cast<uint32_t>(m_sampleRate * 10.0);
+		const auto voices = static_cast<uint32_t>(m_sampleRate * 10.0);
 		const uint32_t delay = m_delay.tail();
 		const uint32_t reverb = m_reverb.tail();
 		if (delay == UINT32_MAX || reverb == UINT32_MAX)
@@ -266,7 +266,7 @@ namespace gnubase::engine::processors
 			}
 	}
 
-	double DrumMachine::nextNoise(Voice& voice) const noexcept
+	double DrumMachine::nextNoise(Voice& voice) noexcept
 	{
 		voice.noise = (voice.noise * 1664525u) + 1013904223u;
 		return (static_cast<double>(voice.noise >> 8) / 8388608.0) - 1.0;

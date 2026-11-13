@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-/* The drum machine panel (ui/drummachinepanel.h, docs/features/drum-track.md): the toolbar with the page tabs, the
-   pad section with the group buttons, the 4x4 grid of pads and the pad tools, and the page beside it. The root gets
+/* The drum machine panel (ui/drummachinepanel.h, docs/features/drum-track.md): the toolbar with the page tabs and the
+   pad tools, the pad section with the group buttons and the 4x4 grid of pads, and the page beside it. The root gets
    .empty without a drum track, the selected group, page tab and pad .selected, pads .assigned (they play something),
    .muted, .soloed and .soloed-out, and the toolbar's message .error; the themes color them. */
 .drum-machine
@@ -85,8 +85,8 @@
 	flex-direction: column;
 	justify-content: space-between;
 	width: 60dp;
-	height: 44dp;
-	padding: 3dp;
+	height: 30dp;
+	padding: 2dp 3dp;
 	border-width: 1dp;
 	overflow: hidden;
 }
@@ -97,16 +97,9 @@
 	overflow: hidden;
 }
 
-.drum-pad-tools
-{
-	display: flex;
-	flex-wrap: wrap;
-	gap: 2dp;
-}
-
 .drum-pad-field
 {
-	width: 100%;
+	width: 120dp;
 }
 
 .drum-page

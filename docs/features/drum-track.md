@@ -86,7 +86,7 @@ a hint (the root `.drum-machine` has the class `.empty`):
   (`.drum-pad`, attribute `pad`) in four rows of four, the lowest note at the bottom left, with their names and notes;
   pads that play something are `.assigned`, the selected one `.selected`, muted, soloed and soloed-out ones `.muted`,
   `.soloed` and `.soloed-out`. A click selects a pad; it opens on the third group, with the kick.
-- **Pad tools**: the selected pad's name (`#drum-pad-name`, Rename Pad when Enter is pressed or the field loses the
+- **Pad tools**, in the toolbar too: the selected pad's name (`#drum-pad-name`, Rename Pad when Enter is pressed or the field loses the
   focus), Load (`#drum-load`, a file dialog, then `drum.loadPad` with `path`), Copy, Cut, Paste (`drum.copyPad`) and
   Reset (`drum.resetPad`). A file dropped on a pad loads onto that pad, elsewhere on the panel onto the selected one.
 - **Page**: the Instrument page has a control per parameter of the selected pad (`[parameter]`,

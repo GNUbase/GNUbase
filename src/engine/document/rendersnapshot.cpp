@@ -558,7 +558,9 @@ namespace gnubase::engine
 				return clip != project.clips.end() ? project.media.at(clip->second.media).path : std::string();
 			};
 			if (channel.instrument == "sampler")
+			{
 				render.samples = {path(channel.sample)};
+			}
 			else if (channel.instrument == "drumMachine")
 			{
 				render.samples.resize(processors::g_drumPads);

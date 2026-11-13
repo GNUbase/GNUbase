@@ -86,7 +86,8 @@ namespace gnubase::engine
 		for (int number = 1;; ++number)
 		{
 			const std::string digits = std::to_string(number);
-			std::string name = prefix + std::string(digits.size() < 2 ? " 0" : " ") + digits;
+			std::string name = prefix;
+			name.append(digits.size() < 2 ? " 0" : " ").append(digits);
 			if (taken.count(name) == 0)
 				return name;
 		}

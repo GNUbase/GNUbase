@@ -91,7 +91,8 @@ namespace
 
 		Json drumChannel()
 		{
-			for (const Json& each : app.call("project.get").at("channels"))
+			const Json project = app.call("project.get");
+			for (const Json& each : project.at("channels"))
 				if (each.at("id") == channel)
 					return each;
 			return {};
@@ -99,7 +100,8 @@ namespace
 
 		double parameter(uint32_t id, double fallback)
 		{
-			for (const Json& item : drumChannel().at("instrumentParameters"))
+			const Json drums = drumChannel();
+			for (const Json& item : drums.at("instrumentParameters"))
 				if (item.at("parameter") == id)
 					return item.at("value").get<double>();
 			return fallback;
@@ -107,7 +109,8 @@ namespace
 
 		std::string padName(int pad)
 		{
-			for (const Json& item : drumChannel().at("pads"))
+			const Json drums = drumChannel();
+			for (const Json& item : drums.at("pads"))
 				if (item.at("pad") == pad)
 					return item.value("name", std::string());
 			return {};

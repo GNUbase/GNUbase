@@ -69,7 +69,7 @@ namespace gnubase::engine::processors
 			ReverbSend,     // %
 		};
 
-		enum GlobalParameter : uint32_t
+		enum GlobalParameter : uint16_t
 		{
 			MasterLevel = g_drumPads * g_drumPadStride, // dB
 			BypassEffects,
@@ -153,7 +153,7 @@ namespace gnubase::engine::processors
 		void fadeOut(Voice& voice) const noexcept;
 		void render(const graph::ProcessContext& context, uint32_t begin, uint32_t end, const Kit& kit) noexcept;
 		double synth(Voice& voice) noexcept;
-		double nextNoise(Voice& voice) const noexcept;
+		static double nextNoise(Voice& voice) noexcept;
 
 		void publish(std::unique_ptr<Kit> kit);
 

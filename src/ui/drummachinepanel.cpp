@@ -133,16 +133,15 @@ namespace gnubase::ui
 							R"(<div class="drum-toolbar">)" +
 			tabs +
 			R"(<button id="drum-bypass" type="toggle" title="Bypass All Effects">Bypass FX</button>)"
-			R"(<span id="drum-message" class="drum-message"/></div>)"
-			R"(<div class="drum-body"><div class="drum-pads"><div class="drum-groups">)" +
-			groups + R"(</div><div class="drum-grid" id="drum-grid">)" + grid +
-			R"(</div><div class="drum-pad-tools">)"
 			R"(<input type="text" id="drum-pad-name" class="drum-pad-field" title="Rename Pad"/>)"
 			R"(<button id="drum-load" title="Load Sample">Load</button>)"
 			R"(<button id="drum-copy" title="Copy Pad">Copy</button>)"
 			R"(<button id="drum-cut" title="Cut Pad">Cut</button>)"
 			R"(<button id="drum-paste" title="Paste Pad">Paste</button>)"
 			R"(<button id="drum-reset" title="Reset Pad">Reset</button>)"
+			R"(<span id="drum-message" class="drum-message"/></div>)"
+			R"(<div class="drum-body"><div class="drum-pads"><div class="drum-groups">)" +
+			groups + R"(</div><div class="drum-grid" id="drum-grid">)" + grid +
 			R"(</div></div><div class="drum-page" id="drum-page-content"/></div></div>)");
 		for (const Rml::EventId id : g_events)
 			element.AddEventListener(id, this);
@@ -298,7 +297,7 @@ namespace gnubase::ui
 			for (const Json& pad : channel->value("pads", Json::array()))
 			{
 				std::string name = pad.value("name", std::string());
-				if (const Json* clip = findIn(project, "clips", pad.value("sample", Json())); name.empty() && clip)
+				if (const Json* clip = findIn(project, "clips", pad.value("sample", Json())); name.empty() && clip != nullptr)
 					name = clip->value("name", std::string());
 				names[pad.value("pad", 0)] = name;
 			}
@@ -319,7 +318,7 @@ namespace gnubase::ui
 		setClass(root, "empty", m_track == 0);
 		m_showing = true;
 		// The pads of the group shown, four rows of four, the lowest note at the bottom left (p. 942).
-		if (Rml::Element* grid = find("drum-grid"))
+		if (const Rml::Element* grid = find("drum-grid"))
 		{
 			bool solo = false;
 			for (int pad = 0; pad < g_pads && !solo; ++pad)
@@ -443,7 +442,7 @@ namespace gnubase::ui
 			const bool done = event == Rml::EventId::Blur ||
 				(event == Rml::EventId::Change && event.GetParameter<bool>("linebreak", false));
 			const auto name = m_names.find(m_pad);
-			const std::string text = target->GetAttribute<Rml::String>("value", "");
+			const auto text = target->GetAttribute<Rml::String>("value", "");
 			if (done && m_track != 0 && text != (name != m_names.end() ? name->second : std::string()))
 				m_binding.send("drum.setPad", {{"track", m_track}, {"pad", m_pad}, {"name", text}});
 			return;
