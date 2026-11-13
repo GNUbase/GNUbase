@@ -4,6 +4,7 @@
 // the sample editor's Hitpoints section in the app.
 #include "engine/analysis/onsets.h"
 #include "engine/engine.h"
+#include "testutils/heldjob.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -14,6 +15,7 @@
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -639,44 +641,36 @@ TEST_CASE("clip.setHitpoints sets a clip's hitpoints as given and checks them", 
 TEST_CASE("detecting hitpoints runs as a job, which can be cancelled and fails without the clip or its file", "[unit]")
 {
 	Fixture f;
-	// A minute of the loop, so that the job still runs when it is cancelled or the clip removed.
-	const Loop loop = rockLoop();
-	test::Audio minute;
-	minute.sampleRate = loop.audio.sampleRate;
-	minute.channels = loop.audio.channels;
-	for (int i = 0; i < 15; ++i)
-		minute.samples.insert(minute.samples.end(), loop.audio.samples.begin(), loop.audio.samples.end());
-	const std::string file = (f.dir.path() / "minute.wav").u8string();
-	test::writeWav(file, minute);
+	// The job is held at its first job.progress, which it sends after its first read of the file, until the test
+	// cancelled it, opened another project or removed the clip (#1079, #1154). It checks for job.cancel before each
+	// read, so the file takes more than one: the loop's four seconds do. A clip of its own, which no event uses, so
+	// that it can be removed.
 	const Json media = f.call("media.add",
-							{{"path", file}, {"sampleRate", 48000}, {"channels", 1},
-								{"length", static_cast<int64_t>(minute.frames())}})
+							{{"path", f.file}, {"sampleRate", 48000}, {"channels", 1},
+								{"length", static_cast<int64_t>(rockLoop().audio.frames())}})
 						   .at("media");
 	const auto clip = f.call("clip.add", {{"media", media.at("id")}}).at("clip").at("id").get<int64_t>();
 	const size_t steps = f.call("history.get").at("steps").size();
+	const auto whileHeld = [&f, clip](const std::function<void(uint64_t job)>& during)
+	{ return test::whileHeld(f.engine, f.client, "clip.detectHitpoints", {{"clip", clip}}, during); };
 
 	SECTION("cancelled, it leaves the hitpoints as they were")
 	{
-		const Json started = f.call("clip.detectHitpoints", {{"clip", clip}});
-		CHECK(started.at("job").at("kind") == "clip.detectHitpoints");
-		f.call("job.cancel", {{"job", started.at("job").at("id")}});
-		CHECK(f.waitForJob(started).at("state") == "cancelled");
+		const Json finished = whileHeld(
+			[&f](uint64_t job) { CHECK(f.call("job.cancel", {{"job", job}}).at("job").at("state") == "running"); });
+		CHECK(finished.at("state") == "cancelled");
 		CHECK(f.call("history.get").at("steps").size() == steps);
 	}
 	SECTION("another project opened meanwhile fails the job")
 	{
-		const Json started = f.call("clip.detectHitpoints", {{"clip", clip}});
-		f.call("project.new");
-		const Json finished = f.waitForJob(started);
+		const Json finished = whileHeld([&f](uint64_t /*job*/) { f.call("project.new"); });
 		CHECK(finished.at("state") == "failed");
 		CHECK_THAT(finished.at("error").get<std::string>(), ContainsSubstring("another project was opened"));
 		CHECK(f.call("project.get").at("clips").empty());
 	}
 	SECTION("a clip removed meanwhile fails the job")
 	{
-		const Json started = f.call("clip.detectHitpoints", {{"clip", clip}});
-		f.call("clip.remove", {{"clip", clip}});
-		const Json finished = f.waitForJob(started);
+		const Json finished = whileHeld([&f, clip](uint64_t /*job*/) { f.call("clip.remove", {{"clip", clip}}); });
 		CHECK(finished.at("state") == "failed");
 		CHECK_THAT(finished.at("error").get<std::string>(), ContainsSubstring("no clip " + std::to_string(clip)));
 	}
