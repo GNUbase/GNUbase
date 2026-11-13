@@ -35,9 +35,10 @@ reference manual pp. 164, 404-413).
   playback goes on from there. `arrangerEnter` decides where playback that starts or is located is in the chain: in the
   step playing if its event holds the position, else in the first step whose event holds it, else outside the chain,
   where it plays linearly. Playback enters at its start without the pre-roll, so a chain edit during the pre-roll keeps
-  the chain playing. `transport.play` from outside every step's event starts at the chain's first step, but it keeps a
-  triggered event that loops where playback starts; while playing it ends a Repeat Forever loop, going on with the next
-  step or past the chain if the looping step is the last one (p. 407).
+  the chain playing. `transport.play` starts where the transport would (the cursor, or the left locator with the start
+  mode cycleStart), and a start outside every step's event gives way to the chain: playback starts at its first step.
+  A triggered event that loops where playback starts is kept. While playing, `transport.play` ends a Repeat Forever
+  loop, going on with the next step or past the chain if the looping step is the last one (p. 407).
 - **Jump mode** (pp. 411-412): `arranger.goToStep` (the chain list, Previous and Next Chain Step, First and Last Repeat)
   and `arranger.trigger` (an event from the events list, which then loops until another one is chosen) take over at
   once while stopped or with the jump mode `none`, through a locate. While playing with another jump mode the
@@ -77,13 +78,14 @@ Range copies keep the order in which audio events stack, so overlapping events p
 
 `tests/arranger_tests.cpp`: the transport along a plan for block sizes 1 to 1024 (steps, repeats, chain end, pause after
 repeats, repeat forever with a step that waits for the next beat, a triggered event that loops, arranger mode against
-the cycle, a chain edit during the pre-roll); the commands with undo, settings and the arranger track's removal; saving
-and loading, with a file's repeats capped to 1 to 999; the chain playback render, sample by sample against the audio of
-each section, for two block sizes; real time against offline; choosing steps and triggering events while stopped and
-playing; `transport.play` ending a repeat forever loop and keeping a triggered event, and `transport.get` reporting no
-step while the plan doesn't play; flattening, played back linearly against the chain's audio, with undo.
-`tests/lua/ui/arranger.lua` opens the arranger editor and drives it, with its step buttons disabled outside arranger
-mode and a locate arrow on every row.
+the cycle, chain edits during the pre-roll and while the chain plays back into the project, a stop and a cycle jump
+ending the pre-roll); the commands with undo, settings and the arranger track's removal; saving and loading, with a
+file's repeats capped to 1 to 999; the chain playback render, sample by sample against the audio of each section, for
+two block sizes; real time against offline; choosing steps and triggering events while stopped and playing;
+`transport.play` ending a repeat forever loop, keeping a triggered event and starting from the left locator with the
+start mode cycleStart, and `transport.get` reporting no step while the plan doesn't play; flattening, played back
+linearly against the chain's audio, with undo. `tests/lua/ui/arranger.lua` opens the arranger editor and drives it, with
+its step buttons disabled outside arranger mode and a locate arrow on every row.
 
 Not yet: arranger events on the arranger track's lane in the event display and drawing them with the draw tool,
 the track list's arranger controls and the inspector's arranger section, renaming chains in the editor, drag and drop

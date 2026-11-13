@@ -108,7 +108,9 @@ namespace gnubase::engine
 		explicit Transport(uint32_t maxFrames = 8192);
 
 		// Command thread. Each returns false, and changes nothing, if too many requests are waiting.
-		bool play(); // from startPosition: the cursor, or the left locator in StartMode::CycleStart, less the pre-roll
+		// From startPosition: the cursor, or the left locator in StartMode::CycleStart, less the pre-roll; with from at
+		// or after 0, from there less the pre-roll instead: where the arranger puts playback (#880).
+		bool play(time::Samples from = -1);
 		bool stop(); // ends recording or a count-in; returns to the start if returnToStart is set
 		// While playing: punches in, or with punchIn before the left locator lets the punch in start recording there;
 		// off punches out. Stopped, on starts playback as play does and recording where play would start without the
@@ -132,9 +134,9 @@ namespace gnubase::engine
 		// While counting in, playing is true, and recording is whether recording starts where playback starts.
 		bool recording() const { return m_requestedRecording; }
 		bool countingIn() const { return m_requestedCountingIn; }
-		// Command thread: where play starts playback.
-		time::Samples startPosition() const;
-		time::Samples playStart() const; // where play starts playback without the pre-roll
+		// Command thread: where play(from) starts playback.
+		time::Samples startPosition(time::Samples from = -1) const;
+		time::Samples playStart(time::Samples from = -1) const; // the same without the pre-roll
 		// Command thread: where the last playback started, without the pre-roll (0 before any).
 		time::Samples playbackStart() const { return m_playbackStart; }
 		// Where recording from stop starts, for playback that starts at start before the pre-roll and at from with
@@ -195,7 +197,7 @@ namespace gnubase::engine
 		bool send(const Request& request);
 		void apply(const Request& request) noexcept;
 		void locateTo(time::Samples position) noexcept;
-		void start() noexcept;
+		void start(time::Samples from = -1) noexcept;
 		void startRecording() noexcept;
 		void autoStop() noexcept;
 		void publish(bool changed) noexcept;
