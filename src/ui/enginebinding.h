@@ -110,8 +110,8 @@ namespace gnubase::ui
 		// Whether the control that sends the steps of what is ahead of the engine's answer that update() handed on as
 		// handed() returned read: a step of it is on its way, or the last one that the engine took was answered after
 		// that answer. A refused step changes nothing, so it doesn't count. Once what's last step is answered and a
-		// query answered after it was handed on, such as the project read after its history.changed, its record goes
-		// away in the next update(), so it is ahead of no answer from then on.
+		// project read (project.get) answered after it was handed on, such as the one after its history.changed, and no
+		// other is out, its record goes away in the next update(), so it is ahead of no answer from then on.
 		bool ahead(const std::string& what, uint64_t read) const;
 
 		// A name for one view to begin the whats of its steps with, e.g. "mixer 3 ", a new one for each call. Views
@@ -202,8 +202,8 @@ namespace gnubase::ui
 		};
 
 		// The steps of one thing: the dones of those in flight, in order, those that wait, and when the engine last
-		// took one. A record with nothing in flight or waiting goes away in the update() after a query's answer that
-		// came after taken.
+		// took one. A record with nothing in flight or waiting goes away in the update() after a project read answered
+		// after taken, once no other is out.
 		struct Steps
 		{
 			std::deque<std::function<void(const engine::Result&)>> inFlight;
@@ -242,8 +242,8 @@ namespace gnubase::ui
 		std::deque<std::function<void()>> m_held; // afterAwaited's, in order
 		bool m_runningHeld = false;               // runHeld runs one
 		uint64_t m_handed = 0;
-		uint64_t m_queried = 0; // m_handed when the last query's answer was handed on
-		uint64_t m_owners = 0;  // stepOwner's
+		uint64_t m_projectRead = 0; // m_handed when the last project.get's answer was handed on
+		uint64_t m_owners = 0;      // stepOwner's
 		uint64_t m_nextId = 1;
 	};
 }

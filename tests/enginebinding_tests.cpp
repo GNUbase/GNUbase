@@ -240,7 +240,12 @@ TEST_CASE("a control's steps leave no record behind once a read after their last
 	const uint64_t fresh = readProject();
 	CHECK(!binding.ahead("volume", fresh));
 	CHECK(binding.ahead("volume", 0)); // the views showing what this update handed on still ask about it
-	binding.update();                  // the next one lets the record go (#746)
+	// Another project read out keeps it too: the view that sent it may show an older read until it is in.
+	binding.send("project.get");
+	binding.update();
+	CHECK(binding.ahead("volume", 0));
+	updateUntil(binding, [&binding] { return binding.waiting("project.get") == 0; });
+	binding.update(); // the next one lets the record go (#746)
 	CHECK(!binding.ahead("volume", 0));
 	CHECK(!binding.sending("volume"));
 
