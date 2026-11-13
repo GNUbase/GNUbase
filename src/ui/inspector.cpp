@@ -58,6 +58,8 @@ namespace gnubase::ui
 			R"(<select control="input" title="Input Routing"/></div>)"
 			R"(<div class="inspector-row" row="output"><span class="inspector-label">Output</span>)"
 			R"(<select control="output" title="Output Routing"/></div>)"
+			R"(<div class="inspector-row" row="midiChannel"><span class="inspector-label">Channel</span>)"
+			R"(<select control="midiChannel" title="MIDI Channel"/></div>)"
 			R"(<div class="inspector-row" row="device"><span class="inspector-label">Device</span>)"
 			R"(<select control="device" title="MIDI Device"/></div>)"
 			R"(<div class="inspector-row" row="bank"><span class="inspector-label">Bank</span>)"
@@ -735,6 +737,7 @@ namespace gnubase::ui
 		if (channel != nullptr && type == "midi")
 			if (const auto found = m_devices.find(channel->value("device", std::string())); found != m_devices.end())
 				device = &*found;
+		available("[row=midiChannel]", type == "midi");
 		available("[row=device]", type == "midi");
 		available("[row=bank]", type == "midi" && device == nullptr);
 		available("[row=program]", type == "midi");
@@ -769,6 +772,14 @@ namespace gnubase::ui
 				widgets::fill(*input, inputs(*m_project), std::to_string(channel->at("input").get<uint64_t>()));
 			if (type == "midi")
 			{
+				// The MIDI channel its patch, MIDI volume and pan go out on (reference manual p. 349): Any or 1-16.
+				Options midiChannels{{"any", "Any"}};
+				for (int number = 0; number < 16; ++number)
+					midiChannels.emplace_back(std::to_string(number), std::to_string(number + 1));
+				const Json midiChannel = channel->value("midiChannel", Json());
+				if (Rml::Element* select = element("select[control=midiChannel]"))
+					widgets::fill(*select, midiChannels,
+						midiChannel.is_number_integer() ? std::to_string(midiChannel.get<int>()) : "any");
 				const std::string named = channel->value("device", std::string());
 				Options devices{{"", "No Device"}};
 				for (const auto& [name, value] : m_devices.items())
@@ -1247,6 +1258,14 @@ namespace gnubase::ui
 		else if (name == "device")
 		{
 			value = event.GetParameter<Rml::String>("value", "");
+		}
+		else if (name == "midiChannel")
+		{
+			const auto chosen = event.GetParameter<Rml::String>("value", "any");
+			const Json midiChannel = chosen == "any" ? Json(nullptr) : Json(std::stoi(chosen));
+			if (m_channel.value("midiChannel", Json()) != midiChannel)
+				sendChannel({{"midiChannel", midiChannel}});
+			return;
 		}
 		else if (name == "bank")
 		{

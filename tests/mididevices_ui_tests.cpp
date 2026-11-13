@@ -183,3 +183,30 @@ TEST_CASE("the MIDI device manager installs, shows and removes MIDI devices", "[
 	click(app, "#close");
 	REQUIRE(app.waitUntil([&] { return elements(app, "#midi-devices").empty(); }));
 }
+
+TEST_CASE("the inspector chooses the MIDI channel a MIDI track's patch goes out on", "[ui]")
+{
+	test::UiApp app{{1200, 600}};
+	ui::EventDisplay& display = app.appUi().showProject();
+	app.setDpRatio(1.0F);
+	app.appUi().docking().open("inspector");
+	app.shell().step(std::chrono::milliseconds(0));
+	const uint64_t track = app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	REQUIRE(app.waitUntil([&] { return display.project().at("tracks").size() == 1; }));
+	app.appUi().trackList()->select({track});
+	const auto shows = [&](const std::string& value)
+	{
+		return app.waitUntil(
+			[&] { return attribute(app, ".inspector select[control=midiChannel]", "value") == value; });
+	};
+	REQUIRE(shows("any"));
+	CHECK(selected(app, ".inspector select[control=midiChannel]") == "Any");
+
+	// Any, then channels 1 to 16.
+	choose(app, ".inspector select[control=midiChannel]", 10);
+	REQUIRE(app.waitUntil([&] { return channel(app).at("midiChannel") == 9; }));
+	REQUIRE(shows("9"));
+	CHECK(selected(app, ".inspector select[control=midiChannel]") == "10");
+	app.call("channel.set", {{"channel", channel(app).at("id")}, {"midiChannel", nullptr}});
+	CHECK(shows("any"));
+}
