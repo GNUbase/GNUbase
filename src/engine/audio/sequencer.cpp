@@ -360,7 +360,13 @@ namespace gnubase::engine
 			m_pre->setSequence(std::move(unmodified));
 			sequence->pre = m_pre;
 		}
-		if (sequence->articulations.id != m_mapId || sequence->articulations.slots != m_mapSlots)
+		// Only what plays from the input counts: a slot renamed or recolored in the setup stays selected.
+		const auto plays = [](const SoundSlot& slot)
+		{ return std::tie(slot.trigger, slot.outputs, slot.channel, slot.transpose, slot.velocity); };
+		const std::vector<SoundSlot>& slots = sequence->articulations.slots;
+		if (sequence->articulations.id != m_mapId ||
+			!std::equal(slots.begin(), slots.end(), m_mapSlots.begin(), m_mapSlots.end(),
+				[&plays](const SoundSlot& a, const SoundSlot& b) { return plays(a) == plays(b); }))
 		{
 			m_mapId = sequence->articulations.id;
 			m_mapSlots = sequence->articulations.slots;

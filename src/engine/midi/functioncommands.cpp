@@ -557,8 +557,10 @@ namespace gnubase::engine::midi
 				"random MIDI modifier values draw anew. includeChase "
 				"adds the last value of every controller and program before start at the new part's start. Either way "
 				"the new part starts with the directions of the tracks' articulation maps in effect at start, and "
-				"each part that starts after start with a reset of each group of its track's map, so that the notes "
-				"play the same sound slots." +
+				"each part that starts after start with a reset of each group of its track's map in which a direction "
+				"is in effect there, so that the notes play the same sound slots. The directions of several tracks "
+				"with maps share the new part's one lane, so they can't all keep their slots: one track's direction "
+				"also selects the other tracks' slots, and a reset where another track's part starts ends it." +
 					returns,
 				objectSchema(
 					{{"start", integerSchema}, {"end", integerSchema}, {"tracks", ids}, {"destination", idSchema},
