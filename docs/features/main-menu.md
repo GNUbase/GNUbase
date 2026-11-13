@@ -21,14 +21,20 @@ project window.
 - **Disabled.** An item is `disabled` while `KeyCommands::canRun` says its command can't run: what
   `KeyCommands::enableWhen` set for it, e.g. Undo and Redo while the undo history (`history.changed`) has nothing to
   undo or redo, and the project window's edit commands without the event display. The menu updates in every step of
-  the shell, so the DOM that MCP's UI tools read is always current, and also as soon as a mouse button or key is
-  released, before the elements handle that (the popups' listener on the document, which is added when it loads, goes
-  first): a menu opened by a right click that selected a track has its items for that track enabled at once, so a
-  script's click on one right after the right click runs it, without waiting for a step (#1069). It updates once more
-  when a click or an element's change event reaches the document, after the elements' listeners: the toolbar's tool
-  buttons drop the selection range in a click listener, so the range items are disabled right after the click; a
-  list view selects its row in the click's default action, which runs after every listener of the click and so after
-  the release, and says so with a change event, so the DOM is current right after a click on a row, too (#1120).
+  the shell, after the window system's input of that step, so the DOM that MCP's UI tools read is always current. Input
+  from `ui::Automation` (MCP's and Lua's UI tools, the UI tests) comes outside the steps: after each click, press,
+  release, key, move, drag, wheel turn, text or drop, once all of its listeners and default actions have run, the
+  shell's input handler updates the menu (`Shell::onInputHandled`, set by `app::AppUi`). So the DOM is current right
+  after every input, whatever changed and in whichever listener: a right click that selected a track and opened the
+  context menu, a key that selected a track on its press (#1069), a tool button that dropped the selection range, a
+  list view that selects its row in the click's default action (#1120), the event display that selects on the
+  release, and an item's own command, such as Edit > Select > All or None (#1173). For this update the order in which
+  listeners were added doesn't matter, and the menu doesn't update on every change event, such as each step of a value
+  drag (#1176). A click on an item updates the menu once more before it looks for the item, so a listener of the click
+  that changes what the item's command can do counts (#1120), if it ran before the menu's own click listener on the
+  document: a listener of an element below the document, a capture phase listener of the document, or a listener of
+  the document that was added before the menu's. A bubble phase click listener added to the document after the menu
+  runs after the lookup: what it changes shows after the input, too late for that click (#1233).
 - **The menu bar** is a docking strip, `strip="menuBar"` ([docking.md](docking.md)): Menu Bar in the Set up Window
   Layout menu and the UI command `window.menuBar` show and hide it, and `ui.layout` keeps it per window. It is a
   `<menubar>`, whose titles are buttons that open the menus ([widgets.md](widgets.md), "Menus and context menus"), and
@@ -66,12 +72,17 @@ system menu bar on macOS, where the window shows its own menu bar until then (an
 `ui::Automation` clicks, as MCP's `ui_click` does: Studio > Studio Setup opens the studio setup dialog and closes the
 menu; items show their keys per platform; Transport > Locators > Go to Right Locator Position sends `transport.locate`
 with its parameters through the UI's client; Edit > Select > All and Edit > Delete run the event display's commands;
-Undo and Redo are disabled and enabled as the history changes, and a disabled item ignores clicks; `canRun` and
-`enableWhen`; the menu bar hidden from Set up Window Layout and shown with `window.menuBar`; File > Quit quits; and
-the File menu's Import item shows its arrow, the mouse moves from File to Edit, Right and Left move to Media and back,
-and Alt opens and closes the File menu (mouse moves and key presses, as MCP's `ui_move` and `ui_key` do). A menu with
-an item whose command doesn't exist or is empty, whose parameters an engine command doesn't take or has of the wrong
-type, that gives a UI command parameters, or whose parameters aren't a JSON object throws and leaves the document as
-it was; the project window, the transport panel and the time display window open, and every `command` in the
-documents and fragments of `resources/ui` passes `KeyCommands::check`, as does every command their buttons run from
-Lua with `gnubase.ui.command`.
+Undo and Redo are disabled and enabled as the history changes, and a disabled item ignores clicks; Edit > Select >
+All and None, and a Ctrl-click on a part that takes it out of the selection on the release, enable and disable
+Quantize right after the click; a click listener of the item, or of the document added before the menu, that lets the
+item's command run makes the click run it, and one added to the document after the menu only the next click; every
+input of `ui::Automation` (move, click, drag, press, release, wheel, key down, up and press, text and drop) runs the
+shell's input handler once, after the input's listeners and the shell's unused key and key release handlers (#1233);
+`canRun` and `enableWhen`; the menu bar hidden from Set up Window Layout and shown with `window.menuBar`; File > Quit
+quits; and the File menu's Import item shows its arrow, the mouse moves from File to Edit, Right and Left move to Media
+and back, and Alt opens and closes the File menu (mouse moves and key presses, as MCP's `ui_move` and `ui_key` do). A
+menu with an item whose command doesn't exist or is empty, whose parameters an engine command doesn't take or has of the
+wrong type, that gives a UI command parameters, or whose parameters aren't a JSON object throws and leaves the document
+as it was; the project window, the transport panel and the time display window open, and every `command` in the
+documents and fragments of `resources/ui` passes `KeyCommands::check`, as does every command their buttons run from Lua
+with `gnubase.ui.command`.

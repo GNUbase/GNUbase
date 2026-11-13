@@ -9,12 +9,15 @@
 #include "engine/time/tempomap.h"
 #include "ui/automation.h"
 #include "ui/eventdisplay.h"
+#include "ui/rmlui.h"
 
+#include <RmlUi/Core/Core.h>
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -231,4 +234,24 @@ TEST_CASE("a double click on a transpose event opens its value for typing", "[ui
 	window.app.ui().key(std::nullopt, "Enter");
 	CHECK(window.app.waitUntil([&] { return window.call("transpose.get").at("events").at(0).at("value") == -7; }));
 	CHECK(window.call("transpose.get").at("events").at(0).at("position") == 0);
+}
+
+TEST_CASE("two presses on a transpose event open it only less than half a second apart", "[ui]")
+{
+	Window window;
+	addEvent(window);
+	// RmlUi's clock, which times the presses, stands still but for advance().
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	clock->freeze(true);
+	const std::shared_ptr<void> thaw(nullptr, [clock](void*) { clock->freeze(false); });
+
+	clock->advance(1.0);
+	window.click(".transpose-event");
+	clock->advance(0.6);
+	window.click(".transpose-event");
+	CHECK(!window.hasClass(".transpose-field", "shown"));
+	clock->advance(0.4);
+	window.click(".transpose-event");
+	CHECK(window.app.waitUntil([&] { return window.hasClass(".transpose-field", "shown"); }));
 }

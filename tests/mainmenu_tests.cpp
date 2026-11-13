@@ -11,14 +11,18 @@
 #include "ui/enginebinding.h"
 #include "ui/keycommands.h"
 #include "ui/mainmenu.h"
+#include "ui/rmlui.h"
 #include "uiapp.h"
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/EventListener.h>
+#include <RmlUi/Core/SystemInterface.h>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <memory>
@@ -26,6 +30,7 @@
 #include <regex>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 using namespace gnubase;
 using Catch::Matchers::ContainsSubstring;
@@ -200,6 +205,210 @@ TEST_CASE("main menu items are disabled while their command can't run", "[ui]")
 	app.shell().step(std::chrono::milliseconds(0));
 	CHECK(app.call("project.get").at("tracks").empty());
 	CHECK(!disabled(app, "menuitem[command=\"history.redo\"]"));
+}
+
+// What a release and an item's own command change shows in the DOM that MCP's UI tools read right after the input,
+// without a step of the shell (#1173): the event display selects when the mouse button is released, and Edit >
+// Select changes what the items for selected events can do.
+TEST_CASE(
+	"the main menu's items follow a release's selection and an item's own command without a step of the shell", "[ui]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	app.setDpRatio(1.0F);
+	const Json track = app.call("track.add", {{"type", "midi"}}).at("track");
+	app.call("midiPart.add", {{"track", track.at("id")}, {"position", 0}, {"length", 1920}});
+	ui::EventLanes* lanes = nullptr;
+	REQUIRE(app.waitUntil(
+		[&app, &lanes]
+		{
+			lanes =
+				dynamic_cast<ui::EventLanes*>(app.main().context().GetDocument(0)->QuerySelector("event-lanes.events"));
+			return lanes != nullptr && !lanes->lanes().empty() && !lanes->lanes()[0].events.empty();
+		}));
+	const std::string quantize = "menuitem[command=\"edit.quantize\"]";
+	REQUIRE(disabled(app, quantize));
+	const auto select = [&app](const char* command)
+	{
+		click(app, "#menu-bar button[menu=edit-menu]");
+		app.ui().move(std::nullopt, {"#select-submenu", 0, std::nullopt});
+		app.shell().step(std::chrono::milliseconds(0));
+		app.ui().click(std::nullopt, {std::string("menuitem[command=\"") + command + "\"]", 0, std::nullopt},
+			ui::MouseButton::Left, 1, {});
+	};
+
+	// Edit > Select > All and None: Quantize follows right after the click on the item.
+	select("edit.selectAll");
+	CHECK(!disabled(app, quantize));
+	select("edit.selectNone");
+	CHECK(disabled(app, quantize));
+
+	// A Ctrl-click on the part selects it, and another one takes it out of the selection when the button is released.
+	const ui::TimeSpan& part = lanes->lanes()[0].events[0];
+	const ui::Target middle{"", 0,
+		ui::Point{static_cast<int>(lanes->GetAbsoluteLeft() + ((part.start + part.end()) / 2.0)),
+			static_cast<int>(lanes->GetAbsoluteTop() + (lanes->lanes()[0].height / 2.0F))}};
+	app.ui().click(std::nullopt, middle, ui::MouseButton::Left, 1, {"ctrl"});
+	CHECK(!disabled(app, quantize));
+	if (auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface()))
+		clock->advance(1.0); // no double click
+	app.ui().click(std::nullopt, middle, ui::MouseButton::Left, 1, {"ctrl"});
+	CHECK(disabled(app, quantize));
+}
+
+// A click's own listeners may change what the clicked item can do: the menu follows them before it looks for the
+// item (#1120, #1176), as far as they ran before the menu's listener on the document (#1233).
+TEST_CASE("the main menu follows what a click's listeners changed before it runs the clicked item", "[unit]")
+{
+	// Lets the command run; it outlives the documents it listens to.
+	bool enabled = false;
+	class Enabler final : public Rml::EventListener
+	{
+	public:
+		explicit Enabler(bool& enabled) : m_enabled(enabled) {}
+		void ProcessEvent(Rml::Event& /*event*/) override { m_enabled = true; }
+
+	private:
+		bool& m_enabled;
+	} enabler(enabled);
+	engine::Engine engine;
+	test::FakeUi fake({{1, "Monitor", {0, 0, 1920, 1080}, {0, 0, 1920, 1080}, 1.0F}});
+	ui::Window& window = fake.shell.open(ui::WindowSpec{});
+	ui::EngineBinding binding(engine);
+	ui::KeyCommands keys(engine, binding);
+	int runs = 0;
+	keys.add({"test.command", "A test command.", [&runs](ui::Window& /*window*/, Rml::Element* /*zone*/) { ++runs; }});
+	keys.enableWhen("test.command", [&enabled](ui::Window& /*window*/, Rml::Element* /*zone*/) { return enabled; });
+	Rml::ElementDocument* document = window.context().LoadDocumentFromMemory(
+		R"(<rml><head><style>body { width: 100%; height: 100%; } menuitem { display: block; height: 20dp; }</style>)"
+		R"(</head><body><menuitem id="item" command="test.command"/></body></rml>)");
+	REQUIRE(document != nullptr);
+	document->Show();
+	Rml::Element* item = document->GetElementById("item");
+	REQUIRE(item != nullptr);
+	const auto click = [&fake]
+	{ ui::Automation(fake.shell).click(std::nullopt, {"#item", 0, std::nullopt}, ui::MouseButton::Left, 1, {}); };
+
+	// The item's own listener lets its command run, before the menu's listener on the document.
+	item->AddEventListener(Rml::EventId::Click, &enabler);
+	{
+		const ui::MainMenu menu(keys, window, *document);
+		REQUIRE(item->HasAttribute("disabled"));
+		click();
+		CHECK(runs == 1);
+		CHECK(!item->HasAttribute("disabled"));
+	}
+	item->RemoveEventListener(Rml::EventId::Click, &enabler);
+
+	// So does a listener on the document added before the menu.
+	enabled = false;
+	document->AddEventListener(Rml::EventId::Click, &enabler);
+	{
+		const ui::MainMenu menu(keys, window, *document);
+		REQUIRE(item->HasAttribute("disabled"));
+		click();
+		CHECK(runs == 2);
+	}
+	document->RemoveEventListener(Rml::EventId::Click, &enabler);
+
+	// One added to the document after the menu runs once the menu has looked for the item: that click doesn't run the
+	// command. The update after the input, as the app does it, enables the item, and the next click runs it.
+	enabled = false;
+	{
+		ui::MainMenu menu(keys, window, *document);
+		fake.shell.onInputHandled([&menu] { menu.update(); });
+		document->AddEventListener(Rml::EventId::Click, &enabler);
+		REQUIRE(item->HasAttribute("disabled"));
+		click();
+		CHECK(runs == 2);
+		CHECK(!item->HasAttribute("disabled"));
+		click();
+		CHECK(runs == 3);
+		document->RemoveEventListener(Rml::EventId::Click, &enabler);
+		fake.shell.onInputHandled({});
+	}
+	document->Close();
+}
+
+// ui::Automation runs the shell's input handler once after each input, once the input's listeners have run, so that
+// the main menu's items show what any input changed before a script reads the DOM (#1173, #1233).
+TEST_CASE("each input of the UI automation runs the shell's input handler once, after the input's listeners", "[unit]")
+{
+	std::vector<std::string> happened; // outlives the shell and the documents that write to it
+	class Recorder final : public Rml::EventListener
+	{
+	public:
+		explicit Recorder(std::vector<std::string>& happened) : m_happened(happened) {}
+		void ProcessEvent(Rml::Event& event) override { m_happened.push_back(event.GetType()); }
+
+	private:
+		std::vector<std::string>& m_happened;
+	} recorder(happened);
+	test::FakeUi fake({{1, "Monitor", {0, 0, 1920, 1080}, {0, 0, 1920, 1080}, 1.0F}});
+	const ui::Window& window = fake.shell.open(ui::WindowSpec{});
+	Rml::ElementDocument* document = window.context().LoadDocumentFromMemory(
+		R"(<rml><head><style>body { width: 100%; height: 100%; }</style></head><body/></rml>)");
+	REQUIRE(document != nullptr);
+	document->Show();
+	document->Focus();
+	for (const char* type : {"mousemove", "mousedown", "mouseup", "click", "mousescroll", "keydown", "keyup",
+			 "textinput", ui::g_fileDropEvent})
+		document->AddEventListener(type, &recorder);
+	fake.shell.onUnusedKey(
+		[&happened](ui::Window& /*window*/, const ui::KeyPress& /*keys*/) { happened.emplace_back("unused key"); });
+	fake.shell.onKeyReleased(
+		[&happened](ui::Window& /*window*/, const ui::KeyPress& /*keys*/) { happened.emplace_back("key released"); });
+	fake.shell.onInputHandled([&happened] { happened.emplace_back("input handled"); });
+	ui::Automation automation(fake.shell);
+
+	// The last input ran the expected listeners and shell handlers in this order, and the input handler once, after
+	// everything else.
+	const auto handledAfter = [&happened](const std::vector<std::string>& expected)
+	{
+		INFO("happened: " << engine::Json(happened).dump());
+		CHECK(std::count(happened.begin(), happened.end(), "input handled") == 1);
+		CHECK((!happened.empty() && happened.back() == "input handled"));
+		auto at = happened.begin();
+		for (const std::string& one : expected)
+		{
+			INFO(one);
+			at = std::find(at, happened.end(), one);
+			REQUIRE(at != happened.end());
+			++at;
+		}
+		happened.clear();
+	};
+	const auto point = [](int x, int y) { return ui::Target{"", 0, ui::Point{x, y}}; };
+
+	automation.move(std::nullopt, point(100, 100));
+	handledAfter({"mousemove"});
+	automation.click(std::nullopt, point(110, 100), ui::MouseButton::Left, 1, {});
+	handledAfter({"mousedown", "mouseup", "click"});
+	automation.click(std::nullopt, point(110, 100), ui::MouseButton::Left, 2, {}); // a double click is one input
+	handledAfter({"mousedown", "mouseup", "click", "mousedown", "mouseup", "click"});
+	automation.drag(std::nullopt, point(120, 100), point(200, 150), {});
+	handledAfter({"mousedown", "mousemove", "mouseup"});
+	automation.press(std::nullopt, point(130, 100), ui::MouseButton::Left, {});
+	handledAfter({"mousedown"});
+	automation.release(std::nullopt, point(130, 100), ui::MouseButton::Left, {});
+	handledAfter({"mouseup"});
+	automation.wheel(std::nullopt, point(140, 100), 0.0F, 1.0F, {});
+	handledAfter({"mousescroll"});
+	automation.key(std::nullopt, "F2", ui::KeyAction::Press);
+	handledAfter({"keydown", "unused key", "keyup", "key released"});
+	automation.key(std::nullopt, "F2", ui::KeyAction::Down);
+	handledAfter({"keydown", "unused key"});
+	automation.key(std::nullopt, "F2", ui::KeyAction::Up);
+	handledAfter({"keyup", "key released"});
+	automation.text(std::nullopt, "a");
+	handledAfter({"textinput"});
+	automation.drop(std::nullopt, point(150, 100), {"/music/kick.wav"});
+	handledAfter({ui::g_fileDropEvent});
+
+	fake.shell.onInputHandled({});
+	fake.shell.onKeyReleased({});
+	fake.shell.onUnusedKey({});
+	document->Close();
 }
 
 TEST_CASE("key commands say whether a command can run, for menu items", "[ui]")

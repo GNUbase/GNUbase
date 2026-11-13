@@ -44,17 +44,6 @@ namespace gnubase::engine
 			return ids;
 		}
 
-		// As trackLayout.get returns it: without the tracks that are gone.
-		Json layoutJson(const Project& project)
-		{
-			TrackLayout layout;
-			for (const auto& [track, height] : project.trackLayout.heights)
-				if (project.trackById.count(track) != 0)
-					layout.heights[track] = height;
-			layout.folded = existing(project, project.trackLayout.folded);
-			return toJson(layout);
-		}
-
 		const VisibilityConfiguration* active(const TrackVisibility& visibility)
 		{
 			for (const VisibilityConfiguration& configuration : visibility.configurations)
@@ -102,6 +91,16 @@ namespace gnubase::engine
 				context.emit("mixer.changed", mixerViewJson(project, mixer));
 			}
 		}
+	}
+
+	Json trackLayoutJson(const Project& project)
+	{
+		TrackLayout layout;
+		for (const auto& [track, height] : project.trackLayout.heights)
+			if (project.trackById.count(track) != 0)
+				layout.heights[track] = height;
+		layout.folded = existing(project, project.trackLayout.folded);
+		return toJson(layout);
 	}
 
 	void followMixer(Project& project, const std::string& mixer, CommandContext& context)
@@ -228,13 +227,15 @@ namespace gnubase::engine
 			{"trackLayout.get", 1,
 				"The track list's track heights and folded folders (reference manual pp. 217, 225). " + text,
 				{{"type", "object"}, {"additionalProperties", false}}, resultSchema, true},
-			[&model](CommandContext&) { return layoutJson(model.project()); });
+			[&model](CommandContext&) { return trackLayoutJson(model.project()); });
 
 		model.addEdit(engine,
 			{"trackLayout.set", 1,
 				"Changes the track list's track heights and folded folders; what isn't given stays. " + text +
 					" heights sets the given tracks' heights, the others keep theirs; folded replaces the folded "
-					"folders. Settings, not an undo step, saved with the project. Emits trackLayout.changed.",
+					"folders. Settings, not an undo step, saved with the project. Emits trackLayout.changed, as undo "
+					"and redo do when a track with a height or a fold state comes back or goes. Values the project has "
+					"already change nothing: no event, and the project doesn't count as modified.",
 				{{"type", "object"}, {"properties", {{"heights", heightsSchema}, {"folded", foldedSchema}}},
 					{"additionalProperties", false}},
 				resultSchema, false},
@@ -243,6 +244,7 @@ namespace gnubase::engine
 			{
 				const Json& parameters = context.parameters();
 				TrackLayout& layout = project.trackLayout;
+				const TrackLayout before = layout;
 				if (parameters.contains("heights"))
 					for (const Json& item : parameters.at("heights"))
 					{
@@ -258,7 +260,13 @@ namespace gnubase::engine
 						require(project.trackById.at(id).type == TrackType::Folder,
 							"track " + std::to_string(id) + " is not a folder");
 				}
-				Json result = layoutJson(project);
+				Json result = trackLayoutJson(project);
+				// The layout the project has already is no change, which would count the project as modified (#1131).
+				if (layout.heights == before.heights && layout.folded == before.folded)
+				{
+					context.markUnchanged();
+					return result;
+				}
 				context.emit("trackLayout.changed", result);
 				return result;
 			});

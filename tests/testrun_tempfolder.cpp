@@ -17,10 +17,6 @@
 #include <string>
 #include <string_view>
 
-#ifndef _WIN32
-#include <sys/wait.h>
-#endif
-
 namespace
 {
 	void setTempFolder(const std::filesystem::path& folder)
@@ -79,16 +75,8 @@ TEST_CASE("a test run's temp folder is gone when the run ends", "[integration]")
 {
 	const gnubase::test::TempDir dir;
 	const std::filesystem::path out = dir.path() / "out.txt";
-	const std::string command =
-		"\"" + std::string(GNUBASE_TESTS) + R"(" "[temp-folder-child]" > ")" + out.u8string() + "\"";
-#ifdef _WIN32
-	// cmd.exe removes the outer quotes. As UTF-16, so that paths with any characters come through.
-	// NOLINTNEXTLINE(bugprone-command-processor): fixed test command
-	const int status = _wsystem(std::filesystem::u8path("\"" + command + "\"").wstring().c_str());
-#else
-	const int raw = std::system(command.c_str()); // NOLINT(bugprone-command-processor): fixed test command
-	const int status = WIFEXITED(raw) ? WEXITSTATUS(raw) : -1;
-#endif
+	const int status = gnubase::test::runCommand(
+		"\"" + std::string(GNUBASE_TESTS) + R"(" "[temp-folder-child]" > ")" + out.u8string() + "\"");
 	const std::string output = gnubase::test::readText(out);
 	INFO(output);
 	CHECK(status == 0);

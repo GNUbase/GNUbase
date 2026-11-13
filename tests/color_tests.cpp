@@ -269,7 +269,7 @@ namespace
 
 		Json project() { return app.call("project.get"); }
 
-		test::UiApp app{{1000, 500}};
+		test::UiApp app{{1024, 500}}; // with room for the toolbar's color menu
 		ui::EventDisplay& display;
 	};
 }
