@@ -266,8 +266,8 @@ namespace gnubase::engine
 			for (size_t i = 0; i < played.size(); ++i)
 			{
 				bool sent = false; // before its note-on
-				for (size_t j = i; j-- > 0 && played[j].offset == played[i].offset && !sent;)
-					sent = initial(i, j);
+				for (size_t j = i; j > 0 && played[j - 1].offset == played[i].offset && !sent; --j)
+					sent = initial(i, j - 1);
 				if (sent)
 					continue;
 				for (size_t j = i + 1; j < played.size() && played[j].offset == played[i].offset; ++j)
