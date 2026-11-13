@@ -55,7 +55,7 @@ namespace gnubase::time
 		// The segments start at whole ticks, so the floored tick finds the one the exact tick is in.
 		const Segment& segment =
 			detail::lastAtOrBefore(m_segments, &Segment::start, static_cast<Ticks>(std::floor(tick)));
-		const double beats = toBeats(tick - segment.start);
+		const double beats = toBeats(tick - static_cast<double>(segment.start));
 		if (segment.slope == 0.0 || beats < 0.0)
 			return segment.seconds + (beats * 60.0 / segment.bpm);
 		// The tempo grows linearly per beat, so the time is the integral of 60 / tempo.
