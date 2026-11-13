@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <cstring>
 #include <iterator>
+#include <optional>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -239,11 +240,37 @@ namespace gnubase::engine
 			out.add(lane, event, again);
 		}
 
+		// The value a lane sends where it arrives at points at a position (a step, the end of a ramp or a jump between
+		// points at one position), if there are points there and they send one: the value from there on, or a
+		// terminator's that a gap follows; nothing where a gap starts or where the value doesn't change.
+		std::optional<double> arriving(const Points& points, int64_t at, bool glides)
+		{
+			const size_t next = after(points, at);
+			if (next == 0 || points[next - 1].position != at)
+				return std::nullopt;
+			const size_t first = static_cast<size_t>(
+				std::lower_bound(points.begin(), points.end(), at,
+					[](const RenderAutomationPoint& point, int64_t position) { return point.position < position; }) -
+				points.begin());
+			size_t last = next;
+			while (last > first && points[last - 1].gap)
+				--last;
+			const bool fromRamp = first > 0 && points[first - 1].shape != AutomationShape::Step;
+			// Nothing was sent in a gap, also in virgin territory before the first point, whose gap point is
+			// points[0].
+			const bool fromGap = points[first == 0 ? 0 : first - 1].gap;
+			const double approached = first == 0 || fromRamp ? points[first].value : points[first - 1].value;
+			if (last > first && (points[last - 1].value != approached || (fromRamp && !glides) || fromGap))
+				return points[last - 1].value;
+			return std::nullopt;
+		}
+
 		// Plays a lane's curve over one transport segment. With jump, playback didn't arrive here from the frame
 		// before, so the value at the segment's start is set first; a lane without points glides there over smoothing
-		// frames.
+		// frames. That value is set again (AutomationPlayer::play's sentAgain) unless it is new there: renewed, a
+		// static value set in this block, or a point's that the lane arrives at there.
 		void playLane(const PlayedLane& lane, const graph::TransportSegment& segment, bool jump, const Outputs& out,
-			uint32_t smoothing) noexcept
+			uint32_t smoothing, bool renewed) noexcept
 		{
 			const Points& points = lane.points;
 			const int64_t begin = segment.position;
@@ -252,39 +279,23 @@ namespace gnubase::engine
 			if (points.empty())
 			{
 				if (jump)
-					emit(lane, segment.offset, lane.staticValue, smoothing, out, true);
+					emit(lane, segment.offset, lane.staticValue, smoothing, out, !renewed);
 				return;
 			}
-			if (jump && !inGap(points, begin))
-				emit(lane, segment.offset, automationValue(points, begin), 0, out, true);
-
 			// The fader and the pre gain glide along ramps; the others get the value at each g_automationInterval
 			// frame.
 			const bool glides = lane.glides();
+			if (jump && !inGap(points, begin))
+				emit(lane, segment.offset, automationValue(points, begin), 0, out,
+					!renewed && !arriving(points, begin, glides));
+
 			int64_t at = begin;
 			for (;;)
 			{
-				// Arriving at points: a step, the end of a ramp or a jump between points at one position.
 				const size_t next = after(points, at);
-				if (at < end && next > 0 && points[next - 1].position == at && (at > begin || !jump))
-				{
-					const size_t first =
-						static_cast<size_t>(std::lower_bound(points.begin(), points.end(), at,
-												[](const RenderAutomationPoint& point, int64_t position)
-												{ return point.position < position; }) -
-							points.begin());
-					// The value from here on, or a terminator's that a gap follows; nothing where a gap starts.
-					size_t last = next;
-					while (last > first && points[last - 1].gap)
-						--last;
-					const bool fromRamp = first > 0 && points[first - 1].shape != AutomationShape::Step;
-					// Nothing was sent in a gap, also in virgin territory before the first point, whose gap point is
-					// points[0].
-					const bool fromGap = points[first == 0 ? 0 : first - 1].gap;
-					const double approached = first == 0 || fromRamp ? points[first].value : points[first - 1].value;
-					if (last > first && (points[last - 1].value != approached || (fromRamp && !glides) || fromGap))
-						emit(lane, offset(at), points[last - 1].value, 0, out);
-				}
+				if (at < end && (at > begin || !jump))
+					if (const std::optional<double> value = arriving(points, at, glides))
+						emit(lane, offset(at), *value, 0, out);
 				if (at >= end || next == points.size())
 					break; // after the last point the value stays
 				if (next == 0)
@@ -578,6 +589,14 @@ namespace gnubase::engine
 		const bool revised = automation.revision != m_played && m_played != 0;
 		const auto glide = [revised, smoothing](const PlayedLane& lane)
 		{ return revised && lane.smooth ? smoothing : 0; };
+		// A program or MIDI controller without points whose value is new in this block (PlayedLane::revision) isn't
+		// set again: a MIDI track's mute sends what it kept before it, as before a lane's new value. Nor are the MIDI
+		// controllers that a new program brings along, which go out after it.
+		const bool newProgram =
+			std::any_of(automation.lanes.begin(), automation.lanes.end(), [played = m_played](const PlayedLane& lane)
+				{ return lane.kind == Kind::Program && lane.revision > played; });
+		const auto renewed = [played = m_played, newProgram, &midi](const PlayedLane& lane)
+		{ return lane.revision > played || (newProgram && midi(lane)); };
 		m_played = automation.revision;
 		std::copy_n(processors.begin(), count, m_processors.begin());
 		m_processorCount = count;
@@ -594,7 +613,7 @@ namespace gnubase::engine
 					if (out && (lane.points.empty() || !inGap(lane.points, transport.position)))
 						emit(lane, 0,
 							lane.points.empty() ? lane.staticValue : automationValue(lane.points, transport.position),
-							glide(lane), *out, true);
+							glide(lane), *out, !renewed(lane));
 				}
 			hear(moved);
 			m_stoppedAt = transport.position;
@@ -609,7 +628,8 @@ namespace gnubase::engine
 			const bool moved = segment.position != m_next;
 			for (const PlayedLane& lane : automation.lanes)
 				if (const std::optional<Outputs> out = outputs(lane); out && !(silent && midi(lane)))
-					playLane(lane, segment, moved || (first && again(lane)), *out, first && changed ? glide(lane) : 0);
+					playLane(lane, segment, moved || (first && again(lane)), *out, first && changed ? glide(lane) : 0,
+						first && renewed(lane));
 			first = false;
 			hear(moved);
 			m_next = segment.position + segment.frames;
@@ -713,8 +733,7 @@ namespace gnubase::engine
 		: m_state(std::move(state)), m_source(std::move(source)), m_panning(panning), m_monitoring(monitoring),
 		  m_silent(silent), m_part(part), m_lookAhead(lookAhead), m_processors(std::move(slots)),
 		  m_slots(std::move(slotIds)), m_sourceEvents(graph::g_maxEventsPerBlock),
-		  m_faderEvents(graph::g_maxEventsPerBlock), m_faderOut(graph::g_maxEventsPerBlock),
-		  m_sentAgain(graph::g_maxEventsPerBlock)
+		  m_faderEvents(graph::g_maxEventsPerBlock), m_faderOut(graph::g_maxEventsPerBlock)
 	{
 		m_processors.insert(m_processors.begin(), m_source.get());
 	}
@@ -773,7 +792,7 @@ namespace gnubase::engine
 		m_sourceEvents.nextSource();
 		m_state->pluginEvents.clear();
 		m_state->automation.play(context.transport, m_processors, m_slots, m_sourceEvents, m_faderEvents,
-			m_state->pluginEvents, m_smoothing, &m_sentAgain);
+			m_state->pluginEvents, m_smoothing, m_sentAgain.capacity() > 0 ? &m_sentAgain : nullptr);
 
 		if (m_monitoring && context.frames > 0)
 		{
@@ -874,12 +893,20 @@ namespace gnubase::engine
 	{
 		using Type = graph::ProcessEvent::Type;
 		ChannelState& state = *m_state;
-		// Another project's track on this channel: what the old one's mute kept and its pedals aren't this one's.
+		// Another project's track on this channel: what the old one's mute kept isn't this one's, and the pedals that
+		// hold the old one's notes go up at the block's start, before this one's events, as a mute releases them: the
+		// next project may play the same instrument (project.revert), which would keep them down.
+		bool release = false;
 		if (state.midiProject != m_project)
 		{
 			state.midiProject = m_project;
 			state.midiDropped.clear();
-			state.midiPedals = {};
+			for (const std::array<uint32_t, 3>& values : state.midiPedals)
+				release = release ||
+					std::any_of(values.begin(), values.end(),
+						[](uint32_t value) { return midi::controllerToMidi1(value) != 0; });
+			if (!release)
+				state.midiPedals = {};
 		}
 		const auto isMute = [](const graph::ProcessEvent& event) noexcept
 		{ return event.type == Type::Parameter && event.parameter == ChannelFader::Mute; };
@@ -935,6 +962,21 @@ namespace gnubase::engine
 			if (chased != nullptr)
 				for (const graph::ProcessEvent& event : *chased)
 					state.midiDropped.forget(event);
+			// A track that isn't routed to an instrument (no chaseFrom) chases into its own events, at the block's
+			// start, where its sequencer chases them after the channel's values: what it sets there, the chase or the
+			// track's events, is later than what the mute kept. The values that the automation sent again there are
+			// earlier.
+			if (!m_chased)
+			{
+				std::bitset<DroppedMidi::g_kinds> again;
+				for (const graph::ProcessEvent& event : m_sentAgain)
+					if (const int kind = DroppedMidi::kindOf(event); event.offset == 0 && kind >= 0)
+						again[static_cast<size_t>(kind)] = true;
+				for (const graph::ProcessEvent& event : out)
+					if (const int kind = DroppedMidi::kindOf(event);
+						event.offset == 0 && kind >= 0 && !again[static_cast<size_t>(kind)])
+						state.midiDropped.forget(event);
+			}
 		}
 		const auto take = [this, &state, &track](const graph::ProcessEvent& event) noexcept
 		{
@@ -973,7 +1015,7 @@ namespace gnubase::engine
 				state.midiNext = at.position + at.frames;
 			}
 		};
-		if (!state.midiMuted && !state.midiDropped.waiting() && chased == nullptr &&
+		if (!release && !state.midiMuted && !state.midiDropped.waiting() && chased == nullptr &&
 			std::none_of(m_faderEvents.begin(), m_faderEvents.end(), isMute))
 		{
 			jumpsUntil(UINT32_MAX);
@@ -988,9 +1030,30 @@ namespace gnubase::engine
 		for (const graph::ProcessEvent& event : out)
 			events.add(event);
 		out.clear();
-		// The events that end notes go first in a full buffer, so that no note hangs.
-		const auto put = [&out](const graph::ProcessEvent& event) noexcept
-		{ return graph::endsNotes(event) ? out.addEnd(event) : out.add(event); };
+		// After a project change's pedal releases, the block's last values that no longer fit wait as if a mute had
+		// dropped them, after the block's other events, as the latest of their kinds.
+		std::bitset<graph::g_maxEventsPerBlock> deferred;
+		if (release)
+		{
+			for (size_t channel = 0; channel < state.midiPedals.size(); ++channel)
+				for (const uint8_t controller : {uint8_t{64}, uint8_t{66}, uint8_t{69}})
+					if (midi::controllerToMidi1(state.midiPedals[channel][pedal(controller)]) != 0)
+					{
+						graph::ProcessEvent up;
+						up.type = Type::Controller;
+						up.channel = static_cast<uint8_t>(channel);
+						up.key = controller;
+						out.add(up);
+					}
+			state.midiPedals = {};
+			size_t over = out.size() + events.size() > out.capacity() ? out.size() + events.size() - out.capacity() : 0;
+			for (size_t i = events.size(); i > 0 && over > 0; --i)
+				if (!graph::endsNotes(events[i - 1]))
+				{
+					deferred[i - 1] = true;
+					--over;
+				}
+		}
 		// Before a mute's count note-offs and pedal releases: in a full buffer they take the places of the last
 		// values that passed (EventBuffer::addEnd), which then wait for unmuting as if the mute had dropped them,
 		// kept oldest first so that the latest of a kind wins and the kinds keep their order.
@@ -1008,15 +1071,19 @@ namespace gnubase::engine
 				if (!graph::endsNotes(out[i]))
 					state.midiDropped.drop(out[i]);
 		};
-		size_t next = 0; // the events from here on haven't passed yet
+		// The events that end notes go first in a full buffer, so that no note hangs.
+		const auto put = [&out](const graph::ProcessEvent& event) noexcept
+		{ return graph::endsNotes(event) ? out.addEnd(event) : out.add(event); };
+		size_t next = 0;  // the events from here on haven't passed yet
+		size_t ahead = 0; // but this many of them, which went out early
 		// Sends what the mute dropped at offset, as far as it fits with room left for the block's events still to
 		// come; the rest follows in the next block.
-		const auto resend = [&state, &out, &next, &track, &events](uint32_t offset) noexcept
+		const auto resend = [&state, &out, &next, &ahead, &track, &events](uint32_t offset) noexcept
 		{
 			state.midiDropped.send(offset,
-				[&out, &next, &track, &events](const graph::ProcessEvent& event) noexcept
+				[&out, &next, &ahead, &track, &events](const graph::ProcessEvent& event) noexcept
 				{
-					if (out.size() + (events.size() - next) >= out.capacity() || !out.add(event))
+					if (out.size() + (events.size() - next - ahead) >= out.capacity() || !out.add(event))
 						return false;
 					track(event);
 					return true;
@@ -1133,6 +1200,11 @@ namespace gnubase::engine
 		for (; next < events.size(); ++next)
 		{
 			if (early[next])
+			{
+				--ahead;
+				continue;
+			}
+			if (deferred[next])
 				continue;
 			const graph::ProcessEvent& event = events[next];
 			chaseUntil(event.offset);
@@ -1145,9 +1217,10 @@ namespace gnubase::engine
 				if (resendAt == static_cast<int64_t>(event.offset))
 					for (size_t later = next + 1; later < events.size() && events[later].offset == event.offset;
 						++later)
-						if (sentAgain(events[later]))
+						if (!deferred[later] && sentAgain(events[later]))
 						{
 							early[later] = true;
+							++ahead;
 							if (pass(events[later], false))
 								put(events[later]);
 						}
@@ -1159,6 +1232,9 @@ namespace gnubase::engine
 		chaseUntil(UINT32_MAX);
 		muteUntil(UINT32_MAX);
 		flush(UINT32_MAX);
+		for (size_t i = 0; i < events.size(); ++i)
+			if (deferred[i])
+				state.midiDropped.drop(events[i]);
 	}
 
 	void ChannelStrip::render(RenderPoint point, const graph::ProcessContext& context) noexcept

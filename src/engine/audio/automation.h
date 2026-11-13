@@ -143,8 +143,9 @@ namespace gnubase::engine
 		// values over smoothing frames, and mute glides over them from the sample where it changes, so it doesn't
 		// click. sentAgain, if any, gets a copy of the events for source that set a value again, where a start, a
 		// locate, a jump, new automation, a new processor or being heard again sends the values (also while stopped),
-		// and not those of a lane's new value (a step, a ramp): a MIDI track's strip sends what its mute kept after
-		// them.
+		// and not those of a new value: a lane's step or ramp, also one at the sample where the values are sent again,
+		// or a program or MIDI controller without points set in this block. A MIDI track's strip sends what its mute
+		// kept after the values set again and before the new ones.
 		void play(const graph::TransportBlock& transport, const std::vector<const void*>& processors,
 			const std::vector<ObjectId>& slots, graph::EventBuffer& source, graph::EventBuffer& fader,
 			graph::EventBuffer& plugins, uint32_t smoothing = 0, graph::EventBuffer* sentAgain = nullptr) noexcept;
@@ -243,12 +244,14 @@ namespace gnubase::engine
 		// Where playback jumps: forgets everything, which the jump's chase replaces.
 		void clear() noexcept;
 
-	private:
 		// Per MIDI channel: 128 controllers, then program, pitch bend and channel pressure.
 		static constexpr size_t g_perChannel = 131;
 		static constexpr size_t g_kinds = 16 * g_perChannel;
-		static constexpr auto g_none = static_cast<uint16_t>(g_kinds); // the end of the list
+		// The kind of event, below g_kinds, or -1 for one that isn't kept (a note, a parameter).
 		static int kindOf(const graph::ProcessEvent& event) noexcept;
+
+	private:
+		static constexpr auto g_none = static_cast<uint16_t>(g_kinds); // the end of the list
 		// Takes a kind that waits out of the list.
 		void unlink(uint16_t kind) noexcept;
 
@@ -458,6 +461,10 @@ namespace gnubase::engine
 		// (RenderSnapshot::opened). The first strip of another project on the channel's state forgets what the old
 		// track's mute kept and the pedals it had down (ChannelState::midiProject).
 		void playsProject(uint64_t opened) { m_project = opened; }
+		// Command thread, before the graph compiles: the strip runs a MIDI track's source, whose mute mutes the
+		// track's events (muteMidi). It gets room for the values that the automation sends again in a block, which
+		// only such a strip reads.
+		void playsMidiTrack() { m_sentAgain = graph::EventBuffer(graph::g_maxEventsPerBlock); }
 
 		// Scales the block's first channels from gain to target, frame by frame, and keeps target as the gain; a gain
 		// below 0 (before the first block) starts at the target.
@@ -488,7 +495,7 @@ namespace gnubase::engine
 		graph::EventBuffer m_faderEvents;
 		graph::EventBuffer m_faderOut; // and, on a channel without audio (a MIDI track), the block's events while muted
 		// The events of m_sourceEvents that the automation sent again in this block (AutomationPlayer::play), which a
-		// MIDI track's mute lets go before what it kept.
+		// MIDI track's mute lets go before what it kept; no room on other strips (playsMidiTrack).
 		graph::EventBuffer m_sentAgain;
 		std::shared_ptr<PreFaderTap> m_tap;    // or none, without pre-fader sends
 		bool m_tapFollowsMute = false;         // the fader's mute applies to m_tap

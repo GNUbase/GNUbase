@@ -963,6 +963,7 @@ namespace gnubase::engine
 					kinds.push_back(chaseKindEvent(kind));
 				sourceStrip->chasedWhenHeard(std::move(kinds), sequencer->second);
 				sourceStrip->playsProject(snapshot.opened);
+				sourceStrip->playsMidiTrack();
 			}
 			if (const auto tap = m_renderTaps.find(channel.id); tap != m_renderTaps.end())
 				(tap->second.point == RenderPoint::Source ? sourceStrip : fader)
