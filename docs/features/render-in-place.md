@@ -51,10 +51,13 @@ last sample a 24-bit file doesn't hold as silence, or at the range's end.
   `freeze/Ramp.wav`), since entries are looked up in any case and extracted into one folder; one that isn't there
   when the project is saved is referred to by its absolute path. Names that differ only in the case of a non-ASCII
   letter (`Übung.wav` and `übung.wav`) are two entries in the file, which the case-insensitive lookup tells apart,
-  but the file systems of Windows and macOS read as one name, so the later one would extract over the earlier: the
-  load asks the file system which paths are one file and gives the clash a numbered name of its own
-  (`freeze/2-übung.wav` next to `freeze/Übung.wav`) there, while Linux, which keeps the two apart, extracts both as
-  they are. `project.backup` copies each into the backup's `Freeze` folder once.
+  but a file system that folds the case of such letters, as those of Windows and macOS do by default, reads as one
+  name, so the later one would extract over the earlier. This holds for every embedded file, not only freeze files:
+  media files go into `audio/` under names made unique only in the same case, so `audio/Übung.wav` and
+  `audio/übung.wav` can both be in a file too. The load asks the file system which paths are one file and gives the
+  clash a numbered name of its own (`freeze/2-übung.wav` next to `freeze/Übung.wav`, `audio/2-übung.wav` next to
+  `audio/Übung.wav`) there, while a file system that keeps the two apart, as those of Linux do by default, extracts
+  both as they are. `project.backup` copies each into the backup's `Freeze` folder once.
 - Refused for a track that is frozen already, disabled or has nothing to play, and when `mixdown.export` refuses
   (no device, a device at another sample rate than the project).
 - Scrubbing a frozen track reads its freeze file; when undo brings back an earlier freeze, it reads that one.
