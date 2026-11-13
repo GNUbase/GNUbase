@@ -15,6 +15,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -580,5 +581,119 @@ TEST_CASE(
 	f.start();
 	CHECK(removedFolders(f.dir.path()).empty());
 	CHECK(f.names() == std::vector<std::string>{"Default", "Studio"});
+}
+#endif
+
+#ifndef _WIN32
+namespace
+{
+	// A folder with a file that can't be deleted, as the folder's permissions keep it. When the test ends, also after
+	// a failed check, the folder can be changed again, where it is or in a profile-removed-* folder that a switch put
+	// it in, so that the settings folder can be deleted.
+	class LockedFolder
+	{
+	public:
+		LockedFolder(std::filesystem::path settings, std::filesystem::path folder)
+			: m_settings(std::move(settings)), m_folder(std::move(folder))
+		{
+			namespace fs = std::filesystem;
+			fs::create_directories(m_folder);
+			std::ofstream(m_folder / "settings.json") << "{}";
+			fs::permissions(m_folder, fs::perms::owner_read | fs::perms::owner_exec);
+		}
+		~LockedFolder() { unlock(); }
+		LockedFolder(const LockedFolder&) = delete;
+		LockedFolder& operator=(const LockedFolder&) = delete;
+		LockedFolder(LockedFolder&&) = delete;
+		LockedFolder& operator=(LockedFolder&&) = delete;
+
+		// Whether the file can't be deleted indeed: root changes any folder.
+		bool locked() const { return !std::ofstream(m_folder / "probe").good(); }
+
+		void unlock() const
+		{
+			namespace fs = std::filesystem;
+			std::error_code ignored;
+			fs::permissions(m_folder, fs::perms::owner_all, ignored);
+			std::error_code error;
+			for (fs::directory_iterator entry(m_settings, error), end; !error && entry != end; entry.increment(error))
+				if (entry->path().filename().u8string().rfind("profile-removed-", 0) == 0)
+					fs::permissions(entry->path() / m_folder.filename(), fs::perms::owner_all, ignored);
+		}
+
+	private:
+		std::filesystem::path m_settings;
+		std::filesystem::path m_folder;
+	};
+}
+
+// Not on Windows, as above.
+TEST_CASE(
+	"a profile switch deletes the next profile's folder at once though something in it can't be deleted", "[unit]")
+{
+	namespace fs = std::filesystem;
+	Fixture f;
+	f.setScale(1.5);
+	f.call("profile.add", {{"name", "Studio"}});
+	const fs::path studio = f.dir.path() / "profiles" / "Studio";
+	const LockedFolder locked(f.dir.path(), studio / "Locked");
+	if (!locked.locked())
+		SKIP("the folder can be changed here anyway, e.g. by root");
+	f.call("profile.activate", {{"name", "Studio"}});
+	f.start();
+	CHECK(f.call("profile.list").at("active") == "Studio");
+	CHECK(f.scale() == 1.0);
+	// Its folder in profiles is gone at once, so it isn't a profile of its own; what can't be deleted waits aside.
+	CHECK(!fs::exists(studio));
+	CHECK(f.names() == std::vector<std::string>{"Default", "Studio"});
+	CHECK(removedFolders(f.dir.path()).size() == 1);
+	f.setScale(2.0);
+	// The switch back makes the folder again, with the profile's files and without the folder that waits aside.
+	f.call("profile.activate", {{"name", "Default"}});
+	f.start();
+	CHECK(f.call("profile.list").at("active") == "Default");
+	CHECK(f.scale() == 1.5);
+	CHECK(fs::is_regular_file(studio / "settings.json"));
+	CHECK(!fs::exists(studio / "Locked"));
+	CHECK(removedFolders(f.dir.path()).size() == 1);
+	// Once it can be deleted, the next start deletes it.
+	locked.unlock();
+	f.start();
+	CHECK(removedFolders(f.dir.path()).empty());
+	f.call("profile.activate", {{"name", "Studio"}});
+	f.start();
+	CHECK(f.scale() == 2.0);
+}
+
+// Not on Windows, as above.
+TEST_CASE(
+	"a profile switch goes ahead when a profile-switch folder that was left can't be deleted completely", "[unit]")
+{
+	namespace fs = std::filesystem;
+	Fixture f;
+	f.setScale(2.0);
+	f.call("profile.duplicate", {{"name", "Default"}, {"newName", "Studio"}});
+	f.setScale(1.5);
+	// What an earlier switch couldn't delete of its copies.
+	const fs::path staging = f.dir.path() / "profile-switch";
+	const LockedFolder locked(f.dir.path(), staging / "Locked");
+	if (!locked.locked())
+		SKIP("the folder can be changed here anyway, e.g. by root");
+	f.call("profile.activate", {{"name", "Studio"}});
+	f.start();
+	const Json list = f.call("profile.list");
+	CHECK(list.at("active") == "Studio");
+	CHECK(list.at("next") == "");
+	CHECK(list.at("unfinished") == false);
+	CHECK(f.scale() == 2.0);
+	CHECK(!fs::exists(staging));
+	CHECK(removedFolders(f.dir.path()).size() == 1);
+	// Once it can be deleted, the next start deletes it.
+	locked.unlock();
+	f.start();
+	CHECK(removedFolders(f.dir.path()).empty());
+	f.call("profile.activate", {{"name", "Default"}});
+	f.start();
+	CHECK(f.scale() == 1.5);
 }
 #endif

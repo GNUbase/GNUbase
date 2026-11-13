@@ -100,7 +100,12 @@ on macOS and Linux.
   can't be put back keeping `profile-switch`, from which the next start puts them back before it switches; a switch
   that GNUbase didn't finish undone at the next start, then done, or kept for later when its files can't be put back,
   with `next` and `unfinished` in `profile.list` and the active profile's rename refused, and dropped by Delete
-  program preferences; a switch to a folder that is the active profile's refused.
+  program preferences; a switch to a folder that is the active profile's refused; deleted folders (#1284): 20
+  switches back and forth and a deleted profile added again while something has the deleted folders open, what is
+  left in `profile-removed-*` folders deleted at the next start, and on Linux and macOS, with a folder in it whose file
+  can't be deleted, a deleted profile gone at once and added again, the next profile's folder gone from `profiles` at
+  once after a switch and made again without that folder by the switch back, and a switch going ahead when such a
+  `profile-switch` was left.
 - `tests/profiles_ui_tests.cpp`: the Profile Manager from the Edit menu, adding, duplicating, renaming and deleting
   profiles through its name field and buttons, a taken name's error, and Activate Profile saying that the profile
   becomes active at the next start; Export and Import through the file dialogs, answered as `ui_file_dialog` does;

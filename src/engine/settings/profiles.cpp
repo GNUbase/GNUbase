@@ -180,7 +180,7 @@ namespace gnubase::engine::settings
 		// something can't be deleted would stay under its name. So the folder first gets a name of its own in the
 		// settings folder, which frees its name at once; not in profiles, where it would be a profile. One that can't
 		// be renamed, such as while a file in it is open or when profiles is on another volume, is deleted under its
-		// name. What stays of a renamed one goes at the next switch (removeLeftovers).
+		// name. What stays of a renamed one goes at the next start (removeLeftovers, from switchProfile).
 		void removeFolder(const fs::path& directory, const fs::path& folder, std::error_code& error)
 		{
 			// Two processes that pick the same name are no harm: the second rename fails, or replaces an empty folder.
