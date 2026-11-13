@@ -1397,6 +1397,15 @@
 	{
 		decorator: svg-ninepatch(button-pressed.svg, 6 6 6 6);
 	}
+	.mixer-channel
+	{
+	}
+	.mixer-channel-name
+	{
+	}
+	.transport .display
+	{
+	}
 	.time-display.size-0
 	{
 		font-size: 32dp;

@@ -334,6 +334,9 @@ TEST_CASE("the default theme's bars, tabs and inspector headers are flat, the ot
 			CHECK(last(".track-list").find("background-color: " + background) == std::string::npos);
 			CHECK(last(".track-list listitem.selected").find("list-item-selected.svg") != std::string::npos);
 			CHECK(file("list-item-selected.svg").find("stroke=") != std::string::npos);
+			// Mixer channel strips as raised panels, the transport bar's time displays as plain digits.
+			CHECK(last(".mixer-channel").find("border-radius") != std::string::npos);
+			CHECK(last(".transport .display").find("decorator: none") != std::string::npos);
 			for (const char* arrow : {"dropdown-button-normal.svg", "disclosure-open.svg", "disclosure-closed.svg"})
 			{
 				INFO(arrow);

@@ -28,8 +28,10 @@ how each state looks (CLAUDE.md, "UI conventions"). The code is in `src/ui/theme
   toolbars are in the window's dark tone. Menu buttons that show a value look like drop-down fields with an arrow,
   tabs are names over an accent line, zones are rounded panels over the window's background, the event display's
   lanes are on the panels' surface with the track list a step lighter, track list rows are raised, a selected list
-  item is tinted and outlined in the second accent, inspector section headers are bold names after a disclosure
-  arrow, and value fields have no accent line. The generator's `flat_rules` gives every
+  item is tinted and outlined in the second accent, inspector section headers are bold names on a tile after a
+  disclosure arrow, value and text fields and drop-down lists are raised fields lighter than their panel, without
+  the accent line, mute, solo and record buttons are filled boxes, mixer channel strips are raised panels, and the
+  transport bar's time displays are plain digits. The generator's `flat_rules` gives every
   theme the same selectors (the check below): the default theme its flat look, the others what their general rules
   already give, so they keep their framed look. Their drop-down button and disclosure skins are the plain button's.
   Rules for buttons in bars skip toggle and primary buttons (`:not(.toggle):not(.primary)`), which keep their skins.
@@ -88,7 +90,8 @@ The theme styles RmlUi's controls by their tags and states, and GNUbase's contai
   white keys lighter than its black keys, dims the audio part editor's events that their part hides entirely, and the
   high contrast theme meets WCAG's contrast ratios. The default theme's bar buttons, tabs and inspector headers are
   flat, the other themes' framed, their arrow skins the plain button's, and no bar rule reaches toggle or primary
-  buttons; the default theme's lanes and track list are off the window's background, the other themes' lanes on it.
+  buttons; the default theme's lanes and track list are off the window's background, the other themes' lanes on it,
+  and its mixer strips and transport displays follow the mockup.
 - `tests/stylerules_tests.cpp`: C++ and Lua code (`src`, `resources`, `tests/lua`) never sets a style property other
   than geometry from data (position, size, transform), and documents and shared style sheets never name a theme.
 - `tests/window_tests.cpp`: a page of widgets (`tests/data/ui/widgets.rml`) in every theme, and in the default theme

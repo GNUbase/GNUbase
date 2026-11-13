@@ -194,7 +194,8 @@ def nine_svg(name: str, theme: dict) -> tuple[int, int, str, dict]:
         bg = mix(c["surface"], c["surfaceRaised"], .55)
     elif name == "display":
         bg = mix(c["background"], "#000000", .20); border = mix(c["border"], c["accent"], .20)
-        if theme["flat"]: border = mix(c["border"], c["background"], .35)  # a quiet field, no accent line
+        if theme["flat"]:  # a raised field, lighter than its panel, without the accent line
+            bg = mix(c["surfaceRaised"], c["border"], .55); border = mix(c["border"], c["surfaceRaised"], .2)
         else: extra = f'<line x1="5" y1="{h-4.5}" x2="{w-5}" y2="{h-4.5}" stroke="{c["accent"]}" opacity=".35"/>'
     elif name == "tooltip":
         bg = mix(c["surfaceRaised"], c["background"], .25); border = mix(c["border"], c["textMuted"], .25)
@@ -223,7 +224,8 @@ def nine_svg(name: str, theme: dict) -> tuple[int, int, str, dict]:
     elif name.startswith("toggle-"):
         state = name.removeprefix("toggle-"); r = 3
         colors = {"mute": c["warning"], "solo": c["accent"], "record": c["danger"], "monitor": c["success"]}
-        if theme["flat"] and state in ("off", "hover"): bg = mix(c["surface"], c["border"], .45 if state == "off" else .8); border = "none"
+        if theme["flat"] and state in ("off", "hover"):
+            bg = mix(c["surfaceRaised"], c["border"], .7 if state == "off" else 1); border = "none"
         elif state == "hover": bg = mix(bg, accent, .14); border = mix(border, accent, .5)
         elif state in colors:
             bg = mix(colors[state], c["background"], .10 if theme["glow"] else .24); border = colors[state]
@@ -249,7 +251,8 @@ def nine_svg(name: str, theme: dict) -> tuple[int, int, str, dict]:
                  'stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>')
         return w, h, svg_doc(w, h, rect(w, h, bg, border, r, 1, None, .5) + arrow), {"left": 6, "top": 6, "right": 20, "bottom": 6}
     elif name.startswith("field-") or name.startswith("dropdown-"):
-        state = name.split("-")[-1]; bg = mix(c["background"], c["surface"], .28)
+        state = name.split("-")[-1]
+        bg = mix(c["surface"], c["surfaceRaised"], .7) if theme["flat"] else mix(c["background"], c["surface"], .28)
         if state in ("focus", "open"): border = accent; extra = glow_rect(w, h, accent, r) if theme["glow"] else ""
         elif state == "hover": border = mix(border, accent, .55)
         elif state == "disabled": bg = mix(c["surface"], c["background"], .35); border = mix(border, bg, .45)
@@ -456,8 +459,8 @@ def flat_rules(theme: dict, skin, on_accent: str) -> list:
         (".track-list listitem.selected", {"decorator": skin("list-item-selected")}, {}),
         # Inspector sections: a bold name after a disclosure arrow, pointing down while the section is open
         (".inspector-section button.section-header",
-         {"decorator": skin("disclosure-open"), "background-color": "transparent", "color": c["text"],
-          "font-weight": "600", "padding-left": "22dp"},
+         {"decorator": skin("disclosure-open"), "background-color": mix(c["surface"], c["surfaceRaised"], .8),
+          "border-radius": f"{r['control']}dp", "color": c["text"], "font-weight": "600", "padding-left": "22dp"},
          {"decorator": skin("disclosure-open"), "color": c["text"]}),
         (".inspector-section.collapsed button.section-header", {"decorator": skin("disclosure-closed")},
          {"decorator": skin("disclosure-closed")}),
@@ -465,6 +468,12 @@ def flat_rules(theme: dict, skin, on_accent: str) -> list:
          {"background-color": mix(c["surfaceRaised"], accent, .1)}, {"decorator": skin("button-hover")}),
         (".inspector-section button.section-header:active", {"background-color": pressed},
          {"decorator": skin("button-pressed")}),
+        # Mixer channel strips as raised panels, a line of the window's background between them; the transport bar's time displays
+        # as plain digits
+        (".mixer-channel", {"background-color": c["surfaceRaised"], "border-radius": f"{r['panel']}dp",
+                            "border-right-color": c["background"]}, {}),
+        (".mixer-channel-name", {"font-weight": "600"}, {}),
+        (".transport .display", {"decorator": "none"}, {}),
     ]
     return [(selector, flat_look if theme["flat"] else framed) for selector, flat_look, framed in pairs]
 

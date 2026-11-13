@@ -1421,7 +1421,8 @@
 	.inspector-section button.section-header
 	{
 		decorator: svg-ninepatch(disclosure-open.svg, 6 6 6 20);
-		background-color: transparent;
+		background-color: #161a30;
+		border-radius: 5dp;
 		color: #f1f4ff;
 		font-weight: 600;
 		padding-left: 22dp;
@@ -1437,6 +1438,20 @@
 	.inspector-section button.section-header:active
 	{
 		background-color: #0b3e4c;
+	}
+	.mixer-channel
+	{
+		background-color: #171c32;
+		border-radius: 6dp;
+		border-right-color: #090b18;
+	}
+	.mixer-channel-name
+	{
+		font-weight: 600;
+	}
+	.transport .display
+	{
+		decorator: none;
 	}
 	.time-display.size-0
 	{
