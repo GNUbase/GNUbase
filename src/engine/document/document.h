@@ -496,11 +496,22 @@ namespace gnubase::engine
 		double curve = 0.0;
 	};
 
-	// An audio event's original and quantized starts (#145), while its quantized position has not been changed again.
+	// What quantizing and the quantize panel's length changes make of an audio event (#910): where it plays, the
+	// section of its clip it plays, and the crossfade into it from the event before. As a note's timing, so that
+	// resetting can put all of it back.
+	struct EventTiming
+	{
+		time::Position position; // in the track's time base
+		time::Samples offset = 0;
+		time::Samples length = 0;
+		Crossfade crossfade;
+	};
+
+	// An audio event's original and quantized timings (#145), while its quantized position has not been changed again.
 	struct EventQuantizeOrigin
 	{
-		time::Position original;
-		time::Position quantized;
+		EventTiming original;
+		EventTiming quantized;
 	};
 
 	// Plays a section of a clip on an audio track.
@@ -532,9 +543,9 @@ namespace gnubase::engine
 		// Where it is in the stack of its track's events (#99): where events overlap, the one whose frontOf is highest
 		// plays. 0 orders it by its id, so an event added later is in front; event.toFront gives it a new id here.
 		ObjectId front = 0;
-		// Where it was before quantizing (#145) first moved it, and where quantizing put it. While it is there,
-		// quantizing starts from the original position and resetting puts it back; moved by other means, it is
-		// where it is.
+		// Where it was before quantizing (#145) first moved it, and where quantizing and the quantize panel's
+		// length changes (#910) left it. While it is there, quantizing starts from the original position and
+		// resetting puts it back; moved by other means, it is where it is.
 		std::optional<EventQuantizeOrigin> quantizeOrigin;
 	};
 
@@ -1606,6 +1617,12 @@ namespace gnubase::engine
 	inline bool operator==(const VolumePoint& a, const VolumePoint& b)
 	{
 		return std::tie(a.position, a.volume, a.curve) == std::tie(b.position, b.volume, b.curve);
+	}
+
+	inline bool operator==(const EventTiming& a, const EventTiming& b)
+	{
+		return std::tie(a.position, a.offset, a.length, a.crossfade) ==
+			std::tie(b.position, b.offset, b.length, b.crossfade);
 	}
 
 	inline bool operator==(const EventQuantizeOrigin& a, const EventQuantizeOrigin& b)
