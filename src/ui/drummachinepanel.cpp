@@ -297,7 +297,8 @@ namespace gnubase::ui
 			for (const Json& pad : channel->value("pads", Json::array()))
 			{
 				std::string name = pad.value("name", std::string());
-				if (const Json* clip = findIn(project, "clips", pad.value("sample", Json())); name.empty() && clip != nullptr)
+				if (const Json* clip = findIn(project, "clips", pad.value("sample", Json()));
+					name.empty() && clip != nullptr)
 					name = clip->value("name", std::string());
 				names[pad.value("pad", 0)] = name;
 			}
