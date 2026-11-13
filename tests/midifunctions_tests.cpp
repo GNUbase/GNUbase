@@ -2466,6 +2466,41 @@ TEST_CASE(
 		CHECK(storedPitches(onlyPartJson(client, added)) == std::vector<int>{57, 60, 64, 64});
 	}
 
+	// Without includeInserts, the track's MIDI modifiers stay on the track and play after the stored pitch, so a note
+	// that the part's global transpose alone takes beyond 0-127 still plays and is kept.
+	const auto mergeOntoItself = [&]()
+	{
+		run(client, "midi.merge",
+			{{"start", 0}, {"end", 2 * g_eightQuarters}, {"tracks", {track}}, {"destination", track},
+				{"eraseDestination", true}});
+		return storedPitches(onlyPartJson(client, track));
+	};
+
+	SECTION("without includeInserts, a note above 127 with the global transpose that the track's modifiers bring back")
+	{
+		// 125 + 5 - 12 plays 118.
+		setModifiers(client, track, Json{{"transpose", -12}});
+		addPartWith(client, track, 8 * g_quarter, 4 * g_quarter, {{0, 125}});
+		const auto before = playedOn(fixture.engine, track);
+		REQUIRE(before ==
+			std::vector<std::vector<int64_t>>{{0, 53, 0}, {24000, 57, 0}, {24000, 57, 0}, {g_eightQuarters, 118, 0}});
+		CHECK(mergeOntoItself() == std::vector<int>{60, 64, 64, 125});
+		CHECK(playedOn(fixture.engine, track) == before);
+	}
+
+	SECTION("without includeInserts, a note below 0 with the global transpose that the track's modifiers bring back")
+	{
+		// From the part with the note on, a transpose event of -5: 2 - 5 + 12 plays 9.
+		run(client, "transpose.add", {{"position", 8 * g_quarter}, {"value", -5}});
+		setModifiers(client, track, Json{{"transpose", 12}});
+		addPartWith(client, track, 8 * g_quarter, 4 * g_quarter, {{0, 2}});
+		const auto before = playedOn(fixture.engine, track);
+		REQUIRE(before ==
+			std::vector<std::vector<int64_t>>{{0, 77, 0}, {24000, 81, 0}, {24000, 81, 0}, {g_eightQuarters, 9, 0}});
+		CHECK(mergeOntoItself() == std::vector<int>{2, 60, 64, 64});
+		CHECK(playedOn(fixture.engine, track) == before);
+	}
+
 	SECTION("each note gets the global transpose at its own position")
 	{
 		// From the second quarter on, the transpose track plays 2 lower: 64 plays 67, and the new part stores it as 64.

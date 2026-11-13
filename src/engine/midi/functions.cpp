@@ -1063,7 +1063,7 @@ namespace gnubase::engine::midi
 			// As playback plays them (compilePart in rendersnapshot.cpp): through the track's drum map or the chord
 			// track, then with the part's transpose and velocity, which the new part doesn't have, its global
 			// transpose and with Include Inserts the track's MIDI modifiers; the new part's global transpose then
-			// comes off the pitch that plays.
+			// comes off the pitch that plays. Without Include Inserts, the difference of the two global transposes.
 			const TrackPitches sourcePitches(project, part.track);
 			const ArticulationMap* articulations = articulationMapOf(project, part.track);
 			Modifiers modifiers = settings.includeInserts ? trackModifiers(project, part.track) : Modifiers();
@@ -1082,16 +1082,29 @@ namespace gnubase::engine::midi
 				const Ticks at = partFrom + std::max({moved, Ticks{0}, -partFrom});
 				if (at >= partTo || !inRange(at))
 					continue;
-				// With its global transpose before the modifiers' note ranges, as playback adds it, then less the new
-				// part's where it lands: the new part can't play a pitch that this takes beyond 0-127.
+				const int global = globalAt(project, {part.rootKey, part.independent}, partFrom + note.position);
+				const int newGlobal = globalAt(project, main, at);
 				Modifiers transposed = modifiers;
-				transposed.transpose += globalAt(project, {part.rootKey, part.independent}, partFrom + note.position);
-				if (!modifyNote(transposed, seed, copy.pitch, copy.velocity))
-					continue;
-				const int pitch = copy.pitch - globalAt(project, main, at);
-				if (pitch < 0 || pitch > 127)
-					continue;
-				copy.pitch = static_cast<uint8_t>(pitch);
+				if (settings.includeInserts)
+				{
+					// With its global transpose before the modifiers' note ranges, as playback adds it, then less the
+					// new part's where it lands: the new part can't play a pitch that this takes beyond 0-127.
+					transposed.transpose += global;
+					if (!modifyNote(transposed, seed, copy.pitch, copy.velocity))
+						continue;
+					const int pitch = copy.pitch - newGlobal;
+					if (pitch < 0 || pitch > 127)
+						continue;
+					copy.pitch = static_cast<uint8_t>(pitch);
+				}
+				else
+				{
+					// The track's modifiers stay on the track and play after the stored pitch, so nothing lies between
+					// the two global transposes: only their difference goes into the note.
+					transposed.transpose += global - newGlobal;
+					if (!modifyNote(transposed, seed, copy.pitch, copy.velocity))
+						continue;
+				}
 				const Ticks length = note.length > 0 ? modifyLength(modifiers, seed, note.length) : 0;
 				copy.position = at;
 				copy.length = std::min(at + length, partTo) - at;
