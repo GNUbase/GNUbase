@@ -358,7 +358,7 @@ TEST_CASE(
 			.get<uint64_t>();
 	};
 	const uint64_t loose = event(0);
-	window.call("event.toPart", {{"events", {event(96000)}}});
+	const auto audioPart = window.call("event.toPart", {{"events", {event(96000)}}}).at("events").at(0).get<uint64_t>();
 	const auto row = [](uint64_t track)
 	{ return "#track-list listitem[value=\"" + std::to_string(track) + "\"] .track-name"; };
 	REQUIRE(window.app.waitUntil([&] { return window.elements(row(audio)).size() == 1; }));
@@ -371,6 +371,9 @@ TEST_CASE(
 	run("track.createChordEventsSelected");
 	REQUIRE(window.app.waitUntil([&] { return window.ran("chord.fromAudio").size() == 1; }));
 	CHECK(window.ran("chord.fromAudio")[0] == Json{{"events", {loose}}});
+	// A selected audio part is a selection too, of nothing to make chord events from: not the track's loose events.
+	window.display.select({audioPart});
+	run("track.createChordEventsSelected");
 
 	// The selected MIDI track: all its parts; with a part selected, only that one.
 	window.click(row(midi));
@@ -386,7 +389,7 @@ TEST_CASE(
 	window.click("#create-chord-events");
 	REQUIRE(window.app.waitUntil([&] { return window.ran("chord.fromMidi").size() == 1; }));
 	CHECK(window.ran("chord.fromMidi")[0].at("parts") == Json{second});
-	CHECK(window.ran("chord.fromAudio").size() == 1); // no audio event selected
+	CHECK(window.ran("chord.fromAudio").size() == 1); // neither with the audio part nor here
 	run("track.mapToChordTrackSelected");
 	REQUIRE(window.app.waitUntil([&] { return window.elements("#map-to-chord-track-dialog").size() == 1; }));
 	window.click("#map-to-chord-track");
