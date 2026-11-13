@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -240,6 +241,7 @@ TEST_CASE("a channel strip's name shows its track's color, which the style sheet
 	// Back to the default color: the theme's again.
 	app.call("track.set", {{"track", track}, {"color", nullptr}});
 	REQUIRE(app.waitUntil([&] { return !has(element(app, window, guitar), "colored"); }));
+	CHECK(!element(app, window, guitar).at("attributes").contains("color"));
 	CHECK(!has(element(app, window, guitar), "bright"));
 	name = findElement(app, window, guitar);
 	REQUIRE(name != nullptr);
@@ -260,6 +262,7 @@ TEST_CASE("the lower zone's mixer in the default theme looks as its golden image
 	app.call("channel.set", {{"channel", vocals.at("channel").at("id")}, {"solo", true}, {"pan", -0.5}});
 	app.ui().key(std::nullopt, "Alt+F3");
 	REQUIRE(app.waitUntil([&] { return strips(app, std::nullopt, "#lower-zone").size() == 6; }));
+	app.appUi().docking().setSize("project", "lower", 320); // tall enough for the whole strips
 	REQUIRE(app.waitUntil(
 		[&]
 		{
@@ -270,9 +273,9 @@ TEST_CASE("the lower zone's mixer in the default theme looks as its golden image
 		}));
 	app.shell().step(std::chrono::milliseconds(0));
 
-	// The lower zone only, so that changes elsewhere in the window don't touch this image.
+	// The strips only, so that changes elsewhere in the window or the zone don't touch this image.
 	const ui::Image window = app.screenshot("lower-zone-mixer-window", {1200, 700});
-	const Json box = element(app, std::nullopt, "#lower-zone").at("box");
+	const Json box = element(app, std::nullopt, "#lower-zone .mixer-channels").at("box");
 	const int x = box.at("x").get<int>();
 	const int y = box.at("y").get<int>();
 	const int width = box.at("width").get<int>();
@@ -284,8 +287,8 @@ TEST_CASE("the lower zone's mixer in the default theme looks as its golden image
 	ui::Image zone{width, height, {}};
 	for (int row = y; row < y + height; ++row)
 	{
-		const auto begin = window.pixels.begin() + (((static_cast<ptrdiff_t>(row) * window.width) + x) * 4);
-		zone.pixels.insert(zone.pixels.end(), begin, begin + (static_cast<ptrdiff_t>(width) * 4));
+		const auto begin = window.pixels.begin() + (((static_cast<std::ptrdiff_t>(row) * window.width) + x) * 4);
+		zone.pixels.insert(zone.pixels.end(), begin, begin + (static_cast<std::ptrdiff_t>(width) * 4));
 	}
 	test::UiApp::checkGolden("lower-zone-mixer", zone);
 }

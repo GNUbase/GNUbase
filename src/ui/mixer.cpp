@@ -693,11 +693,16 @@ namespace gnubase::ui
 			// style the text over it by the classes.
 			if (name->GetAttribute<Rml::String>("color", "") != channel.color)
 			{
-				name->SetAttribute("color", channel.color);
 				if (channel.color.empty())
+				{
+					name->RemoveAttribute("color");
 					name->RemoveProperty("background-color");
+				}
 				else
+				{
+					name->SetAttribute("color", channel.color);
 					name->SetProperty("background-color", channel.color);
+				}
 				name->SetClass("colored", !channel.color.empty());
 				name->SetClass("bright", bright(channel.color));
 			}

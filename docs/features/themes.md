@@ -74,9 +74,9 @@ The theme styles RmlUi's controls by their tags and states, and GNUbase's contai
   per scale for any number of widgets of any size; decorators find their files next to the style sheet.
 - `tests/theme_tests.cpp`: every theme's style sheet uses all its skins and styles the same widgets and states as the
   others, draws the focus ring on every focusable widget in each of its states, gives the key editor's piano keyboard
-  white keys lighter than its black keys, gives mixer strip names text that is legible on every color of its track
-  palette, dims the audio part editor's events that their part hides entirely, and the high contrast theme meets
-  WCAG's contrast ratios.
+  white keys lighter than its black keys, gives mixer strip names text with WCAG's 4.5:1 contrast on any track color,
+  dims the audio part editor's events that their part hides entirely, and the high contrast theme meets WCAG's
+  contrast ratios.
 - `tests/stylerules_tests.cpp`: C++ and Lua code (`src`, `resources`, `tests/lua`) never sets a style property other
   than geometry from data (position, size, transform), and documents and shared style sheets never name a theme.
 - `tests/window_tests.cpp`: a page of widgets (`tests/data/ui/widgets.rml`) in every theme, and in the default theme

@@ -108,15 +108,16 @@ windows' places are kept in `ui.layout` and workspaces ([workspaces.md](workspac
   mixer, refused for unknown ids, types and mixers, not undo steps, without channels that are gone, and saved and
   loaded; notes and pictures as undo steps, copied with a track, saved and loaded.
 - `tests/mixerwindow_tests.cpp` drives the app with `ui::Automation`: F3 opens a mixer window with the busses and the
-  channels in the track list's order and closes it again; tracks added, renamed, moved and removed by the engine show
-  at once; the fader, the dB text and the mute and solo buttons both ways; two windows, the Visibility tab and the
-  type filter hiding channels in one window only, Show All Channels, and `mixer.set` from the engine; Alt+F3 showing
-  the lower zone's mixer with its own view and hiding the zone again; a closed window letting go of its mixer; the
-  setup pane's Pictures, Notepad and Fader, notes from the engine and typed in the notepad, a picture shown and
-  removed, and channel names dragged onto others reordering the tracks, while busses stay. A strip's name shows its
-  track's color as `track.set` changes it, marked bright or not, and the theme's once the color is gone. A fader and a send's level
-  dragged and the panner turned while the engine answers late follow the mouse, never back, end where the engine is,
-  and are one undo step; values set through MCP show at once, and during a drag when it ends. A fader step the engine
-  refuses, its track being gone, shows in the command log, leaves no undo step and, once an undo brings the track
-  back, the strip made again shows the engine's volume; a strip made again while its fader's step is in flight shows
-  the engine's volume at once, not the widget's default.
+  channels in the track list's order and closes it again; tracks added, renamed, moved and removed by the engine show at
+  once; the fader, the dB text and the mute and solo buttons both ways; two windows, the Visibility tab and the type
+  filter hiding channels in one window only, Show All Channels, and `mixer.set` from the engine; Alt+F3 showing the
+  lower zone's mixer with its own view and hiding the zone again; a closed window letting go of its mixer; the setup
+  pane's Pictures, Notepad and Fader, notes from the engine and typed in the notepad, a picture shown and removed, and
+  channel names dragged onto others reordering the tracks, while busses stay. A strip's name shows its track's color as
+  `track.set` changes it, marked bright or not, and the theme's once the color is gone. A fader and a send's level
+  dragged and the panner turned while the engine answers late follow the mouse, never back, end where the engine is, and
+  are one undo step; values set through MCP show at once, and during a drag when it ends. A fader step the engine
+  refuses, its track being gone, shows in the command log, leaves no undo step and, once an undo brings the track back,
+  the strip made again shows the engine's volume; a strip made again while its fader's step is in flight shows the
+  engine's volume at once, not the widget's default. The lower zone's mixer in the default theme, with colored and plain
+  names, is compared with the golden image `lower-zone-mixer.png`.

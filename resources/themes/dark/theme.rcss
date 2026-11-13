@@ -746,12 +746,12 @@
 	}
 	.mixer-channel-name.colored
 	{
-		color: #f3f4f5;
+		color: #ffffff;
 		border-radius: 3dp;
 	}
 	.mixer-channel-name.colored.bright
 	{
-		color: #151617;
+		color: #000000;
 	}
 	.midi-editor .editor-part, .in-place-editor .editor-part
 	{
