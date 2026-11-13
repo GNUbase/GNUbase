@@ -570,7 +570,7 @@ TEST_CASE("a MIDI track heard again after playback moved while it was silent cha
 	CHECK(played() == chased);
 
 	// Without chasing, the channel's values alone, as at a jump. Muted by its button, its strip sends the program and
-	// CC 7 that played into its mute, which it keeps as nothing chases them, before the channel's values.
+	// CC 7 that played into its mute, which it keeps as nothing chases them, after the channel's values, so they win.
 	for (const char* key : {"midi.chaseControllers", "midi.chasePrograms"})
 		run(song.client, "settings.set", {{"key", key}, {"value", false}});
 	mute(true);
@@ -578,8 +578,9 @@ TEST_CASE("a MIDI track heard again after playback moved while it was silent cha
 	run(song.client, "transport.play");
 	pastTheSecondCc7();
 	mute(false);
-	ControllerBytes unchased = button ? ControllerBytes{{0xC0, 9}, {0xB0, 7, 64}} : ControllerBytes{};
-	unchased.insert(unchased.end(), channelValues.begin(), channelValues.end());
+	ControllerBytes unchased = channelValues;
+	if (button)
+		unchased.insert(unchased.end(), {{0xC0, 9}, {0xB0, 7, 64}});
 	CHECK(played() == unchased);
 	for (const char* key : {"midi.chaseControllers", "midi.chasePrograms"})
 		run(song.client, "settings.reset", {{"key", key}});
@@ -624,6 +625,34 @@ TEST_CASE("a pedal that the chase of a MIDI track heard again presses goes up wh
 	run(song.client, "track.set", {{"track", song.midi}, {"enabled", true}});
 	CHECK(played() == ControllerBytes{{0xB0, 7, 50}, {0xB0, 64, 127}});
 	// Its mute releases the pedal, and unmuting presses it again.
+	mute(true);
+	CHECK(played() == ControllerBytes{{0xB0, 64, 0}});
+	mute(false);
+	CHECK(played() == ControllerBytes{{0xB0, 64, 127}});
+}
+
+TEST_CASE("a MIDI track heard again while the transport stands presses its pedal once, which its mute releases",
+	"[integration]")
+{
+	const int blockSize = GENERATE(17, 64);
+	CAPTURE(blockSize);
+	Song song(blockSize);
+	const ObjectId channel = channelOf(song.client, song.midi);
+	// The sustain pedal goes down before the cursor; the channel's MIDI volume goes out first.
+	run(song.client, "controller.add",
+		{{"part", song.part(1)}, {"controllers", {{{"position", ticks(100)}, {"number", 64}, {"value", 1.0}}}}});
+	run(song.client, "channel.set", {{"channel", channel}, {"midiVolume", 50}});
+	run(song.client, "track.set", {{"track", song.midi}, {"enabled", false}});
+	run(song.client, "midi.capture", {{"start", true}});
+	run(song.client, "transport.locate", {{"position", 1000}}); // a move while it is disabled
+	run(song.client, "audio.render", {{"frames", 128}});
+	run(song.client, "midi.capture");
+	const auto played = [&song] { return controllersPlayed(song.client, false); };
+	const auto mute = [&](bool on) { run(song.client, "channel.set", {{"channel", channel}, {"mute", on}}); };
+
+	run(song.client, "track.set", {{"track", song.midi}, {"enabled", true}});
+	CHECK(played() == ControllerBytes{{0xB0, 7, 50}, {0xB0, 64, 127}});
+	CHECK(played().empty());
 	mute(true);
 	CHECK(played() == ControllerBytes{{0xB0, 64, 0}});
 	mute(false);
@@ -792,20 +821,12 @@ TEST_CASE("unmuting a MIDI track sends the latest values of the controllers, pro
 		run(song.client, "audio.render", {{"frames", 2000}});
 	}
 
-	// In the order they first came: the button drops the controller at 500 already, which the one at 1400
+	// In the order of their latest events: the button drops the controller at 500 already, which the one at 1400
 	// replaces. Then the controller where it unmutes.
 	std::vector<Played> expected;
-	std::vector<std::vector<int>> sent{{0xE0}, {0xB0, 11, 100}, {0xC0, 7}};
-	if (button)
-	{
-		sent.insert(sent.begin(), {0xB0, 1, 127});
-	}
-	else
-	{
+	if (!button)
 		expected.push_back({500, {0xB0, 1, 32}});
-		sent.push_back({0xB0, 1, 127});
-	}
-	sent.push_back({0xB0, 2, 127});
+	const std::vector<std::vector<int>> sent{{0xE0}, {0xB0, 11, 100}, {0xC0, 7}, {0xB0, 1, 127}, {0xB0, 2, 127}};
 	for (const std::vector<int>& bytes : sent)
 		expected.push_back({1600, bytes});
 	expected.push_back({1800, {0xB0, 1, 0}});
@@ -879,6 +900,86 @@ namespace
 		run(song.client, "audio.render", {{"frames", 64}});
 		return controllerValues(song.client, number);
 	}
+}
+
+TEST_CASE("unmuting a MIDI track where its controller lane has a new value sends that value after what its mute kept",
+	"[integration]")
+{
+	// A mute lane mutes from 1000 to 1600; a CC 7 lane steps to 64 at 1200, into the mute, and to 127 at 1600.
+	const int blockSize = GENERATE(64, 100, 333); // 1600 on a block boundary or inside a block
+	const int64_t start = GENERATE(0, 1300);      // playback starts before the mute or inside it
+	INFO("block size " << blockSize << ", start " << start);
+	Song song(blockSize);
+	const auto lane = [&song](const Json& target, const Json& points)
+	{
+		const ObjectId id =
+			idOf(run(song.client, "automationLane.add", {{"track", song.midi}, {"target", target}}), "lane");
+		run(song.client, "automationPoint.add", {{"lane", id}, {"points", points}});
+	};
+	lane({{"type", "mute"}},
+		{{{"position", 0}, {"value", 0.0}}, {{"position", ticks(1000)}, {"value", 1.0}},
+			{{"position", ticks(1600)}, {"value", 0.0}}});
+	lane({{"type", "controller"}, {"number", 7}},
+		{{{"position", 0}, {"value", 0.0}, {"shape", "step"}},
+			{{"position", ticks(1200)}, {"value", 0.5}, {"shape", "step"}},
+			{{"position", ticks(1600)}, {"value", 1.0}, {"shape", "step"}}});
+	run(song.client, "midi.capture", {{"start", true}});
+	if (start > 0)
+		run(song.client, "transport.locate", {{"position", start}});
+	run(song.client, "transport.play");
+	run(song.client, "audio.render", {{"frames", 2000 - start}});
+
+	// The lane's value where it unmutes is the latest: whatever the mute kept goes out before it. Positions are the
+	// device's frames, which start with playback.
+	std::vector<Played> volumes;
+	for (const Played& played : captured(song.client))
+		if (played.bytes.size() == 3 && played.bytes[0] == 0xB0 && played.bytes[1] == 7)
+			volumes.push_back(played);
+	REQUIRE(!volumes.empty());
+	CHECK(volumes.back() == Played{1600 - start, {0xB0, 7, 127}});
+	CHECK(std::none_of(volumes.begin(), volumes.end(),
+		[start](const Played& played) { return played.position + start > 1000 && played.position + start < 1600; }));
+}
+
+TEST_CASE("a project loaded in place of another doesn't get what the old one's MIDI track mute kept, nor its pedals",
+	"[integration]")
+{
+	// The old project's MIDI track presses the sustain pedal at 100; muted by its button at 512, which releases the
+	// pedal, it keeps the pedal and CC 1 at 1000 for unmuting. The loaded project has the same tracks, so its MIDI
+	// track has the same channel id, without these events.
+	const bool muted = GENERATE(false, true);
+	INFO((muted ? "muted" : "not muted"));
+	const gnubase::test::TempDir dir;
+	Song song(64);
+	const ObjectId channel = channelOf(song.client, song.midi);
+	const std::string file = (dir.path() / "next.dawproject").u8string();
+	run(song.client, "project.save", {{"path", file}});
+	song.addControllers(1,
+		{{{"position", ticks(100)}, {"number", 64}, {"value", 1.0}},
+			{{"position", ticks(1000)}, {"number", 1}, {"value", 1.0}}});
+	run(song.client, "midi.capture", {{"start", true}});
+	run(song.client, "transport.play");
+	run(song.client, "audio.render", {{"frames", 512}});
+	if (muted)
+	{
+		run(song.client, "channel.set", {{"channel", channel}, {"mute", true}});
+		run(song.client, "audio.render", {{"frames", 640}});
+	}
+	CHECK(controllerValues(song.client, 64) == (muted ? std::vector<int>{127, 0} : std::vector<int>{127}));
+
+	run(song.client, "project.load", {{"path", file}});
+	REQUIRE(channelOf(song.client, song.midi) == channel);
+	run(song.client, "midi.capture", {{"start", true}});
+	run(song.client, "transport.play");
+	run(song.client, "audio.render", {{"frames", 128}});
+	run(song.client, "channel.set", {{"channel", channel}, {"mute", true}});
+	run(song.client, "audio.render", {{"frames", 128}});
+	run(song.client, "channel.set", {{"channel", channel}, {"mute", false}});
+	run(song.client, "audio.render", {{"frames", 128}});
+	const auto oldValue = [](const Played& played)
+	{ return played.bytes.size() == 3 && played.bytes[0] == 0xB0 && (played.bytes[1] == 64 || played.bytes[1] == 1); };
+	const std::vector<Played> played = captured(song.client);
+	CHECK(std::none_of(played.begin(), played.end(), oldValue));
 }
 
 TEST_CASE(

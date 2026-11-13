@@ -487,9 +487,6 @@ TEST_CASE("headless runs and tests open the dummy device stopped, whatever the u
 }
 
 #ifdef GNUBASE_APP
-#ifndef _WIN32
-#include <sys/wait.h>
-#endif
 
 namespace
 {
@@ -498,14 +495,7 @@ namespace
 	{
 		const std::string command = "\"" + std::string(GNUBASE_APP) + "\" " + arguments + " < \"" + in.u8string() +
 			"\" > \"" + out.u8string() + "\"";
-#ifdef _WIN32
-		// cmd.exe removes the outer quotes. As UTF-16, so that paths with any characters come through.
-		// NOLINTNEXTLINE(bugprone-command-processor): fixed test command
-		return _wsystem(std::filesystem::u8path("\"" + command + "\"").wstring().c_str());
-#else
-		const int status = std::system(command.c_str()); // NOLINT(bugprone-command-processor): fixed test command
-		return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
-#endif
+		return gnubase::test::runCommand(command);
 	}
 }
 

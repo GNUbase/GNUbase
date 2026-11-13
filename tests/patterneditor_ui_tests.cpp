@@ -5,6 +5,8 @@
 #include "engine/time/tempomap.h"
 #include "ui/automation.h"
 #include "ui/eventdisplay.h"
+#include "ui/midieditor.h"
+#include "ui/patterneditor.h"
 #include "uiapp.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -101,11 +103,23 @@ namespace
 			return indexes;
 		}
 
-		// Lets the editor hear what the engine announced.
+		// Waits until the editor has the pattern as the engine has it: it hears of a change and then asks for the
+		// project, which takes a while in sanitized builds.
 		void settle()
 		{
-			int steps = 0;
-			app.waitUntil([&] { return ++steps > 5; });
+			REQUIRE(app.waitUntil(
+				[&]
+				{
+					ui::MidiEditor* shown = app.appUi().editorWindow();
+					const ui::PatternEditor* editor = shown != nullptr ? shown->patternEditor() : nullptr;
+					if (editor == nullptr)
+						return false;
+					const Json expected = patternJson();
+					for (const Json& each : editor->project().value("patterns", Json::array()))
+						if (each.at("id") == pattern)
+							return each == expected;
+					return false;
+				}));
 		}
 
 		void click(const ui::Target& target, int count = 1, const std::vector<std::string>& modifiers = {})
@@ -174,6 +188,27 @@ TEST_CASE("a draw gesture keeps its steps when the project changes under it, and
 	f.app.waitUntil([&] { return f.steps(36) == std::vector<int>{0, 1, 2}; });
 	REQUIRE(f.steps(36) == std::vector<int>{0, 1, 2});
 	CHECK(f.patternJson().at("swing") == 0.5);
+
+	// Steps that changed meanwhile on the lanes the gesture doesn't edit stay as the engine has them (#1091).
+	f.app.ui().press(f.window, f.center(cell(42, 0)), ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.has(cell(42, 0), "on"));
+	Json lanes = f.patternJson().at("lanes");
+	for (Json& each : lanes)
+		if (each.at("pitch") == 38)
+			each["steps"] = {{{"index", 8}}};
+	f.app.call("pattern.set", {{"pattern", f.pattern}, {"lanes", lanes}});
+	f.settle();
+	f.app.ui().move(f.window, f.center(cell(42, 1)));
+	f.app.ui().release(f.window, f.center(cell(42, 1)), ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.app.waitUntil([&] { return f.steps(42) == std::vector<int>{0, 1}; });
+	REQUIRE(f.steps(42) == std::vector<int>{0, 1});
+	CHECK(f.steps(38) == std::vector<int>{8});
+	CHECK(f.steps(36) == std::vector<int>{0, 1, 2});
+	f.app.call("history.undo");
+	CHECK(f.steps(42).empty());
+	CHECK(f.steps(38) == std::vector<int>{8});
 
 	// Steps the pattern no longer has room for are refused: the editor shows the engine's pattern again.
 	f.app.ui().press(f.window, f.center(cell(38, 4)), ui::MouseButton::Left);

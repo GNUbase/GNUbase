@@ -68,6 +68,8 @@ namespace gnubase::ui
 			R"(<select control="inputTransformer" title="Input Transformer"/></div>)"
 			R"(</div></div>)"
 			R"(<div class="inspector-section" section="modifiers" label="MIDI Modifiers"/>)"
+			R"(<div class="inspector-section" section="midiInserts" label="MIDI Inserts"/>)"
+			R"(<div class="inspector-section" section="midiSends" label="MIDI Sends"/>)"
 			R"(<div class="inspector-section" section="chords" label="Chords">)"
 			R"(<button class="section-header">Chords</button><div class="section-body">)"
 			R"(<div class="inspector-row" row="followChords"><span class="inspector-label">Follow</span>)"
@@ -195,6 +197,106 @@ namespace gnubase::ui
 							integerField(name + "-maximum", low, 127, random ? 0 : 127, "Maximum"));
 				}
 			return rml + "</div>";
+		}
+
+		// The MIDI Inserts and MIDI Sends sections (pp. 1104-1106): their controls are named after the channel's
+		// midiInserts and midiSends in channel.set, the section, then the slot's index and its field or "parameter-"
+		// and a parameter's key ("midiInserts-0-effect", "midiSends-1-parameter-rate"), or the section's own field
+		// ("midiInserts-bypass", "midiInserts-divider", "midiSends-pre"). Each slot has the control panel of its effect
+		// below it, which its edit button opens and closes.
+		std::string midiEffectsRml(bool sends)
+		{
+			const std::string section = sends ? "midiSends" : "midiInserts";
+			const std::string title = sends ? "MIDI Sends" : "MIDI Inserts";
+			std::string rml = R"(<button class="section-header">)" + title + R"(</button><div class="section-body">)";
+			rml += R"(<div class="inspector-buttons"><button type="toggle" class="toggle bypass" control=")" + section +
+				R"(-bypass" title="Bypass )" + title + R"(">Bypass</button>)";
+			if (sends)
+				rml += R"(<button type="toggle" class="toggle" control="midiSends-pre")"
+					   R"( title="Pre/Post MIDI Modifiers and Inserts">Pre</button>)";
+			rml += "</div>";
+			if (!sends)
+				rml += row("divider", "Divider",
+					R"(<select control="midiInserts-divider" title="Divider: the inserts above it are recorded"/>)");
+			for (size_t slot = 0; slot < 4; ++slot)
+			{
+				const std::string name = section + "-" + std::to_string(slot);
+				rml += R"(<div class="midi-effect-slot" slot=")";
+				rml += std::to_string(slot);
+				rml += R"("><div class="inspector-row"><button type="toggle" class="toggle" control=")";
+				rml += name;
+				rml += R"(-on" title="Activate">)";
+				rml += std::to_string(slot + 1);
+				rml += R"(</button><select control=")";
+				rml += name;
+				rml += R"(-effect" title="Select Effect Type"/><button class="midi-effect-edit" title="Open/Close )";
+				rml += sends ? "Send" : "Insert";
+				rml += R"( Effect Editor">e</button></div>)";
+				if (sends)
+					rml += row("output", "Output", R"(<select control=")" + name + R"(-output" title="Send Output"/>)");
+				rml += R"(<div class="midi-effect-panel"/></div>)";
+			}
+			return rml + "</div>";
+		}
+
+		// A MIDI effect's control panel: a drop-down list for a parameter with options, a value field for the others.
+		std::string midiEffectPanelRml(const std::string& slot, const Json& effect)
+		{
+			std::string rml;
+			for (const Json& parameter : effect.at("parameters"))
+			{
+				const std::string key = parameter.at("key").get<std::string>();
+				const std::string label = Rml::StringUtilities::EncodeRml(parameter.at("name").get<std::string>());
+				std::string control = slot;
+				control += "-parameter-";
+				control += key;
+				std::string field;
+				if (!parameter.at("options").empty())
+				{
+					field = R"(<select control=")";
+					field += control;
+					field += R"(" title=")";
+					field += label;
+					field += R"("/>)";
+					rml += row(key, label, field);
+					continue;
+				}
+				const bool stepped = parameter.at("stepped").get<bool>();
+				field = R"(<valuefield control=")";
+				field += control;
+				for (const auto& [attribute, value] : {std::pair{"min", parameter.at("minimum")},
+						 std::pair{"max", parameter.at("maximum")}, std::pair{"default", parameter.at("default")}})
+				{
+					field += R"(" )";
+					field += attribute;
+					field += R"(=")";
+					field += widgets::format(value.get<float>());
+				}
+				field += stepped ? R"(" step="1" decimals="0)" : R"(" step="0.5" decimals="1)";
+				field += R"(" unit=")";
+				field += Rml::StringUtilities::EncodeRml(parameter.at("unit").get<std::string>());
+				field += R"(" title=")";
+				field += label;
+				field += R"("/>)";
+				rml += row(key, label, field);
+			}
+			return rml;
+		}
+
+		// A MIDI effect control's name split at its dashes: section, slot, field and, for a parameter, its key.
+		std::vector<std::string> midiEffectPath(const std::string& control)
+		{
+			std::vector<std::string> path;
+			size_t from = 0;
+			while (from <= control.size() && path.size() < 3)
+			{
+				const size_t dash = std::min(control.find('-', from), control.size());
+				path.push_back(control.substr(from, dash - from));
+				from = dash + 1;
+			}
+			if (from <= control.size())
+				path.push_back(control.substr(from));
+			return path;
 		}
 
 		bool showsTicks(const Json& random)
@@ -387,6 +489,9 @@ namespace gnubase::ui
 		root.SetInnerRML(g_rml);
 		if (Rml::Element* modifiers = root.QuerySelector("[section=modifiers]"))
 			modifiers->SetInnerRML(modifiersRml());
+		for (const bool sends : {false, true})
+			if (Rml::Element* section = root.QuerySelector(sends ? "[section=midiSends]" : "[section=midiInserts]"))
+				section->SetInnerRML(midiEffectsRml(sends));
 		Rml::ElementList controls;
 		root.QuerySelectorAll(controls, "[control], textarea, .inserts");
 		for (Rml::Element* control : controls)
@@ -404,6 +509,15 @@ namespace gnubase::ui
 				if (alive.expired() || !result.ok() || m_devicesKnown) // gone, or newer changes win
 					return;
 				m_devices = result.value.at("value");
+				m_stale = true;
+			});
+		// The MIDI effects the slots offer, with their parameters (midiEffect.list).
+		m_binding.send("midiEffect.list", Json::object(),
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (alive.expired() || !result.ok())
+					return;
+				m_midiEffects = result.value.at("effects");
 				m_stale = true;
 			});
 		show();
@@ -497,6 +611,8 @@ namespace gnubase::ui
 		available("[section=inserts]", audio);
 		const bool noteTrack = channel != nullptr && (type == "midi" || type == "instrument");
 		available("[section=modifiers]", noteTrack);
+		available("[section=midiInserts]", noteTrack);
+		available("[section=midiSends]", noteTrack);
 		// Edit In-Place (p. 1259), checked while the track's in-place editor is open.
 		available("button[control=editInPlace]", noteTrack);
 		if (Rml::Element* button = element("button[control=editInPlace]"))
@@ -680,6 +796,9 @@ namespace gnubase::ui
 			}
 			if (noteTrack && channel->contains("modifiers"))
 				showModifiers(channel->at("modifiers"));
+			if (noteTrack && channel->contains("midiInserts"))
+				for (const char* section : {"midiInserts", "midiSends"})
+					showMidiEffects(section, channel->at(section));
 
 			// The inserts: an overview of the slots, bypassed and deactivated ones marked.
 			std::string slots;
@@ -754,6 +873,191 @@ namespace gnubase::ui
 		}
 	}
 
+	void Inspector::showMidiEffects(const std::string& section, const Json& rack)
+	{
+		Rml::Element* root = m_root->QuerySelector("[section=" + section + "]");
+		if (root == nullptr)
+			return;
+		const bool sends = section == "midiSends";
+		const auto element = [root](const std::string& selector) { return root->QuerySelector(selector); };
+		if (Rml::Element* bypass = element("button[control=" + section + "-bypass]"))
+			checked(*bypass, rack.at("bypass").get<bool>());
+		if (Rml::Element* pre = element("button[control=midiSends-pre]"))
+			checked(*pre, rack.value("pre", false));
+		const int divider = rack.value("divider", 0);
+		if (Rml::Element* select = element("select[control=midiInserts-divider]"))
+			widgets::fill(*select,
+				{{"0", "Above Slot 1"}, {"1", "Below Slot 1"}, {"2", "Below Slot 2"}, {"3", "Below Slot 3"},
+					{"4", "Below Slot 4"}},
+				std::to_string(divider));
+		Options effects = {{"", "No Effect"}};
+		for (const Json& effect : m_midiEffects)
+			effects.emplace_back(effect.at("id").get<std::string>(), effect.at("name").get<std::string>());
+		// A send plays to the track's own output or to another instrument track (p. 1106).
+		Options outputs = {{"0", "Track Output"}};
+		for (const Json& track : m_project->at("tracks"))
+			if (track.at("type") == "instrument" && track.at("channel") != m_channel.at("id"))
+				outputs.emplace_back(
+					std::to_string(track.at("channel").get<uint64_t>()), track.at("name").get<std::string>());
+		const Json& slots = rack.at("slots");
+		for (size_t index = 0; index < slots.size(); ++index)
+		{
+			const Json& slot = slots[index];
+			const std::string name = section + "-" + std::to_string(index);
+			Rml::Element* box = element(".midi-effect-slot[slot=" + std::to_string(index) + "]");
+			if (box == nullptr)
+				continue;
+			const std::string id = slot.at("effect").get<std::string>();
+			setClass(*box, "empty", id.empty());
+			setClass(*box, "off", !slot.at("on").get<bool>());
+			setClass(*box, "recorded", !sends && static_cast<int>(index) < divider);
+			if (Rml::Element* select = box->QuerySelector("select[control=" + name + "-effect]"))
+				widgets::fill(*select, effects, id);
+			if (Rml::Element* on = box->QuerySelector("button[control=" + name + "-on]"))
+				checked(*on, slot.at("on").get<bool>());
+			if (Rml::Element* output = box->QuerySelector("select[control=" + name + "-output]"))
+				widgets::fill(*output, outputs, std::to_string(slot.value("output", uint64_t{0})));
+			if (Rml::Element* row = box->QuerySelector("[row=output]"))
+				setClass(*row, "unavailable", id.empty());
+			// The control panel of the slot's effect, made again when the effect changes.
+			Rml::Element* panel = box->QuerySelector(".midi-effect-panel");
+			const auto info = std::find_if(m_midiEffects.begin(), m_midiEffects.end(),
+				[&id](const Json& effect) { return effect.at("id") == id; });
+			if (panel == nullptr)
+				continue;
+			if (panel->GetAttribute<Rml::String>("effect", "") != id || panel->GetNumChildren() == 0)
+			{
+				panel->SetInnerRML(info != m_midiEffects.end() ? midiEffectPanelRml(name, *info) : std::string());
+				panel->SetAttribute("effect", id);
+				Rml::ElementList controls;
+				panel->QuerySelectorAll(controls, "[control]");
+				for (Rml::Element* control : controls)
+					control->SetAttribute("contextmenu", "");
+			}
+			if (info == m_midiEffects.end())
+				continue;
+			for (const Json& parameter : info->at("parameters"))
+			{
+				const std::string key = parameter.at("key").get<std::string>();
+				std::string control = name;
+				control += "-parameter-";
+				control += key;
+				const Json value = slot.at("parameters").value(key, parameter.at("default"));
+				if (Rml::Element* select = panel->QuerySelector("select[control=" + control + "]"))
+				{
+					Options options;
+					const Json& names = parameter.at("options");
+					for (size_t option = 0; option < names.size(); ++option)
+						options.emplace_back(std::to_string(option), names[option].get<std::string>());
+					widgets::fill(*select, options, std::to_string(std::lround(value.get<double>())));
+				}
+				else if (Rml::Element* field = panel->QuerySelector("valuefield[control=" + control + "]");
+					field != nullptr && !m_binding.ahead(stepKey(m_stepOwner, m_channel.at("id"), control), m_read))
+				{
+					setAttribute(*field, "value", widgets::format(value.get<float>()));
+				}
+			}
+		}
+	}
+
+	void Inspector::changeMidiEffect(const std::string& control, const Rml::Event& event)
+	{
+		const std::vector<std::string> path = midiEffectPath(control);
+		const std::string& section = path[0];
+		const Json current = m_channel.value(section, Json());
+		if (!current.is_object() || path.size() < 2)
+			return;
+		Json rack = Json::object();
+		if (path[1] == "bypass" || path[1] == "pre")
+		{
+			const bool on = event.GetParameter<bool>("value", false);
+			if (current.at(path[1]) == on)
+				return;
+			rack[path[1]] = on;
+		}
+		else if (path[1] == "divider")
+		{
+			const auto divider =
+				static_cast<int>(std::strtol(event.GetParameter<Rml::String>("value", "0").c_str(), nullptr, 10));
+			if (current.at("divider") == divider)
+				return;
+			rack["divider"] = divider;
+		}
+		else if (path.size() >= 3)
+		{
+			// The slot changes only the field given, channel.set keeps the rest: the slots before it are empty objects.
+			const auto index = static_cast<size_t>(std::strtoul(path[1].c_str(), nullptr, 10));
+			if (index >= current.at("slots").size())
+				return;
+			const Json& slot = current.at("slots")[index];
+			Json changed = Json::object();
+			const std::string& field = path[2];
+			if (field == "on")
+			{
+				const bool on = event.GetParameter<bool>("value", false);
+				if (slot.at("on") == on)
+					return;
+				changed["on"] = on;
+			}
+			else if (field == "effect")
+			{
+				const auto effect = event.GetParameter<Rml::String>("value", "");
+				if (slot.at("effect") == effect)
+					return;
+				changed["effect"] = effect;
+				changed["on"] = true; // a chosen effect is active, its control panel open (p. 1105)
+				if (Rml::Element* box =
+						m_root->QuerySelector("[section=" + section + "] .midi-effect-slot[slot=" + path[1] + "]"))
+					setClass(*box, "open", !effect.empty());
+			}
+			else if (field == "output")
+			{
+				const uint64_t output =
+					std::strtoull(event.GetParameter<Rml::String>("value", "0").c_str(), nullptr, 10);
+				if (slot.value("output", uint64_t{0}) == output)
+					return;
+				changed["output"] = output;
+			}
+			else if (field == "parameter" && path.size() == 4)
+			{
+				const bool select =
+					event.GetTargetElement() != nullptr && event.GetTargetElement()->GetTagName() == "select";
+				const double value = select
+					? std::strtod(event.GetParameter<Rml::String>("value", "0").c_str(), nullptr)
+					: static_cast<double>(event.GetParameter<float>("value", 0.0F));
+				const int gesture = event.GetParameter<int>("gesture", 0);
+				if (gesture == 0 && slot.at("parameters").contains(path[3]) &&
+					std::abs(slot.at("parameters").at(path[3]).get<double>() - value) < 1e-6)
+					return;
+				Json slots = Json::array();
+				for (size_t i = 0; i < index; ++i)
+					slots.push_back(Json::object());
+				slots.push_back({{"parameters", {{path[3], value}}}});
+				// A drag, wheel turns or a held arrow key: one undo step.
+				const Json channel = m_channel.at("id");
+				const Json step = {{"command", "channel.set"},
+					{"parameters", {{"channel", channel}, {section, {{"slots", std::move(slots)}}}}}};
+				m_binding.sendStep(gesture, stepKey(m_stepOwner, channel, control), "Change MIDI Effect",
+					Json::array({step}), whenRefused());
+				return;
+			}
+			else
+			{
+				return;
+			}
+			Json slots = Json::array();
+			for (size_t i = 0; i < index; ++i)
+				slots.push_back(Json::object());
+			slots.push_back(std::move(changed));
+			rack["slots"] = std::move(slots);
+		}
+		else
+		{
+			return;
+		}
+		sendChannel({{section, std::move(rack)}});
+	}
+
 	void Inspector::ProcessEvent(Rml::Event& event)
 	{
 		Rml::Element* target = event.GetTargetElement();
@@ -766,6 +1070,13 @@ namespace gnubase::ui
 				m_editChannel(m_track); // Edit Channel Settings (reference manual p. 500)
 			if (target->IsClassSet("inspector-articulation-setup") && m_setupArticulations && m_track != 0)
 				m_setupArticulations(m_track);
+			// A MIDI effect's edit button opens and closes its control panel.
+			if (target->IsClassSet("midi-effect-edit") && target->GetParentNode() != nullptr &&
+				target->GetParentNode()->GetParentNode() != nullptr)
+			{
+				Rml::Element& slot = *target->GetParentNode()->GetParentNode();
+				slot.SetClass("open", !slot.IsClassSet("open"));
+			}
 			// A section's header opens and closes it.
 			for (const Rml::Element* up = target; up != nullptr && up != m_root.get(); up = up->GetParentNode())
 				if (up->IsClassSet("section-header") && up->GetParentNode() != nullptr)
@@ -904,6 +1215,11 @@ namespace gnubase::ui
 		if (name.rfind("modifiers-", 0) == 0)
 		{
 			changeModifier(name, event);
+			return;
+		}
+		if (name.rfind("midiInserts-", 0) == 0 || name.rfind("midiSends-", 0) == 0)
+		{
+			changeMidiEffect(name, event);
 			return;
 		}
 		if (name == "volume" || name == "pan")

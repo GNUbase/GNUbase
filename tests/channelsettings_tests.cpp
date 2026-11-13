@@ -342,6 +342,7 @@ TEST_CASE("the channel settings window copies and pastes channel settings and ad
 	app.appUi().showProject();
 	const Added guitar = addTrack(app, "audio", "Guitar");
 	const Added bass = addTrack(app, "audio", "Bass");
+	const Added drums = addTrack(app, "audio", "Drums");
 	app.call("channel.set",
 		{{"channel", guitar.channel}, {"eq", {{"bands", {{{"band", 2}, {"on", true}, {"gain", 6.0}}}}}}});
 	REQUIRE(app.appUi().openChannelSettings(guitar.track) != nullptr);
@@ -356,7 +357,8 @@ TEST_CASE("the channel settings window copies and pastes channel settings and ad
 	REQUIRE(app.waitUntil([&] { return channelJson(app, bass.channel).at("eq").at("bands")[1].at("gain") == 6.0; }));
 	CHECK(channelJson(app, bass.channel).at("eq").at("bands")[1].at("on") == true);
 
-	// Add Effect Track to Send (p. 554): the add track dialog's effect page, whose track the send goes to.
+	// Add Effect Track to Send (p. 554): the add track dialog's effect page, whose track the send goes to, below the
+	// track whose send it is.
 	click(app, window, "[param=\"sends.1.destination\"]");
 	app.ui().key(window, "Down");
 	click(app, window, "[param=\"sends.1.destination\"]");
@@ -365,8 +367,10 @@ TEST_CASE("the channel settings window copies and pastes channel settings and ad
 	click(app, window, "#add-track-confirm");
 	REQUIRE(app.waitUntil([&] { return elements(app, window, "#add-track-dialog").empty(); }));
 	const Json project = app.call("project.get");
-	const Json& effect = project.at("tracks").back();
+	REQUIRE(project.at("tracks").size() == 4);
+	const Json& effect = project.at("tracks")[2];
 	CHECK(effect.at("type") == "effect");
+	CHECK(project.at("tracks")[3].at("id") == drums.track);
 	CHECK(channelJson(app, bass.channel).at("sends")[0].at("destination") == effect.at("channel"));
 	CHECK(channelJson(app, bass.channel).at("sends")[0].at("on") == true);
 	CHECK(channelJson(app, guitar.channel).at("sends")[0].at("destination") == 0);

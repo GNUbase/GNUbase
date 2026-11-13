@@ -2,7 +2,8 @@
 <!-- Tells that a project command failed (docs/features/project-files.md): ui::ProjectFiles opens it with the error in
      #project-error-message when saving, opening or backing up the project fails, so that a failed save isn't taken for
      done, and when an auto save fails, so that the user learns that auto save stopped working; also when importing or
-     exporting tracks fails or leaves tracks out (docs/features/track-presets.md). -->
+     exporting tracks fails. Under another title in #project-error-title (ProjectFiles::showNotice), it tells what a
+     command that worked left out, such as the tracks an export couldn't take (docs/features/track-presets.md). -->
 <rml>
 <head>
 	<title>Project Error</title>
@@ -26,7 +27,7 @@
 </head>
 <body>
 	<dialog id="project-error-dialog">
-		<div class="dialog-titlebar">Project Error</div>
+		<div class="dialog-titlebar" id="project-error-title">Project Error</div>
 		<div class="row" id="project-error-message"></div>
 		<div class="row buttons">
 			<button class="primary" result="ok">OK</button>

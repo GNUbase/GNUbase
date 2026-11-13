@@ -91,6 +91,10 @@ namespace gnubase::test
 	// The whole file, or an empty string if it cannot be read.
 	std::string readText(const std::filesystem::path& file);
 
+	// Runs a command line, UTF-8, with the system's shell (cmd.exe on Windows, sh elsewhere), and returns its exit
+	// code, or -1 if it didn't exit (POSIX: ended by a signal).
+	int runCommand(const std::string& command);
+
 	// The build's test output folder, for files a test writes to look at, such as screenshots.
 	std::filesystem::path outputDirectory();
 

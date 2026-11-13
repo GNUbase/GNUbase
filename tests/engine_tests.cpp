@@ -2,6 +2,8 @@
 #include "engine/engine.h"
 #include "engine/schema.h"
 #include "engine/schematext.h"
+#include "engine/settings/store.h"
+#include "engine/settings/usersettings.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
@@ -10,6 +12,7 @@
 #include <atomic>
 #include <chrono>
 #include <future>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <numeric>
@@ -17,6 +20,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -378,9 +382,10 @@ TEST_CASE("values are checked against their JSON schema", "[unit]")
 	CHECK(validate("lowerZone", named) == "parameters must match ^(lower|inPlace:[0-9]+)$");
 	CHECK(validate(Json(3), Json::parse(R"({"pattern": "x"})")).empty()); // only strings
 	// The API references write a pattern as the strings it matches; an array's items with theirs.
-	CHECK(schemaType(named) == "string matching `^(lower|inPlace:[0-9]+)$`");
+	// A pattern without a maxLength is matched on at most g_patternMaxLength characters, and they show that limit.
+	CHECK(schemaType(named) == "string matching `^(lower|inPlace:[0-9]+)$`, at most 64 characters");
 	CHECK(schemaType(Json::parse(R"({"type": "array", "items": {"type": "string", "pattern": "^a$"}})")) ==
-		"array of string matching `^a$`");
+		"array of string matching `^a$`, at most 64 characters");
 
 	// maxLength counts characters (code points, as JSON Schema does), not bytes: these 3 umlauts take 6 bytes.
 	const Json shortName = Json::parse(R"({"type": "string", "maxLength": 3})");
@@ -401,9 +406,32 @@ TEST_CASE("values are checked against their JSON schema", "[unit]")
 	CHECK(validate(std::string(12, '\x80'), shortName, "name").empty());
 	CHECK(validate(std::string(13, '\x80'), shortName, "name") == "name must be at most 3 characters");
 
-	// The Lua API reference and the MCP tool catalogue show the limit.
+	// Whatever the schema says, a pattern is never matched on more than g_patternMaxLength characters (#1159): the
+	// schemas of settings, presets, rule sets and the UI tools have no guard test, and a pattern added to one of them
+	// without a maxLength, or with a large one, would bring the overflow back.
+	REQUIRE(g_patternMaxLength == 64);
+	const Json unbounded = Json::parse(R"({"type": "string", "pattern": "("})");
+	CHECK(validate(std::string(100000, '9'), unbounded, "key") == "key must be at most 64 characters");
+	CHECK(validate(std::string(100000, '\x80'), unbounded, "key") == "key must be at most 64 characters");
+	const Json large = Json::parse(R"({"type": "string", "pattern": "(", "maxLength": 100000})");
+	CHECK(validate(std::string(100000, '9'), large, "key") == "key must be at most 64 characters");
+	const Json digits = Json::parse(R"({"type": "string", "pattern": "^[0-9]+$"})");
+	CHECK(validate(std::string(64, '9'), digits).empty());
+	CHECK(validate(std::string(65, '9'), digits) == "parameters must be at most 64 characters");
+	// Without a pattern, a string may be as long as its maxLength says, or of any length.
+	CHECK(validate(std::string(100000, 'a'), Json::parse(R"({"type": "string", "maxLength": 100000})")).empty());
+	CHECK(validate(std::string(100000, 'a'), Json::parse(R"({"type": "string"})")).empty());
+
+	// The Lua API reference and the MCP tool catalogue show the limit, the one validate checks.
 	CHECK(schemaType(bounded) == "string matching `(`, at most 27 characters");
 	CHECK(schemaType(shortName) == "string of at most 3 characters");
+	CHECK(schemaType(large) == "string matching `(`, at most 64 characters");
+	// A type list shows them too.
+	CHECK(schemaType(Json::parse(R"({"type": ["string", "null"], "pattern": "^a$", "maxLength": 5})")) ==
+		"string or null matching `^a$`, at most 5 characters");
+	CHECK(schemaType(Json::parse(R"({"type": ["string", "null"], "maxLength": 5})")) ==
+		"string or null of at most 5 characters");
+	CHECK(schemaType(Json::parse(R"({"type": ["string", "null"]})")) == "string or null");
 
 	// additionalProperties as a schema: a map whose members all fit it.
 	const Json map = Json::parse(R"({"type": "object", "additionalProperties": {"type": "boolean"}})");
@@ -413,7 +441,23 @@ TEST_CASE("values are checked against their JSON schema", "[unit]")
 
 namespace
 {
-	// Counts the string schemas with a pattern in a schema and everything below it, and the ones without a maxLength.
+	// The schemas validate checks values from outside against that a test can reach: every command's parameters and
+	// result, and every user setting.
+	std::vector<std::pair<std::string, Json>> checkedSchemas(const Engine& engine)
+	{
+		std::vector<std::pair<std::string, Json>> schemas;
+		for (const CommandInfo& info : engine.commands())
+		{
+			schemas.emplace_back(info.name + " parameters", info.parameters);
+			schemas.emplace_back(info.name + " result", info.result);
+		}
+		for (const settings::Definition& definition : settings::userFormat().definitions)
+			schemas.emplace_back("setting " + definition.key, definition.schema);
+		return schemas;
+	}
+
+	// Counts the string schemas with a pattern in a schema and everything below it, and the ones without a maxLength
+	// of at most g_patternMaxLength.
 	void countPatterns(const Json& schema, int& patterns, std::vector<std::string>& unbounded, const std::string& where)
 	{
 		if (schema.is_object())
@@ -421,7 +465,9 @@ namespace
 			if (const auto pattern = schema.find("pattern"); pattern != schema.end() && pattern->is_string())
 			{
 				++patterns;
-				if (!schema.contains("maxLength"))
+				// Within the ceiling, so that the references show the limit validate checks.
+				if (const auto maxLength = schema.find("maxLength"); maxLength == schema.end() ||
+					!maxLength->is_number_integer() || *maxLength < 0 || maxLength->get<size_t>() > g_patternMaxLength)
 					unbounded.push_back(where);
 			}
 			for (const auto& [key, item] : schema.items())
@@ -440,18 +486,15 @@ namespace
 	}
 }
 
-TEST_CASE("every pattern in a command's schema comes with a maxLength", "[unit]")
+TEST_CASE("every pattern in a command's or setting's schema comes with a maxLength within the ceiling", "[unit]")
 {
 	// validate matches a pattern only on strings within their maxLength, since matching may recurse once per
 	// character and a long string from an MCP client or a Lua script overflowed the stack (#1059).
 	const Engine engine;
 	int patterns = 0;
 	std::vector<std::string> unbounded;
-	for (const CommandInfo& info : engine.commands())
-	{
-		countPatterns(info.parameters, patterns, unbounded, info.name + " parameters");
-		countPatterns(info.result, patterns, unbounded, info.name + " result");
-	}
+	for (const auto& [where, schema] : checkedSchemas(engine))
+		countPatterns(schema, patterns, unbounded, where);
 	CHECK(patterns > 0); // the editors' names at least
 	CHECK(unbounded == std::vector<std::string>());
 }
@@ -473,4 +516,110 @@ TEST_CASE("numbers are checked against the schema's minimum and maximum", "[unit
 	CHECK(validate(0.25, schema, "scale") == "scale must be at least 0.5");
 	CHECK(validate(5, schema, "scale") == "scale must be at most 4");
 	CHECK(validate("big", Json::parse(R"({"minimum": 1})"), "name").empty()); // only numbers have a minimum
+}
+
+// JSON has no NaN, but an in-process client (Lua's 0/0) can send one: every comparison with it is false, so a check
+// written as "less than the minimum" lets it through (#1131).
+TEST_CASE("a NaN is outside every minimum and maximum", "[unit]")
+{
+	const double nan = std::numeric_limits<double>::quiet_NaN();
+	CHECK(validate(nan, Json::parse(R"({"type": "number", "minimum": 0.5, "maximum": 4})"), "scale") ==
+		"scale must be at least 0.5");
+	CHECK(validate(nan, Json::parse(R"({"type": "number", "minimum": 0.5})"), "scale") == "scale must be at least 0.5");
+	CHECK(validate(nan, Json::parse(R"({"type": "number", "maximum": 4})"), "scale") == "scale must be at most 4");
+	CHECK(validate(nan, Json::parse(R"({"type": "number"})"), "scale").empty()); // no bounds, nothing to break
+}
+
+TEST_CASE("the schema's minLength, minItems, maxItems and exclusive bounds are checked", "[unit]")
+{
+	// Schemas declare them and MCP clients see them, so validate checks them rather than every command (#1159).
+	const Json name = Json::parse(R"({"type": "string", "minLength": 2})");
+	CHECK(validate("ab", name, "name").empty());
+	CHECK(validate("\xC3\xA4\xC3\xB6", name, "name").empty()); // characters, not bytes
+	CHECK(validate("a", name, "name") == "name must be at least 2 characters");
+	CHECK(validate("\xC3\xA4", name, "name") == "name must be at least 2 characters"); // 2 bytes, 1 character
+	CHECK(validate("", Json::parse(R"({"type": "string", "minLength": 1})"), "name") ==
+		"name must be at least 1 character");
+	CHECK(validate(Json(3), Json::parse(R"({"minLength": 2})")).empty()); // only strings
+
+	const Json ids = Json::parse(R"({"type": "array", "items": {"type": "integer"}, "minItems": 1, "maxItems": 2})");
+	CHECK(validate(Json::array({1}), ids, "tracks").empty());
+	CHECK(validate(Json::array({1, 2}), ids, "tracks").empty());
+	CHECK(validate(Json::array(), ids, "tracks") == "tracks must have at least 1 item");
+	CHECK(validate(Json::array({1, 2, 3}), ids, "tracks") == "tracks must have at most 2 items");
+	CHECK(validate(Json::array(), Json::parse(R"({"type": "array", "minItems": 2})"), "tracks") ==
+		"tracks must have at least 2 items");
+	CHECK(validate(Json::array({1, 2}), Json::parse(R"({"type": "array", "maxItems": 1})"), "tracks") ==
+		"tracks must have at most 1 item");
+	CHECK(validate("abc", Json::parse(R"({"maxItems": 1})")).empty()); // only arrays
+
+	const Json seconds = Json::parse(R"({"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1})");
+	CHECK(validate(0.5, seconds, "seconds").empty());
+	CHECK(validate(0, seconds, "seconds") == "seconds must be more than 0");
+	CHECK(validate(-1, seconds, "seconds") == "seconds must be more than 0");
+	CHECK(validate(1, seconds, "seconds") == "seconds must be less than 1");
+	CHECK(validate("big", seconds, "seconds") == "seconds must be number");
+	CHECK(validate("big", Json::parse(R"({"exclusiveMinimum": 1})")).empty()); // only numbers
+}
+
+namespace
+{
+	// The keywords of the schemas in a schema and below it that validate neither checks nor knowingly leaves alone,
+	// and the ones whose value validate can't use: lengths and counts are integers of at least 0, bounds numbers
+	// (exclusiveMinimum as a number, not draft 4's boolean).
+	void uncheckedKeywords(const Json& schema, std::vector<std::string>& found, const std::string& where)
+	{
+		static const std::vector<std::string> counts = {"minLength", "maxLength", "minItems", "maxItems"};
+		static const std::vector<std::string> bounds = {"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"};
+		// What validate checks, what only describes, and minProperties, which needsOne leaves to the command.
+		static const std::vector<std::string> known = {"type", "properties", "required", "additionalProperties",
+			"items", "enum", "pattern", "minLength", "maxLength", "minItems", "maxItems", "minimum", "maximum",
+			"exclusiveMinimum", "exclusiveMaximum", "description", "minProperties"};
+		if (!schema.is_object())
+			return;
+		for (const auto& [key, item] : schema.items())
+		{
+			std::string path = where;
+			path += '.';
+			path += key;
+			const bool isCount = std::find(counts.begin(), counts.end(), key) != counts.end();
+			const bool isBound = std::find(bounds.begin(), bounds.end(), key) != bounds.end();
+			if (std::find(known.begin(), known.end(), key) == known.end())
+			{
+				found.push_back(path);
+			}
+			else if ((isCount && (!item.is_number_integer() || item < 0)) || (isBound && !item.is_number()))
+			{
+				std::string value = path;
+				value += ' ';
+				value += item.dump();
+				found.push_back(value);
+			}
+			if (key == "properties" && item.is_object())
+			{
+				for (const auto& [property, propertySchema] : item.items())
+				{
+					std::string member = path;
+					member += '.';
+					member += property;
+					uncheckedKeywords(propertySchema, found, member);
+				}
+			}
+			else if (key == "items" || key == "additionalProperties")
+			{
+				uncheckedKeywords(item, found, path);
+			}
+		}
+	}
+}
+
+TEST_CASE("every keyword in a command's or setting's schema is one validate checks", "[unit]")
+{
+	// MCP clients and Lua scripts rely on what a schema declares, so a keyword validate doesn't know would be a
+	// promise nothing keeps (#1159).
+	const Engine engine;
+	std::vector<std::string> unchecked;
+	for (const auto& [where, schema] : checkedSchemas(engine))
+		uncheckedKeywords(schema, unchecked, where);
+	CHECK(unchecked == std::vector<std::string>());
 }

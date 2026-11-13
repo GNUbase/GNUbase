@@ -402,6 +402,64 @@ TEST_CASE("a double click in the empty area adds a track like the selected one b
 	CHECK(names(app).back() == "MIDI 03");
 }
 
+TEST_CASE("with Keep Dialog Open the next tracks stay below the selection after a project folder track", "[ui]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	const uint64_t first = idOf(app.call("track.add", {{"type", "audio"}}));
+	app.call("track.add", {{"type", "audio"}});
+	select(app, {first});
+
+	// An effect track into the project's FX folder, then with Keep Dialog Open an audio track: below the selected
+	// track, not into the folder.
+	click(app, "#add-track");
+	REQUIRE(app.waitUntil([&app] { return open(app); }));
+	click(app, "#keep-open");
+	page(app, "effect");
+	click(app, "#track-project-folder");
+	click(app, "#add-track-confirm");
+	REQUIRE(app.waitUntil([&app] { return names(app).size() == 4; }));
+	page(app, "audio");
+	click(app, "#add-track-confirm");
+	REQUIRE(app.waitUntil([&app] { return names(app).size() == 5; }));
+	CHECK(names(app) == std::vector<std::string>{"Audio 01", "Audio 03", "Audio 02", "FX", "FX 01"});
+	const Json tracks = app.call("project.get").at("tracks");
+	CHECK(tracks[1].at("parent") == 0);
+	CHECK(tracks[4].at("parent") == tracks[3].at("id"));
+	click(app, "#add-track-cancel");
+	REQUIRE(app.waitUntil([&app] { return !open(app); }));
+}
+
+TEST_CASE("a double click with a selected MIDI track copies its MIDI input, in one undo step", "[ui]")
+{
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	const Json synth = app.call("track.add", {{"type", "instrument"}});
+	const Json midi = app.call("track.add", {{"type", "midi"}, {"output", synth.at("track").at("channel")}});
+	app.call("channel.set", {{"channel", midi.at("track").at("channel")}, {"midiInput", "none"}});
+	select(app, {idOf(midi)});
+	const auto channel = [&app](const Json& track)
+	{
+		const Json channels = app.call("project.get").at("channels");
+		const auto found = std::find_if(channels.begin(), channels.end(),
+			[&track](const Json& item) { return item.at("id") == track.at("channel"); });
+		REQUIRE(found != channels.end());
+		return *found;
+	};
+
+	// The new MIDI track below has the selected track's MIDI input (none) and output (the instrument).
+	doubleClickBelow(app, "#track-list");
+	REQUIRE(app.waitUntil([&app] { return names(app).size() == 3; }));
+	const Json tracks = app.call("project.get").at("tracks");
+	CHECK(tracks[2].at("type") == "midi");
+	REQUIRE(app.waitUntil([&] { return channel(tracks[2]).at("midiInput") == "none"; }));
+	CHECK(channel(tracks[2]).at("output") == synth.at("track").at("channel"));
+
+	// track.add and the channel.set of the MIDI input are one undo step.
+	app.call("history.undo");
+	REQUIRE(app.waitUntil([&app] { return names(app).size() == 2; }));
+}
+
 TEST_CASE("gnubase.ui.command runs in the window of the document that called it", "[ui]")
 {
 	test::UiApp app({900, 640});

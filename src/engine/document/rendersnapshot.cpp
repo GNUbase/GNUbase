@@ -619,6 +619,17 @@ namespace gnubase::engine
 					pannerFor(render.format, snapshot->channels[static_cast<size_t>(channel->second)].format);
 				feeds[static_cast<size_t>(channelIndex.at(render.id))].push_back(static_cast<size_t>(channel->second));
 			}
+			// A MIDI send to the instrument the track plays anyway plays to its own output.
+			int own = render.output.kind == RenderTarget::Kind::Channel ? render.output.index : -1;
+			if (render.type == TrackType::Instrument)
+				own = channelIndex.at(render.id);
+			const bool notes = render.type == TrackType::Midi || render.type == TrackType::Instrument; // not frozen
+			for (size_t s = 0; s < render.midiSends.slots.size() && notes; ++s)
+				if (const auto target = channelIndex.find(render.midiSends.slots[s].output);
+					target != channelIndex.end() && target->second != own &&
+					snapshot->channels[static_cast<size_t>(target->second)].type == TrackType::Instrument &&
+					!midiSendLoops(project, render.id, target->first))
+					render.midiSendOutputs[s] = target->second;
 			const std::array<Send, g_maxSends>& sends = project.channels.at(render.id).sends;
 			for (size_t s = 0; s < sends.size() && render.format != ChannelFormat::None; ++s)
 			{
@@ -656,6 +667,15 @@ namespace gnubase::engine
 				continue;
 			snapshot->channels[trackChannel.at(event.track)].audioEvents.push_back(std::move(render));
 		}
+		// MIDI sends before the modifiers (p. 1106) get the parts' notes without them, where the modifiers play.
+		const auto preNotes = [](const RenderChannel& channel)
+		{
+			const midi::EffectRack& sends = channel.midiSends;
+			return sends.pre && !sends.bypass && !channel.modifiers.bypass &&
+				!(channel.modifiers == midi::Modifiers()) &&
+				std::any_of(sends.slots.begin(), sends.slots.end(),
+					[](const midi::EffectSlot& slot) { return slot.on && !slot.effect.empty(); });
+		};
 		// What each track's notes play as it follows the chord track, made once per track, not once per part.
 		std::map<ObjectId, ChordFollower> followers;
 		const auto follower = [&](ObjectId track) -> const ChordFollower&
@@ -667,16 +687,22 @@ namespace gnubase::engine
 			// strip, whose mute drops them and keeps the latest controller values for unmuting (ChannelStrip).
 			if (part.mute || !plays(part.track) || (channel.quiet && channel.type == TrackType::Midi))
 				continue;
-			if (project.patterns.count(part.pattern) == 0)
+			const bool isPattern = project.patterns.count(part.pattern) != 0;
+			MidiPart played;
+			if (isPattern)
 			{
-				compilePart(project, id, part, follower(part.track), channel);
-				continue;
+				// A pattern event (#181) plays its pattern's notes instead of its own.
+				// ponytail: pattern events that overlap on a track all play, not only the topmost (p. 935).
+				played = part;
+				played.notes = midi::playedNotes(project, part);
 			}
-			// A pattern event (#181) plays its pattern's notes instead of its own.
-			// ponytail: pattern events that overlap on a track all play, not only the topmost (p. 935).
-			MidiPart played = part;
-			played.notes = midi::playedNotes(project, part);
-			compilePart(project, id, played, follower(part.track), channel);
+			const MidiPart& compiled = isPattern ? played : part;
+			compilePart(project, id, compiled, follower(part.track), channel);
+			if (!preNotes(channel))
+				continue;
+			RenderChannel unmodified;
+			compilePart(project, id, compiled, follower(part.track), unmodified);
+			channel.preNotes.insert(channel.preNotes.end(), unmodified.notes.begin(), unmodified.notes.end());
 		}
 
 		std::map<ObjectId, Points> vcaCurves; // by the VCA fader's channel
@@ -732,12 +758,13 @@ namespace gnubase::engine
 			std::stable_sort(channel.audioEvents.begin(), channel.audioEvents.end(),
 				[](const RenderAudioEvent& a, const RenderAudioEvent& b) { return a.start < b.start; });
 			// At one sample key switches come first (#175): at the project's start one can't come a sample before.
-			std::stable_sort(channel.notes.begin(), channel.notes.end(),
-				[](const RenderNote& a, const RenderNote& b)
-				{
-					return std::make_tuple(a.start, !a.keySwitch, a.pitch) <
-						std::make_tuple(b.start, !b.keySwitch, b.pitch);
-				});
+			for (std::vector<RenderNote>* notes : {&channel.notes, &channel.preNotes})
+				std::stable_sort(notes->begin(), notes->end(),
+					[](const RenderNote& a, const RenderNote& b)
+					{
+						return std::make_tuple(a.start, !a.keySwitch, a.pitch) <
+							std::make_tuple(b.start, !b.keySwitch, b.pitch);
+					});
 			std::stable_sort(channel.controllers.begin(), channel.controllers.end(),
 				[](const RenderController& a, const RenderController& b) { return a.position < b.position; });
 			// The parts by start; their controller events keep pointing at them.
