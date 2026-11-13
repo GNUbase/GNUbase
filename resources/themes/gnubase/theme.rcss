@@ -1229,6 +1229,144 @@
 	{
 		decorator: svg(dropdown-arrow.svg);
 	}
+	.toolbar
+	{
+		decorator: none;
+		background-color: #101426;
+	}
+	.toolbar button, .transport button
+	{
+		decorator: none;
+		background-color: transparent;
+		border-radius: 5dp;
+		color: #aeb7d0;
+	}
+	.toolbar button svg.icon, .transport button svg.icon
+	{
+		image-color: #aeb7d0;
+	}
+	.toolbar button:hover, .transport button:hover
+	{
+		decorator: none;
+		background-color: #16374d;
+		color: #f1f4ff;
+	}
+	.toolbar button:hover svg.icon, .transport button:hover svg.icon
+	{
+		image-color: #f1f4ff;
+	}
+	.toolbar button:active, .transport button:active
+	{
+		decorator: none;
+		background-color: #0b3e4c;
+	}
+	.toolbar button.checked, .transport button.checked
+	{
+		decorator: none;
+		background-color: #10dff22e;
+		color: #10dff2;
+	}
+	.toolbar button.checked svg.icon, .transport button.checked svg.icon
+	{
+		image-color: #10dff2;
+	}
+	.toolbar button:disabled, .transport button:disabled
+	{
+		decorator: none;
+		background-color: transparent;
+		color: #676e84;
+	}
+	.toolbar button:disabled svg.icon, .transport button:disabled svg.icon
+	{
+		image-color: #676e84;
+	}
+	.toolbar button[menu], .transport button[menu]
+	{
+		decorator: svg-ninepatch(dropdown-button-normal.svg, 6 20 6 6);
+		color: #f1f4ff;
+		text-align: left;
+		padding-right: 22dp;
+	}
+	.toolbar button[menu]:hover, .transport button[menu]:hover
+	{
+		decorator: svg-ninepatch(dropdown-button-hover.svg, 6 20 6 6);
+	}
+	.toolbar button.icon-only[menu], .transport button.icon-only[menu]
+	{
+		decorator: none;
+		padding-right: 0;
+		text-align: center;
+	}
+	.toolbar button.icon-only[menu]:hover, .transport button.icon-only[menu]:hover
+	{
+		decorator: none;
+	}
+	.transport #start
+	{
+		background-color: #10dff226;
+	}
+	.transport #start svg.icon
+	{
+		image-color: #10dff2;
+	}
+	.transport #start.checked
+	{
+		background-color: #10dff2;
+	}
+	.transport #start.checked svg.icon
+	{
+		image-color: #090b18;
+	}
+	.transport #record svg.icon
+	{
+		image-color: #ff5270;
+	}
+	.transport #record.checked
+	{
+		background-color: #ff5270;
+	}
+	.transport #record.checked svg.icon
+	{
+		image-color: #ffffff;
+	}
+	.transport .primary-time
+	{
+		color: #f1f4ff;
+		font-size: 17dp;
+		font-weight: 600;
+	}
+	tabset tabs
+	{
+		decorator: none;
+		background-color: #101426;
+	}
+	tabset tab
+	{
+		decorator: none;
+		color: #aeb7d0;
+		border-bottom-width: 2dp;
+		border-bottom-color: transparent;
+	}
+	tabset tab:hover
+	{
+		decorator: none;
+		color: #f1f4ff;
+	}
+	tabset tab:selected
+	{
+		decorator: none;
+		color: #f1f4ff;
+		border-bottom-color: #10dff2;
+	}
+	.docking [zone]
+	{
+		background-color: #101426;
+		border-radius: 6dp;
+	}
+	.docking .strip
+	{
+		background-color: #101426;
+	}
 	.time-display.size-0
 	{
 		font-size: 32dp;
@@ -1331,6 +1469,18 @@
 		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg(radio-on.svg);
 	}
 	menubar button:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6);
+	}
+	.toolbar button:focus-visible, .transport button:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6);
+	}
+	.toolbar button.checked:focus-visible, .transport button.checked:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6);
+	}
+	.toolbar button.icon-only[menu]:focus-visible, .transport button.icon-only[menu]:focus-visible
 	{
 		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6);
 	}

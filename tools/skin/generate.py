@@ -33,6 +33,10 @@ THEMES = {
         "timeDisplaySizes": [32, 48, 64, 96, 128],
         "fontFamilies": {"ui": "Inter", "counter": "JetBrains Mono"},
         "glow": True,
+        # Flat widgets, as the mockup shows them (#1328): toolbar and transport buttons without frames until the mouse
+        # is over them or they are checked, tabs underlined, zones raised panels over the window's background, and
+        # frameless mute, solo and record buttons. The other themes keep framed widgets.
+        "flat": True,
     },
     "dark": {
         "colors": {
@@ -52,6 +56,7 @@ THEMES = {
         "timeDisplaySizes": [32, 48, 64, 96, 128],
         "fontFamilies": {"ui": "Inter", "counter": "JetBrains Mono"},
         "glow": False,
+        "flat": False,
     },
     "light": {
         "colors": {
@@ -71,6 +76,7 @@ THEMES = {
         "timeDisplaySizes": [32, 48, 64, 96, 128],
         "fontFamilies": {"ui": "Inter", "counter": "JetBrains Mono"},
         "glow": False,
+        "flat": False,
     },
     # Black, white and bright colors that meet WCAG's enhanced contrast (7:1) for text, white borders around every
     # control and a thicker focus ring (docs/features/accessibility.md).
@@ -92,6 +98,7 @@ THEMES = {
         "timeDisplaySizes": [32, 48, 64, 96, 128],
         "fontFamilies": {"ui": "Inter", "counter": "JetBrains Mono"},
         "glow": False,
+        "flat": False,
         "focusRing": 2,
     },
 }
@@ -106,6 +113,7 @@ NINE_NAMES = [
     "button-primary-normal", "button-primary-hover", "button-primary-pressed",
     "toggle-off", "toggle-hover", "toggle-mute", "toggle-solo", "toggle-record", "toggle-monitor",
     "field-normal", "field-focus", "field-disabled", "dropdown-normal", "dropdown-hover", "dropdown-open",
+    "dropdown-button-normal", "dropdown-button-hover",
     "menu", "menu-item-hover", "menu-separator", "list", "list-item-hover", "list-item-selected",
     "tabbar", "tab-normal", "tab-hover", "tab-active",
     "scrollbar-track-vertical", "scrollbar-track-horizontal", "scrollbar-thumb-vertical", "scrollbar-thumb-horizontal",
@@ -122,7 +130,7 @@ FIXED_NAMES = [
 SIZES = {
     "dialog": (32, 32), "dialog-titlebar": (32, 24), "panel": (24, 24), "panel-header": (24, 20),
     "toolbar": (24, 24), "display": (24, 24), "tooltip": (24, 24), "focus-ring": (20, 20),
-    "button": (24, 24), "toggle": (20, 20), "field": (24, 24), "dropdown": (24, 24),
+    "button": (24, 24), "toggle": (20, 20), "field": (24, 24), "dropdown": (24, 24), "dropdown-button": (40, 24),
     "menu": (24, 24), "menu-item": (24, 20), "menu-separator": (16, 8), "list": (24, 24),
     "list-item": (24, 20), "tabbar": (24, 24), "tab": (24, 24), "scrollbar-track-vertical": (10, 24),
     "scrollbar-track-horizontal": (24, 10), "scrollbar-thumb-vertical": (10, 24),
@@ -214,10 +222,19 @@ def nine_svg(name: str, theme: dict) -> tuple[int, int, str, dict]:
     elif name.startswith("toggle-"):
         state = name.removeprefix("toggle-"); r = 3
         colors = {"mute": c["warning"], "solo": c["accent"], "record": c["danger"], "monitor": c["success"]}
-        if state == "hover": bg = mix(bg, accent, .14); border = mix(border, accent, .5)
+        if theme["flat"] and state in ("off", "hover"): bg = mix(c["surface"], c["border"], .45 if state == "off" else .8); border = "none"
+        elif state == "hover": bg = mix(bg, accent, .14); border = mix(border, accent, .5)
         elif state in colors:
             bg = mix(colors[state], c["background"], .10 if theme["glow"] else .24); border = colors[state]
             extra = glow_rect(w, h, colors[state], r) if theme["glow"] else ""
+    elif name.startswith("dropdown-button-"):
+        # A menu button that shows a value: a field with the arrow in its right slice, which doesn't stretch across
+        bg = mix(c["background"], c["surface"], .28)
+        if name.endswith("hover"): border = mix(border, accent, .55)
+        y = h / 2
+        arrow = (f'<polyline points="{w-15},{y-2} {w-11},{y+2} {w-7},{y-2}" fill="none" stroke="{c["textMuted"]}" '
+                 'stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>')
+        return w, h, svg_doc(w, h, rect(w, h, bg, border, r, 1, None, .5) + arrow), {"left": 6, "top": 6, "right": 20, "bottom": 6}
     elif name.startswith("field-") or name.startswith("dropdown-"):
         state = name.split("-")[-1]; bg = mix(c["background"], c["surface"], .28)
         if state in ("focus", "open"): border = accent; extra = glow_rect(w, h, accent, r) if theme["glow"] else ""
@@ -321,6 +338,59 @@ def luminance(color: str) -> float:
         return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
     r, g, b = (int(color[i:i + 2], 16) for i in (1, 3, 5))
     return 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b)
+
+
+def flat_rules(theme: dict, skin, on_accent: str) -> list:
+    """The flat widgets' rules (#1328), after the framed ones they replace, with selectors at least as specific.
+
+    Only colors, decorators and border radii: sizes and positions stay as resources/styles sets them.
+    """
+    c = theme["colors"]
+    accent, r = c["accent"], theme["radii"]
+    bars = ".toolbar button, .transport button"
+    def each(suffix: str) -> str:
+        return ", ".join(f"{part}{suffix}" for part in bars.split(", "))
+    return [
+        # Toolbars and the transport bar on the panels' surface
+        (".toolbar", {"decorator": "none", "background-color": c["surface"]}),
+        # Their buttons: no frame, muted until the mouse is over them, a soft fill under it, the accent when checked
+        (bars, {"decorator": "none", "background-color": "transparent", "border-radius": f"{r['control']}dp",
+                "color": c["textMuted"]}),
+        (each(" svg.icon"), {"image-color": c["textMuted"]}),
+        (each(":hover"), {"decorator": "none", "background-color": mix(c["surfaceRaised"], accent, .14),
+                          "color": c["text"]}),
+        (each(":hover svg.icon"), {"image-color": c["text"]}),
+        (each(":active"), {"decorator": "none", "background-color": mix(c["background"], accent, .24)}),
+        (each(".checked"), {"decorator": "none", "background-color": accent + "2e", "color": accent}),
+        (each(".checked svg.icon"), {"image-color": accent}),
+        (each(":disabled"), {"decorator": "none", "background-color": "transparent", "color": mix(c["textMuted"], c["surface"], .45)}),
+        (each(":disabled svg.icon"), {"image-color": mix(c["textMuted"], c["surface"], .45)}),
+        # Menu buttons that show a value (snap type, grid type) look like drop-down fields
+        (each("[menu]"), {"decorator": skin("dropdown-button-normal"), "color": c["text"], "text-align": "left",
+                          "padding-right": "22dp"}),
+        (each("[menu]:hover"), {"decorator": skin("dropdown-button-hover")}),
+        (each(".icon-only[menu]"), {"decorator": "none", "padding-right": "0", "text-align": "center"}),
+        (each(".icon-only[menu]:hover"), {"decorator": "none"}),
+        # Start in the accent, filled while playing; Record in the danger color, filled while recording
+        (".transport #start", {"background-color": accent + "26"}),
+        (".transport #start svg.icon", {"image-color": accent}),
+        (".transport #start.checked", {"background-color": accent}),
+        (".transport #start.checked svg.icon", {"image-color": on_accent}),
+        (".transport #record svg.icon", {"image-color": c["danger"]}),
+        (".transport #record.checked", {"background-color": c["danger"]}),
+        (".transport #record.checked svg.icon", {"image-color": "#ffffff"}),
+        (".transport .primary-time", {"color": c["text"], "font-size": f"{theme['fontSizes']['title'] + 2}dp",
+                                      "font-weight": "600"}),
+        # Tabs: no boxes, the selected one's name bright over an accent line
+        ("tabset tabs", {"decorator": "none", "background-color": c["surface"]}),
+        ("tabset tab", {"decorator": "none", "color": c["textMuted"], "border-bottom-width": "2dp",
+                        "border-bottom-color": "transparent"}),
+        ("tabset tab:hover", {"decorator": "none", "color": c["text"]}),
+        ("tabset tab:selected", {"decorator": "none", "color": c["text"], "border-bottom-color": accent}),
+        # Zones are raised panels with rounded corners, the window's background showing between them
+        (".docking [zone]", {"background-color": c["surface"], "border-radius": f"{r['panel']}dp"}),
+        (".docking .strip", {"background-color": c["surface"]}),
+    ]
 
 
 def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
@@ -778,6 +848,8 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         ("menuitem .menu-keys", {"color": c["textMuted"]}),
         ("menuitem > .menu-arrow", {"decorator": skin("dropdown-arrow")}),
     ]
+    if theme["flat"]:
+        rules += flat_rules(theme, skin, on_accent)
     # The time display window's digits at each of its sizes (docs/features/transport-bar.md), a line twice as high.
     rules.extend((f".time-display.size-{i}", {"font-size": f"{size}dp", "line-height": f"{2 * size}dp"})
                  for i, size in enumerate(theme["timeDisplaySizes"]))
