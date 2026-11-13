@@ -251,7 +251,10 @@ namespace gnubase::engine::midi
 	// playback applies them, and with includeInserts also their tracks' MIDI modifiers (reference manual pp. 1096,
 	// 1120), with the random values playback draws; a note they move out of the range or that doesn't play is left
 	// out. Notes are written as they play through their tracks' drum maps and the chord track; a destination with its
-	// own gets the pitch that plays them, if one does, else what played, which it then maps. eraseDestination first
+	// own gets the pitch that plays them, if one does, else what played, which it then maps. The new part gets the
+	// root key and Global Transpose setting the parts its notes come from share, or, when they differ, the project
+	// root key and follow, and then each note the difference its part's global transposition makes transposed into
+	// it, so that it keeps the pitch it played with (#954). eraseDestination first
 	// removes the destination track's parts that lie in the range and the events of other parts that start in it, a
 	// shared copy leaving its copies for that: its notes get new ids, so their play probability, velocity variance and
 	// random MIDI modifier values draw anew. includeChase adds the last controller value of every controller, program
@@ -284,9 +287,14 @@ namespace gnubase::engine::midi
 	// Combines parts on one track into a single part from the first one's start to the last one's end, named after
 	// the earliest, on the lowest lane they are on (reference manual p. 1123). Muted parts are removed and add
 	// nothing. Events keep their time; notes are cut where their part ended. The parts' transpose and velocity go into
-	// the notes as playback applies them, and a note transposed beyond 0 to 127, which doesn't play, is left out. Where
-	// a drum map or the chord track would then play another pitch, the new part keeps the transpose, and parts with
-	// different ones make a part for each. The track's MIDI modifiers stay on the track, and the copied notes get new
-	// ids, so the play probability and velocity variance of a note, drawn from its part's and its own id, draw anew.
+	// the notes as playback applies them, and a note transposed beyond 0 to 127, which doesn't play, is left out.
+	// The new part gets the root key and Global Transpose setting the parts share, or, when they differ, the project
+	// root key and follow, and then each note the difference its part's global transposition makes played into its
+	// pitch, so that it keeps the pitch it played with (#954). Where a drum map or the chord track would then play
+	// another pitch, because they map a note before the part's transpose and the global transposition, the notes
+	// can't hold them: the new part keeps the transpose, and parts with a different transpose, root key or Global
+	// Transpose setting make a part for each, which keeps them (#954). The track's MIDI modifiers stay on the track,
+	// and the copied notes get new ids, so the play probability and velocity variance of a note, drawn from its part's
+	// and its own id, draw anew.
 	PartChanges bounce(Project& project, const std::vector<ObjectId>& parts);
 }
