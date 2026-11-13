@@ -2215,16 +2215,7 @@ namespace gnubase::engine
 			if (parameters.contains("sends"))
 				setSends(project, changed, parameters.at("sends"));
 			// A MIDI slot's automation goes with its effect when the slot gets another one (or none).
-			for (auto lane = project.automation.begin(); lane != project.automation.end();)
-			{
-				const AutomationTarget& target = lane->second.target;
-				const bool gone = lane->second.track == channel.track &&
-					target.type == AutomationTargetType::MidiEffect &&
-					midiEffectSlot(channel, target.number).effect != midiEffectSlot(changed, target.number).effect;
-				if (gone)
-					context.emit("automationLane.removed", {{"lane", lane->first}});
-				lane = gone ? project.automation.erase(lane) : std::next(lane);
-			}
+			removeMidiEffectLanes(project, context, channel, changed);
 			const Channel before = channel;
 			channel = changed;
 			const std::set<ObjectId> soloed = passOn(project, before, channel.id, parameters, context);

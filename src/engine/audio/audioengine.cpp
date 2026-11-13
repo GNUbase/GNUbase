@@ -1134,9 +1134,12 @@ namespace gnubase::engine
 		result.reserve(m_releases.size());
 		for (const PendingRelease& pending : m_releases)
 		{
-			Release release{pending.channel, pending.departed, pending.departedSend, {}};
-			for (const ObjectId source : m_instruments.at(pending.instrument).sources)
+			Release release{pending.channel, pending.departed, pending.departedSend, {}, {}};
+			const Instrument& instrument = m_instruments.at(pending.instrument);
+			for (const ObjectId source : instrument.sources)
 				release.staying.push_back(m_sequencers.at(source));
+			for (const auto& entry : instrument.sends)
+				release.stayingSends.push_back(entry.second);
 			result.push_back(std::move(release));
 		}
 		return result;
@@ -1153,9 +1156,9 @@ namespace gnubase::engine
 			m_running = program.generation;
 			for (const Release& release : program.releases)
 				if (release.departedSend)
-					release.channel->releaseNotesOf(*release.departedSend, release.staying);
+					release.channel->releaseNotesOf(*release.departedSend, release.staying, release.stayingSends);
 				else
-					release.channel->releaseNotesOf(*release.departed, release.staying);
+					release.channel->releaseNotesOf(*release.departed, release.staying, release.stayingSends);
 			for (size_t i = 0; i < program.sequencers.size(); ++i)
 				program.sequencers[i].second->playOn(program.destinations[i]);
 			m_started.store(program.generation, std::memory_order_release);
@@ -1189,11 +1192,10 @@ namespace gnubase::engine
 				transform.processor->process(program.sequencers[i].second->input(), transform.rules);
 		transport.tempo = program.tempo.bpmAt(program.tempo.toTicks(transport.position, program.sampleRate));
 		transport.tempoMap = &program.tempo;
-		// The MIDI inserts above the divider play the input before it is recorded.
-		for (const auto& [channel, sequencer] : program.sequencers)
-			sequencer->processInput(block.frames, transport);
-		m_recorder.process(block, m_played, m_recordOffset.load(std::memory_order_relaxed), program.sequencers);
 		program.graph.process(block.frames, transport, m_workers.get());
+		// After the graph: the MIDI inserts above the divider played the input there, with their automation, before
+		// it is recorded (MidiSequencer::process).
+		m_recorder.process(block, m_played, m_recordOffset.load(std::memory_order_relaxed), program.sequencers);
 		m_tap.capture(block.position, program.instruments);
 		m_playback.endBlock();
 		output(block, program);

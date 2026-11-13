@@ -1951,6 +1951,10 @@ namespace gnubase::engine
 						".effect must be a built-in MIDI effect (midiEffect.list) or empty, not " + effect.dump());
 				if (id != slot.effect) // another effect starts from its defaults
 				{
+					// A send whose effect is removed plays nowhere: an output the inspector doesn't show any more
+					// mustn't count as a loop (#1149).
+					if (id.empty() && !given.contains("output"))
+						slot.output = 0;
 					slot.effect = id;
 					slot.parameters.clear();
 					if (info != nullptr)
