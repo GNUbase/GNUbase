@@ -335,9 +335,11 @@ namespace gnubase::engine::settings
 					const std::optional<std::string> text = files::readFile(file);
 					require(text.has_value(), "can't read the key commands file " + file.u8string());
 					const Json contents = Json::parse(text.value_or(std::string()), nullptr, false);
-					require(contents.is_object() && contents.value("format", std::string()) == "gnubase.keyCommands",
+					// Compared as Json, so a format or version of another type is a readable error, not the JSON
+					// library's type error (Json::value throws on a type mismatch).
+					require(contents.is_object() && contents.value("format", Json()) == Json("gnubase.keyCommands"),
 						file.u8string() + " is no key commands file");
-					require(contents.value("version", 0) == 1,
+					require(contents.value("version", Json()) == Json(1),
 						file.u8string() + " is a key commands file of another version");
 					const Json saved = {{"keyCommands", contents.value("keyCommands", Json::array())},
 						{"macros", contents.value("macros", Json::array())}};
