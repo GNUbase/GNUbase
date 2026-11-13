@@ -123,9 +123,9 @@ transpose palette and deleting; the nudge buttons, Solo Editor, Record in Editor
 the Scale Assistant, Indicate Transpositions, event colors, the status line and Set up Window Layout; horizontal zoom
 and scrolling; dragging at the keyboard's left edge to scroll and zoom it, and the key at the mouse's pitch lit while
 the mouse moves in the note display (p. 1204), and with vertical zoom the keyboard's height following the rows' (it
-is fixed at 128 rows of 10dp in `keyeditor.rcss`); drum map names in the key editor and articulation names; Add to Chord Track, Match with
-Chord Track, Create Chord Events and the chord insert tools; quantizing from the toolbar (#132) and the Length section's
-functions (#133); the key editor's context menu.
+is fixed at 128 rows of 10dp in `keyeditor.rcss`); drum map names in the key editor and articulation names; Add to
+Chord Track, Match with Chord Track, Create Chord Events and the chord insert tools; quantizing from the toolbar
+(#132) and the Length section's functions (#133); the key editor's context menu.
 
 ## Checks
 
@@ -142,8 +142,10 @@ functions (#133); the key editor's context menu.
   (`tests/golden/ui/key-editor-keyboard.png`); pressing the right part of a white key beside a black key and the
   black key playing their pitches on the track's instrument until the mouse is released, also outside the editor,
   leaving the selected notes as they were, and a held key's pitch ending when the editor switches to the drum editor,
-  closes through the engine API or has its window closed; the object selection tool selecting, deselecting, moving,
-  resizing, inserting and deleting; the draw tool with Quantize Link and an eighth from the Length Quantize menu; the erase, trim (and with Alt), split and glue tools; the transpose palette
+  closes through the engine API or has its window closed, and when the lower zone's Editor panel in a window of its
+  own has that window closed or is docked again; the object selection tool selecting, deselecting, moving,
+  resizing, inserting and deleting; the draw tool with Quantize Link and an eighth from the Length Quantize menu; the
+  erase, trim (and with Alt), split and glue tools; the transpose palette
   and typing a pitch on the info line; step input with its cursor, a click moving it, and MIDI input selecting the
   next note; the Chord Editing section naming and changing a chord; the toolbox with the setting on and off, with and
   without a modifier key, choosing tools.

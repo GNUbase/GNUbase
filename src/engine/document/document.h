@@ -232,6 +232,9 @@ namespace gnubase::engine
 		// (docs/features/midi-devices.md).
 		std::optional<int> program = std::nullopt;
 		std::optional<int> bank = std::nullopt;
+		// MIDI channels: the MIDI channel (0 to 15) that the program, bank, MIDI volume and pan go out on, or none:
+		// Any, which sends them on channel 1 (docs/features/mixer.md).
+		std::optional<int> midiChannel = std::nullopt;
 		// NOLINTNEXTLINE(readability-redundant-member-init): see instrumentParameters
 		std::string device = {};
 		// MIDI and instrument tracks: the MIDI modifiers, which change how the track's notes play
@@ -496,11 +499,22 @@ namespace gnubase::engine
 		double curve = 0.0;
 	};
 
-	// An audio event's original and quantized starts (#145), while its quantized position has not been changed again.
+	// What quantizing and the quantize panel's length changes make of an audio event (#910): where it plays, the
+	// section of its clip it plays, and the crossfade into it from the event before. As a note's timing, so that
+	// resetting can put all of it back.
+	struct EventTiming
+	{
+		time::Position position; // in the track's time base
+		time::Samples offset = 0;
+		time::Samples length = 0;
+		Crossfade crossfade;
+	};
+
+	// An audio event's original and quantized timings (#145), while its quantized position has not been changed again.
 	struct EventQuantizeOrigin
 	{
-		time::Position original;
-		time::Position quantized;
+		EventTiming original;
+		EventTiming quantized;
 	};
 
 	// Plays a section of a clip on an audio track.
@@ -532,9 +546,9 @@ namespace gnubase::engine
 		// Where it is in the stack of its track's events (#99): where events overlap, the one whose frontOf is highest
 		// plays. 0 orders it by its id, so an event added later is in front; event.toFront gives it a new id here.
 		ObjectId front = 0;
-		// Where it was before quantizing (#145) first moved it, and where quantizing put it. While it is there,
-		// quantizing starts from the original position and resetting puts it back; moved by other means, it is
-		// where it is.
+		// Where it was before quantizing (#145) first moved it, and where quantizing and the quantize panel's
+		// length changes (#910) left it. While it is there, quantizing starts from the original position and
+		// resetting puts it back; moved by other means, it is where it is.
 		std::optional<EventQuantizeOrigin> quantizeOrigin;
 	};
 
@@ -1211,12 +1225,17 @@ namespace gnubase::engine
 		PlayDirection direction = PlayDirection::Forward;
 		double swing = 0.0; // -1 to 1: how far every second step moves, in half steps
 		std::vector<PatternLane> lanes;
+		// The pattern of another track that midi::adoptPatterns made it a copy of, 0 for none. Not saved: in a loaded
+		// project no pattern is a copy.
+		ObjectId copiedFrom = 0;
 	};
 
 	inline bool operator==(const Pattern& a, const Pattern& b)
 	{
-		return std::tie(a.id, a.track, a.name, a.mode, a.length, a.resolution, a.direction, a.swing, a.lanes) ==
-			std::tie(b.id, b.track, b.name, b.mode, b.length, b.resolution, b.direction, b.swing, b.lanes);
+		return std::tie(a.id, a.track, a.name, a.mode, a.length, a.resolution, a.direction, a.swing, a.lanes,
+				   a.copiedFrom) ==
+			std::tie(
+				b.id, b.track, b.name, b.mode, b.length, b.resolution, b.direction, b.swing, b.lanes, b.copiedFrom);
 	}
 
 	// A color of the project's color set (reference manual pp. 115-118), which colors are picked from.
@@ -1507,15 +1526,15 @@ namespace gnubase::engine
 	inline bool operator==(const Channel& a, const Channel& b)
 	{
 		return std::tie(a.id, a.track, a.format, a.input, a.output, a.instrument, a.volume, a.pan, a.panner, a.panLeft,
-				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.program, a.bank, a.device, a.modifiers,
-				   a.midiInserts, a.midiSends, a.inputTransformer, a.instrumentParameters, a.sample, a.monitor,
-				   a.recordEnable, a.midiInput, a.mute, a.solo, a.soloDefeat, a.listen, a.slots, a.notes, a.sections,
-				   a.sends) ==
+				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.program, a.bank, a.midiChannel, a.device,
+				   a.modifiers, a.midiInserts, a.midiSends, a.inputTransformer, a.instrumentParameters, a.sample,
+				   a.monitor, a.recordEnable, a.midiInput, a.mute, a.solo, a.soloDefeat, a.listen, a.slots, a.notes,
+				   a.sections, a.sends) ==
 			std::tie(b.id, b.track, b.format, b.input, b.output, b.instrument, b.volume, b.pan, b.panner, b.panLeft,
-				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.program, b.bank, b.device, b.modifiers,
-				b.midiInserts, b.midiSends, b.inputTransformer, b.instrumentParameters, b.sample, b.monitor,
-				b.recordEnable, b.midiInput, b.mute, b.solo, b.soloDefeat, b.listen, b.slots, b.notes, b.sections,
-				b.sends);
+				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.program, b.bank, b.midiChannel, b.device,
+				b.modifiers, b.midiInserts, b.midiSends, b.inputTransformer, b.instrumentParameters, b.sample,
+				b.monitor, b.recordEnable, b.midiInput, b.mute, b.solo, b.soloDefeat, b.listen, b.slots, b.notes,
+				b.sections, b.sends);
 	}
 
 	inline bool operator==(const Slot& a, const Slot& b)
@@ -1606,6 +1625,12 @@ namespace gnubase::engine
 	inline bool operator==(const VolumePoint& a, const VolumePoint& b)
 	{
 		return std::tie(a.position, a.volume, a.curve) == std::tie(b.position, b.volume, b.curve);
+	}
+
+	inline bool operator==(const EventTiming& a, const EventTiming& b)
+	{
+		return std::tie(a.position, a.offset, a.length, a.crossfade) ==
+			std::tie(b.position, b.offset, b.length, b.crossfade);
 	}
 
 	inline bool operator==(const EventQuantizeOrigin& a, const EventQuantizeOrigin& b)

@@ -467,8 +467,13 @@ TEST_CASE("the snap point, the zoom, play and scrub tools, the overview and the 
 	// The play tool auditions the clip from the frame pressed until the release; the scrub tool scrubs it.
 	ui::EngineBinding binding(f.app.engine());
 	std::vector<std::string> modes;
+	std::vector<Json> auditions; // what MCP and Lua listeners get
 	const ui::Subscription subscription = binding.on("audition.changed",
-		[&modes](const engine::Event& event) { modes.push_back(event.data.at("mode").get<std::string>()); });
+		[&modes, &auditions](const engine::Event& event)
+		{
+			modes.push_back(event.data.at("mode").get<std::string>());
+			auditions.push_back(event.data);
+		});
 	// Both play the clip with its fades (p. 630), also past the event's end at frame 5000; scrubbing moves the
 	// project cursor to where the frame plays (p. 634).
 	f.tool("play");
@@ -481,6 +486,9 @@ TEST_CASE("the snap point, the zoom, play and scrub tools, the overview and the 
 		}));
 	Json played = f.lastParameters("audition.start");
 	CHECK(played.at("clip") == f.clip);
+	CHECK(auditions.front().at("clip") == f.clip); // the event names the clip, and media its media file
+	CHECK(auditions.front().at("media") != 0);
+	CHECK(auditions.front().at("track") == 0);
 	CHECK(!played.contains("track"));
 	CHECK(std::abs(played.at("position").get<int64_t>() - 6000) <= 10);
 	f.tool("scrub");
@@ -494,6 +502,8 @@ TEST_CASE("the snap point, the zoom, play and scrub tools, the overview and the 
 	// Only the drag's first scrub goes into the command log; the cursor shows where the last one went.
 	const Json scrubbed = f.lastParameters("audition.scrub");
 	CHECK(scrubbed.at("clip") == f.clip);
+	CHECK(auditions[2].at("clip") == f.clip);
+	CHECK(auditions[2].at("media") == auditions.front().at("media"));
 	CHECK(std::abs(scrubbed.at("position").get<int64_t>() - 6000) <= 10);
 	CHECK(std::abs(f.app.call("transport.get").at("position").get<int64_t>() - (g_second - 1000 + 6500)) <= 10);
 

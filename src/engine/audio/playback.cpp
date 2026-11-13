@@ -63,6 +63,9 @@ namespace gnubase::engine
 			std::optional<GainRamp> fadeOut;
 			bool crossfadeIn = false; // the fade in belongs to a crossfade
 			bool crossfadeOut = false;
+			// A muted event kept in the stack because editing.treatMutedAudioLikeDeleted is off: it covers what lies
+			// behind it but plays nothing, so front() leaves a silent gap where it is in front.
+			bool muted = false;
 		};
 
 		// Where two events play together: out fades out and in fades in. Fades that only apply where an event plays
@@ -146,8 +149,9 @@ namespace gnubase::engine
 				if (crossfade.from == 0 || from == index.end())
 					continue;
 				Placed& out = events[from->second];
-				// The snapshot only has crossfades that apply (crossfadeApplies): between events that overlap, the
-				// second one starting inside the first and ending after it. An edit that ends this rests a crossfade.
+				// The snapshot only has crossfades that apply (crossfadeApplies): between unmuted events that overlap,
+				// the second one starting inside the first and ending after it, so a muted event never crossfades and
+				// nothing behind it plays through. An edit that ends this rests a crossfade.
 				if (out.crossfadeOut || out.end <= in.start)
 					continue;
 				const time::Samples overlap = out.end - in.start;
@@ -292,7 +296,8 @@ namespace gnubase::engine
 						covered.push_back(after);
 					}
 				}
-				covered.push_back(entry);
+				if (!placed.muted) // a muted event covers what lies behind it but plays nothing: a silent gap
+					covered.push_back(entry);
 				std::sort(covered.begin(), covered.end(),
 					[](const PlaylistEntry& a, const PlaylistEntry& b) { return a.start < b.start; });
 				layer = std::move(covered);
@@ -481,15 +486,20 @@ namespace gnubase::engine
 				[&](const GainRamp& ramp) { return ramp.start < position + frames && ramp.end > position; });
 	}
 
-	Playlist makePlaylist(const RenderSnapshot& snapshot, const RenderChannel& channel)
+	Playlist makePlaylist(const RenderSnapshot& snapshot, const RenderChannel& channel, bool treatMutedLikeDeleted)
 	{
 		std::vector<Placed> events;
 		for (const RenderAudioEvent& event : channel.audioEvents)
 		{
-			if (event.muted || event.media < 0 || static_cast<size_t>(event.media) >= snapshot.media.size())
+			if (event.media < 0 || static_cast<size_t>(event.media) >= snapshot.media.size())
+				continue;
+			// A muted event is skipped when it is treated as deleted; else it stays in the stack, covering what lies
+			// behind it while playing nothing (front() leaves a silent gap where it is in front).
+			if (event.muted && treatMutedLikeDeleted)
 				continue;
 			Placed placed;
 			placed.event = &event;
+			placed.muted = event.muted;
 			placed.media = &snapshot.media[static_cast<size_t>(event.media)];
 			placed.ratio = snapshot.sampleRate / placed.media->sampleRate;
 			placed.start = event.start;

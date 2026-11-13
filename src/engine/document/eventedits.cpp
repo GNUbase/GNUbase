@@ -634,26 +634,29 @@ namespace gnubase::engine
 				right.length -= frames;
 				right.fadeIn = Fade();
 				right.crossfade = Crossfade();
-				// The piece of a quantized event after the split was as far from its own original, in samples, as
-				// the split is from where quantizing put the event, so that resetting puts both pieces back
-				// (#910). It goes through samples: a musical event's position is in ticks, but its audio keeps its
-				// length in samples (#414), so how many ticks the piece lies after the start depends on the tempo
-				// there, which quantizing can have moved the event past. An origin that has stopped counting, of an
-				// event moved by other means since, doesn't come along.
-				if (right.quantizeOrigin && right.quantizeOrigin->quantized == event.position)
+				event.length = frames;
+				event.fadeOut = Fade();
+				// Both pieces of a quantized event keep where they were before quantizing, each with its own length,
+				// so that resetting puts them back and they tile again (#910). The piece after the split was as far
+				// from its original, in samples, as the split is from where quantizing put the event; it goes through
+				// samples because a musical event's position is in ticks while its audio keeps its length in samples
+				// (#414), so the tempo between the two counts. An origin that has stopped counting, of an event moved
+				// by other means since, doesn't come along.
+				if (auto& origin = right.quantizeOrigin; origin && origin->quantized.position == event.position)
 				{
 					const time::Samples original =
-						samples(project, right.quantizeOrigin->original) + (at - samples(project, event.position));
-					right.quantizeOrigin->quantized = right.position;
-					right.quantizeOrigin->original =
+						samples(project, origin->original.position) + (at - samples(project, event.position));
+					const time::Position shifted =
 						rebased(project, {time::TimeBase::Linear, original}, event.position.base);
+					*origin = EventQuantizeOrigin{EventTiming{shifted, right.offset, right.length, right.crossfade},
+						EventTiming{right.position, right.offset, right.length, right.crossfade}};
+					event.quantizeOrigin->original.length = frames;
+					event.quantizeOrigin->quantized.length = frames;
 				}
 				else
 				{
 					right.quantizeOrigin.reset();
 				}
-				event.length = frames;
-				event.fadeOut = Fade();
 				// An event that crossfaded from this one now overlaps the piece after the split.
 				for (auto& [id, other] : project.audioEvents)
 					if (other.crossfade.from == event.id && eventSpan(project, other).start >= at)

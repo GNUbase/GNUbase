@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <optional>
@@ -201,6 +202,11 @@ namespace gnubase::ui
 					m_zoomHorizontalOnly = zoom->get<bool>();
 					m_zoomHorizontalOnlyKnown = true;
 				}
+				if (const auto muted = values.find("editing.treatMutedAudioLikeDeleted"); muted != values.end())
+				{
+					m_treatMutedKnown = true;
+					setTreatMutedAudioLikeDeleted(muted->get<bool>());
+				}
 			}));
 		const std::weak_ptr<bool> alive = m_alive;
 		requestProject();
@@ -250,6 +256,12 @@ namespace gnubase::ui
 			{
 				if (!alive.expired() && result.ok() && !m_zoomHorizontalOnlyKnown)
 					m_zoomHorizontalOnly = result.value.at("value").get<bool>();
+			});
+		m_binding.send("settings.get", {{"key", "editing.treatMutedAudioLikeDeleted"}},
+			[this, alive](const engine::Result& result)
+			{
+				if (!alive.expired() && result.ok() && !m_treatMutedKnown) // newer changes win
+					setTreatMutedAudioLikeDeleted(result.value.at("value").get<bool>());
 			});
 		requestMarkers();
 		showAutoScroll();
@@ -465,15 +477,18 @@ namespace gnubase::ui
 			const auto found = takeLanes.find({event.at("track").get<uint64_t>(), event.value("lane", 0)});
 			return found == takeLanes.end() ? std::optional<size_t>() : found->second;
 		};
+		// An event's own color, or else its track's (reference manual p. 114).
+		const auto colorOf = [&colors](const Json& event)
+		{
+			const Json& own = event.at("color");
+			return own.is_string() ? spanColor(own.get<std::string>()) : colors[event.at("track").get<uint64_t>()];
+		};
 		// With onTrackLane false, the track's lane gets no span for it: audio events show there where they are in
 		// front.
 		const auto addEvent = [&](const Json& event, double start, double end, bool onTrackLane = true)
 		{
 			const auto track = event.at("track").get<uint64_t>();
-			// Its own color, or else its track's (reference manual p. 114).
-			const Json& own = event.at("color");
-			TimeSpan span{start, end - start};
-			span.color = own.is_string() ? spanColor(own.get<std::string>()) : colors[track];
+			const TimeSpan span{start, end - start, colorOf(event)};
 			// The folders around the track show it as a data block.
 			for (uint64_t folder = parents[track]; folder != 0; folder = parents[folder])
 				if (const auto lane = lanes.find(folder); lane != lanes.end() &&
@@ -493,27 +508,37 @@ namespace gnubase::ui
 			}
 			m_end = std::max(m_end, end);
 		};
-		// Audio parts (#471) show as parts; their events only as the waveforms within them.
-		std::map<uint64_t, std::pair<double, double>> audioParts;
+		// Audio parts (#471) show as parts; their events only as the waveforms within them, in the part's color
+		// (#1312).
+		struct AudioPart
+		{
+			double start = 0.0;
+			double end = 0.0;
+			uint32_t color = 0;
+		};
+		std::map<uint64_t, AudioPart> audioParts;
 		for (const Json& part : project.at("audioParts"))
 		{
 			const auto track = part.at("track").get<uint64_t>();
 			const auto position = part.at("position").get<int64_t>();
 			const double start = seconds(position, linear[track]);
 			const double end = seconds(position + part.at("length").get<int64_t>(), linear[track]);
-			audioParts[part.at("id").get<uint64_t>()] = {start, end};
+			audioParts[part.at("id").get<uint64_t>()] = {start, end, colorOf(part)};
 			addEvent(part, start, end);
 		}
 		std::vector<EventWaveforms::Event> waves;
-		// Audio events in the order they are stacked, the one in front last, so that a click finds it (#99). Muted
-		// ones play nothing and hide nothing (makePlaylist): they come behind every other.
+		// Audio events in the order they are stacked, the one in front last, so that a click finds it (#99). With
+		// editing.treatMutedAudioLikeDeleted, muted ones play nothing and hide nothing (makePlaylist): they come behind
+		// every other. Without it, they keep their place in the stack and silence what lies behind them.
 		std::vector<const Json*> stacked;
 		for (const Json& event : project.at("audioEvents"))
 			stacked.push_back(&event);
-		const auto front = [](const Json* event)
+		const bool asDeleted = m_treatMutedAudioLikeDeleted;
+		const auto front = [asDeleted](const Json* event)
 		{
 			const auto own = event->value("front", uint64_t{0});
-			return std::make_pair(!event->value("mute", false), own != 0 ? own : event->at("id").get<uint64_t>());
+			return std::make_pair(
+				asDeleted && !event->value("mute", false), own != 0 ? own : event->at("id").get<uint64_t>());
 		};
 		std::stable_sort(
 			stacked.begin(), stacked.end(), [&front](const Json* a, const Json* b) { return front(a) < front(b); });
@@ -543,23 +568,22 @@ namespace gnubase::ui
 				played != event.end() && length > 0.0 ? event.at("length").get<double>() / length : rate;
 			if (const auto part = audioParts.find(event.value("part", uint64_t{0})); part != audioParts.end())
 			{
-				const double from = std::max(start, part->second.first);
-				const double to = std::min(start + length, part->second.second);
+				const double from = std::max(start, part->second.start);
+				const double to = std::min(start + length, part->second.end);
 				if (file != media.end() && rate > 0.0 && lanes.count(track) != 0 && to > from)
-					waves.push_back({event.at("id").get<uint64_t>(), lanes[track], {from, to - from}, file->first,
-						waveRate, file->second->at("channels").get<int>(),
-						event.at("offset").get<int64_t>() +
-							static_cast<int64_t>(std::llround((from - start) * waveRate))});
+					waves.push_back(
+						{event.at("id").get<uint64_t>(), lanes[track], {from, to - from, part->second.color},
+							file->first, waveRate, file->second->at("channels").get<int>(),
+							event.at("offset").get<int64_t>() +
+								static_cast<int64_t>(std::llround((from - start) * waveRate))});
 				continue;
 			}
 			addEvent(event, start, start + length, false);
 			if (lanes.count(track) != 0)
 			{
-				const Json& own = event.at("color");
-				Piece piece{{start, length, own.is_string() ? spanColor(own.get<std::string>()) : colors[track]}, {},
-					event.value("mute", false)};
+				Piece piece{{start, length, colorOf(event)}, {}, event.value("mute", false)};
 				if (file != media.end() && rate > 0.0)
-					piece.wave = {event.at("id").get<uint64_t>(), lanes[track], {start, length}, file->first, waveRate,
+					piece.wave = {event.at("id").get<uint64_t>(), lanes[track], piece.span, file->first, waveRate,
 						file->second->at("channels").get<int>(), event.at("offset").get<int64_t>()};
 				std::vector<Piece> covered;
 				for (const Piece& other : pieces[lanes[track]])
@@ -594,8 +618,8 @@ namespace gnubase::ui
 			if (rate > 0.0)
 				readFades(event, rate, waveRate);
 			if (const std::optional<size_t> taken = takeLane(event); taken && file != media.end() && rate > 0.0)
-				waves.push_back({event.at("id").get<uint64_t>(), *taken, {start, length}, file->first, waveRate,
-					file->second->at("channels").get<int>(), event.at("offset").get<int64_t>()});
+				waves.push_back({event.at("id").get<uint64_t>(), *taken, {start, length, colorOf(event)}, file->first,
+					waveRate, file->second->at("channels").get<int>(), event.at("offset").get<int64_t>()});
 		}
 		for (const auto& [lane, shown] : pieces)
 			for (const Piece& piece : shown)
@@ -607,7 +631,7 @@ namespace gnubase::ui
 					continue;
 				EventWaveforms::Event wave = piece.wave;
 				wave.offset += std::llround((piece.span.start - wave.time.start) * wave.sampleRate);
-				wave.time = {piece.span.start, piece.span.length};
+				wave.time = piece.span;
 				waves.push_back(wave);
 			}
 		m_waveforms->setEvents(waves);
@@ -992,6 +1016,14 @@ namespace gnubase::ui
 		if (mode == m_folderMode)
 			return;
 		m_folderMode = mode;
+		showProject();
+	}
+
+	void EventDisplay::setTreatMutedAudioLikeDeleted(bool on)
+	{
+		if (on == m_treatMutedAudioLikeDeleted)
+			return;
+		m_treatMutedAudioLikeDeleted = on;
 		showProject();
 	}
 

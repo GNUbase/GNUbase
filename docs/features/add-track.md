@@ -33,16 +33,16 @@ studio setup dialog ([studio-setup.md](studio-setup.md)).
   `processor.list`. Each starts at the engine's default: the first input bus, the main output, stereo, no instrument,
   bars and beats. An empty name takes the engine's default name ("Audio 01", "Audio 02" and so on).
 - **Add Track** adds Count tracks (1 to 100, as in the reference) with the page's settings, all with the same
-  parameters, in one `history.transaction` named "Add Track", so one undo removes them. New tracks go below the
-  selected track (p. 198), the lowest one if several are, in its folder and in the order they were added, as
-  `track.add`'s `parent` and `index`: the UI command passes it as the document attribute `below`. Tracks that stay at
-  the top level (marker, tempo, signature, arranger, transpose and chord tracks) go below the selected track's
-  top-level folder, and tracks for the project's Group or FX folder into that folder. Without a selected track they
-  go to the end of the project. The dialog closes, unless Keep Dialog Open
-  is checked: then it shows the page again, with the new group and instrument channels among the outputs, for adding
-  more of another type, below the tracks it just added; tracks that went into the project's Group or FX folder leave
-  `below` where it was, so the next tracks go below the selection, not into that folder. A track the engine refuses, such as an eleventh marker track, adds nothing, and the dialog
-  stays open with the engine's message. Cancel and Escape close it.
+  parameters, in one `history.transaction` named "Add Track", so one undo removes them. New tracks go below the selected
+  track (p. 198), the lowest one if several are, in its folder and in the order they were added, as `track.add`'s
+  `parent` and `index`: the UI command passes it as the document attribute `below`. Tracks that stay at the top level
+  (marker, tempo, signature, arranger, transpose and chord tracks) go below the selected track's top-level folder, and
+  tracks for the project's Group or FX folder into that folder. Without a selected track they go to the end of the
+  project. The dialog closes, unless Keep Dialog Open is checked: then it shows the page again, with the new group and
+  instrument channels among the outputs, for adding more of another type, below the tracks it just added; tracks that
+  went into the project's Group or FX folder leave `below` where it was, so the next tracks go below the selection, not
+  into that folder. A track the engine refuses, such as an eleventh marker track, adds nothing, and the dialog stays
+  open with the engine's message. Cancel and Escape close it.
 
 - **For selected tracks.** Group Track to Selected Tracks and Effect Track to Selected Tracks in the track list's
   context menu open the dialog on the group or effect page with the document attributes `type` and `tracks` (the

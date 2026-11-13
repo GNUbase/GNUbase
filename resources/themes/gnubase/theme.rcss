@@ -445,6 +445,22 @@
 	{
 		background-color: #090b18;
 	}
+	.event-display event-lanes.events, .event-display event-lanes.muted-events, .event-display event-lanes.selected-events, .event-display event-lanes.folder-data
+	{
+		event-inset: 2dp;
+	}
+	.event-display event-lanes.events
+	{
+		color: #10dff273;
+		stroke-color: #64eaf7;
+		own-fill-opacity: 0.45;
+		own-color-tint: #ffffff59;
+	}
+	.event-display .waveforms waveform
+	{
+		own-color-tint: #ffffff59;
+		padding: 4dp 0;
+	}
 	.event-display .overview
 	{
 		background-color: #101426;
@@ -467,7 +483,7 @@
 	}
 	.event-display event-lanes.selected-events
 	{
-		color: #12a4b8;
+		color: #f1f4ff29;
 		stroke-color: #f1f4ff;
 	}
 	.event-display fade-lines

@@ -15,6 +15,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <vector>
@@ -68,6 +69,15 @@ namespace
 		app.ui().key(std::nullopt, "Mod+A");
 		app.ui().text(std::nullopt, value);
 		app.ui().key(std::nullopt, "Enter");
+		step(app);
+	}
+
+	// Opens a drop-down list, moves the selection one option with an arrow key, and closes it.
+	void choose(test::UiApp& app, const std::string& select, const std::string& key)
+	{
+		click(app, select);
+		app.ui().key(std::nullopt, key);
+		click(app, select);
 		step(app);
 	}
 
@@ -136,6 +146,52 @@ namespace
 	size_t audioEvents(test::UiApp& app)
 	{
 		return app.call("project.get").at("audioEvents").size();
+	}
+
+	// One event of a whole media file on a new linear audio track.
+	uint64_t addEvent(test::UiApp& app, const std::filesystem::path& file, int channels, int64_t length)
+	{
+		const uint64_t track =
+			app.call("track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track").at("id").get<uint64_t>();
+		const Json media =
+			app.call("media.add",
+				   {{"path", file.u8string()}, {"sampleRate", 48000}, {"channels", channels}, {"length", length}})
+				.at("media");
+		const Json clip = app.call("clip.add", {{"media", media.at("id")}}).at("clip").at("id");
+		return app.call("audioEvent.add", {{"track", track}, {"clip", clip}, {"position", 0}, {"length", length}})
+			.at("event")
+			.at("id")
+			.get<uint64_t>();
+	}
+
+	// Shows the project's only event in the event display, selected.
+	void showEvent(test::UiApp& app, uint64_t event)
+	{
+		ui::EventDisplay& display = app.appUi().showProject();
+		REQUIRE(app.waitUntil(
+			[&display] { return display.project().is_object() && display.project().at("audioEvents").size() == 1; }));
+		display.select({event});
+	}
+
+	// The Spectrum Analyzer's bar of a frequency: one per 1/24 octave from 20 Hz.
+	int bar(double frequency)
+	{
+		return static_cast<int>(std::lround(24.0 * std::log2(frequency / 20.0))) + 1;
+	}
+
+	double barHeight(test::UiApp& app, int index)
+	{
+		return element(app, ".sa-bar[index=\"" + std::to_string(index) + "\"]").at("box").at("height").get<double>();
+	}
+
+	// The middle of a bar of #sa-graph, for the mouse.
+	ui::Target barTarget(test::UiApp& app, int index)
+	{
+		const Json graph = element(app, "#sa-graph").at("box");
+		const double width = graph.at("width").get<double>() / static_cast<double>(elements(app, ".sa-bar").size());
+		return ui::Target{"", 0,
+			ui::Point{static_cast<int>(std::lround(graph.at("x").get<double>() + ((index - 0.5) * width))),
+				static_cast<int>(std::lround(graph.at("y").get<double>() + (graph.at("height").get<double>() / 2.0)))}};
 	}
 }
 
@@ -232,23 +288,9 @@ TEST_CASE("the Spectrum Analyzer draws the spectrum, shows the values under the 
 	run(app, "audio.spectrumAnalyzer", "#spectrum-analyzer-dialog");
 	const Json bars = elements(app, ".sa-bar");
 	REQUIRE(bars.size() == 246); // 1/24 octave from 20 Hz up to 24 kHz
-	const Json graph = element(app, "#sa-graph").at("box");
+	CHECK(barHeight(app, bar(1000.0)) > barHeight(app, bar(300.0)) + 50.0);
 
-	// The bar of a frequency, and the mouse over it.
-	const auto bar = [](double frequency)
-	{ return static_cast<int>(std::lround(24.0 * std::log2(frequency / 20.0))) + 1; };
-	const auto at = [&](int index)
-	{
-		const double width = graph.at("width").get<double>() / static_cast<double>(bars.size());
-		return ui::Target{"", 0,
-			ui::Point{static_cast<int>(std::lround(graph.at("x").get<double>() + ((index - 0.5) * width))),
-				static_cast<int>(std::lround(graph.at("y").get<double>() + (graph.at("height").get<double>() / 2.0)))}};
-	};
-	const auto barHeight = [&app](int index)
-	{ return element(app, ".sa-bar[index=\"" + std::to_string(index) + "\"]").at("box").at("height").get<double>(); };
-	CHECK(barHeight(bar(1000.0)) > barHeight(bar(300.0)) + 50.0);
-
-	app.ui().move(std::nullopt, at(bar(1000.0)));
+	app.ui().move(std::nullopt, barTarget(app, bar(1000.0)));
 	step(app);
 	const std::string value = text(app, "#sa-value");
 	CHECK_THAT(value, ContainsSubstring("Mono"));
@@ -257,16 +299,75 @@ TEST_CASE("the Spectrum Analyzer draws the spectrum, shows the values under the 
 	CHECK_THAT(value, !ContainsSubstring("D:"));
 
 	// A right click on the tone, then the mouse at 300 Hz: far lower.
-	app.ui().click(std::nullopt, at(bar(1000.0)), ui::MouseButton::Right, 1, {});
+	app.ui().click(std::nullopt, barTarget(app, bar(1000.0)), ui::MouseButton::Right, 1, {});
 	step(app);
 	CHECK(elements(app, ".sa-bar.reference").size() == 1);
-	app.ui().move(std::nullopt, at(bar(300.0)));
+	app.ui().move(std::nullopt, barTarget(app, bar(300.0)));
 	step(app);
 	CHECK_THAT(text(app, "#sa-value"), ContainsSubstring("D: -"));
-	app.ui().click(std::nullopt, at(bar(300.0)), ui::MouseButton::Left, 1, {});
+	app.ui().click(std::nullopt, barTarget(app, bar(300.0)), ui::MouseButton::Left, 1, {});
 	step(app);
 	CHECK(elements(app, ".sa-bar.reference").empty());
 	CHECK_THAT(text(app, "#sa-value"), !ContainsSubstring("D:"));
+
+	click(app, "#sa-close");
+	closes(app, "#spectrum-analyzer-dialog");
+}
+
+TEST_CASE("the Spectrum Analyzer shows the error of a clip whose file can't be read", "[ui]")
+{
+	test::UiApp app({1000, 760});
+	const test::TempDir dir;
+	test::Audio audio;
+	audio.sampleRate = 48000;
+	audio.samples.assign(48000, 0.25f);
+	const std::filesystem::path file = dir.path() / "gone.wav";
+	test::writeWav(file, audio);
+	const uint64_t event = addEvent(app, file, 1, 48000);
+	REQUIRE(std::filesystem::remove(file));
+	showEvent(app, event);
+
+	run(app, "audio.spectrumAnalyzer", "#spectrum-analyzer-dialog");
+	CHECK_THAT(text(app, "#sa-value"), ContainsSubstring("can't read"));
+	CHECK(elements(app, ".sa-bar").empty());
+	click(app, "#sa-close");
+	closes(app, "#spectrum-analyzer-dialog");
+}
+
+TEST_CASE("the Spectrum Analyzer draws the channel of a stereo clip that #sa-channel chooses", "[ui]")
+{
+	test::UiApp app({1000, 760});
+	const test::TempDir dir;
+	// A second of stereo: 1 kHz at -6 dBFS on the left, 3 kHz at -6 dBFS on the right.
+	test::Audio audio;
+	audio.sampleRate = 48000;
+	audio.channels = 2;
+	audio.samples.resize(size_t{2} * 48000);
+	for (size_t i = 0; i < 48000; ++i)
+	{
+		const double t = static_cast<double>(i) / 48000.0;
+		audio.samples[2 * i] = static_cast<float>(0.5 * std::sin(2.0 * g_pi * 1000.0 * t));
+		audio.samples[(2 * i) + 1] = static_cast<float>(0.5 * std::sin(2.0 * g_pi * 3000.0 * t));
+	}
+	const std::filesystem::path file = dir.path() / "stereo.wav";
+	test::writeWav(file, audio);
+	const uint64_t event = addEvent(app, file, 2, 48000);
+	showEvent(app, event);
+	run(app, "audio.spectrumAnalyzer", "#spectrum-analyzer-dialog");
+	REQUIRE(elements(app, ".sa-bar").size() == 246); // 1/24 octave from 20 Hz up to 24 kHz
+
+	// The left channel first: its tone towers over the right channel's.
+	CHECK(barHeight(app, bar(1000.0)) > barHeight(app, bar(3000.0)) + 50.0);
+	app.ui().move(std::nullopt, barTarget(app, bar(1000.0)));
+	step(app);
+	CHECK_THAT(text(app, "#sa-value"), ContainsSubstring("Left"));
+
+	// Choosing the right channel redraws its bars, and the mouse shows its name.
+	choose(app, "#sa-channel", "Down");
+	CHECK(barHeight(app, bar(3000.0)) > barHeight(app, bar(1000.0)) + 50.0);
+	app.ui().move(std::nullopt, barTarget(app, bar(3000.0)));
+	step(app);
+	CHECK_THAT(text(app, "#sa-value"), ContainsSubstring("Right"));
 
 	click(app, "#sa-close");
 	closes(app, "#spectrum-analyzer-dialog");
