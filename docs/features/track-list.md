@@ -67,9 +67,16 @@ the project (#491).
   vertical zoom (20 to 400), by track, and `folded`, the folded folder tracks. `heights` sets the given tracks' and
   leaves the others; `folded` replaces the list, and refuses tracks that aren't folders. Like the track visibility they
   are settings, not undo steps, and saved with the project in GNUbase's extra entry (`trackLayout` in `project.get`),
-  empty for files from before; tracks that are gone are left out of what `trackLayout.get` returns. Every change
-  emits `trackLayout.changed`. A file's heights are brought into the range and its folded tracks that aren't folders
-  left out (#991).
+  empty for files from before; tracks that are gone are left out of what `trackLayout.get` returns, though the
+  project keeps their heights and fold states for undo, until the next `trackLayout.set` with `folded` replaces the
+  folded folders (a set of heights keeps them), so undo and redo emit
+  `trackLayout.changed` too when a track with a height or a fold state comes back or goes (#1131). Every change
+  emits `trackLayout.changed`; a set that gives the layout the project has changes nothing: no event, the project's
+  revision stays and it doesn't count as modified (`CommandContext::markUnchanged`). A height that isn't a number
+  (a NaN from an in-process client) is refused like one out of range: the schema check's `minimum` and `maximum`
+  hold for every command. A file's heights are brought into the range, its heights of tracks that aren't in the
+  project (the ones that were removed when it was saved) and its folded tracks that aren't folders are left out,
+  as are heights that aren't finite (#991, #1131).
 - **DAWproject:** a channel's mute is its `Mute` parameter, solo its `solo` attribute, and a disabled track has
   `loaded="false"`; all three come back from `project.xml` without GNUbase's entry.
 
@@ -143,14 +150,22 @@ sends engine commands, so whatever another client changes shows at once.
   last, on the middle of the folder's row. The moves are `track.move` commands in one `history.transaction`, "Move
   Tracks", so one undo restores the order.
 - **Heights** (p. 217): dragging a row's lower edge (its last 4 dp) sets its track's height, with Ctrl (Cmd) every
-  track's; releasing the mouse sends the heights the drag changed with `trackLayout.set`, and nothing for a press
-  that changed none. Heights are the project's, saved with it, but not in its undo history.
+  track's: all the tracks of the project, as the manual says, also those inside folded folders and those the track
+  visibility hides (#1131). Releasing the mouse sends the heights the drag changed with `trackLayout.set`, and nothing
+  for a press that changed none or a drag that ends at the heights the engine has (also at the limit of 20 or 400 dp). A
+  drag under way keeps the heights it gave its tracks through `trackLayout.changed`, but takes the other tracks'
+  heights, and its release compares with the engine's heights, also those that came during the drag. A press on the list
+  while a drag is still under way (its release never reached the list's document) ends it, and `project.reset` ends it
+  without sending anything. Heights are the project's, saved with it, but not in its undo history.
 - **Folding** (p. 225): a folder's toggle, or Right and Left on the selected folder, folds and unfolds it; the tracks
   inside a folded folder leave the list and the event display (`EventDisplay::setHiddenTracks`) and still play.
   Project > Track Folding: Toggle Selected Track, Fold Tracks, Unfold Tracks and Flip Fold States
   (`track.toggleFolding`, `track.foldAll`, `track.unfoldAll`, `track.flipFolding`). Each sends the folded folders
-  with one `trackLayout.set` when they changed: they are the project's, like the heights, and every set advances the
-  project's revision, which makes it count as modified (#991).
+  with one `trackLayout.set` when they changed: they are the project's, like the heights, and every set that changes
+  something advances the project's revision, which makes it count as modified (#991). A set that fails, such as one
+  that names a track another client removed before the list heard of it, changes nothing in the project, and the list
+  reads `trackLayout.get` again and shows what the project has (#1131). The list also hears of the fold states that
+  undo and redo bring back with a track (`trackLayout.changed`, #1131).
 - **Another project** (#491): the list follows `trackLayout.changed` and, on `project.reset` (`project.new`,
   `project.load`), takes the new project's heights and folded folders from `trackLayout.get` and drops the old ones,
   and the selection: the new project's tracks can have the old ones' ids.
@@ -213,7 +228,7 @@ dividing the track list, track visibility agents and the track type
 filter, track presets, track pictures, the lock control, edit channel settings, volume and pan in the track list,
 the settings dialog's groups, controls area preview, presets, Reset All and the MIDI tracks' Output Group and
 Channel Width (p. 191), the track height presets menu, snap track heights, the preferences dialog's
-page for `ui.removeTracksWarning` and `ui.upDownSelectsTracksOnly` (#162). Adding a track below the selected one is #448. Folders' group channels, data blocks and Move Selected Tracks to
+page for `ui.removeTracksWarning` and `ui.upDownSelectsTracksOnly` (#162). Folders' group channels, data blocks and Move Selected Tracks to
 New Folder are in [folder-tracks.md](folder-tracks.md).
 
 ## Checks
@@ -236,8 +251,11 @@ New Folder are in [folder-tracks.md](folder-tracks.md).
   `tests/automation_tests.cpp` has the strip forget what the mute kept of the kinds chased for a track heard again;
   `tests/dawproject_tests.cpp` saves and loads mute, solo and disabled tracks, also from `project.xml` alone.
 - `tests/tracklayout_tests.cpp`: `trackLayout.set` setting heights and replacing the folded folders, refusing unknown
-  tracks, folded tracks that aren't folders and heights out of range, not an undo step, without tracks that are gone,
-  and saved and loaded with the project; a new project starts without.
+  tracks, folded tracks that aren't folders and heights out of range or not a number, not an undo step, without
+  tracks that are gone, and saved and loaded with the project; a new project starts without; undo and redo announcing
+  the layout when a removed folder with a fold state comes back or goes; a set that changes nothing leaving the
+  revision and the events alone; `trackLayoutFromJson` with heights that aren't finite. `tests/engine_tests.cpp`: a
+  NaN outside every minimum and maximum.
 - `tests/tracklist_tests.cpp` drives the app's project window with `ui::Automation`: rows level with the lanes and
   each type's controls; every control's button and the engine's state both ways; selection with clicks, modifiers,
   Shift-click deselecting, the arrow keys and the key commands; Up, Down and Alt+F2 pressed with the focus in the
@@ -256,4 +274,9 @@ New Folder are in [folder-tracks.md](folder-tracks.md).
   what the setting leaves out, the setting's unknown keys kept, the controls on more lines in a narrow controls area at
   any track list width, and the name giving way deep in folders and in a narrow track list; heights, folded folders and
   the selection not taken into a new project's tracks with the same ids, and heights and folded folders back after
-  saving and loading the project.
+  saving and loading the project; sending only the changes; Ctrl setting every track's height, also inside folded
+  folders; a drag that ends where it started, also after another client gave the track another height meanwhile, and
+  one that stays at the limit sending nothing; a drag whose release never came ending with the next press; a failed
+  set (a track removed meanwhile, a folded folder removed meanwhile) showing the project's heights and folded
+  folders again; and a folded folder that undo brings back being folded in the list, also when the list took the
+  engine's layout meanwhile.
