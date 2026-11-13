@@ -139,24 +139,6 @@
 			width: 160dp;
 		}
 
-		/* What the Tool Modifiers page asks before it takes modifier keys another action of the tool has
-		   (reference manual p. 1602). */
-		#preferences-modifiers-ask
-		{
-			display: none;
-		}
-
-		dialog.asking #preferences-modifiers-ask
-		{
-			display: flex;
-		}
-
-		#preferences-modifiers-question
-		{
-			flex: 1;
-			white-space: normal;
-		}
-
 		.row span
 		{
 			white-space: nowrap;
@@ -181,15 +163,6 @@
 
 		local function numberText(value)
 			return math.tointeger(value) and tostring(math.tointeger(value)) or tostring(value)
-		end
-
-		local function checked(element)
-			return element:HasAttribute("checked")
-		end
-
-		local function value(element)
-			local text = element:GetAttribute("value")
-			return text ~= nil and tostring(text) or ""
 		end
 
 		-- Whether two values from the engine are the same, also objects and lists. Numbers count as the same when
@@ -440,81 +413,6 @@
 
 		local custom = {}
 
-		-- The category and name the page shows for an action (p. 1601); an action it doesn't know shows its name.
-		local function modifierNames(action)
-			return modifierActions[action] or {"", escape(action)}
-		end
-
-		-- The tool an action belongs to: its category, or the action itself for one the page doesn't know.
-		local function tool(action)
-			local names = modifierActions[action]
-			return names and names[1] or action
-		end
-
-		-- What the modifier list shows for modifier keys.
-		local function keysText(keys)
-			for _, choice in ipairs(modifierChoices) do
-				if choice[1] == keys then
-					return choice[2]
-				end
-			end
-			return escape(keys)
-		end
-
-		-- The modifier controls of the Tool Modifiers page, by action.
-		local function modifierControls(document)
-			local controls = {}
-			for _, control in ipairs(document:QuerySelectorAll("#page-editing-tool-modifiers select.preference")) do
-				controls[tostring(control:GetAttribute("action"))] = control
-			end
-			return controls
-		end
-
-		-- Gives an action its modifier keys, in the page and in what the page shows.
-		local function assign(document, action, keys)
-			local control = modifierControls(document)[action]
-			if control ~= nil then
-				control:SetAttribute("value", keys)
-			end
-			prefs.shownKeys[action] = keys
-		end
-
-		local function stopAsking(document)
-			prefs.pending = nil
-			document:GetElementById("preferences"):SetClass("asking", false)
-		end
-
-		-- The other actions of the action's tool that have these modifier keys already: the reference asks before it
-		-- takes them (p. 1602).
-		local function taken(document, action, keys)
-			local others = {}
-			if keys == "" then
-				return others
-			end
-			local own = tool(action)
-			for other, control in pairs(modifierControls(document)) do
-				if other ~= action and tool(other) == own and value(control) == keys then
-					others[#others + 1] = other
-				end
-			end
-			table.sort(others)
-			return others
-		end
-
-		-- Asks whether an action may take the modifier keys other actions of its tool have (p. 1602). The action
-		-- keeps what it has until the question is answered.
-		local function ask(document, action, keys, others)
-			prefs.pending = {action = action, keys = keys, others = others}
-			local names = {}
-			for _, other in ipairs(others) do
-				names[#names + 1] = modifierNames(other)[2]
-			end
-			document:GetElementById("preferences-modifiers-question").inner_rml = tool(action) .. ": " ..
-				table.concat(names, ", ") .. (#others == 1 and " has " or " have ") .. keysText(keys) ..
-				" already. Replace the modifier keys?"
-			document:GetElementById("preferences"):SetClass("asking", true)
-		end
-
 		-- Editing - Tool Modifiers (p. 1601): the modifier keys of each action, ui.toolModifiers over the defaults.
 		function custom.toolModifiers(values)
 			local set = values["ui.toolModifiers"] or {}
@@ -523,47 +421,22 @@
 				actions[#actions + 1] = action
 			end
 			table.sort(actions)
-			prefs.shownKeys = {}
 			local rows = {}
 			for _, action in ipairs(actions) do
-				local names = modifierNames(action)
+				local names = modifierActions[action] or {"", escape(action)}
 				local id = action:gsub("%.", "-")
-				local keys = set[action] or prefs.toolDefaults[action] or ""
-				prefs.shownKeys[action] = keys
 				rows[#rows + 1] = "<tr><td>" .. names[1] .. "</td><td>" .. names[2] .. "</td><td>" ..
-					dropDown(attributes("pref-tool-" .. id, "ui.toolModifiers") .. ' action="' .. action ..
-						'" onchange="Preferences.modifiers(document, element)"', modifierChoices, keys) ..
+					dropDown(attributes("pref-tool-" .. id, "ui.toolModifiers") ..
+						' action="' .. action .. '"', modifierChoices, set[action] or prefs.toolDefaults[action]) ..
 					'</td><td><button id="pref-tool-assign-' .. id .. '" action="' .. action ..
-						'" onclick="Preferences.assignModifiers(document, event, element)">Assign</button></td></tr>'
+					'" onclick="Preferences.assignModifiers(document, event, element)">Assign</button></td></tr>'
 			end
 			return '<table class="modifiers"><thead><tr><td>Categories</td><td>Action</td><td>Modifiers</td><td/></tr>' ..
 				"</thead><tbody>" .. table.concat(rows) .. "</tbody></table>"
 		end
 
-		-- A question is dropped as soon as the user changes another action instead of answering it.
-		local function dropQuestion(document, action)
-			if prefs.pending ~= nil and prefs.pending.action ~= action then
-				stopAsking(document)
-			end
-		end
-
-		-- The list chose modifier keys for an action: they are its, unless another action of its tool has them
-		-- already, which the reference asks about first (p. 1602).
-		function prefs.modifiers(document, control)
-			local action = tostring(control:GetAttribute("action"))
-			dropQuestion(document, action)
-			local keys = value(control)
-			local others = taken(document, action, keys)
-			if #others == 0 then
-				prefs.shownKeys[action] = keys
-				stopAsking(document)
-				return
-			end
-			control:SetAttribute("value", prefs.shownKeys[action] or "") -- until the question is answered
-			ask(document, action, keys, others)
-		end
-
-		-- Assign (p. 1574): the modifier keys held while clicking it, for its action.
+		-- Assign (p. 1574): the modifier keys held while clicking it, for its action. Another action of the category
+		-- with the same modifiers is left without any.
 		function prefs.assignModifiers(document, event, button)
 			local function held(name)
 				local state = event.parameters[name]
@@ -581,32 +454,16 @@
 			end
 			local assigned = table.concat(keys, "+")
 			local action = tostring(button:GetAttribute("action"))
-			dropQuestion(document, action)
-			local others = taken(document, action, assigned)
-			if #others > 0 then
-				ask(document, action, assigned, others)
-				return
+			local category = (modifierActions[action] or {action})[1]
+			for _, control in ipairs(document:QuerySelectorAll("select.preference[action]")) do
+				local other = tostring(control:GetAttribute("action"))
+				if other == action then
+					control:SetAttribute("value", assigned)
+				elseif assigned ~= "" and (modifierActions[other] or {other})[1] == category and
+					tostring(control:GetAttribute("value") or "") == assigned then
+					control:SetAttribute("value", "")
+				end
 			end
-			stopAsking(document)
-			assign(document, action, assigned)
-		end
-
-		-- Replace: the action gets the keys, and the actions of its tool that had them are left without any.
-		function prefs.replaceModifiers(document)
-			local pending = prefs.pending
-			if pending == nil then
-				return
-			end
-			stopAsking(document)
-			for _, other in ipairs(pending.others) do
-				assign(document, other, "")
-			end
-			assign(document, pending.action, pending.keys)
-		end
-
-		-- Cancel: the action keeps the modifier keys it has.
-		function prefs.keepModifiers(document)
-			stopAsking(document)
 		end
 
 		local function controllerItems(controllers)
@@ -678,9 +535,6 @@
 
 		local function renderPage(document, page)
 			document:GetElementById("page-" .. page.id).inner_rml = pageRml(page, prefs.values)
-			if page.custom == "toolModifiers" then
-				stopAsking(document) -- what the page asked about went with it
-			end
 		end
 
 		local function report(document, errors)
@@ -746,6 +600,15 @@
 				document:GetElementById("page-" .. page.id):SetClass("shown", page.id == id)
 			end
 			prefs.active = id
+		end
+
+		local function checked(element)
+			return element:HasAttribute("checked")
+		end
+
+		local function value(element)
+			local text = element:GetAttribute("value")
+			return text ~= nil and tostring(text) or ""
 		end
 
 		-- What a page's controls show, into values; what can't be read goes into errors.
@@ -1051,13 +914,6 @@
 		<div class="content">
 			<listview id="preferences-pages" value="editing" onchange="Preferences.show(document, element:GetAttribute('value'))"/>
 			<div id="preferences-page-area"/>
-		</div>
-		<div class="row" id="preferences-modifiers-ask">
-			<span id="preferences-modifiers-question"/>
-			<button id="preferences-modifiers-replace" class="primary"
-				onclick="Preferences.replaceModifiers(document)">Replace</button>
-			<button id="preferences-modifiers-keep"
-				onclick="Preferences.keepModifiers(document)">Cancel</button>
 		</div>
 		<div class="row">
 			<span>Preference Presets</span>

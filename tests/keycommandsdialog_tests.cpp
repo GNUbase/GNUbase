@@ -557,11 +557,8 @@ TEST_CASE("tool modifiers are assigned by holding the keys and clicking Assign",
 	click(app, "#pages-editing-tool-modifiers");
 	click(app, "#pref-tool-assign-dragDrop-copy", {"ctrl", "shift"});
 	CHECK(element(app, "#pref-tool-dragDrop-copy").at("value") == "ctrl+shift");
-	// Modifiers another action of the category has: the dialog asks before it takes them (p. 1602), and Replace
-	// leaves that action without any.
+	// Modifiers another action of the category has leave it without any.
 	click(app, "#pref-tool-assign-dragDrop-sharedCopy", {"ctrl", "shift"});
-	CHECK(element(app, "#pref-tool-dragDrop-copy").at("value") == "ctrl+shift");
-	click(app, "#preferences-modifiers-replace");
 	CHECK(element(app, "#pref-tool-dragDrop-sharedCopy").at("value") == "ctrl+shift");
 	CHECK(element(app, "#pref-tool-dragDrop-copy").at("value") == "");
 	click(app, "#preferences-ok");

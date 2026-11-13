@@ -89,13 +89,6 @@ namespace
 		app.shell().step(std::chrono::milliseconds(0));
 	}
 
-	// Whether the element is there and shown: the dialog has parts it shows only when it has something to say.
-	bool visible(test::UiApp& app, const std::string& selector)
-	{
-		const Json found = elements(app, selector);
-		return !found.empty() && found[0].value("visible", false);
-	}
-
 	// What a control shows; empty for one that isn't there.
 	std::string shown(test::UiApp& app, const std::string& selector)
 	{
@@ -374,6 +367,20 @@ TEST_CASE("the preferences dialog's Apply, Cancel and Defaults", "[ui]")
 	CHECK_THAT(text(app, "#preferences-message"), ContainsSubstring("Maximum Number of Auto Save Files"));
 }
 
+TEST_CASE("Enter in a preference's field applies the dialog and closes it", "[ui]")
+{
+	// The dialog's Enter clicks its button.primary (ui/popupwidgets.cpp), which is the OK button.
+	test::UiApp app({1000, 760});
+	openDialog(app);
+	page(app, "general");
+	REQUIRE(shown(app, "#pref-project-autoSaveFiles") == "5");
+	type(app, "#pref-project-autoSaveFiles", "9");
+	app.ui().key(std::nullopt, "Return");
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(closed(app));
+	CHECK(app.call("settings.get", {{"key", "project.autoSaveFiles"}}).at("value") == 9);
+}
+
 TEST_CASE("the preferences dialog's preferences take effect", "[ui]")
 {
 	test::UiApp app({1000, 760});
@@ -558,47 +565,6 @@ TEST_CASE("the tool modifiers page keeps the overrides it doesn't show", "[ui]")
 	click(app, "#preferences-ok");
 	CHECK(closed(app));
 	CHECK(app.call("settings.get", {{"key", "ui.toolModifiers"}}).at("value") == modifiers);
-}
-
-TEST_CASE("the tool modifiers page asks before it takes keys another action of the tool has", "[ui]")
-{
-	// Reference manual p. 1602: "If this tool already has assigned modifier keys, you are prompted to replace them."
-	test::UiApp app({1000, 760});
-	openDialog(app);
-	page(app, "editing-tool-modifiers");
-	const std::string split = "#pref-tool-select-splitEvent";         // Split Event: alt
-	const std::string cursor = "#pref-tool-select-setCursorPosition"; // Set Cursor Position: alt+shift
-	REQUIRE(shown(app, split) == "alt");
-	REQUIRE(shown(app, cursor) == "alt+shift");
-	CHECK_FALSE(visible(app, "#preferences-modifiers-ask"));
-
-	// Shift for Set Cursor Position: no other action of the Select Tool has it, so the page takes it at once.
-	choose(app, cursor, -3); // shift, before alt+shift
-	REQUIRE(shown(app, cursor) == "shift");
-	CHECK_FALSE(visible(app, "#preferences-modifiers-ask"));
-
-	// The same keys for Split Event: the page asks and leaves both actions as they are until it has an answer.
-	choose(app, split, 1); // shift, after alt
-	REQUIRE(visible(app, "#preferences-modifiers-ask"));
-	CHECK_THAT(text(app, "#preferences-modifiers-question"), ContainsSubstring("Set Cursor Position"));
-	CHECK_THAT(text(app, "#preferences-modifiers-question"), ContainsSubstring("Shift"));
-	CHECK(shown(app, split) == "alt");
-	click(app, "#preferences-modifiers-keep");
-	CHECK_FALSE(visible(app, "#preferences-modifiers-ask"));
-	CHECK(shown(app, split) == "alt");
-	CHECK(shown(app, cursor) == "shift");
-
-	// Assign (p. 1574) asks the same, and Replace takes the keys: the other action is left without any.
-	click(app, "#pref-tool-assign-select-splitEvent", {"shift"});
-	REQUIRE(visible(app, "#preferences-modifiers-ask"));
-	click(app, "#preferences-modifiers-replace");
-	CHECK_FALSE(visible(app, "#preferences-modifiers-ask"));
-	CHECK(shown(app, split) == "shift");
-	CHECK(shown(app, cursor) == "");
-	click(app, "#preferences-ok");
-	CHECK(closed(app));
-	CHECK(app.call("settings.get", {{"key", "ui.toolModifiers"}}).at("value") ==
-		Json({{"select.setCursorPosition", ""}, {"select.splitEvent", "shift"}}));
 }
 
 TEST_CASE("the theme list carries the names the UI shows for the themes", "[ui]")

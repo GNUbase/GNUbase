@@ -38,8 +38,7 @@ presets to preferences and clients can tell them from the settings that have a p
     Notes Only (`editing.legatoBetweenSelected`). Tool Modifiers: each action's modifier keys (`ui.toolModifiers`, over
     the defaults that `ui::EventDisplay::defaultToolModifiers` has; the dialog keeps only those that differ), chosen
     from a list or, as in the reference (p. 1574), by holding the keys and clicking the action's Assign (Ctrl or Cmd,
-    Alt, Shift). When another action of the same tool has those keys already, the dialog asks first (p. 1602): Replace
-    gives them to the action and leaves the other without any, Cancel keeps what both had. Tools: Show Toolbox on
+    Alt, Shift); another action of the same category with those keys is then left without any. Tools: Show Toolbox on
     Right-Click (`ui.toolboxOnRightClick`), Show Notification when Switching Tool Mode with Key Command
     (`ui.toolSwitchNotification`). Zoom: Zoom Tool Standard Mode: Horizontal Zooming Only (`ui.zoomToolHorizontalOnly`,
     [tools.md](tools.md)).
@@ -64,9 +63,10 @@ presets to preferences and clients can tell them from the settings that have a p
   must be on a page, and every setting on a page must have it (`tests/preferences_tests.cpp` checks both), so a feature
   that adds a preference flags it and adds it to the dialog's `pages` table.
 - **Apply, OK, Cancel, Defaults.** Apply sends what the pages changed, in one `settings.set` with `values`, and shows
-  what the engine has then; OK does the same and closes; Cancel and Escape drop it. Defaults puts the shown page's
-  preferences back to their defaults in the dialog, for Apply or OK to send. A number that isn't one keeps the dialog
-  open with the message in `#preferences-message`, as does what the engine refuses, and then nothing changes.
+  what the engine has then; OK does the same and closes, and Enter anywhere in the dialog is OK, as in every dialog
+  (`ui/popupwidgets.cpp`); Cancel and Escape drop it. Defaults puts the shown page's preferences back to their defaults
+  in the dialog, for Apply or OK to send. A number that isn't one keeps the dialog open with the message in
+  `#preferences-message`, as does what the engine refuses, and then nothing changes.
   - **Only what changed.** What a page shows counts as a change only when it differs from what the engine has, in the
     form the dialog shows it: numbers as the text their fields show, so one a field rounds doesn't come back rounded,
     and the MIDI filter's lists as sets, since the dialog fills them in its own order. A page that shows part of a
