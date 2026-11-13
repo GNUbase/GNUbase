@@ -1779,11 +1779,13 @@ namespace gnubase::engine
 			const Json& item = json.at(i);
 			const std::string where = name + "[" + std::to_string(i) + "]";
 			const auto type = item.at("type").get<std::string>();
-			const auto* const found = std::find(g_expressionNames.begin(), g_expressionNames.end(), type);
-			if (found == g_expressionNames.end())
+			// An index, not an iterator: it is a pointer in some standard libraries.
+			const auto index = static_cast<size_t>(
+				std::find(g_expressionNames.begin(), g_expressionNames.end(), type) - g_expressionNames.begin());
+			if (index == g_expressionNames.size())
 				throw std::invalid_argument(where + ".type: there is no expression " += type);
 			ExpressionPoint point;
-			point.type = static_cast<plugin::NoteExpression>(found - g_expressionNames.begin());
+			point.type = static_cast<plugin::NoteExpression>(index);
 			point.position = item.at("position").get<time::Ticks>();
 			if (point.position < 0)
 				throw std::invalid_argument(where + ".position must not be negative");
