@@ -99,10 +99,10 @@ TEST_CASE("Add Track adds the chord track once", "[ui]")
 	};
 	click("#add-track");
 	REQUIRE(app.waitUntil([&] { return !elements("#add-track-dialog").empty(); }));
-	// The list scrolls: Chord is below Arranger and Transpose.
-	click("#type-arranger");
-	app.ui().key(std::nullopt, "Down");
-	app.ui().key(std::nullopt, "Down");
+	// The list scrolls: Chord is below Signature, Arranger and Transpose.
+	click("#type-signature");
+	for (int i = 0; i < 3; ++i)
+		app.ui().key(std::nullopt, "Down");
 	app.shell().step(std::chrono::milliseconds(0));
 	REQUIRE(elements("#track-types").at(0).at("attributes").at("value") == "chord");
 	CHECK(elements("#track-name").empty());
@@ -121,9 +121,9 @@ TEST_CASE("Add Track adds the chord track once", "[ui]")
 		click("#add-track");
 		REQUIRE(app.waitUntil([&] { return !elements("#add-track-dialog").empty(); }));
 	}
-	click("#type-arranger");
-	app.ui().key(std::nullopt, "Down");
-	app.ui().key(std::nullopt, "Down");
+	click("#type-signature");
+	for (int i = 0; i < 3; ++i)
+		app.ui().key(std::nullopt, "Down");
 	app.shell().step(std::chrono::milliseconds(0));
 	REQUIRE(elements("#track-types").at(0).at("attributes").at("value") == "chord");
 	click("#add-track-confirm");

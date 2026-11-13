@@ -86,7 +86,7 @@ namespace
 			app.keys().run("window.drumMachine", Json::object(), app.main(), nullptr);
 			REQUIRE(
 				app.waitUntil([&] { return !elements("#drum-machine").empty() && !has("#drum-machine", "empty"); }));
-			REQUIRE(app.waitUntil([&] { return !elements("[parameter]").empty(); }));
+			REQUIRE(app.waitUntil([&] { return !elements("#drum-machine [parameter]").empty(); }));
 		}
 
 		Json drumChannel()
