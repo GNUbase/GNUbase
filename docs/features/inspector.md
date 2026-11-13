@@ -106,12 +106,13 @@ one it has the class `empty` and says "No Track Selected".
   older ones (#716, [ui-engine-binding.md](ui-engine-binding.md)).
 - **Refused changes.** When the engine refuses a change, such as an output that would make a routing loop, the
   inspector shows the channel as it is again.
-- **Routing** (p. 168): the input bus of an audio track, and where the channel plays: an output bus or a group
-  channel, for MIDI tracks an instrument track's channel, as in the add track dialog (`channel.set` `input` and
-  `output`). On MIDI tracks also the MIDI device, bank and program (pp. 1108, 1113, [midi-devices.md](midi-devices.md)).
-  On MIDI and instrument tracks the Input Transformer (pp. 1097, 1393, [midi-rules.md](midi-rules.md)): Off, Project
-  or Track (`channel.set` `inputTransformer` `mode`) and, while it isn't off, Open Panel..., which opens the project
-  input transformer or the track's and leaves the mode as it was.
+- **Routing** (p. 168): the input bus of an audio track, and where the channel plays: an output bus or a group channel,
+  for MIDI tracks an instrument track's channel, as in the add track dialog (`channel.set` `input` and `output`). On
+  MIDI tracks also the MIDI channel their patch, MIDI volume and pan go out on (Channel: Any or 1 to 16, p. 349,
+  `channel.set` `midiChannel`, [mixer.md](mixer.md)) and the MIDI device, bank and program (pp. 1108, 1113,
+  [midi-devices.md](midi-devices.md)). On MIDI and instrument tracks the Input Transformer (pp. 1097, 1393,
+  [midi-rules.md](midi-rules.md)): Off, Project or Track (`channel.set` `inputTransformer` `mode`) and, while it isn't
+  off, Open Panel..., which opens the project input transformer or the track's and leaves the mode as it was.
 - **MIDI Modifiers** (pp. 1099–1102, [midi-modifiers.md](midi-modifiers.md)): Bypass, Transpose, Velocity Shift,
   Velocity and Length Compression as numerator and denominator, Random 1 and 2 with their target and minimum and
   maximum, and Range 1 and 2 with their mode and minimum and maximum, sent with `channel.set` `modifiers`. Each control

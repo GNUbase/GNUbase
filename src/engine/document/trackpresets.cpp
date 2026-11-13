@@ -870,6 +870,7 @@ namespace gnubase::engine
 			channel.midiPan = sound.midiPan;
 			channel.program = sound.program;
 			channel.bank = sound.bank;
+			channel.midiChannel = sound.midiChannel;
 			channel.device = sound.device;
 			channel.modifiers = sound.modifiers;
 			channel.midiInserts = sound.midiInserts;

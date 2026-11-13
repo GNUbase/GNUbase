@@ -49,9 +49,9 @@ namespace gnubase::ui
 	{
 		AudioFades fades;
 		fades.rate = rate;
-		fades.length = event.value("fadeRoom", event.at("length").get<int64_t>()); // a warped event's room for them
+		fades.fadeRoom = event.value("fadeRoom", event.at("length").get<int64_t>());
 		fades.timeRate = timeRate;
-		fades.frames = event.at("length").get<int64_t>();
+		fades.length = event.at("length").get<int64_t>();
 		fades.in = fadeOf(event.at("fadeIn"));
 		fades.out = fadeOf(event.at("fadeOut"));
 		if (const Json& crossfade = event.at("crossfade"); crossfade.is_object())
@@ -93,7 +93,7 @@ namespace gnubase::ui
 		const AudioFades& fades = m_fades.at(event);
 		if (!(fades.rate > 0.0))
 			return 0.0;
-		const double length = static_cast<double>(fades.length) / fades.rate;
+		const double length = static_cast<double>(fades.fadeRoom) / fades.rate;
 		const double own = static_cast<double>((in ? fades.in : fades.out).length) / fades.rate;
 		const double other = static_cast<double>((in ? fades.out : fades.in).length) / fades.rate;
 		const bool dragged = (m_drag == Drag::FadeIn && in) || (m_drag == Drag::FadeOut && !in);
@@ -145,7 +145,7 @@ namespace gnubase::ui
 			const AudioFades& fades = m_fades.at(id);
 			const engine::Fade& other = in ? fades.out : fades.in;
 			const int64_t length = std::clamp<int64_t>(
-				std::llround(draggedFade(id, in) * fades.rate), 0, std::max<int64_t>(0, fades.length - other.length));
+				std::llround(draggedFade(id, in) * fades.rate), 0, std::max<int64_t>(0, fades.fadeRoom - other.length));
 			commands.push_back({{"command", "audioEvent.setFades"},
 				{"parameters", {{"event", id}, {in ? "fadeIn" : "fadeOut", {{"length", length}}}}}});
 		}

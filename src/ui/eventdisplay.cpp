@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <optional>
@@ -108,6 +109,9 @@ namespace gnubase::ui
 		m_crossVertical = &add(*m_area, "div", "cross-hair-vertical");
 		m_crossHorizontal = &add(*m_area, "div", "cross-hair-horizontal");
 		m_cursorLine = &add(timeline, "div", "project-cursor");
+		m_stepCursor = &add(timeline, "div", "step-input-cursor");
+		m_stepCursor->SetClass("hidden", true);
+		add(*m_stepCursor, "div", "step-input-handle");
 		for (const Rml::EventId id : g_rootEvents)
 			root.AddEventListener(id, this);
 		// On the document, for files dropped on the track list too.
@@ -160,6 +164,14 @@ namespace gnubase::ui
 			}));
 		m_subscriptions.push_back(
 			m_binding.on("transport.changed", [this](const engine::Event& event) { followTransport(event.data); }));
+		m_subscriptions.push_back(
+			m_binding.on("chordPads.changed", [this](const engine::Event& event) { followChordPads(event.data); }));
+		m_binding.send("chordPads.get", Json::object(),
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (!alive.expired() && result.ok())
+					followChordPads(result.value);
+			});
 		m_subscriptions.push_back(m_binding.on("snap.changed",
 			[this](const engine::Event& event)
 			{
@@ -476,15 +488,18 @@ namespace gnubase::ui
 			const auto found = takeLanes.find({event.at("track").get<uint64_t>(), event.value("lane", 0)});
 			return found == takeLanes.end() ? std::optional<size_t>() : found->second;
 		};
+		// An event's own color, or else its track's (reference manual p. 114).
+		const auto colorOf = [&colors](const Json& event)
+		{
+			const Json& own = event.at("color");
+			return own.is_string() ? spanColor(own.get<std::string>()) : colors[event.at("track").get<uint64_t>()];
+		};
 		// With onTrackLane false, the track's lane gets no span for it: audio events show there where they are in
 		// front.
 		const auto addEvent = [&](const Json& event, double start, double end, bool onTrackLane = true)
 		{
 			const auto track = event.at("track").get<uint64_t>();
-			// Its own color, or else its track's (reference manual p. 114).
-			const Json& own = event.at("color");
-			TimeSpan span{start, end - start};
-			span.color = own.is_string() ? spanColor(own.get<std::string>()) : colors[track];
+			const TimeSpan span{start, end - start, colorOf(event)};
 			// The folders around the track show it as a data block.
 			for (uint64_t folder = parents[track]; folder != 0; folder = parents[folder])
 				if (const auto lane = lanes.find(folder); lane != lanes.end() &&
@@ -504,15 +519,22 @@ namespace gnubase::ui
 			}
 			m_end = std::max(m_end, end);
 		};
-		// Audio parts (#471) show as parts; their events only as the waveforms within them.
-		std::map<uint64_t, std::pair<double, double>> audioParts;
+		// Audio parts (#471) show as parts; their events only as the waveforms within them, in the part's color
+		// (#1312).
+		struct AudioPart
+		{
+			double start = 0.0;
+			double end = 0.0;
+			uint32_t color = 0;
+		};
+		std::map<uint64_t, AudioPart> audioParts;
 		for (const Json& part : project.at("audioParts"))
 		{
 			const auto track = part.at("track").get<uint64_t>();
 			const auto position = part.at("position").get<int64_t>();
 			const double start = seconds(position, linear[track]);
 			const double end = seconds(position + part.at("length").get<int64_t>(), linear[track]);
-			audioParts[part.at("id").get<uint64_t>()] = {start, end};
+			audioParts[part.at("id").get<uint64_t>()] = {start, end, colorOf(part)};
 			addEvent(part, start, end);
 		}
 		std::vector<EventWaveforms::Event> waves;
@@ -557,23 +579,22 @@ namespace gnubase::ui
 				played != event.end() && length > 0.0 ? event.at("length").get<double>() / length : rate;
 			if (const auto part = audioParts.find(event.value("part", uint64_t{0})); part != audioParts.end())
 			{
-				const double from = std::max(start, part->second.first);
-				const double to = std::min(start + length, part->second.second);
+				const double from = std::max(start, part->second.start);
+				const double to = std::min(start + length, part->second.end);
 				if (file != media.end() && rate > 0.0 && lanes.count(track) != 0 && to > from)
-					waves.push_back({event.at("id").get<uint64_t>(), lanes[track], {from, to - from}, file->first,
-						waveRate, file->second->at("channels").get<int>(),
-						event.at("offset").get<int64_t>() +
-							static_cast<int64_t>(std::llround((from - start) * waveRate))});
+					waves.push_back(
+						{event.at("id").get<uint64_t>(), lanes[track], {from, to - from, part->second.color},
+							file->first, waveRate, file->second->at("channels").get<int>(),
+							event.at("offset").get<int64_t>() +
+								static_cast<int64_t>(std::llround((from - start) * waveRate))});
 				continue;
 			}
 			addEvent(event, start, start + length, false);
 			if (lanes.count(track) != 0)
 			{
-				const Json& own = event.at("color");
-				Piece piece{{start, length, own.is_string() ? spanColor(own.get<std::string>()) : colors[track]}, {},
-					event.value("mute", false)};
+				Piece piece{{start, length, colorOf(event)}, {}, event.value("mute", false)};
 				if (file != media.end() && rate > 0.0)
-					piece.wave = {event.at("id").get<uint64_t>(), lanes[track], {start, length}, file->first, waveRate,
+					piece.wave = {event.at("id").get<uint64_t>(), lanes[track], piece.span, file->first, waveRate,
 						file->second->at("channels").get<int>(), event.at("offset").get<int64_t>()};
 				std::vector<Piece> covered;
 				for (const Piece& other : pieces[lanes[track]])
@@ -608,8 +629,8 @@ namespace gnubase::ui
 			if (rate > 0.0)
 				readFades(event, rate, waveRate);
 			if (const std::optional<size_t> taken = takeLane(event); taken && file != media.end() && rate > 0.0)
-				waves.push_back({event.at("id").get<uint64_t>(), *taken, {start, length}, file->first, waveRate,
-					file->second->at("channels").get<int>(), event.at("offset").get<int64_t>()});
+				waves.push_back({event.at("id").get<uint64_t>(), *taken, {start, length, colorOf(event)}, file->first,
+					waveRate, file->second->at("channels").get<int>(), event.at("offset").get<int64_t>()});
 		}
 		for (const auto& [lane, shown] : pieces)
 			for (const Piece& piece : shown)
@@ -621,7 +642,7 @@ namespace gnubase::ui
 					continue;
 				EventWaveforms::Event wave = piece.wave;
 				wave.offset += std::llround((piece.span.start - wave.time.start) * wave.sampleRate);
-				wave.time = {piece.span.start, piece.span.length};
+				wave.time = piece.span;
 				waves.push_back(wave);
 			}
 		m_waveforms->setEvents(waves);
@@ -752,6 +773,39 @@ namespace gnubase::ui
 		m_cursor = static_cast<double>(sample) / m_time.sampleRate;
 		if (alive())
 			m_cursorLine->SetProperty(Rml::PropertyId::Left, dp((m_cursor - m_view.start) / m_view.scale));
+	}
+
+	std::optional<std::pair<uint64_t, int64_t>> EventDisplay::trackAt(float x, float y) const
+	{
+		if (!alive())
+			return std::nullopt;
+		const double across = dpFrom(*m_lanes, x);
+		const double down = (y - m_lanes->GetAbsoluteTop()) / dpRatio();
+		if (across < 0.0 || down < 0.0 || across > width() || down > height())
+			return std::nullopt;
+		const size_t lane = laneAt(down + m_view.top);
+		if (lane >= m_laneTracks.size())
+			return std::nullopt;
+		const double seconds = std::max(m_view.start + (across * m_view.scale), 0.0);
+		return std::make_pair(m_laneTracks[lane], static_cast<int64_t>(std::llround(m_time.tempo.toTicks(seconds))));
+	}
+
+	void EventDisplay::followChordPads(const Json& pads)
+	{
+		m_stepInput = pads.value("stepInput", false);
+		m_stepTicks = pads.value("stepPosition", int64_t{0});
+		placeStepCursor();
+	}
+
+	void EventDisplay::placeStepCursor()
+	{
+		if (!alive() || m_stepCursor == nullptr)
+			return;
+		if (m_stepCursor->IsClassSet("hidden") == m_stepInput)
+			m_stepCursor->SetClass("hidden", !m_stepInput);
+		const double seconds = m_time.tempo.toSeconds(m_stepTicks);
+		if (m_stepInput)
+			m_stepCursor->SetProperty(Rml::PropertyId::Left, dp((seconds - m_view.start) / m_view.scale));
 	}
 
 	void EventDisplay::follow()
@@ -891,6 +945,7 @@ namespace gnubase::ui
 			canvas->SetAttribute("scroll-top", m_view.top);
 		m_waveforms->show({m_view.start, m_view.scale, m_view.top, m_laneTops, width(), height(), dpRatio()});
 		setCursor(m_cursorSample);
+		placeStepCursor();
 		showRange();
 		placeAutomation();
 		placePartMarks();

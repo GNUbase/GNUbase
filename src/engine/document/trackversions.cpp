@@ -251,7 +251,8 @@ namespace gnubase::engine
 				return name;
 	}
 
-	TrackVersion copyVersion(Project& project, const TrackVersion& version, ObjectId track)
+	TrackVersion copyVersion(
+		Project& project, const TrackVersion& version, ObjectId track, const std::map<ObjectId, ObjectId>& patterns)
 	{
 		TrackVersion copy;
 		copy.id = version.id;
@@ -286,6 +287,8 @@ namespace gnubase::engine
 		{
 			part.id = project.newId();
 			part.track = track;
+			if (const auto pattern = patterns.find(part.pattern); pattern != patterns.end())
+				part.pattern = pattern->second;
 			if (part.shared == 0)
 				renumber(project, part);
 			copy.midiParts.push_back(std::move(part));
