@@ -83,7 +83,11 @@ namespace gnubase::ui
 		void editNotes(const std::string& field, const std::string& text, float number, int gesture);
 		bool shows() const
 		{
-			return m_showsNotes ? !m_notes.empty() : m_showsMarkers ? !m_markers.empty() : !m_events.empty();
+			if (m_showsNotes)
+			{
+				return !m_notes.empty();
+			}
+			return m_showsMarkers ? !m_markers.empty() : !m_events.empty();
 		}
 		// The selected event's volume in dB, from the display's project.
 		double volumeOf(uint64_t event) const;

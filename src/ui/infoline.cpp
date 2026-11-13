@@ -709,10 +709,22 @@ namespace gnubase::ui
 				return;
 			}
 			if (field == "releaseVelocity")
+			{
 				delta = *typed - std::lround(first.releaseVelocity * g_maxVelocity);
+			}
+			else
+			{
+				delta = 0; // the channel is set for all, not moved
+			}
 		}
 		else
+		{
 			return;
+		}
+		if (!typed || !delta)
+		{
+			return; // a field the notes don't have
+		}
 		// Each note's part's start, for the positions that note.set takes relative to it.
 		std::map<uint64_t, int64_t> starts;
 		for (const Note& note : m_notes)
@@ -738,18 +750,24 @@ namespace gnubase::ui
 				change["length"] = std::max<int64_t>(to - note.start, 1);
 			}
 			else if (field == "length")
+			{
 				change["length"] = std::max<int64_t>(m_absolute ? *typed : note.length + *delta, 1);
+			}
 			else if (field == "pitch")
+			{
 				change["pitch"] = std::clamp<int64_t>(m_absolute ? *typed : note.pitch + *delta, 0, g_pitches - 1);
+			}
 			else if (field == "velocity" || field == "releaseVelocity")
 			{
 				const double base = field == "velocity" ? note.velocity : note.releaseVelocity;
-				const double value = m_absolute ? static_cast<double>(*typed) / g_maxVelocity
-												: base + static_cast<double>(*delta) / g_maxVelocity;
+				const double value = m_absolute ? (static_cast<double>(*typed) / g_maxVelocity)
+												: base + (static_cast<double>(*delta) / g_maxVelocity);
 				change[field] = std::clamp(value, 0.0, 1.0);
 			}
 			else if (field == "channel")
+			{
 				change["channel"] = std::clamp<int64_t>(*typed - 1, 0, 15);
+			}
 			changes[note.part].push_back(std::move(change));
 		}
 		Json commands = Json::array();
