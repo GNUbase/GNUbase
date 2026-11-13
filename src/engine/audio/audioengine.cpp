@@ -283,11 +283,18 @@ namespace gnubase::engine
 					Playback::Cue cue;
 					cue.window = static_cast<time::Samples>(g_cueSeconds * m_device->format().sampleRate);
 					{
-						// Held while it cues, so that a cue made before a start doesn't come after its exact cue.
-						const std::scoped_lock lock(m_cueMutex);
-						cue.playing = m_cueState.playing;
-						cue.settings = m_cueState.settings;
-						cue.arranger = m_cueState.arranger.get();
+						// Held while it cues, and taken by cueStart before it announces a start, so that a cue made
+						// before a start doesn't come after its exact cue. The state is only read under m_cueMutex:
+						// transport commands and rebuilds don't wait while this opens streams.
+						const std::scoped_lock order(m_cueOrderMutex);
+						CueState state;
+						{
+							const std::scoped_lock lock(m_cueMutex);
+							state = m_cueState; // keeps the arranger plan alive while it cues
+						}
+						cue.playing = state.playing;
+						cue.settings = state.settings;
+						cue.arranger = state.arranger.get();
 						cue.arrangerState = m_transport.arranger();
 						// Read first: a request seen applied then shows where the audio thread went (transport.h). The
 						// count-in comes before the cursor because it ends after the cursor has moved.
@@ -297,10 +304,10 @@ namespace gnubase::engine
 						// At a start the command thread cued, until the audio thread plays from there, and while it
 						// counts in, where playback starts after it. Either may begin while this cues: the voice it
 						// reads stays.
-						if (m_cueState.start >= 0 && applied < m_cueState.startRequests)
+						if (state.start >= 0 && applied < state.startRequests)
 						{
-							cue.position = m_cueState.start;
-							cue.enter = m_cueState.enter;
+							cue.position = state.start;
+							cue.enter = state.enter;
 							cue.playing = true;
 							cue.starting = true;
 						}
@@ -320,6 +327,7 @@ namespace gnubase::engine
 
 	void AudioEngine::cueStart(time::Samples start, time::Samples enter)
 	{
+		const std::scoped_lock order(m_cueOrderMutex); // after the cue the cue thread may be making (startCueing)
 		const std::scoped_lock lock(m_cueMutex);
 		m_cueState.start = start;
 		m_cueState.enter = enter;

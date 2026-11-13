@@ -528,7 +528,8 @@ namespace gnubase::engine
 			time::Samples enter = -1;
 			uint64_t startRequests = 0;
 		};
-		std::mutex m_cueMutex;             // guards m_cueState; the cue thread holds it while it cues
+		std::mutex m_cueMutex;             // guards m_cueState, held only to read or change it
+		std::mutex m_cueOrderMutex;        // the cue thread holds it while it cues, cueStart before m_cueMutex
 		ArrangerState m_announcedArranger; // as transport.changed last announced it
 		CueState m_cueState;
 		std::atomic<bool> m_cueing{false};
