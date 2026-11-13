@@ -792,6 +792,27 @@ TEST_CASE("Reset Quantize keeps a crossfade the event had before quantizing", "[
 		CHECK(crossfadeOf(client, second).at("mode") == "equalPower");
 		CHECK(!crossfadeOf(client, third).is_object());
 	}
+
+	SECTION("splitting the event the hand-made crossfade comes from")
+	{
+		// The crossfade follows the piece after the split, and its origin's crossfades follow with it (#1333), so
+		// that resetting keeps the hand-made one, from the piece that is then the neighbour before the event.
+		const Json pieces = run(client, "event.split", {{"events", {first}}, {"positions", {20000}}}).at("events");
+		REQUIRE(pieces.size() == 1);
+		const auto right = pieces.at(0).get<ObjectId>();
+		REQUIRE(crossfadeOf(client, second).at("from") == right);
+		Json all = events;
+		all.push_back(right);
+		run(client, "quantize.reset", {{"events", all}});
+		CHECK(eventsOn(client, track) ==
+			std::vector<std::vector<int64_t>>{
+				{1000, 0, 20000}, {21000, 20000, 10000}, {25000, 24000, 30000}, {49000, 48000, 30000}});
+		const Json kept = crossfadeOf(client, second);
+		REQUIRE(kept.is_object());
+		CHECK(kept.at("from") == right);
+		CHECK(kept.at("mode") == "equalPower");
+		CHECK(!crossfadeOf(client, third).is_object());
+	}
 }
 
 TEST_CASE("Reset Quantize keeps an end trimmed by hand after quantizing", "[integration]")
