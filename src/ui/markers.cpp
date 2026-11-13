@@ -571,7 +571,8 @@ namespace gnubase::ui
 			// a drag select ranges as on any lane.
 			if (twice)
 			{
-				m_binding.send("marker.range",
+				// What the user does next waits for the range (afterAwaited), e.g. Delete right after the double click.
+				m_binding.sendAwaited("marker.range",
 					{{"track", track.id}, {"position", positionSamples(seconds, m_markers.time.sampleRate)}},
 					[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 					{

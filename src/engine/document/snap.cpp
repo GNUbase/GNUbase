@@ -533,7 +533,11 @@ namespace gnubase::engine
 		const int64_t first = std::max<int64_t>(event.offset + 1, static_cast<int64_t>(std::floor(frameAt(from))) + 1);
 		const int64_t last =
 			std::min<int64_t>(event.offset + event.length - 1, static_cast<int64_t>(std::ceil(frameAt(to))) - 1);
-		return crossingInFrames(project, event, at, first, last);
+		const time::Samples found = crossingInFrames(project, event, at, first, last);
+		// A frame of a file at another sample rate can round back onto from or to, where the event doesn't play.
+		if (found == at || to - from < 2)
+			return found;
+		return std::clamp(found, from + 1, to - 1);
 	}
 
 	void registerSnapCommands(ProjectModel& model, Engine& engine)
@@ -697,10 +701,8 @@ namespace gnubase::engine
 					time::Samples start = 0;
 					time::Samples end = 0;
 				};
-				// Where events overlap, the one whose frontOf is highest plays, of two at the same place in the stack
-				// (the pieces of a split event) the one with the higher id, as in playback (makePlaylist).
-				const auto stackPlace = [](const Plays& plays)
-				{ return std::make_pair(frontOf(*plays.event), plays.event->id); };
+				// Where events overlap, the one highest in the stack plays, as in playback (makePlaylist).
+				const auto stackPlace = [](const Plays& plays) { return stackKey(*plays.event); };
 				std::vector<std::vector<Plays>> onTracks(tracks.size());
 				for (const auto& [id, event] : project.audioEvents)
 				{
