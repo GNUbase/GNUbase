@@ -254,6 +254,10 @@ namespace gnubase::ui
 
 	double DrumMachinePanel::value(uint32_t id) const
 	{
+		// A parameter whose change is on its way keeps what the user gave it, not the engine's older value, also after
+		// another drum track showed meanwhile (#1471).
+		if (const Json* shown = m_channel.is_object() ? m_binding.shown(stepKey(id), m_read) : nullptr)
+			return shown->get<double>();
 		if (const auto set = m_values.find(id); set != m_values.end())
 			return set->second;
 		const uint32_t base = id < g_globals ? id % g_padStride : id;
@@ -287,7 +291,6 @@ namespace gnubase::ui
 		}
 		m_track = channel != nullptr ? track : 0;
 		m_channel = channel != nullptr ? *channel : Json();
-		// A parameter whose change is on its way keeps what the user gave it, not the engine's older value.
 		std::map<uint32_t, double> values;
 		std::map<int, std::string> names;
 		if (channel != nullptr)
@@ -303,9 +306,6 @@ namespace gnubase::ui
 				names[pad.value("pad", 0)] = name;
 			}
 		}
-		for (const auto& [id, set] : m_values)
-			if (channel != nullptr && m_binding.ahead(stepKey(id), m_read))
-				values[id] = set;
 		m_values = std::move(values);
 		m_names = std::move(names);
 		show();
@@ -407,12 +407,11 @@ namespace gnubase::ui
 	{
 		if (m_channel.is_null())
 			return;
-		m_values[id] = value;
 		const Json step = {{"command", "parameter.set"},
 			{"parameters",
 				{{"channel", m_channel.at("id")}, {"target", {{"type", "instrument"}, {"parameter", id}}},
 					{"value", value}}}};
-		m_binding.sendStep(gesture, stepKey(id), "Change Drum Machine", Json::array({step}));
+		m_binding.sendStep(gesture, stepKey(id), "Change Drum Machine", Json::array({step}), {}, value);
 	}
 
 	void DrumMachinePanel::showMessage(const std::string& text)

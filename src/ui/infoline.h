@@ -95,10 +95,10 @@ namespace gnubase::ui
 		int partValue(uint64_t part, const char* key) const;
 		// A MIDI part as the display's project has it, or null.
 		const engine::Json* partOf(uint64_t part) const;
-		// What a value field of the selected events shows for the project's value: while the project is older than the
-		// field's own steps for those events (#716), the value that the field sent last for them instead, also after
-		// other events showed in it meanwhile (#1421).
-		std::string fieldValue(const std::string& field, std::string value) const;
+		// What a value field shows for the project's value of event, the first selected: while the project is older
+		// than the field's own steps (#716), the value that the steps that changed event gave it instead, also after
+		// other events showed in the field meanwhile (#1421), and when it was dragged with others (#1471).
+		std::string fieldValue(const std::string& field, uint64_t event, std::string value) const;
 		// The notes a selection of an in-place editor names, from the display's project, by start, then pitch.
 		std::vector<Note> notesOf(const engine::Json& selection) const;
 		// A part's start in project ticks, a linear track's position converted as the key editor does.
@@ -120,10 +120,7 @@ namespace gnubase::ui
 		std::vector<uint64_t> m_markerSelection; // shown
 		bool m_showsMarkers = false;             // the markers' selection changed last
 		std::vector<MarkerItem> m_markers;       // the selected ones in timeline order, the first one first
-		// The values that edit sent, by step key. ponytail: never pruned, one short entry per field and selection the
-		// user changed.
-		std::map<std::string, std::string> m_sent;
-		Subscription m_editors;                               // editor.changed
+		Subscription m_editors;                  // editor.changed
 		std::map<std::string, engine::Json> m_viewSelections; // each open in-place editor's selection seen
 		std::string m_noteView;                               // the editor whose notes show
 		engine::Json m_noteSelection = engine::Json::array(); // its selection shown, or to show

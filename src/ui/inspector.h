@@ -9,7 +9,6 @@
 
 #include <cstdint>
 #include <functional>
-#include <map>
 #include <memory>
 #include <set>
 #include <string>
@@ -73,8 +72,8 @@ namespace gnubase::ui
 		void sendChannel(engine::Json parameters);
 		// What a command does when it is done: if it was refused, the next update shows the channel again.
 		std::function<void(const engine::Result&)> whenRefused();
-		// Sends a value field's change as a step of its gesture (EngineBinding::sendStep) under key, and keeps the
-		// value that the field shows with it (shown).
+		// Sends a value field's change as a step of its gesture (EngineBinding::sendStep) under key, with the value
+		// that the field shows (shown), which the binding keeps with the step's record.
 		void sendFieldStep(
 			int gesture, const std::string& key, float shown, std::string description, engine::Json commands);
 		// What a value field shows for the project's value: while the project is older than the field's own steps for
@@ -95,9 +94,6 @@ namespace gnubase::ui
 		uint64_t m_track = 0;
 		uint64_t m_loads = 0;
 		uint64_t m_read = 0;
-		// sendFieldStep's values, by key. ponytail: never pruned, one short entry per field and channel the user
-		// changed.
-		std::map<std::string, std::string> m_sent;
 		const engine::Json* m_project = nullptr;            // update's
 		engine::Json m_devices = engine::Json::object();    // the user setting midi.devices
 		engine::Json m_channel;                             // the track's, null without one

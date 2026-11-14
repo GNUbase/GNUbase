@@ -1435,7 +1435,9 @@ TEST_CASE("the info line's volume turned or dragged while the engine answers lat
 	CHECK(window.historyPosition() == position + 1);
 }
 
-TEST_CASE("the info line shows another event's own volume while a dragged one's last step is out", "[ui]")
+TEST_CASE("the info line shows another event's own volume while a dragged one's last step is out, and back on the "
+		  "dragged one the drag's",
+	"[ui]")
 {
 	test::CommandHolds holds; // declared before the window: its engine's command thread waits in hold()
 	Window window;
@@ -1528,6 +1530,95 @@ TEST_CASE("the info line shows another event's own volume while a dragged one's 
 	CHECK(drag.value() == Catch::Approx(value).margin(1e-5));
 	CHECK(window.find("audioEvents", dragged).at("volume") == Catch::Approx(value).margin(1e-5));
 	CHECK(window.find("audioEvents", other).at("volume") == 3.0);
+}
+
+TEST_CASE("the info line shows another part's own transpose while a dragged selection's last step is out, and one "
+		  "dragged part alone the drag's",
+	"[ui]")
+{
+	test::CommandHolds holds; // declared before the window: its engine's command thread waits in hold()
+	Window window;
+	const test::ReleaseHolds releaseHolds{holds};
+	// Without the inspector: it reads the in-place editors (editor.inPlace, not a query) for each history.changed,
+	// which sends a waiting step at once, before the display's read for the step before.
+	window.app.appUi().docking().setTabHidden("inspector", true);
+	window.app.engine().registerCommand(
+		{"test.hold", 1, "Waits for the test to release it.", engine::CommandInfo{}.parameters, Json::object(), false},
+		[&holds](engine::CommandContext&) { return holds.hold(); });
+	engine::Client holder(window.app.engine(), "holder");
+	const uint64_t keys = window.addTrack({{"type", "instrument"}, {"name", "Keys"}});
+	const uint64_t first = window.addPart(keys, 0, 4 * g_quarter, "First");
+	const uint64_t second = window.addPart(keys, 4 * g_quarter, 4 * g_quarter, "Second");
+	const uint64_t other = window.addPart(keys, 8 * g_quarter, 4 * g_quarter, "Other");
+	window.call("midiPart.set", {{"part", other}, {"transpose", 5}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("midiParts").size() == 3; }));
+	window.display.select({first, second});
+	const std::string field = "#info-line valuefield[field=transpose]";
+	REQUIRE(window.shows("#info-line textdisplay[field=name]", "First"));
+	REQUIRE(window.shows(field, "0"));
+	ui::EngineBinding& binding = window.app.appUi().binding();
+	// The first part's transpose in the project that the event display, and with it the info line, shows.
+	const auto shown = [&]
+	{
+		const Json& parts = window.display.project().at("midiParts");
+		const auto found =
+			std::find_if(parts.begin(), parts.end(), [first](const Json& each) { return each.at("id") == first; });
+		REQUIRE(found != parts.end());
+		return found->value("transpose", 0);
+	};
+
+	// A drag of both parts' transpose while the engine answers late, and two steps while the test holds the engine:
+	// the first goes behind the hold, the last waits in the binding.
+	test::LateDrag drag(window.app, std::nullopt, field);
+	drag.move(5, 1);
+	REQUIRE(window.app.waitUntil(
+		[&]
+		{
+			return binding.waiting("history.transaction") == 0 && binding.waiting("project.get") == 0 &&
+				binding.waiting("editor.inPlace") == 0;
+		}));
+	holder.send("test.hold");
+	REQUIRE(holds.waitEntered(1));
+	drag.nudge(1);
+	drag.nudge(1);
+	const auto value = static_cast<double>(std::lround(drag.value())); // the field shows the whole semitones sent
+	drag.release(false);
+	REQUIRE(binding.waiting("history.transaction") == 1);
+	// The other part, asked for (event.get), a query, so before the last step. A second hold after that question
+	// keeps the project read that the display sends for the first step's history.changed out, and the last step
+	// goes behind it.
+	window.display.select({other});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(binding.waiting("event.get") != 0);
+	holder.send("test.hold");
+	holds.release(1);
+	REQUIRE(holds.waitEntered(2));
+	REQUIRE(window.shows("#info-line textdisplay[field=name]", "Other"));
+	CHECK(window.shows(field, "5")); // its own, not the dragged parts'
+	REQUIRE(binding.waiting("project.get") != 0);
+
+	// The first dragged part alone, asked for after the last step. A third hold keeps the project read after the
+	// last step out: the display shows the read after the first one, and the field where the drag left the part,
+	// though the drag changed it with another part selected (#1471).
+	window.display.select({first});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(binding.waiting("event.get") != 0);
+	holder.send("test.hold");
+	holds.release(2);
+	REQUIRE(holds.waitEntered(3));
+	REQUIRE(window.shows("#info-line textdisplay[field=name]", "First"));
+	CHECK(window.app.waitUntil([&] { return drag.value() == value; }));
+	REQUIRE(binding.waiting("history.transaction") == 0);
+	REQUIRE(binding.waiting("project.get") != 0);
+	REQUIRE(shown() != value);
+
+	// The read after the last step agrees with it, and so does the engine, for both dragged parts.
+	holds.release(3);
+	REQUIRE(window.app.waitUntil([&] { return shown() == value; }));
+	CHECK(drag.value() == value);
+	CHECK(window.part(first).value("transpose", 0) == value);
+	CHECK(window.part(second).value("transpose", 0) == value);
+	CHECK(window.part(other).value("transpose", 0) == 5);
 }
 
 TEST_CASE("the info line's refused volume step shows the engine's value again", "[ui]")

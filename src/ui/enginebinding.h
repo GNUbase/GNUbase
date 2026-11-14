@@ -95,8 +95,11 @@ namespace gnubase::ui
 		// the same gesture replaces the one waiting, so that a fast drag sends its newest value whenever the engine
 		// has answered instead of piling up commands. done runs for every step sent; a step replaced before it was
 		// sent is dropped with its done.
+		// shown, unless null, is what the control shows once the engine took the step, kept with the record of what's
+		// steps for shown(): an object's members are merged into what the record keeps (a JSON merge patch), e.g. one
+		// per event that the step changes, anything else replaces it.
 		void sendStep(int gesture, const std::string& what, std::string description, engine::Json commands,
-			std::function<void(const engine::Result&)> done = {});
+			std::function<void(const engine::Result&)> done = {}, const engine::Json& shown = nullptr);
 
 		// Whether steps of what (sendStep) are in flight or waiting. Until they aren't, the engine's values for what
 		// are older than the control that sent them, so a view leaves the control as it is (#716); the engine's
@@ -116,6 +119,12 @@ namespace gnubase::ui
 		// binding without one keeps them for the session, and a view that asks about another query's answer may find
 		// the record gone before that query answers again.
 		bool ahead(const std::string& what, uint64_t read) const;
+
+		// What the steps of what showed (sendStep's shown) while the control is ahead of read, else null: a view shows
+		// it instead of the older value that read has, also after it showed another channel or event in the same
+		// control meanwhile (#1421). It goes with the record, so a session keeps none for every control it touched
+		// (#1471). Valid until the next sendStep or update().
+		const engine::Json* shown(const std::string& what, uint64_t read) const;
 
 		// A name for one view to begin the whats of its steps with, e.g. "mixer 3 ", a new one for each call. Views
 		// that show the same value, such as two mixers and the inspector, send their steps under names of their own,
@@ -212,6 +221,7 @@ namespace gnubase::ui
 			std::deque<std::function<void(const engine::Result&)>> inFlight;
 			std::deque<Step> waiting;
 			uint64_t taken = 0; // m_handed when its result was handed on
+			engine::Json shown; // sendStep's, merged
 		};
 
 		Subscription follow(std::function<void()> read);
