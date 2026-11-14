@@ -10,6 +10,9 @@
 #include "uiapp.h"
 
 #include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Factory.h>
+#include <RmlUi/Core/StyleSheetContainer.h>
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
@@ -455,6 +458,37 @@ TEST_CASE("dragging the keyboard's left part zooms the pitches and scrolls the n
 	CHECK(std::abs(f.box(".key-editor-row").at("height").get<double>() - 40.0) <= 0.5);
 }
 
+TEST_CASE("the keyboard's zoom scales the rows' height that the style sheet gives them", "[ui]")
+{
+	// A theme or style change that gives the rows another height is what the zoom scales (#1369).
+	Fixture f({1024, 600});
+	f.app.setDpRatio(1.0F);
+	f.add({{0, 60, g_quarter}});
+	ui::Window* window = f.app.shell().find(f.app.appUi().editorWindowId());
+	REQUIRE(window != nullptr);
+	Rml::Context& context = window->context();
+	Rml::ElementDocument* document = nullptr;
+	for (int i = 0; i < context.GetNumDocuments(); ++i)
+		if (context.GetDocument(i)->QuerySelector(".key-editor-rows") != nullptr)
+			document = context.GetDocument(i);
+	REQUIRE(document != nullptr);
+	auto style = Rml::MakeShared<Rml::StyleSheetContainer>();
+	style->MergeStyleSheetContainer(*document->GetStyleSheetContainer());
+	style->MergeStyleSheetContainer(*Rml::Factory::InstanceStyleSheetString(
+		".key-editor-rows .key-editor-row { height: 14dp; } .key-editor-body .key-editor-keys { height: 1792dp; }"));
+	document->SetStyleSheetContainer(std::move(style));
+	f.scroll(127);
+	CHECK(std::abs(f.box(".key-editor-row").at("height").get<double>() - 14.0) <= 0.5);
+
+	// A drag 100 px to the right doubles the rows' height.
+	const Json keyboard = f.box(".key-editor-keys");
+	const int left = keyboard.at("x").get<int>() + 4;
+	const int high = f.box(".key-editor-body").at("y").get<int>() + 150;
+	f.drag({"", 0, ui::Point{left, high}}, {"", 0, ui::Point{left + 100, high}});
+	CHECK(std::abs(f.box(".key-editor-row").at("height").get<double>() - 28.0) <= 0.5);
+	CHECK(std::abs(f.box(".key-editor-keys").at("height").get<double>() - (128 * 28.0)) <= 1);
+}
+
 TEST_CASE("a click and a drag on the keyboard's left part leave the selected notes and the history alone", "[ui]")
 {
 	// The zoom gesture's release edits nothing, and no note an earlier press remembered (review of #1365).
@@ -728,6 +762,61 @@ TEST_CASE("the erase, trim, split and glue tools", "[ui]")
 	f.settle();
 	CHECK(f.note(ids[2]).at("length") == 6 * g_sixteenth);
 	CHECK(f.note(ids[3]).is_null());
+}
+
+TEST_CASE("the split tool splits the selected notes of every part at one position, undone in one step", "[ui]")
+{
+	// Reference manual p. 1215: with notes selected, all of them are split at the same position (review of #1480).
+	Fixture f;
+	const std::vector<uint64_t> ids = f.add({{0, 60, g_quarter}, {0, 62, g_quarter}});
+	const uint64_t track = f.app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	const uint64_t second = f.app.call("midiPart.add", {{"track", track}, {"position", 0}, {"length", g_bar}})
+								.at("part")
+								.at("id")
+								.get<uint64_t>();
+	const uint64_t other =
+		f.app
+			.call("note.add",
+				{{"part", second},
+					{"notes", {{{"position", 0}, {"length", g_quarter}, {"pitch", 64}, {"velocity", 0.5}}}}})
+			.at("notes")
+			.at(0)
+			.at("id")
+			.get<uint64_t>();
+	f.app.call("editor.open", {{"editor", "window"}, {"parts", {f.part, second}}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note").size() == 3; }));
+	f.scroll(60);
+	// The notes of the parts by part, as [position, length] sorted.
+	const auto pieces = [&]
+	{
+		std::vector<std::vector<std::pair<int64_t, int64_t>>> found(2);
+		const Json project = f.app.call("project.get");
+		for (const Json& each : project.at("midiParts"))
+			for (const Json& note : each.at("notes"))
+				found.at(each.at("id") == f.part ? 0 : 1)
+					.emplace_back(note.at("position").get<int64_t>(), note.at("length").get<int64_t>());
+		for (auto& part : found)
+			std::sort(part.begin(), part.end());
+		return found;
+	};
+	const auto before = pieces();
+	f.app.call("editor.set",
+		{{"editor", "window"},
+			{"selection", Json::array({{{"part", f.part}, {"note", ids[0]}}, {{"part", second}, {"note", other}}})}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note.selected").size() == 2; }));
+
+	// One click on a selected note splits both selected notes at its position; the unselected one stays whole.
+	f.tool("split");
+	f.click(f.at(2.2, 60));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note").size() == 5; }));
+	using Pieces = std::vector<std::pair<int64_t, int64_t>>;
+	const auto split = pieces();
+	CHECK(split[0] == Pieces{{0, 2 * g_sixteenth}, {0, g_quarter}, {2 * g_sixteenth, 2 * g_sixteenth}});
+	CHECK(split[1] == Pieces{{0, 2 * g_sixteenth}, {2 * g_sixteenth, 2 * g_sixteenth}});
+
+	// One undo step takes back both parts' splits.
+	f.app.call("history.undo");
+	CHECK(pieces() == before);
 }
 
 TEST_CASE("a right click in the note display opens the toolbox, by the setting and modifiers", "[ui]")

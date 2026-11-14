@@ -234,6 +234,7 @@ namespace gnubase::ui
 		bool m_snapOff = false;
 		float m_pitchZoom = 1.0F;               // the pitch rows' scale, which the keyboard's left part drags (p. 1261)
 		float m_zoomStart = 1.0F;               // m_pitchZoom at the press
+		float m_rowDp = 0.0F;                   // the pitch rows' height at zoom 1, read from the style at the press
 		float m_scrollStart = 0.0F;             // the note display's scroll top at the press, in pixels
 		bool m_zoomDrag = false;                // the drag went past the threshold
 		Rml::ObserverPtr<Rml::Element> m_drawn; // the note a draw drags out

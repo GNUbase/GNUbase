@@ -154,8 +154,9 @@ menu.
   the engine API or has its window closed, and when the lower zone's Editor panel in a window of its own has that window
   closed or is docked again; the object selection tool selecting, deselecting, moving, resizing, inserting and deleting;
   the draw tool with Quantize Link and an eighth from the Length Quantize menu; the erase, trim (and with Alt), split
-  and glue tools; the transpose palette and typing a pitch on the info line; step input with its cursor, a click moving
-  it, and MIDI input selecting the next note; the Chord Editing section naming and changing a chord; the toolbox with
-  the setting on and off, with and without a modifier key, choosing tools; drags on the keyboard's left part zooming the
-  rows in and out between the limits and scrolling the note display, while a click there zooms nothing, and a click and
-  a drag there leaving a note an earlier press selected and the history alone.
+  and glue tools, and the split tool splitting the selected notes of two parts at one position in one undo step; the
+  transpose palette and typing a pitch on the info line; step input with its cursor, a click moving it, and MIDI input
+  selecting the next note; the Chord Editing section naming and changing a chord; the toolbox with the setting on and
+  off, with and without a modifier key, choosing tools; drags on the keyboard's left part zooming the rows in and out
+  between the limits, from the height a style sheet gives them, and scrolling the note display, while a click there
+  zooms nothing, and a click and a drag there leaving a note an earlier press selected and the history alone.
