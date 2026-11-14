@@ -502,7 +502,10 @@ namespace gnubase::engine
 				"refuses the move. notes may then be empty. Emits controller.removed and controller.added for them, "
 				"and the note events only when notes names any. Returns the moved notes and controller events, as the "
 				"target part has them.",
-				noteMove, resultSchema("notes"), false},
+				noteMove,
+				{{"type", "object"}, {"required", {"notes", "controllers"}},
+					{"properties", {{"notes", {{"type", "array"}}}, {"controllers", {{"type", "array"}}}}}},
+				false},
 			moveNotes);
 		add(engine,
 			{"controller.set", 1,

@@ -224,6 +224,15 @@ TEST_CASE("note.move moves notes to another part as one undo step, keeping every
 	call(client, "history.redo");
 	CHECK(notesOf(client, source).empty());
 	CHECK(notesOf(client, target) == expected);
+
+	// The result schema names both arrays, for MCP clients and Lua.
+	for (const gnubase::engine::CommandInfo& info : engine.commands())
+		if (info.name == "note.move")
+		{
+			CHECK(info.result.at("required") == Json{"notes", "controllers"});
+			CHECK(info.result.at("properties").at("notes").at("type") == "array");
+			CHECK(info.result.at("properties").at("controllers").at("type") == "array");
+		}
 }
 
 TEST_CASE("note.move refuses what doesn't fit and changes nothing then", "[unit]")
@@ -366,6 +375,19 @@ TEST_CASE("note.move counts ticks on the project's timeline, whatever the parts'
 	CHECK(notesOf(client, source).at(0).at("position") == g_sixteenth);
 }
 
+namespace
+{
+	// The controller events of one part as project.get lists them.
+	Json controllersOf(Client& client, int64_t part)
+	{
+		const Json project = call(client, "project.get");
+		for (const Json& each : project.at("midiParts"))
+			if (each.at("id") == part)
+				return each.at("controllers");
+		return Json::array();
+	}
+}
+
 TEST_CASE("note.move keeps the shared copies of the source and of the target consistent", "[unit]")
 {
 	Engine engine;
@@ -387,6 +409,12 @@ TEST_CASE("note.move keeps the shared copies of the source and of the target con
 			{"notes", Json::array({{{"position", 0}, {"length", g_sixteenth}, {"pitch", 60}, {"velocity", 1.0}}})}})
 						   .at("notes");
 	const int64_t note = added.at(0).at("id").get<int64_t>();
+	const int64_t controller = call(client, "controller.add",
+		{{"part", source}, {"controllers", {{{"position", g_sixteenth}, {"number", 1}, {"value", 0.5}}}}})
+								   .at("controllers")
+								   .at(0)
+								   .at("id")
+								   .get<int64_t>();
 	const int64_t sourceCopy =
 		call(client, "event.copy", {{"events", {source}}, {"ticks", 8 * g_sixteenth}, {"shared", true}})
 			.at("events")
@@ -399,29 +427,24 @@ TEST_CASE("note.move keeps the shared copies of the source and of the target con
 			.get<int64_t>();
 	REQUIRE(notesOf(client, sourceCopy).size() == 1);
 	REQUIRE(notesOf(client, targetCopy).empty());
+	REQUIRE(controllersOf(client, sourceCopy).size() == 1);
 
-	const Json moved = call(client, "note.move", {{"part", source}, {"notes", {note}}, {"target", target}}).at("notes");
-	// The copy of the source loses the note with it, and the copy of the target get it with its id.
+	const Json moved = call(
+		client, "note.move", {{"part", source}, {"notes", {note}}, {"controllers", {controller}}, {"target", target}});
+	// The copy of the source loses the note and the controller event with it, and the copy of the target gets them
+	// with their ids.
 	CHECK(notesOf(client, sourceCopy).empty());
-	REQUIRE(notesOf(client, targetCopy) == moved);
-	CHECK(moved.at(0).at("id") == note);
+	REQUIRE(notesOf(client, targetCopy) == moved.at("notes"));
+	CHECK(moved.at("notes").at(0).at("id") == note);
+	CHECK(controllersOf(client, sourceCopy).empty());
+	REQUIRE(controllersOf(client, targetCopy) == moved.at("controllers"));
+	CHECK(moved.at("controllers").at(0).at("id") == controller);
 
 	call(client, "history.undo");
 	CHECK(notesOf(client, sourceCopy).size() == 1);
 	CHECK(notesOf(client, targetCopy).empty());
-}
-
-namespace
-{
-	// The controller events of one part as project.get lists them.
-	Json controllersOf(Client& client, int64_t part)
-	{
-		const Json project = call(client, "project.get");
-		for (const Json& each : project.at("midiParts"))
-			if (each.at("id") == part)
-				return each.at("controllers");
-		return Json::array();
-	}
+	CHECK(controllersOf(client, sourceCopy).size() == 1);
+	CHECK(controllersOf(client, targetCopy).empty());
 }
 
 TEST_CASE("note.move takes the named controller events along, keeping every field and their ids", "[unit]")
@@ -518,6 +541,27 @@ TEST_CASE("note.move takes the named controller events along, keeping every fiel
 	CHECK(aloneEvents.count("note.added") == 0);
 	CHECK(aloneEvents.count("controller.added") == 1);
 	call(client, "history.undo");
+
+	// Within one part the controller events move in time with the notes, and nothing else of the part changes.
+	const Json within = call(client, "note.move",
+		{{"part", source}, {"notes", {note}}, {"controllers", {program}}, {"target", source}, {"ticks", g_sixteenth}});
+	REQUIRE(within.at("controllers").size() == 1);
+	CHECK(within.at("controllers").at(0).at("position") == 2 * g_sixteenth);
+	CHECK(within.at("notes").at(0).at("position") == 3 * g_sixteenth);
+	Json shifted = before;
+	for (Json& controller : shifted)
+		if (controller.at("id") == program)
+			controller["position"] = 2 * g_sixteenth;
+	std::sort(shifted.begin(), shifted.end(),
+		[](const Json& a, const Json& b) { return a.at("id").get<int64_t>() < b.at("id").get<int64_t>(); });
+	Json stored = controllersOf(client, source);
+	std::sort(stored.begin(), stored.end(),
+		[](const Json& a, const Json& b) { return a.at("id").get<int64_t>() < b.at("id").get<int64_t>(); });
+	CHECK(stored == shifted);
+	CHECK(notesOf(client, source).size() == 1);
+	CHECK(controllersOf(client, target).empty());
+	call(client, "history.undo");
+	CHECK(controllersOf(client, source) == before);
 
 	// An event the part doesn't have refuses the whole move: the notes stay too.
 	CHECK_THAT(client

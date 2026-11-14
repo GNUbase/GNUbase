@@ -132,8 +132,9 @@ namespace gnubase::ui
 		// The grid of another in-place editor under the event's target, and its track: where a move's release drops
 		// the selected notes (p. 1261); null when the target isn't in one or this editor isn't an in-place one.
 		std::pair<Rml::Element*, uint64_t> foreignInPlaceGrid(const Rml::Event& event) const;
-		// A move released over that grid: the selected notes go to the target track's part at the drop's time, as
-		// note.move, which keeps their distances to the pressed one and everything they have; one undo step.
+		// A move released over that grid: the selected notes and controller events go to the target track's part at
+		// the drop's time, as note.move, which keeps their distances to the pressed note and everything they have;
+		// one undo step. A part that gives only controller events sends a note.move with no notes.
 		void moveToInPlace(const Rml::Event& event, Rml::Element& grid, uint64_t track);
 		// What a press on a note's box starts: a resize near its ends, else a move.
 		Gesture edgeGesture(Rml::Element* target, const Rml::Event& event) const;
