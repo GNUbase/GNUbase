@@ -7,35 +7,37 @@ note, each playing a sample from the pool or a percussion synth. With the patter
 ## In the engine
 
 A drum track is an instrument track whose channel plays the built-in **drum machine** (`processors::DrumMachine`,
-`src/engine/processors/drummachine.h`), with its pads' names and pool clips in the channel's `pads`
-(`[{pad, name, sample}]`, the pads that have either). MIDI parts, pattern events, recording, monitoring, the mixer and
-automation work on it as on any instrument track. The drum machine is a GNUbase processor and runs inside the engine
-(architecture rule 3).
+`src/engine/processors/drummachine.h`), with its pads' names, pool clips and colors in the channel's `pads` (`[{pad,
+name, sample, sound, color}]`, the pads that have one of them). MIDI parts, pattern events, recording, monitoring, the
+mixer and automation work on it as on any instrument track. The drum machine is a GNUbase processor and runs inside the
+engine (architecture rule 3).
 
 | Command | What it does | Reference |
 |---|---|---|
 | `drum.create` | A new drum track, named `name` or Drum 01, Drum 02 and so on, placed and routed with `parent`, `index` and `output` as `track.add` does; its pads start with the default kit (below), or all off with `kit` false | pp. 145-146 |
-| `drum.loadPad` | Loads a sample onto pad `pad`: a pool clip (`clip`), an audio event's clip (`event`) or an audio file (`path`), which goes into the pool in the same undo step, from `start` to `end` in clip frames. The pad's instrument becomes Sample, its other settings go back to their defaults unless `keepSettings` (Apply Hot Swap) | pp. 941, 944 |
-| `drum.setPad` | Rename Pad: an empty `name` goes back to the sample's clip's name | p. 943 |
-| `drum.copyPad` | Copy Pad and Paste Pad onto `to`: name, sample and settings; with `move` Cut Pad. A pad that plays something and goes by the General MIDI sound of its note keeps that name in the copy | p. 943 |
+| `drum.loadPad` | Loads a sample onto pad `pad`: a pool clip (`clip`), an audio event's clip (`event`) or an audio file (`path`), which goes into the pool in the same undo step, into the pool folder Drum Machine, made when the first file comes (p. 980), from `start` to `end` in clip frames. The pad's instrument becomes Sample, its other settings go back to their defaults unless `keepSettings` (Apply Hot Swap) | pp. 941, 944, 980 |
+| `drum.setPad` | Rename Pad: an empty `name` goes back to the sample's clip's name; Set Color: `color` `#rrggbb`, empty or null for none (#1567) | pp. 942-943 |
+| `drum.copyPad` | Copy Pad and Paste Pad onto `to`: name, sample and settings; with `move` Cut Pad. A pad that plays something and goes by the General MIDI sound of its note goes by that sound in the copy too (`sound`, the note of the sound), until it gets a name or a sample (#1567) | p. 943 |
 | `drum.resetPad` | Reset Pad, or Reset All Pads without `pad`: no name, no sample, every setting at its default | p. 943 |
 
-Each is one undo step and emits `channel.changed`. Another instrument (`channel.set`, a track preset's) drops the
-pads. The pads' clips count as used in the pool (`pool.get`, `pool.removeUnused`, `clip.remove` refuses them,
+Each is one undo step and emits `channel.changed`. Another instrument (`channel.set`, a track preset's) drops the pads.
+The pads' clips count as used in the pool (`pool.get`, `pool.removeUnused`, `clip.remove` refuses them,
 `media.removeMissing` empties their pads) and in backups, as a sampler's do; imported and exported tracks and track
 presets take them along (`track.loadPreset` and `track.addFromPreset` bring the preset's clips into the pool, as
-`track.import` does, unless it has the same clips already; a preset has the samples' files in it), and they are saved with the channel in `gnubase.json`, where a clip that isn't in the pool when
-the project loads is dropped.
+`track.import` does, unless it has the same clips already, and share the project's media files that have the same audio;
+a preset has the samples' files in it, and refers to those that are missing where they were), and they are saved with
+the channel in `gnubase.json`, where a clip that isn't in the pool when the project loads is dropped.
 
 **The default kit** of `drum.create` (p. 942) is made of the percussion synths on the General MIDI notes that new drum
 patterns start with, without names of their own, so that they go by the General MIDI sounds' until they get a sample
 or a name: kick 36, snare 38, clap 39, closed, pedal and open hi-hats 42, 44 and 46 in exclusive group 1, toms 45, 48
 and 50, crash 49 and cowbell 56.
 
-**Synchronization with the pattern editor** (p. 938): a new drum pattern on a drum track (`pattern.add`) has a lane
-per pad that plays, named after it; renaming, loading, copying or resetting a pad, and loading a track preset
-(`track.loadPreset`), renames the lanes that play it in the track's drum patterns (`pattern.changed`). A pad's name is its own, else its sample's clip's, else the General
-MIDI sound's of its note.
+**Synchronization with the pattern editor** (p. 938): a new drum pattern on a drum track (`pattern.add`) has a lane per
+pad that plays, named after it; renaming, loading, copying or resetting a pad, and loading a track preset
+(`track.loadPreset`) or importing a drum track onto the track with `track.import`'s `destinations`, renames the lanes
+that play it in the track's drum patterns (`pattern.changed`). A pad's name is its own, else its sample's clip's, else
+the General MIDI sound's of its note, or of the note in its `sound`.
 
 The drum machine's settings are its parameters (`processor.list`, `parameter.set`, automatable like any
 instrument's). Pad *n*'s have the ids *n* × 32 and up:
@@ -89,16 +91,23 @@ a hint and Add Drum Track (`#drum-add-track`, p. 146), which opens the Add Track
 `project.addDrumTrack` does (the root `.drum-machine` has the class `.empty`):
 
 - **Toolbar**: the editing pages Instrument, Delay and Reverb (`#drum-page-instrument` and so on, the one shown
-  `.selected`), Bypass All Effects (`#drum-bypass`) and a message (`#drum-message`, `.error`) when loading a sample
-  failed.
+  `.selected`), Bypass All Effects (`#drum-bypass`), Load Preset and Save Preset (`#drum-load-preset`,
+  `#drum-save-preset`, Load Track Preset and preset management, pp. 939-940), which open the track preset dialog for
+  the drum track shown, as the track list's Load and Save Track Preset do for the selected tracks
+  ([track-presets.md](track-presets.md)), and a message (`#drum-message`, `.error`) when loading a sample failed.
 - **Pad section**: the eight groups (`.drum-group`, attribute `group`), and the 16 pads of the one shown (`.drum-pad`,
   attribute `pad`) in four rows of four, the lowest note at the bottom left, with their names and notes; a pad without a
   name of its own or a sample shows the General MIDI sound's of its note, which `processor.list` has for it
   (`padNames`), as pattern lanes do; pads that play something are `.assigned`, the selected one `.selected`, muted,
-  soloed and soloed-out ones `.muted`, `.soloed` and `.soloed-out`. A click selects a pad; it opens on the third group,
-  with the kick.
+  soloed and soloed-out ones `.muted`, `.soloed` and `.soloed-out`, and those with a color `.colored`, with the color
+  in their strip (`.drum-pad-color`, attribute `color` and `background-color`, user data). A click selects a pad, and
+  the pad plays at velocity 127 while the mouse button is down on it (p. 942): a note on and off into the track's
+  channel through `midi.inject` with `drumSounds`, as the drum editor auditions sounds; a button released outside the
+  panel ends the note with the next press. It opens on the third group, with the kick.
 - **Pad tools**, in the toolbar too: the selected pad's name (`#drum-pad-name`, Rename Pad when Enter is pressed or the
-  field loses the focus), Load (`#drum-load`, a file dialog, then `drum.loadPad` with `path`), Copy, Cut, Paste
+  field loses the focus), Set Color (`#drum-pad-color`, a drop-down list of No Color and the project's color set, the
+  16 colors of the factory set in a new project, [colors.md](colors.md)), Load (`#drum-load`, a file dialog, then
+  `drum.loadPad` with `path`), Copy, Cut, Paste
   (`drum.copyPad`) and Reset (`drum.resetPad`). A file dropped on a pad loads onto that pad, elsewhere on the panel onto
   the selected one.
 - **Page**: the Instrument page has a control per parameter of the selected pad (`[parameter]`,
@@ -107,29 +116,30 @@ a hint and Add Drum Track (`#drum-add-track`, p. 146), which opens the Add Track
 
 Not yet: four layers per pad and the layer slots' context menus, the synths' own parameters of each model (Kick 1-4,
 Snare 1-3, the rimshots, HiHat 1-4 and so on, pp. 948-964, of which GNUbase has one model per instrument with Tone and
-Noise), the sample layer's fades, pre-filter, pitch and filter envelopes, filter shapes and distortion types
-(pp. 965-968), Pad FX (pp. 968-972), the Group page (p. 973), low and high keys for melodic playing, the 31 output
-busses, pad colors, the delay's Cross mode and L/R offsets, the reverb's chorusing, shape, density and band times, Delay
-and Reverb presets, the drum machine's own undo history, MIDI Reset, MIDI Follow, playing a pad with a click, the
-triggered pad's highlight, Hot Swap Preview, the media browser's Find Samples and Find Instruments, layer and pad
-presets, the toolbar's Read/Write Automation, Load Track Preset and preset management (pp. 939-940), the automation
-parameters with their quick controls, Learn CC and ranges (pp. 978-980), the pool folder of the drum machine's samples
-(p. 980), and the Add Track dialog's Event Type (pattern event or MIDI part) and Input Routing.
+Noise), the sample layer's fades, pre-filter, pitch and filter envelopes, filter shapes and distortion types (pp.
+965-968), Pad FX (pp. 968-972), the Group page (p. 973), low and high keys for melodic playing, the 31 output busses,
+the delay's Cross mode and L/R offsets, the reverb's chorusing, shape, density and band times, Delay and Reverb presets,
+the drum machine's own undo history, MIDI Reset, MIDI Follow, the triggered pad's highlight, Hot Swap Preview, the media
+browser's Find Samples and Find Instruments, layer and pad presets, the toolbar's Read/Write Automation (p. 939), the
+automation parameters with their quick controls, Learn CC and ranges (pp. 978-980), and the Add Track dialog's Event
+Type (pattern event or MIDI part) and Input Routing. A track preset has the whole file of a sample that a pad or a
+sampler plays a section of; `project.backup`'s `minimize` cuts such files down for backups.
 
 ## Tests
 
-`tests/drummachine_tests.cpp`: the drum machine on its own (a pad's sample at its note, start, end, tuning and
-reverse; level, pan, velocity, mute and solo; exclusive groups and the gate; every synth sounding, decaying, held and
-the same in any block size; the delay and reverb sends and Bypass All Effects, and the effects starting empty after
-they were off; its parameters in `processor.list`),
-a pad parameter ignoring the events of its removed lane, the commands, the default kit and the names it goes by
-(`processor.list`'s `padNames`), a copy keeping the name a synth pad went by, a synth voice keeping its tuning, tone
-and noise from its note on, pattern lanes that follow the pads and track presets, saving and loading, another instrument dropping
-the pads, the pads' clips in the pool (`pool.removeUnused`, `media.removeMissing`), track presets loaded onto a drum
-track and onto another instrument's, tracks added from a preset or imported from another project with their pads'
-clips, automation of a pad's parameter and the values set without it, and offline renders of a drum track against the
-sample itself and the golden file `drum-track-beat` (a pattern event playing the kit with its sends);
-`tests/rtcheck_tests.cpp` plays samples, every synth, groups and the effects without allocating;
+`tests/drummachine_tests.cpp`: the drum machine on its own (a pad's sample at its note, start, end, tuning and reverse;
+level, pan, velocity, mute and solo; exclusive groups and the gate; every synth sounding, decaying, held and the same in
+any block size; the delay and reverb sends and Bypass All Effects, and the effects starting empty after they were off;
+its parameters in `processor.list`), a pad parameter ignoring the events of its removed lane, the commands (a file's
+clip in the pool folder Drum Machine), the default kit and the names it goes by (`processor.list`'s `padNames`), a copy
+going by the sound a synth pad went by until a sample names it, a synth voice keeping its tuning, tone and noise from
+its note on, pattern lanes that follow the pads, track presets and drum tracks imported onto the track, saving and
+loading, another instrument dropping the pads, the pads' clips in the pool (`pool.removeUnused`, `media.removeMissing`),
+track presets loaded onto a drum track and onto another instrument's, tracks added from a preset or imported from
+another project with their pads' clips, automation of a pad's parameter and the values set without it, and offline
+renders of a drum track against the sample itself and the golden file `drum-track-beat` (a pattern event playing the
+kit with its sends); `tests/rtcheck_tests.cpp` plays samples, every synth, groups and the effects without allocating;
 `tests/drummachine_ui_tests.cpp` drives the panel (following the selection, the names of pads without their own,
-groups, pages, controls, renaming, copying, cutting, pasting, resetting and dropping a file on a pad) and the Add
-Track dialog's Drum page, from the Project menu's command and from the empty panel.
+groups, pages, controls, playing a pad with a click, saving and loading track presets, renaming, coloring, copying (a
+synth pad's copy shown by the sound it was copied from), cutting, pasting, resetting and dropping a file on a pad) and
+the Add Track dialog's Drum page, from the Project menu's command and from the empty panel.

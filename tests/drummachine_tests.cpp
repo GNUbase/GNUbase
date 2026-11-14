@@ -536,9 +536,11 @@ TEST_CASE("drum.loadPad, drum.setPad, drum.copyPad and drum.resetPad change the 
 	Client& client = session.client;
 	const auto track = run(client, "drum.create").at("track").at("id").get<ObjectId>();
 
-	// A copy of a synth pad without a name keeps the name it went by, not the General MIDI sound's of its new note.
+	// A copy of a synth pad without a name goes by the General MIDI sound it went by, not by its new note's: it has
+	// no name of its own but the note of that sound.
 	Json copied = run(client, "drum.copyPad", {{"track", track}, {"pad", 36}, {"to", 40}}).at("channel");
-	CHECK(padOf(copied, 40).at("name") == "Bass Drum 1");
+	CHECK(padOf(copied, 40).at("name") == "");
+	CHECK(padOf(copied, 40).at("sound") == 36);
 	CHECK(padOf(copied, 36).is_null());
 	copied = run(client, "drum.copyPad", {{"track", track}, {"pad", 41}, {"to", 40}}).at("channel"); // an empty pad
 	CHECK(padOf(copied, 40).is_null());
@@ -563,6 +565,24 @@ TEST_CASE("drum.loadPad, drum.setPad, drum.copyPad and drum.resetPad change the 
 				  .at("channel");
 	CHECK(padOf(channel, 38).at("sample") != session.clip);
 	CHECK(instrumentParameter(channel, padParameter(38, DrumMachine::Decay)) == 220.0);
+	// The file's clip goes into the pool's Drum Machine folder (p. 980), which a second file shares.
+	const auto folderOf = [&](const Json& clipId)
+	{
+		const Json pool = run(client, "pool.get");
+		for (const Json& clip : pool.at("clips"))
+			if (clip.at("id") == clipId)
+				for (const Json& folder : pool.at("folders"))
+					if (folder.at("id") == clip.at("folder"))
+						return folder;
+		return Json();
+	};
+	const Json folder = folderOf(padOf(channel, 38).at("sample"));
+	REQUIRE(folder.is_object());
+	CHECK(folder.at("name") == "Drum Machine");
+	CHECK(folder.at("parent") == 0);
+	const Json second = run(client, "drum.loadPad", {{"track", track}, {"pad", 39}, {"path", session.file.u8string()}});
+	CHECK(folderOf(padOf(second.at("channel"), 39).at("sample")) == folder);
+	CHECK(folderOf(session.clip).is_null());
 	CHECK(
 		instrumentParameter(channel, padParameter(38, DrumMachine::Instrument)) == static_cast<double>(Layer::Sample));
 
@@ -576,9 +596,19 @@ TEST_CASE("drum.loadPad, drum.setPad, drum.copyPad and drum.resetPad change the 
 	CHECK(instrumentParameter(channel, padParameter(60, DrumMachine::Start)) == 0.25);
 	CHECK(padOf(channel, 36).is_null());
 	CHECK(instrumentParameter(channel, padParameter(36, DrumMachine::Instrument)) == -1.0);
+	// Set Color: the pad keeps its name, and copies take the color along.
+	channel = run(client, "drum.setPad", {{"track", track}, {"pad", 60}, {"color", "#ff8000"}}).at("channel");
+	CHECK(padOf(channel, 60).at("color") == "#ff8000");
+	CHECK(padOf(channel, 60).at("name") == "Boom");
+	CHECK_THAT(reject(client, "drum.setPad", {{"track", track}, {"pad", 60}, {"color", "orange"}}),
+		ContainsSubstring("#rrggbb"));
+	CHECK_THAT(reject(client, "drum.setPad", {{"track", track}, {"pad", 60}}), ContainsSubstring("name or color"));
 	channel = run(client, "drum.copyPad", {{"track", track}, {"pad", 60}, {"to", 61}}).at("channel");
 	CHECK(padOf(channel, 60).at("name") == "Boom");
 	CHECK(padOf(channel, 61).at("name") == "Boom");
+	CHECK(padOf(channel, 61).at("color") == "#ff8000");
+	channel = run(client, "drum.setPad", {{"track", track}, {"pad", 61}, {"color", nullptr}}).at("channel");
+	CHECK(padOf(channel, 61).at("color") == "");
 
 	// The clip is in use: clip.remove refuses it.
 	CHECK_THAT(reject(client, "clip.remove", {{"clip", session.clip}}), ContainsSubstring("drum track"));
@@ -621,6 +651,16 @@ TEST_CASE("a drum track's patterns have a lane per pad, named after it", "[integ
 	CHECK(lanes().at(0).at("name") == "tick");
 	run(client, "drum.resetPad", {{"track", track}, {"pad", 36}});
 	CHECK(lanes().at(0).at("name") == "Bass Drum 1");
+	// A copy of a synth pad goes by the sound it was copied from until a sample or a name of its own names it.
+	run(client, "drum.copyPad", {{"track", track}, {"pad", 39}, {"to", 36}});
+	CHECK(lanes().at(0).at("name") == "Hand Clap");
+	run(client, "drum.copyPad", {{"track", track}, {"pad", 36}, {"to", 37}});
+	run(client, "drum.copyPad", {{"track", track}, {"pad", 37}, {"to", 36}});
+	CHECK(lanes().at(0).at("name") == "Hand Clap");
+	run(client, "drum.loadPad", {{"track", track}, {"pad", 36}, {"clip", session.clip}});
+	CHECK(lanes().at(0).at("name") == "tick");
+	run(client, "drum.resetPad", {{"track", track}, {"pad", 36}});
+	CHECK(lanes().at(0).at("name") == "Bass Drum 1");
 
 	// A track preset renames the lanes of the pads it replaces.
 	const auto kit = run(client, "drum.create").at("track").at("id").get<ObjectId>();
@@ -631,6 +671,18 @@ TEST_CASE("a drum track's patterns have a lane per pad, named after it", "[integ
 	CHECK(lanes().at(0).at("name") == "tick");
 	CHECK(lanes().at(1).at("name") == "Snap");
 	CHECK(lanes().at(2).at("name") == "Hand Clap");
+
+	// So does a drum track imported onto the track with its settings, which replace the pads as a preset does.
+	run(client, "drum.resetPad", {{"track", track}});
+	CHECK(lanes().at(1).at("name") == "Acoustic Snare");
+	const fs::path file = session.folder.path() / "kit.dawproject";
+	run(client, "track.export", {{"tracks", {kit}}, {"path", file.u8string()}});
+	const Json source = run(client, "track.importSources", {{"path", file.u8string()}}).at("tracks").at(0).at("id");
+	run(client, "track.import",
+		{{"path", file.u8string()}, {"tracks", {source}}, {"events", false}, {"automation", false},
+			{"destinations", {{{"source", source}, {"track", track}}}}});
+	CHECK(lanes().at(0).at("name") == "tick");
+	CHECK(lanes().at(1).at("name") == "Snap");
 }
 
 TEST_CASE("a drum track's pads are saved with the project, and a missing clip leaves its pad empty", "[integration]")
@@ -639,7 +691,7 @@ TEST_CASE("a drum track's pads are saved with the project, and a missing clip le
 	Client& client = session.client;
 	const auto track = run(client, "drum.create").at("track").at("id").get<ObjectId>();
 	run(client, "drum.loadPad", {{"track", track}, {"pad", 40}, {"clip", session.clip}});
-	run(client, "drum.setPad", {{"track", track}, {"pad", 41}, {"name", "Shaker"}});
+	run(client, "drum.setPad", {{"track", track}, {"pad", 41}, {"name", "Shaker"}, {"color", "#20a0ff"}});
 	const fs::path file = session.folder.path() / "drums.dawproject";
 	run(client, "project.save", {{"path", file.u8string()}});
 	run(client, "project.new");
@@ -648,6 +700,7 @@ TEST_CASE("a drum track's pads are saved with the project, and a missing clip le
 	CHECK(channel.at("instrument") == "drumMachine");
 	CHECK(padOf(channel, 40).at("sample").get<ObjectId>() != 0);
 	CHECK(padOf(channel, 41).at("name") == "Shaker");
+	CHECK(padOf(channel, 41).at("color") == "#20a0ff");
 	CHECK(instrumentParameter(channel, padParameter(36, DrumMachine::Instrument)) == static_cast<double>(Layer::Kick));
 
 	// Another instrument drops the pads.

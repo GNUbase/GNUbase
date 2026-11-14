@@ -20,7 +20,8 @@ namespace gnubase::engine
 	// The channel's drum machine pads that play something (their instrument isn't Off), from the lowest note up.
 	std::vector<int> playingDrumPads(const Channel& channel);
 
-	// A pad's name: its own, else its sample's clip's, else the General MIDI sound's of its note.
+	// A pad's name: its own, else its sample's clip's, else the General MIDI sound's of its note or of the note it
+	// goes by (DrumPad::sound).
 	std::string drumPadName(const Project& project, const Channel& channel, int pad);
 
 	// Renames the lanes of the track's drum patterns that play the pad, or every pad with a negative one, after it,

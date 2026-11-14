@@ -23,7 +23,8 @@ namespace gnubase::ui
 
 	namespace
 	{
-		constexpr std::array<Rml::EventId, 2> g_events = {Rml::EventId::Click, Rml::EventId::Change};
+		constexpr std::array<Rml::EventId, 4> g_events = {
+			Rml::EventId::Click, Rml::EventId::Change, Rml::EventId::Mousedown, Rml::EventId::Mouseup};
 
 		constexpr int g_pads = 128;
 		constexpr int g_padsPerGroup = 16;
@@ -113,9 +114,10 @@ namespace gnubase::ui
 	}
 
 	DrumMachinePanel::DrumMachinePanel(EngineBinding& binding, Rml::Element& element,
-		std::function<void(uint64_t track, int pad)> loadSample, std::function<void()> addTrack)
+		std::function<void(uint64_t track, int pad)> loadSample, std::function<void()> addTrack,
+		std::function<void(uint64_t track, const std::string& mode)> preset)
 		: m_binding(binding), m_loadSample(std::move(loadSample)), m_addTrack(std::move(addTrack)),
-		  m_stepOwner(binding.stepOwner("drumMachine")), m_root(element.GetObserverPtr())
+		  m_preset(std::move(preset)), m_stepOwner(binding.stepOwner("drumMachine")), m_root(element.GetObserverPtr())
 	{
 		std::string groups;
 		for (int group = 0; group < g_pads / g_padsPerGroup; ++group)
@@ -127,14 +129,18 @@ namespace gnubase::ui
 				R"(">)" + page.title + "</button>";
 		std::string grid;
 		for (int i = 0; i < g_padsPerGroup; ++i)
-			grid += R"(<div class="drum-pad"><span class="drum-pad-name"/><span class="drum-pad-note"/></div>)";
+			grid += R"(<div class="drum-pad"><span class="drum-pad-name"/><span class="drum-pad-note"/>)"
+					R"(<span class="drum-pad-color"/></div>)";
 		element.SetInnerRML(R"(<div class="drum-machine empty" id="drum-machine">)"
 							R"(<div class="drum-hint"><div>Select a drum track</div>)"
 							R"(<button id="drum-add-track">Add Drum Track</button></div>)"
 							R"(<div class="drum-toolbar">)" +
 			tabs +
 			R"(<button id="drum-bypass" type="toggle" title="Bypass All Effects">Bypass FX</button>)"
+			R"(<button id="drum-load-preset" title="Load Track Preset">Load Preset</button>)"
+			R"(<button id="drum-save-preset" title="Save Track Preset">Save Preset</button>)"
 			R"(<input type="text" id="drum-pad-name" class="drum-pad-field" title="Rename Pad"/>)"
+			R"(<select id="drum-pad-color" title="Set Color"/>)"
 			R"(<button id="drum-load" title="Load Sample">Load</button>)"
 			R"(<button id="drum-copy" title="Copy Pad">Copy</button>)"
 			R"(<button id="drum-cut" title="Cut Pad">Cut</button>)"
@@ -166,6 +172,27 @@ namespace gnubase::ui
 			root->RemoveEventListener(Rml::EventId::Blur, this, true);
 			root->RemoveEventListener(m_dropEvent, this);
 		}
+	}
+
+	// Ends the note of the pad that sounds and plays pad, unless it is negative: into the track's channel as if from
+	// its MIDI input (midi.inject), as the drum editor auditions sounds, so that a drum map's pitches play their pads.
+	// Without an audio device nothing sounds, which is no error to report.
+	void DrumMachinePanel::sound(int pad)
+	{
+		const auto inject = [this](uint64_t channel, int note, bool on)
+		{
+			m_binding.send("midi.inject",
+				{{"channel", channel}, {"drumSounds", true},
+					{"messages", Json::array({{{"position", 0}, {"bytes", {on ? 0x90 : 0x80, note, on ? 127 : 0}}}})}},
+				[](const engine::Result&) {});
+		};
+		if (const auto sounding = std::exchange(m_sounding, std::nullopt))
+			inject(sounding->first, sounding->second, false);
+		const Json channel = m_channel.is_object() ? m_channel.value("id", Json()) : Json();
+		if (pad < 0 || !channel.is_number_unsigned())
+			return;
+		m_sounding = std::make_pair(channel.get<uint64_t>(), pad);
+		inject(m_sounding->first, pad, true);
 	}
 
 	Rml::Element* DrumMachinePanel::find(const std::string& id) const
@@ -254,11 +281,14 @@ namespace gnubase::ui
 		show();
 	}
 
-	// The pad's own name, its sample's, or the engine's for its note, as pattern lanes have them (drumPadName).
+	// The pad's own name, its sample's, or the engine's for its note or for the note of the sound it goes by (a copy's,
+	// #1567), as pattern lanes have them (drumPadName).
 	std::string DrumMachinePanel::padName(int pad) const
 	{
 		if (const auto name = m_names.find(pad); name != m_names.end() && !name->second.empty())
 			return name->second;
+		if (const auto sound = m_sounds.find(pad); sound != m_sounds.end())
+			pad = sound->second;
 		return pad >= 0 && static_cast<size_t>(pad) < m_padNames.size() ? m_padNames[static_cast<size_t>(pad)]
 																		: std::string();
 	}
@@ -304,6 +334,8 @@ namespace gnubase::ui
 		m_channel = channel != nullptr ? *channel : Json();
 		std::map<uint32_t, double> values;
 		std::map<int, std::string> names;
+		std::map<int, int> sounds;
+		std::map<int, std::string> colors;
 		if (channel != nullptr)
 		{
 			for (const Json& item : channel->value("instrumentParameters", Json::array()))
@@ -315,10 +347,20 @@ namespace gnubase::ui
 					name.empty() && clip != nullptr)
 					name = clip->value("name", std::string());
 				names[pad.value("pad", 0)] = name;
+				if (const int sound = pad.value("sound", -1); sound >= 0)
+					sounds[pad.value("pad", 0)] = sound;
+				if (std::string color = pad.value("color", std::string()); !color.empty())
+					colors[pad.value("pad", 0)] = std::move(color);
 			}
 		}
 		m_values = std::move(values);
 		m_names = std::move(names);
+		m_sounds = std::move(sounds);
+		m_colors = std::move(colors);
+		// Set Color offers the project's color set (pp. 942-943), as the project window's color menu does.
+		m_colorSet = {{"", "No Color"}};
+		for (const Json& color : project.value("colors", Json::array()))
+			m_colorSet.emplace_back(color.value("color", std::string()), color.value("name", std::string()));
 		show();
 	}
 
@@ -351,6 +393,19 @@ namespace gnubase::ui
 				setClass(element, "muted", parameter(g_mute) >= 0.5);
 				setClass(element, "soloed", parameter(g_solo) >= 0.5);
 				setClass(element, "soloed-out", solo && parameter(g_solo) < 0.5);
+				// The pad's color, which is user data, in its strip.
+				const auto color = m_colors.find(pad);
+				const std::string shown = color != m_colors.end() ? color->second : std::string();
+				if (Rml::Element* strip = element->GetChild(2);
+					strip != nullptr && strip->GetAttribute<Rml::String>("color", "") != shown)
+				{
+					strip->SetAttribute("color", shown);
+					if (shown.empty())
+						strip->RemoveProperty("background-color");
+					else
+						strip->SetProperty("background-color", shown);
+				}
+				setClass(element, "colored", !shown.empty());
 			}
 		}
 		Rml::ElementList groups;
@@ -366,6 +421,11 @@ namespace gnubase::ui
 			const std::string text = padName(m_pad);
 			if (field->GetAttribute<Rml::String>("value", "") != text && !field->IsPseudoClassSet("focus"))
 				field->SetAttribute("value", text);
+		}
+		if (Rml::Element* select = find("drum-pad-color"))
+		{
+			const auto color = m_colors.find(m_pad);
+			widgets::fill(*select, m_colorSet, color != m_colors.end() ? color->second : std::string());
 		}
 		setChecked(find("drum-bypass"), value(g_globals + 1) >= 0.5);
 		if (Rml::Element* paste = find("drum-paste");
@@ -457,6 +517,18 @@ namespace gnubase::ui
 		}
 		switch (event.GetId())
 		{
+		case Rml::EventId::Mousedown:
+		{
+			// A pad plays while the mouse button is down on it, at velocity 127 (reference manual p. 942).
+			const Rml::Element* pad = target != nullptr ? withAttribute(target, "pad") : nullptr;
+			if (pad != nullptr && m_track != 0 && event.GetParameter<int>("button", 0) == 0)
+				sound(std::clamp(pad->GetAttribute<int>("pad", 0), 0, g_pads - 1));
+			return;
+		}
+		case Rml::EventId::Mouseup:
+			// ponytail: a button released outside the panel ends the note with the next press there.
+			sound(-1);
+			return;
 		case Rml::EventId::Click:
 		{
 			if (target != nullptr && target->GetId() == "drum-add-track" && m_addTrack)
@@ -486,6 +558,10 @@ namespace gnubase::ui
 			{
 				m_loadSample(m_track, m_pad);
 			}
+			else if ((id == "drum-load-preset" || id == "drum-save-preset") && m_preset)
+			{
+				m_preset(m_track, id == "drum-load-preset" ? "load" : "save");
+			}
 			else if (id == "drum-copy" || id == "drum-cut")
 			{
 				m_copied = m_pad;
@@ -512,6 +588,15 @@ namespace gnubase::ui
 			if (target->GetId() == "drum-bypass")
 			{
 				set(g_globals + 1, event.GetParameter<bool>("value", false) ? 1.0 : 0.0, 0);
+				return;
+			}
+			if (target->GetId() == "drum-pad-color")
+			{
+				// Set Color (pp. 942-943): a color of the project's set, or none.
+				const auto color = m_colors.find(m_pad);
+				const auto chosen = event.GetParameter<Rml::String>("value", "");
+				if (m_track != 0 && chosen != (color != m_colors.end() ? color->second : std::string()))
+					m_binding.send("drum.setPad", {{"track", m_track}, {"pad", m_pad}, {"color", chosen}});
 				return;
 			}
 			const Rml::Element* control = withAttribute(target, "parameter");

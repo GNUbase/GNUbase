@@ -611,7 +611,8 @@ namespace gnubase::engine
 		json["sends"] = std::move(sends);
 		Json pads = Json::array();
 		for (const auto& [pad, drum] : channel.pads)
-			pads.push_back({{"pad", pad}, {"name", drum.name}, {"sample", drum.sample}});
+			pads.push_back({{"pad", pad}, {"name", drum.name}, {"sample", drum.sample}, {"sound", drum.sound},
+				{"color", drum.color}});
 		json["pads"] = std::move(pads);
 		return json;
 	}
@@ -2297,8 +2298,12 @@ namespace gnubase::engine
 				for (const Json& pad : item.value("pads", Json::array()))
 				{
 					const int note = pad.value("pad", -1);
+					const int sound = pad.value("sound", -1);
+					const std::string color = pad.value("color", std::string());
 					if (note >= 0 && note < processors::g_drumPads)
-						channel.pads[note] = {pad.value("name", std::string()), pad.value("sample", ObjectId{0})};
+						channel.pads[note] = {pad.value("name", std::string()), pad.value("sample", ObjectId{0}),
+							sound >= 0 && sound < processors::g_drumPads ? sound : -1,
+							isColor(color) ? color : std::string()};
 				}
 			// Audio, MIDI and instrument tracks and VCA faders have the buttons; files from before them have them off.
 			// MIDI input other than none is all MIDI inputs, also in files from before it.

@@ -437,7 +437,7 @@ namespace gnubase::engine::processors
 				"with their ids, ranges, defaults and units. A stepped parameter takes whole numbers only; its "
 				"options, if any, name its values from the minimum on. The drum machine's has padNames too: the "
 				"name of each pad, by note, that has neither a name of its own nor a sample, the General MIDI "
-				"sound's of its note (empty outside them).",
+				"sound's of its note (empty outside them); a pad's sound (a copy's) names it by another note's.",
 				CommandInfo{}.parameters,
 				Json::parse(R"({"type": "object", "properties": {"processors": {"type": "array"}},
 					"required": ["processors"]})"),

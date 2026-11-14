@@ -16,12 +16,12 @@ sampler is a GNUbase processor and runs inside the engine (architecture rule 3).
 | `sampler.normalize` | Sets the Sample gain so that the highest peak between start and end reaches `level` dBFS (default 0); refused for a silent sample or a missing file | pp. 715, 735 |
 
 Each is one undo step and emits `channel.changed`; `sampler.create` also `track.added`. Another instrument
-(`channel.set`, or a track preset's in `track.loadPreset`) drops the sample. A sampler's clip counts as used in the pool (`pool.get`, `pool.removeUnused`,
-`clip.remove` refuses it, `media.removeMissing` empties the sampler) and in a backup (`project.backup`, p. 710: its
-`removeUnused` keeps it, and `minimize` copies a file that a sampler plays whole, as Start, End and the loop are shares
-of it). Imported and exported tracks (`track.import`, `track.export`) and track presets
-(`track.savePreset`, with the sample's file in the preset, and `track.loadPreset`) take their sample along. The sample is saved
-with the channel in `gnubase.json`; a clip that isn't in the pool when the project loads is dropped.
+(`channel.set`, or a track preset's in `track.loadPreset`) drops the sample. A sampler's clip counts as used in the pool
+(`pool.get`, `pool.removeUnused`, `clip.remove` refuses it, `media.removeMissing` empties the sampler) and in a backup
+(`project.backup`, p. 710: its `removeUnused` keeps it, and `minimize` copies a file that a sampler plays whole, as
+Start, End and the loop are shares of it). Imported and exported tracks (`track.import`, `track.export`) and track
+presets (`track.savePreset`, with the sample's file in the preset, and `track.loadPreset`) take their sample along. The
+sample is saved with the channel in `gnubase.json`; a clip that isn't in the pool when the project loads is dropped.
 
 The sampler's settings are its parameters (`processor.list`, `parameter.set`, automatable like any instrument's):
 
@@ -105,12 +105,13 @@ root `.sampler-panel` has the class `.empty`):
   (`#sampler-file`), the Normalization Level (`#sampler-level`, -96 to 0 dBFS, p. 735), Normalize Sample
   (`#sampler-normalize`, `sampler.normalize` with that `level`) and Lock Parameter Settings (`#sampler-lock`), which
   loads keep the settings with (`keepSettings`). The lock and the level are the user setting `ui.samplerPanel`
-  (`lockParameters`, `normalizeLevel`; what later versions add to it is kept), so they stay as they were when the panel is made anew, e.g. in a window of its
-  own. While the panel's own changes of it are on their way, e.g. during a drag of the level, the older ones that
-  `settings.changed` brings back don't set the field back. A change from elsewhere still shows: results and events
-  reach the panel in the engine's order, so one made after the panel's last `settings.set` comes after that save's
-  answer, when none of the panel's own is on its way. Why a load (a file that isn't audio) or Normalize Sample (a silent or missing sample) failed shows in the
-  toolbar's message (`#sampler-message`, `.error`) until the next one succeeds or another track is shown.
+  (`lockParameters`, `normalizeLevel`; what later versions add to it is kept), so they stay as they were when the panel
+  is made anew, e.g. in a window of its own. While the panel's own changes of it are on their way, e.g. during a drag of
+  the level, the older ones that `settings.changed` brings back don't set the field back. A change from elsewhere still
+  shows: results and events reach the panel in the engine's order, so one made after the panel's last `settings.set`
+  comes after that save's answer, when none of the panel's own is on its way. Why a load (a file that isn't audio) or
+  Normalize Sample (a silent or missing sample) failed shows in the toolbar's message (`#sampler-message`, `.error`)
+  until the next one succeeds or another track is shown.
 - **Waveform display** (`#sampler-display`): the sample's waveform from `media.peaks`, its parts before Start and
   after End shaded (`.sampler-outside`), the loop (`.sampler-loop`) and the markers (`.sampler-marker`, attribute
   `marker`: Start, End, Loop start, Loop end), placed in percent of the sample and mirrored when Reverse is on. Without
@@ -133,21 +134,21 @@ root `.sampler-panel` has the class `.empty`):
 
 ## Tests
 
-`tests/sampler_tests.cpp`: the sampler on its own (pitch, tuning, key range, start and end, reverse, every loop mode
-and loops shorter than a step, one shot, slices, monophonic and legato with the fade of the note taken over and notes
-held from before, the amp section and envelope, the filter types, key follow and drive, letting go of a swapped
-sample), `sharedSample`, the commands and their names, the pool, track presets, removing clips, importing and saving, and offline renders of a sampler track against the sample itself and
-the golden file `sampler-track-phrase`, then a hot swap and its undo; `tests/rtcheck_tests.cpp` plays it with every
-loop mode, slices and the filter without allocating; `tests/sampleeditor_ui_tests.cpp` and
-`tests/audiofunctions_ui_tests.cpp` create sampler tracks from the UI; `tests/sampler_ui_tests.cpp` drives the sampler
-panel (following the selection, toggles, value fields, markers, the keyboard, dropped files, Normalize Sample) and the
-Add Track dialog's Sampler page; `tests/backup_tests.cpp` backs one up with
-`removeUnused` and `minimize`. #1122 added the sample loader's own tests and a legato note after Monophonic came on to
-`tests/sampler_tests.cpp`, with the engine's side of a load while the dummy device plays in real time: a read held
+`tests/sampler_tests.cpp`: the sampler on its own (pitch, tuning, key range, start and end, reverse, every loop mode and
+loops shorter than a step, one shot, slices, monophonic and legato with the fade of the note taken over and notes held
+from before, the amp section and envelope, the filter types, key follow and drive, letting go of a swapped sample),
+`sharedSample`, the commands and their names, the pool, track presets, removing clips, importing and saving, and offline
+renders of a sampler track against the sample itself and the golden file `sampler-track-phrase`, then a hot swap and its
+undo; `tests/rtcheck_tests.cpp` plays it with every loop mode, slices and the filter without allocating;
+`tests/sampleeditor_ui_tests.cpp` and `tests/audiofunctions_ui_tests.cpp` create sampler tracks from the UI;
+`tests/sampler_ui_tests.cpp` drives the sampler panel (following the selection, toggles, value fields, markers, the
+keyboard, dropped files, Normalize Sample) and the Add Track dialog's Sampler page; `tests/backup_tests.cpp` backs one
+up with `removeUnused` and `minimize`. #1122 added the sample loader's own tests and a legato note after Monophonic came
+on to `tests/sampler_tests.cpp`, with the engine's side of a load while the dummy device plays in real time: a read held
 back (`Engine::setSampleReader`) leaves `sampler.load` and later commands running and the sampler silent, the posted
 `audio.updateSamples` alone hands the sample over, and a project loaded over another doesn't play the other's sample
-meanwhile. It added the load and Normalize Sample messages for dropped and imported files, the lock and level as a
-user setting, the keyboard's handles, and drags released outside the window to `tests/sampler_ui_tests.cpp`. #1180 and
+meanwhile. It added the load and Normalize Sample messages for dropped and imported files, the lock and level as a user
+setting, the keyboard's handles, and drags released outside the window to `tests/sampler_ui_tests.cpp`. #1180 and
 #1191 added a key held from polyphonic mode that a monophonic note goes back to, the loader waiting only for the files
 asked for and its end, `sharedSample` reading a file asked for while it is read once, and, with the read held back, a
 hot swap that plays the sample before on, a project loaded while the one before reads, playback waiting for the
