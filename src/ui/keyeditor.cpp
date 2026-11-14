@@ -1107,14 +1107,35 @@ namespace gnubase::ui
 				drag(event);
 			break;
 		case Rml::EventId::Mouseup:
+		{
 			// A key's pitch ends wherever the mouse is released; the document hears that, the root only within.
 			sound(std::nullopt);
 			// A drumstick's deletion and a keyboard's drag end wherever the mouse is released; the other gestures
 			// only within.
 			if (event.GetCurrentElement() == m_root.get() || m_gesture == Gesture::Erase ||
 				m_gesture == Gesture::ZoomScroll)
+			{
 				release(event);
+			}
+			else if (const auto [grid, track] = foreignInPlaceGrid(event);
+				grid != nullptr && m_gesture != Gesture::None)
+			{
+				// A gesture released over another in-place editor's grid: a move drops the selected notes there
+				// (p. 1261); the others end without their effect.
+				if (std::exchange(m_gesture, Gesture::None) == Gesture::Move)
+				{
+					moveToInPlace(event, *grid, track);
+				}
+				else
+				{
+					if (Rml::Element* drawn = m_drawn.get(); drawn != nullptr && drawn->GetParentNode() != nullptr)
+						drawn->GetParentNode()->RemoveChild(drawn);
+					m_pressed.reset();
+					placeItems();
+				}
+			}
 			break;
+		}
 		case Rml::EventId::Mouseout:
 			// The mouse leaving the window ends the pitch too: the button going up out there sends no mouseup.
 			if (target == m_document.get())
@@ -1573,6 +1594,131 @@ namespace gnubase::ui
 			commands.push_back(
 				{{"command", "controller.set"}, {"parameters", {{"part", part}, {"controllers", items}}}});
 		edit(gesture == Gesture::Move ? "Move" : "Resize", std::move(commands));
+	}
+
+	std::pair<Rml::Element*, uint64_t> KeyEditor::foreignInPlaceGrid(const Rml::Event& event) const
+	{
+		// Only an in-place editor drops its notes into another one (p. 1261): the other editors' grids lie on time
+		// axes of their own, so a drop there wouldn't land at the time under the mouse.
+		if (m_name.rfind("inPlace:", 0) != 0)
+			return {nullptr, 0};
+		Rml::Element* grid = nullptr;
+		for (Rml::Element* up = event.GetTargetElement(); up != nullptr; up = up->GetParentNode())
+		{
+			if (up->IsClassSet("key-editor-grid"))
+			{
+				grid = up;
+			}
+			else if (up->IsClassSet("in-place-editor"))
+			{
+				const std::string track = up->GetAttribute<Rml::String>("track", "");
+				if (grid != nullptr && !track.empty() && "inPlace:" + track != m_name)
+					return {grid, std::stoull(track)};
+				return {nullptr, 0};
+			}
+		}
+		return {nullptr, 0};
+	}
+
+	// A move released over another in-place editor's grid (p. 1261): the selected notes go to the target track's
+	// part at the drop's time, keeping their distances to the pressed one, their lengths and their values. The
+	// removes here and the adds there go as one history.transaction, so one undo step brings them all back.
+	void KeyEditor::moveToInPlace(const Rml::Event& event, Rml::Element& grid, uint64_t track)
+	{
+		const std::vector<const Note*> notes = selectedNotes();
+		if (notes.empty() || !m_pressed)
+		{
+			m_pressed.reset();
+			return;
+		}
+		// The drop in the target's grid: its x lies on the same timeline as this one's, its row gives the pitch.
+		const Rml::Vector2f origin = grid.GetAbsoluteOffset(Rml::BoxArea::Border);
+		const Rml::Vector2f size = grid.GetBox().GetSize(Rml::BoxArea::Border);
+		if (size.x <= 0.0F || size.y <= 0.0F)
+		{
+			placeItems(); // the dragged notes back where they are
+			return;
+		}
+		const double x = (event.GetParameter("mouse_x", 0.0F) - origin.x) / size.x;
+		const double y = (event.GetParameter("mouse_y", 0.0F) - origin.y) / size.y;
+		const double ticks = static_cast<double>(m_from) + (x * static_cast<double>(m_to - m_from));
+		const int row = std::clamp(static_cast<int>(std::floor(y * g_pitches)), 0, g_pitches - 1);
+		const int64_t dt = delta(Gesture::Move, ticks);
+		const int rows = row - m_rowOf.at(static_cast<size_t>(m_pressedAt.second));
+		// The target track's part where the pressed note lands, on the project's timeline.
+		const TimeContext time = projectTime(m_project);
+		std::map<uint64_t, const Json*> tracks;
+		const auto trackList = m_project.find("tracks");
+		if (trackList != m_project.end())
+			for (const Json& each : *trackList)
+				tracks[each.at("id").get<uint64_t>()] = &each;
+		const int64_t pressedStart = m_pressed->start + dt;
+		const Json* target = nullptr;
+		int64_t targetStart = 0;
+		const auto parts = m_project.find("midiParts");
+		const auto trackJson = tracks.find(track);
+		if (parts != m_project.end() && trackJson != tracks.end())
+			for (const Json& part : *parts)
+			{
+				if (part.at("track").get<uint64_t>() != track)
+					continue;
+				const auto position = part.at("position").get<int64_t>();
+				const int64_t start = ticksOf(*trackJson->second, position, time);
+				const int64_t end = ticksOf(*trackJson->second, position + part.at("length").get<int64_t>(), time);
+				if (pressedStart >= start && pressedStart < end)
+				{
+					target = &part;
+					targetStart = start;
+					break;
+				}
+			}
+		if (target == nullptr)
+		{
+			placeItems(); // no part to take the notes: they stay where they are
+			return;
+		}
+		// Every note has to fit the pitches and start in the target part or later, as for a move within one.
+		for (const Note* note : notes)
+			if (note->start + dt < targetStart || shifted(note->pitch, rows) < 0)
+			{
+				placeItems();
+				return;
+			}
+		std::map<uint64_t, Json> removed;
+		Json added = Json::array();
+		for (const Note* note : notes)
+		{
+			removed[note->part].push_back(note->id);
+			Json item{{"position", note->start + dt - targetStart}, {"length", note->length},
+				{"pitch", shifted(note->pitch, rows)}, {"velocity", note->velocity},
+				{"releaseVelocity", note->releaseVelocity}, {"channel", note->channel}};
+			// What the note has beyond the values the display keeps comes along too.
+			if (const Json* source = noteJson(*note))
+				for (const char* field : {"probability", "velocityVariance", "articulations", "expressions"})
+					if (source->contains(field))
+						item[field] = source->at(field);
+			added.push_back(std::move(item));
+		}
+		Json commands = Json::array();
+		for (const auto& [part, ids] : removed)
+			commands.push_back({{"command", "note.remove"}, {"parameters", {{"part", part}, {"notes", ids}}}});
+		commands.push_back(
+			{{"command", "note.add"}, {"parameters", {{"part", target->at("id")}, {"notes", std::move(added)}}}});
+		m_pressed.reset();
+		edit("Move", std::move(commands));
+	}
+
+	const Json* KeyEditor::noteJson(const Note& note) const
+	{
+		const auto parts = m_project.find("midiParts");
+		if (parts == m_project.end())
+			return nullptr;
+		for (const Json& part : *parts)
+			if (part.at("id") == note.part)
+				for (const Json& each : part.at("notes"))
+					if (each.at("id") == note.id)
+						return &each;
+		return nullptr;
 	}
 
 	// With the object selection tool a double click on a note deletes it, in the empty grid it inserts a note of the

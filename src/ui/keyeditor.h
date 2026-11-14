@@ -128,6 +128,14 @@ namespace gnubase::ui
 		// Scales the pitch rows and the keyboard by the zoom, clamped to its limits; the row height is what the style
 		// sheet gives it at 1.
 		void setPitchZoom(float zoom);
+		// The grid of another in-place editor under the event's target, and its track: where a move's release drops
+		// the selected notes (p. 1261); null when the target isn't in one or this editor isn't an in-place one.
+		std::pair<Rml::Element*, uint64_t> foreignInPlaceGrid(const Rml::Event& event) const;
+		// A move released over that grid: the selected notes go to the target track's part at the drop's time, with
+		// their distances to the pressed one, their lengths and their values; the removes and adds are one undo step.
+		void moveToInPlace(const Rml::Event& event, Rml::Element& grid, uint64_t track);
+		// The note as the project shown has it, for the fields note.add takes along; null when it is gone.
+		const engine::Json* noteJson(const Note& note) const;
 		// What a press on a note's box starts: a resize near its ends, else a move.
 		Gesture edgeGesture(Rml::Element* target, const Rml::Event& event) const;
 		// Starts drawing a note at the snapped position under the press, as the draw tool's press does.

@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <map>
 #include <numeric>
 #include <optional>
 #include <string>
@@ -515,6 +516,119 @@ TEST_CASE("a double click on the lanes' footer closes the in-place editor", "[ui
 	f.app.shell().step(std::chrono::milliseconds(0));
 	CHECK(f.elements(f.editor()).size() == 1);
 	CHECK(f.view().at("open").get<bool>());
+}
+
+TEST_CASE("a note dragged from one in-place editor to another moves to that track's part", "[ui]")
+{
+	// Reference manual p. 1261: "You can drag notes from one In-Place Editor to another."
+	Fixture f;
+	const uint64_t other = f.app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	const uint64_t otherPart =
+		f.app.call("midiPart.add", {{"track", other}, {"position", g_bar}, {"length", 2 * g_bar}, {"name", "Strings"}})
+			.at("part")
+			.at("id")
+			.get<uint64_t>();
+	REQUIRE(f.app.waitUntil([&] { return f.display.project().at("midiParts").size() == 2; }));
+	f.app.call("editor.inPlace", {{"tracks", {f.track, other}}, {"open", true}});
+	const std::string lane = ".in-place-editor[track=\"" + std::to_string(other) + "\"]";
+	REQUIRE(f.app.waitUntil(
+		[&] { return f.elements(f.editor() + " .key-note").size() == 2 && f.elements(lane + " .key-note").empty(); }));
+	f.settle(2);
+
+	// A point of the other editor's grid at project ticks, on the pitch's row.
+	const auto otherAt = [&](int64_t ticks, int pitch)
+	{
+		const Json grid = f.box(lane + " .key-editor-grid");
+		const double y = grid.at("y").get<double>() + ((127.5 - pitch) / 128.0 * grid.at("height").get<double>());
+		return ui::Target{
+			"", 0, ui::Point{static_cast<int>(std::lround(f.timelineX(ticks))), static_cast<int>(std::lround(y))}};
+	};
+	const auto partNotes = [&](uint64_t part)
+	{
+		const Json project = f.app.call("project.get");
+		for (const Json& each : project.at("midiParts"))
+			if (each.at("id") == part)
+				return each.at("notes");
+		return Json::array();
+	};
+	const auto steps = f.app.call("history.get").at("steps").size();
+	Json source = Json::object();
+	for (const Json& note : partNotes(f.part))
+		if (note.at("id") == f.notes[0])
+			source = note;
+	REQUIRE(source.is_object());
+
+	// The first note, C3 on the bar's first beat, dragged into the other editor's second bar at E3: it moves to
+	// that track's part, at the drop's time and pitch, with its length and velocity, as one undo step.
+	f.app.ui().drag(std::nullopt, f.at(g_bar + (g_quarter / 2), 60), otherAt(2 * g_bar + (g_quarter / 2), 64));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return partNotes(otherPart).size() == 1; }));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(lane + " .key-note").size() == 1; }));
+	CHECK(partNotes(f.part).size() == 1);
+	const Json moved = partNotes(otherPart).at(0);
+	CHECK(moved.at("position") == g_bar);
+	CHECK(moved.at("pitch") == 64);
+	CHECK(moved.at("length") == g_quarter);
+	CHECK(moved.at("velocity") == source.at("velocity"));
+	CHECK(f.app.call("history.get").at("steps").size() == steps + 1);
+	// The moved note left its editor's selection.
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("selection").empty(); }));
+
+	// Both notes back where they were, in the engine and on the screen.
+	const auto restored = [&]
+	{
+		REQUIRE(f.app.waitUntil(
+			[&]
+			{
+				return partNotes(otherPart).empty() && partNotes(f.part).size() == 2 &&
+					f.elements(lane + " .key-note").empty() && f.elements(f.editor() + " .key-note").size() == 2;
+			}));
+	};
+
+	// Undo brings it back.
+	f.app.call("history.undo");
+	restored();
+
+	// A drag to a time where the other track has no part leaves the note where it was.
+	f.app.ui().drag(std::nullopt, f.at(g_bar + (g_quarter / 2), 60), otherAt(g_quarter, 60));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(f.editor() + " .key-note").size() == 2; }));
+	CHECK(partNotes(otherPart).empty());
+	CHECK(partNotes(f.part).size() == 2);
+	CHECK(f.app.call("history.get").at("steps").size() == steps + 1);
+
+	// Both notes selected: a drag whose press lands in the other part takes them both, each keeping its distance
+	// to the pressed one, as one undo step: the history goes on by one, also with the undone step dropped.
+	f.click(f.note(f.notes[0]));
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("selection").size() == 1; }));
+	f.app.ui().click(std::nullopt, {f.note(f.notes[1]), 0, std::nullopt}, ui::MouseButton::Left, 1, {"ctrl"});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("selection").size() == 2; }));
+	const auto position = f.app.call("history.get").at("position").get<int64_t>();
+	f.app.ui().drag(std::nullopt, f.at(g_bar + (g_quarter / 2), 60), otherAt(g_bar + (g_quarter / 2), 62));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return partNotes(otherPart).size() == 2; }));
+	CHECK(partNotes(f.part).empty());
+	std::map<int, int64_t> placed;
+	for (const Json& note : partNotes(otherPart))
+		placed[note.at("pitch").get<int>()] = note.at("position").get<int64_t>();
+	CHECK(placed[62] == 0);
+	CHECK(placed[66] == g_quarter);
+	CHECK(f.app.call("history.get").at("position").get<int64_t>() == position + 1);
+	CHECK(f.app.call("history.get").at("steps").size() == steps + 1);
+
+	// Undo brings both back, into the selection they were in; a drag that would put a note before the other
+	// part's start moves nothing.
+	f.app.call("history.undo");
+	restored();
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("selection").size() == 2; }));
+	// The press on the second note, dropped at the other part's start: the first note would land before it.
+	f.app.ui().drag(std::nullopt, f.at(g_bar + g_quarter + (g_quarter / 2), 64), otherAt(g_bar + (g_quarter / 2), 62));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(partNotes(otherPart).empty());
+	CHECK(partNotes(f.part).size() == 2);
+	CHECK(f.app.call("history.get").at("position").get<int64_t>() == position);
+	REQUIRE(f.app.waitUntil([&] { return f.elements(f.editor() + " .key-note").size() == 2; }));
 }
 
 TEST_CASE("a key held in an in-place editor that closes ends its pitch", "[ui]")
