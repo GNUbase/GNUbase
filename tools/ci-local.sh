@@ -119,7 +119,7 @@ job()
 		local python=python3
 		python3 --version >/dev/null 2>&1 || python=python
 		rm -rf "$logs/themes"
-		"$python" tools/skin/generate.py "$logs/themes" && diff -rq resources/themes "$logs/themes" || return 1
+		"$python" tools/skin/generate.py "$logs/themes" && diff -rq --strip-trailing-cr resources/themes "$logs/themes" || return 1
 		local format=${CLANG_FORMAT:-clang-format}
 		if [ $os = windows ] && ! command -v "$format" >/dev/null; then
 			format="$("$vswhere" -latest -property installationPath | tr -d '\r')/VC/Tools/Llvm/x64/bin/clang-format.exe"
