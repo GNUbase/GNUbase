@@ -695,10 +695,12 @@ namespace gnubase::app
 				return sampler;
 			}});
 		// The drum machine (reference manual pp. 938-977, docs/features/drum-track.md) in the lower zone, for the
-		// selected drum track. Load asks for the file in the window it shows in.
+		// selected drum track. Load asks for the file in the window it shows in, Add Drum Track opens the add track
+		// dialog there.
 		m_docking.add({"drumMachine", "Drum Machine", "project", "lower", [this](Rml::Element& element)
 			{
-				auto drums = std::make_shared<ui::DrumMachinePanel>(m_binding, element,
+				auto drums = std::make_shared<ui::DrumMachinePanel>(
+					m_binding, element,
 					[this](uint64_t track, int pad)
 					{
 						const ui::Window* window = m_docking.windowOf("drumMachine");
@@ -720,6 +722,12 @@ namespace gnubase::app
 								else
 									m_binding.send("drum.loadPad", {{"track", track}, {"pad", pad}, {"path", path}});
 							});
+					},
+					[this]
+					{
+						ui::Window* window = m_docking.windowOf("drumMachine");
+						m_keys.run("project.addDrumTrack", engine::Json::object(), window != nullptr ? *window : m_main,
+							nullptr);
 					});
 				m_drums = drums;
 				return drums;

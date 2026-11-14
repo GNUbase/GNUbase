@@ -172,7 +172,8 @@ namespace gnubase::engine
 				"track list or as track.add places it with parent and index, playing into output as track.add's "
 				"does. Its pads start with a kit of percussion synths on the General MIDI notes (kick 36, snare 38, "
 				"clap 39, hi-hats 42, 44 and 46 in exclusive group 1, toms 45, 48 and 50, crash 49, cowbell 56), "
-				"named after the General MIDI sounds, or all off with kit false. Emits track.added and "
+				"without names of their own, so that they go by the General MIDI sounds' until they get a sample or "
+				"a name, or all off with kit false. Emits track.added and "
 				"channel.changed. Returns the track and its channel.",
 				objectSchema({{"name", {{"type", "string"}}}, {"parent", integer}, {"index", integer},
 					{"output", integer}, {"kit", {{"type", "boolean"}}}}),
@@ -195,7 +196,6 @@ namespace gnubase::engine
 							static_cast<double>(kitPad.layer);
 						for (const auto& [parameter, value] : kitPad.settings)
 							channel.instrumentParameters[DrumMachine::padParameter(kitPad.pad, parameter)] = value;
-						channel.pads[kitPad.pad].name = drumPadName(project, channel, kitPad.pad);
 					}
 				return result(project, channel, context);
 			});

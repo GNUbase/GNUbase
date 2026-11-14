@@ -17,6 +17,7 @@
 #include <filesystem>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -69,12 +70,17 @@ namespace
 		return event;
 	}
 
-	// Runs a drum machine on its own: stereo blocks with the given events.
+	// Runs a drum machine on its own: stereo blocks with the given events, as automation sends them: every pad
+	// parameter counts as automated, until setPadValues says otherwise.
 	class Bench
 	{
 	public:
 		explicit Bench(DrumMachine& drums, uint32_t frames = 64) : m_drums(drums), m_frames(frames)
 		{
+			std::set<uint32_t> automated;
+			for (uint32_t id = 0; id < DrumMachine::MasterLevel; ++id)
+				automated.insert(id);
+			drums.setPadValues({}, automated);
 			drums.prepareFor(g_sampleRate, frames);
 			m_samples.resize(2 * static_cast<size_t>(frames));
 			m_pointers = {m_samples.data(), m_samples.data() + frames};
@@ -197,6 +203,26 @@ TEST_CASE("a drum pad's level, pan, velocity, mute and solo", "[unit]")
 	bench.add(note(0, true, 36));
 	bench.add(note(0, true, 38, 0x8000));
 	CHECK_THAT(bench.left(1)[9], WithinAbs(10.0 / 1024.0 * 0x8000 / 65535.0, 1e-6)); // 38's alone
+}
+
+TEST_CASE("a pad parameter whose lane went ignores that lane's last events", "[unit]")
+{
+	// The engine hands the drum machine the pads' values without the lane before it stops the lane's automation, so
+	// the lane's last events can come after them (#1361).
+	DrumMachine drums;
+	drums.setSample(36, ramp(64));
+	Bench bench(drums);
+	const std::map<uint32_t, double> values = {
+		{padParameter(36, DrumMachine::Instrument), static_cast<double>(Layer::Sample)}};
+	drums.setPadValues(values, {padParameter(36, DrumMachine::Level)});
+	bench.set(36, DrumMachine::Level, -96.0);
+	bench.add(note(0, true, 36));
+	CHECK(peak(bench.left(1)) < 1e-4);
+
+	drums.setPadValues(values, {});
+	bench.set(36, DrumMachine::Level, -96.0);
+	bench.add(note(0, true, 36));
+	CHECK_THAT(bench.left(1)[9], WithinAbs(10.0 / 1024.0, 1e-6));
 }
 
 TEST_CASE("pads of an exclusive group cut each other off; the gate ends a pad with its note", "[unit]")
@@ -368,9 +394,9 @@ namespace
 			clip = run(client, "clip.add", {{"media", media.at("media").at("id")}}).at("clip").at("id").get<ObjectId>();
 		}
 
-		Engine engine;
-		Client client{engine};
 		gnubase::test::TempDir folder;
+		Engine engine{gnubase::audio::makeBackends(), folder.path() / "settings"}; // for track presets
+		Client client{engine};
 		fs::path file;
 		ObjectId clip = 0;
 	};
@@ -411,9 +437,16 @@ TEST_CASE("drum.create makes a drum track with a kit of synths on the General MI
 	CHECK(created.at("track").at("type") == "instrument");
 	const Json& channel = created.at("channel");
 	CHECK(channel.at("instrument") == "drumMachine");
-	CHECK(padOf(channel, 36).at("name") == "Bass Drum 1");
-	CHECK(padOf(channel, 56).at("name") == "Cowbell");
-	CHECK(channel.at("pads").size() == 11);
+	// The kit's pads have no names of their own: they go by the General MIDI sounds', which processor.list has.
+	CHECK(channel.at("pads").empty());
+	const Json list = run(client, "processor.list");
+	for (const Json& processor : list.at("processors"))
+		if (processor.at("id") == "drumMachine")
+		{
+			REQUIRE(processor.at("padNames").size() == 128);
+			CHECK(processor.at("padNames").at(36) == "Bass Drum 1");
+			CHECK(processor.at("padNames").at(56) == "Cowbell");
+		}
 	CHECK(instrumentParameter(channel, padParameter(36, DrumMachine::Instrument)) == static_cast<double>(Layer::Kick));
 	CHECK(instrumentParameter(channel, padParameter(38, DrumMachine::Instrument)) == static_cast<double>(Layer::Snare));
 	for (const int hat : {42, 44, 46})
@@ -503,12 +536,13 @@ TEST_CASE("a drum track's patterns have a lane per pad, named after it", "[integ
 	CHECK(pitches == std::vector<int>{36, 38, 39, 42, 44, 45, 46, 48, 49, 50, 56});
 	CHECK(pattern.at("lanes").at(0).at("name") == "Bass Drum 1");
 
-	// Renaming a pad renames its lanes; a sample names an unnamed pad.
-	run(client, "drum.setPad", {{"track", track}, {"pad", 36}, {"name", "Boom"}});
+	// Renaming a pad renames its lanes; a sample names a pad without a name of its own, as the kit's are.
 	const auto lanes = [&] { return run(client, "project.get").at("patterns").at(0).at("lanes"); };
+	run(client, "drum.loadPad", {{"track", track}, {"pad", 36}, {"clip", session.clip}});
+	CHECK(lanes().at(0).at("name") == "tick");
+	run(client, "drum.setPad", {{"track", track}, {"pad", 36}, {"name", "Boom"}});
 	CHECK(lanes().at(0).at("name") == "Boom");
 	run(client, "drum.setPad", {{"track", track}, {"pad", 36}, {"name", ""}});
-	run(client, "drum.loadPad", {{"track", track}, {"pad", 36}, {"clip", session.clip}});
 	CHECK(lanes().at(0).at("name") == "tick");
 	run(client, "drum.resetPad", {{"track", track}, {"pad", 36}});
 	CHECK(lanes().at(0).at("name") == "Bass Drum 1");
@@ -642,4 +676,80 @@ TEST_CASE("a drum pad's automated parameters play their automation, the others t
 	const auto [setFirst, setSecond] = peaks();
 	CHECK_THAT(setFirst, WithinAbs(plainFirst * std::pow(10.0, -6.0 / 20.0), 1e-5));
 	CHECK_THAT(setSecond, WithinAbs(setFirst, 1e-6));
+}
+
+TEST_CASE(
+	"a drum track's pads keep their clips in the pool, and go along with track presets and imports", "[integration]")
+{
+	Session session;
+	Client& client = session.client;
+	const auto track = run(client, "drum.create").at("track").at("id").get<ObjectId>();
+	run(client, "drum.loadPad", {{"track", track}, {"pad", 40}, {"clip", session.clip}});
+	run(client, "drum.setPad", {{"track", track}, {"pad", 41}, {"name", "Shaker"}});
+	// A clip a pad plays is used: pool.removeUnused keeps it.
+	CHECK(run(client, "pool.get").at("clips").at(0).at("used") == 1);
+	CHECK(run(client, "pool.removeUnused").at("clips").empty());
+
+	// The pads with their samples, which come into the pool, with every track a preset gives its sound or adds.
+	const auto channelOf = [&](ObjectId id)
+	{
+		const Json project = run(client, "project.get");
+		for (const Json& each : project.at("tracks"))
+			if (each.at("id") == id)
+				for (const Json& channel : project.at("channels"))
+					if (channel.at("id") == each.at("channel"))
+						return channel;
+		return Json();
+	};
+	const auto playsTick = [&](const Json& channel)
+	{
+		INFO(channel.dump());
+		CHECK(channel.at("instrument") == "drumMachine");
+		CHECK(padOf(channel, 41).at("name") == "Shaker");
+		CHECK(instrumentParameter(channel, padParameter(40, DrumMachine::Instrument)) ==
+			static_cast<double>(Layer::Sample));
+		const Json pad = padOf(channel, 40);
+		REQUIRE(pad.is_object());
+		const Json project = run(client, "project.get");
+		Json media;
+		for (const Json& clip : project.at("clips"))
+			if (clip.at("id") == pad.at("sample"))
+				for (const Json& file : project.at("media"))
+					if (file.at("id") == clip.at("media"))
+						media = file;
+		REQUIRE(media.is_object());
+		CHECK(media.at("length") == 4800);
+		return fs::u8path(media.at("path").get<std::string>());
+	};
+	run(client, "track.savePreset", {{"tracks", Json::array({track})}, {"name", "Kit"}});
+	const auto kit = run(client, "drum.create").at("track").at("id").get<ObjectId>();
+	const auto synth =
+		run(client, "track.add", {{"type", "instrument"}, {"instrument", "testSynth"}}).at("track").at("id");
+	run(client, "track.loadPreset", {{"tracks", Json::array({kit})}, {"name", "Kit"}});
+	run(client, "track.loadPreset", {{"tracks", Json::array({synth})}, {"name", "Kit"}});
+	playsTick(channelOf(kit));
+	playsTick(channelOf(synth.get<ObjectId>()));
+	run(client, "history.undo");
+	CHECK(channelOf(synth.get<ObjectId>()).at("pads").empty());
+	const Json added = run(client, "track.addFromPreset", {{"name", "Kit"}});
+	playsTick(channelOf(added.at("tracks").at(0).get<ObjectId>()));
+
+	// track.import from another project.
+	const fs::path file = session.folder.path() / "drums.dawproject";
+	run(client, "project.save", {{"path", file.u8string()}});
+	run(client, "project.new");
+	const Json imported = run(client, "track.import", {{"path", file.u8string()}});
+	const fs::path copy = playsTick(channelOf(imported.at("tracks").at(0).get<ObjectId>()));
+
+	// A missing file empties the pads that played it.
+	fs::remove(copy);
+	CHECK(!run(client, "media.removeMissing").at("clips").empty());
+	const Json project = run(client, "project.get");
+	for (const Json& channel : project.at("channels"))
+		if (channel.at("instrument") == "drumMachine")
+		{
+			const Json pad = padOf(channel, 40);
+			CHECK((pad.is_null() || pad.at("sample") == 0));
+			CHECK(padOf(channel, 41).at("name") == "Shaker");
+		}
 }

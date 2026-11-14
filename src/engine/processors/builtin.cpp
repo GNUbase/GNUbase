@@ -2,6 +2,7 @@
 #include "engine/processors/builtin.h"
 
 #include "engine/engine.h"
+#include "engine/midi/drummaps.h"
 #include "engine/processors/drummachine.h"
 #include "engine/processors/effects.h"
 #include "engine/processors/gainpan.h"
@@ -434,7 +435,9 @@ namespace gnubase::engine::processors
 			{"processor.list", 1,
 				"Every built-in processor: its id, name, description, whether it is an instrument, and its parameters "
 				"with their ids, ranges, defaults and units. A stepped parameter takes whole numbers only; its "
-				"options, if any, name its values from the minimum on.",
+				"options, if any, name its values from the minimum on. The drum machine's has padNames too: the "
+				"name of each pad, by note, that has neither a name of its own nor a sample, the General MIDI "
+				"sound's of its note (empty outside them).",
 				CommandInfo{}.parameters,
 				Json::parse(R"({"type": "object", "properties": {"processors": {"type": "array"}},
 					"required": ["processors"]})"),
@@ -443,7 +446,13 @@ namespace gnubase::engine::processors
 			{
 				Json list = Json::array();
 				for (const BuiltinInfo& info : builtins())
-					list.push_back(toJson(info));
+				{
+					Json item = toJson(info);
+					if (info.id == "drumMachine") // as drumPadName names the pads (#1361)
+						for (const DrumSound& sound : midi::gmDrumMap().sounds)
+							item["padNames"].push_back(sound.name);
+					list.push_back(std::move(item));
+				}
 				return Json{{"processors", std::move(list)}};
 			});
 		engine.registerCommand(
