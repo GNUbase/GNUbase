@@ -52,9 +52,10 @@ reference manual pp. 164, 404-413).
   event it plays, and drops it only when the chain lost that step.
 - `transport.get` and `transport.changed` have `arranger`: the step and repeat playing and the arranger event playing,
   the step -1 and the event 0 both outside the chain and while the plan doesn't play (arranger mode off or an empty
-  chain). Every new plan gets a generation number; the transport publishes its arranger state after every block, in
-  one sequence lock with the generation its step and section indices walk, and a new step or repeat makes the engine
-  announce `transport.changed`.
+  chain). Every new plan gets a generation number, by which the transport tells a new plan from the one it played,
+  not by its address, which a new plan may get once the old one is freed (#1479); it publishes its arranger state
+  after every block, in one sequence lock with the generation its step and section indices walk, and a new step or
+  repeat makes the engine announce `transport.changed`.
 - **Cueing**: `Playback::points` and `Playback::ahead` walk the same path as the transport, through cycle jumps or
   arranger turns (`arrangerNext`), so the voices wait where each jump lands and real-time playback renders the same as
   offline. Sections need to be longer than a few cue intervals (5 ms each) for that; every musical section is. A cue
@@ -93,14 +94,15 @@ repeats, repeat forever with a step that waits for the next beat, a triggered ev
 the cycle, chain edits during the pre-roll, while the chain plays back into the project and without a block between
 them - two back to back and 129 of them -, a stop and a cycle jump ending the pre-roll, a new plan finding the step
 playing and a step waiting again by their events, a locate from a repeated step into another step's own first repeat,
-a generation that wraps the packed field, and the generation of the plan the transport publishes with its state); the
-commands with undo, settings and the arranger track's removal; saving and loading, with a file's repeats capped to 1
-to 999; the chain playback render, sample by sample against the audio of each section, for two block sizes; real time
-against offline, also with a chain edit while playing; choosing steps and triggering events while stopped and playing,
-also across a chain edit that moves the chosen step; the plan a cue walks for the published generation, including
-when neither kept plan is it; a cue that falls between two plan generations; `transport.play` ending a repeat forever
-loop, keeping a triggered event and starting from the left locator with the start mode cycleStart, and `transport.get`
-reporting no step while the plan doesn't play; flattening, played back linearly against the chain's audio, with undo.
+a generation that wraps the packed field, a new plan at the old one's address, and the generation of the plan the
+transport publishes with its state); the commands with undo, settings and the arranger track's removal; saving and
+loading, with a file's repeats capped to 1 to 999; the chain playback render, sample by sample against the audio of
+each section, for two block sizes; real time against offline, also with a chain edit while playing; choosing steps and
+triggering events while stopped and playing, also across a chain edit that moves the chosen step; the plan a cue walks
+for the published generation, including when neither kept plan is it; a cue that falls between two plan generations;
+`transport.play` ending a repeat forever loop, keeping a triggered event and starting from the left locator with the
+start mode cycleStart, and `transport.get` reporting no step while the plan doesn't play; flattening, played back
+linearly against the chain's audio, with undo.
 `tests/lua/ui/arranger.lua` opens the arranger editor and drives it, with its step buttons disabled outside arranger
 mode and a locate arrow on every row.
 
