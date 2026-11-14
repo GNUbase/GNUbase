@@ -571,6 +571,10 @@ namespace gnubase::engine
 		// length changes (#910) left it. While it is there, quantizing starts from the original position and
 		// resetting puts it back; moved by other means, it is where it is.
 		std::optional<EventQuantizeOrigin> quantizeOrigin;
+		// Global transposition (#1368, reference manual pp. 414-421), as a MIDI part's: its root key (-1 for none, 0 C
+		// to 11 B) and Global Transpose Independent. Playback shifts its pitch in real time (dsp::WarpReader).
+		int rootKey = -1;
+		bool independent = false;
 	};
 
 	inline ObjectId frontOf(const AudioEvent& event)
@@ -1630,6 +1634,7 @@ namespace gnubase::engine
 	// The step from a part's root key to the project root key, the nearer way (-5 to 6 semitones): 0 for an
 	// Independent part and unless both have a root key. project.get gives it as each part's rootKeyTranspose.
 	int rootKeyTranspose(const Project& project, const MidiPart& part);
+	int rootKeyTranspose(const Project& project, const AudioEvent& event); // #1368
 
 	// The semitones a part's notes play transposed by at a position (project samples): an Independent part's own
 	// transpose as it is; a part that follows global transposition plays its own transpose plus the step from its
@@ -1637,6 +1642,9 @@ namespace gnubase::engine
 	// the transpose event playing there unless the transpose track is muted — with Keep Transpose in Octave Range
 	// the whole sum kept within 7 semitones either way, 8 up playing 4 down (#896, reference manual pp. 419-421).
 	int globalTranspose(const Project& project, const MidiPart& part, time::Samples at);
+	// The same for an audio event, which has no transpose of its own yet: the semitones playback shifts its pitch by
+	// (#1368).
+	int globalTranspose(const Project& project, const AudioEvent& event, time::Samples at);
 
 	// Whether folder is the pool's Audio folder (0) or a pool folder whose parents lead there without passing
 	// excluded: false for a folder that isn't there, one in a loop, and excluded or a folder inside it.
@@ -1794,10 +1802,10 @@ namespace gnubase::engine
 	{
 		return std::tie(a.id, a.track, a.position, a.clip, a.offset, a.length, a.volume, a.mute, a.lock, a.fadeIn,
 				   a.fadeOut, a.crossfade, a.snapPoint, a.color, a.part, a.lane, a.volumeCurve, a.front, a.rank,
-				   a.quantizeOrigin) ==
+				   a.quantizeOrigin, a.rootKey, a.independent) ==
 			std::tie(b.id, b.track, b.position, b.clip, b.offset, b.length, b.volume, b.mute, b.lock, b.fadeIn,
 				b.fadeOut, b.crossfade, b.snapPoint, b.color, b.part, b.lane, b.volumeCurve, b.front, b.rank,
-				b.quantizeOrigin);
+				b.quantizeOrigin, b.rootKey, b.independent);
 	}
 
 	inline bool operator==(const AudioPart& a, const AudioPart& b)

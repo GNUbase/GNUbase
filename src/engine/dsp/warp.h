@@ -5,6 +5,8 @@
 #include "engine/dsp/timestretch.h"
 
 #include <memory>
+#include <optional>
+#include <utility>
 #include <vector>
 
 // Real-time warping of audio (#144, docs/features/warp.md): a file played through a time stretcher whose ratio follows
@@ -22,6 +24,19 @@ namespace gnubase::engine::dsp
 		bool operator==(const WarpPoint& other) const { return source == other.source && target == other.target; }
 	};
 
+	// A point of a pitch map (#1368): from the target frame on, the audio plays shifted by semitones. A map is in
+	// target order; before its first point nothing is shifted.
+	struct PitchPoint
+	{
+		double target = 0.0;
+		double semitones = 0.0;
+
+		bool operator==(const PitchPoint& other) const
+		{
+			return target == other.target && semitones == other.semitones;
+		}
+	};
+
 	// The target of a source frame, and the source frame at a target: linear between points, the end segments' slopes
 	// beyond them.
 	double warpTarget(const std::vector<WarpPoint>& map, double source);
@@ -32,12 +47,14 @@ namespace gnubase::engine::dsp
 	// range). It is as long as the map's last target. A disk stream reads it like any file, on its disk thread:
 	// seeking resets the stretcher and allocates nothing else. Where a segment's slope is beyond the real-time range,
 	// the clamped ratio plays its audio too long or too short: the reader starts over at the segment's end, as after a
-	// seek, so the audio after it is back where the map puts it.
+	// seek, so the audio after it is back where the map puts it. A pitch map shifts the pitch of the audio from each of
+	// its points on, clamped to the real-time range, as global transposition does (#1368).
 	class WarpReader : public AudioFileReader
 	{
 	public:
 		// Throws std::invalid_argument for a map with fewer than two points or a file the stretcher can't take.
-		WarpReader(std::unique_ptr<AudioFileReader> source, std::vector<WarpPoint> map, StretchPreset preset);
+		WarpReader(std::unique_ptr<AudioFileReader> source, std::vector<WarpPoint> map, StretchPreset preset,
+			std::vector<PitchPoint> pitch = {});
 		~WarpReader() override;
 		WarpReader(const WarpReader&) = delete;
 		WarpReader& operator=(const WarpReader&) = delete;
@@ -54,9 +71,13 @@ namespace gnubase::engine::dsp
 		void feed();
 		// The ratio of a segment of the map.
 		double ratio(size_t segment) const;
+		// Sets the stretcher's pitch for the source frame; returns the source frame of the next pitch point after it,
+		// or none.
+		std::optional<double> pitchAt(double source);
 
 		std::unique_ptr<AudioFileReader> m_source;
 		std::vector<WarpPoint> m_map;
+		std::vector<std::pair<double, double>> m_pitch; // the pitch map by source frame: source and semitones
 		std::unique_ptr<TimeStretcher> m_stretcher;
 		std::vector<float> m_interleaved;
 		std::vector<std::vector<float>> m_planar;

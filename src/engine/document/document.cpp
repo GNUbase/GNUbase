@@ -305,41 +305,65 @@ namespace gnubase::engine
 		return static_cast<int>(found - names.begin()) - 1;
 	}
 
+	namespace
+	{
+		int rootKeyStep(const Project& project, int rootKey, bool independent)
+		{
+			if (independent || project.rootKey < 0 || rootKey < 0)
+				return 0;
+			const int semitones = (((project.rootKey - rootKey) % 12) + 12) % 12; // 0 to 11 up
+			return semitones > 6 ? semitones - 12 : semitones;
+		}
+
+		// globalTranspose of what has a root key, Global Transpose and a transpose of its own.
+		int globalTransposeOf(const Project& project, int rootKey, bool independent, int own, time::Samples at)
+		{
+			if (independent)
+				return own;
+			int semitones = rootKeyStep(project, rootKey, independent) + own;
+			const TransposeTrack& track = project.transpose;
+			if (!track.mute)
+			{
+				// ponytail: a scan of the events per note; a song has a handful of them.
+				int value = 0;
+				for (const TransposeEvent& event : track.events)
+				{
+					if (time::toSamples(event.position, project.tempo, project.sampleRate) > at)
+						break;
+					value = event.value;
+				}
+				semitones += value;
+			}
+			if (track.keepInOctave)
+			{
+				// The whole sum, the part's own transpose included (#896), never more than 7 semitones either way.
+				while (semitones > 7)
+					semitones -= 12;
+				while (semitones < -7)
+					semitones += 12;
+			}
+			return semitones;
+		}
+	}
+
 	int rootKeyTranspose(const Project& project, const MidiPart& part)
 	{
-		if (part.independent || project.rootKey < 0 || part.rootKey < 0)
-			return 0;
-		const int semitones = (((project.rootKey - part.rootKey) % 12) + 12) % 12; // 0 to 11 up
-		return semitones > 6 ? semitones - 12 : semitones;
+		return rootKeyStep(project, part.rootKey, part.independent);
+	}
+
+	int rootKeyTranspose(const Project& project, const AudioEvent& event)
+	{
+		return rootKeyStep(project, event.rootKey, event.independent);
 	}
 
 	int globalTranspose(const Project& project, const MidiPart& part, time::Samples at)
 	{
-		if (part.independent)
-			return part.transpose;
-		int semitones = rootKeyTranspose(project, part) + part.transpose;
-		const TransposeTrack& track = project.transpose;
-		if (!track.mute)
-		{
-			// ponytail: a scan of the events per note; a song has a handful of them.
-			int value = 0;
-			for (const TransposeEvent& event : track.events)
-			{
-				if (time::toSamples(event.position, project.tempo, project.sampleRate) > at)
-					break;
-				value = event.value;
-			}
-			semitones += value;
-		}
-		if (track.keepInOctave)
-		{
-			// The whole sum, the part's own transpose included (#896), never more than 7 semitones either way.
-			while (semitones > 7)
-				semitones -= 12;
-			while (semitones < -7)
-				semitones += 12;
-		}
-		return semitones;
+		return globalTransposeOf(project, part.rootKey, part.independent, part.transpose, at);
+	}
+
+	int globalTranspose(const Project& project, const AudioEvent& event, time::Samples at)
+	{
+		return globalTransposeOf(project, event.rootKey, event.independent, 0, at);
 	}
 
 	bool poolFolderOutside(const Project& project, ObjectId folder, ObjectId excluded)

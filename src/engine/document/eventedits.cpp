@@ -1136,7 +1136,13 @@ namespace gnubase::engine
 							std::clamp(point.volume + each.volume - loudest, g_minEventVolume, g_maxEventVolume);
 					curve.insert(curve.end(), own.begin(), own.end());
 				}
-				// Events that continue each other in a clip become one event.
+				// Events that continue each other in a clip become one event, with the first one's root key and Global
+				// Transpose: refused for events that follow global transpose differently, as for MIDI parts (#1368).
+				for (size_t i = 1; i < items.size(); ++i)
+					require(items[i].audio->independent == first.audio->independent &&
+							rootKeyTranspose(project, *items[i].audio) == rootKeyTranspose(project, *first.audio),
+						"audio events that follow global transpose differently, by their root key or Global "
+						"Transpose, don't glue");
 				for (size_t i = 1; i < items.size(); ++i)
 				{
 					first.audio->length += items[i].audio->length;

@@ -125,8 +125,12 @@ namespace gnubase::engine
 		{
 			std::vector<dsp::WarpPoint> map;
 			dsp::StretchPreset preset = dsp::StretchPreset::Quality;
+			std::vector<dsp::PitchPoint> pitch; // global transposition (#1368)
 
-			bool operator==(const Warp& other) const { return map == other.map && preset == other.preset; }
+			bool operator==(const Warp& other) const
+			{
+				return map == other.map && preset == other.preset && pitch == other.pitch;
+			}
 		};
 
 		// Command thread: the tracks to play and their clips' files, streamed at the project's sample rate, those in

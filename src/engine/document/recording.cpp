@@ -581,6 +581,13 @@ namespace gnubase::engine
 						{"length", each.length}})
 									   .at("event")
 									   .at("id");
+				// Recorded events follow global transpose with the project root key, or with transpose events are
+				// independent of it, as recorded MIDI parts (#1368, reference manual p. 420).
+				const bool transposed = !project.transpose.events.empty();
+				if (transposed || project.rootKey >= 0)
+					run("audioEvent.set",
+						{{"event", event}, {"rootKey", transposed ? std::string() : rootKeyName(project.rootKey)},
+							{"globalTranspose", transposed ? "independent" : "follow"}});
 				if (lane)
 					run("event.set", {{"events", Json::array({event})}, {"lane", (*lane)++}});
 				events.push_back(event);

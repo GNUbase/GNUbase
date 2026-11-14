@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 
@@ -42,11 +43,14 @@ namespace gnubase::engine::dsp
 		return interpolate(map[s], map[s + 1], target, &WarpPoint::target, &WarpPoint::source);
 	}
 
-	WarpReader::WarpReader(std::unique_ptr<AudioFileReader> source, std::vector<WarpPoint> map, StretchPreset preset)
+	WarpReader::WarpReader(std::unique_ptr<AudioFileReader> source, std::vector<WarpPoint> map, StretchPreset preset,
+		std::vector<PitchPoint> pitch)
 		: m_source(std::move(source)), m_map(std::move(map))
 	{
 		if (m_map.size() < 2)
 			throw std::invalid_argument("a warp map needs two points at least");
+		for (const PitchPoint& point : pitch)
+			m_pitch.emplace_back(warpSource(m_map, point.target), point.semitones);
 		m_info = m_source->info();
 		m_info.frames = std::max<time::Samples>(0, std::llround(m_map.back().target));
 		StretchSettings settings;
@@ -79,11 +83,28 @@ namespace gnubase::engine::dsp
 		return (b.target - a.target) / (b.source - a.source);
 	}
 
+	std::optional<double> WarpReader::pitchAt(double source)
+	{
+		double semitones = 0.0;
+		for (const auto& [from, shift] : m_pitch)
+		{
+			if (from > source)
+			{
+				m_stretcher->setPitch(semitones, 0.0);
+				return from;
+			}
+			semitones = shift;
+		}
+		m_stretcher->setPitch(semitones, 0.0);
+		return std::nullopt;
+	}
+
 	void WarpReader::restart(time::Samples frame)
 	{
 		(*m_stretcher).reset();
 		const double source = warpSource(m_map, static_cast<double>(frame));
 		m_stretcher->setRatio(ratio(segmentOf(m_map, source, &WarpPoint::source)));
+		pitchAt(source);
 		m_input = std::llround(source) - static_cast<time::Samples>(m_stretcher->startPad());
 		m_drop = m_stretcher->latency();
 		m_position = frame;
@@ -110,6 +131,9 @@ namespace gnubase::engine::dsp
 		size_t frames = std::clamp<size_t>(m_stretcher->inputRequired(), 1, g_blockFrames);
 		if (at < b.source && s + 2 < m_map.size())
 			frames = std::min(frames, static_cast<size_t>(std::ceil(b.source - at)));
+		// So does a pitch, up to the next point of the pitch map.
+		if (const std::optional<double> next = pitchAt(at))
+			frames = std::min(frames, static_cast<size_t>(std::ceil(*next - at)));
 		const auto channels = static_cast<size_t>(m_info.channels);
 		size_t silent = 0; // frames before the source's start
 		if (m_input < 0)

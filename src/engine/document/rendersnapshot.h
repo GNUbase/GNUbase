@@ -35,10 +35,12 @@ namespace gnubase::engine
 		double sampleRate = 48000.0;
 		int channels = 2;
 		time::Samples length = 0;
-		// An audio event of a warped clip plays a media file of its own, the event's id: path played through this
-		// warp map (dsp::WarpReader) with the preset, from the event's start. Empty for a plain file.
+		// An audio event of a warped clip, or one that global transposition shifts (#1368), plays a media file of its
+		// own, the event's id: path played through this warp map (dsp::WarpReader) with the preset and the pitch map,
+		// from the event's start. Empty for a plain file.
 		std::vector<dsp::WarpPoint> warp;
 		dsp::StretchPreset preset = dsp::StretchPreset::Quality;
+		std::vector<dsp::PitchPoint> pitch;
 	};
 
 	// A clip of the project: its media file (an id of RenderSnapshot::media) and its fades, for auditioning it on its
