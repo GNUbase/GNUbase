@@ -31,7 +31,8 @@ now also keeps the app's top-level windows under `windows`, by name, next to the
   and `open` when that changes. A window that never moved adds nothing, so the layout keeps only what the user did.
   When GNUbase starts, a window that `ui.layout` from the last session has open but that is closed gets `open: false`
   at once (and the other way round), so that a workspace added then has the windows as they are. Panels in windows
-  of their own keep their monitor too.
+  of their own keep their monitor too. The transport panel's entry also has `fittedWidth`, the width it last took from
+  its sections, which it follows while its bounds have that width ([transport-bar.md](transport-bar.md)).
 - **Maximized.** A maximized window gets `maximized: true` and keeps its normal bounds, the ones it had before; it
   loses the flag when it has its normal size again. It opens maximized again (the main window when GNUbase starts),
   and a layout that has it maximized maximizes it where it is open (`WindowSystem::maximized`, `setMaximized`).

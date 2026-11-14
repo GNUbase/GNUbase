@@ -261,6 +261,10 @@ namespace gnubase::app
 		{
 			ui::WindowId window = 0;
 			std::unique_ptr<ui::TransportControls> controls;
+			// The transport panel's sections, and the width the window had before their last fit while the window
+			// system hasn't given it the fitted one yet (#1527).
+			Rml::ObserverPtr<Rml::Element> sections;
+			int unfitted = 0;
 
 			// The window, or null if it is closed, also when the user closed it.
 			ui::Window* shown(ui::Shell& shell) const { return window == 0 ? nullptr : shell.find(window); }
@@ -270,8 +274,11 @@ namespace gnubase::app
 		std::unique_ptr<ui::TransportControls> transportControls(Rml::Element& root, ui::Window& window, bool fill);
 		// name is its window's in ui.layout (ui::Docking::addWindow).
 		void toggle(TransportWindow& shown, const char* name, const char* file, const char* title, ui::Size size);
-		// Gives a new transport panel the width of its shown sections, as far as the primary monitor has room (#1424).
-		void fitSections(ui::Window& window, Rml::Element& controls);
+		// Gives the transport panel the width of its shown sections, as far as its monitor has room (#1424): a new one
+		// in the middle of the primary monitor (centre), an open one where it is, whenever its sections' width changes
+		// and its window still has the width of their last fit, which ui.layout keeps: the user didn't size it since
+		// (#1527). Whether it changed the window's bounds.
+		bool fitSections(ui::Window& window, bool centre);
 		// Edits a display of the transport bar, or of the transport panel, which opens if the bar doesn't show.
 		void enter(const std::string& field);
 		// File > Import: the OS's file dialog for the window, then the event display imports what the user chose;

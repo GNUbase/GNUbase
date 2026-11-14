@@ -1223,6 +1223,9 @@ namespace gnubase::app
 			m_keys.bind({wind.keys, wind.id});
 		}
 		m_shell.eachStep([this] { return m_winding.step(); });
+		// The transport panel follows its sections whenever an update may have changed their width (#1527).
+		m_shell.afterUpdate([this](ui::Window& window)
+			{ return window.id() == m_transportPanel.window && fitSections(window, false); });
 		// The time display window's context menu (reference manual p. 313).
 		m_keys.add({"timeDisplay.beatCountOnly",
 			"Shows only the beat in its bar in the time display window, or the whole position again.",
@@ -1467,6 +1470,7 @@ namespace gnubase::app
 	{
 		if (const ui::Window* window = shown.shown(m_shell))
 		{
+			m_docking.saveWindows(); // its bounds as the user left them
 			shown.controls.reset();
 			m_shell.close(window->id());
 			shown.window = 0;
@@ -1507,24 +1511,13 @@ namespace gnubase::app
 		if (root == controls)
 		{
 			m_docking.attach("transportPanel", *document);
-			// The controls show the project once the engine answered their queries, and their displays grow with
-			// their text: a query sent now is answered after those, so the sections are measured again as they show
-			// it, and the bounds kept at once (#1474). Fitted to the controls' defaults until then, so that a panel
-			// closed before the answer doesn't keep the unfitted width in ui.layout.
+			// Fitted to the controls' defaults at once, so that a panel closed before the engine answered their
+			// queries doesn't keep the unfitted width in ui.layout. Once they show the project, their displays grow
+			// with their text, and the panel follows (#1474, #1527).
+			shown.sections = controls->GetObserverPtr();
+			shown.unfitted = 0;
 			if (!spec.bounds)
-			{
-				fitSections(window, *controls);
-				m_binding.send("engine.version", engine::Json::object(),
-					[this, id = window.id(), fitted = controls->GetObserverPtr()](const engine::Result&)
-					{
-						ui::Window* shownWindow = m_shell.find(id);
-						if (Rml::Element* element = fitted.get(); element != nullptr && shownWindow != nullptr)
-						{
-							fitSections(*shownWindow, *element);
-							m_docking.saveWindows();
-						}
-					});
-			}
+				fitSections(window, true);
 		}
 		else
 		{
@@ -1542,27 +1535,56 @@ namespace gnubase::app
 		}
 	}
 
-	void AppUi::fitSections(ui::Window& window, Rml::Element& controls)
+	bool AppUi::fitSections(ui::Window& window, bool centre)
 	{
+		TransportWindow& panel = m_transportPanel;
+		Rml::Element* controls = panel.sections.get();
 		const std::vector<ui::Display> displays = m_shell.displays();
 		const ui::Size pixels = window.pixelSize();
-		if (displays.empty() || pixels.width <= 0)
-			return;
-		window.context().Update();
+		if (controls == nullptr || displays.empty() || pixels.width <= 0)
+			return false;
+		const ui::Rect bounds = m_shell.bounds(window.id());
+		const std::optional<int> fitted = m_docking.fittedWidth("transportPanel");
+		if (!centre)
+		{
+			if (!fitted || (bounds.width != *fitted && bounds.width != panel.unfitted))
+				return false; // sized by the user, or by a layout from before #1527
+			if (bounds.width == *fitted)
+				panel.unfitted = 0;
+		}
+		else
+		{
+			window.context().Update(); // a new document
+		}
 		float right = 0;
 		Rml::ElementList sections;
-		controls.QuerySelectorAll(sections, ".transport-section");
+		controls->QuerySelectorAll(sections, ".transport-section");
 		for (Rml::Element* section : sections)
 			if (section->IsVisible())
 				right = std::max(right,
 					section->GetAbsoluteLeft() + section->GetOffsetWidth() +
 						section->GetBox().GetEdge(Rml::BoxArea::Margin, Rml::BoxEdge::Right));
 		if (right <= 0)
-			return;
-		const ui::Rect bounds = m_shell.bounds(window.id());
-		const int width =
-			static_cast<int>(std::ceil(right * static_cast<float>(bounds.width) / static_cast<float>(pixels.width)));
-		m_shell.setBounds(window.id(), ui::centred({width, bounds.height}, displays.front()));
+			return false;
+		const ui::Display* display = centre ? nullptr : ui::displayOf(bounds, displays);
+		const ui::Rect& area = (display != nullptr ? *display : displays.front()).usable;
+		const int width = std::min(area.width,
+			static_cast<int>(std::ceil(right * static_cast<float>(bounds.width) / static_cast<float>(pixels.width))));
+		if (!centre && width == fitted)
+			return false;
+		// An open panel stays where it is, moved left only as far as its monitor's right edge needs.
+		const ui::Rect fit = centre
+			? ui::centred({width, bounds.height}, displays.front())
+			: ui::Rect{std::min(bounds.x, area.x + area.width - width), bounds.y, width, bounds.height};
+		m_shell.setBounds(window.id(), fit);
+		// A window system that sizes windows later has the old width meanwhile; one that gave the window a width of
+		// its own, such as a minimum, keeps that as the fit's.
+		const int now = m_shell.bounds(window.id()).width;
+		const bool applied = now != bounds.width || now == width;
+		panel.unfitted = applied ? 0 : bounds.width;
+		m_docking.setFittedWidth("transportPanel", applied ? now : width);
+		m_docking.saveWindows(); // so that a panel closed at once comes back as wide
+		return true;
 	}
 
 	void AppUi::toggleTransportPanel()

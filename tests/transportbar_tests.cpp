@@ -276,18 +276,17 @@ namespace
 	// controls show the project: every control inside the window and the window ending a section gap after the last
 	// one, or, where the sections are wider than the primary monitor's usable area, as wide as that area (#1424,
 	// #1474). shown says when the panel shows what the test set up; reopen closes the panel right after the fit and
-	// opens it again, with the bounds the fit kept.
+	// opens it again, with the bounds the fit kept, which it follows from (#1527).
 	void checkPanelFits(
 		test::UiApp& app, float dpRatio, const std::function<bool()>& shown = [] { return true; }, bool reopen = false)
 	{
 		INFO("dp ratio " << dpRatio);
 		app.setDpRatio(dpRatio);
 		app.ui().key(std::nullopt, "F2");
-		// The fit runs on the answer to the query sent behind the controls' own.
-		const auto fitRan = [&] { return shown() && app.appUi().binding().waiting("engine.version") == 0; };
+		// The panel follows its sections whenever they change, so it fits once it shows what the test set up.
 		if (reopen)
 		{
-			REQUIRE(app.waitUntil(fitRan, std::chrono::seconds(2)));
+			REQUIRE(app.waitUntil(shown, std::chrono::seconds(2)));
 			app.ui().key(std::nullopt, "F2");
 			REQUIRE(app.appUi().transportPanel() == nullptr);
 			app.ui().key(std::nullopt, "F2");
@@ -324,8 +323,8 @@ namespace
 			const float gap = static_cast<float>(panel->pixelSize().width) - last;
 			return inside ? gap <= (16.0F * dpRatio) + 1.0F : app.shell().bounds(panel->id()).width == usable;
 		};
-		app.waitUntil([&] { return fitRan() && fitted(); }, std::chrono::seconds(2));
-		CHECK(fitRan());
+		app.waitUntil([&] { return shown() && fitted(); }, std::chrono::seconds(2));
+		CHECK(shown());
 		const auto [last, inside] = measure();
 		const auto width = static_cast<float>(panel->pixelSize().width);
 		INFO("last control ends at " << last << " of " << width << " pixels; usable width " << usable);
@@ -377,6 +376,68 @@ TEST_CASE("a transport panel closed right after its fit comes back as wide", "[u
 			return panel != nullptr && shows(app, "#left-locator", panel->id()) == "01:00:00:00";
 		},
 		true);
+}
+
+namespace
+{
+	// The transport panel's width in its bounds, once it is open.
+	int panelWidth(test::UiApp& app)
+	{
+		const ui::Window* panel = app.appUi().transportPanel();
+		return panel != nullptr ? app.shell().bounds(panel->id()).width : 0;
+	}
+}
+
+TEST_CASE("an open transport panel follows the width of its sections until the user sizes it", "[ui]")
+{
+	// In bars and beats from the project start the sections are narrower than in timecode with the locators an hour
+	// out; at a dp ratio of 0.5 both fit CI's 1024-pixel monitor.
+	test::UiApp app({1024, 700});
+	app.appUi().showProject();
+	checkPanelFits(app, 0.5F);
+	const int narrow = panelWidth(app);
+	const int left = app.shell().bounds(app.appUi().transportPanel()->id()).x;
+
+	// A time format picked later and the locators moved far out: the panel grows where it is.
+	app.call("project.set", {{"timeFormat", "timecode"}});
+	app.call("transport.set", {{"left", int64_t{48000} * 3600}, {"right", int64_t{48000} * 7200}});
+	REQUIRE(app.waitUntil([&] { return panelWidth(app) > narrow; }, std::chrono::seconds(2)));
+	const int wide = panelWidth(app);
+	CHECK(app.shell().bounds(app.appUi().transportPanel()->id()).x == left);
+	// Closed and opened again, it has the width it had and still follows its sections.
+	app.ui().key(std::nullopt, "F2");
+	REQUIRE(app.appUi().transportPanel() == nullptr);
+	app.ui().key(std::nullopt, "F2");
+	REQUIRE(app.waitUntil([&] { return panelWidth(app) == wide; }, std::chrono::seconds(2)));
+
+	// A section hidden in the setup pane makes it narrower, and shown again wider.
+	const auto hidden = [&app](const Json& sections)
+	{
+		Json layout = app.call("settings.get", {{"key", "ui.layout"}}).at("value");
+		layout["windows"]["transportPanel"]["sections"]["transport"]["hidden"] = sections;
+		app.call("settings.set", {{"key", "ui.layout"}, {"value", layout}});
+	};
+	hidden(Json::array({"click"}));
+	REQUIRE(app.waitUntil([&] { return panelWidth(app) < wide; }, std::chrono::seconds(2)));
+	hidden(Json::array());
+	REQUIRE(app.waitUntil([&] { return panelWidth(app) == wide; }, std::chrono::seconds(2)));
+
+	// Sized by the user, it keeps its width: back in bars and beats it doesn't get narrower, also when it opens again.
+	ui::Rect sized = app.shell().bounds(app.appUi().transportPanel()->id());
+	sized.width = wide + 40;
+	app.shell().setBounds(app.appUi().transportPanel()->id(), sized);
+	app.call("project.set", {{"timeFormat", "barsBeats"}});
+	app.call("transport.set", {{"left", 0}, {"right", int64_t{48000} * 8}});
+	REQUIRE(
+		app.waitUntil([&app] { return shows(app, "#left-locator", app.appUi().transportPanel()->id()) == "1.1.1.0"; },
+			std::chrono::seconds(2)));
+	const auto settle = [&app] { app.waitUntil([] { return false; }, std::chrono::milliseconds(300)); };
+	settle();
+	CHECK(panelWidth(app) == wide + 40);
+	app.ui().key(std::nullopt, "F2");
+	app.ui().key(std::nullopt, "F2");
+	settle();
+	CHECK(panelWidth(app) == wide + 40);
 }
 
 TEST_CASE("the transport bar goes to markers, the project's ends and the selection", "[ui]")
