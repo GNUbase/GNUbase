@@ -324,6 +324,104 @@ TEST_CASE("the tempo track editor switches the tempo mode and edits the tempo ev
 	REQUIRE(app.waitUntil([&app] { return app.appUi().tempoEditor() == nullptr; }));
 }
 
+TEST_CASE("the tempo track editor's Current Tempo follows the cursor again after a tempo was typed in it", "[ui]")
+{
+	test::UiApp app{{1000, 600}};
+	app.appUi().showProject();
+	app.call("project.set", {{"tempoTrackActive", true}});
+	app.call("tempo.add", {{"position", 4 * g_quarter}, {"bpm", 100.0}, {"ramp", false}});
+	app.ui().key(std::nullopt, "Mod+T");
+	REQUIRE(app.waitUntil([&app] { return app.appUi().tempoEditor() != nullptr; }));
+	const ui::WindowId window = app.appUi().tempoWindow();
+	Rml::ElementDocument& document = editorDocument(app);
+	auto* current = dynamic_cast<Rml::ElementFormControl*>(document.GetElementById("current-tempo"));
+	REQUIRE(current != nullptr);
+	REQUIRE(app.waitUntil([current] { return current->GetValue() == "120.000"; }));
+	const auto typeTempo = [&app, window](const std::string& text)
+	{
+		app.ui().click(window, {"#current-tempo", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+		app.ui().key(window, "Mod+A");
+		app.ui().text(window, text);
+		app.ui().key(window, "Enter");
+	};
+
+	// Enter ends the typing: the field shows Current Tempo again (reference manual p. 1449), which the change
+	// updates, and what isn't a tempo goes.
+	typeTempo("130");
+	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("tempo")[0].at("bpm") == 130.0; }));
+	REQUIRE(app.waitUntil([current] { return current->GetValue() == "130.000"; }));
+	typeTempo("fast");
+	REQUIRE(app.waitUntil([current] { return current->GetValue() == "130.000"; }));
+	CHECK(app.call("project.get").at("tempo")[0].at("bpm") == 130.0);
+
+	// The field goes on following the cursor: past the second event, it shows that event's tempo (p. 1446).
+	app.call("transport.locate", {{"position", 3 * 48000}});
+	REQUIRE(app.waitUntil([current] { return current->GetValue() == "100.000"; }));
+}
+
+TEST_CASE("the tempo track editor selects events with a rectangle, and Shift-click takes a selected one out", "[ui]")
+{
+	test::UiApp app{{1000, 600}};
+	app.appUi().showProject();
+	app.call("project.set", {{"tempoTrackActive", true}});
+	// Two events far into the project, so that the editor's curve of the whole project spreads them out.
+	app.call("tempo.add", {{"position", 200 * g_quarter}, {"bpm", 100.0}, {"ramp", false}});
+	app.call("tempo.add", {{"position", 400 * g_quarter}, {"bpm", 110.0}, {"ramp", false}});
+	app.ui().key(std::nullopt, "Mod+T");
+	REQUIRE(app.waitUntil([&app] { return app.appUi().tempoEditor() != nullptr; }));
+	const ui::WindowId window = app.appUi().tempoWindow();
+	Rml::ElementDocument& document = editorDocument(app);
+	REQUIRE(app.waitUntil(
+		[&document]
+		{
+			Rml::ElementList points;
+			document.QuerySelectorAll(points, ".tempo-point");
+			return points.size() == 3;
+		}));
+	ui::TempoCurve* curve = app.appUi().tempoEditor()->curve();
+	REQUIRE(curve != nullptr);
+	Rml::ElementList points;
+	document.QuerySelectorAll(points, ".tempo-point");
+	REQUIRE(points.size() == 3);
+	Rml::Element* area = document.GetElementById("tempo-curve-area");
+	REQUIRE(area != nullptr);
+	const auto centreOf = [](Rml::Element& element)
+	{
+		return Rml::Vector2f{element.GetAbsoluteLeft() + (element.GetOffsetWidth() / 2.0F),
+			element.GetAbsoluteTop() + (element.GetOffsetHeight() / 2.0F)};
+	};
+	const Rml::Vector2f first = centreOf(*points[0]);
+	const Rml::Vector2f second = centreOf(*points[1]);
+	const Rml::Vector2f third = centreOf(*points[2]);
+	const float right = area->GetAbsoluteLeft() + area->GetClientWidth();
+	const float bottom = area->GetAbsoluteTop() + area->GetClientHeight();
+
+	// A drag on an empty part of the curve selects the events in its rectangle (reference manual p. 1450); while it
+	// is dragged, the rectangle shows, laid out by tempo-editor.rml.
+	const int fromX = static_cast<int>((first.x + second.x) / 2.0F);
+	const int fromY = static_cast<int>(area->GetAbsoluteTop() + 4.0F);
+	const int toX = static_cast<int>(std::min(third.x + 30.0F, right - 4.0F));
+	const int toY = static_cast<int>(bottom - 4.0F);
+	app.ui().press(window, point(fromX, fromY), ui::MouseButton::Left, {});
+	app.ui().move(window, point(toX, toY), {});
+	app.shell().step(milliseconds(0));
+	Rml::Element* rectangle = document.QuerySelector(".tempo-curve .tool-rectangle");
+	REQUIRE(rectangle != nullptr);
+	CHECK(rectangle->IsClassSet("shown"));
+	CHECK(rectangle->GetAbsoluteLeft() == Approx(fromX).margin(2.0));
+	CHECK(rectangle->GetOffsetWidth() == Approx(toX - fromX).margin(2.0));
+	CHECK(curve->selection() == std::vector<int64_t>{200 * g_quarter, 400 * g_quarter});
+	app.ui().release(window, point(toX, toY), ui::MouseButton::Left, {});
+	app.shell().step(milliseconds(0));
+	CHECK(!rectangle->IsClassSet("shown"));
+	CHECK(curve->selection() == std::vector<int64_t>{200 * g_quarter, 400 * g_quarter});
+
+	// Shift-click on a selected event takes it out of the selection.
+	app.ui().click(window, centre(*points[2]), ui::MouseButton::Left, 1, {"shift"});
+	app.shell().step(milliseconds(0));
+	CHECK(curve->selection() == std::vector<int64_t>{200 * g_quarter});
+}
+
 TEST_CASE("the tempo track's Activate Tempo Track and the transport bar's switch the tempo mode", "[ui]")
 {
 	test::UiApp app{{1024, 500}};

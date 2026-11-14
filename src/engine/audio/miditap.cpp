@@ -8,6 +8,7 @@
 #include "engine/midi/midivalues.h"
 #include "engine/settings/usersettings.h"
 #include "platform/midi/port.h"
+#include "plugin/events.h"
 
 #include <algorithm>
 #include <array>
@@ -134,6 +135,24 @@ namespace gnubase::engine
 					add(0xB0U, 32, 3, event.value);      // and LSB
 				}
 				add(0xC0U, event.key);
+				break;
+			case Type::NoteExpression:
+				// MPE on the note's channel (docs/features/note-expression.md); the other expressions have no MIDI
+				// 1.0 message.
+				if (event.parameter == plugin::expressionId(plugin::NoteExpression::Tuning))
+				{
+					const uint32_t bend =
+						midi::pitchBendToMidi1(midi::semitonesToBend(event.parameterValue, midi::g_mpePitchRange));
+					add(0xE0U, bend, 3, bend >> 7U);
+				}
+				else if (event.parameter == plugin::expressionId(plugin::NoteExpression::Pressure))
+				{
+					add(0xD0U, midi::controllerToMidi1(midi::controllerFromUnit(event.parameterValue)));
+				}
+				else if (event.parameter == plugin::expressionId(plugin::NoteExpression::Brightness))
+				{
+					add(0xB0U, 74, 3, midi::controllerToMidi1(midi::controllerFromUnit(event.parameterValue)));
+				}
 				break;
 			case Type::SysEx:
 			case Type::Parameter:
@@ -278,10 +297,15 @@ namespace gnubase::engine
 				"as a MIDI input port's do, and the audio device places them in its next block. The MIDI and "
 				"instrument tracks set to all MIDI inputs play them while they monitor or are record-enabled (MIDI "
 				"thru), and the record-enabled ones record them. bytes: a status byte from 0x80 to 0xEF and its data "
-				"bytes. The UI's on-screen keyboard window plays its notes through this. If the input waiting for the "
-				"audio device has no room left, the call fails and says how many of its messages were played.",
+				"bytes. The UI's on-screen keyboard window plays its notes through this. With chordPads they are the "
+				"chord pads' notes instead (chordPads.trigger plays through this), of player (0 to 7, the chord pads' "
+				"player whose voicings they are): they play into the tracks whose "
+				"MIDI input is the chord pads, and with Chord Pad Output Mode on (chordPads.set outputMode) into "
+				"those of all MIDI inputs too. If the input waiting for the audio device has no room left, the call "
+				"fails and says how many of its messages were played.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["messages"],
-					"properties": {"messages": {"type": "array", "items": {"type": "object",
+					"properties": {"chordPads": {"type": "boolean"}, "player": {"type": "integer", "minimum": 0, "maximum": 7},
+					"messages": {"type": "array", "items": {"type": "object",
 						"additionalProperties": false, "required": ["bytes"], "properties": {"bytes": {"type": "array",
 							"items": {"type": "integer", "minimum": 0, "maximum": 255}}}}}}})"),
 				Json::object(), false},
@@ -292,8 +316,10 @@ namespace gnubase::engine
 				played.reserve(messages.size());
 				for (size_t i = 0; i < messages.size(); ++i)
 					played.push_back(channelMessage(messages[i].at("bytes"), "messages[" + std::to_string(i) + "]: "));
+				const bool pads = context.parameters().value("chordPads", false);
+				const auto player = context.parameters().value("player", size_t{0});
 				for (size_t i = 0; i < played.size(); ++i)
-					require(m_midi.play(played[i]),
+					require(pads ? m_midi.playPads(played[i], player) : m_midi.play(played[i]),
 						"too much MIDI input waits for the audio device; " + std::to_string(i) +
 							" of the messages were played");
 				return Json::object();
@@ -363,6 +389,7 @@ namespace gnubase::engine
 				const double ratio = m_snapshots.latest().sampleRate / m_device->format().sampleRate;
 				const time::Samples cursor = m_transport.position();
 				MidiTakeBuilder builder;
+				builder.setMpe(mpePitchRange(m_settings));
 				time::Samples start = -1;
 				int64_t stopped = -1; // the device frame of the first input in stop mode
 				for (const RetrospectiveEvent& kept : events)

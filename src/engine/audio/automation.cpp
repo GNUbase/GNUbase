@@ -217,6 +217,7 @@ namespace gnubase::engine
 			if (lane.kind == Kind::Program)
 			{
 				event.type = Type::Program;
+				event.channel = lane.target.channel;
 				event.key = static_cast<uint8_t>(lane.parameter);
 				event.value = value < 0.0 ? g_noBank : static_cast<uint32_t>(value);
 				out.add(lane, event, again);
@@ -378,7 +379,7 @@ namespace gnubase::engine
 		for (const auto& [number, value] :
 			{std::pair{uint8_t{7}, channel.midiVolume}, std::pair{uint8_t{10}, channel.midiPan}})
 			if (value)
-				lanes.push_back({{AutomationTargetType::Controller, 0, number, 0, 0}, Kind::Midi, 0,
+				lanes.push_back({{AutomationTargetType::Controller, 0, number, channel.midiChannel, 0}, Kind::Midi, 0,
 					static_cast<double>(midi::controllerFromMidi1(static_cast<uint8_t>(*value))) / 4294967295.0, 0.0,
 					1.0, {}});
 		if (const processors::BuiltinInfo* info = processors::findBuiltin(channel.instrument))
@@ -458,7 +459,7 @@ namespace gnubase::engine
 		// The program first, so the instrument has the patch before the controllers. No automation lane targets it.
 		if (channel.program)
 			lanes.insert(lanes.begin(),
-				PlayedLane{{AutomationTargetType::Controller, 0, 0, 0, 0}, Kind::Program,
+				PlayedLane{{AutomationTargetType::Controller, 0, 0, channel.midiChannel, 0}, Kind::Program,
 					static_cast<uint32_t>(*channel.program), channel.bank ? static_cast<double>(*channel.bank) : -1.0,
 					-1.0, static_cast<double>(g_maxBank), {}});
 		return automation;
@@ -841,6 +842,7 @@ namespace gnubase::engine
 		case Type::PolyPressure: // its note was ended
 		case Type::SysEx:
 		case Type::Parameter:
+		case Type::NoteExpression:
 			return -1;
 		}
 		return -1;

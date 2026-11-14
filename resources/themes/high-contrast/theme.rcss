@@ -449,6 +449,20 @@
 	{
 		background-color: #000000;
 	}
+	.event-display event-lanes.events, .event-display event-lanes.muted-events, .event-display event-lanes.selected-events, .event-display event-lanes.folder-data
+	{
+		event-inset: 0dp;
+	}
+	.event-display event-lanes.events
+	{
+		own-fill-opacity: 1;
+		own-color-tint: none;
+	}
+	.event-display .waveforms waveform
+	{
+		own-color-tint: none;
+		padding: 2dp 0;
+	}
 	.event-display .overview
 	{
 		background-color: #000000;
@@ -492,6 +506,10 @@
 	.event-display .project-cursor
 	{
 		background-color: #ffffff;
+	}
+	.event-display .step-input-cursor, .event-display .step-input-handle
+	{
+		background-color: #ffff00;
 	}
 	.event-display .cross-hair-vertical, .event-display .cross-hair-horizontal
 	{
@@ -638,6 +656,73 @@
 	.chord-pad.triggered
 	{
 		background-color: #7a7a07;
+	}
+	.chord-pad.listening
+	{
+		border-color: #ff8c8c;
+	}
+	.chord-pad.level-0
+	{
+		border-bottom-color: #40ff80;
+	}
+	.chord-pad.level-1
+	{
+		border-bottom-color: #ffb000;
+	}
+	.chord-pad.level-2
+	{
+		border-bottom-color: #ff8c8c;
+	}
+	.chord-pad .chord-pad-voicing
+	{
+		color: #c8c8c8;
+		font-size: 11dp;
+	}
+	.chord-pad .chord-pad-progress
+	{
+		background-color: #ffff00;
+	}
+	.chord-pad.black-key
+	{
+		background-color: #050505;
+	}
+	.chord-pads-key.white
+	{
+		background-color: #ffffff;
+		border-width: 1dp;
+		border-color: #ffffff;
+	}
+	.chord-pads-key.black
+	{
+		background-color: #000000;
+	}
+	.chord-pads-key.remote
+	{
+		background-color: #ffff80;
+	}
+	.chord-pads-key.black.remote
+	{
+		background-color: #999900;
+	}
+	.chord-pads-key.modifier
+	{
+		background-color: #40ff80;
+	}
+	.chord-pads-key.hover
+	{
+		background-color: #ffb000;
+	}
+	.chord-pads-key.played
+	{
+		background-color: #00ffff;
+	}
+	.chord-proximity-reference
+	{
+		color: #ffff00;
+	}
+	.chord-suggestion.recent .chord-suggestion-chord
+	{
+		font-weight: bold;
 	}
 	.chord-suggestion
 	{
@@ -1171,6 +1256,18 @@
 	.inspector .insert.bypassed, .inspector .insert.inactive
 	{
 		color: #c8c8c8;
+	}
+	.inspector .midi-effect-slot.off select
+	{
+		color: #c8c8c8;
+	}
+	.inspector .midi-effect-slot.recorded
+	{
+		border-left-color: #ffff00;
+	}
+	.inspector .midi-divider.at .midi-divider-line
+	{
+		background-color: #ffff00;
 	}
 	.pool-message.error
 	{

@@ -27,7 +27,8 @@ namespace gnubase::ui
 	// #track-visibility-configurations shows the active configuration, with an asterisk while the tracks differ from
 	// it, and opens #track-visibility-configurations-menu: Add, Update, Rename and Delete Configuration, then the
 	// configurations, a click on one applies it. Add and Rename ask for the name in visibility-configuration.rml, next
-	// to the document. Use it on the UI thread; the binding must outlive it.
+	// to the document: OK there with a name that trackVisibility.set would refuse keeps the dialog open with the
+	// reason (#906). Use it on the UI thread; the binding must outlive it.
 	class TrackVisibility final : private Rml::EventListener
 	{
 	public:
@@ -56,9 +57,12 @@ namespace gnubase::ui
 		void click(uint64_t track, bool exclusive);
 		void choose(const std::string& item);
 		void openDialog(bool rename);
+		void dialogOk();
 		void closedDialog(Rml::Event& event);
 		void removeSyncMenu();
-		std::vector<uint64_t> inside(uint64_t track) const; // the track and the tracks in it, nested too
+		std::vector<uint64_t> inside(uint64_t track) const;       // the track and the tracks in it, nested too
+		std::set<uint64_t> current(std::set<uint64_t> ids) const; // the ids that are tracks as project.get answered
+		engine::Json current(const engine::Json& ids) const;
 
 		EngineBinding& m_binding;
 		Rml::ObserverPtr<Rml::Element> m_document;

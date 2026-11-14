@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -343,6 +344,118 @@ TEST_CASE("audio events show their waveforms from the engine's waveform overview
 	// Removing the event removes its waveform, through any client.
 	fixture.call("history.undo");
 	REQUIRE(fixture.waitUntil([&] { return waveforms(fixture.document).empty(); }));
+}
+
+TEST_CASE("audio events' waveforms are in their events' colors, or else their tracks'", "[unit]")
+{
+	// #1312: the event display gives each waveform the color its event shows in.
+	const test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "take.wav";
+	test::Audio audio;
+	audio.samples.assign(4800, 0.5F);
+	test::writeWav(file, audio);
+
+	Fixture fixture;
+	const Json track =
+		fixture.call("track.add", {{"type", "audio"}, {"timeBase", "linear"}, {"color", "#204060"}}).at("track");
+	const Json media = fixture.call("media.add", {{"path", file.u8string()}}).at("media");
+	const Json clip = fixture.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	const Json event = fixture
+						   .call("audioEvent.add",
+							   {{"track", track.at("id")}, {"clip", clip.at("id")}, {"position", 0}, {"length", 4800}})
+						   .at("event");
+	const auto colored = [&](uint32_t color)
+	{
+		return fixture.waitUntil(
+			[&]
+			{
+				const std::vector<ui::Waveform*> list = waveforms(fixture.document);
+				return list.size() == 1 && list[0]->span().color == color;
+			});
+	};
+	REQUIRE(colored(0x204060ffU));
+	const ui::Waveform* wave = waveforms(fixture.document)[0];
+
+	// A color of its own, on the same element; back to the track's, which follows the track.
+	fixture.call("event.set", {{"events", {event.at("id")}}, {"color", "#a0c0e0"}});
+	REQUIRE(colored(0xa0c0e0ffU));
+	CHECK(waveforms(fixture.document)[0] == wave);
+	fixture.call("event.set", {{"events", {event.at("id")}}, {"color", nullptr}});
+	REQUIRE(colored(0x204060ffU));
+	fixture.call("track.set", {{"track", track.at("id")}, {"color", "#ffffff"}});
+	REQUIRE(colored(0xffffffffU));
+}
+
+namespace
+{
+	// A short sound, for events whose waveforms only need to show.
+	std::filesystem::path shortTake(const test::TempDir& dir)
+	{
+		const std::filesystem::path file = dir.path() / "take.wav";
+		test::Audio audio;
+		audio.samples.assign(4800, 0.5F);
+		test::writeWav(file, audio);
+		return file;
+	}
+
+	// Whether there are count waveforms, all of them in color, within five seconds.
+	bool waveformsIn(Fixture& fixture, size_t count, uint32_t color)
+	{
+		return fixture.waitUntil(
+			[&]
+			{
+				const std::vector<ui::Waveform*> list = waveforms(fixture.document);
+				return list.size() == count &&
+					std::all_of(list.begin(), list.end(),
+						[&](const ui::Waveform* wave) { return wave->span().color == color; });
+			});
+	}
+}
+
+TEST_CASE("an audio part's waveforms are in the part's color, its own or else its track's", "[unit]")
+{
+	// #1312: in the event display a part is what is selected and colored (reference manual p. 114), and its events
+	// show in it as their waveforms, in the part's color.
+	const test::TempDir dir;
+	Fixture fixture;
+	const Json track =
+		fixture.call("track.add", {{"type", "audio"}, {"timeBase", "linear"}, {"color", "#204060"}}).at("track");
+	const Json media = fixture.call("media.add", {{"path", shortTake(dir).u8string()}}).at("media");
+	const Json clip = fixture.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	const Json event = fixture
+						   .call("audioEvent.add",
+							   {{"track", track.at("id")}, {"clip", clip.at("id")}, {"position", 0}, {"length", 4800}})
+						   .at("event");
+	// The event's own color doesn't show: the part's does.
+	fixture.call("event.set", {{"events", {event.at("id")}}, {"color", "#ff0000"}});
+	const Json part = fixture.call("event.toPart", {{"events", {event.at("id")}}}).at("events").at(0);
+	REQUIRE(waveformsIn(fixture, 1, 0x204060ffU));
+	fixture.call("event.set", {{"events", {part}}, {"color", "#a0c0e0"}});
+	REQUIRE(waveformsIn(fixture, 1, 0xa0c0e0ffU));
+	fixture.call("event.set", {{"events", {part}}, {"color", "#c08040"}});
+	REQUIRE(waveformsIn(fixture, 1, 0xc08040ffU));
+	fixture.call("event.set", {{"events", {part}}, {"color", nullptr}});
+	REQUIRE(waveformsIn(fixture, 1, 0x204060ffU));
+}
+
+TEST_CASE("with a track's lanes shown, an event's waveforms on the track and on its lane are in its color", "[unit]")
+{
+	const test::TempDir dir;
+	Fixture fixture;
+	const Json track =
+		fixture.call("track.add", {{"type", "audio"}, {"timeBase", "linear"}, {"color", "#204060"}}).at("track");
+	const Json media = fixture.call("media.add", {{"path", shortTake(dir).u8string()}}).at("media");
+	const Json clip = fixture.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	const Json event = fixture
+						   .call("audioEvent.add",
+							   {{"track", track.at("id")}, {"clip", clip.at("id")}, {"position", 0}, {"length", 4800}})
+						   .at("event");
+	fixture.call("event.set", {{"events", {event.at("id")}}, {"lane", 1}, {"color", "#e0c0a0"}});
+	fixture.display.showLanes(track.at("id").get<uint64_t>(), true);
+	// One on the track's lane, where the event is in front, and one on lane 1.
+	REQUIRE(waveformsIn(fixture, 2, 0xe0c0a0ffU));
+	fixture.call("event.set", {{"events", {event.at("id")}}, {"color", nullptr}});
+	REQUIRE(waveformsIn(fixture, 2, 0x204060ffU));
 }
 
 TEST_CASE("waveforms of lanes scrolled out of view are clipped to the event area", "[unit]")

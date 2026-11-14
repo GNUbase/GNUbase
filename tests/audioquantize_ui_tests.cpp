@@ -160,8 +160,6 @@ TEST_CASE("Warp Quantize On/Off in the quantize panel follows the settings, as t
 	CHECK(f.app.waitUntil([&] { return f.hasClass("#toolbar-quantize-warp", "checked"); }));
 	CHECK(f.hasClass("#quantize-slice", "hidden"));
 	CHECK(f.shown("#quantize-create-markers"));
-	// The toolbar has room for its toggle in wider windows only.
-	CHECK(!f.shown("#toolbar-quantize-warp"));
 	f.app.call("quantize.set", {{"settings", {{"warpQuantize", false}}}});
 	CHECK(f.app.waitUntil([&] { return !f.hasClass("#quantize-warp", "checked"); }));
 	CHECK(f.app.waitUntil([&] { return !f.hasClass("#toolbar-quantize-warp", "checked"); }));

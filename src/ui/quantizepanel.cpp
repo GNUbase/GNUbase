@@ -190,7 +190,7 @@ namespace gnubase::ui
 				R"(Q</button><button id="toolbar-quantize-presets" menu="toolbar-quantize-presets-menu" )"
 				R"(title="Quantize Presets"/><button id="toolbar-quantize-soft" type="toggle" action="soft" )"
 				R"(title="Soft Quantize On/Off">Soft</button><button id="toolbar-quantize-warp" type="toggle" )"
-				R"(action="warp" title="Warp Quantize On/Off">Warp</button>)"
+				R"(action="warp" fit="spare" title="Warp Quantize On/Off">Warp</button>)"
 				R"(<button id="toolbar-quantize-panel" class="icon-only" )"
 				R"(action="panel" title="Open Quantize Panel">...</button>)");
 		}

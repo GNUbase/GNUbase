@@ -371,7 +371,8 @@ namespace gnubase::ui
 		};
 		// The chord track (docs/features/chord-track.md, reference manual pp. 1336, 1341-1344): Chords to MIDI onto the
 		// first selected MIDI or instrument track; the other functions take the selected MIDI parts and audio events,
-		// else those of the selected tracks, and audio events only outside audio parts (p. 1344).
+		// else those of the selected tracks, and audio events only outside audio parts (p. 1344). Selected audio parts
+		// count as a selection, of nothing: they don't fall back to the tracks' loose audio events.
 		const auto noteTracks = [this]
 		{
 			std::vector<uint64_t> tracks;
@@ -390,7 +391,7 @@ namespace gnubase::ui
 			const auto selected = [&events](const Json& item)
 			{ return std::binary_search(events.begin(), events.end(), item.at("id").get<uint64_t>()); };
 			bool fromEvents = false;
-			for (const char* each : {"midiParts", "audioEvents"})
+			for (const char* each : {"midiParts", "audioParts", "audioEvents"})
 				for (const Json& item : project.at(each))
 					fromEvents = fromEvents || selected(item);
 			const std::vector<uint64_t> tracks = selection();
@@ -582,8 +583,15 @@ namespace gnubase::ui
 					if (!alive.expired() && result.ok() && result.value.at("value").is_boolean())
 						*value = result.value.at("value").get<bool>();
 				});
-		// Current Tempo follows the project cursor.
-		m_subscriptions.push_back(m_binding.on("transport.changed", [this](const engine::Event&) { showTempo(); }));
+		// Current Tempo follows the project cursor, also while playing (#831), when the cursor moves without events.
+		m_subscriptions.push_back(
+			m_binding.on("transport.changed", [this](const engine::Event& event) { followTransport(event.data); }));
+		m_binding.send("transport.get", Json::object(),
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (!alive.expired() && result.ok())
+					followTransport(result.value);
+			});
 		m_binding.send("settings.get", {{"key", "editing.tempoType"}},
 			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
@@ -1077,21 +1085,51 @@ namespace gnubase::ui
 				}
 			}
 		}
+		followTempo(); // the tempo field may have come or gone with the rows or the controls (#1338)
 		showTempo();
 		if (Rml::Context* context = m_view->GetContext())
 			context->RequestNextUpdate(0);
 	}
 
-	void TrackList::showTempo()
+	void TrackList::followTransport(const Json& status)
+	{
+		m_playing = status.value("playing", false);
+		followTempo();
+		showTempo();
+	}
+
+	void TrackList::followTempo()
+	{
+		if (!m_playing || !alive())
+		{
+			m_playback.reset();
+			return;
+		}
+		// The watch runs showTempo once a frame: only watch while the list has a Current Tempo field (#1338).
+		Rml::ElementList fields;
+		m_view->QuerySelectorAll(fields, "[control=currentTempo]");
+		if (fields.empty())
+			m_playback.reset();
+		else if (!m_playback)
+			// While playing the display's cursor follows the playback position once a frame, without events; Current
+			// Tempo follows it (#831). The display's own playback watch, made before this one, moves the cursor first.
+			m_playback = m_binding.watch<double>(
+				m_root.get(), [this] { return m_display.cursor(); }, [this](const double&) { return showTempo(); });
+	}
+
+	bool TrackList::showTempo()
 	{
 		const Json& project = m_display.project();
 		if (!alive() || !project.is_object())
-			return;
-		const TimeContext context = projectTime(project);
+			return false;
+		// The display reads its time context once per project answer: the frames of the playback watch must not
+		// build one each (#1338), as the transport bar's tempo field doesn't.
+		const TimeContext& context = m_display.time();
 		const auto cursor = static_cast<int64_t>(std::llround(m_display.cursor() * context.sampleRate));
 		const std::string tempo = tempoText(currentTempo(context, cursor));
 		Rml::ElementList fields;
 		m_view->QuerySelectorAll(fields, "[control=currentTempo], [control=tempoType]");
+		bool changed = false;
 		for (Rml::Element* field : fields)
 		{
 			auto* control = dynamic_cast<Rml::ElementFormControl*>(field);
@@ -1103,8 +1141,10 @@ namespace gnubase::ui
 				m_showingTempo = true;
 				control->SetValue(value);
 				m_showingTempo = false;
+				changed = true;
 			}
 		}
+		return changed;
 	}
 
 	void TrackList::hide()

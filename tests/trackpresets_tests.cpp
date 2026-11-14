@@ -1433,3 +1433,30 @@ TEST_CASE("track presets keep a MIDI send's effect but not its output to another
 	CHECK(slot.at("effect") == "chordGenerator");
 	CHECK(slot.at("output") == 0);
 }
+
+TEST_CASE("a track preset that changes a MIDI slot's effect takes the slot's automation lanes along", "[unit]")
+{
+	const test::TempDir dir;
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	const Added keys = add(client, {{"type", "instrument"}, {"name", "Keys"}});
+	run(client, "channel.set",
+		{{"channel", keys.channel},
+			{"midiInserts", {{"slots", {{{"effect", "chordGenerator"}}, {{"effect", "transformer"}}}}}}});
+	run(client, "track.savePreset", {{"tracks", {keys.track}}, {"name", "Chords"}});
+	const Added other = add(client, {{"type", "instrument"}, {"name", "Other"}});
+	run(client, "channel.set",
+		{{"channel", other.channel},
+			{"midiInserts", {{"slots", {{{"effect", "transformer"}}, {{"effect", "transformer"}}}}}}});
+	// Lanes of both slots: the first gets another effect, the second keeps its own.
+	for (const int number : {0, 1})
+		run(client, "automationLane.add",
+			{{"track", other.track}, {"target", {{"type", "midiEffect"}, {"number", number}, {"parameter", 4}}}});
+	REQUIRE(run(client, "project.get").at("automation").size() == 2);
+	run(client, "track.loadPreset", {{"tracks", {other.track}}, {"name", "Chords"}});
+	const Json automation = run(client, "project.get").at("automation");
+	REQUIRE(automation.size() == 1);
+	CHECK(automation[0].at("target").at("number") == 1);
+	run(client, "history.undo");
+	CHECK(run(client, "project.get").at("automation").size() == 2);
+}

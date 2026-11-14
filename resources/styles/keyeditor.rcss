@@ -118,6 +118,18 @@
 	padding-top: 0;
 }
 
+/* The keyboard's left part, where a drag zooms the pitches and scrolls the note display (reference manual p. 1261):
+   the pointer is the OS's four-point arrow over it. */
+.key-editor-keys-zoom
+{
+	position: absolute;
+	left: 0;
+	top: 0;
+	height: 100%;
+	width: 12dp;
+	cursor: move;
+}
+
 .key-editor-notes
 {
 	position: absolute;

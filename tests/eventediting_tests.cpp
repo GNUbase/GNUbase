@@ -32,6 +32,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <utility>
@@ -626,8 +627,6 @@ namespace
 		CommandHolds() = default;
 		CommandHolds(const CommandHolds&) = delete;
 		CommandHolds& operator=(const CommandHolds&) = delete;
-		// Lets every run go, so that a test that fails on the way doesn't leave the engine's thread waiting.
-		~CommandHolds() { release(std::numeric_limits<size_t>::max()); }
 
 		// The command's handler, on the engine's command thread. It gives up after 30 s, so that an engine that is
 		// stopping can end even if the test never releases it.
@@ -662,17 +661,55 @@ namespace
 		size_t entered = 0;  // the runs that have entered hold()
 		size_t released = 0; // the runs let go: release(n) frees the n-th
 	};
+
+	// Lets every run of holds go when it goes. Declared after the fixture, it goes before the fixture's engine waits
+	// for its command thread to end, so that a test that fails while a run is held ends at once, not after hold()'s
+	// 30 s (#1308). The holds themselves are declared before the fixture: the engine's command thread waits in them.
+	struct ReleaseHolds
+	{
+		CommandHolds& holds;
+		~ReleaseHolds() { holds.release(std::numeric_limits<size_t>::max()); }
+	};
+
+	// Registers test.hold, a command whose runs wait in holds.
+	void registerHold(Fixture& f, CommandHolds& holds)
+	{
+		f.engine.registerCommand({"test.hold", 1, "Waits for the test to release it.", engine::CommandInfo{}.parameters,
+									 Json::object(), false},
+			[&holds](engine::CommandContext&) { return holds.hold(); });
+	}
+}
+
+TEST_CASE("a test that fails while a command is held ends at once", "[unit]")
+{
+	// A failing REQUIRE throws, as this does, while a run of test.hold holds the engine's command thread.
+	auto failed = std::chrono::steady_clock::now();
+	CHECK_THROWS_AS(
+		[&failed]
+		{
+			CommandHolds holds;
+			Fixture f;
+			const ReleaseHolds releaseHolds{holds};
+			registerHold(f, holds);
+			engine::Client holder(f.engine, "holder");
+			holder.send("test.hold");
+			REQUIRE(holds.waitEntered(1));
+			failed = std::chrono::steady_clock::now();
+			throw std::runtime_error("a failing check");
+		}(),
+		std::runtime_error);
+	// Well below hold()'s 30 s, which the fixture's engine would wait if the holds went after it.
+	CHECK(std::chrono::steady_clock::now() - failed < std::chrono::seconds(10));
 }
 
 TEST_CASE("a second resize release can precede the first release's project", "[unit]")
 {
-	CommandHolds holds; // declared before the fixture: its engine's command thread waits in hold()
+	CommandHolds holds;
 	Fixture f;
+	const ReleaseHolds releaseHolds{holds};
 	// The engine answers only when the test lets it: a command that holds its command thread until it is released,
 	// so what queues behind it runs, and answers, in an order the test chooses, not one a busy machine chooses.
-	f.engine.registerCommand(
-		{"test.hold", 1, "Waits for the test to release it.", engine::CommandInfo{}.parameters, Json::object(), false},
-		[&holds](engine::CommandContext&) { return holds.hold(); });
+	registerHold(f, holds);
 	engine::Client holder(f.engine, "holder");
 	f.display.select({f.part});
 	REQUIRE(f.waitUntil([&f] { return f.lanes("selected-events")[1].events.size() == 1; }));

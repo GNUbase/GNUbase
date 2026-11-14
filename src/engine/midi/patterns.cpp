@@ -579,13 +579,19 @@ namespace gnubase::engine::midi
 				for (Pattern& copy : copied)
 				{
 					const ObjectId original = copy.id;
+					const ObjectId origin = copy.copiedFrom;
 					copy.track = part.track;
-					// A copy of it that the track has already, from a copy before, plays it again.
+					copy.copiedFrom = original;
+					// A copy of it that the track has already, from a copy before and unchanged since, plays it again,
+					// as does the pattern it is a copy of, on its way back (#1347); an equal pattern that isn't its
+					// copy doesn't.
 					const auto same = std::find_if(project.patterns.begin(), project.patterns.end(),
-						[&copy](const auto& each)
+						[&copy, origin](const auto& each)
 						{
 							Pattern other = each.second;
 							other.id = copy.id;
+							if (origin != 0 && each.first == origin)
+								other.copiedFrom = copy.copiedFrom;
 							return other == copy;
 						});
 					if (same != project.patterns.end())
@@ -703,7 +709,8 @@ namespace gnubase::engine::midi
 			"pattern went before their start, after a split or a start sized, so that they continue it. A pattern "
 			"event on another track than its pattern's, copied, moved or on a duplicated track, plays a copy on its "
 			"own track: a track without pattern events gets copies of all the patterns of the pattern's track (p. "
-			"936), and a copy the track has already, unchanged, plays it again. Removing a track removes its patterns.";
+			"936), and a copy the track has already, made from that pattern in an earlier copy or move and unchanged "
+			"since, plays it again (a track's own equal pattern doesn't). Removing a track removes its patterns.";
 		const auto object = [](Json properties, std::vector<std::string> required)
 		{
 			return Json{{"type", "object"}, {"properties", std::move(properties)}, {"required", std::move(required)},

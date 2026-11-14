@@ -101,7 +101,14 @@ namespace gnubase::app
 		std::vector<std::pair<std::string, std::string>> attributes;
 		if (track != 0)
 			attributes.emplace_back("track", std::to_string(track));
-		openOnce(window, "articulation-maps.rml", m_articulationMaps, attributes);
+		const bool reused = m_articulationMaps.get() != nullptr && m_articulationMaps->GetParentNode() != nullptr;
+		Rml::ElementDocument& document = openOnce(window, "articulation-maps.rml", m_articulationMaps, attributes);
+		// Open already: now the setup of this track, whose map its Lua selects (#1265).
+		if (reused && track != 0)
+		{
+			document.SetAttribute("track", std::to_string(track));
+			document.DispatchEvent("trackchange", Rml::Dictionary());
+		}
 	}
 
 	void AppUi::showArticulationMapError(const engine::Result& result)

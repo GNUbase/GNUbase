@@ -68,6 +68,8 @@ namespace gnubase::ui
 				// only one.
 				Wave& before = *found->second;
 				wave.element = std::exchange(before.element, nullptr);
+				if (wave.element != nullptr)
+					wave.element->setColor(event.time.color); // the peaks stay, its color may not (#1312)
 				wave.pending = before.pending;
 				if (sameEvent(before.event, event))
 				{
@@ -196,7 +198,8 @@ namespace gnubase::ui
 			for (const Json& channel : result.value.at("channels"))
 				channels.push_back(
 					{channel.at("min").get<std::vector<int16_t>>(), channel.at("max").get<std::vector<int16_t>>()});
-			wave->element->setPeaks({question.from, question.to - question.from}, std::move(channels));
+			wave->element->setPeaks(
+				{question.from, question.to - question.from, wave->event.time.color}, std::move(channels));
 		}
 		update(*wave);
 	}

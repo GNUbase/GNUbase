@@ -24,6 +24,15 @@ editor and the automation lanes fill them.
   and the properties `stroke-color` and `stroke-width`, which `ui::RmlUi` registers when it starts, along with the
   elements, so every document has them. Each theme styles the four elements; a change of style or theme builds them
   again. Code only gives them data.
+- **Colors that are user data** (an event's or its track's color, `TimeSpan::color`, #94) show as the style sheet says
+  (#1312): `own-fill-opacity` (a number from 0 to 1, default 1) is how opaque an event's body is in its own color;
+  `own-color-tint` (`none` by default, or a color) is laid over the own color by its alpha, for the event's outline
+  and for a `<waveform>` with an own color, which otherwise use `stroke-color` and `color`; `event-inset` (a length,
+  default 0) keeps `<event-lanes>` events that far off their lane's top and bottom, in lanes high enough to keep a
+  pixel between. The defaults draw as before, so only style sheets that ask change. The default theme tints the
+  event display's events this way, after the project window mockup (`art/mockups/main-window.webp`), and pads
+  their waveforms by more than the inset so they stay inside the events' outlines. Fade and volume lines still
+  span the whole lane, where the event display's handles take the mouse.
 - **Pixels.** Positions snap to whole pixels and line widths round to whole pixels, so edges stay sharp at every dp
   ratio. What an element draws is clipped to its content box by scissor, which is screen-aligned: canvas elements
   can't sit inside a transform.
