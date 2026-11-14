@@ -10,6 +10,7 @@
 #include "plugin/remote/protocol.h"
 #include "plugin/remote/proxy.h"
 #include "pluginhost/testformat.h"
+#include "testutils/stopandjoin.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -1037,6 +1038,7 @@ TEST_CASE("killing the host process mid-render yields silence and an error event
 				std::this_thread::sleep_for(1ms);
 			}
 		});
+	const gnubase::test::StopAndJoin stopAudio(stop, audio);
 	CHECK(eventually([&] { return blocks > 20; }));
 	CHECK(silentBlocks == 0);
 	REQUIRE(manager.kill(process));
@@ -1060,8 +1062,7 @@ TEST_CASE("killing the host process mid-render yields silence and an error event
 	const int silentBefore = silentBlocks;
 	const int blocksBefore = blocks;
 	CHECK(eventually([&] { return blocks > blocksBefore + 20; }));
-	stop = true;
-	audio.join();
+	stopAudio.join();
 	CHECK(graph.slot().failed());
 	CHECK(silentBlocks - silentBefore == blocks - blocksBefore); // only silence since
 
@@ -1512,6 +1513,7 @@ TEST_CASE(
 			loaded = plugin::extension<plugin::State>(plugin)->loadState(
 				state.data(), state.size(), plugin::StateContext::Project);
 		});
+	const gnubase::test::StopAndJoin joinLoad(load);
 	REQUIRE(eventually([&] { return loading.load(); }));
 	std::this_thread::sleep_for(100ms); // the load holds the plugin's calls now
 
@@ -1519,7 +1521,7 @@ TEST_CASE(
 	const auto start = std::chrono::steady_clock::now();
 	CHECK(plugin.setProcessMode(plugin::ProcessMode::Offline));
 	CHECK(std::chrono::steady_clock::now() - start < 450ms);
-	load.join();
+	joinLoad.join();
 	CHECK(loaded);
 	flush(plugin, {paramEvent(g_stall, 0.0)}); // so reading its state back doesn't stall
 	CHECK(savedValue(plugin, "test:stall", g_offline) == 0.0);
