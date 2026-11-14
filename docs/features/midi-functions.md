@@ -32,10 +32,14 @@ Functions that edit MIDI parts as a whole (#133, #838).
   nowhere and is left out). The part's velocity: where a note has velocity variance, which playback applies before the
   part's velocity, and without `includeInserts` where the destination's modifiers compress the velocity, or bring back
   one beyond 1-127, before playback adds the part's; with `includeInserts` such a note's variance then applies to the
-  velocity the track's modifiers made. The first new part, with the controllers, is on the first lane, the others on new
-  lanes below the destination's parts. With `eraseDestination`, a shared copy that loses events leaves its copies, which
-  keep theirs; its events get new ids, so the play probability, velocity variance and random MIDI modifier values of the
-  notes that stay draw anew. `midi.dissolve` copies events by channel or pitch into new parts at the same place and
+  velocity the track's modifiers made, and the part's velocity stays on the new part only where the track's modifiers
+  play every note of the part alike with it added after them (their compression, Velocity Limit and Velocity Filter and
+  the clamp to 1-127 come before it in playback), else it goes into the notes. The first new part, with the
+  controllers, is on the first lane, the others, with the articulation events only (playback resolves directions per
+  part and never sends them), on new lanes below the destination's parts. With `eraseDestination`, a shared copy that
+  loses events leaves its copies, which keep theirs; its events get new ids, so the play probability, velocity variance
+  and random MIDI modifier values of the notes that stay draw anew. `midi.dissolve` copies events by channel or pitch
+  into new parts at the same place and
   mutes the parts (pp. 1121-1122): `to: tracks` puts them on new MIDI tracks routed to the same instrument, `to: lanes`
   on new lanes of the track below the lanes its parts are on (`optimize` only works with tracks). Events of no channel
   or pitch go with the first new part of their part, so none is lost; new parts keep their part's mute, transpose,

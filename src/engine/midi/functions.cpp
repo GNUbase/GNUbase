@@ -855,6 +855,41 @@ namespace gnubase::engine::midi
 			return true;
 		}
 
+		// Whether a note plays alike through the modifiers, which have the part's velocity in them as playback adds
+		// it, as through them without it and with the part's velocity added after, as a new part with the part's
+		// velocity plays what merge writes with Include Inserts (#1240): whether it plays and how loud, for every
+		// velocity its variance gives it and the random velocity playback draws for it.
+		bool velocityOnPart(const Modifiers& modifiers, uint64_t seed, const Note& note, int partVelocity)
+		{
+			// Pitches play no part: modifyNote then sees a key that passes.
+			Modifiers with = modifiers;
+			with.transpose = 0;
+			for (RandomModifier& random : with.random)
+				if (random.target == RandomTarget::Pitch)
+					random.target = RandomTarget::Off;
+			for (RangeModifier& range : with.range)
+				if (range.target == RangeTarget::NoteLimit || range.target == RangeTarget::NoteFilter)
+					range.target = RangeTarget::Off;
+			Modifiers without = with;
+			without.velocityShift -= partVelocity;
+			const double varied = std::clamp(std::round(note.velocity * (1.0 + note.velocityVariance)), 0.0,
+				static_cast<double>(std::numeric_limits<uint16_t>::max()));
+			const int first = velocityToMidi1(note.velocity);
+			const int last = velocityToMidi1(static_cast<uint16_t>(varied));
+			for (int velocity = std::min(first, last); velocity <= std::max(first, last); ++velocity)
+			{
+				uint8_t pitch = 60;
+				uint16_t played = velocityFromMidi1(static_cast<uint8_t>(velocity));
+				const bool plays = modifyNote(with, seed, pitch, played);
+				uint16_t kept = velocityFromMidi1(static_cast<uint8_t>(velocity));
+				const bool keptPlays = modifyNote(without, seed, pitch, kept);
+				if (plays != keptPlays ||
+					(plays && velocityToMidi1(played) != std::clamp(velocityToMidi1(kept) + partVelocity, 1, 127)))
+					return false;
+			}
+			return true;
+		}
+
 		// The root key and Global Transpose setting of a part (#888).
 		struct GlobalSetting
 		{
@@ -1265,6 +1300,8 @@ namespace gnubase::engine::midi
 			for (const Candidate& candidate : candidates)
 				if (candidate.source == source)
 					own.push_back(&candidate);
+			// With includeInserts the track's modifiers then play the notes without the part's velocity, so only where
+			// every note comes out alike.
 			const bool velocityKept = source->velocity != 0 &&
 				std::any_of(own.begin(), own.end(),
 					[&](const Candidate* candidate)
@@ -1273,7 +1310,14 @@ namespace gnubase::engine::midi
 							(!settings.includeInserts &&
 								!velocityInNote(
 									destinationModifiers, velocityToMidi1(candidate->note.velocity), source->velocity));
-					});
+					}) &&
+				(!settings.includeInserts ||
+					std::all_of(own.begin(), own.end(),
+						[&](const Candidate* candidate)
+						{
+							return velocityOnPart(
+								candidate->modifiers, candidate->seed, candidate->note, source->velocity);
+						}));
 			BouncedSetting setting{0, velocityKept ? source->velocity : 0, newSetting};
 			std::vector<Note> notes;
 			const auto writeAll = [&](bool pitchKept)
@@ -1364,7 +1408,8 @@ namespace gnubase::engine::midi
 			controller.position = start;
 			controllers.insert(controllers.begin(), controller);
 		}
-		// The first new part on the first lane, with the controllers; the others on new lanes below the destination's.
+		// The first new part on the first lane, with the other controllers; the others on new lanes below the
+		// destination's.
 		int lane = 1;
 		for (const auto& [id, other] : project.midiParts)
 			if (other.track == destination)
@@ -1388,8 +1433,9 @@ namespace gnubase::engine::midi
 				note.position -= start;
 				part.notes[note.id] = note;
 			}
-			if (i == 0)
-				for (Controller& controller : controllers)
+			// Every new part gets the articulation events, which playback reads per part and never sends.
+			for (Controller controller : controllers)
+				if (i == 0 || controller.type == ControllerType::Articulation)
 				{
 					controller.id = project.newId();
 					controller.position -= start;

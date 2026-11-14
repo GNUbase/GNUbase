@@ -3144,6 +3144,36 @@ TEST_CASE("merge keeps on a part of its own the transpose and velocity the notes
 		CHECK(velocities(parts[0]) == stored);
 	}
 
+	SECTION("with includeInserts, a velocity range of the track that the part's velocity changes puts it in the notes")
+	{
+		// 64 + 20 passes a filter of 80-127 that 64 alone wouldn't, and plays 70 under a limit of 1-70 where 64 + 20
+		// after it would play 84.
+		const Json range = GENERATE(Json{{"target", "velocityFilter"}, {"minimum", 80}, {"maximum", 127}},
+			Json{{"target", "velocityLimit"}, {"minimum", 1}, {"maximum", 70}});
+		run(client, "midiPart.set", {{"part", fixture.part}, {"velocity", 20}});
+		run(client, "note.set",
+			{{"part", fixture.part}, {"notes", {{{"id", fixture.notes[0]}, {"velocityVariance", -1.0}}}}});
+		setModifiers(client, track, Json{{"range", {range}}});
+		// The notes without variance, pitch 64; the varied one plays as playback draws it.
+		const auto withoutVariance = [&](ObjectId on)
+		{
+			std::vector<std::vector<int64_t>> played;
+			for (const auto& each : playedLoud(fixture.engine, on))
+				if (each[1] == 64)
+					played.push_back(each);
+			return played;
+		};
+		const auto before = withoutVariance(track);
+		REQUIRE(before.size() == 2);
+		const Json merged = run(client, "midi.merge",
+			{{"start", 0}, {"end", g_eightQuarters}, {"tracks", {track}}, {"includeInserts", true}});
+		const ObjectId made = merged.at("tracks").at(0).get<ObjectId>();
+		CHECK(withoutVariance(made) == before);
+		const std::vector<Json> parts = partsOn(client, made);
+		REQUIRE(parts.size() == 1);
+		CHECK(parts[0].at("velocity") == 0);
+	}
+
 	SECTION("a pitch the part's transpose takes beyond 127 and the track's brings back")
 	{
 		// 120 + 12 - 12 plays 120.
