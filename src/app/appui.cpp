@@ -1451,16 +1451,23 @@ namespace gnubase::app
 		{
 			m_docking.attach("transportPanel", *document);
 			// The controls show the project once the engine answered their queries, and their displays grow with
-			// their text: a query sent now is answered after those, so the sections are measured as they show it
-			// (#1474).
+			// their text: a query sent now is answered after those, so the sections are measured again as they show
+			// it, and the bounds kept at once (#1474). Fitted to the controls' defaults until then, so that a panel
+			// closed before the answer doesn't keep the unfitted width in ui.layout.
 			if (!spec.bounds)
+			{
+				fitSections(window, *controls);
 				m_binding.send("engine.version", engine::Json::object(),
 					[this, id = window.id(), fitted = controls->GetObserverPtr()](const engine::Result&)
 					{
 						ui::Window* shownWindow = m_shell.find(id);
 						if (Rml::Element* element = fitted.get(); element != nullptr && shownWindow != nullptr)
+						{
 							fitSections(*shownWindow, *element);
+							m_docking.saveWindows();
+						}
 					});
+			}
 		}
 		else
 		{

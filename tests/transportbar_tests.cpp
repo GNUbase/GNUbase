@@ -275,12 +275,23 @@ namespace
 	// Opens a new transport panel with F2, at a dp ratio, and checks that it has the width of its sections once the
 	// controls show the project: every control inside the window and the window ending a section gap after the last
 	// one, or, where the sections are wider than the primary monitor's usable area, as wide as that area (#1424,
-	// #1474). shown says when the panel shows what the test set up.
-	void checkPanelFits(test::UiApp& app, float dpRatio, const std::function<bool()>& shown = [] { return true; })
+	// #1474). shown says when the panel shows what the test set up; reopen closes the panel right after the fit and
+	// opens it again, with the bounds the fit kept.
+	void checkPanelFits(
+		test::UiApp& app, float dpRatio, const std::function<bool()>& shown = [] { return true; }, bool reopen = false)
 	{
 		INFO("dp ratio " << dpRatio);
 		app.setDpRatio(dpRatio);
 		app.ui().key(std::nullopt, "F2");
+		// The fit runs on the answer to the query sent behind the controls' own.
+		const auto fitRan = [&] { return shown() && app.appUi().binding().waiting("engine.version") == 0; };
+		if (reopen)
+		{
+			REQUIRE(app.waitUntil(fitRan, std::chrono::seconds(2)));
+			app.ui().key(std::nullopt, "F2");
+			REQUIRE(app.appUi().transportPanel() == nullptr);
+			app.ui().key(std::nullopt, "F2");
+		}
 		ui::Window* panel = app.appUi().transportPanel();
 		REQUIRE(panel != nullptr);
 		Rml::Context& context = panel->context();
@@ -313,8 +324,8 @@ namespace
 			const float gap = static_cast<float>(panel->pixelSize().width) - last;
 			return inside ? gap <= (16.0F * dpRatio) + 1.0F : app.shell().bounds(panel->id()).width == usable;
 		};
-		app.waitUntil([&] { return shown() && fitted(); }, std::chrono::seconds(2));
-		CHECK(shown());
+		app.waitUntil([&] { return fitRan() && fitted(); }, std::chrono::seconds(2));
+		CHECK(fitRan());
 		const auto [last, inside] = measure();
 		const auto width = static_cast<float>(panel->pixelSize().width);
 		INFO("last control ends at " << last << " of " << width << " pixels; usable width " << usable);
@@ -347,6 +358,24 @@ TEST_CASE("a new transport panel takes the width of the project it shows", "[ui]
 	app.call("transport.set", {{"left", int64_t{48000} * 3600}, {"right", int64_t{48000} * 7200}});
 	checkPanelFits(
 		app, 0.5F, [&app] { return shows(app, "#left-locator", app.appUi().transportPanel()->id()) == "01:00:00:00"; });
+}
+
+TEST_CASE("a transport panel closed right after its fit comes back as wide", "[ui]")
+{
+	// The fit keeps the bounds at once, not on the docking system's next save: closed and opened again, the panel has
+	// the width of the project it shows, wider than the controls' defaults.
+	test::UiApp app({1024, 700});
+	app.appUi().showProject();
+	app.call("project.set", {{"timeFormat", "timecode"}});
+	app.call("transport.set", {{"left", int64_t{48000} * 3600}, {"right", int64_t{48000} * 7200}});
+	checkPanelFits(
+		app, 0.5F,
+		[&app]
+		{
+			const ui::Window* panel = app.appUi().transportPanel();
+			return panel != nullptr && shows(app, "#left-locator", panel->id()) == "01:00:00:00";
+		},
+		true);
 }
 
 TEST_CASE("the transport bar goes to markers, the project's ends and the selection", "[ui]")
