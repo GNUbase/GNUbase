@@ -291,10 +291,9 @@ namespace gnubase::ui
 		const float tinted = own.tint ? stroked : width;
 		const float inset = eventInset();
 		// Events reaching beyond the frame end just outside it, so their outline there stays out of view, whichever
-		// width it has.
-		const float drawn = std::max(width, tinted);
-		const float first = -(drawn + 1.0F);
-		const float last = static_cast<float>(frame.right - frame.left) + drawn + 1.0F;
+		// width it has: the tinted one is never narrower.
+		const float first = -(tinted + 1.0F);
+		const float last = static_cast<float>(frame.right - frame.left) + tinted + 1.0F;
 		const double from = frame.from();
 		const double to = frame.to();
 		Rml::Mesh mesh;
@@ -357,13 +356,13 @@ namespace gnubase::ui
 			return;
 		const std::optional<Colour> own = m_span.color == 0 ? std::nullopt : ownColors().line(m_span.color);
 		const Colour colour = own ? *own : fill();
-		// event-inset off the lane's edges, inside the padding, as <event-lanes> keeps events: not if the lane is no
-		// higher than twice the inset, where events drop it, or if it would leave the waveform no pixel.
+		// event-inset off the lane's edges, inside the padding, as <event-lanes> keeps events, unless that would leave
+		// the waveform no pixel. That includes the lanes no higher than twice the inset, where events drop it, as the
+		// content box is no higher than the lane.
 		const float inset = eventInset();
-		const float lane = GetBox().GetSize(Rml::BoxArea::Border).y;
 		float area = frame.size.y;
 		float offset = 0.0F;
-		if (lane > 2.0F * inset && frame.size.y - (2.0F * inset) >= 1.0F)
+		if (frame.size.y - (2.0F * inset) >= 1.0F)
 		{
 			offset = inset;
 			area = frame.size.y - (2.0F * inset);

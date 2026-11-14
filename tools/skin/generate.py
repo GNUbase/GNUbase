@@ -40,9 +40,11 @@ THEMES = {
         "flat": True,
         # Events in the event display, tinted in their colors as the mockup shows (#1312): how opaque a body is, the
         # shade laid over an event's color for its outline and waveform and over the accent for the outline of events
-        # without a color, and how opaque the selected events' light is. None in the other themes: opaque events in
-        # their colors, outlined in the stroke color, selected ones painted over, as before.
-        "events": {"fillOpacity": 0.45, "shade": ("#ffffff", .35), "selected": .16},
+        # without a color, how opaque the selected events' light is, and how far events and their waveforms keep off
+        # their lanes' edges (<waveform> takes event-inset, inside the 2dp padding every theme keeps between a waveform
+        # and its event's edges, resources/styles/base.rcss). None in the other themes: opaque events in their colors,
+        # outlined in the stroke color, selected ones painted over, at their lanes' full height, as before.
+        "events": {"fillOpacity": 0.45, "shade": ("#ffffff", .35), "selected": .16, "inset": "2dp"},
     },
     "dark": {
         "displayName": "Dark",
@@ -536,9 +538,7 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
                       "stroke-color": mix(c["accent"], shade, strength),
                       "own-fill-opacity": f"{events['fillOpacity']:g}", "own-color-tint": tint},
             "tint": tint,
-            # Events off their lanes' edges; waveforms too (<waveform> takes event-inset), inside the 2dp padding
-            # every theme keeps between a waveform and its event's edges (resources/styles/base.rcss)
-            "inset": "2dp",
+            "inset": events["inset"],
             "selected": {"color": c["text"] + alpha(events["selected"]), "stroke-color": c["text"]},
         }
 

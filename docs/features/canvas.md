@@ -38,11 +38,12 @@ editor and the automation lanes fill them.
     stays out of view.
   - **Waveforms take the inset themselves** (#1332): a `<waveform>` is as high as its lane, so it keeps `event-inset`
     off the lane's edges inside its padding, which the shared style sheet gives it (`2dp 0`), as `<event-lanes>` keeps
-    events: not in lanes no higher than twice the inset, where events drop it, nor where it would leave the waveform
-    no pixel. The themes set the same inset on events and waveforms, so the waveform stays inside the event's outline
+    events, unless that would leave the waveform no pixel, as in lanes no higher than twice the inset, where events
+    drop it. The themes set the same inset on events and waveforms, so the waveform stays inside the event's outline
     without padding of its own.
   - The element reads these properties once per build, not per event.
-  - Fade and volume lines still span the whole lane, where the event display's handles take the mouse.
+  - Fade and volume lines and fade handles still span the whole lane, where the event display's handles take the
+    mouse; the transpose mark sits on a part's upper outline, and marker events aren't inset (open in #1332).
 - **Pixels.** Positions snap to whole pixels and line widths round to whole pixels, so edges stay sharp at every dp
   ratio. What an element draws is clipped to its content box by scissor, which is screen-aligned: canvas elements
   can't sit inside a transform.
@@ -67,9 +68,10 @@ or not. A canvas element is one element that builds its geometry, and only for w
 ## Benchmark
 
 `gnubase-canvas-bench` (`tests/bench/canvas_bench.cpp`, built with the tests, run by hand as it needs a display and a
-GPU) draws 10,000 events on 100 tracks, every other one in a color of its own (#1332), under a ruler in a 1600 by 1000 window, with vsync and the default theme's event look, as the
-app does. It runs three phases and prints the frames per second against the display's refresh rate and the frames that
-came later than one and a half refreshes; it fails if a phase falls behind the refresh rate:
+GPU) draws 10,000 events on 100 tracks, every other one in a color of its own (#1332), under a ruler in a 1600 by 1000
+window, with vsync and the default theme's event look, as the app does. It runs three phases and prints the frames per
+second against the display's refresh rate and the frames that came later than one and a half refreshes; it fails if a
+phase falls behind the refresh rate:
 
 1. scrolling a view of a tenth of the project and 16 of the tracks, 4 dp a frame across and 2 dp down and up;
 2. scrolling with all 10,000 events in view;
@@ -97,8 +99,8 @@ build/windows-x64/bin/Release/gnubase-canvas-bench
   view are built, scrolling within the build only moves it, and zooming, resizing and new data build again; a waveform
   pixel shows the peaks of the columns it covers; own colors at `own-fill-opacity` and with `own-color-tint`, which
   outlines colored events also without a `stroke-color` and keeps them out of view past the build's edges, and
-  `event-inset` on events and waveforms, also in lanes too low for it; a curve builds only the segments around the view; the ruler's
-  decimal scale and its marks.
+  `event-inset` on events and waveforms, also in lanes too low for it; a curve builds only the segments around the view;
+  the ruler's decimal scale and its marks.
 - `tests/window_tests.cpp` draws all four through SDL_GPU at dp ratios 1 and 2 and checks their pixels: positions,
   outlines, clipping at the box, the waveform's full scale and silence, the curve's ramp, step and level, the ruler's
   ticks and labels, and scrolling.

@@ -554,15 +554,14 @@ TEST_CASE(
 				CHECK(declarations.find("padding") == std::string::npos);
 			}
 		}
-		for (const char* property : {"own-fill-opacity", "own-color-tint", "event-inset"})
+		const std::map<std::string, std::string> defaults{
+			{"own-fill-opacity", "1"}, {"own-color-tint", "none"}, {"event-inset", "0dp"}};
+		for (const auto& [property, value] : defaults)
 		{
 			INFO(property);
 			REQUIRE(!values[property].empty());
 			if (!tinted)
-				CHECK(values[property] ==
-					std::set<std::string>{std::string_view(property) == "own-fill-opacity" ? "1"
-							: std::string_view(property) == "own-color-tint"               ? "none"
-																						   : "0dp"});
+				CHECK(values[property] == std::set<std::string>{value});
 		}
 		if (tinted)
 		{

@@ -166,8 +166,8 @@ namespace gnubase::ui
 
 	// <waveform>: the peaks of one or more channels, one above the other, in color, or in the span's own color with
 	// own-color-tint over it if that isn't none. As high as its lane, it keeps event-inset off the lane's edges inside
-	// its padding, as <event-lanes> keeps events, unless the lane is no higher than twice the inset or that would leave
-	// it no pixel. A pixel shows the columns it covers; columns wider than a pixel are repeated.
+	// its padding, as <event-lanes> keeps events, unless that would leave it no pixel (as in lanes no higher than twice
+	// the inset, where events drop it). A pixel shows the columns it covers; columns wider than a pixel are repeated.
 	class Waveform final : public Canvas
 	{
 	public:

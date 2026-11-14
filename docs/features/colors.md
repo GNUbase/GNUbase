@@ -36,7 +36,8 @@ its track's.
   color, or else its track's, and with the style sheet's `color` when neither has one (`TimeSpan::color`,
   [canvas.md](canvas.md)); folder data blocks and the overview line show the same colors. Muted and selected events
   are drawn over them by the style sheets as before. Audio events' waveforms are in the same color where the theme
-  tints own colors. The default theme shows events tinted: a translucent body in the color, the outline and the
+  tints own colors; the waveforms in an audio part are in the part's color, its own or else its track's, never in
+  their events' colors. The default theme shows events tinted: a translucent body in the color, the outline and the
   waveform in a lighter shade of it, and selected events lit over it (#1312); the other themes fill events opaque.
   The tint outlines colored events also where the theme gives uncolored ones no outline, and waveforms keep the
   events' inset off their lanes' edges themselves (#1332, [canvas.md](canvas.md)).
@@ -72,6 +73,10 @@ color (p. 1621, with the mixer, #106, and the inspector, #89), and the MIDI edit
 - `tests/canvas_tests.cpp`: an event with a color of its own is filled with it, outlined by `stroke-color`, or by
   the tinted color in `stroke-width` with `own-color-tint`, also without a `stroke-color`; a waveform in the tinted
   color, `event-inset` inside its padding.
+  In the default theme selected events are lit over their tint, in their events' boxes.
+- `tests/eventdisplay_tests.cpp`: audio events' waveforms are in their events' colors, or else their tracks'; an audio
+  part's waveforms are in the part's color, its own or else its track's; with a track's lanes shown, an event's
+  waveforms on the track and on its lane are in its color.
 - `tests/theme_tests.cpp`: only the default theme tints own colors and insets events; the other themes leave events
   as they were.
 - `tests/uiapp_tests.cpp`: the golden image `event-colors.png` shows a colored audio event with its waveform and
