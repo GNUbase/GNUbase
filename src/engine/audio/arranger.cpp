@@ -33,31 +33,116 @@ namespace gnubase::engine
 			return validSection(plan, section) && sectionOf(plan, section).start <= position &&
 				position < sectionOf(plan, section).end;
 		}
-	}
 
-	ArrangerState arrangerEnter(const ArrangerPlan& plan, const ArrangerState& state, time::Samples position) noexcept
-	{
-		ArrangerState result; // a step or event that waits still does
-		result.pendingStep = state.pendingStep;
-		result.pendingRepeat = state.pendingRepeat;
-		result.pendingSection = state.pendingSection;
-		if (!plan.plays())
-			return result;
-		if (validStep(plan, state.step) && holds(plan, stepOf(plan, state.step).section, position))
+		uint64_t stepEvent(const ArrangerPlan& plan, int32_t step)
 		{
-			result.step = state.step;
-			result.repeat = state.repeat;
+			return validStep(plan, step) ? sectionOf(plan, stepOf(plan, step).section).event : uint64_t{0};
+		}
+
+		// How many of the steps before step play the same event: its rank among that event's steps.
+		int32_t rankOf(const ArrangerPlan& plan, int32_t step)
+		{
+			const uint64_t event = stepEvent(plan, step);
+			int32_t rank = 0;
+			for (int32_t s = 0; s < step; ++s)
+				if (stepEvent(plan, s) == event)
+					++rank;
+			return rank;
+		}
+
+		// The step of plan that is the rank-th one playing event, or -1 if it has fewer of them.
+		int32_t nthStepOf(const ArrangerPlan& plan, uint64_t event, int32_t rank)
+		{
+			for (size_t s = 0; s < plan.steps.size(); ++s)
+			{
+				if (stepEvent(plan, static_cast<int32_t>(s)) != event)
+					continue;
+				if (rank == 0)
+					return static_cast<int32_t>(s);
+				--rank;
+			}
+			return -1;
+		}
+
+		int32_t sectionOfEvent(const ArrangerPlan& plan, uint64_t event)
+		{
+			for (size_t s = 0; s < plan.sections.size(); ++s)
+				if (plan.sections[s].event == event)
+					return static_cast<int32_t>(s);
+			return -1;
+		}
+
+		// The state's indices found again in plan by the events they play in previous (#885): a step that is still
+		// there keeps its repeat, clamped to the ones it has now, and one that is gone leaves the position to decide;
+		// a step or event that waits and is gone is dropped, instead of taking over as whatever its old index names.
+		ArrangerState remapped(
+			const ArrangerPlan& previous, const ArrangerPlan& plan, const ArrangerState& state) noexcept
+		{
+			ArrangerState result = state;
+			if (validStep(previous, state.step))
+			{
+				const int32_t step = nthStepOf(plan, stepEvent(previous, state.step), rankOf(previous, state.step));
+				result.step = step;
+				result.section = -1;
+				result.repeat = step >= 0 ? std::min(state.repeat, stepOf(plan, step).repeats - 1) : 0;
+			}
+			else if (state.step < 0 && validSection(previous, state.section))
+				result.section = sectionOfEvent(plan, sectionOf(previous, state.section).event);
+			else
+			{
+				result.step = -1;
+				result.section = -1;
+				result.repeat = 0;
+			}
+			if (validStep(previous, state.pendingStep))
+			{
+				const int32_t step =
+					nthStepOf(plan, stepEvent(previous, state.pendingStep), rankOf(previous, state.pendingStep));
+				result.pendingStep = step;
+				result.pendingRepeat = step >= 0 ? std::min(state.pendingRepeat, stepOf(plan, step).repeats - 1) : 0;
+				result.pendingSection = -1;
+			}
+			else if (state.pendingStep < 0 && validSection(previous, state.pendingSection))
+				result.pendingSection = sectionOfEvent(plan, sectionOf(previous, state.pendingSection).event);
+			else
+			{
+				result.pendingStep = -1;
+				result.pendingRepeat = 0;
+				result.pendingSection = -1;
+			}
 			return result;
 		}
-		if (state.step < 0 && holds(plan, state.section, position))
+	}
+
+	ArrangerState arrangerEnter(const ArrangerPlan& plan, const ArrangerPlan* previous, const ArrangerState& state,
+		time::Samples position) noexcept
+	{
+		// Indices into another plan are found again by their event first; a step or event that waits still does.
+		const ArrangerState mapped =
+			previous != nullptr && previous != &plan ? remapped(*previous, plan, state) : state;
+		ArrangerState result;
+		result.pendingStep = mapped.pendingStep;
+		result.pendingRepeat = mapped.pendingRepeat;
+		result.pendingSection = mapped.pendingSection;
+		if (!plan.plays())
+			return result;
+		if (validStep(plan, mapped.step) && holds(plan, stepOf(plan, mapped.step).section, position))
 		{
-			result.section = state.section;
+			result.step = mapped.step;
+			result.repeat = mapped.repeat;
+			return result;
+		}
+		if (mapped.step < 0 && holds(plan, mapped.section, position))
+		{
+			result.section = mapped.section;
 			return result;
 		}
 		for (size_t s = 0; s < plan.steps.size(); ++s)
 			if (holds(plan, plan.steps[s].section, position))
 			{
 				result.step = static_cast<int32_t>(s);
+				// A step of the event playing keeps the repeat it had, as far as this step allows (#885).
+				result.repeat = mapped.step >= 0 ? std::min(mapped.repeat, plan.steps[s].repeats - 1) : 0;
 				return result;
 			}
 		return result;

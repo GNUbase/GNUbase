@@ -120,8 +120,12 @@ namespace gnubase::engine
 	};
 
 	// Where playback that starts or is located at a position is in the plan: in the step it is in if that holds the
-	// position, else in the first step whose event holds it, else outside the chain. Real-time safe.
-	ArrangerState arrangerEnter(const ArrangerPlan& plan, const ArrangerState& state, time::Samples position) noexcept;
+	// position, else in the first step whose event holds it, else outside the chain. previous is the plan the state's
+	// indices walk (the plan the transport played last), or null: with it, the step playing and a step or event that
+	// waits are found again in plan by the event they play, so a chain edit doesn't hand them to another step, and a
+	// step found again keeps its repeat (#885). Real-time safe.
+	ArrangerState arrangerEnter(const ArrangerPlan& plan, const ArrangerPlan* previous, const ArrangerState& state,
+		time::Samples position) noexcept;
 
 	// The next turn after position (at at or after it) for playback in state. Real-time safe.
 	ArrangerTurn arrangerNext(const ArrangerPlan& plan, const ArrangerState& state, time::Samples position) noexcept;

@@ -255,9 +255,13 @@ namespace gnubase::engine
 		cue.playing = playing;
 		cue.settings = m_transport.settings();
 		cue.window = window;
-		const std::shared_ptr<const ArrangerPlan> plan = m_snapshots.latest().arranger;
-		cue.arranger = plan.get();
-		cue.arrangerState = m_transport.arranger();
+		keepPlans(m_snapshots.latest().arranger);
+		{
+			const std::scoped_lock lock(m_cueMutex);
+			const auto [plan, state] = cuePlan(); // a consistent pair: the state and the plan its indices walk (#885)
+			cue.arranger = plan;
+			cue.arrangerState = state;
+		}
 		cue.enter = enter;
 		cue.playsOn = playsOn;
 		m_playback.cue(cue);
@@ -287,8 +291,11 @@ namespace gnubase::engine
 						const std::scoped_lock lock(m_cueMutex);
 						cue.playing = m_cueState.playing;
 						cue.settings = m_cueState.settings;
-						cue.arranger = m_cueState.arranger.get();
-						cue.arrangerState = m_transport.arranger();
+						// The plan the transport's published state walks, not the newest one: a chain edit the audio
+						// thread hasn't played yet must not make this cue walk the new plan with old indices (#885).
+						const auto [plan, state] = cuePlan();
+						cue.arranger = plan;
+						cue.arrangerState = state;
 						// Read first: a request seen applied then shows where the audio thread went (transport.h). The
 						// count-in comes before the cursor because it ends after the cursor has moved.
 						const uint64_t applied = m_transport.appliedRequests();
@@ -325,6 +332,50 @@ namespace gnubase::engine
 		m_cueState.enter = enter;
 		m_cueState.startRequests = m_transport.sentRequests() + 1;
 		m_cueState.playing = true; // until sent() reads the transport, also when the start is applied before it
+	}
+
+	void AudioEngine::keepPlans(const std::shared_ptr<const ArrangerPlan>& newest)
+	{
+		// Command thread only. Arranges that the audio thread hasn't applied yet keep their plan.
+		const uint64_t applied = m_transport.appliedRequests();
+		m_arrangedPlans.erase(std::remove_if(m_arrangedPlans.begin(), m_arrangedPlans.end(),
+								  [applied](const std::pair<std::shared_ptr<const ArrangerPlan>, uint64_t>& sent)
+								  { return sent.second <= applied; }),
+			m_arrangedPlans.end());
+		const std::scoped_lock lock(m_cueMutex);
+		const ArrangerPlan* played = m_transport.arrangerAndPlan().second;
+		const auto onItsWay = [this](const std::shared_ptr<const ArrangerPlan>& plan)
+		{
+			return std::any_of(m_arrangedPlans.begin(), m_arrangedPlans.end(),
+				[&plan](const std::pair<std::shared_ptr<const ArrangerPlan>, uint64_t>& sent)
+				{ return sent.first == plan; });
+		};
+		std::vector<std::shared_ptr<const ArrangerPlan>>& plans = m_cueState.plans;
+		plans.erase(std::remove_if(plans.begin(), plans.end(), [&](const std::shared_ptr<const ArrangerPlan>& plan)
+						{ return plan.get() != played && plan != newest && !onItsWay(plan); }),
+			plans.end());
+		const auto missing = [&plans](const std::shared_ptr<const ArrangerPlan>& plan)
+		{ return std::find(plans.begin(), plans.end(), plan) == plans.end(); };
+		if (missing(newest))
+			plans.push_back(newest);
+		for (const auto& sent : m_arrangedPlans)
+			if (missing(sent.first))
+				plans.push_back(sent.first);
+		m_cueState.arranger = newest;
+	}
+
+	std::pair<const ArrangerPlan*, ArrangerState> AudioEngine::cuePlan() const
+	{
+		const auto [state, plan] = m_transport.arrangerAndPlan();
+		const bool kept = plan != nullptr &&
+			std::any_of(m_cueState.plans.begin(), m_cueState.plans.end(),
+				[plan](const std::shared_ptr<const ArrangerPlan>& keptPlan) { return keptPlan.get() == plan; });
+		if (kept)
+			return {plan, state};
+		// The plan the state walks isn't kept (anymore): walk the newest one, entered again where this cues.
+		ArrangerState entered = state;
+		entered.entering = true;
+		return {m_cueState.arranger.get(), entered};
 	}
 
 	void AudioEngine::startDevice()
@@ -555,10 +606,7 @@ namespace gnubase::engine
 		auto program = std::make_unique<Program>(desc, format.sampleRate, format.blockSize);
 		program->tempo = snapshot.tempo;
 		program->arranger = snapshot.arranger;
-		{
-			const std::scoped_lock lock(m_cueMutex);
-			m_cueState.arranger = snapshot.arranger;
-		}
+		keepPlans(snapshot.arranger); // the cue thread walks the plan the transport's state means, not just the new one
 		program->sampleRate = snapshot.sampleRate;
 		program->generation = generation;
 		program->releases = releases();
@@ -2785,16 +2833,20 @@ namespace gnubase::engine
 
 	void AudioEngine::arrange(const ArrangerState& state)
 	{
-		const ArrangerPlan& plan = *m_snapshots.latest().arranger;
+		// The plan the state's indices walk travels with the request, so a later plan change finds them again by
+		// their events, and the cue thread knows which plan the published state means (#885).
+		const std::shared_ptr<const ArrangerPlan> plan = m_snapshots.latest().arranger;
 		const int32_t section =
-			state.step >= 0 ? plan.steps.at(static_cast<size_t>(state.step)).section : state.section;
-		if (m_transport.playing() && plan.jump != ArrangerJump::None)
+			state.step >= 0 ? plan->steps.at(static_cast<size_t>(state.step)).section : state.section;
+		if (m_transport.playing() && plan->jump != ArrangerJump::None)
 		{
-			sent(m_transport.arrange(state, true));
+			sent(m_transport.arrange(state, true, plan.get()));
+			m_arrangedPlans.emplace_back(plan, m_transport.sentRequests());
 			return;
 		}
-		locate({{"position", plan.sections.at(static_cast<size_t>(section)).start}});
-		sent(m_transport.arrange(state, false));
+		locate({{"position", plan->sections.at(static_cast<size_t>(section)).start}});
+		sent(m_transport.arrange(state, false, plan.get()));
+		m_arrangedPlans.emplace_back(plan, m_transport.sentRequests());
 	}
 
 	void AudioEngine::registerArrangerCommands(Engine& engine)

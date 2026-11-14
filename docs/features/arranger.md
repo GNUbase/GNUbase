@@ -35,23 +35,31 @@ reference manual pp. 164, 404-413).
   playback goes on from there. `arrangerEnter` decides where playback that starts or is located is in the chain: in the
   step playing if its event holds the position, else in the first step whose event holds it, else outside the chain,
   where it plays linearly. Playback enters at its start without the pre-roll, so a chain edit during the pre-roll keeps
-  the chain playing. `transport.play` starts where the transport would (the cursor, or the left locator with the start
-  mode cycleStart), and a start outside every step's event gives way to the chain: playback starts at its first step.
-  A triggered event that loops where playback starts is kept. While playing, `transport.play` ends a Repeat Forever
-  loop, going on with the next step or past the chain if the looping step is the last one (p. 407).
+  the chain playing. A new plan finds the step playing again by the event it plays, not by an index that a chain edit
+  moved: the step keeps its repeat as far as the step found allows, a chain that plays one event in two steps goes on
+  at the one playing, and a step that is gone leaves the position to decide. `transport.play` starts where the
+  transport would (the cursor, or the left locator with the start mode cycleStart), and a start outside every step's
+  event gives way to the chain: playback starts at its first step. A triggered event that loops where playback starts
+  is kept. While playing, `transport.play` ends a Repeat Forever loop, going on with the next step or past the chain
+  if the looping step is the last one (p. 407).
 - **Jump mode** (pp. 411-412): `arranger.goToStep` (the chain list, Previous and Next Chain Step, First and Last Repeat)
   and `arranger.trigger` (an event from the events list, which then loops until another one is chosen) take over at
   once while stopped or with the jump mode `none`, through a locate. While playing with another jump mode the
   transport keeps them waiting until the next jump point of the event playing: every 4 or 2 bars from its start (the
   first bar line at or after it), the next bar line, the next beat, or its end; at its end at the latest. Outside an
-  event they take over at once.
+  event they take over at once. A step or event that waits survives a chain edit: the new plan finds it again by the
+  event it plays, and drops it only when the chain lost that step.
 - `transport.get` and `transport.changed` have `arranger`: the step and repeat playing and the arranger event playing,
   the step -1 and the event 0 both outside the chain and while the plan doesn't play (arranger mode off or an empty
-  chain). The transport publishes its arranger state after every block (a sequence lock), and a new step or repeat
-  makes the engine announce `transport.changed`.
+  chain). The transport publishes its arranger state after every block, in one sequence lock with the plan its step
+  and section indices walk, and a new step or repeat makes the engine announce `transport.changed`.
 - **Cueing**: `Playback::points` and `Playback::ahead` walk the same path as the transport, through cycle jumps or
   arranger turns (`arrangerNext`), so the voices wait where each jump lands and real-time playback renders the same as
-  offline. Sections need to be longer than a few cue intervals (5 ms each) for that; every musical section is.
+  offline. Sections need to be longer than a few cue intervals (5 ms each) for that; every musical section is. A cue
+  walks the plan the transport's published state walks, not the newest one, so a chain edit the audio thread hasn't
+  played yet doesn't cue with the old plan's indices; the command thread keeps the plans this pairs with alive (the
+  newest one, the published one and those an arrange on its way names) and frees what leaves that set, never on the
+  audio thread.
 
 ## Flatten
 
@@ -79,13 +87,15 @@ Range copies keep the order in which audio events stack, so overlapping events p
 `tests/arranger_tests.cpp`: the transport along a plan for block sizes 1 to 1024 (steps, repeats, chain end, pause after
 repeats, repeat forever with a step that waits for the next beat, a triggered event that loops, arranger mode against
 the cycle, chain edits during the pre-roll and while the chain plays back into the project, a stop and a cycle jump
-ending the pre-roll); the commands with undo, settings and the arranger track's removal; saving and loading, with a
-file's repeats capped to 1 to 999; the chain playback render, sample by sample against the audio of each section, for
-two block sizes; real time against offline; choosing steps and triggering events while stopped and playing;
-`transport.play` ending a repeat forever loop, keeping a triggered event and starting from the left locator with the
-start mode cycleStart, and `transport.get` reporting no step while the plan doesn't play; flattening, played back
-linearly against the chain's audio, with undo. `tests/lua/ui/arranger.lua` opens the arranger editor and drives it, with
-its step buttons disabled outside arranger mode and a locate arrow on every row.
+ending the pre-roll, a new plan finding the step playing and a step waiting again by their events, and the plan the
+transport publishes with its state); the commands with undo, settings and the arranger track's removal; saving and
+loading, with a file's repeats capped to 1 to 999; the chain playback render, sample by sample against the audio of
+each section, for two block sizes; real time against offline; choosing steps and triggering events while stopped and
+playing, also across a chain edit that moves the chosen step; `transport.play` ending a repeat forever loop, keeping a
+triggered event and starting from the left locator with the start mode cycleStart, and `transport.get` reporting no
+step while the plan doesn't play; flattening, played back linearly against the chain's audio, with undo.
+`tests/lua/ui/arranger.lua` opens the arranger editor and drives it, with its step buttons disabled outside arranger
+mode and a locate arrow on every row.
 
 Not yet: arranger events on the arranger track's lane in the event display and drawing them with the draw tool,
 the track list's arranger controls and the inspector's arranger section, renaming chains in the editor, drag and drop

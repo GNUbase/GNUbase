@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cstdint>
 #include <thread>
+#include <tuple>
 #include <utility>
 
 namespace gnubase::rt
@@ -47,5 +48,48 @@ namespace gnubase::rt
 		std::atomic<uint64_t> m_sequence{0}; // odd while a store is under way
 		std::atomic<A> m_a{};
 		std::atomic<B> m_b{};
+	};
+
+	// Three values that one writer thread stores together and any number of reader threads load together, with the
+	// same sequence lock as SeqLockPair.
+	template <typename A, typename B, typename C> class SeqLockTriple
+	{
+	public:
+		static_assert(std::atomic<A>::is_always_lock_free && std::atomic<B>::is_always_lock_free &&
+			std::atomic<C>::is_always_lock_free);
+
+		// The writer thread.
+		void store(A a, B b, C c) noexcept
+		{
+			const uint64_t sequence = m_sequence.load(std::memory_order_relaxed);
+			m_sequence.store(sequence + 1, std::memory_order_relaxed);
+			std::atomic_thread_fence(std::memory_order_release);
+			m_a.store(a, std::memory_order_relaxed);
+			m_b.store(b, std::memory_order_relaxed);
+			m_c.store(c, std::memory_order_relaxed);
+			m_sequence.store(sequence + 2, std::memory_order_release);
+		}
+
+		// Any thread but an audio thread.
+		std::tuple<A, B, C> load() const noexcept
+		{
+			for (;;)
+			{
+				const uint64_t before = m_sequence.load(std::memory_order_acquire);
+				const A a = m_a.load(std::memory_order_relaxed);
+				const B b = m_b.load(std::memory_order_relaxed);
+				const C c = m_c.load(std::memory_order_relaxed);
+				std::atomic_thread_fence(std::memory_order_acquire);
+				if ((before & 1U) == 0 && m_sequence.load(std::memory_order_relaxed) == before)
+					return {a, b, c};
+				std::this_thread::yield();
+			}
+		}
+
+	private:
+		std::atomic<uint64_t> m_sequence{0}; // odd while a store is under way
+		std::atomic<A> m_a{};
+		std::atomic<B> m_b{};
+		std::atomic<C> m_c{};
 	};
 }

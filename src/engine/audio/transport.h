@@ -123,10 +123,14 @@ namespace gnubase::engine
 		bool locate(time::Samples position);         // also the new start position for returnToStart
 		bool set(const TransportSettings& settings); // new locators and modes
 		// Arranger playback: makes state the one playing (after a locate to where it plays), or with pending lets its
-		// step or event take over at the next jump point.
-		bool arrange(const ArrangerState& state, bool pending);
+		// step or event take over at the next jump point. plan is the plan the state's indices walk, so a later plan
+		// change finds them again by their events and readers of arrangerAndPlan() know what the state means (#885).
+		bool arrange(const ArrangerState& state, bool pending, const ArrangerPlan* plan = nullptr);
 		// Any thread but the audio thread: where arranger playback is, as of the last block or request.
 		ArrangerState arranger() const;
+		// The same, with the plan that state's step and section indices walk, published together with it: the pair a
+		// cue needs to stay consistent while a new plan waits for the audio thread (#885). Null before the first plan.
+		std::pair<ArrangerState, const ArrangerPlan*> arrangerAndPlan() const;
 
 		// Command thread: the settings as requested and whether playback was requested.
 		const TransportSettings& settings() const { return m_requested; }
@@ -186,12 +190,13 @@ namespace gnubase::engine
 			};
 
 			Type type = Type::Play;
-			time::Samples position = 0;
+			time::Samples position = 0; // Play: where to start, -1 for the settings' start; Locate: where to go
 			TransportSettings settings;
-			uint64_t locate = 0;      // Locate: which one, counted from 1
-			bool record = false;      // Record: punch in, or out
-			graph::CountIn countIn{}; // Record from stop
-			ArrangerState arranger{}; // Arrange; record: pending
+			uint64_t locate = 0;                        // Locate: which one, counted from 1
+			bool record = false;                        // Record: punch in, or out
+			graph::CountIn countIn{};                   // Record from stop
+			ArrangerState arranger{};                   // Arrange; record: pending
+			const ArrangerPlan* arrangerPlan = nullptr; // Arrange: the plan the state's indices walk
 		};
 
 		bool send(const Request& request);
@@ -229,8 +234,10 @@ namespace gnubase::engine
 		std::vector<graph::TransportSegment> m_segments;
 		graph::TransportBlock m_block;
 		ArrangerState m_arranger;
-		const ArrangerPlan* m_plan = nullptr; // the plan advance last played, only compared
+		const ArrangerPlan* m_plan = nullptr;      // the plan advance last played, only compared
+		const ArrangerPlan* m_statePlan = nullptr; // the plan m_arranger's step and section indices walk (#885)
 		ArrangerState m_publishedArranger;
+		const ArrangerPlan* m_publishedPlan = nullptr; // published with m_publishedArranger, as one triple
 
 		// Written by the command thread: how many locates were sent and where the last one goes.
 		rt::SeqLockPair<uint64_t, time::Samples> m_sent;
@@ -243,8 +250,9 @@ namespace gnubase::engine
 		std::atomic<time::Samples> m_countInStart{-1};
 		std::atomic<uint8_t> m_state{0};
 		std::atomic<uint64_t> m_changes{0};
-		// Written by the audio thread: m_arranger, packed (arranger()).
-		rt::SeqLockPair<int64_t, int64_t> m_arrangerShared;
+		// Written by the audio thread: m_arranger packed, with the plan its step and section indices walk, so a
+		// reader never pairs the state with another plan (arrangerAndPlan()).
+		rt::SeqLockTriple<int64_t, int64_t, int64_t> m_arrangerShared;
 	};
 
 	// Where the transport played each of the device's last frames, so recorded input finds where it belongs: with

@@ -10,6 +10,17 @@ namespace gnubase::engine
 	namespace
 	{
 		constexpr size_t g_maxRequests = 256;
+
+		// The plan pointer as the seqlock's third word, and back (#885).
+		int64_t planValue(const ArrangerPlan* plan)
+		{
+			return static_cast<int64_t>(reinterpret_cast<uintptr_t>(plan));
+		}
+
+		const ArrangerPlan* planAt(int64_t value)
+		{
+			return reinterpret_cast<const ArrangerPlan*>(static_cast<uintptr_t>(value));
+		}
 	}
 
 	// A block has at most one segment per frame: a jump at every frame, with a one-sample cycle.
@@ -162,18 +173,26 @@ namespace gnubase::engine
 		return true;
 	}
 
-	bool Transport::arrange(const ArrangerState& state, bool pending)
+	bool Transport::arrange(const ArrangerState& state, bool pending, const ArrangerPlan* plan)
 	{
 		Request request{Request::Type::Arrange, 0, {}, 0};
 		request.arranger = state;
 		request.record = pending;
+		request.arrangerPlan = plan;
 		return send(request);
 	}
 
 	ArrangerState Transport::arranger() const
 	{
-		const auto [a, b] = m_arrangerShared.load();
+		const auto [a, b, plan] = m_arrangerShared.load();
+		static_cast<void>(plan);
 		return unpackArranger(a, b);
+	}
+
+	std::pair<ArrangerState, const ArrangerPlan*> Transport::arrangerAndPlan() const
+	{
+		const auto [a, b, plan] = m_arrangerShared.load();
+		return {unpackArranger(a, b), planAt(plan)};
 	}
 
 	void Transport::locateTo(time::Samples position) noexcept
@@ -256,6 +275,8 @@ namespace gnubase::engine
 			{
 				m_arranger = request.arranger;
 				m_arranger.entering = false;
+				if (request.arrangerPlan != nullptr)
+					m_statePlan = request.arrangerPlan; // the state's indices walk that plan
 			}
 			return;
 		case Request::Type::Record:
@@ -311,13 +332,14 @@ namespace gnubase::engine
 			recording = recordStart(m_settings, start, countInStart) == countInStart;
 		}
 		m_countInStart.store(countInStart, std::memory_order_release);
-		if (m_arranger != m_publishedArranger)
+		if (m_arranger != m_publishedArranger || m_statePlan != m_publishedPlan)
 		{
 			// Only where playback is counts as a change, not whether it still has to find that out.
 			changed = changed || !samePlace(m_arranger, m_publishedArranger);
 			m_publishedArranger = m_arranger;
+			m_publishedPlan = m_statePlan;
 			const auto [a, b] = pack(m_arranger);
-			m_arrangerShared.store(a, b);
+			m_arrangerShared.store(a, b, planValue(m_statePlan));
 		}
 		const auto state = static_cast<uint8_t>(
 			(m_playing || m_countingIn ? 1U : 0U) | (recording ? 2U : 0U) | (m_countingIn ? 4U : 0U));
@@ -354,13 +376,15 @@ namespace gnubase::engine
 		if (!arranged)
 			m_arranger.entering = false; // linear playback is where it is: arranger mode switched on enters there
 		else if (m_arranger.entering)
-			m_arranger = arrangerEnter(*plan, m_arranger, m_start);
+			m_arranger = arrangerEnter(*plan, m_statePlan, m_arranger, m_start);
 		else if (plan != m_plan)
-			// A new plan finds the step playing again. During the pre-roll the position is before the start, where no
-			// step's event holds it yet, so enter at the start without the pre-roll to keep the chain playing (#885).
-			// After it, playback is at the position, even where the chain has played back before the start.
-			m_arranger = arrangerEnter(*plan, m_arranger, m_inPreRoll ? m_start : m_position);
+			// A new plan finds the step playing again, by the event its indices walk in the plan they come from.
+			// During the pre-roll the position is before the start, where no step's event holds it yet, so enter at
+			// the start without the pre-roll to keep the chain playing (#885). After it, playback is at the position,
+			// even where the chain has played back before the start.
+			m_arranger = arrangerEnter(*plan, m_statePlan, m_arranger, m_inPreRoll ? m_start : m_position);
 		m_plan = plan;
+		m_statePlan = plan; // every state this block computes walks it
 		GNUBASE_ASSERT(frames <= m_segments.size());
 		frames = std::min(frames, static_cast<uint32_t>(m_segments.size()));
 		if (m_playing && m_stopAt >= 0 && m_position >= m_stopAt)
