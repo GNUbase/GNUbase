@@ -2,6 +2,7 @@
 #include "engine/document/projectrules.h"
 
 #include "engine/document/projectmodel.h"
+#include "engine/document/trackvisibility.h"
 #include "engine/engine.h"
 #include "engine/rulepresets.h"
 #include "engine/settings/store.h"
@@ -365,6 +366,7 @@ namespace gnubase::engine
 				return std::any_of(
 					map.begin(), map.end(), [track](const auto& entry) { return entry.second.track == track; });
 			};
+			const std::vector<ObjectId> hidden = hiddenTracks(project);
 			const auto addTrack = [&](const auto& self, ObjectId id) -> void
 			{
 				const Track& track = project.trackById.at(id);
@@ -398,8 +400,7 @@ namespace gnubase::engine
 				}
 				if (empty)
 					p.insert("isEmpty");
-				const auto& hidden = project.trackVisibility.hidden;
-				if (std::find(hidden.begin(), hidden.end(), id) != hidden.end())
+				if (std::binary_search(hidden.begin(), hidden.end(), id))
 					p.insert("isHidden");
 				if (!track.versions.empty())
 					p.insert("hasTrackVersion");
