@@ -207,6 +207,17 @@ namespace gnubase::engine
 	// An audio channel has this many sends (reference manual p. 542).
 	inline constexpr size_t g_maxSends = 8;
 
+	// A pad of a drum track's drum machine (#182): its name, or empty for the General MIDI sound's of its note, and
+	// the pool clip it plays, or 0.
+	struct DrumPad
+	{
+		std::string name;
+		ObjectId sample = 0;
+
+		bool operator==(const DrumPad& other) const { return name == other.name && sample == other.sample; }
+		bool operator!=(const DrumPad& other) const { return !(*this == other); }
+	};
+
 	// The mixer channel of a track. MIDI tracks have a MIDI channel: no audio channels, and their output is an
 	// instrument track's channel.
 	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
@@ -261,6 +272,10 @@ namespace gnubase::engine
 		// Sampler tracks, instrument tracks that play the built-in sampler (#180): the pool clip whose media file the
 		// sampler plays, or 0 for none (docs/features/sampler-track.md).
 		ObjectId sample = 0;
+		// Drum tracks, instrument tracks that play the built-in drum machine (#182): the pads with a name or a
+		// sample, by pad, which is the MIDI note that plays it (docs/features/drum-track.md).
+		// NOLINTNEXTLINE(readability-redundant-member-init): see instrumentParameters
+		std::map<int, DrumPad> pads = {};
 		// Audio, MIDI and instrument tracks: the monitor and record enable buttons
 		// (docs/features/latency-and-monitoring.md, docs/features/midi-recording.md).
 		bool monitor = false;
@@ -650,6 +665,11 @@ namespace gnubase::engine
 	// it, becomes a point at 0, and the later points move back by from.
 	std::vector<ExpressionPoint> expressionsFrom(const std::vector<ExpressionPoint>& points, time::Ticks from);
 
+	// Cuts a note at ticks from its start, inside it: the note keeps what comes before the cut, its expression points
+	// too, and the rest, which this returns without an id, starts at the cut with the expression from there on
+	// (expressionsFrom). Both lose their quantize origin.
+	Note splitNote(Note& note, time::Ticks at);
+
 	// The MIDI events besides notes, all held as controller events.
 	enum class ControllerType : uint8_t
 	{
@@ -799,12 +819,23 @@ namespace gnubase::engine
 					visit(event);
 	}
 
-	// Calls visit with the pool clip of every sampler track (#180): their clips are in use too. Project may be const.
+	// Calls visit with the pool clips a channel's instrument plays: a sampler's (#180), a drum machine's pads' (#182).
+	// Channel may be const.
+	template <typename C, typename Visit> void forEveryInstrumentClip(C& channel, Visit visit)
+	{
+		if (channel.sample != 0)
+			visit(channel.sample);
+		for (auto& entry : channel.pads)
+			if (entry.second.sample != 0)
+				visit(entry.second.sample);
+	}
+
+	// Calls visit with the pool clip of every sampler track (#180) and drum track pad (#182): their clips are in use
+	// too. Project may be const.
 	template <typename P, typename Visit> void forEverySamplerClip(P& project, Visit visit)
 	{
 		for (auto& entry : project.channels)
-			if (entry.second.sample != 0)
-				visit(entry.second.sample);
+			forEveryInstrumentClip(entry.second, visit);
 	}
 
 	// Whether tracks of a type can be disabled (reference manual p. 219): audio, instrument and MIDI tracks.
@@ -1562,6 +1593,11 @@ namespace gnubase::engine
 	// pan, eq, strip, sends, or one of its buttons (mute, solo, soloDefeat, listen, monitor, recordEnable).
 	std::vector<ObjectId> linkedTo(const Project& project, ObjectId channel, const std::string& key, bool linked);
 
+	// Moves the fader (key volume) or the pan (key pan) of a channel linked to one whose own moved by moved, as
+	// channel.set and parameter.set both pass it on (docs/features/link-groups.md): by as much, stopping at its ends,
+	// on a channel that has it. A channel with audio has both, a VCA fader's channel only the fader.
+	void followLinkedMove(const Project& project, Channel& to, const std::string& key, double moved);
+
 	// Gives a part's notes and controllers new ids.
 	void renumber(Project& project, MidiPart& part);
 
@@ -1595,11 +1631,11 @@ namespace gnubase::engine
 	// Independent part and unless both have a root key. project.get gives it as each part's rootKeyTranspose.
 	int rootKeyTranspose(const Project& project, const MidiPart& part);
 
-	// The semitones that global transposition adds to a part's notes at a position (project samples): nothing for an
-	// Independent part; otherwise the step from the part's root key to the project root key, the nearer way (-5 to
-	// 6; nothing unless both have one), plus the value of the transpose event playing there unless the transpose track
-	// is muted, kept within 7 semitones either way with Keep Transpose in Octave Range. The part's own transpose adds
-	// to that.
+	// The semitones a part's notes play transposed by at a position (project samples): an Independent part's own
+	// transpose as it is; a part that follows global transposition plays its own transpose plus the step from its
+	// root key to the project root key, the nearer way (-5 to 6; nothing unless both have one), plus the value of
+	// the transpose event playing there unless the transpose track is muted — with Keep Transpose in Octave Range
+	// the whole sum kept within 7 semitones either way, 8 up playing 4 down (#896, reference manual pp. 419-421).
 	int globalTranspose(const Project& project, const MidiPart& part, time::Samples at);
 
 	// Whether folder is the pool's Audio folder (0) or a pool folder whose parents lead there without passing
@@ -1644,11 +1680,11 @@ namespace gnubase::engine
 		return std::tie(a.id, a.track, a.format, a.input, a.output, a.instrument, a.volume, a.pan, a.panner, a.panLeft,
 				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.program, a.bank, a.midiChannel, a.device,
 				   a.modifiers, a.midiInserts, a.midiSends, a.inputTransformer, a.instrumentParameters, a.sample,
-				   a.monitor, a.recordEnable, a.midiInput, a.mute, a.solo, a.soloDefeat, a.listen, a.slots, a.notes,
-				   a.sections, a.sends) ==
+				   a.pads, a.monitor, a.recordEnable, a.midiInput, a.mute, a.solo, a.soloDefeat, a.listen, a.slots,
+				   a.notes, a.sections, a.sends) ==
 			std::tie(b.id, b.track, b.format, b.input, b.output, b.instrument, b.volume, b.pan, b.panner, b.panLeft,
 				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.program, b.bank, b.midiChannel, b.device,
-				b.modifiers, b.midiInserts, b.midiSends, b.inputTransformer, b.instrumentParameters, b.sample,
+				b.modifiers, b.midiInserts, b.midiSends, b.inputTransformer, b.instrumentParameters, b.sample, b.pads,
 				b.monitor, b.recordEnable, b.midiInput, b.mute, b.solo, b.soloDefeat, b.listen, b.slots, b.notes,
 				b.sections, b.sends);
 	}

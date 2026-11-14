@@ -615,6 +615,10 @@ TEST_CASE("a MIDI track heard again after playback moved while it was silent cha
 
 TEST_CASE("a MIDI track on a MIDI channel heard again after a move chases on that channel", "[integration]")
 {
+	// Disabled, its parts are chased; muted by its button, its strip sends the latest values that played into the mute,
+	// forgetting the kinds its channel sent (ChannelStrip::chasedWhenHeard).
+	const bool button = GENERATE(false, true);
+	INFO((button ? "muted" : "disabled"));
 	Song song(64);
 	const ObjectId channel = channelOf(song.client, song.midi);
 	// The part: program 9 and CC 7 at 127 where it starts, CC 7 at 64 at 2000, on MIDI channel 1; the track plays them
@@ -640,12 +644,20 @@ TEST_CASE("a MIDI track on a MIDI channel heard again after a move chases on tha
 		{{"part", song.part(third)}, {"controllers", {{{"position", ticks(1000)}, {"number", 10}, {"value", 0.0}}}}});
 	run(song.client, "midi.capture", {{"start", true}});
 
-	// Disabled while playback starts and passes them all, then heard again.
-	run(song.client, "track.set", {{"track", song.midi}, {"enabled", false}});
+	const auto mute = [&](bool on)
+	{
+		if (button)
+			run(song.client, "channel.set", {{"channel", channel}, {"mute", on}});
+		else
+			run(song.client, "track.set", {{"track", song.midi}, {"enabled", !on}});
+	};
+
+	// Silent while playback starts and passes them all, then heard again.
+	mute(true);
 	run(song.client, "transport.play");
 	run(song.client, "audio.render", {{"frames", 2100}});
 	run(song.client, "midi.capture");
-	run(song.client, "track.set", {{"track", song.midi}, {"enabled", true}});
+	mute(false);
 	// Its values on its channel, then its part's program and latest CC 7 there, and the third track's pan, the latest
 	// of a kind its channel sent; not the other track's program and CC 7 on channel 1.
 	CHECK(controllersPlayed(song.client, false) ==

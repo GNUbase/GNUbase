@@ -1312,6 +1312,30 @@ TEST_CASE("group and effect tracks can show Switch Time Base in the track list",
 	}
 }
 
+TEST_CASE("the track controls settings dialog offers MIDI Channel for MIDI tracks only", "[ui]")
+{
+	Tracks tracks;
+	const uint64_t midi = tracks.add({{"type", "midi"}});
+	tracks.rows(1);
+
+	// MIDI Channel is among the hidden controls of MIDI tracks (reference manual p. 349), not of audio tracks.
+	const auto open = [&tracks] { return !elements(tracks.app, "#track-controls-dialog").empty(); };
+	tracks.click("#track-controls-settings");
+	REQUIRE(tracks.app.waitUntil(open));
+	CHECK(elements(tracks.app, "#hidden-controls > [value=midiChannel]").empty()); // audio, the first type
+	tracks.click("#controls-types > [value=midi]");
+	tracks.click("#hidden-controls > [value=midiChannel]");
+	tracks.click("#controls-add");
+	CHECK(elements(tracks.app, "#visible-controls > [value=midiChannel]").size() == 1);
+	tracks.click("#controls-ok");
+	REQUIRE(tracks.app.waitUntil([&] { return !open(); }));
+
+	CHECK(
+		tracks.app.call("settings.get", {{"key", "ui.trackControls"}}).at("value").at("midi").back() == "midiChannel");
+	CHECK(tracks.app.waitUntil(
+		[&] { return elements(tracks.app, row(midi) + " select[control=midiChannel]").size() == 1; }));
+}
+
 TEST_CASE("the track controls settings dialog keeps the tempo track's controls and chooses them", "[ui]")
 {
 	Tracks tracks;

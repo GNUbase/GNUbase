@@ -4,6 +4,7 @@
 #include "engine/document/stripparameters.h"
 #include "engine/processors/builtin.h"
 #include "engine/processors/builtinplugin.h"
+#include "engine/processors/drummachine.h"
 #include "engine/processors/midieffects.h"
 
 #include "engine/graph/graph.h"
@@ -16,6 +17,7 @@
 #include <cstring>
 #include <iterator>
 #include <optional>
+#include <set>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -346,6 +348,15 @@ namespace gnubase::engine
 		}
 	}
 
+	std::set<uint32_t> automatedInstrumentParameters(const RenderChannel& channel)
+	{
+		std::set<uint32_t> ids;
+		for (const RenderAutomationLane& lane : channel.automation)
+			if (lane.target.type == AutomationTargetType::Instrument)
+				ids.insert(lane.target.parameter);
+		return ids;
+	}
+
 	std::unique_ptr<ChannelAutomation> channelAutomation(const RenderChannel& channel, double maxVolume)
 	{
 		auto automation = std::make_unique<ChannelAutomation>();
@@ -382,9 +393,15 @@ namespace gnubase::engine
 				lanes.push_back({{AutomationTargetType::Controller, 0, number, channel.midiChannel, 0}, Kind::Midi, 0,
 					static_cast<double>(midi::controllerFromMidi1(static_cast<uint8_t>(*value))) / 4294967295.0, 0.0,
 					1.0, {}});
+		// A drum machine's pads have more parameters than a block's events can hold: those without automation reach it
+		// with its samples (#182).
+		const bool drums = channel.instrument == "drumMachine";
+		const std::set<uint32_t> automated = drums ? automatedInstrumentParameters(channel) : std::set<uint32_t>();
 		if (const processors::BuiltinInfo* info = processors::findBuiltin(channel.instrument))
 			for (const processors::ParameterInfo& parameter : info->parameters)
 			{
+				if (drums && parameter.id < processors::DrumMachine::MasterLevel && automated.count(parameter.id) == 0)
+					continue;
 				const auto set = channel.instrumentParameters.find(parameter.id);
 				const double value = set != channel.instrumentParameters.end() ? set->second : parameter.defaultValue;
 				lanes.push_back({{AutomationTargetType::Instrument, parameter.id, 0, 0, 0}, Kind::Instrument,
@@ -427,19 +444,30 @@ namespace gnubase::engine
 					parameter.minimum, parameter.maximum, {}});
 		}
 		const bool midi = channel.type == TrackType::Midi || channel.type == TrackType::Instrument;
+		// Lanes of one target play side by side, each its own points: lanes of one controller on several MIDI
+		// channels, which a MIDI track set to a channel plays on its own (rendersnapshot.cpp), as it plays the parts'
+		// events of several channels. The first takes the static value; a lane added below has none.
+		const size_t statics = lanes.size();
+		std::vector<bool> taken(statics, false);
 		for (const RenderAutomationLane& lane : channel.automation)
 		{
+			const auto end = lanes.begin() + static_cast<std::ptrdiff_t>(statics);
 			const auto match = std::find_if(
-				lanes.begin(), lanes.end(), [&lane](const PlayedLane& played) { return played.target == lane.target; });
-			const bool hasStatic = match != lanes.end(); // a lane added below has none
+				lanes.begin(), end, [&lane](const PlayedLane& played) { return played.target == lane.target; });
+			const bool hasStatic = match != end && !taken[static_cast<size_t>(match - lanes.begin())];
 			PlayedLane* played = nullptr;
 			if (hasStatic)
+			{
+				taken[static_cast<size_t>(match - lanes.begin())] = true;
 				played = &*match;
+			}
 			else if (midi &&
 				(lane.target.type == AutomationTargetType::Controller ||
 					lane.target.type == AutomationTargetType::PitchBend ||
 					lane.target.type == AutomationTargetType::ChannelPressure))
+			{
 				played = &lanes.emplace_back(PlayedLane{lane.target, Kind::Midi, 0, 0.0, 0.0, 1.0, {}});
+			}
 			// Anything else, e.g. a parameter of an instrument the channel no longer plays, waits.
 			if (played == nullptr)
 				continue;

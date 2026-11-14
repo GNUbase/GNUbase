@@ -5,6 +5,7 @@
 #include "platform/files.h"
 #include "platform/log.h"
 #include "ui/chordpads.h"
+#include "ui/displays.h"
 #include "ui/fonts.h"
 #include "ui/historypanel.h"
 #include "ui/inspector.h"
@@ -22,6 +23,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <fstream>
 #include <memory>
 #include <optional>
@@ -477,6 +479,9 @@ namespace gnubase::app
 					if (const std::shared_ptr<ui::SamplerPanel> sampler = m_sampler.lock())
 						sampler->update(
 							first, m_eventDisplay->project(), m_eventDisplay->loads(), m_eventDisplay->read());
+					if (const std::shared_ptr<ui::DrumMachinePanel> drums = m_drums.lock())
+						drums->update(
+							first, m_eventDisplay->project(), m_eventDisplay->loads(), m_eventDisplay->read());
 				}
 				return follows;
 			});
@@ -689,6 +694,36 @@ namespace gnubase::app
 				m_sampler = sampler;
 				return sampler;
 			}});
+		// The drum machine (reference manual pp. 938-977, docs/features/drum-track.md) in the lower zone, for the
+		// selected drum track. Load asks for the file in the window it shows in.
+		m_docking.add({"drumMachine", "Drum Machine", "project", "lower", [this](Rml::Element& element)
+			{
+				auto drums = std::make_shared<ui::DrumMachinePanel>(m_binding, element,
+					[this](uint64_t track, int pad)
+					{
+						const ui::Window* window = m_docking.windowOf("drumMachine");
+						ui::FileDialog dialog;
+						dialog.title = "Load Sample";
+						dialog.filters = {
+							{"Audio files", "wav;w64;rf64;bwf;aif;aiff;aifc;flac;ogg;mp3"}, {"All files", "*"}};
+						dialog.parent = (window != nullptr ? *window : m_main).id();
+						m_shell.showFileDialog(dialog,
+							[this, track, pad](const ui::FileDialogResult& result)
+							{
+								if (!result.error.empty())
+									logging::warning("The file dialog failed: {}", result.error);
+								if (result.files.empty())
+									return;
+								const std::string path = result.files.front().u8string();
+								if (const std::shared_ptr<ui::DrumMachinePanel> panel = m_drums.lock())
+									panel->load(track, pad, path);
+								else
+									m_binding.send("drum.loadPad", {{"track", track}, {"pad", pad}, {"path", path}});
+							});
+					});
+				m_drums = drums;
+				return drums;
+			}});
 		m_docking.addKeyCommands(m_keys);
 		// What the pool's commands did, sent from its toolbar, the Media menu or Find Missing Files, shows in the
 		// pool, which opens for it: its window comes to the front if it is in one of its own.
@@ -713,6 +748,8 @@ namespace gnubase::app
 			}});
 		m_keys.add({"window.sampler", "Shows the sampler panel, which edits the selected sampler track.",
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_docking.open("sampler"); }});
+		m_keys.add({"window.drumMachine", "Shows the drum machine, which edits the selected drum track.",
+			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_docking.open("drumMachine"); }});
 		m_keys.add({"window.history", "Shows the edit history, where steps are undone and redone.",
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_docking.open("history"); }});
 		m_keys.add({"window.pool", "Shows the pool, the project's clips and media files.",
@@ -921,6 +958,14 @@ namespace gnubase::app
 			{
 				std::vector<std::pair<std::string, std::string>> attributes = below();
 				attributes.emplace_back("type", "sampler");
+				openOnce(window, "add-track.rml", m_addTrack, attributes);
+			}});
+		// Add Drum Track (reference manual pp. 145-146): the add track dialog's Drum page.
+		m_keys.add({"project.addDrumTrack", "Opens the add track dialog on its Drum page.",
+			[this, below](ui::Window& window, Rml::Element* /*zone*/)
+			{
+				std::vector<std::pair<std::string, std::string>> attributes = below();
+				attributes.emplace_back("type", "drum");
 				openOnce(window, "add-track.rml", m_addTrack, attributes);
 			}});
 		// Group Track to Selected Tracks and Effect Track to Selected Tracks (reference manual pp. 546, 554): the add
@@ -1401,8 +1446,13 @@ namespace gnubase::app
 		}
 		shown.window = window.id();
 		if (root == controls)
+		{
 			m_docking.attach("transportPanel", *document);
+			if (!spec.bounds)
+				fitSections(window, *controls);
+		}
 		else
+		{
 			shown.controls->onSize(
 				[this, id = window.id()](int size)
 				{
@@ -1414,6 +1464,30 @@ namespace gnubase::app
 					bounds.height = sized.height;
 					m_shell.setBounds(id, bounds);
 				});
+		}
+	}
+
+	void AppUi::fitSections(ui::Window& window, Rml::Element& controls)
+	{
+		const std::vector<ui::Display> displays = m_shell.displays();
+		const ui::Size pixels = window.pixelSize();
+		if (displays.empty() || pixels.width <= 0)
+			return;
+		window.context().Update();
+		float right = 0;
+		Rml::ElementList sections;
+		controls.QuerySelectorAll(sections, ".transport-section");
+		for (Rml::Element* section : sections)
+			if (section->IsVisible())
+				right = std::max(right,
+					section->GetAbsoluteLeft() + section->GetOffsetWidth() +
+						section->GetBox().GetEdge(Rml::BoxArea::Margin, Rml::BoxEdge::Right));
+		if (right <= 0)
+			return;
+		const ui::Rect bounds = m_shell.bounds(window.id());
+		const int width =
+			static_cast<int>(std::ceil(right * static_cast<float>(bounds.width) / static_cast<float>(pixels.width)));
+		m_shell.setBounds(window.id(), ui::centred({width, bounds.height}, displays.front()));
 	}
 
 	void AppUi::toggleTransportPanel()

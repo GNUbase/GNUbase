@@ -445,9 +445,11 @@ namespace gnubase::engine
 			// The MIDI sends of other tracks that play to it, by channel and slot.
 			std::map<std::pair<ObjectId, size_t>, std::shared_ptr<MidiSendTap>> sends;
 			std::shared_ptr<InstrumentChannel> channel;
-			std::shared_ptr<processors::Sampler> sampler; // the sampler's, which loads its sample when it changes
-			std::string sample;                           // the media file that sampler is to play
-			std::string loaded; // the media file whose sample it has: until sample is read, the one before or none
+			// A sampler or drum machine, which loads its samples when they change.
+			std::shared_ptr<processors::SamplePlayer> player;
+			std::vector<std::string> samples; // the media files it is to play, by slot (RenderChannel::samples)
+			// The media files whose samples it has: until samples are read, the ones before or none.
+			std::vector<std::string> loaded;
 		};
 		std::map<ObjectId, std::shared_ptr<MidiSequencer>> m_sequencers; // per MIDI and instrument channel
 		// Per MIDI and instrument channel with an input transformer.
@@ -535,6 +537,10 @@ namespace gnubase::engine
 			bool playing = false;
 			TransportSettings settings;
 			std::shared_ptr<const ArrangerPlan> arranger = std::make_shared<const ArrangerPlan>();
+			// The plan before the newest, kept while the transport's published arranger state still walks its
+			// generation, so a chain edit the audio thread hasn't played yet doesn't leave a cue without the plan
+			// the state's indices mean; rotatePlans frees it on the command thread (#885).
+			std::shared_ptr<const ArrangerPlan> previousArranger;
 			// A start that the command thread cues exactly (-1 for none), where an arranger chain enters with it, and
 			// how many requests the audio thread applies before it plays from there (cueStart).
 			time::Samples start = -1;
@@ -545,6 +551,16 @@ namespace gnubase::engine
 		std::mutex m_cueOrderMutex;        // the cue thread holds it while it cues, cueStart before m_cueMutex
 		ArrangerState m_announcedArranger; // as transport.changed last announced it
 		CueState m_cueState;
+		// Command thread, under m_cueMutex, at every rebuild: hands the newest plan over for the cue thread and the
+		// audio thread's next block, and keeps the plan before it while the transport's published arranger state
+		// still walks it. What leaves these two slots is freed here, never on the audio thread (#885).
+		void rotatePlans(const std::shared_ptr<const ArrangerPlan>& newest);
+		// The plan the transport's published arranger state walks, with that state, so a cue never walks a new plan
+		// with an old plan's indices (#885); the newest plan when it plays no chain and the state's indices don't
+		// matter, and null while the state's generation is neither of the two plans: the caller skips the cue then,
+		// rather than walk a plan the indices don't mean. The caller passes a CueState copy that keeps the returned
+		// plan alive while the cue runs.
+		std::pair<const ArrangerPlan*, ArrangerState> cuePlan(const CueState& state) const;
 		std::atomic<bool> m_cueing{false};
 		std::thread m_cueThread;
 

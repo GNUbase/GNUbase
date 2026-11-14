@@ -730,19 +730,10 @@ namespace gnubase::engine
 				if (splitNotes && note.position + note.length > offset)
 				{
 					// The rest of the note starts the part after the split, its expression from the split on.
-					Note rest = note;
+					Note rest = splitNote(note, offset - note.position);
 					rest.id = project.newId();
 					rest.position = 0;
-					rest.length = note.position + note.length - offset;
-					rest.origin.reset();
-					rest.expressions = expressionsFrom(note.expressions, offset - note.position);
 					right.notes[rest.id] = rest;
-					note.length = offset - note.position;
-					note.origin.reset();
-					note.expressions.erase(
-						std::remove_if(note.expressions.begin(), note.expressions.end(),
-							[&note](const ExpressionPoint& point) { return point.position >= note.length; }),
-						note.expressions.end());
 				}
 				++it;
 			}
@@ -1187,16 +1178,27 @@ namespace gnubase::engine
 				const auto notesOf = [&](const MidiPart& each)
 				{ return continues ? each.notes : midi::playedNotes(project, each); };
 				// Each part's transpose and velocity (reference manual p. 1107) stay in the sound of its notes: the
-				// glued part keeps the first one's, and the notes of the others get the difference to them. A note
-				// the difference would move beyond 0 to 127 can't keep its pitch, so the glue is refused.
+				// glued part keeps the first one's, and the notes of the others get the difference of what the two
+				// parts play them with: their own transposes with global transposition, which Keep Transpose in
+				// Octave Range folds as one sum (#896), so the difference is what the parts play at each note's
+				// position. A note the difference would move beyond 0 to 127 can't keep its pitch, so the glue is
+				// refused.
+				const auto playedShift = [&](const MidiPart& other, const Note& note)
+				{
+					const time::Samples at =
+						project.tempo.toSamples(ticks(project, other.position) + note.position, project.sampleRate);
+					return globalTranspose(project, other, at) - globalTranspose(project, part, at);
+				};
 				for (size_t i = 1; i < items.size(); ++i)
 				{
 					const MidiPart& other = *items[i].part;
-					const int transpose = other.transpose - part.transpose;
 					for (const auto& [id, note] : notesOf(other))
+					{
+						const int transpose = playedShift(other, note);
 						require(note.pitch + transpose >= 0 && note.pitch + transpose <= 127,
 							"a note of MIDI part " + std::to_string(other.id) +
-								" would be transposed beyond 0 to 127 by the difference of the parts' transpose");
+								" would be transposed beyond 0 to 127 by the difference of what the parts play with");
+					}
 				}
 				detach(project, part);
 				if (!continues && part.pattern != 0)
@@ -1217,10 +1219,10 @@ namespace gnubase::engine
 					const MidiPart& other = *items[i].part;
 					end = std::max(end, other.position.value + other.length);
 					const time::Ticks offset = ticks(project, other.position) - start;
-					const int transpose = other.transpose - part.transpose;
 					const int velocity = other.velocity - part.velocity;
 					for (const auto& [id, each] : notesOf(other))
 					{
+						const int transpose = playedShift(other, each);
 						Note note = each;
 						note.id = project.newId();
 						note.position += offset;
@@ -2820,9 +2822,11 @@ namespace gnubase::engine
 				"become one audio part from the first start to the last end, the first of the parts or a new one, "
 				"holding all their events. MIDI parts become the first of them, from the first start to the last "
 				"end, with all their notes and controllers; it keeps its transpose and velocity, and the notes of the "
-				"others get the difference of their part's transpose and velocity to them, so that they play as "
-				"before as far as velocities from 1 to 127 allow (refused if that would transpose a note beyond 0 to "
-				"127). Pattern events that continue the first one's pattern, as the pieces of a split do, stay that "
+				"others get the difference of the transpose and velocity their part plays them with — the transpose at "
+				"each note's position, as Keep Transpose in Octave Range folds a part's own transpose into the global "
+				"transposition it plays with — so that they play as before as far as velocities from 1 to 127 allow "
+				"(refused if that would transpose a note beyond 0 to 127). Pattern events that continue the first "
+				"one's pattern, as the pieces of a split do, stay that "
 				"pattern event; otherwise the pattern events' steps become notes of the glued part, as they played. "
 				"Returns the event or part.",
 				schema({{"events", events()}}, {"events"}), schema({{"event", integer()}}, {"event"}), false},

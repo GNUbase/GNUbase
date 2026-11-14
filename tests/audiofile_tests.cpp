@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -21,6 +22,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <system_error>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -420,6 +422,35 @@ TEST_CASE("the aside replacement leaves the old file when the new one can't take
 	CHECK(std::fread(buffer, 1, 3, reader.get()) == 3);
 	CHECK(std::string(buffer, 3) == "old");
 	CHECK(std::distance(std::filesystem::directory_iterator(dir.path()), std::filesystem::directory_iterator()) == 1);
+}
+
+TEST_CASE("a failed aside replacement names its cause", "[integration]")
+{
+	// The renames report the system's own error codes, on Windows not C library ones: lastError() has to name the
+	// cause, not whatever C library error shares the Windows code's number (#1446).
+	const test::TempDir dir;
+	const std::filesystem::path newPath = dir.path() / "new.bin";
+	{
+		std::ofstream out(newPath, std::ios::binary);
+		out << "new";
+	}
+	// A folder that isn't there: ERROR_PATH_NOT_FOUND (3) on Windows, ESRCH's number.
+	const std::filesystem::path missing = dir.path() / "missing" / "file.bin";
+	CHECK_FALSE(detail::replaceFileMovingAside(utf8(newPath), utf8(missing), utf8(missing) + ".aside"));
+	CHECK(detail::lastError() == std::generic_category().message(ENOENT));
+#ifdef _WIN32
+	// A writer whose handle doesn't share deletion keeps the old file from moving aside: ERROR_SHARING_VIOLATION (32),
+	// EPIPE's number.
+	const std::filesystem::path oldPath = dir.path() / "file.bin";
+	{
+		std::ofstream out(oldPath, std::ios::binary);
+		out << "old";
+	}
+	std::ofstream writer(oldPath, std::ios::binary | std::ios::app);
+	REQUIRE(writer);
+	CHECK_FALSE(detail::replaceFileMovingAside(utf8(newPath), utf8(oldPath), utf8(oldPath) + ".aside"));
+	CHECK(detail::lastError() == std::generic_category().message(EACCES));
+#endif
 }
 
 TEST_CASE("the decoders leave the files that the readers hand them open", "[integration]")

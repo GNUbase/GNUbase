@@ -225,6 +225,9 @@ namespace gnubase::engine
 				channel.id = m_to.newId();
 				channel.track = track;
 				channel.sample = clip(original.sample); // a sampler's (#180), with the instrument
+				channel.pads = original.pads;           // a drum machine's (#182)
+				for (auto& [pad, drum] : channel.pads)
+					drum.sample = clip(drum.sample);
 				// The fader top may be lower here (as project.set brings volumes down to it).
 				channel.volume = std::min(channel.volume, m_to.maxVolume);
 				for (Send& send : channel.sends)
@@ -951,7 +954,10 @@ namespace gnubase::engine
 			for (midi::EffectSlot& slot : channel.midiSends.slots)
 				slot.output = 0; // the preset's tracks aren't this project's
 			if (channel.instrument != sound.instrument)
+			{
 				channel.sample = 0; // only the sampler plays one (#180), as with channel.set
+				channel.pads.clear();
+			}
 			channel.instrument = sound.instrument;
 			channel.instrumentParameters = sound.instrumentParameters;
 			if (channel.format != ChannelFormat::None)
@@ -989,8 +995,10 @@ namespace gnubase::engine
 				"replacing a preset of that name: of one track, or of several as a multi-track preset (p. 241), "
 				"which keeps them in the order of the track list, whatever the order of tracks. "
 				"Audio, instrument, MIDI, group and effect tracks have one: their channel's pre section, equalizer, "
-				"strip, fader, pan and inserts, their MIDI modifiers, inserts, sends, volume, pan, program and device, "
-				"the instrument with its parameters, and the color. Presets are DAWproject files in the folder Track "
+				"strip, fader, pan and inserts, their MIDI modifiers, inserts, sends, volume, pan, program, bank and "
+				"device, the MIDI channel (channel.set midiChannel; a MIDI track's preset keeps both its channel and "
+				"its patch, of which the reference manual's keeps one, p. 238), the instrument with its parameters, "
+				"and the color. Presets are DAWproject files in the folder Track "
 				"Presets in the user settings' folder. Changes nothing in the project. Returns the preset's file.",
 				objectSchema({{"tracks", idsSchema}, {"name", stringSchema}}, {"tracks", "name"}), fileResult, false},
 			[&model, &engine](CommandContext& context)

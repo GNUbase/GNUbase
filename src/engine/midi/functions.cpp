@@ -15,6 +15,7 @@
 #include <iterator>
 #include <limits>
 #include <map>
+#include <optional>
 #include <set>
 #include <tuple>
 #include <utility>
@@ -717,9 +718,13 @@ namespace gnubase::engine::midi
 		{
 		public:
 			TrackPitches(const Project& project, ObjectId track)
-				: m_map(drumMapOf(project, track)), m_follower(project, track)
+				: m_map(drumMapOf(project, track)), m_follower(project, track),
+				  m_trackChannel(trackMidiChannel(project, track))
 			{
 			}
+
+			// The track's MIDI channel, which plays its events instead of their own, or none for Any.
+			std::optional<int> trackChannel() const { return m_trackChannel; }
 
 			bool silent(int pitch) const { return m_map != nullptr && sound(pitch).mute; }
 
@@ -782,6 +787,7 @@ namespace gnubase::engine::midi
 
 			const DrumMap* m_map;
 			ChordFollower m_follower;
+			std::optional<int> m_trackChannel;
 		};
 
 		// A track's MIDI modifiers as playback applies them to its parts' notes: none while they are bypassed.
@@ -1153,7 +1159,9 @@ namespace gnubase::engine::midi
 				const uint64_t seed = noteSeed(part.id, noteId);
 				Note copy = note;
 				copy.pitch = static_cast<uint8_t>(sourcePitches.played(note.pitch, partFrom + note.position));
-				copy.channel = sourcePitches.channel(note.pitch, note.channel);
+				// On the channel it plays on: its drum sound's, else its track's, else its own.
+				copy.channel = sourcePitches.channel(
+					note.pitch, static_cast<uint8_t>(sourcePitches.trackChannel().value_or(note.channel)));
 				// A note moved before its part's start, or the project's, starts there, with its length.
 				const Ticks moved = note.position + randomOffset(modifiers, RandomTarget::Position, seed);
 				const Ticks at = partFrom + std::max({moved, Ticks{0}, -partFrom});
@@ -1171,6 +1179,8 @@ namespace gnubase::engine::midi
 					continue;
 				Controller copy = controller;
 				copy.position = at;
+				if (controller.type != ControllerType::Articulation)
+					copy.channel = static_cast<uint8_t>(sourcePitches.trackChannel().value_or(controller.channel));
 				// Of each group of the track's articulation map, the direction in effect where the range starts, so
 				// that the notes play the same sound slot (#175), also without includeChase. Playback resolves
 				// directions per part, so only from a part that still plays there.
@@ -1191,11 +1201,11 @@ namespace gnubase::engine::midi
 							? group >= 0
 							: settings.includeChase && controller.type != ControllerType::SysEx))
 				{
-					LaneKey key = laneOf(controller);
+					LaneKey key = laneOf(copy);
 					if (group >= 0)
 						key = {ControllerType::Articulation, 0, static_cast<uint8_t>(group)};
 					else if (controller.type == ControllerType::Program)
-						key = {ControllerType::Program, controller.channel, 0};
+						key = {ControllerType::Program, copy.channel, 0};
 					const auto previous = chasedAt.find(key);
 					if (previous == chasedAt.end() || previous->second <= at)
 					{
@@ -1233,9 +1243,18 @@ namespace gnubase::engine::midi
 		// source part's global transposition differs from the new part's, the difference goes into the note, so that
 		// it keeps the pitch it played with.
 		std::vector<const MidiPart*> sources;
+		std::vector<std::vector<const Candidate*>> sourceCandidates; // each source's, in the order of sources
 		for (const Candidate& candidate : candidates)
-			if (std::find(sources.begin(), sources.end(), candidate.source) == sources.end())
+		{
+			const auto index =
+				static_cast<size_t>(std::find(sources.begin(), sources.end(), candidate.source) - sources.begin());
+			if (index == sources.size())
+			{
 				sources.push_back(candidate.source);
+				sourceCandidates.emplace_back();
+			}
+			sourceCandidates[index].push_back(&candidate);
+		}
 		const GlobalSetting newSetting = sharedSetting(project, sources);
 		// Without includeInserts the destination's MIDI modifiers play the merged notes, after the stored pitch and
 		// before the part's velocity.
@@ -1294,12 +1313,20 @@ namespace gnubase::engine::midi
 		// lie between the part's transpose and the new part's global transpose, in an Independent part as it played;
 		// without, in a part with its part's transpose and Global Transpose setting.
 		std::map<BouncedSetting, std::vector<Note>> made;
-		for (const MidiPart* source : sources)
+		std::map<BouncedSetting, Ticks> firstStart;     // of each new part's earliest source part
+		std::map<std::pair<int, int>, bool> velocities; // velocityInNote by MIDI 1.0 velocity and part velocity
+		for (size_t i = 0; i < sources.size(); ++i)
 		{
-			std::vector<const Candidate*> own;
-			for (const Candidate& candidate : candidates)
-				if (candidate.source == source)
-					own.push_back(&candidate);
+			const MidiPart* source = sources[i];
+			const std::vector<const Candidate*>& own = sourceCandidates[i];
+			const auto inNote = [&](const Candidate* candidate)
+			{
+				const std::pair<int, int> key{velocityToMidi1(candidate->note.velocity), source->velocity};
+				const auto found = velocities.find(key);
+				if (found != velocities.end())
+					return found->second;
+				return velocities[key] = velocityInNote(destinationModifiers, key.first, key.second);
+			};
 			// With includeInserts the track's modifiers then play the notes without the part's velocity, so only where
 			// every note comes out alike.
 			const bool velocityKept = source->velocity != 0 &&
@@ -1307,9 +1334,7 @@ namespace gnubase::engine::midi
 					[&](const Candidate* candidate)
 					{
 						return candidate->note.velocityVariance != 0.0 ||
-							(!settings.includeInserts &&
-								!velocityInNote(
-									destinationModifiers, velocityToMidi1(candidate->note.velocity), source->velocity));
+							(!settings.includeInserts && !inNote(candidate));
 					}) &&
 				(!settings.includeInserts ||
 					std::all_of(own.begin(), own.end(),
@@ -1336,14 +1361,25 @@ namespace gnubase::engine::midi
 			}
 			std::vector<Note>& into = made[setting];
 			into.insert(into.end(), notes.begin(), notes.end());
+			const Ticks from = partStart(project, *source);
+			const auto first = firstStart.find(setting);
+			if (first == firstStart.end() || from < first->second)
+				firstStart[setting] = from;
 		}
-		// The new part with the setting of the parts that need none of their own first; it is there without notes too.
+		// The new part with the setting of the parts that need none of their own first, the others in the order of
+		// their earliest source parts, as bounce orders its parts; where nothing is merged, the first is there without
+		// notes.
 		const BouncedSetting plain{0, 0, newSetting};
 		if (made.empty())
 			made[plain];
 		std::vector<std::pair<BouncedSetting, std::vector<Note>>> groups(made.begin(), made.end());
-		std::stable_partition(groups.begin(), groups.end(),
-			[&](const auto& group) { return !(group.first < plain) && !(plain < group.first); });
+		const auto order = [&](const BouncedSetting& setting)
+		{
+			const bool isPlain = !(setting < plain) && !(plain < setting);
+			return std::make_pair(!isPlain, isPlain ? Ticks{0} : firstStart.at(setting));
+		};
+		std::stable_sort(groups.begin(), groups.end(),
+			[&](const auto& a, const auto& b) { return order(a.first) < order(b.first); });
 
 		PartChanges changes;
 		ObjectId destination = settings.destination;
@@ -1493,6 +1529,7 @@ namespace gnubase::engine::midi
 			if (to == DissolveTo::Tracks)
 			{
 				const ObjectId instrument = instrumentOf(project, trackId);
+				const std::optional<int> trackChannel = trackMidiChannel(project, trackId);
 				const std::vector<ObjectId>& siblings =
 					source.parent == 0 ? project.tracks : project.trackById.at(source.parent).children;
 				auto index =
@@ -1501,9 +1538,11 @@ namespace gnubase::engine::midi
 				{
 					trackFor[key] = addMidiTrack(project, source.name + " " + suffixOf(key), source.parent, ++index,
 						instrument, source.timeBase);
-					// The track's MIDI modifiers, so that the new parts play as the part did.
-					project.channels.at(project.trackById.at(trackFor[key]).channel).modifiers =
-						project.channels.at(source.channel).modifiers;
+					// The track's MIDI modifiers, so that the new parts play as the part did; by channel each new
+					// track set to its channel (reference manual p. 1122), by pitch to the track's.
+					Channel& added = project.channels.at(project.trackById.at(trackFor[key]).channel);
+					added.modifiers = project.channels.at(source.channel).modifiers;
+					added.midiChannel = by == DissolveBy::Channel ? std::optional<int>(key) : trackChannel;
 					changes.tracks.push_back(trackFor[key]);
 				}
 			}

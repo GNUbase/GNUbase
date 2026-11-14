@@ -63,7 +63,8 @@ The tempo track, its tempo events and ramps, the project tempo modes and tap tem
   track editor's field show the same tempo, `ui::currentTempo`: the fixed tempo, or in tempo track mode the tempo the
   project plays at the project cursor, which all three follow during playback. The track list's field reads the time
   context the event display keeps per project answer, and the list watches the cursor only while playing and while it
-  has the field (#1338). A tempo typed (`ui::currentTempoCommand`) sets the fixed tempo (`project.set` `tempo`), or
+  has the field (#1338). It keeps its tempo fields from when it shows the rows' controls, so that a frame only fills
+  them, without searching the list for them (#1406). A tempo typed (`ui::currentTempoCommand`) sets the fixed tempo (`project.set` `tempo`), or
   changes the tempo event at or before the cursor (`tempo.set`), the first one in a project without tempo changes.
 - **The tempo track's controls** (p. 162), in the track list (the user setting `ui.trackControls`, all three by
   default): Activate Tempo Track (`tempoTrack`), Current Tempo (`currentTempo`, a text field that takes a tempo with
@@ -125,13 +126,13 @@ that add, drag and erase events, the tempo track editor with Mod+T, its toolbar,
 following the cursor again after a tempo was typed in it, and its rectangle selecting events, Shift-click taking a
 selected one out, Activate Tempo Track in the track list and the transport bar, Tap Tempo, also at a selected part, and
 File > Export and File > Import > Tempo Track through the file dialog. `tests/tracklist_tests.cpp`: the track list's
-commands leaving the tempo track out. `tests/tempocontrols_ui_tests.cpp` (#680, #831, #1338): Current Tempo and the
+commands leaving the tempo track out. `tests/tempocontrols_ui_tests.cpp` (#680, #831, #1338, #1406): Current Tempo and the
 command that changes it, in the transport bar, on the tempo track and in the tempo track editor, during playback as well
 as at the cursor, the Tap Tempo message for every mode, in the project window and in the transport panel, the fixed
 tempo line, selecting events with Shift, Ctrl and a rectangle, also taking a selected event out with either, the Tap
 Tempo Mode menu with the message and `.tapping` while tapping, also with the user setting changed after the bar opened,
 the tempo track's Current Tempo and Type of New Tempo Points, the cursor watch that comes and goes with the tempo
 track's Current Tempo field and the frames of a playback reading the time context the display keeps without building
-one, Insert Tempo Event at Cursor with the dialog's message for a tempo it can't take, and Select All Events.
+one, the field following the cursor after tracks are added and removed during playback, Insert Tempo Event at Cursor with the dialog's message for a tempo it can't take, and Select All Events.
 `tests/transportbar_tests.cpp`: a drag and a wheel gesture on the tempo field, in fixed tempo mode and in tempo track
 mode, each one undo step.

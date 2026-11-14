@@ -82,7 +82,7 @@ TEST_CASE("a MIDI editor opens with several parts on several tracks, in the trac
 	for (const char* key : {"selection", "stepInput", "midiInput", "stepPosition", "moveInsert", "recordPitch",
 			 "recordVelocity", "recordReleaseVelocity", "keepNotes", "insertVelocity", "lengthQuantize", "content",
 			 "lanes", "showLanes", "autoSelectControllers", "controllerSelection", "eventSelection", "pitchVisibility",
-			 "reverseSounds", "showNoteLength"})
+			 "reverseSounds", "showNoteLength", "gridType"})
 		shown.erase(key);
 	CHECK(shown == closed);
 

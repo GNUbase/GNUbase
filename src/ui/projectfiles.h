@@ -131,7 +131,7 @@ namespace gnubase::ui
 		// Runs action now if the project has no unsaved changes, or else once the user agreed to discard them. A
 		// question that waited asks the engine again once it opens: if the project was saved meanwhile, it closes
 		// unanswered and action runs at once. asked, if given, runs once the engine said whether to ask: with the
-		// question's document when it opened, else null.
+		// question's document as it opens, before that second look, else null.
 		void unlessUnsaved(Window& window, std::function<void()> action,
 			std::function<void(Rml::ElementDocument* question)> asked = {});
 		// Quits GNUbase unless the user wants to keep unsaved changes, asking in the window. A dialog that is open

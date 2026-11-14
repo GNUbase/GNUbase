@@ -455,6 +455,7 @@ TEST_CASE("a plugin sees which segments of a block record", "[unit]")
 	transport.playing = true;
 	transport.recording = true;
 	transport.position = 1000;
+	transport.tempo = 90.0;
 	transport.segments = segments.data();
 	transport.segmentCount = segments.size();
 	const graph::EventBuffer eventsIn(4);
@@ -465,8 +466,11 @@ TEST_CASE("a plugin sees which segments of a block record", "[unit]")
 	slot.process({audio.data(), 2, 128, eventsIn, eventsOut, transport});
 	REQUIRE(plugin.transportCount == 2);
 	using gnubase::plugin::Transport;
-	CHECK(plugin.transport[0].transport.flags == Transport::Playing);
-	CHECK(plugin.transport[1].transport.flags == (Transport::Playing | Transport::Recording));
+	// Every segment has the block's tempo.
+	CHECK(plugin.transport[0].transport.flags == (Transport::Playing | Transport::TempoValid));
+	CHECK(plugin.transport[1].transport.flags == (Transport::Playing | Transport::Recording | Transport::TempoValid));
+	CHECK(plugin.transport[0].transport.tempo == 90.0);
+	CHECK(plugin.transport[1].transport.tempo == 90.0);
 	CHECK(plugin.transport[1].offset == 64);
 	CHECK(plugin.transport[1].transport.position == 1064);
 }
@@ -492,10 +496,11 @@ TEST_CASE("a plugin sees a block where playback starts within it as stopped unti
 	slot.process({audio.data(), 2, 128, eventsIn, eventsOut, transport});
 	REQUIRE(plugin.transportCount == 2);
 	CHECK(plugin.transport[0].offset == 0);
-	CHECK(plugin.transport[0].transport.flags == 0); // stopped
+	using gnubase::plugin::Transport;
+	CHECK(plugin.transport[0].transport.flags == Transport::TempoValid); // stopped
 	CHECK(plugin.transport[0].transport.position == 28000);
 	CHECK(plugin.transport[1].offset == 64);
-	CHECK(plugin.transport[1].transport.flags == gnubase::plugin::Transport::Playing);
+	CHECK(plugin.transport[1].transport.flags == (Transport::Playing | Transport::TempoValid));
 	CHECK(plugin.transport[1].transport.position == 24000);
 }
 
@@ -596,6 +601,24 @@ TEST_CASE("a slot whose plugin can't be made is unavailable, and one whose plugi
 	CHECK(slots.status(1) == "unavailable");
 	CHECK(slots.processor(3) != nullptr);
 	CHECK(slots.status(4).empty());
+}
+
+TEST_CASE("an audio plugin slot that names a built-in MIDI effect is unavailable", "[unit]")
+{
+	plugins::HostManager jobs;
+	plugins::SlotInstances slots(jobs, [] {}, [](uint64_t /*generation*/) { return true; });
+	RenderSlot effect;
+	effect.id = 1;
+	effect.plugin = "builtin:chordGenerator";
+	RenderSlot gain;
+	gain.id = 2;
+	gain.plugin = "builtin:gainPan";
+	const std::vector<plugins::SlotInstances::Wanted> wanted{{&effect, 2}, {&gain, 2}};
+	slots.update(wanted, 48000.0, 128);
+	jobs.run([] {}).get();
+	CHECK(slots.status(1) == "unavailable");
+	CHECK(slots.processor(1) == nullptr);
+	CHECK(slots.status(2) == "active");
 }
 
 TEST_CASE("the slots' plugins get offline blocks while the engine renders offline, e.g. an export", "[unit]")

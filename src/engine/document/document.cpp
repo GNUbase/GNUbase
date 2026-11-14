@@ -170,6 +170,15 @@ namespace gnubase::engine
 		return result;
 	}
 
+	void followLinkedMove(const Project& project, Channel& to, const std::string& key, double moved)
+	{
+		const bool audio = to.format != ChannelFormat::None;
+		if (key == "pan" && audio)
+			to.pan = std::clamp(to.pan + moved, -1.0, 1.0);
+		else if (key == "volume" && (audio || project.trackById.at(to.track).type == TrackType::Vca))
+			to.volume = std::clamp(to.volume + moved, g_minChannelVolume, project.maxVolume);
+	}
+
 	time::Ticks longestProjectTicks(const Project& project)
 	{
 		return project.tempo.toTicks(
@@ -307,22 +316,24 @@ namespace gnubase::engine
 	int globalTranspose(const Project& project, const MidiPart& part, time::Samples at)
 	{
 		if (part.independent)
-			return 0;
-		int semitones = rootKeyTranspose(project, part);
+			return part.transpose;
+		int semitones = rootKeyTranspose(project, part) + part.transpose;
 		const TransposeTrack& track = project.transpose;
-		if (track.mute)
-			return semitones;
-		// ponytail: a scan of the events per note; a song has a handful of them.
-		int value = 0;
-		for (const TransposeEvent& event : track.events)
+		if (!track.mute)
 		{
-			if (time::toSamples(event.position, project.tempo, project.sampleRate) > at)
-				break;
-			value = event.value;
+			// ponytail: a scan of the events per note; a song has a handful of them.
+			int value = 0;
+			for (const TransposeEvent& event : track.events)
+			{
+				if (time::toSamples(event.position, project.tempo, project.sampleRate) > at)
+					break;
+				value = event.value;
+			}
+			semitones += value;
 		}
-		semitones += value;
 		if (track.keepInOctave)
 		{
+			// The whole sum, the part's own transpose included (#896), never more than 7 semitones either way.
 			while (semitones > 7)
 				semitones -= 12;
 			while (semitones < -7)
@@ -413,5 +424,21 @@ namespace gnubase::engine
 		std::stable_sort(moved.begin(), moved.end(),
 			[](const ExpressionPoint& a, const ExpressionPoint& b) { return a.position < b.position; });
 		return moved;
+	}
+
+	Note splitNote(Note& note, time::Ticks at)
+	{
+		Note rest = note;
+		rest.id = 0;
+		rest.position = note.position + at;
+		rest.length = note.length - at;
+		rest.origin.reset();
+		rest.expressions = expressionsFrom(note.expressions, at);
+		note.length = at;
+		note.origin.reset();
+		note.expressions.erase(std::remove_if(note.expressions.begin(), note.expressions.end(),
+								   [at](const ExpressionPoint& point) { return point.position >= at; }),
+			note.expressions.end());
+		return rest;
 	}
 }

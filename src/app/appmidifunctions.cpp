@@ -334,7 +334,7 @@ namespace gnubase::app
 
 		// Merge MIDI in Loop (pp. 1119-1120): onto the first selected MIDI or instrument track, or a new one.
 		m_keys.add({"midi.mergeInLoop",
-			"Opens the MIDI Merge Options dialog, which merges the MIDI events between the locators into a new part.",
+			"Opens the MIDI Merge Options dialog, which merges the MIDI events between the locators into new parts.",
 			[this, openFunction](ui::Window& window, Rml::Element* /*zone*/)
 			{
 				Json parameters = Json::object();

@@ -13,6 +13,7 @@
 #include "engine/midi/drummaps.h"
 #include "engine/midi/midivalues.h"
 #include "engine/midi/patterns.h"
+#include "engine/processors/drummachine.h"
 
 #include <algorithm>
 #include <array>
@@ -22,6 +23,7 @@
 #include <numeric>
 #include <optional>
 #include <set>
+#include <string>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -30,6 +32,22 @@ namespace gnubase::engine
 {
 	namespace
 	{
+		// An expression's bit in RenderNote::startsWith: tuning, pressure and brightness have MPE initial values.
+		uint8_t initialBit(plugin::NoteExpression type)
+		{
+			switch (type)
+			{
+			case plugin::NoteExpression::Tuning:
+				return 1;
+			case plugin::NoteExpression::Pressure:
+				return 2;
+			case plugin::NoteExpression::Brightness:
+				return 4;
+			default:
+				return 0;
+			}
+		}
+
 		time::Samples toSamples(const Project& project, time::Position position)
 		{
 			return time::toSamples(position, project.tempo, project.sampleRate);
@@ -38,16 +56,6 @@ namespace gnubase::engine
 		time::Samples toSamples(const Project& project, time::Ticks tick)
 		{
 			return project.tempo.toSamples(tick, project.sampleRate);
-		}
-
-		// The MIDI channel a MIDI track plays its events on instead of their own (reference manual p. 351), or none
-		// for Any, which keeps theirs.
-		std::optional<int> trackMidiChannel(const Project& project, ObjectId trackId)
-		{
-			const Track& track = project.trackById.at(trackId);
-			if (track.type != TrackType::Midi || track.channel == 0)
-				return std::nullopt;
-			return project.channels.at(track.channel).midiChannel;
 		}
 
 		// The channel a note plays on: a sound slot's (#175), else its drum sound's (#129), else its track's, else
@@ -78,7 +86,7 @@ namespace gnubase::engine
 					notes.push_back(&note);
 			std::stable_sort(
 				notes.begin(), notes.end(), [](const Note* a, const Note* b) { return a->position < b->position; });
-			const std::optional<int> trackChannel = trackMidiChannel(project, part.track);
+			const std::optional<int> trackChannel = midi::trackMidiChannel(project, part.track);
 			const SoundSlot* previous = nullptr;
 			uint8_t previousChannel = 0;
 			for (const Note* note : notes)
@@ -95,7 +103,7 @@ namespace gnubase::engine
 							continue;
 						if (output.status == OutputStatus::Note)
 							channel.notes.push_back({std::max<time::Samples>(at - 1, 0), std::max<time::Samples>(at, 1),
-								output.data1, midi::velocityFromMidi1(output.data2), on, true});
+								output.data1, midi::velocityFromMidi1(output.data2), on, true, 0});
 						else if (output.status == OutputStatus::Controller)
 							channel.controllers.push_back({at, ControllerType::Control, output.data1,
 								midi::controllerFromMidi1(output.data2), on, {}, index});
@@ -114,8 +122,8 @@ namespace gnubase::engine
 		}
 
 		// Adds a part's notes and controllers, cut at the part's end, the notes as the chord track maps them if the
-		// track follows it (#173), then as the channel's MIDI modifiers, the part's transpose and velocity and global
-		// transposition (#168) at their start play them. follower is the part's track's.
+		// track follows it (#173), then as the channel's MIDI modifiers, the part's velocity and the transposition it
+		// plays its notes with (#168, #896) at their start play them. follower is the part's track's.
 		void compilePart(const Project& project, ObjectId partId, const MidiPart& part, const ChordFollower& follower,
 			RenderChannel& channel)
 		{
@@ -124,9 +132,9 @@ namespace gnubase::engine
 			const time::Ticks end = time::toTicks(endPosition, project.tempo, project.sampleRate);
 			const auto index = static_cast<int32_t>(channel.midiParts.size());
 			channel.midiParts.push_back({toSamples(project, start), toSamples(project, end)});
-			// The part's transpose and velocity add to the track's modifiers, also while those are bypassed.
+			// The part's velocity adds to the track's modifiers, also while those are bypassed; its transpose plays
+			// in globalTranspose's sum per note, which Keep Transpose in Octave Range folds as one (#896).
 			midi::Modifiers modifiers = channel.modifiers.bypass ? midi::Modifiers() : channel.modifiers;
-			modifiers.transpose += part.transpose;
 			modifiers.velocityShift += part.velocity;
 			// The track's drum map plays each note's sound: its O-note, on its channel unless that is Any, and not
 			// at all if it is muted (#129). The modifiers then apply to the O-note.
@@ -134,7 +142,7 @@ namespace gnubase::engine
 			// The track's articulation map plays each note's sound slot (#175): the slot's output events where the
 			// slot changes, and the slot's MIDI modifiers.
 			const ArticulationMap* articulations = midi::articulationMapOf(project, part.track);
-			const std::optional<int> trackChannel = trackMidiChannel(project, part.track);
+			const std::optional<int> trackChannel = midi::trackMidiChannel(project, part.track);
 			const std::map<ObjectId, size_t> slots =
 				articulations != nullptr ? midi::soundSlots(*articulations, part) : std::map<ObjectId, size_t>();
 			const auto slotOf = [&](ObjectId note) -> const SoundSlot*
@@ -181,11 +189,17 @@ namespace gnubase::engine
 				const time::Ticks length = note.length > 0 ? midi::modifyLength(modifiers, seed, slotLength) : 0;
 				const time::Ticks noteEnd = std::min(start + position + length, end);
 				channel.notes.push_back({toSamples(project, start + position), toSamples(project, noteEnd), pitch,
-					velocity, playedChannel(note, sound, slot, trackChannel), false});
+					velocity, playedChannel(note, sound, slot, trackChannel), false, 0});
 				for (const ExpressionPoint& point : note.expressions)
-					if (start + position + point.position < noteEnd)
-						channel.expressions.push_back({toSamples(project, start + position + point.position), pitch,
-							channel.notes.back().channel, point.type, point.value});
+				{
+					if (start + position + point.position >= noteEnd)
+						continue;
+					channel.expressions.push_back({toSamples(project, start + position + point.position), pitch,
+						channel.notes.back().channel, point.type, point.value});
+					// A point within the note's first sample is one of its initial ones, as it plays at its start.
+					if (channel.expressions.back().position == channel.notes.back().start)
+						channel.notes.back().startsWith |= initialBit(point.type);
+				}
 			}
 			for (const auto& [id, controller] : part.controllers)
 				if (controller.position < end - start && controller.type != ControllerType::Articulation)
@@ -194,27 +208,22 @@ namespace gnubase::engine
 						static_cast<uint8_t>(trackChannel.value_or(controller.channel)), controller.data, index});
 		}
 
-		// MPE's initial values: a note on a MIDI channel whose notes express tuning, pressure or brightness gets the
-		// initial value of each of them that has no point at its start, a centered bend, no pressure and CC 74 at 64,
-		// so that as MIDI 1.0 it doesn't start at what the channel's previous note left.
+		// MPE's initial values: a note on a MIDI channel gets the initial value of each of tuning, pressure and
+		// brightness that the channel's notes express and that it has no point of at its start (RenderNote::
+		// startsWith), a centered bend, no pressure and CC 74 at 64, so that as MIDI 1.0 it doesn't start at what the
+		// channel's previous note left. Of what the channel's notes don't express it gets nothing.
 		void addInitialExpressions(const std::vector<RenderNote>& notes, std::vector<RenderExpression>& expressions)
 		{
 			using plugin::NoteExpression;
 			constexpr std::array<std::pair<NoteExpression, double>, 3> initial = {
 				{{NoteExpression::Tuning, 0.0}, {NoteExpression::Pressure, 0.0}, {NoteExpression::Brightness, 0.5}}};
-			std::array<std::array<bool, initial.size()>, 16> expressed{}; // by MIDI channel
-			std::set<std::tuple<time::Samples, uint8_t, uint8_t, NoteExpression>> points;
+			std::array<uint8_t, 16> expressed{}; // by MIDI channel, as RenderNote::startsWith
 			for (const RenderExpression& point : expressions)
-				for (size_t i = 0; i < initial.size(); ++i)
-					if (point.type == initial.at(i).first)
-					{
-						expressed.at(point.channel % 16).at(i) = true;
-						points.emplace(point.position, point.pitch, point.channel, point.type);
-					}
+				expressed.at(point.channel % 16) |= initialBit(point.type);
 			for (const RenderNote& note : notes)
 				for (size_t i = 0; i < initial.size(); ++i)
-					if (!note.keySwitch && note.end > note.start && expressed.at(note.channel % 16).at(i) &&
-						points.count({note.start, note.pitch, note.channel, initial.at(i).first}) == 0)
+					if (!note.keySwitch && note.end > note.start &&
+						(expressed.at(note.channel % 16) & ~note.startsWith & (1U << i)) != 0)
 						expressions.push_back(
 							{note.start, note.pitch, note.channel, initial.at(i).first, initial.at(i).second});
 		}
@@ -306,7 +315,7 @@ namespace gnubase::engine
 			channel.type = TrackType::Audio;
 			channel.instrument.clear();
 			channel.instrumentParameters.clear();
-			channel.sample.clear();
+			channel.samples.clear();
 			channel.midiThru = false;
 			channel.padThru = false;
 			channel.autoFades = AutoFades();
@@ -540,9 +549,15 @@ namespace gnubase::engine
 		snapshot->signatures = project.signatures;
 		ArrangerPlan plan = arrangerPlan(project);
 		if (previous != nullptr && *previous->arranger == plan)
+		{
 			snapshot->arranger = previous->arranger;
+		}
 		else
+		{
+			// A new plan gets the next generation, so the transport can publish which one its state walks (#885).
+			plan.generation = previous != nullptr ? previous->arranger->generation + 1 : 1;
 			snapshot->arranger = std::make_shared<const ArrangerPlan>(std::move(plan));
+		}
 		snapshot->metronome = project.metronome;
 		std::vector<ObjectId>& outputs = snapshot->metronome.outputs;
 		outputs.erase(std::remove_if(outputs.begin(), outputs.end(),
@@ -598,8 +613,21 @@ namespace gnubase::engine
 			render.format = channel.format;
 			render.instrument = channel.instrument;
 			render.instrumentParameters = channel.instrumentParameters;
-			if (const auto clip = project.clips.find(channel.sample); clip != project.clips.end())
-				render.sample = project.media.at(clip->second.media).path;
+			const auto path = [&project](ObjectId id)
+			{
+				const auto clip = project.clips.find(id);
+				return clip != project.clips.end() ? project.media.at(clip->second.media).path : std::string();
+			};
+			if (channel.instrument == "sampler")
+			{
+				render.samples = {path(channel.sample)};
+			}
+			else if (channel.instrument == "drumMachine")
+			{
+				render.samples.resize(processors::g_drumPads);
+				for (const auto& [pad, drum] : channel.pads)
+					render.samples.at(static_cast<size_t>(pad)) = path(drum.sample);
+			}
 			for (const ObjectId id : channel.slots)
 			{
 				const Slot& slot = project.slots.at(id);
@@ -619,7 +647,7 @@ namespace gnubase::engine
 			render.program = channel.program;
 			render.bank = channel.bank;
 			render.midiChannel = static_cast<uint8_t>(channel.midiChannel.value_or(0));
-			render.inputChannel = static_cast<int8_t>(trackMidiChannel(project, trackId).value_or(-1));
+			render.inputChannel = static_cast<int8_t>(midi::trackMidiChannel(project, trackId).value_or(-1));
 			render.modifiers = channel.modifiers;
 			if (const ArticulationMap* articulations = midi::articulationMapOf(project, track.id))
 				render.articulations = *articulations;
@@ -643,11 +671,14 @@ namespace gnubase::engine
 				if (project.chordPads.players[player].track == track.id && track.id != 0)
 					render.padPlayer = static_cast<int>(player);
 			if (const DrumMap* map = midi::drumMapOf(project, track.id))
+			{
+				const auto plays = [&render](const DrumSound& sound)
+				{ render.drumInput.push_back({sound.oNote, static_cast<int8_t>(sound.channel), sound.mute}); };
 				for (const uint8_t pitch : midi::inputPitches(*map))
-				{
-					const DrumSound& sound = map->sounds.at(pitch);
-					render.drumInput.push_back({sound.oNote, static_cast<int8_t>(sound.channel), sound.mute});
-				}
+					plays(map->sounds.at(pitch));
+				for (const DrumSound& sound : map->sounds)
+					plays(sound);
+			}
 			render.autoFades = track.autoFades.value_or(project.autoFades);
 			if (const auto input = busIndex.find(channel.input); input != busIndex.end())
 				render.input = input->second;
@@ -786,10 +817,10 @@ namespace gnubase::engine
 			{ return RenderAutomationPoint{position, gapValue, AutomationShape::Step, 0.0, !vca}; };
 			RenderAutomationLane played;
 			played.target = lane.target;
-			// A MIDI track's channel plays its MIDI automation on it too (p. 351), as it does its parts' events.
-			// ponytail: lanes of one controller on several MIDI channels all play on the track's, the last one winning.
+			// A MIDI track's channel plays its MIDI automation on it too (p. 351), as it does its parts' events; lanes
+			// of one controller on several MIDI channels then play side by side (channelAutomation).
 			const AutomationTargetType type = lane.target.type;
-			if (const std::optional<int> on = trackMidiChannel(project, lane.track); on &&
+			if (const std::optional<int> on = midi::trackMidiChannel(project, lane.track); on &&
 				(type == AutomationTargetType::Controller || type == AutomationTargetType::PitchBend ||
 					type == AutomationTargetType::ChannelPressure))
 				played.target.channel = static_cast<uint8_t>(*on);

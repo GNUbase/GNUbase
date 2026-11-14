@@ -495,8 +495,10 @@ namespace gnubase::engine
 			for (const graph::ProcessEvent& event : sequencer->input())
 			{
 				// ponytail: events beyond a chunk's room are dropped; a continuation chunk if a block ever has more.
+				// Drum sounds auditioned in the drum editor (midi.inject drumSounds) play but are no MIDI input:
+				// neither recorded nor kept for retrospective recording.
 				if (event.offset < offset || event.offset - offset >= frames || event.type == EventType::SysEx ||
-					event.type == EventType::Parameter || chunk->eventCount == chunk->events.size())
+					event.type == EventType::Parameter || event.drumSound || chunk->eventCount == chunk->events.size())
 					continue;
 				chunk->events[chunk->eventCount++] = {channel, event.offset - offset,
 					played.at(static_cast<int64_t>(block.position + event.offset)), event};
