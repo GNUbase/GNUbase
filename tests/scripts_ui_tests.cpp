@@ -240,12 +240,8 @@ TEST_CASE(
 	const Json clip = app.call("clip.add", {{"media", media}}).at("clip").at("id");
 	app.call("audioEvent.add", {{"track", track}, {"clip", clip}, {"position", 0}, {"length", 20 * 48000}});
 	app.call("snap.set", {{"on", false}, {"zeroCrossing", true}}); // the range as dragged, not on bars
-	REQUIRE(app.waitUntil(
-		[&display]
-		{
-			return display.snap().zeroCrossing && display.project().is_object() &&
-				display.project().at("audioEvents").size() == 1;
-		},
+	REQUIRE(app.waitUntil([&display]
+		{ return display.snap().zeroCrossing && display.project().at("audioEvents").size() == 1; },
 		std::chrono::seconds(20)));
 	display.setTool(ui::Tool::RangeSelection);
 	// A command that keeps the engine busy for a second, which the script posts first, so that the answer comes after

@@ -63,8 +63,7 @@ namespace
 						.get<uint64_t>());
 			}
 			app.call("quantize.set", {{"preset", "1/4"}});
-			REQUIRE(app.waitUntil(
-				[&] { return display.project().is_object() && display.project().at("audioEvents").size() == 2; }));
+			REQUIRE(app.waitUntil([&] { return display.project().at("audioEvents").size() == 2; }));
 		}
 
 		Json elements(const std::string& selector) { return app.ui().dom(std::nullopt, selector, 0).at("elements"); }

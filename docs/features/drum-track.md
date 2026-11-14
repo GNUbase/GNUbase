@@ -74,6 +74,8 @@ How it plays:
   automation without it, and the lane's last events would otherwise keep their value (#1361).
 - A synth voice takes its pad's tuning, tone and noise at its note on; level, pan, envelope and sends follow the
   pad's values while it sounds.
+- The delay and the reverb are cleared when they are switched off or Bypass All Effects goes on: switched on again,
+  they start empty instead of playing what they held from before (#1485).
 
 ## In the UI
 
@@ -118,7 +120,8 @@ parameters with their quick controls, Learn CC and ranges (pp. 978-980), the poo
 
 `tests/drummachine_tests.cpp`: the drum machine on its own (a pad's sample at its note, start, end, tuning and
 reverse; level, pan, velocity, mute and solo; exclusive groups and the gate; every synth sounding, decaying, held and
-the same in any block size; the delay and reverb sends and Bypass All Effects; its parameters in `processor.list`),
+the same in any block size; the delay and reverb sends and Bypass All Effects, and the effects starting empty after
+they were off; its parameters in `processor.list`),
 a pad parameter ignoring the events of its removed lane, the commands, the default kit and the names it goes by
 (`processor.list`'s `padNames`), a copy keeping the name a synth pad went by, a synth voice keeping its tuning, tone
 and noise from its note on, pattern lanes that follow the pads and track presets, saving and loading, another instrument dropping

@@ -55,8 +55,7 @@ namespace
 					.at("event")
 					.at("id")
 					.get<uint64_t>();
-			REQUIRE(app.waitUntil(
-				[&] { return display.project().is_object() && display.project().at("audioEvents").size() == 1; }));
+			REQUIRE(app.waitUntil([&] { return display.project().at("audioEvents").size() == 1; }));
 		}
 
 		// Open/Close Editor with the event selected (p. 613).

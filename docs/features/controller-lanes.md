@@ -96,16 +96,17 @@ part, or else channel 0.
 ## Not yet
 
 The controller event editor and its smart controls (p. 1187); ramps and curves between controller events and Type of New
-Controller Events (pp. 1159, 1181); the pitchbend lane's semitone grid, Grid Settings and Snap Pitchbend Events (pp. 1173-1176);
-SysEx and dynamics lanes, and the Dynamics Mapping Setup (pp. 1177-1179); the MIDI Controller Setup
+Controller Events (pp. 1159, 1181); the pitchbend lane's semitone grid, Grid Settings and Snap Pitchbend Events
+(pp. 1173-1176); SysEx and dynamics lanes, and the Dynamics Mapping Setup (pp. 1177-1179); the MIDI Controller Setup
 dialog, RPN and NRPN controllers (p. 1165); the poly pressure lane's pitch menu and editing its events with
 Ctrl+Alt (pp. 1179-1180); the context menu's Cut, Copy, Paste and Paste at Origin, and pasting notes as modulation
 (pp. 1160, 1180); the rhombus for controllers with automation and the value at the project cursor (pp. 1161, 1166);
 the divider between the note display and the lanes (p. 1158); renaming presets in an Organize Presets dialog; a
 channel per lane; a velocity variance and play probability chosen anew on each cycle pass; MIDI file export,
 Merge MIDI in Loop and Freeze MIDI Modifiers applying them; the line tool's modifier keys and its use in the note
-display; the selection rectangle on lanes; the info line for controller events; the in-place editor's lanes. The drum editor ([drum-editor.md](drum-editor.md))
-has the key editor's lanes.
+display; the selection rectangle on lanes; the info line for controller events. The drum editor
+([drum-editor.md](drum-editor.md)) and the in-place editor ([in-place-editor.md](in-place-editor.md)) have the key
+editor's lanes.
 
 ## Checks
 

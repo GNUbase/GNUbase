@@ -43,12 +43,7 @@ namespace
 				items.push_back({{"position", (pitch - 60) * g_quarter / 4}, {"length", g_quarter / 2},
 					{"pitch", pitch}, {"velocity", 0.5}});
 			app.call("note.add", {{"part", part}, {"notes", items}});
-			REQUIRE(app.waitUntil(
-				[this]
-				{
-					return display.project().is_object() &&
-						!display.project().value("midiParts", Json::array()).empty();
-				}));
+			REQUIRE(app.waitUntil([this] { return !display.project().value("midiParts", Json::array()).empty(); }));
 		}
 
 		Json elements(const std::string& selector) { return app.ui().dom(std::nullopt, selector, 0).at("elements"); }

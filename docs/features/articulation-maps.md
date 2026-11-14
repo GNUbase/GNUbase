@@ -60,20 +60,26 @@ removed).
   track sent, across the track's parts in the order of the notes' starts (and at the track's first note), the off events
   of that slot and the new slot's on events play (#1491): controller and program changes where the note starts, key
   switches for one sample just before it, and at one sample before the notes that start there, whatever their pitch (at
-  the project's start a key switch can't come a sample before). Notes that don't play (their probability, a muted drum
-  sound) select no slot and send no output events. Where playback starts or jumps, the controller and program changes
-  are chased like any others, and with note chasing (`midi.chaseNotes`) the last key switch of each pitch before the
-  position plays again there for a sample, in their order, before the notes. The slot's channel, transpose, velocity and
-  length apply to the note before the track's MIDI modifiers. Merge MIDI in Loop (`midi.merge`) starts the new part with
-  the directions of each group in effect where the range starts, and where a part starts later in the range it adds a
-  reset of each group of that part's track's map in which a direction is in effect there in the new part, as playback
-  starts each part with the default slot, so that its notes play the same slots. Where merge makes more than one new
-  part (#1240), each of them gets these directions and resets; as playback sends the output events across a track's
-  parts, the new parts send the key switches the source parts did, also where they lie over each other across the range.
-  A new track for the merged part gets the map of the first merged track that has one. The directions of several tracks
-  with maps share the new part's one lane, so they can't all keep their slots: a direction of one track's part also
-  selects the slots of the other tracks' notes after it, and the reset where another track's part starts ends it, even
-  where its own part still plays.
+  the project's start a key switch can't come a sample before), in the order the track sends them, so that the
+  instrument ends in the slot the track sent last where notes of several slots start together (#1521). Notes that don't
+  play (their probability, a muted drum sound) select no slot and send no output events. Where playback starts or jumps,
+  the controller and program changes are chased like any others, and with note chasing (`midi.chaseNotes`) the last key
+  switch of each pitch before the position plays again there for a sample, in their order, before the notes. The
+  controller and program changes are the track's, not the part's of the note that sent them (`g_soundSlotPart`): with
+  the chase limited to the parts under the position (`midi.chaseBeyondParts` off) they are chased all the same, also
+  between parts, so a part that continues the slot of the part before it has that slot after a jump (#1521). Key
+  switches are notes: without note chasing, and for a MIDI track heard again after it was soloed out or disabled, which
+  chases no notes, a part that continues the slot of the part before it doesn't send its key switch again, as no note of
+  it sends a slot the track has sent. The slot's channel, transpose, velocity and length apply to the note before the
+  track's MIDI modifiers. Merge MIDI in Loop (`midi.merge`) starts the new part with the directions of each group in
+  effect where the range starts, and where a part starts later in the range it adds a reset of each group of that part's
+  track's map in which a direction is in effect there in the new part, as playback starts each part with the default
+  slot, so that its notes play the same slots. Where merge makes more than one new part (#1240), each of them gets these
+  directions and resets; as playback sends the output events across a track's parts, the new parts send the key switches
+  the source parts did, also where they lie over each other across the range. A new track for the merged part gets the
+  map of the first merged track that has one. The directions of several tracks with maps share the new part's one lane,
+  so they can't all keep their slots: a direction of one track's part also selects the slots of the other tracks' notes
+  after it, and the reset where another track's part starts ends it, even where its own part still plays.
 - **Remote triggers** (pp. 1263, 1268, 1282). In what a recording brings to a track with a map (`recording.add`), the
   notes whose pitch is a slot's trigger (Key Switch), or the program changes whose program is one (Program Change),
   aren't recorded; they select their slot instead: a direction for each group that has directions, the slot's own or
@@ -129,9 +135,10 @@ removed).
   `project.get` lists them (`articulationMap.soundSlots` gives MCP and Lua clients the same), in the slot's color
   where it has one (the only color code sets there, user data like the track colors), with the state class `.light`
   or `.dark` for a light or dark slot color, on which the themes write the slot's name in a dark or a light color.
-  The lane keeps its elements while their RML is the same, so code also takes away a color or width an element no
-  longer has. A row per articulation of the map follows
-  (`.articulation-row[articulation-row]`, its name beside it in the lane's header): directions
+  The lane keeps its elements while their RML is the same, so code also takes away a width an element no longer has;
+  a slot that loses its color loses its class `.light` or `.dark` with it, so its elements are new and have none.
+  A row per articulation of the map follows (`.articulation-row[articulation-row]`, its name beside it in the lane's
+  header): directions
   (`.articulation-item.direction[part][controller]`) last until the next direction of their group or the part's end,
   a reset (`.reset`) is as wide as the style makes it (p. 1290); attributes (`.articulation-item.attribute[part][note]`)
   are on their notes, as long as them. Directions and attributes whose names aren't the map's don't show (p. 1291).
@@ -141,7 +148,8 @@ removed).
   or attribute removes it, as the erase tool's does. The lane menu's Select All Events on Lane selects the lane's
   directions.
 - **Articulations field** (p. 1290): the key and drum editors' info line shows the first selected note's attributes,
-  names separated by commas; typed, they replace every selected note's, and typed empty, they go.
+  names separated by commas; typed, they replace every selected note's, and typed empty, they go. The info line and
+  the list editor join and split the names with `ui::joinNames` and `ui::splitNames` (`ui/articulationnames.h`).
 - **List editor** (p. 1291, [list-editor.md](list-editor.md)): directions are events of the type Articulation with the
   direction's name in the Attributes column, without a channel; a note's Attributes column has its attributes. Both
   can be typed there.
@@ -189,18 +197,20 @@ applications' maps.
   export and import round trip with errors; maps, the tracks' maps and articulations saved and loaded; remote triggers
   in recordings, key switches with and without latch and program changes; renamed and removed articulations in the
   parts, shared copies on other tracks and other track versions; a key switch at the project's start before a lower
-  note; no output events for notes that don't play (their probability, a muted drum sound); a slot's off and on
-  events where it differs from the last one the track sent, across parts; Merge MIDI in Loop with the directions in
-  effect, the directions in every new part where it makes several, keeping the key switches of three parts, the middle
-  one with a part of its own, and over several parts onto a new
-  track with the map, with resets only where a direction of their group is in effect, on one track and in the lane two
-  tracks share (a reset where the second track's part starts while the first's direction is in effect, none once that
-  direction was reset); the slots a map and a part as `project.get` lists them choose (the sound slots lane's) and
+  note; key switches at one sample in the order the track sends them, from two parts over each other (#1521); the sends
+  before the modifiers getting the key switches; no output events for notes that don't play (their probability, a muted
+  drum sound); a slot's off and on events where it differs from the last one the track sent, across parts; Merge MIDI in
+  Loop with the directions in effect, the directions in every new part where it makes several, keeping the key switches
+  of three parts, the middle one with a part of its own, and over several parts onto a new track with the map, with
+  resets only where a direction of their group is in effect, on one track and in the lane two tracks share (a reset
+  where the second track's part starts while the first's direction is in effect, none once that direction was reset);
+  the slots a map and a part as `project.get` lists them choose (the sound slots lane's) and
   `articulationMap.soundSlots`, names joined and split at commas, and the `articulations` lane type, which
-  `controller.line` refuses; track presets and track import with the map; remote
-  triggers played into a track (`midi.inject`, `midi.capture`), the default slot after another map or other slots but
-  not after a slot's new name or color, and a held key's note-off once it is a trigger. `tests/midipatches_tests.cpp`
-  plays them into a MIDI track set to a channel: key switches with latch, the selected slot going out again when the
-  track's channel changes, the default slot coming back on the track's channel where a trigger key is released without
-  latch, and program change triggers. `tests/midi_tests.cpp` and `tests/sequencing_tests.cpp` check the chased key
-  switches; `tests/rtcheck_tests.cpp` plays remote triggers through the RT checker.
+  `controller.line` refuses; track presets and track import with the map; remote triggers played into a track
+  (`midi.inject`, `midi.capture`), the default slot after another map or other slots but not after a slot's new name or
+  color, and a held key's note-off once it is a trigger. `tests/midipatches_tests.cpp` plays them into a MIDI track set
+  to a channel: key switches with latch, the selected slot going out again when the track's channel changes, the default
+  slot coming back on the track's channel where a trigger key is released without latch, and program change triggers.
+  `tests/midi_tests.cpp` and `tests/sequencing_tests.cpp` check the chased key switches, and
+  `tests/sequencing_tests.cpp` a jump with the chase limited to parts into a part that continues the slot of the part
+  before it (#1521); `tests/rtcheck_tests.cpp` plays remote triggers through the RT checker.

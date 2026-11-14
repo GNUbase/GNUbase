@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/listeditor.h"
 
-#include "engine/midi/articulationmaps.h"
 #include "engine/midi/chords.h"
 #include "engine/midi/midivalues.h"
 #include "engine/midi/quantizesettings.h"
+#include "ui/articulationnames.h"
 #include "ui/timeformat.h"
 
 #include <RmlUi/Core/Context.h>
@@ -438,7 +438,7 @@ namespace gnubase::ui
 				return hex(row.data);
 			if (row.type == "articulation")
 				return row.articulation + (row.reset ? " (Reset)" : "");
-			return engine::midi::joinNames(row.articulations);
+			return joinNames(row.articulations);
 		}
 		const std::optional<int64_t> value = number(row, field);
 		if (!value)
@@ -711,8 +711,7 @@ namespace gnubase::ui
 			else if (edited.isNote())
 			{
 				// The note's attributes, names separated by commas; empty clears them (p. 1291).
-				changes[{edited.part, "note.set"}].push_back(
-					{{"id", edited.id}, {"articulations", engine::midi::splitNames(typed)}});
+				changes[{edited.part, "note.set"}].push_back({{"id", edited.id}, {"articulations", splitNames(typed)}});
 				edit("Change Articulations", std::move(changes));
 			}
 			else if (edited.type == "articulation")
