@@ -2721,11 +2721,13 @@ namespace gnubase::engine
 				return;
 			}
 		}
-		// In arranger mode playback outside the chain's events starts at the chain's start. A triggered event that
-		// loops where playback starts counts as inside too, so Play keeps it instead of the chain's first step (#880).
+		// In arranger mode playback outside the chain's events starts at the chain's start: where play starts (the
+		// cursor, or the left locator with startMode cycleStart), and a triggered event that loops there counts as
+		// inside too, so Play keeps it instead of the chain's first step (#880).
+		time::Samples from = -1; // with a start outside the chain: the chain's first step's start
 		if (plan.plays() && !m_transport.playing())
 		{
-			const time::Samples at = m_transport.position();
+			const time::Samples at = m_transport.playStart();
 			const ArrangerState state = m_transport.arranger();
 			const auto section = static_cast<size_t>(state.section);
 			const bool inLoop = state.step < 0 && state.section >= 0 && section < plan.sections.size() &&
@@ -2738,6 +2740,7 @@ namespace gnubase::engine
 				});
 			if (!inLoop && !inStep)
 			{
+				from = plan.sections.at(static_cast<size_t>(plan.steps.at(0).section)).start;
 				ArrangerState first;
 				first.step = 0;
 				arrange(first);
@@ -2745,12 +2748,13 @@ namespace gnubase::engine
 		}
 		if (m_device && !m_transport.playing())
 		{
-			cueStart(m_transport.startPosition(), m_transport.playStart());
-			cue(m_transport.startPosition(), false, m_device->format().blockSize, true, m_transport.playStart());
+			cueStart(m_transport.startPosition(from), m_transport.playStart(from));
+			cue(m_transport.startPosition(from), false, m_device->format().blockSize, true,
+				m_transport.playStart(from));
 			// Only starting playback waits for the samplers' samples, not locating or a count-in (#1180).
 			waitForSamples(g_startWait);
 		}
-		sent(m_transport.play());
+		sent(m_transport.play(from));
 	}
 
 	graph::CountIn AudioEngine::countInFrom(time::Samples start, time::Samples recordStart) const
@@ -3117,9 +3121,10 @@ namespace gnubase::engine
 		};
 		command("transport.play",
 			"Starts playback from the project cursor, or from the left locator if startMode is cycleStart, less the "
-			"pre-roll if preRoll is on (not before the project start). While playing it does nothing, except that it "
-			"ends a Repeat Forever loop: playback then goes on with the next chain step, or past the chain if the "
-			"looping step is the last one.",
+			"pre-roll if preRoll is on (not before the project start); in arranger mode a start outside the chain's "
+			"events starts at the chain's first step instead. While playing it does nothing, except that it ends a "
+			"Repeat Forever loop: playback then goes on with the next chain step, or past the chain if the looping "
+			"step is the last one.",
 			nullptr, [this](const Json&) { play(); });
 		// Lock Record: a recording doesn't stop or punch out by these commands, only by a confirmed stop.
 		const auto unlocked = [this]
