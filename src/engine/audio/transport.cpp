@@ -259,9 +259,9 @@ namespace gnubase::engine
 				m_arranger.pendingStep = request.arranger.step;
 				m_arranger.pendingRepeat = request.arranger.repeat;
 				m_arranger.pendingSection = request.arranger.step >= 0 ? -1 : request.arranger.section;
-				m_arranger.pendingEvent = request.arranger.pendingEvent;
-				m_arranger.pendingRank = request.arranger.pendingRank;
-				m_arranger.pendingSectionEvent = request.arranger.pendingSectionEvent;
+				m_arranger.pendingEvent = request.arranger.stepEvent;
+				m_arranger.pendingRank = request.arranger.stepRank;
+				m_arranger.pendingSectionEvent = request.arranger.sectionEvent;
 			}
 			else
 			{

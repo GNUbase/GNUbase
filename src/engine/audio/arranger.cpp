@@ -92,7 +92,7 @@ namespace gnubase::engine
 	{
 		// The repeat a step found again keeps: its own, as far as the step found allows. A Forever step's counter
 		// runs past its repeats and is kept as it is.
-		const auto keptRepeat = [&plan, &state](int32_t step, int32_t repeat)
+		const auto keptRepeat = [&plan](int32_t step, int32_t repeat)
 		{
 			if (step < 0)
 				return int32_t{0};
