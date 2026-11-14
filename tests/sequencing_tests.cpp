@@ -1316,6 +1316,49 @@ TEST_CASE("playback that starts after a sound slot's key switch sends it again b
 	CHECK(song.capture(1, 8) == std::vector<float>{25, 0, 0, 0, 88, 63, 63, 63});
 }
 
+TEST_CASE("a jump limited to parts chases the sound slot that a part continues from the part before", "[integration]")
+{
+	// Parts A and B play Staccato, controller 32 at 64, and part C plays Arco, which sends Staccato's off event,
+	// controller 32 at 0 (#1521). B continues A's slot and sends nothing of its own: a jump into it, with the chase
+	// limited to the parts under the position, takes A's controller 32 all the same, as the slot is the track's.
+	Song song(64);
+	const Json map = run(song.client, "articulationMap.add",
+		{{"name", "Strings"}, {"articulations", {{{"name", "Staccato"}, {"type", "attribute"}, {"group", 0}}}},
+			{"slots",
+				{{{"name", "Arco"}},
+					{{"name", "Staccato"}, {"articulations", {"Staccato"}},
+						{"outputs",
+							{{{"status", "controller"}, {"data1", 32}, {"data2", 64}},
+								{{"status", "controller"}, {"data1", 32}, {"data2", 0}, {"off", true}}}}}}}});
+	run(song.client, "track.set", {{"track", song.instrument}, {"articulationMap", map.at("map").at("id")}});
+	run(song.client, "settings.set", {{"key", "midi.chaseBeyondParts"}, {"value", false}});
+	// After the song's parts, 2000 samples each.
+	for (const int64_t start : {48000, 50000, 52000})
+	{
+		const ObjectId part =
+			idOf(run(song.client, "midiPart.add",
+					 {{"track", song.instrument}, {"position", ticks(start)}, {"length", ticks(2000)}}),
+				"part");
+		run(song.client, "note.add",
+			{{"part", part},
+				{"notes",
+					{{{"position", 0}, {"length", ticks(1000)}, {"pitch", 60}, {"velocity", 0.8},
+						{"articulations", start < 52000 ? Json::array({"Staccato"}) : Json::array()}}}}});
+	}
+	run(song.client, "midi.capture", {{"start", true}});
+	run(song.client, "transport.locate", {{"position", 47000}});
+	run(song.client, "transport.play");
+	run(song.client, "audio.render", {{"frames", 7000}});
+	ControllerBytes played;
+	for (const Played& message : captured(song.client))
+		if (message.bytes.at(0) == 0xB0)
+			played.push_back(message.bytes);
+	CHECK(played == ControllerBytes{{0xB0, 32, 64}, {0xB0, 32, 0}});
+
+	run(song.client, "transport.locate", {{"position", 50500}});
+	CHECK(controllersPlayed(song.client) == ControllerBytes{{0xB0, 32, 64}});
+}
+
 TEST_CASE("the chase settings are user settings", "[integration]")
 {
 	Engine engine;

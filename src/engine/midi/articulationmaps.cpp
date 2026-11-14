@@ -307,20 +307,19 @@ namespace gnubase::engine::midi
 			}
 			if (renamed.empty())
 				return;
+			// An inactive version's shared copies are all in that version (track-versions.md), so they are all on
+			// the track; its parts change unannounced, as they aren't there to see.
 			std::set<ObjectId> shared;
-			for (auto& [id, track] : project.trackById)
-				if (track.articulationMap == after.id)
+			for (const auto& [id, part] : project.midiParts)
+				if (part.shared != 0 && articulationMapOf(project, part.track) == &after)
+					shared.insert(part.shared);
+			forEveryEventAndPart(
+				project, [](const AudioEvent&, bool) {}, [](const AudioPart&, bool) {},
+				[&](MidiPart& part, bool plays)
 				{
-					for (TrackVersion& version : track.versions)
-						for (MidiPart& part : version.midiParts)
-							rename(part, renamed, nullptr);
-					for (const auto& [partId, part] : project.midiParts)
-						if (part.track == id && part.shared != 0)
-							shared.insert(part.shared);
-				}
-			for (auto& [id, part] : project.midiParts)
-				if (articulationMapOf(project, part.track) == &after || shared.count(part.shared) != 0)
-					rename(part, renamed, &context);
+					if (articulationMapOf(project, part.track) == &after || (plays && shared.count(part.shared) != 0))
+						rename(part, renamed, plays ? &context : nullptr);
+				});
 		}
 
 		Json setMap(Project& project, CommandContext& context)

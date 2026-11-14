@@ -87,6 +87,7 @@
 
 .drum-pad
 {
+	position: relative;
 	display: flex;
 	flex-direction: column;
 	justify-content: space-between;
@@ -95,6 +96,16 @@
 	padding: 2dp 3dp;
 	border-width: 1dp;
 	overflow: hidden;
+}
+
+/* The pad's color (Set Color), a strip along its left edge; the color is user data that the panel sets. */
+.drum-pad-color
+{
+	position: absolute;
+	left: 0;
+	top: 0;
+	bottom: 0;
+	width: 3dp;
 }
 
 .drum-pad-name

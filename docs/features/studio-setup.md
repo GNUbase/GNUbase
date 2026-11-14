@@ -21,6 +21,13 @@ MCP and Lua scripts can do all it does.
     entry, which Apply and OK don't send, so they don't reopen the device with a source the user didn't pick (#398).
   - *MIDI Port Setup*: the ports of every MIDI backend (`midi.ports`) with Show As, Visible, State (active, inactive or
     not present) and, for inputs, In 'All MIDI Inputs'.
+  - *Note Expression Input* (#1514, reference manual pp. 1295-1298): the MIDI Input list picks an input, and below it
+    are that input's MPE settings (`mpe` in `midi.ports` and `midi.setPort`, [note-expression.md](note-expression.md)):
+    Multi-Channel Input Mode (off, MPE's lower or upper zone, channel rotation), Used Channels, First Channel (only
+    for channel rotation), Pitch Range, Use for Tuning and the Send Initial Value of the horizontal (X) and vertical
+    (Y) movements. Each input has its own fields, so switching inputs keeps what the user changed; Apply and OK send
+    the changed inputs' settings; a pitch range that isn't a whole number from 1 to 96 is an error, and that input's
+    settings stay as they were.
 - **Apply, OK, Cancel.** The pages keep what the user changes until Apply or OK sends it; Cancel and Escape drop it.
   Only what changed is sent: another driver with `audio.setDevice` (the old device's page doesn't apply to the new
   one, so the reference's "Switch" is this Apply) with `remember`, so the app opens it again when it starts, and
@@ -66,7 +73,8 @@ MCP and Lua scripts can do all it does.
   the extra processing buffer and power scheme options, disk preload and the MIDI input and output monitors.
 - **Tests:** `tests/studiosetup_tests.cpp` opens the dialog through its UI command on the dummy device and a dummy MIDI
   keyboard and drives it with `ui::Automation`: it shows the driver, the device's settings and its ports; a new sample
-  rate, a renamed and a hidden port and a renamed MIDI input that leaves all MIDI inputs reach the engine with OK;
+  rate, a renamed and a hidden port and a renamed MIDI input that leaves all MIDI inputs reach the engine with OK; the
+  Note Expression Input page sets up the keyboard's channel rotation, and an invalid pitch range keeps it open;
   Cancel drops a change, Apply changes multi-processing while the device runs, a bad record shift keeps the dialog
   open with the message, and Reset reopens the device. With a fake audio backend (`test::UiApp` takes audio backends
   as it takes MIDI backends), Apply switches to its device's driver with `audio.setDevice`, and OK sends no

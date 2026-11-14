@@ -207,14 +207,21 @@ namespace gnubase::engine
 	// An audio channel has this many sends (reference manual p. 542).
 	inline constexpr size_t g_maxSends = 8;
 
-	// A pad of a drum track's drum machine (#182): its name, or empty for the General MIDI sound's of its note, and
-	// the pool clip it plays, or 0.
+	// A pad of a drum track's drum machine (#182): its name, or empty for its sample's or a General MIDI sound's, the
+	// pool clip it plays, or 0, and the note whose General MIDI sound names it without either: a copy's goes by the
+	// sound of the pad it was copied from (drum.copyPad, #1567), -1 by its own note's. And its color, "#rrggbb" or
+	// empty for none (Set Color, reference manual pp. 942-943).
 	struct DrumPad
 	{
 		std::string name;
 		ObjectId sample = 0;
+		int sound = -1;
+		std::string color;
 
-		bool operator==(const DrumPad& other) const { return name == other.name && sample == other.sample; }
+		bool operator==(const DrumPad& other) const
+		{
+			return name == other.name && sample == other.sample && sound == other.sound && color == other.color;
+		}
 		bool operator!=(const DrumPad& other) const { return !(*this == other); }
 	};
 
@@ -641,6 +648,26 @@ namespace gnubase::engine
 			return type == other.type && position == other.position && value == other.value;
 		}
 	};
+
+	// What a note plays of an expression that it has no point of at its start: unity gain, the center, no tuning and
+	// no pressure, and brightness at the center, MPE's initial values of the last three, which playback sends before
+	// a note that doesn't start with its own (#176). Vibrato and expression have none: the plugin decides.
+	constexpr std::optional<double> defaultExpression(plugin::NoteExpression type)
+	{
+		switch (type)
+		{
+		case plugin::NoteExpression::Volume:
+			return 1.0;
+		case plugin::NoteExpression::Pan:
+		case plugin::NoteExpression::Brightness:
+			return 0.5;
+		case plugin::NoteExpression::Tuning:
+		case plugin::NoteExpression::Pressure:
+			return 0.0;
+		default:
+			return std::nullopt;
+		}
+	}
 
 	// The expressions' names, by plugin::NoteExpression.
 	inline constexpr std::array<const char*, 7> g_expressionNames = {

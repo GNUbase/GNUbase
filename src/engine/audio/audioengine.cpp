@@ -558,7 +558,6 @@ namespace gnubase::engine
 		setup.retrospective =
 			static_cast<size_t>(std::max<int64_t>(m_settings.get(settings::g_midiRetrospectiveEvents), 0));
 		setup.pauseFrames = std::llround(30.0 * deviceRate); // reference manual p. 354
-		setup.mpePitchRange = mpePitchRange(m_settings);
 		// Each channel of a track's file records the channel of its input bus with the same number; a bus with fewer
 		// channels gives the others its last one, so a mono input fills a stereo track.
 		const RenderSnapshot& snapshot = m_snapshots.latest();

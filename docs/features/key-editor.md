@@ -106,7 +106,7 @@ editor of its own. A press on a key selects and deselects no notes.
 | Draw | A click draws a note of the length quantize's length, a drag a multiple of it | p. 1212 |
 | Erase | A click deletes the note | p. 1212 |
 | Trim | A click cuts off the note's end from the mouse on, with Alt its start up to the mouse | p. 1215 |
-| Split | A click splits the note at the snapped position; on a selected note, every selected note there (`note.split`: the rests keep the notes' values and their expression from the cut on; as with `event.split`, both pieces lose their quantize origin, so `quantize.reset` no longer moves them) | p. 1215 |
+| Split | A click splits the note at the snapped position; on a selected note, every selected note there (`note.split`: the rests keep the notes' values and their expression from the cut on; as with the notes that `event.split` cuts with `splitNotes`, both pieces lose their quantize origin, so `quantize.reset` no longer moves them) | p. 1215 |
 | Glue | A click glues the note to the next one of its pitch; the first one's values stay, the next one's expression joins its own (`note.glue`) | p. 1215 |
 
 - **Info line** (p. 1199). Start, end and length in bars and beats, the pitch as a name such as C3 (typing a number

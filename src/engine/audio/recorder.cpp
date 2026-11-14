@@ -4,7 +4,6 @@
 #include "engine/document/serialize.h"
 #include "engine/media/backup.h"
 #include "engine/midi/midivalues.h"
-#include "engine/settings/usersettings.h"
 #include "platform/log.h"
 #include "platform/rt/realtime.h"
 
@@ -12,6 +11,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <ctime>
 #include <exception>
 #include <set>
@@ -36,9 +36,6 @@ namespace gnubase::engine
 		constexpr size_t g_eventsPerChunk = 256;
 
 		using EventType = graph::ProcessEvent::Type;
-
-		// The expressions of MPE's pitch bend, channel pressure and CC 74 (MidiTakeBuilder::m_mpeState).
-		constexpr std::array<const char*, 3> g_mpeExpressions = {"tuning", "pressure", "brightness"};
 
 		// A track name as a file name: characters that some file system doesn't take become "_".
 		std::string fileName(const std::string& name)
@@ -140,37 +137,10 @@ namespace gnubase::engine
 
 	bool MidiRecordFilter::records(const graph::ProcessEvent& event) const
 	{
-		return !types.test(static_cast<size_t>(event.type)) && !channels.test(event.channel % 16U) &&
+		// Note expression is no MIDI message type: only its channel filters it.
+		const auto type = static_cast<size_t>(event.type);
+		return (type >= types.size() || !types.test(type)) && !channels.test(event.channel % 16U) &&
 			(event.type != EventType::Controller || !controllers.test(event.key % 128U));
-	}
-
-	int mpePitchRange(const settings::Store& store)
-	{
-		if (!store.get(settings::g_midiMpeInput))
-			return 0;
-		return static_cast<int>(std::clamp<int64_t>(store.get(settings::g_midiMpePitchRange), 1, 96));
-	}
-
-	bool MidiTakeBuilder::addExpression(time::Samples position, const graph::ProcessEvent& event)
-	{
-		const uint8_t channel = event.channel % 16U;
-		if (m_mpeRange <= 0 || channel == 0) // the master channel's messages are the whole zone's
-			return false;
-		size_t index = 0; // into g_mpeExpressions
-		if (event.type == EventType::ChannelPressure)
-			index = 1;
-		else if (event.type == EventType::Controller && event.key == 74)
-			index = 2;
-		else if (event.type != EventType::PitchBend)
-			return false;
-		const double value =
-			index == 0 ? midi::bendToSemitones(event.value, m_mpeRange) : midi::controllerToUnit(event.value);
-		m_mpeState[channel][index] = value;
-		const Json point = {{"type", g_mpeExpressions.at(index)}, {"position", position}, {"value", value}};
-		for (size_t pitch = 0; pitch < 128; ++pitch)
-			if (Sounding& sounding = m_sounding[(size_t{channel} * 128) + pitch]; sounding.position >= 0)
-				sounding.expressions.push_back(point);
-		return true;
 	}
 
 	void MidiTakeBuilder::add(time::Samples position, const graph::ProcessEvent& event)
@@ -194,18 +164,16 @@ namespace gnubase::engine
 			sounding.position = event.type == EventType::NoteOn ? position : -1;
 			sounding.velocity = event.velocity;
 			sounding.expressions = Json::array();
-			if (event.type == EventType::NoteOn && m_mpeRange > 0 && channel != 0)
-			{
-				// The channel's state is the note's initial expression.
-				for (size_t i = 0; i < g_mpeExpressions.size(); ++i)
-					if (const Json& value = m_mpeState[channel][i]; !value.is_null())
-						sounding.expressions.push_back(
-							{{"type", g_mpeExpressions.at(i)}, {"position", position}, {"value", value}});
-			}
 			return;
 		}
-		if (addExpression(position, event))
+		if (event.type == EventType::NoteExpression)
+		{
+			Sounding& sounding = m_sounding[(size_t{channel} * 128) + (event.key % 128U)];
+			if (sounding.position >= 0 && event.parameter < g_expressionNames.size())
+				sounding.expressions.push_back({{"type", g_expressionNames.at(event.parameter)}, {"position", position},
+					{"value", event.parameterValue}});
 			return;
+		}
 		Controller controller;
 		controller.channel = channel;
 		controller.value = event.value;
@@ -302,6 +270,9 @@ namespace gnubase::engine
 		m_filled.reset();
 		m_history.assign(static_cast<size_t>(m_next.preRecordFrames) * static_cast<size_t>(m_channels), 0.0f);
 		m_historyFrames = 0;
+		// The next device counts its frames from 0 again: what was kept so far is no input just before its recordings.
+		for (auto& entry : m_retrospective)
+			entry.second.recorded = entry.second.events.size();
 		if (maxFrames == 0)
 			return;
 		const uint32_t count = std::max(g_minChunks, g_queuedFrames / maxFrames);
@@ -773,7 +744,7 @@ namespace gnubase::engine
 				keepRetrospective(input, chunk.deviceFrame);
 			if (chordsOnly)
 				if (const auto kept = m_retrospective.find(input.channel); kept != m_retrospective.end())
-					kept->second.recordedUntil = chunk.deviceFrame + input.offset + 1;
+					kept->second.recorded = kept->second.events.size();
 			if (builder != m_midiBuilders.end() && m_midiCurrent.midiFilter.records(input.event))
 				builder->second.add(chunk.position + input.offset, input.event);
 		}
@@ -786,24 +757,23 @@ namespace gnubase::engine
 		m_midiTakes.assign(1, {chunk.position, static_cast<time::Samples>(chunk.deviceFrame), 0});
 		m_midiBuilders.clear();
 		for (const MidiRecordTrack& track : m_midiCurrent.midiTracks)
-			m_midiBuilders[track.channel].setMpe(m_midiCurrent.mpePitchRange);
+			m_midiBuilders[track.channel] = MidiTakeBuilder();
 		// The catch range: input that came just before recording started belongs to its start, unless a recording
-		// took it already.
-		if (m_midiCurrent.catchFrames <= 0)
-			return;
+		// took it already. All that was kept so far is before this recording: the next one doesn't take it again.
 		for (const MidiRecordTrack& track : m_midiCurrent.midiTracks)
 		{
 			const auto found = m_retrospective.find(track.channel);
 			if (found == m_retrospective.end())
 				continue;
 			Retrospective& buffer = found->second;
-			for (const RetrospectiveEvent& kept : buffer.events)
-				if (kept.deviceFrame >= buffer.recordedUntil && kept.deviceFrame < chunk.deviceFrame &&
-					kept.deviceFrame + static_cast<uint64_t>(m_midiCurrent.catchFrames) >= chunk.deviceFrame &&
-					m_midiCurrent.midiFilter.records(kept.event))
-					m_midiBuilders[track.channel].add(chunk.position, kept.event);
-			if (track.chordsOnly)
-				buffer.recordedUntil = std::max(buffer.recordedUntil, chunk.deviceFrame);
+			if (m_midiCurrent.catchFrames > 0)
+				for (auto kept = buffer.events.begin() + static_cast<std::ptrdiff_t>(buffer.recorded);
+					kept != buffer.events.end(); ++kept)
+					if (kept->deviceFrame < chunk.deviceFrame &&
+						kept->deviceFrame + static_cast<uint64_t>(m_midiCurrent.catchFrames) >= chunk.deviceFrame &&
+						m_midiCurrent.midiFilter.records(kept->event))
+						m_midiBuilders[track.channel].add(chunk.position, kept->event);
+			buffer.recorded = buffer.events.size();
 		}
 	}
 
@@ -856,11 +826,18 @@ namespace gnubase::engine
 		if (buffer.taken ||
 			(input.played < 0 && !buffer.events.empty() && buffer.events.back().position < 0 &&
 				frame > buffer.events.back().deviceFrame + static_cast<uint64_t>(m_next.pauseFrames)))
+		{
 			buffer.events.clear();
+			buffer.recorded = 0;
+		}
 		buffer.taken = false;
 		buffer.events.push_back({frame, input.played, input.event});
 		while (buffer.events.size() > m_next.retrospective)
+		{
 			buffer.events.pop_front();
+			if (buffer.recorded > 0)
+				--buffer.recorded;
+		}
 	}
 
 	void Recorder::keepHistory(const Chunk& chunk)

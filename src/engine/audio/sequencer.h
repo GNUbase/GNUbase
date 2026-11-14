@@ -45,11 +45,13 @@ namespace gnubase::engine
 		ChaseIndex index; // the part's own controller events
 	};
 
-	// A track's controller events for chasing (makeChaseTrack): all of them, and those of each MIDI part.
+	// A track's controller events for chasing (makeChaseTrack): all of them, those of each MIDI part, and its sound
+	// slots' output events (g_soundSlotPart).
 	struct ChaseTrack
 	{
 		ChaseIndex all;
 		std::vector<ChasePart> parts; // sorted by start
+		ChaseIndex slots;
 		// A MIDI track's AutomationPlayer::heardAgain, or none: raised for the block in which the track is heard again
 		// after playback moved while it was silent, when the sequencer chases its parts where playback is.
 		std::shared_ptr<const std::atomic<HeardAgain>> heardAgain;
@@ -194,7 +196,9 @@ namespace gnubase::engine
 		bool controllers = false; // control changes, each number by itself
 		bool programs = false;
 		bool pitchBend = false;
-		bool beyondParts = true; // controller events from the whole track, not just the part under the position
+		// Controller events from the whole track, not just the parts under the position and the sound slots' output
+		// events, which are the track's.
+		bool beyondParts = true;
 	};
 
 	// Plays a track's MIDI parts as events at their sample offsets, after the events it receives (from MIDI tracks

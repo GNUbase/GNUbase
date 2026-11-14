@@ -724,6 +724,15 @@ namespace
 			return notesPlayed(run(client, "midi.capture"));
 		}
 
+		// Note-ons (0x90) or note-offs (0x80) of the pitches, at a frame of the next block rendered.
+		void inject(int64_t position, int status, const std::vector<int>& pitches)
+		{
+			Json messages = Json::array();
+			for (const int pitch : pitches)
+				messages.push_back({{"position", position}, {"bytes", {status, pitch, status == 0x90 ? 100 : 0}}});
+			run(client, "midi.inject", {{"channel", channel}, {"messages", messages}});
+		}
+
 		// Stops the transport and waits until the recording is added.
 		bool stopRecording()
 		{
@@ -967,16 +976,9 @@ TEST_CASE("a recording within the catch range of the one before doesn't take a m
 	Client& client = rig.client;
 	run(client, "settings.set", {{"key", "midi.recordCatchRange"}, {"value", 1000}}); // 48000 frames
 	run(client, "chord.setTrack", {{"recordEnable", true}});
-	const auto inject = [&](int64_t position, int status, const std::vector<int>& pitches)
-	{
-		Json messages = Json::array();
-		for (const int pitch : pitches)
-			messages.push_back({{"position", position}, {"bytes", {status, pitch, status == 0x90 ? 100 : 0}}});
-		run(client, "midi.inject", {{"channel", rig.channel}, {"messages", messages}});
-	};
 	// F, held over the first recording's end, then edited on the chord track.
 	run(client, "transport.record");
-	inject(1000, 0x90, {65, 69, 72});
+	rig.inject(1000, 0x90, {65, 69, 72});
 	run(client, "audio.render", {{"frames", 24000}});
 	REQUIRE(rig.stopRecording());
 	REQUIRE(chordNames(client) == std::vector<std::string>{"F"});
@@ -988,10 +990,68 @@ TEST_CASE("a recording within the catch range of the one before doesn't take a m
 	run(client, "transport.locate", {{"position", 2 * g_barSamples}});
 	run(client, "audio.render", {{"frames", 64}});
 	run(client, "transport.record");
-	inject(10000, 0x80, {65, 69, 72});
-	inject(12000, 0x90, {67, 71, 74});
-	inject(20000, 0x80, {67, 71, 74});
+	rig.inject(10000, 0x80, {65, 69, 72});
+	rig.inject(12000, 0x90, {67, 71, 74});
+	rig.inject(20000, 0x80, {67, 71, 74});
 	run(client, "audio.render", {{"frames", 24000}});
 	REQUIRE(rig.stopRecording());
 	CHECK(chordNames(client) == std::vector<std::string>{"Am", "G"});
+}
+
+TEST_CASE(
+	"a monitoring track's notes caught at a recording's start aren't caught again by the next one", "[integration]")
+{
+	Rig rig;
+	Client& client = rig.client;
+	run(client, "settings.set", {{"key", "midi.recordCatchRange"}, {"value", 1000}}); // 48000 frames
+	run(client, "chord.setTrack", {{"recordEnable", true}});
+	// F, played before the first recording and held over it: caught at its start, nothing played during it.
+	rig.inject(0, 0x90, {65, 69, 72});
+	run(client, "audio.render", {{"frames", 1000}});
+	run(client, "transport.record");
+	run(client, "audio.render", {{"frames", 24000}});
+	REQUIRE(rig.stopRecording());
+	REQUIRE(chordNames(client) == std::vector<std::string>{"F"});
+	run(client, "chord.set",
+		{{"events", {{{"event", run(client, "chord.get").at("events")[0].at("id")}, {"chord", "Am"}}}}});
+
+	// The second recording, two bars on, is within the catch range of F's note-ons: it doesn't catch them again.
+	run(client, "transport.locate", {{"position", 2 * g_barSamples}});
+	run(client, "audio.render", {{"frames", 64}});
+	run(client, "transport.record");
+	rig.inject(10000, 0x80, {65, 69, 72});
+	rig.inject(12000, 0x90, {67, 71, 74});
+	rig.inject(20000, 0x80, {67, 71, 74});
+	run(client, "audio.render", {{"frames", 24000}});
+	REQUIRE(rig.stopRecording());
+	CHECK(chordNames(client) == std::vector<std::string>{"Am", "G"});
+}
+
+TEST_CASE("the catch range of a recording on another audio device takes a monitoring track's notes", "[integration]")
+{
+	Rig rig;
+	Client& client = rig.client;
+	run(client, "settings.set", {{"key", "midi.recordCatchRange"}, {"value", 1000}}); // 48000 frames
+	run(client, "chord.setTrack", {{"recordEnable", true}});
+	// The first recording starts after the device has run for a while.
+	run(client, "audio.render", {{"frames", 4 * g_barSamples}});
+	run(client, "transport.record");
+	rig.inject(1000, 0x90, {65, 69, 72});
+	rig.inject(20000, 0x80, {65, 69, 72});
+	run(client, "audio.render", {{"frames", 24000}});
+	REQUIRE(rig.stopRecording());
+	REQUIRE(chordNames(client) == std::vector<std::string>{"F"});
+
+	// Another device counts its frames from 0 again: G, played just before the second recording, is caught at its
+	// start.
+	run(client, "audio.setDevice", {{"blockSize", 128}, {"inputChannels", 0}});
+	run(client, "transport.locate", {{"position", 2 * g_barSamples}});
+	run(client, "audio.render", {{"frames", 128}}); // the new graph
+	rig.inject(0, 0x90, {67, 71, 74});
+	run(client, "audio.render", {{"frames", 1024}});
+	run(client, "transport.record");
+	rig.inject(10000, 0x80, {67, 71, 74});
+	run(client, "audio.render", {{"frames", 24000}});
+	REQUIRE(rig.stopRecording());
+	CHECK(chordNames(client) == std::vector<std::string>{"F", "G"});
 }

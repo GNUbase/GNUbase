@@ -748,15 +748,14 @@ TEST_CASE("the erase, trim, split and glue tools", "[ui]")
 	CHECK(f.note(ids[2]).at("expressions") == Json::array({tuning(0, 0.0), tuning(g_sixteenth, 2.0)}));
 	CHECK(pieces[2].at("expressions") == Json::array({tuning(0, 2.0), tuning(g_sixteenth, 4.0)}));
 
-	// Glue joins the note to the next one of its pitch (p. 1215).
+	// Glue joins the note to the next one of its pitch (p. 1215), back to the expression it had before the cut.
 	f.tool("glue");
 	f.click(f.at(8.5, 64));
 	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 3; }));
 	f.settle();
 	CHECK(f.note(ids[2]).at("length") == g_quarter);
 	CHECK(f.note(ids[2]).at("expressions") ==
-		Json::array(
-			{tuning(0, 0.0), tuning(g_sixteenth, 2.0), tuning(2 * g_sixteenth, 2.0), tuning(3 * g_sixteenth, 4.0)}));
+		Json::array({tuning(0, 0.0), tuning(g_sixteenth, 2.0), tuning(3 * g_sixteenth, 4.0)}));
 	f.click(f.at(8.5, 64));
 	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 2; }));
 	f.settle();

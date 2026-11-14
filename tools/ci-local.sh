@@ -11,10 +11,11 @@
 # optimization, which only makes every link slow, and one run at a time per machine (lockMachine).
 # Usage: tools/ci-local.sh [job...]    default: every job this machine can run
 # Environment: GNUBASE_WSL names the WSL distribution (default Ubuntu), GNUBASE_CI_JOBS the compile jobs per build.
-# Setup: Windows needs Visual Studio 2026; Linux (or WSL, Ubuntu 24.04) needs the packages in .github/workflows/ci.yml
-# plus clang with its sanitizer runtimes (libclang-rt-18-dev), ccache, git-lfs, make (without it, GCC's link-time
-# optimization runs its jobs one after another: linking the tests takes ten times as long) and, through pipx,
-# clang-tidy==22.1.8 and clang-format==22.1.3.
+# Setup: Windows needs Visual Studio 2026 and, on Git Bash's PATH, Python 3.10 or later for the format job's
+# tools/skin/generate.py; Linux (or WSL, Ubuntu 24.04) needs the packages in .github/workflows/ci.yml plus clang
+# with its sanitizer runtimes (libclang-rt-18-dev), ccache, git-lfs, make (without it, GCC's link-time optimization
+# runs its jobs one after another: linking the tests takes ten times as long) and, through pipx, clang-tidy==22.1.8
+# and clang-format==22.1.3.
 # Logs: build/ci-local/<job>.log. Exit status: 0 every job passed, 1 a job failed, 2 error. When every job this machine
 # can run passed and the checkout had no uncommitted changes, build/ci-local/passed holds the commit they checked, so
 # other tools can skip checking it again.

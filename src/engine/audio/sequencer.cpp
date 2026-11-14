@@ -210,8 +210,11 @@ namespace gnubase::engine
 			track.all.controllers.push_back(controller);
 			if (controller.part >= 0 && static_cast<size_t>(controller.part) < parts.size())
 				track.parts[static_cast<size_t>(controller.part)].index.controllers.push_back(controller);
+			else if (controller.part == g_soundSlotPart)
+				track.slots.controllers.push_back(controller);
 		}
 		index(track.all);
+		index(track.slots);
 		for (ChasePart& part : track.parts)
 			index(part.index);
 		return track;
@@ -1034,6 +1037,9 @@ namespace gnubase::engine
 				if (part.range.end > position)
 					consider(part.index, index, position, chase, stopped);
 			}
+			// The sound slot the track sent last, wherever the part that sent it is (#1521); after the parts' events,
+			// as it plays after them at one position.
+			consider(track.slots, index, position, chase, stopped);
 		}
 
 		// The kinds found, in time order; at one position by track, then kind, so a bank select precedes its program.
@@ -1151,8 +1157,10 @@ namespace gnubase::engine
 	{
 		const midi::Modifiers& modifiers = sequence.modifiers;
 		using Type = graph::ProcessEvent::Type;
-		// The track's MIDI channel plays them on it (reference manual p. 351); the keys stay where they came in.
-		if (event.type != Type::NoteOn && event.type != Type::NoteOff && event.type != Type::PolyPressure)
+		// The track's MIDI channel plays them on it (reference manual p. 351); the keys stay where they came in. Poly
+		// pressure and a note's expression follow the note its key plays, as MPE input's does (#1514).
+		if (event.type != Type::NoteOn && event.type != Type::NoteOff && event.type != Type::PolyPressure &&
+			event.type != Type::NoteExpression)
 		{
 			if (sequence.inputChannel >= 0 &&
 				(event.type == Type::Controller || event.type == Type::PitchBend ||

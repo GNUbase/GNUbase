@@ -466,7 +466,7 @@ namespace gnubase::engine
 		std::set<ObjectId> changed;
 		if (project.tempo != before)
 		{
-			// The linear parts of inactive track versions too, which aren't shared copies and so aren't reported.
+			// The linear parts of inactive track versions too, which aren't there to see and so aren't reported.
 			forEveryEventAndPart(
 				project, [](const AudioEvent&, bool) {}, [](const AudioPart&, bool) {},
 				[&](MidiPart& part, bool plays)
@@ -481,21 +481,31 @@ namespace gnubase::engine
 		// a musical copy, can't share them all. Copies that still hold the same notes as each other stay shared: the
 		// largest set of matching copies (the first of equal ones) keeps the group and its note and controller ids,
 		// every other set gets a group of its own with new ids, and a copy that matches no other becomes a real copy,
-		// as event.toRealCopy makes it.
-		std::map<ObjectId, std::vector<std::vector<MidiPart*>>> groups; // the sets of matching copies, in id order
-		for (auto& entry : project.midiParts)
+		// as event.toRealCopy makes it. The same goes for the shared copies an inactive version holds, a group of their
+		// own (track-versions.md), which aren't reported.
+		std::map<ObjectId, std::vector<std::vector<MidiPart*>>> groups; // the sets of matching copies
+		std::set<const MidiPart*> playing;
+		forEveryEventAndPart(
+			project, [](const AudioEvent&, bool) {}, [](const AudioPart&, bool) {},
+			[&groups, &playing](MidiPart& part, bool plays)
+			{
+				if (part.shared == 0)
+					return;
+				if (plays)
+					playing.insert(&part);
+				std::vector<std::vector<MidiPart*>>& sets = groups[part.shared];
+				const auto matching = std::find_if(sets.begin(), sets.end(), [&part](const std::vector<MidiPart*>& set)
+					{ return set.front()->notes == part.notes && set.front()->controllers == part.controllers; });
+				if (matching != sets.end())
+					matching->push_back(&part);
+				else
+					sets.push_back({&part});
+			});
+		const auto report = [&changed, &playing](const MidiPart& part)
 		{
-			MidiPart& part = entry.second;
-			if (part.shared == 0)
-				continue;
-			std::vector<std::vector<MidiPart*>>& sets = groups[part.shared];
-			const auto matching = std::find_if(sets.begin(), sets.end(), [&part](const std::vector<MidiPart*>& set)
-				{ return set.front()->notes == part.notes && set.front()->controllers == part.controllers; });
-			if (matching != sets.end())
-				matching->push_back(&part);
-			else
-				sets.push_back({&part});
-		}
+			if (playing.count(&part) != 0)
+				changed.insert(part.id);
+		};
 		for (auto& entry : groups)
 		{
 			const std::vector<std::vector<MidiPart*>>& sets = entry.second;
@@ -511,19 +521,19 @@ namespace gnubase::engine
 					if (set->size() < 2)
 					{
 						source.shared = 0; // the last of its copies is a part like any other
-						changed.insert(source.id);
+						report(source);
 					}
 					continue;
 				}
 				renumber(project, source);
 				source.shared = set->size() < 2 ? 0 : project.newId();
-				changed.insert(source.id);
+				report(source);
 				for (auto other = std::next(set->begin()); other != set->end(); ++other)
 				{
 					(*other)->shared = source.shared;
 					(*other)->notes = source.notes;
 					(*other)->controllers = source.controllers;
-					changed.insert((*other)->id);
+					report(**other);
 				}
 			}
 		}

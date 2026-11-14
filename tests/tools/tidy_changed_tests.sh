@@ -1,7 +1,9 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Tests the line filter tools/tidy-changed.sh gives clang-tidy, with a stub clang-tidy that logs it, in a temporary
-# repository with prepared compile databases. Run by ctest; usage: tidy_changed_tests.sh <source-dir>
+# Tests tools/tidy-changed.sh in a temporary repository with prepared compile databases: the line filter it gives
+# clang-tidy, with a stub clang-tidy that logs it, its exit without changed lines and, on Linux, its compile steps
+# with stub compilers for Clang and GCC and when it configures the compile databases again, with a stub cmake. Run by
+# ctest; usage: tidy_changed_tests.sh <source-dir>
 set -u
 src=$(cd "${1:?usage: $0 <source-dir>}" && pwd) || exit 1
 case "$(uname -s)" in
@@ -121,6 +123,33 @@ if [ "$(uname -s)" = Linux ]; then
 		printed "the error from $compiler is printed" "error: $compiler failed"
 		rm "$tmp/$compiler-error"
 	done
+
+	# b.cpp in build/tidy's database only: Clang compiles both, GCC only a.cpp.
+	printf '[{"directory": "%s", "file": "%s/src/a.cpp", "command": "%s -o x"}]\n' "$repo" "$repo" "$tmp/gcc" \
+		> "$repo/build/tidy-gcc/compile_commands.json"
+	check "a file in no target of GCC's build passes" 0
+	printed "the file in no target of GCC's build is named" \
+		"Not compiled with GCC, in no target of its build: src/b.cpp"
+	printed "GCC compiles the other file" "GCC compiles the others."
+
+	# A CMake file newer than the compile databases configures both again (with a stub cmake that logs its build
+	# folder), once: the next run finds them up to date, also when CMake left their content as it was.
+	mkdir -p "$tmp/bin"
+	printf '#!/bin/sh\necho "$4" >> "%s/configured"\n' "$tmp" > "$tmp/bin/cmake"
+	chmod +x "$tmp/bin/cmake"
+	touch -d '1 hour ago' "$repo/build/tidy/compile_commands.json" "$repo/build/tidy-gcc/compile_commands.json"
+	touch "$repo/CMakeLists.txt"
+	path=$PATH
+	PATH=$tmp/bin:$PATH
+	check "a changed CMake file passes" 0
+	printed "a changed CMake file configures build/tidy again" "Configuring build/tidy for its compile database"
+	[ "$(cat "$tmp/configured")" = "$(printf 'build/tidy\nbuild/tidy-gcc')" ] &&
+		echo "ok: a changed CMake file configures both compile databases again" ||
+		{ echo "FAILED: a changed CMake file configures both compile databases again"; failures=$((failures + 1)); }
+	check "the next run passes" 0
+	[ "$(wc -l < "$tmp/configured" | tr -d ' ')" -eq 2 ] && echo "ok: the next run configures nothing" ||
+		{ echo "FAILED: the next run configures nothing"; sed 's/^/    /' "$tmp/output"; failures=$((failures + 1)); }
+	PATH=$path
 fi
 
 touch "$tmp/finding"
