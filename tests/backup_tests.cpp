@@ -1268,9 +1268,11 @@ TEST_CASE("a save that fails leaves no file behind", "[integration]")
 {
 	const test::TempDir dir;
 	Song song;
+	// Embedding a media file that can't be read, here a folder, fails after the file was begun. One that isn't there
+	// is referred to by its path (#1567).
+	fs::create_directories(dir.path() / "folder.wav");
 	run(song.client, "media.add",
-		{{"path", utf8(dir.path() / "gone.wav")}, {"sampleRate", 48000.0}, {"channels", 2}, {"length", 10}});
-	// Embedding a media file that isn't there fails after the file was begun.
+		{{"path", utf8(dir.path() / "folder.wav")}, {"sampleRate", 48000.0}, {"channels", 2}, {"length", 10}});
 	const fs::path file = dir.path() / "Song.dawproject";
 	reject(song.client, "project.save", {{"path", utf8(file)}});
 	CHECK(filesIn(dir.path()).empty());

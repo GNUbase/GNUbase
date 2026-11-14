@@ -207,14 +207,21 @@ namespace gnubase::engine
 	// An audio channel has this many sends (reference manual p. 542).
 	inline constexpr size_t g_maxSends = 8;
 
-	// A pad of a drum track's drum machine (#182): its name, or empty for the General MIDI sound's of its note, and
-	// the pool clip it plays, or 0.
+	// A pad of a drum track's drum machine (#182): its name, or empty for its sample's or a General MIDI sound's, the
+	// pool clip it plays, or 0, and the note whose General MIDI sound names it without either: a copy's goes by the
+	// sound of the pad it was copied from (drum.copyPad, #1567), -1 by its own note's. And its color, "#rrggbb" or
+	// empty for none (Set Color, reference manual pp. 942-943).
 	struct DrumPad
 	{
 		std::string name;
 		ObjectId sample = 0;
+		int sound = -1;
+		std::string color;
 
-		bool operator==(const DrumPad& other) const { return name == other.name && sample == other.sample; }
+		bool operator==(const DrumPad& other) const
+		{
+			return name == other.name && sample == other.sample && sound == other.sound && color == other.color;
+		}
 		bool operator!=(const DrumPad& other) const { return !(*this == other); }
 	};
 
