@@ -539,7 +539,10 @@ namespace gnubase::engine::midi
 				"them, after their tracks' drum maps and the chord track, so they are written as played; a destination "
 				"with a drum map or following the chord track gets a pitch that plays them, or if none does what "
 				"played, "
-				"which it then maps. The new part gets the root key and Global Transpose setting (midiPart.set "
+				"which it then maps. Notes and controllers are written on the MIDI channel they played on: a drum "
+				"sound's own, else their track's MIDI channel (channel.set midiChannel), else their own; a "
+				"destination set to a MIDI channel plays every channel on it, so there they keep their own. The new "
+				"part gets the root key and Global Transpose setting (midiPart.set "
 				"rootKey and globalTranspose) the parts its notes come from share, or, when they differ, the project "
 				"root key and follow; each note is written as it played, with its part's global transpose, less the "
 				"new part's where it lands, so that it keeps the pitch it played with. includeInserts also plays their "
@@ -592,7 +595,10 @@ namespace gnubase::engine::midi
 				"and poly pressure by pitch) go with the first new part of their part; a part with nothing to "
 				"separate stays as it is. New parts keep the part's mute, transpose, velocity, root key and Global "
 				"Transpose setting; their events get new "
-				"ids, so play probability and velocity variance draw anew. optimize (to tracks only) shortens the new "
+				"ids, so play probability and velocity variance draw anew. New tracks get the track's MIDI modifiers "
+				"(channel.set modifiers) and MIDI channel: by channel each its channel, by pitch the track's "
+				"(channel.set midiChannel), so that the new parts play as the part did. optimize (to tracks only) "
+				"shortens the new "
 				"parts to the bars their events play in." +
 					returns,
 				objectSchema({{"parts", ids}, {"by", enumSchema({"channel", "pitch"})}, {"optimize", booleanSchema},

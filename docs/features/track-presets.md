@@ -15,7 +15,8 @@ they are.
   list's order, whatever the order of `tracks`. The file has the tracks with their channels and inserts, without events
   or automation, and the project's busses, tempo, time signatures and fader top. It isn't an undo step. A preset name
   must be a file name, as a template's must. A MIDI track's preset keeps both its MIDI channel and its patch, where
-  the reference lets a MIDI track preset include either the channel or the patch (p. 238).
+  the reference lets a MIDI track preset include either the channel or the patch (p. 238). Choosing one when saving is
+  not done yet: the preset file would need to say which one it left out, so that loading it keeps the track's own.
 - **Listing them.** `track.presets` lists the presets by name with their file and the types of their tracks, top to
   bottom. A file that isn't a readable DAWproject file is left out.
 - **Loading a preset** (pp. 239-243). `track.loadPreset` `{tracks, name}` gives tracks the preset's sound, in one undo

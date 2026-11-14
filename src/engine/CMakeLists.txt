@@ -203,6 +203,7 @@ add_library(gnubase-engine STATIC
 	midi/quantize.cpp midi/quantize.h
 	midi/quantizecommands.cpp midi/quantizecommands.h
 	midi/quantizesettings.cpp midi/quantizesettings.h
+	midi/trackchannel.h
 	midifile/midiconvert.cpp midifile/midiconvert.h
 	midifile/smf.cpp midifile/smf.h
 	peaks/peakcache.cpp peaks/peakcache.h

@@ -17,7 +17,10 @@ Functions that edit MIDI parts as a whole (#133, #838).
   pitch, so the notes get the O-notes and channels of their sounds (those of muted sounds are left out) and the chord
   track's pitches, which a new track, without either, plays the same. Notes and controllers of a MIDI track set to a
   MIDI channel are written on that channel, as it played them (a drum sound's own channel still wins), so they play
-  there on any track ([mixer.md](mixer.md)). A destination with a drum map or following the chord track gets a pitch
+  there on a track set to Any or to that channel ([mixer.md](mixer.md)). A destination set to a channel plays every
+  channel on its own, so there they keep their own channels, as a destination's drum map keeps a note's own pitch: a
+  track merged onto itself keeps the channels its events were recorded with, and set back to Any plays them so
+  (pp. 1120-1121). A destination with a drum map or following the chord track gets a pitch
   that plays them (a note's own, if it does, so that a track merged onto itself keeps its
   pitches), or if none does what played, which it then maps. The new part gets the root key and Global Transpose setting
   ([transpose.md](transpose.md)) the parts its notes come from share, or, when they differ, the project root key and
