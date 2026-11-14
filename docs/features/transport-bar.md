@@ -100,8 +100,9 @@ the same pane for its own sections (Set up Transport Panel, p. 295). Both are ke
 
 - **Transport panel** (p. 295): F2 (`window.transportPanel`) shows and hides a window of its own,
   `resources/ui/transport-panel.rml`, with the same controls. Closing the window closes the panel. A panel opened
-  without saved bounds takes the width of its shown sections, as far as the primary monitor has room (#1424); its own
-  bounds, kept in `ui.layout`, come back as they were.
+  without saved bounds takes the width of its shown sections, as far as the primary monitor has room (#1424), once its
+  controls show the project: the locator and range displays grow with their text, such as a time format's or a far
+  locator's (#1474). Its own bounds, kept in `ui.layout`, come back as they were.
 - **Time display window** (pp. 312–313): `window.timeDisplay` shows and hides `resources/ui/time-display.rml`, the
   project cursor in large digits, in the format of the slot `timeDisplay`, which its context menu picks. The main
   menu's Studio menu will run it. The context menu also has Show Beat Count Only (`timeDisplay.beatCountOnly`): the
