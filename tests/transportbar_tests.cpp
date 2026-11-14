@@ -415,62 +415,66 @@ TEST_CASE("the time displays keep their width while the cursor moves, and their 
 		{"seconds", {{17279999952}, 12}},                                       // 99:59:59.999
 		{"timecode", {{17279999000}, 11}},                                      // 99:59:59:24
 		{"samples", {{99999999999}, 11}}, {"userFrames", {{17279999000}, 11}}}; // 99:59:59:29
-	for (const char* theme : {"gnubase", "dark", "light", "high-contrast"})
-	{
-		INFO("theme " << theme);
-		app.call("settings.set", {{"key", "ui.theme"}, {"value", theme}});
-		for (const auto& [name, widest] : formats)
+	// FreeType rounds the font to whole pixels, and its advances too: at a dp ratio of 1 a 13 dp digit is 8 px, at 0.85
+	// an 11 px face's is 7 px of 11.05, the most a character takes of its em (#1379).
+	for (const float dpRatio : {1.0F, 0.85F})
+		for (const char* theme : {"gnubase", "dark", "light", "high-contrast"})
 		{
-			INFO("format " << name);
-			const std::optional<ui::TimeFormat> format = ui::timeFormatFromName(name);
-			REQUIRE(format.has_value());
-			const ui::TimeFormat displayed = format.value_or(ui::TimeFormat::BarsBeats);
-			// A format change may change the width.
-			app.call("project.set", {{"timeFormat", name}});
-			app.call("settings.set",
-				{{"key", "ui.timeFormats"},
-					{"value", {{"primary", name}, {"secondary", name}, {"timeDisplay", "barsBeats"}}}});
-			REQUIRE(app.waitUntil(
-				[&, name = name]
-				{
-					return element(app, "#secondary-time")
-							   .value("classes", Json::array())
-							   .dump()
-							   .find(std::string("format-") + name) != std::string::npos;
-				}));
-			std::vector<int64_t> positions = common;
-			positions.insert(positions.end(), widest.first.begin(), widest.first.end());
-			std::array<double, 4> first{};
-			bool measured = false;
-			size_t longest = 0;
-			for (const int64_t position : positions)
+			INFO("dp ratio " << dpRatio << ", theme " << theme);
+			app.setDpRatio(dpRatio);
+			app.call("settings.set", {{"key", "ui.theme"}, {"value", theme}});
+			for (const auto& [name, widest] : formats)
 			{
-				INFO("position " << position);
-				app.call("transport.locate", {{"position", position}});
-				const std::string text =
-					ui::formatTime(displayed, static_cast<double>(position) / time.sampleRate, time);
-				longest = std::max(longest, text.size());
+				INFO("format " << name);
+				const std::optional<ui::TimeFormat> format = ui::timeFormatFromName(name);
+				REQUIRE(format.has_value());
+				const ui::TimeFormat displayed = format.value_or(ui::TimeFormat::BarsBeats);
+				// A format change may change the width.
+				app.call("project.set", {{"timeFormat", name}});
+				app.call("settings.set",
+					{{"key", "ui.timeFormats"},
+						{"value", {{"primary", name}, {"secondary", name}, {"timeDisplay", "barsBeats"}}}});
 				REQUIRE(app.waitUntil(
-					[&] { return shows(app, "#primary-time") == text && shows(app, "#secondary-time") == text; }));
-				app.shell().step(std::chrono::milliseconds(0));
-				// The displays and the controls to their right stay where they are, and the text fits.
-				const std::array<double, 4> now = {
-					width("#primary-time"), width("#secondary-time"), x("#exchange-formats"), x("#tempo")};
-				if (!measured)
-					first = now;
-				measured = true;
-				CHECK(now == first);
-				// The text, measured in the display's font, fits its content box.
-				for (const char* id : {"primary-time", "secondary-time"})
+					[&, name = name]
+					{
+						return element(app, "#secondary-time")
+								   .value("classes", Json::array())
+								   .dump()
+								   .find(std::string("format-") + name) != std::string::npos;
+					}));
+				std::vector<int64_t> positions = common;
+				positions.insert(positions.end(), widest.first.begin(), widest.first.end());
+				std::array<double, 4> first{};
+				bool measured = false;
+				size_t longest = 0;
+				for (const int64_t position : positions)
 				{
-					Rml::Element* display = rml(id);
-					CHECK(static_cast<float>(Rml::ElementUtilities::GetStringWidth(display, text)) <=
-						display->GetBox().GetSize(Rml::BoxArea::Content).x + 0.5F);
+					INFO("position " << position);
+					app.call("transport.locate", {{"position", position}});
+					const std::string text =
+						ui::formatTime(displayed, static_cast<double>(position) / time.sampleRate, time);
+					longest = std::max(longest, text.size());
+					REQUIRE(app.waitUntil(
+						[&] { return shows(app, "#primary-time") == text && shows(app, "#secondary-time") == text; }));
+					app.shell().step(std::chrono::milliseconds(0));
+					// The displays and the controls to their right stay where they are, and the text fits.
+					const std::array<double, 4> now = {
+						width("#primary-time"), width("#secondary-time"), x("#exchange-formats"), x("#tempo")};
+					if (!measured)
+						first = now;
+					measured = true;
+					CHECK(now == first);
+					// The text, measured in the display's font, fits its content box.
+					for (const char* id : {"primary-time", "secondary-time"})
+					{
+						Rml::Element* display = rml(id);
+						CHECK(static_cast<float>(Rml::ElementUtilities::GetStringWidth(display, text)) <=
+							display->GetBox().GetSize(Rml::BoxArea::Content).x + 0.5F);
+					}
 				}
+				CHECK(longest == widest.second); // the widest text the width holds was shown
 			}
-			CHECK(longest == widest.second); // the widest text the width holds was shown
 		}
-	}
 }
 
 TEST_CASE("the transport bar and the transport panel show the same time formats", "[ui]")
