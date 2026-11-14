@@ -752,7 +752,7 @@ TEST_CASE("a chain edit while playing renders the same in real time as offline",
 			edited = true;
 		}
 		const int64_t step = run(realtime.client, "transport.get").at("arranger").at("step").get<int64_t>();
-		if (edited && step == -1 && position >= 1600 * scale + 2500) // past the chain, where the offline render ends
+		if (edited && step == -1 && position >= (1600 * scale) + 2500) // past the chain, where the offline render ends
 			break;
 		std::this_thread::sleep_for(std::chrono::milliseconds(5));
 	}
