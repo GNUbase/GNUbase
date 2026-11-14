@@ -11,10 +11,12 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iterator>
 #include <map>
 #include <memory>
@@ -959,17 +961,35 @@ TEST_CASE("a HeldJob released before its job got there holds none, and its relea
 }
 
 // whileHeld checks that its hold didn't lapse before the test released the job, since what the test did meanwhile may
-// have come after the job went on (#1323). A hold that lapses while the test works fails the test; the job may have
-// ended by then too, which fails whileHeld's check that it still runs.
+// have come after the job went on (#1323). A hold that lapses while the test works fails the test, also while the job
+// still runs (#1430): during keeps the job at its next job.progress, which it gets to only once the hold lapsed, for a
+// moment, and returns once the job is there, so that only whileHeld's lapse check fails, not its check that the job
+// still runs.
 TEST_CASE("whileHeld fails a test whose hold lapsed", "[integration][!shouldfail]")
 {
 	const test::TempDir dir;
-	writeNoise(dir.path() / "take.wav", 48000);
+	writeNoise(dir.path() / "take.wav", 480000); // 10 s, so the backup sends several progress events
 	Song song;
 	song.addEvent(song.addClip(song.addMedia(dir.path() / "take.wav")), 0, 0, 4800);
 	whileHeld(
-		song.engine, song.client, "project.backup", {{"folder", utf8(dir.path() / "backup")}}, [](uint64_t /*job*/)
-		{ std::this_thread::sleep_for(std::chrono::seconds(1)); }, nullptr, std::chrono::milliseconds(200));
+		song.engine, song.client, "project.backup", {{"folder", utf8(dir.path() / "backup")}},
+		[&song](uint64_t job)
+		{
+			// Replaces the HeldJob's hook, which holds the job at its first job.progress until the hold lapses.
+			auto there = std::make_shared<std::promise<void>>();
+			auto once = std::make_shared<std::atomic<bool>>(false);
+			std::future<void> arrived = there->get_future();
+			song.engine.setJobProgressHook(
+				[job, there, once](uint64_t progressed, const std::string& /*kind*/)
+				{
+					if (progressed != job || once->exchange(true))
+						return;
+					there->set_value();
+					std::this_thread::sleep_for(std::chrono::seconds(2));
+				});
+			REQUIRE(arrived.wait_for(std::chrono::seconds(30)) == std::future_status::ready);
+		},
+		nullptr, std::chrono::milliseconds(200));
 }
 
 TEST_CASE("a HeldJob holds the first jobs of a kind, each once, and lets the later ones run", "[integration]")
