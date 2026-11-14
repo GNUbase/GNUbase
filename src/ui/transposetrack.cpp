@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// The transpose events on the transpose track's lane and the chord and scale events on the chord track's
-// (ui/transposetrack.h).
+// The transpose events on the transpose track's lane, the chord and scale events on the chord track's and the arranger
+// events on the arranger track's (ui/transposetrack.h).
 #include "ui/transposetrack.h"
 
 #include "ui/widgetutils.h"
@@ -87,18 +87,27 @@ namespace gnubase::ui
 	{
 		if (m_kind == LaneKind::Scale)
 			return "scale" + std::string(suffix);
+		if (m_kind == LaneKind::Arranger)
+			return "arranger" + std::string(suffix);
 		return (m_kind == LaneKind::Chord ? "chord" : "transpose") + std::string(suffix);
 	}
 
 	std::string GlobalEventLane::command(const char* suffix) const
 	{
+		if (m_kind == LaneKind::Arranger)
+			return "arranger" + std::string(suffix);
 		return (m_kind == LaneKind::Transpose ? "transpose" : "chord") + std::string(suffix);
 	}
 
 	GlobalEventLane::Event GlobalEventLane::eventFrom(const Json& event) const
 	{
-		Event result{event.at("id").get<uint64_t>(), event.at("start").get<int64_t>(), {}, {}, false};
-		if (m_kind == LaneKind::Chord)
+		const auto start = event.at("start").get<int64_t>();
+		Event result{event.at("id").get<uint64_t>(), start, event.value("endSamples", start), {}, {}, false};
+		if (m_kind == LaneKind::Arranger)
+		{
+			result.text = result.value = event.at("name").get<std::string>();
+		}
+		else if (m_kind == LaneKind::Chord)
 		{
 			result.text = result.value = event.at("chord").get<std::string>();
 			result.detected = event.value("audioEvent", uint64_t{0}) != 0;
@@ -134,7 +143,10 @@ namespace gnubase::ui
 				if (result.ok())
 				{
 					m_time = projectTime(result.value);
-					const Json& transpose = result.value.at(m_kind == LaneKind::Transpose ? "transpose" : "chords");
+					const char* section = "chords";
+					if (m_kind == LaneKind::Transpose || m_kind == LaneKind::Arranger)
+						section = m_kind == LaneKind::Transpose ? "transpose" : "arranger";
+					const Json& transpose = result.value.at(section);
 					m_track = transpose.at("track").get<uint64_t>();
 					m_showScales = transpose.value("showScales", false);
 					m_audition = transpose.value("acousticFeedback", false) &&
@@ -179,6 +191,12 @@ namespace gnubase::ui
 			++bar;
 		const time::Ticks at = m_time.signatures.barStart(bar);
 		return m_linear ? std::llround(m_time.tempo.toSeconds(at) * m_time.sampleRate) : at;
+	}
+
+	int64_t GlobalEventLane::position(double seconds) const
+	{
+		seconds = clampPositionSeconds(seconds, m_time.sampleRate);
+		return m_linear ? positionSamples(seconds, m_time.sampleRate) : m_time.tempo.toTicks(seconds);
 	}
 
 	void GlobalEventLane::show()
@@ -226,7 +244,14 @@ namespace gnubase::ui
 				const auto id = element->GetAttribute<uint64_t>("event", 0);
 				for (const Event& event : m_list)
 					if (event.id == id)
+					{
 						element->SetProperty(Rml::PropertyId::Left, left(event.start));
+						if (m_kind == LaneKind::Arranger) // as wide as its section
+						{
+							const double width = (seconds(event.end) - seconds(event.start)) / scale;
+							element->SetProperty(Rml::PropertyId::Width, dp(width));
+						}
+					}
 			}
 			for (const Event& event : m_list)
 				if (m_editing && event.id == *m_editing)
@@ -257,10 +282,12 @@ namespace gnubase::ui
 		{
 			const std::optional<float> value = widgets::parse(m_field->GetValue());
 			const std::optional<uint64_t> id = std::exchange(m_editing, std::nullopt);
-			if (m_kind != LaneKind::Transpose && id)
+			if ((m_kind == LaneKind::Chord || m_kind == LaneKind::Scale) && id)
 				m_binding.send("chord.set",
 					{{"events",
 						{{{"event", *id}, {m_kind == LaneKind::Scale ? "scale" : "chord", m_field->GetValue()}}}}});
+			else if (m_kind == LaneKind::Arranger && id)
+				m_binding.send("arranger.set", {{"event", *id}, {"name", m_field->GetValue()}});
 			else if (value && id)
 				m_binding.send("transpose.set",
 					{{"events",
@@ -304,7 +331,7 @@ namespace gnubase::ui
 			}
 			m_lastPress = std::make_pair(*on, now);
 			// Auditioning (reference manual pp. 1329-1330): the event plays while the button is down.
-			if (m_audition && m_kind != LaneKind::Transpose)
+			if (m_audition && (m_kind == LaneKind::Chord || m_kind == LaneKind::Scale))
 			{
 				m_binding.send("chord.audition", {{"event", *on}});
 				m_auditioning = true;
@@ -319,8 +346,17 @@ namespace gnubase::ui
 		// The draw tool adds an event at the nearest bar, to edit.
 		const Rml::Context* context = m_element->GetContext();
 		const float ratio = context == nullptr ? 1.0F : context->GetDensityIndependentPixelRatio();
-		const double x = (event.GetParameter<float>("mouse_x", 0.0F) - m_element->GetAbsoluteLeft()) / ratio;
+		const auto mouseX = event.GetParameter<float>("mouse_x", 0.0F);
+		const double x = (mouseX - m_element->GetAbsoluteLeft()) / ratio;
 		const TimelineView& view = m_display.view();
+		if (m_kind == LaneKind::Arranger)
+		{
+			// The draw tool draws an arranger event over the stretch dragged, on release.
+			m_draw = std::make_pair(view.start + (x * view.scale), mouseX);
+			if (Rml::ElementDocument* document = m_element->GetOwnerDocument())
+				document->AddEventListener(Rml::EventId::Mouseup, this);
+			return;
+		}
 		Json added = {{"position", nearestBar(view.start + (x * view.scale))}};
 		if (m_kind == LaneKind::Scale)
 			added["scale"] = "C major";
@@ -344,17 +380,40 @@ namespace gnubase::ui
 			document->RemoveEventListener(Rml::EventId::Mouseup, this);
 		if (std::exchange(m_auditioning, false))
 			m_binding.send("chord.audition", {{"on", false}});
+		const Rml::Context* context = m_element->GetContext();
+		const float ratio = context == nullptr ? 1.0F : context->GetDensityIndependentPixelRatio();
+		const auto mouseX = event.GetParameter<float>("mouse_x", 0.0F);
+		if (const std::optional<std::pair<double, float>> drawn = std::exchange(m_draw, std::nullopt))
+			draw(drawn->first, (mouseX - drawn->second) / ratio);
 		const std::optional<std::pair<uint64_t, float>> drag = std::exchange(m_drag, std::nullopt);
 		if (!drag)
 			return;
-		const Rml::Context* context = m_element->GetContext();
-		const float ratio = context == nullptr ? 1.0F : context->GetDensityIndependentPixelRatio();
-		const double dx = (event.GetParameter<float>("mouse_x", 0.0F) - drag->second) / ratio;
+		const double dx = (mouseX - drag->second) / ratio;
 		const auto found =
 			std::find_if(m_list.begin(), m_list.end(), [&drag](const Event& each) { return each.id == drag->first; });
 		if (std::abs(dx) < g_dragStart || found == m_list.end())
 			return;
 		const double to = seconds(found->start) + (dx * m_display.view().scale);
-		m_binding.send(command(".set"), {{"events", {{{"event", found->id}, {"position", nearestBar(to)}}}}});
+		if (m_kind == LaneKind::Arranger)
+			m_binding.send("arranger.set",
+				{{"event", found->id}, {"position", position(m_display.snapped(to, seconds(found->start)))}});
+		else
+			m_binding.send(command(".set"), {{"events", {{{"event", found->id}, {"position", nearestBar(to)}}}}});
+	}
+
+	void GlobalEventLane::draw(double from, double dx)
+	{
+		const double start = m_display.snapped(from);
+		double end = m_display.snapped(from + (dx * m_display.view().scale));
+		if (std::abs(dx) < g_dragStart)
+		{
+			// A click: up to the next bar line.
+			const time::Ticks ticks = m_time.tempo.toTicks(start);
+			end = m_time.tempo.toSeconds(m_time.signatures.barStart(m_time.signatures.toBarsBeats(ticks).bar + 1));
+		}
+		if (std::abs(end - start) * m_time.sampleRate < 1.0)
+			return;
+		m_binding.send(
+			"arranger.add", {{"position", position(std::min(start, end))}, {"end", position(std::max(start, end))}});
 	}
 }

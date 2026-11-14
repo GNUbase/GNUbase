@@ -1003,11 +1003,11 @@ meter .meter-peak
 	width: 48dp;
 }
 
-/* The transpose track (docs/features/transpose.md) and the chord track (chord-track.md): their events over their
-   lanes and the field that edits one's value, chord or scale. Code places the row on its lane (the chord track's chord
-   and scale rows on its halves while Show Scales is on), the events at their positions and the field over the event
-   it edits. */
-.transpose-row, .chord-row, .scale-row
+/* The transpose track (docs/features/transpose.md), the chord track (chord-track.md) and the arranger track
+   (arranger.md): their events over their lanes and the field that edits one's value, chord, scale or name. Code places
+   the row on its lane (the chord track's chord and scale rows on its halves while Show Scales is on), the events at
+   their positions (arranger events also as wide as their sections) and the field over the event it edits. */
+.transpose-row, .chord-row, .scale-row, .arranger-row
 {
 	position: absolute;
 	left: 0;
@@ -1017,12 +1017,12 @@ meter .meter-peak
 }
 
 .transpose-row.hidden, .transpose-row .transpose-field, .chord-row.hidden, .chord-row .chord-field, .scale-row.hidden,
-.scale-row .scale-field
+.scale-row .scale-field, .arranger-row.hidden, .arranger-row .arranger-field
 {
 	display: none;
 }
 
-.transpose-row .transpose-events, .chord-row .chord-events, .scale-row .scale-events
+.transpose-row .transpose-events, .chord-row .chord-events, .scale-row .scale-events, .arranger-row .arranger-events
 {
 	position: absolute;
 	left: 0;
@@ -1039,12 +1039,24 @@ meter .meter-peak
 	white-space: nowrap;
 }
 
-.transpose-row .transpose-field.shown, .chord-row .chord-field.shown, .scale-row .scale-field.shown
+.transpose-row .transpose-field.shown, .chord-row .chord-field.shown, .scale-row .scale-field.shown,
+.arranger-row .arranger-field.shown
 {
 	display: block;
 	position: absolute;
 	top: 0;
 	width: 48dp;
+}
+
+.arranger-row .arranger-event
+{
+	position: absolute;
+	top: 0;
+	height: 100%;
+	box-sizing: border-box;
+	padding: 2dp 3dp;
+	white-space: nowrap;
+	overflow: hidden;
 }
 
 /* The chord pads zone (docs/features/chord-pads.md): its toolbars above the pads, which wrap, and the chord

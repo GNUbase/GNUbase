@@ -31,6 +31,7 @@ add_executable(gnubase-tests
 	analysis_tests.cpp
 	app_tests.cpp
 	arranger_tests.cpp
+	arranger_ui_tests.cpp
 	articulationmaps_tests.cpp
 	articulationmaps_ui_tests.cpp
 	audio_tests.cpp
@@ -153,7 +154,6 @@ add_executable(gnubase-tests
 	profiles_tests.cpp
 	profiles_ui_tests.cpp
 	processor_tests.cpp
-	projectdialogs_ui_tests.cpp
 	projectfiles_tests.cpp
 	projectrules_tests.cpp
 	projectrules_ui_tests.cpp

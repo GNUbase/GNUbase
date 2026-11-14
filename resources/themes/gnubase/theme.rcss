@@ -616,6 +616,14 @@
 		border-left-width: 1dp;
 		border-left-color: #10dff2;
 	}
+	.arranger-row .arranger-event
+	{
+		color: #f1f4ff;
+		font-size: 11dp;
+		background-color: #10dff240;
+		border-width: 1dp;
+		border-color: #10dff2;
+	}
 	.chord-pad
 	{
 		color: #f1f4ff;

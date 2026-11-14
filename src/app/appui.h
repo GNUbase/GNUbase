@@ -350,8 +350,7 @@ namespace gnubase::app
 		// window.
 		ui::Window& callingWindow();
 		// Opens resources/ui/<name> in the window, modal. Throws std::runtime_error if it can't be loaded.
-		// attributes go on the document before it shows, for its Lua. A dialog for objects of the project, with ids of
-		// tracks, parts or notes in its attributes, closes when project.reset replaces the project (#1464).
+		// attributes go on the document before it shows, for its Lua.
 		Rml::ElementDocument& openDialog(ui::Window& window, const char* name,
 			const std::vector<std::pair<std::string, std::string>>& attributes = {}) const;
 		// The Auto Fades dialog (resources/ui/auto-fades.rml) for the project, or for a track (not 0).
@@ -400,6 +399,7 @@ namespace gnubase::app
 		std::unique_ptr<ui::GlobalEventLane> m_transposeLane; // as well
 		std::unique_ptr<ui::GlobalEventLane> m_chordLane;     // as well
 		std::unique_ptr<ui::GlobalEventLane> m_scaleLane;     // as well
+		std::unique_ptr<ui::GlobalEventLane> m_arrangerLane;  // as well
 		std::unique_ptr<ui::RulerLanes> m_rulerLanes;         // as well
 		std::unique_ptr<ui::InPlaceEditors> m_inPlace;        // as well
 		std::unique_ptr<ui::TempoEditor> m_tempoEditor;
@@ -422,9 +422,6 @@ namespace gnubase::app
 		bool m_canUndo = false;
 		bool m_canRedo = false;
 		ui::Subscription m_history;
-		// The dialogs openDialog opened for objects of the project, and project.reset, which closes them.
-		mutable std::vector<Rml::ObserverPtr<Rml::Element>> m_projectDialogs;
-		ui::Subscription m_projectReset;
 		ui::ProjectFiles m_files;                          // the File menu's project commands
 		std::unique_ptr<ui::MainMenu> m_menu;              // the project window's
 		Rml::ObserverPtr<Rml::Element> m_studioSetup;      // the open studio setup dialog's document

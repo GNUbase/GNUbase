@@ -152,13 +152,6 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
   whose window went while it waited shows in the main window instead, so that the failure it reports isn't taken for
   done (#985). Only a failed auto save's error doesn't wait, as above.
 - The UI knows the project's file from `project.saved` and, after `project.reset`, from `project.location`.
-- **Dialogs for objects of the project close** when a new or loaded project replaces it (`project.reset`, #1464):
-  object ids are per project, so OK would act on whatever has those ids in the new project, or be refused.
-  `AppUi::openDialog` keeps the dialogs it opens with ids of tracks, parts or notes in their attributes (Auto Fades
-  for a track, the MIDI function dialogs, the rule editor for parts, notes or a track, Add Track below a track or for
-  the selected tracks, the track preset dialog for the selected tracks, Import Tracks below a track) and closes the
-  ones still open. Dialogs for the whole project stay open. The articulation map setup stays too and drops its track
-  ([articulation-maps.md](articulation-maps.md)).
 
 ## Not yet
 

@@ -13,9 +13,9 @@
      selects a map that comes. It unsubscribes its handlers when it closes (gnubase.off). Opened again for another
      track, or for none, app::AppUi sets or removes its attribute track and sends trackchange, which selects that
      track's map, if it has one, and shows Assign to Track only with a track. project.reset drops the track, since
-     object ids are per project. The buttons are outside the rows that the Lua writes again, since an element must not
-     go while its own event runs: Remove Articulation, Remove Sound Slot and Remove Output Mapping remove the row
-     picked with its radio button. -->
+     object ids are per project. The buttons are outside the rows that
+     the Lua writes again, since an element must not go while its own event runs: Remove Articulation,
+     Remove Sound Slot and Remove Output Mapping remove the row picked with its radio button. -->
 <rml>
 <head>
 	<title>Articulation Map Setup</title>
