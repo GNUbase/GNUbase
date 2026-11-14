@@ -177,7 +177,11 @@ namespace gnubase::engine
 						(message.size == 3 && (status == 0xE0 || status == 0xB0))))
 				{
 					// MIDI Learn of what moves all pads: the control plays on as it is.
-					const uint8_t source = status == 0xD0 ? 1 : (status == 0xE0 ? 2 : 3);
+					uint8_t source = 3; // a controller
+					if (status == 0xD0)
+						source = 1;
+					else if (status == 0xE0)
+						source = 2;
 					m_padEvents.tryPush(PadEvent{PadEvent::Kind::ControlInput, source,
 						static_cast<uint8_t>(status == 0xB0 ? message.bytes[1] & 0x7F : 0)});
 					if (inAll)
