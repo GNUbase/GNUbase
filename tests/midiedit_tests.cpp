@@ -286,7 +286,7 @@ TEST_CASE("note.move refuses what doesn't fit and changes nothing then", "[unit]
 			  {{"part", source}, {"notes", {second}}, {"target", target}, {"ticks", 8 * g_sixteenth}})
 			  .at("notes")
 			  .at(0)
-			  .at("position") == 8 * g_sixteenth + g_sixteenth);
+			  .at("position") == (8 * g_sixteenth) + g_sixteenth);
 	CHECK(call(client, "note.move", {{"part", source}, {"notes", {first}}, {"target", source}, {"ticks", 120}})
 			  .at("notes")
 			  .at(0)
