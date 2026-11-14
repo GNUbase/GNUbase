@@ -962,6 +962,7 @@ TEST_CASE("merge keeps the events' own channels on a destination set to a MIDI c
 		REQUIRE(changes.addedParts.size() == 1);
 		const MidiPart& part = project.midiParts.at(changes.addedParts[0]);
 		std::vector<std::vector<int64_t>> events;
+		events.reserve(part.notes.size() + part.controllers.size());
 		for (const auto& [id, note] : part.notes)
 			events.push_back({note.pitch, note.channel});
 		for (const auto& [id, controller] : part.controllers)
