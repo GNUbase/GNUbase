@@ -1771,6 +1771,17 @@ TEST_CASE("the inspector's MIDI Inserts and MIDI Sends sections show and change 
 	CHECK(window.channel(bass).at("midiInserts").at("divider") == 0);
 	CHECK(inserts().at("divider") == 3);
 	CHECK(hasClass(window.app, ".inspector .midi-divider[gap=3]", "at"));
+	// Nor when it shows an audio track, which has no MIDI inserts, released where the mouse is.
+	window.app.ui().press(std::nullopt, {".inspector .midi-divider[gap=3]", 0, std::nullopt}, ui::MouseButton::Left);
+	window.app.ui().move(std::nullopt, gap2);
+	window.list.select({vox});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Vox"));
+	window.app.ui().release(std::nullopt, {}, ui::MouseButton::Left);
+	window.list.select({keys});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Keys"));
+	CHECK(window.historyPosition() == beforeDrag + 1);
+	CHECK(inserts().at("divider") == 3);
+	CHECK(hasClass(window.app, ".inspector .midi-divider[gap=3]", "at"));
 	// The edit button closes the control panel.
 	window.click(first + " .midi-effect-edit");
 	CHECK_FALSE(hasClass(window.app, first, "open"));
