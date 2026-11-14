@@ -603,6 +603,24 @@ TEST_CASE("a slot whose plugin can't be made is unavailable, and one whose plugi
 	CHECK(slots.status(4).empty());
 }
 
+TEST_CASE("an audio plugin slot that names a built-in MIDI effect is unavailable", "[unit]")
+{
+	plugins::HostManager jobs;
+	plugins::SlotInstances slots(jobs, [] {}, [](uint64_t /*generation*/) { return true; });
+	RenderSlot effect;
+	effect.id = 1;
+	effect.plugin = "builtin:chordGenerator";
+	RenderSlot gain;
+	gain.id = 2;
+	gain.plugin = "builtin:gainPan";
+	const std::vector<plugins::SlotInstances::Wanted> wanted{{&effect, 2}, {&gain, 2}};
+	slots.update(wanted, 48000.0, 128);
+	jobs.run([] {}).get();
+	CHECK(slots.status(1) == "unavailable");
+	CHECK(slots.processor(1) == nullptr);
+	CHECK(slots.status(2) == "active");
+}
+
 TEST_CASE("the slots' plugins get offline blocks while the engine renders offline, e.g. an export", "[unit]")
 {
 	plugins::HostManager jobs;
