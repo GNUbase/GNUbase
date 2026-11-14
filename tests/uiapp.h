@@ -79,6 +79,8 @@ namespace gnubase::test
 		Rml::ElementDocument& show(const std::string& name);
 
 		// Steps the shell until done() is true; false if it isn't within the timeout.
+		// A JSON error from done() means "not ready yet"; if it still throws past the timeout, the error is rethrown.
+		// Predicates may read UI state that hasn't arrived yet without a JSON type guard.
 		bool waitUntil(const std::function<bool()>& done, std::chrono::milliseconds timeout = std::chrono::seconds(5));
 
 		// Lays the windows out at this dp ratio, whatever the monitor's scale, so that screenshots have the same pixels

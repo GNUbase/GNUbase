@@ -1682,8 +1682,7 @@ TEST_CASE("the info line bounds typed start, end and length to the largest proje
 	const uint64_t midi = window.addTrack({{"type", "midi"}, {"timeBase", "linear"}});
 	const uint64_t part = window.addPart(midi, 48000, 48000, "Part");
 	window.call("project.set", {{"timeFormat", "seconds"}});
-	REQUIRE(window.app.waitUntil(
-		[&] { return window.display.project().is_object() && window.display.project().at("midiParts").size() == 1; }));
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("midiParts").size() == 1; }));
 	window.display.select({part});
 	REQUIRE(window.shows("#info-line textdisplay[field=start]", "0:00:01.000"));
 	// The info line edits from the events it last showed. Typed while it still has the clamped length, the same length
