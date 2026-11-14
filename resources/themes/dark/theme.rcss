@@ -614,6 +614,14 @@
 		border-left-width: 1dp;
 		border-left-color: #5ea7b3;
 	}
+	.arranger-lane-row .arranger-lane-event
+	{
+		color: #f3f4f5;
+		font-size: 11dp;
+		background-color: #5ea7b340;
+		border-width: 1dp;
+		border-color: #5ea7b3;
+	}
 	.chord-pad
 	{
 		color: #f3f4f5;

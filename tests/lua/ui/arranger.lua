@@ -46,6 +46,10 @@ test.case("the arranger editor builds a chain from the events and plays its step
 	test.equal(#steps(), 2)
 	test.equal(steps()[1].event, b.id)
 	test.equal(steps()[2].event, a.id)
+	-- The rows lie below one another: no style for the arranger track's lane (.arranger-lane-row) places them.
+	local first = ui.dom{window = window, selector = "#step-0", depth = 0}.elements[1].box
+	local second = ui.dom{window = window, selector = "#step-1", depth = 0}.elements[1].box
+	test.ok(second.y >= first.y + first.height - 1)
 
 	-- Repeats and removing a step.
 	ui.click{window = window, selector = "#step-1 .more"}
