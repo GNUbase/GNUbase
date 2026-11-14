@@ -150,7 +150,7 @@ TEST_CASE("transpose events transpose what follows global transpose from their p
 	CHECK(song.pitches() == std::vector<int>{62, 60, 67, 67});
 	CHECK(run(song.client, "transpose.get").at("events")[0].at("id") == second); // in timeline order
 
-	// Keep Transpose in Octave Range: never more than seven semitones either way.
+	// Keep Transpose in Octave Range: never more than six semitones either way.
 	run(song.client, "transpose.set", {{"events", {{{"event", first.at("event").at("id")}, {"value", 8}}}}});
 	CHECK(song.pitches() == std::vector<int>{62, 60, 70, 70});
 	run(song.client, "transpose.setTrack", {{"keepInOctave", true}});
@@ -181,6 +181,35 @@ TEST_CASE("transpose events transpose what follows global transpose from their p
 	run(song.client, "track.remove", {{"track", track}});
 	CHECK(run(song.client, "transpose.get").at("events").empty());
 	CHECK(song.pitches() == std::vector<int>{62, 62, 62, 62});
+}
+
+TEST_CASE("Keep Transpose in Octave Range folds the part's own transpose into the sum", "[integration]")
+{
+	Song song;
+	run(song.client, "project.set", {{"rootKey", "D"}});
+	run(song.client, "midiPart.set", {{"part", song.part}, {"rootKey", "C"}, {"transpose", 3}});
+	// The root key's step, the transpose event and the part's own transpose add up to 2 + 8 + 3 = 13 semitones.
+	run(song.client, "transpose.add", {{"position", 0}, {"value", 8}});
+	CHECK(song.pitches() == std::vector<int>{73, 73, 73, 73}); // the option off changes nothing
+	run(song.client, "transpose.setTrack", {{"keepInOctave", true}});
+	CHECK(song.pitches() == std::vector<int>{61, 61, 61, 61}); // 13 is 1 up
+	// The option folds into the nearest octave; at 6 up and down are equally near and the sum keeps its sign:
+	// 2 + 8 + 8 = 18 is 6 up...
+	run(song.client, "midiPart.set", {{"part", song.part}, {"transpose", 8}});
+	CHECK(song.pitches() == std::vector<int>{66, 66, 66, 66});
+	// ... and 2 + 8 - 16 = -6 is 6 down.
+	run(song.client, "midiPart.set", {{"part", song.part}, {"transpose", -16}});
+	CHECK(song.pitches() == std::vector<int>{54, 54, 54, 54});
+	// 7 up is nearer 5 down: 2 + 8 - 3 = 7.
+	run(song.client, "midiPart.set", {{"part", song.part}, {"transpose", -3}});
+	CHECK(song.pitches() == std::vector<int>{55, 55, 55, 55});
+	// Muted, the event drops out of the sum, which the option still folds: 2 + 12 = 14 is 2 up.
+	run(song.client, "midiPart.set", {{"part", song.part}, {"transpose", 12}});
+	run(song.client, "transpose.setTrack", {{"mute", true}});
+	CHECK(song.pitches() == std::vector<int>{62, 62, 62, 62});
+	// An Independent part is outside global transpose: its own transpose stays as it is, unwrapped.
+	run(song.client, "midiPart.set", {{"part", song.part}, {"globalTranspose", "independent"}});
+	CHECK(song.pitches() == std::vector<int>{72, 72, 72, 72});
 }
 
 TEST_CASE("Set Root Key for Unassigned Events gives parts without a root key the project's", "[integration]")
@@ -236,6 +265,33 @@ TEST_CASE("glue refuses MIDI parts that follow global transpose differently", "[
 	run(song.client, "midiPart.set", {{"part", song.part}, {"globalTranspose", "independent"}});
 	run(song.client, "event.glue", {{"events", {song.part, other}}});
 	CHECK(run(song.client, "project.get").at("midiParts").size() == 1);
+}
+
+TEST_CASE("glue keeps the sound of parts that Keep Transpose in Octave Range folds differently", "[integration]")
+{
+	Song song;
+	const ObjectId other = run(
+		song.client, "midiPart.add", {{"track", song.track}, {"position", 4 * g_beatTicks}, {"length", g_beatTicks}})
+							   .at("part")
+							   .at("id")
+							   .get<ObjectId>();
+	run(song.client, "note.add",
+		{{"part", other},
+			{"notes", {{{"position", 0}, {"length", g_beatTicks / 2}, {"pitch", 60}, {"velocity", 0.75}}}}});
+	run(song.client, "project.set", {{"rootKey", "D"}});
+	run(song.client, "midiPart.set", {{"part", song.part}, {"rootKey", "C"}});
+	run(song.client, "midiPart.set", {{"part", other}, {"rootKey", "C"}, {"transpose", 6}});
+	run(song.client, "transpose.add", {{"position", 0}, {"value", 0}});
+	run(song.client, "transpose.setTrack", {{"keepInOctave", true}});
+	// The first part plays 2 up; the other's sum is 2 + 0 + 6 = 8, which the option folds to 4 down.
+	CHECK(song.pitches() == std::vector<int>{62, 62, 62, 62, 56});
+	run(song.client, "event.glue", {{"events", {song.part, other}}});
+	const Json project = run(song.client, "project.get");
+	REQUIRE(project.at("midiParts").size() == 1);
+	CHECK(project.at("midiParts")[0].at("transpose") == 0);
+	// The glued part keeps the first part's transpose; the other's note gets the difference of what the two parts
+	// play their notes with at its position, -4 - 2 = -6, written into it, so it plays 56 as before.
+	CHECK(song.pitches() == std::vector<int>{62, 62, 62, 62, 56});
 }
 
 TEST_CASE("Set Root Key for Unassigned Events reaches the parts of inactive track versions", "[integration]")

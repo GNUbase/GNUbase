@@ -307,25 +307,28 @@ namespace gnubase::engine
 	int globalTranspose(const Project& project, const MidiPart& part, time::Samples at)
 	{
 		if (part.independent)
-			return 0;
-		int semitones = rootKeyTranspose(project, part);
+			return part.transpose;
+		int semitones = rootKeyTranspose(project, part) + part.transpose;
 		const TransposeTrack& track = project.transpose;
-		if (track.mute)
-			return semitones;
-		// ponytail: a scan of the events per note; a song has a handful of them.
-		int value = 0;
-		for (const TransposeEvent& event : track.events)
+		if (!track.mute)
 		{
-			if (time::toSamples(event.position, project.tempo, project.sampleRate) > at)
-				break;
-			value = event.value;
+			// ponytail: a scan of the events per note; a song has a handful of them.
+			int value = 0;
+			for (const TransposeEvent& event : track.events)
+			{
+				if (time::toSamples(event.position, project.tempo, project.sampleRate) > at)
+					break;
+				value = event.value;
+			}
+			semitones += value;
 		}
-		semitones += value;
 		if (track.keepInOctave)
 		{
-			while (semitones > 7)
+			// The whole sum into the nearest octave (#896); at 6 up and down are equally near, and the sum keeps
+			// its sign, as it did before the part's own transpose joined it.
+			while (semitones > 6)
 				semitones -= 12;
-			while (semitones < -7)
+			while (semitones < -6)
 				semitones += 12;
 		}
 		return semitones;
