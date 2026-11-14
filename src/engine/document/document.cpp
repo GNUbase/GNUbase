@@ -363,7 +363,7 @@ namespace gnubase::engine
 
 	int globalTranspose(const Project& project, const AudioEvent& event, time::Samples at)
 	{
-		return globalTransposeOf(project, event.rootKey, event.independent, 0, at);
+		return globalTransposeOf(project, event.rootKey, event.independent, event.transpose, at);
 	}
 
 	bool poolFolderOutside(const Project& project, ObjectId folder, ObjectId excluded)

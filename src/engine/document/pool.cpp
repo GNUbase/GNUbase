@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <map>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -546,7 +547,7 @@ namespace gnubase::engine
 		const Json folderSchema = objectSchema({{"id", integer}, {"name", string}, {"parent", integer}});
 		const Json clipSchema = objectSchema({{"id", integer}, {"name", string}, {"folder", integer},
 			{"media", integer}, {"used", integer}, {"path", string}, {"sampleRate", number}, {"channels", integer},
-			{"length", integer}, {"missing", boolean}, {"external", boolean}});
+			{"length", integer}, {"missing", boolean}, {"external", boolean}, {"rootKey", string}});
 		add(engine,
 			{"pool.get", 1,
 				"The pool (reference manual pp. 739-744): its folders, and every clip with the folder it is in, the "
@@ -555,7 +556,8 @@ namespace gnubase::engine
 				"outside the project folder (every file of a project that has no file yet). The totals of the info "
 				"line: audioFiles, usedFiles (media files that an event plays), missingFiles, externalFiles and "
 				"totalSize, the bytes of the files on disk; and missingExternalFiles, how many of the external files "
-				"are missing, which Prepare Archive can't copy.",
+				"are missing, which Prepare Archive can't copy. A clip's rootKey is the root key its audio events "
+				"share (the Key column, p. 417), \"\" when they have none or differ.",
 				objectSchema({}),
 				objectSchema({{"folders", {{"type", "array"}, {"items", folderSchema}}},
 								 {"clips", {{"type", "array"}, {"items", clipSchema}}}, {"audioFiles", integer},
@@ -591,6 +593,15 @@ namespace gnubase::engine
 					}
 				}
 				const std::map<ObjectId, int> uses = clipUses(project);
+				// The root key a clip's audio events share, -1 for none or when they differ.
+				std::map<ObjectId, int> keys;
+				forEveryAudioEvent(project,
+					[&keys](const AudioEvent& event)
+					{
+						if (const auto [key, added] = keys.emplace(event.clip, event.rootKey);
+							!added && key->second != event.rootKey)
+							key->second = -1;
+					});
 				std::set<ObjectId> usedMedia;
 				Json clips = Json::array();
 				for (const auto& [id, clip] : project.clips)
@@ -603,7 +614,8 @@ namespace gnubase::engine
 					clips.push_back({{"id", id}, {"name", clip.name}, {"folder", clip.folder}, {"media", clip.media},
 						{"used", count}, {"path", media.path}, {"sampleRate", media.sampleRate},
 						{"channels", media.channels}, {"length", media.length},
-						{"missing", missingMedia.count(clip.media) != 0}, {"external", external(media)}});
+						{"missing", missingMedia.count(clip.media) != 0}, {"external", external(media)},
+						{"rootKey", rootKeyName(keys.count(id) != 0 ? keys.at(id) : -1)}});
 				}
 				Json folders = Json::array();
 				for (const auto& [id, folder] : project.poolFolders)
@@ -678,9 +690,14 @@ namespace gnubase::engine
 			});
 		add(engine,
 			{"clip.set", 1,
-				"Renames a clip or moves it into a pool folder (0: the pool's Audio folder). The file keeps its name.",
-				objectSchema({{"clip", integer}, {"name", string}, {"folder", integer}}, {"clip"}), result({"clip"}),
-				false},
+				"Renames a clip or moves it into a pool folder (0: the pool's Audio folder). The file keeps its name. "
+				"rootKey (\"\" for none, C, C# and so on to B) is the pool's Key column (reference manual p. 417): "
+				"every audio event that plays the clip gets it as its root key (audioEvent.set rootKey), also those "
+				"that inactive track versions hold; the audio file stays as it is.",
+				objectSchema({{"clip", integer}, {"name", string}, {"folder", integer},
+								 {"rootKey", Json{{"type", "string"}, {"enum", rootKeyNames()}}}},
+					{"clip"}),
+				result({"clip"}), false},
 			[](Project& project, CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
@@ -688,6 +705,28 @@ namespace gnubase::engine
 				clip.name = folderName(parameters, clip.name);
 				clip.folder = parameters.value("folder", clip.folder);
 				requireFolder(project, clip.folder);
+				if (parameters.contains("rootKey"))
+				{
+					const std::string name = parameters.at("rootKey").get<std::string>();
+					const std::optional<int> found = rootKeyFromName(name);
+					require(found.has_value(), "unknown root key " + name);
+					const int key = found.value_or(-1);
+					// Those of inactive track versions lie inside their track, which is announced as changed.
+					std::set<ObjectId> tracks;
+					forEveryAudioEvent(project,
+						[&](AudioEvent& event)
+						{
+							if (event.clip != clip.id || event.rootKey == key)
+								return;
+							event.rootKey = key;
+							if (project.audioEvents.count(event.id) != 0)
+								context.emit("audioEvent.changed", {{"event", toJson(event)}});
+							else
+								tracks.insert(event.track);
+						});
+					for (const ObjectId track : tracks)
+						context.emit("track.changed", {{"track", toJson(project.trackById.at(track))}});
+				}
 				Json changed = {{"clip", toJson(clip)}};
 				context.emit("clip.changed", changed);
 				return changed;

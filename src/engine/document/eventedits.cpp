@@ -1143,6 +1143,10 @@ namespace gnubase::engine
 							rootKeyTranspose(project, *items[i].audio) == rootKeyTranspose(project, *first.audio),
 						"audio events that follow global transpose differently, by their root key or Global "
 						"Transpose, don't glue");
+				// Nor do events that transpose differently by their own Transpose (#1555).
+				for (size_t i = 1; i < items.size(); ++i)
+					require(items[i].audio->transpose == first.audio->transpose,
+						"audio events that transpose differently by their own Transpose don't glue");
 				for (size_t i = 1; i < items.size(); ++i)
 				{
 					first.audio->length += items[i].audio->length;
@@ -2853,7 +2857,10 @@ namespace gnubase::engine
 				"(refused if that would transpose a note beyond 0 to 127). Pattern events that continue the first "
 				"one's pattern, as the pieces of a split do, stay that "
 				"pattern event; otherwise the pattern events' steps become notes of the glued part, as they played. "
-				"Returns the event or part.",
+				"Refused for audio events that continue each other but follow global transpose differently, by their "
+				"root key or Global Transpose, or transpose differently by their own transpose, and for MIDI parts "
+				"that follow global transpose differently: the glued event or part keeps the first one's, so the "
+				"others would play at another pitch (audioEvent.set, midiPart.set). Returns the event or part.",
 				schema({{"events", events()}}, {"events"}), schema({{"event", integer()}}, {"event"}), false},
 			"Glue", glueEvents);
 
