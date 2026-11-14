@@ -893,10 +893,10 @@ TEST_CASE("Pitch Visibility shows the drum sounds with events, Solo Instrument a
 	CHECK(f.elements("#drum-names").at(0).at("text") == "GM Default");
 	f.app.call("editor.set", {{"editor", "window"}, {"content", "key"}});
 	REQUIRE(f.app.waitUntil([&] { return !f.elements(".key-editor-key.black").empty(); }));
-	REQUIRE(f.app.waitUntil([&] { return f.has(".key-editor-keys", "named"); }));
+	REQUIRE(f.app.waitUntil([&] { return f.has(".key-editor", "named-keys"); }));
 	CHECK(f.elements(".key-editor-key[pitch=\"36\"]").at(0).at("attributes").at("title") == "Bass Drum 1");
 	f.app.call("track.set", {{"track", f.track}, {"gmNames", false}});
-	REQUIRE(f.app.waitUntil([&] { return !f.has(".key-editor-keys", "named"); }));
+	REQUIRE(f.app.waitUntil([&] { return !f.has(".key-editor", "named-keys"); }));
 	CHECK(f.elements(".key-editor-key[pitch=\"36\"]").at(0).at("attributes").value("title", "x").empty());
 }
 
@@ -944,6 +944,14 @@ TEST_CASE("Show Drum Sounds in Use by Instrument shows the sounds of a drum trac
 		f.app.call("midiPart.add", {{"track", drums.at("track").at("id")}, {"position", 0}, {"length", g_bar}})
 			.at("part")
 			.at("id");
+	// A note of a pad and one of a pitch without a pad.
+	const Json added = f.app.call("note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", 0}, {"length", g_sixteenth}, {"pitch", 36}, {"velocity", 0.5}},
+					{{"position", g_quarter}, {"length", g_sixteenth}, {"pitch", 100}, {"velocity", 0.5}}}}});
+	const std::string padless =
+		".key-note[note=\"" + std::to_string(added.at("notes").at(1).at("id").get<uint64_t>()) + "\"]";
 	f.app.call("editor.open", {{"editor", "window"}, {"parts", Json::array({part})}});
 	REQUIRE(f.app.waitUntil(
 		[&]
@@ -958,4 +966,50 @@ TEST_CASE("Show Drum Sounds in Use by Instrument shows the sounds of a drum trac
 	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-sound").size() == 11; })); // the kit's pads
 	CHECK(f.elements(".drum-sound").at(0).at("attributes").at("pitch") == "36");
 	CHECK(f.elements(".key-editor-row").size() == 11);
+	// The note of the sound the list hides isn't shown on any row, until the option is off again.
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note").size() == 1; }));
+	CHECK(f.elements(padless).empty());
+	f.click(of("#drum-pitch-options"));
+	f.click(of("#drum-pitch-menu menuitem[visible-sounds=inUse]"));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-sound").size() == 128; }));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note").size() == 2; }));
+	CHECK(f.elements(padless).size() == 1);
+}
+
+TEST_CASE("with drum sound names the key editor's notes line up with their velocity bars and parts", "[ui]")
+{
+	// p. 1239: the wider keyboard of named keys, and the parts' row and the controller lanes' header as wide.
+	Fixture f;
+	const Json added = f.app.call("note.add",
+		{{"part", f.part}, {"notes", {{{"position", 0}, {"length", g_quarter}, {"pitch", 36}, {"velocity", 0.5}}}}});
+	const std::string id = std::to_string(added.at("notes").at(0).at("id").get<uint64_t>());
+	f.app.call("editor.set", {{"editor", "window"}, {"content", "key"}});
+	REQUIRE(f.app.waitUntil([&] { return f.has(".key-editor", "named-keys"); }));
+	const auto left = [&](const std::string& selector) { return f.box(selector).at("x").get<double>(); };
+	const std::string note = ".key-note[note=\"" + id + "\"]";
+	const std::string bar = ".controller-bar[note=\"" + id + "\"]";
+	const std::string part = ".editor-part[part=\"" + std::to_string(f.part) + "\"]";
+	REQUIRE(f.app.waitUntil([&] { return !f.elements(note).empty() && !f.elements(bar).empty(); }));
+	CHECK(f.app.waitUntil([&] { return std::abs(left(note) - left(part)) <= 1.0; }));
+	CHECK(std::abs(left(bar) - left(note)) <= 1.0);
+	CHECK(left(note) > left(".key-editor-keys") + 100.0); // past the named keyboard
+}
+
+TEST_CASE("with Adapt to Zoom and Insert Length linked the drumstick's notes are as long as the quantize grid's value",
+	"[ui]")
+{
+	// p. 1227: the zoom chooses the grid; Insert Length's link stays the quantize grid's value, as step input's.
+	Fixture f;
+	f.scroll(36);
+	f.app.call("quantize.set", {{"settings", {{"grid", "1/4"}}}});
+	f.app.call("editor.set", {{"editor", "window"}, {"lengthQuantize", "link"}});
+	// A bar at least 96 dp wide: the zoom's note value is an eighth or finer, not the quantize grid's quarter.
+	REQUIRE(f.box(".key-editor-grid").at("width").get<double>() >= 96.0);
+	f.click(of("#drum-grid-type"));
+	f.click(of("#drum-grid-menu menuitem[grid-type=zoom]"));
+	REQUIRE(f.app.waitUntil([&] { return f.app.call("editor.get", {{"editor", "window"}}).at("gridType") == "zoom"; }));
+	f.click(of(".key-tool[key-tool=draw]"));
+	f.click(f.at(0.2, 36));
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 1; }));
+	CHECK(f.partNotes()[0].at("length") == g_quarter);
 }

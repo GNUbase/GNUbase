@@ -176,6 +176,9 @@ namespace gnubase::ui
 		// The drum editor shows its notes as diamonds, unless Show Note Length is on.
 		bool diamonds() const { return m_drum && !m_view.value("showNoteLength", false); }
 		void updateOrder();
+		// Whether the drum sound list shows the pitch: Show Drum Sounds with Events and in Use by Instrument hide
+		// sounds, and their notes.
+		bool listed(int pitch) const { return m_rowOf.at(static_cast<size_t>(pitch)) >= 0; }
 		std::string soundsRml() const;
 		void renderDrumMap();
 		void drumMapMenu(Rml::Element& target);
@@ -191,6 +194,7 @@ namespace gnubase::ui
 		// the snap of the pitch it moves to.
 		int64_t delta(Gesture gesture, double ticks, int rows = 0) const;
 		int64_t grid(int pitch = -1) const;
+		int64_t quantizeGrid() const;                                 // the project's quantize grid (quantize.set)
 		static int64_t soundSnap(const engine::Json& map, int pitch); // a drum sound's snap, in ticks
 		// The length of new notes of the pitch: with Drum-Map Link its sound's snap.
 		int64_t lengthQuantize(int pitch) const;
@@ -222,7 +226,7 @@ namespace gnubase::ui
 		std::function<void()> m_drumMapSetup;
 		KeyTool m_tool = KeyTool::ObjectSelection;
 		std::vector<int> m_order; // the pitches of the rows, from the top
-		std::vector<int> m_rowOf; // each pitch's row
+		std::vector<int> m_rowOf; // each pitch's row, -1 for one the drum sound list doesn't show
 		std::string m_soundsRml;  // the drum sound list as last set
 		std::string m_mapMenuRml; // the Map menu as last set
 		engine::Json m_project = engine::Json::object();

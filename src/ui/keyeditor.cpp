@@ -563,7 +563,8 @@ namespace gnubase::ui
 		if (height <= 0.0F || client <= 0.0F)
 			return false;
 		const float row =
-			(static_cast<float>(m_rowOf.at(static_cast<size_t>(std::clamp(pitch, 0, g_pitches - 1)))) + 0.5F) /
+			(static_cast<float>(std::max(m_rowOf.at(static_cast<size_t>(std::clamp(pitch, 0, g_pitches - 1))), 0)) +
+				0.5F) /
 			static_cast<float>(m_order.size()) * height;
 		body->SetScrollTop(std::clamp(row - (client / 2.0F), 0.0F, std::max(height - client, 0.0F)));
 		m_scrolled = true; // a pitch scrolled to is where it stays
@@ -664,9 +665,10 @@ namespace gnubase::ui
 		// The selection only changes classes, so that a press that selects keeps the element under the mouse.
 		std::string rml;
 		for (const Note& note : m_notes)
-			rml += R"(<div class="key-note)" + std::string(diamonds() ? " drum-note" : "") +
-				(note.editable ? "" : " inactive") + R"(" part=")" + std::to_string(note.part) + R"(" note=")" +
-				std::to_string(note.id) + R"("/>)";
+			if (listed(note.pitch))
+				rml += R"(<div class="key-note)" + std::string(diamonds() ? " drum-note" : "") +
+					(note.editable ? "" : " inactive") + R"(" part=")" + std::to_string(note.part) + R"(" note=")" +
+					std::to_string(note.id) + R"("/>)";
 		// Compared with what was set last: the element's own RML has the classes set since.
 		Rml::Element* notes = root->QuerySelector(".key-editor-notes");
 		if (notes != nullptr && rml != m_notesRml)
@@ -775,8 +777,9 @@ namespace gnubase::ui
 					key->SetInnerRML(Rml::StringUtilities::EncodeRml(label));
 				}
 			}
-			if (Rml::Element* keyboard = root->QuerySelector(".key-editor-keys"))
-				setClass(keyboard, "named", any);
+			// On the root, so that the style sheets give the keyboard, the parts' margin and the lanes' header one
+			// width.
+			setClass(root, "named-keys", any);
 		}
 		// The drum editor's grid type (p. 1227).
 		const std::string gridType = m_view.value("gridType", std::string("quantize"));
@@ -855,10 +858,15 @@ namespace gnubase::ui
 				{
 					place(child, std::llround(m_pressedAt.first), m_drawnLength, m_pressedAt.second);
 				}
-				else if (next < m_notes.size())
+				else
 				{
-					place(child, m_notes[next].start, m_notes[next].length, m_notes[next].pitch);
-					++next;
+					while (next < m_notes.size() && !listed(m_notes[next].pitch))
+						++next; // without an element (render)
+					if (next < m_notes.size())
+					{
+						place(child, m_notes[next].start, m_notes[next].length, m_notes[next].pitch);
+						++next;
+					}
 				}
 			}
 		}
@@ -921,7 +929,7 @@ namespace gnubase::ui
 	{
 		std::vector<const Note*> notes;
 		for (const Note& each : m_notes)
-			if (selected(each))
+			if (selected(each) && listed(each.pitch)) // the notes of sounds the list hides aren't edited
 				notes.push_back(&each);
 		std::stable_sort(notes.begin(), notes.end(),
 			[](const Note* a, const Note* b) { return std::tie(a->start, a->pitch) < std::tie(b->start, b->pitch); });
@@ -974,6 +982,11 @@ namespace gnubase::ui
 					step = each;
 			return step;
 		}
+		return quantizeGrid();
+	}
+
+	int64_t KeyEditor::quantizeGrid() const
+	{
 		const std::string grid = m_project.value("quantize", Json::object()).value("grid", std::string("1/16"));
 		return engine::midi::noteValueFromString(grid).value_or(engine::midi::NoteValue{}).ticks();
 	}
@@ -998,10 +1011,11 @@ namespace gnubase::ui
 		if (length == "drumMap")
 		{
 			const Json* map = activeMap();
-			return map != nullptr ? soundSnap(*map, pitch) : grid();
+			return map != nullptr ? soundSnap(*map, pitch) : quantizeGrid();
 		}
+		// Linked to the quantize grid, as editor.set's link and step input's noteLength, also with Adapt to Zoom.
 		if (length == "link")
-			return grid();
+			return quantizeGrid();
 		return engine::midi::noteValueFromString(length).value_or(engine::midi::NoteValue{}).ticks();
 	}
 
@@ -2057,8 +2071,8 @@ namespace gnubase::ui
 		}
 		if (visibility && m_view.value("reverseSounds", false))
 			std::reverse(m_order.begin(), m_order.end());
-		// A pitch the list doesn't show is on the first row.
-		m_rowOf.assign(static_cast<size_t>(g_pitches), 0);
+		// A pitch the list doesn't show has no row, and its notes no element (render).
+		m_rowOf.assign(static_cast<size_t>(g_pitches), -1);
 		for (size_t row = 0; row < m_order.size(); ++row)
 			m_rowOf.at(static_cast<size_t>(m_order[row])) = static_cast<int>(row);
 	}

@@ -89,10 +89,17 @@
 	height: 1280dp;
 }
 
-/* With drum sound names (a drum map's or a name list's, reference manual p. 1239) the keys name their sounds. */
-.key-editor-keys.named
+/* With drum sound names (a drum map's or a name list's, reference manual p. 1239) the keys name their sounds: the
+   keyboard is wider, and the parts and the controller lanes start where the grid does. */
+.key-editor.named-keys .key-editor-keys,
+.key-editor.named-keys .controller-lane-header
 {
 	width: 128dp;
+}
+
+.key-editor.named-keys .editor-parts
+{
+	margin-left: 128dp;
 }
 
 .key-editor-grid

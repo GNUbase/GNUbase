@@ -113,10 +113,12 @@ content is `drum`. It is the key editor ([key-editor.md](key-editor.md)) with th
   down, also when an earlier sound has its I-note. With Pitch Visibility and Reverse Drum Sound List the list goes
   from the bottom of the map's order; with Show Drum Sounds with Events it has only the sounds that the shown parts
   have notes of, and the grid a row for each of them (all of them while the parts have none); with Show Drum Sounds in
-  Use by Instrument those of `soundsInUse`, an option the menu disables while the instrument can't tell.
+  Use by Instrument those of `soundsInUse`, an option the menu disables while the instrument can't tell. The notes of
+  sounds the list hides aren't shown, and the editor's edits leave them out even while they are selected.
 - **Names** (p. 1239): the Names menu chooses the active track's name list, No Names or GM Default (`track.set
   gmNames`). Without a map GM Default names the list's sounds; the key editor's keys show the active track's drum sound
-  names, its map's or GM Default's, as their text and title, and the keyboard is wider then (`.key-editor-keys.named`).
+  names, its map's or GM Default's, as their text and title, and the keyboard is wider then (`.key-editor.named-keys`,
+  with the parts' row and the controller lanes' header as wide, so that they line up with the notes).
 - **Solo Instrument** (p. 1223) switches the view's `soloInstrument`: the sounds of the selected notes, which the list
   marks, play alone.
 - **Drumstick** (pp. 1240-1242). A click inserts a note at the snapped position, as long as Insert Length says; a drag
@@ -139,7 +141,8 @@ content is `drum`. It is the key editor ([key-editor.md](key-editor.md)) with th
   and New Copy add a map that becomes the track's, in one undo step (`drumMap.add track`); Remove removes the track's
   map; Drum Map Setup... opens the setup.
 - **Grid Type** (p. 1227): Use Quantize snaps to the quantize grid; Adapt to Zoom to the finest note value, from a half
-  note down to a 64th, that is at least 12 dp wide in the grid, so zooming in makes it finer; Use Snap from Drum Map
+  note down to a 64th, that is at least 12 dp wide in the grid, so zooming in makes it finer, while Insert Length's
+  link stays the quantize grid's value; Use Snap from Drum Map
   snaps what the drumstick inserts, repeats and moves along, and the notes moved or resized, to the snap of the note's
   sound: a note moved to another row to that of the sound it goes to, which it then is. The split tool and the step
   input cursor snap to the quantize grid: neither belongs to a sound, as the notes step input enters there can be any.
@@ -204,5 +207,6 @@ importing the reference's own drum map files.
   menu's Drum Map Setup and O-Note Conversion; Show Drum Sounds with Events listing and gridding only the notes'
   sounds, the notes on their rows and the drumstick inserting on one, Solo Instrument's button, and the Names menu's GM
   Default naming the list's sounds without a map and the key editor's keys; Show Drum Sounds in Use by Instrument
-  disabled without a drum machine and listing a drum track's kit; Adapt to Zoom snapping the drumstick to
-  the note value that the grid's width chooses.
+  disabled without a drum machine and listing a drum track's kit, hiding the notes of the other sounds; Adapt to Zoom
+  snapping the drumstick to the note value that the grid's width chooses, its notes as long as the quantize grid's
+  value; named keys lining up the notes with their velocity bars and parts.
