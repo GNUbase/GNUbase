@@ -1,7 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Tests tools/tidy-changed.sh in a temporary repository with prepared compile databases: the line filter it gives
-# clang-tidy, with a stub clang-tidy that logs it, its exit without changed lines and, on Linux, its compile steps
+# clang-tidy, with a stub clang-tidy that logs it, the function size check on the whole changed files, its exit without
+# changed lines and, on Linux, its compile steps
 # with stub compilers for Clang and GCC and when it configures the compile databases again, with a stub cmake. Run by
 # ctest; usage: tidy_changed_tests.sh <source-dir>
 set -u
@@ -21,13 +22,23 @@ export GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.com
 export GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.com
 : > "$GIT_CONFIG_GLOBAL"
 
-# The stub logs its line filter and reports a finding, failing, when $tmp/finding exists.
+# The stub logs its line filter and reports a finding, failing, when $tmp/finding exists; called with checks of its
+# own, it logs them and reports a function size finding, failing, when $tmp/size-finding exists.
 cat > "$tmp/clang-tidy" << EOF
 #!/bin/sh
 [ "\$1" = --version ] && echo "clang-tidy version 22.1.0" && exit 0
+own=
 for arg in "\$@"; do
-	case "\$arg" in --line-filter=*) echo "\${arg#--line-filter=}" >> "$tmp/filters" ;; esac
+	case "\$arg" in
+	--line-filter=*) echo "\${arg#--line-filter=}" >> "$tmp/filters" ;;
+	--checks=*) echo "\${arg#--checks=}" >> "$tmp/checks" && own=1 ;;
+	esac
 done
+if [ -n "\$own" ]; then
+	[ -e "$tmp/size-finding" ] || exit 0
+	echo "src/a.cpp:1:5: error: function 'f' exceeds recommended size/complexity thresholds [readability-function-size]"
+	exit 1
+fi
 [ -e "$tmp/finding" ] || exit 0
 echo "src/a.cpp:13:2: error: statement should have braces [readability-inconsistent-ifelse-braces]"
 exit 1
@@ -71,6 +82,7 @@ failures=0
 check()
 {
 	: > "$tmp/filters"
+	: > "$tmp/checks"
 	(cd "$repo" && bash "$src/tools/tidy-changed.sh" HEAD~1) > "$tmp/output" 2>&1
 	status=$?
 	if [ "$status" -eq "$2" ]; then
@@ -114,6 +126,13 @@ expect "a change in the first lines starts at 1, a block 5 lines on both sides" 
 expect "a deletion gets the 5 lines on both sides of it, after an added line that reads like a file header" \
 	-F 'b.cpp","lines":[[1,7],[5,15]]}'
 expect "a deleted file gets no entry" -v -F 'c.cpp'
+[ "$(grep -c -x -F -- '-*,readability-function-size' "$tmp/checks")" -eq 2 ] &&
+	echo "ok: the function size check runs on both changed files without the line filter" ||
+	{
+		echo "FAILED: the function size check runs on both changed files without the line filter"
+		sed 's/^/    /' "$tmp/checks"
+		failures=$((failures + 1))
+	}
 if [ "$(uname -s)" = Linux ]; then
 	printed "Clang compiles the changed files" "Clang compiles them."
 	printed "GCC compiles the changed files" "GCC compiles them."
@@ -156,6 +175,13 @@ touch "$tmp/finding"
 check "a finding next to a change fails the script" 1
 printed "the finding is printed" "readability-inconsistent-ifelse-braces"
 rm "$tmp/finding"
+
+# readability-function-size reports on a function's first line, which a change further down leaves out of the line
+# filter (#1585): it runs on the whole file.
+touch "$tmp/size-finding"
+check "a function size finding away from the changes fails the script" 1
+printed "the function size finding is printed" "readability-function-size"
+rm "$tmp/size-finding"
 
 # A branch that only deletes a file has nothing to check.
 git -C "$repo" checkout -q --detach HEAD~1 && git -C "$repo" rm -q src/c.cpp && git -C "$repo" commit -q -m delete ||
