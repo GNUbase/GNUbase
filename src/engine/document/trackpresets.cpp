@@ -1221,7 +1221,9 @@ namespace gnubase::engine
 					rates = mediaSampleRatesByTrack(placed);
 				}
 				else
+				{
 					rates = mediaSampleRatesByTrack(file);
+				}
 				Json tracks = Json::array();
 				for (const ObjectId id : file.trackOrder())
 				{
