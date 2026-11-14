@@ -1098,6 +1098,59 @@ namespace gnubase::engine
 				}
 			}
 		}
+
+		// chordPads.assistant, outside registerChordPadCommands to keep that within the function size limit.
+		Json assistant(const Project& project, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			const int key = project.chordPads.rootKey;
+			// A chord's degree in the key, empty for a chord with notes outside the key's scale.
+			const auto entry = [key](const midi::ChordSymbol& chord, const std::string& scale)
+			{
+				const std::vector<int> steps = scaleOf(scale);
+				const std::vector<int> classes = classesOf(chord);
+				const bool inKey = std::all_of(
+					classes.begin(), classes.end(), [&steps, key](int note) { return inScale(steps, key, note); });
+				return Json{{"chord", midi::chordName(chord)},
+					{"degree", inKey ? chordpads::degreeName(chord, key, scale) : std::string()}};
+			};
+			if (parameters.at("kind") == "circle")
+			{
+				const bool minor = parameters.value("minor", false);
+				const std::string scale = minor ? "minor" : "major";
+				Json outer = Json::array();
+				Json inner = Json::array();
+				for (int i = 0; i < 12; ++i)
+				{
+					midi::ChordSymbol major;
+					major.root = pitchClass(key + (minor ? 3 : 0) + (7 * i));
+					midi::ChordSymbol relative;
+					relative.root = pitchClass(major.root + 9);
+					relative.type = "min";
+					outer.push_back(entry(major, scale));
+					inner.push_back(entry(relative, scale));
+				}
+				return Json{{"outer", outer}, {"inner", inner}};
+			}
+			const midi::ChordSymbol reference = chordFrom(parameters.value("chord", std::string()));
+			Json suggestions = Json::array();
+			const std::string& scale = project.chordPads.scale;
+			const std::string algorithm = parameters.value("algorithm", std::string("cadence"));
+			const bool near = parameters.at("kind") == "proximity";
+			for (const chordpads::Suggestion& suggestion : near
+					? chordpads::proximity(reference, key, scale)
+					: chordpads::suggestions(reference, key, scale, algorithm, parameters.value("commonNotes", 2),
+						  algorithm == "cadence" ? parameters.value("cadenceType", std::string("all")) : "all"))
+			{
+				Json item = entry(suggestion.chord, scale);
+				item["degree"] = chordpads::degreeName(suggestion.chord, key, scale);
+				item["level"] = suggestion.level;
+				if (near)
+					item["distance"] = suggestion.distance;
+				suggestions.push_back(item);
+			}
+			return Json{{"suggestions", suggestions}};
+		}
 	}
 
 	void ProjectModel::registerChordPadCommands(Engine& engine)
@@ -2363,56 +2416,6 @@ namespace gnubase::engine
 						{"commonNotes", integerSchema}, {"minor", booleanSchema}},
 					{"kind"}),
 				{{"type", "object"}}, true},
-			[](Project& project, CommandContext& context)
-			{
-				const Json& parameters = context.parameters();
-				const int key = project.chordPads.rootKey;
-				// A chord's degree in the key, empty for a chord with notes outside the key's scale.
-				const auto entry = [key](const midi::ChordSymbol& chord, const std::string& scale)
-				{
-					const std::vector<int> steps = scaleOf(scale);
-					const std::vector<int> classes = classesOf(chord);
-					const bool inKey = std::all_of(
-						classes.begin(), classes.end(), [&steps, key](int note) { return inScale(steps, key, note); });
-					return Json{{"chord", midi::chordName(chord)},
-						{"degree", inKey ? chordpads::degreeName(chord, key, scale) : std::string()}};
-				};
-				if (parameters.at("kind") == "circle")
-				{
-					const bool minor = parameters.value("minor", false);
-					const std::string scale = minor ? "minor" : "major";
-					Json outer = Json::array();
-					Json inner = Json::array();
-					for (int i = 0; i < 12; ++i)
-					{
-						midi::ChordSymbol major;
-						major.root = pitchClass(key + (minor ? 3 : 0) + (7 * i));
-						midi::ChordSymbol relative;
-						relative.root = pitchClass(major.root + 9);
-						relative.type = "min";
-						outer.push_back(entry(major, scale));
-						inner.push_back(entry(relative, scale));
-					}
-					return Json{{"outer", outer}, {"inner", inner}};
-				}
-				const midi::ChordSymbol reference = chordFrom(parameters.value("chord", std::string()));
-				Json suggestions = Json::array();
-				const std::string& scale = project.chordPads.scale;
-				const std::string algorithm = parameters.value("algorithm", std::string("cadence"));
-				const bool near = parameters.at("kind") == "proximity";
-				for (const chordpads::Suggestion& suggestion : near
-						? chordpads::proximity(reference, key, scale)
-						: chordpads::suggestions(reference, key, scale, algorithm, parameters.value("commonNotes", 2),
-							  algorithm == "cadence" ? parameters.value("cadenceType", std::string("all")) : "all"))
-				{
-					Json item = entry(suggestion.chord, scale);
-					item["degree"] = chordpads::degreeName(suggestion.chord, key, scale);
-					item["level"] = suggestion.level;
-					if (near)
-						item["distance"] = suggestion.distance;
-					suggestions.push_back(item);
-				}
-				return Json{{"suggestions", suggestions}};
-			});
+			[](Project& project, CommandContext& context) { return assistant(project, context); });
 	}
 }
