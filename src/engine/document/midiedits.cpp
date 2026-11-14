@@ -140,7 +140,9 @@ namespace gnubase::engine
 				changed.push_back(toJson(*note));
 				added.push_back(toJson(rest));
 			}
-			if (!added.empty())
+			if (added.empty())
+				context.markUnchanged(); // no change, so no modified project without an undo step (#1496)
+			else
 			{
 				context.emit("note.changed", {{"part", part.id}, {"notes", changed}});
 				context.emit("note.added", {{"part", part.id}, {"notes", added}});
@@ -163,14 +165,15 @@ namespace gnubase::engine
 			const Note& next = noteNamed("next");
 			require(next.position > note.position, "next must start after note");
 			// What played goes on playing: the note's points up to where the next one starts, or to its own end, then
-			// the next one's.
+			// the next one's up to its end. Points at or past a note's end, e.g. after a trim, never played (#1496).
 			const time::Ticks offset = next.position - note.position;
 			const time::Ticks keep = std::min(offset, note.length);
 			note.expressions.erase(std::remove_if(note.expressions.begin(), note.expressions.end(),
 									   [keep](const ExpressionPoint& point) { return point.position >= keep; }),
 				note.expressions.end());
 			for (const ExpressionPoint& point : next.expressions)
-				note.expressions.push_back({point.type, point.position + offset, point.value});
+				if (point.position < next.length)
+					note.expressions.push_back({point.type, point.position + offset, point.value});
 			note.length = std::max(next.position + next.length, note.position + note.length) - note.position;
 			const ObjectId removed = next.id;
 			part.notes.erase(removed); // next dangles from here on
@@ -443,7 +446,8 @@ namespace gnubase::engine
 				"tool does: each named note that the position cuts ends there, and its rest, a new note with the same "
 				"values, starts there; the others stay as they are. The expression points before the cut stay with "
 				"the note, the rest starts with the values at the cut and goes on with the later points (see "
-				"note.set). Returns the rests.",
+				"note.set). A position that cuts none of them changes nothing, and the project doesn't count as "
+				"modified. Returns the rests.",
 				{{"type", "object"}, {"additionalProperties", false}, {"required", {"part", "notes", "position"}},
 					{"properties",
 						{{"part", idOf}, {"notes", {{"type", "array"}, {"items", idOf}}},
@@ -454,7 +458,7 @@ namespace gnubase::engine
 			{"note.glue", 1,
 				"Glues a note of a MIDI part to a later one, as the key editor's glue tool does: note then lasts to "
 				"the later of their ends and keeps its values, and next is removed. Its expression points go on "
-				"playing: note keeps its own up to next's start, then has next's.",
+				"playing: note keeps its own up to next's start, then has next's up to next's end.",
 				{{"type", "object"}, {"additionalProperties", false}, {"required", {"part", "note", "next"}},
 					{"properties", {{"part", idOf}, {"note", idOf}, {"next", idOf}}}},
 				{{"type", "object"}, {"required", {"note"}}, {"properties", {{"note", {{"type", "object"}}}}}}, false},

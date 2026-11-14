@@ -22,15 +22,16 @@ that has any, and they are saved in the project's GNUbase entry. A project whose
 with them clamped, as the notes' other values, and without points of expressions it doesn't know.
 
 **Cutting and resizing.** Splitting a part with `splitNotes` (`event.split`) leaves the first piece of a cut note its
-points before the cut, and the rest gets the points from the cut on, moved back by the cut, with each expression's
-value at the cut as its initial point. A note whose start `note.set` moves while its end stays (its start resized) keeps
-its expression where it is the same way: moved later, the values at the new start become its initial points; moved
-earlier, its initial values start at the new start and its other points stay where they were. The key editor's split
-tool cuts notes the same way through `note.split` (#1419). Its glue tool joins a note to the next one of its pitch
-through `note.glue`: the glued note keeps its own points up to where the next one started, then has the next one's,
-so that it plays what the two played; glued again after a split, it has an extra point at the cut, with the value it
-had there. The reference manual's glue keeps the first note's properties (p. 1215), and expression is no property
-but what the note plays over time.
+points before the cut, and the rest gets the points from the cut on, moved back by the cut, with each expression's value
+at the cut as its initial point. A note whose start `note.set` moves while its end stays (its start resized) keeps its
+expression where it is the same way: moved later, the values at the new start become its initial points; moved earlier,
+its initial values start at the new start and its other points stay where they were. The key editor's split tool cuts
+notes the same way through `note.split` (#1419); a position that cuts none of them changes nothing, and the project
+doesn't count as modified. Its glue tool joins a note to the next one of its pitch through `note.glue`: the glued note
+keeps its own points up to where the next one started, then has the next one's up to where it ended, so that it plays
+what the two played (the points a note has at or past its end, e.g. after the trim tool shortened it, never played);
+glued again after a split, it has an extra point at the cut, with the value it had there. The reference manual's glue
+keeps the first note's properties (p. 1215), and expression is no property but what the note plays over time.
 
 **Recording MPE** (pp. 1295-1298). With the user setting `midi.mpeInput` on, MIDI recording and retrospective
 recording take their input as MPE's lower zone: channel 1 is the master channel, whose messages record as before, and
