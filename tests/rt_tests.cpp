@@ -57,6 +57,25 @@ TEST_CASE("SpscQueue delivers values in order and reports full and empty", "[uni
 	CHECK_FALSE(queue.tryPop(value));
 }
 
+TEST_CASE("SpscQueue::peek shows the value tryPop takes next without taking it", "[unit]")
+{
+	SpscQueue<int> queue(2);
+	CHECK(queue.peek() == nullptr);
+	CHECK(queue.tryPush(1));
+	CHECK(queue.tryPush(2));
+	REQUIRE(queue.peek() != nullptr);
+	CHECK(*queue.peek() == 1);
+	CHECK_FALSE(queue.tryPush(3)); // the peeked value still takes its slot
+
+	int value = 0;
+	REQUIRE(queue.tryPop(value));
+	CHECK(value == 1);
+	REQUIRE(queue.peek() != nullptr);
+	CHECK(*queue.peek() == 2);
+	REQUIRE(queue.tryPop(value));
+	CHECK(queue.peek() == nullptr);
+}
+
 TEST_CASE("SpscQueue keeps the order between a producer and a consumer thread", "[unit]")
 {
 	constexpr int count = 100000;
