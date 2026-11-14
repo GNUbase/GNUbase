@@ -304,6 +304,24 @@ TEST_CASE("a gesture right after a mode switch edits the pattern as the engine h
 	CHECK(f.patternJson().at("mode") == "poly");
 }
 
+TEST_CASE("the pattern editor takes no edit of the steps before a mode switch's answer", "[ui]")
+{
+	Fixture f;
+	f.click(of(cell(36, 0)));
+	REQUIRE(f.app.waitUntil([&] { return f.steps(36) == std::vector<int>{0}; }));
+	f.settle();
+	// The answer comes only in a step: the click on a step goes while the switch is out, with the drum lanes still
+	// shown, and doesn't bring them back into the cleared melodic pattern (#1410).
+	f.app.ui().click(f.window, of(".pattern-mode[pattern-mode=poly]"), ui::MouseButton::Left, 1, {});
+	f.app.ui().click(f.window, of(cell(36, 4)), ui::MouseButton::Left, 1, {});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.has(".pattern-mode[pattern-mode=poly]", "checked"); }));
+	f.settle();
+	CHECK(f.patternJson().at("mode") == "poly");
+	CHECK(f.patternJson().at("lanes").empty());
+	CHECK(f.elements(".pattern-step.on").empty());
+}
+
 TEST_CASE("in mono mode the draw tool moves tied steps to the pitch drawn", "[ui]")
 {
 	Fixture f;
