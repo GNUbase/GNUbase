@@ -160,7 +160,7 @@ namespace gnubase::engine
 				return found->second;
 			};
 			Note& note = noteNamed("note");
-			const Note next = noteNamed("next");
+			const Note& next = noteNamed("next");
 			require(next.position > note.position, "next must start after note");
 			// What played goes on playing: the note's points up to where the next one starts, or to its own end, then
 			// the next one's.
@@ -172,10 +172,11 @@ namespace gnubase::engine
 			for (const ExpressionPoint& point : next.expressions)
 				note.expressions.push_back({point.type, point.position + offset, point.value});
 			note.length = std::max(next.position + next.length, note.position + note.length) - note.position;
-			part.notes.erase(next.id);
+			const ObjectId removed = next.id;
+			part.notes.erase(removed); // next dangles from here on
 			const Json glued = toJson(note);
 			context.emit("note.changed", {{"part", part.id}, {"notes", Json::array({glued})}});
-			context.emit("note.removed", {{"part", part.id}, {"notes", Json::array({next.id})}});
+			context.emit("note.removed", {{"part", part.id}, {"notes", Json::array({removed})}});
 			return {{"note", glued}};
 		}
 
