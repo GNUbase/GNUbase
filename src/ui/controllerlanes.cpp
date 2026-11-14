@@ -1198,7 +1198,12 @@ namespace gnubase::ui
 				items.push_back({part.id, id, start, start + note.at("length").get<int64_t>(), 0.0, 0, part.editable,
 					false, shown.value("color", std::string())});
 				const std::string name = Rml::StringUtilities::EncodeRml(shown.value("name", std::string()));
-				rml += element("sound-slot", items.back(), "note") + R"( title=")" + name + R"(">)" + name + "</div>";
+				rml.append(element("sound-slot", items.back(), "note"))
+					.append(R"( title=")")
+					.append(name)
+					.append(R"(">)")
+					.append(name)
+					.append("</div>");
 			}
 		}
 		rml += "</div>";
