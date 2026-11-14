@@ -482,6 +482,21 @@ TEST_CASE("notes played live into a track with a drum map go through its I-notes
 				{{"divider", 1}, {"slots", {{{"effect", "chordGenerator"}, {"parameters", {{"chord", "Octave"}}}}}}}}});
 	run("audio.render", {{"frames", 64}});
 	CHECK(play(0x90, 45, true) == std::vector<std::vector<int>>{{0x99, 45}, {0x99, 57}, {0x89, 45}, {0x89, 57}});
+	// So does the arpeggiator, with the note-off in a later block: a key released in the block it was pressed in
+	// plays no step.
+	run("channel.set",
+		{{"channel", channel}, {"midiInserts", {{"divider", 1}, {"slots", {{{"effect", "arpeggiator"}}}}}}});
+	run("audio.render", {{"frames", 64}});
+	const auto inject = [&](int status)
+	{
+		run("midi.inject",
+			{{"channel", channel}, {"drumSounds", true},
+				{"messages", {{{"position", 0}, {"bytes", {status, 45, status >= 0x90 ? 100 : 0}}}}}});
+		run("audio.render", {{"frames", 64}});
+	};
+	inject(0x90);
+	inject(0x80);
+	CHECK(notesPlayed(run("midi.capture")) == std::vector<std::vector<int>>{{0x99, 45}, {0x89, 45}});
 	run("channel.set", {{"channel", channel}, {"midiInserts", {{"slots", {{{"effect", ""}}}}}}});
 	run("audio.render", {{"frames", 64}});
 	// Without the map they play as they come in.

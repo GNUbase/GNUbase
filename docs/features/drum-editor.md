@@ -148,10 +148,10 @@ reference's own drum map files.
   removing a map taking it from the track; export and import round trip of a changed map, with errors for a missing and
   a wrong file; maps and the tracks' maps saved and loaded, and a note pitch beyond 0-127 or a channel beyond 0-15 not
   loading; playback and MIDI thru through the I-notes, O-notes, channels and mutes, and `drumSounds` playing the sounds
-  themselves but not recorded, also through a chord generator above the divider; `inputPitches` giving a shared I-note
-  to the first sound by pitch as `inputPitch` does; step input and recording through the I-notes with Drum-Map Link;
-  O-Note Conversion; the drum editor content, its view settings and parts of a track with a map opening in it unless the
-  preference is off.
+  themselves but not recorded, also through a chord generator and an arpeggiator above the divider; `inputPitches`
+  giving a shared I-note to the first sound by pitch as `inputPitch` does; step input and recording through the I-notes
+  with Drum-Map Link; O-Note Conversion; the drum editor content, its view settings and parts of a track with a map
+  opening in it unless the preference is off.
 - `tests/drumeditor_ui_tests.cpp` drives the app with `ui::Automation`: the sound list with the map's names, diamonds on
   their sounds' rows, the mute button and typing an O-note, a channel and a name; the drumstick inserting a note with
   Drum-Map Link, deleting it and inserting a row of notes with a drag, and deleting a sound's notes with a drag; the Map

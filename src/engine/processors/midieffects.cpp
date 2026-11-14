@@ -304,8 +304,8 @@ namespace gnubase::engine::processors
 		for (int octave = 0; octave < m_octaves; ++octave)
 			for (size_t n = 0; n < m_heldCount; ++n)
 				if (notes[n].key + (12 * octave) <= 127)
-					pattern[count++] = {
-						notes[n].channel, static_cast<uint8_t>(notes[n].key + (12 * octave)), notes[n].velocity};
+					pattern[count++] = {notes[n].channel, static_cast<uint8_t>(notes[n].key + (12 * octave)),
+						notes[n].velocity, notes[n].drumSound};
 		if (m_mode == Down)
 			std::reverse(pattern.data(), pattern.data() + count);
 		const double start = m_next;
