@@ -363,6 +363,29 @@ TEST_CASE(
 	CHECK(slots.at(added.at("notes").at(0).at("id").get<uint64_t>()) == 1); // Pizzicato
 	CHECK(slots.at(added.at("notes").at(1).at("id").get<uint64_t>()) == 0); // reset: the default slot
 	CHECK(slots.at(added.at("notes").at(2).at("id").get<uint64_t>()) == 2); // Staccato
+
+	// articulationMap.soundSlots gives MCP and Lua clients the same, by the part (#1498).
+	const Json listed = f.call("articulationMap.soundSlots", {{"part", f.part}});
+	CHECK(listed.at("map") == f.maps().at(0).at("id"));
+	REQUIRE(listed.at("notes").size() == 3);
+	for (const Json& each : listed.at("notes"))
+	{
+		const auto note = each.at("note").get<uint64_t>();
+		CHECK(each.at("slot") == slots.at(note));
+		CHECK(each.at("name") == f.maps().at(0).at("slots").at(slots.at(note)).at("name"));
+	}
+	// A part of a track without a map lists none.
+	f.call("track.set", {{"track", f.track}, {"articulationMap", 0}});
+	CHECK(f.call("articulationMap.soundSlots", {{"part", f.part}}) == Json{{"map", 0}, {"notes", Json::array()}});
+	CHECK_THAT(f.fails("articulationMap.soundSlots", {{"part", 999999}}), ContainsSubstring("999999"));
+}
+
+TEST_CASE("articulation names are joined and split at commas, as the info line and the list editor show them", "[unit]")
+{
+	CHECK(engine::midi::joinNames({}).empty());
+	CHECK(engine::midi::joinNames({"Staccato", "Pizzicato"}) == "Staccato, Pizzicato");
+	CHECK(engine::midi::splitNames(" Staccato ,Pizzicato,, ") == std::vector<std::string>{"Staccato", "Pizzicato"});
+	CHECK(engine::midi::splitNames("").empty());
 }
 
 TEST_CASE("an Articulations lane is a lane of the editor views, which controller.line doesn't draw on", "[unit]")

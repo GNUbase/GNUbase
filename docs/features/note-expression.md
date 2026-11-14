@@ -26,15 +26,17 @@ points before the cut, and the rest gets the points from the cut on, moved back 
 value at the cut as its initial point. A note whose start `note.set` moves while its end stays (its start resized) keeps
 its expression where it is the same way: moved later, the values at the new start become its initial points; moved
 earlier, its initial values start at the new start and its other points stay where they were. The key editor's split
-tool cuts notes the same way through `note.split` (#1419). Its glue tool joins a note to the next one of its pitch
-through `note.glue`: the glued note keeps its own points up to where the next one started, then has the next one's,
-and after a next one that ends inside it its own again, with its values there, so that it plays what the two played.
-Where one note's points give way to the other's, an expression that the first one has and the other one has no point
-of at its start gets its default there, as the other note started with it: MPE's initial values for tuning, pressure
-and brightness, as playback gives them, unity gain for volume and the center for pan. Vibrato and expression have no
-default (the plugin decides), so they keep their value. Glued again after a split, the note has an extra point at
-the cut, with the value it had there. The reference manual's glue keeps the first note's properties (p. 1215), and
-expression is no property but what the note plays over time.
+tool cuts notes the same way through `note.split` (#1419); a position that cuts none of them changes nothing, and the
+project doesn't count as modified. Its glue tool joins a note to the next one of its pitch through `note.glue`: the
+glued note keeps its own points up to where the next one started, then has the next one's up to where it ended, and
+after a next one that ends inside it its own again, with its values there, so that it plays what the two played (the
+points a note has at or past its end, e.g. after the trim tool shortened it, never played). Where one note's points
+give way to the other's, an expression that the first one has and the other one has no point of at its start gets its
+default there, as the other note started with it: MPE's initial values for tuning, pressure and brightness, as playback
+gives them, unity gain for volume and the center for pan. Vibrato and expression have no default (the plugin decides),
+so they keep their value. Glued again after a split, the note has an extra point at the cut, with the value it had
+there. The reference manual's glue keeps the first note's properties (p. 1215), and expression is no property but what
+the note plays over time.
 
 **Recording MPE** (pp. 1295-1298). With the user setting `midi.mpeInput` on, MIDI recording and retrospective
 recording take their input as MPE's lower zone: channel 1 is the master channel, whose messages record as before, and

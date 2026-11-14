@@ -608,10 +608,12 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".chord-pads-key.black", {"background-color": c["background"]}),
         (".chord-pads-key.remote", {"background-color": mix(c["text"], c["accent"], .5)}),
         (".chord-pads-key.black.remote", {"background-color": mix(c["background"], c["accent"], .6)}),
-        (".chord-pads-key.section", {"background-color": mix(c["warning"], c["background"], .45)}),
-        (".chord-pads-key.modifier", {"background-color": c["success"]}),
-        (".chord-pads-key.hover", {"background-color": c["warning"]}),
-        (".chord-pads-key.played", {"background-color": c["accent2"]}),
+        # What the engine takes a key as wins over the remote range, on black keys too (#1447).
+        (".chord-pads-key.section, .chord-pads-key.black.section",
+         {"background-color": mix(c["warning"], c["background"], .45)}),
+        (".chord-pads-key.modifier, .chord-pads-key.black.modifier", {"background-color": c["success"]}),
+        (".chord-pads-key.hover, .chord-pads-key.black.hover", {"background-color": c["warning"]}),
+        (".chord-pads-key.played, .chord-pads-key.black.played", {"background-color": c["accent2"]}),
         (".chord-proximity-reference", {"color": c["accent"]}),
         (".chord-suggestion.recent .chord-suggestion-chord", {"font-weight": "bold"}),
         (".chord-suggestion", {"color": c["text"], "border-left-width": f"{widths['focus']}dp",
@@ -722,6 +724,10 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".articulation-row.sound-slots", {"border-bottom-width": f"{widths['hairline']}px",
                                            "border-bottom-color": c["border"]}),
         (".sound-slot", {"background-color": c["surfaceRaised"], "color": c["text"]}),
+        # On a slot color of the user's, light or dark (#1498), the name is in the darker or the lighter of the text
+        # and background colors
+        (".sound-slot.light", {"color": ebony}),
+        (".sound-slot.dark", {"color": ivory}),
         (".articulation-item.direction", {"background-color": mix(c["surfaceRaised"], c["accent"], .3)}),
         (".articulation-item.attribute", {"background-color": mix(c["surfaceRaised"], c["accent"], .6)}),
         (".articulation-item.reset", {"background-color": c["textMuted"]}),

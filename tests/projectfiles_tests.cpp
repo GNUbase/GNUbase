@@ -2164,3 +2164,69 @@ TEST_CASE("a backup whose progress's window closes is cancelled, and another one
 	CHECK(fs::exists(dir.path() / "Second" / "Audio" / "take.wav"));
 	CHECK(!shown(app, "#backup-progress-dialog"));
 }
+
+TEST_CASE(
+	"a backup whose window closed before it started shows its refusal or progress in the main window", "[ui][slow]")
+{
+	test::CommandHolds holds; // declared before the app: its engine's command thread waits in hold()
+	test::UiApp app({1200, 700});
+	const test::ReleaseHolds releaseHolds{holds};
+	app.engine().registerCommand(
+		{"test.hold", 1, "Waits for the test to release it.", CommandInfo{}.parameters, Json::object(), false},
+		[&holds](CommandContext&) { return holds.hold(); });
+	Client holder(app.engine(), "holder");
+	app.appUi().showProject();
+	const test::TempDir dir;
+	const fs::path take = dir.path() / "take.wav";
+	test::writeWav(take, {std::vector<float>(size_t{48000} * 10 * 2, 0.25f), 2, 48000}); // 10 s, 4 MB
+	app.call("media.add", {{"path", utf8(take)}});
+	const fs::path notFolder = dir.path() / "file";
+	std::ofstream(notFolder) << "not a folder";
+	gnubase::ui::EngineBinding& binding = app.appUi().binding();
+
+	// Back up Project in a panel's own window, whose OK the engine answers only once the window closed: the n-th
+	// hold keeps project.backup waiting.
+	size_t asked = 0;
+	const auto backUpInClosingPanel = [&](const fs::path& folder)
+	{
+		gnubase::ui::Window& window = panelWindow(app);
+		const gnubase::ui::WindowId panel = window.id();
+		app.keys().run("file.backup", Json::object(), window, nullptr);
+		answer(app, {folder});
+		REQUIRE(app.waitUntil(
+			[&app, panel]
+			{
+				const Json found = app.ui().dom(panel, "#backup-project-dialog button.primary", 0).at("elements");
+				return found.size() == 1 && found[0].at("visible").get<bool>();
+			}));
+		holder.send("test.hold");
+		REQUIRE(holds.waitEntered(++asked));
+		app.ui().click(
+			panel, {"#backup-project-dialog button.primary", 0, std::nullopt}, gnubase::ui::MouseButton::Left, 1, {});
+		REQUIRE(app.waitUntil([&binding] { return binding.waiting("project.backup") != 0; }));
+		app.shell().requestClose(panel);
+		REQUIRE(app.waitUntil([&app, panel] { return app.shell().find(panel) == nullptr; }));
+		holds.release(asked);
+	};
+
+	// Refused, it says why in the main window.
+	backUpInClosingPanel(notFolder);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+	CHECK_THAT(errorMessage(app), ContainsSubstring("is a file"));
+	closeError(app);
+
+	// Started, it shows its progress in the main window, whose Cancel stops it, rather than run unseen (#1372). The
+	// job is held at its first progress until then, so that it can't end first.
+	test::HeldJob held(app.engine(), "project.backup");
+	backUpInClosingPanel(dir.path() / "Backup");
+	REQUIRE(app.waitUntil([&held] { return held.held(); }, std::chrono::seconds(30)));
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#backup-progress-dialog"); }));
+	click(app, "#backup-progress-dialog button[result=cancel]");
+	REQUIRE(app.waitUntil([&app] { return ran(app, "job.cancel"); }));
+	CHECK(held.release());
+	CHECK(lastJob(app).at("state") == "cancelled");
+	CHECK(!fs::exists(dir.path() / "Backup"));
+	CHECK(!shown(app, "#backup-progress-dialog"));
+	handleEarlierEvents(app);
+	CHECK(!shown(app, "#project-error-dialog"));
+}

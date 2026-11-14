@@ -308,7 +308,7 @@ namespace gnubase::ui
 	}
 
 	ChordPadsPanel::ChordPadsPanel(EngineBinding& binding, Rml::Element& element, DropTarget dropOn,
-		Selection selectedEvents, std::function<void()> importLoop)
+		Selection selectedEvents, ImportLoop importLoop)
 		: m_binding(binding), m_dropOn(std::move(dropOn)), m_selectedEvents(std::move(selectedEvents)),
 		  m_importLoop(std::move(importLoop)), m_root(element.GetObserverPtr())
 	{
@@ -515,14 +515,21 @@ namespace gnubase::ui
 	{
 		// A change the engine refuses changes nothing: the toolbar shows the pads as they are again, not the value
 		// that was refused.
+		// Why a pattern wasn't set, such as a MIDI loop without 3 to 5 voices (reference manual p. 1381), shows in the
+		// pattern information field until the next one is.
+		const bool pattern = command == "chordPads.setPattern";
 		m_binding.send(command, std::move(parameters),
-			[this, command, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			[this, command, pattern, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
-				if (result.ok())
+				if (result.ok() && !pattern)
 					return;
-				logging::warning("{} from the UI failed: {}", command, result.error);
-				if (!alive.expired())
-					request();
+				if (!result.ok())
+					logging::warning("{} from the UI failed: {}", command, result.error);
+				if (alive.expired())
+					return;
+				if (pattern)
+					m_patternError = result.ok() ? std::string() : result.error;
+				request();
 			});
 	}
 
@@ -626,10 +633,12 @@ namespace gnubase::ui
 				{"brokenChord", "Broken Chord"}, {"eighths", "Eighths"}},
 			"");
 		setChecked(find("chord-pads-velocityFromKeyboard"), pads.at("velocityFromKeyboard").get<bool>());
-		setText(find("chord-pads-pattern-info"),
-			pattern.at("length").get<int64_t>() > 0
-				? patternName + " (" + std::to_string(pattern.at("voices").get<int>()) + " voices)"
-				: std::string("No pattern"));
+		std::string patternInfo = pattern.at("length").get<int64_t>() > 0
+			? patternName + " (" + std::to_string(pattern.at("voices").get<int>()) + " voices)"
+			: std::string("No pattern");
+		if (!m_patternError.empty())
+			patternInfo = "Pattern not changed: " + m_patternError;
+		setText(find("chord-pads-pattern-info"), patternInfo);
 		for (const char* id : {"chord-pads-patternPreset", "chord-pads-patternFromPart", "chord-pads-importLoop",
 				 "chord-pads-velocityFromKeyboard", "chord-pads-pattern-info"})
 			setClass(find(id), "hidden", mode != "pattern");
@@ -1161,7 +1170,12 @@ namespace gnubase::ui
 		else if (name == "importLoop")
 		{
 			if (m_importLoop)
-				m_importLoop();
+				m_importLoop(
+					[this, alive = std::weak_ptr<bool>(m_alive)](const std::string& file)
+					{
+						if (!alive.expired())
+							send("chordPads.setPattern", {{"file", file}});
+					});
 		}
 		else if (name == "listColors" || name == "voicingIndicators" || name == "patternProgress")
 		{
@@ -1286,11 +1300,14 @@ namespace gnubase::ui
 			}
 			else if (target.GetAttribute<Rml::String>("display", "") == "startNote")
 			{
-				// Start Note (p. 1391): the first pad's key, the remote range as long as it is.
-				const int start = m_pads.value("remoteStart", 36);
-				const int end = m_pads.value("remoteEnd", 47);
-				if (start != value)
-					send("chordPads.set", {{"remoteStart", value}, {"remoteEnd", std::min(value + end - start, 127)}});
+				// Start Note (p. 1391): the first pad's key in the keyboard layout. The remote range stays as it is,
+				// which the layout may need adjusted after (#1447).
+				if (m_display.value("startNote", 36) != value)
+				{
+					Json display = m_display.is_object() ? m_display : Json::object();
+					display["startNote"] = value;
+					m_binding.send("settings.set", {{"key", g_displayKey}, {"value", display}});
+				}
 			}
 			else if (target.GetAttribute<Rml::String>("display", "") == "rows")
 			{
@@ -1483,8 +1500,8 @@ namespace gnubase::ui
 		const int count = m_pads.contains("pads") ? static_cast<int>(m_pads.at("pads").size()) : 12;
 		setValue(find("chord-pads-padCount"), count);
 		setValue(find("chord-pads-rows"), (count + columns - 1) / columns);
-		if (m_pads.contains("remoteStart"))
-			setValue(find("chord-pads-startNote"), m_pads.at("remoteStart").get<int>());
+		const int startNote = std::clamp(m_display.value("startNote", 36), 0, 127);
+		setValue(find("chord-pads-startNote"), startNote);
 		setClass(find("chord-pads-padCount"), "hidden", layout != "keyboard");
 		setClass(find("chord-pads-startNote"), "hidden", layout != "keyboard");
 		setClass(find("chord-pads-rows"), "hidden", layout != "grid");
@@ -1503,11 +1520,8 @@ namespace gnubase::ui
 				pad->SetProperty("width", std::to_string(100.0F / static_cast<float>(columns)) + "%");
 			else
 				pad->RemoveProperty("width");
-			// In the keyboard layout the pads on black keys of the remote range look like them.
-			const Json& key = m_pads.contains("pads") && i < static_cast<int>(m_pads.at("pads").size())
-				? m_pads.at("pads")[static_cast<size_t>(i)].at("key")
-				: Json();
-			setClass(pad, "black-key", layout == "keyboard" && key.is_number() && isBlack(key.get<int>()));
+			// In the keyboard layout from Start Note on, the pads on black keys look like them.
+			setClass(pad, "black-key", layout == "keyboard" && startNote + i <= 127 && isBlack(startNote + i));
 		}
 		if (m_pads.contains("pads"))
 		{

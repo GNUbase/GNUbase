@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/keyeditor.h"
 
+#include "engine/midi/articulationmaps.h"
 #include "engine/midi/chords.h"
 #include "engine/midi/quantizesettings.h"
 #include "platform/log.h"
 #include "ui/controllerlanes.h"
 #include "ui/timeformat.h"
 
+#include <RmlUi/Core/ComputedValues.h>
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
@@ -18,7 +20,6 @@
 #include <cmath>
 #include <exception>
 #include <map>
-#include <sstream>
 #include <tuple>
 #include <utility>
 
@@ -33,9 +34,8 @@ namespace gnubase::ui
 		constexpr float g_edge = 6.0F; // dp at a note's ends where the object selection tool resizes it
 		// dp the drumstick goes from its press before its release deletes the sound's later notes too (p. 1242)
 		constexpr float g_dragThreshold = 4.0F;
-		// The pitch rows' height the style sheet gives them (keyeditor.rcss), and the zoom the keyboard's left part
-		// drags (p. 1261): its limits, and the dp a drag goes to the right to double it.
-		constexpr float g_rowDp = 10.0F;
+		// The zoom the keyboard's left part drags (p. 1261): its limits, and the dp a drag goes to the right to double
+		// it.
 		constexpr float g_minPitchZoom = 0.25F;
 		constexpr float g_maxPitchZoom = 4.0F;
 		constexpr float g_zoomDoubling = 100.0F;
@@ -187,15 +187,6 @@ namespace gnubase::ui
 		Json noteChange(uint64_t id)
 		{
 			return {{"id", id}};
-		}
-
-		// Names separated by commas, as the Articulations field shows a note's attributes.
-		std::string joined(const std::vector<std::string>& names)
-		{
-			std::string text;
-			for (const std::string& name : names)
-				text += (text.empty() ? "" : ", ") + name;
-			return text;
 		}
 
 		// A pitch typed: a number 0-127 or a name such as C1.
@@ -580,9 +571,7 @@ namespace gnubase::ui
 			return; // still a click on a key
 		m_zoomDrag = true;
 		setPitchZoom(m_zoomStart * std::exp2(dx / ratio / g_zoomDoubling));
-		const float rowStart = g_rowDp * m_zoomStart * ratio;
-		const float rowNow = g_rowDp * m_pitchZoom * ratio;
-		body->SetScrollTop(((m_scrollStart / rowStart) * rowNow) - dy);
+		body->SetScrollTop((m_scrollStart * m_pitchZoom / m_zoomStart) - dy);
 		if (context != nullptr)
 			context->RequestNextUpdate(0);
 	}
@@ -599,11 +588,11 @@ namespace gnubase::ui
 		// The keyboard and the rows follow the zoom; the keys, the notes and the cursor lie in percent of them, so
 		// they scale with them.
 		if (Rml::Element* keys = root->QuerySelector(".key-editor-keys"))
-			keys->SetProperty(Rml::PropertyId::Height, dp(static_cast<float>(g_pitches) * g_rowDp * zoom));
+			keys->SetProperty(Rml::PropertyId::Height, dp(static_cast<float>(g_pitches) * m_rowDp * zoom));
 		Rml::ElementList rows;
 		root->QuerySelectorAll(rows, ".key-editor-row");
 		for (Rml::Element* row : rows)
-			row->SetProperty(Rml::PropertyId::Height, dp(g_rowDp * zoom));
+			row->SetProperty(Rml::PropertyId::Height, dp(m_rowDp * zoom));
 	}
 
 	void KeyEditor::place(Rml::Element& element, int64_t start, int64_t length, int pitch) const
@@ -824,7 +813,8 @@ namespace gnubase::ui
 			{"pitch", engine::midi::pitchName(first.pitch)},
 			{"velocity", std::to_string(std::lround(first.velocity * g_maxVelocity))},
 			{"releaseVelocity", std::to_string(std::lround(first.releaseVelocity * g_maxVelocity))},
-			{"channel", std::to_string(first.channel + 1)}, {"articulations", joined(first.articulations)}};
+			{"channel", std::to_string(first.channel + 1)},
+			{"articulations", engine::midi::joinNames(first.articulations)}};
 		for (const auto& [field, text] : texts)
 			if (Rml::Element* display = line->QuerySelector("textdisplay[field=" + field + "]");
 				display != nullptr && attribute(*display, "value") != text)
@@ -996,15 +986,7 @@ namespace gnubase::ui
 		{
 			// The Articulations field (#1112, p. 1290): the attributes typed, names separated by commas, for every
 			// selected note; empty clears them.
-			std::vector<std::string> names;
-			std::string name;
-			for (std::istringstream stream(text); std::getline(stream, name, ',');)
-			{
-				name.erase(0, name.find_first_not_of(' '));
-				name.erase(name.find_last_not_of(' ') + 1);
-				if (!name.empty())
-					names.push_back(name);
-			}
+			const std::vector<std::string> names = engine::midi::splitNames(text);
 			std::map<uint64_t, Json> changes;
 			for (const Note* note : notes)
 			{
@@ -1259,6 +1241,15 @@ namespace gnubase::ui
 			m_pressedY = event.GetParameter("mouse_y", 0.0F);
 			m_zoomStart = m_pitchZoom;
 			m_scrollStart = body != nullptr ? body->GetScrollTop() : 0.0F;
+			// The rows' height unzoomed, as the style sheet gives it (#1369): the zoom scales it.
+			if (const Rml::Element* rowElement = root->QuerySelector(".key-editor-row"))
+				if (const Rml::Style::LengthPercentageAuto height = rowElement->GetComputedValues().height();
+					height.type == Rml::Style::LengthPercentageAuto::Length && height.value > 0.0F)
+				{
+					const Rml::Context* context = root->GetContext();
+					const float ratio = context != nullptr ? context->GetDensityIndependentPixelRatio() : 1.0F;
+					m_rowDp = height.value / ratio / m_pitchZoom;
+				}
 			return;
 		}
 		if (const Rml::Element* key = withAttribute(target, "pitch", root);

@@ -53,6 +53,9 @@ attributes show the view to MCP's `ui_dom`.
 - **Live reload** loads `project.rml` again without the display in it; reopen the app.
 - **Markers** draw into the event area, with lanes of their own, through `onViewChanged` ([markers.md](markers.md)).
 - **Colors.** Events and parts show their own color, or else their track's ([colors.md](colors.md)).
+- **Refused edits.** When the engine refuses an edit of events, such as a glue of MIDI parts that follow global
+  transpose differently ([transpose.md](transpose.md)), the notification `#edit-refused` shows its reason for four
+  seconds over the lanes, and the log has it too (#1367).
 
 ## Ruler and time formats
 

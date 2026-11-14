@@ -146,6 +146,12 @@ namespace gnubase::engine
 	void MidiPorts::take(const audio::DeviceBlock& block, double sampleRate, audio::MidiBuffer& allInputs,
 		PadBuffers& pads, const ChordPadKeys& padKeys) noexcept
 	{
+		// The section keys down on the remote's input before another became it go up with it (#1447).
+		if (padKeys.portHash != m_sectionHeldPort)
+		{
+			m_sectionHeldPort = padKeys.portHash;
+			m_sectionHeld.fill(0);
+		}
 		m_queue.take(block.time, sampleRate, block.frames,
 			[this, &block, &allInputs, &pads, &padKeys](int slot, const audio::MidiMessage& message)
 			{
@@ -163,12 +169,18 @@ namespace gnubase::engine
 				}
 				const bool inAll = m_allInputs[static_cast<size_t>(slot)].load(std::memory_order_relaxed);
 				const int status = message.bytes[0] & 0xF0;
+				// The remote keys come from all MIDI inputs, or only from the chosen one, which may be outside them.
+				const uint64_t hash = m_slotHashes[static_cast<size_t>(slot)].load(std::memory_order_relaxed);
+				const bool remote = padKeys.portHash == 0 ? inAll : hash == padKeys.portHash;
 				if (m_padListen.load(std::memory_order_relaxed) && message.size == 3 &&
 					(status == 0x90 || status == 0x80))
 				{
 					const bool on = status == 0x90 && message.bytes[2] > 0;
 					m_padEvents.tryPush(PadEvent{PadEvent::Kind::Note, static_cast<uint8_t>(message.bytes[1] & 0x7F),
 						static_cast<uint8_t>(on ? message.bytes[2] : 0)});
+					// A remote key that goes up meanwhile ends what it played and is no section key down (#1447).
+					if (!on && remote)
+						playPad(message, padKeys, pads);
 					if (inAll)
 						allInputs.add(message);
 				}
@@ -187,14 +199,9 @@ namespace gnubase::engine
 					if (inAll)
 						allInputs.add(message);
 				}
-				else
+				else if (!(remote && playPad(message, padKeys, pads)) && inAll)
 				{
-					// The remote keys come from all MIDI inputs, or only from the chosen one, which may be outside
-					// them.
-					const uint64_t hash = m_slotHashes[static_cast<size_t>(slot)].load(std::memory_order_relaxed);
-					const bool remote = padKeys.portHash == 0 ? inAll : hash == padKeys.portHash;
-					if (!(remote && playPad(message, padKeys, pads)) && inAll)
-						allInputs.add(message);
+					allInputs.add(message);
 				}
 				if (!m_monitor.tryPush(Received{slot, block.position + message.offset, message}))
 					m_monitorDropped.fetch_add(1, std::memory_order_relaxed);
@@ -342,6 +349,7 @@ namespace gnubase::engine
 		}
 		if (!keys.active || keys.counts.at(keys.selected).at(key) == 0)
 			return filtered;
+		m_sectionPadOf.at(key) = 0;
 		for (size_t player = 0; player < m_padVoices.size(); ++player)
 			if (plays(player) && keys.counts.at(player).at(key) > 0)
 				m_padVoices.at(player).on(key, keys.pitches.at(player).at(key).data(), keys.counts.at(player).at(key),
@@ -401,9 +409,12 @@ namespace gnubase::engine
 					note.bytes = {static_cast<uint8_t>((on ? 0x90 : 0x80) | channel), pitch, level};
 					pads.at(player).add(note);
 				};
-				m_padVoices.at(player).on(key, notes.data(), n, velocity, keys.overlap, emit);
+				// Overlaps is for another chord's notes (p. 1382): the sections of one pad play together (p. 1383).
+				m_padVoices.at(player).on(key, notes.data(), n, velocity, keys.overlap, emit,
+					[this, pad](size_t other) { return m_sectionPadOf.at(other) == pad + 1; });
 			}
 		}
+		m_sectionPadOf.at(key) = static_cast<uint8_t>(pad + 1);
 		return true;
 	}
 
@@ -485,8 +496,9 @@ namespace gnubase::engine
 
 		engine.registerCommand(
 			{"midi.padListen", 1,
-				"Whether every MIDI input port's notes also go to the chord pads as they play (chordPads.listen, "
-				"which uses this, and chordPads.remoteInput), with the pads' remote keys left alone meanwhile.",
+				"Whether every MIDI input port's notes and controls (aftertouch, pitch bend and controllers) also go "
+				"to the chord pads as they play (chordPads.listen, which uses this, and chordPads.remoteInput), with "
+				"the pads' remote keys left alone meanwhile, but for their note-offs, which end what they play.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["on"],
 					"properties": {"on": {"type": "boolean"}}})"),
 				Json::object(), false},

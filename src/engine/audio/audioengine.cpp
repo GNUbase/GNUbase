@@ -623,7 +623,7 @@ namespace gnubase::engine
 		{
 			paths[media.id] = media.path;
 			if (!media.warp.empty())
-				warps[media.id] = {media.warp, media.preset};
+				warps[media.id] = {media.warp, media.preset, media.pitch};
 		}
 		m_mediaPaths = paths;
 		m_auditionTracks.clear();
@@ -1315,10 +1315,13 @@ namespace gnubase::engine
 		const double ticksPerFrame =
 			program.tempo.bpmAt(program.tempo.toTicks(transport.position, program.sampleRate)) / 60.0 *
 			static_cast<double>(time::g_ticksPerQuarter) / program.sampleRate;
+		// Placed by the block's segments, after a cycle's jump inside it too (#1447).
+		const bool rolling = transport.playing && transport.countInFrames == 0 && transport.segmentCount > 0;
+		const graph::TransportSegment whole{0, block.frames, transport.position, false};
 		for (size_t player = 0; player < m_padOutput.size(); ++player)
 		{
-			m_padSnap.at(player).process(m_padOutput.at(player), snap > 0,
-				transport.playing && transport.countInFrames == 0, transport.position, block.frames,
+			m_padSnap.at(player).process(m_padOutput.at(player), snap > 0, rolling,
+				rolling ? transport.segments : &whole, rolling ? transport.segmentCount : 1, block.frames,
 				[&program, snap](int64_t sample)
 				{
 					const time::Ticks ticks = program.tempo.toTicks(sample, program.sampleRate);

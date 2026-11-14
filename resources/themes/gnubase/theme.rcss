@@ -710,19 +710,19 @@
 	{
 		background-color: #0d8a9b;
 	}
-	.chord-pads-key.section
+	.chord-pads-key.section, .chord-pads-key.black.section
 	{
 		background-color: #907135;
 	}
-	.chord-pads-key.modifier
+	.chord-pads-key.modifier, .chord-pads-key.black.modifier
 	{
 		background-color: #39ddb2;
 	}
-	.chord-pads-key.hover
+	.chord-pads-key.hover, .chord-pads-key.black.hover
 	{
 		background-color: #ffc44d;
 	}
-	.chord-pads-key.played
+	.chord-pads-key.played, .chord-pads-key.black.played
 	{
 		background-color: #e12ad8;
 	}
@@ -998,6 +998,14 @@
 	.sound-slot
 	{
 		background-color: #171c32;
+		color: #f1f4ff;
+	}
+	.sound-slot.light
+	{
+		color: #090b18;
+	}
+	.sound-slot.dark
+	{
 		color: #f1f4ff;
 	}
 	.articulation-item.direction

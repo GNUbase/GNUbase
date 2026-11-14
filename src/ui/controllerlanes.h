@@ -124,7 +124,8 @@ namespace gnubase::ui
 		static int64_t cell(double ticks, int64_t step); // the start of the step the ticks are in
 		int64_t grid() const;
 		int64_t lengthQuantize() const;
-		const Part* partAt(int64_t ticks) const;
+		// The editable part at the ticks, the active one first; with a map, only the parts whose track has it.
+		const Part* partAt(int64_t ticks, const engine::Json* map = nullptr) const;
 		const engine::Json* partJson(uint64_t id) const;
 		bool noteSelected(uint64_t part, uint64_t note) const;
 		// The MIDI channel that a lane's new events in a part get: that of its first event from one position to another

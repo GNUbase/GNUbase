@@ -434,6 +434,47 @@ TEST_CASE("note.split cuts notes with their expression where it was, note.glue j
 		ContainsSubstring("must start after"));
 }
 
+TEST_CASE("a note.split that cuts nothing leaves the project unmodified", "[integration]")
+{
+	// Review of #1480: no revision, so no modified project without an undo step to take it back.
+	Setup setup;
+	Client& client = setup.client;
+	const ObjectId part = addPart(client, setup.track);
+	const Json note = run(client, "note.add",
+		{{"part", part}, {"notes", {{{"position", 0}, {"length", g_beatTicks}, {"pitch", 60}, {"velocity", 0.5}}}}})
+						  .at("notes")
+						  .at(0);
+	const Json before = run(client, "project.revision");
+	for (const int64_t position : {int64_t{0}, g_beatTicks, 2 * g_beatTicks})
+		CHECK(run(client, "note.split", {{"part", part}, {"notes", {note.at("id")}}, {"position", position}})
+				.at("notes")
+				.empty());
+	CHECK(run(client, "project.revision") == before);
+}
+
+TEST_CASE("note.glue leaves out the next note's points from its end on: they didn't play", "[integration]")
+{
+	// Review of #1480: the next note ends after the first, and has points at and past its end, e.g. after a trim.
+	Setup setup;
+	Client& client = setup.client;
+	const ObjectId part = addPart(client, setup.track);
+	const Json added = run(client, "note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", 0}, {"length", g_beatTicks}, {"pitch", 60}, {"velocity", 0.5},
+					 {"expressions", {point("tuning", 0, 0.0)}}},
+					{{"position", g_beatTicks / 2}, {"length", g_beatTicks}, {"pitch", 60}, {"velocity", 0.5},
+						{"expressions",
+							{point("tuning", 0, 1.0), point("tuning", g_beatTicks / 2, 2.0),
+								point("tuning", g_beatTicks, 3.0), point("pressure", 2 * g_beatTicks, 0.5)}}}}}});
+	const Json glued = run(client, "note.glue",
+		{{"part", part}, {"note", added.at("notes").at(0).at("id")}, {"next", added.at("notes").at(1).at("id")}})
+						   .at("note");
+	CHECK(glued.at("length") == 3 * g_beatTicks / 2);
+	CHECK(
+		pointsOf(glued) == Points{{"tuning", 0, 0}, {"tuning", g_beatTicks / 2, 1000}, {"tuning", g_beatTicks, 2000}});
+}
+
 TEST_CASE(
 	"note.glue gives the join the defaults of what the next note doesn't express, across a gap too", "[integration]")
 {
