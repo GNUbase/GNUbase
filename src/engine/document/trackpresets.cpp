@@ -103,8 +103,8 @@ namespace gnubase::engine
 		// the same name in the project, if it has them (reference manual p. 200). The buttons (mute, solo, listen,
 		// monitor, record enable) are off in the copies, and their automation reads, as the reference doesn't import
 		// these states. replacedMarkers marker tracks of to are about to be replaced by copies, so these copies don't
-		// count towards the limit of marker tracks. versionIds gives the copies' track versions their ids in to; without
-		// it they keep the ones they have in from, as an export writes a project of its own.
+		// count towards the limit of marker tracks. versionIds gives the copies' track versions their ids in to;
+		// without it they keep the ones they have in from, as an export writes a project of its own.
 		class TrackCopier
 		{
 		public:
@@ -541,6 +541,31 @@ namespace gnubase::engine
 					result.push_back({{"id", id}, {"name", track.name}, {"type", trackTypeName(track.type)}});
 				}
 			return result;
+		}
+
+		// The sample rates of the media files each track's audio events play, by the track's id, each once from the
+		// lowest, also the events of the versions that aren't active: what Convert Sample Rate has to convert for that
+		// track (reference manual p. 205). A media file no event plays is nobody's.
+		std::map<ObjectId, std::set<double>> mediaSampleRatesByTrack(const Project& file)
+		{
+			const auto add = [&file](
+								 std::map<ObjectId, std::set<double>>& rates, ObjectId track, const AudioEvent& event)
+			{
+				const auto clip = file.clips.find(event.clip);
+				if (clip == file.clips.end())
+					return;
+				const auto media = file.media.find(clip->second.media);
+				if (media != file.media.end())
+					rates[track].insert(media->second.sampleRate);
+			};
+			std::map<ObjectId, std::set<double>> rates;
+			for (const auto& [id, event] : file.audioEvents)
+				add(rates, event.track, event);
+			for (const auto& [id, track] : file.trackById)
+				for (const TrackVersion& version : track.versions)
+					for (const AudioEvent& event : version.audioEvents)
+						add(rates, id, event);
+			return rates;
 		}
 
 		// A file with the given tracks of the project as a project of its own, for track presets and archives: the
@@ -1110,46 +1135,46 @@ namespace gnubase::engine
 		engine.registerCommand(
 			{"track.importSources", 1,
 				"The tracks of a DAWproject file that track.import can import from: a track archive (track.export) or "
-				"a project. Each with its id in the file, name, type, parent (the folder it is in, or 0) and whether "
-				"track.import can import it (importable), from top to bottom; the file's project settings as "
-				"project.get has them, to compare them with the project's (Project Settings, reference manual p. 205): "
-				"name, sampleRate, frameRate and startTime; and the sample rates of its media files, each once from "
-				"the lowest (mediaSampleRates), as media.conform converts those at another rate than the project's "
-				"(Convert Sample Rate). Extracts no media files.",
+				"a project. Each with its id in the file, name, type, parent (the folder it is in, or 0), whether "
+				"track.import can import it (importable), and the sample rates of the media files its events play, "
+				"each once from the lowest (mediaSampleRates), as media.conform converts those at another rate than "
+				"the project's (Convert Sample Rate); from top to bottom. And the file's project settings as "
+				"project.get has them, to compare them with the project's (Project Settings, reference manual "
+				"p. 205): name, sampleRate, frameRate and startTime. Extracts no media files.",
 				objectSchema({{"path", stringSchema}}, {"path"}),
 				objectSchema(
 					{{"tracks",
 						 {{"type", "array"},
 							 {"items",
 								 objectSchema({{"id", idSchema}, {"name", stringSchema}, {"type", stringSchema},
-												  {"parent", idSchema}, {"importable", booleanSchema}},
-									 {"id", "name", "type", "parent", "importable"})}}},
+												  {"parent", idSchema}, {"importable", booleanSchema},
+												  {"mediaSampleRates", {{"type", "array"}, {"items", numberSchema}}}},
+									 {"id", "name", "type", "parent", "importable", "mediaSampleRates"})}}},
 						{"project",
 							objectSchema({{"name", stringSchema}, {"sampleRate", numberSchema},
 											 {"frameRate", stringSchema}, {"startTime", numberSchema}},
-								{"name", "sampleRate", "frameRate", "startTime"})},
-						{"mediaSampleRates", {{"type", "array"}, {"items", numberSchema}}}},
-					{"tracks", "project", "mediaSampleRates"}),
+								{"name", "sampleRate", "frameRate", "startTime"})}},
+					{"tracks", "project"}),
 				true},
 			[](CommandContext& context)
 			{
 				const Project file = load(fs::u8path(context.parameters().at("path").get<std::string>()), false);
+				const std::map<ObjectId, std::set<double>> rates = mediaSampleRatesByTrack(file);
 				Json tracks = Json::array();
 				for (const ObjectId id : file.trackOrder())
 				{
 					const Track& track = file.trackById.at(id);
+					std::vector<double> each;
+					if (const auto found = rates.find(id); found != rates.end())
+						each.assign(found->second.begin(), found->second.end());
 					tracks.push_back({{"id", id}, {"name", track.name}, {"type", trackTypeName(track.type)},
-						{"parent", track.parent}, {"importable", importable(track.type)}});
+						{"parent", track.parent}, {"importable", importable(track.type)}, {"mediaSampleRates", each}});
 				}
-				std::set<double> rates;
-				for (const auto& [id, media] : file.media)
-					rates.insert(media.sampleRate);
 				return Json{{"tracks", std::move(tracks)},
 					{"project",
 						{{"name", file.name}, {"sampleRate", file.sampleRate},
 							{"frameRate", time::frameRateName(file.setup.frameRate)},
-							{"startTime", file.setup.startTime}}},
-					{"mediaSampleRates", std::vector<double>(rates.begin(), rates.end())}};
+							{"startTime", file.setup.startTime}}}};
 			});
 		model.addEdit(engine,
 			{"track.import", 1,
