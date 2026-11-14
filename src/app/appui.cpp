@@ -1337,8 +1337,8 @@ namespace gnubase::app
 						}
 						catch (const std::exception& error)
 						{
-							showKeyCommandsError(id, title,
-								"Can't write the key command assignments " + file.u8string() + ": " + error.what());
+							showKeyCommandsError(
+								id, title, std::string("Can't write the key command assignments: ") + error.what());
 						}
 					});
 			}});
