@@ -899,7 +899,7 @@ namespace gnubase::ui
 			if (type == engine::g_expressionNames[i])
 				setInner(editor->QuerySelector(".key-expression-type"), g_expressionLabels[i]);
 		for (const Rml::ObserverPtr<Rml::Element>& menu : m_menus)
-			if (Rml::Element* element = menu.get();
+			if (const Rml::Element* element = menu.get();
 				element != nullptr && element->GetId().rfind("key-expression", 0) == 0)
 				for (int i = 0; i < element->GetNumChildren(); ++i)
 					if (Rml::Element* item = element->GetChild(i);
