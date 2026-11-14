@@ -23,6 +23,14 @@ namespace gnubase::engine::detail
 	namespace
 	{
 		std::atomic<ReplacePath> g_lastReplacePath{ReplacePath::None};
+
+		// errno holds C library error numbers, but the renames report the system's own codes, on Windows its error
+		// codes rather than errno's: store the portable condition such a code stands for, EIO where none fits (#1446).
+		void setErrno(const std::error_code& error)
+		{
+			const std::error_condition condition = error.default_error_condition();
+			errno = condition.category() == std::generic_category() ? condition.value() : EIO;
+		}
 	}
 
 #ifdef _WIN32
@@ -30,11 +38,7 @@ namespace gnubase::engine::detail
 	{
 		void setErrno(DWORD error)
 		{
-			errno = EIO;
-			if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND || error == ERROR_INVALID_NAME)
-				errno = ENOENT;
-			else if (error == ERROR_ACCESS_DENIED || error == ERROR_SHARING_VIOLATION)
-				errno = EACCES;
+			setErrno(std::error_code(static_cast<int>(error), std::system_category()));
 		}
 
 		// A file opened only for reading, which others may delete or rename meanwhile, as on the other platforms: the
@@ -128,7 +132,7 @@ namespace gnubase::engine::detail
 			g_lastReplacePath = ReplacePath::PosixRename;
 		return replaced;
 #else
-		errno = error.value();
+		setErrno(error);
 		return false;
 #endif
 	}
@@ -144,7 +148,7 @@ namespace gnubase::engine::detail
 		std::filesystem::rename(to, aside, error);
 		if (error)
 		{
-			errno = error.value();
+			setErrno(error);
 			return false;
 		}
 		std::filesystem::rename(from, to, error);
@@ -153,7 +157,7 @@ namespace gnubase::engine::detail
 			// The new file didn't arrive: put the old one back, so a failed replacement leaves it in place.
 			std::error_code ignored;
 			std::filesystem::rename(aside, to, ignored);
-			errno = error.value();
+			setErrno(error);
 			return false;
 		}
 		std::filesystem::remove(aside, error); // if this fails, a cleanup of stale temporaries ends the aside
