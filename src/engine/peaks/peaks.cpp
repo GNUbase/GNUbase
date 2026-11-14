@@ -488,11 +488,11 @@ namespace gnubase::engine::peaks
 	// a temporary name first (#963, #1387); should the aside outlive the replacement, the worker cleans it up like a
 	// temporary a crash left behind. Anything that isn't a regular file, such as a directory in the way, keeps
 	// failing the write.
-	bool replacePeakFile(const std::filesystem::path& temporary, const std::filesystem::path& file)
+	static bool replacePeakFile(const std::filesystem::path& temporary, const std::filesystem::path& file)
 	{
+#ifdef _WIN32
 		if (detail::replaceFile(temporary.u8string(), file.u8string()))
 			return true;
-#ifdef _WIN32
 		std::error_code status;
 		if (!std::filesystem::is_regular_file(file, status))
 			return false;
@@ -500,7 +500,7 @@ namespace gnubase::engine::peaks
 		aside += "." + hex(std::random_device()()) + ".tmp";
 		return detail::replaceFileMovingAside(temporary.u8string(), file.u8string(), aside.u8string());
 #else
-		return false;
+		return detail::replaceFile(temporary.u8string(), file.u8string());
 #endif
 	}
 
