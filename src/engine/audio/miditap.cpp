@@ -364,12 +364,11 @@ namespace gnubase::engine
 				"the track's parts, of the MIDI tracks routed to it and what midi.inject played into them, with "
 				"controller automation and the note-offs of a stop. A program change with a bank comes as bank "
 				"select MSB and LSB, then the program change; SysEx isn't captured. Per-note expression comes as MPE "
-				"on "
-				"the note's channel: tuning as pitch bend over 48 semitones, pressure as channel pressure, brightness "
-				"as CC 74, a note's initial ones before its note-on; a note on a channel whose notes express one of "
-				"them and that has no point of it at its start gets MPE's initial value (a centered bend, no "
-				"pressure, CC 74 at 64). dropped counts the messages that "
-				"didn't fit: while nobody reads, newer messages are dropped. start: true starts a fresh capture; it "
+				"on the note's channel: tuning as pitch bend over 48 semitones, pressure as channel pressure, "
+				"brightness as CC 74, a note's initial ones before its note-on; a note on a channel whose notes "
+				"express one of them and that has no point of it at its start gets MPE's initial value (a centered "
+				"bend, no pressure, CC 74 at 64). dropped counts the messages that didn't fit: while nobody reads, "
+				"newer messages are dropped. start: true starts a fresh capture; it "
 				"drops what was captured so far and returns nothing. Each call empties what it returns, so a repeated "
 				"call doesn't return the same messages again.",
 				Json::parse(R"({"type": "object", "additionalProperties": false,
@@ -412,7 +411,8 @@ namespace gnubase::engine
 				"with the new parts mode and the user settings midi.snapPartsToBars and midi.recordFilter. What "
 				"came during playback goes where it played; what came in stop mode goes at the project cursor, with "
 				"its timing. Input after a pause of over 30 s in stop mode starts the buffer afresh, and so does "
-				"input after an insert. Returns what recording.add returns.",
+				"input after an insert. It is no recording of the chord track: it makes no chord events. Returns what "
+				"recording.add returns.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["track"],
 					"properties": {"track": {"type": "integer"}}})"),
 				Json::parse(R"({"type": "object", "properties": {"parts": {"type": "array"}},
@@ -450,6 +450,7 @@ namespace gnubase::engine
 				const Json take = {{"position", start}, {"length", builder.last() - start + 1}};
 				return context.call("recording.add",
 					{{"midiMode", "newParts"}, {"snapToBars", m_settings.get(settings::g_midiSnapPartsToBars)},
+						{"chordEvents", false},
 						{"tracks",
 							Json::array({{{"track", track}, {"takes", Json::array({take})}, {"notes", builder.notes()},
 								{"controllers", builder.controllers()}}})}});

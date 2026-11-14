@@ -394,13 +394,16 @@ namespace gnubase::engine
 	{
 		if (clip.warp.tempo > 0.0)
 			return clip.warp.tempo;
+		// Inactive track versions' events count too: they play the clip as soon as their version is active (#1461).
 		std::optional<time::Ticks> first;
-		for (const auto& [id, event] : project.audioEvents)
-			if (event.clip == clip.id)
+		forEveryAudioEvent(project,
+			[&](const AudioEvent& event)
 			{
+				if (event.clip != clip.id)
+					return;
 				const time::Ticks at = time::toTicks(event.position, project.tempo, project.sampleRate);
 				first = std::min(first.value_or(at), at);
-			}
+			});
 		return project.tempo.bpmAt(first.value_or(0));
 	}
 

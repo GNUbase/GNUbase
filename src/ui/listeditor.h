@@ -56,7 +56,10 @@ namespace gnubase::ui
 			double value = 0.0;   // 0-1: velocity, controller value, pressure, bend
 			double release = 0.5; // notes: release velocity
 			int channel = 0;
-			std::vector<int> data; // SysEx
+			std::vector<int> data;                  // SysEx
+			std::string articulation;               // a direction's name (#1112)
+			bool reset = false;                     // a direction that is a reset
+			std::vector<std::string> articulations; // a note's attributes
 			bool editable = false;
 
 			bool isNote() const { return type == "note"; }

@@ -444,7 +444,7 @@ namespace gnubase::engine
 				"With the chord track record-enabled (chord.setTrack recordEnable, reference manual p. 1345), the "
 				"chords that each take's notes make replace the chord events over that take, take after take; a MIDI "
 				"or instrument track with chordsOnly only monitored while the chord track recorded: its notes make "
-				"chord events and no part. "
+				"chord events and no part. chordEvents false (midi.insertRetrospective) makes none. "
 				"One undo step. "
 				"Announces recording.added with the result: the media files, clips and events added and the MIDI "
 				"parts recorded into. project, as project.revision reports it, is the project the recording was made "
@@ -455,7 +455,8 @@ namespace gnubase::engine
 						{{"project", integer}, {"mode", {{"type", "string"}, {"enum", g_audioRecordModes}}},
 							{"midiMode", {{"type", "string"}, {"enum", g_midiRecordModes}}},
 							{"cycleMode", {{"type", "string"}, {"enum", g_midiCycleRecordModes}}},
-							{"snapToBars", {{"type", "boolean"}}}, {"tracks", {{"type", "array"}, {"items", track}}}}},
+							{"snapToBars", {{"type", "boolean"}}}, {"chordEvents", {{"type", "boolean"}}},
+							{"tracks", {{"type", "array"}, {"items", track}}}}},
 					{"required", {"tracks"}}},
 				{{"type", "object"}, {"properties", {{"media", ids}, {"clips", ids}, {"events", ids}, {"parts", ids}}},
 					{"required", {"media", "clips", "events", "parts"}}},
@@ -580,6 +581,13 @@ namespace gnubase::engine
 						{"length", each.length}})
 									   .at("event")
 									   .at("id");
+				// Recorded events follow global transpose with the project root key, or with transpose events are
+				// independent of it, as recorded MIDI parts (#1368, reference manual p. 420).
+				const bool transposed = !project.transpose.events.empty();
+				if (transposed || project.rootKey >= 0)
+					run("audioEvent.set",
+						{{"event", event}, {"rootKey", transposed ? std::string() : rootKeyName(project.rootKey)},
+							{"globalTranspose", transposed ? "independent" : "follow"}});
 				if (lane)
 					run("event.set", {{"events", Json::array({event})}, {"lane", (*lane)++}});
 				events.push_back(event);
@@ -588,7 +596,7 @@ namespace gnubase::engine
 		// Recording chord events (#933, reference manual p. 1345): with the chord track record-enabled, the chords
 		// that the notes recorded in each take make replace the chord events over that take, so that the laps of a
 		// cycle recording don't mix and the last lap that recorded notes wins.
-		if (project.chords.recordEnable)
+		if (project.chords.recordEnable && parameters.value("chordEvents", true))
 		{
 			struct Lap
 			{

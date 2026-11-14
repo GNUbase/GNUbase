@@ -441,28 +441,48 @@ namespace gnubase::engine::midi
 			result["clips"] = std::move(clips);
 		}
 
-		// Puts the target audio events back, and their clips' warp markers.
-		void resetAudio(Project& project, CommandContext& context, Json& result)
+		// Puts the target audio events back, and their clips' warp markers. A piece of a split past the end of its
+		// event's original has nothing of it to go back to and is removed (#1435), once the others are back, so that
+		// a crossfade from before quantizing comes back from the piece before it rather than going with it.
+		void resetAudio(ProjectModel& model, Project& project, CommandContext& context, Json& result)
 		{
 			const std::vector<ObjectId> events = audioTargets(project, context.parameters());
 			Json moved = Json::array();
+			Json removed = Json::array();
 			Json clips = Json::array();
 			for (const ObjectId id : events)
 			{
 				AudioEvent& event = project.audioEvents.at(id);
-				if (resetEventQuantize(event))
+				const bool reset = resetEventQuantize(event);
+				if (reset && event.length == 0)
+				{
+					removed.push_back(id);
+				}
+				else if (reset)
 				{
 					moved.push_back(id);
 					context.emit("audioEvent.changed", {{"event", toJson(event)}});
 				}
 				Clip& clip = project.clips.at(event.clip);
-				if (resetWarpQuantize(clip))
+				if (!event.lock && resetWarpQuantize(clip))
 				{
 					clips.push_back(clip.id);
 					context.emit("clip.changed", {{"clip", toJson(clip)}});
 				}
 			}
+			if (!removed.empty())
+			{
+				// Removing a piece ends the crossfades from it. An event left out whose crossfade from the piece is
+				// still as the panel left it keeps its origin in step, so that resetting it later still puts back
+				// its crossfade from before quantizing rather than taking the ended one for a change by other means.
+				for (auto& [other, each] : project.audioEvents)
+					if (each.quantizeOrigin && each.crossfade == each.quantizeOrigin->quantized.crossfade &&
+						std::find(removed.begin(), removed.end(), Json(each.crossfade.from)) != removed.end())
+						each.quantizeOrigin->quantized.crossfade = Crossfade();
+				model.runEdit("event.remove", project, {{"events", removed}}, context);
+			}
 			result["events"] = std::move(moved);
+			result["removed"] = std::move(removed);
 			result["clips"] = std::move(clips);
 		}
 
@@ -580,6 +600,9 @@ namespace gnubase::engine::midi
 			{"properties",
 				{{"notes", {{"type", "array"}}}, {"events", arraySchema(idSchema)}, {"clips", arraySchema(idSchema)}}},
 			{"required", {"notes", "events", "clips"}}};
+		Json resetResult = audioResult;
+		resetResult["properties"]["removed"] = arraySchema(idSchema);
+		resetResult["required"].push_back("removed");
 		const std::string audioText =
 			" Audio events (events, and every event of the audio parts in audioParts) move so that their snap points, "
 			"or without one their starts, move toward the grid in the same way (reference manual p. 369); with "
@@ -661,14 +684,17 @@ namespace gnubase::engine::midi
 				"parts in audioParts) go back to their positions, offsets, lengths and crossfades before quantizing, "
 				"so the crossfades quantize.crossfade made go and the ones they had before come back, and their "
 				"clips go back to their warp markers before warp quantizing, unless they were changed by other means "
-				"since; returns those events and clips too.",
-				objectSchema(audioProperties), audioResult, false},
+				"since; returns those events and clips too. Locked events stay as they are, and their clips' warp "
+				"markers too. A piece of an event split "
+				"past its original's length, which the quantize panel added, has nothing of the original to go back "
+				"to and is removed (removed).",
+				objectSchema(audioProperties), resetResult, false},
 			"Reset quantize",
-			[](Project& project, CommandContext& context)
+			[&model](Project& project, CommandContext& context)
 			{
 				Json result =
 					forNotesOrAudio(project, context, [](Note& note, const PartSpan&) { return resetQuantize(note); });
-				resetAudio(project, context, result);
+				resetAudio(model, project, context, result);
 				return result;
 			});
 		model.addEdit(engine,

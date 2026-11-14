@@ -21,7 +21,8 @@ namespace gnubase::engine
 	bool quantizeEventStart(const Project& project, AudioEvent& event, const midi::QuantizeGrid& grid);
 
 	// Puts an event back to the position, offset, length and crossfade it had before it was quantized, unless it
-	// was moved by other means since.
+	// was moved by other means since or is locked. A piece of a split past the end of its event's original (#1435)
+	// has nothing of it and comes back with no length, for the caller to remove.
 	bool resetEventQuantize(AudioEvent& event);
 
 	// Warp quantizing (p. 370): moves the warp markers inside each event (clip frames within it) so that they

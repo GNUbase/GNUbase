@@ -16,6 +16,7 @@
 #include <cstddef>
 #include <cstring>
 #include <iterator>
+#include <limits>
 #include <optional>
 #include <set>
 #include <tuple>
@@ -268,12 +269,44 @@ namespace gnubase::engine
 			return std::nullopt;
 		}
 
+		// The position of a lane's latest point at or before position, or the lowest position before its first point.
+		int64_t latestPoint(const Points& points, int64_t position) noexcept
+		{
+			const size_t next = after(points, position);
+			return next == 0 ? std::numeric_limits<int64_t>::min() : points[next - 1].position;
+		}
+
+		// Whether a lane sends its value at a start, a locate or a jump to position: of lanes of one target side by
+		// side (PlayedLane::shared) that send one there, not in a gap, only the one whose latest point lies latest,
+		// the last of them on a tie, as a part's events are chased by position.
+		bool chases(const std::vector<PlayedLane>& lanes, const PlayedLane& lane, int64_t position) noexcept
+		{
+			if (!lane.shared)
+				return true;
+			const int64_t own = latestPoint(lane.points, position);
+			bool later = false; // the lane compared comes after lane
+			for (const PlayedLane& other : lanes)
+			{
+				if (&other == &lane)
+				{
+					later = true;
+					continue;
+				}
+				if (!other.shared || !(other.target == lane.target) || inGap(other.points, position))
+					continue;
+				const int64_t theirs = latestPoint(other.points, position);
+				if (theirs > own || (theirs == own && later))
+					return false;
+			}
+			return true;
+		}
+
 		// Plays a lane's curve over one transport segment. With jump, playback didn't arrive here from the frame
-		// before, so the value at the segment's start is set first; a lane without points glides there over smoothing
-		// frames. That value is set again (AutomationPlayer::play's sentAgain) unless it is new there: renewed, a
-		// static value set in this block, or a point's that the lane arrives at there.
-		void playLane(const PlayedLane& lane, const graph::TransportSegment& segment, bool jump, const Outputs& out,
-			uint32_t smoothing, bool renewed) noexcept
+		// before, so the value at the segment's start is set first, if chased; a lane without points glides there
+		// over smoothing frames. That value is set again (AutomationPlayer::play's sentAgain) unless it is new there:
+		// renewed, a static value set in this block, or a point's that the lane arrives at there.
+		void playLane(const PlayedLane& lane, const graph::TransportSegment& segment, bool jump, bool chased,
+			const Outputs& out, uint32_t smoothing, bool renewed) noexcept
 		{
 			const Points& points = lane.points;
 			const int64_t begin = segment.position;
@@ -281,14 +314,14 @@ namespace gnubase::engine
 			const auto offset = [&](int64_t at) { return segment.offset + static_cast<uint32_t>(at - begin); };
 			if (points.empty())
 			{
-				if (jump)
+				if (jump && chased)
 					emit(lane, segment.offset, lane.staticValue, smoothing, out, !renewed);
 				return;
 			}
 			// The fader and the pre gain glide along ramps; the others get the value at each g_automationInterval
 			// frame.
 			const bool glides = lane.glides();
-			if (jump && !inGap(points, begin))
+			if (jump && chased && !inGap(points, begin))
 				emit(lane, segment.offset, automationValue(points, begin), 0, out,
 					!renewed && !arriving(points, begin, glides));
 
@@ -484,6 +517,22 @@ namespace gnubase::engine
 						point.gap = false;
 					}
 		}
+		// Lanes side by side: each sends nothing before its first point, the first its static value there, so that a
+		// lane that didn't send where playback started sends its first point's value when it arrives there.
+		for (size_t i = 0; i < lanes.size(); ++i)
+		{
+			PlayedLane& lane = lanes[i];
+			lane.shared = lane.kind == Kind::Midi && !lane.points.empty() &&
+				std::count_if(lanes.begin(), lanes.end(),
+					[&lane](const PlayedLane& other) { return other.target == lane.target; }) > 1;
+			if (lane.shared && !lane.points.front().gap)
+			{
+				const bool hasStatic = i < statics;
+				lane.points.insert(lane.points.begin(),
+					RenderAutomationPoint{lane.points.front().position, hasStatic ? lane.staticValue : 0.0,
+						AutomationShape::Step, 0.0, !hasStatic});
+			}
+		}
 		// The program first, so the instrument has the patch before the controllers. No automation lane targets it.
 		if (channel.program)
 			lanes.insert(lanes.begin(),
@@ -636,7 +685,8 @@ namespace gnubase::engine
 			if (changed || moved)
 				for (const PlayedLane& lane : automation.lanes)
 				{
-					if ((silent && midi(lane)) || !(moved || again(lane)))
+					if ((silent && midi(lane)) || !(moved || again(lane)) ||
+						!chases(automation.lanes, lane, transport.position))
 						continue;
 					const std::optional<Outputs> out = outputs(lane);
 					if (out && (lane.points.empty() || !inGap(lane.points, transport.position)))
@@ -657,7 +707,8 @@ namespace gnubase::engine
 			const bool moved = segment.position != m_next;
 			for (const PlayedLane& lane : automation.lanes)
 				if (const std::optional<Outputs> out = outputs(lane); out && !(silent && midi(lane)))
-					playLane(lane, segment, moved || (first && again(lane)), *out, first && changed ? glide(lane) : 0,
+					playLane(lane, segment, moved || (first && again(lane)),
+						chases(automation.lanes, lane, segment.position), *out, first && changed ? glide(lane) : 0,
 						first && renewed(lane));
 			first = false;
 			hear(moved);

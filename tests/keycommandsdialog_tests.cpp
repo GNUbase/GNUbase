@@ -672,6 +672,80 @@ TEST_CASE("File > Export > Key Command Assignments writes an HTML list of every 
 	CHECK_THAT(content, ContainsSubstring("F11"));
 	CHECK_THAT(content, ContainsSubstring("Space")); // transport.toggle's default key
 	CHECK_THAT(content, ContainsSubstring("</html>"));
+	// Each assignment carries what the list shows and nothing else.
+	for (const Json& entry : app.keys().assignments())
+		CHECK(entry.size() == 3);
+}
+
+TEST_CASE("a key commands file or assignments list that can't be written or read tells the user why", "[ui]")
+{
+	test::UiApp app({1000, 760});
+	app.appUi().showProject();
+	app.shell().showOsFileDialogs(false);
+	const test::TempDir dir;
+	// A file where the folder to write into would be, so that nothing can be written under it.
+	const std::filesystem::path blocker = dir.path() / "blocker";
+	std::ofstream(blocker) << "not a folder";
+	const std::filesystem::path other = dir.path() / "other.json";
+	std::ofstream(other) << "{}";
+	const auto answer = [&app](const std::filesystem::path& file)
+	{
+		REQUIRE(app.waitUntil([&app] { return !app.shell().fileDialogs().empty(); }));
+		app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, {file});
+	};
+	const auto message = [&app] { return text(app, "#keycommands-message"); };
+
+	// The key commands dialog's Export and Import show the engine's error in the dialog's message.
+	openDialog(app);
+	click(app, "#keycommands-export");
+	answer(blocker / "Studio.json");
+	REQUIRE(app.waitUntil([&] { return message().find("can't write the key commands file") != std::string::npos; }));
+	click(app, "#keycommands-import");
+	answer(other);
+	REQUIRE(app.waitUntil([&] { return message().find("is no key commands file") != std::string::npos; }));
+	click(app, "#keycommands-cancel");
+	REQUIRE(closed(app));
+
+	// File > Export > Key Command Assignments, which has no dialog of its own, shows the error in an error dialog.
+	app.keys().run("keyCommands.exportAssignments", Json::object(), app.main(), nullptr);
+	answer(blocker / "assignments");
+	REQUIRE(app.waitUntil([&app] { return !elements(app, "#project-error-dialog").empty(); }));
+	CHECK(text(app, "#project-error-title") == "Export Key Command Assignments");
+	CHECK_THAT(text(app, "#project-error-message"), ContainsSubstring("Can't write the key command assignments"));
+	click(app, "#project-error-dialog button[result=ok]");
+	CHECK(app.waitUntil([&app] { return elements(app, "#project-error-dialog").empty(); }));
+}
+
+TEST_CASE("Cancel and Escape leave no question behind for the next confirmation", "[ui]")
+{
+	// confirm.rml clears the global ConfirmDialog however it closes, so that a later gnubase.ui.confirm{} without a
+	// question of its own asks nothing stale and its OK runs no earlier caller's onOk.
+	test::UiApp app({1000, 760});
+	openDialog(app);
+	select(app, "transport.stop");
+	click(app, "#keycommands-keys listitem:last-child");
+	for (const char* close : {"cancel", "escape"})
+	{
+		INFO(close);
+		click(app, "#keycommands-remove");
+		REQUIRE(app.waitUntil([&app] { return !elements(app, "#confirm-dialog").empty(); }));
+		CHECK(text(app, "#confirm-title") == "Remove Key Command");
+		if (std::string(close) == "cancel")
+			click(app, "#confirm-cancel");
+		else
+			press(app, "Escape");
+		REQUIRE(app.waitUntil([&app] { return elements(app, "#confirm-dialog").empty(); }));
+		const std::optional<std::string> error = app.lua().run("gnubase.ui.confirm{}", "confirm");
+		INFO(error.value_or(""));
+		REQUIRE(!error.has_value());
+		REQUIRE(app.waitUntil([&app] { return !elements(app, "#confirm-dialog").empty(); }));
+		CHECK(text(app, "#confirm-title") == "Confirm");
+		confirm(app);
+		REQUIRE(app.waitUntil([&app] { return elements(app, "#confirm-dialog").empty(); }));
+		CHECK(shownKeys(app) == Strings{"Num0"}); // the stale Remove didn't run
+	}
+	click(app, "#keycommands-cancel");
+	CHECK(closed(app));
 }
 
 TEST_CASE("tool modifiers ask before an action takes another's keys, from Assign and from the list", "[ui]")

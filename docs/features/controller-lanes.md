@@ -34,7 +34,7 @@ key editor's tools edit; lane presets, the line tool's modes and Auto Select Con
 
 | View field | What it is | Reference |
 |---|---|---|
-| `lanes` | From the top, each `{type, number}`: `velocity`, `offVelocity`, `probability`, `velocityVariance`, or controller events: `controller` (number: the controller), `pitchBend`, `channelPressure`, `polyPressure` (number: the pitch), `program`. Default: a velocity lane | pp. 1157-1163 |
+| `lanes` | From the top, each `{type, number}`: `velocity`, `offVelocity`, `probability`, `velocityVariance`, or controller events: `controller` (number: the controller), `pitchBend`, `channelPressure`, `polyPressure` (number: the pitch), `program`; or `articulations`, the Articulations lane ([articulation-maps.md](articulation-maps.md)). Default: a velocity lane | pp. 1157-1163 |
 | `showLanes` | Whether the controller display shows the lanes (Show/Hide Controller Lanes) | p. 1162 |
 | `autoSelectControllers` | Selecting notes selects the controller events from their start to their end | p. 1188 |
 | `controllerSelection` | The selected controller events, each `{part, controller}`, of the editable parts; removed ones leave it, closing the editor clears it | p. 1188 |
@@ -97,7 +97,7 @@ part, or else channel 0.
 
 The controller event editor and its smart controls (p. 1187); ramps and curves between controller events and Type of New
 Controller Events (pp. 1159, 1181); the pitchbend lane's semitone grid, Grid Settings and Snap Pitchbend Events (pp. 1173-1176);
-SysEx, articulation and dynamics lanes, and the Dynamics Mapping Setup (pp. 1177-1179); the MIDI Controller Setup
+SysEx and dynamics lanes, and the Dynamics Mapping Setup (pp. 1177-1179); the MIDI Controller Setup
 dialog, RPN and NRPN controllers (p. 1165); the poly pressure lane's pitch menu and editing its events with
 Ctrl+Alt (pp. 1179-1180); the context menu's Cut, Copy, Paste and Paste at Origin, and pasting notes as modulation
 (pp. 1160, 1180); the rhombus for controllers with automation and the value at the project cursor (pp. 1161, 1166);

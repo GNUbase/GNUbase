@@ -592,6 +592,8 @@ namespace gnubase::ui
 				continue;
 			}
 			addEvent(event, start, start + length, false);
+			if (event.value("globalTranspose", std::string()) == "independent") // #1368
+				m_independent.insert(event.at("id").get<uint64_t>());
 			if (lanes.count(track) != 0)
 			{
 				Piece piece{{start, length, colorOf(event)}, {}, event.value("mute", false)};

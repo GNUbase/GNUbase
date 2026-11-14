@@ -62,6 +62,8 @@ namespace gnubase::ui
 		// Whether a selected track has a type, as track.add names them: e.g. when Set Root Key for Unassigned Events
 		// is in the context menu of the transpose track.
 		bool selectsType(const std::string& type) const;
+		// Whether a selected track has versions: an audio, instrument or MIDI track (docs/features/track-versions.md).
+		bool selectsVersions() const;
 
 		// Folding (reference manual p. 225): the tracks inside a folded folder are hidden, in the event display too.
 		// The heights and the folded folders are the project's (trackLayout.get, trackLayout.set), saved with it;
@@ -91,7 +93,10 @@ namespace gnubase::ui
 		// it), track.showUsedAutomation and track.hideAllAutomation; and for copying automation to other tracks between
 		// the locators (#125) track.copyAutomationAll, track.copyAutomationSelected,
 		// track.copyAutomationSelectedParameters (the selected automation tracks), track.pasteAutomationAll,
-		// track.pasteAutomationSelected and track.pasteAutomationSelectedParameters.
+		// track.pasteAutomationSelected and track.pasteAutomationSelectedParameters; and for the track versions
+		// (docs/features/track-versions.md) of the selected audio, instrument and MIDI tracks trackVersions.new,
+		// trackVersions.duplicate, trackVersions.rename (which asks in the document's rename-version.rml),
+		// trackVersions.remove, trackVersions.selectSameId and trackVersions.assignCommonId.
 		//
 		// A track with a channel has Show/Hide Automation (.automation-toggle, .checked while shown) in its lower
 		// left corner, and below its own row a .automation-row[lane] per automation track the event display shows:
@@ -213,6 +218,13 @@ namespace gnubase::ui
 		std::vector<uint64_t> versioned() const;
 		void showVersions();
 		void versionEvent(Rml::Event& event);
+		// The Track Versions pop-up menu (reference manual p. 231): the arrow at a track's name opens the document's
+		// #track-versions-menu, which the list fills with that track's versions and its functions, and runs clicks on.
+		void openVersionsMenu(uint64_t track);
+		void versionsMenuEvent(Rml::Event& event);
+		// Rename Version (p. 236): names the selected tracks' active version, asking in rename-version.rml.
+		void openRenameDialog();
+		void closedRenameDialog(Rml::Event& event);
 
 		EventDisplay& m_display;
 		EngineBinding& m_binding;
@@ -225,6 +237,7 @@ namespace gnubase::ui
 		uint64_t m_parameterLane = 0;            // the automation lane it was opened for
 		Rml::Element* m_versionMenu = nullptr;   // the document's #track-versions-list
 		std::string m_versionRml;                // what it shows
+		Rml::Element* m_versionsMenu = nullptr;  // the document's #track-versions-menu
 		std::set<uint64_t> m_selectedLanes;      // the selected automation tracks' lanes
 		std::vector<Row> m_tracks;               // every track in the project's order
 		std::map<uint64_t, size_t> m_index;
@@ -244,10 +257,12 @@ namespace gnubase::ui
 		std::string m_renamed;                         // the name before renaming
 		bool m_warnBeforeRemoving = true;              // ui.removeTracksWarning
 		bool m_upDownTracksOnly = false;               // ui.upDownSelectsTracksOnly
+		bool m_showVersionName = true;                 // ui.showVersionName
 		Rml::ObserverPtr<Rml::Element> m_removeDialog; // remove-tracks.rml while open
 		std::vector<uint64_t> m_removing;              // the tracks it asks about
 		Rml::ObserverPtr<Rml::Element> m_chordDialog;  // a chord track dialog while open
 		std::vector<uint64_t> m_chordParts;            // the MIDI parts it is for
+		Rml::ObserverPtr<Rml::Element> m_renameDialog; // rename-version.rml while open
 
 		Drag m_drag = Drag::None;
 		uint64_t m_dragTrack = 0;

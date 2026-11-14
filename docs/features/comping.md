@@ -50,7 +50,10 @@ and loading; names overlapping pieces of a split in both orders to copy them and
 split at several positions and a second split change no event in front of the split one; and loads a file whose
 GNUbase entry gives two overlapping events one place without ranks, as files from before #1189 can, and renders the
 overlap, snaps in it, copies the events and brings them to the front named in both orders: the one with the higher id
-stays in front.
+stays in front. Where the ranks of a split's pieces disagree with their ids (the first piece split again: its newest
+piece is behind the piece after it, which is moved to overlap it), the piece in front by its rank plays in the
+overlap, its zero crossings are the ones snapped to, and it stays in front in copies and when the pieces come to the
+front, named in both orders; each order undoes its bringing to the front, so that both meet the pieces at one place.
 
 ## Event display and track list
 
@@ -77,8 +80,10 @@ stays in front.
 
 Tests: `tests/eventediting_tests.cpp` shows a track's lanes, checks that the track's lane shows only the take in
 front and that a muted take covers nothing, and covers what lies behind it with `editing.treatMutedAudioLikeDeleted`
-off, brings a take to the front with a click, comps a range with a drag and draws parts on lanes;
-`tests/fileimport_tests.cpp` drops a file on a lane.
+off, brings a take to the front with a click, comps a range with a drag and draws parts on lanes. It also checks that
+the track's lane shows the pieces of a split whose ranks disagree with their ids by their ranks, and that of two
+events at one place without ranks, loaded from a file, it shows the one with the higher id in front; a click in the
+overlap finds the one in front in both. `tests/fileimport_tests.cpp` drops a file on a lane.
 
 ## Not yet
 

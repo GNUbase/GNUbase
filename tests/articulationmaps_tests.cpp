@@ -4,6 +4,7 @@
 // output events and MIDI modifiers, and remote triggers in recordings.
 #include "engine/document/rendersnapshot.h"
 #include "engine/engine.h"
+#include "engine/midi/articulationmaps.h"
 #include "engine/midi/midivalues.h"
 #include "engine/time/tempomap.h"
 #include "platform/audio/device.h"
@@ -15,6 +16,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <map>
 #include <memory>
 #include <string>
 #include <tuple>
@@ -337,6 +339,44 @@ TEST_CASE("the closest sound slot plays notes whose articulations no slot has", 
 	CHECK(notePlaying(channel, 24).start == notePlaying(channel, 61).start - 1); // C0
 }
 
+TEST_CASE(
+	"the sound slots lane shows the slot each note plays, from the map and part as project.get lists them", "[unit]")
+{
+	Fixture f;
+	f.strings();
+	// Pizzicato from the start, reset at the second beat; a staccato note at the third.
+	f.call("controller.add",
+		{{"part", f.part},
+			{"controllers",
+				{{{"position", 0}, {"type", "articulation"}, {"articulation", "Pizzicato"}},
+					{{"position", g_quarter}, {"type", "articulation"}, {"articulation", "Pizzicato"},
+						{"reset", true}}}}});
+	const Json added = f.call("note.add",
+		{{"part", f.part},
+			{"notes",
+				{{{"position", 0}, {"length", 60}, {"pitch", 60}, {"velocity", 0.5}},
+					{{"position", g_quarter}, {"length", 60}, {"pitch", 60}, {"velocity", 0.5}},
+					{{"position", 2 * g_quarter}, {"length", 60}, {"pitch", 60}, {"velocity", 0.5},
+						{"articulations", {"Staccato"}}}}}});
+	const std::map<uint64_t, size_t> slots = engine::midi::soundSlots(f.maps().at(0), f.partJson());
+	REQUIRE(slots.size() == 3);
+	CHECK(slots.at(added.at("notes").at(0).at("id").get<uint64_t>()) == 1); // Pizzicato
+	CHECK(slots.at(added.at("notes").at(1).at("id").get<uint64_t>()) == 0); // reset: the default slot
+	CHECK(slots.at(added.at("notes").at(2).at("id").get<uint64_t>()) == 2); // Staccato
+}
+
+TEST_CASE("an Articulations lane is a lane of the editor views, which controller.line doesn't draw on", "[unit]")
+{
+	Fixture f;
+	f.call("editor.open", {{"editor", "window"}, {"parts", Json::array({f.part})}});
+	const Json view = f.call("editor.set", {{"editor", "window"}, {"lanes", {{{"type", "articulations"}}}}});
+	CHECK(view.at("lanes") == Json::array({{{"type", "articulations"}, {"number", 0}}}));
+	CHECK_THAT(f.fails("controller.line",
+				   {{"part", f.part}, {"lane", {{"type", "articulations"}}}, {"mode", "line"},
+					   {"from", {{"position", 0}, {"value", 0}}}, {"to", {{"position", g_quarter}, {"value", 1}}}}),
+		ContainsSubstring("controller lane type"));
+}
+
 TEST_CASE("articulation maps export to a file and import from it unchanged", "[integration]")
 {
 	Fixture f;
@@ -627,6 +667,41 @@ TEST_CASE("notes that don't play send no output events", "[unit]")
 	CHECK(notePlaying(channel, 24).end == notePlaying(channel, 60).start); // C0, Arco's key switch, before it
 }
 
+TEST_CASE(
+	"a track sends a slot's output events where it differs from the last slot the track sent, across parts", "[unit]")
+{
+	Fixture f;
+	f.strings();
+	// Bar 1 plays Staccato, bars 2 and 3 Arco, each in a part of its own.
+	f.call("note.add",
+		{{"part", f.part},
+			{"notes",
+				{{{"position", 0}, {"length", 60}, {"pitch", 61}, {"velocity", 0.5},
+					{"articulations", {"Staccato"}}}}}});
+	for (const int64_t bar : {1, 2})
+	{
+		const Json part = f.call("midiPart.add", {{"track", f.track}, {"position", bar * g_bar}, {"length", g_bar}})
+							  .at("part")
+							  .at("id");
+		f.call("note.add",
+			{{"part", part}, {"notes", {{{"position", 0}, {"length", 60}, {"pitch", 60}, {"velocity", 0.5}}}}});
+	}
+	// At 120 BPM and 48 kHz a bar is 96000 samples. Staccato's off event and C0 where bar 2 starts, not again in
+	// bar 3.
+	const engine::RenderChannel channel = f.rendered();
+	REQUIRE(channel.controllers.size() == 2);
+	CHECK(channel.controllers[0].position == 0);
+	CHECK(channel.controllers[0].value == engine::midi::controllerFromMidi1(64));
+	CHECK(channel.controllers[1].position == 96000);
+	CHECK(channel.controllers[1].number == 32);
+	CHECK(channel.controllers[1].value == 0);
+	std::vector<int64_t> keySwitches;
+	for (const engine::RenderNote& note : channel.notes)
+		if (note.keySwitch)
+			keySwitches.push_back(note.start);
+	CHECK(keySwitches == std::vector<int64_t>{96000 - 1});
+}
+
 TEST_CASE("Merge MIDI in Loop takes the directions in effect where the range starts", "[unit]")
 {
 	Fixture f;
@@ -746,12 +821,14 @@ TEST_CASE("Merge MIDI in Loop adds resets only where a direction of their group 
 		CHECK(controller.at("position").get<int64_t>() < g_bar); // A's own, no reset where B starts
 }
 
-TEST_CASE("Merge MIDI in Loop gives every new part the directions, which playback resolves per part", "[unit]")
+TEST_CASE(
+	"Merge MIDI in Loop gives every new part the directions, and the track's key switches stay as they were", "[unit]")
 {
 	Fixture f;
 	f.strings();
 	// Part A, bar 1, plays Arco; part B, bar 2, plays Pizzicato with a velocity of 20 and a note with velocity
-	// variance, which merge keeps on a new part of its own (#1240).
+	// variance, which merge keeps on a new part of its own (#1240); part C, bar 3, plays Arco again, in the new part
+	// with A's notes, after B's part of its own sent C#0 (#1491).
 	f.call("note.add",
 		{{"part", f.part}, {"notes", {{{"position", 0}, {"length", 60}, {"pitch", 60}, {"velocity", 0.5}}}}});
 	const Json b =
@@ -763,6 +840,9 @@ TEST_CASE("Merge MIDI in Loop gives every new part the directions, which playbac
 		{{"part", b},
 			{"notes",
 				{{{"position", 0}, {"length", 60}, {"pitch", 62}, {"velocity", 0.5}, {"velocityVariance", 0.5}}}}});
+	const Json c =
+		f.call("midiPart.add", {{"track", f.track}, {"position", 2 * g_bar}, {"length", g_bar}}).at("part").at("id");
+	f.call("note.add", {{"part", c}, {"notes", {{{"position", 0}, {"length", 60}, {"pitch", 64}, {"velocity", 0.5}}}}});
 	// The key switches a track plays: start, pitch and channel.
 	const auto keySwitches = [&](uint64_t track)
 	{
@@ -776,9 +856,9 @@ TEST_CASE("Merge MIDI in Loop gives every new part the directions, which playbac
 		return played;
 	};
 	const auto before = keySwitches(f.track);
-	REQUIRE(before.size() == 2); // C0 for Arco, C#0 for Pizzicato
-	// At 120 BPM and 48 kHz a bar is 96000 samples: bars 1 and 2, onto a new track.
-	const Json changes = f.call("midi.merge", {{"start", 0}, {"end", 192000}});
+	REQUIRE(before.size() == 3); // C0 for Arco, C#0 for Pizzicato, C0 for Arco
+	// At 120 BPM and 48 kHz a bar is 96000 samples: bars 1 to 3, onto a new track.
+	const Json changes = f.call("midi.merge", {{"start", 0}, {"end", 288000}});
 	REQUIRE(changes.at("parts").size() == 2);
 	CHECK(keySwitches(changes.at("tracks").at(0).get<uint64_t>()) == before);
 }

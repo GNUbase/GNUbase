@@ -28,10 +28,16 @@ namespace gnubase::engine::plugins
 	// graph event. Real-time safe.
 	bool toGraphEvent(const plugin::Event& event, const plugin::EventList& list, graph::ProcessEvent& out) noexcept;
 
-	// A block's transport as the plugin's segments, as many as fit in segments, each with the block's tempo: a stopped
-	// segment while stopped and for the frames before a count-in ends. Returns how many there are, at least one.
-	uint32_t convertTransport(
-		const graph::TransportBlock& transport, std::vector<plugin::TransportSegment>& segments) noexcept;
+	// The transport segments a plugin gets per block at most, as many as a host process passes on.
+	inline constexpr size_t g_maxTransportSegments = 64;
+
+	// A block's transport as the plugin's segments, as many as fit in segments: a stopped segment while stopped and for
+	// the frames before a count-in ends, then the block's segments, and a new one where a point of the project's
+	// tempo map is (TransportBlock::tempoMap, at the sample rate). Each has the tempo at its first frame, which under a
+	// ramp changes within it; without a tempo map or sample rate, the block's. Returns how many there are, at least
+	// one. Real-time safe.
+	uint32_t convertTransport(const graph::TransportBlock& transport, double sampleRate,
+		std::vector<plugin::TransportSegment>& segments) noexcept;
 
 	// The processor of a plugin slot node (graph::NodeKind::PluginSlot): hosts any plugin::Plugin, a built-in one or
 	// a remote plugin::remote::RemotePlugin, so the graph doesn't know the difference (docs/plugin-api.md). The engine
@@ -39,7 +45,8 @@ namespace gnubase::engine::plugins
 	// block it passes the node's audio to the plugin's main input port, its events as plugin events and the transport
 	// as transport segments, and the main output port back as the node's audio. Other ports get silence. A block the
 	// plugin fails (ProcessStatus::Error, which a remote plugin also returns once its host crashed or hung) outputs
-	// silence. A bypassed slot processes the plugin and outputs its input, delayed by the plugin's latency.
+	// silence. A bypassed slot processes the plugin and outputs its input, delayed by the plugin's latency. Events that
+	// don't fit its event lists are dropped, and it logs how many.
 	//
 	// Threads: [main] calls are the plugin's main thread, the plugin job thread in the engine; they may only happen
 	// while no graph processes the slot.

@@ -1412,6 +1412,13 @@ meter .meter-peak
 	text-align: center;
 }
 
+/* Why the engine refused an edit of events (#1367), a little longer and wider than a tool's name. */
+.event-display .edit-refused
+{
+	width: 480dp;
+	margin-left: -240dp;
+}
+
 /* The track list (docs/features/track-list.md): the global track controls over a row per track, level with the
    event display's lanes under its overview line and ruler. Code sets the rows' heights from the tracks' and where the
    list is scrolled to; the line where dragged tracks go shows while they are dragged. */
@@ -1566,6 +1573,38 @@ meter .meter-peak
 	display: block;
 	flex: 0 1 auto;
 	height: 18dp;
+}
+
+/* The Track Versions pop-up menu's arrow, at the right end of the name of a track with versions
+   (docs/features/track-versions.md). Its negative margin takes back the room it needs, which is the name's own right
+   padding, so the name keeps the width the user chose and the controls area keeps its place. */
+.track-list listitem.versions .track-name
+{
+	box-sizing: border-box;
+	padding-right: 16dp;
+}
+
+.track-list .track-versions-toggle
+{
+	flex: 0 0 auto;
+	min-width: 14dp;
+	width: 14dp;
+	height: 18dp;
+	margin-left: -14dp;
+	padding: 0;
+	text-align: center;
+}
+
+.track-list .track-versions-toggle svg.icon
+{
+	width: 10dp;
+	height: 10dp;
+	vertical-align: 0;
+}
+
+.track-list listitem.renaming .track-versions-toggle
+{
+	display: none;
 }
 
 .track-list .track-controls
@@ -1829,6 +1868,13 @@ menu.toolbox svg.icon
 }
 
 menuitem .menu-keys
+{
+	float: right;
+	padding-left: 24dp;
+}
+
+/* The version's ID after its name in a Track Versions menu (reference manual p. 232). */
+menuitem .track-version-id
 {
 	float: right;
 	padding-left: 24dp;
@@ -2247,7 +2293,7 @@ splitter.column .splitter-grip-horizontal
 	flex-shrink: 0;
 }
 
-.inspector-row select, .inspector-row valuefield
+.inspector-row select, .inspector-row valuefield, .inspector-row textdisplay
 {
 	flex: 1 1 0;
 	width: auto;
@@ -2256,6 +2302,45 @@ splitter.column .splitter-grip-horizontal
 .insert
 {
 	padding: 2dp 6dp;
+}
+
+/* The Track Versions section (docs/features/track-versions.md): the ID of the active version, the indicator that
+   shows while the track has more than one, and the list a click activates one of. */
+.inspector-version-id
+{
+	flex: 1 1 0;
+	padding: 0 6dp;
+}
+
+.inspector-version-indicator
+{
+	display: none;
+	width: 16dp;
+	text-align: center;
+}
+
+.inspector-section.multiple .inspector-version-indicator
+{
+	display: block;
+}
+
+.inspector-version
+{
+	display: flex;
+	padding: 2dp 6dp;
+}
+
+.inspector-version .name
+{
+	flex: 1 1 0;
+	overflow: hidden;
+	white-space: nowrap;
+}
+
+.inspector-version .id
+{
+	flex: 0 0 auto;
+	margin-left: 6dp;
 }
 
 /* The MIDI Inserts and MIDI Sends sections: a slot's control panel shows while its edit button opened it. */

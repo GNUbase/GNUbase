@@ -95,6 +95,9 @@ namespace gnubase::ui
 		int partValue(uint64_t part, const char* key) const;
 		// A MIDI part as the display's project has it, or null.
 		const engine::Json* partOf(uint64_t part) const;
+		// A selected MIDI part or audio event (of m_events) as the display's project has it, for its root key and
+		// Global Transpose (#1368), or null.
+		const engine::Json* transposableOf(const engine::Json& event) const;
 		// What a value field shows for the project's value of event, the first selected: while the project is older
 		// than the field's own steps (#716), the value that the steps that changed event gave it instead, also after
 		// other events showed in the field meanwhile (#1421), and when it was dragged with others (#1471).

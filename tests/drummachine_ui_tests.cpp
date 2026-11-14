@@ -36,6 +36,7 @@ namespace
 	}
 
 	constexpr uint32_t g_padStride = 32;
+	constexpr double g_kick = 2.0; // the instrument parameter's value
 	constexpr uint32_t g_level = 1;
 	constexpr uint32_t g_mute = 3;
 	constexpr uint32_t g_bypass = 4097;
@@ -139,13 +140,18 @@ TEST_CASE("the drum machine panel shows the selected drum track's pads and sets 
 	REQUIRE(f.app.waitUntil([&] { return f.has("#drum-machine", "empty"); }));
 	f.open();
 
-	// The third group, C1 and up, with the kit's pads named and the kick selected.
+	// The third group, C1 and up, with the kick selected; pads without names of their own go by the General MIDI
+	// sounds', as pattern lanes do.
 	CHECK(f.elements(".drum-pad").size() == 16);
 	CHECK(f.has(".drum-group[group=\"2\"]", "selected"));
 	CHECK(f.has(Fixture::pad(36), "selected"));
 	CHECK(f.has(Fixture::pad(36), "assigned"));
 	CHECK(!f.has(Fixture::pad(37), "assigned"));
-	CHECK(f.elements(Fixture::pad(36) + " .drum-pad-name").at(0).value("text", "") == "Bass Drum 1");
+	CHECK(f.padName(36).empty());
+	REQUIRE(f.app.waitUntil(
+		[&] { return f.elements(Fixture::pad(36) + " .drum-pad-name").at(0).value("text", "") == "Bass Drum 1"; }));
+	CHECK(f.elements(Fixture::pad(37) + " .drum-pad-name").at(0).value("text", "") == "Side Stick");
+	CHECK(f.elements("#drum-pad-name").at(0).at("attributes").at("value") == "Bass Drum 1");
 	// The pads' lowest row is at the bottom.
 	CHECK(f.elements(Fixture::pad(36)).at(0).at("box").at("y").get<double>() >
 		f.elements(Fixture::pad(40)).at(0).at("box").at("y").get<double>());
@@ -246,22 +252,23 @@ TEST_CASE("the drum machine panel renames, copies, cuts, pastes, resets and load
 		[&] { return f.elements(Fixture::pad(37) + " .drum-pad-name").at(0).value("text", "") == "Rim"; }));
 
 	// Copy and paste the kick onto pad 40, cut it and paste it onto 41.
+	const auto kick = [&](int pad) { return f.parameter(pad * g_padStride, 0.0) == g_kick; };
 	f.click(Fixture::pad(36));
 	f.click("#drum-copy");
 	f.click(Fixture::pad(40));
 	f.click("#drum-paste");
-	REQUIRE(f.app.waitUntil([&] { return f.padName(40) == "Bass Drum 1"; }));
-	CHECK(f.padName(36) == "Bass Drum 1");
+	REQUIRE(f.app.waitUntil([&] { return kick(40); }));
+	CHECK(kick(36));
 	f.click("#drum-cut");
 	f.click(Fixture::pad(41));
 	f.click("#drum-paste");
-	REQUIRE(f.app.waitUntil([&] { return f.padName(41) == "Bass Drum 1" && f.padName(40).empty(); }));
+	REQUIRE(f.app.waitUntil([&] { return kick(41) && f.parameter(40 * g_padStride, 0.0) == 0.0; }));
 	REQUIRE(
 		f.app.waitUntil([&] { return f.has(Fixture::pad(41), "assigned") && !f.has(Fixture::pad(40), "assigned"); }));
 
 	// Reset Pad.
 	f.click("#drum-reset");
-	REQUIRE(f.app.waitUntil([&] { return f.padName(41).empty() && !f.has(Fixture::pad(41), "assigned"); }));
+	REQUIRE(f.app.waitUntil([&] { return !kick(41) && !f.has(Fixture::pad(41), "assigned"); }));
 
 	// A file dropped on a pad loads onto it and names it.
 	CHECK(!f.app.ui().drop(std::nullopt, of(Fixture::pad(43)), {f.file}).at("element").is_null());
@@ -288,4 +295,14 @@ TEST_CASE("Add Drum Track opens the add track dialog on its Drum page", "[ui]")
 	for (const Json& each : project.at("channels"))
 		if (each.at("id") == added.at("channel"))
 			CHECK(each.at("instrument") == "drumMachine");
+
+	// The empty drum machine panel's Add Drum Track does the same (p. 146).
+	f.select(f.audio);
+	f.app.keys().run("window.drumMachine", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil([&] { return f.has("#drum-machine", "empty"); }));
+	f.click("#drum-add-track");
+	REQUIRE(f.app.waitUntil([&] { return !f.elements("#add-track-dialog").empty(); }));
+	CHECK(f.elements("#track-types").at(0).at("attributes").at("value") == "drum");
+	f.click("#add-track-confirm");
+	REQUIRE(f.app.waitUntil([&] { return f.app.call("project.get").at("tracks").size() == 4; }));
 }

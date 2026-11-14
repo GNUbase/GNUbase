@@ -481,6 +481,28 @@ namespace gnubase::engine::midi
 		return slots;
 	}
 
+	std::map<ObjectId, size_t> soundSlots(const Json& map, const Json& part)
+	{
+		MidiPart parsed;
+		for (const Json& json : part.value("notes", Json::array()))
+		{
+			Note note;
+			note.id = json.at("id").get<ObjectId>();
+			note.position = json.at("position").get<time::Ticks>();
+			note.articulations = json.value("articulations", std::vector<std::string>());
+			parsed.notes[note.id] = std::move(note);
+		}
+		for (const Json& json : part.value("controllers", Json::array()))
+			if (json.value("type", std::string()) == "articulation")
+			{
+				Controller controller = controllerFromJson(json);
+				controller.id = json.at("id").get<ObjectId>();
+				controller.position = json.at("position").get<time::Ticks>();
+				parsed.controllers[controller.id] = std::move(controller);
+			}
+		return soundSlots(articulationMapFromJson(map, ArticulationMap()), parsed);
+	}
+
 	void applyRemoteTriggers(const ArticulationMap& map, Json& notes, Json& controllers)
 	{
 		std::vector<Trigger> triggers;

@@ -112,10 +112,10 @@ namespace gnubase::ui
 		}
 	}
 
-	DrumMachinePanel::DrumMachinePanel(
-		EngineBinding& binding, Rml::Element& element, std::function<void(uint64_t track, int pad)> loadSample)
-		: m_binding(binding), m_loadSample(std::move(loadSample)), m_stepOwner(binding.stepOwner("drumMachine")),
-		  m_root(element.GetObserverPtr())
+	DrumMachinePanel::DrumMachinePanel(EngineBinding& binding, Rml::Element& element,
+		std::function<void(uint64_t track, int pad)> loadSample, std::function<void()> addTrack)
+		: m_binding(binding), m_loadSample(std::move(loadSample)), m_addTrack(std::move(addTrack)),
+		  m_stepOwner(binding.stepOwner("drumMachine")), m_root(element.GetObserverPtr())
 	{
 		std::string groups;
 		for (int group = 0; group < g_pads / g_padsPerGroup; ++group)
@@ -129,7 +129,8 @@ namespace gnubase::ui
 		for (int i = 0; i < g_padsPerGroup; ++i)
 			grid += R"(<div class="drum-pad"><span class="drum-pad-name"/><span class="drum-pad-note"/></div>)";
 		element.SetInnerRML(R"(<div class="drum-machine empty" id="drum-machine">)"
-							R"(<div class="drum-hint">Select a drum track</div>)"
+							R"(<div class="drum-hint"><div>Select a drum track</div>)"
+							R"(<button id="drum-add-track">Add Drum Track</button></div>)"
 							R"(<div class="drum-toolbar">)" +
 			tabs +
 			R"(<button id="drum-bypass" type="toggle" title="Bypass All Effects">Bypass FX</button>)"
@@ -179,6 +180,7 @@ namespace gnubase::ui
 		{
 			if (processor.at("id") != "drumMachine")
 				continue;
+			m_padNames = processor.value("padNames", std::vector<std::string>());
 			for (const Json& item : processor.at("parameters"))
 			{
 				const auto id = item.at("id").get<uint32_t>();
@@ -250,6 +252,15 @@ namespace gnubase::ui
 		}
 		page->SetInnerRML(rml);
 		show();
+	}
+
+	// The pad's own name, its sample's, or the engine's for its note, as pattern lanes have them (drumPadName).
+	std::string DrumMachinePanel::padName(int pad) const
+	{
+		if (const auto name = m_names.find(pad); name != m_names.end() && !name->second.empty())
+			return name->second;
+		return pad >= 0 && static_cast<size_t>(pad) < m_padNames.size() ? m_padNames[static_cast<size_t>(pad)]
+																		: std::string();
 	}
 
 	double DrumMachinePanel::value(uint32_t id) const
@@ -333,8 +344,7 @@ namespace gnubase::ui
 					element->SetAttribute("pad", number);
 				const auto parameter = [pad, this](uint32_t id)
 				{ return value((static_cast<uint32_t>(pad) * g_padStride) + id); };
-				const auto name = m_names.find(pad);
-				setText(element->GetChild(0), name != m_names.end() ? name->second : std::string());
+				setText(element->GetChild(0), padName(pad));
 				setText(element->GetChild(1), number);
 				setClass(element, "assigned", parameter(g_instrument) >= 0.5);
 				setClass(element, "selected", pad == m_pad);
@@ -353,8 +363,7 @@ namespace gnubase::ui
 			setClass(tab, "selected", tab->GetAttribute<Rml::String>("page", "") == m_page);
 		if (Rml::Element* field = find("drum-pad-name"))
 		{
-			const auto name = m_names.find(m_pad);
-			const std::string text = name != m_names.end() ? name->second : std::string();
+			const std::string text = padName(m_pad);
 			if (field->GetAttribute<Rml::String>("value", "") != text && !field->IsPseudoClassSet("focus"))
 				field->SetAttribute("value", text);
 		}
@@ -441,9 +450,8 @@ namespace gnubase::ui
 			// A new name goes out with Enter or when the field loses the focus (Rename Pad, p. 943).
 			const bool done = event == Rml::EventId::Blur ||
 				(event == Rml::EventId::Change && event.GetParameter<bool>("linebreak", false));
-			const auto name = m_names.find(m_pad);
 			const auto text = target->GetAttribute<Rml::String>("value", "");
-			if (done && m_track != 0 && text != (name != m_names.end() ? name->second : std::string()))
+			if (done && m_track != 0 && text != padName(m_pad))
 				m_binding.send("drum.setPad", {{"track", m_track}, {"pad", m_pad}, {"name", text}});
 			return;
 		}
@@ -451,6 +459,11 @@ namespace gnubase::ui
 		{
 		case Rml::EventId::Click:
 		{
+			if (target != nullptr && target->GetId() == "drum-add-track" && m_addTrack)
+			{
+				m_addTrack(); // Add Drum Track (p. 146)
+				return;
+			}
 			if (target == nullptr || m_track == 0)
 				return;
 			const std::string id = target->GetId();

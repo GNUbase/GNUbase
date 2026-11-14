@@ -61,10 +61,11 @@ How it plays:
   Starting playback, with `transport.play` or with `transport.record` from stop without a count-in, waits for the
   samples as for the audio tracks' streams (up to 2 seconds); locating and a count-in don't. Offline renders
   (`audio.render`, `mixdown.export`, render in place) wait until every sample is there, so they come out the same every
-  time: they log a warning every 30 seconds and fail with an error after 10 minutes (#1343), so a file whose read
-  never ends, e.g. on a network drive that stalls, doesn't hold them for good; none of them can be cancelled while
-  it waits. The warning and the error name the files still waited for (#1414). An export that fails there puts the
-  transport, its settings and the device back and leaves no files, as any export that fails while it renders. Both wait only for the files that samplers wait for, not for one being read that none wants any more.
+  time: they log a warning every 30 seconds and fail with an error after 10 minutes (#1343), so a file whose read never
+  ends, e.g. on a network drive that stalls, doesn't hold them for good; none of them can be cancelled while it waits.
+  The warning and the error name the files still waited for (#1414). An export that fails there puts the transport, its
+  settings and the device back and leaves no files, as any export that fails while it renders. Starting playback and the
+  offline renders wait only for the files that samplers wait for, not for one being read that none wants any more.
   Files that no sampler waits for any more, after an undo or another project, are dropped from the loader's queue
   unread; the one being read can't be stopped, and the engine's end waits for it. A read that fails plays nothing, as
   a missing file does.

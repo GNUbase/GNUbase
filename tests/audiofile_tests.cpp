@@ -348,9 +348,19 @@ TEST_CASE("replaceFile moves one file over another", "[integration]")
 	CHECK(detail::lastReplacePath() == detail::ReplacePath::Rename);
 	CHECK(test::readText(to) == "new");
 	CHECK_FALSE(std::filesystem::exists(from));
-	// A file that isn't there is reported through lastError().
+	// A file that isn't there is reported through lastError(), with its cause on every platform (#1483).
 	CHECK_FALSE(detail::replaceFile(utf8(from), utf8(to)));
-	CHECK_FALSE(detail::lastError().empty());
+	CHECK(detail::lastError() == std::generic_category().message(ENOENT));
+}
+
+TEST_CASE("opening a missing file names its cause", "[integration]")
+{
+	// Windows opens through its own API, whose error codes lastError() has to translate (#1483).
+	const test::TempDir dir;
+	CHECK_FALSE(detail::openFile(utf8(dir.path() / "missing.bin"), "rb"));
+	CHECK(detail::lastError() == std::generic_category().message(ENOENT));
+	CHECK_FALSE(detail::openFile(utf8(dir.path() / "missing" / "file.bin"), "rb"));
+	CHECK(detail::lastError() == std::generic_category().message(ENOENT));
 }
 
 TEST_CASE("replaceFile replaces a file a reader has open, on Windows too", "[integration]")

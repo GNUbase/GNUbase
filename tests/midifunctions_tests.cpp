@@ -891,6 +891,7 @@ TEST_CASE("merge writes the events of a MIDI track set to a MIDI channel on that
 			.note(3, 2 * g_quarter, g_quarter, 38, 1)
 			.cc(4, 2 * g_quarter, 7, 90, 1)
 			.controller(5, 2 * g_quarter, ControllerType::Program, 9, g_noBank)
+			.controller(6, 0, ControllerType::Program, 4, g_noBank, 1)
 			.part);
 	DrumMap map;
 	map.id = project.newId();
@@ -913,13 +914,14 @@ TEST_CASE("merge writes the events of a MIDI track set to a MIDI channel on that
 		return events;
 	};
 
-	// On the track's channel 4: the notes, the controllers and the chased CC 1.
+	// On the track's channel 4: the notes, the controllers, the chased CC 1 and the chased program change.
 	const int64_t control = -static_cast<int64_t>(ControllerType::Control) - 1;
 	const int64_t program = -static_cast<int64_t>(ControllerType::Program) - 1;
 	const auto expected = [&](int64_t drumChannel)
 	{
 		std::vector<std::vector<int64_t>> events = {{g_quarter, 38, g_quarter, drumChannel},
-			{g_quarter, 60, g_quarter, 3}, {0, control, 1, 3}, {g_quarter, control, 7, 3}, {g_quarter, program, 9, 3}};
+			{g_quarter, 60, g_quarter, 3}, {0, control, 1, 3}, {g_quarter, control, 7, 3}, {g_quarter, program, 9, 3},
+			{0, program, 4, 3}};
 		std::sort(events.begin(), events.end());
 		return events;
 	};
@@ -929,6 +931,67 @@ TEST_CASE("merge writes the events of a MIDI track set to a MIDI channel on that
 	project.trackById.at(strings).drumMap = map.id;
 	settings.tracks = {strings};
 	CHECK(channels(merge(project, settings)) == expected(9));
+}
+
+TEST_CASE("merge keeps the events' own channels on a destination set to a MIDI channel", "[unit]")
+{
+	Project project = newProject();
+	const ObjectId piano = addTrack(project, TrackType::Instrument, "Piano");
+	const ObjectId strings = addTrack(project, TrackType::Midi, "Strings");
+	const ObjectId horns = addTrack(project, TrackType::Midi, "Horns");
+	for (const ObjectId track : {strings, horns})
+		project.channels.at(project.trackById.at(track).channel).output = project.trackById.at(piano).channel;
+	const auto midiChannel = [&project](ObjectId track) -> std::optional<int>&
+	{ return project.channels.at(project.trackById.at(track).channel).midiChannel; };
+	midiChannel(strings) = 3;
+	// Notes on channels 1 and 2, a controller on channel 6.
+	addPart(project, strings, 0, 4 * g_quarter,
+		PartBuilder()
+			.note(1, g_quarter, g_quarter, 60)
+			.note(2, g_quarter, g_quarter, 62, 1)
+			.cc(3, g_quarter, 1, 50, 5)
+			.part);
+	MergeSettings settings;
+	settings.start = 0;
+	settings.end = project.tempo.toSamples(4 * g_quarter, project.sampleRate);
+	settings.tracks = {strings};
+	settings.includeChase = false;
+	// The channel of each merged event, by position and pitch or controller number.
+	const auto channels = [&project](const PartChanges& changes)
+	{
+		REQUIRE(changes.addedParts.size() == 1);
+		const MidiPart& part = project.midiParts.at(changes.addedParts[0]);
+		std::vector<std::vector<int64_t>> events;
+		events.reserve(part.notes.size() + part.controllers.size());
+		for (const auto& [id, note] : part.notes)
+			events.push_back({note.pitch, note.channel});
+		for (const auto& [id, controller] : part.controllers)
+			events.push_back({-controller.number, controller.channel});
+		std::sort(events.begin(), events.end());
+		return events;
+	};
+	const std::vector<std::vector<int64_t>> own = {{-1, 5}, {60, 0}, {62, 1}};
+	const std::vector<std::vector<int64_t>> onFour = {{-1, 3}, {60, 3}, {62, 3}};
+
+	SECTION("a track merged onto itself keeps the channels its events were recorded with (pp. 1120-1121)")
+	{
+		settings.destination = strings;
+		settings.eraseDestination = true;
+		CHECK(channels(merge(project, settings)) == own);
+	}
+	SECTION("a track set to another channel plays every channel on its own")
+	{
+		midiChannel(horns) = 7;
+		settings.destination = horns;
+		CHECK(channels(merge(project, settings)) == own);
+	}
+	SECTION("a track set to Any plays them on theirs: the channel they played on")
+	{
+		settings.destination = horns;
+		CHECK(channels(merge(project, settings)) == onFour);
+		settings.destination = 0;
+		CHECK(channels(merge(project, settings)) == onFour);
+	}
 }
 
 TEST_CASE("dissolve sets the new tracks to the MIDI channel they hold, or by pitch to the track's", "[unit]")
@@ -3334,6 +3397,58 @@ TEST_CASE("merge keeps on a part of its own the transpose and velocity the notes
 		CHECK(parts[0].at("transpose") == 24);
 		CHECK(parts[1].at("lane") == 1);
 		CHECK(parts[1].at("transpose") == 12);
+	}
+
+	SECTION("the part with the shared setting first, the parts of their own after it in the order of their starts")
+	{
+		// The earliest part's transpose of 24 sorts after the latest one's 12, and its part of its own starts before
+		// the part with the shared setting; both take a pitch beyond 127 that the track's transpose brings back.
+		const ObjectId other = addInstrumentTrack(client);
+		const ObjectId earliest = addPartWith(client, other, 0, 4 * g_quarter, {{0, 110}});
+		run(client, "midiPart.set", {{"part", earliest}, {"transpose", 24}});
+		addPartWith(client, other, 4 * g_quarter, 4 * g_quarter, {{0, 60}});
+		const ObjectId latest = addPartWith(client, other, 8 * g_quarter, 4 * g_quarter, {{0, 120}});
+		run(client, "midiPart.set", {{"part", latest}, {"transpose", 12}});
+		setModifiers(client, other, Json{{"transpose", -12}});
+		const auto before = playedOn(fixture.engine, other);
+		REQUIRE(before.size() == 3);
+		run(client, "midi.merge",
+			{{"start", 0}, {"end", 2 * g_eightQuarters}, {"tracks", {other}}, {"destination", other},
+				{"eraseDestination", true}});
+		CHECK(playedOn(fixture.engine, other) == before);
+		const std::vector<Json> parts = partsOn(client, other);
+		REQUIRE(parts.size() == 3);
+		CHECK(parts[0].at("lane") == 0);
+		CHECK(parts[0].at("transpose") == 0);
+		CHECK(storedPitches(parts[0]) == std::vector<int>{60});
+		CHECK(parts[1].at("lane") == 1);
+		CHECK(parts[1].at("transpose") == 24);
+		CHECK(parts[2].at("lane") == 2);
+		CHECK(parts[2].at("transpose") == 12);
+	}
+
+	SECTION("a part of its own that no note goes into is left out")
+	{
+		// The later part keeps its velocity for its note's variance, but the note's pitch, 120 + 12, plays nowhere
+		// on a new track without the source track's transpose (#1491).
+		const auto high =
+			run(client, "midiPart.add", {{"track", track}, {"position", 8 * g_quarter}, {"length", 4 * g_quarter}})
+				.at("part")
+				.at("id")
+				.get<ObjectId>();
+		run(client, "midiPart.set", {{"part", high}, {"transpose", 12}, {"velocity", 20}});
+		run(client, "note.add",
+			{{"part", high},
+				{"notes",
+					{{{"position", 0}, {"length", 10}, {"pitch", 120}, {"velocity", 0.5},
+						{"velocityVariance", -1.0}}}}});
+		setModifiers(client, track, Json{{"transpose", -12}});
+		const Json merged =
+			run(client, "midi.merge", {{"start", 0}, {"end", 2 * g_eightQuarters}, {"tracks", {track}}});
+		const std::vector<Json> parts = partsOn(client, merged.at("tracks").at(0).get<ObjectId>());
+		REQUIRE(parts.size() == 1);
+		CHECK(parts[0].at("velocity") == 0);
+		CHECK(storedPitches(parts[0]) == std::vector<int>{60, 64, 64});
 	}
 
 	SECTION("without includeInserts, a pitch only the source track's modifiers bring back plays nowhere on a new track")

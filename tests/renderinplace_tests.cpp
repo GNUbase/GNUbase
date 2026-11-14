@@ -4,6 +4,7 @@
 #include "engine/audiofile/audiofile.h"
 #include "engine/dawproject/dawproject.h"
 #include "engine/document/document.h"
+#include "engine/document/rendersnapshot.h"
 #include "engine/engine.h"
 #include "testutils/heldjob.h"
 #include "testutils/testutils.h"
@@ -840,6 +841,31 @@ TEST_CASE("render in place puts what a track plays on a new audio track", "[inte
 		CHECK(copy.at("slot").at("id") != gain);
 		CHECK(copy.at("slot").at("plugin") == "builtin:gainPan");
 	}
+}
+
+TEST_CASE("a rendered event under a transpose event is independent of it", "[integration]")
+{
+	// The render holds the transposition: following the transpose track, it would be transposed again (#1368).
+	Session project;
+	const Session::Track mono = project.addTrack("Mono", 1);
+	run(project.client, "transpose.add", {{"position", 0}, {"value", 5}});
+	const Json result =
+		run(project.client, "track.renderInPlace", {{"tracks", {mono.track}}, {"sourceTracks", "mute"}});
+	const Json rendered = result.at("events").at(0);
+	const Json state = run(project.client, "project.get");
+	for (const Json& event : state.at("audioEvents"))
+		if (event.at("id") == rendered)
+			CHECK(event.at("globalTranspose") == "independent");
+	const RenderSnapshot& snapshot = project.engine.renderSnapshots().acquire();
+	bool found = false;
+	for (const RenderChannel& channel : snapshot.channels)
+		for (const RenderAudioEvent& event : channel.audioEvents)
+			if (event.id == rendered.get<ObjectId>())
+			{
+				found = true;
+				CHECK(snapshot.media.at(static_cast<size_t>(event.media)).pitch.empty());
+			}
+	CHECK(found);
 }
 
 TEST_CASE("render in place refuses what it can't render", "[integration]")

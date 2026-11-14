@@ -216,6 +216,7 @@ namespace gnubase::engine::processors
 		voice.amplitude = 1.0 - share + (share * velocity / 65535.0);
 		voice.noise = 0x9E3779B9u ^ (static_cast<uint32_t>(pad) * 2654435761u);
 		const double pitch = std::pow(2.0, value(pad, Tune) / 12.0);
+		voice.pitch = pitch;
 		if (layer == Layer::Sample && sample != nullptr)
 		{
 			const auto frames = static_cast<double>(sample->frames());
@@ -227,6 +228,8 @@ namespace gnubase::engine::processors
 		}
 		// The synths' filters: bright noise for snares, hi-hats and cymbals, a band for claps and cowbells.
 		const double tone = std::clamp(value(pad, Tone) / 100.0, 0.0, 1.0);
+		voice.tone = tone;
+		voice.noiseLevel = std::clamp(value(pad, Noise) / 100.0, 0.0, 1.0);
 		const double nyquist = 0.45 * m_sampleRate;
 		switch (layer)
 		{
@@ -272,14 +275,13 @@ namespace gnubase::engine::processors
 		return (static_cast<double>(voice.noise >> 8) / 8388608.0) - 1.0;
 	}
 
-	// One frame of a synth layer before its envelope, about -1 to 1.
-	double DrumMachine::synth(Voice& voice) noexcept
+	// One frame of a synth layer before its envelope, about -1 to 1. Tuning, tone and noise are the note on's.
+	double DrumMachine::synth(Voice& voice) const noexcept
 	{
-		const int pad = voice.pad;
 		const double t = voice.frame / m_sampleRate;
-		const double pitch = std::pow(2.0, value(pad, Tune) / 12.0);
-		const double noise = std::clamp(value(pad, Noise) / 100.0, 0.0, 1.0);
-		const double tone = std::clamp(value(pad, Tone) / 100.0, 0.0, 1.0);
+		const double pitch = voice.pitch;
+		const double noise = voice.noiseLevel;
+		const double tone = voice.tone;
 		// A sine whose pitch falls from depth times its own to it.
 		const auto body = [&](double frequency, double depth, double fall)
 		{
@@ -500,7 +502,10 @@ namespace gnubase::engine::processors
 					noteOff(event.key);
 					break;
 				case graph::ProcessEvent::Type::Parameter:
-					setParameter(event.parameter, event.parameterValue);
+					// A pad's parameter only while it is automated: the values without a lane come before the new
+					// automation, so its last events can still come after them (#1361).
+					if (event.parameter >= MasterLevel || kit.automated[event.parameter])
+						setParameter(event.parameter, event.parameterValue);
 					break;
 				case graph::ProcessEvent::Type::PitchBend:
 				case graph::ProcessEvent::Type::Controller:

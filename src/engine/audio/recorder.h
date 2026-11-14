@@ -266,6 +266,9 @@ namespace gnubase::engine
 		{
 			std::deque<RetrospectiveEvent> events;
 			bool taken = false; // retrospective() returned it: the next input starts afresh
+			// Its events before this device frame went into a recording (a track that only monitors while the chord
+			// track records): the catch range of the next one leaves them out.
+			uint64_t recordedUntil = 0;
 		};
 
 		// Releases m_mutex while a recording's files are created, with m_opening set.

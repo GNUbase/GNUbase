@@ -724,6 +724,22 @@ namespace
 			return notesPlayed(run(client, "midi.capture"));
 		}
 
+		// Stops the transport and waits until the recording is added.
+		bool stopRecording()
+		{
+			run(client, "transport.stop");
+			run(client, "audio.render", {{"frames", 640}});
+			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+			while (std::chrono::steady_clock::now() < deadline)
+			{
+				const std::optional<Message> next = client.wait(std::chrono::milliseconds(50));
+				const auto* event = next ? std::get_if<Event>(&*next) : nullptr;
+				if (event != nullptr && event->name == "recording.added")
+					return true;
+			}
+			return false;
+		}
+
 		Engine engine;
 		Client client{engine};
 		ObjectId track = 0;
@@ -894,21 +910,15 @@ TEST_CASE("recording chord events from an instrument track that only monitors", 
 	}
 	run(client, "midi.inject", {{"channel", rig.channel}, {"messages", messages}});
 	run(client, "audio.render", {{"frames", 24000}});
-	run(client, "transport.stop");
-	run(client, "audio.render", {{"frames", 640}});
-	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-	bool added = false;
-	while (!added && std::chrono::steady_clock::now() < deadline)
-	{
-		const std::optional<Message> next = client.wait(std::chrono::milliseconds(50));
-		const auto* event = next ? std::get_if<Event>(&*next) : nullptr;
-		added = event != nullptr && event->name == "recording.added";
-	}
-	REQUIRE(added);
+	REQUIRE(rig.stopRecording());
 	CHECK(chordNames(client) == std::vector<std::string>{"F"});
 	CHECK(run(client, "project.get").at("midiParts").empty()); // the track didn't record
-	// Its retrospective buffer kept what it played.
+	// Its retrospective buffer kept what it played. Inserting it is no recording of the chord track: what was edited
+	// there in between stays.
+	run(client, "chord.set",
+		{{"events", {{{"event", run(client, "chord.get").at("events")[0].at("id")}, {"chord", "Dm"}}}}});
 	run(client, "midi.insertRetrospective", {{"track", rig.track}});
+	CHECK(chordNames(client) == std::vector<std::string>{"Dm"});
 	const Json parts = run(client, "project.get").at("midiParts");
 	REQUIRE(parts.size() == 1);
 	std::vector<int> pitches;
@@ -934,6 +944,8 @@ TEST_CASE("a chord held on an audition track that is frozen doesn't block auditi
 	run(client, "track.freeze", {{"tracks", {rig.track}}, {"tail", 0}});
 	run(client, "audio.render", {{"frames", 64}}); // the new graph, without the track's sequencer
 	run(client, "chord.audition", {{"on", false}});
+	// A frozen track takes no MIDI: it auditions nothing.
+	CHECK(reject(client, "chord.audition", {{"chord", "C"}}).find("frozen") != std::string::npos);
 
 	// Another audition track auditions.
 	const Json added = run(client, "track.add", {{"type", "instrument"}});
@@ -946,4 +958,40 @@ TEST_CASE("a chord held on an audition track that is frozen doesn't block auditi
 	run(client, "audio.render", {{"frames", 64}});
 	CHECK(notesPlayed(run(client, "midi.capture")) ==
 		std::vector<std::vector<int>>{{0x90, 48}, {0x90, 60}, {0x90, 64}, {0x90, 67}});
+}
+
+TEST_CASE("a recording within the catch range of the one before doesn't take a monitoring track's notes again",
+	"[integration]")
+{
+	Rig rig;
+	Client& client = rig.client;
+	run(client, "settings.set", {{"key", "midi.recordCatchRange"}, {"value", 1000}}); // 48000 frames
+	run(client, "chord.setTrack", {{"recordEnable", true}});
+	const auto inject = [&](int64_t position, int status, const std::vector<int>& pitches)
+	{
+		Json messages = Json::array();
+		for (const int pitch : pitches)
+			messages.push_back({{"position", position}, {"bytes", {status, pitch, status == 0x90 ? 100 : 0}}});
+		run(client, "midi.inject", {{"channel", rig.channel}, {"messages", messages}});
+	};
+	// F, held over the first recording's end, then edited on the chord track.
+	run(client, "transport.record");
+	inject(1000, 0x90, {65, 69, 72});
+	run(client, "audio.render", {{"frames", 24000}});
+	REQUIRE(rig.stopRecording());
+	REQUIRE(chordNames(client) == std::vector<std::string>{"F"});
+	run(client, "chord.set",
+		{{"events", {{{"event", run(client, "chord.get").at("events")[0].at("id")}, {"chord", "Am"}}}}});
+
+	// The second recording, two bars on, starts within the catch range of F's note-ons, which made a chord event
+	// already: it doesn't catch them. F is let go there, then G is played.
+	run(client, "transport.locate", {{"position", 2 * g_barSamples}});
+	run(client, "audio.render", {{"frames", 64}});
+	run(client, "transport.record");
+	inject(10000, 0x80, {65, 69, 72});
+	inject(12000, 0x90, {67, 71, 74});
+	inject(20000, 0x80, {67, 71, 74});
+	run(client, "audio.render", {{"frames", 24000}});
+	REQUIRE(rig.stopRecording());
+	CHECK(chordNames(client) == std::vector<std::string>{"Am", "G"});
 }

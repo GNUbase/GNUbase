@@ -17,7 +17,10 @@ Functions that edit MIDI parts as a whole (#133, #838).
   pitch, so the notes get the O-notes and channels of their sounds (those of muted sounds are left out) and the chord
   track's pitches, which a new track, without either, plays the same. Notes and controllers of a MIDI track set to a
   MIDI channel are written on that channel, as it played them (a drum sound's own channel still wins), so they play
-  there on any track ([mixer.md](mixer.md)). A destination with a drum map or following the chord track gets a pitch
+  there on a track set to Any or to that channel ([mixer.md](mixer.md)). A destination set to a channel plays every
+  channel on its own, so there they keep their own channels, as a destination's drum map keeps a note's own pitch: a
+  track merged onto itself keeps the channels its events were recorded with, and set back to Any plays them so
+  (pp. 1120-1121). A destination with a drum map or following the chord track gets a pitch
   that plays them (a note's own, if it does, so that a track merged onto itself keeps its
   pitches), or if none does what played, which it then maps. The new part gets the root key and Global Transpose setting
   ([transpose.md](transpose.md)) the parts its notes come from share, or, when they differ, the project root key and
@@ -40,10 +43,11 @@ Functions that edit MIDI parts as a whole (#133, #838).
   is on the first lane: the one with the setting the parts share, else the one of the earliest source part. The others,
   in the order of their earliest source parts as bounce orders its parts, with the articulation events only (playback
   resolves directions per part and never sends them), are on new lanes below the destination's parts. Playback sends a
-  sound slot's output events per part ([articulation-maps.md](articulation-maps.md)), so on a track with an articulation
-  map a note of one new part can sound under the key switch another new part sent (#1432). With `eraseDestination`, a
-  shared copy that loses events leaves its copies, which keep theirs; its events get new ids, so the play probability,
-  velocity variance and random MIDI modifier values of the notes that stay draw anew. `midi.dissolve` copies events by
+  sound slot's output events across a track's parts ([articulation-maps.md](articulation-maps.md)), so the new parts
+  play the slots the source parts did. A part of its own that no note goes into (all of them left out, or playing
+  nowhere) is left out (#1491). With `eraseDestination`, a shared copy that loses events leaves its copies, which keep
+  theirs; its events get new ids, so the play probability, velocity variance and random MIDI modifier values of the
+  notes that stay draw anew. `midi.dissolve` copies events by
   channel or pitch into new parts at the same place and mutes the parts (pp. 1121-1122): `to: tracks` puts them on new
   MIDI tracks routed to the same instrument, `to: lanes` on new lanes of the track below the lanes its parts are on
   (`optimize` only works with tracks). Events of no channel or pitch go with the first new part of their part, so none
@@ -97,19 +101,22 @@ a part of its own a pitch that plays and that the new part's global transpose or
 0-127, with and without Include Inserts, the part's velocity with a note's velocity variance, and without Include
 Inserts onto the track itself a pitch the part's transpose takes beyond 127 that the track's modifiers bring back and
 the part's velocity under their compression; merge with Include Inserts putting the part's velocity into the notes where
-a Velocity Filter lets a velocity a note's variance gives it through only with the part's velocity, and keeping it on
-the part under a velocity shift and a random velocity; without Include Inserts onto a new track, a pitch that only the
-source track's modifiers bring back left out; parts of their own on a destination with a drum map or following the chord
-track; the first new part being the earliest part's where none goes into the one with the shared setting; undo and redo
-of a merge into several parts, and Erase Destination with a part that stays on a higher lane; merge and bounce taking
-the global transpose at each note's position (an Independent part, then one that follows the transpose track across an
-event, with a Note Filter in merge), and merge with Include Inserts taking the new part's where a random position moves
-a note across a transpose event; the new part's setting coming only from parts with notes (in merge's range); bounce
-with a Velocity Limit, a Velocity Filter and a Note Filter that leaves out pitch 60 under a compression, a note that
-plays nowhere with its part's transpose in it and one that keeps it on the part under a drum map, the one new part
-moving past a part that stays, and undo and redo of a bounce into parts with different root keys; dissolve to lanes and
-to tracks of a part in another root key and an Independent part under a transpose event, playing as before; with random
-pitch and velocity and with velocity variance, which draw anew, it checks what stays on the part.
+a Velocity Filter lets a velocity a note's variance gives it through only with the part's velocity, and where a velocity
+range of the track (Velocity Filter or Velocity Limit) that the part's velocity changes puts it in the notes, and
+keeping it on the part under a velocity shift and a random velocity; a part of its own that no note goes into left out;
+without Include Inserts onto a new track, a pitch that only the source track's modifiers bring back left out; parts of
+their own on a destination with a drum map or following the chord track; the first new part being the earliest part's
+where none goes into the one with the shared setting, and the one with the shared setting first, before a part of its
+own whose source part starts earlier, with two parts of their own after it in the order of their starts, not their
+settings; undo and redo of a merge into several parts, and Erase Destination with a part that stays on a higher lane;
+merge and bounce taking the global transpose at each note's position (an Independent part, then one that follows the
+transpose track across an event, with a Note Filter in merge), and merge with Include Inserts taking the new part's
+where a random position moves a note across a transpose event; the new part's setting coming only from parts with notes
+(in merge's range); bounce with a Velocity Limit, a Velocity Filter and a Note Filter that leaves out pitch 60 under a
+compression, a note that plays nowhere with its part's transpose in it and one that keeps it on the part under a drum
+map, the one new part moving past a part that stays, and undo and redo of a bounce into parts with different root keys;
+dissolve to lanes and to tracks of a part in another root key and an Independent part under a transpose event, playing
+as before; with random pitch and velocity and with velocity variance, which draw anew, it checks what stays on the part.
 `tests/midifunctions_ui_tests.cpp` drives the menu with `ui::Automation`: every item of MIDI > Functions without a
 dialog, once each, run on a part through the menu and the engine's command with the expected settings on a copy of it on
 another track, comparing notes, controllers and automation, so that a wrong command or mode fails; the item list is

@@ -128,6 +128,22 @@ namespace gnubase::ui
 			R"(<div class="inspector-buttons"><button class="inspector-articulation-setup")"
 			R"( title="Articulation Map Setup">Setup...</button></div>)"
 			R"(</div></div>)"
+			// The track's versions (reference manual pp. 231-232, docs/features/track-versions.md), which the commands
+			// change on every selected track.
+			R"(<div class="inspector-section" section="trackVersions" label="Track Versions">)"
+			R"(<button class="section-header">Track Versions</button><div class="section-body">)"
+			R"(<div class="inspector-row" row="versionName"><span class="inspector-label">Name</span>)"
+			R"(<textdisplay class="display" control="versionName" title="Track Version Name"/></div>)"
+			R"(<div class="inspector-row" row="versionId"><span class="inspector-label">ID</span>)"
+			R"(<span class="inspector-version-id"/><span class="inspector-version-indicator")"
+			R"( title="More Than One Track Version">+</span></div>)"
+			R"(<div class="inspector-versions"/>)"
+			R"(<div class="inspector-buttons">)"
+			R"(<button class="inspector-version-add" title="Add new Track Version">New</button>)"
+			R"(<button class="inspector-version-duplicate" title="Duplicate active Track Version">Duplicate</button>)"
+			R"(<button class="inspector-version-remove" title="Delete active Track Version">Delete</button>)"
+			R"(</div>)"
+			R"(</div></div>)"
 			R"(<div class="inspector-section" section="inserts" label="Inserts">)"
 			R"(<button class="section-header">Inserts</button><div class="section-body inserts"/></div>)"
 			R"(<div class="inspector-section" section="notepad" label="Notepad">)"
@@ -364,6 +380,12 @@ namespace gnubase::ui
 			return nullptr;
 		}
 
+		// Whether tracks of a type have versions (docs/features/track-versions.md).
+		bool hasVersions(const std::string& type)
+		{
+			return type == "audio" || type == "instrument" || type == "midi";
+		}
+
 		// Where the channel of a track of the type can play: output busses, group and effect channels, or for MIDI
 		// tracks the instrument channels, as in the add track dialog; and where an audio track records from.
 		Options outputs(const Json& project, const std::string& type, uint64_t channel)
@@ -550,19 +572,21 @@ namespace gnubase::ui
 			m_root->RemoveEventListener(id, this);
 	}
 
-	void Inspector::update(uint64_t track, const Json& project, uint64_t loads, uint64_t read)
+	void Inspector::update(const std::vector<uint64_t>& tracks, const Json& project, uint64_t loads, uint64_t read)
 	{
 		m_project = &project;
 		m_read = read;
-		if (track == m_track && loads == m_loads && !m_stale)
+		if (tracks == m_selected && loads == m_loads && !m_stale)
 			return;
 		m_stale = false;
+		const uint64_t track = tracks.empty() ? 0 : tracks.front();
 		// An edit belongs to the track it started on: leaving the field takes it there before another track shows.
 		Rml::Context* context = m_root ? m_root->GetContext() : nullptr;
 		if (Rml::Element* focus = context != nullptr ? context->GetFocusElement() : nullptr;
 			track != m_track && focus != nullptr && focus != m_root.get() && m_root->Contains(focus))
 			focus->Blur();
 		m_track = track;
+		m_selected = tracks;
 		m_loads = loads;
 		show();
 	}
@@ -760,6 +784,11 @@ namespace gnubase::ui
 		available("[row=bank]", type == "midi" && device == nullptr);
 		available("[row=program]", type == "midi");
 		available("[row=inputTransformer]", noteTrack);
+		// The track's versions (reference manual pp. 231-232, docs/features/track-versions.md).
+		const bool versioned = type == "audio" || type == "instrument" || type == "midi";
+		available("[section=trackVersions]", versioned);
+		if (versioned)
+			showVersions(*track);
 		if (channel != nullptr)
 		{
 			for (const auto& [control, key] : {std::pair{"mute", "mute"}, std::pair{"solo", "solo"},
@@ -853,6 +882,58 @@ namespace gnubase::ui
 				notes->SetValue(channel->value("notes", std::string()));
 		}
 		m_showing = false;
+	}
+
+	void Inspector::showVersions(const Json& track)
+	{
+		Rml::Element& root = *m_root.get();
+		const auto element = [&root](const std::string& selector) { return root.QuerySelector(selector); };
+		const Json& versions = track.at("versions");
+		const Json& active = track.at("activeVersion");
+		// A track that has versions always has at least the one it doesn't store (versionsOf).
+		const Json* shown = &versions.front();
+		for (const Json& version : versions)
+			if (version.at("id") == active)
+				shown = &version;
+		// The name, unless the user is typing a new one.
+		Rml::Element* field = element("textdisplay[control=versionName]");
+		Rml::Context* context = root.GetContext();
+		if (field != nullptr && (context == nullptr || context->GetFocusElement() != field))
+			field->SetAttribute("value", shown->at("name").get<std::string>());
+		if (Rml::Element* id = element(".inspector-version-id"))
+			id->SetInnerRML(std::to_string(shown->at("id").get<int>()));
+		// The indicator shows that there is more than one version.
+		if (Rml::Element* section = element("[section=trackVersions]"))
+			setClass(*section, "multiple", versions.size() > 1);
+		// The list, in which a click activates a version on every selected track; the active one is selected.
+		std::string rml;
+		for (const Json& version : versions)
+			rml += std::string(R"(<div class="list-item inspector-version)") +
+				(version.at("id") == active ? " selected" : "") + R"(" version=")" +
+				std::to_string(version.at("id").get<int>()) + R"("><span class="name">)" +
+				Rml::StringUtilities::EncodeRml(version.at("name").get<std::string>()) + R"(</span><span class="id">)" +
+				std::to_string(version.at("id").get<int>()) + "</span></div>";
+		if (Rml::Element* list = element(".inspector-versions"); list != nullptr && list->GetInnerRML() != rml)
+			list->SetInnerRML(rml);
+		// Delete needs a version to delete.
+		if (Rml::Element* button = element(".inspector-version-remove"))
+			setClass(*button, "unavailable", versions.size() < 2);
+	}
+
+	std::vector<uint64_t> Inspector::versioned() const
+	{
+		std::vector<uint64_t> tracks;
+		for (const uint64_t id : m_selected)
+			if (const Json* track = findIn(m_project, "tracks", id);
+				track != nullptr && hasVersions(track->at("type").get<std::string>()))
+				tracks.push_back(id);
+		return tracks;
+	}
+
+	void Inspector::versionCommand(const char* command)
+	{
+		if (const std::vector<uint64_t> tracks = versioned(); !tracks.empty())
+			m_binding.send(command, {{"tracks", tracks}}, whenRefused());
 	}
 
 	void Inspector::showModifiers(const Json& modifiers)
@@ -1109,6 +1190,21 @@ namespace gnubase::ui
 				m_editChannel(m_track); // Edit Channel Settings (reference manual p. 500)
 			if (target->IsClassSet("inspector-articulation-setup") && m_setupArticulations && m_track != 0)
 				m_setupArticulations(m_track);
+			// The Track Versions section's buttons, and the version list, in which a click activates a version.
+			if (target->IsClassSet("inspector-version-add"))
+				versionCommand("trackVersion.add");
+			if (target->IsClassSet("inspector-version-duplicate"))
+				versionCommand("trackVersion.duplicate");
+			if (target->IsClassSet("inspector-version-remove") && !target->IsClassSet("unavailable"))
+				versionCommand("trackVersion.remove");
+			for (const Rml::Element* up = target; up != nullptr && up != m_root.get(); up = up->GetParentNode())
+				if (up->IsClassSet("inspector-version") && up->HasAttribute("version"))
+				{
+					if (const std::vector<uint64_t> tracks = versioned(); !tracks.empty())
+						m_binding.send("trackVersion.activate",
+							{{"tracks", tracks}, {"version", up->GetAttribute<int>("version", 1)}}, whenRefused());
+					break;
+				}
 			// A MIDI effect's edit button opens and closes its control panel.
 			if (target->IsClassSet("midi-effect-edit") && target->GetParentNode() != nullptr &&
 				target->GetParentNode()->GetParentNode() != nullptr)
@@ -1202,6 +1298,16 @@ namespace gnubase::ui
 		if (name == "name")
 		{
 			m_binding.send("track.set", {{"track", m_track}, {"name", event.GetParameter<Rml::String>("value", "")}});
+			return;
+		}
+		if (name == "versionName")
+		{
+			// Renaming the active version renames it on every selected track (reference manual p. 236).
+			const auto value = event.GetParameter<Rml::String>("value", "");
+			if (value.empty())
+				m_stale = true; // the engine refuses an empty name: show the version's own again
+			else if (const std::vector<uint64_t> tracks = versioned(); !tracks.empty())
+				m_binding.send("trackVersion.set", {{"tracks", tracks}, {"name", value}}, whenRefused());
 			return;
 		}
 		if (name == "editInPlace")

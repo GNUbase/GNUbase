@@ -26,7 +26,7 @@ namespace gnubase::ui
 	// The drum machine panel (#182, reference manual pp. 938-977, docs/features/drum-track.md), a panel of the lower
 	// zone that shows the selected drum track: its toolbar with the editing pages (Instrument, Delay and Reverb) and
 	// Bypass All Effects, the pad section with the eight groups of 16 pads, and the page shown. The root gets the class
-	// empty while the selected track isn't a drum track.
+	// empty while the selected track isn't a drum track, and it then shows Add Drum Track (p. 146).
 	//
 	// A click on a pad selects it; the Instrument page shows the selected pad's name and a control per pad parameter
 	// (from processor.list), the Delay and Reverb pages the global ones. The pad tools load an audio file onto the pad
@@ -37,9 +37,10 @@ namespace gnubase::ui
 	class DrumMachinePanel final : private Rml::EventListener
 	{
 	public:
-		// loadSample asks for a file to load onto a pad of a drum track.
+		// loadSample asks for a file to load onto a pad of a drum track; addTrack adds one (Add Drum Track, the
+		// button of the empty panel).
 		DrumMachinePanel(EngineBinding& binding, Rml::Element& element,
-			std::function<void(uint64_t track, int pad)> loadSample = {});
+			std::function<void(uint64_t track, int pad)> loadSample = {}, std::function<void()> addTrack = {});
 		~DrumMachinePanel() override;
 		DrumMachinePanel(const DrumMachinePanel&) = delete;
 		DrumMachinePanel& operator=(const DrumMachinePanel&) = delete;
@@ -77,18 +78,21 @@ namespace gnubase::ui
 		void set(uint32_t id, double value, int gesture);
 		void showMessage(const std::string& text);
 		double value(uint32_t id) const;
+		std::string padName(int pad) const;
 		uint32_t idOf(const Parameter& parameter) const;
 		std::string stepKey(uint32_t id) const;
 		Rml::Element* find(const std::string& id) const;
 
 		EngineBinding& m_binding;
 		std::function<void(uint64_t track, int pad)> m_loadSample;
+		std::function<void()> m_addTrack;
 		const std::string m_stepOwner;
 		Rml::ObserverPtr<Rml::Element> m_root;
 		std::vector<Parameter> m_padParameters;    // pad 0's, from processor.list
 		std::vector<Parameter> m_globalParameters; // the drum machine's own
 		std::map<uint32_t, double> m_values;       // the channel's
 		std::map<int, std::string> m_names;        // the pads' names (drum.setPad), else their clips'
+		std::vector<std::string> m_padNames;       // without these: the General MIDI sounds', from processor.list
 		uint64_t m_track = 0;
 		uint64_t m_selected = 0; // the track update showed last, a drum track or not
 		uint64_t m_loads = 0;

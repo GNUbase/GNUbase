@@ -1,8 +1,9 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-/* The drum machine panel (ui/drummachinepanel.h, docs/features/drum-track.md): the toolbar with the page tabs and the
-   pad tools, the pad section with the group buttons and the 4x4 grid of pads, and the page beside it. The root gets
-   .empty without a drum track, the selected group, page tab and pad .selected, pads .assigned (they play something),
-   .muted, .soloed and .soloed-out, and the toolbar's message .error; the themes color them. */
+/* The drum machine panel (ui/drummachinepanel.h, docs/features/drum-track.md): the hint with Add Drum Track while
+   there is no drum track, the toolbar with the page tabs and the pad tools, the pad section with the group buttons
+   and the 4x4 grid of pads, and the page beside it. The root gets .empty without a drum track, the selected group,
+   page tab and pad .selected, pads .assigned (they play something), .muted, .soloed and .soloed-out, and the
+   toolbar's message .error; the themes color them. */
 .drum-machine
 {
 	display: flex;
@@ -20,6 +21,11 @@
 .drum-machine.empty .drum-hint
 {
 	display: block;
+}
+
+#drum-add-track
+{
+	margin-top: 8dp;
 }
 
 .drum-machine.empty .drum-toolbar, .drum-machine.empty .drum-body

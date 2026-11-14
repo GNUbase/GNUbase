@@ -249,6 +249,13 @@ namespace gnubase::ui
 		m_root->SetAttribute("selection", ids);
 	}
 
+	void EventDisplay::showRefusal(const std::string& error)
+	{
+		logging::warning("An edit of events failed: {}", error);
+		if (m_refusal != nullptr && alive())
+			m_refusal->SetAttribute("text", error);
+	}
+
 	void EventDisplay::edit(const std::string& command, Json parameters, bool selectResult)
 	{
 		m_binding.send(command, std::move(parameters),
@@ -257,7 +264,7 @@ namespace gnubase::ui
 				if (alive.expired())
 					return;
 				if (!result.ok())
-					logging::warning("An edit of events failed: {}", result.error);
+					showRefusal(result.error);
 				else if (selectResult)
 					select(result.value.at("events").get<std::vector<uint64_t>>());
 			});
@@ -1145,7 +1152,7 @@ namespace gnubase::ui
 				if (alive.expired())
 					return;
 				if (!result.ok())
-					logging::warning("An edit of events failed: {}", result.error);
+					showRefusal(result.error);
 				if (release == m_resizeReleases) // the last one: its preview goes with the next project
 					m_resizeLanded = true;
 				if (!result.ok() || !previewed)
@@ -1224,7 +1231,7 @@ namespace gnubase::ui
 					return;
 				if (!result.ok())
 				{
-					logging::warning("An edit of events failed: {}", result.error);
+					showRefusal(result.error);
 					return;
 				}
 				if (!copy)

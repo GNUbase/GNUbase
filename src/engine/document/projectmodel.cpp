@@ -494,29 +494,39 @@ namespace gnubase::engine
 
 	void rebaseTrack(Project& project, Track& track, time::TimeBase base, CommandContext& context)
 	{
-		for (auto& [id, event] : project.audioEvents)
-			if (event.track == track.id)
+		// The inactive versions' events and parts are in the track's time base too, and change without an event, since
+		// nothing shows them.
+		forEveryEventAndPart(
+			project,
+			[&](AudioEvent& event, bool plays)
 			{
+				if (event.track != track.id)
+					return;
 				event.position = time::rebase(event.position, base, project.tempo, project.sampleRate);
-				context.emit("audioEvent.changed", {{"event", toJson(event)}});
-			}
-		for (auto& [id, part] : project.audioParts)
-			if (part.track == track.id)
+				if (plays)
+					context.emit("audioEvent.changed", {{"event", toJson(event)}});
+			},
+			[&](AudioPart& part, bool plays)
 			{
+				if (part.track != track.id)
+					return;
 				const time::Position end = time::rebase(
 					{part.position.base, part.position.value + part.length}, base, project.tempo, project.sampleRate);
 				part.position = time::rebase(part.position, base, project.tempo, project.sampleRate);
 				part.length = end.value - part.position.value;
-				context.emit("audioPart.changed", {{"part", toJson(part)}});
-			}
-		for (auto& [id, part] : project.midiParts)
-			if (part.track == track.id)
+				if (plays)
+					context.emit("audioPart.changed", {{"part", toJson(part)}});
+			},
+			[&](MidiPart& part, bool plays)
 			{
+				if (part.track != track.id)
+					return;
 				const time::Position end = time::rebase(partEnd(part), base, project.tempo, project.sampleRate);
 				part.position = time::rebase(part.position, base, project.tempo, project.sampleRate);
 				part.length = end.value - part.position.value;
-				context.emit("midiPart.changed", {{"part", toJson(part)}});
-			}
+				if (plays)
+					context.emit("midiPart.changed", {{"part", toJson(part)}});
+			});
 		for (auto& [id, marker] : project.markers)
 			if (marker.track == track.id)
 			{
@@ -557,70 +567,42 @@ namespace gnubase::engine
 			}
 		track.timeOffset =
 			time::rebase({track.timeBase, track.timeOffset}, base, project.tempo, project.sampleRate).value;
-		// The inactive versions' events and parts are in the track's time base too.
-		for (TrackVersion& version : track.versions)
-		{
-			for (AudioEvent& event : version.audioEvents)
-				event.position = time::rebase(event.position, base, project.tempo, project.sampleRate);
-			for (AudioPart& part : version.audioParts)
-			{
-				const time::Position end = time::rebase(
-					{part.position.base, part.position.value + part.length}, base, project.tempo, project.sampleRate);
-				part.position = time::rebase(part.position, base, project.tempo, project.sampleRate);
-				part.length = end.value - part.position.value;
-			}
-			for (MidiPart& part : version.midiParts)
-			{
-				const time::Position end = time::rebase(partEnd(part), base, project.tempo, project.sampleRate);
-				part.position = time::rebase(part.position, base, project.tempo, project.sampleRate);
-				part.length = end.value - part.position.value;
-			}
-		}
 		track.timeBase = base;
 	}
 
 	void changeSampleRate(Project& project, double sampleRate, CommandContext& context)
 	{
 		const double factor = sampleRate / project.sampleRate;
-		for (auto& [id, event] : project.audioEvents)
-			if (event.position.base == time::TimeBase::Linear)
+		// Only linear positions are in samples; the inactive versions' events and parts change without an event, since
+		// nothing shows them. An audio event's offset and length stay: they are frames of its file.
+		forEveryEventAndPart(
+			project,
+			[&](AudioEvent& event, bool plays)
 			{
+				if (event.position.base != time::TimeBase::Linear)
+					return;
 				event.position.value = rescale(event.position.value, factor);
-				context.emit("audioEvent.changed", {{"event", toJson(event)}});
-			}
-		for (auto& [id, part] : project.midiParts)
-			if (part.position.base == time::TimeBase::Linear)
+				if (plays)
+					context.emit("audioEvent.changed", {{"event", toJson(event)}});
+			},
+			[&](AudioPart& part, bool plays)
 			{
+				if (part.position.base != time::TimeBase::Linear)
+					return;
 				part.position.value = rescale(part.position.value, factor);
 				part.length = rescale(part.length, factor);
-				context.emit("midiPart.changed", {{"part", toJson(part)}});
-			}
-		for (auto& [id, part] : project.audioParts)
-			if (part.position.base == time::TimeBase::Linear)
+				if (plays)
+					context.emit("audioPart.changed", {{"part", toJson(part)}});
+			},
+			[&](MidiPart& part, bool plays)
 			{
+				if (part.position.base != time::TimeBase::Linear)
+					return;
 				part.position.value = rescale(part.position.value, factor);
 				part.length = rescale(part.length, factor);
-				context.emit("audioPart.changed", {{"part", toJson(part)}});
-			}
-		for (auto& [id, track] : project.trackById)
-			for (TrackVersion& version : track.versions)
-			{
-				for (AudioEvent& event : version.audioEvents)
-					if (event.position.base == time::TimeBase::Linear)
-						event.position.value = rescale(event.position.value, factor);
-				for (AudioPart& part : version.audioParts)
-					if (part.position.base == time::TimeBase::Linear)
-					{
-						part.position.value = rescale(part.position.value, factor);
-						part.length = rescale(part.length, factor);
-					}
-				for (MidiPart& part : version.midiParts)
-					if (part.position.base == time::TimeBase::Linear)
-					{
-						part.position.value = rescale(part.position.value, factor);
-						part.length = rescale(part.length, factor);
-					}
-			}
+				if (plays)
+					context.emit("midiPart.changed", {{"part", toJson(part)}});
+			});
 		for (auto& [id, lane] : project.automation)
 		{
 			bool changed = false;
@@ -2891,6 +2873,24 @@ namespace gnubase::engine
 			return result;
 		}
 
+		// A MIDI part's or an audio event's rootKey and globalTranspose, as midiPart.set and audioEvent.set take them.
+		void setGlobalTranspose(const Json& parameters, int& rootKey, bool& independent)
+		{
+			if (parameters.contains("rootKey"))
+			{
+				const std::string name = parameters.at("rootKey").get<std::string>();
+				const std::optional<int> key = rootKeyFromName(name);
+				require(key.has_value(), "unknown root key " + name);
+				rootKey = key.value_or(-1);
+			}
+			if (parameters.contains("globalTranspose"))
+			{
+				const std::string mode = parameters.at("globalTranspose").get<std::string>();
+				require(mode == "follow" || mode == "independent", "globalTranspose must be follow or independent");
+				independent = mode == "independent";
+			}
+		}
+
 		Json setAudioEvent(Project& project, CommandContext& context, bool follow)
 		{
 			const Json& parameters = context.parameters();
@@ -2903,6 +2903,7 @@ namespace gnubase::engine
 			changed.length = parameters.value("length", event.length);
 			changed.volume = parameters.value("volume", event.volume);
 			changed.mute = parameters.value("mute", event.mute);
+			setGlobalTranspose(parameters, changed.rootKey, changed.independent);
 			require(changed.length > 0, "length must be positive");
 			checkAudioEvent(project, changed);
 			if (follow && changed.position != event.position)
@@ -2993,19 +2994,7 @@ namespace gnubase::engine
 					requireRange(number, -127, 127, key);
 					*value = static_cast<int>(number);
 				}
-			if (parameters.contains("rootKey"))
-			{
-				const std::string name = parameters.at("rootKey").get<std::string>();
-				const std::optional<int> key = rootKeyFromName(name);
-				require(key.has_value(), "unknown root key " + name);
-				part.rootKey = key.value_or(-1);
-			}
-			if (parameters.contains("globalTranspose"))
-			{
-				const std::string mode = parameters.at("globalTranspose").get<std::string>();
-				require(mode == "follow" || mode == "independent", "globalTranspose must be follow or independent");
-				part.independent = mode == "independent";
-			}
+			setGlobalTranspose(parameters, part.rootKey, part.independent);
 			if (parameters.contains("pattern"))
 			{
 				const auto pattern = parameters.at("pattern").get<ObjectId>();
@@ -3607,6 +3596,7 @@ namespace gnubase::engine
 						return result;
 					syncSharedParts(before.midiParts, m_project, context);
 					midi::adoptPatterns(m_project, context);
+					followTrackFolders(m_project, context);
 				}
 				catch (...)
 				{
@@ -3731,6 +3721,7 @@ namespace gnubase::engine
 		before.clips = m_project.clips;
 		before.audioEvents = m_project.audioEvents;
 		const Json layout = trackLayoutJson(m_project);
+		const Json visibility = trackVisibilityJson(m_project);
 		for (int64_t i = 0; i < steps; ++i)
 		{
 			const HistoryStep& step = undo ? m_history.undo() : m_history.redo();
@@ -3739,6 +3730,7 @@ namespace gnubase::engine
 		}
 		announceWarpedEvents(before, m_project, context);
 		followTimeFormat(m_project, timeFormat, context);
+		followTrackFolders(m_project, context, visibility);
 		// The project keeps the heights and fold states of removed tracks for undo: a track that comes back or goes
 		// brings its own back or takes them away (#1131).
 		if (Json now = trackLayoutJson(m_project); now != layout)
@@ -4620,10 +4612,16 @@ namespace gnubase::engine
 				resultSchema({"event"}), false},
 			addAudioEvent);
 		add(engine,
-			{"audioEvent.set", 1, "Changes an audio event's position, clip, offset, length, volume (dB) or mute.",
-				objectSchema(
-					{{"event", idSchema}, {"clip", idSchema}, {"position", integerSchema}, {"offset", integerSchema},
-						{"length", integerSchema}, {"volume", numberSchema}, {"mute", booleanSchema}},
+			{"audioEvent.set", 1,
+				"Changes an audio event's position, clip, offset, length, volume (dB) or mute, or how global "
+				"transposition shifts its pitch in real time (#1368), as midiPart.set's do a MIDI part's: rootKey is "
+				"its root key (\"\" for none, C, C# and so on to B), which the project root key transposes it to "
+				"(project.set rootKey); globalTranspose follow (the default) or independent says whether the project "
+				"root key and the transpose track transpose it (transpose.add). Its audio file stays as it is.",
+				objectSchema({{"event", idSchema}, {"clip", idSchema}, {"position", integerSchema},
+								 {"offset", integerSchema}, {"length", integerSchema}, {"volume", numberSchema},
+								 {"mute", booleanSchema}, {"rootKey", enumSchema(rootKeyNames())},
+								 {"globalTranspose", enumSchema({"follow", "independent"})}},
 					{"event"}),
 				resultSchema({"event"}), false},
 			[this](Project& project, CommandContext& context)

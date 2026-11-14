@@ -975,6 +975,40 @@
 		background-color: transparent;
 		decorator: repeating-linear-gradient(to top, #3c3c3c 0dp, #3c3c3c 3dp, #3c3c3c00 3dp, #3c3c3c00 5dp);
 	}
+	.articulation-name
+	{
+		color: #c8c8c8;
+	}
+	.articulation-row.sound-slots
+	{
+		border-bottom-width: 1px;
+		border-bottom-color: #ffffff;
+	}
+	.sound-slot
+	{
+		background-color: #0d0d0d;
+		color: #ffffff;
+	}
+	.articulation-item.direction
+	{
+		background-color: #565609;
+	}
+	.articulation-item.attribute
+	{
+		background-color: #9e9e05;
+	}
+	.articulation-item.reset
+	{
+		background-color: #c8c8c8;
+	}
+	.articulation-item.selected
+	{
+		background-color: #00ffff;
+	}
+	.articulation-item.inactive
+	{
+		background-color: #3c3c3c;
+	}
 	.ape-display
 	{
 		background-color: #000000;

@@ -4,6 +4,8 @@
 #include "engine/graph/graph.h"
 #include "engine/midi/midivalues.h"
 #include "engine/plugins/pluginslot.h"
+#include "platform/log.h"
+#include "platform/rt/realtime.h"
 
 #include <algorithm>
 #include <array>
@@ -12,6 +14,7 @@
 #include <iterator>
 #include <limits>
 #include <numeric>
+#include <string_view>
 #include <tuple>
 #include <utility>
 
@@ -266,8 +269,44 @@ namespace gnubase::engine
 		return event;
 	}
 
-	MidiSequencer::MidiSequencer()
-		: m_sequence(std::make_unique<const MidiSequence>()), m_input(graph::g_maxEventsPerBlock),
+	MidiEffectInstance::MidiEffectInstance(std::unique_ptr<plugin::Plugin> plugin)
+		: m_plugin(std::move(plugin)), m_params(plugin::extension<plugin::Params>(*m_plugin))
+	{
+	}
+
+	MidiEffectInstance::~MidiEffectInstance()
+	{
+		// No block processes it any more.
+		deactivate();
+	}
+
+	void MidiEffectInstance::deactivate()
+	{
+		rt::assertNotRealtime("MidiEffectInstance::deactivate");
+		if (m_started)
+			m_plugin->stopProcessing();
+		if (m_active)
+			m_plugin->deactivate();
+		m_started = false;
+		m_active = false;
+	}
+
+	void MidiEffectInstance::activate(double sampleRate, uint32_t maxFrames)
+	{
+		deactivate();
+		m_active = m_plugin->activate(sampleRate, 1, maxFrames);
+	}
+
+	plugin::ProcessStatus MidiEffectInstance::process(const plugin::Process& process) noexcept
+	{
+		if (m_active && !m_started)
+			m_started = m_plugin->startProcessing();
+		return m_started ? m_plugin->process(process) : plugin::ProcessStatus::Error;
+	}
+
+	MidiSequencer::MidiSequencer(std::shared_ptr<plugin::Factory> effects)
+		: m_factory(effects ? std::move(effects) : std::make_shared<processors::BuiltinFactory>()),
+		  m_sequence(std::make_unique<const MidiSequence>()), m_input(graph::g_maxEventsPerBlock),
 		  m_stripChase(std::make_shared<graph::EventBuffer>(graph::g_maxEventsPerBlock))
 	{
 		std::iota(m_inputTo.begin(), m_inputTo.end(), uint16_t{0});
@@ -275,15 +314,14 @@ namespace gnubase::engine
 
 	namespace
 	{
-		constexpr size_t g_effectTransportSegments = 16;
 		constexpr size_t g_effectSysexBytes = 65536;
 
 		// Command thread: an instance of a built-in MIDI effect through the plugin API, initialized, with the slot's
 		// parameter values.
-		std::shared_ptr<plugin::Plugin> makeEffect(
-			const std::string& id, const std::vector<double>& parameters, plugin::Host& host)
+		std::shared_ptr<MidiEffectInstance> makeEffect(
+			plugin::Factory& factory, const std::string& id, const std::vector<double>& parameters, plugin::Host& host)
 		{
-			std::shared_ptr<plugin::Plugin> effect = processors::BuiltinFactory().create("builtin:" + id, host);
+			std::unique_ptr<plugin::Plugin> effect = factory.create("builtin:" + id, host);
 			if (!effect || !effect->init())
 				return nullptr;
 			plugin::EventList values(parameters.size(), 0, 0);
@@ -296,21 +334,10 @@ namespace gnubase::engine
 				value.value = parameters[parameter];
 				values.push(value);
 			}
-			if (auto* params = plugin::extension<plugin::Params>(*effect))
-				params->flushParams(values, ignored);
-			return effect;
-		}
-
-		// Command thread: activates an effect for blocks of up to maxFrames, or again after it was active.
-		void activateEffect(plugin::Plugin& effect, bool active, double sampleRate, uint32_t maxFrames)
-		{
-			if (active)
-			{
-				effect.stopProcessing();
-				effect.deactivate();
-			}
-			if (effect.activate(sampleRate, 1, maxFrames))
-				effect.startProcessing();
+			auto instance = std::make_shared<MidiEffectInstance>(std::move(effect));
+			if (instance->params() != nullptr)
+				instance->params()->flushParams(values, ignored);
+			return instance;
 		}
 	}
 
@@ -359,24 +386,23 @@ namespace gnubase::engine
 			{
 				// The slot's values, not on the audio thread yet. Later the lanes of its automation carry them, which
 				// they send again only when they change (#992); the audio thread gives it the last ones they sent.
-				kept.effect = makeEffect(slot.effect, slot.parameters, m_host);
+				kept.effect = makeEffect(*m_factory, slot.effect, slot.parameters, m_host);
 				if (!kept.effect)
 				{
 					kept = SlotEffect();
 					continue;
 				}
-				kept.params = plugin::extension<plugin::Params>(*kept.effect);
 				kept.id = slot.effect;
 				kept.serial = ++m_effectSerial;
 				kept.output = output;
 				kept.input = input;
 				kept.source = source;
 				if (m_sampleRate > 0.0)
-					activateEffect(*kept.effect, false, m_sampleRate, m_maxFrames);
+					kept.effect->activate(m_sampleRate, m_maxFrames);
 				insertsNew = insertsNew || !sends;
 				inputNew = inputNew || input || wasInput;
 			}
-			sequence->effects.push_back({kept.effect, kept.params, info, kept.serial, number, output != 0, sends});
+			sequence->effects.push_back({kept.effect, info, kept.serial, number, output != 0, sends});
 			sequence->insertCount += sends ? 0 : 1;
 			sequence->inputCount += input ? 1 : 0;
 		}
@@ -391,7 +417,7 @@ namespace gnubase::engine
 			m_pluginIn = plugin::EventList(graph::g_maxEventsPerBlock, g_effectSysexBytes, 0);
 			for (plugin::EventList& out : m_pluginOut)
 				out = plugin::EventList(graph::g_maxEventsPerBlock, g_effectSysexBytes, 0);
-			m_pluginTransport.resize(g_effectTransportSegments);
+			m_pluginTransport.resize(plugins::g_maxTransportSegments);
 			m_automatedIn = plugin::EventList(g_automated, 0, 0);
 		}
 		// The buffers stay once they are there: the audio thread may use them as long as it has a sequence that
@@ -413,7 +439,7 @@ namespace gnubase::engine
 		{
 			if (!m_pre)
 			{
-				m_pre = std::make_shared<MidiSequencer>();
+				m_pre = std::make_shared<MidiSequencer>(m_factory);
 				m_pre->setChase(m_chaseSetting);
 				if (m_sampleRate > 0.0)
 					m_pre->prepareFor(m_sampleRate, m_maxFrames);
@@ -425,7 +451,12 @@ namespace gnubase::engine
 			unmodified->expressions = sequence->preExpressions;
 			unmodified->controllers = sequence->controllers;
 			unmodified->chase = sequence->chase;
-			unmodified->inputChannel = sequence->inputChannel; // the input on the track's MIDI channel, as the parts'
+			// The input on the track's MIDI channel, through the drum map's input mapping or Live Input and the
+			// articulation map's remote triggers, as the parts' notes in preNotes go through both maps.
+			unmodified->inputChannel = sequence->inputChannel;
+			unmodified->liveInput = sequence->liveInput;
+			unmodified->drumInput = sequence->drumInput;
+			unmodified->articulations = sequence->articulations;
 			m_pre->setSequence(std::move(unmodified));
 			sequence->pre = m_pre;
 		}
@@ -448,12 +479,11 @@ namespace gnubase::engine
 
 	void MidiSequencer::prepare(double sampleRate, uint32_t maxFrames)
 	{
-		const bool active = m_sampleRate > 0.0;
 		m_sampleRate = sampleRate;
 		m_maxFrames = maxFrames;
 		for (const SlotEffect& slot : m_slots)
 			if (slot.effect)
-				activateEffect(*slot.effect, active, sampleRate, maxFrames);
+				slot.effect->activate(sampleRate, maxFrames);
 		if (m_pre)
 			m_pre->prepareFor(sampleRate, maxFrames);
 	}
@@ -577,14 +607,33 @@ namespace gnubase::engine
 		m_pluginIn.clear();
 		for (const graph::ProcessEvent& event : *input)
 			plugins::convertEvent(event, frames, m_pluginIn, true);
-		plugin::EventList& out =
-			m_pluginOut[((running.send ? midi::g_effectSlots : 0) + running.slot) % m_pluginOut.size()];
+		const size_t slot = ((running.send ? midi::g_effectSlots : 0) + running.slot) % m_pluginOut.size();
+		plugin::EventList& out = m_pluginOut[slot];
 		out.clear();
+		if (frames == 0)
+			return;
 		m_host.setTempoMap(transport.tempoMap);
 		const plugin::Process process{frames, -1, plugin::ProcessMode::Realtime, nullptr, 0, nullptr, 0, m_pluginIn,
-			out, m_pluginTransport.data(), plugins::convertTransport(transport, m_pluginTransport)};
-		if (frames == 0 || running.effect->process(process) == plugin::ProcessStatus::Error)
+			out, m_pluginTransport.data(), plugins::convertTransport(transport, m_sampleRate, m_pluginTransport)};
+		const plugin::ProcessStatus status = running.effect->process(process);
+		const std::string_view id = running.info != nullptr ? std::string_view(running.info->id) : std::string_view();
+		const std::string_view section = running.send ? "send" : "insert";
+		if (const size_t dropped = m_pluginIn.dropped() + out.dropped(); dropped > 0)
+			logging::warning("The MIDI effect {} in MIDI {} {} dropped events that didn't fit its event lists: {} in a "
+							 "block",
+				id, section, running.slot + 1, dropped);
+		if (status == plugin::ProcessStatus::Error)
+		{
+			if (m_failing[slot] != running.serial)
+				logging::warning("The MIDI effect {} in MIDI {} {} failed a block: its events pass it as they come "
+								 "until it processes again",
+					id, section, running.slot + 1);
+			m_failing[slot] = running.serial;
+			for (const graph::ProcessEvent& event : in)
+				to.add(event);
 			return;
+		}
+		m_failing[slot] = 0;
 		graph::ProcessEvent played;
 		for (const plugin::Event& event : out)
 			if (plugins::toGraphEvent(event, out, played))
@@ -611,7 +660,8 @@ namespace gnubase::engine
 			}
 			// A new instance plays the values the automation sent its slot last, which it doesn't send again.
 			const size_t slot = ((running.send ? midi::g_effectSlots : 0) + running.slot) % m_automated.size();
-			if (running.serial > m_newest && m_automatedEffect[slot] == running.info && running.params != nullptr)
+			plugin::Params* const params = running.effect->params();
+			if (running.serial > m_newest && m_automatedEffect[slot] == running.info && params != nullptr)
 			{
 				m_automatedIn.clear();
 				for (size_t id = 0; id < g_automated; ++id)
@@ -625,7 +675,7 @@ namespace gnubase::engine
 					m_automatedIn.push(value);
 				}
 				m_automatedOut.clear();
-				running.params->flushParams(m_automatedIn, m_automatedOut);
+				params->flushParams(m_automatedIn, m_automatedOut);
 			}
 		}
 		for (const RunningEffect& running : sequence.effects)

@@ -1,7 +1,8 @@
 # Tempo matching and warping
 
 Musical mode, a clip's definition grid (Auto Adjust and Manual Adjust), free warp markers, flattening and unstretching
-(#144, reference manual pp. 648-658). The stretching itself is the time-stretch engine's ([time-stretch.md](../time-stretch.md)).
+(#144, reference manual pp. 648-658). The stretching itself is the time-stretch engine's
+([time-stretch.md](../time-stretch.md)).
 
 ## In the document
 
@@ -71,7 +72,7 @@ Each is one undo step and emits `clip.changed`, except `event.flatten`, which em
 
 | Command | What it does | Reference |
 |---|---|---|
-| `clip.setWarp` | Musical mode on or off (a clip without a tempo takes the project's where its first event starts, so nothing changes until the tempo does), `tempo`, length in `bars` and `beats` (sets the tempo), `beatsPerBar`, `gridStart` and `preset` | pp. 616, 648-650 |
+| `clip.setWarp` | Musical mode on or off (a clip without a tempo takes the project's where its first event starts, also one on an inactive track version, so nothing changes until the tempo does), `tempo`, length in `bars` and `beats` (sets the tempo), `beatsPerBar`, `gridStart` and `preset` | pp. 616, 648-650 |
 | `clip.autoAdjust` | The tempo and grid start from a section (`start`, `end`; default the clip) that starts and ends at a barline and is `bars` bars long (default: the nearest whole bars), and every beat with a hitpoint that counts within a quarter beat of it edited onto that hitpoint; the snap point of `event` (the sample editor's) moves to the section's start | pp. 651-652 |
 | `clip.adjustGrid` | Manual Adjust: `mode` `start` (Set Grid Start), `stretch` (Stretch Grid: beat `beat`, default the second bar, at `frame` by the tempo), `bar` (Set Bar Position: the beats edited after it move with it), `beat` (Set Beat Position), `remove` (Remove Beat Edit) | pp. 652-654 |
 | `clip.addWarpMarker`, `clip.setWarpMarker` | Inserts a warp marker at `position` playing at `target`, moves one; markers can't pass each other, and no section between two markers, or a marker and the clip's ends, may play more than 4 times or less than a quarter as long, the real-time stretcher's range (`checkMarkers`, which warp quantizing and `event.pasteWarpMarkers` keep to as well). A section the edit leaves playing as it did, give or take the half frame a marker inserted on it is rounded by, may stay beyond the range, so a clip from a project saved before the range was checked still takes edits elsewhere | pp. 654-656 |
@@ -91,6 +92,12 @@ The clip's fades play where the warp puts the clip's ends (`warpedClipEdges`, `R
 `clipEnd`), also for an event that starts or ends inside them. These entries carry the event's id but aren't media
 files: the peak cache and `audition.start` skip them.
 
+An event that global transposition shifts (#1368, [transpose.md](transpose.md)) gets such an entry too, warped or not
+(an unwarped one with a map from its offset that plays its frames as they are), with a pitch map
+(`RenderMedia::pitch`): `dsp::WarpReader` starts over at each of its points, as after a seek, with the stretcher's
+pitch from there on. The stretcher's latency depends on the pitch, so reading on through a pitch change would play
+the audio after it early or late by the difference (tested with clicks, an octave up and down).
+
 `Playback` opens such a file through `dsp::WarpReader` (`src/engine/dsp/warp.h`): a real-time `TimeStretcher` whose
 ratio is the slope of the map, fed and read by the disk thread that fills the voice's disk stream, so the audio thread
 reads finished frames as before and the real-time rules hold. A ratio change takes effect on the input that leaves the
@@ -107,11 +114,11 @@ audio up to half the stretch away from the map (at 8 times, the end of the clip'
 reader keeps to the segments.
 
 The disk thread that fills every voice's stream does the stretching. Measured with events of a loop that musical mode
-stretches from 90 to 120 BPM on the quality preset, playing in real time on the dummy device while other builds kept
-the machine busy: a Debug build keeps up with 4 such events and drops out with 8 (about a second of 2). The
-`[realtime]` test plays 4; a Release build, which CI runs the tests in, is several times faster. Spreading the voices
-over more disk threads is a follow-up if real projects need it. A changed map, as after a tempo change, opens new voices; the stretcher allocates
-when one opens, never on the disk thread's reads.
+stretches from 90 to 120 BPM on the quality preset, playing in real time on the dummy device while other builds kept the
+machine busy: a Debug build keeps up with 4 such events and drops out with 8 (about a second of 2). The `[realtime]`
+test plays 4; a Release build, which CI runs the tests in, is several times faster. Spreading the voices over more disk
+threads is a follow-up if real projects need it. A changed map, as after a tempo change, opens new voices; the stretcher
+allocates when one opens, never on the disk thread's reads.
 
 Flattening reads through the same reader and applies the clip's fades as playback does, so a flattened event sounds
 exactly as it played (the render tests compare them, with and without fades); offline mode's better quality for it is
@@ -145,16 +152,17 @@ warp (`playedLength`), its waveform stretched evenly over it, and its fade handl
 The Definition section's rulers, Grid Resolution and the bars and beats fields, and Manual Adjust's gestures in the
 display (the engine has them: `clip.adjustGrid`); the Warping Algorithm pop-up and the Flatten dialog's preset (the
 engine takes `preset`); Swing; Stretch to Project Tempo and Sizing Applies Time Stretch; Free Warp snapping to
-hitpoints, warp markers and zero crossings, several markers removed by a rectangle, and Free Warp for several clips at once (the
-project window's time warp tool has Free Warp, [time-warp.md](time-warp.md)); the note and warp icons on events and the pool's Musical Mode column; the tempo of loops with embedded
-tempo on import; the sample editor's positions following the warp (they show the unwarped clip), and the project
-window's waveform of a warped event following its warp within the event (it is stretched evenly), with the event's
-snap point, which it draws where the even stretch puts it while the engine snaps to it through the warp; event fades keep
-their length in clip frames; auditioning and scrubbing play warped events unstretched; flattening in offline mode; the
-audio within a map segment beyond the stretcher's range playing as long as the segment (the reader gets back onto the
-map at its end); a `Warps` element in seconds that stretches a whole clip, and one whose audio is in beats, on
-import, and in beats the points that bend between beats, as musical mode with free warp markers exports them (the
-import keeps the whole beats, so the markers are lost); more disk threads for many warped events.
+hitpoints, warp markers and zero crossings, several markers removed by a rectangle, and Free Warp for several clips at
+once (the project window's time warp tool has Free Warp, [time-warp.md](time-warp.md)); the note and warp icons on
+events and the pool's Musical Mode column; the tempo of loops with embedded tempo on import; the sample editor's
+positions following the warp (they show the unwarped clip), and the project window's waveform of a warped event
+following its warp within the event (it is stretched evenly), with the event's snap point, which it draws where the even
+stretch puts it while the engine snaps to it through the warp; event fades keep their length in clip frames; auditioning
+and scrubbing play warped events unstretched; flattening in offline mode; the audio within a map segment beyond the
+stretcher's range playing as long as the segment (the reader gets back onto the map at its end); a `Warps` element in
+seconds that stretches a whole clip, and one whose audio is in beats, on import, and in beats the points that bend
+between beats, as musical mode with free warp markers exports them (the import keeps the whole beats, so the markers are
+lost); more disk threads for many warped events.
 
 ## Checks
 
@@ -171,11 +179,12 @@ and clip fades) and no longer following the tempo, with undo, and leaving no fil
 drawn volume curves and hitpoint cuts through the warp; sizing with the contents keeping the other edge; zero crossings,
 the snap point and Detect Silence's splits through the warp; the sample editor's Select Locators; fades that stop
 fitting after a tempo change still changing; the warped events' entries refused as media files; the warp saved and
-loaded; a clip in musical mode loaded without a tempo taking the project's at its first event; a quarter in musical mode
-at 8 times its length leaving the clicks after it where the map puts them; a warped event's `playedLength` and
-`fadeRoom` in `project.get` and announced after a tempo change, an undo and an edit of the event, and gone out of
-musical mode; musical mode and warp markers through `project.xml`'s `Warps` alone, playing as before and musical mode
-still following the tempo, `Warps` whose audio isn't within the file, and two events of a file sharing its clip with a
-fade longer than the clip; 4 warped events on the quality preset playing in real time without dropouts (`[realtime]`).
-`tests/sampleeditor_ui_tests.cpp`: Musical Mode, the Audio Tempo field, Auto Adjust, Free Warp's drags and removal, Reset, Unstretch Audio
-from the Audio menu and Flatten.
+loaded; a clip in musical mode loaded without a tempo taking the project's at its first event; one whose first event is
+on an inactive track version taking the tempo there; a quarter in musical mode at 8 times its length leaving the clicks
+after it where the map puts them; a warped event's `playedLength` and `fadeRoom` in `project.get` and announced after a
+tempo change, an undo and an edit of the event, and gone out of musical mode; musical mode and warp markers through
+`project.xml`'s `Warps` alone, playing as before and musical mode still following the tempo, `Warps` whose audio isn't
+within the file, and two events of a file sharing its clip with a fade longer than the clip; 4 warped events on the
+quality preset playing in real time without dropouts (`[realtime]`).
+`tests/sampleeditor_ui_tests.cpp`: Musical Mode, the Audio Tempo field, Auto Adjust, Free Warp's drags and removal,
+Reset, Unstretch Audio from the Audio menu and Flatten.
