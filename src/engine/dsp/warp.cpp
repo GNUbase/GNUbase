@@ -3,7 +3,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <optional>
 #include <stdexcept>
 #include <utility>
 
@@ -50,7 +49,7 @@ namespace gnubase::engine::dsp
 		if (m_map.size() < 2)
 			throw std::invalid_argument("a warp map needs two points at least");
 		for (const PitchPoint& point : pitch)
-			m_pitch.emplace_back(warpSource(m_map, point.target), point.semitones);
+			m_pitch.emplace_back(std::llround(point.target), point.semitones);
 		m_info = m_source->info();
 		m_info.frames = std::max<time::Samples>(0, std::llround(m_map.back().target));
 		StretchSettings settings;
@@ -83,38 +82,34 @@ namespace gnubase::engine::dsp
 		return (b.target - a.target) / (b.source - a.source);
 	}
 
-	std::optional<double> WarpReader::pitchAt(double source)
-	{
-		double semitones = 0.0;
-		for (const auto& [from, shift] : m_pitch)
-		{
-			if (from > source)
-			{
-				m_stretcher->setPitch(semitones, 0.0);
-				return from;
-			}
-			semitones = shift;
-		}
-		m_stretcher->setPitch(semitones, 0.0);
-		return std::nullopt;
-	}
-
 	void WarpReader::restart(time::Samples frame)
 	{
 		(*m_stretcher).reset();
 		const double source = warpSource(m_map, static_cast<double>(frame));
 		m_stretcher->setRatio(ratio(segmentOf(m_map, source, &WarpPoint::source)));
-		pitchAt(source);
+		// The stretcher's latency depends on the pitch: it starts over at each pitch point, so that the latency it
+		// drops is the one of the pitch it plays.
+		double semitones = 0.0;
+		m_restartAt = m_info.frames;
+		for (const auto& [at, shift] : m_pitch)
+		{
+			if (at > frame)
+			{
+				m_restartAt = std::min(at, m_info.frames);
+				break;
+			}
+			semitones = shift;
+		}
+		m_stretcher->setPitch(semitones, 0.0);
 		m_input = std::llround(source) - static_cast<time::Samples>(m_stretcher->startPad());
 		m_drop = m_stretcher->latency();
 		m_position = frame;
 		m_final = false;
-		m_restartAt = m_info.frames;
 		for (size_t s = segmentOf(m_map, static_cast<double>(frame), &WarpPoint::target); s + 1 < m_map.size(); ++s)
 			if (const double r = ratio(s); r > g_maxRealtimeRatio || r < g_minRealtimeRatio)
 				if (const time::Samples end = std::llround(m_map[s + 1].target); end > frame)
 				{
-					m_restartAt = std::min(end, m_info.frames);
+					m_restartAt = std::min(end, m_restartAt);
 					break;
 				}
 	}
@@ -131,9 +126,6 @@ namespace gnubase::engine::dsp
 		size_t frames = std::clamp<size_t>(m_stretcher->inputRequired(), 1, g_blockFrames);
 		if (at < b.source && s + 2 < m_map.size())
 			frames = std::min(frames, static_cast<size_t>(std::ceil(b.source - at)));
-		// So does a pitch, up to the next point of the pitch map.
-		if (const std::optional<double> next = pitchAt(at))
-			frames = std::min(frames, static_cast<size_t>(std::ceil(*next - at)));
 		const auto channels = static_cast<size_t>(m_info.channels);
 		size_t silent = 0; // frames before the source's start
 		if (m_input < 0)

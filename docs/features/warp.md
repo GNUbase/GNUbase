@@ -93,8 +93,9 @@ files: the peak cache and `audition.start` skip them.
 
 An event that global transposition shifts (#1368, [transpose.md](transpose.md)) gets such an entry too, warped or not
 (an unwarped one with a map from its offset that plays its frames as they are), with a pitch map
-(`RenderMedia::pitch`): `dsp::WarpReader` sets the stretcher's pitch from each of its points on, the same way it sets
-each segment's ratio a start pad early.
+(`RenderMedia::pitch`): `dsp::WarpReader` starts over at each of its points, as after a seek, with the stretcher's
+pitch from there on. The stretcher's latency depends on the pitch, so reading on through a pitch change would play
+the audio after it early or late by the difference (tested with clicks, an octave up and down).
 
 `Playback` opens such a file through `dsp::WarpReader` (`src/engine/dsp/warp.h`): a real-time `TimeStretcher` whose
 ratio is the slope of the map, fed and read by the disk thread that fills the voice's disk stream, so the audio thread

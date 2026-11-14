@@ -35,7 +35,8 @@ transpose events and controls, and MIDI parts and audio events that follow it or
 - **Controls** (`transpose.setTrack`, an undo step): `mute` (Mute Transpose Events: the events don't play),
   `keepInOctave` (Keep Transpose in Octave Range) and `lock` (the events can't be added, changed or removed).
 - **Recording** (p. 420): a recorded part or audio event follows global transpose with the project root key, or, if
-  the project has transpose events, is independent without a root key.
+  the project has transpose events, is independent without a root key. So is an event that render in place adds,
+  as the render already holds the transposition.
 
 ## Playback
 
@@ -92,8 +93,10 @@ Delete Time and Insert Silence moving the events, Delete Time carrying the trans
 and nothing when an event is at the end or none in the range, recorded parts with and without transpose events, and
 saving and loading. For audio events: the pitch map of the render snapshot for the root key, transpose events, a muted
 track, the octave range and Independent, with undo and splits; Set Root Key for Unassigned Events and glue; recorded
-events with and without transpose events; saving and loading. `tests/warp_tests.cpp`: `dsp::WarpReader` shifting a sine
-an octave up from a point of its pitch map, also after a seek, and an audio event in C playing 4 semitones up in a
+events with and without transpose events; saving and loading. `tests/renderinplace_tests.cpp`: a rendered event under a
+transpose event Independent with an empty pitch map. `tests/warp_tests.cpp`: `dsp::WarpReader` shifting a sine an octave
+up from a point of its pitch map, also after a seek, clicks after a pitch point an octave up and down where its map puts
+them, read through and after a seek, and an audio event in C playing 4 semitones up in a
 project in E and 8 down after a transpose event, measured in an offline render, and unshifted when Independent.
 `tests/transpose_ui_tests.cpp`: the toolbar's root key, the info line's Root Key and Global Transpose (its button
 reading Follow or Independent) for parts and audio events and a part's root key step, the mark of Independent parts and

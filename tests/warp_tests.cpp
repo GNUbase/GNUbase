@@ -10,6 +10,7 @@
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <pugixml.hpp>
@@ -255,6 +256,37 @@ TEST_CASE("a warp reader shifts the pitch where its pitch map says", "[unit]")
 	std::vector<float> after(36000);
 	REQUIRE(reader.read(after.data(), after.size()) == after.size());
 	CHECK(std::abs(frequency(after, 12000) - 1500.0) < 15.0);
+}
+
+TEST_CASE("a warp reader plays clicks after a pitch point where its map puts them", "[unit]")
+{
+	// The stretcher's latency depends on the pitch: the reader starts over at a pitch point, or the clicks after it
+	// would play early (up) or late (down) by the difference (#1368).
+	const double semitones = GENERATE(12.0, -12.0);
+	CAPTURE(semitones);
+	const test::TempDir dir;
+	const std::string file = (dir.path() / "clicks.wav").u8string();
+	test::writeWav(file, clicks({6000, 18000, 30000, 42000}, 48000));
+	const std::vector<engine::dsp::WarpPoint> map{{0.0, 0.0}, {48000.0, 48000.0}};
+	engine::dsp::WarpReader reader(
+		engine::AudioFileReader::open(file), map, engine::dsp::StretchPreset::Quality, {{24000.0, semitones}});
+	std::vector<float> output(48000);
+	size_t done = 0;
+	while (done < output.size())
+	{
+		const size_t got = reader.read(output.data() + done, std::min<size_t>(4096, output.size() - done));
+		REQUIRE(got > 0);
+		done += got;
+	}
+	checkClicks(output, {6000.0, 18000.0, 30000.0, 42000.0});
+
+	// After a seek before the point, the same.
+	reader.seek(12000);
+	std::vector<float> after(36000);
+	REQUIRE(reader.read(after.data(), after.size()) == after.size());
+	std::vector<float> placed(12000, 0.0F);
+	placed.insert(placed.end(), after.begin(), after.end());
+	checkClicks(placed, {18000.0, 30000.0, 42000.0});
 }
 
 TEST_CASE("an audio event that follows global transpose plays shifted in real time", "[integration]")
