@@ -577,6 +577,24 @@ TEST_CASE("the drumstick's drag changes the velocity, with Alt the pitch, with S
 	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 1; }));
 	CHECK(f.partNotes()[0].at("pitch") == 36);
 	CHECK(std::lround(f.partNotes()[0].at("velocity").get<double>() * 127) == std::lround(velocity * 127) + 20);
+	// The velocity shows while dragging, and a slip of less than 4 dp keeps the insert velocity.
+	const auto shown = [&] { return f.elements(".key-editor-velocity").at(0).value("text", std::string()); };
+	CHECK(f.has(".key-editor-velocity", "off"));
+	f.app.ui().press(f.window, f.at(2.3, 36), ui::MouseButton::Left);
+	f.app.ui().move(f.window, up(f.at(2.3, 36), 3));
+	REQUIRE(f.app.waitUntil([&] { return !f.has(".key-editor-velocity", "off"); }));
+	CHECK(shown() == std::to_string(std::lround(velocity * 127)));
+	f.app.ui().move(f.window, up(f.at(2.3, 36), 12));
+	CHECK(f.app.waitUntil([&] { return shown() == std::to_string(std::lround(velocity * 127) + 12); }));
+	f.app.ui().move(f.window, up(f.at(2.3, 36), 3));
+	f.app.ui().release(f.window, up(f.at(2.3, 36), 3), ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 2; }));
+	CHECK(f.has(".key-editor-velocity", "off"));
+	CHECK(f.partNotes()[1].at("position") == 2 * g_sixteenth);
+	CHECK(std::lround(f.partNotes()[1].at("velocity").get<double>() * 127) == std::lround(velocity * 127));
+	f.app.call("history.undo");
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 1; }));
 	// With Alt down a row: the next sound in the list, at the insert velocity.
 	f.app.ui().drag(f.window, f.at(4.3, 36), f.at(4.3, 37), {"alt"});
 	f.app.shell().step(std::chrono::milliseconds(0));
@@ -623,6 +641,79 @@ TEST_CASE("with the grid type Use Snap from Drum Map the drumstick snaps to the 
 	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 4; }));
 	CHECK(f.partNotes()[3].at("position") == 7 * g_sixteenth);
 	CHECK(f.partNotes()[3].at("pitch") == 38);
+}
+
+TEST_CASE("with Alt the drumstick inserts with the length and the snap of the sound under the mouse", "[ui]")
+{
+	// p. 1241: the note goes to the sound under the mouse, so it takes that sound's length and grid (pp. 1227, 1240).
+	Fixture f;
+	f.app.call("drumMap.set", {{"map", f.map}, {"sounds", Json::array({{{"pitch", 37}, {"snap", "1/8"}}})}});
+	f.app.call("editor.set", {{"editor", "window"}, {"lengthQuantize", "drumMap"}, {"gridType", "drumMap"}});
+	REQUIRE(
+		f.app.waitUntil([&] { return f.app.call("editor.get", {{"editor", "window"}}).at("gridType") == "drumMap"; }));
+	f.scroll(36);
+	f.click(of(".key-tool[key-tool=draw]"));
+	// From the bass drum's sixteenths down to the side stick's eighths, over 3.5 sixteenths: two eighths.
+	f.app.ui().drag(f.window, f.at(0.3, 36), f.at(3.5, 37), {"alt"});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return !f.partNotes().empty(); }));
+	REQUIRE(f.partNotes().size() == 2);
+	for (size_t i = 0; i < 2; ++i)
+	{
+		CHECK(f.partNotes()[i].at("pitch") == 37);
+		CHECK(f.partNotes()[i].at("position") == static_cast<int64_t>(i) * 2 * g_sixteenth);
+		CHECK(f.partNotes()[i].at("length") == 2 * g_sixteenth);
+	}
+}
+
+TEST_CASE("with Use Snap from Drum Map a note moves and resizes to its sound's snap", "[ui]")
+{
+	// p. 1227: the bass drum's snap is 1/8, the quantize grid's 1/16.
+	Fixture f;
+	f.app.call("drumMap.set", {{"map", f.map}, {"sounds", Json::array({{{"pitch", 36}, {"snap", "1/8"}}})}});
+	f.app.call("editor.set", {{"editor", "window"}, {"gridType", "drumMap"}});
+	f.app.call("note.add",
+		{{"part", f.part},
+			{"notes", {{{"position", 0}, {"length", 2 * g_sixteenth}, {"pitch", 36}, {"velocity", 0.5}}}}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-note").size() == 1; }));
+	REQUIRE(
+		f.app.waitUntil([&] { return f.app.call("editor.get", {{"editor", "window"}}).at("gridType") == "drumMap"; }));
+	f.scroll(36);
+	// Moved by 3.2 sixteenths: to the nearest eighth, the fourth sixteenth.
+	f.click(of(".drum-note"));
+	f.app.ui().drag(f.window, f.at(0.0, 36), f.at(3.2, 36));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes()[0].at("position") != 0; }));
+	CHECK(f.partNotes()[0].at("position") == 4 * g_sixteenth);
+	// Its end dragged on by 3.2 sixteenths with Show Note Length: also to an eighth.
+	f.click(of(".key-input[setting=showNoteLength]"));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-note").empty() && f.elements(".key-note").size() == 1; }));
+	const double width = f.box(".key-note").at("width").get<double>();
+	const double x = f.box(".key-note").at("x").get<double>() + width - 2.0;
+	const double sixteenth = f.box(".key-editor-grid").at("width").get<double>() / 16.0;
+	ui::Target end = f.at(6.0, 36);
+	end.point->x = static_cast<int>(std::lround(x));
+	ui::Target later = end;
+	later.point->x = static_cast<int>(std::lround(x + (3.2 * sixteenth)));
+	f.resize(end, later);
+	CHECK(f.partNotes()[0].at("length") == 6 * g_sixteenth);
+}
+
+TEST_CASE("a drumstick drag released outside the editor still inserts its notes", "[ui]")
+{
+	Fixture f;
+	f.scroll(36);
+	f.click(of(".key-tool[key-tool=draw]"));
+	// To the right over 3.5 sixteenths, released above the editor: a note at every sixteenth, none left drawn.
+	const ui::Point later = f.at(3.5, 36).point.value_or(ui::Point{});
+	const ui::Target outside{"", 0, ui::Point{later.x, f.box(".key-editor").at("y").get<int>() - 4}};
+	f.app.ui().drag(f.window, f.at(0.3, 36), outside);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 4; }));
+	CHECK(f.partNotes()[3].at("position") == 3 * g_sixteenth);
+	CHECK(f.partNotes()[3].at("pitch") == 36);
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note.drawing").empty(); }));
+	CHECK(f.has(".key-editor-velocity", "off"));
 }
 
 TEST_CASE("the object selection tool's double click and drag inserts and deletes several notes of a sound", "[ui]")

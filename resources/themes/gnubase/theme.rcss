@@ -924,6 +924,10 @@
 	{
 		background-color: #10dff266;
 	}
+	.key-editor-velocity
+	{
+		color: #f1f4ff;
+	}
 	.key-editor-step-cursor
 	{
 		background-color: #10dff2;

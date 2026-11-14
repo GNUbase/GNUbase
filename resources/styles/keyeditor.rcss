@@ -1,10 +1,10 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* The key editor (ui/keyeditor.h, docs/features/key-editor.md): its toolbar and info line, the parts by track, and
    the note display: the keyboard beside the grid of 128 pitch rows, the notes over it and the step input cursor. Code
-   places the parts, the notes and the cursor in percent of the grid; the rows' height here sets the pitches' height.
-   The keys and rows of black keys get .black, lit keys .selected, notes .selected, .inactive (outside the part
-   editing mode) and .drawing (being drawn), the tools and input buttons .checked; the themes color them. The drum
-   editor is .key-editor.drum-editor, below. */
+   places the parts, the notes, the cursor and the drumstick's velocity in percent of the grid; the rows' height here
+   sets the pitches' height. The keys and rows of black keys get .black, lit keys .selected, notes .selected,
+   .inactive (outside the part editing mode) and .drawing (being drawn), the tools and input buttons .checked; the
+   themes color them. The drum editor is .key-editor.drum-editor, below. */
 .key-editor
 {
 	flex: 1 1 0;
@@ -161,6 +161,22 @@
 }
 
 .key-editor-step-cursor.off
+{
+	display: none;
+}
+
+/* The velocity of the notes the drumstick draws, while it drags (p. 1241): code places it on the note's row from the
+   note's start, and the text goes right of the diamond. */
+.key-editor-velocity
+{
+	position: absolute;
+	box-sizing: border-box;
+	padding-left: 8dp;
+	white-space: nowrap;
+	font-size: 8dp;
+}
+
+.key-editor-velocity.off
 {
 	display: none;
 }
