@@ -22,7 +22,8 @@ sections player modes, presets, step input and the List, Proximity and Circle of
   before the players has one basic player with its octave offset.
 - **Players on several tracks** (p. 1377): a player can have a MIDI or instrument track (`track`, one player a
   track). The selected player and those with a track play: a player's track gets its voicings, every other track the
-  selected player's. Each pad has a voicing per player (`voicings`; `voicing` is the selected player's), and changing
+  selected player's. Removing the track takes it from its player in the same undo step; in a project file, a player's
+  track that is no MIDI or instrument track of the project, or another player's, becomes none. Each pad has a voicing per player (`voicings`; `voicing` is the selected player's), and changing
   a pad's voicing changes the selected player's only (p. 1378). The render snapshot carries each playing player's pitches per remote key (`ChordPadKeys`, up to
   8 players), the audio thread voices a remote key's chord for each of them (a `midi::PadVoices` per player) into a
   buffer per player, and each track's thru takes its player's buffer (`RenderChannel::padPlayer`);
@@ -48,8 +49,8 @@ sections player modes, presets, step input and the List, Proximity and Circle of
   root key; `load` chooses chords and players, chords only or players only (the basic player without offset).
   `chordPads.savePreset` keeps the pads as a preset of the user's own in the user setting `chordPads.presets` (each
   pad's chord, voicing and adaptive voicing, the root key, the scale and the players, without their tracks, which are
-  the project's), which `chordPads.loadPreset` brings back pad by pad and `chordPads.deletePreset` deletes; saving is
-  no change to the project. `chordPads.presets` lists the scale-based presets, then the user's, the order in which
+  the project's, with the player mode and its pattern), which `chordPads.loadPreset` brings back pad by pad (the
+  player mode and pattern with the players) and `chordPads.deletePreset` deletes; saving is no change to the project. `chordPads.presets` lists the scale-based presets, then the user's, the order in which
   Previous and Next Preset step (p. 1348). The pads keep the loaded preset's name (`preset`) and its scale (`scale`),
   which the degrees and the assistant's levels are in.
 - **Enh. Shift** (p. 1363): with `flats`, each pad's `spelled` name has flats for the sharps of its notes (Db for C#,
@@ -83,14 +84,16 @@ sections player modes, presets, step input and the List, Proximity and Circle of
   play its sections, the notes from the lowest up, one each, the rest to the top section or, with `spread`, spread
   over the five; `subsectionKeys` play the sections of `subsectionSections` moved by `subsectionOffsets` semitones.
   `sectionPlay` is the Custom Section Player Settings' Play Mode: `sections` (with the pad's key down), `chordPads`
-  (a section key alone plays the pad triggered last) or `combination` (either first); `latchPads` (Latch Chord Pads)
+  (a section key alone plays the pad triggered last) or `combination` (either first: section keys pressed before the
+  pad key start with it, on its chord); a section played over another treats it as `overlaps` says; `latchPads` (Latch Chord Pads)
   keeps the sections going after the pad's key goes up; `mutedSections` play nothing. The audio thread plays them
   for each playing player (`MidiPorts::playSection`). `playerKeys` are Select/Mute Player's keys: the previous and the
   next player, and mute or unmute the selected one (`chordPads.setPlayer` `muted`; a muted player plays nothing).
   Pads triggered with the mouse play their whole chord in this mode.
 - **Snap Playback to Musical Grid** (p. 1349): with `snapPlayback`, while the transport plays, the pads' note-ons wait
   for the next position of the quantize grid (`quantize.set`) on the audio thread (`midi::PadSnap`), and a note-off
-  waits with its note-on, so a chord released before the grid position ends right after it starts.
+  waits with its note-on, so a chord released before the grid position ends right after it starts. When the transport
+  jumps, as at the cycle's end or by a locate, what waits plays at once, since the transport may never get to it.
 - **Overlaps, Latch Chords and Filter Notes** (pp. 1379, 1386): `midi::PadVoices` keeps which trigger (a pad, an
   audition, a remote key) holds which pitches; a pitch sounds once, on the channel of the voice that started it, until
   nobody holds it. A chord played over another treats the other's notes as `overlaps` says: `holdFirst` (the default:
@@ -121,14 +124,21 @@ sections player modes, presets, step input and the List, Proximity and Circle of
   the selected pads; the engine has no pad selection, so it
   takes the pad that is played. Modify All Pad Voicings, Modify All Pad Tensions and Transpose All Pads
   (`controlSources`: aftertouch, pitchBend or a controller of `controlNumbers`) move all pads across the control's
-  range: the voicings from 3 inversions down to 3 up, the tensions from none to 3 more, the transposition from 6
-  semitones down to 6 up; the audio thread hands the control's value to the command thread (`PadEvent::Kind::Control`),
-  which modifies the pads as one undo step per gesture (a merged `history.transaction`).
+  range, and a control at rest changes nothing: pitch bend from its middle, the voicings 3 inversions and the
+  transposition 6 semitones either way; aftertouch and controllers from 0, up to 3 inversions and 6 semitones; the
+  tensions from none to 3 more. The audio thread hands the control's value to the command thread
+  (`PadEvent::Kind::Control`), which modifies the pads as one undo step per gesture (a merged `history.transaction`; a
+  control's gesture ends after a second without its messages). How far the controls moved the pads is kept for each
+  undo step they made, so after undo and redo the next move goes from where the pads are.
 - **Assign from MIDI Input and MIDI Learn** (pp. 1360, 1388): `chordPads.listen` `assign` (a pad) takes the next notes
   from the MIDI inputs, which play as they are meanwhile, and once they are all released assigns their chord
   (`chordPads.assign` `pitches`); `learn` `range` takes the next two keys as the remote range, `learn` with a
-  modifier's name the next key as its key. While it listens (`midi.padListen`), no remote key triggers a pad.
-  `chordPads.listening` and `chordPads.get` `listening` say what it listens for.
+  modifier's name the next key as its key, `sectionKeys`, `subsectionKeys` and `playerKeys` the next keys as those
+  keys one after another (p. 1389), and `modifyAllVoicings`, `modifyAllTensions` and `transposeAllPads` the next
+  aftertouch, pitch bend or controller as what moves all pads (p. 1387; the audio thread reports it as
+  `PadEvent::Kind::ControlInput`). While it listens (`midi.padListen`), no remote key triggers a pad.
+  `chordPads.listening` and `chordPads.get` `listening` say what it listens for. A project made or loaded ends it, and
+  starts the held pads, the pad triggered last and the controls' steps again.
 - **Step input** (p. 1369): with `stepInput`, `chordPads.step` puts a pad's chord on the chord track at the start of
   the bar of the step position (`stepPosition`, ticks; the chord track is added if there is none) and moves the
   position to the next bar; with `moveInsert` the chord events from there on move a bar later first, without it a
@@ -171,14 +181,15 @@ Track, the velocity of mouse clicks, the pad remote control with its range, Show
 of four settings panes, one showing at a time under the toolbars (`.chord-pads-pane`): Player Settings (the players,
 Add Player of a type, rename by Enter, Delete, and the Chord Voicing Style of a piano or guitar player or the Octave
 Offset of a basic one, and the player's track), Player Mode (Plain Chords or Pattern; for Pattern a preset, From
-Selected Part, which makes the event display's selected MIDI part the pattern, Velocity from MIDI Keyboard and what
-pattern is loaded; for Plain Chords Overlaps and Filter Notes), Remote Settings (the MIDI Input, Latch Chords, MIDI
-Learn of the range, Activate Chord Modifiers and their keys, and what moves all pads' voicings, tensions and
-transposition), Player Remote (the sections mode's Play Mode, Latch Chord
-Pads, Spread, the section and subsection keys, offsets and sections, the section mutes and the Select/Mute Player keys) and
-Display (`ui.chordPads`: the primary and secondary
-chord symbols, note names, roman numerals or Nashville numbers; the keyboard layout, where the pads on black remote
-keys are `.black-key`, or the grid with its columns; Show List Assistant Colors, Show Voicing Indicators and Show
+Selected Part, which makes the event display's selected MIDI part the pattern, Import from MIDI Loop, which asks for a
+MIDI file in a file dialog, Velocity from MIDI Keyboard and what pattern is loaded; for Plain Chords and Sections
+Overlaps and Filter Notes), Remote Settings (the MIDI Input, Latch Chords, MIDI Learn of the range, Activate Chord
+Modifiers and their keys, and what moves all pads' voicings, tensions and transposition), Player Remote (the sections
+mode's Play Mode, Latch Chord Pads, Spread, the section and subsection keys, offsets and sections, the section mutes
+and the Select/Mute Player keys) and Display (`ui.chordPads`: the primary and secondary chord symbols, note names, roman
+numerals or Nashville numbers; the keyboard layout, where the pads on black remote keys are `.black-key`, with Number
+of Pads (`chordPads.set` `padCount`) and Start Note (the remote range's start, the range as long as it is), or the grid
+with its columns and Number of Rows (as many pads as the rows of the columns hold); Show List Assistant Colors, Show Voicing Indicators and Show
 Pattern Play Progress, a bar along a playing pad's bottom, `.chord-pad-progress`, that runs through the pattern in the
 seconds it lasts at the project's tempo, `chordPads.get` `pattern.seconds`). The
 extended toolbar has Select All, Open Chord Editor, Remove Assignment, Transpose Down/Up, Fewer/More Tensions,
@@ -200,8 +211,12 @@ refuses, such as a remote start above the end, goes back to the one the pads hav
   selected pads' chords and Ctrl+Shift+L (Cmd+Shift+L) locks them (pp. 1351, 1362).
 - The zone's keyboard (`#chord-pads-keyboard`, p. 1355), C0 to C6 at first, scrolls by keys as it is dragged left or
   right and shows fewer or more keys as it is dragged up or down; it shows the notes that sound (`.played`), the remote
-  range (`.remote`), the chord modifiers' keys while they are active (`.modifier`) and the hovered pad's trigger key
-  (`.hover`).
+  range (`.remote`), the section and subsection keys in the sections player mode (`.section`, brown), the chord
+  modifiers' keys while they are active (`.modifier`) and the hovered pad's trigger key (`.hover`).
+- Each key setting of the Remote Settings and Player Remote panes has its MIDI Learn button
+  (`#chord-pads-learn-<target>`, `chordPads.listen` `learn`): the range, each chord modifier's key, what moves all
+  pads' voicings, tensions and transposition, the section keys, the subsection keys and the Select/Mute Player keys
+  (pp. 1386-1389). The button of what it listens for is lit; a click on it again stops listening.
 - The Inspector's Input Routing of a MIDI or instrument track chooses All MIDI Inputs, Chord Pads or Not Connected
   (p. 1367).
 - The wheel over a pad: down the next voicing, up the previous one; with Shift it transposes, with Alt it changes the
@@ -221,9 +236,10 @@ refuses, such as a remote start above the end, goes back to the one the pads hav
   `.in-key`) with a Major/Minor menu, or the Proximity assistant: rows by distance (`.chord-proximity-row`), the
   farthest at the top, above the reference (`.chord-proximity-reference`). On the List page a Cadence Type menu goes
   with Cadence. A press auditions a chord; a double click assigns it to the first unassigned pad,
-  and dropped on a pad it goes onto that one (pp. 1357-1359); a context click assigns it to the first unassigned pad
-  (p. 1375), and the last three auditioned show in bold (`.recent`). An answer that arrives after its page was left is
-  dropped, so it never replaces the chord editor's buttons or another page's suggestions.
+  and dropped on a pad it goes onto that one (pp. 1357-1359), whose frame is green while the chord is over it (the
+  drop location, `.drop-target`, p. 1354); a context click assigns it to the first unassigned pad (p. 1375), and the
+  last three auditioned show in bold (`.recent`). Only the answer to the latest question is drawn: one that arrives
+  after the assistant drew the hint, the chord editor or another page, or asked again, is dropped (#1391).
 
 ## Checks
 
@@ -239,8 +255,11 @@ Mode with the Chord Pads MIDI input; Overlaps, Latch Chords and Filter Notes; se
 Playback to Musical Grid; the pattern player (`midi::PadPattern` on its own and with a MIDI part's pattern); the
 sections player mode with its play modes, muted sections and subsections, and Select/Mute Player's keys; a dummy MIDI
 input's notes on the remote keys playing the pads only while the remote is on, ended by their note-offs, lighting the
-pads, changing them with the chord modifiers' keys and coming only from the chosen input; Assign from MIDI Input and
-MIDI Learn; chords recorded on the record-enabled chord track from the mouse and the remote keys; step input with Move
+pads, changing them with the chord modifiers' keys and coming only from the chosen input; controls at rest changing
+nothing, a gesture per undo step and the next move after undo going from where the pads are; Assign from MIDI Input and
+MIDI Learn, also of the Player Remote Control tab's keys and of the controls, ended by another project; the sections
+mode's combination and Overlaps; Snap Playback after a jump back; a player's track removed with its track and checked
+in a file; a user preset with its player mode and pattern; chords recorded on the record-enabled chord track from the mouse and the remote keys; step input with Move
 Insert Mode, at a bar's start, over a chord that is there and moved by bars, also on a chord track in linear time base
 at a tempo whose bars start between samples and with Move Insert across a tempo change, `stepBars` of any size and a
 step position past the longest project's end, cursor moves without undo steps and steps undone with their chord, moved
@@ -251,6 +270,7 @@ loading.
 `tests/inspector_tests.cpp`: the Inspector's Input Routing of an instrument track choosing the chord pads.
 `tests/rtcheck_tests.cpp`: the remote keys for two players with Filter Notes, the chord modifiers and a control,
 Snap Playback, the pattern player and the sections player mode pass the RT checker.
+`tests/time_tests.cpp`: the tempo map at the largest ticks (#1391).
 `tests/chordpads_ui_tests.cpp` drives the zone: shown and hidden from the Project menu's command, a pad held with the
 mouse recorded on a record-enabled track, a chord typed after a double click, pads swapped by dragging, the extended
 toolbar, the wheel with and without Shift, Select All with Remove Assignment past a locked pad, Load and the root key
@@ -265,12 +285,15 @@ the chord modifiers and their keys, MIDI Learn, the sections settings and keys, 
 numerals, Nashville numbers, voicing indicators and the grid); saving a preset and stepping through the presets; the
 pads' key commands; a pad modifier button playing the pad while it is down, the keyboard's remote range, played notes
 and hovered key, a pad lit by a remote key, a suggestion dropped onto a pad, the List assistant's colors and Assign from
-MIDI Input's frame; a pad dropped onto an instrument track's lane and onto the chord track; and the step input cursor in
+MIDI Input's frame, a drop location's frame, the assistant's hint kept for a pad without a chord selected before
+an answer came, every MIDI Learn button, the section keys on the keyboard, Number of Pads, Start Note and Number of
+Rows, and Import from MIDI Loop; a pad dropped onto an instrument track's lane and onto the chord track; and the step input cursor in
 the event display.
 
 ## Not yet
 
-Choosing a MIDI loop in a media browser (`chordPads.setPattern` `file` imports one from a path); the Chord Note Distribution
+Choosing a MIDI loop in a media browser (Import from MIDI Loop asks in a file dialog) and a MIDI part dropped onto the
+Player Mode section (From Selected Part does the same, p. 1379); the Chord Note Distribution
 beyond Spread; the chord editor's own keyboard display and Activate MIDI Input (the zone's keyboard and Assign from
 MIDI Input do the same); the Chord Assistant as a window of its own and the Circle of Fifths' context menu (a context
 click assigns at once); preset attributes; and the reference indicator drawn as the reference manual's picture shows it (p. 1353:

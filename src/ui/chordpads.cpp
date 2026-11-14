@@ -129,7 +129,19 @@ namespace gnubase::ui
 				title + R"("/>)";
 		}
 
-		// The chord modifiers' remote keys (reference manual p. 1387), as value fields.
+		// MIDI Learn of a chordPads.listen learn target (reference manual pp. 1386-1389), lit while it listens.
+		std::string learnButton(const std::string& target, const std::string& title)
+		{
+			return R"(<button action="learn" learn=")" + target + R"(" id="chord-pads-learn-)" + target +
+				R"(" type="toggle" title="MIDI Learn: )" + title + R"(">Learn</button>)";
+		}
+
+		// What MIDI Learn can listen for (chordPads.listen learn).
+		constexpr std::array<const char*, 13> g_learnTargets = {"range", "previousVoicing", "nextVoicing",
+			"fewerTensions", "moreTensions", "transposeDown", "transposeUp", "modifyAllVoicings", "modifyAllTensions",
+			"transposeAllPads", "sectionKeys", "subsectionKeys", "playerKeys"};
+
+		// The chord modifiers' remote keys (reference manual p. 1387), as value fields, each with its MIDI Learn.
 		std::string modifierKeys()
 		{
 			static const std::array<const char*, 6> titles = {"Previous Voicing", "Next Voicing", "Fewer Tensions",
@@ -138,7 +150,8 @@ namespace gnubase::ui
 			for (size_t i = 0; i < g_modifierKeyNames.size(); ++i)
 				rml += std::string(R"(<valuefield id="chord-pads-modifier-)") + g_modifierKeyNames.at(i) +
 					R"(" modifier=")" + g_modifierKeyNames.at(i) +
-					R"(" min="0" max="127" step="1" decimals="0" title=")" + titles.at(i) + R"("/>)";
+					R"(" min="0" max="127" step="1" decimals="0" title=")" + titles.at(i) + R"("/>)" +
+					learnButton(g_modifierKeyNames.at(i), titles.at(i));
 			return rml;
 		}
 
@@ -294,10 +307,10 @@ namespace gnubase::ui
 		}
 	}
 
-	ChordPadsPanel::ChordPadsPanel(
-		EngineBinding& binding, Rml::Element& element, DropTarget dropOn, Selection selectedEvents)
+	ChordPadsPanel::ChordPadsPanel(EngineBinding& binding, Rml::Element& element, DropTarget dropOn,
+		Selection selectedEvents, std::function<void()> importLoop)
 		: m_binding(binding), m_dropOn(std::move(dropOn)), m_selectedEvents(std::move(selectedEvents)),
-		  m_root(element.GetObserverPtr())
+		  m_importLoop(std::move(importLoop)), m_root(element.GetObserverPtr())
 	{
 		element.SetInnerRML(R"(<div class="chord-pads"><div class="chord-pads-toolbar">)" +
 			button("outputMode", "Chord Pad Output Mode", "Output", true) +
@@ -345,23 +358,28 @@ namespace gnubase::ui
 			R"(<select id="chord-pads-playerMode" title="Player Mode"/><select id="chord-pads-patternPreset" )"
 			R"(title="Pattern Preset"/>)" +
 			button("patternFromPart", "Use the Selected MIDI Part as the Pattern", "From Part") +
+			button("importLoop", "Import from MIDI Loop", "Import Loop") +
 			button("velocityFromKeyboard", "Velocity from MIDI Keyboard", "Keyboard Velocity", true) +
 			R"(<span id="chord-pads-pattern-info" class="chord-pads-hint"/>)"
 			R"(<select id="chord-pads-overlaps" title="Overlaps"/>)" +
 			button("filterNotes", "Filter Notes From MIDI Thru", "Filter Notes", true) +
 			R"(</div><div id="chord-pads-pane-remote" class="chord-pads-toolbar chord-pads-pane hidden">)"
 			R"(<select id="chord-pads-remotePort" title="MIDI Input"/>)" +
-			button("latch", "Latch Chords", "Latch", true) + button("learnRange", "MIDI Learn", "Learn", true) +
+			button("latch", "Latch Chords", "Latch", true) + learnButton("range", "Pads Remote Range") +
 			button("modifiers", "Activate Chord Modifiers", "Modifiers", true) + modifierKeys() +
-			R"(<select id="chord-pads-controlSource-0" control="0" title="Modify All Pad Voicings"/>)"
-			R"(<select id="chord-pads-controlSource-1" control="1" title="Modify All Pad Tensions"/>)"
+			R"(<select id="chord-pads-controlSource-0" control="0" title="Modify All Pad Voicings"/>)" +
+			learnButton("modifyAllVoicings", "Modify All Pad Voicings") +
+			R"(<select id="chord-pads-controlSource-1" control="1" title="Modify All Pad Tensions"/>)" +
+			learnButton("modifyAllTensions", "Modify All Pad Tensions") +
 			R"(<select id="chord-pads-controlSource-2" control="2" title="Transpose All Pads"/>)" +
+			learnButton("transposeAllPads", "Transpose All Pads") +
 			fiveKeys("controlNumbers", "Controller Number", 3, 0, 127) +
 			R"(</div><div id="chord-pads-pane-playerRemote" class="chord-pads-toolbar chord-pads-pane hidden">)"
 			R"(<select id="chord-pads-sectionPlay" title="Play Mode"/>)" +
 			button("latchPads", "Latch Chord Pads", "Latch Pads", true) +
 			button("spread", "Chord Note Distribution: Spread", "Spread", true) +
-			fiveKeys("sectionKeys", "Section", 5, -1, 127) + fiveKeys("subsectionKeys", "Subsection", 5, -1, 127) +
+			fiveKeys("sectionKeys", "Section", 5, -1, 127) + learnButton("sectionKeys", "Sections") +
+			fiveKeys("subsectionKeys", "Subsection", 5, -1, 127) + learnButton("subsectionKeys", "Subsections") +
 			fiveKeys("subsectionOffsets", "Subsection Offset", 5, -48, 48) + subsectionSections() +
 			R"(<button action="muteSection" index="0" id="chord-pads-mute-0" type="toggle" title="Mute Section 1">M1)"
 			R"(</button><button action="muteSection" index="1" id="chord-pads-mute-1" type="toggle" )"
@@ -370,9 +388,15 @@ namespace gnubase::ui
 			R"(id="chord-pads-mute-3" type="toggle" title="Mute Section 4">M4</button><button action="muteSection" )"
 			R"(index="4" id="chord-pads-mute-4" type="toggle" title="Mute Section 5">M5</button>)" +
 			fiveKeys("playerKeys", "Select/Mute Player Key", 3, -1, 127) +
+			learnButton("playerKeys", "Select/Mute Player") +
 			R"(</div><div id="chord-pads-pane-display" class="chord-pads-toolbar chord-pads-pane hidden">)"
 			R"(<select id="chord-pads-primary" title="Primary Type"/><select id="chord-pads-secondary" )"
 			R"(title="Secondary Type"/><select id="chord-pads-layout" title="Pad Layout"/>)"
+			R"(<valuefield id="chord-pads-padCount" setting="padCount" min="1" max="32" step="1" decimals="0" )"
+			R"(title="Number of Pads"/><valuefield id="chord-pads-startNote" display="startNote" min="0" )"
+			R"(max="127" step="1" decimals="0" title="Start Note"/>)"
+			R"(<valuefield id="chord-pads-rows" display="rows" min="1" max="32" step="1" decimals="0" )"
+			R"(title="Number of Rows"/>)"
 			R"(<valuefield id="chord-pads-columns" display="columns" min="1" max="16" step="1" decimals="0" )"
 			R"(title="Number of Columns"/>)" +
 			button("listColors", "Show List Assistant Colors", "Colors", true) +
@@ -606,7 +630,7 @@ namespace gnubase::ui
 			pattern.at("length").get<int64_t>() > 0
 				? patternName + " (" + std::to_string(pattern.at("voices").get<int>()) + " voices)"
 				: std::string("No pattern"));
-		for (const char* id : {"chord-pads-patternPreset", "chord-pads-patternFromPart",
+		for (const char* id : {"chord-pads-patternPreset", "chord-pads-patternFromPart", "chord-pads-importLoop",
 				 "chord-pads-velocityFromKeyboard", "chord-pads-pattern-info"})
 			setClass(find(id), "hidden", mode != "pattern");
 		setClass(find("chord-pads-overlaps"), "hidden", mode == "pattern");
@@ -665,14 +689,17 @@ namespace gnubase::ui
 		for (int i = 0; i < list->GetNumChildren(); ++i)
 			setClass(list->GetChild(i), "listening", i == listening);
 		setChecked(find("chord-pads-assignMidi"), listening >= 0);
-		setChecked(find("chord-pads-learnRange"),
-			m_listening.is_object() && m_listening.value("learn", std::string()) == "range");
+		const std::string learning = m_listening.is_object() ? m_listening.value("learn", std::string()) : "";
+		for (const char* target : g_learnTargets)
+			setChecked(find(std::string("chord-pads-learn-") + target), learning == target);
 		showListColors();
 		showAssistant();
 	}
 
 	void ChordPadsPanel::showAssistant()
 	{
+		// What comes now replaces the answer to any question asked before.
+		const int asked = ++m_asked;
 		const Rml::Element* assistant = find("chord-pads-assistant-pane");
 		if (assistant == nullptr || assistant->IsClassSet("hidden"))
 			return;
@@ -721,13 +748,13 @@ namespace gnubase::ui
 			parameters["minor"] = find("chord-pads-mode")->GetAttribute<Rml::String>("value", "major") == "minor";
 		}
 		m_binding.send("chordPads.assistant", parameters,
-			[this, page = m_page, reference = parameters.value("chord", std::string()),
+			[this, asked, page = m_page, reference = parameters.value("chord", std::string()),
 				alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
-				// An answer for a page that was left before it arrived isn't wanted: the page open now drew itself or
-				// asked again.
+				// Only the latest question's answer is wanted: after it, the assistant drew a page of its own, the hint
+				// or the chord editor, or asked again (#1391).
 				Rml::Element* suggestions =
-					alive.expired() || !result.ok() || m_page != page ? nullptr : find("chord-pads-suggestions");
+					alive.expired() || !result.ok() || m_asked != asked ? nullptr : find("chord-pads-suggestions");
 				if (suggestions == nullptr)
 					return;
 				std::string rml;
@@ -847,6 +874,7 @@ namespace gnubase::ui
 			{
 				m_hovered = hovered;
 				showKeyboard();
+				showDropTarget();
 			}
 			return;
 		}
@@ -919,7 +947,16 @@ namespace gnubase::ui
 			else if (const Rml::Element* actor = withAttribute(target, "action"))
 			{
 				const auto name = actor->GetAttribute<Rml::String>("action", "");
-				if (name == "muteSection")
+				if (name == "learn")
+				{
+					// MIDI Learn (pp. 1386-1389): its target, or off again.
+					const auto learn = actor->GetAttribute<Rml::String>("learn", "");
+					if (m_listening.is_object() && m_listening.value("learn", std::string()) == learn)
+						send("chordPads.listen", Json::object());
+					else
+						send("chordPads.listen", {{"learn", learn}});
+				}
+				else if (name == "muteSection")
 				{
 					// Mute Sections (p. 1384): the button's section.
 					Json muted = m_pads.at("mutedSections");
@@ -992,6 +1029,7 @@ namespace gnubase::ui
 				showSelection();
 			}
 			m_auditioned.clear();
+			showDropTarget();
 		}
 		if (m_pressed < 0)
 			return;
@@ -1120,12 +1158,10 @@ namespace gnubase::ui
 			else
 				send("chordPads.listen", {{"assign", first}});
 		}
-		else if (name == "learnRange")
+		else if (name == "importLoop")
 		{
-			if (m_listening.is_object())
-				send("chordPads.listen", Json::object());
-			else
-				send("chordPads.listen", {{"learn", "range"}});
+			if (m_importLoop)
+				m_importLoop();
 		}
 		else if (name == "listColors" || name == "voicingIndicators" || name == "patternProgress")
 		{
@@ -1248,6 +1284,22 @@ namespace gnubase::ui
 				if (m_pads.at("modifierKeys").value(name, -1) != value)
 					send("chordPads.set", {{"modifierKeys", {{name, value}}}});
 			}
+			else if (target.GetAttribute<Rml::String>("display", "") == "startNote")
+			{
+				// Start Note (p. 1391): the first pad's key, the remote range as long as it is.
+				const int start = m_pads.value("remoteStart", 36);
+				const int end = m_pads.value("remoteEnd", 47);
+				if (start != value)
+					send("chordPads.set", {{"remoteStart", value}, {"remoteEnd", std::min(value + end - start, 127)}});
+			}
+			else if (target.GetAttribute<Rml::String>("display", "") == "rows")
+			{
+				// Number of Rows (p. 1391): as many pads as the rows of the grid's columns hold.
+				const int columns = std::clamp(m_display.value("columns", 6), 1, 16);
+				const int count = std::clamp(value * columns, 1, 32);
+				if (m_pads.contains("pads") && static_cast<int>(m_pads.at("pads").size()) != count)
+					send("chordPads.set", {{"padCount", count}});
+			}
 			else if (m_display.value("columns", 6) != value)
 			{
 				Json display = m_display.is_object() ? m_display : Json::object();
@@ -1260,7 +1312,10 @@ namespace gnubase::ui
 		{
 			const auto value = static_cast<int>(event.GetParameter<float>("value", 0.0F));
 			const auto setting = target.GetAttribute<Rml::String>("setting", "");
-			if (m_pads.contains(setting) && m_pads.at(setting) != value)
+			// Number of Pads (p. 1391) is how many pads there are.
+			const Json current = setting == "padCount" && m_pads.contains("pads") ? Json(m_pads.at("pads").size())
+																				  : m_pads.value(setting, Json());
+			if (!current.is_null() && current != value)
 				send("chordPads.set", {{setting, value}});
 			return;
 		}
@@ -1424,6 +1479,15 @@ namespace gnubase::ui
 		widgets::fill(*find("chord-pads-layout"), layouts(), layout);
 		setValue(find("chord-pads-columns"), columns);
 		setClass(find("chord-pads-columns"), "hidden", layout != "grid");
+		// Number of Pads and Start Note in the keyboard layout, Number of Rows in the grid (p. 1391).
+		const int count = m_pads.contains("pads") ? static_cast<int>(m_pads.at("pads").size()) : 12;
+		setValue(find("chord-pads-padCount"), count);
+		setValue(find("chord-pads-rows"), (count + columns - 1) / columns);
+		if (m_pads.contains("remoteStart"))
+			setValue(find("chord-pads-startNote"), m_pads.at("remoteStart").get<int>());
+		setClass(find("chord-pads-padCount"), "hidden", layout != "keyboard");
+		setClass(find("chord-pads-startNote"), "hidden", layout != "keyboard");
+		setClass(find("chord-pads-rows"), "hidden", layout != "grid");
 		const bool voicings = m_display.value("voicingIndicators", true);
 		setChecked(find("chord-pads-listColors"), m_display.value("listColors", false));
 		setChecked(find("chord-pads-voicingIndicators"), voicings);
@@ -1500,8 +1564,8 @@ namespace gnubase::ui
 
 	void ChordPadsPanel::showKeyboard()
 	{
-		// The zone's keyboard (p. 1355): the notes that sound, the pads' remote range, the chord modifiers' keys
-		// while active, and the hovered pad's trigger key.
+		// The zone's keyboard (p. 1355): the notes that sound, the pads' remote range, the section keys in the sections
+		// player mode, the chord modifiers' keys while active, and the hovered pad's trigger key.
 		const Rml::Element* keys = find("chord-pads-keyboard");
 		if (keys == nullptr || !m_pads.contains("pads"))
 			return;
@@ -1521,6 +1585,12 @@ namespace gnubase::ui
 		std::set<int> modifierKeys;
 		for (const auto& [name, value] : m_pads.at("modifierKeys").items())
 			modifierKeys.insert(value.get<int>());
+		// The section and subsection keys in the sections player mode (p. 1355).
+		std::set<int> sectionKeys;
+		if (m_pads.at("remote").get<bool>() && m_pads.value("mode", std::string()) == "sections")
+			for (const char* setting : {"sectionKeys", "subsectionKeys"})
+				for (const Json& value : m_pads.at(setting))
+					sectionKeys.insert(value.get<int>());
 		const Json hoveredKey = m_hovered >= 0 && m_hovered < static_cast<int>(m_pads.at("pads").size())
 			? m_pads.at("pads")[static_cast<size_t>(m_hovered)].at("key")
 			: Json();
@@ -1530,9 +1600,22 @@ namespace gnubase::ui
 			const int pitch = m_keyLow + i;
 			setClass(key, "played", played.count(pitch) != 0);
 			setClass(key, "remote", m_pads.at("remote").get<bool>() && pitch >= start && pitch <= end);
+			setClass(key, "section", sectionKeys.count(pitch) != 0);
 			setClass(key, "modifier", m_pads.at("remote").get<bool>() && modifiers && modifierKeys.count(pitch) != 0);
 			setClass(key, "hover", hoveredKey.is_number() && hoveredKey.get<int>() == pitch);
 		}
+	}
+
+	void ChordPadsPanel::showDropTarget()
+	{
+		// While an assistant's chord is dragged, the pad it would go onto has a green frame (p. 1354).
+		const Rml::Element* list = find("chord-pads-pads");
+		if (list == nullptr || !m_pads.contains("pads"))
+			return;
+		const Json& items = m_pads.at("pads");
+		for (int i = 0; i < list->GetNumChildren() && i < static_cast<int>(items.size()); ++i)
+			setClass(list->GetChild(i), "drop-target",
+				!m_auditioned.empty() && i == m_hovered && !items[static_cast<size_t>(i)].at("locked").get<bool>());
 	}
 
 	void ChordPadsPanel::showKeys()
