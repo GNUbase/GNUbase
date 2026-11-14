@@ -381,6 +381,39 @@ TEST_CASE("windows are drawn only when something changed", "[unit]")
 	CHECK(window.frames() == 4);
 }
 
+TEST_CASE(
+	"a task fits a window's layout after its update for drawing, and a fit that changed it updates again", "[unit]")
+{
+	Ui ui({primary()});
+	ui::Window& window = ui.shell.open(at({100, 100, 800, 600}));
+	show(window, "boxes.rml");
+	int runs = 0;
+	ui.shell.afterUpdate(
+		[&](ui::Window& updated)
+		{
+			CHECK(&updated == &window);
+			++runs;
+			// What the update laid out decides the box's width, as the toolbar's room decides its sections (#1234).
+			Rml::Element* box = updated.context().GetDocument(0)->GetElementById("box");
+			if (box->GetOffsetWidth() >= 200.0F)
+				return false;
+			box->SetProperty("width", "200dp");
+			return true;
+		});
+	ui.shell.step(milliseconds(0));
+	CHECK(runs == 1);
+	CHECK(window.frames() == 1);
+	CHECK(boxWidth(window) == 200.0F); // drawn as the fit left it
+
+	// A step that draws nothing fits nothing, so it lays nothing out.
+	ui.shell.step(milliseconds(0));
+	CHECK(runs == 1);
+	window.requestRender();
+	ui.shell.step(milliseconds(0));
+	CHECK(runs == 2);
+	CHECK(window.frames() == 2);
+}
+
 TEST_CASE("a window keeps drawing while its document animates", "[unit]")
 {
 	Ui ui({primary()});

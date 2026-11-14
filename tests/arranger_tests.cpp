@@ -3,6 +3,7 @@
 #include "engine/audio/transport.h"
 #include "engine/document/document.h"
 #include "engine/document/rendersnapshot.h"
+#include "engine/document/serialize.h"
 #include "engine/engine.h"
 #include "testutils/testutils.h"
 
@@ -219,6 +220,95 @@ TEST_CASE("with a pre-roll playback enters the chain where it starts without it"
 	REQUIRE(transport.locate(1000)); // where play puts playback from outside the chain: the first step's start
 	REQUIRE(transport.play());
 	CHECK(play(transport, plan, 1100, blockSize) == path({{800, 1300}, {3000, 3500}}, 1100));
+}
+
+TEST_CASE("a real plan change during the pre-roll keeps the chain playing", "[unit]")
+{
+	const uint32_t blockSize = GENERATE(1u, 64u, 100u);
+	INFO("block size " << blockSize);
+	ArrangerPlan plan = abPlan();
+	plan.steps = {{0, 1, ArrangerRepeat::Normal}, {2, 1, ArrangerRepeat::Normal}}; // A, C
+	Transport transport;
+	TransportSettings settings;
+	settings.preRoll = true;
+	settings.preRollAmount = 200;
+	REQUIRE(transport.set(settings));
+	REQUIRE(transport.locate(1000)); // play starts at A (1000); the pre-roll plays from 800
+	REQUIRE(transport.play());
+	CHECK(play(transport, plan, 100, blockSize) == path({{800, 900}}, 100)); // in the pre-roll, before A
+	// A chain edit that really changes the plan (A now repeats twice) while still in the pre-roll: playback enters at
+	// the start without the pre-roll, so it keeps the chain at A instead of going linear from the pre-roll position.
+	ArrangerPlan edited = plan;
+	edited.steps = {{0, 2, ArrangerRepeat::Normal}, {2, 1, ArrangerRepeat::Normal}}; // A twice, C
+	CHECK(play(transport, edited, 700, blockSize) == path({{900, 1300}, {1000, 1300}}, 700));
+	CHECK(transport.arranger().step == 1); // on to C
+}
+
+TEST_CASE("a chain edit while the chain plays back into the project keeps the step and its repeat", "[unit]")
+{
+	const uint32_t blockSize = GENERATE(1u, 64u, 100u);
+	INFO("block size " << blockSize);
+	ArrangerPlan plan = abPlan();
+	plan.steps = {{2, 1, ArrangerRepeat::Normal}, {0, 2, ArrangerRepeat::Normal}}; // C, then A twice
+	Transport transport;
+	REQUIRE(transport.locate(3000)); // playback starts at C
+	REQUIRE(transport.play());
+	// C, then A: the chain jumps back to before the start, where the position stays while A plays.
+	CHECK(play(transport, plan, 900, blockSize) == path({{3000, 3500}, {1000, 1300}, {1000, 1100}}, 900));
+	CHECK(transport.arranger().step == 1);
+	CHECK(transport.arranger().repeat == 1);
+	// A real plan change while A plays (A gets one more repeat): the step playing and its repeat are kept, not
+	// re-found at the start position, which lies in C.
+	ArrangerPlan edited = plan;
+	edited.steps[1].repeats = 3;
+	CHECK(play(transport, edited, 450, blockSize) == path({{1100, 1300}, {1000, 1250}}, 450));
+	CHECK(transport.arranger().step == 1);
+	CHECK(transport.arranger().repeat == 2);
+}
+
+TEST_CASE("a stop or a cycle jump ends the pre-roll the transport remembers", "[unit]")
+{
+	ArrangerPlan plan = abPlan();
+	plan.steps = {{0, 1, ArrangerRepeat::Normal}}; // A
+	Transport transport;
+	TransportSettings settings;
+	settings.preRoll = true;
+	settings.preRollAmount = 200;
+	REQUIRE(transport.set(settings));
+	REQUIRE(transport.locate(1000)); // play starts at A; the pre-roll plays from 800
+	REQUIRE(transport.play());
+	CHECK(play(transport, plan, 50, 50) == path({{800, 850}}, 50)); // in the pre-roll, before A
+
+	SECTION("a stop during the pre-roll")
+	{
+		REQUIRE(transport.stop());
+		// A chain edit while stopped: playback is no longer rolling in, so the new plan enters where the transport
+		// stands, outside the chain, not at the start the pre-roll was for.
+		ArrangerPlan edited = plan;
+		edited.steps = {{0, 2, ArrangerRepeat::Normal}};
+		CHECK(play(transport, edited, 10, 10) == std::vector<Samples>(10, -1)); // stopped: nothing plays
+		CHECK(transport.arranger().step == -1);
+	}
+	SECTION("a cycle jump during the pre-roll")
+	{
+		// Cycling with the plan off: the right locator comes before the start, so the jump lands in the pre-roll.
+		ArrangerPlan off = plan;
+		off.active = false;
+		Transport cycling;
+		TransportSettings cycleSettings;
+		cycleSettings.cycle = true;
+		cycleSettings.left = 500;
+		cycleSettings.right = 1020;
+		cycleSettings.preRoll = true;
+		cycleSettings.preRollAmount = 50;
+		REQUIRE(cycling.set(cycleSettings));
+		REQUIRE(cycling.locate(1050)); // in A; the pre-roll plays from 1000
+		REQUIRE(cycling.play());
+		CHECK(play(cycling, off, 30, 30) == path({{1000, 1020}, {500, 510}}, 30));
+		// Arranger mode switched on: playback enters where it is (500, outside the chain), not at the stale start.
+		CHECK(play(cycling, plan, 10, 10) == path({{510, 520}}, 10));
+		CHECK(cycling.arranger().step == -1);
+	}
 }
 
 TEST_CASE("jump points for 4 bars, 2 bars, 1 bar and 1 beat from an event that starts in the middle of a bar", "[unit]")
@@ -594,4 +684,124 @@ TEST_CASE("flatten turns the chain into a linear project that plays the same, on
 	CHECK(run(song.client, "project.get").at("audioEvents") == before);
 	run(song.client, "arranger.flatten");
 	CHECK(run(song.client, "arranger.get").at("track") == 0); // without keepTrack the arranger track goes
+}
+
+TEST_CASE("transport.play while playing ends a Repeat Forever loop", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	Song song(100);
+	song.addAudio(dir);
+	run(song.client, "arranger.setChain",
+		{{"steps", {{{"event", song.a}, {"mode", "repeatForever"}}, {{"event", song.b}}}}});
+	run(song.client, "arranger.setMode", {{"mode", true}});
+	run(song.client, "transport.locate", {{"position", 1000}}); // in A, the Forever step 0
+	run(song.client, "transport.play");
+	run(song.client, "audio.render", {{"frames", 700}}); // A (1000-1600) loops: repeat 1 at 1100
+	CHECK(run(song.client, "transport.get").at("arranger").at("step") == 0);
+	CHECK(run(song.client, "transport.get").at("arranger").at("repeat") == 1);
+
+	// Play once again while it loops: the next step takes over (reference manual p. 407), at once with no jump mode.
+	run(song.client, "transport.play");
+	CHECK(run(song.client, "transport.get").at("arranger").at("step") == 1);
+	CHECK(run(song.client, "transport.get").at("position") == 2000); // B's start
+
+	// A Forever step that is the last one: Play goes on past the chain, linearly from where playback is.
+	run(song.client, "transport.stop");
+	run(song.client, "arranger.setChain", {{"steps", {{{"event", song.a}, {"mode", "repeatForever"}}}}});
+	run(song.client, "transport.locate", {{"position", 1000}});
+	run(song.client, "transport.play");
+	run(song.client, "audio.render", {{"frames", 700}}); // A loops: repeat 1 at 1100
+	CHECK(run(song.client, "transport.get").at("arranger").at("step") == 0);
+	run(song.client, "transport.play"); // ends the loop: past the chain
+	CHECK(run(song.client, "transport.get").at("arranger").at("step") == -1);
+	run(song.client, "audio.render", {{"frames", 600}}); // linear from 1100, not looping back to 1000
+	CHECK(run(song.client, "transport.get").at("position") == 1700);
+}
+
+TEST_CASE("transport.play keeps a triggered event that isn't in the chain", "[integration]")
+{
+	Song song(100);
+	run(song.client, "arranger.setChain", {{"steps", {{{"event", song.a}}}}}); // the chain has only A
+	run(song.client, "arranger.setMode", {{"mode", true}});
+	run(song.client, "transport.locate", {{"position", 2000}});
+	run(song.client, "arranger.trigger", {{"event", song.b}}); // B loops, and isn't a step of the chain
+	CHECK(run(song.client, "transport.get").at("arranger").at("event") == song.b);
+	CHECK(run(song.client, "transport.get").at("arranger").at("step") == -1);
+	// Play keeps the looping event instead of replacing it with the chain's first step.
+	run(song.client, "transport.play");
+	CHECK(run(song.client, "transport.get").at("arranger").at("event") == song.b);
+	CHECK(run(song.client, "transport.get").at("arranger").at("step") == -1);
+	CHECK(run(song.client, "transport.get").at("position") == 2000);
+}
+
+TEST_CASE(
+	"with the start mode cycleStart a left locator outside the chain starts at the chain's first step", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	Song song(100);
+	song.addAudio(dir);
+	run(song.client, "arranger.setChain", {{"steps", {{{"event", song.b}}, {{"event", song.a}}}}}); // B, A
+	run(song.client, "arranger.setMode", {{"mode", true}});
+	// The cursor is in A, but playback starts at the left locator (startMode cycleStart), which is outside the chain.
+	run(song.client, "transport.set", {{"left", 3000}, {"startMode", "cycleStart"}});
+	run(song.client, "transport.locate", {{"position", 1200}});
+	run(song.client, "transport.play");
+	CHECK(run(song.client, "transport.get").at("position") == 2000); // the chain's first step, not the left locator
+	CHECK(run(song.client, "transport.get").at("arranger").at("step") == 0);
+	run(song.client, "audio.render", {{"frames", 1200}});
+	checkOutput(song, path({{2000, 2500}, {1000, 1600}, {1600, 1700}}, 1200));
+}
+
+TEST_CASE("with the start mode cycleStart a left locator inside the chain keeps the step holding it", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	Song song(100);
+	song.addAudio(dir);
+	run(song.client, "arranger.setChain", {{"steps", {{{"event", song.b}}, {{"event", song.a}}}}}); // B, then A
+	run(song.client, "arranger.setMode", {{"mode", true}});
+	// The cursor is in B, but playback starts at the left locator, which the step of A holds.
+	run(song.client, "transport.set", {{"left", 1200}, {"startMode", "cycleStart"}});
+	run(song.client, "transport.locate", {{"position", 2200}});
+	run(song.client, "transport.play");
+	CHECK(run(song.client, "transport.get").at("position") == 1200); // the left locator, not the cursor
+	run(song.client, "audio.render", {{"frames", 200}});
+	CHECK(run(song.client, "transport.get").at("arranger").at("step") == 1); // A's step plays
+	CHECK(run(song.client, "transport.get").at("position") == 1400);
+	run(song.client, "audio.render", {{"frames", 300}});
+	checkOutput(song, path({{1200, 1600}, {1600, 1700}}, 500)); // A, then on after the chain
+}
+
+TEST_CASE("transport.get reports no arranger step while the plan doesn't play", "[integration]")
+{
+	Song song(100);
+	run(song.client, "arranger.setChain", {{"steps", {{{"event", song.a}}, {{"event", song.b}}}}});
+	run(song.client, "arranger.setMode", {{"mode", true}});
+	CHECK(run(song.client, "arranger.goToStep", {{"step", 1}}).at("arranger").at("step") == 1);
+	run(song.client, "arranger.setMode", {{"mode", false}}); // arranger mode off: the step playing is stale
+	Json arranger = run(song.client, "transport.get").at("arranger");
+	CHECK(arranger.at("step") == -1);
+	CHECK(arranger.at("event") == 0);
+	// Arranger mode on with an empty chain plays nothing either.
+	run(song.client, "arranger.setMode", {{"mode", true}});
+	run(song.client, "arranger.setChain", {{"steps", Json::array()}});
+	CHECK(run(song.client, "transport.get").at("arranger").at("step") == -1);
+}
+
+TEST_CASE("repeats loaded from a file are capped at 999 and raised to 1", "[integration]")
+{
+	Engine engine;
+	Client client{engine};
+	run(client, "track.add", {{"type", "arranger"}, {"timeBase", "linear"}});
+	const ObjectId a = idOf(run(client, "arranger.add", {{"position", 0}, {"end", 1000}}), "event");
+	const ObjectId b = idOf(run(client, "arranger.add", {{"position", 1000}, {"end", 2000}}), "event");
+	run(client, "arranger.setChain", {{"steps", {{{"event", a}, {"repeats", 2}}, {{"event", b}, {"repeats", 3}}}}});
+	Json saved = run(client, "project.get");
+	// A file from another application, with repeats outside the 1 to 999 arranger.setChain enforces.
+	saved["arranger"]["chains"][0]["steps"][0]["repeats"] = 5000;
+	saved["arranger"]["chains"][0]["steps"][1]["repeats"] = 0;
+	const Project loaded = projectFromJson(saved);
+	REQUIRE(loaded.arranger.chains.size() == 1);
+	REQUIRE(loaded.arranger.chains[0].steps.size() == 2);
+	CHECK(loaded.arranger.chains[0].steps[0].repeats == 999);
+	CHECK(loaded.arranger.chains[0].steps[1].repeats == 1);
 }

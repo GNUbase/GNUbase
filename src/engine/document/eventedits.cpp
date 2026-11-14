@@ -126,7 +126,7 @@ namespace gnubase::engine
 		{
 			std::vector<AudioEvent*> events = eventsIn(project, part);
 			std::stable_sort(events.begin(), events.end(),
-				[](const AudioEvent* a, const AudioEvent* b) { return frontOf(*a) < frontOf(*b); });
+				[](const AudioEvent* a, const AudioEvent* b) { return stackKey(*a) < stackKey(*b); });
 			return events;
 		}
 
@@ -135,7 +135,7 @@ namespace gnubase::engine
 		// order keeps it among them.
 		std::vector<size_t> stackOrder(Project& project, const std::vector<Item>& items)
 		{
-			std::vector<std::pair<ObjectId, ObjectId>> places(items.size());
+			std::vector<std::tuple<ObjectId, int64_t, ObjectId>> places(items.size());
 			for (size_t index = 0; index < items.size(); ++index)
 			{
 				const Item& item = items[index];
@@ -566,6 +566,15 @@ namespace gnubase::engine
 			part.length = length;
 		}
 
+		// Whether a position in samples lies inside a part from its start to end (in the start's time base), in
+		// samples: on a musical track a part's start or end in ticks can lie up to half a sample from where it shows,
+		// and a cut there would leave a piece shorter than a sample with what starts there, a note on its downbeat
+		// (#1261). Audio events are cut in samples too.
+		bool inside(const Project& project, const time::Position& start, int64_t end, time::Samples at)
+		{
+			return at > samples(project, start) && at < samples(project, {start.base, end});
+		}
+
 		// Splits an item at a position in samples and returns the new item after it, or nothing if the position
 		// isn't inside it.
 		Item splitAt(Project& project, const Item& item, time::Samples at, bool splitNotes, CommandContext& context)
@@ -576,7 +585,7 @@ namespace gnubase::engine
 				AudioPart& part = *item.audioPart;
 				const int64_t end = part.position.value + part.length;
 				const int64_t split = rebased(project, {time::TimeBase::Linear, at}, part.position.base).value;
-				if (split <= part.position.value || split >= end)
+				if (split <= part.position.value || split >= end || !inside(project, part.position, end, at))
 					return {};
 				AudioPart right = part;
 				right.id = project.newId();
@@ -605,20 +614,27 @@ namespace gnubase::engine
 					return {};
 				AudioEvent right = event;
 				right.id = project.newId();
-				// The piece after the split comes right in front of its event, as its id is the newest place, and
-				// what was in front of the event stays in front of it: new places after it, in the order it had
-				// (#1189), so that a second split of a piece doesn't bring it in front of the piece after it.
-				right.front = 0;
-				std::vector<AudioEvent*> inFront;
+				// The piece after the split comes right in front of its event, behind whatever was in front of it: at
+				// its event's place, ranked right after it (#1189, #1281). Only the events at that place, the pieces
+				// of the event, get new ranks; ties from before ranks go by id, as stackKey orders them.
+				right.front = frontOf(event);
+				std::vector<AudioEvent*> place;
 				for (auto& [id, other] : project.audioEvents)
-					if (other.track == event.track && stackKey(other) > stackKey(event))
-						inFront.push_back(&other);
-				std::sort(inFront.begin(), inFront.end(),
+					if (frontOf(other) == right.front)
+						place.push_back(&other);
+				std::sort(place.begin(), place.end(),
 					[](const AudioEvent* a, const AudioEvent* b) { return stackKey(*a) < stackKey(*b); });
-				for (AudioEvent* other : inFront)
+				int64_t rank = 0;
+				for (AudioEvent* other : place)
 				{
-					other->front = project.newId();
-					context.emit("audioEvent.changed", {{"event", toJson(*other)}});
+					if (other->rank != rank)
+					{
+						other->rank = rank;
+						context.emit("audioEvent.changed", {{"event", toJson(*other)}});
+					}
+					if (other == &event)
+						right.rank = ++rank;
+					++rank;
 				}
 				right.position = rebased(project, {time::TimeBase::Linear, at}, event.position.base);
 				right.offset += frames;
@@ -627,32 +643,54 @@ namespace gnubase::engine
 				right.crossfade = Crossfade();
 				event.length = frames;
 				event.fadeOut = Fade();
-				// Both pieces of a quantized event keep where they were before quantizing, each with its own length,
-				// so that resetting puts them back and they tile again (#910). The piece after the split was as far
-				// from its original, in samples, as the split is from where quantizing put the event; it goes through
-				// samples because a musical event's position is in ticks while its audio keeps its length in samples
-				// (#414), so the tempo between the two counts. An origin that has stopped counting, of an event moved
-				// by other means since, doesn't come along.
+				// Both pieces of a quantized event keep where they were before quantizing, so that resetting puts
+				// them back and they tile again (#910). The piece after the split was as far from its original, in
+				// samples, as the split is from where quantizing put the event; it goes through samples because a
+				// musical event's position is in ticks while its audio keeps its length in samples (#414), so the
+				// tempo between the two counts. Its original offset and length are the recorded original's, cut
+				// where the piece before it ends, not its current ones: with a start the Crossfade step stretched
+				// the two differ, and resetting would play the wrong clip section and leave a gap (#1333). The
+				// panel can also have made the event longer than its original, so the piece before the split
+				// keeps at most the whole original, and a split past the original's end leaves nothing of it for
+				// the piece after, which then keeps no origin, as for an event moved by other means since (#1333).
+				// Such an origin, one that has stopped counting, doesn't come along either.
 				if (auto& origin = right.quantizeOrigin; origin && origin->quantized.position == event.position)
 				{
-					const time::Samples original =
-						samples(project, origin->original.position) + (at - samples(project, event.position));
-					const time::Position shifted =
-						rebased(project, {time::TimeBase::Linear, original}, event.position.base);
-					*origin = EventQuantizeOrigin{EventTiming{shifted, right.offset, right.length, right.crossfade},
-						EventTiming{right.position, right.offset, right.length, right.crossfade}};
-					event.quantizeOrigin->original.length = frames;
+					event.quantizeOrigin->original.length = std::min(frames, origin->original.length);
 					event.quantizeOrigin->quantized.length = frames;
+					if (frames < origin->original.length)
+					{
+						const time::Samples original =
+							samples(project, origin->original.position) + (at - samples(project, event.position));
+						const time::Position shifted =
+							rebased(project, {time::TimeBase::Linear, original}, event.position.base);
+						const EventTiming originalTiming{shifted, origin->original.offset + frames,
+							origin->original.length - frames, right.crossfade};
+						*origin = EventQuantizeOrigin{
+							originalTiming, EventTiming{right.position, right.offset, right.length, right.crossfade}};
+					}
+					else
+					{
+						right.quantizeOrigin.reset();
+					}
 				}
 				else
 				{
 					right.quantizeOrigin.reset();
 				}
-				// An event that crossfaded from this one now overlaps the piece after the split.
+				// An event that crossfaded from this one now overlaps the piece after the split. Its origin's
+				// crossfades follow, so that resetting still knows them as the panel left them (#1333).
 				for (auto& [id, other] : project.audioEvents)
 					if (other.crossfade.from == event.id && eventSpan(project, other).start >= at)
 					{
 						other.crossfade.from = right.id;
+						if (other.quantizeOrigin)
+						{
+							if (other.quantizeOrigin->original.crossfade.from == event.id)
+								other.quantizeOrigin->original.crossfade.from = right.id;
+							if (other.quantizeOrigin->quantized.crossfade.from == event.id)
+								other.quantizeOrigin->quantized.crossfade.from = right.id;
+						}
 						context.emit("audioEvent.changed", {{"event", toJson(other)}});
 					}
 				return {&(project.audioEvents[right.id] = right), nullptr};
@@ -660,7 +698,7 @@ namespace gnubase::engine
 			MidiPart& part = *item.part;
 			const int64_t end = part.position.value + part.length;
 			const int64_t split = rebased(project, {time::TimeBase::Linear, at}, part.position.base).value;
-			if (split <= part.position.value || split >= end)
+			if (split <= part.position.value || split >= end || !inside(project, part.position, end, at))
 				return {};
 			detach(project, part);
 			const time::Ticks offset = ticks(project, {part.position.base, split}) - ticks(project, part.position);
@@ -694,15 +732,20 @@ namespace gnubase::engine
 				}
 				if (splitNotes && note.position + note.length > offset)
 				{
-					// The rest of the note starts the part after the split.
+					// The rest of the note starts the part after the split, its expression from the split on.
 					Note rest = note;
 					rest.id = project.newId();
 					rest.position = 0;
 					rest.length = note.position + note.length - offset;
 					rest.origin.reset();
+					rest.expressions = expressionsFrom(note.expressions, offset - note.position);
 					right.notes[rest.id] = rest;
 					note.length = offset - note.position;
 					note.origin.reset();
+					note.expressions.erase(
+						std::remove_if(note.expressions.begin(), note.expressions.end(),
+							[&note](const ExpressionPoint& point) { return point.position >= note.length; }),
+						note.expressions.end());
 				}
 				++it;
 			}
@@ -1601,6 +1644,27 @@ namespace gnubase::engine
 				ticks(project, {time::TimeBase::Linear, to}) - ticks(project, {time::TimeBase::Linear, from})};
 		}
 
+		// The gap by which the items of a range that starts at from (ticks) land in a range that starts at at (project
+		// samples): gap, the one between the two, unless an item on a musical track starts where the range starts in
+		// samples. Then every musical item, on every track, goes by the ticks that put the first of those in ticks at
+		// at exactly, so that all of them keep their distances in ticks, also across tracks: by the gap, as from and
+		// at are rounded to ticks apart and the item's start in ticks lies up to half a sample from the range's, it
+		// could land a sample off at (#1261).
+		Gap landing(const Project& project, const std::vector<Item>& items, Gap gap, time::Ticks from, time::Samples at)
+		{
+			const time::Samples start = samples(project, {time::TimeBase::Musical, from});
+			std::optional<time::Ticks> first;
+			for (const Item& item : items)
+			{
+				const time::Position& position = item.position();
+				if (position.base == time::TimeBase::Musical && samples(project, position) == start)
+					first = std::min(first.value_or(position.value), position.value);
+			}
+			if (first)
+				gap.ticks = ticks(project, {time::TimeBase::Linear, at}) - *first;
+			return gap;
+		}
+
 		// Moves the unlocked events and parts on the tracks that lie after a position they were split at by a gap, with
 		// sign 1 later, with -1 earlier.
 		void moveFrom(Project& project, const std::vector<ObjectId>& tracks, time::Samples at, const Gap& gap,
@@ -1893,7 +1957,7 @@ namespace gnubase::engine
 			clipboard.automation = automationIn(project, range);
 			// In stack order: pasted copies stack in the order they are added, and a split moves no piece in the stack.
 			std::stable_sort(clipboard.audioEvents.begin(), clipboard.audioEvents.end(),
-				[](const AudioEvent& a, const AudioEvent& b) { return frontOf(a) < frontOf(b); });
+				[](const AudioEvent& a, const AudioEvent& b) { return stackKey(a) < stackKey(b); });
 			return clipboard;
 		}
 
@@ -2144,15 +2208,8 @@ namespace gnubase::engine
 				return tracks.at(static_cast<size_t>(index));
 			};
 			const Gap shift{at - clipboard.start, ticks(project, {time::TimeBase::Linear, at}) - clipboard.startTicks};
+			// The copies, where they were copied, until they all are there and go to where they land.
 			std::vector<Item> added;
-			const auto paste = [&](const Item& item)
-			{
-				const ObjectId track = onto(item.track());
-				checkTrack(project, item, track);
-				place(project, item, shift.shift(item.position().base, 1), track);
-				announce(project, context, item, "added");
-				added.push_back(item);
-			};
 			// Audio parts, then their events, which they then take along to where they land.
 			std::map<ObjectId, ObjectId> parts;
 			std::vector<AudioPart*> pastedParts;
@@ -2169,7 +2226,7 @@ namespace gnubase::engine
 			std::vector<size_t> stacked(copiedEvents.size());
 			std::iota(stacked.begin(), stacked.end(), size_t{0});
 			std::stable_sort(stacked.begin(), stacked.end(),
-				[&copiedEvents](size_t a, size_t b) { return frontOf(copiedEvents[a]) < frontOf(copiedEvents[b]); });
+				[&copiedEvents](size_t a, size_t b) { return stackKey(copiedEvents[a]) < stackKey(copiedEvents[b]); });
 			std::vector<ObjectId> newIds(copiedEvents.size());
 			for (const size_t index : stacked)
 				newIds[index] = project.newId();
@@ -2186,10 +2243,10 @@ namespace gnubase::engine
 				event.part = part == parts.end() ? 0 : part->second;
 				AudioEvent& pasted = project.audioEvents[event.id] = event;
 				if (pasted.part == 0)
-					paste(audioItem(pasted));
+					added.push_back(audioItem(pasted));
 			}
 			for (AudioPart* part : pastedParts)
-				paste(audioPartItem(*part));
+				added.push_back(audioPartItem(*part));
 			for (const MidiPart& copied : clipboard.midiParts)
 			{
 				MidiPart part = copied;
@@ -2198,7 +2255,15 @@ namespace gnubase::engine
 				part.shared = 0;
 				renumber(project, part);
 				const ObjectId id = part.id;
-				paste({nullptr, &(project.midiParts[id] = std::move(part))});
+				added.push_back({nullptr, &(project.midiParts[id] = std::move(part))});
+			}
+			const Gap landed = landing(project, added, shift, clipboard.startTicks, at);
+			for (const Item& item : added)
+			{
+				const ObjectId track = onto(item.track());
+				checkTrack(project, item, track);
+				place(project, item, landed.shift(item.position().base, 1), track);
+				announce(project, context, item, "added");
 			}
 			// ponytail: automation lands only on lanes of the same parameter that the tracks already have.
 			for (const AutomationLane& copied : clipboard.automation)
@@ -2213,9 +2278,11 @@ namespace gnubase::engine
 
 		// range.move without copy: what lies in the range, cut at its edges, moves to at on its tracks. It keeps its
 		// ids, so that an editor open on a moved part keeps it, a crossfade between two moved events stays and a shared
-		// copy of a MIDI part stays one (one cut at an edge is a real copy, as range.split makes it). A crossfade
-		// between a moved event and one that stays ends. Its audio comes in front where it lands, as range.paste puts
-		// it. The automation in the range moves as range.cut and range.paste move it. Returns what moved.
+		// copy of a MIDI part stays one (one cut at an edge is a real copy, as range.split makes it). A cut gives the
+		// piece after it the new id: of what starts before the range the moved piece is new, of what starts in it and
+		// ends after it the piece that stays. A crossfade between a moved event and one that stays ends. Its audio
+		// comes in front where it lands, as range.paste puts it. The automation in the range moves as range.cut and
+		// range.paste move it. Returns what moved.
 		Json moveRange(Project& project, const Range& range, time::Samples at, CommandContext& context)
 		{
 			const std::vector<AutomationLane> automation = automationIn(project, range);
@@ -2239,16 +2306,18 @@ namespace gnubase::engine
 				}
 			}
 			std::stable_sort(movedAudio.begin(), movedAudio.end(),
-				[](const AudioEvent* a, const AudioEvent* b) { return frontOf(*a) < frontOf(*b); });
+				[](const AudioEvent* a, const AudioEvent* b) { return stackKey(*a) < stackKey(*b); });
 			std::set<ObjectId> movedEvents;
 			for (AudioEvent* event : movedAudio)
 			{
 				event->front = project.newId();
 				movedEvents.insert(event->id);
 			}
+			const Gap landed =
+				landing(project, items, shift, ticks(project, {time::TimeBase::Linear, range.start}), at);
 			for (const Item& item : items)
 			{
-				place(project, item, shift.shift(item.position().base, 1), item.track());
+				place(project, item, landed.shift(item.position().base, 1), item.track());
 				announce(project, context, item, "changed");
 			}
 			for (auto& [id, event] : project.audioEvents)
@@ -2735,7 +2804,8 @@ namespace gnubase::engine
 			{"event.split", 1,
 				"Splits audio events and MIDI parts at positions (project samples): events, or without it every "
 				"unlocked one that a position cuts. A MIDI part's notes stay in the part they start in, or with "
-				"splitNotes are cut in two. With zeroCrossing, audio events split at the nearest point within 50 ms "
+				"splitNotes are cut in two, the rest with the expression from the cut on. With zeroCrossing, audio "
+				"events split at the nearest point within 50 ms "
 				"and inside the event where their audio crosses zero. The pieces of a pattern event continue its "
 				"pattern (patternOffset). The piece of a quantized audio event after the split keeps where it "
 				"was before quantizing, shifted by the split, so that quantize.reset puts both pieces back. "
@@ -2891,19 +2961,17 @@ namespace gnubase::engine
 				"Deletes what lies in " + range +
 					": the audio events and MIDI parts in it, cut at its edges (splitNotes as in range.split), and the "
 					"automation in it: its points, and the curve between two points that goes across it. The "
-					"automation "
-					"outside keeps its curve: the value it arrives at the start with holds up to the end; with virgin "
-					"territory (automation.set) the range becomes a gap instead, the point at its start a terminator. "
-					"time (Delete Time) closes the gap: what comes after the range on its tracks moves back by its "
-					"length, in ticks on musical tracks, and the transpose events in the range go with it, those after "
-					"it moving back too, unless the transpose track is locked. Locked events stay. Without time, a "
-					"cycle marker on a "
-					"marker track among tracks that the range lies in loses the part in it (reference manual p. 425): "
-					"one "
-					"that starts or ends with the range gets shorter, one that it lies inside otherwise is split in "
-					"two, the part after it a new cycle marker with the first free number, the same name and color. "
-					"Other markers stay, as do cycle markers that the range covers whole or reaches out of, and all "
-					"of them with time.",
+					"automation outside keeps its curve: the value it arrives at the start with holds up to the end; "
+					"with virgin territory (automation.set) the range becomes a gap instead, the point at its start a "
+					"terminator. time (Delete Time) closes the gap: what comes after the range on its tracks moves "
+					"back by its length, in ticks on musical tracks, and the transpose events in the range go with it, "
+					"those after it moving back too, unless the transpose track is locked. Locked events stay. Without "
+					"time it also takes the range out of the cycle markers that it lies in, on the marker tracks among "
+					"its tracks (reference manual p. 425): a cycle marker that starts or ends where the range does "
+					"gets shorter, and one that reaches past both of its edges is split in two, the part after the "
+					"range a new cycle marker with the first free number and the same name and color. Position markers "
+					"stay, and so do cycle markers that the range covers whole or reaches out of; with time every "
+					"marker stays.",
 				schema(withTime, {}), {{"type", "object"}}, false},
 			"Delete",
 			[](Project& project, CommandContext& context)
@@ -2968,10 +3036,12 @@ namespace gnubase::engine
 			{"range.paste", 1,
 				"Pastes the range clipboard (range.copy, range.cut) at position (project samples, default the project "
 				"cursor): onto the tracks it was copied from, or onto track and the tracks below it in the project's "
-				"order, one for each copied track, which must take the copied events. Audio events and MIDI parts "
-				"come as unlocked real copies; automation replaces the curve where it lands, on a lane of the same "
-				"parameter. time (Paste Time) first makes room as long as the copied range, as range.insertSilence "
-				"does. Returns the new events.",
+				"order, one for each copied track, which must take the copied events. What started where the copied "
+				"range starts lands at position exactly (of several, the first in ticks), and everything on musical "
+				"tracks moves by the same ticks, keeping its distance from that on every track. Audio events and MIDI "
+				"parts come as unlocked real copies; automation replaces the curve where it lands, on a lane of the "
+				"same parameter. time (Paste Time) first makes room as long as the copied range, as "
+				"range.insertSilence does. Returns the new events.",
 				schema({{"position", integer()}, {"track", integer()}, {"time", boolean()}}, {}), eventsResult(),
 				false},
 			"Paste",
@@ -2985,13 +3055,18 @@ namespace gnubase::engine
 				"Moves what lies in " + range +
 					" to position (project samples) on the same tracks, as dragging a selection range does (reference "
 					"manual p. 291), without the range clipboard: cut at its edges (splitNotes as in range.split), "
-					"what lies in it moves by position minus start, keeping its ids, the crossfades between moved "
-					"events and shared copies of MIDI parts that it holds whole; a crossfade between a moved event "
-					"and one that stays ends. The automation in it is cut out as range.delete does and pasted at "
-					"position as range.paste does. copy (Alt, p. 432) leaves the range as it is and pastes a copy as "
-					"range.paste does: real copies with new ids. Either way the audio that lands comes in front of "
-					"the events there, in the order it was stacked. Locked events stay where they are and aren't "
-					"copied. Returns the moved events, or the copies.",
+					"what lies in it moves by position minus start, in ticks on musical tracks, where what starts at "
+					"start lands at position exactly (of several, the first in ticks) and everything on musical "
+					"tracks moves by the same ticks, keeping its distance from that on every track. What moves "
+					"keeps its id, but the cuts make new pieces: of an event or part that starts before the range the "
+					"piece in it is new, of one that ends after it the piece after the range. The crossfades between "
+					"moved events stay, and so do shared copies of MIDI parts that the range holds whole; a crossfade "
+					"between a moved event and one that stays ends, and a shared copy cut at an edge becomes a real "
+					"copy. The automation in it is cut out as range.delete does and pasted at position as range.paste "
+					"does. copy (Alt, p. 432) leaves the range as it is and pastes a copy as range.paste does: real "
+					"copies with new ids. Either way the audio that lands comes in front of the events there, in the "
+					"order it was stacked. Locked events stay where they are and aren't copied. Returns the moved "
+					"events, or the copies.",
 				schema(withPosition, {"position"}), eventsResult(), false},
 			"Move Range",
 			[](Project& project, CommandContext& context)

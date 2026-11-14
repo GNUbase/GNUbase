@@ -100,6 +100,7 @@ sends engine commands, so whatever another client changes shows at once.
         .track-color                      the track's color strip, attribute color (colors.md)
         .track-name, input.track-name-field
         .track-controls > button.toggle[control]   .checked while on, disabled without anything to do
+        .track-controls > select.midi-channel[control=midiChannel]   MIDI tracks: value any or 0-15
     .drop-line                    where dragged tracks go, .shown while dragging
 ```
 
@@ -125,9 +126,10 @@ sends engine commands, so whatever another client changes shows at once.
   line and the ruler, by style sheet, also without the overview line. The wheel over the list scrolls the display.
 - **Controls** (pp. 191–195). The user setting `ui.trackControls` chooses each track type's controls and their order:
   `mute` (M) and `solo` (S), which tracks with a channel always show, `record` and `monitor` (audio tracks), `read`
-  (every automation lane of the track reads, or with a click none does; disabled without lanes) and `timeBase`
-  (musical or linear, `.checked` when linear). A click sends `channel.set`, `automationLane.set` in one transaction,
-  or `track.set`. Folders without a group channel and signature tracks show none. The tempo track's controls are
+  (every automation lane of the track reads, or with a click none does; disabled without lanes), `timeBase`
+  (musical or linear, `.checked` when linear) and on MIDI tracks `midiChannel` (MIDI Channel, p. 349), a drop-down list
+  of Any and 1 to 16 that sends `channel.set` `midiChannel` as the inspector's does ([mixer.md](mixer.md)). A click
+  sends `channel.set`, `automationLane.set` in one transaction, or `track.set`. Folders without a group channel and signature tracks show none. The tempo track's controls are
   `tempoTrack`, Activate Tempo Track (`project.set` `tempoTrackActive`), `currentTempo`, Current Tempo, a text field
   with the tempo at the project cursor, following it during playback, that takes a tempo typed with Enter, and
   `tempoType`, Type of New Tempo Points, a drop-down list for `editing.tempoType`

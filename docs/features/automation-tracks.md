@@ -13,7 +13,8 @@ the project or its undo history.
 - **`automationLane.targets`** `{track}` lists what a track's automation tracks can show, in the order they offer it:
   its channel's parameters as `parameter.list` returns them (volume, pan, the panner's sides, mute, the built-in
   instrument's and the plugins' parameters), then on MIDI and instrument tracks Pitch Bend, Channel Pressure and
-  Controller 0 to 127 (MIDI channel 0, from 0 to 1; pitch bend's static value is 0.5). Each comes with `group`
+  Controller 0 to 127 (MIDI channel 0, from 0 to 1; pitch bend's static value is 0.5; a MIDI track set to a MIDI
+  channel plays them on that one, [mixer.md](mixer.md)). Each comes with `group`
   (`Channel`, the instrument's or plugin's name, or `MIDI`) and `lane`, the id of the track's lane for it, or 0.
   Tracks without a channel have none.
 

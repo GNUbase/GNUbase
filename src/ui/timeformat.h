@@ -45,8 +45,14 @@ namespace gnubase::ui
 	};
 
 	// The tempo, signatures, sample rate, frame rate, start time and bar offset of a project as project.get returns
-	// it. Keeps the defaults, with a warning in the log, for a tempo or signature map it can't read.
+	// it. Keeps the defaults, with a warning in the log, for a tempo or signature map it can't read. Views that show
+	// time every frame keep a context and read it again per project answer instead (EventDisplay::time,
+	// readTimeContext); building one walks the project's JSON and costs what its tempo and signature maps do.
 	TimeContext projectTime(const engine::Json& project);
+
+	// How often projectTime built a context since the program started, e.g. for tests that a view keeps its context
+	// while the frames go by.
+	uint64_t projectTimeBuilds();
 
 	// Bounds a UI time to the largest project position before converting it to samples or tempo-map ticks.
 	// This also keeps NaN and negative input at the project start.

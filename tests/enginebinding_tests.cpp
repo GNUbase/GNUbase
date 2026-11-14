@@ -274,6 +274,18 @@ TEST_CASE("a control's steps leave no record behind once a read after their last
 	CHECK(!binding.ahead("volume", 0));
 	CHECK(read("volume") == -3.0); // the refused step changed nothing
 
+	// A failed project read is none: the view that sent it shows its older read still, so the record stays (#1370).
+	binding.sendStep(11, "pan", "Change Pan", set("pan", -0.5));
+	updateUntil(binding, [&binding] { return !binding.sending("pan"); });
+	bool failed = false;
+	binding.send("project.get", {{"unknown", 1}}, [&failed](const engine::Result& result) { failed = !result.ok(); });
+	updateUntil(binding, [&failed] { return failed; });
+	binding.update();
+	CHECK(binding.ahead("pan", 0));
+	readProject();
+	binding.update();
+	CHECK(!binding.ahead("pan", 0));
+
 	// A later gesture makes the record again and works as before.
 	binding.sendStep(10, "volume", "Change Volume", set("volume", -4.0));
 	updateUntil(binding, [&binding] { return !binding.sending("volume"); });

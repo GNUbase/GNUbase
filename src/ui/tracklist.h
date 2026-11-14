@@ -136,8 +136,11 @@ namespace gnubase::ui
 		void showState(); // names, controls and state classes
 		bool showTempo(); // the tempo track's Current Tempo and Type of New Tempo Points; whether a text changed
 		void followTransport(const engine::Json& status); // Current Tempo, also while playing (#831)
-		void place();                                     // heights and scrolling, from the display's lanes
-		void hide(); // tells the display which tracks folded folders and the track visibility hide
+		// The cursor watch while playing, which Current Tempo follows (#831): only while the list has the field, so
+		// that the frames of other projects cost nothing (#1338). Made and dropped as playback and the rows change.
+		void followTempo();
+		void place(); // heights and scrolling, from the display's lanes
+		void hide();  // tells the display which tracks folded folders and the track visibility hide
 		void fold(std::set<uint64_t> folders); // folds those folders, unfolds the others, and tells the engine
 		// The heights and folded folders from trackLayout.get or trackLayout.changed; replace drops the other heights.
 		void loadLayout(const engine::Json& layout, bool replace);
@@ -161,6 +164,8 @@ namespace gnubase::ui
 		void markerChange(Rml::Element& control, const std::string& value);
 		// A ruler track's time format chosen or time offset typed (reference manual p. 159).
 		void rulerChange(Rml::Element& control, const std::string& value);
+		// The MIDI channel a MIDI track's row chose (channel.set midiChannel).
+		void midiChannelChange(Rml::Element& control, const std::string& value);
 		void step(int direction);
 		void reveal(uint64_t track); // scrolls the display so that the track's lane shows
 		void finishRename(bool keep);
@@ -255,6 +260,7 @@ namespace gnubase::ui
 		std::function<void(uint64_t, bool)> m_onMarker;
 		std::vector<Subscription> m_subscriptions;
 		std::optional<Subscription> m_playback; // while playing, Current Tempo follows the cursor (#831)
+		bool m_playing = false;                 // the transport status followTransport last heard
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 		uint64_t m_addTrackMerges = 0; // addTrack's merge keys, one per double click
 	};

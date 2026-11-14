@@ -51,12 +51,15 @@ and on its time axis. It shows the project and the view as the key editor hands 
 .controller-lanes                     .lanes-hidden while showLanes is off
   .controller-lane-list               scrolls, like the note display, so that their time axes line up
     .controller-lane[lane][lane-kind]
-      button.controller-lane-type     the lane's name, opens #controller-lane-menu (the lane's type, Select All
+      .controller-lane-header         a right click below the name opens #controller-lane-context-menu: the lanes
+                                      to add, and Remove This Lane of that one (p. 1261)
+        button.controller-lane-type   the lane's name, opens #controller-lane-menu (the lane's type, Select All
                                       Events on Lane, Remove This Lane, Apply and Reset MIDI Play Probability and
                                       Velocity Variance)
       .controller-lane-area[lane]     .controller-bar[part][note] per note (note lanes), .controller-step[part]
                                       [controller] per event, as wide as until the next one; .selected, .inactive
-  .controller-lanes-footer
+  .controller-lanes-footer            in an in-place editor a double click on the strip, not on its buttons,
+                                      closes the editor (p. 1261, in-place-editor.md)
     #controller-lane-create           Create Controller Lane, menu #controller-create-menu: the lane types,
                                       named controllers and all 128 in Continuous Controllers; Show Used
                                       Controllers, Show Velocity Lane Only, Show/Hide Controller Lanes
@@ -81,6 +84,8 @@ part, or else channel 0.
 
 - **Auto Select Controllers** is a button of the key editor's toolbar (`.key-input[setting=autoSelectControllers]`).
   Selected controller events move with the notes that the object selection tool moves (p. 1188).
+- **A right click below a lane's name** (p. 1261) opens `#controller-lane-context-menu` at the mouse: the lane types,
+  named controllers and the Continuous Controllers to add a lane, and Remove This Lane of the lane it opened for.
 - **Bars are thin**: a press on a note lane that misses a bar takes the note starting nearest in the grid cell.
 - **Gestures**: while a drag goes on the lanes hear the mouseup in the whole document, so a drag released outside the
   lanes ends there, with its effect at that point. A left press anywhere in the document while a drag goes on means its
@@ -115,11 +120,12 @@ has the key editor's lanes.
   `controllerSelection` and Auto Select Controllers.
 - `tests/controllerlanes_ui_tests.cpp` drives the app with `ui::Automation`: velocity bars at their notes, dragged,
   painted and drawn with the line tool; a lane from the Create Controller Lane menu, events drawn, painted, selected,
-  dragged and erased; the line tool's line, square, parabola, sine, triangle and Paint modes from its menu, which
-  shows only after the second click; Ctrl painting only where the mouse went; poly pressure lanes taking the selected
-  note's pitch and program change lanes; Show Used Controllers, a lane's type, Select All Events on Lane, Remove This
-  Lane, play probability drawn, applied and reset, Apply and Reset MIDI Velocity Variance over two parts as one undo
-  step, Show/Hide and Show Velocity Lane Only; the line tool and painting on a lane whose events are on another
-  channel; drags released outside the lanes and never released; Auto Select Controllers with a note moved; a preset
-  saved with Add Preset, loaded and removed with Remove Preset; events drawn on a lane playing back.
+  dragged and erased; the line tool's line, square, parabola, sine, triangle and Paint modes from its menu, which shows
+  only after the second click; Ctrl painting only where the mouse went; poly pressure lanes taking the selected note's
+  pitch and program change lanes; Show Used Controllers, a lane's type, Select All Events on Lane, Remove This Lane,
+  play probability drawn, applied and reset, Apply and Reset MIDI Velocity Variance over two parts as one undo step,
+  Show/Hide and Show Velocity Lane Only; a right click below a lane's name adding a lane and removing that one; the line
+  tool and painting on a lane whose events are on another channel; drags released outside the lanes and never released;
+  Auto Select Controllers with a note moved; a preset saved with Add Preset, loaded and removed with Remove Preset;
+  events drawn on a lane playing back.
   `tests/uithemes_tests.cpp`: every theme draws play probability and velocity variance bars dashed.

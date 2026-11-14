@@ -309,9 +309,10 @@ tabset tab
 	margin-right: 0;
 }
 
-/* A section the toolbar has no room for: out of the flow and unseen, so it takes no room and no gap, and still laid
-   out, so the docking system knows the width it needs to show again. */
-.toolbar-section.no-room
+/* A section the toolbar has no room for, or a part it gives up first (fit="spare", such as Warp Quantize On/Off): out
+   of the flow and unseen, so it takes no room and no gap, and still laid out, so the docking system knows the width it
+   needs to show again. */
+.toolbar-section.no-room, .toolbar-section .no-room
 {
 	position: absolute;
 	left: 0;
@@ -543,9 +544,36 @@ valuefield.editing .valuefield-text
 	min-width: 72dp;
 }
 
-.transport .primary-time
+/* The project cursor's displays keep their width while the transport runs, locates or scrubs (#1335): the width of
+   their format's widest text, which the format's state class picks, in em, so that it follows the font size. The
+   themes show displays in a font whose digits are all 0.6 em wide, but FreeType rounds the face's size and its
+   advances to whole pixels, so a character takes up to 0.64 em: 8 px at 13 px, 7 px of an 11.05 px font cut to an
+   11 px face (tests/transportbar_tests.cpp checks the widths in every theme at dp ratios of 1 and 0.85).
+   14 characters for bars and beats, every position from bar -999 to 9999 in any signature (-999.99.16.119); 12 for
+   seconds and 11 for timecode and user frames, every position under 100 hours (99:59:59.999, 99:59:59:29); 11 for
+   samples, every position under 48 hours at 384 kHz. That holds the longest project (24 hours) from the latest start
+   time (under 24 hours). Later positions may not fit. */
+.transport textdisplay[time=position]
 {
-	min-width: 96dp;
+	box-sizing: content-box;
+	min-width: 0;
+	height: 16dp;
+}
+
+.transport textdisplay[time=position].format-barsBeats
+{
+	width: 8.96em;
+}
+
+.transport textdisplay[time=position].format-seconds
+{
+	width: 7.68em;
+}
+
+.transport textdisplay[time=position].format-timecode, .transport textdisplay[time=position].format-userFrames,
+.transport textdisplay[time=position].format-samples
+{
+	width: 7.04em;
 }
 
 /* The time display window's digits; their size at each of the window's sizes (.size-0 to .size-4) is the theme's. */
@@ -1490,19 +1518,12 @@ meter .meter-peak
 	text-align: left;
 }
 
-.track-visibility-item[level="1"]
+/* The indent of a track in folders, which code sizes from the track's level as the tree views' indents: folders
+   nest without a limit, which no rule per level covers (#906). */
+.track-visibility-indent
 {
-	margin-left: 12dp;
-}
-
-.track-visibility-item[level="2"]
-{
-	margin-left: 24dp;
-}
-
-.track-visibility-item[level="3"]
-{
-	margin-left: 36dp;
+	display: inline-block;
+	height: 1dp;
 }
 
 /* The track's color (#94), which code gives it as user data; without one it shows nothing. */
@@ -1601,6 +1622,15 @@ meter .meter-peak
 .track-list .track-controls select.marker-menu
 {
 	width: 44dp;
+	padding: 0 2dp;
+}
+
+/* A MIDI track's MIDI channel (docs/features/mixer.md): Any, 1 to 16. */
+.track-list .track-controls select.midi-channel
+{
+	width: 44dp;
+	height: 18dp;
+	margin-left: 2dp;
 	padding: 0 2dp;
 }
 

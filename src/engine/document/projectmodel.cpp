@@ -1609,7 +1609,7 @@ namespace gnubase::engine
 			for (const AudioEvent& event : audio)
 				stacked.push_back(&event);
 			std::stable_sort(stacked.begin(), stacked.end(),
-				[](const AudioEvent* a, const AudioEvent* b) { return frontOf(*a) < frontOf(*b); });
+				[](const AudioEvent* a, const AudioEvent* b) { return stackKey(*a) < stackKey(*b); });
 			for (const AudioEvent* event : stacked)
 				events[event->id] = project.newId();
 			for (AudioEvent& event : audio)
@@ -2162,6 +2162,8 @@ namespace gnubase::engine
 				}
 				for (const midi::EffectSlot& slot : rack.slots)
 				{
+					// A send without an effect plays nowhere, so it makes no send and counts for no loop (#1149).
+					require(slot.output == 0 || !slot.effect.empty(), "a MIDI send without an effect has no output");
 					const auto target = project.channels.find(slot.output);
 					require(slot.output == 0 ||
 							(target != project.channels.end() &&
@@ -4394,7 +4396,8 @@ namespace gnubase::engine
 				"change, after bank select MSB (CC 0) and LSB (CC 32) if bank is set, goes to the instrument on its "
 				"midiChannel whenever they change and when playback starts or jumps; without a program nothing is "
 				"sent. midiChannel is the MIDI channel they go out on, 0 to 15, or null (Any, the default) for MIDI "
-				"channel 1. device names the "
+				"channel 1. A MIDI track set to a channel also plays its parts' notes and controller events, what its "
+				"input plays and its MIDI automation on it; Any keeps their own channels. device names the "
 				"installed MIDI device (midiDevice.install) whose patches choose them, or is empty. monitor and "
 				"recordEnable are an audio track's buttons: monitor hears the input bus, recordEnable arms the track "
 				"for recording "
@@ -4438,8 +4441,9 @@ namespace gnubase::engine
 				"the track live, before it records, and not its parts), slots: [{effect (an id, or empty for none; "
 				"another effect starts from its defaults), on, parameters {key: value, a number or an option's "
 				"name}, output (sends only: an instrument track's channel the effect plays to, 0 for the track's own "
-				"output)}]}. The inserts play in order, each on what the one before it played; each send plays its "
-				"effect's events beside them. Changing which effects play ends the notes the track sounds. The channel "
+				"output; a slot without an effect has none: 0, which removing its effect sets)}]}. The inserts play in "
+				"order, each on what the one before it played; each send plays its effect's events beside them. "
+				"Changing which effects play ends the notes the track sounds. The channel "
 				"strip's sections (audio channels only; "
 				"each object changes only what it has, as project.get shows them) run before the fader: pre "
 				"{gain (dB, -24 to 24), phase (inverts the polarity), lowCut and highCut {on, frequency (Hz, 20 or "

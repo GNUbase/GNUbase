@@ -285,7 +285,7 @@ namespace gnubase::engine
 		rt::assertNotRealtime("engine::Recorder::prepare");
 		std::unique_lock lock(m_mutex);
 		m_wake.wait(lock, [this] { return !m_opening; }); // the chunks go away
-		drain();                                          // what the audio thread sent before it stopped
+		drain(true);                                      // what the audio thread sent before it stopped
 		applySetups(m_latestSetup.load(std::memory_order_acquire));
 		if (m_midiRecording)
 			endMidi();
@@ -369,7 +369,7 @@ namespace gnubase::engine
 	{
 		rt::assertNotRealtime("engine::Recorder::retrospective");
 		const std::scoped_lock lock(m_mutex);
-		drain();
+		drain(false);
 		const auto found = m_retrospective.find(channel);
 		if (found == m_retrospective.end())
 			return {};
@@ -381,7 +381,7 @@ namespace gnubase::engine
 	{
 		rt::assertNotRealtime("engine::Recorder::clearRetrospective");
 		const std::scoped_lock lock(m_mutex);
-		drain();
+		drain(false);
 		if (channel == 0)
 			m_retrospective.clear();
 		else
@@ -511,7 +511,7 @@ namespace gnubase::engine
 		while (!m_stopping)
 		{
 			// ponytail: polls, since the audio thread can't wake it; a semaphore if 2 ms ever matters.
-			if (!drain())
+			if (!drain(true))
 			{
 				applySetups(m_latestSetup.load(std::memory_order_acquire)); // for the chunks to come
 				m_wake.wait_for(lock, g_idle);
@@ -519,14 +519,17 @@ namespace gnubase::engine
 		}
 	}
 
-	bool Recorder::drain()
+	bool Recorder::drain(bool mayBegin)
 	{
-		if (m_opening)
-			return false; // the chunks behind the one that starts a recording wait for its files
+		if (m_opening || !m_filled)
+			return false; // not prepared, or the chunks behind the one that starts a recording wait for its files
 		bool handled = false;
-		Chunk* chunk = nullptr;
-		while (m_filled && m_filled->tryPop(chunk))
+		for (Chunk* const* next = m_filled->peek(); next != nullptr; next = m_filled->peek())
 		{
+			Chunk* chunk = *next;
+			if (!mayBegin && !chunk->midi && chunk->position >= 0 && !m_recording)
+				break; // starts a recording: the disk thread lists the folder and creates the files
+			m_filled->tryPop(chunk);
 			applySetups(chunk->setup);
 			if (chunk->midi)
 			{
@@ -761,9 +764,12 @@ namespace gnubase::engine
 		{
 			const MidiInput& input = chunk.events[i];
 			const auto builder = m_midiBuilders.find(input.channel);
-			if (builder == m_midiBuilders.end())
+			// A track that only monitors records only chord events, no part: its input stays retrospective too.
+			const bool chordsOnly = std::any_of(m_midiCurrent.midiTracks.begin(), m_midiCurrent.midiTracks.end(),
+				[&input](const MidiRecordTrack& track) { return track.channel == input.channel && track.chordsOnly; });
+			if (builder == m_midiBuilders.end() || chordsOnly)
 				keepRetrospective(input, chunk.deviceFrame);
-			else if (m_midiCurrent.midiFilter.records(input.event))
+			if (builder != m_midiBuilders.end() && m_midiCurrent.midiFilter.records(input.event))
 				builder->second.add(chunk.position + input.offset, input.event);
 		}
 	}

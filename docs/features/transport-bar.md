@@ -23,7 +23,7 @@ are by attributes, which `TransportControls` follows:
 | Click | Activate Metronome Click | `transport.toggle` `metronome` |
 
 The sections keep the width of their controls. A window too narrow for all of them, such as the transport bar of a
-project window under about 1180 dp wide, cuts off the last sections at its right edge instead of drawing sections over
+project window under about 1310 dp wide, cuts off the last sections at its right edge instead of drawing sections over
 each other.
 
 - **Buttons** have a `command` with `parameters` (JSON), which run as a key would (`KeyCommands::run`): engine
@@ -46,7 +46,15 @@ each other.
   a scroll sideways moves nothing, and a turn moves at most a billion steps (#457).
 - **Displays** (`time`) show the project cursor, a locator or the locator range in the time format of their slot
   (`format`: `primary`, `secondary`, `timeDisplay`). While playing they read the playback position once a frame, as
-  the event display does. They are `<textdisplay>`s ([widgets.md](widgets.md)): a double click edits one, and Enter
+  the event display does. Each has its format's state class, such as `.format-barsBeats`, and in the transport bar
+  and the panel the cursor's displays take the width of their format's widest text from it (`base.rcss`, in em of the
+  display font, whose digits are all as wide, with room for FreeType rounding them to whole pixels), so the controls
+  beside them stay in place while the transport runs, locates or scrubs; a format change may change it (#1335). The
+  widths hold every position from bar -999 to 9999 in any signature, every position under 100 hours in seconds,
+  timecode and user frames, and 11 digits of samples (under 48 hours at 384 kHz): the longest project from the latest
+  start time (#1379). The locators and the signature keep the widths they have, since they don't move with the cursor;
+  the tempo field follows the cursor in tempo track mode, also while playing, and keeps its width as every
+  `valuefield` does (80 dp). The time display window fills its window. They are `<textdisplay>`s ([widgets.md](widgets.md)): a double click edits one, and Enter
   takes what was typed in its format (`ui::parseTime`): "3.2" is bar 3, beat 2, "1:30" a minute and a half,
   "5:12" five seconds and twelve frames; what is left out counts from the start. A minus before the bar number types
   a position before bar 1, which a negative bar offset shows: "-3.1.1.0" with a bar offset of -4
@@ -149,25 +157,27 @@ following, revision, persistence, validation and lack of an undo step.
 
 `tests/transport_tests.cpp`: `transport.toggle` with each setting, `transport.locate` `by`, also huge amounts both ways
 and from the largest position, and `project.set` `tempo` and `signature` with undo and refused values.
-`tests/timeformat_tests.cpp`: positions typed in every format read back as the engine converts them, partial and
-invalid text, timecode hours past 2147483647, lengths in bars and beats across a tempo change, and the time context
-from `project.get`. `tests/transportbar_tests.cpp` drives the app's UI (`test::UiApp`, [ui-tests.md](ui-tests.md)):
-every button of the transport bar, a window too narrow for the transport bar cutting off its last sections, the
-switches following another client's changes, the marker buttons with and without markers, Locators to Selection by
-button and key, the time format menus, Exchange Time Formats by button and key, `ui.timeFormats` and the project's time
-format from the engine, also by undo and redo; positions, locators and a length typed into the displays (also the
-position a display shows, from between its ticks), the tempo and signature fields with undo, every key command, the
-transport panel opened by F2, by an enter command and again after its window was closed, and the time display window
-with its context menu; Rewind, Forward and Fast Forward winding while their key or button is held and stopping when it
-goes up, also after Shift; Nudge Cursor on bar, beat and second grids and at the project start; the wheel on the
-position, locator and range displays in three formats, and past the largest project position, where positions, locators
-and a length typed stop too, also for turns far larger than a wheel's; a drag and wheel turns on the tempo field as one
-undo step each, in fixed tempo mode and in tempo track mode; a tempo with more decimals than the field shows, kept when
-the field is left untouched and set when its number is typed; the position typed back into the primary display during
-playback; Show Beat Count Only and the window sizes, kept for the window opened again; and the setup panes of the
-transport bar and the panel, each with its own sections, and Show All. A button or menu item with a command that
-doesn't exist, parameters it doesn't take or parameters that aren't JSON makes `TransportControls` throw; without a
-check, only the last. `tests/mainmenu_tests.cpp` opens the transport panel and the time display window from a copy of
-the resources with a control that is refused: the window closes again, also when it is opened a second time,
-`transportPanel()` or `timeDisplay()` stays null, and the other window still opens. `tests/keycommands_tests.cpp`
-checks held keys, `tests/theme_tests.cpp` the themes' time display sizes.
+`tests/timeformat_tests.cpp`: positions typed in every format read back as the engine converts them, partial and invalid
+text, timecode hours past 2147483647, lengths in bars and beats across a tempo change, and the time context from
+`project.get`. `tests/transportbar_tests.cpp` drives the app's UI (`test::UiApp`, [ui-tests.md](ui-tests.md)): every
+button of the transport bar, a window too narrow for the transport bar cutting off its last sections, the switches
+following another client's changes, the marker buttons with and without markers, Locators to Selection by button and
+key, the time format menus, Exchange Time Formats by button and key, `ui.timeFormats` and the project's time format from
+the engine, also by undo and redo; in every theme and every format, at dp ratios of 1 and 0.85, the cursor's displays
+keeping their width and the controls to their right their place through positions with more and fewer digits, up to
+each format's widest text the widths hold (bars -999 and 9999 in 99/1, just under 100 hours, 11 digits of samples),
+with their text inside; positions, locators and a length typed into the displays (also the position a display shows, from between its ticks), the tempo and
+signature fields with undo, every key command, the transport panel opened by F2, by an enter command and again after its
+window was closed, and the time display window with its context menu; Rewind, Forward and Fast Forward winding while
+their key or button is held and stopping when it goes up, also after Shift; Nudge Cursor on bar, beat and second grids
+and at the project start; the wheel on the position, locator and range displays in three formats, and past the largest
+project position, where positions, locators and a length typed stop too, also for turns far larger than a wheel's; a
+drag and wheel turns on the tempo field as one undo step each, in fixed tempo mode and in tempo track mode; a tempo with
+more decimals than the field shows, kept when the field is left untouched and set when its number is typed; the position
+typed back into the primary display during playback; Show Beat Count Only and the window sizes, kept for the window
+opened again; and the setup panes of the transport bar and the panel, each with its own sections, and Show All. A button
+or menu item with a command that doesn't exist, parameters it doesn't take or parameters that aren't JSON makes
+`TransportControls` throw; without a check, only the last. `tests/mainmenu_tests.cpp` opens the transport panel and the
+time display window from a copy of the resources with a control that is refused: the window closes again, also when it
+is opened a second time, `transportPanel()` or `timeDisplay()` stays null, and the other window still opens.
+`tests/keycommands_tests.cpp` checks held keys, `tests/theme_tests.cpp` the themes' time display sizes.

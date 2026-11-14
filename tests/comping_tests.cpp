@@ -9,9 +9,13 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -30,6 +34,15 @@ namespace
 	float ramp(int64_t frame)
 	{
 		return static_cast<float>(frame + 1) / 65536.0f;
+	}
+
+	// Where an audio event is in its track's stack, to compare: its place (front, or its id while it has none), its
+	// rank among the events at that place, and its id.
+	std::array<int64_t, 3> stackPlace(const Json& event)
+	{
+		const auto own = event.at("front").get<int64_t>();
+		const auto id = event.at("id").get<int64_t>();
+		return {own != 0 ? own : id, event.value("rank", int64_t{0}), id};
 	}
 
 	struct Fixture
@@ -194,11 +207,15 @@ TEST_CASE("a split, the project file and undo keep where audio events are in the
 	const int64_t front = f.take(track, clip, 0, 1000, 1);
 	CHECK(f.object("audioEvents", back).at("front") == 0); // its id orders it
 
-	// The piece after a split comes right in front of its event, and the take in front gets a place after it.
+	// The piece after a split comes right in front of its event: at its event's place, ranked after it (#1281). The
+	// take in front keeps its place.
+	const Json inFront = f.object("audioEvents", front);
 	const Json pieces = f.call("event.split", {{"events", {back}}, {"positions", {500}}}).at("events");
 	REQUIRE(pieces.size() == 1);
-	CHECK(f.object("audioEvents", pieces.at(0)).at("front") == 0);
-	CHECK(f.object("audioEvents", front).at("front").get<int64_t>() > pieces.at(0).get<int64_t>());
+	CHECK(f.object("audioEvents", pieces.at(0)).at("front") == back);
+	CHECK(f.object("audioEvents", pieces.at(0)).at("rank") == 1);
+	CHECK(f.object("audioEvents", back).at("rank") == 0);
+	CHECK(f.object("audioEvents", front) == inFront);
 
 	f.call("event.toFront", {{"events", {back}}});
 	const Json moved = f.object("audioEvents", back).at("front");
@@ -209,6 +226,7 @@ TEST_CASE("a split, the project file and undo keep where audio events are in the
 	CHECK(f.object("audioEvents", back).at("front") == 0);
 	f.call("project.load", {{"path", path}});
 	CHECK(f.object("audioEvents", back).at("front") == moved);
+	CHECK(f.object("audioEvents", pieces.at(0)).at("rank") == 1);
 	// New events still come in front of it.
 	CHECK(f.take(track, clip, 0, 100, 2) > moved.get<int64_t>());
 }
@@ -261,6 +279,134 @@ TEST_CASE("a second split leaves what plays where the pieces of a split overlap,
 	f.call("project.save", {{"path", path}, {"embedMedia", false}});
 	f.call("project.load", {{"path", path}});
 	Fixture::check(f.render(2000), plays);
+}
+
+TEST_CASE("a split changes the stack only among the pieces of its event, also at several positions", "[unit]")
+{
+	Fixture f;
+	const int64_t track = f.track("audio");
+	const Json media =
+		f.call("media.add", {{"path", "take.wav"}, {"sampleRate", 48000}, {"channels", 1}, {"length", 48000}})
+			.at("media");
+	const auto clip = f.call("clip.add", {{"media", media.at("id")}}).at("clip").at("id").get<int64_t>();
+	// An early event, and three added after it, in front of it.
+	const int64_t event = f.take(track, clip, 0, 4000, 0);
+	std::vector<Json> others;
+	for (int lane = 1; lane <= 3; ++lane)
+		others.push_back(f.object("audioEvents", f.take(track, clip, 0, 1000, lane)));
+	const auto othersKept = [&f, &others]
+	{
+		for (const Json& other : others)
+			if (f.object("audioEvents", other.at("id")) != other)
+				return false;
+		return true;
+	};
+
+	// Split at three positions: the pieces follow each other in the stack from left to right, and the others are as
+	// they were.
+	const Json pieces = f.call("event.split", {{"events", {event}}, {"positions", {1000, 2000, 3000}}}).at("events");
+	REQUIRE(pieces.size() == 3);
+	CHECK(othersKept());
+	std::vector<Json> ordered{f.object("audioEvents", event)};
+	for (const Json& piece : pieces)
+		ordered.push_back(f.object("audioEvents", piece));
+	for (size_t i = 1; i < ordered.size(); ++i)
+		CHECK(stackPlace(ordered[i]) > stackPlace(ordered[i - 1]));
+	CHECK(stackPlace(ordered.back()) < stackPlace(others.front()));
+
+	// A second split of the first piece puts its new piece between it and the second piece; the others stay.
+	const Json second = f.call("event.split", {{"events", {event}}, {"positions", {500}}}).at("events").at(0);
+	CHECK(othersKept());
+	const auto place = [&f](const Json& id) { return stackPlace(f.object("audioEvents", id)); };
+	CHECK(place(second) > place(event));
+	CHECK(place(second) < place(pieces.at(0)));
+	CHECK(place(pieces.at(0)) < place(pieces.at(1)));
+	CHECK(place(pieces.at(2)) < stackPlace(others.front()));
+}
+
+TEST_CASE("two overlapping events at one place in the stack, as a file from before #1189 has them, play, snap, copy "
+		  "and come to the front by their ids",
+	"[integration]")
+{
+	// A sine that crosses zero every 100 frames. Event a plays it from frame 0 at 0, event b, added after it, from
+	// frame 50 at 1000 on: b's crossings are 50 samples off a's.
+	const gnubase::test::TempDir dir;
+	Fixture f;
+	f.call("audio.setDevice", {{"blockSize", 64}, {"inputChannels", 0}, {"captureSeconds", 1}});
+	const auto wave = [](int64_t frame)
+	{ return static_cast<float>(0.5 * std::sin(static_cast<double>(frame) * 3.14159265358979323846 / 100.0)); };
+	gnubase::test::Audio audio;
+	audio.sampleRate = 48000;
+	for (int64_t frame = 0; frame < 9600; ++frame)
+		audio.samples.push_back(wave(frame));
+	const std::filesystem::path file = dir.path() / "sine.wav";
+	gnubase::test::writeWav(file, audio);
+	const Json media = f.call("media.add", {{"path", file.u8string()}}).at("media");
+	const auto clip = f.call("clip.add", {{"media", media.at("id")}}).at("clip").at("id").get<int64_t>();
+	const int64_t track = f.track("audio");
+	const int64_t a = f.take(track, clip, 0, 4000, 0);
+	const int64_t b = f.take(track, clip, 50, 4000, 1);
+	f.call("event.move", {{"events", {b}}, {"delta", 1000}});
+
+	// The file gives b a's place, without a rank: of the two, b, with the higher id, is in front.
+	const std::string path = (dir.path() / "tie.dawproject").u8string();
+	f.call("project.save", {{"path", path}, {"embedMedia", false}});
+	std::map<std::string, std::string> entries = gnubase::test::readZip(path);
+	Json extension = Json::parse(entries.at("gnubase.json"));
+	for (Json& event : extension.at("project").at("audioEvents"))
+	{
+		event.erase("rank");
+		if (event.at("id") == b)
+			event["front"] = a;
+	}
+	entries["gnubase.json"] = extension.dump();
+	gnubase::test::writeZip(path, entries);
+	const auto load = [&f, &path, a, b]
+	{
+		f.call("project.new");
+		f.call("project.load", {{"path", path}});
+		REQUIRE(f.object("audioEvents", b).at("front") == a);
+	};
+	load();
+
+	// b plays in the overlap, and zero crossings there are b's.
+	const std::vector<float> output = f.render(5000);
+	size_t wrong = 0;
+	for (size_t i = 0; i < output.size(); ++i)
+	{
+		const auto position = static_cast<int64_t>(i);
+		if (output[i] != wave(position < 1000 ? position : position - 950))
+			++wrong;
+	}
+	CHECK(wrong == 0);
+	CHECK(f.call("snap.zeroCrossings", {{"positions", {1030}}, {"tracks", {track}}}).at("positions").at(0) == 1050);
+
+	// Copies and events brought to the front keep b in front of a, named in either order. Each order loads the file
+	// again, so it meets the tie: the first order's toFront gives a and b places of their own.
+	const auto bInFront = [&f](int64_t position)
+	{
+		std::optional<std::array<int64_t, 3>> aPlace;
+		std::optional<std::array<int64_t, 3>> bPlace;
+		const Json project = f.call("project.get");
+		for (const Json& event : project.at("audioEvents"))
+		{
+			if (event.at("position") == position && event.at("offset") == 0)
+				aPlace = stackPlace(event);
+			else if (event.at("position") == position + 1000 && event.at("offset") == 50)
+				bPlace = stackPlace(event);
+		}
+		return aPlace && bPlace && *bPlace > *aPlace;
+	};
+	for (const Json& named : {Json{a, b}, Json{b, a}})
+	{
+		INFO("named " << named.dump());
+		load();
+		REQUIRE(bInFront(0));
+		f.call("event.copy", {{"events", named}, {"delta", 48000}});
+		CHECK(bInFront(48000));
+		f.call("event.toFront", {{"events", named}});
+		CHECK(bInFront(0));
+	}
 }
 
 TEST_CASE("event.comp takes a piece of a clip at another sample rate that a split rounds past the range", "[unit]")
@@ -526,20 +672,17 @@ TEST_CASE("overlapping pieces of a split copied or brought to the front keep the
 	// Whether, of the pieces at position (the left's) and 500 after it (the right's), the right one is in front.
 	const auto rightInFront = [&f](int64_t position)
 	{
-		int64_t leftPlace = -1;
-		int64_t rightPlace = -1;
+		std::optional<std::array<int64_t, 3>> leftPlace;
+		std::optional<std::array<int64_t, 3>> rightPlace;
 		const Json project = f.call("project.get");
 		for (const Json& event : project.at("audioEvents"))
 		{
-			const auto own = event.at("front").get<int64_t>();
-			const int64_t place = own != 0 ? own : event.at("id").get<int64_t>();
 			if (event.at("position") == position && event.at("offset") == 0)
-				leftPlace = place;
+				leftPlace = stackPlace(event);
 			else if (event.at("position") == position + 500 && event.at("offset") == 1000)
-				rightPlace = place;
+				rightPlace = stackPlace(event);
 		}
-		INFO("left " << leftPlace << ", right " << rightPlace);
-		return leftPlace > 0 && rightPlace > leftPlace;
+		return leftPlace && rightPlace && *rightPlace > *leftPlace;
 	};
 	REQUIRE(rightInFront(0));
 	int64_t delta = 0;

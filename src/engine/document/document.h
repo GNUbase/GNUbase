@@ -548,6 +548,10 @@ namespace gnubase::engine
 		// Where it is in the stack of its track's events (#99): where events overlap, the one whose frontOf is highest
 		// plays. 0 orders it by its id, so an event added later is in front; event.toFront gives it a new id here.
 		ObjectId front = 0;
+		// Where it is among the events at its place (frontOf), higher in front: the pieces of a split share their
+		// event's place, each right in front of the piece it was split from (#1281). Only events at the same place
+		// compare it, and a split renumbers its place's events.
+		int64_t rank = 0;
 		// Where it was before quantizing (#145) first moved it, and where quantizing and the quantize panel's
 		// length changes (#910) left it. While it is there, quantizing starts from the original position and
 		// resetting puts it back; moved by other means, it is where it is.
@@ -559,11 +563,11 @@ namespace gnubase::engine
 		return event.front != 0 ? event.front : event.id;
 	}
 
-	// Its place in the stack with its id, to order events by: of events at the same place, such as the pieces of an
-	// event split before #1189, the one with the higher id is in front, as in playback (makePlaylist).
-	inline std::pair<ObjectId, ObjectId> stackKey(const AudioEvent& event)
+	// Its place in the stack with its rank and id, to order events by: of events at the same place and rank, such as
+	// the pieces of an event split before #1189, the one with the higher id is in front, as in playback (makePlaylist).
+	inline std::tuple<ObjectId, int64_t, ObjectId> stackKey(const AudioEvent& event)
 	{
-		return {frontOf(event), event.id};
+		return {frontOf(event), event.rank, event.id};
 	}
 
 	// A container of audio events on an audio track (#471, reference manual p. 250). Its events are the audio events
@@ -640,6 +644,11 @@ namespace gnubase::engine
 		std::vector<std::string> articulations;
 		std::vector<ExpressionPoint> expressions; // its per-note expression (#176), sorted by position
 	};
+
+	// A note's expression points measured from from instead of its start, for a note whose start moves there and
+	// whose expression stays where it is: the value each expression has at from, or at the start for a from before
+	// it, becomes a point at 0, and the later points move back by from.
+	std::vector<ExpressionPoint> expressionsFrom(const std::vector<ExpressionPoint>& points, time::Ticks from);
 
 	// The MIDI events besides notes, all held as controller events.
 	enum class ControllerType : uint8_t
@@ -1744,10 +1753,11 @@ namespace gnubase::engine
 	inline bool operator==(const AudioEvent& a, const AudioEvent& b)
 	{
 		return std::tie(a.id, a.track, a.position, a.clip, a.offset, a.length, a.volume, a.mute, a.lock, a.fadeIn,
-				   a.fadeOut, a.crossfade, a.snapPoint, a.color, a.part, a.lane, a.volumeCurve, a.front,
+				   a.fadeOut, a.crossfade, a.snapPoint, a.color, a.part, a.lane, a.volumeCurve, a.front, a.rank,
 				   a.quantizeOrigin) ==
 			std::tie(b.id, b.track, b.position, b.clip, b.offset, b.length, b.volume, b.mute, b.lock, b.fadeIn,
-				b.fadeOut, b.crossfade, b.snapPoint, b.color, b.part, b.lane, b.volumeCurve, b.front, b.quantizeOrigin);
+				b.fadeOut, b.crossfade, b.snapPoint, b.color, b.part, b.lane, b.volumeCurve, b.front, b.rank,
+				b.quantizeOrigin);
 	}
 
 	inline bool operator==(const AudioPart& a, const AudioPart& b)
