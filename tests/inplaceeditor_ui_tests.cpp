@@ -560,7 +560,7 @@ TEST_CASE("a note dragged from one in-place editor to another moves to that trac
 
 	// The first note, C3 on the bar's first beat, dragged into the other editor's second bar at E3: it moves to
 	// that track's part, at the drop's time and pitch, with its length and velocity, as one undo step.
-	f.app.ui().drag(std::nullopt, f.at(g_bar + (g_quarter / 2), 60), otherAt(2 * g_bar + (g_quarter / 2), 64));
+	f.app.ui().drag(std::nullopt, f.at(g_bar + (g_quarter / 2), 60), otherAt((2 * g_bar) + (g_quarter / 2), 64));
 	f.app.shell().step(std::chrono::milliseconds(0));
 	REQUIRE(f.app.waitUntil([&] { return partNotes(otherPart).size() == 1; }));
 	REQUIRE(f.app.waitUntil([&] { return f.elements(lane + " .key-note").size() == 1; }));

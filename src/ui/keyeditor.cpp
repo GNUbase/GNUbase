@@ -1611,7 +1611,7 @@ namespace gnubase::ui
 			}
 			else if (up->IsClassSet("in-place-editor"))
 			{
-				const std::string track = up->GetAttribute<Rml::String>("track", "");
+				const auto track = up->GetAttribute<Rml::String>("track", "");
 				if (grid != nullptr && !track.empty() && "inPlace:" + track != m_name)
 					return {grid, std::stoull(track)};
 				return {nullptr, 0};
