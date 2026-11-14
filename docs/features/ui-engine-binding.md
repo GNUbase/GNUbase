@@ -40,9 +40,12 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   taken step, such as the one after that step's `history.changed`, once no other project read is out (#746), so a
   session keeps no entry for every channel and parameter a gesture touched. A failed read is none, as the view that
   sent it still shows its older one (#1370). Until then a view may have no read newer than the control, and one that
-  shows an older read again, such as the inspector after a track change, still leaves the control as it is (#1305); a
-  view showing what that update handed on still asks `sending` and `ahead` about it, and a later gesture makes the
-  record again. The records go only while some view reads the project, as the event display does: a binding without
+  shows an older read again, such as the inspector after a track change, shows the value that the control sent last
+  (#1305): the inspector shows every track in the same fields, so it keeps that value by step key, which names the
+  channel, and back on a dragged track the field shows the drag's value, not the other track's (#1421). The info line's
+  step keys name the selected events, so other events selected meanwhile show their own values. A view showing what that
+  update handed on still asks `sending` and `ahead` about it, and a later gesture makes the record again. The records go
+  only while some view reads the project, as the event display does: a binding without
   one keeps them all for the session, and a view that asks `ahead` about another query's answer than `project.get`'s
   may find the record gone before that query answers again.
 - **Events.** `on(name, handler)` calls `handler` with every event of that name, from whichever client caused it: a
@@ -105,7 +108,8 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   changed; a gesture's steps go one at a time, the newest replacing those that wait, as one undo step, without holding
   up another control's, and steps without a gesture or of another gesture are kept, also after a refused one; the record
   of a control's steps goes away in the update after the one that handed on a project read sent after their last answer,
-  not one sent before it nor while another is out, also after a refused one, and a later gesture makes it again;
+  not one sent before it, nor while another is out, nor a failed one (#1370), also after a refused one, and a later
+  gesture makes it again;
   settling sends the steps that wait and waits for commands that change things and for queries sent with `sendAwaited`,
   and for what their answers send; what `afterAwaited` holds runs after the answer, in order, what a held one runs
   itself at once, and after another awaited query that a held one sends; `awaitHeld`, as a press calls it, waits for
@@ -121,7 +125,10 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   engine answers, the other mixers and the inspector that show its channel follow its steps. A mixer step and an info
   line volume step that the engine refuses, its track or one of the selected events being gone, show in the command log,
   leave no undo step and let the control show the engine's value again; a strip made again while its fader's step is in
-  flight shows the engine's volume at once, not the widget's default. One test changes the transport through MCP and
+  flight shows the engine's volume at once, not the widget's default. With the engine held behind a drag's last step
+  (`test::CommandHolds`), so that the display shows a read from before it: the inspector shows another audio track's own
+  volume in the dragged field, and back on the dragged track the drag's value; the info line shows another audio event's
+  own volume, not the dragged event's. One test changes the transport through MCP and
   checks a document shows it, then clicks the document's button and finds the command in `engine.commandLog`, sent by
   `ui`. Two more check drawing without input: a watched value draws its own window in the step it changed in, and no
   other window; events from MCP, results (a command's `done` or an `onResult` handler) and posted work draw every window

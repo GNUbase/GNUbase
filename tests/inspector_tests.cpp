@@ -1231,7 +1231,8 @@ TEST_CASE("the inspector's volume and pan fields dragged while the engine answer
 	CHECK(window.shows(".inspector valuefield[control=pan]", "25"));
 }
 
-TEST_CASE("the inspector's dragged volume stays while it shows a project read from before the drag again", "[ui]")
+TEST_CASE(
+	"the inspector's dragged volume stays while it shows a project read from before the drag's last step again", "[ui]")
 {
 	test::CommandHolds holds; // declared before the window: its engine's command thread waits in hold()
 	Window window;
@@ -1241,7 +1242,8 @@ TEST_CASE("the inspector's dragged volume stays while it shows a project read fr
 		[&holds](engine::CommandContext&) { return holds.hold(); });
 	engine::Client holder(window.app.engine(), "holder");
 	const uint64_t audio = window.addTrack({{"type", "audio"}, {"name", "Vox"}});
-	const uint64_t other = window.addTrack({{"type", "midi"}, {"name", "Keys"}});
+	const uint64_t other = window.addTrack({{"type", "audio"}, {"name", "Bass"}});
+	window.call("channel.set", {{"channel", window.channel(other).at("id")}, {"volume", 4.0}});
 	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 2; }));
 	window.list.select({audio});
 	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Vox"));
@@ -1277,10 +1279,11 @@ TEST_CASE("the inspector's dragged volume stays while it shows a project read fr
 	REQUIRE(shown() != Catch::Approx(dragged).margin(1e-5));
 	CHECK(drag.value() == Catch::Approx(dragged).margin(1e-5));
 
-	// Another track and back shows that older read again: the field stays where the drag left it. The other is a
-	// MIDI track, whose inspector shows no volume, so the field shows only the dragged track's.
+	// Another audio track shows its own volume in the same field, and back on the dragged one that older read shows
+	// again: the field shows where the drag left it, not the other track's volume (#1421).
 	window.list.select({other});
-	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Keys"));
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Bass"));
+	CHECK(window.shows(field, "4"));
 	window.list.select({audio});
 	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Vox"));
 	CHECK(drag.value() == Catch::Approx(dragged).margin(1e-5));
@@ -1333,6 +1336,67 @@ TEST_CASE("the info line's volume turned or dragged while the engine answers lat
 	window.app.shell().step(std::chrono::milliseconds(0));
 	CHECK(drag.value() == Catch::Approx(dragged).margin(1e-5));
 	CHECK(window.historyPosition() == position + 1);
+}
+
+TEST_CASE("the info line shows another event's own volume while a dragged one's last step is out", "[ui]")
+{
+	test::CommandHolds holds; // declared before the window: its engine's command thread waits in hold()
+	Window window;
+	const test::ReleaseHolds releaseHolds{holds};
+	window.app.engine().registerCommand(
+		{"test.hold", 1, "Waits for the test to release it.", engine::CommandInfo{}.parameters, Json::object(), false},
+		[&holds](engine::CommandContext&) { return holds.hold(); });
+	engine::Client holder(window.app.engine(), "holder");
+	const uint64_t audio = window.addTrack({{"type", "audio"}, {"timeBase", "linear"}});
+	const Json media =
+		window.call("media.add", {{"path", "take.wav"}, {"sampleRate", 48000}, {"channels", 1}, {"length", 480000}})
+			.at("media");
+	const Json clip = window.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	const auto addEvent = [&](int64_t at)
+	{
+		return window
+			.call("audioEvent.add", {{"track", audio}, {"clip", clip.at("id")}, {"position", at}, {"length", 24000}})
+			.at("event")
+			.at("id")
+			.get<uint64_t>();
+	};
+	const uint64_t dragged = addEvent(96000);
+	const uint64_t other = addEvent(192000);
+	window.call("audioEvent.set", {{"event", other}, {"volume", 3.0}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("audioEvents").size() == 2; }));
+	window.display.select({dragged});
+	const std::string field = "#info-line valuefield[field=volume]";
+	REQUIRE(window.shows(field, "0"));
+	ui::EngineBinding& binding = window.app.appUi().binding();
+
+	// A drag while the engine answers late, and its last step while the test holds the engine.
+	test::LateDrag drag(window.app, std::nullopt, field);
+	drag.move(15, 1);
+	REQUIRE(window.app.waitUntil([&] { return binding.waiting("history.transaction") == 0; }));
+	holder.send("test.hold");
+	REQUIRE(holds.waitEntered(1));
+	drag.nudge(1);
+	const double value = drag.value();
+	drag.release(false);
+	// The other event, asked for (event.get) after the last step. A second hold after that question keeps the
+	// project read that the display sends for the step's history.changed out: the display shows a read from before
+	// the last step (#1305).
+	window.display.select({other});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(binding.waiting("event.get") != 0);
+	holder.send("test.hold");
+	holds.release(1);
+	REQUIRE(holds.waitEntered(2));
+	CHECK(window.shows(field, "3")); // its own, not the dragged event's
+	REQUIRE(binding.waiting("project.get") != 0);
+
+	// Back on the dragged event, the field shows where the drag left it, and so does the engine.
+	window.display.select({dragged});
+	holds.release(2);
+	REQUIRE(window.app.waitUntil(
+		[&] { return window.find("audioEvents", dragged).at("volume") == Catch::Approx(value).margin(1e-5); }));
+	CHECK(window.app.waitUntil([&] { return drag.value() == Catch::Approx(value).margin(1e-5); }));
+	CHECK(window.find("audioEvents", other).at("volume") == 3.0);
 }
 
 TEST_CASE("the info line's refused volume step shows the engine's value again", "[ui]")

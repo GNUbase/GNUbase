@@ -114,11 +114,14 @@ namespace gnubase::ui
 				element.RemoveAttribute(name);
 		}
 
-		// What a field's gesture changes, as EngineBinding::sendStep names it: the info line's step owner, then the
-		// field.
-		std::string stepKey(const std::string& owner, const std::string& field)
+		// What a field's gesture changes, as EngineBinding::sendStep names it: the info line's step owner, then the ids
+		// of the events it edits and the field, so that other events selected meanwhile show their own values (#1421).
+		std::string stepKey(const std::string& owner, const Json& events, const std::string& field)
 		{
-			return owner + field;
+			std::string key = owner;
+			for (const Json& event : events)
+				key += std::to_string(event.at("id").get<uint64_t>()) + " ";
+			return key + field;
 		}
 	}
 
@@ -290,7 +293,7 @@ namespace gnubase::ui
 			setClass(*volume, "unavailable", !audio);
 		// Not while the project is older than the field's own steps (#716).
 		if (Rml::Element* volume = root.QuerySelector("valuefield[field=volume]");
-			volume != nullptr && audio && !m_binding.ahead(stepKey(m_stepOwner, "volume"), m_display.read()))
+			volume != nullptr && audio && !m_binding.ahead(stepKey(m_stepOwner, m_events, "volume"), m_display.read()))
 			setValue(*volume, widgets::format(static_cast<float>(volumeOf(first.at("id").get<uint64_t>()))));
 		for (const char* field : {"mute", "lock"})
 			if (Rml::Element* button = root.QuerySelector("button[field=" + std::string(field) + "]"))
@@ -302,7 +305,7 @@ namespace gnubase::ui
 			if (Rml::Element* shown = root.QuerySelector("[info-field=" + std::string(field) + "]"))
 				setClass(*shown, "unavailable", !midi);
 			if (Rml::Element* value = root.QuerySelector("valuefield[field=" + std::string(field) + "]");
-				value != nullptr && midi && !m_binding.ahead(stepKey(m_stepOwner, field), m_display.read()))
+				value != nullptr && midi && !m_binding.ahead(stepKey(m_stepOwner, m_events, field), m_display.read()))
 				setValue(*value, widgets::format(static_cast<float>(partValue(first.at("id").get<uint64_t>(), field))));
 		}
 		const Json* part = midi ? partOf(first.at("id").get<uint64_t>()) : nullptr;
@@ -592,7 +595,7 @@ namespace gnubase::ui
 		std::string label = labels.count(field) != 0 ? labels.at(field) : field;
 		label.front() = static_cast<char>(std::toupper(static_cast<unsigned char>(label.front())));
 		// A drag, wheel turns or a held arrow key on the volume: one undo step.
-		m_binding.sendStep(gesture, stepKey(m_stepOwner, field), "Change " + label, std::move(commands),
+		m_binding.sendStep(gesture, stepKey(m_stepOwner, m_events, field), "Change " + label, std::move(commands),
 			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
 				if (!alive.expired() && !result.ok())
