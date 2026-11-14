@@ -993,12 +993,44 @@ TEST_CASE(
 
 	SECTION("resetting the split event and its piece first and the neighbour second")
 	{
-		// Removing the piece ends the crossfade from it. The neighbour's origin keeps in step, so that resetting it
-		// later still takes the crossfade as the panel left it and puts back the one from before quantizing.
+		// Removing the piece moves the crossfade from it to the piece before it, the whole original again (#1566).
+		// The neighbour's origin keeps in step, so that resetting it later still takes the crossfade as the panel
+		// left it and puts back the one from before quantizing.
 		const Json reset = run(client, "quantize.reset", {{"events", {first, right}}});
 		CHECK(reset.at("removed") == Json::array({right}));
-		CHECK(!crossfadeOf(client, second).is_object());
+		CHECK(crossfadeOf(client, second).at("from") == first);
 		checkReset(run(client, "quantize.reset", {{"events", {second}}}), Json::array());
+	}
+
+	SECTION("a locked neighbour keeps its crossfade, from the piece before the removed one")
+	{
+		// A locked event stays as it is when resetting (reference manual p. 276), so its crossfade from the piece
+		// goes to the piece before it rather than ending with the piece (#1566). Unlocked and reset, the neighbour
+		// gets the one from before quantizing back.
+		const auto timing = [&](ObjectId id)
+		{
+			const Json event = byId(client, "audioEvents", id);
+			return std::vector<int64_t>{event.at("position").get<int64_t>(), event.at("offset").get<int64_t>(),
+				event.at("length").get<int64_t>()};
+		};
+		const std::vector<int64_t> locked = timing(second);
+		run(client, "event.set", {{"events", {second}}, {"lock", true}});
+		const Json reset = run(client, "quantize.reset", {{"events", all}});
+		CHECK(reset.at("removed") == Json::array({right}));
+		CHECK(timing(second) == locked);
+		CHECK(crossfadeOf(client, second).at("from") == first);
+		run(client, "event.set", {{"events", {second}}, {"lock", false}});
+		checkReset(run(client, "quantize.reset", {{"events", {second}}}), Json::array());
+	}
+
+	SECTION("an original crossfade from an event removed by hand doesn't come back")
+	{
+		// The neighbour's original crossfade still names the split event, while the one it has now comes from the
+		// piece. With that event removed by hand, resetting the neighbour has nothing for it to come from (#1566).
+		run(client, "event.remove", {{"events", {first}}});
+		run(client, "quantize.reset", {{"events", {second}}});
+		CHECK(!crossfadeOf(client, second).is_object());
+		CHECK(byId(client, "audioEvents", second).at("position") == before.at(1).at(0));
 	}
 
 	SECTION("a project saved with the piece")
@@ -1041,6 +1073,56 @@ TEST_CASE(
 		expected.push_back({21000, 20000, length - 100});
 		CHECK(eventsOn(client, loop.track) == expected);
 		CHECK(crossfadeOf(client, second).at("from") == first);
+	}
+}
+
+TEST_CASE(
+	"Reset Quantize moves a crossfade changed by hand from a piece it removes to the piece before", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	// As in the test before, but with the crossfade nudged right, so that the second event starts after the end of
+	// the first's original: the piece split off there overlaps its start, and the crossfade from the piece can be
+	// changed by hand. Changed by other means since quantizing, it counts as the second's original and stays when
+	// resetting; when the piece it comes from goes, it comes from the piece before, the whole original that
+	// overlaps the second again, rather than ending with the piece (#1566).
+	const Track loop = addTrack(client, dir, "loop", clicks({1000}, 4 * g_quarter));
+	const ObjectId first = loop.add(client, 1000, 0, 20000);
+	const ObjectId second = loop.add(client, 19000, 18000, 30000);
+	run(client, "crossfade.set", {{"from", first}, {"to", second}, {"mode", "equalPower"}});
+	const std::vector<std::vector<int64_t>> before = eventsOn(client, loop.track);
+	run(client, "quantize.set", {{"preset", "1/4"}});
+	const Json events = Json::array({first, second});
+	run(client, "quantize.apply", {{"events", events}});
+	run(client, "quantize.crossfade", {{"events", events}});
+	run(client, "quantize.nudgeCrossfade", {{"events", {second}}});
+	REQUIRE(eventsOn(client, loop.track).at(1).at(0) == 20048);
+	const auto right =
+		run(client, "event.split", {{"events", {first}}, {"positions", {20000}}}).at("events").at(0).get<ObjectId>();
+	REQUIRE(crossfadeOf(client, second).at("from") == right);
+	run(client, "crossfade.set", {{"from", right}, {"to", second}, {"mode", "equalGain"}});
+	const auto checkHandMade = [&]()
+	{
+		CHECK(eventsOn(client, loop.track) == before);
+		const Json kept = crossfadeOf(client, second);
+		REQUIRE(kept.is_object());
+		CHECK(kept.at("from") == first);
+		CHECK(kept.at("mode") == "equalGain");
+	};
+
+	SECTION("all at once")
+	{
+		CHECK(
+			run(client, "quantize.reset", {{"events", {first, second, right}}}).at("removed") == Json::array({right}));
+		checkHandMade();
+	}
+	SECTION("the neighbour after the others")
+	{
+		CHECK(run(client, "quantize.reset", {{"events", {first, right}}}).at("removed") == Json::array({right}));
+		CHECK(crossfadeOf(client, second).at("from") == first);
+		run(client, "quantize.reset", {{"events", {second}}});
+		checkHandMade();
 	}
 }
 
@@ -1265,6 +1347,33 @@ TEST_CASE("Nudge Crossfade moves the crossfades of quantized slices by a millise
 	}
 }
 
+TEST_CASE("Quantizing again after Nudge Crossfade Right leaves the nudged slices where they are", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	// Sliced at the hitpoints with no Offset, a slice starts at its snap point, so the first step right takes its
+	// start past it. Quantizing again measures the snap point from the slice's offset before the nudge and moves
+	// the result by how far the offset moved since, so the slices stay where they are, playing the same audio
+	// there, instead of going back to the grid with the nudged offset (#1581).
+	const std::vector<int64_t> played{6200, 25600, 47300, 72800};
+	const Loop loop = addLoop(client, dir, "loop", clicks(played, 4 * g_quarter));
+	setHitpoints(client, loop.clip, played);
+	const Json events = run(client, "quantize.slice", {{"events", {loop.event}}}).at("events");
+	const std::vector<std::vector<int64_t>> before = eventsOn(client, loop.track);
+	run(client, "quantize.set", {{"preset", "1/8"}});
+	run(client, "quantize.apply", {{"events", events}});
+	run(client, "quantize.crossfade", {{"events", events}, {"length", 2.0}});
+	run(client, "quantize.nudgeCrossfade", {{"events", events}});
+	const std::vector<std::vector<int64_t>> nudged = eventsOn(client, loop.track);
+	REQUIRE(nudged.at(2) == std::vector<int64_t>{24048, 25648, 21796});
+
+	run(client, "quantize.apply", {{"events", events}});
+	CHECK(eventsOn(client, loop.track) == nudged);
+	run(client, "quantize.reset", {{"events", events}});
+	CHECK(eventsOn(client, loop.track) == before);
+}
+
 TEST_CASE("Create Groove Quantize Preset makes a preset of an audio event's hitpoints", "[integration]")
 {
 	const test::TempDir dir;
@@ -1302,5 +1411,7 @@ TEST_CASE("Create Groove Quantize Preset makes a preset of an audio event's hitp
 			reject(client, "quantize.extractGroove", {{"event", played.event}}), ContainsSubstring("no hitpoints"));
 		CHECK_THAT(reject(client, "quantize.extractGroove", {{"event", 999}}), ContainsSubstring("no audio event 999"));
 		CHECK_THAT(reject(client, "quantize.extractGroove", Json::object()), ContainsSubstring("give part or event"));
+		CHECK_THAT(reject(client, "quantize.extractGroove", {{"event", loop.event}, {"length", 1000}}),
+			ContainsSubstring("length goes with part"));
 	}
 }
