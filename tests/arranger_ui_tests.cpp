@@ -60,7 +60,7 @@ namespace
 		// The point on the arranger track's lane at a time, in the window's pixels.
 		ui::Point at(double seconds)
 		{
-			const Json row = box(".arranger-row");
+			const Json row = box(".arranger-lane-row");
 			const ui::TimelineView& view = display.view();
 			const double x = row.at("x").get<double>() + ((seconds - view.start) / view.scale * g_ratio);
 			const double y = row.at("y").get<double>() + (row.at("height").get<double>() / 2.0);
@@ -78,13 +78,13 @@ TEST_CASE("the arranger track's lane shows arranger events and the draw tool dra
 	Window window;
 	window.app.call("track.add", {{"type", "arranger"}});
 	window.app.call("arranger.add", {{"position", 0}, {"end", 4 * g_quarter}});
-	REQUIRE(window.app.waitUntil([&] { return window.shown(".arranger-event") == 1; }));
-	REQUIRE(window.app.waitUntil([&] { return !window.hasClass(".arranger-row", "hidden"); }));
+	REQUIRE(window.app.waitUntil([&] { return window.shown(".arranger-lane-event") == 1; }));
+	REQUIRE(window.app.waitUntil([&] { return !window.hasClass(".arranger-lane-row", "hidden"); }));
 	// An event spans its section and shows its name.
-	CHECK(
-		window.app.ui().dom(std::nullopt, ".arranger-event", 0).at("elements")[0].value("text", std::string()) == "A");
+	CHECK(window.app.ui().dom(std::nullopt, ".arranger-lane-event", 0).at("elements")[0].value("text", std::string()) ==
+		"A");
 	const double bar = 2.0 / window.display.view().scale * g_ratio; // pixels
-	CHECK(std::abs(window.box(".arranger-event").at("width").get<double>() - bar) < 2.0);
+	CHECK(std::abs(window.box(".arranger-lane-event").at("width").get<double>() - bar) < 2.0);
 
 	// The draw tool draws an event from the press to the release, snapped (reference manual p. 404).
 	window.display.setTool(ui::Tool::Draw);
@@ -98,17 +98,17 @@ TEST_CASE("the arranger track's lane shows arranger events and the draw tool dra
 	REQUIRE(window.app.waitUntil([&] { return window.events().size() == 3; }));
 	CHECK(window.events()[2].at("position") == 16 * g_quarter);
 	CHECK(window.events()[2].at("end") == 20 * g_quarter);
-	CHECK(window.app.waitUntil([&] { return window.shown(".arranger-event") == 3; }));
+	CHECK(window.app.waitUntil([&] { return window.shown(".arranger-lane-event") == 3; }));
 	// Its name isn't opened for typing: arranger events name themselves.
-	CHECK_FALSE(window.hasClass(".arranger-field", "shown"));
+	CHECK_FALSE(window.hasClass(".arranger-lane-field", "shown"));
 }
 
 TEST_CASE("arranger events on the lane move, rename and erase", "[ui]")
 {
 	Window window;
 	window.app.call("arranger.add", {{"position", 0}, {"end", 8 * g_quarter}});
-	REQUIRE(window.app.waitUntil([&] { return window.shown(".arranger-event") == 1; }));
-	REQUIRE(window.app.waitUntil([&] { return !window.hasClass(".arranger-row", "hidden"); }));
+	REQUIRE(window.app.waitUntil([&] { return window.shown(".arranger-lane-event") == 1; }));
+	REQUIRE(window.app.waitUntil([&] { return !window.hasClass(".arranger-lane-row", "hidden"); }));
 	window.display.setTool(ui::Tool::ObjectSelection);
 
 	// A drag moves the event, snapped, keeping its length.
@@ -117,9 +117,9 @@ TEST_CASE("arranger events on the lane move, rename and erase", "[ui]")
 	CHECK(window.events()[0].at("end") == 12 * g_quarter);
 
 	// A double click opens its name for typing.
-	window.app.ui().click(std::nullopt, {".arranger-event", 0, std::nullopt}, ui::MouseButton::Left, 2, {});
+	window.app.ui().click(std::nullopt, {".arranger-lane-event", 0, std::nullopt}, ui::MouseButton::Left, 2, {});
 	window.app.shell().step(std::chrono::milliseconds(0));
-	REQUIRE(window.app.waitUntil([&] { return window.hasClass(".arranger-field", "shown"); }));
+	REQUIRE(window.app.waitUntil([&] { return window.hasClass(".arranger-lane-field", "shown"); }));
 	window.app.ui().key(std::nullopt, "Mod+A");
 	window.app.ui().text(std::nullopt, "Intro");
 	window.app.ui().key(std::nullopt, "Enter");
@@ -128,7 +128,7 @@ TEST_CASE("arranger events on the lane move, rename and erase", "[ui]")
 		[&]
 		{
 			return window.app.ui()
-					   .dom(std::nullopt, ".arranger-event", 0)
+					   .dom(std::nullopt, ".arranger-lane-event", 0)
 					   .at("elements")[0]
 					   .value("text", std::string()) == "Intro";
 		}));
@@ -136,6 +136,27 @@ TEST_CASE("arranger events on the lane move, rename and erase", "[ui]")
 
 	// The erase tool removes the event clicked.
 	window.display.setTool(ui::Tool::Erase);
-	window.app.ui().click(std::nullopt, {".arranger-event", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+	window.app.ui().click(std::nullopt, {".arranger-lane-event", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
 	CHECK(window.app.waitUntil([&] { return window.events().empty(); }));
+}
+
+TEST_CASE("an arranger event named X opens with its name and keeps it", "[ui]")
+{
+	// "X" is the chord lane's undefined chord, which opens empty; an arranger event may be named "X" (#1393).
+	Window window;
+	window.app.call("arranger.add", {{"position", 0}, {"end", 8 * g_quarter}, {"name", "X"}});
+	REQUIRE(window.app.waitUntil([&] { return window.shown(".arranger-lane-event") == 1; }));
+	REQUIRE(window.app.waitUntil([&] { return !window.hasClass(".arranger-lane-row", "hidden"); }));
+	window.display.setTool(ui::Tool::ObjectSelection);
+
+	window.app.ui().click(std::nullopt, {".arranger-lane-event", 0, std::nullopt}, ui::MouseButton::Left, 2, {});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(window.app.waitUntil([&] { return window.hasClass(".arranger-lane-field", "shown"); }));
+	CHECK(
+		window.app.ui().dom(std::nullopt, ".arranger-lane-field", 0).at("elements")[0].value("value", std::string()) ==
+		"X");
+	window.app.ui().key(std::nullopt, "Enter");
+	window.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(window.app.waitUntil([&] { return !window.hasClass(".arranger-lane-field", "shown"); }));
+	CHECK(window.events()[0].at("name") == "X");
 }

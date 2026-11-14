@@ -1007,7 +1007,7 @@ meter .meter-peak
    (arranger.md): their events over their lanes and the field that edits one's value, chord, scale or name. Code places
    the row on its lane (the chord track's chord and scale rows on its halves while Show Scales is on), the events at
    their positions (arranger events also as wide as their sections) and the field over the event it edits. */
-.transpose-row, .chord-row, .scale-row, .arranger-row
+.transpose-row, .chord-row, .scale-row, .arranger-lane-row
 {
 	position: absolute;
 	left: 0;
@@ -1017,12 +1017,13 @@ meter .meter-peak
 }
 
 .transpose-row.hidden, .transpose-row .transpose-field, .chord-row.hidden, .chord-row .chord-field, .scale-row.hidden,
-.scale-row .scale-field, .arranger-row.hidden, .arranger-row .arranger-field
+.scale-row .scale-field, .arranger-lane-row.hidden, .arranger-lane-row .arranger-lane-field
 {
 	display: none;
 }
 
-.transpose-row .transpose-events, .chord-row .chord-events, .scale-row .scale-events, .arranger-row .arranger-events
+.transpose-row .transpose-events, .chord-row .chord-events, .scale-row .scale-events,
+.arranger-lane-row .arranger-lane-events
 {
 	position: absolute;
 	left: 0;
@@ -1040,7 +1041,7 @@ meter .meter-peak
 }
 
 .transpose-row .transpose-field.shown, .chord-row .chord-field.shown, .scale-row .scale-field.shown,
-.arranger-row .arranger-field.shown
+.arranger-lane-row .arranger-lane-field.shown
 {
 	display: block;
 	position: absolute;
@@ -1048,7 +1049,7 @@ meter .meter-peak
 	width: 48dp;
 }
 
-.arranger-row .arranger-event
+.arranger-lane-row .arranger-lane-event
 {
 	position: absolute;
 	top: 0;

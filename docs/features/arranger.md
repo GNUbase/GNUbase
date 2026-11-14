@@ -79,11 +79,11 @@ Range copies keep the order in which audio events stack, so overlapping events p
 
 - **Add Track** has Arranger, once per project.
 - **The arranger track's lane** (`ui::GlobalEventLane` with `LaneKind::Arranger`, `src/ui/transposetrack.h`, shared
-  with the transpose and chord tracks' lanes, #1393, pp. 404-405): an `.arranger-event` per arranger event in an
-  `.arranger-row` over the lane, as wide as its section, with its name. The draw tool draws an event from the press to
+  with the transpose and chord tracks' lanes, #1393, pp. 404-405): an `.arranger-lane-event` per arranger event in an
+  `.arranger-lane-row` over the lane, as wide as its section, with its name. The draw tool draws an event from the press to
   the release (`arranger.add`, named in alphabetical order); a click without a drag draws one up to the next bar line.
   With the other tools a drag moves an event, keeping its length (`arranger.set`), and a double click opens its name in
-  the `.arranger-field` over it, where Enter renames it; the erase tool removes the event clicked (`arranger.remove`).
+  the `.arranger-lane-field` over it, where Enter renames it; the erase tool removes the event clicked (`arranger.remove`).
   Drawing and moving snap as the event display's drags do ([snap.md](snap.md), `EventDisplay::snapped`), so with
   Snap on and the snap type Events, as p. 404 asks, new events start and end at other events' edges.
 - **The arranger editor** (`resources/ui/arranger-editor.rml`, the UI command `window.arranger`, in a window of its own)

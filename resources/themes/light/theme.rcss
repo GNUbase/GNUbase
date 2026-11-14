@@ -614,7 +614,7 @@
 		border-left-width: 1dp;
 		border-left-color: #0969da;
 	}
-	.arranger-row .arranger-event
+	.arranger-lane-row .arranger-lane-event
 	{
 		color: #17202d;
 		font-size: 11dp;

@@ -88,7 +88,7 @@ namespace gnubase::ui
 		if (m_kind == LaneKind::Scale)
 			return "scale" + std::string(suffix);
 		if (m_kind == LaneKind::Arranger)
-			return "arranger" + std::string(suffix);
+			return "arranger-lane" + std::string(suffix);
 		return (m_kind == LaneKind::Chord ? "chord" : "transpose") + std::string(suffix);
 	}
 
@@ -176,7 +176,8 @@ namespace gnubase::ui
 		if (!alive() || m_field == nullptr || found == m_list.end())
 			return;
 		m_editing = event;
-		m_field->SetValue(found->value == "X" ? std::string() : found->value);
+		// "X" is the chord lane's undefined chord, typed afresh; an arranger event may be named "X".
+		m_field->SetValue(m_kind == LaneKind::Chord && found->value == "X" ? std::string() : found->value);
 		show();
 		m_field->Focus();
 	}

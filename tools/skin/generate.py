@@ -744,9 +744,10 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
                                      "border-left-width": f"{widths['hairline']}dp",
                                      "border-left-color": c["accent"]}),
         # The arranger track (docs/features/arranger.md): an arranger event over its section, with its name
-        (".arranger-row .arranger-event", {"color": c["text"], "font-size": f"{sizes['small']}dp",
-                                           "background-color": c["accent"] + "40",
-                                           "border-width": f"{widths['hairline']}dp", "border-color": c["accent"]}),
+        (".arranger-lane-row .arranger-lane-event", {"color": c["text"], "font-size": f"{sizes['small']}dp",
+                                                     "background-color": c["accent"] + "40",
+                                                     "border-width": f"{widths['hairline']}dp",
+                                                     "border-color": c["accent"]}),
         # The chord pads (docs/features/chord-pads.md): pads with their chord, degree and remote key, the selected,
         # triggered, locked and reference pads, the adaptive voicing reference indicator (a square in the reference
         # frame's color) and the adaptive voicing indicator (a dot), and the chord assistant's suggestions by how well
