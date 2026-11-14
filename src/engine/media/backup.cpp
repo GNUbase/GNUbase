@@ -101,7 +101,7 @@ namespace gnubase::engine
 					throw std::runtime_error("can't write " + to.u8string());
 				copied(count);
 			}
-			if (std::ferror(input.get()))
+			if (std::ferror(input.get()) != 0)
 				throw std::runtime_error("can't read " + from.u8string());
 			output.close();
 			if (!output)
