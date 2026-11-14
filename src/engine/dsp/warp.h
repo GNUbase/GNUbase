@@ -54,7 +54,7 @@ namespace gnubase::engine::dsp
 	public:
 		// Throws std::invalid_argument for a map with fewer than two points or a file the stretcher can't take.
 		WarpReader(std::unique_ptr<AudioFileReader> source, std::vector<WarpPoint> map, StretchPreset preset,
-			std::vector<PitchPoint> pitch = {});
+			const std::vector<PitchPoint>& pitch = {});
 		~WarpReader() override;
 		WarpReader(const WarpReader&) = delete;
 		WarpReader& operator=(const WarpReader&) = delete;

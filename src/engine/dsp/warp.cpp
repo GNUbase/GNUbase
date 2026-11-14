@@ -44,7 +44,7 @@ namespace gnubase::engine::dsp
 	}
 
 	WarpReader::WarpReader(std::unique_ptr<AudioFileReader> source, std::vector<WarpPoint> map, StretchPreset preset,
-		std::vector<PitchPoint> pitch)
+		const std::vector<PitchPoint>& pitch)
 		: m_source(std::move(source)), m_map(std::move(map))
 	{
 		if (m_map.size() < 2)

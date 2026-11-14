@@ -355,7 +355,7 @@ namespace gnubase::engine
 			event.length = frozen.length;
 			channel.audioEvents.push_back(std::move(event));
 			snapshot.media.push_back({channel.id, frozen.path, frozen.sampleRate, frozen.channels, frozen.length, {},
-				dsp::StretchPreset::Quality});
+				dsp::StretchPreset::Quality, {}});
 		}
 
 		// Mute, solo and disabled tracks: with a channel soloed, only soloed channels, those they play into and those
@@ -615,7 +615,7 @@ namespace gnubase::engine
 		{
 			mediaIndex[id] = static_cast<int>(snapshot->media.size());
 			snapshot->media.push_back(
-				{id, media.path, media.sampleRate, media.channels, media.length, {}, dsp::StretchPreset::Quality});
+				{id, media.path, media.sampleRate, media.channels, media.length, {}, dsp::StretchPreset::Quality, {}});
 		}
 		for (const auto& [id, clip] : project.clips)
 			snapshot->clips.push_back({id, clip.media, clip.fadeIn, clip.fadeOut});

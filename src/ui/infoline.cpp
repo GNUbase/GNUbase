@@ -323,13 +323,16 @@ namespace gnubase::ui
 		return 0;
 	}
 
-	const engine::Json* InfoLine::audioEventOf(uint64_t event) const
+	const engine::Json* InfoLine::transposableOf(const Json& event) const
 	{
 		const Json& project = m_display.project();
-		if (!project.is_object())
+		const auto kind = event.at("kind").get<std::string>();
+		if (kind == "midi")
+			return partOf(event.at("id").get<uint64_t>());
+		if (kind != "audio" || !project.is_object())
 			return nullptr;
 		for (const Json& audio : project.at("audioEvents"))
-			if (audio.at("id") == event)
+			if (audio.at("id") == event.at("id"))
 				return &audio;
 		return nullptr;
 	}
@@ -417,9 +420,7 @@ namespace gnubase::ui
 						field, widgets::format(static_cast<float>(partValue(first.at("id").get<uint64_t>(), field)))));
 		}
 		// A MIDI part's or an audio event's root key and Global Transpose (#1368).
-		const Json* part = midi ? partOf(first.at("id").get<uint64_t>())
-			: audio             ? audioEventOf(first.at("id").get<uint64_t>())
-								: nullptr;
+		const Json* part = transposableOf(first);
 		for (const char* field : {"rootKey", "globalTranspose"})
 			if (Rml::Element* shown = root.QuerySelector("[info-field=" + std::string(field) + "]"))
 				setClass(*shown, "unavailable", part == nullptr);
@@ -929,9 +930,7 @@ namespace gnubase::ui
 			{
 				const bool midi = event.at("kind") == "midi";
 				const auto id = event.at("id").get<uint64_t>();
-				if (const Json* item = midi           ? partOf(id)
-						: event.at("kind") == "audio" ? audioEventOf(id)
-													  : nullptr;
+				if (const Json* item = transposableOf(event);
 					item != nullptr && item->value(field, std::string()) != value)
 					commands.push_back({{"command", midi ? "midiPart.set" : "audioEvent.set"},
 						{"parameters", {{midi ? "part" : "event", id}, {field, value}}}});
