@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/audio/sampleloader.h"
+#include "engine/audiofile/audiofile.h"
 #include "engine/document/document.h"
 #include "engine/engine.h"
 #include "engine/graph/graph.h"
@@ -1194,10 +1195,19 @@ TEST_CASE("a sampler's track preset brings its sample, embedded in the preset, i
 		const fs::path extracted = fs::u8path(project.at("media").at(0).at("path").get<std::string>());
 		CHECK(extracted != file);
 		CHECK(fs::is_regular_file(extracted));
+		return extracted;
 	};
-	loadOnto(empty);
-	loadOnto(empty);
-	loadOnto(synth);
+	const fs::path extracted = loadOnto(empty);
+
+	// Loading it again leaves the extracted file alone, also while a reader has it open, which reads all of it.
+	const fs::file_time_type written = fs::last_write_time(extracted) - std::chrono::hours(1);
+	fs::last_write_time(extracted, written);
+	const std::unique_ptr<AudioFileReader> reader = AudioFileReader::open(extracted.u8string());
+	CHECK(loadOnto(empty) == extracted);
+	CHECK(loadOnto(synth) == extracted);
+	CHECK(fs::last_write_time(extracted) == written);
+	std::vector<float> samples(static_cast<size_t>(1000 * reader->info().channels));
+	CHECK(reader->read(samples.data(), 1000) == 480);
 }
 
 TEST_CASE(
