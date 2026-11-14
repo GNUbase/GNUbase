@@ -419,14 +419,14 @@ TEST_CASE("note.split cuts notes with their expression where it was, note.glue j
 	CHECK(pointsOf(now[0]) == Points{{"pressure", 0, 500}, {"tuning", 0, 0}, {"tuning", g_beatTicks / 2, 2000}});
 	CHECK(now[2].at("length") == g_beatTicks);
 
-	// Glued, the note plays what the two played: its own points up to the rest's start, then the rest's.
+	// Glued, the note plays what the two played: its own points up to the rest's start, then the rest's, without the
+	// points of the rest that only repeat the value that plays there. That is the note before the cut.
 	const Json glued =
 		run(client, "note.glue", {{"part", part}, {"note", note.at("id")}, {"next", rest.at("id")}}).at("note");
 	CHECK(glued.at("length") == 2 * g_beatTicks);
 	CHECK(pointsOf(glued) ==
-		Points{{"brightness", g_beatTicks, 1000}, {"pressure", 0, 500}, {"pressure", g_beatTicks, 500},
-			{"tuning", 0, 0}, {"tuning", g_beatTicks / 2, 2000}, {"tuning", g_beatTicks, 2000},
-			{"tuning", 3 * g_beatTicks / 2, 4000}});
+		Points{{"brightness", g_beatTicks, 1000}, {"pressure", 0, 500}, {"tuning", 0, 0},
+			{"tuning", g_beatTicks / 2, 2000}, {"tuning", 3 * g_beatTicks / 2, 4000}});
 	now = notes();
 	REQUIRE(now.size() == 2);
 	CHECK(now[0] == glued);
@@ -513,7 +513,7 @@ TEST_CASE("note.glue of a note inside the first one goes on with the first one's
 			{"notes",
 				{{{"position", 0}, {"length", 4 * g_beatTicks}, {"pitch", 60}, {"velocity", 0.5},
 					 {"expressions",
-						 {point("tuning", 0, 1.0), point("tuning", 2 * g_beatTicks, 2.0),
+						 {point("tuning", 0, 1.0), point("vibrato", 0, 0.3), point("tuning", 2 * g_beatTicks, 2.0),
 							 point("tuning", 3 * g_beatTicks, 3.0)}}},
 					{{"position", g_beatTicks}, {"length", 3 * g_beatTicks / 2}, {"pitch", 60}, {"velocity", 0.5},
 						{"expressions", {point("brightness", 0, 1.0), point("tuning", g_beatTicks / 2, -1.0)}}}}}});
@@ -522,10 +522,86 @@ TEST_CASE("note.glue of a note inside the first one goes on with the first one's
 						   .at("note");
 	CHECK(glued.at("length") == 4 * g_beatTicks);
 	// Up to the next note's end its expression, unbent at its start; then the first one's again, as it was there.
+	// The vibrato that the next note doesn't express goes on through it, without a point after it.
 	CHECK(pointsOf(glued) ==
 		Points{{"brightness", g_beatTicks, 1000}, {"brightness", 5 * g_beatTicks / 2, 500}, {"tuning", 0, 1000},
 			{"tuning", g_beatTicks, 0}, {"tuning", 3 * g_beatTicks / 2, -1000}, {"tuning", 5 * g_beatTicks / 2, 2000},
-			{"tuning", 3 * g_beatTicks, 3000}});
+			{"tuning", 3 * g_beatTicks, 3000}, {"vibrato", 0, 300}});
+}
+
+TEST_CASE("note.glue gives pan and pressure their defaults at the join, and no point where the value plays already",
+	"[integration]")
+{
+	// Review of #1470.
+	Setup setup;
+	Client& client = setup.client;
+	const ObjectId part = addPart(client, setup.track);
+	const Json added = run(client, "note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", 0}, {"length", g_beatTicks}, {"pitch", 60}, {"velocity", 0.5},
+					 {"expressions",
+						 {point("pan", 0, 0.2), point("pressure", 0, 0.6), point("volume", 0, 1.0),
+							 point("tuning", 0, 0.0), point("brightness", g_beatTicks / 2, 0.5)}}},
+					{{"position", g_beatTicks}, {"length", g_beatTicks}, {"pitch", 60}, {"velocity", 0.5},
+						{"expressions", {point("tuning", 0, 0.0), point("tuning", g_beatTicks / 2, 1.0)}}}}}});
+	const Json glued = run(client, "note.glue",
+		{{"part", part}, {"note", added.at("notes").at(0).at("id")}, {"next", added.at("notes").at(1).at("id")}})
+						   .at("note");
+	CHECK(glued.at("length") == 2 * g_beatTicks);
+	// Panned and pressed before the join, the next note played centered without pressure. Volume, brightness and
+	// tuning already have the value the next note starts with.
+	CHECK(pointsOf(glued) ==
+		Points{{"brightness", g_beatTicks / 2, 500}, {"pan", 0, 200}, {"pan", g_beatTicks, 500}, {"pressure", 0, 600},
+			{"pressure", g_beatTicks, 0}, {"tuning", 0, 0}, {"tuning", 3 * g_beatTicks / 2, 1000},
+			{"volume", 0, 1000}});
+}
+
+TEST_CASE("note.glue of a next note that starts inside the first one and ends after it", "[integration]")
+{
+	// Review of #1470: both notes have expression where they overlap.
+	Setup setup;
+	Client& client = setup.client;
+	const ObjectId part = addPart(client, setup.track);
+	const Json added = run(client, "note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", 0}, {"length", 2 * g_beatTicks}, {"pitch", 60}, {"velocity", 0.5},
+					 {"expressions",
+						 {point("brightness", 0, 0.8), point("tuning", 0, 0.0),
+							 point("tuning", 3 * g_beatTicks / 2, 1.0)}}},
+					{{"position", g_beatTicks}, {"length", 2 * g_beatTicks}, {"pitch", 60}, {"velocity", 0.5},
+						{"expressions", {point("tuning", 0, 2.0), point("pressure", g_beatTicks / 2, 0.5)}}}}}});
+	const Json glued = run(client, "note.glue",
+		{{"part", part}, {"note", added.at("notes").at(0).at("id")}, {"next", added.at("notes").at(1).at("id")}})
+						   .at("note");
+	CHECK(glued.at("length") == 3 * g_beatTicks);
+	// From the next note's start on its expression: the first one's tuning point inside it never played.
+	CHECK(pointsOf(glued) ==
+		Points{{"brightness", 0, 800}, {"brightness", g_beatTicks, 500}, {"pressure", 3 * g_beatTicks / 2, 500},
+			{"tuning", 0, 0}, {"tuning", g_beatTicks, 2000}});
+}
+
+TEST_CASE("note.glue takes a point within the next note's first sample as one it starts with", "[integration]")
+{
+	// Review of #1470: as playback does (RenderNote::startsWith), so the join gets no default before it.
+	Setup setup;
+	Client& client = setup.client;
+	const ObjectId part = addPart(client, setup.track);
+	const Json added = run(client, "note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", 0}, {"length", g_beatTicks}, {"pitch", 60}, {"velocity", 0.5},
+					 {"expressions", {point("tuning", 0, 2.0), point("pressure", 0, 0.4)}}},
+					{{"position", g_beatTicks}, {"length", g_beatTicks}, {"pitch", 60}, {"velocity", 0.5},
+						{"expressions", {point("tuning", 10, -1.0), point("pressure", ticksOf(2), 0.7)}}}}}});
+	const Json glued = run(client, "note.glue",
+		{{"part", part}, {"note", added.at("notes").at(0).at("id")}, {"next", added.at("notes").at(1).at("id")}})
+						   .at("note");
+	// The pressure point two samples in is not at its start: the next note started without pressure.
+	CHECK(pointsOf(glued) ==
+		Points{{"pressure", 0, 400}, {"pressure", g_beatTicks, 0}, {"pressure", g_beatTicks + ticksOf(2), 700},
+			{"tuning", 0, 2000}, {"tuning", g_beatTicks + 10, -1000}});
 }
 
 TEST_CASE("note.split and note.glue refuse notes the part doesn't have, and undo in one step", "[integration]")

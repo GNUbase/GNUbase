@@ -368,9 +368,9 @@ namespace gnubase::engine
 				"brightness as CC 74, a note's initial ones before its note-on; a note on a channel whose notes "
 				"express one of them and that has no point of it at its start gets MPE's initial value (a centered "
 				"bend, no pressure, CC 74 at 64). dropped counts the messages that didn't fit: while nobody reads, "
-				"newer messages are dropped. start: true starts a fresh capture; it "
-				"drops what was captured so far and returns nothing. Each call empties what it returns, so a repeated "
-				"call doesn't return the same messages again.",
+				"newer messages are dropped. start: true starts a fresh capture; it drops what was captured so far "
+				"and returns nothing. Each call empties what it returns, so a repeated call doesn't return the same "
+				"messages again.",
 				Json::parse(R"({"type": "object", "additionalProperties": false,
 					"properties": {"start": {"type": "boolean"}}})"),
 				Json::parse(R"({"type": "object", "properties": {"captured": {"type": "array"},

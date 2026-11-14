@@ -31,11 +31,12 @@ project doesn't count as modified. Its glue tool joins a note to the next one of
 glued note keeps its own points up to where the next one started, then has the next one's up to where it ended, and
 after a next one that ends inside it its own again, with its values there, so that it plays what the two played (the
 points a note has at or past its end, e.g. after the trim tool shortened it, never played). Where one note's points
-give way to the other's, an expression that the first one has and the other one has no point of at its start gets its
-default there, as the other note started with it: MPE's initial values for tuning, pressure and brightness, as playback
-gives them, unity gain for volume and the center for pan. Vibrato and expression have no default (the plugin decides),
-so they keep their value. Glued again after a split, the note has an extra point at the cut, with the value it had
-there. The reference manual's glue keeps the first note's properties (p. 1215), and expression is no property but what
+give way to the other's, an expression that the first one has and the other one has no point of at its start (within
+its first sample, as playback takes a note's initial points) gets its default there, as the other note started with it:
+MPE's initial values for tuning, pressure and brightness, as playback gives them (one definition,
+`defaultExpression`, serves both), unity gain for volume and the center for pan. Vibrato and expression have no default
+(the plugin decides), so they keep their value. A point there whose value already plays is left out, so that the
+expression editor shows no point that changes nothing: glued again after a split, the note is what it was before. The reference manual's glue keeps the first note's properties (p. 1215), and expression is no property but what
 the note plays over time.
 
 **Recording MPE** (pp. 1295-1298). With the user setting `midi.mpeInput` on, MIDI recording and retrospective

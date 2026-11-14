@@ -153,50 +153,39 @@ namespace gnubase::engine
 			return {{"notes", added}};
 		}
 
-		// What a note plays of an expression that it has no point of at its start: MPE's initial values for tuning,
-		// pressure and brightness (see addInitialExpressions), unity gain and the center. Vibrato and expression have
-		// none: the plugin decides.
-		std::optional<double> defaultOf(plugin::NoteExpression type)
-		{
-			switch (type)
-			{
-			case plugin::NoteExpression::Volume:
-				return 1.0;
-			case plugin::NoteExpression::Pan:
-			case plugin::NoteExpression::Brightness:
-				return 0.5;
-			case plugin::NoteExpression::Tuning:
-			case plugin::NoteExpression::Pressure:
-				return 0.0;
-			default:
-				return std::nullopt;
-			}
-		}
-
-		// points before cut, then from's moved to at. Of what points express and from has no point of at its start,
-		// the join gets the default, as the note that from belonged to started with it.
-		std::vector<ExpressionPoint> joined(const std::vector<ExpressionPoint>& points, time::Ticks cut,
-			const std::vector<ExpressionPoint>& from, time::Ticks at)
+		// points before cut, then from's moved to at. Of what points express and from doesn't start with (atStart
+		// tells its points at its start), the join gets the default (defaultExpression), as the note that from belonged
+		// to started with it. A point of the join whose value already plays there is left out: it changes nothing.
+		template <typename AtStart> std::vector<ExpressionPoint> joined(const std::vector<ExpressionPoint>& points,
+			time::Ticks cut, const std::vector<ExpressionPoint>& from, time::Ticks at, AtStart atStart)
 		{
 			std::vector<ExpressionPoint> result;
-			std::array<bool, g_expressionNames.size()> open{};
+			std::array<std::optional<double>, g_expressionNames.size()> playing{}; // by type, at the join
 			for (const ExpressionPoint& point : points)
 				if (point.position < cut)
 				{
 					result.push_back(point);
-					open.at(static_cast<size_t>(point.type)) = true;
+					playing.at(static_cast<size_t>(point.type)) = point.value;
 				}
+			std::array<bool, g_expressionNames.size()> starts{};
 			for (const ExpressionPoint& point : from)
-				if (point.position == 0)
-					open.at(static_cast<size_t>(point.type)) = false;
-			for (size_t type = 0; type < open.size(); ++type)
+				if (atStart(point.position))
+					starts.at(static_cast<size_t>(point.type)) = true;
+			for (size_t type = 0; type < playing.size(); ++type)
 			{
 				const auto expression = static_cast<plugin::NoteExpression>(type);
-				if (const std::optional<double> value = defaultOf(expression); open.at(type) && value.has_value())
+				const std::optional<double> value = defaultExpression(expression);
+				if (playing.at(type).has_value() && !starts.at(type) && value.has_value() && value != playing.at(type))
 					result.push_back({expression, at, *value});
 			}
 			for (const ExpressionPoint& point : from)
+			{
+				std::optional<double>& value = playing.at(static_cast<size_t>(point.type));
+				if (atStart(point.position) && value == point.value)
+					continue;
 				result.push_back({point.type, point.position + at, point.value});
+				value = point.value;
+			}
 			return result;
 		}
 
@@ -222,10 +211,17 @@ namespace gnubase::engine
 			std::vector<ExpressionPoint> played;
 			std::copy_if(next.expressions.begin(), next.expressions.end(), std::back_inserter(played),
 				[&next](const ExpressionPoint& point) { return point.position < next.length; });
+			// A point within the next note's first sample is one it starts with, as playback has it
+			// (RenderNote::startsWith).
+			const time::Ticks start = time::toTicks(part.position, project.tempo, project.sampleRate) + next.position;
+			const time::Samples startSample = project.tempo.toSamples(start, project.sampleRate);
+			const auto inFirstSample = [&project, start, startSample](time::Ticks position)
+			{ return project.tempo.toSamples(start + position, project.sampleRate) == startSample; };
 			std::vector<ExpressionPoint> points =
-				joined(note.expressions, std::min(offset, note.length), played, offset);
-			if (nextEnd < note.length)
-				points = joined(points, nextEnd, expressionsFrom(note.expressions, nextEnd), nextEnd);
+				joined(note.expressions, std::min(offset, note.length), played, offset, inFirstSample);
+			if (nextEnd < note.length) // the first note's values there are points at 0
+				points = joined(points, nextEnd, expressionsFrom(note.expressions, nextEnd), nextEnd,
+					[](time::Ticks position) { return position == 0; });
 			note.expressions = std::move(points);
 			note.length = std::max(next.position + next.length, note.position + note.length) - note.position;
 			const ObjectId removed = next.id;
@@ -531,9 +527,9 @@ namespace gnubase::engine
 				"tool does: each named note that the position cuts ends there, and its rest, a new note with the same "
 				"values, starts there; the others stay as they are. The expression points before the cut stay with "
 				"the note, the rest starts with the values at the cut and goes on with the later points (see "
-				"note.set). Both pieces lose their quantize origin, as with event.split: quantize.reset no longer "
-				"moves them. A position that cuts none of them changes nothing, and the project doesn't count as "
-				"modified. Returns the rests.",
+				"note.set). Both pieces lose their quantize origin, as the notes that event.split cuts with splitNotes "
+				"do: quantize.reset no longer moves them. A position that cuts none of them changes nothing, and the "
+				"project doesn't count as modified. Returns the rests.",
 				{{"type", "object"}, {"additionalProperties", false}, {"required", {"part", "notes", "position"}},
 					{"properties",
 						{{"part", integer}, {"notes", {{"type", "array"}, {"items", integer}}},
@@ -546,9 +542,10 @@ namespace gnubase::engine
 				"the later of their ends and keeps its values, and next is removed. Its expression points go on "
 				"playing: note keeps its own up to next's start, then has next's up to next's end, and after a next "
 				"that ends inside note its own again. Where one note's points give way to the other's, an expression "
-				"that the first one has and the other has no point of at its start goes back to its default, as the "
-				"other note started with it: no tuning, no pressure, brightness 0.5, volume 1 and pan 0.5; vibrato "
-				"and expression keep their value.",
+				"that the first one has and the other has no point of at its start (within its first sample, as "
+				"playback has it) goes back to its default, as the other note started with it: no tuning, no "
+				"pressure, brightness 0.5, volume 1 and pan 0.5; vibrato and expression keep their value. A point "
+				"there whose value already plays is left out.",
 				{{"type", "object"}, {"additionalProperties", false}, {"required", {"part", "note", "next"}},
 					{"properties", {{"part", integer}, {"note", integer}, {"next", integer}}}},
 				{{"type", "object"}, {"required", {"note"}}, {"properties", {{"note", {{"type", "object"}}}}}}, false},
