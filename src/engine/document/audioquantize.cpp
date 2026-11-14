@@ -530,14 +530,13 @@ namespace gnubase::engine
 
 	bool resetEventQuantize(AudioEvent& event)
 	{
-		if (!event.quantizeOrigin || event.quantizeOrigin->quantized.position != event.position)
+		// A locked event is protected from being moved and edited (p. 276), as quantizing leaves it alone.
+		if (event.lock || !event.quantizeOrigin || event.quantizeOrigin->quantized.position != event.position)
 			return false;
 		// Only what still is where quantizing and the panel's length changes left it goes back: an offset, length or
 		// crossfade changed by other means since stays, as a note's length or velocity changed by other means does.
 		// The crossfade is part of the state resetting returns to (p. 367), and the Crossfade step changes it (p. 379).
 		const EventTiming original = originalOf(event, timingOf(event));
-		if (original.length == 0 && event.lock)
-			return false; // a piece with nothing of the original goes, but a locked event can't be removed
 		event.position = original.position;
 		event.offset = original.offset;
 		event.length = original.length;
