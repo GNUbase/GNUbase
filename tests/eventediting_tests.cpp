@@ -2107,6 +2107,9 @@ TEST_CASE("a press runs the edits still waiting for a range's zero crossings aft
 	for (int frame = 0; frame < 96000; ++frame)
 		sine.samples.push_back(static_cast<float>(0.5 * std::sin(frame * 3.14159265358979323846 / 100.0)));
 	test::writeWav(file, sine);
+	// The flag that lets the busy command below go outlives the fixture, whose engine reads it until the command
+	// returns: also when a REQUIRE fails before the press.
+	std::atomic<bool> pressed{false};
 	Fixture f;
 	const uint64_t audio = f.call("project.get").at("tracks")[0].at("id").get<uint64_t>();
 	const Json media =
@@ -2120,7 +2123,6 @@ TEST_CASE("a press runs the edits still waiting for a range's zero crossings aft
 	f.display.setTool(ui::Tool::RangeSelection);
 	// A command that keeps the engine busy until the test lets it go after the press, so that the zero crossings
 	// answer only after the press gave up on them, however slow the machine.
-	std::atomic<bool> pressed{false};
 	f.engine.registerCommand(
 		{"test.busy", 1, "Waits for the press.", engine::CommandInfo{}.parameters, Json::object(), false},
 		[&pressed](engine::CommandContext&)
