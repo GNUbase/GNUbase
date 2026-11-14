@@ -1315,3 +1315,95 @@ TEST_CASE("minimizing copies 32-bit integer, 64-bit float and Broadcast Wave fil
 	CHECK(events[2].at("offset") == 50000);
 	CHECK(events[3].at("offset") == 480);
 }
+
+TEST_CASE("a file being backed up can be replaced and deleted meanwhile, on Windows too", "[integration]")
+{
+	// The backup reads media files in chunks on the job thread and reports progress after each chunk, and
+	// Engine::setJobProgressHook runs on that thread after the progress went out, outside every lock: the hook
+	// replaces or deletes the file being read exactly while one chunk is copied and the next isn't read yet, so the
+	// test needs no sleeps and no timing (#963). On Windows this takes opening the files as the readers open them,
+	// sharing deletion; the backup reads the old file to its end either way.
+	constexpr size_t chunk = size_t{1} << 20; // the backup's copy chunk; progress follows each chunk
+
+	// Whether the copy in the backup folder got its first chunk, which the hook waits for. fs::file_size asks
+	// fresh, where a directory_entry's cached size stays 0 while the backup writes.
+	const auto copyStarted = [chunk](const fs::path& folder)
+	{
+		std::error_code error;
+		const auto size = fs::file_size(folder / "Audio" / "take.wav", error);
+		return !error && size >= chunk;
+	};
+
+	struct Hook
+	{
+		bool fired = false;
+		std::string problem;
+	};
+
+	{
+		const test::TempDir dir;
+		Song song;
+		const fs::path media = dir.path() / "take.wav";
+		writeNoise(media, 800000, 1, 7); // about 2.4 MB as 24 bits: at least two copy chunks
+		song.addMedia(media);
+		const std::string before = bytesOf(media);
+		const fs::path folder = dir.path() / "replaced";
+		const fs::path aside = dir.path() / "aside.wav";
+		const auto hook = std::make_shared<Hook>();
+		song.engine.setJobProgressHook(
+			[hook, media, folder, aside, copyStarted](uint64_t, const std::string& kind)
+			{
+				if (hook->fired || kind != "project.backup" || !copyStarted(folder))
+					return;
+				std::error_code error;
+				// Moving the file being read aside works while its handles share deletion; the new file then takes its
+				// name, and the backup reads the moved file to its end.
+				fs::rename(media, aside, error);
+				if (error)
+				{
+					hook->problem = "rename: " + error.message();
+					return;
+				}
+				hook->fired = true;
+				writeNoise(media, 1000, 1, 8); // other content under the old name
+				fs::remove(aside, error);      // the file the backup reads on
+				if (error)
+					hook->problem = "remove: " + error.message();
+			});
+		const Json result = backup(song.client, {{"folder", utf8(folder)}});
+		song.engine.setJobProgressHook({});
+		CHECK(hook->problem.empty());
+		REQUIRE(hook->fired);
+		CHECK(result.at("missing").empty());
+		CHECK(bytesOf(folder / "Audio" / "take.wav") == before);
+	}
+	{
+		const test::TempDir dir;
+		Song song;
+		const fs::path media = dir.path() / "take.wav";
+		writeNoise(media, 800000, 1, 9);
+		song.addMedia(media);
+		const std::string before = bytesOf(media);
+		const fs::path folder = dir.path() / "deleted";
+		const auto hook = std::make_shared<Hook>();
+		song.engine.setJobProgressHook(
+			[hook, media, folder, copyStarted](uint64_t, const std::string& kind)
+			{
+				if (hook->fired || kind != "project.backup" || !copyStarted(folder))
+					return;
+				std::error_code error;
+				fs::remove(media, error);
+				if (error)
+					hook->problem = "remove: " + error.message();
+				else
+					hook->fired = true;
+			});
+		const Json result = backup(song.client, {{"folder", utf8(folder)}});
+		song.engine.setJobProgressHook({});
+		CHECK(hook->problem.empty());
+		REQUIRE(hook->fired);
+		CHECK(result.at("missing").empty());
+		CHECK(bytesOf(folder / "Audio" / "take.wav") == before);
+		CHECK(!fs::exists(media));
+	}
+}
