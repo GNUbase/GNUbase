@@ -695,18 +695,20 @@ TEST_CASE("the Articulations lane drops a cleared slot color and width, and its 
 	const std::array<uint8_t, 4> pixel = shown.pixel(shown.width - 3, shown.height / 2);
 	CHECK_FALSE((pixel[0] == 0xf0 && pixel[1] == 0xe0 && pixel[2] == 0xa0));
 
-	// A direction that another one of its group now starts with has no width of its own left.
+	// A direction that another one of its group now starts with has no width of its own left. Both are after the last
+	// note's start, so the notes' slots and the lane's RML stay the same and the Pizzicato element is kept.
 	const Json added = f.app.call("controller.add",
 		{{"part", f.part},
 			{"controllers",
-				{{{"position", 0}, {"type", "articulation"}, {"articulation", "Pizzicato"}},
-					{{"position", 8 * g_sixteenth}, {"type", "articulation"}, {"articulation", "Arco"}}}}});
+				{{{"position", 10 * g_sixteenth}, {"type", "articulation"}, {"articulation", "Pizzicato"}},
+					{{"position", 12 * g_sixteenth}, {"type", "articulation"}, {"articulation", "Arco"}}}}});
 	const std::string pizzicato = inLane(" .articulation-row[articulation-row=\"1\"] .articulation-item");
 	const double area = f.box(inLane(" .controller-lane-area")).at("width").get<double>();
 	REQUIRE(
-		f.app.waitUntil([&] { return std::abs(f.box(pizzicato).at("width").get<double>() - (area / 2.0)) <= 2.0; }));
+		f.app.waitUntil([&] { return std::abs(f.box(pizzicato).at("width").get<double>() - (area / 8.0)) <= 2.0; }));
 	f.app.call("controller.set",
-		{{"part", f.part}, {"controllers", {{{"id", added.at("controllers").at(1).at("id")}, {"position", 0}}}}});
+		{{"part", f.part},
+			{"controllers", {{{"id", added.at("controllers").at(1).at("id")}, {"position", 10 * g_sixteenth}}}}});
 	REQUIRE(f.app.waitUntil([&] { return f.box(pizzicato).at("width").get<double>() < area / 16.0; }));
 
 	// The line under the sound slots lane is inside its height: each articulation's name is beside its row.
