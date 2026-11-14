@@ -110,8 +110,9 @@ editor of its own. A press on a key selects and deselects no notes.
 | Glue | A click glues the note to the next one of its pitch; the first one's values stay, the next one's expression joins its own (`note.glue`) | p. 1215 |
 
 - **Info line** (p. 1199). Start, end and length in bars and beats, the pitch as a name such as C3 (typing a number
-  works too), velocities 0-127 and the channel 1-16. A value typed moves every selected note by as much as the first
-  one's changes; the channel is set for all.
+  works too), velocities 0-127, the channel 1-16 and the Articulations, the attributes of the track's articulation
+  map that the note has, names separated by commas ([articulation-maps.md](articulation-maps.md)). A value typed
+  moves every selected note by as much as the first one's changes; the channel and the attributes are set for all.
 - **Chord Editing** (pp. 1215-1218) is in the editor window's inspector, under Global Tracks: the chord the selected
   notes make ("No Chord" for none), and buttons that send `note.voicing` for each part's selected notes.
 - **Toolbox** (p. 65). A right click in the note display opens `#key-editor-toolbox`, the toolbar's tools at the

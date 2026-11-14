@@ -710,6 +710,19 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
             "decorator": f"repeating-linear-gradient(to top, {color} 0dp, {color} 3dp, {color}00 3dp, {color}00 5dp)"})
           for state, color in (("", mix(c["surfaceRaised"], c["accent"], .6)), (".selected", c["accent2"]),
                                (".inactive", mix(c["surface"], c["textMuted"], .3)))],
+        # The Articulations lane (docs/features/articulation-maps.md): the articulations' names muted beside their
+        # rows, a line under the sound slots lane, whose slots are raised unless the code gives them their slot's
+        # color, directions lighter than the attributes, which have the notes' color, resets in the muted text color,
+        # selected ones in the second accent, those outside the part editing mode dimmed
+        (".articulation-name", {"color": c["textMuted"]}),
+        (".articulation-row.sound-slots", {"border-bottom-width": f"{widths['hairline']}px",
+                                           "border-bottom-color": c["border"]}),
+        (".sound-slot", {"background-color": c["surfaceRaised"], "color": c["text"]}),
+        (".articulation-item.direction", {"background-color": mix(c["surfaceRaised"], c["accent"], .3)}),
+        (".articulation-item.attribute", {"background-color": mix(c["surfaceRaised"], c["accent"], .6)}),
+        (".articulation-item.reset", {"background-color": c["textMuted"]}),
+        (".articulation-item.selected", {"background-color": c["accent2"]}),
+        (".articulation-item.inactive", {"background-color": mix(c["surface"], c["textMuted"], .3)}),
         # The audio part editor (docs/features/audio-part-editor.md): lines between the lanes, the events, selected
         # ones in the second accent, and muted ones, those outside the part editing mode and those their part hides
         # entirely dimmed

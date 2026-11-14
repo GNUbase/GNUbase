@@ -56,8 +56,13 @@ value bars' width; `listeditor.rcss` lays the columns out and the themes color t
 | Poly Pressure | pitch | pressure | | pressure | |
 | Pitchbend | bend -8192 to 8191 | | | bend | |
 | SysEx | | | | | the bytes in hexadecimal |
+| Articulation | | | | | the direction's name, with (Reset) for a reset |
 
-Start, end and length are in bars and beats; end and length only for notes. The channel is 1-16, SysEx has none.
+Start, end and length are in bars and beats; end and length only for notes. The channel is 1-16, SysEx and
+directions (Articulation, [articulation-maps.md](articulation-maps.md)) have none. A note's Attributes are its
+attributes of the track's articulation map, names separated by commas; typed, they replace them, and typed empty, they
+go (p. 1291). A direction's name can be typed there too; the Insert Event Type menu has no Articulation, as a
+direction needs a name: the Articulations lane draws them.
 
 - **Event list** (pp. 1251-1252, 1254). A click on a row selects its event, Ctrl (Cmd) or Shift and a click adds or
   removes it, a click in the empty rest deselects; a click also activates the event's part, as `MidiEditor` handles

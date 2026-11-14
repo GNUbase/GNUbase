@@ -36,7 +36,7 @@ namespace gnubase::ui
 			Rml::EventId::Click, Rml::EventId::Change, Rml::EventId::Dragend};
 
 		// The event types, as controller.add names them, with the list's names (p. 1253), in the filters bar's order.
-		constexpr std::array<std::pair<const char*, const char*>, 7> g_types = {{
+		constexpr std::array<std::pair<const char*, const char*>, 8> g_types = {{
 			{"note", "Note"},
 			{"controller", "Controller"},
 			{"program", "Program Change"},
@@ -44,6 +44,7 @@ namespace gnubase::ui
 			{"polyPressure", "Poly Pressure"},
 			{"pitchBend", "Pitchbend"},
 			{"sysEx", "SysEx"},
+			{"articulation", "Articulation"}, // directions (#1112, p. 1291), which have no channel
 		}};
 
 		constexpr std::array<std::pair<const char*, const char*>, 3> g_tools = {{
@@ -74,6 +75,36 @@ namespace gnubase::ui
 
 		constexpr std::array<const char*, 11> g_lengths = {
 			"link", "1/1", "1/2", "1/4", "1/8", "1/16", "1/32", "1/64", "1/4T", "1/8T", "1/16T"};
+
+		// Whether events of the type have a MIDI channel: SysEx and directions don't.
+		bool hasChannel(const std::string& type)
+		{
+			return type != "sysEx" && type != "articulation";
+		}
+
+		// Names separated by commas, as the Attributes column shows a note's attributes.
+		std::string joined(const std::vector<std::string>& names)
+		{
+			std::string text;
+			for (const std::string& name : names)
+				text += (text.empty() ? "" : ", ") + name;
+			return text;
+		}
+
+		// Names typed separated by commas, without the spaces around them.
+		std::vector<std::string> names(const std::string& text)
+		{
+			std::vector<std::string> found;
+			std::string name;
+			for (std::istringstream stream(text); std::getline(stream, name, ',');)
+			{
+				name.erase(0, name.find_first_not_of(' '));
+				name.erase(name.find_last_not_of(' ') + 1);
+				if (!name.empty())
+					found.push_back(name);
+			}
+			return found;
+		}
 
 		const char* typeLabel(const std::string& type)
 		{
@@ -237,7 +268,9 @@ namespace gnubase::ui
 		Rml::ElementDocument* document = root.GetOwnerDocument();
 		std::string types;
 		for (const auto& [type, label] : g_types)
-			types += std::string(R"(<menuitem type="toggle" insert-type=")") + type + R"(">)" + label + "</menuitem>";
+			if (std::string(type) != "articulation") // a direction needs a name: the Articulations lane adds them
+				types +=
+					std::string(R"(<menuitem type="toggle" insert-type=")") + type + R"(">)" + label + "</menuitem>";
 		std::string lengths;
 		for (const char* length : g_lengths)
 			lengths += std::string(R"(<menuitem type="toggle" length=")") + length + R"(">)" +
@@ -320,6 +353,7 @@ namespace gnubase::ui
 					row.value = note.at("velocity").get<double>();
 					row.release = note.at("releaseVelocity").get<double>();
 					row.channel = note.at("channel").get<int>();
+					row.articulations = note.value("articulations", std::vector<std::string>());
 					row.editable = item.editable;
 					m_rows.push_back(row);
 				}
@@ -335,6 +369,8 @@ namespace gnubase::ui
 					row.value = controller.value("value", 0.0);
 					row.channel = controller.value("channel", 0);
 					row.data = controller.value("data", std::vector<int>());
+					row.articulation = controller.value("articulation", std::string());
+					row.reset = controller.value("reset", false);
 					row.editable = item.editable;
 					m_rows.push_back(row);
 				}
@@ -375,9 +411,11 @@ namespace gnubase::ui
 			return true;
 		const Row& focus = *first;
 		if (m_focus == "channel")
-			return row.type != "sysEx" && focus.type != "sysEx" && row.channel == focus.channel;
+			return hasChannel(row.type) && hasChannel(focus.type) && row.channel == focus.channel;
 		if (row.type != focus.type)
 			return false;
+		if (row.type == "articulation")
+			return m_focus == "type" || row.articulation == focus.articulation;
 		return m_focus == "type" || row.type == "sysEx" || row.type == "channelPressure" || row.type == "pitchBend" ||
 			row.number == focus.number;
 	}
@@ -391,7 +429,7 @@ namespace gnubase::ui
 			return row.start + row.length;
 		if (field == "length" && row.isNote())
 			return row.length;
-		if (field == "channel" && type != "sysEx")
+		if (field == "channel" && hasChannel(type))
 			return row.channel + 1;
 		if (field == "subtype")
 		{
@@ -417,7 +455,14 @@ namespace gnubase::ui
 	std::string ListEditor::text(const Row& row, const std::string& field) const
 	{
 		if (field == "attributes")
-			return row.type == "sysEx" ? hex(row.data) : "";
+		{
+			// SysEx's bytes, a direction's name, a note's attributes (#1112, p. 1291).
+			if (row.type == "sysEx")
+				return hex(row.data);
+			if (row.type == "articulation")
+				return row.articulation + (row.reset ? " (Reset)" : "");
+			return joined(row.articulations);
+		}
 		const std::optional<int64_t> value = number(row, field);
 		if (!value)
 			return "";
@@ -459,7 +504,7 @@ namespace gnubase::ui
 
 	std::optional<double> ListEditor::bar(const Row& row)
 	{
-		if (row.type == "sysEx")
+		if (row.type == "sysEx" || row.type == "articulation")
 			return std::nullopt;
 		if (row.type == "program")
 			return row.number / g_maxVelocity;
@@ -519,8 +564,10 @@ namespace gnubase::ui
 				typeLabel(row.type) + "</span>";
 			for (const auto& [field, name] : g_fields)
 			{
-				const bool editable =
-					row.editable && (number(row, field) || (field == std::string("attributes") && row.type == "sysEx"));
+				const bool editable = row.editable &&
+					(number(row, field) ||
+						(field == std::string("attributes") &&
+							(row.type == "sysEx" || row.type == "articulation" || row.isNote())));
 				rml += std::string(R"(<textdisplay class="list-cell" field=")") + field + '"' +
 					(editable ? "" : R"( disabled="")") + "/>";
 			}
@@ -678,11 +725,30 @@ namespace gnubase::ui
 	{
 		if (field == "attributes")
 		{
+			std::map<std::pair<uint64_t, std::string>, Json> changes;
 			if (const std::optional<std::vector<int>> data = parseHex(typed); data && edited.type == "sysEx")
 			{
-				std::map<std::pair<uint64_t, std::string>, Json> changes;
 				changes[{edited.part, "controller.set"}].push_back({{"id", edited.id}, {"data", *data}});
 				edit("Change SysEx", std::move(changes));
+			}
+			else if (edited.isNote())
+			{
+				// The note's attributes, names separated by commas; empty clears them (p. 1291).
+				changes[{edited.part, "note.set"}].push_back({{"id", edited.id}, {"articulations", names(typed)}});
+				edit("Change Articulations", std::move(changes));
+			}
+			else if (edited.type == "articulation")
+			{
+				// A direction's name, as the attributes column shows it.
+				std::string name = typed;
+				if (const std::string reset = " (Reset)";
+					name.size() > reset.size() && name.compare(name.size() - reset.size(), reset.size(), reset) == 0)
+					name.resize(name.size() - reset.size());
+				if (!name.empty())
+				{
+					changes[{edited.part, "controller.set"}].push_back({{"id", edited.id}, {"articulation", name}});
+					edit("Change Articulation", std::move(changes));
+				}
 			}
 			return;
 		}

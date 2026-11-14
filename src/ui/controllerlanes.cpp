@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/controllerlanes.h"
 
+#include "engine/midi/articulationmaps.h"
 #include "engine/midi/chords.h"
 #include "engine/midi/quantizesettings.h"
 #include "platform/log.h"
@@ -28,7 +29,7 @@ namespace gnubase::ui
 	namespace
 	{
 		// The lanes' types as the menus list them (p. 1158), the controller events' first; controllers come after.
-		constexpr std::array<std::pair<const char*, const char*>, 8> g_types = {{
+		constexpr std::array<std::pair<const char*, const char*>, 9> g_types = {{
 			{"velocity", "Velocity"},
 			{"pitchBend", "Pitchbend"},
 			{"channelPressure", "Aftertouch"},
@@ -37,6 +38,7 @@ namespace gnubase::ui
 			{"probability", "Play Probability"},
 			{"velocityVariance", "Velocity Variance"},
 			{"offVelocity", "Off Velocity"},
+			{"articulations", "Articulations"},
 		}};
 
 		// Controllers the menus list by name; all 128 are in the Continuous Controllers submenu.
@@ -150,6 +152,15 @@ namespace gnubase::ui
 			return note.at("velocity").get<double>();
 		}
 
+		// The articulation of a map by name, or null: an articulation that isn't the map's doesn't show (p. 1291).
+		const Json* articulationOf(const Json& map, const std::string& name)
+		{
+			for (const Json& articulation : map.at("articulations"))
+				if (articulation.at("name") == name)
+					return &articulation;
+			return nullptr;
+		}
+
 		// A display value as the lane's field: the velocity variance from -1 to 1.
 		double fieldValue(const std::string& type, double value)
 		{
@@ -251,6 +262,9 @@ namespace gnubase::ui
 		m_noteSelection.clear();
 		m_controllerSelection.clear();
 		m_lanes.clear();
+		m_maps.clear();
+		for (const Json& map : project.value("articulationMaps", Json::array()))
+			m_maps[map.at("id").get<uint64_t>()] = map;
 		const std::string grid = project.value("quantize", Json::object()).value("grid", std::string("1/16"));
 		m_grid = engine::midi::noteValueFromString(grid).value_or(engine::midi::NoteValue{}).ticks();
 		const auto midiParts = project.find("midiParts");
@@ -274,7 +288,7 @@ namespace gnubase::ui
 					m_partIndex[found->first] = m_parts.size();
 					m_parts.push_back({found->first, ticksOf(track, position, time),
 						ticksOf(track, position + part.at("length").get<int64_t>(), time),
-						editable.count(found->first) != 0, part});
+						editable.count(found->first) != 0, part, track.value("articulationMap", uint64_t{0})});
 				}
 			for (const Json& selected : m_view.value("selection", Json::array()))
 				m_noteSelection.emplace(selected.at("part").get<uint64_t>(), selected.at("note").get<uint64_t>());
@@ -325,7 +339,7 @@ namespace gnubase::ui
 					const uint64_t id = note.at("id").get<uint64_t>();
 					const int64_t start = part.start + note.at("position").get<int64_t>();
 					found.push_back({part.id, id, start, start, noteValue(note, lane.type), 0, part.editable,
-						noteSelected(part.id, id)});
+						noteSelected(part.id, id), std::string()});
 				}
 				continue;
 			}
@@ -337,9 +351,9 @@ namespace gnubase::ui
 						event.value("number", 0) != lane.number))
 					continue;
 				const uint64_t id = event.at("id").get<uint64_t>();
-				events.push_back(
-					{part.id, id, part.start + event.at("position").get<int64_t>(), part.end, eventValue(event),
-						event.value("channel", 0), part.editable, m_controllerSelection.count({part.id, id}) != 0});
+				events.push_back({part.id, id, part.start + event.at("position").get<int64_t>(), part.end,
+					eventValue(event), event.value("channel", 0), part.editable,
+					m_controllerSelection.count({part.id, id}) != 0, std::string()});
 			}
 			std::stable_sort(
 				events.begin(), events.end(), [](const Item& a, const Item& b) { return a.start < b.start; });
@@ -377,7 +391,25 @@ namespace gnubase::ui
 			rml += m_menuSuffix;
 			rml += R"(">)";
 			rml += Rml::StringUtilities::EncodeRml(laneName(lane.type, lane.number));
-			rml += R"(</button></div><div class="controller-lane-area" lane=")";
+			rml += "</button>";
+			if (lane.type == "articulations")
+			{
+				// The articulations' names beside their rows, under the lane's name beside the sound slots lane.
+				if (const Json* map = laneMap())
+					for (const Json& articulation : map->at("articulations"))
+					{
+						const std::string name =
+							Rml::StringUtilities::EncodeRml(articulation.at("name").get<std::string>());
+						rml += R"(<div class="articulation-name" articulation-type=")" +
+							articulation.at("type").get<std::string>() + R"(">)" + name + "</div>";
+					}
+				rml += R"(</div><div class="controller-lane-area" lane=")" + index + R"(">)";
+				m_items.emplace_back();
+				rml += articulationArea(m_items.back());
+				rml += "</div></div>";
+				continue;
+			}
+			rml += R"(</div><div class="controller-lane-area" lane=")";
 			rml += index;
 			rml += R"(">)";
 			m_items.push_back(items(lane));
@@ -441,6 +473,26 @@ namespace gnubase::ui
 		for (size_t i = 0; list != nullptr && i < m_items.size(); ++i)
 		{
 			const Rml::Element* area = list->QuerySelector(".controller-lane-area[lane=\"" + std::to_string(i) + "\"]");
+			if (area != nullptr && i < m_lanes.size() && m_lanes[i].type == "articulations")
+			{
+				// The items row by row, from the start to the end; a reset has the width its style gives it (p. 1290).
+				size_t next = 0;
+				for (int row = 0; row < area->GetNumChildren(); ++row)
+					for (int child = 0; child < area->GetChild(row)->GetNumChildren() && next < m_items[i].size();
+						++child, ++next)
+					{
+						const Item& item = m_items[i][next];
+						Rml::Element* element = area->GetChild(row)->GetChild(child);
+						const double left = static_cast<double>(item.start - m_from) / range * 100.0;
+						const double width = static_cast<double>(item.end - item.start) / range * 100.0;
+						element->SetProperty(Rml::PropertyId::Left, percent(left));
+						if (item.end > item.start)
+							element->SetProperty(Rml::PropertyId::Width, percent(width));
+						if (!item.color.empty())
+							element->SetProperty("background-color", item.color); // the slot's color, user data
+					}
+				continue;
+			}
 			for (int child = 0;
 				area != nullptr && child < area->GetNumChildren() && static_cast<size_t>(child) < m_items[i].size();
 				++child)
@@ -850,6 +902,11 @@ namespace gnubase::ui
 		m_snapOff = event.GetParameter("ctrl_key", 0) != 0 || event.GetParameter("meta_key", 0) != 0;
 		const bool shift = event.GetParameter("shift_key", 0) != 0;
 		const Lane& shown = m_lanes[m_lane];
+		if (shown.type == "articulations")
+		{
+			pressArticulation(event);
+			return;
+		}
 		const bool notes = isNoteLane(shown.type);
 		m_pressed.reset();
 		if (const Rml::Element* element =
@@ -1101,5 +1158,207 @@ namespace gnubase::ui
 		}
 		commands.push_back({{"command", "controller.line"}, {"parameters", std::move(parameters)}});
 		edit("Draw line", std::move(commands));
+	}
+
+	const Json* ControllerLanes::laneMap() const
+	{
+		const Json* found = nullptr;
+		for (const Part& part : m_parts)
+			if (const auto map = m_maps.find(part.map);
+				map != m_maps.end() && (found == nullptr || Json(part.id) == m_view.value("activePart", Json())))
+				found = &map->second;
+		return found;
+	}
+
+	std::string ControllerLanes::articulationArea(std::vector<Item>& items) const
+	{
+		const auto element = [](const char* classes, const Item& item, const char* key)
+		{
+			return std::string(R"(<div class=")") + classes + (item.selected ? " selected" : "") +
+				(item.editable ? "" : " inactive") + R"(" part=")" + std::to_string(item.part) + R"(" )" + key +
+				R"(=")" + std::to_string(item.id) + R"(")";
+		};
+		// The sound slots lane (p. 1287): the slot each note plays, as its track's map chooses it, in its color.
+		std::string rml = R"(<div class="articulation-row sound-slots">)";
+		for (const Part& part : m_parts)
+		{
+			const auto map = m_maps.find(part.map);
+			if (map == m_maps.end())
+				continue;
+			const Json& slots = map->second.at("slots");
+			const std::map<uint64_t, size_t> chosen = engine::midi::soundSlots(map->second, part.json);
+			for (const Json& note : part.json.at("notes"))
+			{
+				const uint64_t id = note.at("id").get<uint64_t>();
+				const auto slot = chosen.find(id);
+				if (slot == chosen.end() || slot->second >= slots.size())
+					continue;
+				const Json& shown = slots.at(slot->second);
+				const int64_t start = part.start + note.at("position").get<int64_t>();
+				items.push_back({part.id, id, start, start + note.at("length").get<int64_t>(), 0.0, 0, part.editable,
+					false, shown.value("color", std::string())});
+				const std::string name = Rml::StringUtilities::EncodeRml(shown.value("name", std::string()));
+				rml.append(element("sound-slot", items.back(), "note"))
+					.append(R"( title=")")
+					.append(name)
+					.append(R"(">)")
+					.append(name)
+					.append("</div>");
+			}
+		}
+		rml += "</div>";
+		const Json* map = laneMap();
+		if (map == nullptr)
+			return rml;
+		// A row per articulation (p. 1287): directions last until the next direction of their group, a reset has a
+		// width of its own (p. 1290); attributes are on their notes.
+		const Json& articulations = map->at("articulations");
+		for (size_t row = 0; row < articulations.size(); ++row)
+		{
+			const Json& articulation = articulations.at(row);
+			const std::string name = articulation.at("name").get<std::string>();
+			const bool direction = articulation.at("type") == "direction";
+			rml += R"(<div class="articulation-row" articulation-row=")" + std::to_string(row) + R"(">)";
+			for (const Part& part : m_parts)
+			{
+				if (!direction)
+				{
+					for (const Json& note : part.json.at("notes"))
+					{
+						const auto names = note.value("articulations", std::vector<std::string>());
+						if (std::find(names.begin(), names.end(), name) == names.end())
+							continue;
+						const uint64_t id = note.at("id").get<uint64_t>();
+						const int64_t start = part.start + note.at("position").get<int64_t>();
+						items.push_back({part.id, id, start, start + note.at("length").get<int64_t>(), 0.0, 0,
+							part.editable, noteSelected(part.id, id), std::string()});
+						rml += element("articulation-item attribute", items.back(), "note") + "/>";
+					}
+					continue;
+				}
+				std::vector<std::pair<int64_t, const Json*>> group; // the part's directions of the group
+				for (const Json& event : part.json.at("controllers"))
+					if (event.at("type") == "articulation")
+						if (const Json* other = articulationOf(*map, event.value("articulation", std::string()));
+							other != nullptr && other->at("type") == "direction" &&
+							other->at("group") == articulation.at("group"))
+							group.emplace_back(event.at("position").get<int64_t>(), &event);
+				std::stable_sort(
+					group.begin(), group.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+				for (size_t i = 0; i < group.size(); ++i)
+				{
+					const Json& event = *group[i].second;
+					if (event.at("articulation") != name)
+						continue;
+					const bool reset = event.value("reset", false);
+					const int64_t start = part.start + group[i].first;
+					int64_t end = part.end;
+					if (reset)
+						end = start;
+					else if (i + 1 < group.size())
+						end = part.start + group[i + 1].first;
+					const uint64_t id = event.at("id").get<uint64_t>();
+					items.push_back({part.id, id, start, end, 0.0, 0, part.editable,
+						m_controllerSelection.count({part.id, id}) != 0, std::string()});
+					rml += element(reset ? "articulation-item direction reset" : "articulation-item direction",
+							   items.back(), "controller") +
+						"/>";
+				}
+			}
+			rml += "</div>";
+		}
+		return rml;
+	}
+
+	// Adding articulations on the lane (pp. 1288-1289): the draw tool adds a direction at the quantize grid's position
+	// pressed, or the attribute to the notes that sound there and started last (a chord), in place of their attribute
+	// of the same group; on a direction or attribute it removes it, as the erase tool does.
+	void ControllerLanes::pressArticulation(Rml::Event& event)
+	{
+		Rml::Element* target = event.GetTargetElement();
+		const Rml::Element* row = withAttribute(target, "articulation-row", m_root.get());
+		const Json* map = laneMap();
+		if (row == nullptr || map == nullptr || (m_tool != "draw" && m_tool != "erase"))
+			return;
+		const auto index = static_cast<size_t>(std::stoul(attribute(*row, "articulation-row")));
+		const Json& articulations = map->at("articulations");
+		if (index >= articulations.size())
+			return;
+		const Json& articulation = articulations.at(index);
+		const std::string name = articulation.at("name").get<std::string>();
+		const bool direction = articulation.at("type") == "direction";
+		if (const Rml::Element* item = withAttribute(target, direction ? "controller" : "note", m_root.get()))
+		{
+			const uint64_t part = idAttribute(*item, "part");
+			const uint64_t id = idAttribute(*item, direction ? "controller" : "note");
+			const auto found = m_partIndex.find(part);
+			if (found == m_partIndex.end() || !m_parts[found->second].editable)
+				return;
+			if (direction)
+			{
+				edit("Remove Articulation",
+					Json::array({{{"command", "controller.remove"},
+						{"parameters", {{"part", part}, {"controllers", Json::array({id})}}}}}));
+				return;
+			}
+			for (const Json& note : m_parts[found->second].json.at("notes"))
+				if (note.at("id") == id)
+				{
+					auto names = note.value("articulations", std::vector<std::string>());
+					names.erase(std::remove(names.begin(), names.end(), name), names.end());
+					const Json change = {{"id", id}, {"articulations", names}};
+					edit("Remove Articulation",
+						Json::array({{{"command", "note.set"},
+							{"parameters", {{"part", part}, {"notes", Json::array({change})}}}}}));
+				}
+			return;
+		}
+		if (m_tool != "draw")
+			return;
+		if (direction)
+		{
+			const int64_t position = snap(m_pressedAt.first, m_snapOff);
+			if (const Part* part = partAt(position))
+			{
+				const Json added = {
+					{"position", position - part->start}, {"type", "articulation"}, {"articulation", name}};
+				edit("Add Articulation",
+					Json::array({{{"command", "controller.add"},
+						{"parameters", {{"part", part->id}, {"controllers", Json::array({added})}}}}}));
+			}
+			return;
+		}
+		// The notes that sound where the press is, of those the ones that start last.
+		std::vector<std::pair<const Part*, const Json*>> notes;
+		std::optional<int64_t> latest;
+		for (const Part& part : m_parts)
+			for (const Json& note : part.json.at("notes"))
+			{
+				const int64_t start = part.start + note.at("position").get<int64_t>();
+				if (!part.editable || static_cast<double>(start) > m_pressedAt.first ||
+					static_cast<double>(start + note.at("length").get<int64_t>()) <= m_pressedAt.first ||
+					(latest && start < *latest))
+					continue;
+				if (latest && start > *latest)
+					notes.clear();
+				latest = start;
+				notes.emplace_back(&part, &note);
+			}
+		std::map<uint64_t, Json> changes;
+		for (const auto& [part, note] : notes)
+		{
+			// One attribute of each group (p. 1279): the new one takes the place of its group's.
+			std::vector<std::string> names;
+			for (const std::string& each : note->value("articulations", std::vector<std::string>()))
+				if (const Json* other = articulationOf(*map, each); other == nullptr ||
+					other->at("type") != "attribute" || other->at("group") != articulation.at("group"))
+					names.push_back(each);
+			names.push_back(name);
+			changes[part->id].push_back({{"id", note->at("id")}, {"articulations", names}});
+		}
+		Json commands = Json::array();
+		for (auto& [part, items] : changes)
+			commands.push_back({{"command", "note.set"}, {"parameters", {{"part", part}, {"notes", items}}}});
+		edit("Add Articulation", std::move(commands));
 	}
 }

@@ -18,6 +18,7 @@
 #include <cmath>
 #include <exception>
 #include <map>
+#include <sstream>
 #include <tuple>
 #include <utility>
 
@@ -188,6 +189,15 @@ namespace gnubase::ui
 			return {{"id", id}};
 		}
 
+		// Names separated by commas, as the Articulations field shows a note's attributes.
+		std::string joined(const std::vector<std::string>& names)
+		{
+			std::string text;
+			for (const std::string& name : names)
+				text += (text.empty() ? "" : ", ") + name;
+			return text;
+		}
+
 		// A pitch typed: a number 0-127 or a name such as C1.
 		std::optional<int> parsePitch(const std::string& text)
 		{
@@ -253,8 +263,8 @@ namespace gnubase::ui
 				each.title + R"(">)" + each.label + "</button>";
 		std::string info;
 		for (const auto& [field, label] : std::vector<std::pair<const char*, const char*>>{{"start", "Start"},
-				 {"end", "End"}, {"length", "Length"}, {"pitch", "Pitch"}, {"velocity", "Velocity"},
-				 {"releaseVelocity", "Off Velocity"}, {"channel", "Channel"}})
+				 {"end", "End"}, {"length", "Length"}, {"pitch", "Pitch"}, {"articulations", "Articulations"},
+				 {"velocity", "Velocity"}, {"releaseVelocity", "Off Velocity"}, {"channel", "Channel"}})
 			info += std::string(R"(<div class="info-field" info-field=")") + field + R"("><span class="info-label">)" +
 				label + R"(</span><textdisplay class="display" field=")" + field + R"("/></div>)";
 		// The rows of the grid from the highest pitch down, and the piano keyboard beside them: the white keys, then
@@ -486,7 +496,8 @@ namespace gnubase::ui
 					m_notes.push_back({item.id, note.at("id").get<uint64_t>(),
 						item.start + note.at("position").get<int64_t>(), note.at("length").get<int64_t>(),
 						note.at("pitch").get<int>(), note.at("velocity").get<double>(),
-						note.at("releaseVelocity").get<double>(), note.at("channel").get<int>(), item.editable});
+						note.at("releaseVelocity").get<double>(), note.at("channel").get<int>(), item.editable,
+						note.value("articulations", std::vector<std::string>())});
 			}
 		for (const Json& selected : m_view.value("selection", Json::array()))
 			m_selection.emplace_back(selected.at("part").get<uint64_t>(), selected.at("note").get<uint64_t>());
@@ -813,7 +824,7 @@ namespace gnubase::ui
 			{"pitch", engine::midi::pitchName(first.pitch)},
 			{"velocity", std::to_string(std::lround(first.velocity * g_maxVelocity))},
 			{"releaseVelocity", std::to_string(std::lround(first.releaseVelocity * g_maxVelocity))},
-			{"channel", std::to_string(first.channel + 1)}};
+			{"channel", std::to_string(first.channel + 1)}, {"articulations", joined(first.articulations)}};
 		for (const auto& [field, text] : texts)
 			if (Rml::Element* display = line->QuerySelector("textdisplay[field=" + field + "]");
 				display != nullptr && attribute(*display, "value") != text)
@@ -981,6 +992,32 @@ namespace gnubase::ui
 		const std::vector<const Note*> notes = selectedNotes();
 		if (notes.empty())
 			return;
+		if (field == "articulations")
+		{
+			// The Articulations field (#1112, p. 1290): the attributes typed, names separated by commas, for every
+			// selected note; empty clears them.
+			std::vector<std::string> names;
+			std::string name;
+			for (std::istringstream stream(text); std::getline(stream, name, ',');)
+			{
+				name.erase(0, name.find_first_not_of(' '));
+				name.erase(name.find_last_not_of(' ') + 1);
+				if (!name.empty())
+					names.push_back(name);
+			}
+			std::map<uint64_t, Json> changes;
+			for (const Note* note : notes)
+			{
+				Json change = noteChange(note->id);
+				change["articulations"] = names;
+				changes[note->part].push_back(change);
+			}
+			Json commands = Json::array();
+			for (auto& [part, items] : changes)
+				commands.push_back({{"command", "note.set"}, {"parameters", {{"part", part}, {"notes", items}}}});
+			edit("Change Articulations", std::move(commands));
+			return;
+		}
 		const Note& first = *notes.front();
 		const TimeContext time = projectTime(m_project);
 		const double start = time.tempo.toSeconds(first.start);
