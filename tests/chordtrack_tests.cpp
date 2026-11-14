@@ -808,6 +808,30 @@ TEST_CASE("auditioning chord events on the audition track, and Acoustic Feedback
 	CHECK(reject(client, "chord.audition", {{"chord", "C"}}).find("muted") != std::string::npos);
 }
 
+TEST_CASE("Acoustic Feedback plays on the MIDI channel of a MIDI track set to one", "[integration]")
+{
+	Rig rig;
+	Client& client = rig.client;
+	const Json added = run(client, "track.add", {{"type", "midi"}});
+	const auto midi = added.at("channel").at("id").get<ObjectId>();
+	run(client, "channel.set", {{"channel", midi}, {"output", rig.channel}, {"midiChannel", 4}});
+	run(client, "chord.setTrack", {{"audition", added.at("track").at("id")}, {"acousticFeedback", true}});
+	// The voicing on channel 5, where chord.audition plays it too (midi.inject).
+	std::vector<std::pair<int, int>> notes;
+	for (const RenderChannel& render : rig.engine.renderSnapshots().acquire().channels)
+		if (render.id == midi)
+			for (const RenderNote& note : render.notes)
+				notes.emplace_back(note.pitch, note.channel);
+	CHECK(notes == std::vector<std::pair<int, int>>{{48, 4}, {60, 4}, {64, 4}, {67, 4}});
+	run(client, "channel.set", {{"channel", midi}, {"midiChannel", nullptr}});
+	notes.clear();
+	for (const RenderChannel& render : rig.engine.renderSnapshots().acquire().channels)
+		if (render.id == midi)
+			for (const RenderNote& note : render.notes)
+				notes.emplace_back(note.pitch, note.channel);
+	CHECK(notes == std::vector<std::pair<int, int>>{{48, 0}, {60, 0}, {64, 0}, {67, 0}});
+}
+
 TEST_CASE("a chord held on an audition track that is removed doesn't block auditioning on another", "[integration]")
 {
 	Rig rig;

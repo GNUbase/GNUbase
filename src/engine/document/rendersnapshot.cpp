@@ -40,16 +40,6 @@ namespace gnubase::engine
 			return project.tempo.toSamples(tick, project.sampleRate);
 		}
 
-		// The MIDI channel a MIDI track plays its events on instead of their own (reference manual p. 351), or none
-		// for Any, which keeps theirs.
-		std::optional<int> trackMidiChannel(const Project& project, ObjectId trackId)
-		{
-			const Track& track = project.trackById.at(trackId);
-			if (track.type != TrackType::Midi || track.channel == 0)
-				return std::nullopt;
-			return project.channels.at(track.channel).midiChannel;
-		}
-
 		// The channel a note plays on: a sound slot's (#175), else its drum sound's (#129), else its track's, else
 		// its own.
 		uint8_t playedChannel(
@@ -78,7 +68,7 @@ namespace gnubase::engine
 					notes.push_back(&note);
 			std::stable_sort(
 				notes.begin(), notes.end(), [](const Note* a, const Note* b) { return a->position < b->position; });
-			const std::optional<int> trackChannel = trackMidiChannel(project, part.track);
+			const std::optional<int> trackChannel = midi::trackMidiChannel(project, part.track);
 			const SoundSlot* previous = nullptr;
 			uint8_t previousChannel = 0;
 			for (const Note* note : notes)
@@ -134,7 +124,7 @@ namespace gnubase::engine
 			// The track's articulation map plays each note's sound slot (#175): the slot's output events where the
 			// slot changes, and the slot's MIDI modifiers.
 			const ArticulationMap* articulations = midi::articulationMapOf(project, part.track);
-			const std::optional<int> trackChannel = trackMidiChannel(project, part.track);
+			const std::optional<int> trackChannel = midi::trackMidiChannel(project, part.track);
 			const std::map<ObjectId, size_t> slots =
 				articulations != nullptr ? midi::soundSlots(*articulations, part) : std::map<ObjectId, size_t>();
 			const auto slotOf = [&](ObjectId note) -> const SoundSlot*
@@ -619,7 +609,7 @@ namespace gnubase::engine
 			render.program = channel.program;
 			render.bank = channel.bank;
 			render.midiChannel = static_cast<uint8_t>(channel.midiChannel.value_or(0));
-			render.inputChannel = static_cast<int8_t>(trackMidiChannel(project, trackId).value_or(-1));
+			render.inputChannel = static_cast<int8_t>(midi::trackMidiChannel(project, trackId).value_or(-1));
 			render.modifiers = channel.modifiers;
 			if (const ArticulationMap* articulations = midi::articulationMapOf(project, track.id))
 				render.articulations = *articulations;
@@ -786,10 +776,10 @@ namespace gnubase::engine
 			{ return RenderAutomationPoint{position, gapValue, AutomationShape::Step, 0.0, !vca}; };
 			RenderAutomationLane played;
 			played.target = lane.target;
-			// A MIDI track's channel plays its MIDI automation on it too (p. 351), as it does its parts' events.
-			// ponytail: lanes of one controller on several MIDI channels all play on the track's, the last one winning.
+			// A MIDI track's channel plays its MIDI automation on it too (p. 351), as it does its parts' events; lanes
+			// of one controller on several MIDI channels then play side by side (channelAutomation).
 			const AutomationTargetType type = lane.target.type;
-			if (const std::optional<int> on = trackMidiChannel(project, lane.track); on &&
+			if (const std::optional<int> on = midi::trackMidiChannel(project, lane.track); on &&
 				(type == AutomationTargetType::Controller || type == AutomationTargetType::PitchBend ||
 					type == AutomationTargetType::ChannelPressure))
 				played.target.channel = static_cast<uint8_t>(*on);
