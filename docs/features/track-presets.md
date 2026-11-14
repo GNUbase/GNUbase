@@ -30,8 +30,8 @@ they are.
   tracks below `track` in its folder, or at the bottom of the track list, with their sound. Outputs go to the project's
   busses with the same names, or the main output.
 - **Exporting tracks** (pp. 205-206). `track.export` `{tracks, path, copyMedia}` writes a track archive: a DAWproject
-  file with the tracks, a folder with the tracks inside it, their channels, inserts, events, parts, markers, track
-  versions and automation, and the project's sample rate, busses, tempo, time signatures and fader top, so that
+  file with the tracks, a folder with the tracks inside it, their channels, inserts, events, parts, patterns, markers,
+  track versions and automation, and the project's sample rate, busses, tempo, time signatures and fader top, so that
   positions, volumes and routing mean the same there. `copyMedia` (default true, the reference's Copy Media Files)
   embeds the media files in the archive; false refers to them where they are (Reference Media Files). The archive is a
   DAWproject file rather than the reference's XML, as the project format is DAWproject. Routing to tracks that weren't
@@ -52,20 +52,21 @@ they are.
   `track` in its folder or at the bottom (Import Position for New Tracks); marker tracks go to the top level, and the
   project's marker track limit holds for new ones. Tracks that can't be imported yet stay behind, inside a folder or,
   without `tracks`, at the top level, and the result lists them as `skipped`, from top to bottom in the file; listed
-  themselves, also inside a listed folder, they are refused. `events` brings events, parts, markers and track versions,
-  `settings` the channel settings and inserts, `automation` the automation; all default to true. Without `settings` the
-  channels start from the defaults, keeping their format, routing and instrument. Mute, solo, listen, monitor and record
-  enable are off, and automation lanes read, as a new lane does: the reference doesn't import these states (p. 200).
-  Routing between imported tracks stays; sends and outputs to other channels go to the tracks the project had before the
-  import with the same name and type (not to other copies, which could route them in a loop), outputs to busses to its
-  busses with the same name, or else the main output (p. 200). Clips come with the events, in the pool's top folder, and
-  media files the project has already are shared; drum maps the project has with the same name and sounds too. Media
-  files embedded in the file are extracted next to it, into `<name> media`, as `project.load` does, and the result lists
-  the media files the import added as `media`. Linear positions from a file at another sample rate are rescaled to keep
-  their time, as `project.set` does; faders, send levels and volume automation above the project's fader top come down
-  to it, from presets too. When what is imported ends after the project's end (its length in the project setup), the end
-  moves to where it ends, up to the setup's 24 hours (the note on Import Position, p. 204): its events, parts, markers
-  (a cycle marker's end too) and automation points, not those of versions that aren't active.
+  themselves, also inside a listed folder, they are refused. `events` brings events, parts, patterns, markers and track
+  versions, `settings` the channel settings and inserts, `automation` the automation; all default to true. Without
+  `settings` the channels start from the defaults, keeping their format, routing and instrument. Mute, solo, listen,
+  monitor and record enable are off, and automation lanes read, as a new lane does: the reference doesn't import these
+  states (p. 200). Routing between imported tracks stays; sends and outputs to other channels go to the tracks the
+  project had before the import with the same name and type (not to other copies, which could route them in a loop),
+  outputs to busses to its busses with the same name, or else the main output (p. 200). Clips come with the events, in
+  the pool's top folder, and media files the project has already are shared; drum maps the project has with the same
+  name and sounds too. Media files embedded in the file are extracted next to it, into `<name> media`, as `project.load`
+  does, and the result lists the media files the import added as `media`. Linear positions from a file at another sample
+  rate are rescaled to keep their time, as `project.set` does; faders, send levels and volume automation above the
+  project's fader top come down to it, from presets too. When what is imported ends after the project's end (its length
+  in the project setup), the end moves to where it ends, up to the setup's 24 hours (the note on Import Position,
+  p. 204): its events, parts, markers (a cycle marker's end too) and automation points, not those of versions that
+  aren't active.
 - **Onto existing tracks** (Destination Track, pp. 200, 203). `destinations` `[{source, track}]` imports listed tracks
   onto the project's tracks of their type instead of as new ones. A group, effect, folder, marker or ruler track
   replaces the track, a folder with the tracks inside it: the copy takes its place, among the new tracks the result
