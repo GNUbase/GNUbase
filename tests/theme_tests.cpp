@@ -369,6 +369,143 @@ TEST_CASE("every theme dims the audio part editor's events that their part hides
 	}
 }
 
+TEST_CASE("the default theme's bars, tabs and inspector headers are flat, the other themes' framed as before", "[unit]")
+{
+	// #1328: the default theme follows the mockup; dark, light and high contrast keep their framed widgets, with the
+	// same selectors as the default theme. Their drop-down button and disclosure skins are the plain button's, so the
+	// rules that use them change nothing.
+	const std::string bar = ".toolbar button:not(.toggle):not(.primary), .transport button:not(.toggle):not(.primary)";
+	const std::string menu =
+		".toolbar button[menu]:not(.toggle):not(.primary), .transport button[menu]:not(.toggle):not(.primary)";
+	const std::string header = ".inspector-section button.section-header";
+	const std::string collapsed = ".inspector-section.collapsed button.section-header";
+	// The selector of the buttons in bars with more classes or attributes and a state, as tools/skin/generate.py
+	// writes it.
+	const auto bars = [](const std::string& more, const std::string& state)
+	{
+		return ".toolbar button" + more + ":not(.toggle):not(.primary)" + state + ", .transport button" + more +
+			":not(.toggle):not(.primary)" + state;
+	};
+	// A property's value in a rule's declarations, or empty.
+	const auto value = [](const std::string& declarations, const std::string& property)
+	{
+		const size_t at = declarations.find("\t" + property + ": ");
+		if (at == std::string::npos)
+			return std::string();
+		const size_t from = at + property.size() + 3;
+		return declarations.substr(from, declarations.find(';', from) - from);
+	};
+	for (const char* theme : g_themes)
+	{
+		INFO("theme " << theme);
+		const std::filesystem::path dir = themesDir() / theme;
+		std::vector<std::pair<std::string, std::string>> found; // the last declarations of each selector
+		for (const auto& [selector, declarations] : rules(gnubase::test::readText(dir / "theme.rcss")))
+		{
+			const size_t first = selector.find_first_not_of(" \t");
+			const std::string name = selector.substr(first, selector.find_last_not_of(" \t\r") + 1 - first);
+			// Rules for buttons in bars leave toggle and primary buttons their own skins.
+			if (name.rfind(".toolbar button", 0) == 0 || name.rfind(".transport button", 0) == 0)
+			{
+				INFO(name);
+				CHECK(name.find(":not(.toggle):not(.primary)") != std::string::npos);
+			}
+			found.emplace_back(name, declarations);
+		}
+		const auto last = [&found](const std::string& name)
+		{
+			const auto at =
+				std::find_if(found.rbegin(), found.rend(), [&name](const auto& rule) { return rule.first == name; });
+			return at == found.rend() ? std::string() : at->second;
+		};
+		const auto file = [&dir](const char* asset) { return gnubase::test::readText(dir / asset); };
+		const nlohmann::json tokens = readJson(dir / "tokens.json");
+		const auto token = [&tokens](const char* name) { return tokens.at(name).get<std::string>(); };
+		if (std::string_view(theme) == "gnubase")
+		{
+			CHECK(last(bar).find("decorator: none") != std::string::npos);
+			CHECK(last(bar).find("border-radius") != std::string::npos);
+			CHECK(last(menu).find("dropdown-button-normal.svg") != std::string::npos);
+			CHECK(last("tabset tab").find("decorator: none") != std::string::npos);
+			CHECK(last(header).find("disclosure-open.svg") != std::string::npos);
+			CHECK(last(collapsed).find("disclosure-closed.svg") != std::string::npos);
+			// Bar buttons: a soft fill under the mouse, the accent when checked.
+			CHECK(value(last(bars("", ":hover")), "decorator") == "none");
+			CHECK(value(last(bars("", ":hover")), "background-color").rfind('#', 0) == 0);
+			CHECK(value(last(bars(".checked", "")), "color") == token("accent"));
+			// Start in the accent, filled while playing; Record in the danger color, filled while recording; the
+			// primary time display bold.
+			CHECK(value(last(".transport #start svg.icon"), "image-color") == token("accent"));
+			CHECK(value(last(".transport #start.checked"), "background-color") == token("accent"));
+			CHECK(value(last(".transport #record svg.icon"), "image-color") == token("danger"));
+			CHECK(value(last(".transport #record.checked"), "background-color") == token("danger"));
+			CHECK(value(last(".transport .primary-time"), "font-weight") == "600");
+			CHECK(value(last(".transport .primary-time"), "color") == token("text"));
+			// Zones as rounded panels on the surface.
+			CHECK(!value(last(".docking [zone]"), "border-radius").empty());
+			CHECK(value(last(".docking [zone]"), "background-color") == token("surface"));
+			// Lanes and the track list on the panels' surface over the window's background, the selected row outlined.
+			const std::string background = token("background");
+			CHECK(value(last(".event-display"), "background-color") == token("surface"));
+			CHECK(value(last(".track-list"), "background-color").rfind('#', 0) == 0);
+			CHECK(last(".track-list").find("background-color: " + background) == std::string::npos);
+			CHECK(last(".track-list listitem.selected").find("list-item-selected.svg") != std::string::npos);
+			CHECK(file("list-item-selected.svg").find("stroke=") != std::string::npos);
+			// Mixer channel strips as raised panels, the transport bar's time displays as plain digits.
+			CHECK(last(".mixer-channel").find("border-radius") != std::string::npos);
+			CHECK(last(".transport .display").find("decorator: none") != std::string::npos);
+			// A light fader cap with grip lines; a knob without a fixed accent arc.
+			CHECK(file("fader-cap.svg").find("linearGradient") != std::string::npos);
+			CHECK(file("knob-base.svg").find(readJson(dir / "tokens.json").at("accent").get<std::string>()) ==
+				std::string::npos);
+			for (const char* arrow : {"dropdown-button-normal.svg", "disclosure-open.svg", "disclosure-closed.svg"})
+			{
+				INFO(arrow);
+				CHECK(file(arrow).find("<polyline") != std::string::npos);
+			}
+		}
+		else
+		{
+			CHECK(last(bar).find("button-normal.svg") != std::string::npos);
+			CHECK(last("tabset tab").find("tab-normal.svg") != std::string::npos);
+			CHECK(last(".toolbar").find("toolbar.svg") != std::string::npos);
+			// The bar rules outrank the general button rules, so each state of a button in a bar, plain or a menu
+			// button, gives what the general rule of that state gives: its skin (a drop-down button's skin is the
+			// plain button's), and its color where it sets one. So do the inspector headers' states.
+			const auto same = [&](const std::string& selector, const std::string& general)
+			{
+				INFO(selector << " as " << general);
+				const std::string own = last(selector);
+				REQUIRE(!own.empty());
+				std::string skin = value(own, "decorator");
+				if (const size_t at = skin.find("dropdown-button-"); at != std::string::npos)
+					skin.erase(at, std::string_view("dropdown-").size());
+				CHECK(skin == value(last(general), "decorator"));
+				if (const std::string color = value(last(general), "color"); !color.empty())
+					CHECK(value(own, "color") == color);
+			};
+			for (const char* state : {":hover", ":active", ":disabled"})
+				same(bars("", state), std::string("button") + state);
+			for (const char* state : {".checked", ".suspended", ".tapping"})
+				same(bars(state, ""), std::string("button") + state);
+			same(bars("[menu]", ":hover"), "button:hover");
+			same(bars("[menu]", ":active"), "button:active");
+			same(bars(".checked[menu]", ""), "button.checked");
+			same(header + ":hover", "button:hover");
+			same(header + ":active", "button:active");
+			const std::string background = readJson(dir / "tokens.json").at("background").get<std::string>();
+			// The lanes stay on the window's background.
+			for (const auto& [name, declarations] : found)
+				if (name == ".event-display" && declarations.find("background-color") != std::string::npos)
+					CHECK(declarations.find("background-color: " + background) != std::string::npos);
+			CHECK(file("dropdown-button-normal.svg") == file("button-normal.svg"));
+			CHECK(file("dropdown-button-hover.svg") == file("button-hover.svg"));
+			CHECK(file("disclosure-open.svg") == file("button-normal.svg"));
+			CHECK(file("disclosure-closed.svg") == file("button-normal.svg"));
+		}
+	}
+}
+
 TEST_CASE("every theme marks the arranger editor's row that is playing", "[unit]")
 {
 	// The arranger editor (docs/features/arranger.md): the row of the chain step or event playing carries .current and
