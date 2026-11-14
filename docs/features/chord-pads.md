@@ -145,9 +145,10 @@ chord track's music theory ([chord-track.md](chord-track.md)).
   (`ChordPadRemote::ControlSteps`). A pad whose chord changed another way than by the pad modifiers since, such as by
   `chordPads.assign`, starts again: the way back leaves it as it is (the history steps since the controls' last one
   say which). At rest, how far each pad followed and the tensions the control added start again, so that the next
-  gesture moves every pad as far, and the pads the voicings control turned adaptive voicing off for have it again with
-  their voicing, as part of the same undo step, so that they follow the reference pad again (#1571, #1574). The
-  commands are registered by topic, in functions that stay below clang-tidy's function size limit (#1585).
+  gesture moves every pad as far, and once the voicings control rests (not the other two), the pads it turned adaptive
+  voicing off for have it again with their voicing, as part of the same undo step, so that they follow the reference
+  pad again (#1571, #1574). The commands are registered by topic, in functions that stay below clang-tidy's function
+  size limit (#1585).
 - **Assign from MIDI Input and MIDI Learn** (pp. 1360, 1388): `chordPads.listen` `assign` (a pad) takes the next notes
   from the MIDI inputs, which play as they are meanwhile, and once they are all released assigns their chord
   (`chordPads.assign` `pitches`); `learn` `range` takes the next two keys as the remote range, `learn` with a
@@ -280,10 +281,10 @@ undo step and the next move after undo going from where the pads are; Assign fro
 Player Remote Control tab's keys and of the controls, ended by another project; the sections mode's combination with
 several section keys and Overlaps between the sections of two pads; section keys released while listening or on the
 remote's input before; a pad with tensions and one near the voicing's limit back as before after a control's move, and
-pitch bend below its middle, with a reference pad whose adaptive voicing comes back at rest; a pad assigned anew while
-a control is away from its rest, the tensions control's way back in steps and after undo, and `chordPads.modify`
-`without`; what the remote keys hold ended when the remote's input changes; Snap Playback after a jump back and after a
-cycle's jump inside a block, on its own and through the audio engine; a player's track
+pitch bend below its middle, with a reference pad whose adaptive voicing comes back at the voicings control's rest only;
+a pad assigned anew while a control is away from its rest, the tensions control's way back in steps and after undo, and
+`chordPads.modify` `without`; what the remote keys hold ended when the remote's input changes; Snap Playback after a
+jump back and after a cycle's jump inside a block, on its own and through the audio engine; a player's track
 removed with its track and checked in a file; a user preset with its player mode and pattern; chords recorded on the
 record-enabled chord track from the mouse and the remote keys; step input with Move Insert Mode, at a bar's start, over
 a chord that is there and moved by bars, also on a chord track in linear time base at a tempo whose bars start between
