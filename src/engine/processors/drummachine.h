@@ -27,8 +27,8 @@ namespace gnubase::engine::processors
 	//
 	// The pads have 2432 parameters, more than the events a block can hold, so the automation player sends only
 	// those of the pads that have automation (and the global ones); the others reach the drum machine with its
-	// samples, from the channel's values (setPadValues). Parameter events for a pad's parameter hold until new pad
-	// values come, unless the parameter is automated.
+	// samples, from the channel's values (setPadValues). Events for a pad's parameter count only while it is
+	// automated, so that those of a lane that went, which can come after the values without it, change nothing.
 	class DrumMachine : public SamplePlayer
 	{
 	public:
@@ -99,7 +99,7 @@ namespace gnubase::engine::processors
 		// Command thread: the sample of a pad to play from its next note on.
 		void setSample(size_t pad, std::shared_ptr<const Sample> sample) override;
 		// Command thread: the pads' parameter values (those not given: their defaults), from the next block on, except
-		// for the automated ones, whose parameter events set them.
+		// for the automated ones, whose parameter events set them; the others' events are ignored.
 		void setPadValues(const std::map<uint32_t, double>& values, const std::set<uint32_t>& automated);
 		void collect() override;
 
@@ -140,6 +140,10 @@ namespace gnubase::engine::processors
 			double step = 1.0;
 			double from = 0.0;
 			double to = 0.0;
+			// Synth layers: the pad's tuning as a factor, its tone and its noise (0 to 1), at the note on.
+			double pitch = 1.0;
+			double tone = 0.0;
+			double noiseLevel = 0.0;
 			std::array<double, 6> phases{};
 			uint32_t noise = 1; // the voice's own noise generator, so that every render is the same
 			dsp::Biquad filter;

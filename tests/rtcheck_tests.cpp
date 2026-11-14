@@ -36,6 +36,7 @@
 #include <cstdlib>
 #include <initializer_list>
 #include <memory>
+#include <set>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -494,7 +495,12 @@ TEST_CASE("the drum machine plays samples, every synth, groups and its effects w
 	sample->right.assign(4800, -0.5f);
 	DrumMachine drums;
 	drums.setSample(40, std::move(sample));
-	drums.setPadValues({{DrumMachine::padParameter(40, DrumMachine::Instrument), 1.0}}, {});
+	// The pad parameters the events below set are automated: the others' events don't count.
+	std::set<uint32_t> automated = {DrumMachine::padParameter(40, DrumMachine::Reverse)};
+	for (uint32_t id = DrumMachine::padParameter(41, DrumMachine::Instrument);
+		id < DrumMachine::padParameter(49, DrumMachine::Instrument); ++id)
+		automated.insert(id);
+	drums.setPadValues({{DrumMachine::padParameter(40, DrumMachine::Instrument), 1.0}}, automated);
 	drums.prepareFor(48000.0, frames);
 
 	const RecordViolations record;
