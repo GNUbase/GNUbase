@@ -1177,14 +1177,11 @@ namespace gnubase::ui
 			sound(std::stoi(attribute(*key, "pitch")));
 			return;
 		}
-		// A click on a drum sound's pitch auditions it: its I-note, which the track's map plays as the sound
-		// (#882, p. 1236).
+		// A click on a drum sound's pitch auditions it as the track's map plays the sound (#882, p. 1236).
 		if (const Rml::Element* row = withAttribute(target, "pitch", root);
 			m_drum && row != nullptr && target->IsClassSet("drum-sound-pitch"))
 		{
-			const int pitch = std::stoi(attribute(*row, "pitch"));
-			const Json* map = activeMap();
-			sound(map != nullptr ? map->at("sounds").at(static_cast<size_t>(pitch)).at("iNote").get<int>() : pitch);
+			sound(std::stoi(attribute(*row, "pitch")));
 			return;
 		}
 		const Rml::Element* area = root->QuerySelector(".key-editor-grid");
@@ -1442,11 +1439,12 @@ namespace gnubase::ui
 	void KeyEditor::sound(std::optional<int> pitch)
 	{
 		// Into the track's channel as if from its MIDI input (midi.inject), on MIDI channel 1 as chord.audition plays;
-		// without an audio device or an instrument nothing sounds, which is no error to report.
+		// without an audio device or an instrument nothing sounds, which is no error to report. The drum editor plays
+		// the sound of the pitch itself, not the first with its I-note (drumSounds).
 		const auto inject = [this](uint64_t channel, int note, bool on)
 		{
 			m_binding.send("midi.inject",
-				{{"channel", channel},
+				{{"channel", channel}, {"drumSounds", m_drum},
 					{"messages", Json::array({{{"position", 0}, {"bytes", {on ? 0x90 : 0x80, note, on ? 100 : 0}}}})}},
 				[](const engine::Result&) {});
 		};
@@ -1482,7 +1480,7 @@ namespace gnubase::ui
 			// close flams under the mouse.
 			const Rml::Context* context = m_root.get()->GetContext();
 			const float ratio = context != nullptr ? context->GetDensityIndependentPixelRatio() : 1.0F;
-			const bool dragged = std::abs(event.GetParameter("mouse_x", 0.0F) - m_pressedX) >= g_dragThreshold * ratio;
+			const bool dragged = event.GetParameter("mouse_x", 0.0F) - m_pressedX >= g_dragThreshold * ratio;
 			std::map<uint64_t, Json> removed;
 			const int64_t until = std::max(static_cast<int64_t>(std::llround(ticks)), m_pressed->start);
 			for (const Note& each : m_notes)

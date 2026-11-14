@@ -5,6 +5,7 @@
 // tests/drumeditor_ui_tests.cpp drives the drum editor in the app.
 #include "engine/document/rendersnapshot.h"
 #include "engine/engine.h"
+#include "engine/midi/drummaps.h"
 #include "engine/time/tempomap.h"
 #include "platform/audio/device.h"
 #include "platform/midi/dummyport.h"
@@ -446,10 +447,10 @@ TEST_CASE("notes played live into a track with a drum map go through its I-notes
 					{{"pitch", 38}, {"mute", true}}, {{"pitch", 40}, {"channel", nullptr}}}}});
 	run("audio.render", {{"frames", 64}}); // the new graph
 	run("midi.capture", {{"start", true}});
-	const auto play = [&](int status, int pitch)
+	const auto play = [&](int status, int pitch, bool sounds = false)
 	{
 		run("midi.inject",
-			{{"channel", channel},
+			{{"channel", channel}, {"drumSounds", sounds},
 				{"messages",
 					{{{"position", 0}, {"bytes", {status, pitch, 100}}},
 						{{"position", 0}, {"bytes", {status - 0x10, pitch, 0}}}}}});
@@ -460,8 +461,42 @@ TEST_CASE("notes played live into a track with a drum map go through its I-notes
 	CHECK(play(0x90, 38).empty());                                                  // muted
 	CHECK(play(0x91, 40) == std::vector<std::vector<int>>{{0x91, 40}, {0x81, 40}}); // Any: the note's channel
 	CHECK(play(0x90, 42) == std::vector<std::vector<int>>{{0x99, 42}, {0x89, 42}}); // the GM Map's channel 10
+	// The drum editor auditions a sound itself (p. 1236): with drumSounds the key is the sound's pitch, not an
+	// I-note, so the low tom plays although its I-note is gone, and the low mid tom although the bass drum has its.
+	run("drumMap.set", {{"map", id}, {"sounds", Json::array({{{"pitch", 47}, {"iNote", 45}}})}});
+	run("audio.render", {{"frames", 64}});
+	CHECK(play(0x90, 45) == std::vector<std::vector<int>>{{0x93, 35}, {0x83, 35}}); // the first sound with it
+	CHECK(play(0x90, 45, true) == std::vector<std::vector<int>>{{0x99, 45}, {0x89, 45}});
+	CHECK(play(0x90, 47, true) == std::vector<std::vector<int>>{{0x99, 47}, {0x89, 47}});
+	CHECK(play(0x90, 36, true) == std::vector<std::vector<int>>{{0x93, 35}, {0x83, 35}});
+	CHECK(play(0x90, 38, true).empty()); // muted
 	// Without the map they play as they come in.
 	run("track.set", {{"track", track}, {"drumMap", 0}});
 	run("audio.render", {{"frames", 64}});
 	CHECK(play(0x90, 45) == std::vector<std::vector<int>>{{0x90, 45}, {0x80, 45}});
+}
+
+TEST_CASE("the notes played in map to the first sound by pitch whose I-note they are", "[unit]")
+{
+	// The render snapshot maps MIDI thru with inputPitches, recording and step input with inputPitch (p. 1239): two
+	// sounds sharing an I-note must give it to the same, the first by pitch, in both.
+	engine::Project project;
+	engine::DrumMap map = engine::midi::gmDrumMap();
+	map.id = 5;
+	map.sounds.at(60).iNote = 50;
+	map.sounds.at(40).iNote = 50;
+	map.sounds.at(50).iNote = 40;
+	project.drumMaps[map.id] = map;
+	engine::Track track;
+	track.id = 7;
+	track.drumMap = map.id;
+	project.trackById[track.id] = track;
+	const auto pitches = engine::midi::inputPitches(map);
+	for (size_t played = 0; played < pitches.size(); ++played)
+	{
+		INFO(played);
+		CHECK(pitches.at(played) == engine::midi::inputPitch(project, track.id, static_cast<uint8_t>(played)));
+	}
+	CHECK(pitches.at(50) == 40);
+	CHECK(pitches.at(40) == 50);
 }

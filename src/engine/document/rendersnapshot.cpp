@@ -658,11 +658,14 @@ namespace gnubase::engine
 				if (project.chordPads.players[player].track == track.id && track.id != 0)
 					render.padPlayer = static_cast<int>(player);
 			if (const DrumMap* map = midi::drumMapOf(project, track.id))
+			{
+				const auto plays = [&render](const DrumSound& sound)
+				{ render.drumInput.push_back({sound.oNote, static_cast<int8_t>(sound.channel), sound.mute}); };
 				for (const uint8_t pitch : midi::inputPitches(*map))
-				{
-					const DrumSound& sound = map->sounds.at(pitch);
-					render.drumInput.push_back({sound.oNote, static_cast<int8_t>(sound.channel), sound.mute});
-				}
+					plays(map->sounds.at(pitch));
+				for (const DrumSound& sound : map->sounds)
+					plays(sound);
+			}
 			render.autoFades = track.autoFades.value_or(project.autoFades);
 			if (const auto input = busIndex.find(channel.input); input != busIndex.end())
 				render.input = input->second;

@@ -388,6 +388,26 @@ TEST_CASE("the drum sound list types an output, reverses with Pitch Visibility a
 			}
 			return played == std::vector<std::vector<int>>{{0x93, 35}, {0x83, 35}};
 		}));
+	// A sound whose I-note an earlier sound has too plays itself, not the earlier one.
+	f.app.call("drumMap.set", {{"map", f.map}, {"sounds", Json::array({{{"pitch", 47}, {"iNote", 45}}})}});
+	f.app.call("audio.render", {{"frames", 128}});
+	f.app.call("midi.capture", {{"start", true}});
+	played.clear();
+	f.scroll(47);
+	f.click(of(sound(47) + " .drum-sound-pitch"));
+	CHECK(f.app.waitUntil(
+		[&]
+		{
+			f.app.call("audio.render", {{"frames", 128}});
+			const Json captured = f.app.call("midi.capture");
+			for (const Json& message : captured.at("captured"))
+			{
+				const auto bytes = message.at("bytes").get<std::vector<int>>();
+				if ((bytes.at(0) & 0xE0) == 0x80)
+					played.push_back({bytes.at(0), bytes.at(1)});
+			}
+			return played == std::vector<std::vector<int>>{{0x99, 47}, {0x89, 47}};
+		}));
 }
 
 TEST_CASE("Show Note Length shows boxes, and the drumstick deletes a sound's notes with a drag", "[ui]")
@@ -516,6 +536,26 @@ TEST_CASE("the drumstick's click deletes only the note clicked, and a drag also 
 	f.app.ui().drag(f.window, f.at(0.0, 36), outside);
 	f.app.shell().step(std::chrono::milliseconds(0));
 	REQUIRE(f.app.waitUntil([&] { return f.partNotes().empty(); }));
+}
+
+TEST_CASE("the drumstick's drag to the left deletes only the note clicked, not its doubles", "[ui]")
+{
+	Fixture f;
+	f.app.call("note.add",
+		{{"part", f.part},
+			{"notes",
+				{{{"position", 0}, {"length", g_sixteenth}, {"pitch", 36}, {"velocity", 0.5}},
+					{{"position", 4 * g_sixteenth}, {"length", g_sixteenth}, {"pitch", 36}, {"velocity", 0.5}},
+					{{"position", 4 * g_sixteenth}, {"length", g_sixteenth}, {"pitch", 36}, {"velocity", 0.5}}}}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-note").size() == 3; }));
+	f.scroll(36);
+	f.click(of(".key-tool[key-tool=draw]"));
+	// Only a drag to the right deletes the sound's later notes (p. 1242); to the left it is a click.
+	f.app.ui().drag(f.window, f.at(4.0, 36), f.at(1.0, 36));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 2; }));
+	CHECK(f.partNotes()[0].at("position") == 0);
+	CHECK(f.partNotes()[1].at("position") == 4 * g_sixteenth);
 }
 
 TEST_CASE("the object selection tool's double click and drag inserts and deletes several notes of a sound", "[ui]")
