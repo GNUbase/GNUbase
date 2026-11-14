@@ -14,14 +14,16 @@ they are.
   Audio, instrument, MIDI, group and effect tracks have presets; other types are refused. The tracks keep the track
   list's order, whatever the order of `tracks`. The file has the tracks with their channels and inserts, without events
   or automation, and the project's busses, tempo, time signatures and fader top. It isn't an undo step. A preset name
-  must be a file name, as a template's must.
+  must be a file name, as a template's must. A MIDI track's preset keeps both its MIDI channel and its patch, where
+  the reference lets a MIDI track preset include either the channel or the patch (p. 238).
 - **Listing them.** `track.presets` lists the presets by name with their file and the types of their tracks, top to
   bottom. A file that isn't a readable DAWproject file is left out.
 - **Loading a preset** (pp. 239-243). `track.loadPreset` `{tracks, name}` gives tracks the preset's sound, in one undo
   step (the reference can't undo it; GNUbase can, as every edit): the pre section, the equalizer, the strip, the fader
   and pan, the inserts (copies of the preset's, which replace the track's own and the automation of their plugins, as
-  Paste Channel Settings does), the MIDI modifiers, inserts, sends, volume, pan, program, bank and device, the
-  instrument with its parameters, and for MIDI and instrument tracks the color. Not the name, routing, sends, buttons
+  Paste Channel Settings does), the MIDI modifiers, inserts, sends, volume, pan, program, bank and device, the MIDI
+  channel (`channel.set` `midiChannel`), the instrument with its parameters, and for MIDI and instrument tracks the
+  color. Not the name, routing, sends, buttons
   or notes. The tracks must be as many as the preset's, of the same types in the same order (p. 241): the first of
   `tracks` gets the sound of the preset's top track, and so on.
 - **Adding tracks from a preset** (Use Track Preset, p. 199). `track.addFromPreset` `{name, track}` adds the preset's

@@ -84,8 +84,9 @@ are its parameters:
   first program change, with its bank, and its first MIDI volume (CC 7) and pan (CC 10) the track's `program`,
   `bank`, `midiVolume` and `midiPan` (`channel.set`) instead of events in its part. Only those on the MIDI channel
   the track's settings go out on (channel 1 for Any), so an event of another channel stays in the part, where it
-  plays on its own channel on a track set to Any and on the track's channel otherwise ([mixer.md](mixer.md)). Instrument tracks have no such settings, so their events stay. A track that has nothing left
-  after that keeps its settings but gets no part.
+  plays on its own channel on a track set to Any and on the track's channel otherwise ([mixer.md](mixer.md)). Instrument
+  tracks have no such settings, so their events stay. A track that has nothing left after that keeps its settings but
+  gets no part.
 - **automation** (Import Controller as Automation Tracks) moves the continuous controllers into automation lanes of
   their tracks with `midi.extractAutomation` ([midi-functions.md](midi-functions.md)), after the extraction above.
 - `trackType` (Destination: MIDI or instrument tracks) and `markers` (Import Markers) were there before.
@@ -229,8 +230,9 @@ track whose clip plays in musical mode that ends after it only by its start in t
 and redo of such an import with the project's tempo, signatures and tempo mode, a type 0 file kept in one track, the
 whole file in one part on a new track and on an instrument track at a position and on a linear MIDI track in samples,
 refusing an audio track or `track` without `singlePart`, the file tracks' MIDI channels on new MIDI tracks (Any for one
-of several channels, also without extraction, and for a single part on a new track from several channels), the first patch and volume and pan of that channel (channel 1 for Any,
-the `track`'s own channel for a single part) in a MIDI track's settings while other channels' and later events stay,
+of several channels, also without extraction, and for a single part on a new track from several channels), the first
+patch and volume and pan of that channel (channel 1 for Any, the `track`'s own channel for a single part) in a MIDI
+track's settings while other channels' and later events stay,
 none on instrument tracks, a track of nothing but those kept without a part, and controllers in automation lanes with
 the sustain pedal left in the part, in one undo step. `tests/fileimport_tests.cpp` runs File > Import > MIDI File:
 Cancel, No at the left locator keeping the project's tempo with Ignore Master Track Events on Merge, and Yes into a new
