@@ -688,6 +688,7 @@ TEST_CASE(
 {
 	const gnubase::test::TempDir dir;
 	const std::filesystem::path file = dir.path() / "gnubase.log";
+	gnubase::logging::flush(); // what earlier tests logged goes to stderr, not into this log
 	const gnubase::logging::Session log(file);
 	auto made = std::make_unique<CountingPlugin>(0, true);
 	CountingPlugin& plugin = *made;

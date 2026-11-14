@@ -1159,6 +1159,7 @@ TEST_CASE("an effect that fails a block passes its events on as they came, and t
 {
 	const gnubase::test::TempDir dir;
 	const std::filesystem::path file = dir.path() / "gnubase.log";
+	gnubase::logging::flush(); // what earlier tests logged goes to stderr, not into this log
 	const gnubase::logging::Session log(file);
 	auto effects = std::make_shared<TestEffects>(true);
 	MidiSequencer sequencer(effects);
@@ -1177,7 +1178,7 @@ TEST_CASE("an effect that fails a block passes its events on as they came, and t
 	const std::string text = logged(file);
 	CHECK_THAT(text, ContainsSubstring("chordGenerator in MIDI insert 1 failed"));
 	// Once while it fails, not every block.
-	CHECK(text.find("failed") == text.rfind("failed"));
+	CHECK(occurrences(text, "failed a block") == 1);
 }
 
 TEST_CASE("an insert that starts to fail ends the notes it played, which would hang otherwise", "[unit]")
@@ -1231,6 +1232,7 @@ TEST_CASE("events that don't fit an effect's event lists are dropped, and the lo
 {
 	const gnubase::test::TempDir dir;
 	const std::filesystem::path file = dir.path() / "gnubase.log";
+	gnubase::logging::flush(); // what earlier tests logged goes to stderr, not into this log
 	const gnubase::logging::Session log(file);
 	MidiSequencer sequencer;
 	sequencer.prepareFor(48000.0, 128);
