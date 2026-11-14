@@ -547,27 +547,31 @@ namespace gnubase::engine
 		}
 
 		// The sample rates of the media files each track's audio events play, by the track's id, each once from the
-		// lowest, also the events of the versions that aren't active: what Convert Sample Rate has to convert for that
-		// track (reference manual p. 205). A media file no event plays is nobody's.
+		// lowest, also the events of the versions that aren't active, and of its sampler's sample or drum machine's
+		// (#180, #182): what Convert Sample Rate has to convert for that track (reference manual p. 205). A media file
+		// nothing plays is nobody's.
 		std::map<ObjectId, std::set<double>> mediaSampleRatesByTrack(const Project& file)
 		{
-			const auto add = [&file](
-								 std::map<ObjectId, std::set<double>>& rates, ObjectId track, const AudioEvent& event)
+			std::map<ObjectId, std::set<double>> rates;
+			const auto add = [&file, &rates](ObjectId track, ObjectId clipId)
 			{
-				const auto clip = file.clips.find(event.clip);
+				const auto clip = file.clips.find(clipId);
 				if (clip == file.clips.end())
 					return;
 				const auto media = file.media.find(clip->second.media);
 				if (media != file.media.end())
 					rates[track].insert(media->second.sampleRate);
 			};
-			std::map<ObjectId, std::set<double>> rates;
 			for (const auto& [id, event] : file.audioEvents)
-				add(rates, event.track, event);
+				add(event.track, event.clip);
 			for (const auto& [id, track] : file.trackById)
+			{
 				for (const TrackVersion& version : track.versions)
 					for (const AudioEvent& event : version.audioEvents)
-						add(rates, id, event);
+						add(id, event.clip);
+				if (const auto channel = file.channels.find(track.channel); channel != file.channels.end())
+					forEveryInstrumentClip(channel->second, [&add, id = id](ObjectId clip) { add(id, clip); });
+			}
 			return rates;
 		}
 
@@ -674,6 +678,17 @@ namespace gnubase::engine
 				if (keep(item))
 					kept.push_back(std::move(item));
 			items = std::move(kept);
+		}
+
+		// The range {start, end} of track.import and track.importSources, if given.
+		std::optional<std::pair<time::Samples, time::Samples>> rangeOf(const Json& parameters)
+		{
+			if (!parameters.contains("range"))
+				return std::nullopt;
+			const time::Samples start = parameters.at("range").at("start").get<time::Samples>();
+			const time::Samples end = parameters.at("range").at("end").get<time::Samples>();
+			require(start < end, "range must end after its start");
+			return std::pair{start, end};
 		}
 
 		// Where track.import puts what the file's tracks hold (Import Position and Range, reference manual p. 204):
@@ -1158,12 +1173,18 @@ namespace gnubase::engine
 			{"track.importSources", 1,
 				"The tracks of a DAWproject file that track.import can import from: a track archive (track.export) or "
 				"a project. Each with its id in the file, name, type, parent (the folder it is in, or 0), whether "
-				"track.import can import it (importable), and the sample rates of the media files its events play, "
-				"each once from the lowest (mediaSampleRates), as media.conform converts those at another rate than "
-				"the project's (Convert Sample Rate); from top to bottom. And the file's project settings as "
-				"project.get has them, to compare them with the project's (Project Settings, reference manual "
-				"p. 205): name, sampleRate, frameRate and startTime. Extracts no media files.",
-				objectSchema({{"path", stringSchema}}, {"path"}),
+				"track.import can import it (importable), and the sample rates of the media files its events and its "
+				"sampler's or drum machine's samples play, each once from the lowest (mediaSampleRates), as "
+				"media.conform converts those at another rate than the project's (Convert Sample Rate); from top to "
+				"bottom. With range {start, end} only the events that track.import brings with that range: what "
+				"starts from start up to end, in samples at the project's sample rate from the file's start (Range, "
+				"reference manual p. 204). And the file's project settings as project.get has them, to compare them "
+				"with the project's (Project Settings, p. 205): name, sampleRate, frameRate and startTime. Extracts no "
+				"media files.",
+				objectSchema(
+					{{"path", stringSchema},
+						{"range", objectSchema({{"start", samplesSchema}, {"end", samplesSchema}}, {"start", "end"})}},
+					{"path"}),
 				objectSchema(
 					{{"tracks",
 						 {{"type", "array"},
@@ -1178,10 +1199,29 @@ namespace gnubase::engine
 								{"name", "sampleRate", "frameRate", "startTime"})}},
 					{"tracks", "project"}),
 				true},
-			[](CommandContext& context)
+			[&model](CommandContext& context)
 			{
-				const Project file = load(fs::u8path(context.parameters().at("path").get<std::string>()), false);
-				const std::map<ObjectId, std::set<double>> rates = mediaSampleRatesByTrack(file);
+				const Json& parameters = context.parameters();
+				const auto range = rangeOf(parameters);
+				const Project file = load(fs::u8path(parameters.at("path").get<std::string>()), false);
+				std::map<ObjectId, std::set<double>> rates;
+				if (range)
+				{
+					// What track.import brings with the range: the file at the project's rate, as it imports it.
+					const Project& project = model.project();
+					Project placed = file;
+					const Json none = Json::object();
+					CommandContext inner(none);
+					if (placed.sampleRate != project.sampleRate)
+						changeSampleRate(placed, project.sampleRate, inner);
+					std::set<ObjectId> every;
+					for (const auto& [id, track] : placed.trackById)
+						every.insert(id);
+					place(placed, project, 0, range, every, {});
+					rates = mediaSampleRatesByTrack(placed);
+				}
+				else
+					rates = mediaSampleRatesByTrack(file);
 				Json tracks = Json::array();
 				for (const ObjectId id : file.trackOrder())
 				{
@@ -1258,13 +1298,7 @@ namespace gnubase::engine
 			[&model](Project& project, CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
-				std::optional<std::pair<time::Samples, time::Samples>> range;
-				if (parameters.contains("range"))
-				{
-					range.emplace(parameters.at("range").at("start").get<time::Samples>(),
-						parameters.at("range").at("end").get<time::Samples>());
-					require(range->first < range->second, "range must end after its start");
-				}
+				const auto range = rangeOf(parameters);
 				Project file = load(fs::u8path(parameters.at("path").get<std::string>()));
 				const Json none = Json::object();
 				CommandContext inner(none); // for the parts of the import, which announces what changed at the end
