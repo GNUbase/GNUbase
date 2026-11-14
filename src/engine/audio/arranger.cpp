@@ -224,12 +224,19 @@ namespace gnubase::engine
 		}
 	}
 
-	std::pair<int64_t, int64_t> pack(const ArrangerState& state) noexcept
+	std::pair<int64_t, int64_t> pack(const ArrangerState& state, uint64_t generation) noexcept
 	{
-		return {field(state.step + 1, 0) | field(state.repeat, g_fieldBits) |
-				field(state.section + 1, 2 * g_fieldBits) | (state.entering ? int64_t{1} << (3 * g_fieldBits) : 0),
-			field(state.pendingStep + 1, 0) | field(state.pendingRepeat, g_fieldBits) |
-				field(state.pendingSection + 1, 2 * g_fieldBits)};
+		// The generation rides in the bits the fields leave free: three at the top of the first word, four at the top
+		// of the second. Unsigned assembly: its top bit may land in a word's sign bit.
+		const uint64_t gen = generation % g_arrangerGenerations;
+		const uint64_t a = static_cast<uint64_t>(field(state.step + 1, 0)) |
+			static_cast<uint64_t>(field(state.repeat, g_fieldBits)) |
+			static_cast<uint64_t>(field(state.section + 1, 2 * g_fieldBits)) |
+			(state.entering ? uint64_t{1} << (3 * g_fieldBits) : uint64_t{0}) | (gen & 7) << 61;
+		const uint64_t b = static_cast<uint64_t>(field(state.pendingStep + 1, 0)) |
+			static_cast<uint64_t>(field(state.pendingRepeat, g_fieldBits)) |
+			static_cast<uint64_t>(field(state.pendingSection + 1, 2 * g_fieldBits)) | ((gen >> 3) & 15) << 60;
+		return {static_cast<int64_t>(a), static_cast<int64_t>(b)};
 	}
 
 	ArrangerState unpackArranger(int64_t a, int64_t b) noexcept
@@ -243,5 +250,10 @@ namespace gnubase::engine
 		state.pendingRepeat = fieldAt(b, g_fieldBits);
 		state.pendingSection = fieldAt(b, 2 * g_fieldBits) - 1;
 		return state;
+	}
+
+	uint64_t unpackGeneration(int64_t a, int64_t b) noexcept
+	{
+		return (static_cast<uint64_t>(a) >> 61) | (static_cast<uint64_t>(b) >> 60 << 3);
 	}
 }

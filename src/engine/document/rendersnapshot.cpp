@@ -501,7 +501,11 @@ namespace gnubase::engine
 		if (previous != nullptr && *previous->arranger == plan)
 			snapshot->arranger = previous->arranger;
 		else
+		{
+			// A new plan gets the next generation, so the transport can publish which one its state walks (#885).
+			plan.generation = previous != nullptr ? previous->arranger->generation + 1 : 1;
 			snapshot->arranger = std::make_shared<const ArrangerPlan>(std::move(plan));
+		}
 		snapshot->metronome = project.metronome;
 		std::vector<ObjectId>& outputs = snapshot->metronome.outputs;
 		outputs.erase(std::remove_if(outputs.begin(), outputs.end(),

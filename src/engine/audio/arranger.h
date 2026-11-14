@@ -72,6 +72,10 @@ namespace gnubase::engine
 		ArrangerJump jump = ArrangerJump::None;
 		std::vector<ArrangerSection> sections; // by event, in the order of the project's arranger events
 		std::vector<ArrangerPlanStep> steps;
+		// Counts the plan changes of a project, assigned when a snapshot publishes a new plan (rendersnapshot.cpp);
+		// the transport publishes it with its state, so a cue walks the plan the state's indices mean (#885). Not
+		// part of the content equality: a plan that plays the same is the same plan and keeps its generation.
+		uint64_t generation = 0;
 
 		bool plays() const { return active && !steps.empty(); }
 		bool operator==(const ArrangerPlan& other) const
@@ -130,7 +134,14 @@ namespace gnubase::engine
 	// The next turn after position (at at or after it) for playback in state. Real-time safe.
 	ArrangerTurn arrangerNext(const ArrangerPlan& plan, const ArrangerState& state, time::Samples position) noexcept;
 
-	// The state packed into two integers for a lock-free hand-over, and back.
-	std::pair<int64_t, int64_t> pack(const ArrangerState& state) noexcept;
+	// The plan generations that travel in the packed state: the two sequence-lock words have seven bits to spare for
+	// it (#885). Plans whose generations differ by a multiple of this share a key; a state that is that stale makes
+	// its readers fall back to re-entering the newest plan instead of pairing it with a wrong one.
+	inline constexpr uint64_t g_arrangerGenerations = 128;
+
+	// The state and the generation of the plan its step and section indices walk, packed into two integers for a
+	// lock-free hand-over, and back. The generation comes back modulo g_arrangerGenerations.
+	std::pair<int64_t, int64_t> pack(const ArrangerState& state, uint64_t generation) noexcept;
 	ArrangerState unpackArranger(int64_t a, int64_t b) noexcept;
+	uint64_t unpackGeneration(int64_t a, int64_t b) noexcept;
 }

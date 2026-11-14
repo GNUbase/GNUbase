@@ -313,14 +313,6 @@ namespace gnubase::engine
 		// from then on, until the audio thread has applied that request, the cue thread cues there too, as for a
 		// playing transport that starts there, and not where the cursor is.
 		void cueStart(time::Samples start, time::Samples enter);
-		// Command thread: keeps the plans alive that the audio thread's next re-entry or a cue may walk - the newest
-		// one, the one the transport published with its arranger state, and those an arrange request on its way
-		// names - and frees the others here, never on the audio thread (#885).
-		void keepPlans(const std::shared_ptr<const ArrangerPlan>& newest);
-		// The plan the transport's published arranger state walks, with that state, so a cue never walks a new plan
-		// with an old plan's indices (#885); the newest plan, entered again at the cue's position, while the state's
-		// plan isn't kept. The caller holds m_cueMutex.
-		std::pair<const ArrangerPlan*, ArrangerState> cuePlan() const;
 		void startCueing();
 		void stopCueing();
 		// What the chord pads' remote keys did since the last call, as chordPads.remoteInput takes it; null for
@@ -543,10 +535,10 @@ namespace gnubase::engine
 			bool playing = false;
 			TransportSettings settings;
 			std::shared_ptr<const ArrangerPlan> arranger = std::make_shared<const ArrangerPlan>();
-			// The plans kept for a new plan's hand-over (#885): the newest one, the one the transport published with
-			// its arranger state, and those an arrange request on its way names. The command thread prunes this and
-			// frees what leaves it, so a plan is never freed on the audio thread.
-			std::vector<std::shared_ptr<const ArrangerPlan>> plans;
+			// The plan before the newest, kept while the transport's published arranger state still walks its
+			// generation, so a chain edit the audio thread hasn't played yet doesn't leave a cue without the plan
+			// the state's indices mean; rotatePlans frees it on the command thread (#885).
+			std::shared_ptr<const ArrangerPlan> previousArranger;
 			// A start that the command thread cues exactly (-1 for none), where an arranger chain enters with it, and
 			// how many requests the audio thread applies before it plays from there (cueStart).
 			time::Samples start = -1;
@@ -557,9 +549,15 @@ namespace gnubase::engine
 		std::mutex m_cueOrderMutex;        // the cue thread holds it while it cues, cueStart before m_cueMutex
 		ArrangerState m_announcedArranger; // as transport.changed last announced it
 		CueState m_cueState;
-		// Command thread: the plans arrange requests on their way to the transport name, with the number of requests
-		// the audio thread applies with them (keepPlans).
-		std::vector<std::pair<std::shared_ptr<const ArrangerPlan>, uint64_t>> m_arrangedPlans;
+		// Command thread, under m_cueMutex, at every rebuild: hands the newest plan over for the cue thread and the
+		// audio thread's next block, and keeps the plan before it while the transport's published arranger state
+		// still walks it. What leaves these two slots is freed here, never on the audio thread (#885).
+		void rotatePlans(const std::shared_ptr<const ArrangerPlan>& newest);
+		// The plan the transport's published arranger state walks, with that state, so a cue never walks a new plan
+		// with an old plan's indices (#885); the newest plan, entered again at the cue's position, while the state's
+		// generation isn't one of the state's plans. The caller passes a CueState copy that keeps the returned plan
+		// alive while the cue runs.
+		std::pair<const ArrangerPlan*, ArrangerState> cuePlan(const CueState& state) const;
 		std::atomic<bool> m_cueing{false};
 		std::thread m_cueThread;
 

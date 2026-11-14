@@ -51,15 +51,17 @@ reference manual pp. 164, 404-413).
   event it plays, and drops it only when the chain lost that step.
 - `transport.get` and `transport.changed` have `arranger`: the step and repeat playing and the arranger event playing,
   the step -1 and the event 0 both outside the chain and while the plan doesn't play (arranger mode off or an empty
-  chain). The transport publishes its arranger state after every block, in one sequence lock with the plan its step
-  and section indices walk, and a new step or repeat makes the engine announce `transport.changed`.
+  chain). Every new plan gets a generation number; the transport publishes its arranger state after every block, in
+  one sequence lock with the generation its step and section indices walk, and a new step or repeat makes the engine
+  announce `transport.changed`.
 - **Cueing**: `Playback::points` and `Playback::ahead` walk the same path as the transport, through cycle jumps or
   arranger turns (`arrangerNext`), so the voices wait where each jump lands and real-time playback renders the same as
   offline. Sections need to be longer than a few cue intervals (5 ms each) for that; every musical section is. A cue
-  walks the plan the transport's published state walks, not the newest one, so a chain edit the audio thread hasn't
-  played yet doesn't cue with the old plan's indices; the command thread keeps the plans this pairs with alive (the
-  newest one, the published one and those an arrange on its way names) and frees what leaves that set, never on the
-  audio thread.
+  walks the plan of the generation the transport's published state walks, not the newest one, so a chain edit the
+  audio thread hasn't played yet doesn't cue with the old plan's indices. The cue state keeps the newest plan and the
+  one before it, the previous one while the published state still walks it; the command thread rotates the two at a
+  rebuild, so a plan is freed there and never on the audio thread. A cue whose generation is neither of the two
+  enters the newest plan again at its position.
 
 ## Flatten
 
@@ -87,13 +89,14 @@ Range copies keep the order in which audio events stack, so overlapping events p
 `tests/arranger_tests.cpp`: the transport along a plan for block sizes 1 to 1024 (steps, repeats, chain end, pause after
 repeats, repeat forever with a step that waits for the next beat, a triggered event that loops, arranger mode against
 the cycle, chain edits during the pre-roll and while the chain plays back into the project, a stop and a cycle jump
-ending the pre-roll, a new plan finding the step playing and a step waiting again by their events, and the plan the
-transport publishes with its state); the commands with undo, settings and the arranger track's removal; saving and
-loading, with a file's repeats capped to 1 to 999; the chain playback render, sample by sample against the audio of
-each section, for two block sizes; real time against offline; choosing steps and triggering events while stopped and
-playing, also across a chain edit that moves the chosen step; `transport.play` ending a repeat forever loop, keeping a
-triggered event and starting from the left locator with the start mode cycleStart, and `transport.get` reporting no
-step while the plan doesn't play; flattening, played back linearly against the chain's audio, with undo.
+ending the pre-roll, a new plan finding the step playing and a step waiting again by their events, and the generation
+of the plan the transport publishes with its state); the commands with undo, settings and the arranger track's removal;
+saving and loading, with a file's repeats capped to 1 to 999; the chain playback render, sample by sample against the
+audio of each section, for two block sizes; real time against offline, also with a chain edit while playing; choosing
+steps and triggering events while stopped and playing, also across a chain edit that moves the chosen step; a cue that
+falls between two plan generations; `transport.play` ending a repeat forever loop, keeping a triggered event and
+starting from the left locator with the start mode cycleStart, and `transport.get` reporting no step while the plan
+doesn't play; flattening, played back linearly against the chain's audio, with undo.
 `tests/lua/ui/arranger.lua` opens the arranger editor and drives it, with its step buttons disabled outside arranger
 mode and a locate arrow on every row.
 
