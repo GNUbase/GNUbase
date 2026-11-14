@@ -1277,6 +1277,55 @@ TEST_CASE("track.importSources lists the sample rates of the media files each tr
 	CHECK(tracks[1].at("mediaSampleRates") == Json::array());
 }
 
+TEST_CASE("track.importSources counts a sampler's sample and, for a range, only what starts in it", "[integration]")
+{
+	const test::TempDir dir;
+	const fs::path song = dir.path() / "Song.dawproject";
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	run(client, "project.set", {{"sampleRate", 44100.0}}); // the file's rate: the range is at the project's
+	const auto clipOf = [&](int rate, const std::string& name)
+	{
+		const fs::path wav = dir.path() / name;
+		test::writeWav(wav, {std::vector<float>(100, 0.25f), 1, rate});
+		const ObjectId media =
+			run(client, "media.add", {{"path", wav.u8string()}}).at("media").at("id").get<ObjectId>();
+		return run(client, "clip.add", {{"media", media}}).at("clip").at("id").get<ObjectId>();
+	};
+	const Added takes = add(client, {{"type", "audio"}, {"name", "Takes"}, {"timeBase", "linear"}}); // in samples
+	const auto event = [&](int rate, const std::string& name, int64_t position)
+	{
+		run(client, "audioEvent.add",
+			{{"track", takes.track}, {"clip", clipOf(rate, name)}, {"position", position}, {"offset", 0},
+				{"length", 100}});
+	};
+	event(22050, "before.wav", 0);     // at 0 seconds
+	event(48000, "inside.wav", 44100); // at 1 second
+	event(32000, "after.wav", 88200);  // at 2 seconds, where the range ends
+	run(client, "trackVersion.add", {{"tracks", {takes.track}}});
+	event(96000, "version.wav", 66150); // at 1.5 seconds, in a version that isn't active
+	run(client, "trackVersion.activate", {{"tracks", {takes.track}}, {"version", 1}});
+	// A sampler plays its sample wherever the range is.
+	run(client, "sampler.create", {{"clip", clipOf(16000, "sample.wav")}, {"name", "Sampler"}});
+	run(client, "project.save", {{"path", song.u8string()}, {"embedMedia", false}});
+
+	run(client, "project.new"); // at 48 kHz: from 1 to 2 seconds
+	const Json whole = run(client, "track.importSources", {{"path", song.u8string()}}).at("tracks");
+	REQUIRE(whole.size() == 2);
+	CHECK(whole[0].at("mediaSampleRates") == Json{22050.0, 32000.0, 48000.0, 96000.0});
+	CHECK(whole[1].at("name") == "Sampler");
+	CHECK(whole[1].at("mediaSampleRates") == Json{16000.0});
+	const Json ranged =
+		run(client, "track.importSources", {{"path", song.u8string()}, {"range", {{"start", 48000}, {"end", 96000}}}})
+			.at("tracks");
+	REQUIRE(ranged.size() == 2);
+	CHECK(ranged[0].at("mediaSampleRates") == Json{48000.0, 96000.0});
+	CHECK(ranged[1].at("mediaSampleRates") == Json{16000.0});
+	CHECK_THAT(reject(client, "track.importSources",
+				   {{"path", song.u8string()}, {"range", {{"start", 96000}, {"end", 48000}}}}),
+		ContainsSubstring("range must end after its start"));
+}
+
 TEST_CASE("listing the tracks of a file reads no media file in its place", "[integration]")
 {
 	const test::TempDir dir;
@@ -1620,6 +1669,12 @@ TEST_CASE(
 	CHECK(disabled("#import-convert"));
 	click(app, "#import-copy");
 	CHECK(!disabled("#import-convert"));
+	// Bass counts while it goes along with its folder, though its own box isn't checked.
+	click(app, "#import-source-" + source("Band"));
+	click(app, bassRow);
+	REQUIRE(app.waitUntil([&disabled] { return disabled("#import-convert"); }));
+	click(app, "#import-source-" + source("Band"));
+	REQUIRE(app.waitUntil([&disabled] { return !disabled("#import-convert"); }));
 	click(app, "#import-copy");
 	CHECK(disabled("#import-convert"));
 
@@ -1636,6 +1691,17 @@ TEST_CASE(
 	REQUIRE(app.waitUntil([&element] { return element("#import-range-end").at("value") == "00:00:20:00"; }));
 	click(app, "#import-locators");
 	CHECK(element("#import-range-end").at("value") == "00:00:12:00");
+	// Convert Sample Rate follows the range: Bass's media file starts at 10 seconds, so a range from 11 seconds
+	// has nothing to convert.
+	click(app, "#import-copy");
+	REQUIRE(app.waitUntil([&disabled] { return !disabled("#import-convert"); }));
+	click(app, "#import-range-start");
+	app.ui().key(std::nullopt, "Mod+A");
+	app.ui().text(std::nullopt, "00:00:11:00");
+	REQUIRE(app.waitUntil([&disabled] { return disabled("#import-convert"); }));
+	click(app, "#import-locators");
+	REQUIRE(app.waitUntil([&disabled] { return !disabled("#import-convert"); }));
+	click(app, "#import-copy");
 	// Relative Position: as far from the project's start as from the file's, at 1 second rather than at 11.
 	click(app, "#import-position");
 	app.ui().key(std::nullopt, "Down");
