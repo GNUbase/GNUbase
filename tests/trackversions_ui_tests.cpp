@@ -88,15 +88,6 @@ namespace
 		return app.call("track.add", {{"type", "audio"}, {"name", name}}).at("track").at("id").get<uint64_t>();
 	}
 
-	std::vector<std::string> names(test::UiApp& app, uint64_t id)
-	{
-		const Json versions = track(app, id).at("versions");
-		std::vector<std::string> result;
-		for (const Json& version : versions)
-			result.push_back(version.at("name").get<std::string>());
-		return result;
-	}
-
 	std::string activeName(test::UiApp& app, uint64_t id)
 	{
 		const Json json = track(app, id);

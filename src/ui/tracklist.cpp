@@ -1397,7 +1397,7 @@ namespace gnubase::ui
 					"trackVersion.activate", {{"tracks", tracks}, {"version", item->GetAttribute<int>("version", 1)}});
 			return;
 		}
-		const std::string action = item->GetAttribute<Rml::String>("versions-action", "");
+		const auto action = item->GetAttribute<Rml::String>("versions-action", "");
 		if (action == "showVersionName")
 			m_binding.send("settings.set", {{"key", "ui.showVersionName"}, {"value", !m_showVersionName}});
 		else if (const auto found = m_actions.find(action); found != m_actions.end())

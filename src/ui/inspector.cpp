@@ -1283,7 +1283,7 @@ namespace gnubase::ui
 		if (name == "versionName")
 		{
 			// Renaming the active version renames it on every selected track (reference manual p. 236).
-			const Rml::String value = event.GetParameter<Rml::String>("value", "");
+			const auto value = event.GetParameter<Rml::String>("value", "");
 			if (value.empty())
 				m_stale = true; // the engine refuses an empty name: show the version's own again
 			else if (!m_selected.empty())
