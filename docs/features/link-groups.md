@@ -19,7 +19,8 @@ fader itself is in [mixer.md](mixer.md), mute, solo and listen in [solo-mute-lis
   whose last channel goes, to another group or with its track, goes too (`linkGroup.removed`), as linking needs a
   channel; its VCA fader stays and controls nothing.
 - **What a group links** (p. 458): `volume` (on by default) moves the other channels' faders by as much as one moved,
-  stopping at their ends; `pan` likewise; `mute` passes mute, solo, solo defeat and listen on as they are, `record`
+  stopping at their ends; `pan` likewise (both commands below through `followLinkedMove` in
+  `src/engine/document/document.cpp`, so the rules can't drift apart); `mute` passes mute, solo, solo defeat and listen on as they are, `record`
   record enable and monitor; `eq`, `dynamics` (the strip) and `sends` (on by default) the changes of those sections
   ([channel-settings.md](channel-settings.md)). `channel.set` does it in the same undo step, announcing each channel;
   with `linked` false it changes only the channel, as the mixer's Sus does (p. 460). `parameter.set` passes the same

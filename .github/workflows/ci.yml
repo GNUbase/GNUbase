@@ -352,6 +352,11 @@ jobs:
       - name: Check license headers
         run: sh tools/check-spdx.sh
 
+      - name: Check the generated themes
+        run: | # resources/themes must be what tools/skin/generate.py writes; names the files that differ
+          python3 tools/skin/generate.py "$RUNNER_TEMP/themes"
+          diff -rq resources/themes "$RUNNER_TEMP/themes"
+
       - name: Install clang-format
         run: pipx install clang-format==22.1.3 # exactly the version Visual Studio 2026 bundles
 

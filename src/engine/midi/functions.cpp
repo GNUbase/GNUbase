@@ -15,6 +15,7 @@
 #include <iterator>
 #include <limits>
 #include <map>
+#include <optional>
 #include <set>
 #include <tuple>
 #include <utility>
@@ -717,9 +718,13 @@ namespace gnubase::engine::midi
 		{
 		public:
 			TrackPitches(const Project& project, ObjectId track)
-				: m_map(drumMapOf(project, track)), m_follower(project, track)
+				: m_map(drumMapOf(project, track)), m_follower(project, track),
+				  m_trackChannel(trackMidiChannel(project, track))
 			{
 			}
+
+			// The track's MIDI channel, which plays its events instead of their own, or none for Any.
+			std::optional<int> trackChannel() const { return m_trackChannel; }
 
 			bool silent(int pitch) const { return m_map != nullptr && sound(pitch).mute; }
 
@@ -782,6 +787,7 @@ namespace gnubase::engine::midi
 
 			const DrumMap* m_map;
 			ChordFollower m_follower;
+			std::optional<int> m_trackChannel;
 		};
 
 		// A track's MIDI modifiers as playback applies them to its parts' notes: none while they are bypassed.
@@ -1153,7 +1159,9 @@ namespace gnubase::engine::midi
 				const uint64_t seed = noteSeed(part.id, noteId);
 				Note copy = note;
 				copy.pitch = static_cast<uint8_t>(sourcePitches.played(note.pitch, partFrom + note.position));
-				copy.channel = sourcePitches.channel(note.pitch, note.channel);
+				// On the channel it plays on: its drum sound's, else its track's, else its own.
+				copy.channel = sourcePitches.channel(
+					note.pitch, static_cast<uint8_t>(sourcePitches.trackChannel().value_or(note.channel)));
 				// A note moved before its part's start, or the project's, starts there, with its length.
 				const Ticks moved = note.position + randomOffset(modifiers, RandomTarget::Position, seed);
 				const Ticks at = partFrom + std::max({moved, Ticks{0}, -partFrom});
@@ -1171,6 +1179,8 @@ namespace gnubase::engine::midi
 					continue;
 				Controller copy = controller;
 				copy.position = at;
+				if (controller.type != ControllerType::Articulation)
+					copy.channel = static_cast<uint8_t>(sourcePitches.trackChannel().value_or(controller.channel));
 				// Of each group of the track's articulation map, the direction in effect where the range starts, so
 				// that the notes play the same sound slot (#175), also without includeChase. Playback resolves
 				// directions per part, so only from a part that still plays there.
@@ -1191,11 +1201,11 @@ namespace gnubase::engine::midi
 							? group >= 0
 							: settings.includeChase && controller.type != ControllerType::SysEx))
 				{
-					LaneKey key = laneOf(controller);
+					LaneKey key = laneOf(copy);
 					if (group >= 0)
 						key = {ControllerType::Articulation, 0, static_cast<uint8_t>(group)};
 					else if (controller.type == ControllerType::Program)
-						key = {ControllerType::Program, controller.channel, 0};
+						key = {ControllerType::Program, copy.channel, 0};
 					const auto previous = chasedAt.find(key);
 					if (previous == chasedAt.end() || previous->second <= at)
 					{
@@ -1493,6 +1503,7 @@ namespace gnubase::engine::midi
 			if (to == DissolveTo::Tracks)
 			{
 				const ObjectId instrument = instrumentOf(project, trackId);
+				const std::optional<int> trackChannel = trackMidiChannel(project, trackId);
 				const std::vector<ObjectId>& siblings =
 					source.parent == 0 ? project.tracks : project.trackById.at(source.parent).children;
 				auto index =
@@ -1501,9 +1512,11 @@ namespace gnubase::engine::midi
 				{
 					trackFor[key] = addMidiTrack(project, source.name + " " + suffixOf(key), source.parent, ++index,
 						instrument, source.timeBase);
-					// The track's MIDI modifiers, so that the new parts play as the part did.
-					project.channels.at(project.trackById.at(trackFor[key]).channel).modifiers =
-						project.channels.at(source.channel).modifiers;
+					// The track's MIDI modifiers, so that the new parts play as the part did; by channel each new
+					// track set to its channel (reference manual p. 1122), by pitch to the track's.
+					Channel& added = project.channels.at(project.trackById.at(trackFor[key]).channel);
+					added.modifiers = project.channels.at(source.channel).modifiers;
+					added.midiChannel = by == DissolveBy::Channel ? std::optional<int>(key) : trackChannel;
 					changes.tracks.push_back(trackFor[key]);
 				}
 			}

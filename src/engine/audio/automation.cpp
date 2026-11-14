@@ -444,19 +444,30 @@ namespace gnubase::engine
 					parameter.minimum, parameter.maximum, {}});
 		}
 		const bool midi = channel.type == TrackType::Midi || channel.type == TrackType::Instrument;
+		// Lanes of one target play side by side, each its own points: lanes of one controller on several MIDI
+		// channels, which a MIDI track set to a channel plays on its own (rendersnapshot.cpp), as it plays the parts'
+		// events of several channels. The first takes the static value; a lane added below has none.
+		const size_t statics = lanes.size();
+		std::vector<bool> taken(statics, false);
 		for (const RenderAutomationLane& lane : channel.automation)
 		{
+			const auto end = lanes.begin() + static_cast<std::ptrdiff_t>(statics);
 			const auto match = std::find_if(
-				lanes.begin(), lanes.end(), [&lane](const PlayedLane& played) { return played.target == lane.target; });
-			const bool hasStatic = match != lanes.end(); // a lane added below has none
+				lanes.begin(), end, [&lane](const PlayedLane& played) { return played.target == lane.target; });
+			const bool hasStatic = match != end && !taken[static_cast<size_t>(match - lanes.begin())];
 			PlayedLane* played = nullptr;
 			if (hasStatic)
+			{
+				taken[static_cast<size_t>(match - lanes.begin())] = true;
 				played = &*match;
+			}
 			else if (midi &&
 				(lane.target.type == AutomationTargetType::Controller ||
 					lane.target.type == AutomationTargetType::PitchBend ||
 					lane.target.type == AutomationTargetType::ChannelPressure))
+			{
 				played = &lanes.emplace_back(PlayedLane{lane.target, Kind::Midi, 0, 0.0, 0.0, 1.0, {}});
+			}
 			// Anything else, e.g. a parameter of an instrument the channel no longer plays, waits.
 			if (played == nullptr)
 				continue;

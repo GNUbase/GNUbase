@@ -94,7 +94,8 @@ and auditioning chord events.
   instrument track's (a frozen track takes no MIDI); if they can't be sent otherwise (too much MIDI waits for the
   device), the command fails and the chord stays held for the next call to end. With Acoustic Feedback the render
   snapshot also plays the chord events' voicings on the audition track (`renderChordTrack`), each to the next, the last
-  a bar long.
+  a bar long, on the track's MIDI channel if it is a MIDI track set to one, where auditioning plays too
+  ([mixer.md](mixer.md)).
 - **The project file** keeps all of it in GNUbase's entry. It is read as the commands would make it (#939): unknown
   chords are undefined, unknown scales and events before the project start are left out, an unknown follow mode is
   `off` (it would otherwise play like Chords), and other unknown settings are their defaults.
@@ -154,13 +155,13 @@ Chord Track and Assign Voices to Notes, chord events from a synthesized audio fi
 events, also a cycle recording's laps and from a track that only monitors (whose input stays in its retrospective
 buffer, which a later recording's catch range and an insert of the buffer don't make chord events from again), Live
 Input (also two keys on one note) and auditioning on the dummy device with the note probe, note-offs that don't fit, a
-held chord on a removed or frozen audition track and the refusal to audition on a frozen one, Acoustic Feedback, and
-saving and loading, also of a hand-edited file. `tests/chordtrack_ui_tests.cpp`: Add Track's Chord page and its refusal
-of a second one, drawing, typing, dragging, double-clicking and erasing chord events on the lane, the scale lane, the
-track list's chord track controls, Project > Chord Track's items and dialogs, whose options reach the commands, on the
-selected parts (a selected audio part counts as one, also for Map to Chord Track and Assign Voices to Notes with a MIDI
-track selected) or the selected tracks' parts and loose audio events, pressing chord and scale events with Acoustic
-Feedback, and the Inspector's chord settings.
+held chord on a removed or frozen audition track and the refusal to audition on a frozen one, Acoustic Feedback (also on
+a MIDI track's channel), and saving and loading, also of a hand-edited file. `tests/chordtrack_ui_tests.cpp`: Add
+Track's Chord page and its refusal of a second one, drawing, typing, dragging, double-clicking and erasing chord events
+on the lane, the scale lane, the track list's chord track controls, Project > Chord Track's items and dialogs, whose
+options reach the commands, on the selected parts (a selected audio part counts as one, also for Map to Chord Track and
+Assign Voices to Notes with a MIDI track selected) or the selected tracks' parts and loose audio events, pressing chord
+and scale events with Acoustic Feedback, and the Inspector's chord settings.
 
 ## Not yet
 

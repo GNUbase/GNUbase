@@ -85,7 +85,10 @@ removed).
   changes: their triggers, output mappings, channels, transpose and velocity, not their names, colors, articulations
   or length. A trigger key's note-off still ends the note its note-on played before the key became a trigger (a map
   assigned, or the key made a trigger, while it was held). Without latch the default slot comes back where the key is
-  released. What is recorded keeps the triggers for `recording.add`, which turns them into directions and attributes.
+  released, on the same channel. A MIDI track set to another channel (`channel.set` `midiChannel`) sends the selected
+  slot's off events on the channel its on events went to and its on events on the new one, unless the slot has a channel
+  of its own, so the instrument there has them before the next note. What is recorded keeps the triggers for
+  `recording.add`, which turns them into directions and attributes.
 - **Articulation map files** are JSON: the map as `articulationMap.set` takes it, with `"format":
   "gnubase.articulationMap"`. Track presets and track import bring a track's map along, or use the project's map
   that is the same (`src/engine/document/trackpresets.cpp`).
@@ -155,5 +158,8 @@ applications' maps.
   starts while the first's direction is in effect, none once that direction was reset); track presets and track
   import with the map; remote triggers played into a track (`midi.inject`, `midi.capture`), the default slot after
   another map or other slots but not after a slot's new name or color, and a held key's note-off once it is a
-  trigger. `tests/midi_tests.cpp` and `tests/sequencing_tests.cpp` check the chased key switches;
-  `tests/rtcheck_tests.cpp` plays remote triggers through the RT checker.
+  trigger. `tests/midipatches_tests.cpp` plays them into a MIDI track set to a channel: key switches with latch, the
+  selected slot going out again when the track's channel changes, the default slot coming back on the track's channel
+  where a trigger key is released without latch, and program change triggers. `tests/midi_tests.cpp` and
+  `tests/sequencing_tests.cpp` check the chased key switches; `tests/rtcheck_tests.cpp` plays remote triggers through
+  the RT checker.
