@@ -374,7 +374,13 @@ TEST_CASE("the articulation map setup opened without a track can't assign, and a
 	const auto map = f.app.call("articulationMap.add", {{"name", "Piano"}}).at("map").at("id").get<uint64_t>();
 	const auto track =
 		f.app.call("track.add", {{"type", "midi"}, {"name", "Piano"}}).at("track").at("id").get<uint64_t>();
-	REQUIRE(f.app.waitUntil([&f] { return f.display.project().value("tracks", Json::array()).size() == 1; }));
+	// The old project has one track too, so wait for the new one by name, not by count.
+	REQUIRE(f.app.waitUntil(
+		[&f]
+		{
+			const Json tracks = f.display.project().value("tracks", Json::array());
+			return tracks.size() == 1 && tracks.at(0).value("name", std::string()) == "Piano";
+		}));
 	f.app.appUi().trackList()->select({track});
 	f.app.shell().step(std::chrono::milliseconds(0));
 	open();
