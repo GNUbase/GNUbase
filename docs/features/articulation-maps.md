@@ -63,13 +63,14 @@ removed).
   playback starts or jumps, the controller and program changes are chased like any others, and with note chasing
   (`midi.chaseNotes`) the last key switch of each pitch before the position plays again there for a sample, in their
   order, before the notes. The slot's channel, transpose, velocity and length apply to the note before the track's MIDI
-  modifiers. Merge MIDI in Loop (`midi.merge`) starts the new part with the directions of each group in effect where
-  the range starts, and where a part starts later in the range it adds a reset of each group of that part's track's
-  map in which a direction is in effect there in the new part, as playback starts each part with the default slot, so
-  that its notes play the same slots. A new track for the merged part gets the map of the first merged track that has
-  one. The directions of several tracks with maps share the new part's one lane, so they can't all keep their slots:
-  a direction of one track's part also selects the slots of the other tracks' notes after it, and the reset where
-  another track's part starts ends it, even where its own part still plays.
+  modifiers. Merge MIDI in Loop (`midi.merge`) starts the new part with the directions of each group in effect where the
+  range starts, and where a part starts later in the range it adds a reset of each group of that part's track's map in
+  which a direction is in effect there in the new part, as playback starts each part with the default slot, so that its
+  notes play the same slots. Where merge makes more than one new part (#1240), each of them gets these directions and
+  resets. A new track for the merged part gets the map of the first merged track that has one. The directions of several
+  tracks with maps share the new part's one lane, so they can't all keep their slots: a direction of one track's part
+  also selects the slots of the other tracks' notes after it, and the reset where another track's part starts ends it,
+  even where its own part still plays.
 - **Remote triggers** (pp. 1263, 1268, 1282). In what a recording brings to a track with a map (`recording.add`), the
   notes whose pitch is a slot's trigger (Key Switch), or the program changes whose program is one (Program Change),
   aren't recorded; they select their slot instead: a direction for each group that has directions, the slot's own or
