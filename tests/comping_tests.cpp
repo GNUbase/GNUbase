@@ -36,6 +36,12 @@ namespace
 		return static_cast<float>(frame + 1) / 65536.0f;
 	}
 
+	// A sine that crosses zero every 100 frames, so that zero crossings tell events apart.
+	float sine(int64_t frame)
+	{
+		return static_cast<float>(0.5 * std::sin(static_cast<double>(frame) * 3.14159265358979323846 / 100.0));
+	}
+
 	// Where an audio event is in its track's stack, to compare: its place (front, or its id while it has none), its
 	// rank among the events at that place, and its id.
 	std::array<int64_t, 3> stackPlace(const Json& event)
@@ -87,6 +93,20 @@ namespace
 								.get<int64_t>();
 			call("event.set", {{"events", {id}}, {"lane", lane}, {"mute", mute}});
 			return id;
+		}
+
+		// A clip of 9600 frames of the sine at 48 kHz, in a file in dir, with the dummy device set up to render it.
+		int64_t sineClip(const std::filesystem::path& dir)
+		{
+			call("audio.setDevice", {{"blockSize", 64}, {"inputChannels", 0}, {"captureSeconds", 1}});
+			gnubase::test::Audio audio;
+			audio.sampleRate = 48000;
+			for (int64_t frame = 0; frame < 9600; ++frame)
+				audio.samples.push_back(sine(frame));
+			const std::filesystem::path file = dir / "sine.wav";
+			gnubase::test::writeWav(file, audio);
+			const Json media = call("media.add", {{"path", file.u8string()}}).at("media");
+			return call("clip.add", {{"media", media.at("id")}}).at("clip").at("id").get<int64_t>();
 		}
 
 		Json object(const char* kind, const Json& id)
@@ -328,21 +348,11 @@ TEST_CASE("two overlapping events at one place in the stack, as a file from befo
 		  "and come to the front by their ids",
 	"[integration]")
 {
-	// A sine that crosses zero every 100 frames. Event a plays it from frame 0 at 0, event b, added after it, from
-	// frame 50 at 1000 on: b's crossings are 50 samples off a's.
+	// Event a plays the sine from frame 0 at 0, event b, added after it, from frame 50 at 1000 on: b's crossings are 50
+	// samples off a's.
 	const gnubase::test::TempDir dir;
 	Fixture f;
-	f.call("audio.setDevice", {{"blockSize", 64}, {"inputChannels", 0}, {"captureSeconds", 1}});
-	const auto wave = [](int64_t frame)
-	{ return static_cast<float>(0.5 * std::sin(static_cast<double>(frame) * 3.14159265358979323846 / 100.0)); };
-	gnubase::test::Audio audio;
-	audio.sampleRate = 48000;
-	for (int64_t frame = 0; frame < 9600; ++frame)
-		audio.samples.push_back(wave(frame));
-	const std::filesystem::path file = dir.path() / "sine.wav";
-	gnubase::test::writeWav(file, audio);
-	const Json media = f.call("media.add", {{"path", file.u8string()}}).at("media");
-	const auto clip = f.call("clip.add", {{"media", media.at("id")}}).at("clip").at("id").get<int64_t>();
+	const int64_t clip = f.sineClip(dir.path());
 	const int64_t track = f.track("audio");
 	const int64_t a = f.take(track, clip, 0, 4000, 0);
 	const int64_t b = f.take(track, clip, 50, 4000, 1);
@@ -375,7 +385,7 @@ TEST_CASE("two overlapping events at one place in the stack, as a file from befo
 	for (size_t i = 0; i < output.size(); ++i)
 	{
 		const auto position = static_cast<int64_t>(i);
-		if (output[i] != wave(position < 1000 ? position : position - 950))
+		if (output[i] != sine(position < 1000 ? position : position - 950))
 			++wrong;
 	}
 	CHECK(wrong == 0);
@@ -412,20 +422,10 @@ TEST_CASE("two overlapping events at one place in the stack, as a file from befo
 TEST_CASE("pieces of a split whose ranks disagree with their ids play, snap, copy and come to the front by their ranks",
 	"[integration]")
 {
-	// A sine that crosses zero every 100 frames, in an event from 0 to 4000.
+	// The sine in an event from 0 to 4000.
 	const gnubase::test::TempDir dir;
 	Fixture f;
-	f.call("audio.setDevice", {{"blockSize", 64}, {"inputChannels", 0}, {"captureSeconds", 1}});
-	const auto wave = [](int64_t frame)
-	{ return static_cast<float>(0.5 * std::sin(static_cast<double>(frame) * 3.14159265358979323846 / 100.0)); };
-	gnubase::test::Audio audio;
-	audio.sampleRate = 48000;
-	for (int64_t frame = 0; frame < 9600; ++frame)
-		audio.samples.push_back(wave(frame));
-	const std::filesystem::path file = dir.path() / "sine.wav";
-	gnubase::test::writeWav(file, audio);
-	const Json media = f.call("media.add", {{"path", file.u8string()}}).at("media");
-	const auto clip = f.call("clip.add", {{"media", media.at("id")}}).at("clip").at("id").get<int64_t>();
+	const int64_t clip = f.sineClip(dir.path());
 	const int64_t track = f.track("audio");
 	const int64_t event = f.take(track, clip, 0, 4000, 0);
 
@@ -446,9 +446,9 @@ TEST_CASE("pieces of a split whose ranks disagree with their ids play, snap, cop
 		const auto position = static_cast<int64_t>(i);
 		float expected = 0.0f;
 		if (position < 1050)
-			expected = wave(position);
+			expected = sine(position);
 		else if (position < 3050)
-			expected = wave(position + 950);
+			expected = sine(position + 950);
 		if (output[i] != expected)
 			++wrong;
 	}
@@ -456,6 +456,8 @@ TEST_CASE("pieces of a split whose ranks disagree with their ids play, snap, cop
 	CHECK(f.call("snap.zeroCrossings", {{"positions", {1530}}, {"tracks", {track}}}).at("positions").at(0) == 1550);
 
 	// Copies and pieces brought to the front keep the later piece in front of the newest one, named in either order.
+	// Each order undoes its toFront, which gives the pieces places of their own, so that both meet them at one place,
+	// ordered by their ranks alone.
 	const auto laterInFront = [&f](int64_t position)
 	{
 		std::optional<std::array<int64_t, 3>> newestPlace;
@@ -470,16 +472,18 @@ TEST_CASE("pieces of a split whose ranks disagree with their ids play, snap, cop
 		}
 		return newestPlace && laterPlace && *laterPlace > *newestPlace;
 	};
-	REQUIRE(laterInFront(0));
 	int64_t delta = 0;
 	for (const Json& named : {Json{newest, later}, Json{later, newest}})
 	{
 		INFO("named " << named.dump());
+		REQUIRE(f.object("audioEvents", newest).at("front") == f.object("audioEvents", later).at("front"));
+		REQUIRE(laterInFront(0));
 		delta += 48000;
 		f.call("event.copy", {{"events", named}, {"delta", delta}});
 		CHECK(laterInFront(delta));
 		f.call("event.toFront", {{"events", named}});
 		CHECK(laterInFront(0));
+		f.call("history.undo");
 	}
 }
 
