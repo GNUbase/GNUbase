@@ -852,6 +852,24 @@ TEST_CASE("a clip in musical mode loaded without a tempo takes the project's at 
 	CHECK(warpOf(client, loop.clip).at("tempo") == 140.0);
 }
 
+// #1461: an event on an inactive track version plays the clip too, as soon as its version is active again.
+TEST_CASE("a clip whose first event is on an inactive track version takes the tempo there", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	run(client, "project.set", {{"tempoTrackActive", true}});
+	run(client, "tempo.add", {{"position", 0}, {"bpm", 100.0}, {"ramp", false}});
+	run(client, "tempo.add", {{"position", 4 * g_ticksPerQuarter}, {"bpm", 140.0}, {"ramp", false}});
+	const Loop loop = addLoop(client, dir, clicks({1000, 25000}, 48000));
+	run(client, "audioEvent.set", {{"event", loop.event}, {"position", 8 * g_ticksPerQuarter}});
+	run(client, "trackVersion.add", {{"tracks", {loop.track}}}); // the event stays on the first version
+	REQUIRE(run(client, "project.get").at("audioEvents").empty());
+
+	run(client, "clip.setWarp", {{"clip", loop.clip}, {"musical", true}});
+	CHECK(warpOf(client, loop.clip).at("tempo") == 140.0);
+}
+
 // Follow-ups of #1129 (#1266).
 TEST_CASE("a marker inserted next to a section at the limit of the real-time range may be off by its rounding only",
 	"[integration]")
