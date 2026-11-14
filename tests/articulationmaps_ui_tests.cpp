@@ -857,3 +857,17 @@ TEST_CASE("the in-place editor has the Articulations lane", "[ui]")
 	CHECK(direction.at("articulation") == "Pizzicato");
 	CHECK(direction.at("position") == 8 * g_sixteenth);
 }
+
+TEST_CASE("the articulation map setup opened right after a new project has no track", "[ui]")
+{
+	Fixture f;
+	// project.new through MCP or Lua, then the setup before the UI's next step: the track list still has the old
+	// project's track selected, so the setup opens for it, and the project.reset reaches the setup's Lua while it reads
+	// the project (#1464).
+	f.app.call("project.new");
+	f.app.keys().run("midi.articulationMapSetup", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil([&f] { return f.shown("#articulation-maps-dialog"); }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.elements("body[track]").empty());
+	CHECK(f.elements("#articulation-map-assign.unavailable").size() == 1);
+}
