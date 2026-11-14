@@ -4,6 +4,9 @@
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
 #include "engine/processors/midieffects.h"
+#include "platform/log.h"
+#include "platform/rt/realtime.h"
+#include "plugin/checkedplugin.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -11,11 +14,14 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -993,4 +999,184 @@ TEST_CASE(
 	CHECK(projectFromJson(saved).channels.at(track.channel).midiSends.slots[0].output == 0);
 	sent["output"] = track.channel;
 	CHECK(track.set("midiSends", {{"slots", {sent}}}, other).at("slots")[0].at("output") == track.channel);
+}
+
+namespace
+{
+	namespace plugin = gnubase::plugin;
+
+	// Makes the built-in MIDI effects, each behind a plugin::CheckedPlugin that counts the calls on the wrong thread or
+	// in the wrong state, or behind a FailingEffect. The audio thread is the real-time context; while idle, no block
+	// processes the effects, so they may stop processing there too, as a plugin slot stops its plugin before it
+	// deactivates it.
+	class TestEffects final : public plugin::Factory, public plugin::ThreadCheck
+	{
+	public:
+		explicit TestEffects(bool failing = false) : m_failing(failing) {}
+
+		std::atomic<bool> idle{true};
+		std::atomic<uint32_t> violations{0};
+		std::atomic<const char*> lastViolation{nullptr};
+
+		size_t count() const override { return m_builtins.count(); }
+		const plugin::Descriptor& descriptor(size_t index) const override { return m_builtins.descriptor(index); }
+		std::unique_ptr<plugin::Plugin> create(std::string_view id, plugin::Host& host) override;
+
+		bool isMainThread() const noexcept override { return !gnubase::rt::isRealtimeContext(); }
+		bool isAudioThread() const noexcept override { return gnubase::rt::isRealtimeContext() || idle; }
+
+	private:
+		static void violated(const char* message, void* context) noexcept
+		{
+			auto* self = static_cast<TestEffects*>(context);
+			self->violations.fetch_add(1);
+			self->lastViolation.store(message);
+		}
+
+		processors::BuiltinFactory m_builtins;
+		bool m_failing = false;
+	};
+
+	// A plugin that fails every block it gets, as a third-party one might.
+	class FailingEffect final : public plugin::Plugin
+	{
+	public:
+		explicit FailingEffect(std::unique_ptr<plugin::Plugin> plugin) : m_plugin(std::move(plugin)) {}
+
+		const plugin::Descriptor& descriptor() const override { return m_plugin->descriptor(); }
+		bool init() override { return m_plugin->init(); }
+		bool activate(double sampleRate, uint32_t minFrames, uint32_t maxFrames) override
+		{
+			return m_plugin->activate(sampleRate, minFrames, maxFrames);
+		}
+		void deactivate() override { m_plugin->deactivate(); }
+		bool startProcessing() noexcept override { return m_plugin->startProcessing(); }
+		void stopProcessing() noexcept override { m_plugin->stopProcessing(); }
+		void reset() noexcept override { (*m_plugin).reset(); }
+		plugin::ProcessStatus process(const plugin::Process& /*process*/) noexcept override
+		{
+			return plugin::ProcessStatus::Error;
+		}
+		void* extension(std::string_view id) override { return m_plugin->extension(id); }
+
+	private:
+		std::unique_ptr<plugin::Plugin> m_plugin;
+	};
+
+	std::unique_ptr<plugin::Plugin> TestEffects::create(std::string_view id, plugin::Host& host)
+	{
+		std::unique_ptr<plugin::Plugin> made = m_builtins.create(id, host);
+		if (made && m_failing)
+			made = std::make_unique<FailingEffect>(std::move(made));
+		if (made)
+			made = std::make_unique<plugin::CheckedPlugin>(std::move(made), *this, &TestEffects::violated, this);
+		return made;
+	}
+
+	// A sequence with the effect in the first insert slot, or none.
+	std::unique_ptr<MidiSequence> withInsert(const std::string& effect)
+	{
+		auto sequence = std::make_unique<MidiSequence>();
+		sequence->inserts.slots[0].effect = effect;
+		return sequence;
+	}
+
+	// Plays a block of 128 frames with the events as the sequencer's input, on the audio thread, while stopped.
+	EventBuffer playBlock(MidiSequencer& sequencer, const std::vector<ProcessEvent>& events)
+	{
+		const EventBuffer in(4);
+		EventBuffer out(256);
+		const graph::TransportBlock transport;
+		for (const ProcessEvent& event : events)
+			sequencer.input().add(event);
+		{
+			const gnubase::rt::ScopedRealtimeContext audioThread;
+			sequencer.process({nullptr, 0, 128, in, out, transport});
+		}
+		sequencer.input().clear();
+		return out;
+	}
+
+	// The log's text so far.
+	std::string logged(const std::filesystem::path& file)
+	{
+		gnubase::logging::flush();
+		return gnubase::test::readText(file);
+	}
+}
+
+TEST_CASE(
+	"the sequencer starts its effects on the audio thread and stops and deactivates them before they go", "[unit]")
+{
+	auto effects = std::make_shared<TestEffects>();
+	{
+		auto sequencer = std::make_shared<MidiSequencer>(effects);
+		sequencer->prepareFor(48000.0, 128);
+		effects->idle = false;
+		sequencer->setSequence(withInsert("transformer"));
+		CHECK(hanging(playBlock(*sequencer, {noteAt(ProcessEvent::Type::NoteOn, 0, 60)})) == std::vector<int>{60});
+		// The effect leaves its slot; it goes once the audio thread took the sequence without it.
+		sequencer->setSequence(withInsert(""));
+		playBlock(*sequencer, {});
+		effects->idle = true;
+		sequencer->setSequence(withInsert(""));
+		// Again, and the sequencer goes with the effect active.
+		effects->idle = false;
+		sequencer->setSequence(withInsert("chordGenerator"));
+		CHECK(!playBlock(*sequencer, {noteAt(ProcessEvent::Type::NoteOn, 0, 60)}).empty());
+		// A new sample rate activates it again; the audio thread starts it again.
+		effects->idle = true;
+		sequencer->prepareFor(44100.0, 128);
+		effects->idle = false;
+		CHECK(!playBlock(*sequencer, {noteAt(ProcessEvent::Type::NoteOn, 0, 62)}).empty());
+		effects->idle = true;
+	}
+	const char* last = effects->lastViolation.load();
+	INFO((last != nullptr ? last : "none"));
+	CHECK(effects->violations == 0);
+}
+
+TEST_CASE("an effect that fails a block passes its events on as they came, and the log says so", "[unit]")
+{
+	const gnubase::test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "gnubase.log";
+	const gnubase::logging::Session log(file);
+	auto effects = std::make_shared<TestEffects>(true);
+	MidiSequencer sequencer(effects);
+	sequencer.prepareFor(48000.0, 128);
+	sequencer.setSequence(withInsert("chordGenerator"));
+	effects->idle = false;
+	const EventBuffer on = playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOn, 5, 60)});
+	REQUIRE(on.size() == 1);
+	CHECK(on[0].type == ProcessEvent::Type::NoteOn);
+	CHECK(on[0].key == 60);
+	CHECK(on[0].offset == 5);
+	const EventBuffer off = playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOff, 7, 60)});
+	REQUIRE(off.size() == 1);
+	CHECK(off[0].type == ProcessEvent::Type::NoteOff);
+	effects->idle = true;
+	const std::string text = logged(file);
+	CHECK_THAT(text, ContainsSubstring("chordGenerator in MIDI insert 1 failed"));
+	// Once while it fails, not every block.
+	CHECK(text.find("failed") == text.rfind("failed"));
+}
+
+TEST_CASE("events that don't fit an effect's event lists are dropped, and the log says so", "[unit]")
+{
+	const gnubase::test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "gnubase.log";
+	const gnubase::logging::Session log(file);
+	MidiSequencer sequencer;
+	sequencer.prepareFor(48000.0, 128);
+	sequencer.setSequence(withInsert("transformer"));
+	// More SysEx than a block's event lists hold.
+	std::vector<uint8_t> dump(70000, 0x10);
+	dump.front() = 0xF0;
+	dump.back() = 0xF7;
+	ProcessEvent sysex;
+	sysex.type = ProcessEvent::Type::SysEx;
+	sysex.data = dump.data();
+	sysex.size = static_cast<uint32_t>(dump.size());
+	CHECK(playBlock(sequencer, {sysex}).empty());
+	CHECK_THAT(logged(file), ContainsSubstring("transformer in MIDI insert 1 dropped events"));
 }
