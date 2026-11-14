@@ -15,6 +15,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <cstdlib>
 #include <memory>
 #include <optional>
 #include <string>
@@ -120,13 +121,13 @@ namespace
 		app.ui().text(std::nullopt, text);
 	}
 
-	// Opens a drop-down list, picks the option that many above the selected one with the arrow key, and closes it.
-	// Its options aren't in the DOM that the UI tools see.
+	// Opens a drop-down list, picks the option that many above the selected one with the arrow key (below it if
+	// negative), and closes it. Its options aren't in the DOM that the UI tools see.
 	void choose(test::UiApp& app, const std::string& select, int up)
 	{
 		click(app, select);
-		for (int i = 0; i < up; ++i)
-			app.ui().key(std::nullopt, "Up");
+		for (int i = 0; i < std::abs(up); ++i)
+			app.ui().key(std::nullopt, up > 0 ? "Up" : "Down");
 		click(app, select);
 	}
 
@@ -227,6 +228,43 @@ TEST_CASE("the studio setup dialog shows the audio and MIDI devices and changes 
 	CHECK(closed(app));
 	CHECK(app.call("audio.ports").at("inputs")[0].at("showAs") == "Input 1");
 	CHECK(app.call("audio.ports").at("outputs")[3].at("visible") == true);
+}
+
+TEST_CASE("the studio setup dialog's Note Expression Input page sets up a MIDI input's MPE input", "[ui]")
+{
+	test::UiApp app({900, 640}, keyboard());
+	openDialog(app);
+	click(app, "#devices-mpe");
+	CHECK(element(app, "#page-mpe").at("visible") == true);
+	CHECK(element(app, "#page-midi").at("visible") == false);
+	// The MIDI inputs, the keyboard's: no MPE input yet. First Channel is only for channel rotation.
+	CHECK(selected(app, "mpe-input") == "Keys");
+	const std::string fields = ".mpe-port.shown ";
+	CHECK(element(app, fields + "select.mpe-mode").at("value") == "off");
+	CHECK(element(app, fields + "select.mpe-first-channel").at("attributes").contains("disabled"));
+	choose(app, fields + "select.mpe-mode", -3); // Channel Rotation, below Off and the two zones
+	CHECK_FALSE(element(app, fields + "select.mpe-first-channel").at("attributes").contains("disabled"));
+	choose(app, fields + "select.mpe-first-channel", -1);
+	click(app, fields + "input.mpe-tuning");
+	choose(app, fields + "select.mpe-initial-y", -2); // Center (64)
+
+	// A pitch range out of range keeps the dialog open with the message, and sends nothing.
+	type(app, fields + "input.mpe-pitch-range", 0, "200");
+	click(app, "#ok");
+	CHECK(open(app));
+	CHECK_THAT(element(app, "#studio-setup-message").at("text").get<std::string>(), ContainsSubstring("Pitch Range"));
+	CHECK(port(app.call("midi.ports"), "Keys", true).at("mpe").at("mode") == "off");
+
+	click(app, "#devices-mpe");
+	type(app, fields + "input.mpe-pitch-range", 0, "24");
+	choose(app, fields + "select.mpe-mode", -3);
+	choose(app, fields + "select.mpe-first-channel", -1);
+	click(app, fields + "input.mpe-tuning");
+	choose(app, fields + "select.mpe-initial-y", -2);
+	click(app, "#ok");
+	CHECK(closed(app));
+	CHECK(port(app.call("midi.ports"), "Keys", true).at("mpe") == Json::parse(R"({"mode": "rotation", "channels": 15,
+		"firstChannel": 2, "pitchRange": 24, "tuning": false, "initialX": "off", "initialY": "center"})"));
 }
 
 TEST_CASE("the studio setup dialog's Cancel drops the changes, Apply sends them and stays open", "[ui]")

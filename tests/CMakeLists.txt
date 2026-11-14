@@ -6,6 +6,7 @@ add_library(gnubase-testutils STATIC
 	testutils/heldjob.cpp testutils/heldjob.h
 	testutils/library.h
 	testutils/slowframe.h
+	testutils/stopandjoin.h
 	testutils/testutils.cpp testutils/testutils.h)
 target_include_directories(gnubase-testutils PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(gnubase-testutils PUBLIC gnubase-ui)
@@ -31,6 +32,7 @@ add_executable(gnubase-tests
 	analysis_tests.cpp
 	app_tests.cpp
 	arranger_tests.cpp
+	arranger_ui_tests.cpp
 	articulationmaps_tests.cpp
 	articulationmaps_ui_tests.cpp
 	audio_tests.cpp
@@ -135,6 +137,7 @@ add_executable(gnubase-tests
 	mixerviews_tests.cpp
 	mixerwindow_tests.cpp
 	monitoring_tests.cpp
+	mpeinput_tests.cpp
 	multicore_tests.cpp
 	noteexpression_tests.cpp
 	onscreenkeyboard_tests.cpp
@@ -386,7 +389,7 @@ endfunction()
 gnubase_add_shell_test("the clang-tidy cache reruns clang-tidy only when an input changed" clang_tidy_cache_tests.sh)
 gnubase_add_shell_test("the keyword guard blocks private keywords in commits and pull requests" keyword_guard_tests.sh)
 gnubase_add_shell_test("the license header check lists files without the SPDX header" spdx_check_tests.sh)
-gnubase_add_shell_test("tidy-changed.sh checks the changed lines and 5 around them" tidy_changed_tests.sh)
+gnubase_add_shell_test("tidy-changed.sh checks the changed lines and compiles the changed files" tidy_changed_tests.sh)
 
 # Benchmarks print measurements for design notes; they are not part of the test run.
 option(GNUBASE_BENCHMARKS "Build the benchmarks in tests/bench" OFF)

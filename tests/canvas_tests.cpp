@@ -235,6 +235,36 @@ TEST_CASE("the style sheet decides how an event's own color shows: its body's op
 	CHECK(count(vertices, Rml::Colourb(128, 255, 128, 255).ToPremultiplied(0.5F)) == 8);
 }
 
+TEST_CASE("an own-color-tint outlines events with a color in stroke-width, also without a stroke-color", "[unit]")
+{
+	// #1332: the tint alone decides that events with a color are outlined; events without one follow stroke-color.
+	OneWindow fixture;
+	fixture.show("event-lanes { width: 400dp; height: 100dp; color: #ff0000; stroke-color: transparent;"
+				 " stroke-width: 2dp; own-color-tint: #ffffff80; }",
+		R"(<event-lanes id="lanes" scale="10"/>)");
+	auto& lanes = fixture.element<ui::EventLanes>("lanes");
+	ui::TimeSpan own{2000.0, 1000.0};
+	own.color = 0x00ff00ffU;
+	lanes.setLanes({{20.0F, {{1000.0, 500.0}, own}}});
+	std::vector<Rml::Vertex> vertices = fixture.draw();
+	const Colour tinted{128, 255, 128, 255};
+	CHECK(count(vertices, red()) == 4); // no outline
+	CHECK(count(vertices, tinted) == 8);
+	std::vector<float> ring = extent(vertices, tinted);
+	CHECK(ring[2] - ring[0] == 100.0F);
+	CHECK(ring[3] - ring[1] == 20.0F);
+
+	// An event reaching beyond the built frame (a view's width on each side: 1200 pixels) ends the drawn outline's
+	// width and a pixel outside it, so that outline stays out of view there.
+	ui::TimeSpan wide{-1e6, 2e6};
+	wide.color = 0x00ff00ffU;
+	lanes.setLanes({{20.0F, {wide}}});
+	vertices = fixture.draw();
+	ring = extent(vertices, tinted);
+	CHECK(ring[0] == -3.0F);
+	CHECK(ring[2] == 1203.0F);
+}
+
 TEST_CASE("event-inset keeps events off their lanes' top and bottom edges", "[unit]")
 {
 	OneWindow fixture;
@@ -370,6 +400,37 @@ TEST_CASE("a waveform with a color of its own shows in it when the style sheet t
 	CHECK(count(fixture.draw(), green()) == 4);
 }
 
+TEST_CASE("a waveform keeps event-inset off its lane's edges inside its padding, unless the lane is too low", "[unit]")
+{
+	// #1332: a <waveform> is as high as its lane and takes event-inset as <event-lanes> does, so that it stays inside
+	// its event; its padding comes from the shared style sheet.
+	OneWindow fixture;
+	fixture.show("waveform { width: 4dp; height: 40dp; box-sizing: border-box; padding: 2dp 0; color: #00ff00;"
+				 " event-inset: 3dp; }",
+		R"(<waveform id="wave" scale="100"/>)");
+	auto& wave = fixture.element<ui::Waveform>("wave");
+	ui::PeakColumns peaks;
+	peaks.low = {-32767, -32767, -32767, -32767};
+	peaks.high = {32767, 32767, 32767, 32767};
+	wave.setPeaks({0.0, 400.0}, {peaks});
+	// Builds reach a view's height above the content, 36 here: the lane from 34 to 74, the waveform 3 and 2 inside it.
+	std::vector<float> drawn = extent(fixture.draw(), green());
+	CHECK(drawn[1] == 39.0F);
+	CHECK(drawn[3] == 69.0F);
+
+	// A lane no higher than twice the inset, as events drop their inset there, or one that would leave the waveform
+	// no pixel: the padding only.
+	for (const int height : {6, 7})
+	{
+		INFO(height);
+		wave.SetAttribute("style", "height: " + std::to_string(height) + "dp");
+		const float content = static_cast<float>(height) - 4.0F;
+		drawn = extent(fixture.draw(), green());
+		CHECK(drawn[1] == content);
+		CHECK(drawn[3] == 2.0F * content);
+	}
+}
+
 TEST_CASE("in the default theme a full-scale waveform stays inside its event's body", "[unit]")
 {
 	// The theme keeps events off their lanes' edges and pads waveforms by more (#1312).
@@ -380,7 +441,7 @@ TEST_CASE("in the default theme a full-scale waveform stays inside its event's b
 	fixture.ui.shell.setTheme("gnubase");
 	fixture.show(theme +
 			" event-lanes, waveform { position: absolute; left: 0; top: 0; width: 4dp; height: 40dp;"
-			" box-sizing: border-box; }",
+			" box-sizing: border-box; } waveform { padding: 2dp 0; }", // and the shared style sheet's padding
 		R"(<div class="event-display"><div class="event-area"><event-lanes id="lanes" class="events" scale="100"/>)"
 		R"(<div class="waveforms"><waveform id="wave" scale="100"/></div></div></div>)");
 	auto& lanes = fixture.element<ui::EventLanes>("lanes");

@@ -396,6 +396,39 @@ TEST_CASE("a GNUbase project comes back exactly from its DAWproject file", "[int
 	}
 }
 
+TEST_CASE("a missing media file is referred to by its path, and loading extracts over no file with other content",
+	"[integration]")
+{
+	const test::TempDir dir;
+	const std::string audio = utf8(dir.path() / "take.wav");
+	writeWav(audio, 44100.0, 1, 44100);
+	Engine engine;
+	Client client(engine);
+	buildProject(client, audio);
+	const std::string file = utf8(dir.path() / "song.dawproject");
+	const std::string media = utf8(dir.path() / "media");
+	run(client, "project.save", {{"path", file}});
+
+	// A file that is there with other content stays; the entry goes beside it under a numbered name.
+	const std::filesystem::path extracted = dir.path() / "media" / "audio" / "take.wav";
+	std::filesystem::create_directories(extracted.parent_path());
+	writeWav(utf8(extracted), 44100.0, 1, 100);
+	run(client, "project.load", {{"path", file}, {"mediaFolder", media}});
+	CHECK(run(client, "project.get").at("media")[0].at("path") == utf8(dir.path() / "media" / "audio" / "2-take.wav"));
+	CHECK(std::filesystem::file_size(extracted) < std::filesystem::file_size(std::filesystem::u8path(audio)));
+	// A file with the entry's content is used as it is.
+	run(client, "project.load", {{"path", file}, {"mediaFolder", media}});
+	CHECK(run(client, "project.get").at("media")[0].at("path") == utf8(dir.path() / "media" / "audio" / "2-take.wav"));
+
+	// Saved while its media file is missing, the project refers to the file where it was.
+	std::filesystem::remove(std::filesystem::u8path(audio));
+	run(client, "project.load", {{"path", file}, {"mediaFolder", utf8(dir.path() / "other")}});
+	std::filesystem::remove_all(dir.path() / "other");
+	run(client, "project.save", {{"path", file}});
+	run(client, "project.load", {{"path", file}, {"mediaFolder", media}});
+	CHECK(run(client, "project.get").at("media")[0].at("path") == utf8(dir.path() / "other" / "audio" / "take.wav"));
+}
+
 TEST_CASE("projects saved on two threads at the same time both load", "[integration]")
 {
 	// Backup jobs save beside each other and beside a save. Unless built with MINIZ_NO_TIME, miniz stamps ZIP entries

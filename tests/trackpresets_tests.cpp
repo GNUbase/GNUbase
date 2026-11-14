@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -1283,6 +1284,47 @@ TEST_CASE("track.import returns the media files it added, not the ones it shares
 		fs::u8path(find(project.at("media"), media[0].get<ObjectId>()).at("path").get<std::string>()), added));
 }
 
+TEST_CASE("track.import shares the project's clips that are the same, also those of an import before", "[integration]")
+{
+	const test::TempDir dir;
+	const fs::path wav = dir.path() / "loop.wav";
+	test::writeWav(wav, {std::vector<float>(4800, 0.25f), 1, 48000});
+	const fs::path archive = dir.path() / "Loops.dawproject";
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	const Added take = add(client, {{"type", "audio"}, {"name", "Take"}});
+	const ObjectId media = run(client, "media.add", {{"path", wav.u8string()}}).at("media").at("id").get<ObjectId>();
+	// Two clips of the file that differ only in their ids: the import makes them one.
+	for (int i = 0; i < 2; ++i)
+	{
+		const ObjectId clip = run(client, "clip.add", {{"media", media}}).at("clip").at("id").get<ObjectId>();
+		run(client, "audioEvent.add",
+			{{"track", take.track}, {"clip", clip}, {"position", i * 4800}, {"offset", 0}, {"length", 4800}});
+	}
+	run(client, "track.export", {{"tracks", {take.track}}, {"path", archive.u8string()}});
+
+	run(client, "project.new");
+	const auto clipsOfEvents = [&client]
+	{
+		std::set<ObjectId> clips;
+		const Json project = run(client, "project.get");
+		for (const Json& event : project.at("audioEvents"))
+			clips.insert(event.at("clip").get<ObjectId>());
+		return clips;
+	};
+	run(client, "track.import", {{"path", archive.u8string()}});
+	CHECK(run(client, "project.get").at("clips").size() == 1);
+	CHECK(clipsOfEvents().size() == 1);
+	// The archive imported again shares the clip and the media file of the first import.
+	run(client, "track.import", {{"path", archive.u8string()}});
+	const Json project = run(client, "project.get");
+	CHECK(project.at("tracks").size() == 2);
+	CHECK(project.at("audioEvents").size() == 4);
+	CHECK(project.at("clips").size() == 1);
+	CHECK(project.at("media").size() == 1);
+	CHECK(clipsOfEvents().size() == 1);
+}
+
 TEST_CASE("track.importSources lists the sample rates of the media files each track of a file plays", "[integration]")
 {
 	const test::TempDir dir;
@@ -1901,4 +1943,61 @@ TEST_CASE("a track preset that changes a MIDI slot's effect takes the slot's aut
 	CHECK(automation[0].at("target").at("number") == 1);
 	run(client, "history.undo");
 	CHECK(run(client, "project.get").at("automation").size() == 2);
+}
+
+TEST_CASE("track.import and project.load leave an extracted media file as it is and extract the entry beside one with "
+		  "other content",
+	"[integration]")
+{
+	const test::TempDir dir;
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	test::Audio audio;
+	audio.samples.assign(480, 0.5f);
+	const fs::path wav = dir.path() / "dc.wav";
+	test::writeWav(wav, audio);
+	const Added track = add(client, {{"type", "audio"}, {"name", "DC"}});
+	const ObjectId media = run(client, "media.add", {{"path", wav.u8string()}}).at("media").at("id").get<ObjectId>();
+	const ObjectId clip = run(client, "clip.add", {{"media", media}}).at("clip").at("id").get<ObjectId>();
+	run(client, "audioEvent.add", {{"track", track.track}, {"clip", clip}, {"position", 0}});
+	const fs::path archive = dir.path() / "DC.dawproject";
+	run(client, "track.export", {{"tracks", {track.track}}, {"path", archive.u8string()}, {"copyMedia", true}});
+	const fs::path project = dir.path() / "Song.dawproject";
+	run(client, "project.save", {{"path", project.u8string()}, {"embedMedia", true}});
+
+	for (const bool import : {true, false})
+	{
+		INFO((import ? "track.import" : "project.load"));
+		const auto load = [&]
+		{
+			run(client, "project.new");
+			if (import)
+				run(client, "track.import", {{"path", archive.u8string()}});
+			else
+				run(client, "project.load", {{"path", project.u8string()}});
+			const Json pool = run(client, "project.get").at("media");
+			REQUIRE(pool.size() == 1);
+			return fs::u8path(pool.at(0).at("path").get<std::string>());
+		};
+		const fs::path extracted = load();
+		CHECK(extracted != wav);
+
+		// The second time leaves the file as it is, write time included.
+		const fs::file_time_type written = fs::last_write_time(extracted) - std::chrono::hours(1);
+		fs::last_write_time(extracted, written);
+		CHECK(load() == extracted);
+		CHECK(fs::last_write_time(extracted) == written);
+
+		// A file of the entry's size with other content stays, as a project may play it, and the entry goes beside it:
+		// the CRC-32 tells them apart, not the size.
+		const uintmax_t size = fs::file_size(extracted);
+		test::Audio other;
+		other.samples.assign(480, 0.25f);
+		test::writeWav(extracted, other);
+		REQUIRE(fs::file_size(extracted) == size);
+		const fs::path beside = load();
+		CHECK(beside != extracted);
+		CHECK(test::readWav(beside).samples == audio.samples);
+		CHECK(test::readWav(extracted).samples == other.samples);
+	}
 }

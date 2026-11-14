@@ -463,7 +463,7 @@
 	.event-display .waveforms waveform
 	{
 		own-color-tint: #ffffff59;
-		padding: 4dp 0;
+		event-inset: 2dp;
 	}
 	.event-display .overview
 	{
@@ -615,6 +615,14 @@
 		font-size: 11dp;
 		border-left-width: 1dp;
 		border-left-color: #10dff2;
+	}
+	.arranger-lane-row .arranger-lane-event
+	{
+		color: #f1f4ff;
+		font-size: 11dp;
+		background-color: #10dff240;
+		border-width: 1dp;
+		border-color: #10dff2;
 	}
 	.chord-pad
 	{

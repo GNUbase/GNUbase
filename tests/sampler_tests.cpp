@@ -8,6 +8,7 @@
 #include "engine/processors/sampler.h"
 #include "engine/time/tempomap.h"
 #include "platform/log.h"
+#include "testutils/stopandjoin.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -1210,6 +1211,76 @@ TEST_CASE("a sampler's track preset brings its sample, embedded in the preset, i
 	CHECK(reader->read(samples.data(), 1000) == 480);
 }
 
+TEST_CASE("a track preset shares the project's file, keeps the files it extracted before and refers to a missing one",
+	"[integration]")
+{
+	const gnubase::test::TempDir settings;
+	Engine engine(gnubase::audio::makeBackends(), settings.path() / "settings");
+	Client client(engine);
+	const auto clipOf = [&](const fs::path& file, float value, size_t frames)
+	{
+		gnubase::test::Audio audio;
+		audio.samples.assign(frames, value);
+		fs::create_directories(file.parent_path());
+		gnubase::test::writeWav(file, audio);
+		const Json media = run(client, "media.add", {{"path", file.u8string()}});
+		return run(client, "clip.add", {{"media", media.at("media").at("id")}}).at("clip").at("id");
+	};
+	const auto save = [&](const Json& sampler, const std::string& name)
+	{ run(client, "track.savePreset", {{"tracks", Json::array({sampler.at("track").at("id")})}, {"name", name}}); };
+	// Loads the preset onto a new sampler track and returns the media file it plays.
+	const auto load = [&](const std::string& name)
+	{
+		const Json sampler = run(client, "sampler.create");
+		run(client, "track.loadPreset", {{"tracks", Json::array({sampler.at("track").at("id")})}, {"name", name}});
+		const Json project = run(client, "project.get");
+		Json clip;
+		for (const Json& channel : project.at("channels"))
+			if (channel.at("id") == sampler.at("channel").at("id"))
+				clip = channel.at("sample");
+		for (const Json& item : project.at("clips"))
+			if (item.at("id") == clip)
+				for (const Json& media : project.at("media"))
+					if (media.at("id") == item.at("media"))
+						return media;
+		return Json(); // the sampler plays no media file: at("path") throws
+	};
+
+	// Loaded in the project it was saved in, the preset plays the project's file and clip: the pool stays as it is.
+	const fs::path first = settings.path() / "a" / "dc.wav";
+	save(run(client, "sampler.create", {{"clip", clipOf(first, 0.5f, 480)}}), "DC");
+	CHECK(fs::equivalent(fs::u8path(load("DC").at("path").get<std::string>()), first));
+	CHECK(run(client, "project.get").at("clips").size() == 1);
+	CHECK(run(client, "project.get").at("media").size() == 1);
+
+	// Saved again with another file of the same name, it leaves the file that it extracted before, which a project
+	// may play, as it is, and extracts the new one beside it.
+	run(client, "project.new");
+	const fs::path earlier = fs::u8path(load("DC").at("path").get<std::string>());
+	CHECK(!fs::equivalent(earlier, first));
+	run(client, "project.new");
+	save(run(client, "sampler.create", {{"clip", clipOf(settings.path() / "b" / "dc.wav", 0.25f, 960)}}), "DC");
+	run(client, "project.new");
+	const Json later = load("DC");
+	CHECK(later.at("length") == 960);
+	CHECK(!fs::equivalent(fs::u8path(later.at("path").get<std::string>()), earlier));
+	CHECK(AudioFileReader::open(earlier.u8string())->info().frames == 480);
+	// Loaded again, it plays the file it extracted the last time.
+	run(client, "project.new");
+	CHECK(fs::equivalent(
+		fs::u8path(load("DC").at("path").get<std::string>()), fs::u8path(later.at("path").get<std::string>())));
+
+	// A sample whose file is missing doesn't keep the track from being saved: the preset refers to the file where it
+	// was.
+	run(client, "project.new");
+	const fs::path gone = fs::absolute(settings.path() / "c" / "gone.wav").lexically_normal();
+	const Json missing = run(client, "sampler.create", {{"clip", clipOf(gone, 0.5f, 480)}});
+	fs::remove(gone);
+	save(missing, "Gone");
+	run(client, "project.new");
+	CHECK(fs::u8path(load("Gone").at("path").get<std::string>()) == gone);
+}
+
 TEST_CASE(
 	"a sampler track's clip counts as used in the pool, and the sample is saved with the project", "[integration]")
 {
@@ -1638,12 +1709,10 @@ TEST_CASE(
 			std::this_thread::sleep_for(std::chrono::milliseconds(100));
 			held.release();
 		});
-	// Not run: a failed REQUIRE would throw past the joinable thread.
-	const Result played = client.call("transport.play");
+	const gnubase::test::StopAndJoin joinRelease(releasing);
+	run(client, "transport.play");
 	const auto answered = std::chrono::steady_clock::now();
-	releasing.join();
-	INFO(played.error);
-	REQUIRE(played.ok());
+	joinRelease.join();
 	CHECK(answered - releaseStart >= std::chrono::milliseconds(100));
 	CHECK(held.reads() == std::vector<fs::path>{"sine.wav"});
 	run(client, "transport.stop");
@@ -1681,12 +1750,10 @@ TEST_CASE("recording from stop waits for the samples like starting playback, a c
 			std::this_thread::sleep_for(std::chrono::milliseconds(100));
 			held.release();
 		});
-	// Not run: a failed REQUIRE would throw past the joinable thread.
-	const Result recorded = client.call("transport.record");
+	const gnubase::test::StopAndJoin joinRelease(releasing);
+	run(client, "transport.record");
 	const auto answered = std::chrono::steady_clock::now();
-	releasing.join();
-	INFO(recorded.error);
-	REQUIRE(recorded.ok());
+	joinRelease.join();
 	CHECK(answered - releaseStart >= std::chrono::milliseconds(100));
 	CHECK(held.reads() == std::vector<fs::path>{"sine.wav"});
 	run(client, "transport.stop");
@@ -1720,19 +1787,18 @@ TEST_CASE("an offline render logs a warning naming the file at every round of it
 		}
 		return files;
 	};
+	std::atomic<bool> stop{false};
 	std::thread releasing(
-		[&held, &warnings]
+		[&held, &warnings, &stop]
 		{
 			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-			while (warnings().size() < 2 && std::chrono::steady_clock::now() < deadline)
+			while (!stop && warnings().size() < 2 && std::chrono::steady_clock::now() < deadline)
 				std::this_thread::sleep_for(std::chrono::milliseconds(5));
 			held.release();
 		});
-	// Not run: a failed REQUIRE would throw past the joinable thread.
-	const Result result = client.call("audio.render", {{"frames", 64}});
-	releasing.join();
-	INFO(result.error);
-	CHECK(result.ok());
+	const gnubase::test::StopAndJoin joinRelease(stop, releasing);
+	run(client, "audio.render", {{"frames", 64}});
+	joinRelease.join();
 	CHECK(held.reads() == std::vector<fs::path>{"sine.wav"});
 	const std::vector<std::string> files = warnings();
 	CHECK(files.size() >= 2);
@@ -1812,11 +1878,9 @@ TEST_CASE("an offline render waits for a sample whose file takes long to read", 
 			std::this_thread::sleep_for(std::chrono::milliseconds(200));
 			held.release();
 		});
-	// Not run: a failed REQUIRE would throw past the joinable thread.
-	const Result rendered = client.call("audio.render", {{"frames", 64}});
-	releasing.join();
-	INFO(rendered.error);
-	REQUIRE(rendered.ok());
+	const gnubase::test::StopAndJoin joinRelease(releasing);
+	run(client, "audio.render", {{"frames", 64}});
+	joinRelease.join();
 	CHECK(held.reads() == std::vector<fs::path>{"sine.wav"});
 	// The update the loader posts runs on its own and stays out of the command log.
 	run(client, "transport.get");

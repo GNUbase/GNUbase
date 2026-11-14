@@ -10,6 +10,8 @@
 #include <cctype>
 #include <cmath>
 #include <filesystem>
+#include <map>
+#include <set>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -523,6 +525,50 @@ TEST_CASE("every theme marks the arranger editor's row that is playing", "[unit]
 				marked = declarations.find(':') != std::string::npos; // it says how the row looks
 		}
 		CHECK(marked);
+	}
+}
+
+TEST_CASE(
+	"only the default theme tints events and keeps them off their lanes' edges; no theme pads waveforms", "[unit]")
+{
+	// #1312, #1332: dark, light and high contrast show events as before the tint: opaque in their colors, no tint over
+	// their outlines and waveforms, at their lanes' full height. A <waveform> takes event-inset itself, so the padding
+	// stays in the shared style sheet.
+	for (const char* theme : g_themes)
+	{
+		INFO("theme " << theme);
+		const bool tinted = std::string_view(theme) == "gnubase";
+		std::map<std::string, std::set<std::string>> values; // by property, the values the theme's rules give it
+		for (const auto& [selector, declarations] : rules(gnubase::test::readText(themesDir() / theme / "theme.rcss")))
+		{
+			for (const char* property : {"own-fill-opacity", "own-color-tint", "event-inset"})
+				for (size_t at = declarations.find(std::string("\t") + property + ": "); at != std::string::npos;
+					at = declarations.find(std::string("\t") + property + ": ", at + 1))
+				{
+					const size_t from = at + std::string_view(property).size() + 3;
+					values[property].insert(declarations.substr(from, declarations.find(';', from) - from));
+				}
+			if (selector.find("waveform") != std::string::npos)
+			{
+				INFO(selector);
+				CHECK(declarations.find("padding") == std::string::npos);
+			}
+		}
+		const std::map<std::string, std::string> defaults{
+			{"own-fill-opacity", "1"}, {"own-color-tint", "none"}, {"event-inset", "0dp"}};
+		for (const auto& [property, value] : defaults)
+		{
+			INFO(property);
+			REQUIRE(!values[property].empty());
+			if (!tinted)
+				CHECK(values[property] == std::set<std::string>{value});
+		}
+		if (tinted)
+		{
+			CHECK(values["own-fill-opacity"].count("1") == 0);
+			CHECK(values["own-color-tint"].count("none") == 0);
+			CHECK(values["event-inset"].count("0dp") == 0);
+		}
 	}
 }
 
