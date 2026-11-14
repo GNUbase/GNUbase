@@ -414,4 +414,20 @@ namespace gnubase::engine
 			[](const ExpressionPoint& a, const ExpressionPoint& b) { return a.position < b.position; });
 		return moved;
 	}
+
+	Note splitNote(Note& note, time::Ticks at)
+	{
+		Note rest = note;
+		rest.id = 0;
+		rest.position = note.position + at;
+		rest.length = note.length - at;
+		rest.origin.reset();
+		rest.expressions = expressionsFrom(note.expressions, at);
+		note.length = at;
+		note.origin.reset();
+		note.expressions.erase(std::remove_if(note.expressions.begin(), note.expressions.end(),
+								   [at](const ExpressionPoint& point) { return point.position >= at; }),
+			note.expressions.end());
+		return rest;
+	}
 }

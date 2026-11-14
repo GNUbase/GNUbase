@@ -1294,26 +1294,17 @@ namespace gnubase::ui
 			std::vector<const Note*> notes = {pressed};
 			if (selected(*pressed))
 				notes = selectedNotes();
+			// note.split per part, which gives the rests the notes' values and expression from the cut on.
 			Json commands = Json::array();
-			for (const Note* each : notes)
+			for (const Part& part : m_parts)
 			{
-				if (cut <= each->start || cut >= each->start + each->length)
-					continue;
-				int64_t partStart = 0;
-				for (const Part& part : m_parts)
-					if (part.id == each->part)
-						partStart = part.start;
-				Json change = noteChange(each->id);
-				change["length"] = cut - each->start;
-				commands.push_back({{"command", "note.set"},
-					{"parameters", {{"part", each->part}, {"notes", Json::array({change})}}}});
-				commands.push_back({{"command", "note.add"},
-					{"parameters",
-						{{"part", each->part},
-							{"notes",
-								{{{"position", cut - partStart}, {"length", each->start + each->length - cut},
-									{"pitch", each->pitch}, {"velocity", each->velocity},
-									{"releaseVelocity", each->releaseVelocity}, {"channel", each->channel}}}}}}});
+				Json ids = Json::array();
+				for (const Note* each : notes)
+					if (each->part == part.id && cut > each->start && cut < each->start + each->length)
+						ids.push_back(each->id);
+				if (!ids.empty())
+					commands.push_back({{"command", "note.split"},
+						{"parameters", {{"part", part.id}, {"notes", ids}, {"position", cut - part.start}}}});
 			}
 			edit("Split", std::move(commands));
 			return;
@@ -1322,7 +1313,8 @@ namespace gnubase::ui
 			return;
 		case KeyTool::Glue:
 		{
-			// Glues the note to the next one of its pitch in its part; the first one's values stay (p. 1215).
+			// Glues the note to the next one of its pitch in its part; the first one's values stay (p. 1215), and the
+			// next one's expression joins its own.
 			if (pressed == nullptr)
 				return;
 			const Note* next = nullptr;
@@ -1332,13 +1324,9 @@ namespace gnubase::ui
 					next = &each;
 			if (next == nullptr)
 				return;
-			Json change = noteChange(pressed->id);
-			change["length"] = std::max(next->start + next->length, pressed->start + pressed->length) - pressed->start;
 			edit("Glue",
-				Json::array({{{"command", "note.set"},
-								 {"parameters", {{"part", pressed->part}, {"notes", Json::array({change})}}}},
-					{{"command", "note.remove"},
-						{"parameters", {{"part", pressed->part}, {"notes", Json::array({next->id})}}}}}));
+				Json::array({{{"command", "note.glue"},
+					{"parameters", {{"part", pressed->part}, {"note", pressed->id}, {"next", next->id}}}}}));
 			return;
 		}
 		}
