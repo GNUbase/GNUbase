@@ -12,6 +12,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <utility>
@@ -61,6 +62,8 @@ namespace gnubase::ui
 		// Whether a selected track has a type, as track.add names them: e.g. when Set Root Key for Unassigned Events
 		// is in the context menu of the transpose track.
 		bool selectsType(const std::string& type) const;
+		// Whether a selected track has versions: an audio, instrument or MIDI track (docs/features/track-versions.md).
+		bool selectsVersions() const;
 
 		// Folding (reference manual p. 225): the tracks inside a folded folder are hidden, in the event display too.
 		// The heights and the folded folders are the project's (trackLayout.get, trackLayout.set), saved with it;
@@ -90,7 +93,10 @@ namespace gnubase::ui
 		// it), track.showUsedAutomation and track.hideAllAutomation; and for copying automation to other tracks between
 		// the locators (#125) track.copyAutomationAll, track.copyAutomationSelected,
 		// track.copyAutomationSelectedParameters (the selected automation tracks), track.pasteAutomationAll,
-		// track.pasteAutomationSelected and track.pasteAutomationSelectedParameters.
+		// track.pasteAutomationSelected and track.pasteAutomationSelectedParameters; and for the track versions
+		// (docs/features/track-versions.md) of the selected audio, instrument and MIDI tracks trackVersions.new,
+		// trackVersions.duplicate, trackVersions.rename (which asks in the document's rename-version.rml),
+		// trackVersions.remove, trackVersions.selectSameId and trackVersions.assignCommonId.
 		//
 		// A track with a channel has Show/Hide Automation (.automation-toggle, .checked while shown) in its lower
 		// left corner, and below its own row a .automation-row[lane] per automation track the event display shows:
@@ -133,9 +139,13 @@ namespace gnubase::ui
 		void layout();
 		void build();     // the rows, from the project
 		void showState(); // names, controls and state classes
-		void showTempo(); // the tempo track's Current Tempo and Type of New Tempo Points
-		void place();     // heights and scrolling, from the display's lanes
-		void hide();      // tells the display which tracks folded folders and the track visibility hide
+		bool showTempo(); // the tempo track's Current Tempo and Type of New Tempo Points; whether a text changed
+		void followTransport(const engine::Json& status); // Current Tempo, also while playing (#831)
+		// The cursor watch while playing, which Current Tempo follows (#831): only while the list has the field, so
+		// that the frames of other projects cost nothing (#1338). Made and dropped as playback and the rows change.
+		void followTempo();
+		void place(); // heights and scrolling, from the display's lanes
+		void hide();  // tells the display which tracks folded folders and the track visibility hide
 		void fold(std::set<uint64_t> folders); // folds those folders, unfolds the others, and tells the engine
 		// The heights and folded folders from trackLayout.get or trackLayout.changed; replace drops the other heights.
 		void loadLayout(const engine::Json& layout, bool replace);
@@ -159,6 +169,8 @@ namespace gnubase::ui
 		void markerChange(Rml::Element& control, const std::string& value);
 		// A ruler track's time format chosen or time offset typed (reference manual p. 159).
 		void rulerChange(Rml::Element& control, const std::string& value);
+		// The MIDI channel a MIDI track's row chose (channel.set midiChannel).
+		void midiChannelChange(Rml::Element& control, const std::string& value);
 		void step(int direction);
 		void reveal(uint64_t track); // scrolls the display so that the track's lane shows
 		void finishRename(bool keep);
@@ -206,6 +218,13 @@ namespace gnubase::ui
 		std::vector<uint64_t> versioned() const;
 		void showVersions();
 		void versionEvent(Rml::Event& event);
+		// The Track Versions pop-up menu (reference manual p. 231): the arrow at a track's name opens the document's
+		// #track-versions-menu, which the list fills with that track's versions and its functions, and runs clicks on.
+		void openVersionsMenu(uint64_t track);
+		void versionsMenuEvent(Rml::Event& event);
+		// Rename Version (p. 236): names the selected tracks' active version, asking in rename-version.rml.
+		void openRenameDialog();
+		void closedRenameDialog(Rml::Event& event);
 
 		EventDisplay& m_display;
 		EngineBinding& m_binding;
@@ -218,6 +237,7 @@ namespace gnubase::ui
 		uint64_t m_parameterLane = 0;            // the automation lane it was opened for
 		Rml::Element* m_versionMenu = nullptr;   // the document's #track-versions-list
 		std::string m_versionRml;                // what it shows
+		Rml::Element* m_versionsMenu = nullptr;  // the document's #track-versions-menu
 		std::set<uint64_t> m_selectedLanes;      // the selected automation tracks' lanes
 		std::vector<Row> m_tracks;               // every track in the project's order
 		std::map<uint64_t, size_t> m_index;
@@ -227,17 +247,22 @@ namespace gnubase::ui
 		engine::Json m_widths = engine::Json::object();        // ui.trackWidths
 		engine::Json m_defaultWidths = engine::Json::object(); // ui.trackWidths defaults by type
 		std::string m_tempoType = "auto";                      // editing.tempoType
-		bool m_showingTempo = false;                           // the tempo controls' change events aren't the user's
-		uint64_t m_loads = 0;                                  // the display's, when the rows were last built
+		// The rows' Current Tempo and Type of New Tempo Points, kept by showState so that a frame doesn't search for
+		// them (#1406); one whose row went is null.
+		std::vector<Rml::ObserverPtr<Rml::Element>> m_tempoFields;
+		bool m_showingTempo = false; // the tempo controls' change events aren't the user's
+		uint64_t m_loads = 0;        // the display's, when the rows were last built
 		bool m_layingOut = false;
 		uint64_t m_renaming = 0;
 		std::string m_renamed;                         // the name before renaming
 		bool m_warnBeforeRemoving = true;              // ui.removeTracksWarning
 		bool m_upDownTracksOnly = false;               // ui.upDownSelectsTracksOnly
+		bool m_showVersionName = true;                 // ui.showVersionName
 		Rml::ObserverPtr<Rml::Element> m_removeDialog; // remove-tracks.rml while open
 		std::vector<uint64_t> m_removing;              // the tracks it asks about
 		Rml::ObserverPtr<Rml::Element> m_chordDialog;  // a chord track dialog while open
 		std::vector<uint64_t> m_chordParts;            // the MIDI parts it is for
+		Rml::ObserverPtr<Rml::Element> m_renameDialog; // rename-version.rml while open
 
 		Drag m_drag = Drag::None;
 		uint64_t m_dragTrack = 0;
@@ -252,6 +277,8 @@ namespace gnubase::ui
 		std::map<std::string, std::function<void()>> m_actions;
 		std::function<void(uint64_t, bool)> m_onMarker;
 		std::vector<Subscription> m_subscriptions;
+		std::optional<Subscription> m_playback; // while playing, Current Tempo follows the cursor (#831)
+		bool m_playing = false;                 // the transport status followTransport last heard
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 		uint64_t m_addTrackMerges = 0; // addTrack's merge keys, one per double click
 	};

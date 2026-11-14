@@ -13,6 +13,7 @@
 #include <link.h>
 #endif
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -140,13 +141,25 @@ namespace gnubase::test
 	bool UiApp::waitUntil(const std::function<bool()>& done, std::chrono::milliseconds timeout)
 	{
 		const auto deadline = std::chrono::steady_clock::now() + timeout;
-		while (!done())
+		while (true)
 		{
-			if (std::chrono::steady_clock::now() >= deadline)
+			const bool late = std::chrono::steady_clock::now() >= deadline;
+			try
+			{
+				if (done())
+					return true;
+			}
+			catch (const engine::Json::exception&)
+			{
+				// The UI hasn't received the data done() reads yet, such as a display's project before its first
+				// answer (#1499): not done yet. Past the deadline the error is the failure's message.
+				if (late)
+					throw;
+			}
+			if (late)
 				return false;
 			shell().step(std::chrono::milliseconds(10));
 		}
-		return true;
 	}
 
 	void UiApp::setDpRatio(float ratio)
@@ -195,6 +208,35 @@ namespace gnubase::test
 		}
 	}
 
+	NoteProbe::NoteProbe(UiApp& app, uint64_t track) : m_app(app)
+	{
+		app.call("audio.setDevice", {{"blockSize", 128}, {"inputChannels", 0}, {"captureSeconds", 1}});
+		const engine::Json tracks = app.call("project.get").at("tracks");
+		const auto found = std::find_if(tracks.begin(), tracks.end(),
+			[track](const engine::Json& each) { return each.at("id").get<uint64_t>() == track; });
+		REQUIRE(found != tracks.end());
+		app.call("channel.set", {{"channel", found->at("channel")}, {"instrument", "noteProbe"}});
+		app.call("audio.render", {{"frames", 128}}); // the new graph
+		app.call("midi.capture", {{"start", true}});
+	}
+
+	bool NoteProbe::plays(const std::vector<std::vector<int>>& expected)
+	{
+		return m_app.waitUntil(
+			[&]
+			{
+				m_app.call("audio.render", {{"frames", 128}});
+				const engine::Json captured = m_app.call("midi.capture");
+				for (const engine::Json& message : captured.at("captured"))
+				{
+					const auto bytes = message.at("bytes").get<std::vector<int>>();
+					if ((bytes.at(0) & 0xE0) == 0x80)
+						m_played.push_back(bytes);
+				}
+				return m_played == expected;
+			});
+	}
+
 	double controlValue(UiApp& app, std::optional<ui::WindowId> window, const std::string& selector)
 	{
 		const engine::Json found = app.ui().dom(window, selector, 0).at("elements");
@@ -239,11 +281,14 @@ namespace gnubase::test
 			[this, direction, perAnswer]
 			{
 				for (int step = 0; step < perAnswer; ++step)
-				{
-					m_moved += 2 * direction;
-					m_context.ProcessMouseMove(m_at.x, m_at.y + m_moved, 0);
-				}
+					nudge(direction);
 			});
+	}
+
+	void LateDrag::nudge(int direction)
+	{
+		m_moved += 2 * direction;
+		m_context.ProcessMouseMove(m_at.x, m_at.y + m_moved, 0);
 	}
 
 	void LateDrag::release(bool stays)

@@ -751,6 +751,130 @@ TEST_CASE("warp quantizing keeps the markers within the real-time range", "[inte
 	CHECK(warpOf(client, loop.clip).at("markers") == Json::array({{{"position", 1000}, {"target", 250}}}));
 }
 
+// Follow-ups of #968 (#1129).
+TEST_CASE("warp quantizing leaves room for the markers after the one it moves", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	// Two markers 5 frames apart, 10 and 5 frames before the clip's end, both nearest to the quarter 2 frames after
+	// it. The first goes only as far as leaves the two sections after it a quarter of their 5 frames each, so that
+	// the second still finds a target between it and the end.
+	const Loop loop = addLoop(client, dir, clicks({1000, 25000}, 47998), "linear");
+	run(client, "clip.addWarpMarker", {{"clip", loop.clip}, {"position", 47988}});
+	run(client, "clip.addWarpMarker", {{"clip", loop.clip}, {"position", 47993}});
+	run(client, "quantize.set", {{"preset", "1/4"}, {"settings", {{"warpQuantize", true}}}});
+	run(client, "quantize.apply", {{"events", {loop.event}}});
+	CHECK(warpOf(client, loop.clip).at("markers") ==
+		Json::array({{{"position", 47988}, {"target", 47994}}, {{"position", 47993}, {"target", 47996}}}));
+}
+
+TEST_CASE("a clip loaded with a section beyond the real-time range still takes edits elsewhere", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	const Loop loop = addLoop(client, dir, clicks({1000, 25000, 52000, 73000}, 4 * g_quarter), "linear");
+	run(client, "clip.addWarpMarker", {{"clip", loop.clip}, {"position", 50000}});
+	run(client, "clip.addWarpMarker", {{"clip", loop.clip}, {"position", 80000}, {"target", 82000}});
+	run(client, "clip.addWarpMarker", {{"clip", loop.clip}, {"position", 90000}, {"target", 92000}});
+	const Loop other = addLoop(client, dir, clicks({1000, 25000, 52000, 73000}, 4 * g_quarter), "linear");
+	run(client, "clip.addWarpMarker", {{"clip", other.clip}, {"position", 30000}, {"target", 31000}});
+
+	// As in a project saved before the range was checked: the 6000 frames after the last marker play in 500.
+	const std::string file = (dir.path() / "old.dawproject").u8string();
+	run(client, "project.save", {{"path", file}, {"embedMedia", false}});
+	std::map<std::string, std::string> entries = test::readZip(file);
+	Json extension = Json::parse(entries.at("gnubase.json"));
+	for (Json& clip : extension.at("project").at("clips"))
+		if (clip.at("id") == loop.clip)
+			clip.at("warp").at("markers")[2]["target"] = 95500;
+	entries["gnubase.json"] = extension.dump();
+	test::writeZip(file, entries);
+	run(client, "project.load", {{"path", file}});
+	const Json old{{"position", 90000}, {"target", 95500}};
+	REQUIRE(warpOf(client, loop.clip).at("markers")[2] == old);
+
+	// Warp quantizing an event that ends before them: the marker at 50000 plays at 146000, nearest to the quarter at
+	// 144000.
+	const ObjectId event = run(client, "audioEvent.add",
+		{{"track", loop.track}, {"clip", loop.clip}, {"position", 4 * g_quarter}, {"offset", 0}, {"length", 60000}})
+							   .at("event")
+							   .at("id")
+							   .get<ObjectId>();
+	run(client, "quantize.set", {{"preset", "1/4"}, {"settings", {{"warpQuantize", true}}}});
+	run(client, "quantize.apply", {{"events", {event}}});
+	Json markers = warpOf(client, loop.clip).at("markers");
+	REQUIRE(markers.size() == 3);
+	CHECK(markers[0] == Json{{"position", 50000}, {"target", 48000}});
+	CHECK(markers[2] == old);
+
+	// Pasting the other clip's marker, and inserting one.
+	CHECK(run(client, "event.pasteWarpMarkers", {{"from", other.event}, {"events", {loop.event}}}).at("markers") == 1);
+	run(client, "clip.addWarpMarker", {{"clip", loop.clip}, {"position", 70000}});
+	markers = warpOf(client, loop.clip).at("markers");
+	CHECK(markers.size() == 5);
+	CHECK(markers.back() == old);
+	// The section itself is still checked when an edit changes it.
+	CHECK_THAT(reject(client, "clip.addWarpMarker", {{"clip", loop.clip}, {"position", 93000}, {"target", 95600}}),
+		ContainsSubstring("4 times"));
+	// A marker inserted on it, its target rounded: 93001 plays at 95750.08 (#1266). Both its sections stay beyond the
+	// range, as the section was.
+	run(client, "clip.addWarpMarker", {{"clip", loop.clip}, {"position", 93001}, {"target", 95750}});
+	CHECK(warpOf(client, loop.clip).at("markers").size() == 6);
+}
+
+// Follow-ups of #1273 (#1288).
+TEST_CASE("a clip in musical mode loaded without a tempo takes the project's at its first event", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	run(client, "project.set", {{"tempoTrackActive", true}});
+	run(client, "tempo.add", {{"position", 0}, {"bpm", 100.0}, {"ramp", false}});
+	run(client, "tempo.add", {{"position", 4 * g_ticksPerQuarter}, {"bpm", 140.0}, {"ramp", false}});
+	const Loop loop = addLoop(client, dir, clicks({1000, 25000}, 48000));
+	run(client, "audioEvent.set", {{"event", loop.event}, {"position", 8 * g_ticksPerQuarter}});
+	run(client, "clip.setWarp", {{"clip", loop.clip}, {"musical", true}, {"tempo", 120.0}});
+
+	// As in a file edited elsewhere: musical mode without a tempo, which commands and the DAWproject reader never
+	// write. Without one its length in beats would change with the project's tempo, as a MIDI file import does.
+	const std::string file = (dir.path() / "edited.dawproject").u8string();
+	run(client, "project.save", {{"path", file}, {"embedMedia", false}});
+	std::map<std::string, std::string> entries = test::readZip(file);
+	Json extension = Json::parse(entries.at("gnubase.json"));
+	for (Json& clip : extension.at("project").at("clips"))
+		if (clip.at("id") == loop.clip)
+			clip.at("warp")["tempo"] = 0.0;
+	entries["gnubase.json"] = extension.dump();
+	test::writeZip(file, entries);
+	run(client, "project.load", {{"path", file}});
+	CHECK(warpOf(client, loop.clip).at("tempo") == 140.0);
+}
+
+// Follow-ups of #1129 (#1266).
+TEST_CASE("a marker inserted next to a section at the limit of the real-time range may be off by its rounding only",
+	"[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	const Loop loop = addLoop(client, dir, clicks({1000, 25000, 52000, 73000}, 4 * g_quarter), "linear");
+	// The first 4000 frames play in 1000, a quarter, and the first 1000 of the other clip in 4000.
+	run(client, "clip.addWarpMarker", {{"clip", loop.clip}, {"position", 4000}, {"target", 1000}});
+	const Loop other = addLoop(client, dir, clicks({1000, 25000, 52000, 73000}, 4 * g_quarter), "linear");
+	run(client, "clip.addWarpMarker", {{"clip", other.clip}, {"position", 1000}, {"target", 4000}});
+	// A frame off the map: 8 frames in 1, which plays at 2, and 1 frame 5 times as long.
+	CHECK_THAT(reject(client, "clip.addWarpMarker", {{"clip", loop.clip}, {"position", 8}, {"target", 1}}),
+		ContainsSubstring("4 times"));
+	CHECK_THAT(reject(client, "clip.addWarpMarker", {{"clip", other.clip}, {"position", 1}, {"target", 5}}),
+		ContainsSubstring("4 times"));
+	// Rounded onto the map: 9 frames in 2 for the 2.25 the map plays them in.
+	run(client, "clip.addWarpMarker", {{"clip", loop.clip}, {"position", 9}, {"target", 2}});
+	CHECK(warpOf(client, loop.clip).at("markers") ==
+		Json::array({{{"position", 9}, {"target", 2}}, {{"position", 4000}, {"target", 1000}}}));
+}
+
 TEST_CASE("Crossfade closes a gap and overlaps through the warp of warped events", "[integration]")
 {
 	const test::TempDir dir;
@@ -1064,7 +1188,10 @@ TEST_CASE("warped events reach other applications through DAWproject's Warps", "
 		// whose grid would go on for billions of beats, and times so large that a beat more is the same time.
 		const std::vector<std::tuple<std::vector<std::pair<double, double>>, double, double>> cases{
 			{{{0.0, 0.0}, {1.0, 0.5}, {2.0, 0.500000001}}, 0.0, 8.0},
-			{{{1e17, -0.001}, {2e17, 1e16}}, 1.0000000000000016e17, 64.0}};
+			{{{1e17, -0.001}, {2e17, 1e16}}, 1.0000000000000016e17, 64.0},
+			// The audio's start so far before it that its frame is no 64-bit number, and the end within it (#1184,
+			// #1266).
+			{{{0.0, 0.0}, {1.0, 1e300}}, -1.0, 1.0}};
 		for (const auto& [points, playStart, duration] : cases)
 		{
 			pugi::xml_document document;
@@ -1094,6 +1221,43 @@ TEST_CASE("warped events reach other applications through DAWproject's Warps", "
 			REQUIRE(project.at("audioEvents").size() == 1);
 			CHECK(warpOf(client, project.at("audioEvents").at(0).at("clip").get<ObjectId>()).at("musical") == false);
 		}
+	}
+}
+
+// Follow-ups of #965 (#1183).
+TEST_CASE("imported events of a file with the same Warps share its clip and keep the fades they play", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	// At 240 BPM in musical mode the clip's 48000 frames play for 96000 at the project's 120: room for a fade in of
+	// 60000, longer than the clip.
+	const Loop loop = addLoop(client, dir, clicks({1000, 25000}, 2 * g_quarter));
+	run(client, "clip.setWarp", {{"clip", loop.clip}, {"musical", true}});
+	run(client, "clip.setWarp", {{"clip", loop.clip}, {"tempo", 240.0}});
+	run(client, "audioEvent.setFades", {{"event", loop.event}, {"fadeIn", {{"length", 60000}}}});
+	run(client, "audioEvent.add",
+		{{"track", loop.track}, {"clip", loop.clip}, {"position", 8 * g_ticksPerQuarter}, {"offset", 0},
+			{"length", 2 * g_quarter}});
+	const std::string file = (dir.path() / "warp.dawproject").u8string();
+	run(client, "project.save", {{"path", file}, {"embedMedia", false}});
+	std::map<std::string, std::string> entries = test::readZip(file);
+	REQUIRE(entries.erase("gnubase.json") == 1);
+	const std::string other = (dir.path() / "other.dawproject").u8string();
+	test::writeZip(other, entries);
+	run(client, "project.load", {{"path", other}});
+
+	const Json project = run(client, "project.get");
+	REQUIRE(project.at("audioEvents").size() == 2);
+	REQUIRE(project.at("clips").size() == 1);
+	const Json& clip = project.at("clips")[0];
+	CHECK(clip.at("warp").at("musical") == true);
+	CHECK(std::abs(clip.at("warp").at("tempo").get<double>() - 240.0) < 0.01);
+	for (const Json& event : project.at("audioEvents"))
+	{
+		CHECK(event.at("clip") == clip.at("id"));
+		if (event.at("position") == 0)
+			CHECK(std::abs(event.at("fadeIn").at("length").get<int64_t>() - 60000) <= 1);
 	}
 }
 

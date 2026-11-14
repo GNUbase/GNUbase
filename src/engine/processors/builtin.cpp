@@ -2,6 +2,8 @@
 #include "engine/processors/builtin.h"
 
 #include "engine/engine.h"
+#include "engine/midi/drummaps.h"
+#include "engine/processors/drummachine.h"
 #include "engine/processors/effects.h"
 #include "engine/processors/gainpan.h"
 #include "engine/processors/generators.h"
@@ -84,6 +86,54 @@ namespace gnubase::engine::processors
 			return names;
 		}
 
+		// The drum machine's (#182): each pad's, then the global ones.
+		std::vector<ParameterInfo> drumMachineParameters()
+		{
+			using Drum = DrumMachine;
+			std::vector<ParameterInfo> parameters;
+			for (int pad = 0; pad < g_drumPads; ++pad)
+			{
+				const std::string prefix = "Pad " + std::to_string(pad) + " ";
+				const auto id = [pad](Drum::PadParameter parameter) { return Drum::padParameter(pad, parameter); };
+				const std::vector<ParameterInfo> list = {
+					choice(id(Drum::Instrument), prefix + "instrument",
+						{"Off", "Sample", "Kick", "Snare", "Hi-hat", "Tom", "Clap", "Cymbal", "Cowbell"}, 0.0),
+					number(id(Drum::Level), prefix + "level", -96.0, 12.0, 0.0, "dB"),
+					number(id(Drum::Pan), prefix + "pan", -1.0, 1.0, 0.0),
+					onOff(id(Drum::Mute), prefix + "mute", false), onOff(id(Drum::Solo), prefix + "solo", false),
+					number(id(Drum::Tune), prefix + "tune", -24.0, 24.0, 0.0, "st"),
+					number(id(Drum::Tone), prefix + "tone", 0.0, 100.0, 50.0, "%"),
+					number(id(Drum::Noise), prefix + "noise", 0.0, 100.0, 50.0, "%"),
+					number(id(Drum::Hold), prefix + "hold", 0.0, 10000.0, 0.0, "ms"),
+					number(id(Drum::Decay), prefix + "decay", 1.0, 10000.0, 300.0, "ms"),
+					number(id(Drum::VelocityToLevel), prefix + "velocity to level", 0.0, 100.0, 100.0, "%"),
+					onOff(id(Drum::OneShot), prefix + "one shot", true), onOff(id(Drum::Gate), prefix + "gate", false),
+					number(id(Drum::Start), prefix + "start", 0.0, 1.0, 0.0),
+					number(id(Drum::End), prefix + "end", 0.0, 1.0, 1.0),
+					onOff(id(Drum::Reverse), prefix + "reverse", false),
+					whole(id(Drum::ExclusiveGroup), prefix + "exclusive group", 0.0, 32.0, 0.0),
+					number(id(Drum::DelaySend), prefix + "delay send", 0.0, 100.0, 0.0, "%"),
+					number(id(Drum::ReverbSend), prefix + "reverb send", 0.0, 100.0, 0.0, "%")};
+				parameters.insert(parameters.end(), list.begin(), list.end());
+			}
+			const std::vector<ParameterInfo> global = {number(Drum::MasterLevel, "Level", -96.0, 12.0, 0.0, "dB"),
+				onOff(Drum::BypassEffects, "Bypass all effects", false), onOff(Drum::DelayOn, "Delay", true),
+				number(Drum::DelayTime, "Delay time", 1.0, 5000.0, 375.0, "ms"),
+				onOff(Drum::DelaySync, "Delay sync", false),
+				choice(Drum::DelayNote, "Delay note", noteNames(), dsp::Delay::g_defaultNote),
+				number(Drum::DelayFeedback, "Delay feedback", 0.0, 100.0, 30.0, "%"),
+				onOff(Drum::DelayPingPong, "Delay ping-pong", false),
+				number(Drum::DelayToReverb, "Delay to reverb", 0.0, 100.0, 0.0, "%"),
+				number(Drum::DelayLevel, "Delay level", -96.0, 12.0, 0.0, "dB"), onOff(Drum::ReverbOn, "Reverb", true),
+				number(Drum::ReverbPredelay, "Reverb predelay", 0.0, 200.0, 10.0, "ms"),
+				number(Drum::ReverbSize, "Reverb room size", 0.0, 100.0, 50.0, "%"),
+				number(Drum::ReverbTime, "Reverb time", 0.1, 20.0, 1.5, "s"),
+				number(Drum::ReverbDamping, "Reverb damping", 0.0, 100.0, 50.0, "%"),
+				number(Drum::ReverbLevel, "Reverb level", -96.0, 12.0, 0.0, "dB")};
+			parameters.insert(parameters.end(), global.begin(), global.end());
+			return parameters;
+		}
+
 		template <typename T> std::function<std::shared_ptr<graph::Processor>()> make()
 		{
 			return [] { return std::make_shared<T>(); };
@@ -120,6 +170,14 @@ namespace gnubase::engine::processors
 						 choice(
 							 dsp::Dither::NoiseShaping, "Noise shaping", {"Off", "First order", "Second order"}, 0.0)}},
 					make<Dither>()},
+				{{"drumMachine", "Drum machine",
+					 "The drum track's instrument: 128 pads, one per MIDI note, each playing a sample or a "
+					 "percussion synth (kick, snare, hi-hat, tom, clap, cymbal, cowbell) with its own level, pan, "
+					 "tuning, envelope and exclusive group, and sends to a global delay and reverb. Pad n's "
+					 "parameters have the ids n * 32 and up; the global ones 4096 and up. The pads' samples come "
+					 "from the track (drum.loadPad).",
+					 true, drumMachineParameters()},
+					make<DrumMachine>()},
 				{{"eq", "Parametric EQ",
 					 "Six bands, each a bell, low or high shelf, or low or high cut with a slope of 6 to 48 dB/oct.",
 					 false, equalizerParameters()},
@@ -377,7 +435,9 @@ namespace gnubase::engine::processors
 			{"processor.list", 1,
 				"Every built-in processor: its id, name, description, whether it is an instrument, and its parameters "
 				"with their ids, ranges, defaults and units. A stepped parameter takes whole numbers only; its "
-				"options, if any, name its values from the minimum on.",
+				"options, if any, name its values from the minimum on. The drum machine's has padNames too: the "
+				"name of each pad, by note, that has neither a name of its own nor a sample, the General MIDI "
+				"sound's of its note (empty outside them).",
 				CommandInfo{}.parameters,
 				Json::parse(R"({"type": "object", "properties": {"processors": {"type": "array"}},
 					"required": ["processors"]})"),
@@ -386,7 +446,13 @@ namespace gnubase::engine::processors
 			{
 				Json list = Json::array();
 				for (const BuiltinInfo& info : builtins())
-					list.push_back(toJson(info));
+				{
+					Json item = toJson(info);
+					if (info.id == "drumMachine") // as drumPadName names the pads (#1361)
+						for (const DrumSound& sound : midi::gmDrumMap().sounds)
+							item["padNames"].push_back(sound.name);
+					list.push_back(std::move(item));
+				}
 				return Json{{"processors", std::move(list)}};
 			});
 		engine.registerCommand(

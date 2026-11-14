@@ -8,6 +8,7 @@
 #include "engine/midi/midivalues.h"
 #include "engine/settings/usersettings.h"
 #include "platform/midi/port.h"
+#include "plugin/events.h"
 
 #include <algorithm>
 #include <array>
@@ -135,6 +136,24 @@ namespace gnubase::engine
 				}
 				add(0xC0U, event.key);
 				break;
+			case Type::NoteExpression:
+				// MPE on the note's channel (docs/features/note-expression.md); the other expressions have no MIDI
+				// 1.0 message.
+				if (event.parameter == plugin::expressionId(plugin::NoteExpression::Tuning))
+				{
+					const uint32_t bend =
+						midi::pitchBendToMidi1(midi::semitonesToBend(event.parameterValue, midi::g_mpePitchRange));
+					add(0xE0U, bend, 3, bend >> 7U);
+				}
+				else if (event.parameter == plugin::expressionId(plugin::NoteExpression::Pressure))
+				{
+					add(0xD0U, midi::controllerToMidi1(midi::controllerFromUnit(event.parameterValue)));
+				}
+				else if (event.parameter == plugin::expressionId(plugin::NoteExpression::Brightness))
+				{
+					add(0xB0U, 74, 3, midi::controllerToMidi1(midi::controllerFromUnit(event.parameterValue)));
+				}
+				break;
 			case Type::SysEx:
 			case Type::Parameter:
 				break;
@@ -194,8 +213,10 @@ namespace gnubase::engine
 					[](const auto& entry, ObjectId channel) { return entry.first < channel; });
 				const uint32_t offset =
 					message.position > position ? static_cast<uint32_t>(message.position - position) : 0;
-				wait = found != sequencers.end() && found->first == message.channel &&
-					!found->second->input().add(toEvent(message.message, offset));
+				graph::ProcessEvent event = toEvent(message.message, offset);
+				event.drumSound = message.drumSound;
+				wait =
+					found != sequencers.end() && found->first == message.channel && !found->second->input().add(event);
 			}
 			if (wait)
 				m_waiting[kept++] = message;
@@ -225,13 +246,38 @@ namespace gnubase::engine
 	{
 		std::array<audio::MidiMessage, 3> messages;
 		for (const auto& [channel, instrument] : instruments)
-			for (const graph::ProcessEvent& event : instrument->played())
+		{
+			const auto keep = [&, channel = channel](const graph::ProcessEvent& event)
 			{
 				const size_t count = toMidi1(event, messages);
 				for (size_t i = 0; i < count; ++i)
 					if (!m_captured.tryPush(Message{channel, position + event.offset, messages[i]}))
 						m_dropped.fetch_add(1, std::memory_order_relaxed);
+			};
+			// The expression of a note that starts at the same frame, which follows its note-on, as MPE before it:
+			// its initial pitch bend, pressure and CC 74 (docs/features/note-expression.md).
+			const graph::EventBuffer& played = instrument->played();
+			const auto initial = [&played](size_t expression, size_t noteOn)
+			{
+				const graph::ProcessEvent& a = played[expression];
+				const graph::ProcessEvent& b = played[noteOn];
+				return a.type == graph::ProcessEvent::Type::NoteExpression &&
+					b.type == graph::ProcessEvent::Type::NoteOn && a.offset == b.offset && a.key == b.key &&
+					a.channel == b.channel;
+			};
+			for (size_t i = 0; i < played.size(); ++i)
+			{
+				bool sent = false; // before its note-on
+				for (size_t j = i; j > 0 && played[j - 1].offset == played[i].offset && !sent; --j)
+					sent = initial(i, j - 1);
+				if (sent)
+					continue;
+				for (size_t j = i + 1; j < played.size() && played[j].offset == played[i].offset; ++j)
+					if (initial(j, i))
+						keep(played[j]);
+				keep(played[i]);
 			}
+		}
 	}
 
 	void AudioEngine::registerMidiTapCommands(Engine& engine)
@@ -245,9 +291,14 @@ namespace gnubase::engine
 				"frames the device has processed already play at the start of its next block, those for one frame in "
 				"the order they came. They wait until the device processes their block, at most 4096 at a time, and "
 				"are dropped when the device changes; a call whose messages don't all fit fails and injects none. "
-				"midi.capture returns what instruments played.",
+				"drumSounds: on a track with a drum map, the notes' keys are drum sounds' pitches, not I-notes: they "
+				"play their sounds as the track's notes do but are neither recorded nor kept for "
+				"midi.insertRetrospective (the "
+				"drum editor auditions sounds so; reference manual p. 1236). midi.capture returns what instruments "
+				"played.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["channel", "messages"],
-					"properties": {"channel": {"type": "integer"}, "messages": {"type": "array", "items": {
+					"properties": {"channel": {"type": "integer"}, "drumSounds": {"type": "boolean"},
+					"messages": {"type": "array", "items": {
 						"type": "object", "additionalProperties": false, "required": ["position", "bytes"],
 						"properties": {"position": {"type": "integer", "minimum": 0}, "bytes": {"type": "array",
 							"items": {"type": "integer", "minimum": 0, "maximum": 255}}}}}}})"),
@@ -261,12 +312,13 @@ namespace gnubase::engine
 					"channel " + std::to_string(channel) + " is not a MIDI or instrument track's channel");
 				const Json& messages = parameters.at("messages");
 				require(messages.size() <= MidiTap::g_size, "at most 4096 messages at a time");
+				const bool drumSounds = parameters.value("drumSounds", false);
 				std::vector<MidiTap::Message> injected;
 				injected.reserve(messages.size());
 				for (size_t i = 0; i < messages.size(); ++i)
 				{
 					injected.push_back({channel, messages[i].at("position").get<uint64_t>(),
-						channelMessage(messages[i].at("bytes"), "messages[" + std::to_string(i) + "]: ")});
+						channelMessage(messages[i].at("bytes"), "messages[" + std::to_string(i) + "]: "), drumSounds});
 				}
 				require(m_tap.inject(injected),
 					"too many MIDI messages wait for the audio device; none were injected, try again later");
@@ -278,10 +330,15 @@ namespace gnubase::engine
 				"as a MIDI input port's do, and the audio device places them in its next block. The MIDI and "
 				"instrument tracks set to all MIDI inputs play them while they monitor or are record-enabled (MIDI "
 				"thru), and the record-enabled ones record them. bytes: a status byte from 0x80 to 0xEF and its data "
-				"bytes. The UI's on-screen keyboard window plays its notes through this. If the input waiting for the "
-				"audio device has no room left, the call fails and says how many of its messages were played.",
+				"bytes. The UI's on-screen keyboard window plays its notes through this. With chordPads they are the "
+				"chord pads' notes instead (chordPads.trigger plays through this), of player (0 to 7, the chord pads' "
+				"player whose voicings they are): they play into the tracks whose "
+				"MIDI input is the chord pads, and with Chord Pad Output Mode on (chordPads.set outputMode) into "
+				"those of all MIDI inputs too. If the input waiting for the audio device has no room left, the call "
+				"fails and says how many of its messages were played.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["messages"],
-					"properties": {"messages": {"type": "array", "items": {"type": "object",
+					"properties": {"chordPads": {"type": "boolean"}, "player": {"type": "integer", "minimum": 0, "maximum": 7},
+					"messages": {"type": "array", "items": {"type": "object",
 						"additionalProperties": false, "required": ["bytes"], "properties": {"bytes": {"type": "array",
 							"items": {"type": "integer", "minimum": 0, "maximum": 255}}}}}}})"),
 				Json::object(), false},
@@ -292,8 +349,10 @@ namespace gnubase::engine
 				played.reserve(messages.size());
 				for (size_t i = 0; i < messages.size(); ++i)
 					played.push_back(channelMessage(messages[i].at("bytes"), "messages[" + std::to_string(i) + "]: "));
+				const bool pads = context.parameters().value("chordPads", false);
+				const auto player = context.parameters().value("player", size_t{0});
 				for (size_t i = 0; i < played.size(); ++i)
-					require(m_midi.play(played[i]),
+					require(pads ? m_midi.playPads(played[i], player) : m_midi.play(played[i]),
 						"too much MIDI input waits for the audio device; " + std::to_string(i) +
 							" of the messages were played");
 				return Json::object();
@@ -304,8 +363,12 @@ namespace gnubase::engine
 				"its instrument track's channel, its frame position on the audio device and its bytes: the events of "
 				"the track's parts, of the MIDI tracks routed to it and what midi.inject played into them, with "
 				"controller automation and the note-offs of a stop. A program change with a bank comes as bank "
-				"select MSB and LSB, then the program change; SysEx isn't captured. dropped counts the messages that "
-				"didn't fit: while nobody reads, newer messages are dropped. start: true starts a fresh capture; it "
+				"select MSB and LSB, then the program change; SysEx isn't captured. Per-note expression comes as MPE "
+				"on the note's channel: tuning as pitch bend over 48 semitones, pressure as channel pressure, "
+				"brightness as CC 74, a note's initial ones before its note-on; a note on a channel whose notes "
+				"express one of them and that has no point of it at its start gets MPE's initial value (a centered "
+				"bend, no pressure, CC 74 at 64). dropped counts the messages that didn't fit: while nobody reads, "
+				"newer messages are dropped. start: true starts a fresh capture; it "
 				"drops what was captured so far and returns nothing. Each call empties what it returns, so a repeated "
 				"call doesn't return the same messages again.",
 				Json::parse(R"({"type": "object", "additionalProperties": false,
@@ -348,7 +411,8 @@ namespace gnubase::engine
 				"with the new parts mode and the user settings midi.snapPartsToBars and midi.recordFilter. What "
 				"came during playback goes where it played; what came in stop mode goes at the project cursor, with "
 				"its timing. Input after a pause of over 30 s in stop mode starts the buffer afresh, and so does "
-				"input after an insert. Returns what recording.add returns.",
+				"input after an insert. It is no recording of the chord track: it makes no chord events. Returns what "
+				"recording.add returns.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["track"],
 					"properties": {"track": {"type": "integer"}}})"),
 				Json::parse(R"({"type": "object", "properties": {"parts": {"type": "array"}},
@@ -363,6 +427,7 @@ namespace gnubase::engine
 				const double ratio = m_snapshots.latest().sampleRate / m_device->format().sampleRate;
 				const time::Samples cursor = m_transport.position();
 				MidiTakeBuilder builder;
+				builder.setMpe(mpePitchRange(m_settings));
 				time::Samples start = -1;
 				int64_t stopped = -1; // the device frame of the first input in stop mode
 				for (const RetrospectiveEvent& kept : events)
@@ -385,6 +450,7 @@ namespace gnubase::engine
 				const Json take = {{"position", start}, {"length", builder.last() - start + 1}};
 				return context.call("recording.add",
 					{{"midiMode", "newParts"}, {"snapToBars", m_settings.get(settings::g_midiSnapPartsToBars)},
+						{"chordEvents", false},
 						{"tracks",
 							Json::array({{{"track", track}, {"takes", Json::array({take})}, {"notes", builder.notes()},
 								{"controllers", builder.controllers()}}})}});

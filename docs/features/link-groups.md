@@ -19,10 +19,14 @@ fader itself is in [mixer.md](mixer.md), mute, solo and listen in [solo-mute-lis
   whose last channel goes, to another group or with its track, goes too (`linkGroup.removed`), as linking needs a
   channel; its VCA fader stays and controls nothing.
 - **What a group links** (p. 458): `volume` (on by default) moves the other channels' faders by as much as one moved,
-  stopping at their ends; `pan` likewise; `mute` passes mute, solo, solo defeat and listen on as they are, `record`
+  stopping at their ends; `pan` likewise (both commands below through `followLinkedMove` in
+  `src/engine/document/document.cpp`, so the rules can't drift apart); `mute` passes mute, solo, solo defeat and listen on as they are, `record`
   record enable and monitor; `eq`, `dynamics` (the strip) and `sends` (on by default) the changes of those sections
   ([channel-settings.md](channel-settings.md)). `channel.set` does it in the same undo step, announcing each channel;
-  with `linked` false it changes only the channel, as the mixer's Sus does (p. 460). Exclusive solo leaves the
+  with `linked` false it changes only the channel, as the mixer's Sus does (p. 460). `parameter.set` passes the same
+  parameters on in the same way ([parameters.md](parameters.md)): the fader's volume, pan and mute, and the equalizer's
+  and the dynamics' section parameters, but not the pre section's, which `channel.set` doesn't pass on either
+  ([channel-strip.md](channel-strip.md)), nor an instrument's, a plugin's or a MIDI effect's. Exclusive solo leaves the
   channels the solo went to soloed.
 - **VCA faders** (pp. 515–519). A group with a VCA fader doesn't link the volume: giving it one turns `volume` off,
   taking it away turns it back on (p. 517), and `volume` with a VCA fader is refused. The VCA fader's buttons go on
@@ -65,14 +69,14 @@ the display line's pop-up menu (p. 459).
 
 ## Checks
 
-- `tests/linkgroups_tests.cpp`: linked channels pass the fader and the pan on relatively and the buttons as they
-  are, `linked` false, exclusive solo, one undo step; a channel moving between groups, removing tracks and
-  unlinking; refusals. VCA tracks' channels and their parameter; a VCA fader turns off the volume link, passes its
-  buttons on through a nested VCA fader in one undo step, refuses loops, leaves the group it controlled for another
-  one; removing a VCA track turns the volume link back on; groups without channels go; default names stay unique;
-  saving and loading. Rendered through the dummy device: the reference manual's nested example (-3, -10 and
-  +4 dB play at -9 dB), a VCA ramp over a static channel fader exactly, and a VCA ramp over the channel's own ramp
-  within 0.001.
+- `tests/linkgroups_tests.cpp`: linked channels pass the fader and the pan on relatively and the buttons as they are,
+  `linked` false, exclusive solo, one undo step; `parameter.set` passing on what the group links and not what it
+  doesn't; a channel moving between groups, removing tracks and unlinking; refusals. VCA tracks' channels and their
+  parameter; a VCA fader turns off the volume link, passes its buttons on through a nested VCA fader in one undo step,
+  refuses loops, leaves the group it controlled for another one; removing a VCA track turns the volume link back on;
+  groups without channels go; default names stay unique; saving and loading. Rendered through the dummy device: the
+  reference manual's nested example (-3, -10 and +4 dB play at -9 dB), a VCA ramp over a static channel fader exactly,
+  and a VCA ramp over the channel's own ramp within 0.001.
 - `tests/mixerwindow_tests.cpp`: a VCA strip's fader and buttons, its group drop-down list and the display line.
-- `tests/dawproject_tests.cpp`: VCA fader loops in a file are left out, and another application's VCA channel
-  loses its pan, sends and destination.
+- `tests/dawproject_tests.cpp`: VCA fader loops in a file are left out, and another application's VCA channel loses its
+  pan, sends and destination.

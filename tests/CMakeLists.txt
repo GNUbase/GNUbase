@@ -1,8 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 add_library(gnubase-testutils STATIC
+	testutils/commandholds.h
 	testutils/fakeui.cpp testutils/fakeui.h
 	testutils/goldenimage.cpp testutils/goldenimage.h
 	testutils/heldjob.cpp testutils/heldjob.h
+	testutils/library.h
+	testutils/slowframe.h
 	testutils/testutils.cpp testutils/testutils.h)
 target_include_directories(gnubase-testutils PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(gnubase-testutils PUBLIC gnubase-ui)
@@ -64,6 +67,8 @@ add_executable(gnubase-tests
 	docking_tests.cpp
 	document_tests.cpp
 	drumeditor_ui_tests.cpp
+	drummachine_tests.cpp
+	drummachine_ui_tests.cpp
 	drummaps_tests.cpp
 	editors_tests.cpp
 	effects_tests.cpp
@@ -131,6 +136,7 @@ add_executable(gnubase-tests
 	mixerwindow_tests.cpp
 	monitoring_tests.cpp
 	multicore_tests.cpp
+	noteexpression_tests.cpp
 	onscreenkeyboard_tests.cpp
 	parameter_tests.cpp
 	patterneditor_ui_tests.cpp
@@ -379,6 +385,7 @@ endfunction()
 gnubase_add_shell_test("the clang-tidy cache reruns clang-tidy only when an input changed" clang_tidy_cache_tests.sh)
 gnubase_add_shell_test("the keyword guard blocks private keywords in commits and pull requests" keyword_guard_tests.sh)
 gnubase_add_shell_test("the license header check lists files without the SPDX header" spdx_check_tests.sh)
+gnubase_add_shell_test("tidy-changed.sh checks the changed lines and 5 around them" tidy_changed_tests.sh)
 
 # Benchmarks print measurements for design notes; they are not part of the test run.
 option(GNUBASE_BENCHMARKS "Build the benchmarks in tests/bench" OFF)

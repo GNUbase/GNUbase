@@ -14,11 +14,13 @@
 
 #include <chrono>
 #include <cstdlib>
+#include <filesystem>
 #include <optional>
 #include <set>
 #include <string>
 #include <utility>
 #include <variant>
+#include <vector>
 
 using namespace gnubase;
 using Catch::Matchers::ContainsSubstring;
@@ -81,10 +83,17 @@ namespace
 		return element(app, selector).value("attributes", Json::object()).contains("checked");
 	}
 
-	void click(test::UiApp& app, const std::string& selector)
+	void click(test::UiApp& app, const std::string& selector, const std::vector<std::string>& modifiers = {})
 	{
-		app.ui().click(std::nullopt, {selector, 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+		app.ui().click(std::nullopt, {selector, 0, std::nullopt}, ui::MouseButton::Left, 1, modifiers);
 		app.shell().step(std::chrono::milliseconds(0));
+	}
+
+	// What a control shows; empty for one that isn't there.
+	std::string shown(test::UiApp& app, const std::string& selector)
+	{
+		const Json found = elements(app, selector);
+		return found.empty() ? std::string() : found[0].value("value", std::string());
 	}
 
 	// Replaces the text of a text field.
@@ -105,6 +114,21 @@ namespace
 		click(app, select);
 	}
 
+	// Presses a key. A drop-down list moves its selection with the arrow keys while it is open, which is when
+	// its change event runs.
+	void press(test::UiApp& app, const std::string& keys)
+	{
+		app.ui().key(std::nullopt, keys);
+		app.shell().step(std::chrono::milliseconds(0));
+	}
+
+	// Clicks a button of the confirmation dialog (confirm.rml) and waits for it to close.
+	void confirm(test::UiApp& app, const std::string& button)
+	{
+		REQUIRE(app.waitUntil([&app, &button] { return !elements(app, button).empty(); }));
+		click(app, button);
+		REQUIRE(app.waitUntil([&app] { return elements(app, "#confirm-dialog").empty(); }));
+	}
 	bool open(test::UiApp& app)
 	{
 		return !elements(app, "#preferences").empty();
@@ -137,52 +161,6 @@ namespace
 			if (entry.at("key") == key)
 				return entry;
 		return Json::object();
-	}
-
-	// The user settings that aren't preferences: they have their own place in the UI, where the user changes them,
-	// or are kept by the UI itself. Every other user setting must be on a page of the dialog.
-	const std::set<std::string>& elsewhere()
-	{
-		static const std::set<std::string> keys = {
-			"audio.backend",                 // Studio Setup
-			"audio.blockSize",               // Studio Setup
-			"audio.busPresets",              // Audio Connections' presets
-			"audio.device",                  // Studio Setup
-			"audio.fallbackDevice",          // Studio Setup
-			"audio.listenDim",               // the control room's listen settings
-			"audio.listenLevel",             // the control room's listen settings
-			"audio.portSettings",            // Studio Setup
-			"audio.sampleRate",              // Studio Setup
-			"editing.importAudioOneTrack",   // the Import Options dialog; not among the manual's preferences
-			"editing.tempoType",             // the tempo track's and tempo editor's type of new tempo events
-			"meter.resetOnStart",            // the loudness meter's own setting
-			"meter.rmsAes17",                // the master meter's own settings
-			"meter.rmsResolution",           // the master meter's own settings
-			"midi.devices",                  // the MIDI device manager
-			"midi.portSettings",             // Studio Setup
-			"preferences.presets",           // the dialog's presets themselves
-			"transport.cycleFollowsMarkers", // the markers window and the Transport menu
-			"transport.tapTempoMode",        // the tempo track's Tap Tempo Mode menu
-			"ui.controllerLanePresets",      // the MIDI editors' controller lane presets
-			"ui.keyCommandPresets",          // the key commands dialog's presets
-			"ui.keyCommands",                // the key commands dialog
-			"ui.layout",                     // the windows' zones and panels, as the user arranges them
-			"ui.macros",                     // the key commands dialog's macros
-			"ui.markerColumns",              // the markers window
-			"ui.markerIds",                  // the marker track
-			"ui.markersAutoScroll",          // the markers window
-			"ui.markersSyncSelection",       // the markers window
-			"ui.noWorkspaceLayout",          // the workspaces' No Workspace
-			"ui.samplerPanel",               // the sampler panel's toolbar
-			"ui.setupPresets",               // the setup panes' presets
-			"ui.timeDisplay",                // the time display window
-			"ui.timeFormats",                // the transport bar's displays
-			"ui.trackControls",              // the track controls settings dialog
-			"ui.trackWidths",                // the track list's splitters
-			"ui.workspaces",                 // the workspaces
-			"ui.zoomPresets",                // the zoom presets
-		};
-		return keys;
 	}
 }
 
@@ -228,11 +206,19 @@ TEST_CASE("preference presets are saved, renamed and removed in the user setting
 	// Saving it changes no preference.
 	CHECK(setting(client, "audio.mutePreSends") == false);
 
-	// Values must be preferences that fit their settings.
+	// Values must be preferences that fit their settings: settings.list says which settings are preferences.
+	const Json list = run(client, "settings.list");
+	CHECK(entryOf(list, "audio.mutePreSends").at("preference") == true);
+	CHECK(entryOf(list, "preferences.presets").at("preference") == false);
 	CHECK_THAT(reject(client, "preferences.savePreset", {{"name", "x"}, {"values", {{"ui.zoom", 1}}}}),
 		ContainsSubstring("ui.zoom"));
 	CHECK_THAT(reject(client, "preferences.savePreset", {{"name", "x"}, {"values", {{"ui.scale", 40}}}}),
 		ContainsSubstring("ui.scale"));
+	// A user setting that isn't a preference, such as one Studio Setup or the layout has, stays out of presets.
+	CHECK_THAT(reject(client, "preferences.savePreset", {{"name", "x"}, {"values", {{"audio.device", "dummy"}}}}),
+		ContainsSubstring("audio.device"));
+	CHECK_THAT(reject(client, "preferences.savePreset", {{"name", "x"}, {"values", {{"ui.layout", Json::object()}}}}),
+		ContainsSubstring("ui.layout"));
 	CHECK_THAT(reject(client, "preferences.savePreset",
 				   {{"name", "x"}, {"values", {{"preferences.presets", Json::object()}}}}),
 		ContainsSubstring("preferences.presets"));
@@ -262,23 +248,31 @@ TEST_CASE("preference presets are saved, renamed and removed in the user setting
 	CHECK(setting(again, "preferences.presets") == Json({{"Mix", mixing}}));
 }
 
-TEST_CASE("every user setting is on a page of the preferences dialog or has a place of its own", "[ui]")
+TEST_CASE("the preferences dialog shows every preference and nothing else", "[ui]")
 {
 	test::UiApp app({1000, 760});
 	openDialog(app);
 	std::set<std::string> shown;
 	for (const Json& control : elements(app, ".preference"))
 		shown.insert(control.at("attributes").at("setting").get<std::string>());
+
+	// The definitions say which settings are preferences; the ones that aren't have a place of their own in the UI,
+	// where the user changes them, or the UI keeps them.
+	std::set<std::string> defined;
 	for (const engine::settings::Definition& definition : engine::settings::userFormat().definitions)
-	{
-		INFO(definition.key);
-		CHECK(shown.count(definition.key) + elsewhere().count(definition.key) == 1);
-	}
+		defined.insert(definition.key);
 	for (const std::string& key : shown)
 	{
 		INFO(key);
-		CHECK(elsewhere().count(key) == 0);
+		CHECK(defined.count(key) == 1);
 	}
+	for (const engine::settings::Definition& definition : engine::settings::userFormat().definitions)
+	{
+		INFO(definition.key);
+		const bool onAPage = shown.count(definition.key) == 1;
+		CHECK(onAPage == definition.preference);
+	}
+	CHECK(shown.size() > 20);
 }
 
 TEST_CASE("the preferences dialog shows each preference and changes it through the engine", "[ui]")
@@ -388,6 +382,20 @@ TEST_CASE("the preferences dialog's Apply, Cancel and Defaults", "[ui]")
 	CHECK_THAT(text(app, "#preferences-message"), ContainsSubstring("Maximum Number of Auto Save Files"));
 }
 
+TEST_CASE("Enter in a preference's field applies the dialog and closes it", "[ui]")
+{
+	// The dialog's Enter clicks its button.primary (ui/popupwidgets.cpp), which is the OK button.
+	test::UiApp app({1000, 760});
+	openDialog(app);
+	page(app, "general");
+	REQUIRE(shown(app, "#pref-project-autoSaveFiles") == "5");
+	type(app, "#pref-project-autoSaveFiles", "9");
+	app.ui().key(std::nullopt, "Return");
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(closed(app));
+	CHECK(app.call("settings.get", {{"key", "project.autoSaveFiles"}}).at("value") == 9);
+}
+
 TEST_CASE("the preferences dialog's preferences take effect", "[ui]")
 {
 	test::UiApp app({1000, 760});
@@ -493,4 +501,149 @@ TEST_CASE("the preferences dialog saves, chooses, renames and deletes preference
 		Json({{"General",
 			{{"project.autoSave", true}, {"project.autoSaveFiles", 8}, {"project.autoSaveInterval", 15}}}}));
 	CHECK(element(app, "#preferences-preset").at("value") == "");
+
+	// Delete without a chosen preset says why and leaves the name field alone.
+	type(app, "#preferences-preset-name", "Whole Set");
+	click(app, "#preferences-delete-preset");
+	CHECK_THAT(text(app, "#preferences-message"), ContainsSubstring("no preferences preset"));
+	CHECK(shown(app, "#preferences-preset-name") == "Whole Set");
+}
+
+TEST_CASE("the preferences dialog shows settings that change while it is open", "[ui]")
+{
+	test::UiApp app({1000, 760});
+	openDialog(app);
+	page(app, "general");
+	REQUIRE(shown(app, "#pref-project-autoSaveFiles") == "5");
+	type(app, "#pref-project-autoSaveInterval", "30"); // an edit the dialog hasn't sent
+
+	// A script or an MCP client changes a preference: the dialog follows it and keeps the edit.
+	app.call("settings.set", {{"key", "project.autoSaveFiles"}, {"value", 7}});
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#pref-project-autoSaveFiles") == "7"; }));
+	CHECK(shown(app, "#pref-project-autoSaveInterval") == "30");
+
+	// What it shows for a setting nobody changed stays what the engine has.
+	app.call("settings.set", {{"key", "project.autoSaveInterval"}, {"value", 45}});
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#pref-project-autoSaveInterval") == "45"; }));
+	CHECK(shown(app, "#pref-project-autoSaveFiles") == "7");
+
+	click(app, "#preferences-ok");
+	CHECK(closed(app));
+	CHECK(app.call("settings.get", {{"key", "project.autoSaveFiles"}}).at("value") == 7);
+	CHECK(app.call("settings.get", {{"key", "project.autoSaveInterval"}}).at("value") == 45);
+}
+
+TEST_CASE("OK and Apply leave alone the settings nobody changed in the dialog", "[ui]")
+{
+	test::UiApp app({1000, 760});
+	// A number its field can't show exactly, lists in another order than the page fills them in, and a tool
+	// modifier override: nothing of it is a change, so OK sends nothing and the engine keeps what it has.
+	const double seconds = 0.12345678901234567;
+	const Json filter = Json{{"types", {"programs", "notes"}}, {"channels", {10, 3}}, {"controllers", {7, 1}}};
+	const Json modifiers = Json{{"select.splitEvent", ""}};
+	app.call("settings.set",
+		{{"values",
+			{{"audio.preRecordSeconds", seconds}, {"midi.recordFilter", filter}, {"ui.toolModifiers", modifiers}}}});
+
+	openDialog(app);
+	page(app, "record-audio");
+	CHECK_THAT(shown(app, "#pref-audio-preRecordSeconds"), ContainsSubstring("0.1234567890123"));
+	page(app, "midi-filter");
+	CHECK(checked(app, "#pref-filter-type-programs"));
+	CHECK(checked(app, "#pref-filter-type-notes"));
+	CHECK(checked(app, "#pref-filter-channel-3"));
+	CHECK(checked(app, "#pref-filter-channel-10"));
+	click(app, "#preferences-ok");
+	CHECK(closed(app));
+	CHECK(app.call("settings.get", {{"key", "audio.preRecordSeconds"}}).at("value") == seconds);
+	CHECK(app.call("settings.get", {{"key", "midi.recordFilter"}}).at("value") == filter);
+	CHECK(app.call("settings.get", {{"key", "ui.toolModifiers"}}).at("value") == modifiers);
+}
+
+TEST_CASE("the tool modifiers page keeps the overrides it doesn't show", "[ui]")
+{
+	// An action a newer GNUbase added can have modifiers in ui.toolModifiers that the page doesn't list; OK and
+	// Apply keep them, since the page only shows part of the setting.
+	const test::TempDir folder;
+	const std::filesystem::path resources =
+		test::patchedResources(folder.path(), "preferences.rml", "table.sort(actions)",
+			"table.sort(actions) for at = #actions, 1, -1 do if actions[at] == \"select.splitEvent\" then "
+			"table.remove(actions, at) end end");
+	test::UiApp app({1000, 760}, resources);
+	const Json modifiers = Json{{"select.splitEvent", ""}};
+	app.call("settings.set", {{"key", "ui.toolModifiers"}, {"value", modifiers}});
+
+	openDialog(app);
+	page(app, "editing-tool-modifiers");
+	REQUIRE(elements(app, "#pref-tool-select-splitEvent").empty()); // the page doesn't list it
+	REQUIRE_FALSE(elements(app, "#pref-tool-dragDrop-copy").empty());
+	click(app, "#preferences-ok");
+	CHECK(closed(app));
+	CHECK(app.call("settings.get", {{"key", "ui.toolModifiers"}}).at("value") == modifiers);
+}
+
+TEST_CASE("a settings change while the tool modifiers question is open keeps the answer and the page", "[ui]")
+{
+	// The dialog follows settings.changed while it is open, and the Tool Modifiers page asks before an action
+	// takes the keys another action of its tool has (p. 1602). A change that renders the page again while the
+	// question is up replaces its controls: the answer must reach the new ones, and Cancel must not put back keys
+	// the engine has changed since.
+	test::UiApp app({1000, 760});
+	openDialog(app);
+	page(app, "editing-tool-modifiers");
+	const std::string copy = "#pref-tool-dragDrop-copy";             // Copy: alt
+	const std::string sharedCopy = "#pref-tool-dragDrop-sharedCopy"; // Shared Copy: alt+shift
+	REQUIRE(shown(app, copy) == "alt");
+	REQUIRE(shown(app, sharedCopy) == "alt+shift");
+
+	// The list moves Shared Copy onto Copy's Alt, which asks; the list keeps that choice until it has an answer.
+	// The choices are None, Ctrl, Alt, Shift, Ctrl-Alt, Ctrl-Shift, Alt-Shift, Ctrl-Alt-Shift, so Alt-Shift is four
+	// steps above Alt, and none of the three in between is another Drag & Drop action's keys.
+	click(app, sharedCopy);
+	for (int step = 0; step < 4; ++step)
+		press(app, "Up");
+	REQUIRE(shown(app, sharedCopy) == "alt");
+	REQUIRE(app.waitUntil([&app] { return !elements(app, "#confirm-dialog").empty(); }));
+
+	// A script changes the setting the page shows, so the page renders again while the question is up.
+	app.call("settings.set", {{"key", "ui.toolModifiers"}, {"value", Json{{"dragDrop.sharedCopy", "ctrl"}}}});
+	REQUIRE(app.waitUntil([&] { return shown(app, sharedCopy) == "ctrl"; }));
+	REQUIRE(!elements(app, "#confirm-dialog").empty()); // the question is still there
+
+	// Cancel leaves the page at what the engine has now, not at the Alt-Shift the question was about.
+	confirm(app, "#confirm-cancel");
+	CHECK(shown(app, sharedCopy) == "ctrl");
+	CHECK(shown(app, copy) == "alt");
+
+	// Replace still answers a question, on the controls the render made: Copy takes the keys, Shared Copy goes
+	// without any.
+	click(app, "#pref-tool-assign-dragDrop-copy", {"ctrl"});
+	confirm(app, "#confirm-ok");
+	CHECK(shown(app, copy) == "ctrl");
+	CHECK(shown(app, sharedCopy) == "");
+
+	click(app, "#preferences-ok");
+	CHECK(closed(app));
+	CHECK(app.call("settings.get", {{"key", "ui.toolModifiers"}}).at("value") ==
+		Json({{"dragDrop.copy", "ctrl"}, {"dragDrop.sharedCopy", ""}}));
+}
+
+TEST_CASE("the theme list carries the names the UI shows for the themes", "[ui]")
+{
+	test::UiApp app({1000, 760});
+	// Each theme's manifest carries its name, so that no document has to name a theme (docs/features/themes.md).
+	const std::optional<std::string> error = app.lua().run(
+		"local names = {}\n"
+		"for _, theme in ipairs(gnubase.ui.themes().themes) do\n"
+		"\tnames[theme.id] = theme.name\n"
+		"end\n"
+		"for id, name in pairs({gnubase = 'GNUbase', dark = 'Dark', light = 'Light', ['high-contrast'] = 'High "
+		"Contrast'}) do\n"
+		"\tif names[id] ~= name then\n"
+		"\t\terror(id .. ' is shown as ' .. tostring(names[id]))\n"
+		"\tend\n"
+		"end",
+		"themes");
+	INFO(error.value_or(""));
+	CHECK(!error.has_value());
 }

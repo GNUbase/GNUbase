@@ -110,6 +110,9 @@ namespace gnubase::engine
 		void setChase(const MidiChase& chase);
 		// Any thread: reads the samplers' samples asked for from now on with read (SampleLoader::setRead).
 		void setSampleReader(SampleLoader::Read read);
+		// Any thread: how long an offline render waits for the samplers' samples before it logs a warning and waits
+		// again (30 s), 20 rounds at most before it fails.
+		void setOfflineSampleWait(std::chrono::milliseconds wait) { m_offlineSampleWait = wait; }
 
 		// Command thread, after a command changed the user settings audio.portSettings (audioPorts) or
 		// midi.portSettings (midiPorts): emits the audio ports as audio.portsChanged, and the MIDI ports follow their
@@ -161,7 +164,8 @@ namespace gnubase::engine
 			std::shared_ptr<InstrumentChannel> channel;
 			std::shared_ptr<MidiSequencer> departed; // or a MIDI send of another track that played there:
 			std::shared_ptr<MidiSendTap> departedSend;
-			std::vector<std::shared_ptr<MidiSequencer>> staying; // the MIDI tracks still routed to the instrument
+			std::vector<std::shared_ptr<MidiSequencer>> staying;    // the MIDI tracks still routed to the instrument
+			std::vector<std::shared_ptr<MidiSendTap>> stayingSends; // the other tracks' MIDI sends still playing there
 		};
 
 		// What the audio thread runs: the graph and its links to the device, and the releases to do before its first
@@ -193,7 +197,9 @@ namespace gnubase::engine
 			MidiTap::Sequencers sequencers;     // of the MIDI and instrument channels, for midi.inject
 			std::vector<uint64_t> destinations; // per sequencer, where it plays (MidiSequencer::playOn)
 			std::vector<uint8_t> thru;          // per sequencer, 1 if it plays all MIDI inputs (MidiTap::thru)
-			ChordPadKeys chordPadKeys;          // what MIDI inputs' notes on the chord pads' remote keys play
+			// Per chord pads player, per sequencer: 1 if it plays that player's notes (#1089).
+			std::array<std::vector<uint8_t>, ChordPadKeys::g_maxPlayers> padThru;
+			ChordPadKeys chordPadKeys; // what MIDI inputs' notes on the chord pads' remote keys play
 			// Per sequencer, its input transformer, which changes its input after the MIDI thru.
 			std::vector<InputTransform> inputTransformers;
 			MidiTap::Instruments instruments; // for midi.capture
@@ -309,6 +315,9 @@ namespace gnubase::engine
 		void cueStart(time::Samples start, time::Samples enter);
 		void startCueing();
 		void stopCueing();
+		// What the chord pads' remote keys did since the last call, as chordPads.remoteInput takes it; null for
+		// nothing. Only one thread at a time: the cue thread, or the command thread while it doesn't run.
+		Json padEvents();
 		void startDevice();
 		void stopDevice();
 		// Gives MIDI and instrument channels their sequencers and instruments, and notes the MIDI tracks that left an
@@ -318,8 +327,8 @@ namespace gnubase::engine
 		// returns the files that samplers still wait for.
 		std::set<std::string> updateSamples();
 		// Waits until the sample loader has read every file the samplers wait for, at most timeout, and hands them
-		// over (updateSamples); false if one wasn't read in time.
-		bool waitForSamples(std::chrono::milliseconds timeout);
+		// over (updateSamples); returns the files not read in time.
+		std::set<std::string> waitForSamples(std::chrono::milliseconds timeout);
 		// Sample loader thread: has the command thread run updateSamples.
 		void postSampleUpdate();
 		// The releases for a new program: those pending that the audio thread hasn't done yet.
@@ -436,9 +445,11 @@ namespace gnubase::engine
 			// The MIDI sends of other tracks that play to it, by channel and slot.
 			std::map<std::pair<ObjectId, size_t>, std::shared_ptr<MidiSendTap>> sends;
 			std::shared_ptr<InstrumentChannel> channel;
-			std::shared_ptr<processors::Sampler> sampler; // the sampler's, which loads its sample when it changes
-			std::string sample;                           // the media file that sampler is to play
-			std::string loaded; // the media file whose sample it has: until sample is read, the one before or none
+			// A sampler or drum machine, which loads its samples when they change.
+			std::shared_ptr<processors::SamplePlayer> player;
+			std::vector<std::string> samples; // the media files it is to play, by slot (RenderChannel::samples)
+			// The media files whose samples it has: until samples are read, the ones before or none.
+			std::vector<std::string> loaded;
 		};
 		std::map<ObjectId, std::shared_ptr<MidiSequencer>> m_sequencers; // per MIDI and instrument channel
 		// Per MIDI and instrument channel with an input transformer.
@@ -488,8 +499,12 @@ namespace gnubase::engine
 		std::map<ObjectId, int> m_sourceNodes;          // rebuild: per channel
 		Transport m_transport;                          // advanced by the audio thread
 		MidiPorts m_midi;
-		audio::MidiBuffer m_midiInput; // the block's messages from all MIDI inputs, for MIDI thru (MidiTap::thru)
-		MidiTap m_tap;                 // midi.inject and midi.capture
+		audio::MidiBuffer m_midiInput;     // the block's messages from all MIDI inputs, for MIDI thru (MidiTap::thru)
+		MidiPorts::PadBuffers m_padOutput; // and the chord pads' notes, by player
+		// Which wait for the grid with Snap Playback to Musical Grid, by player.
+		std::array<midi::PadSnap, ChordPadKeys::g_maxPlayers> m_padSnap;
+		std::array<midi::PadPattern, ChordPadKeys::g_maxPlayers> m_padPattern; // the pattern player mode's, by player
+		MidiTap m_tap;                                                         // midi.inject and midi.capture
 
 		// Changed only while the device is stopped.
 		enum class Limit : uint8_t
@@ -522,15 +537,30 @@ namespace gnubase::engine
 			bool playing = false;
 			TransportSettings settings;
 			std::shared_ptr<const ArrangerPlan> arranger = std::make_shared<const ArrangerPlan>();
+			// The plan before the newest, kept while the transport's published arranger state still walks its
+			// generation, so a chain edit the audio thread hasn't played yet doesn't leave a cue without the plan
+			// the state's indices mean; rotatePlans frees it on the command thread (#885).
+			std::shared_ptr<const ArrangerPlan> previousArranger;
 			// A start that the command thread cues exactly (-1 for none), where an arranger chain enters with it, and
 			// how many requests the audio thread applies before it plays from there (cueStart).
 			time::Samples start = -1;
 			time::Samples enter = -1;
 			uint64_t startRequests = 0;
 		};
-		std::mutex m_cueMutex;             // guards m_cueState; the cue thread holds it while it cues
+		std::mutex m_cueMutex;             // guards m_cueState, held only to read or change it
+		std::mutex m_cueOrderMutex;        // the cue thread holds it while it cues, cueStart before m_cueMutex
 		ArrangerState m_announcedArranger; // as transport.changed last announced it
 		CueState m_cueState;
+		// Command thread, under m_cueMutex, at every rebuild: hands the newest plan over for the cue thread and the
+		// audio thread's next block, and keeps the plan before it while the transport's published arranger state
+		// still walks it. What leaves these two slots is freed here, never on the audio thread (#885).
+		void rotatePlans(const std::shared_ptr<const ArrangerPlan>& newest);
+		// The plan the transport's published arranger state walks, with that state, so a cue never walks a new plan
+		// with an old plan's indices (#885); the newest plan when it plays no chain and the state's indices don't
+		// matter, and null while the state's generation is neither of the two plans: the caller skips the cue then,
+		// rather than walk a plan the indices don't mean. The caller passes a CueState copy that keeps the returned
+		// plan alive while the cue runs.
+		std::pair<const ArrangerPlan*, ArrangerState> cuePlan(const CueState& state) const;
 		std::atomic<bool> m_cueing{false};
 		std::thread m_cueThread;
 
@@ -538,6 +568,9 @@ namespace gnubase::engine
 		std::shared_ptr<graph::Processor> m_generator;
 		graph::EventBuffer m_generatorEvents;
 		graph::EventBuffer m_generatorOut;
+
+		// A round of an offline render's wait for the samplers' samples (setOfflineSampleWait).
+		std::atomic<std::chrono::milliseconds> m_offlineSampleWait{std::chrono::seconds(30)};
 
 		// Reads the samplers' samples (#1122). Last, so that it stops first: it posts audio.updateSamples.
 		std::atomic<bool> m_updatingSamples{false}; // an audio.updateSamples it posted hasn't started yet

@@ -63,6 +63,59 @@
 	width: 3dp;
 }
 
+/* The Articulations lane (docs/features/articulation-maps.md): as tall as its rows, the sound slots lane and a row
+   per articulation, with the lane's name and the articulations' names beside them. Code places the slots,
+   directions and attributes in percent of the area's width; a reset (.reset) is as wide as this gives it. */
+.controller-lane[lane-kind=articulations]
+{
+	height: auto;
+	min-height: 14dp;
+}
+
+.controller-lane[lane-kind=articulations] .controller-lane-type
+{
+	height: 14dp;
+	padding: 0 2dp;
+	white-space: nowrap;
+}
+
+.articulation-name
+{
+	height: 14dp;
+	padding: 0 2dp;
+	font-size: 8dp;
+	line-height: 14dp;
+	white-space: nowrap;
+	overflow: hidden;
+}
+
+.articulation-row
+{
+	position: relative;
+	height: 14dp;
+}
+
+.sound-slot, .articulation-item
+{
+	position: absolute;
+	top: 1dp;
+	bottom: 1dp;
+	box-sizing: border-box;
+	overflow: hidden;
+}
+
+.sound-slot
+{
+	font-size: 8dp;
+	line-height: 12dp;
+	white-space: nowrap;
+}
+
+.articulation-item.reset
+{
+	width: 4dp;
+}
+
 .controller-lanes-footer
 {
 	flex-shrink: 0;

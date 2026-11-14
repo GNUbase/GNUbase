@@ -32,7 +32,7 @@ namespace gnubase::ui
 		{
 			uint64_t id = 0; // the audio event's
 			size_t lane = 0;
-			TimeSpan time; // seconds
+			TimeSpan time; // seconds, and the event's color, its own or its track's (#1312)
 			uint64_t media = 0;
 			double sampleRate = 0.0; // the media file's
 			int channels = 1;

@@ -129,9 +129,12 @@ window, with the state class `.shown`. It goes when the mouse moves to an elemen
 and on a click, a key or the wheel. The tooltip goes with its element: no tooltip comes when the element is removed
 while the mouse rests on it, and a shown one goes when its element is removed, as when a list under the mouse is
 rendered anew, or kept elsewhere instead of destroyed. A new element with a title in the removed one's place, under
-the resting mouse, gets its tooltip after the usual rest, without another mouse move. It goes too when the mouse moves
-from the element onto a part of an ancestor that no other element covers (the gap between a toolbar's buttons): RmlUi
-sends no Mouseover there, so the tooltip treats an element that has lost its `:hover` like one that is gone. Every
+the resting mouse, gets its tooltip after the usual rest, without another mouse move. When the mouse moves from the
+element onto a part of an ancestor that no other element covers (the gap between a toolbar's buttons), the tooltip goes
+and, if that ancestor has a title, its tooltip comes after the rest, though RmlUi sends no Mouseover there; the same
+happens when the element under the resting mouse is removed or kept elsewhere. The tooltip looks at the element under
+the mouse itself, and treats an element that has lost its `:hover` like one that is gone. An element whose Mouseover a
+listener stops gets no `:hover` from RmlUi, so no tooltip either; nothing in the app stops it. Every
 document gets its tooltip element when it loads; it lets the mouse through.
 
 ## Notifications
@@ -170,18 +173,20 @@ The theme draws them; the widget library adds nothing.
 as the edit history's done and undone steps with a separator between them ([edit-history.md](edit-history.md)): its
 rows are in the document's order. Each row has a `value` attribute (without commas).
 
-- **Selection.** A click selects a row. With the `multiple` attribute, Ctrl-click (Cmd-click on macOS) adds or removes
-  a row and Shift-click selects the rows from the last one clicked; with `shiftdeselects` too, Shift-click on a
-  selected row deselects it, as in the track list ([track-list.md](track-list.md)). Up and Down move the selection, Shift extends it,
-  Page Up and Page Down move it by one row less than the view shows, Home and End go to the first and last row.
-  Selected rows have the state class `.selected`. The view's `value` attribute is the selected rows' values separated
-  by commas, and `change` sends it, so `data-value` binds the selection both ways, also when `data-for` makes the rows.
+- **Selection.** A click selects a row. With the `multiple` attribute, Ctrl-click (Cmd-click on macOS) adds or removes a
+  row and Shift-click selects the rows from the last one clicked; with `shiftdeselects` too, Shift-click on a selected
+  row deselects it, as in the track list ([track-list.md](track-list.md)). Up and Down move the selection, Shift extends
+  it, Page Up and Page Down move it by one row less than the view shows, Home and End go to the first and last row.
+  Selected rows have the state class `.selected`. The view's `value` attribute is the selected rows' values separated by
+  commas, and `change` sends it, so `data-value` binds the selection both ways, also when `data-for` makes the rows.
   Rows that code adds, removes or replaces with new elements, all of them or only some, keep the selection that the
   view's `value` gives, also with as many rows and the same value; the keys and Shift-click then go from the first
-  selected row. A click or a key before the next update finds the view caught up as well: with the new rows selected
-  and shaped as a tree, and with a `value` that code set. Not yet: a row that keeps its element but gets another
-  `value`, as when `data-for` reorders its items. Clicks and keys in a form control in a row, such as a text field,
-  are the control's and don't change the selection.
+  selected row. A click or a key before the next update finds the view caught up as well: with the new rows selected and
+  shaped as a tree, and with a `value` that code set. Not yet: a row that keeps its element but gets another `value`, as
+  when `data-for` reorders its items. Clicks and keys in a form control in a row, such as a text field, are the
+  control's and don't change the selection, and neither does a click on a control that opens a menu (a `menu`
+  attribute), such as the track list's track versions arrow ([track-versions.md](track-versions.md)), so that its menu
+  works on the rows that are selected.
 - **Scrolling while dragging.** With the `dragscroll` attribute, a drag of an element in the view (`drag: drag`)
   scrolls the view while the mouse is above or below it, by ten times as far as the mouse is past the edge each second,
   also while the mouse is held still. The drag's end, the button going up or the view losing the focus stop it. The

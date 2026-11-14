@@ -26,6 +26,8 @@ namespace gnubase::engine::midi
 	// articulations are those of the note (its attributes and the directions in effect at its start), else the
 	// closest match, the slot that matches the most important groups, else the first one, the default slot.
 	std::map<ObjectId, size_t> soundSlots(const ArticulationMap& map, const MidiPart& part);
+	// The same for a map and a part as project.get lists them, which the sound slots lane shows (#1112, p. 1287).
+	std::map<ObjectId, size_t> soundSlots(const Json& map, const Json& part);
 
 	// Remote triggers (pp. 1263, 1268) in what a recording brings to a track with the map, as recording.add takes
 	// it: notes and controllers with positions in samples. Takes the notes (key switches) or program changes that

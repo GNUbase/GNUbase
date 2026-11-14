@@ -125,7 +125,12 @@ TEST_CASE("every theme has the same assets, each a renderable SVG of its manifes
 	{
 		INFO("theme " << theme);
 		const std::filesystem::path dir = themesDir() / theme;
-		const nlohmann::json assets = readJson(dir / "manifest.json").at("assets");
+		const nlohmann::json manifest = readJson(dir / "manifest.json");
+		CHECK(manifest.at("theme") == theme);
+		// The name the UI shows for the theme (ui::Themes), so that no document has to name one.
+		// Not CHECK_FALSE: Catch2's ContinueOnFailure | FalseTest trips clang-analyzer's EnumCastOutOfRange check
+		CHECK(!manifest.value("displayName", std::string()).empty());
+		const nlohmann::json& assets = manifest.at("assets");
 		CHECK(assets.size() == reference.size());
 
 		for (const auto& [name, asset] : assets.items())
@@ -296,6 +301,22 @@ TEST_CASE("the default theme's bars, tabs and inspector headers are flat, the ot
 		".toolbar button[menu]:not(.toggle):not(.primary), .transport button[menu]:not(.toggle):not(.primary)";
 	const std::string header = ".inspector-section button.section-header";
 	const std::string collapsed = ".inspector-section.collapsed button.section-header";
+	// The selector of the buttons in bars with more classes or attributes and a state, as tools/skin/generate.py
+	// writes it.
+	const auto bars = [](const std::string& more, const std::string& state)
+	{
+		return ".toolbar button" + more + ":not(.toggle):not(.primary)" + state + ", .transport button" + more +
+			":not(.toggle):not(.primary)" + state;
+	};
+	// A property's value in a rule's declarations, or empty.
+	const auto value = [](const std::string& declarations, const std::string& property)
+	{
+		const size_t at = declarations.find("\t" + property + ": ");
+		if (at == std::string::npos)
+			return std::string();
+		const size_t from = at + property.size() + 3;
+		return declarations.substr(from, declarations.find(';', from) - from);
+	};
 	for (const char* theme : g_themes)
 	{
 		INFO("theme " << theme);
@@ -320,6 +341,8 @@ TEST_CASE("the default theme's bars, tabs and inspector headers are flat, the ot
 			return at == found.rend() ? std::string() : at->second;
 		};
 		const auto file = [&dir](const char* asset) { return gnubase::test::readText(dir / asset); };
+		const nlohmann::json tokens = readJson(dir / "tokens.json");
+		const auto token = [&tokens](const char* name) { return tokens.at(name).get<std::string>(); };
 		if (std::string_view(theme) == "gnubase")
 		{
 			CHECK(last(bar).find("decorator: none") != std::string::npos);
@@ -328,9 +351,25 @@ TEST_CASE("the default theme's bars, tabs and inspector headers are flat, the ot
 			CHECK(last("tabset tab").find("decorator: none") != std::string::npos);
 			CHECK(last(header).find("disclosure-open.svg") != std::string::npos);
 			CHECK(last(collapsed).find("disclosure-closed.svg") != std::string::npos);
+			// Bar buttons: a soft fill under the mouse, the accent when checked.
+			CHECK(value(last(bars("", ":hover")), "decorator") == "none");
+			CHECK(value(last(bars("", ":hover")), "background-color").rfind('#', 0) == 0);
+			CHECK(value(last(bars(".checked", "")), "color") == token("accent"));
+			// Start in the accent, filled while playing; Record in the danger color, filled while recording; the
+			// primary time display bold.
+			CHECK(value(last(".transport #start svg.icon"), "image-color") == token("accent"));
+			CHECK(value(last(".transport #start.checked"), "background-color") == token("accent"));
+			CHECK(value(last(".transport #record svg.icon"), "image-color") == token("danger"));
+			CHECK(value(last(".transport #record.checked"), "background-color") == token("danger"));
+			CHECK(value(last(".transport .primary-time"), "font-weight") == "600");
+			CHECK(value(last(".transport .primary-time"), "color") == token("text"));
+			// Zones as rounded panels on the surface.
+			CHECK(!value(last(".docking [zone]"), "border-radius").empty());
+			CHECK(value(last(".docking [zone]"), "background-color") == token("surface"));
 			// Lanes and the track list on the panels' surface over the window's background, the selected row outlined.
-			const std::string background = readJson(dir / "tokens.json").at("background").get<std::string>();
-			CHECK(last(".event-display").find("background-color: " + background) == std::string::npos);
+			const std::string background = token("background");
+			CHECK(value(last(".event-display"), "background-color") == token("surface"));
+			CHECK(value(last(".track-list"), "background-color").rfind('#', 0) == 0);
 			CHECK(last(".track-list").find("background-color: " + background) == std::string::npos);
 			CHECK(last(".track-list listitem.selected").find("list-item-selected.svg") != std::string::npos);
 			CHECK(file("list-item-selected.svg").find("stroke=") != std::string::npos);
@@ -352,6 +391,30 @@ TEST_CASE("the default theme's bars, tabs and inspector headers are flat, the ot
 			CHECK(last(bar).find("button-normal.svg") != std::string::npos);
 			CHECK(last("tabset tab").find("tab-normal.svg") != std::string::npos);
 			CHECK(last(".toolbar").find("toolbar.svg") != std::string::npos);
+			// The bar rules outrank the general button rules, so each state of a button in a bar, plain or a menu
+			// button, gives what the general rule of that state gives: its skin (a drop-down button's skin is the
+			// plain button's), and its color where it sets one. So do the inspector headers' states.
+			const auto same = [&](const std::string& selector, const std::string& general)
+			{
+				INFO(selector << " as " << general);
+				const std::string own = last(selector);
+				REQUIRE(!own.empty());
+				std::string skin = value(own, "decorator");
+				if (const size_t at = skin.find("dropdown-button-"); at != std::string::npos)
+					skin.erase(at, std::string_view("dropdown-").size());
+				CHECK(skin == value(last(general), "decorator"));
+				if (const std::string color = value(last(general), "color"); !color.empty())
+					CHECK(value(own, "color") == color);
+			};
+			for (const char* state : {":hover", ":active", ":disabled"})
+				same(bars("", state), std::string("button") + state);
+			for (const char* state : {".checked", ".suspended", ".tapping"})
+				same(bars(state, ""), std::string("button") + state);
+			same(bars("[menu]", ":hover"), "button:hover");
+			same(bars("[menu]", ":active"), "button:active");
+			same(bars(".checked[menu]", ""), "button.checked");
+			same(header + ":hover", "button:hover");
+			same(header + ":active", "button:active");
 			const std::string background = readJson(dir / "tokens.json").at("background").get<std::string>();
 			// The lanes stay on the window's background.
 			for (const auto& [name, declarations] : found)
@@ -362,6 +425,26 @@ TEST_CASE("the default theme's bars, tabs and inspector headers are flat, the ot
 			CHECK(file("disclosure-open.svg") == file("button-normal.svg"));
 			CHECK(file("disclosure-closed.svg") == file("button-normal.svg"));
 		}
+	}
+}
+
+TEST_CASE("every theme marks the arranger editor's row that is playing", "[unit]")
+{
+	// The arranger editor (docs/features/arranger.md): the row of the chain step or event playing carries .current and
+	// the theme decides how that looks, since the document's own locate arrows show on every row and mark nothing. The
+	// rule lives in the generated style sheets (tools/skin/generate.py), so a regeneration that drops it fails here.
+	for (const char* theme : g_themes)
+	{
+		INFO("theme " << theme);
+		bool marked = false;
+		for (const auto& [selector, declarations] : rules(gnubase::test::readText(themesDir() / theme / "theme.rcss")))
+		{
+			const size_t first = selector.find_first_not_of(" \t");
+			const std::string name = selector.substr(first, selector.find_last_not_of(" \t\r") + 1 - first);
+			if (name == ".arranger-row.current")
+				marked = declarations.find(':') != std::string::npos; // it says how the row looks
+		}
+		CHECK(marked);
 	}
 }
 

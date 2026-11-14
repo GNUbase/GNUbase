@@ -4,6 +4,7 @@
 // inspector's Chord Editing section. tests/keyeditor_tests.cpp checks the engine's side.
 #include "engine/time/tempomap.h"
 #include "ui/automation.h"
+#include "ui/docking.h"
 #include "ui/keyeditor.h"
 #include "ui/midieditor.h"
 #include "uiapp.h"
@@ -184,33 +185,23 @@ namespace
 			REQUIRE(has(".key-tool[key-tool=" + name + "]", "checked"));
 		}
 
-		// Gives the track the instrument noteProbe and renders by hand, so that plays() hears what the keyboard's keys
-		// play (reference manual p. 1204).
-		void probe()
-		{
-			app.call("audio.setDevice", {{"blockSize", 128}, {"inputChannels", 0}, {"captureSeconds", 1}});
-			app.call("channel.set",
-				{{"channel", app.call("project.get").at("tracks").at(0).at("channel")}, {"instrument", "noteProbe"}});
-			app.call("audio.render", {{"frames", 128}}); // the new graph
-			app.call("midi.capture", {{"start", true}});
-		}
+		// Gives the track the instrument noteProbe, so that plays() hears what the keyboard's keys play (reference
+		// manual p. 1204).
+		void probe() { sound.emplace(app, track); }
 
-		// Renders until the note ons and offs the instrument played since played was last cleared are expected.
+		// Renders until the note ons and offs the instrument played since the last clearSound() are the expected ones.
 		bool plays(const std::vector<std::vector<int>>& expected)
 		{
-			return app.waitUntil(
-				[&]
-				{
-					app.call("audio.render", {{"frames", 128}});
-					const Json captured = app.call("midi.capture");
-					for (const Json& message : captured.at("captured"))
-					{
-						const auto bytes = message.at("bytes").get<std::vector<int>>();
-						if ((bytes.at(0) & 0xE0) == 0x80)
-							played.push_back(bytes);
-					}
-					return played == expected;
-				});
+			if (!sound)
+				FAIL("probe() first");
+			return sound->plays(expected);
+		}
+
+		void clearSound()
+		{
+			if (!sound)
+				FAIL("probe() first");
+			sound->clear();
 		}
 
 		// A point on the keyboard: x across the window, in the middle of the pitch's row.
@@ -225,7 +216,7 @@ namespace
 		std::optional<ui::WindowId> window;
 		uint64_t track = 0;
 		uint64_t part = 0;
-		std::vector<std::vector<int>> played; // the note ons and offs that plays() heard
+		std::optional<test::NoteProbe> sound;
 	};
 }
 
@@ -320,7 +311,8 @@ TEST_CASE("the key editor's keyboard is a piano keyboard aligned with the grid's
 			const Json& element = under.at("element");
 			return element.is_null() ? -1 : std::stoi(element.at("attributes").value("pitch", std::string("-1")));
 		};
-		const int left = x + 2;
+		// Just right of the keyboard's left part, where a drag zooms (p. 1261): over the keys themselves.
+		const int left = x + static_cast<int>(std::ceil(12.0 * ratio)) + 2;
 		const int right = x + width - 2;
 		CHECK(pitchAt(left, 1.3) == 61);   // C#3
 		CHECK(pitchAt(right, 1.3) == 60);  // C3, up to 12/7 rows
@@ -395,7 +387,7 @@ TEST_CASE("a click on a key of the keyboard plays its pitch on the track's instr
 
 	// At the left of that row the black key, C#3; released outside the key editor, over the editor window's toolbar,
 	// it ends too. Neither click selects or deselects a note.
-	f.played.clear();
+	f.clearSound();
 	f.app.ui().press(f.window, f.key(left, 61), ui::MouseButton::Left, {});
 	f.app.shell().step(std::chrono::milliseconds(0));
 	CHECK(f.plays({{0x90, 61, 100}}));
@@ -405,7 +397,7 @@ TEST_CASE("a click on a key of the keyboard plays its pitch on the track's instr
 	CHECK(f.selection() == std::vector<uint64_t>{ids[0]});
 
 	// Released outside the window, where no mouseup arrives, D3 ends when the mouse leaves the window.
-	f.played.clear();
+	f.clearSound();
 	f.app.ui().press(f.window, f.key(right, 62), ui::MouseButton::Left, {});
 	f.app.shell().step(std::chrono::milliseconds(0));
 	CHECK(f.plays({{0x90, 62, 100}}));
@@ -417,6 +409,82 @@ TEST_CASE("a click on a key of the keyboard plays its pitch on the track's instr
 	context.ProcessMouseButtonUp(0, 0);
 	f.app.shell().step(std::chrono::milliseconds(0));
 	CHECK(f.plays({{0x90, 62, 100}, {0x80, 62, 0}}));
+}
+
+TEST_CASE("dragging the keyboard's left part zooms the pitches and scrolls the note display", "[ui]")
+{
+	// Reference manual p. 1261: to the right or left it zooms vertically, up or down it scrolls.
+	Fixture f({1024, 600});
+	f.app.setDpRatio(1.0F);
+	f.add({{0, 60, g_quarter}, {g_quarter, 64, 2 * g_quarter}});
+	f.scroll(127); // the top of the pitches in view, where a zoom in keeps them
+	const Json keyboard = f.box(".key-editor-keys");
+	const Json body = f.box(".key-editor-body");
+	const int left = keyboard.at("x").get<int>() + 4; // the keyboard's left 12 dp
+	const double top = keyboard.at("y").get<double>();
+	const auto at = [&](int x, int y) { return ui::Target{"", 0, ui::Point{x, y}}; };
+	const int high = body.at("y").get<int>() + 150;
+	CHECK(std::abs(f.box(".key-editor-row").at("height").get<double>() - 10.0) <= 0.5);
+
+	// A drag 100 px to the right doubles the rows' height; the pitch at the top of the view stays there.
+	f.drag(at(left, high), at(left + 100, high));
+	CHECK(std::abs(f.box(".key-editor-row").at("height").get<double>() - 20.0) <= 0.5);
+	CHECK(std::abs(f.box(".key-editor-keys").at("height").get<double>() - 2560.0) <= 1);
+	CHECK(std::abs(f.box(".key-editor-grid").at("height").get<double>() - 2560.0) <= 1);
+	CHECK(std::abs(f.box(".key-editor-key[pitch=\"127\"]").at("y").get<double>() - top) <= 1);
+
+	// A drag 80 px up scrolls the pitches down by as much; the rows keep their height.
+	f.drag(at(left, high), at(left, high - 80));
+	CHECK(std::abs(f.box(".key-editor-row").at("height").get<double>() - 20.0) <= 0.5);
+	CHECK(std::abs(f.box(".key-editor-key[pitch=\"127\"]").at("y").get<double>() - (top - 80)) <= 1);
+
+	// Two drags 200 px to the left zoom out, the second to the least: rows of 2.5 dp.
+	f.drag(at(left, high), at(left - 200, high));
+	CHECK(std::abs(f.box(".key-editor-row").at("height").get<double>() - 5.0) <= 0.5);
+	f.drag(at(left, high), at(left - 200, high));
+	CHECK(std::abs(f.box(".key-editor-row").at("height").get<double>() - 2.5) <= 0.5);
+	CHECK(std::abs(f.box(".key-editor-keys").at("height").get<double>() - 320.0) <= 1);
+
+	// A drag 500 px to the right zooms in to the most: rows of 40 dp.
+	f.drag(at(left, high), at(left + 500, high));
+	CHECK(std::abs(f.box(".key-editor-row").at("height").get<double>() - 40.0) <= 0.5);
+	CHECK(std::abs(f.box(".key-editor-keys").at("height").get<double>() - 5120.0) <= 1);
+
+	// A click without a drag leaves the zoom as it is.
+	f.click(at(left, high));
+	CHECK(std::abs(f.box(".key-editor-row").at("height").get<double>() - 40.0) <= 0.5);
+}
+
+TEST_CASE("a click and a drag on the keyboard's left part leave the selected notes and the history alone", "[ui]")
+{
+	// The zoom gesture's release edits nothing, and no note an earlier press remembered (review of #1365).
+	Fixture f({1024, 600});
+	f.app.setDpRatio(1.0F);
+	const std::vector<uint64_t> ids = f.add({{0, 60, g_quarter}, {g_quarter, 64, 2 * g_quarter}});
+	// A click on the second note selects it; the press remembers it as the note pressed.
+	f.click(f.at(8.5, 64));
+	REQUIRE(f.app.waitUntil([&] { return f.selection() == std::vector<uint64_t>{ids[1]}; }));
+	f.scroll(127);
+	const Json before = f.partNotes();
+	const auto steps = f.app.call("history.get").at("steps").size();
+	const Json keyboard = f.box(".key-editor-keys");
+	const Json body = f.box(".key-editor-body");
+	const int left = keyboard.at("x").get<int>() + 4; // the keyboard's left 12 dp
+	const auto at = [&](int x, int y) { return ui::Target{"", 0, ui::Point{x, y}}; };
+	const int high = body.at("y").get<int>() + 100;
+
+	// A click there plays its pitch and edits nothing.
+	f.click(at(left, high));
+	CHECK(f.selection() == std::vector<uint64_t>{ids[1]});
+	CHECK(f.app.call("history.get").at("steps").size() == steps);
+	CHECK(f.partNotes() == before);
+
+	// A drag there zooms, and its release doesn't stretch the selected note to where the mouse went.
+	f.drag(at(left, high), at(left + 80, high + 60));
+	CHECK(f.box(".key-editor-row").at("height").get<double>() > 10.5);
+	CHECK(f.selection() == std::vector<uint64_t>{ids[1]});
+	CHECK(f.app.call("history.get").at("steps").size() == steps);
+	CHECK(f.partNotes() == before);
 }
 
 TEST_CASE("a key of the keyboard held while the key editor goes ends its pitch", "[ui]")
@@ -452,7 +520,7 @@ TEST_CASE("a key of the keyboard held while the key editor goes ends its pitch",
 	}
 
 	// The editor closing through the engine API, as a key command closes it, ends the pitch with the editor window.
-	f.played.clear();
+	f.clearSound();
 	f.app.call("editor.set", {{"editor", "window"}, {"content", "key"}});
 	REQUIRE(f.app.waitUntil([&] { return keyEditor() != nullptr && !keyEditor()->drum(); }));
 	press(62);
@@ -464,7 +532,7 @@ TEST_CASE("a key of the keyboard held while the key editor goes ends its pitch",
 	// The user closing the editor window, as its close button does: the shell drops the window and its document first.
 	// The document's mouseout, which RmlUi sends it as it goes, ends the pitch while the key editor is still there, and
 	// the destructor, which runs after the window, is the backstop; the check holds either one, not each alone.
-	f.played.clear();
+	f.clearSound();
 	f.app.call("editor.open", {{"editor", "window"}, {"parts", Json::array({f.part})}});
 	REQUIRE(f.app.waitUntil([&] { return keyEditor() != nullptr; }));
 	f.window = f.app.appUi().editorWindowId();
@@ -475,6 +543,57 @@ TEST_CASE("a key of the keyboard held while the key editor goes ends its pitch",
 	f.app.ui().close(f.window, false);
 	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().editorWindow() == nullptr; }));
 	CHECK(f.plays({{0x90, 64, 100}, {0x80, 64, 0}}));
+}
+
+TEST_CASE("a key of the keyboard held while the lower zone's Editor panel goes ends its pitch", "[ui]")
+{
+	// The docking system owns the Editor panel and its key editor. A key held in the panel's window ends its pitch when
+	// that window is closed, as its close button does, and when the panel is docked again. Docking::applyFloating drops
+	// the panel's content before the shell closes the window of a panel docked again, so there the key editor's
+	// destructor sends the note off; the editor window's check can't hold that.
+	Fixture f({1024, 600}, "instrument");
+	f.app.setDpRatio(1.0F);
+	f.probe();
+	f.app.call("editor.close", {{"editor", "window"}});
+	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().editorWindow() == nullptr; }));
+	f.app.appUi().showProject();
+	ui::Docking& docking = f.app.appUi().docking();
+	const auto keyEditor = [&]() -> ui::KeyEditor*
+	{
+		ui::MidiEditor* editor = f.app.appUi().lowerZoneEditor();
+		return editor != nullptr ? editor->keyEditor() : nullptr;
+	};
+	// The part in the lower zone's editor, the Editor panel in a window of its own and C3 held on its keyboard. The
+	// panel's key editor is new each time: the editor view is opened again, as the panel going closes it.
+	const auto floatAndPress = [&]
+	{
+		docking.setFloating("editor", true);
+		f.app.shell().step(std::chrono::milliseconds(0));
+		REQUIRE(docking.windowOf("editor") != nullptr);
+		f.window = docking.windowOf("editor")->id();
+		f.app.call("editor.open", {{"editor", "lower"}, {"parts", Json::array({f.part})}});
+		REQUIRE(f.app.waitUntil([&] { return keyEditor() != nullptr; }));
+		REQUIRE(f.app.waitUntil([&] { return f.elements(".key-editor-keys").size() == 1; }));
+		REQUIRE(f.app.waitUntil([&] { return keyEditor() != nullptr && keyEditor()->scrollToPitch(60); }));
+		f.app.shell().step(std::chrono::milliseconds(0));
+		const Json keyboard = f.box(".key-editor-keys");
+		f.app.ui().press(f.window, f.key(keyboard.at("x").get<int>() + 2, 60), ui::MouseButton::Left, {});
+		f.app.shell().step(std::chrono::milliseconds(0));
+		CHECK(f.plays({{0x90, 60, 100}}));
+	};
+
+	// The panel's window closed, as its close button does: the panel is docked again by the shell's close request.
+	floatAndPress();
+	f.app.ui().close(f.window, false);
+	REQUIRE(f.app.waitUntil([&] { return docking.windowOf("editor") == nullptr; }));
+	CHECK(f.plays({{0x90, 60, 100}, {0x80, 60, 0}}));
+
+	// The panel docked again, as the window's Dock button does.
+	f.clearSound();
+	floatAndPress();
+	docking.setFloating("editor", false);
+	REQUIRE(f.app.waitUntil([&] { return docking.windowOf("editor") == nullptr; }));
+	CHECK(f.plays({{0x90, 60, 100}, {0x80, 60, 0}}));
 }
 
 TEST_CASE("the object selection tool selects, moves, resizes, inserts and deletes notes", "[ui]")
@@ -574,7 +693,15 @@ TEST_CASE("the erase, trim, split and glue tools", "[ui]")
 	f.settle();
 	CHECK(std::abs(f.note(ids[1]).at("position").get<int64_t>() - (5 * g_sixteenth)) < g_sixteenth / 4);
 
-	// Split cuts the note in two at the snapped position (p. 1215).
+	// Split cuts the note in two at the snapped position (p. 1215), its expression too: the rest starts with the
+	// values at the cut.
+	const auto tuning = [](int64_t position, double value)
+	{ return Json{{"type", "tuning"}, {"position", position}, {"value", value}}; };
+	f.app.call("note.set",
+		{{"part", f.part},
+			{"notes",
+				{{{"id", ids[2]},
+					{"expressions", {tuning(0, 0.0), tuning(g_sixteenth, 2.0), tuning(3 * g_sixteenth, 4.0)}}}}}});
 	f.tool("split");
 	f.click(f.at(10.2, 64));
 	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 4; }));
@@ -584,6 +711,8 @@ TEST_CASE("the erase, trim, split and glue tools", "[ui]")
 	CHECK(pieces[2].at("position") == 10 * g_sixteenth);
 	CHECK(pieces[2].at("length") == 2 * g_sixteenth);
 	CHECK(pieces[2].at("pitch") == 64);
+	CHECK(f.note(ids[2]).at("expressions") == Json::array({tuning(0, 0.0), tuning(g_sixteenth, 2.0)}));
+	CHECK(pieces[2].at("expressions") == Json::array({tuning(0, 2.0), tuning(g_sixteenth, 4.0)}));
 
 	// Glue joins the note to the next one of its pitch (p. 1215).
 	f.tool("glue");
@@ -591,6 +720,9 @@ TEST_CASE("the erase, trim, split and glue tools", "[ui]")
 	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 3; }));
 	f.settle();
 	CHECK(f.note(ids[2]).at("length") == g_quarter);
+	CHECK(f.note(ids[2]).at("expressions") ==
+		Json::array(
+			{tuning(0, 0.0), tuning(g_sixteenth, 2.0), tuning(2 * g_sixteenth, 2.0), tuning(3 * g_sixteenth, 4.0)}));
 	f.click(f.at(8.5, 64));
 	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 2; }));
 	f.settle();

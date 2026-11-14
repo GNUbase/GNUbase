@@ -137,6 +137,10 @@
 	{
 		decorator: svg-ninepatch(list-item-selected.svg, 6 6 6 6);
 	}
+	.arranger-row.current
+	{
+		decorator: svg-ninepatch(list-item-selected.svg, 6 6 6 6);
+	}
 	listview thead td.sorted
 	{
 		color: #0969da;
@@ -445,6 +449,20 @@
 	{
 		background-color: #eef1f5;
 	}
+	.event-display event-lanes.events, .event-display event-lanes.muted-events, .event-display event-lanes.selected-events, .event-display event-lanes.folder-data
+	{
+		event-inset: 0dp;
+	}
+	.event-display event-lanes.events
+	{
+		own-fill-opacity: 1;
+		own-color-tint: none;
+	}
+	.event-display .waveforms waveform
+	{
+		own-color-tint: none;
+		padding: 2dp 0;
+	}
 	.event-display .overview
 	{
 		background-color: #ffffff;
@@ -488,6 +506,10 @@
 	.event-display .project-cursor
 	{
 		background-color: #17202d;
+	}
+	.event-display .step-input-cursor, .event-display .step-input-handle
+	{
+		background-color: #0969da;
 	}
 	.event-display .cross-hair-vertical, .event-display .cross-hair-horizontal
 	{
@@ -634,6 +656,81 @@
 	.chord-pad.triggered
 	{
 		background-color: #8cb8ed;
+	}
+	.chord-pad.listening
+	{
+		border-color: #c92d42;
+	}
+	.chord-pad.drop-target
+	{
+		border-color: #157f5b;
+	}
+	.chord-pad.level-0
+	{
+		border-bottom-color: #157f5b;
+	}
+	.chord-pad.level-1
+	{
+		border-bottom-color: #9a6500;
+	}
+	.chord-pad.level-2
+	{
+		border-bottom-color: #c92d42;
+	}
+	.chord-pad .chord-pad-voicing
+	{
+		color: #566273;
+		font-size: 11dp;
+	}
+	.chord-pad .chord-pad-progress
+	{
+		background-color: #0969da;
+	}
+	.chord-pad.black-key
+	{
+		background-color: #f2f4f8;
+	}
+	.chord-pads-key.white
+	{
+		background-color: #17202d;
+		border-width: 1dp;
+		border-color: #b9c1cc;
+	}
+	.chord-pads-key.black
+	{
+		background-color: #eef1f5;
+	}
+	.chord-pads-key.remote
+	{
+		background-color: #104484;
+	}
+	.chord-pads-key.black.remote
+	{
+		background-color: #659fe5;
+	}
+	.chord-pads-key.section
+	{
+		background-color: #c0a46e;
+	}
+	.chord-pads-key.modifier
+	{
+		background-color: #157f5b;
+	}
+	.chord-pads-key.hover
+	{
+		background-color: #9a6500;
+	}
+	.chord-pads-key.played
+	{
+		background-color: #6554c0;
+	}
+	.chord-proximity-reference
+	{
+		color: #0969da;
+	}
+	.chord-suggestion.recent .chord-suggestion-chord
+	{
+		font-weight: bold;
 	}
 	.chord-suggestion
 	{
@@ -878,6 +975,40 @@
 		background-color: transparent;
 		decorator: repeating-linear-gradient(to top, #ccd0d5 0dp, #ccd0d5 3dp, #ccd0d500 3dp, #ccd0d500 5dp);
 	}
+	.articulation-name
+	{
+		color: #566273;
+	}
+	.articulation-row.sound-slots
+	{
+		border-bottom-width: 1px;
+		border-bottom-color: #b9c1cc;
+	}
+	.sound-slot
+	{
+		background-color: #f7f9fc;
+		color: #17202d;
+	}
+	.articulation-item.direction
+	{
+		background-color: #b0cef2;
+	}
+	.articulation-item.attribute
+	{
+		background-color: #68a3e8;
+	}
+	.articulation-item.reset
+	{
+		background-color: #566273;
+	}
+	.articulation-item.selected
+	{
+		background-color: #6554c0;
+	}
+	.articulation-item.inactive
+	{
+		background-color: #ccd0d5;
+	}
 	.ape-display
 	{
 		background-color: #ffffff;
@@ -1036,6 +1167,44 @@
 	{
 		color: #c92d42;
 	}
+	.drum-pad
+	{
+		color: #566273;
+		background-color: #ffffff;
+		border-color: #b9c1cc;
+		border-radius: 3dp;
+	}
+	.drum-pad.assigned
+	{
+		color: #17202d;
+		background-color: #f7f9fc;
+	}
+	.drum-pad.selected
+	{
+		border-color: #0969da;
+	}
+	.drum-pad.muted, .drum-pad.soloed-out
+	{
+		color: #566273;
+		background-color: #eef1f5;
+	}
+	.drum-pad.soloed
+	{
+		border-color: #6554c0;
+	}
+	.drum-pad-note, .drum-label
+	{
+		color: #566273;
+		font-size: 11dp;
+	}
+	.drum-group.selected, .drum-page-tab.selected
+	{
+		color: #0969da;
+	}
+	.drum-message.error
+	{
+		color: #c92d42;
+	}
 	.ds-display, .sa-graph
 	{
 		background-color: #ffffff;
@@ -1167,6 +1336,18 @@
 	.inspector .insert.bypassed, .inspector .insert.inactive
 	{
 		color: #566273;
+	}
+	.inspector .midi-effect-slot.off select
+	{
+		color: #566273;
+	}
+	.inspector .midi-effect-slot.recorded
+	{
+		border-left-color: #0969da;
+	}
+	.inspector .midi-divider.at .midi-divider-line
+	{
+		background-color: #0969da;
 	}
 	.pool-message.error
 	{

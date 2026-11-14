@@ -89,7 +89,7 @@ flowchart TD
 | Plugin monitor | Notices remote plugins that failed and has the engine report them | Low priority, every 20 ms |
 | Plugin retirer | Waits until the audio thread runs a graph without the slots' plugins that left it, then queues their deactivation, reactivation or destruction as plugin jobs (`SlotInstances`, [plugin slots](features/plugin-slots.md)) | Sleeps on a semaphore that the audio thread releases when it starts a newer graph; never polls |
 | Background threads | Peak files (the peak cache's worker), analysis, saving projects, plugin scan coordination | Low priority |
-| Sample loader | Reads the samples of sampler tracks (`SampleLoader`, [sampler tracks](features/sampler-track.md)), one file after another, and posts `audio.updateSamples` after each | Never holds up the command thread, which only waits for it to start playback or render offline |
+| Sample loader | Reads the samples of sampler tracks and drum tracks' pads (`SampleLoader`, [sampler tracks](features/sampler-track.md), [drum tracks](features/drum-track.md)), one file after another, and posts `audio.updateSamples` after each | Never holds up the command thread, which only waits for it to start playback or render offline |
 | Job threads | Background jobs such as backups, one thread each (`src/engine/jobs`) | Normal priority, never wait for the command thread |
 | Log writer | Writes what audio threads logged, every 10 ms (#8) | Low priority |
 | MCP I/O thread | The MCP server's HTTP or stdio transport | Only forwards to the command thread |

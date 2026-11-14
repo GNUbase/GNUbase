@@ -309,9 +309,10 @@ tabset tab
 	margin-right: 0;
 }
 
-/* A section the toolbar has no room for: out of the flow and unseen, so it takes no room and no gap, and still laid
-   out, so the docking system knows the width it needs to show again. */
-.toolbar-section.no-room
+/* A section the toolbar has no room for, or a part it gives up first (fit="spare", such as Warp Quantize On/Off): out
+   of the flow and unseen, so it takes no room and no gap, and still laid out, so the docking system knows the width it
+   needs to show again. */
+.toolbar-section.no-room, .toolbar-section .no-room
 {
 	position: absolute;
 	left: 0;
@@ -538,14 +539,49 @@ valuefield.editing .valuefield-text
 	margin-right: 2dp;
 }
 
+/* The locator buttons' one to three letters take their text's width rather than a text button's 64 dp, so that all
+   sections fit 1280 dp, a 1920-pixel display at 150 % (#1450). */
+.transport-section button
+{
+	min-width: 24dp;
+}
+
 .transport textdisplay
 {
 	min-width: 72dp;
 }
 
-.transport .primary-time
+/* The project cursor's displays keep their width while the transport runs, locates or scrubs (#1335): the width of
+   their format's widest text, which the format's state class picks, in em, so that it follows the font size. The
+   themes show displays in a font whose digits are all 0.6 em wide, but RmlUi cuts the font size to whole pixels
+   before it asks for the face, and FreeType rounds the hinted advances, so a character takes up to 0.64 em: 8 px at
+   13 px, 7 px of an 11.05 px font cut to an 11 px face (tests/transportbar_tests.cpp checks the widths in every theme
+   at dp ratios of 1 and 0.85).
+   14 characters for bars and beats, every position from bar -999 to 9999 in any signature (-999.99.16.119); 12 for
+   seconds and 11 for timecode and user frames, every position under 100 hours (99:59:59.999, 99:59:59:29); 11 for
+   samples, every position under 48 hours at 384 kHz. That holds the longest project (24 hours) from the latest start
+   time (under 24 hours). Later positions may not fit. */
+.transport textdisplay[time=position]
 {
-	min-width: 96dp;
+	box-sizing: content-box;
+	min-width: 0;
+	height: 16dp;
+}
+
+.transport textdisplay[time=position].format-barsBeats
+{
+	width: 8.96em;
+}
+
+.transport textdisplay[time=position].format-seconds
+{
+	width: 7.68em;
+}
+
+.transport textdisplay[time=position].format-timecode, .transport textdisplay[time=position].format-userFrames,
+.transport textdisplay[time=position].format-samples
+{
+	width: 7.04em;
 }
 
 /* The time display window's digits; their size at each of the window's sizes (.size-0 to .size-4) is the theme's. */
@@ -802,13 +838,28 @@ meter .meter-peak
 	top: 0;
 }
 
-.event-display .project-cursor, .event-display .cross-hair-vertical
+.event-display .project-cursor, .event-display .cross-hair-vertical, .event-display .step-input-cursor
 {
 	position: absolute;
 	top: 0;
 	bottom: 0;
 	width: 1dp;
 	pointer-events: none;
+}
+
+/* The chord pads' step input cursor (docs/features/chord-pads.md): a line with a handle in the ruler. */
+.event-display .step-input-cursor.hidden
+{
+	display: none;
+}
+
+.event-display .step-input-handle
+{
+	position: absolute;
+	top: 0;
+	left: -4dp;
+	width: 9dp;
+	height: 8dp;
 }
 
 .event-display .cross-hair-horizontal
@@ -1062,6 +1113,116 @@ meter .meter-peak
 	justify-content: center;
 	width: 64dp;
 	height: 52dp;
+	border-bottom-width: 3dp;
+}
+
+/* The grid layout (reference manual p. 1391): the code gives each pad its column's share of the width. */
+.chord-pads-pads.grid
+{
+	gap: 0dp;
+}
+
+/* The pads on black keys of the remote range sit higher in the keyboard layout. */
+.chord-pad.black-key
+{
+	height: 40dp;
+}
+
+/* Pattern Play Progress (pp. 1354, 1391): a bar along the bottom of a pad that plays the pattern. */
+.chord-pad .chord-pad-progress
+{
+	position: absolute;
+	left: 0;
+	bottom: 0;
+	width: 0%;
+	height: 2dp;
+	display: none;
+}
+
+.chord-pad.triggered .chord-pad-progress
+{
+	display: block;
+}
+
+.chord-pads-pads.no-progress .chord-pad-progress
+{
+	display: none;
+}
+
+/* The voicing indicator at the bottom of the pad (p. 1353), unless the display settings hide it. */
+.chord-pads-pads.no-voicings .chord-pad-voicing
+{
+	display: none;
+}
+
+/* The settings panes under the toolbars, one at a time. */
+.chord-pads-pane input
+{
+	width: 96dp;
+}
+
+/* The zone's keyboard under the pads (p. 1355): white and black keys in a row, the black ones shorter. */
+.chord-pads-keyboard
+{
+	display: flex;
+	align-items: flex-start;
+	height: 28dp;
+	padding: 2dp 4dp;
+}
+
+.chord-pads-key
+{
+	flex: 1 1 0;
+	height: 100%;
+}
+
+.chord-pads-key.black
+{
+	height: 60%;
+}
+
+/* The Proximity assistant (p. 1374): rows of suggestions by distance, the reference below them in the middle. */
+.chord-proximity-row
+{
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: center;
+	gap: 3dp;
+	width: 100%;
+}
+
+/* The chord editor's buttons (p. 1357), a row each of roots, types, tensions and bass notes. */
+.chord-editor-row
+{
+	display: flex;
+	flex-wrap: wrap;
+	gap: 2dp;
+	width: 100%;
+	padding-bottom: 3dp;
+}
+
+.chord-editor-button
+{
+	width: 21dp;
+	min-width: 0dp;
+	padding: 1dp 0dp;
+}
+
+.chord-editor-button.chord-editor-type
+{
+	width: 36dp;
+}
+
+.chord-editor-button.chord-editor-tension
+{
+	width: 26dp;
+}
+
+.chord-proximity-reference
+{
+	width: 100%;
+	text-align: center;
+	padding: 4dp;
 }
 
 /* The adaptive voicing reference indicator, the adaptive voicing indicator and the padlock side by side in a pad's
@@ -1365,19 +1526,12 @@ meter .meter-peak
 	text-align: left;
 }
 
-.track-visibility-item[level="1"]
+/* The indent of a track in folders, which code sizes from the track's level as the tree views' indents: folders
+   nest without a limit, which no rule per level covers (#906). */
+.track-visibility-indent
 {
-	margin-left: 12dp;
-}
-
-.track-visibility-item[level="2"]
-{
-	margin-left: 24dp;
-}
-
-.track-visibility-item[level="3"]
-{
-	margin-left: 36dp;
+	display: inline-block;
+	height: 1dp;
 }
 
 /* The track's color (#94), which code gives it as user data; without one it shows nothing. */
@@ -1412,6 +1566,38 @@ meter .meter-peak
 	display: block;
 	flex: 0 1 auto;
 	height: 18dp;
+}
+
+/* The Track Versions pop-up menu's arrow, at the right end of the name of a track with versions
+   (docs/features/track-versions.md). Its negative margin takes back the room it needs, which is the name's own right
+   padding, so the name keeps the width the user chose and the controls area keeps its place. */
+.track-list listitem.versions .track-name
+{
+	box-sizing: border-box;
+	padding-right: 16dp;
+}
+
+.track-list .track-versions-toggle
+{
+	flex: 0 0 auto;
+	min-width: 14dp;
+	width: 14dp;
+	height: 18dp;
+	margin-left: -14dp;
+	padding: 0;
+	text-align: center;
+}
+
+.track-list .track-versions-toggle svg.icon
+{
+	width: 10dp;
+	height: 10dp;
+	vertical-align: 0;
+}
+
+.track-list listitem.renaming .track-versions-toggle
+{
+	display: none;
 }
 
 .track-list .track-controls
@@ -1476,6 +1662,15 @@ meter .meter-peak
 .track-list .track-controls select.marker-menu
 {
 	width: 44dp;
+	padding: 0 2dp;
+}
+
+/* A MIDI track's MIDI channel (docs/features/mixer.md): Any, 1 to 16. */
+.track-list .track-controls select.midi-channel
+{
+	width: 44dp;
+	height: 18dp;
+	margin-left: 2dp;
 	padding: 0 2dp;
 }
 
@@ -1666,6 +1861,13 @@ menu.toolbox svg.icon
 }
 
 menuitem .menu-keys
+{
+	float: right;
+	padding-left: 24dp;
+}
+
+/* The version's ID after its name in a Track Versions menu (reference manual p. 232). */
+menuitem .track-version-id
 {
 	float: right;
 	padding-left: 24dp;
@@ -2084,7 +2286,7 @@ splitter.column .splitter-grip-horizontal
 	flex-shrink: 0;
 }
 
-.inspector-row select, .inspector-row valuefield
+.inspector-row select, .inspector-row valuefield, .inspector-row textdisplay
 {
 	flex: 1 1 0;
 	width: auto;
@@ -2093,6 +2295,45 @@ splitter.column .splitter-grip-horizontal
 .insert
 {
 	padding: 2dp 6dp;
+}
+
+/* The Track Versions section (docs/features/track-versions.md): the ID of the active version, the indicator that
+   shows while the track has more than one, and the list a click activates one of. */
+.inspector-version-id
+{
+	flex: 1 1 0;
+	padding: 0 6dp;
+}
+
+.inspector-version-indicator
+{
+	display: none;
+	width: 16dp;
+	text-align: center;
+}
+
+.inspector-section.multiple .inspector-version-indicator
+{
+	display: block;
+}
+
+.inspector-version
+{
+	display: flex;
+	padding: 2dp 6dp;
+}
+
+.inspector-version .name
+{
+	flex: 1 1 0;
+	overflow: hidden;
+	white-space: nowrap;
+}
+
+.inspector-version .id
+{
+	flex: 0 0 auto;
+	margin-left: 6dp;
 }
 
 /* The MIDI Inserts and MIDI Sends sections: a slot's control panel shows while its edit button opened it. */
@@ -2110,6 +2351,31 @@ splitter.column .splitter-grip-horizontal
 .midi-effect-slot.empty .midi-effect-edit
 {
 	visibility: hidden;
+}
+
+/* The slots above the divider, which are recorded, have a line at their side; the divider is a line in a grip at each
+   of its places, which shows at the one it is at and is dragged to another. */
+.midi-effect-slot
+{
+	padding-left: 2dp;
+}
+
+.midi-effect-slot.recorded
+{
+	padding-left: 0;
+	border-left-width: 2dp;
+}
+
+.midi-divider
+{
+	padding: 2dp 0;
+	drag: drag;
+	focus: none;
+}
+
+.midi-divider-line
+{
+	height: 2dp;
 }
 
 .inspector textarea.notepad

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Waveform overviews (#83): peak levels, peak files, the background cache and media.peaks.
 #include "engine/audiofile/audiofile.h"
+#include "engine/audiofile/file.h"
 #include "engine/engine.h"
 #include "engine/peaks/peakcache.h"
 #include "engine/peaks/peaks.h"
@@ -15,6 +16,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -519,6 +521,40 @@ TEST_CASE("peak files round trip, and damaged ones are rejected", "[unit]")
 	damage(newer, "a newer version");
 	damage("", "empty");
 	CHECK_THROWS_AS(peaks::readPeakFile(dir.path() / "missing.gbpeaks"), peaks::PeakFileError);
+}
+
+TEST_CASE("a peak file being read can be replaced, on Windows too", "[integration]")
+{
+	// The cache rebuilds a peak file while another thread still reads the old peaks, and writePeakFile then renames
+	// the new file over one that a reader has open: on Windows a classic rename can't do that, so the replacement
+	// goes through a POSIX-semantic rename or moves the file being read aside (#963, #1387). Holding a reader open
+	// across the replacement proves that the case is tested.
+	const test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "take.gbpeaks";
+	const peaks::PeakData oldData = build(testSignal(1, 1000, 5), 1, {16});
+	peaks::writePeakFile(file, "take.wav", {1, 2, 3}, oldData);
+	const std::string oldBytes = test::readText(file);
+
+	const detail::File reader = detail::openFile(file.u8string(), "rb");
+	REQUIRE(reader);
+	const peaks::PeakData newData = build(testSignal(1, 2000, 6), 1, {16});
+	peaks::writePeakFile(file, "take.wav", {4, 5, 6}, newData); // mustn't throw while the reader is in the old file
+#ifdef _WIN32
+	// The reader shares deletion, so the POSIX-semantic rename replaced the file atomically; the aside fallback is
+	// only for what that rename refuses, such as a reader that doesn't share deletion (#1387).
+	CHECK(detail::lastReplacePath() == detail::ReplacePath::PosixRename);
+#endif
+
+	// The held reader reads the old file on, and the name has the new peaks.
+	std::string held(oldBytes.size(), '\0');
+	CHECK(std::fread(held.data(), 1, held.size(), reader.get()) == held.size());
+	CHECK(held == oldBytes);
+	const peaks::PeakFile replaced = peaks::readPeakFile(file);
+	CHECK(replaced.data == newData);
+	CHECK(replaced.source == "take.wav");
+	CHECK(replaced.stamp == (peaks::SourceStamp{4, 5, 6}));
+	// The replacement left nothing behind.
+	CHECK(std::distance(std::filesystem::directory_iterator(dir.path()), std::filesystem::directory_iterator()) == 1);
 }
 
 TEST_CASE("a peak file far larger than its header says is rejected without reading it", "[unit]")

@@ -78,18 +78,36 @@ namespace gnubase::engine
 			return result;
 		}
 
-		// The first program change, MIDI volume and pan on MIDI channel 1, which a MIDI track's settings play on,
-		// as those settings for channel.set (reference manual p. 364: Extract First Patch, Extract First
-		// Volume/Pan); they leave the controllers.
-		Json extractSettings(std::vector<Controller>& controllers, bool patch, bool volumePan)
+		// The MIDI channel of a file track's notes and channel events if they all have the same, else none (Any).
+		std::optional<int> fileChannel(const midifile::ImportedTrack& track)
+		{
+			std::optional<int> channel;
+			bool mixed = false;
+			const auto see = [&channel, &mixed](int each)
+			{
+				mixed = mixed || (channel && *channel != each);
+				channel = each;
+			};
+			for (const Note& note : track.notes)
+				see(note.channel);
+			for (const Controller& controller : track.controllers)
+				if (controller.type != ControllerType::SysEx && controller.type != ControllerType::Articulation)
+					see(controller.channel);
+			return mixed ? std::nullopt : channel;
+		}
+
+		// The first program change, MIDI volume and pan on midiChannel, which a MIDI track's settings play on, as
+		// those settings for channel.set (reference manual p. 364: Extract First Patch, Extract First Volume/Pan);
+		// they leave the controllers.
+		Json extractSettings(std::vector<Controller>& controllers, int midiChannel, bool patch, bool volumePan)
 		{
 			Json settings = Json::object();
-			const auto extract = [&controllers](ControllerType type, int number)
+			const auto extract = [&controllers, midiChannel](ControllerType type, int number)
 			{
 				const auto found = std::find_if(controllers.begin(), controllers.end(),
-					[type, number](const Controller& controller)
+					[type, number, midiChannel](const Controller& controller)
 					{
-						return controller.channel == 0 && controller.type == type &&
+						return controller.channel == midiChannel && controller.type == type &&
 							(number < 0 || controller.number == number);
 					});
 				std::optional<Controller> result;
@@ -169,7 +187,9 @@ namespace gnubase::engine
 				"position, so one at the file's end counts; on linear tracks it is in samples, compared with the "
 				"file's end in the file's tempo. An audio event on a musical track keeps its start in ticks and its "
 				"length in samples, so it counts by its start in the file's tempo plus its length (by its end in "
-				"ticks if its clip plays in musical mode). Unless markers is false, its "
+				"ticks if its clip plays in musical mode). One on a linear track whose clip plays in musical mode "
+				"keeps its start in samples and its length in beats, so it counts by its start in ticks in the file's "
+				"tempo plus that length. Unless markers is false, its "
 				"markers are added to the active marker track (one is added if there is none), except that a type 1 "
 				"file's tracks of nothing but a name and markers, which midiFile.export writes for marker tracks, "
 				"become new marker tracks at the top while the project has room for them. The options of the "
@@ -178,10 +198,12 @@ namespace gnubase::engine
 				"type 0 file in one track. singlePart puts the whole file into one part on one track: track, a "
 				"MIDI or instrument track of the project, or a new one named after the file; on a linear track the "
 				"part's position and length are in samples, its notes in ticks. On MIDI tracks, "
-				"extractPatch makes each track's first program change (with its bank) and extractVolumePan its "
-				"first MIDI volume (CC 7) and pan (CC 10) on MIDI channel 1 the track's program, bank, midiVolume "
-				"and midiPan (channel.set) instead of events. automation moves the continuous controllers into "
-				"automation lanes, as midi.extractAutomation does. One undo step. Returns the new tracks and the "
+				"a new track's midiChannel (channel.set) is its file track's MIDI channel if all its channel events "
+				"have the same, else Any; extractPatch makes each track's first program change (with its bank) and "
+				"extractVolumePan its first MIDI volume (CC 7) and pan (CC 10) on the MIDI channel its settings go "
+				"out on (1 for Any) the track's program, bank, midiVolume and midiPan instead of events. automation "
+				"moves the continuous controllers into automation lanes, as midi.extractAutomation does. One undo "
+				"step. Returns the new tracks and the "
 				"parts. A track that the extraction leaves empty keeps its settings but gets no part, so parts can "
 				"be shorter than tracks, and empty with singlePart.",
 				{{"type", "object"}, {"additionalProperties", false},
@@ -244,19 +266,32 @@ namespace gnubase::engine
 				extendParts(version.midiParts);
 				extendParts(version.audioParts);
 			}
-		// An audio event keeps its position in its track's time base. On a linear track it counts by its end in
-		// samples. On a musical one it keeps its start in ticks and its length in samples, so it ends at its start in
-		// the file's tempo plus its length, unless its clip plays in musical mode and so keeps its end in ticks too.
+		// An audio event keeps its position in its track's time base. If its clip plays in musical mode, its length
+		// is in beats, which follow the tempo: on a musical track it keeps its end in ticks, on a linear one it ends at
+		// its start in ticks in the file's tempo plus that length. Otherwise its length is in samples: on a linear
+		// track it counts by its end in samples, on a musical one by its start in the file's tempo plus its length.
 		forEveryAudioEvent(project,
 			[&project, &options, &extend](const AudioEvent& event)
 			{
 				const EventSpan span = eventSpan(project, event);
-				if (event.position.base == time::TimeBase::Linear)
+				const bool linear = event.position.base == time::TimeBase::Linear;
+				if (project.clips.at(event.clip).warp.musical)
+				{
+					const time::Ticks end = project.tempo.toTicks(span.end, project.sampleRate);
+					if (linear)
+						options.beatAudioEvents.push_back(
+							{span.start, end - project.tempo.toTicks(span.start, project.sampleRate)});
+					else
+						extend({time::TimeBase::Musical, end});
+				}
+				else if (linear)
+				{
 					extend({time::TimeBase::Linear, span.end});
-				else if (project.clips.at(event.clip).warp.musical)
-					extend({time::TimeBase::Musical, project.tempo.toTicks(span.end, project.sampleRate)});
+				}
 				else
+				{
 					options.audioEvents.push_back({event.position.value, span.end - span.start});
+				}
 			});
 		for (const auto& [id, marker] : project.markers)
 			extend(marker.end);
@@ -363,10 +398,20 @@ namespace gnubase::engine
 				trackId = run("track.add", trackParameters).at("track").at("id").get<ObjectId>();
 				tracks.push_back(trackId);
 			}
+			// A new MIDI track plays on its file track's MIDI channel; the settings come from the channel the track
+			// plays on.
 			if (const Track& added = project.trackById.at(trackId); added.type == TrackType::Midi)
 			{
-				Json settings = extractSettings(track.controllers, parameters.value("extractPatch", false),
-					parameters.value("extractVolumePan", false));
+				std::optional<int> midiChannel = project.channels.at(added.channel).midiChannel;
+				Json settings = Json::object();
+				if (target == 0)
+				{
+					midiChannel = fileChannel(track);
+					if (midiChannel)
+						settings["midiChannel"] = *midiChannel;
+				}
+				settings.update(extractSettings(track.controllers, midiChannel.value_or(0),
+					parameters.value("extractPatch", false), parameters.value("extractVolumePan", false)));
 				if (!settings.empty())
 				{
 					settings["channel"] = added.channel;

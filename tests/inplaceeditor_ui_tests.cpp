@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <map>
 #include <numeric>
 #include <optional>
 #include <string>
@@ -463,6 +464,181 @@ TEST_CASE("two in-place editors and the lower zone's key editor have menus and s
 	CHECK(f.elements("#key-length-menu").size() == 1);
 }
 
+TEST_CASE("dragging the keyboard's left part zooms the pitches of an in-place editor", "[ui]")
+{
+	// Reference manual p. 1261.
+	Fixture f;
+	f.app.keys().run("editor.openInPlace", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil([&] { return f.elements(f.editor() + " .key-note").size() == 2; }));
+	f.settle(2);
+	f.scroll(127); // the top of the pitches in view, where a zoom in keeps them
+	const Json keyboard = f.box(f.editor() + " .key-editor-keys");
+	const Json body = f.box(f.editor() + " .key-editor-body");
+	const int left = keyboard.at("x").get<int>() + 4; // the keyboard's left 12 dp
+	const int high = body.at("y").get<int>() + 100;
+	const double top = keyboard.at("y").get<double>();
+	CHECK(std::abs(f.box(f.editor() + " .key-editor-row").at("height").get<double>() - 10.0) <= 0.5);
+
+	// A drag 100 px to the right doubles the rows' height; the pitch at the top of the view stays there.
+	f.app.ui().drag(std::nullopt, {"", 0, ui::Point{left, high}}, {"", 0, ui::Point{left + 100, high}});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(std::abs(f.box(f.editor() + " .key-editor-row").at("height").get<double>() - 20.0) <= 0.5);
+	CHECK(std::abs(f.box(f.editor() + " .key-editor-keys").at("height").get<double>() - 2560.0) <= 1);
+	CHECK(std::abs(f.box(f.editor() + " .key-editor-key[pitch=\"127\"]").at("y").get<double>() - top) <= 1);
+
+	// A drag 80 px up scrolls the pitches down by as much.
+	f.app.ui().drag(std::nullopt, {"", 0, ui::Point{left, high}}, {"", 0, ui::Point{left, high - 80}});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(std::abs(f.box(f.editor() + " .key-editor-key[pitch=\"127\"]").at("y").get<double>() - (top - 80)) <= 1);
+}
+
+TEST_CASE("a double click on the lanes' footer closes the in-place editor", "[ui]")
+{
+	// Reference manual p. 1261: a double click below the controller display closes it; the footer strip under the
+	// lanes is that place.
+	Fixture f;
+	f.app.keys().run("editor.openInPlace", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil([&] { return f.elements(f.editor() + " .key-note").size() == 2; }));
+
+	// A double click on the footer's empty place, right of its buttons, closes the editor.
+	const Json footer = f.box(f.editor() + " .controller-lanes-footer");
+	const ui::Target empty{"", 0,
+		ui::Point{footer.at("x").get<int>() + footer.at("width").get<int>() - 10,
+			footer.at("y").get<int>() + (footer.at("height").get<int>() / 2)}};
+	f.click(empty, 2);
+	REQUIRE(f.app.waitUntil([&] { return f.elements(f.editor()).empty(); }));
+	CHECK_FALSE(f.view().at("open").get<bool>());
+
+	// A double click on one of the footer's buttons doesn't close it.
+	f.app.call("editor.inPlace", {{"tracks", {f.track}}, {"open", true}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(f.editor() + " .key-note").size() == 2; }));
+	f.click(ui::Target{f.editor() + " #controller-lane-create", 0, std::nullopt}, 2);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.elements(f.editor()).size() == 1);
+	CHECK(f.view().at("open").get<bool>());
+}
+
+TEST_CASE("a note dragged from one in-place editor to another moves to that track's part", "[ui]")
+{
+	// Reference manual p. 1261: "You can drag notes from one In-Place Editor to another."
+	Fixture f;
+	const uint64_t other = f.app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	// The other track's part starts a bar later than this one's, so the move can't but count on the timeline.
+	const uint64_t otherPart =
+		f.app
+			.call(
+				"midiPart.add", {{"track", other}, {"position", 2 * g_bar}, {"length", 2 * g_bar}, {"name", "Strings"}})
+			.at("part")
+			.at("id")
+			.get<uint64_t>();
+	REQUIRE(f.app.waitUntil([&] { return f.display.project().at("midiParts").size() == 2; }));
+	f.app.call("editor.inPlace", {{"tracks", {f.track, other}}, {"open", true}});
+	const std::string lane = ".in-place-editor[track=\"" + std::to_string(other) + "\"]";
+	REQUIRE(f.app.waitUntil(
+		[&] { return f.elements(f.editor() + " .key-note").size() == 2 && f.elements(lane + " .key-note").empty(); }));
+	f.settle(2);
+
+	// A point of the other editor's grid at project ticks, on the pitch's row.
+	const auto otherAt = [&](int64_t ticks, int pitch)
+	{
+		const Json grid = f.box(lane + " .key-editor-grid");
+		const double y = grid.at("y").get<double>() + ((127.5 - pitch) / 128.0 * grid.at("height").get<double>());
+		return ui::Target{
+			"", 0, ui::Point{static_cast<int>(std::lround(f.timelineX(ticks))), static_cast<int>(std::lround(y))}};
+	};
+	const auto partNotes = [&](uint64_t part)
+	{
+		const Json project = f.app.call("project.get");
+		for (const Json& each : project.at("midiParts"))
+			if (each.at("id") == part)
+				return each.at("notes");
+		return Json::array();
+	};
+	const auto steps = f.app.call("history.get").at("steps").size();
+	Json source = Json::object();
+	for (const Json& note : partNotes(f.part))
+		if (note.at("id") == f.notes[0])
+			source = note;
+	REQUIRE(source.is_object());
+
+	// The first note, C3 on the bar's first beat, dragged into the other editor's third bar at E3: it moves to
+	// that track's part, under the mouse less the half beat the press grabbed it by, with its length and velocity,
+	// as one undo step. Its position counts from the other part's later start.
+	f.app.ui().drag(std::nullopt, f.at(g_bar + (g_quarter / 2), 60), otherAt((2 * g_bar) + (g_quarter / 2), 64));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return partNotes(otherPart).size() == 1; }));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(lane + " .key-note").size() == 1; }));
+	CHECK(partNotes(f.part).size() == 1);
+	const Json moved = partNotes(otherPart).at(0);
+	CHECK(moved.at("id") == f.notes[0]); // note.move keeps the ids
+	CHECK(moved.at("position") == 0);
+	CHECK(moved.at("pitch") == 64);
+	CHECK(std::abs(f.box(lane + " .key-note").at("x").get<double>() - f.timelineX(2 * g_bar)) <= 1.5);
+	CHECK(moved.at("length") == g_quarter);
+	CHECK(moved.at("velocity") == source.at("velocity"));
+	CHECK(f.app.call("history.get").at("steps").size() == steps + 1);
+	// The moved note left its editor's selection.
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("selection").empty(); }));
+
+	// Both notes back where they were, in the engine and on the screen.
+	const auto restored = [&]
+	{
+		REQUIRE(f.app.waitUntil(
+			[&]
+			{
+				return partNotes(otherPart).empty() && partNotes(f.part).size() == 2 &&
+					f.elements(lane + " .key-note").empty() && f.elements(f.editor() + " .key-note").size() == 2;
+			}));
+	};
+
+	// Undo brings it back.
+	f.app.call("history.undo");
+	restored();
+
+	// A drag to a time where the other track has no part leaves the note where it was.
+	f.app.ui().drag(std::nullopt, f.at(g_bar + (g_quarter / 2), 60), otherAt(g_quarter, 60));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(f.editor() + " .key-note").size() == 2; }));
+	CHECK(partNotes(otherPart).empty());
+	CHECK(partNotes(f.part).size() == 2);
+	CHECK(f.app.call("history.get").at("steps").size() == steps + 1);
+
+	// Both notes selected: a drag whose press lands in the other part takes them both, each keeping its distance
+	// to the pressed one, as one undo step: the history goes on by one, also with the undone step dropped.
+	f.click(f.note(f.notes[0]));
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("selection").size() == 1; }));
+	f.app.ui().click(std::nullopt, {f.note(f.notes[1]), 0, std::nullopt}, ui::MouseButton::Left, 1, {"ctrl"});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("selection").size() == 2; }));
+	const auto position = f.app.call("history.get").at("position").get<int64_t>();
+	f.app.ui().drag(std::nullopt, f.at(g_bar + (g_quarter / 2), 60), otherAt((2 * g_bar) + (g_quarter / 2), 62));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return partNotes(otherPart).size() == 2; }));
+	CHECK(partNotes(f.part).empty());
+	std::map<int, int64_t> placed;
+	for (const Json& note : partNotes(otherPart))
+		placed[note.at("pitch").get<int>()] = note.at("position").get<int64_t>();
+	CHECK(placed[62] == 0);
+	CHECK(placed[66] == g_quarter);
+	CHECK(f.app.call("history.get").at("position").get<int64_t>() == position + 1);
+	CHECK(f.app.call("history.get").at("steps").size() == steps + 1);
+
+	// Undo brings both back, into the selection they were in; a drag that would put a note before the other
+	// part's start moves nothing.
+	f.app.call("history.undo");
+	restored();
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("selection").size() == 2; }));
+	// The press on the second note, dropped at the other part's start: the first note would land on the timeline
+	// before it.
+	f.app.ui().drag(
+		std::nullopt, f.at(g_bar + g_quarter + (g_quarter / 2), 64), otherAt((2 * g_bar) + (g_quarter / 2), 62));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(partNotes(otherPart).empty());
+	CHECK(partNotes(f.part).size() == 2);
+	CHECK(f.app.call("history.get").at("position").get<int64_t>() == position);
+	REQUIRE(f.app.waitUntil([&] { return f.elements(f.editor() + " .key-note").size() == 2; }));
+}
+
 TEST_CASE("a key held in an in-place editor that closes ends its pitch", "[ui]")
 {
 	// A key of the keyboard plays its pitch until the mouse is released (p. 1204); the in-place editor closing ends it
@@ -471,32 +647,8 @@ TEST_CASE("a key held in an in-place editor that closes ends its pitch", "[ui]")
 	const uint64_t strings = f.app.call("track.add", {{"type", "instrument"}}).at("track").at("id").get<uint64_t>();
 	f.app.call("midiPart.add", {{"track", strings}, {"position", g_bar}, {"length", g_bar}, {"name", "Strings"}});
 	REQUIRE(f.app.waitUntil([&] { return f.display.project().at("midiParts").size() == 2; }));
-	// The instrument noteProbe, rendered by hand, so that the notes the keyboard sends are heard.
-	f.app.call("audio.setDevice", {{"blockSize", 128}, {"inputChannels", 0}, {"captureSeconds", 1}});
-	const Json tracks = f.app.call("project.get").at("tracks");
-	const auto instrument =
-		std::find_if(tracks.begin(), tracks.end(), [&](const Json& each) { return each.at("id") == strings; });
-	REQUIRE(instrument != tracks.end());
-	f.app.call("channel.set", {{"channel", instrument->at("channel")}, {"instrument", "noteProbe"}});
-	f.app.call("audio.render", {{"frames", 128}}); // the new graph
-	f.app.call("midi.capture", {{"start", true}});
-	std::vector<std::vector<int>> played;
-	const auto plays = [&](const std::vector<std::vector<int>>& expected)
-	{
-		return f.app.waitUntil(
-			[&]
-			{
-				f.app.call("audio.render", {{"frames", 128}});
-				const Json captured = f.app.call("midi.capture");
-				for (const Json& message : captured.at("captured"))
-				{
-					const auto bytes = message.at("bytes").get<std::vector<int>>();
-					if ((bytes.at(0) & 0xE0) == 0x80)
-						played.push_back(bytes);
-				}
-				return played == expected;
-			});
-	};
+	// The instrument noteProbe, so that the notes the keyboard sends are heard.
+	test::NoteProbe sound(f.app, strings);
 
 	f.app.appUi().trackList()->select({strings});
 	f.app.call("editor.inPlace", {{"tracks", {strings}}, {"open", true}});
@@ -523,11 +675,11 @@ TEST_CASE("a key held in an in-place editor that closes ends its pitch", "[ui]")
 		{"", 0, ui::Point{keyboard.at("x").get<int>() + 2, static_cast<int>(std::lround(y))}}, ui::MouseButton::Left,
 		{});
 	f.app.shell().step(std::chrono::milliseconds(0));
-	CHECK(plays({{0x90, 60, 100}}));
+	CHECK(sound.plays({{0x90, 60, 100}}));
 
 	f.app.call("editor.inPlace", {{"tracks", {strings}}, {"open", false}});
 	REQUIRE(f.app.waitUntil([&] { return f.elements(lane).empty(); }));
-	CHECK(plays({{0x90, 60, 100}, {0x80, 60, 0}}));
+	CHECK(sound.plays({{0x90, 60, 100}, {0x80, 60, 0}}));
 }
 
 TEST_CASE("only a track's own lane grows for its in-place editor, which a folded folder hides", "[ui]")

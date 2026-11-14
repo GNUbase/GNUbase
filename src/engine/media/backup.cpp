@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <fstream>
 #include <functional>
 #include <map>
@@ -81,24 +82,26 @@ namespace gnubase::engine
 		// Copies a file in chunks, so that a job can report progress and stop in between. Throws std::runtime_error.
 		void copyFile(const fs::path& from, const fs::path& to, const std::function<void(size_t)>& copied)
 		{
-			std::ifstream input(from, std::ios::binary);
+			// Opened as the readers open files, so that the file can be replaced or deleted while the backup reads
+			// it, on Windows too: these are the project's media and freeze files, which the user or another program
+			// may move while the job runs; the copy reads the old file to its end (#963).
+			const detail::File input = detail::openFile(from.u8string(), "rb");
 			if (!input)
 				throw std::runtime_error("can't read " + from.u8string());
 			std::ofstream output(to, std::ios::binary | std::ios::trunc); // made for this copy by createFreeFile
 			if (!output)
 				throw std::runtime_error("can't create " + to.u8string());
 			std::vector<char> buffer(g_copyChunk);
-			while (input)
+			for (;;)
 			{
-				input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-				const auto count = static_cast<size_t>(input.gcount());
+				const size_t count = std::fread(buffer.data(), 1, buffer.size(), input.get());
 				if (count == 0)
 					break;
 				if (!output.write(buffer.data(), static_cast<std::streamsize>(count)))
 					throw std::runtime_error("can't write " + to.u8string());
 				copied(count);
 			}
-			if (input.bad())
+			if (std::ferror(input.get()) != 0)
 				throw std::runtime_error("can't read " + from.u8string());
 			output.close();
 			if (!output)
@@ -428,7 +431,7 @@ namespace gnubase::engine
 	std::set<std::string> takenNames(const fs::path& folder)
 	{
 		// One listing instead of a failed create for every file of that name: a folder can hold thousands of
-		// recordings, and the recorder holds its lock meanwhile.
+		// recordings, and a recording's input waits for its files meanwhile.
 		std::set<std::string> taken;
 		std::error_code error;
 		for (fs::directory_iterator entry(folder, error), end; !error && entry != end; entry.increment(error))
@@ -486,9 +489,13 @@ namespace gnubase::engine
 			file.to.clear();
 			const fs::path source = pathOf(file.from);
 			std::error_code error;
-			std::ifstream input(source, std::ios::binary | std::ios::ate);
-			readable.push_back(fs::is_regular_file(source, error) && input.good());
-			const std::streamoff size = readable.back() ? static_cast<std::streamoff>(input.tellg()) : 0;
+			// Opened as the readers open files, so that the file can be replaced or deleted while it is read, on
+			// Windows too (#963).
+			const detail::File input = detail::openFile(source.u8string(), "rb");
+			readable.push_back(input && fs::is_regular_file(source, error));
+			int64_t size = 0;
+			if (readable.back() && detail::seekFile(input.get(), 0, SEEK_END))
+				size = detail::tellFile(input.get());
 			sizes.push_back(size > 0 ? static_cast<std::uintmax_t>(size) : 0);
 			total += sizes.back();
 		}
@@ -695,9 +702,11 @@ namespace gnubase::engine
 			}
 			else
 			{
-				std::ifstream file(pathOf(media.path), std::ios::binary | std::ios::ate);
-				const std::streamoff size = file ? static_cast<std::streamoff>(file.tellg()) : 0;
-				plan.bytes = size > 0 ? static_cast<std::uintmax_t>(size) : 0;
+				// The estimate asks the file system rather than opening the file: it mustn't hold a handle in a
+				// media file the project may be playing, not even briefly (#963).
+				std::error_code sizeError;
+				const auto size = fs::file_size(pathOf(media.path), sizeError);
+				plan.bytes = sizeError ? 0 : size;
 			}
 			total += plan.bytes;
 			plans.push_back(plan);
@@ -772,8 +781,9 @@ namespace gnubase::engine
 			}
 			else
 			{
-				const std::ifstream readable(source, std::ios::binary);
-				if (!readable || fs::is_directory(source, error))
+				// Opened as the readers open files, so the check doesn't lock a file the project plays (#963).
+				if (const detail::File readable = detail::openFile(source.u8string(), "rb");
+					!readable || fs::is_directory(source, error))
 				{
 					missing.push_back({{"media", media.id}, {"path", media.path}});
 					done += plan.bytes;
@@ -822,8 +832,8 @@ namespace gnubase::engine
 			const fs::path source = pathOf(path);
 			detail = source.filename().u8string();
 			job.progress(static_cast<double>(done) / static_cast<double>(total), detail);
-			const std::ifstream readable(source, std::ios::binary);
-			if (!readable || fs::is_directory(source, error))
+			if (const detail::File readable = detail::openFile(source.u8string(), "rb");
+				!readable || fs::is_directory(source, error))
 			{
 				done += bytes;
 				continue;
@@ -869,14 +879,12 @@ namespace gnubase::engine
 				continue;
 			}
 			const fs::path source = mixdownFolder / mixdown.relative;
-			std::ifstream readable(source, std::ios::binary);
-			if (!readable)
+			if (const detail::File readable = detail::openFile(source.u8string(), "rb"); !readable)
 			{
 				missing.push_back({{"path", source.u8string()}});
 				done += mixdown.bytes;
 				continue;
 			}
-			readable.close();
 			detail = mixdown.relative.filename().u8string();
 			job.progress(static_cast<double>(done) / static_cast<double>(total), detail);
 			const fs::path copy = createFreeFile(parent, mixdown.relative.filename(), takenNames);

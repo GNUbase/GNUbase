@@ -21,6 +21,24 @@ namespace gnubase::engine
 				appendTracks(project, project.trackById.at(id).children, order);
 			}
 		}
+
+		// Whether a link group links a key (reference manual p. 458).
+		bool links(const LinkGroup& group, const std::string& key)
+		{
+			if (key == "volume")
+				return group.volume;
+			if (key == "pan")
+				return group.pan;
+			if (key == "monitor" || key == "recordEnable")
+				return group.record;
+			if (key == "eq")
+				return group.eq;
+			if (key == "strip")
+				return group.dynamics;
+			if (key == "sends")
+				return group.sends;
+			return group.mute; // mute, solo, soloDefeat and listen
+		}
 	}
 
 	std::vector<ProjectColor> factoryColors()
@@ -125,6 +143,40 @@ namespace gnubase::engine
 			group = linkGroupOf(project, group->vca))
 			chain.push_back(group->vca);
 		return chain;
+	}
+
+	std::vector<ObjectId> linkedTo(const Project& project, ObjectId channel, const std::string& key, bool linked)
+	{
+		const bool button = key != "volume" && key != "pan" && key != "eq" && key != "strip" && key != "sends";
+		std::vector<ObjectId> result;
+		std::set<ObjectId> seen{channel};
+		std::vector<ObjectId> pending{channel};
+		while (!pending.empty())
+		{
+			const ObjectId at = pending.back();
+			pending.pop_back();
+			std::vector<ObjectId> next;
+			if (const LinkGroup* group = linkGroupOf(project, at); linked && group != nullptr && links(*group, key))
+				next = group->channels;
+			if (const LinkGroup* group = controlledBy(project, at); button && group != nullptr)
+				next.insert(next.end(), group->channels.begin(), group->channels.end());
+			for (const ObjectId id : next)
+				if (seen.insert(id).second)
+				{
+					result.push_back(id);
+					pending.push_back(id);
+				}
+		}
+		return result;
+	}
+
+	void followLinkedMove(const Project& project, Channel& to, const std::string& key, double moved)
+	{
+		const bool audio = to.format != ChannelFormat::None;
+		if (key == "pan" && audio)
+			to.pan = std::clamp(to.pan + moved, -1.0, 1.0);
+		else if (key == "volume" && (audio || project.trackById.at(to.track).type == TrackType::Vca))
+			to.volume = std::clamp(to.volume + moved, g_minChannelVolume, project.maxVolume);
 	}
 
 	time::Ticks longestProjectTicks(const Project& project)
@@ -264,22 +316,24 @@ namespace gnubase::engine
 	int globalTranspose(const Project& project, const MidiPart& part, time::Samples at)
 	{
 		if (part.independent)
-			return 0;
-		int semitones = rootKeyTranspose(project, part);
+			return part.transpose;
+		int semitones = rootKeyTranspose(project, part) + part.transpose;
 		const TransposeTrack& track = project.transpose;
-		if (track.mute)
-			return semitones;
-		// ponytail: a scan of the events per note; a song has a handful of them.
-		int value = 0;
-		for (const TransposeEvent& event : track.events)
+		if (!track.mute)
 		{
-			if (time::toSamples(event.position, project.tempo, project.sampleRate) > at)
-				break;
-			value = event.value;
+			// ponytail: a scan of the events per note; a song has a handful of them.
+			int value = 0;
+			for (const TransposeEvent& event : track.events)
+			{
+				if (time::toSamples(event.position, project.tempo, project.sampleRate) > at)
+					break;
+				value = event.value;
+			}
+			semitones += value;
 		}
-		semitones += value;
 		if (track.keepInOctave)
 		{
+			// The whole sum, the part's own transpose included (#896), never more than 7 semitones either way.
 			while (semitones > 7)
 				semitones -= 12;
 			while (semitones < -7)
@@ -350,5 +404,41 @@ namespace gnubase::engine
 				pending.push_back(send.destination);
 		}
 		return false;
+	}
+
+	std::vector<ExpressionPoint> expressionsFrom(const std::vector<ExpressionPoint>& points, time::Ticks from)
+	{
+		const time::Ticks at = std::max<time::Ticks>(from, 0);
+		std::vector<ExpressionPoint> moved;
+		for (size_t type = 0; type < g_expressionNames.size(); ++type)
+		{
+			// The last of the type's points up to at: they are sorted by position.
+			const auto last = std::find_if(points.rbegin(), points.rend(), [&](const ExpressionPoint& point)
+				{ return static_cast<size_t>(point.type) == type && point.position <= at; });
+			if (last != points.rend())
+				moved.push_back({last->type, 0, last->value});
+		}
+		for (const ExpressionPoint& point : points)
+			if (point.position > at)
+				moved.push_back({point.type, point.position - from, point.value});
+		std::stable_sort(moved.begin(), moved.end(),
+			[](const ExpressionPoint& a, const ExpressionPoint& b) { return a.position < b.position; });
+		return moved;
+	}
+
+	Note splitNote(Note& note, time::Ticks at)
+	{
+		Note rest = note;
+		rest.id = 0;
+		rest.position = note.position + at;
+		rest.length = note.length - at;
+		rest.origin.reset();
+		rest.expressions = expressionsFrom(note.expressions, at);
+		note.length = at;
+		note.origin.reset();
+		note.expressions.erase(std::remove_if(note.expressions.begin(), note.expressions.end(),
+								   [at](const ExpressionPoint& point) { return point.position >= at; }),
+			note.expressions.end());
+		return rest;
 	}
 }

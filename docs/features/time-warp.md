@@ -45,7 +45,8 @@ signature events ([signature-track.md](signature-track.md)) and the clips' warp 
   checked as chosen. It has no toolbar button: the toolbar has no room for one at 1024 pixels, the width of CI's
   displays. In the grid modes a drag sends `tempo.warp` on release, from the position pressed,
   snapped, to the time released, with `follow` in the second mode. In Free Warp a press on an audio event inserts a
-  warp marker at the clip frame pressed that plays at the frame released (`clip.addWarpMarker`).
+  warp marker at the clip frame pressed that plays at the frame released (`clip.addWarpMarker`), counted through the
+  event's clip frames per second, so on a warped event they are the frames its waveform shows there.
 - **Project > Tempo Track > Process Tempo...** (`tempo.openProcessTempo`) opens `resources/ui/process-tempo.rml`: the
   locator range in seconds, New End Position `#pt-new-end` and New Length `#pt-new-length`, each following the other,
   and the Equivalent Tempo Scaling `#pt-scaling`; Process sends `tempo.process`.
@@ -75,4 +76,5 @@ length and end, from the locators and with a ramp across the range's end; every 
 Set Definition from Tempo playing as before and following a tempo change, for the events' tracks or all; pasting warp
 markers at the same times, keeping those there, and undo. `tests/timewarp_ui_tests.cpp`: the tool's Warp Grid and
 Free Warp drags and its modes in the context menu, the Process Tempo and Process Bars dialogs, and Audio > Advanced's Set Definition from
-Tempo and Copy and Paste Warp Markers.
+Tempo and Copy and Paste Warp Markers. `tests/eventediting_tests.cpp`: Free Warp's drag on a stretched musical-mode
+event.

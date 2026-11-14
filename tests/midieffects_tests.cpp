@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/audio/sequencer.h"
 #include "engine/document/document.h"
+#include "engine/document/serialize.h"
 #include "engine/engine.h"
 #include "engine/processors/midieffects.h"
+#include "platform/log.h"
+#include "platform/rt/realtime.h"
+#include "plugin/checkedplugin.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -10,11 +14,14 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -169,6 +176,17 @@ TEST_CASE("midiEffect.list lists the built-in MIDI effects with their parameters
 	for (const processors::BuiltinInfo& info : processors::midiEffects())
 		for (size_t i = 0; i < info.parameters.size(); ++i)
 			CHECK(info.parameters[i].id == i);
+}
+
+TEST_CASE("the sequencer remembers the automated values of every MIDI effect's parameters", "[unit]")
+{
+	// A parameter beyond them would play its static value in a new instance of its effect.
+	for (const processors::BuiltinInfo& info : processors::midiEffects())
+		for (const processors::ParameterInfo& parameter : info.parameters)
+		{
+			INFO(info.id << " " << parameter.name);
+			CHECK(parameter.id < MidiSequencer::g_automated);
+		}
 }
 
 TEST_CASE("the arpeggiator plays the held notes in each mode at its rate, gate and octaves", "[integration]")
@@ -575,14 +593,16 @@ TEST_CASE("channel.set refuses unknown MIDI effects, parameters out of range and
 	CHECK_THAT(reject(track.client, "channel.set", {{"channel", track.channel}, {"midiSends", {{"divider", 1}}}}),
 		ContainsSubstring("only the MIDI inserts"));
 	const ObjectId midi = run(track.client, "track.add", {{"type", "midi"}}).at("channel").at("id").get<ObjectId>();
-	CHECK_THAT(reject(track.client, "channel.set",
-				   {{"channel", track.channel}, {"midiSends", {{"slots", {{{"output", midi}}}}}}}),
+	Json sent = slot("transformer");
+	sent["output"] = midi;
+	CHECK_THAT(reject(track.client, "channel.set", {{"channel", track.channel}, {"midiSends", {{"slots", {sent}}}}}),
 		ContainsSubstring("instrument track's channel"));
 	// Two instrument tracks can't send to each other.
 	const ObjectId other = track.addInstrument();
-	track.set("midiSends", {{"slots", {{{"output", other}}}}});
-	CHECK_THAT(reject(track.client, "channel.set",
-				   {{"channel", other}, {"midiSends", {{"slots", {{{"output", track.channel}}}}}}}),
+	sent["output"] = other;
+	track.set("midiSends", {{"slots", {sent}}});
+	sent["output"] = track.channel;
+	CHECK_THAT(reject(track.client, "channel.set", {{"channel", other}, {"midiSends", {{"slots", {sent}}}}}),
 		ContainsSubstring("loop"));
 	CHECK_THAT(refused(5), ContainsSubstring("midiInserts must be object"));
 
@@ -723,13 +743,13 @@ TEST_CASE("a send plays its effect to another instrument track, with the track's
 	CHECK(played[track.channel] == "10 90 3c 64\n20 b0 40 7f\n25 e0 00 50\n30 80 3c 40\n40 90 3e 64\n");
 	CHECK(played[other] == "10 90 48 64\n20 b0 40 7f\n25 e0 00 50\n30 80 48 40\n40 90 4a 64\n");
 
-	// Back to the track's output: the note it played there ends there.
+	// Back to the track's output: the note it played there ends there; the track's own note sounds on (#1157).
 	sent["output"] = 0;
 	track.set("midiSends", {{"slots", {sent}}});
 	track.render(64);
 	played = track.capturedBy();
 	CHECK(played[other] == "64 80 4a 00\n");
-	CHECK(played[track.channel] == "64 80 3e 00\n");
+	CHECK(played[track.channel].empty());
 }
 
 TEST_CASE(
@@ -813,4 +833,350 @@ TEST_CASE("automation plays a MIDI effect's parameters at their samples, and par
 	CHECK(run(track.client, "project.get").at("automation").empty());
 	run(track.client, "history.undo");
 	CHECK(run(track.client, "project.get").at("automation").size() == 1);
+}
+
+TEST_CASE("an effect after a changed insert starts afresh, without the notes the old chain gave it", "[integration]")
+{
+	EffectTrack track;
+	track.set("midiInserts",
+		{{"slots", {slot("chordGenerator", {{"chord", "Major"}}), slot("arpeggiator", {{"rate", "1/16"}})}}});
+	run(track.client, "transport.play");
+	track.inject({message(10, {0x90, 60, 100})});
+	track.render(g_beat);
+	// The chord generator goes while the note sounds: an arpeggiator that kept the chord's notes would step on
+	// through them after the note ends.
+	track.set("midiInserts", {{"slots", {slot("")}}});
+	track.render(g_beat);
+	track.inject({message(2 * g_beat, {0x80, 60, 64})});
+	track.render(2 * g_beat);
+	const std::string played = track.captured();
+	for (size_t line = 0; line < played.size(); line = played.find('\n', line) + 1)
+		if (std::stoll(played.substr(line)) > 2 * g_beat)
+			CHECK(played.compare(played.find(' ', line), 4, " 90 ") != 0);
+}
+
+TEST_CASE("a send whose source changes ends its own notes only, not the track's", "[integration]")
+{
+	EffectTrack track;
+	track.add({{0, 2, 60, 100}});
+	track.set("midiSends", {{"pre", true}, {"slots", {slot("transformer", {{"value", 12}})}}});
+	run(track.client, "transport.play");
+	track.render(g_beat);
+	CHECK(track.captured() == "0 90 3c 64\n0 90 48 64\n");
+	// Switching Pre gives the send a new instance: its note ends, the part's note sounds on to its end.
+	track.set("midiSends", {{"pre", false}});
+	track.render(g_beat + 64);
+	const std::string played = track.captured();
+	CHECK(played.find(std::to_string(g_beat) + " 80 48 00\n") == 0);
+	CHECK(played.find("80 3c") == played.find(std::to_string(2 * g_beat) + " 80 3c") + 6);
+}
+
+TEST_CASE("an effect that starts afresh takes its automated values, not the slot's", "[integration]")
+{
+	EffectTrack track;
+	track.set("midiInserts", {{"slots", {slot("transformer")}}});
+	const Json target = {{"type", "midiEffect"}, {"number", 0}, {"parameter", processors::Transformer::Value}};
+	const auto lane = run(track.client, "automationLane.add", {{"track", track.track}, {"target", target}})
+						  .at("lane")
+						  .at("id")
+						  .get<ObjectId>();
+	run(track.client, "automationPoint.add",
+		{{"lane", lane}, {"points", {{{"position", 0}, {"value", 12}, {"shape", "step"}}}}});
+	run(track.client, "transport.play");
+	track.render(64);
+	// Switched off and on, the slot plays a new instance, which the lane doesn't send its value again.
+	track.set("midiInserts", {{"slots", {{{"on", false}}}}});
+	track.render(64);
+	track.set("midiInserts", {{"slots", {{{"on", true}}}}});
+	track.render(64);
+	track.inject({message(200, {0x90, 60, 100})});
+	track.render(64);
+	CHECK(track.captured() == "200 90 48 64\n");
+	// Moved across the divider, the insert plays a new instance too.
+	track.set("midiInserts", {{"divider", 1}});
+	track.render(64);
+	track.inject({message(330, {0x90, 62, 100})});
+	track.render(64);
+	CHECK(track.captured() == "256 80 48 00\n330 90 4a 64\n"); // the old instance's note ends
+}
+
+TEST_CASE("a send that starts afresh when Pre is switched takes its automated values", "[integration]")
+{
+	EffectTrack track;
+	track.set("midiSends", {{"slots", {slot("transformer")}}});
+	const Json target = {{"type", "midiEffect"}, {"number", 4}, {"parameter", processors::Transformer::Value}};
+	const auto lane = run(track.client, "automationLane.add", {{"track", track.track}, {"target", target}})
+						  .at("lane")
+						  .at("id")
+						  .get<ObjectId>();
+	run(track.client, "automationPoint.add",
+		{{"lane", lane}, {"points", {{{"position", 0}, {"value", 12}, {"shape", "step"}}}}});
+	run(track.client, "transport.play");
+	track.render(64);
+	track.set("midiSends", {{"pre", true}});
+	track.render(64);
+	// The track's own note and the send's, an octave up.
+	track.inject({message(150, {0x90, 60, 100})});
+	track.render(64);
+	const std::string played = track.captured();
+	CHECK(played.find("150 90 3c 64\n") != std::string::npos);
+	CHECK(played.find("150 90 48 64\n") != std::string::npos);
+}
+
+TEST_CASE("the inserts above the divider take their automation at its sample", "[integration]")
+{
+	EffectTrack track;
+	track.set("midiInserts", {{"divider", 1}, {"slots", {slot("transformer")}}});
+	const Json target = {{"type", "midiEffect"}, {"number", 0}, {"parameter", processors::Transformer::Value}};
+	const auto lane = run(track.client, "automationLane.add", {{"track", track.track}, {"target", target}})
+						  .at("lane")
+						  .at("id")
+						  .get<ObjectId>();
+	run(track.client, "automationPoint.add",
+		{{"lane", lane},
+			{"points",
+				{{{"position", 0}, {"value", 0}, {"shape", "step"}},
+					{{"position", g_beatTicks + (25 * g_beatTicks / g_beat)}, {"value", 12}, {"shape", "step"}}}}});
+	run(track.client, "transport.play");
+	track.render(g_beat);
+	// The value changes 25 samples into the block, between its two notes.
+	track.inject({message(g_beat + 10, {0x90, 60, 100}), message(g_beat + 40, {0x90, 62, 100})});
+	track.render(64);
+	CHECK(
+		track.captured() == std::to_string(g_beat + 10) + " 90 3c 64\n" + std::to_string(g_beat + 40) + " 90 4a 64\n");
+}
+
+TEST_CASE("a send that goes leaves the notes another track's send holds on the instrument", "[integration]")
+{
+	EffectTrack track;
+	const ObjectId second = track.addInstrument();
+	const ObjectId target = track.addInstrument();
+	Json sent = slot("transformer");
+	sent["output"] = target;
+	track.set("midiSends", {{"slots", {sent}}});
+	track.set("midiSends", {{"slots", {sent}}}, second);
+	track.inject({message(10, {0x90, 60, 100})});
+	run(track.client, "midi.inject", {{"channel", second}, {"messages", {message(20, {0x90, 60, 100})}}});
+	track.render(64);
+	CHECK(track.capturedBy()[target] == "10 90 3c 64\n20 90 3c 64\n");
+	// The second track goes with its send; the first one's still holds the note there.
+	const Json project = run(track.client, "project.get");
+	for (const Json& channel : project.at("channels"))
+		if (channel.at("id") == second)
+			run(track.client, "track.remove", {{"track", channel.at("track")}});
+	track.render(64);
+	CHECK(track.capturedBy()[target] == "");
+}
+
+TEST_CASE(
+	"a send slot without an effect has no output, also in an older project, and counts for no loop", "[integration]")
+{
+	EffectTrack track;
+	const ObjectId other = track.addInstrument();
+	Json sent = slot("transformer");
+	sent["output"] = other;
+	track.set("midiSends", {{"slots", {sent}}});
+	const auto refused = [&](const Json& slot)
+	{ return reject(track.client, "channel.set", {{"channel", track.channel}, {"midiSends", {{"slots", {slot}}}}}); };
+	// Removing the effect with an output given is refused too, and the slot keeps its effect and its output.
+	CHECK_THAT(refused({{"effect", ""}, {"output", other}}), ContainsSubstring("without an effect has no output"));
+	Json kept;
+	const Json project = run(track.client, "project.get");
+	for (const Json& channel : project.at("channels"))
+		if (channel.at("id") == track.channel)
+			kept = channel.at("midiSends").at("slots")[0];
+	CHECK(kept.at("effect") == "transformer");
+	CHECK(kept.at("output") == other);
+	CHECK(track.set("midiSends", {{"slots", {slot("")}}}).at("slots")[0].at("output") == 0);
+	// Nor does an empty slot take an output, with or without the effect given.
+	CHECK_THAT(refused({{"output", other}}), ContainsSubstring("without an effect has no output"));
+	CHECK_THAT(refused({{"effect", ""}, {"output", other}}), ContainsSubstring("without an effect has no output"));
+	// A project saved with an output on an empty slot loads without it.
+	Json saved = run(track.client, "project.get");
+	for (Json& channel : saved.at("channels"))
+		if (channel.at("id") == track.channel)
+			channel.at("midiSends").at("slots")[0]["output"] = other;
+	CHECK(projectFromJson(saved).channels.at(track.channel).midiSends.slots[0].output == 0);
+	sent["output"] = track.channel;
+	CHECK(track.set("midiSends", {{"slots", {sent}}}, other).at("slots")[0].at("output") == track.channel);
+}
+
+namespace
+{
+	namespace plugin = gnubase::plugin;
+
+	// Makes the built-in MIDI effects, each behind a plugin::CheckedPlugin that counts the calls on the wrong thread or
+	// in the wrong state, or behind a FailingEffect. The audio thread is the real-time context; while idle, no block
+	// processes the effects, so they may stop processing there too, as a plugin slot stops its plugin before it
+	// deactivates it.
+	class TestEffects final : public plugin::Factory, public plugin::ThreadCheck
+	{
+	public:
+		explicit TestEffects(bool failing = false) : m_failing(failing) {}
+
+		std::atomic<bool> idle{true};
+		std::atomic<uint32_t> violations{0};
+		std::atomic<const char*> lastViolation{nullptr};
+
+		size_t count() const override { return m_builtins.count(); }
+		const plugin::Descriptor& descriptor(size_t index) const override { return m_builtins.descriptor(index); }
+		std::unique_ptr<plugin::Plugin> create(std::string_view id, plugin::Host& host) override;
+
+		bool isMainThread() const noexcept override { return !gnubase::rt::isRealtimeContext(); }
+		bool isAudioThread() const noexcept override { return gnubase::rt::isRealtimeContext() || idle; }
+
+	private:
+		static void violated(const char* message, void* context) noexcept
+		{
+			auto* self = static_cast<TestEffects*>(context);
+			self->violations.fetch_add(1);
+			self->lastViolation.store(message);
+		}
+
+		processors::BuiltinFactory m_builtins;
+		bool m_failing = false;
+	};
+
+	// A plugin that fails every block it gets, as a third-party one might.
+	class FailingEffect final : public plugin::Plugin
+	{
+	public:
+		explicit FailingEffect(std::unique_ptr<plugin::Plugin> plugin) : m_plugin(std::move(plugin)) {}
+
+		const plugin::Descriptor& descriptor() const override { return m_plugin->descriptor(); }
+		bool init() override { return m_plugin->init(); }
+		bool activate(double sampleRate, uint32_t minFrames, uint32_t maxFrames) override
+		{
+			return m_plugin->activate(sampleRate, minFrames, maxFrames);
+		}
+		void deactivate() override { m_plugin->deactivate(); }
+		bool startProcessing() noexcept override { return m_plugin->startProcessing(); }
+		void stopProcessing() noexcept override { m_plugin->stopProcessing(); }
+		void reset() noexcept override { (*m_plugin).reset(); }
+		plugin::ProcessStatus process(const plugin::Process& /*process*/) noexcept override
+		{
+			return plugin::ProcessStatus::Error;
+		}
+		void* extension(std::string_view id) override { return m_plugin->extension(id); }
+
+	private:
+		std::unique_ptr<plugin::Plugin> m_plugin;
+	};
+
+	std::unique_ptr<plugin::Plugin> TestEffects::create(std::string_view id, plugin::Host& host)
+	{
+		std::unique_ptr<plugin::Plugin> made = m_builtins.create(id, host);
+		if (made && m_failing)
+			made = std::make_unique<FailingEffect>(std::move(made));
+		if (made)
+			made = std::make_unique<plugin::CheckedPlugin>(std::move(made), *this, &TestEffects::violated, this);
+		return made;
+	}
+
+	// A sequence with the effect in the first insert slot, or none.
+	std::unique_ptr<MidiSequence> withInsert(const std::string& effect)
+	{
+		auto sequence = std::make_unique<MidiSequence>();
+		sequence->inserts.slots[0].effect = effect;
+		return sequence;
+	}
+
+	// Plays a block of 128 frames with the events as the sequencer's input, on the audio thread, while stopped.
+	EventBuffer playBlock(MidiSequencer& sequencer, const std::vector<ProcessEvent>& events)
+	{
+		const EventBuffer in(4);
+		EventBuffer out(256);
+		const graph::TransportBlock transport;
+		for (const ProcessEvent& event : events)
+			sequencer.input().add(event);
+		{
+			const gnubase::rt::ScopedRealtimeContext audioThread;
+			sequencer.process({nullptr, 0, 128, in, out, transport});
+		}
+		sequencer.input().clear();
+		return out;
+	}
+
+	// The log's text so far.
+	std::string logged(const std::filesystem::path& file)
+	{
+		gnubase::logging::flush();
+		return gnubase::test::readText(file);
+	}
+}
+
+TEST_CASE(
+	"the sequencer starts its effects on the audio thread and stops and deactivates them before they go", "[unit]")
+{
+	auto effects = std::make_shared<TestEffects>();
+	{
+		auto sequencer = std::make_shared<MidiSequencer>(effects);
+		sequencer->prepareFor(48000.0, 128);
+		effects->idle = false;
+		sequencer->setSequence(withInsert("transformer"));
+		CHECK(hanging(playBlock(*sequencer, {noteAt(ProcessEvent::Type::NoteOn, 0, 60)})) == std::vector<int>{60});
+		// The effect leaves its slot; it goes once the audio thread took the sequence without it.
+		sequencer->setSequence(withInsert(""));
+		playBlock(*sequencer, {});
+		effects->idle = true;
+		sequencer->setSequence(withInsert(""));
+		// Again, and the sequencer goes with the effect active.
+		effects->idle = false;
+		sequencer->setSequence(withInsert("chordGenerator"));
+		CHECK(!playBlock(*sequencer, {noteAt(ProcessEvent::Type::NoteOn, 0, 60)}).empty());
+		// A new sample rate activates it again; the audio thread starts it again.
+		effects->idle = true;
+		sequencer->prepareFor(44100.0, 128);
+		effects->idle = false;
+		CHECK(!playBlock(*sequencer, {noteAt(ProcessEvent::Type::NoteOn, 0, 62)}).empty());
+		effects->idle = true;
+	}
+	const char* last = effects->lastViolation.load();
+	INFO((last != nullptr ? last : "none"));
+	CHECK(effects->violations == 0);
+}
+
+TEST_CASE("an effect that fails a block passes its events on as they came, and the log says so", "[unit]")
+{
+	const gnubase::test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "gnubase.log";
+	const gnubase::logging::Session log(file);
+	auto effects = std::make_shared<TestEffects>(true);
+	MidiSequencer sequencer(effects);
+	sequencer.prepareFor(48000.0, 128);
+	sequencer.setSequence(withInsert("chordGenerator"));
+	effects->idle = false;
+	const EventBuffer on = playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOn, 5, 60)});
+	REQUIRE(on.size() == 1);
+	CHECK(on[0].type == ProcessEvent::Type::NoteOn);
+	CHECK(on[0].key == 60);
+	CHECK(on[0].offset == 5);
+	const EventBuffer off = playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOff, 7, 60)});
+	REQUIRE(off.size() == 1);
+	CHECK(off[0].type == ProcessEvent::Type::NoteOff);
+	effects->idle = true;
+	const std::string text = logged(file);
+	CHECK_THAT(text, ContainsSubstring("chordGenerator in MIDI insert 1 failed"));
+	// Once while it fails, not every block.
+	CHECK(text.find("failed") == text.rfind("failed"));
+}
+
+TEST_CASE("events that don't fit an effect's event lists are dropped, and the log says so", "[unit]")
+{
+	const gnubase::test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "gnubase.log";
+	const gnubase::logging::Session log(file);
+	MidiSequencer sequencer;
+	sequencer.prepareFor(48000.0, 128);
+	sequencer.setSequence(withInsert("transformer"));
+	// More SysEx than a block's event lists hold.
+	std::vector<uint8_t> dump(70000, 0x10);
+	dump.front() = 0xF0;
+	dump.back() = 0xF7;
+	ProcessEvent sysex;
+	sysex.type = ProcessEvent::Type::SysEx;
+	sysex.data = dump.data();
+	sysex.size = static_cast<uint32_t>(dump.size());
+	CHECK(playBlock(sequencer, {sysex}).empty());
+	CHECK_THAT(logged(file), ContainsSubstring("transformer in MIDI insert 1 dropped events"));
 }

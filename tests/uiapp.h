@@ -13,6 +13,7 @@
 #include <RmlUi/Core/ElementDocument.h>
 
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -104,6 +105,25 @@ namespace gnubase::test
 		std::unique_ptr<ui::Automation> m_automation;
 	};
 
+	// The instrument noteProbe on a track, rendered by hand: plays() hears the note ons and offs that reach the
+	// track's instrument, such as those of a key of a key editor's keyboard. Sets the dummy device up and captures
+	// MIDI.
+	class NoteProbe
+	{
+	public:
+		NoteProbe(UiApp& app, uint64_t track);
+
+		// Renders until the note ons and offs heard since clear() are the expected ones (bytes of each message).
+		bool plays(const std::vector<std::vector<int>>& expected);
+
+		// Forgets what was heard.
+		void clear() { m_played.clear(); }
+
+	private:
+		UiApp& m_app;
+		std::vector<std::vector<int>> m_played;
+	};
+
 	// The value attribute of a value control (a fader, a knob, a value field) as a number.
 	double controlValue(UiApp& app, std::optional<ui::WindowId> window, const std::string& selector);
 
@@ -125,6 +145,10 @@ namespace gnubase::test
 		// Moves the mouse by steps of two pixels, down (1) or up (-1), perAnswer steps for each time the engine
 		// answers. Returns the control's value.
 		double move(int steps, int direction, int perAnswer = 1);
+
+		// Moves the mouse by one step of two pixels, down (1) or up (-1), without waiting for the engine, e.g. while
+		// the test holds it.
+		void nudge(int direction);
 
 		// Releases the button. If stays, checks that the control then stays where the drag left it while the engine
 		// answers late; it doesn't if another client set its value during the drag.

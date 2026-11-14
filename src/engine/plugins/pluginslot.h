@@ -18,7 +18,26 @@ namespace gnubase::engine::plugins
 	// Appends a graph event to a plugin's events, at the offset clamped to the block of `frames`: notes and parameter
 	// changes as plugin events, the other MIDI messages as MIDI 1.0 bytes (a program change after its bank select)
 	// and SysEx with its bytes copied. Real-time safe.
-	void convertEvent(const graph::ProcessEvent& event, uint32_t frames, plugin::EventList& out) noexcept;
+	// With midi2, for a note port that takes MIDI 2.0 (a MIDI effect's, #1380), the other MIDI messages are MIDI 2.0
+	// universal MIDI packets instead, at the graph's full resolution, and a program change carries its bank.
+	void convertEvent(
+		const graph::ProcessEvent& event, uint32_t frames, plugin::EventList& out, bool midi2 = false) noexcept;
+
+	// A plugin's event of list as a graph event: notes, parameter changes, note expressions, MIDI 2.0 channel voice
+	// messages and SysEx, whose bytes stay in list. False for the others (MIDI 1.0, other namespaces), which have no
+	// graph event. Real-time safe.
+	bool toGraphEvent(const plugin::Event& event, const plugin::EventList& list, graph::ProcessEvent& out) noexcept;
+
+	// The transport segments a plugin gets per block at most, as many as a host process passes on.
+	inline constexpr size_t g_maxTransportSegments = 64;
+
+	// A block's transport as the plugin's segments, as many as fit in segments: a stopped segment while stopped and for
+	// the frames before a count-in ends, then the block's segments, and a new one where a point of the project's
+	// tempo map is (TransportBlock::tempoMap, at the sample rate). Each has the tempo at its first frame, which under a
+	// ramp changes within it; without a tempo map or sample rate, the block's. Returns how many there are, at least
+	// one. Real-time safe.
+	uint32_t convertTransport(const graph::TransportBlock& transport, double sampleRate,
+		std::vector<plugin::TransportSegment>& segments) noexcept;
 
 	// The processor of a plugin slot node (graph::NodeKind::PluginSlot): hosts any plugin::Plugin, a built-in one or
 	// a remote plugin::remote::RemotePlugin, so the graph doesn't know the difference (docs/plugin-api.md). The engine
@@ -26,7 +45,8 @@ namespace gnubase::engine::plugins
 	// block it passes the node's audio to the plugin's main input port, its events as plugin events and the transport
 	// as transport segments, and the main output port back as the node's audio. Other ports get silence. A block the
 	// plugin fails (ProcessStatus::Error, which a remote plugin also returns once its host crashed or hung) outputs
-	// silence. A bypassed slot processes the plugin and outputs its input, delayed by the plugin's latency.
+	// silence. A bypassed slot processes the plugin and outputs its input, delayed by the plugin's latency. Events that
+	// don't fit its event lists are dropped, and it logs how many.
 	//
 	// Threads: [main] calls are the plugin's main thread, the plugin job thread in the engine; they may only happen
 	// while no graph processes the slot.
@@ -90,7 +110,6 @@ namespace gnubase::engine::plugins
 		// The plugin's main output as the node's audio, and its notes unless bypassed.
 		void output(const graph::ProcessContext& context, bool bypass) noexcept;
 		void convertEvents(const graph::ProcessContext& context) noexcept;
-		uint32_t convertTransport(const graph::TransportBlock& transport) noexcept;
 
 		std::unique_ptr<plugin::Plugin> m_plugin;
 		plugin::AudioPorts* m_ports = nullptr;

@@ -22,12 +22,16 @@ namespace gnubase::engine::graph
 			Program,         // key: the program; value: the bank, or 0xFFFFFFFF for none
 			SysEx,           // data and size: the whole message, from 0xF0 to 0xF7
 			Parameter,
+			// A note's per-note expression (#176): key and channel are the note's, parameter the expression's id
+			// (plugin::NoteExpression), parameterValue its value in that expression's unit.
+			NoteExpression,
 		};
 
 		uint32_t offset = 0; // frame within the block
 		Type type = Type::NoteOn;
 		uint8_t channel = 0;           // MIDI channel, 0-15
 		uint8_t key = 0;               // notes: the pitch; see Type for the others
+		bool drumSound = false;        // notes played into a track: key is a drum sound's pitch, not an I-note
 		uint16_t velocity = 0;         // notes, 0-65535
 		uint32_t value = 0;            // 0-4294967295; see Type
 		uint32_t parameter = 0;        // parameter changes: the processor's parameter id

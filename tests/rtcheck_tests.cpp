@@ -8,10 +8,14 @@
 #include "engine/plugins/pluginslot.h"
 #include "engine/processors/builtin.h"
 #include "engine/processors/builtinplugin.h"
+#include "engine/processors/drummachine.h"
 #include "engine/processors/midieffects.h"
 #include "engine/processors/sampler.h"
 #include "ipc/connection.h"
+#include "platform/audio/device.h"
+#include "platform/hosttime.h"
 #include "platform/log.h"
+#include "platform/midi/dummyport.h"
 #include "platform/rt/realtime.h"
 #include "platform/rt/snapshotpublisher.h"
 #include "platform/rt/workerpool.h"
@@ -32,6 +36,7 @@
 #include <cstdlib>
 #include <initializer_list>
 #include <memory>
+#include <set>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -476,6 +481,65 @@ TEST_CASE("the sampler plays notes, loops, slices and its filter without allocat
 	CHECK(g_violations == 0);
 }
 
+TEST_CASE("the drum machine plays samples, every synth, groups and its effects without allocating", "[unit]")
+{
+	using namespace gnubase::engine::graph;
+	using namespace gnubase::engine::processors;
+	constexpr uint32_t frames = 256;
+	std::vector<float> samples(size_t{2} * frames);
+	float* const channels[] = {samples.data(), samples.data() + frames};
+	EventBuffer eventsIn(256);
+	EventBuffer eventsOut(64);
+	auto sample = std::make_shared<Sample>();
+	sample->left.assign(4800, 0.5f);
+	sample->right.assign(4800, -0.5f);
+	DrumMachine drums;
+	drums.setSample(40, std::move(sample));
+	// The pad parameters the events below set are automated: the others' events don't count.
+	std::set<uint32_t> automated = {DrumMachine::padParameter(40, DrumMachine::Reverse)};
+	for (uint32_t id = DrumMachine::padParameter(41, DrumMachine::Instrument);
+		id < DrumMachine::padParameter(49, DrumMachine::Instrument); ++id)
+		automated.insert(id);
+	drums.setPadValues({{DrumMachine::padParameter(40, DrumMachine::Instrument), 1.0}}, automated);
+	drums.prepareFor(48000.0, frames);
+
+	const RecordViolations record;
+	for (int block = 0; block < 12; ++block)
+	{
+		eventsIn.clear();
+		const auto set = [&eventsIn](uint32_t id, double value)
+		{
+			ProcessEvent event;
+			event.type = ProcessEvent::Type::Parameter;
+			event.parameter = id;
+			event.parameterValue = value;
+			eventsIn.add(event);
+		};
+		for (int pad = 41; pad < 49; ++pad)
+		{
+			set(DrumMachine::padParameter(pad, DrumMachine::Instrument), static_cast<double>(pad - 39));
+			set(DrumMachine::padParameter(pad, DrumMachine::ExclusiveGroup), static_cast<double>(pad % 2));
+			set(DrumMachine::padParameter(pad, DrumMachine::Gate), static_cast<double>(block % 2));
+			set(DrumMachine::padParameter(pad, DrumMachine::DelaySend), 50.0);
+			set(DrumMachine::padParameter(pad, DrumMachine::ReverbSend), 50.0);
+		}
+		set(DrumMachine::padParameter(40, DrumMachine::Reverse), static_cast<double>(block % 2));
+		set(DrumMachine::DelaySync, static_cast<double>(block % 2));
+		for (uint8_t key = 40; key < 49; ++key)
+		{
+			ProcessEvent note;
+			note.type = block % 3 == 2 ? ProcessEvent::Type::NoteOff : ProcessEvent::Type::NoteOn;
+			note.offset = 20 + key;
+			note.key = key;
+			note.velocity = 0x8000;
+			eventsIn.add(note);
+		}
+		const ScopedRealtimeContext realtime;
+		drums.process({channels, 2, frames, eventsIn, eventsOut, TransportBlock{}});
+	}
+	CHECK(g_violations == 0);
+}
+
 TEST_CASE("every built-in processor processes signals, parameter sweeps and resets without allocating", "[unit]")
 {
 	using namespace gnubase::engine::graph;
@@ -746,6 +810,76 @@ TEST_CASE("MIDI injected into tracks and captured from instruments passes the RT
 	run("track.add", {{"type", "midi"}}); // a new graph, swapped in between blocks
 	run("audio.render", {{"frames", 2400}});
 	run("midi.capture", Json::object());
+	CHECK(g_violations == 0);
+}
+
+TEST_CASE("the chord pads' remote keys, players, pattern, sections and snap pass the RT checker", "[integration]")
+{
+	// #1089: what the audio thread does for the chord pads: midi::PadVoices for each player, Filter Notes, the
+	// chord modifiers' and controls' keys, the sections player mode, the pattern player and Snap Playback.
+	using gnubase::engine::Json;
+	auto dummy = std::make_unique<gnubase::midi::DummyBackend>();
+	gnubase::midi::DummyBackend& backend = *dummy;
+	backend.addLoopback("Keys");
+	std::vector<std::unique_ptr<gnubase::midi::Backend>> midi;
+	midi.push_back(std::move(dummy));
+	gnubase::engine::Engine engine(gnubase::audio::makeBackends(), {}, std::move(midi));
+	gnubase::engine::Client client(engine);
+	const auto run = [&client](const std::string& command, const Json& parameters = Json::object())
+	{
+		const gnubase::engine::Result result = client.call(command, parameters);
+		INFO(command << ": " << result.error);
+		REQUIRE(result.ok());
+		return result.value;
+	};
+	run("audio.setDevice", {{"blockSize", 64}, {"inputChannels", 0}, {"captureSeconds", 1}});
+	const Json added = run("track.add", {{"type", "instrument"}});
+	run("channel.set", {{"channel", added.at("channel").at("id")}, {"instrument", "testSynth"}, {"monitor", true}});
+	const Json second = run("track.add", {{"type", "instrument"}});
+	run("channel.set", {{"channel", second.at("channel").at("id")}, {"instrument", "testSynth"}, {"monitor", true}});
+	run("chordPads.addPlayer", {{"library", "piano"}, {"track", second.at("track").at("id")}});
+	run("chordPads.set",
+		{{"player", 0}, {"remote", true}, {"filterNotes", true}, {"modifiers", true}, {"controlSources", {"pitchBend"}},
+			{"snapPlayback", true}, {"overlaps", "legato"}});
+	run("midi.ports");
+	const auto keys = backend.openOutput("Keys");
+	const auto send = [&keys](uint8_t status, uint8_t data1, uint8_t data2)
+	{
+		gnubase::audio::MidiMessage message;
+		message.size = 3;
+		message.bytes = {status, data1, data2};
+		keys->send(message, gnubase::hostTime());
+	};
+	run("transport.play");
+	run("audio.render", {{"frames", 640}});
+
+	const RecordViolations record;
+	for (int round = 0; round < 3; ++round)
+	{
+		for (const uint8_t key : std::array<uint8_t, 6>{36, 38, 40, 47, 49, 60})
+			send(0x90, key, 100);
+		send(0xE0, 0, 100);
+		run("chordPads.trigger", {{"pad", 2}});
+		run("audio.render", {{"frames", 6400}});
+		for (const uint8_t key : std::array<uint8_t, 6>{36, 38, 40, 47, 49, 60})
+			send(0x80, key, 0);
+		run("chordPads.trigger", {{"pad", 2}, {"on", false}});
+		run("audio.render", {{"frames", 6400}});
+		// The pattern player, then the sections player mode, in the rounds after.
+		if (round == 0)
+			run("chordPads.setPattern", {{"preset", "arpeggioUp"}});
+		else
+			run("chordPads.set", {{"mode", "sections"}});
+		run("audio.render", {{"frames", 64}});
+	}
+	for (const uint8_t key : std::array<uint8_t, 4>{36, 55, 56, 57})
+		send(0x90, key, 90);
+	run("audio.render", {{"frames", 6400}});
+	for (const uint8_t key : std::array<uint8_t, 4>{57, 56, 55, 36})
+		send(0x80, key, 0);
+	run("audio.render", {{"frames", 6400}});
+	run("transport.stop");
+	run("audio.render", {{"frames", 640}});
 	CHECK(g_violations == 0);
 }
 

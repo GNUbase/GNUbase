@@ -613,6 +613,57 @@ TEST_CASE("a MIDI track heard again after playback moved while it was silent cha
 	CHECK(played() == afterTheOther);
 }
 
+TEST_CASE("a MIDI track on a MIDI channel heard again after a move chases on that channel", "[integration]")
+{
+	// Disabled, its parts are chased; muted by its button, its strip sends the latest values that played into the mute,
+	// forgetting the kinds its channel sent (ChannelStrip::chasedWhenHeard).
+	const bool button = GENERATE(false, true);
+	INFO((button ? "muted" : "disabled"));
+	Song song(64);
+	const ObjectId channel = channelOf(song.client, song.midi);
+	// The part: program 9 and CC 7 at 127 where it starts, CC 7 at 64 at 2000, on MIDI channel 1; the track plays them
+	// on channel 3, where its program 5, MIDI volume 50 and pan 20 go out first.
+	run(song.client, "controller.add",
+		{{"part", song.part(1)},
+			{"controllers",
+				{{{"position", 0}, {"type", "program"}, {"number", 9}},
+					{{"position", 0}, {"number", 7}, {"value", 1.0}},
+					{{"position", ticks(2000)}, {"number", 7}, {"value", 0.5}}}}});
+	run(song.client, "channel.set",
+		{{"channel", channel}, {"program", 5}, {"midiVolume", 50}, {"midiPan", 20}, {"midiChannel", 2}});
+	// Another track on Any with a later program change and CC 7 on channel 1, and one on channel 3 with a later pan.
+	const int any = song.addMidiTrack().first;
+	run(song.client, "controller.add",
+		{{"part", song.part(any)},
+			{"controllers",
+				{{{"position", ticks(1000)}, {"type", "program"}, {"number", 3}},
+					{{"position", ticks(1000)}, {"number", 7}, {"value", 1.0}}}}});
+	const auto [third, thirdTrack] = song.addMidiTrack();
+	run(song.client, "channel.set", {{"channel", channelOf(song.client, thirdTrack)}, {"midiChannel", 2}});
+	run(song.client, "controller.add",
+		{{"part", song.part(third)}, {"controllers", {{{"position", ticks(1000)}, {"number", 10}, {"value", 0.0}}}}});
+	run(song.client, "midi.capture", {{"start", true}});
+
+	const auto mute = [&](bool on)
+	{
+		if (button)
+			run(song.client, "channel.set", {{"channel", channel}, {"mute", on}});
+		else
+			run(song.client, "track.set", {{"track", song.midi}, {"enabled", !on}});
+	};
+
+	// Silent while playback starts and passes them all, then heard again.
+	mute(true);
+	run(song.client, "transport.play");
+	run(song.client, "audio.render", {{"frames", 2100}});
+	run(song.client, "midi.capture");
+	mute(false);
+	// Its values on its channel, then its part's program and latest CC 7 there, and the third track's pan, the latest
+	// of a kind its channel sent; not the other track's program and CC 7 on channel 1.
+	CHECK(controllersPlayed(song.client, false) ==
+		ControllerBytes{{0xC2, 5}, {0xB2, 7, 50}, {0xB2, 10, 20}, {0xC2, 9}, {0xB2, 10, 0}, {0xB2, 7, 64}});
+}
+
 TEST_CASE("a pedal that the chase of a MIDI track heard again presses goes up when the track is muted", "[integration]")
 {
 	const int blockSize = GENERATE(17, 64);

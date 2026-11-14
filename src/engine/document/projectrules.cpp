@@ -1103,18 +1103,19 @@ namespace gnubase::engine
 			"equal, unequal, bigger, biggerOrEqual, less, lessOrEqual, insideRange or outsideRange with parameter2; "
 			"tracks have neither) or property (isMuted, isSelected, isEmpty, isHidden, hasTrackVersion, "
 			"followsChordTrack, isDisabled or parentIsSelected; condition propertyIsSet or propertyIsNotSet); open and "
-			"close brackets 0 to 3; join and or or to the next line, and binding more tightly than or. function "
-			"delete, transform, select or deselect. actions, each {target, operation, parameter1, parameter2} in "
-			"order: position or length (add, subtract, multiplyBy, divideBy, roundBy, setRandom, setRelativeRandom "
-			"or setFixed), name (replace, append, prepend with parameter1; generateName: parameter1 and a number from "
-			"parameter2, one up for each element renamed; replaceSearchString: parameter1 by parameter2; eraseBefore "
-			"and eraseAfter parameter1; eraseFrontCharacter, eraseEndCharacter), trackOperation (mute, solo, record or "
-			"monitor with parameter1 on, off or toggle; timeDomain musical, linear or toggle) or color (setFixed: a "
-			"project color's name or #rrggbb; increment, decrement: the next or previous project color). pre and post: "
-			"up to 4 key commands each, {command, parameters}, that the UI runs before and after; the engine keeps "
-			"them with the rules. Tracks are found from top to bottom, then parts, audio events and markers. preset "
-			"names a preset instead of rules. selected: the ids of the selected tracks, parts, events and markers, for "
-			"isSelected and parentIsSelected.";
+			"close brackets 0 to 3, which must match and nest at most 3 deep; join and or or to the next line, and "
+			"binding more tightly than or. function delete, transform, select or deselect. actions, each {target, "
+			"operation, parameter1, parameter2} in order: position or length (add, subtract, multiplyBy, divideBy, "
+			"roundBy, setRandom, setRelativeRandom or setFixed), name (replace, append, prepend with parameter1; "
+			"generateName: parameter1 and a number from parameter2, one up for each element renamed; "
+			"replaceSearchString: parameter1 by parameter2; eraseBefore and eraseAfter parameter1; "
+			"eraseFrontCharacter, eraseEndCharacter), trackOperation (mute, solo, record or monitor with parameter1 "
+			"on, off or toggle; timeDomain musical, linear or toggle) or color (setFixed: a project color's name or "
+			"#rrggbb; increment, decrement: the next or previous project color). pre and post: up to 4 key commands "
+			"each, {command, parameters}, that the UI runs before and after; the engine keeps them with the rules. "
+			"Tracks are found from top to bottom, then parts, audio events and markers. preset names a preset instead "
+			"of rules. selected: the ids of the selected tracks, parts, events and markers, for isSelected and "
+			"parentIsSelected.";
 		const Json properties = {
 			{"rules", rulesSchema}, {"preset", stringSchema}, {"selected", ids}, {"seed", {{"type", "integer"}}}};
 		const Json foundSchema = {{"type", "object"},

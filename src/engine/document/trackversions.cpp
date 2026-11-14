@@ -31,8 +31,9 @@ namespace gnubase::engine
 		}
 
 		// The tracks of the parameters' tracks, each once, in their order; every one an audio, instrument or MIDI
-		// track. Gives each the first version as a version of its own.
-		std::vector<ObjectId> tracksOf(Project& project, const Json& parameters)
+		// track. Changes nothing: a track that has only its first version keeps storing none of its own, so that a
+		// command that then leaves it alone leaves it as it was (firstVersion).
+		std::vector<ObjectId> tracksOf(const Project& project, const Json& parameters)
 		{
 			std::vector<ObjectId> tracks;
 			for (const Json& item : parameters.at("tracks"))
@@ -43,11 +44,24 @@ namespace gnubase::engine
 				require(hasVersions(found->second.type), "track " + idText(id) + " has no versions");
 				if (std::find(tracks.begin(), tracks.end(), id) == tracks.end())
 					tracks.push_back(id);
-				if (found->second.versions.empty())
-					found->second.versions.emplace_back();
 			}
 			require(!tracks.empty(), "tracks must not be empty");
 			return tracks;
+		}
+
+		// Gives the track its first version as a version of its own, for a command that changes its versions.
+		void firstVersion(Track& track)
+		{
+			if (track.versions.empty())
+				track.versions.emplace_back();
+		}
+
+		// Drops the first version again when it is all the track has and nothing about it changed: a track with only
+		// v1 stores none of its own.
+		void forgetFirstVersion(Track& track)
+		{
+			if (track.versions.size() == 1 && track.versions.front() == TrackVersion())
+				track.versions.clear();
 		}
 
 		TrackVersion* versionOf(Track& track, int id)
@@ -57,13 +71,23 @@ namespace gnubase::engine
 			return found != track.versions.end() ? &*found : nullptr;
 		}
 
+		// Whether the track has a version with the ID: one of its own, or the first one it doesn't store.
+		bool hasVersion(const Track& track, int id)
+		{
+			if (track.versions.empty())
+				return id == TrackVersion().id;
+			return std::any_of(track.versions.begin(), track.versions.end(),
+				[id](const TrackVersion& version) { return version.id == id; });
+		}
+
 		TrackVersion& active(Track& track)
 		{
 			return *versionOf(track, track.activeVersion);
 		}
 
 		// Moves the track's events and parts out of the project into its active version, which holds them while
-		// another one is active. Its MIDI parts are no longer shared copies of parts that play.
+		// another one is active. A MIDI part whose shared copies all go with it stays one of them; one whose group
+		// still has copies elsewhere stops being a copy of them, since only the parts that play are edited together.
 		void stash(Project& project, Track& track, CommandContext& context)
 		{
 			TrackVersion& version = active(track);
@@ -85,8 +109,22 @@ namespace gnubase::engine
 			take(project.audioEvents, version.audioEvents, "audioEvent", "event");
 			take(project.audioParts, version.audioParts, "audioPart", "part");
 			take(project.midiParts, version.midiParts, "midiPart", "part");
+			const auto elsewhere = [&project, &version](ObjectId group)
+			{
+				if (std::any_of(project.midiParts.begin(), project.midiParts.end(),
+						[group](const auto& entry) { return entry.second.shared == group; }))
+					return true;
+				for (const auto& [trackId, other] : project.trackById)
+					for (const TrackVersion& otherVersion : other.versions)
+						if (&otherVersion != &version &&
+							std::any_of(otherVersion.midiParts.begin(), otherVersion.midiParts.end(),
+								[group](const MidiPart& part) { return part.shared == group; }))
+							return true;
+				return false;
+			};
 			for (MidiPart& part : version.midiParts)
-				part.shared = 0;
+				if (part.shared != 0 && elsewhere(part.shared))
+					detach(project, part);
 		}
 
 		// Makes a version of the track active: its events and parts go into the project. The active one's must be
@@ -137,6 +175,7 @@ namespace gnubase::engine
 			for (const ObjectId trackId : tracks)
 			{
 				Track& track = project.trackById.at(trackId);
+				firstVersion(track);
 				TrackVersion version;
 				version.id = id;
 				version.name = context.parameters().value("name", newVersionName(track));
@@ -163,7 +202,10 @@ namespace gnubase::engine
 			const std::vector<ObjectId> tracks = tracksOf(project, context.parameters());
 			for (const ObjectId id : tracks)
 			{
-				active(project.trackById.at(id)).name = name;
+				Track& track = project.trackById.at(id);
+				firstVersion(track);
+				active(track).name = name;
+				forgetFirstVersion(track); // the first version's own name leaves the track as it was
 				changed(project, id, context);
 			}
 			return versionsResult(project, tracks);
@@ -185,8 +227,7 @@ namespace gnubase::engine
 				const auto next = track.versions.erase(place);
 				const int nextId = (next == track.versions.begin() ? *next : *std::prev(next)).id;
 				unstash(project, track, nextId, context);
-				if (track.versions.size() == 1 && track.versions.front() == TrackVersion())
-					track.versions.clear(); // back to the first version only
+				forgetFirstVersion(track); // back to the first version only
 				removed.push_back(id);
 				changed(project, id, context);
 			}
@@ -202,7 +243,7 @@ namespace gnubase::engine
 			for (const ObjectId trackId : tracksOf(project, context.parameters()))
 			{
 				Track& track = project.trackById.at(trackId);
-				if (versionOf(track, id) == nullptr)
+				if (!hasVersion(track, id))
 					continue;
 				activated.push_back(trackId);
 				if (track.activeVersion == id)
@@ -222,11 +263,36 @@ namespace gnubase::engine
 			for (const ObjectId trackId : tracks)
 			{
 				Track& track = project.trackById.at(trackId);
+				firstVersion(track);
 				active(track).id = id;
 				track.activeVersion = id;
 				changed(project, trackId, context);
 			}
 			return versionsResult(project, tracks);
+		}
+
+		// The part's notes and controllers with new ids, the same new id for the same old one, so that the shared
+		// copies of a group keep sharing them; renumber gives a part ids no other part has.
+		void renumberShared(Project& project, MidiPart& part, std::map<ObjectId, ObjectId>& noteIds,
+			std::map<ObjectId, ObjectId>& controllerIds)
+		{
+			std::map<ObjectId, Note> notes;
+			for (auto& [id, note] : part.notes)
+			{
+				const auto found = noteIds.find(id);
+				note.id = found != noteIds.end() ? found->second : noteIds.emplace(id, project.newId()).first->second;
+				notes[note.id] = note;
+			}
+			part.notes = std::move(notes);
+			std::map<ObjectId, Controller> controllers;
+			for (auto& [id, controller] : part.controllers)
+			{
+				const auto found = controllerIds.find(id);
+				controller.id = found != controllerIds.end() ? found->second
+															 : controllerIds.emplace(id, project.newId()).first->second;
+				controllers[controller.id] = std::move(controller);
+			}
+			part.controllers = std::move(controllers);
 		}
 	}
 
@@ -251,7 +317,8 @@ namespace gnubase::engine
 				return name;
 	}
 
-	TrackVersion copyVersion(Project& project, const TrackVersion& version, ObjectId track)
+	TrackVersion copyVersion(
+		Project& project, const TrackVersion& version, ObjectId track, const std::map<ObjectId, ObjectId>& patterns)
 	{
 		TrackVersion copy;
 		copy.id = version.id;
@@ -267,7 +334,7 @@ namespace gnubase::engine
 		// New ids in stack order keep it, with every copy ordered by its id.
 		std::vector<AudioEvent> events = version.audioEvents;
 		std::stable_sort(events.begin(), events.end(),
-			[](const AudioEvent& a, const AudioEvent& b) { return frontOf(a) < frontOf(b); });
+			[](const AudioEvent& a, const AudioEvent& b) { return stackKey(a) < stackKey(b); });
 		std::map<ObjectId, ObjectId> ids;
 		for (const AudioEvent& event : events)
 			ids[event.id] = project.newId();
@@ -282,12 +349,29 @@ namespace gnubase::engine
 			event.part = part == parts.end() ? 0 : part->second;
 		}
 		copy.audioEvents = std::move(events);
+		// A version's shared copies get a group of their own: two versions never play together, so a group across
+		// them is none, and the first switch would take the copies apart anyway. The copies of a group keep sharing
+		// their notes and controllers, with each other and with nothing else.
+		std::map<ObjectId, ObjectId> groups;                    // a copied group -> the copy's own
+		std::map<ObjectId, std::map<ObjectId, ObjectId>> notes; // per new group: the ids its copies share
+		std::map<ObjectId, std::map<ObjectId, ObjectId>> controllers;
 		for (MidiPart part : version.midiParts)
 		{
 			part.id = project.newId();
 			part.track = track;
+			if (const auto pattern = patterns.find(part.pattern); pattern != patterns.end())
+				part.pattern = pattern->second;
 			if (part.shared == 0)
+			{
 				renumber(project, part);
+			}
+			else
+			{
+				if (groups.find(part.shared) == groups.end())
+					groups[part.shared] = project.newId();
+				part.shared = groups.at(part.shared);
+				renumberShared(project, part, notes[part.shared], controllers[part.shared]);
+			}
 			copy.midiParts.push_back(std::move(part));
 		}
 		return copy;

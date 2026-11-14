@@ -12,15 +12,41 @@ event of those audio parts (p. 369). An event moves so that its snap point, or w
 grid as a note's start does: strength, catch range, safe range, randomizing and grooves alike. The randomizing is
 seeded by the position, not the event, so events at the same place move alike. Locked events stay.
 
-As with notes, an event keeps where it was before it was first quantized and where quantizing put it
-(`AudioEvent::quantizeOrigin`, saved in `gnubase.json`): quantizing again starts from the original unless it is soft,
-and `quantize.reset` puts it back. An event moved by other means since is where it is, and its origin no longer counts.
-Splitting a quantized event (`event.split`) gives the piece after the split an origin of its own, so that resetting
-puts both pieces back where they were and they tile again: it was as far from its original, in samples, as the split is
-from where quantizing put the event. It goes through samples because a musical event's position is in ticks while its
-audio keeps its length in samples, so the tempo between the two counts. A piece of an event moved by other means since
-keeps no origin.
-`src/engine/document/audioquantize.cpp` has the functions; the commands stay in `midi/quantizecommands.cpp`.
+As with notes, an event keeps where it was before it was first quantized and where quantizing and the quantize panel's
+length changes left it (`AudioEvent::quantizeOrigin`, saved in `gnubase.json`): a position, an offset, a length and a
+crossfade for each of the two states, as a note's origin keeps its timing. Quantizing again starts from the original
+unless it is soft, and `quantize.reset` puts back all four, so it also undoes what the panel's Crossfade step cut and
+stretched (pp. 367, 379). An event moved by other means since is where it is, and its origin no longer counts (p. 375);
+an offset, a length or a crossfade changed by other means since stays, and counts as the original from then on, as a
+note's length or velocity changed by other means does. Each of the four is judged by itself, so on a slice whose start
+the Crossfade step stretched and whose end the user then trimmed by hand, resetting puts the stretched offset back but
+keeps the hand-set length, and the slice's end moves in the clip by the stretch: {5960, 160, 16896} resets to {5960,
+5960, 16896} (#1333).
+
+Resetting puts back the crossfade the event had before quantizing, so the ones `quantize.crossfade` made go and one
+made by hand stays: resetting returns to the original, unquantized state (p. 367), and a crossfade from before
+quantizing is part of it. Which crossfade that was is our reading of the state, not something the reference manual
+spells out.
+
+Splitting a quantized event (`event.split`) gives each piece an origin of its own, so that resetting puts both back
+where they were and they tile again: the piece after the split was as far from its original, in samples, as the split is
+from where quantizing put the event, and its original offset and length are the recorded original's, cut where the piece
+before it ends, not its current ones: with a start the Crossfade step stretched, those would reset it to the wrong
+section of the clip and leave a gap before the next slice (#1333). The panel can also have made the event longer than
+its original: every slice the Crossfade step crossfades into the next one is longer by the crossfade, and a slice whose
+start it stretched by the stretch, so a split can fall past the end of the original's content. The piece before it then
+keeps at most the whole original, and the piece after it is made only of length the panel added: its original has no
+length, and resetting removes it, in the same undo step, and lists it in `removed` (#1435). Reset Quantize returns to
+the original, unquantized state and resets the panel's length changes (p. 367), and that state has nothing where the
+piece is; a locked piece stays, since a locked event can't be removed. The distance goes through samples because a
+musical event's position is in ticks while its audio keeps its length in samples, so the tempo between the two counts.
+An event that crossfaded from the split event now crossfades from the piece after the split, and its origin's
+crossfades follow, so that resetting still takes out one the panel made and keeps one made by hand, from the piece that
+is then the neighbour before it. When the piece after the split has nothing of the original, the crossfade from before
+quantizing stays with the piece before it, the whole original, and resetting removes the piece after the others are
+back, so that crossfade comes back. A piece keeps no origin either when its event was moved by other means
+since the panel left it. `src/engine/document/audioquantize.cpp` has the functions; the commands stay in
+`midi/quantizecommands.cpp`.
 
 ## Warp quantizing
 
@@ -47,16 +73,23 @@ commands on the events of several tracks. Each is one undo step.
 |---|---|---|
 | `quantize.slice` | Cuts every event `offset` ms before each position, gives each slice that starts there its snap point at the position and clears the snap point of every other slice | pp. 370, 378-379 |
 | `quantize.createWarpMarkers` | Adds a warp marker at each position to every event's clip, changing nothing until it is quantized | pp. 371-372, 379-380 |
-| `quantize.crossfade` | On each track: an event overlapping the next ends where it starts, an event after a gap starts where the one before ends, then each goes `length` ms into the next with a crossfade | p. 379 |
+| `quantize.crossfade` | On each track: an event overlapping the next ends where it starts, an event after a gap starts where the one before ends, then each goes `length` ms into the next with a crossfade. `quantize.reset` undoes all of it | pp. 367, 379 |
 
 The positions are the hitpoints that count of the events' clips: those of the tracks with the highest priority
 (`priorities`, 0 to 5 per track, default 1; 0 leaves a track out), then those of the others with none of a higher
-priority, or of the same priority earlier, within `range` ms. `range` says when hitpoints on *different* tracks mark
-the same beat (pp. 378, 380): two of one track, such as a flam, stay two positions. Slicing all tracks at the same
-places with the slices snapping there is what keeps them phase coherent: `quantize.apply` then moves the slices of
-every track at a position by the same amount. A slice that starts at no position gets no snap point at all, so it
-snaps at its start like the same slice on every other track, instead of keeping the one `event.split` copied from its
-event. Warp quantizing several tracks stretches each clip by itself, so it doesn't keep them phase coherent (p. 371).
+priority, or of the same priority earlier, within `range` ms. `range` says when hitpoints on *different* tracks mark the
+same beat (pp. 378, 380): two of one track, such as a flam, stay two positions, while two events of one track whose
+hitpoints coincide give one position between them. Slicing all tracks at the same places with the slices snapping there
+is what keeps them phase coherent: `quantize.apply` then moves the slices of every track at a position by the same
+amount. A slice that starts at no position gets no snap point at all, so it snaps at its start like the same slice on
+every other track, instead of keeping the one `event.split` copied from its event. Warp quantizing several tracks
+stretches each clip by itself, so it doesn't keep them phase coherent (p. 371).
+
+`quantize.crossfade` records what it changed in each event's origin, so that a later `quantize.reset` puts every slice
+back to its position, offset, length and crossfade, and the slices tile again with no overlaps and no gaps left: Reset
+Quantize resets the length changes made in the quantize panel too (p. 367), and crossfades are such changes (p. 379).
+What the user changed by hand since is not: resetting only puts back a part of the event that still is where the panel
+left it.
 
 ## In the UI
 
@@ -66,8 +99,8 @@ event. Warp quantizing several tracks stretches each clip by itself, so it doesn
   events and audio parts too, with its MIDI parts in one `quantize.apply` or `quantize.reset`. Quantize MIDI Event
   Ends and Lengths and Freeze MIDI Quantize stay MIDI only.
 - **Warp Quantize On/Off**: `#quantize-warp` in the panel, next to the strength, and `#toolbar-quantize-warp` in the
-  toolbar's quantize section, which shows it in windows at least 1100 dp wide only, so that the section fits at
-  1024 dp (`resources/styles/quantize.rcss`).
+  toolbar's quantize section, where it is the first thing to go when the toolbar has no room for all its sections
+  (`fit="spare"`, [docking.md](docking.md)).
   Both are `.checked` while `warpQuantize` is on and switch it with `quantize.set`.
 - **Several audio tracks** (`#quantize-tracks`, below Apply): Range (`#quantize-range`) and Offset
   (`#quantize-offset`) in ms, Slice (`#quantize-slice`), or with warp quantizing on Create
@@ -88,11 +121,19 @@ the Edit menu (`event.fromHitpoints` with `groove` makes it).
 `tests/audioquantize_tests.cpp`: event starts and snap points to the grid, strength, soft quantizing, reset, events
 moved since, audio parts, locked events, the catch range, errors and the origin saved with the project; splitting a
 quantized event and resetting both pieces, on a linear and on a musical track whose tempo changes under it; warp
-quantizing a loop played on eighths with a quarter grid, rendered, with
-reset and existing markers, and a musical clip whose project runs at half its own tempo; several tracks sliced by
-priority and range, quantized and crossfaded, then rendered with the second track's audio inverted: the sum is silence,
-so they stayed phase coherent; the range leaving a flam on one track two positions; slicing clearing the snap points it
-doesn't set; soft and rough quantizing moving the slices of two tracks alike; warp markers for several tracks of the
-same priority.
+quantizing a loop played on eighths with a quarter grid, rendered, with reset and existing markers, and a musical clip
+whose project runs at half its own tempo; several tracks sliced by priority and range, quantized and crossfaded, then
+rendered with the second track's audio inverted: the sum is silence, so they stayed phase coherent; the range leaving a
+flam on one track two positions, and hitpoints of one track at the same place giving one position; slicing clearing the
+snap points it doesn't set; soft and rough quantizing moving the slices of two tracks alike; resetting after a crossfade
+that cut an overlap and one that closed a gap, putting every slice back to its position, offset and length and removing
+the crossfades, also across a save and a load; splitting a slice whose start the Crossfade step stretched and resetting
+both pieces, so that they tile the original slice again, splitting one inside the stretch at its start and inside the
+part the step added to it, where resetting removes the piece after the split in one undo step unless it is locked, and a
+crossfade into the next slice following such a split; a crossfade made by hand before quantizing coming back from the
+piece before a split at the original's end, whose piece after it resetting removes; resetting keeping a crossfade the event had before quantizing while the one the Crossfade step
+made goes, also across a save and a load and from the piece after a split of the event it comes from; resetting keeping
+an end trimmed and a crossfade made by hand after quantizing, and an end trimmed by hand on a slice the step stretched;
+a project file whose origins keep no offset or length yet; warp markers for several tracks of the same priority.
 `tests/audioquantize_ui_tests.cpp` drives the app with `ui::Automation`: Edit > Quantize and Reset Quantize on a
 selected audio event, Warp Quantize On/Off, and the panel's Slice, Apply, Crossfade and Create on two tracks.

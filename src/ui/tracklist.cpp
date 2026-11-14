@@ -145,6 +145,34 @@ namespace gnubase::ui
 													: time.tempo.toTicks(seconds);
 		}
 
+		// Whether tracks of a type have versions (docs/features/track-versions.md).
+		bool hasVersions(const std::string& type)
+		{
+			return type == "audio" || type == "instrument" || type == "midi";
+		}
+
+		// A menu's items for a track's versions (reference manual pp. 231-232): the active one checked, each with its
+		// name and its ID, which a click activates on the selected tracks.
+		std::string versionItems(const Json& track)
+		{
+			std::string rml;
+			for (const Json& version : track.at("versions"))
+			{
+				const std::string id = std::to_string(version.at("id").get<int>());
+				rml += R"(<menuitem class="track-version)";
+				rml += version.at("id") == track.at("activeVersion") ? " checked" : "";
+				rml += R"(" version=")";
+				rml += id;
+				rml += R"(">)";
+				rml += Rml::StringUtilities::EncodeRml(version.at("name").get<std::string>());
+				// The ID after the name, as the inspector's list shows it (reference manual p. 232).
+				rml += R"(<span class="track-version-id">)";
+				rml += id;
+				rml += "</span></menuitem>";
+			}
+			return rml;
+		}
+
 		// The controls a track type can have.
 		bool applies(const std::string& control, const std::string& type, bool hasChannel)
 		{
@@ -165,6 +193,9 @@ namespace gnubase::ui
 				return control == "timeBase" && type != "folder" && type != "ruler" && type != "signature";
 			if (control == "record" || control == "monitor")
 				return type == "audio" || type == "instrument" || type == "midi";
+			// The MIDI channel, as in the inspector (reference manual p. 349).
+			if (control == "midiChannel")
+				return type == "midi";
 			// Switch Time Base (reference manual pp. 179-180, 229).
 			if (control == "timeBase")
 				return type == "audio" || type == "instrument" || type == "midi" || type == "group" || type == "effect";
@@ -184,6 +215,8 @@ namespace gnubase::ui
 				return R"(<select class="time-format" control="timeFormat" title="Time Format"/>)";
 			if (control == "chordAudition")
 				return R"(<select class="chord-audition" control="chordAudition" title="Select Track for Auditioning"/>)";
+			if (control == "midiChannel")
+				return R"(<select class="midi-channel" control="midiChannel" title="MIDI Channel"/>)";
 			if (control == "timeOffset")
 				return R"(<textdisplay class="display time-offset" control="timeOffset" title="Time Offset"/>)";
 			if (control == "setTimeOffset")
@@ -371,7 +404,8 @@ namespace gnubase::ui
 		};
 		// The chord track (docs/features/chord-track.md, reference manual pp. 1336, 1341-1344): Chords to MIDI onto the
 		// first selected MIDI or instrument track; the other functions take the selected MIDI parts and audio events,
-		// else those of the selected tracks, and audio events only outside audio parts (p. 1344).
+		// else those of the selected tracks, and audio events only outside audio parts (p. 1344). Selected audio parts
+		// count as a selection, of nothing: they don't fall back to the tracks' loose audio events.
 		const auto noteTracks = [this]
 		{
 			std::vector<uint64_t> tracks;
@@ -390,7 +424,7 @@ namespace gnubase::ui
 			const auto selected = [&events](const Json& item)
 			{ return std::binary_search(events.begin(), events.end(), item.at("id").get<uint64_t>()); };
 			bool fromEvents = false;
-			for (const char* each : {"midiParts", "audioEvents"})
+			for (const char* each : {"midiParts", "audioParts", "audioEvents"})
 				for (const Json& item : project.at(each))
 					fromEvents = fromEvents || selected(item);
 			const std::vector<uint64_t> tracks = selection();
@@ -526,16 +560,17 @@ namespace gnubase::ui
 			for (const Rml::EventId id : {Rml::EventId::Click, Rml::EventId::Change})
 				m_parameterMenu->AddEventListener(id, this);
 		// Track versions (#165, docs/features/track-versions.md) of the selected audio, instrument and MIDI tracks.
-		for (const auto& [action, command] : {std::pair{"track.newVersion", "trackVersion.add"},
-				 std::pair{"track.duplicateVersion", "trackVersion.duplicate"},
-				 std::pair{"track.deleteVersion", "trackVersion.remove"},
-				 std::pair{"track.assignCommonVersionId", "trackVersion.assignCommonId"}})
+		for (const auto& [action, command] : {std::pair{"trackVersions.new", "trackVersion.add"},
+				 std::pair{"trackVersions.duplicate", "trackVersion.duplicate"},
+				 std::pair{"trackVersions.remove", "trackVersion.remove"},
+				 std::pair{"trackVersions.assignCommonId", "trackVersion.assignCommonId"}})
 			m_actions[action] = [this, command = std::string(command)]
 			{
 				if (const std::vector<uint64_t> tracks = versioned(); !tracks.empty())
 					m_binding.send(command, {{"tracks", tracks}});
 			};
-		m_actions["track.selectSameVersionId"] = [this]
+		m_actions["trackVersions.rename"] = [this] { openRenameDialog(); };
+		m_actions["trackVersions.selectSameId"] = [this]
 		{
 			const std::vector<uint64_t> tracks = versioned();
 			if (tracks.empty())
@@ -553,6 +588,9 @@ namespace gnubase::ui
 		m_versionMenu = m_document->GetElementById("track-versions-list");
 		if (m_versionMenu != nullptr)
 			m_versionMenu->AddEventListener(Rml::EventId::Click, this);
+		m_versionsMenu = m_document->GetElementById("track-versions-menu");
+		if (m_versionsMenu != nullptr)
+			m_versionsMenu->AddEventListener(Rml::EventId::Click, this);
 
 		m_subscriptions.push_back(m_binding.on("settings.changed",
 			[this](const engine::Event& event)
@@ -572,18 +610,31 @@ namespace gnubase::ui
 				if (const auto only = values.find("ui.upDownSelectsTracksOnly");
 					only != values.end() && only->is_boolean())
 					m_upDownTracksOnly = only->get<bool>();
+				if (const auto name = values.find("ui.showVersionName"); name != values.end() && name->is_boolean())
+				{
+					m_showVersionName = name->get<bool>();
+					showState();
+				}
 			}));
 		for (const std::pair<const char*, bool*>& setting :
 			{std::make_pair("ui.removeTracksWarning", &m_warnBeforeRemoving),
-				std::make_pair("ui.upDownSelectsTracksOnly", &m_upDownTracksOnly)})
+				std::make_pair("ui.upDownSelectsTracksOnly", &m_upDownTracksOnly),
+				std::make_pair("ui.showVersionName", &m_showVersionName)})
 			m_binding.send("settings.get", {{"key", setting.first}},
 				[value = setting.second, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 				{
 					if (!alive.expired() && result.ok() && result.value.at("value").is_boolean())
 						*value = result.value.at("value").get<bool>();
 				});
-		// Current Tempo follows the project cursor.
-		m_subscriptions.push_back(m_binding.on("transport.changed", [this](const engine::Event&) { showTempo(); }));
+		// Current Tempo follows the project cursor, also while playing (#831), when the cursor moves without events.
+		m_subscriptions.push_back(
+			m_binding.on("transport.changed", [this](const engine::Event& event) { followTransport(event.data); }));
+		m_binding.send("transport.get", Json::object(),
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (!alive.expired() && result.ok())
+					followTransport(result.value);
+			});
 		m_binding.send("settings.get", {{"key", "editing.tempoType"}},
 			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
@@ -666,6 +717,12 @@ namespace gnubase::ui
 			dialog->RemoveEventListener(g_dialogCloseEvent, this);
 			closeDialog(*dialog, "cancel");
 		}
+		if (auto* dialog = dynamic_cast<Rml::ElementDocument*>(m_renameDialog.get()))
+		{
+			// Nothing is renamed any more: the dialog goes too.
+			dialog->RemoveEventListener(g_dialogCloseEvent, this);
+			closeDialog(*dialog, "cancel");
+		}
 		if (!alive())
 			return;
 		if (m_parameterMenu != nullptr)
@@ -673,6 +730,8 @@ namespace gnubase::ui
 				m_parameterMenu->RemoveEventListener(id, this);
 		if (m_versionMenu != nullptr)
 			m_versionMenu->RemoveEventListener(Rml::EventId::Click, this);
+		if (m_versionsMenu != nullptr)
+			m_versionsMenu->RemoveEventListener(Rml::EventId::Click, this);
 		for (const Rml::EventId id : g_rootEvents)
 			m_root->RemoveEventListener(id, this);
 		m_root->RemoveEventListener(Rml::EventId::Blur, this, true);
@@ -888,9 +947,18 @@ namespace gnubase::ui
 			return;
 		std::string rml;
 		for (const Row& row : m_tracks)
+		{
+			const bool versions = hasVersions(row.type);
 			rml += R"(<listitem value=")" + std::to_string(row.id) + R"(" level=")" + std::to_string(row.level) +
-				R"(" type=")" + row.type +
-				R"("><span class="track-color"/><span class="track-name"/><input type="text" class="track-name-field"/>)"
+				R"(" type=")" + row.type + (versions ? R"(" class="versions")" : R"(")") +
+				R"(><span class="track-color"/><span class="track-name"/><input type="text" class="track-name-field"/>)" +
+				// The Track Versions pop-up menu's arrow, at the right end of the name of a track with versions
+				// (reference manual p. 231). It sits in the name's own right padding, so that the name keeps the width
+				// the user chose and the controls area keeps its place.
+				(versions ? R"(<button class="track-versions-toggle icon-only" menu="track-versions-menu")"
+							R"( title="Track Versions">)"
+							R"(<svg class="icon" src="../icons/general-arrow-down.svg"/></button>)"
+						  : "") +
 				R"(<div class="track-controls"/>)" +
 				// Show/Hide Automation in the lower left corner, and the automation tracks below (#121).
 				(row.channel != 0 ? R"(<button class="automation-toggle icon-only" title="Show/Hide Automation">)"
@@ -898,6 +966,7 @@ namespace gnubase::ui
 									R"(<div class="automation-rows"/>)"
 								  : "") +
 				"</listitem>";
+		}
 		finishRename(false);
 		const auto selected = m_view->GetAttribute<Rml::String>("value", "");
 		m_view->SetInnerRML(rml);
@@ -945,6 +1014,7 @@ namespace gnubase::ui
 		const double nameWidth = widthOf(m_widths, "name", widthOf(m_defaultWidths, "name"));
 		const Json controlsWidths = m_widths.value("controls", Json::object());
 		const Json defaultControls = m_defaultWidths.value("controls", Json::object());
+		m_tempoFields.clear(); // the rows' fields as they are now, for showTempo's frames (#1406)
 		for (int i = 0; i < m_view->GetNumChildren() && static_cast<size_t>(i) < m_tracks.size(); ++i)
 		{
 			Rml::Element* element = m_view->GetChild(i);
@@ -979,9 +1049,11 @@ namespace gnubase::ui
 			if (label != nullptr && row.id != m_renaming)
 			{
 				std::string text = Rml::StringUtilities::EncodeRml(track.at("name").get<std::string>());
-				// With more than one version, the active one's name (reference manual p. 236).
+				// With more than one version, the active one's name (reference manual p. 236), unless Show Version Name
+				// in Track List is off.
 				for (const Json& version : track.value("versions", Json::array()))
-					if (track.at("versions").size() > 1 && version.at("id") == track.at("activeVersion"))
+					if (m_showVersionName && track.at("versions").size() > 1 &&
+						version.at("id") == track.at("activeVersion"))
 						text += R"( <span class="track-version">)" +
 							Rml::StringUtilities::EncodeRml(version.at("name").get<std::string>()) + "</span>";
 				if (label->GetInnerRML() != text)
@@ -1010,7 +1082,10 @@ namespace gnubase::ui
 				Rml::Element* button = controls->GetChild(c);
 				const auto name = button->GetAttribute<Rml::String>("control", "");
 				if (name == "currentTempo" || name == "tempoType")
-					continue; // fields, which showTempo fills
+				{
+					m_tempoFields.emplace_back(button->GetObserverPtr()); // fields, which showTempo fills
+					continue;
+				}
 				if (name == "timeFormat")
 				{
 					widgets::fill(*button, timeFormatOptions(), track.value("timeFormat", std::string()));
@@ -1030,6 +1105,16 @@ namespace gnubase::ui
 				if (markerMenu(name))
 				{
 					widgets::fill(*button, markerOptions(markers, row.id, name), "");
+					continue;
+				}
+				if (name == "midiChannel")
+				{
+					widgets::Options channels{{"any", "Any"}};
+					for (int number = 0; number < 16; ++number)
+						channels.emplace_back(std::to_string(number), std::to_string(number + 1));
+					const Json midiChannel = channel != nullptr ? channel->value("midiChannel", Json()) : Json();
+					widgets::fill(*button, channels,
+						midiChannel.is_number_integer() ? std::to_string(midiChannel.get<int>()) : "any");
 					continue;
 				}
 				if (name == "chordAudition")
@@ -1077,34 +1162,67 @@ namespace gnubase::ui
 				}
 			}
 		}
+		followTempo(); // the tempo field may have come or gone with the rows or the controls (#1338)
 		showTempo();
 		if (Rml::Context* context = m_view->GetContext())
 			context->RequestNextUpdate(0);
 	}
 
-	void TrackList::showTempo()
+	void TrackList::followTransport(const Json& status)
+	{
+		m_playing = status.value("playing", false);
+		followTempo();
+		showTempo();
+	}
+
+	void TrackList::followTempo()
+	{
+		if (!m_playing || !alive())
+		{
+			m_playback.reset();
+			return;
+		}
+		// The watch runs showTempo once a frame: only watch while the list has a Current Tempo field (#1338).
+		const bool hasField =
+			std::any_of(m_tempoFields.begin(), m_tempoFields.end(), [](const Rml::ObserverPtr<Rml::Element>& field)
+				{ return field && field->GetAttribute<Rml::String>("control", "") == "currentTempo"; });
+		if (!hasField)
+			m_playback.reset();
+		else if (!m_playback)
+			// While playing the display's cursor follows the playback position once a frame, without events; Current
+			// Tempo follows it (#831). The display's own playback watch, made before this one, moves the cursor first.
+			m_playback = m_binding.watch<double>(
+				m_root.get(), [this] { return m_display.cursor(); }, [this](const double&) { return showTempo(); });
+	}
+
+	bool TrackList::showTempo()
 	{
 		const Json& project = m_display.project();
 		if (!alive() || !project.is_object())
-			return;
-		const TimeContext context = projectTime(project);
+			return false;
+		// The display reads its time context once per project answer: the frames of the playback watch must not
+		// build one each (#1338), as the transport bar's tempo field doesn't.
+		const TimeContext& context = m_display.time();
 		const auto cursor = static_cast<int64_t>(std::llround(m_display.cursor() * context.sampleRate));
 		const std::string tempo = tempoText(currentTempo(context, cursor));
-		Rml::ElementList fields;
-		m_view->QuerySelectorAll(fields, "[control=currentTempo], [control=tempoType]");
-		for (Rml::Element* field : fields)
+		bool changed = false;
+		for (const Rml::ObserverPtr<Rml::Element>& field : m_tempoFields)
 		{
-			auto* control = dynamic_cast<Rml::ElementFormControl*>(field);
-			const bool typed = field->IsPseudoClassSet("focus"); // what is being typed stays
+			auto* control = dynamic_cast<Rml::ElementFormControl*>(field.get());
+			if (control == nullptr) // gone with its row
+				continue;
+			const bool typed = control->IsPseudoClassSet("focus"); // what is being typed stays
 			const std::string value =
-				field->GetAttribute<Rml::String>("control", "") == "tempoType" ? m_tempoType : tempo;
-			if (control != nullptr && !typed && control->GetValue() != value)
+				control->GetAttribute<Rml::String>("control", "") == "tempoType" ? m_tempoType : tempo;
+			if (!typed && control->GetValue() != value)
 			{
 				m_showingTempo = true;
 				control->SetValue(value);
 				m_showingTempo = false;
+				changed = true;
 			}
 		}
+		return changed;
 	}
 
 	void TrackList::hide()
@@ -1238,16 +1356,19 @@ namespace gnubase::ui
 		}
 	}
 
-	// The parameter selector (reference manual p. 880): the track's parameters, which a search narrows, and the
-	// automation track's functions.
+	// The selected audio, instrument and MIDI tracks, which the track version commands work on.
 	std::vector<uint64_t> TrackList::versioned() const
 	{
 		std::vector<uint64_t> tracks;
 		for (const uint64_t track : selection())
-			if (const std::string& type = m_tracks[m_index.at(track)].type;
-				type == "audio" || type == "instrument" || type == "midi")
+			if (hasVersions(m_tracks[m_index.at(track)].type))
 				tracks.push_back(track);
 		return tracks;
+	}
+
+	bool TrackList::selectsVersions() const
+	{
+		return !versioned().empty();
 	}
 
 	void TrackList::showVersions()
@@ -1255,14 +1376,7 @@ namespace gnubase::ui
 		const std::vector<uint64_t> tracks = versioned();
 		std::string rml;
 		if (!tracks.empty())
-		{
-			const Json& track = m_display.project().at("tracks").at(m_index.at(tracks.front()));
-			for (const Json& version : track.at("versions"))
-				rml += R"(<menuitem class="track-version)" +
-					std::string(version.at("id") == track.at("activeVersion") ? " checked" : "") + R"(" version=")" +
-					std::to_string(version.at("id").get<int>()) + R"(">)" +
-					Rml::StringUtilities::EncodeRml(version.at("name").get<std::string>()) + "</menuitem>";
-		}
+			rml = versionItems(m_display.project().at("tracks").at(m_index.at(tracks.front())));
 		if (m_versionMenu != nullptr && rml != m_versionRml)
 		{
 			m_versionRml = rml;
@@ -1280,6 +1394,100 @@ namespace gnubase::ui
 			return;
 		m_binding.send(
 			"trackVersion.activate", {{"tracks", tracks}, {"version", item->GetAttribute<int>("version", 1)}});
+	}
+
+	// Filled before the arrow's click opens the menu, so that it shows the track's versions as they are then.
+	void TrackList::openVersionsMenu(uint64_t track)
+	{
+		if (m_versionsMenu == nullptr || !alive() || m_index.count(track) == 0)
+			return;
+		// Its functions work on the selected tracks, so the track the arrow belongs to is one of them; a selection
+		// that already has it stays, so that they work on them all (reference manual p. 234).
+		const std::vector<uint64_t> selected = selection();
+		if (std::find(selected.begin(), selected.end(), track) == selected.end())
+			select({track});
+		const Json& json = m_display.project().at("tracks").at(m_index.at(track));
+		std::string rml = versionItems(json);
+		const std::string only = json.at("versions").size() > 1 ? std::string() : std::string(" disabled");
+		rml += R"(<menuseparator/>)"
+			   R"(<menuitem versions-action="trackVersions.new">New Version</menuitem>)"
+			   R"(<menuitem versions-action="trackVersions.duplicate">Duplicate Version</menuitem>)"
+			   R"(<menuitem versions-action="trackVersions.rename">Rename Version</menuitem>)"
+			   R"(<menuitem versions-action="trackVersions.remove")" +
+			only +
+			R"(>Delete Version</menuitem>)"
+			R"(<menuseparator/>)"
+			R"(<menuitem versions-action="trackVersions.selectSameId">)"
+			R"(Select Tracks with Same Version ID</menuitem>)"
+			R"(<menuitem versions-action="showVersionName")" +
+			std::string(m_showVersionName ? " checked" : "") + R"(>Show Version Name in Track List</menuitem>)";
+		m_versionsMenu->SetInnerRML(rml);
+	}
+
+	void TrackList::versionsMenuEvent(Rml::Event& event)
+	{
+		const Rml::Element* item = event.GetTargetElement();
+		while (item != nullptr && item != m_versionsMenu && !item->HasAttribute("version") &&
+			!item->HasAttribute("versions-action"))
+			item = item->GetParentNode();
+		if (item == nullptr || item == m_versionsMenu || item->HasAttribute("disabled"))
+			return;
+		if (item->HasAttribute("version"))
+		{
+			if (const std::vector<uint64_t> tracks = versioned(); !tracks.empty())
+				m_binding.send(
+					"trackVersion.activate", {{"tracks", tracks}, {"version", item->GetAttribute<int>("version", 1)}});
+			return;
+		}
+		const auto action = item->GetAttribute<Rml::String>("versions-action", "");
+		if (action == "showVersionName")
+			m_binding.send("settings.set", {{"key", "ui.showVersionName"}, {"value", !m_showVersionName}});
+		else if (const auto found = m_actions.find(action); found != m_actions.end())
+			found->second();
+	}
+
+	void TrackList::openRenameDialog()
+	{
+		const std::vector<uint64_t> tracks = versioned();
+		if (m_renameDialog || tracks.empty() || !alive())
+			return;
+		const std::string path = std::filesystem::u8path(m_root->GetOwnerDocument()->GetSourceURL())
+									 .replace_filename("rename-version.rml")
+									 .generic_u8string();
+		Rml::ElementDocument* dialog = m_root->GetContext()->LoadDocument(path);
+		if (dialog == nullptr)
+		{
+			logging::warning("The track list can't open the dialog {}", path);
+			return;
+		}
+		// The name of the first selected track's active version, which typing replaces.
+		if (auto* field = dynamic_cast<Rml::ElementFormControlInput*>(dialog->GetElementById("rename-version-name")))
+		{
+			const Json& track = m_display.project().at("tracks").at(m_index.at(tracks.front()));
+			for (const Json& version : track.at("versions"))
+				if (version.at("id") == track.at("activeVersion"))
+					field->SetValue(version.at("name").get<std::string>());
+			field->Focus();
+			field->Select();
+		}
+		m_renameDialog = dialog->GetObserverPtr();
+		dialog->AddEventListener(g_dialogCloseEvent, this);
+		dialog->Show(Rml::ModalFlag::Modal);
+	}
+
+	void TrackList::closedRenameDialog(Rml::Event& event)
+	{
+		if (event.GetType() != g_dialogCloseEvent)
+			return;
+		Rml::Element* dialog = m_renameDialog.get();
+		dialog->RemoveEventListener(g_dialogCloseEvent, this);
+		m_renameDialog.reset();
+		const auto* field = dynamic_cast<Rml::ElementFormControl*>(dialog->GetElementById("rename-version-name"));
+		const std::vector<uint64_t> tracks = versioned();
+		if (event.GetParameter<Rml::String>("result", "") != "ok" || field == nullptr || tracks.empty() || !alive())
+			return;
+		if (const Rml::String name = field->GetValue(); !name.empty())
+			m_binding.send("trackVersion.set", {{"tracks", tracks}, {"name", name}});
 	}
 
 	void TrackList::openParameters(uint64_t lane)
@@ -1384,6 +1592,11 @@ namespace gnubase::ui
 			closedChordDialog(event);
 			return;
 		}
+		if (m_renameDialog && event.GetCurrentElement() == m_renameDialog.get())
+		{
+			closedRenameDialog(event);
+			return;
+		}
 		if (!alive())
 			return;
 		if (m_parameterMenu != nullptr && event.GetCurrentElement() == m_parameterMenu)
@@ -1394,6 +1607,11 @@ namespace gnubase::ui
 		if (m_versionMenu != nullptr && event.GetCurrentElement() == m_versionMenu)
 		{
 			versionEvent(event);
+			return;
+		}
+		if (m_versionsMenu != nullptr && event.GetCurrentElement() == m_versionsMenu)
+		{
+			versionsMenuEvent(event);
 			return;
 		}
 		Rml::Element* target = event.GetTargetElement();
@@ -1408,6 +1626,9 @@ namespace gnubase::ui
 		};
 		if (event.GetId() == Rml::EventId::Mousedown && closest(target, "automation-parameter") != nullptr)
 			openParameters(automationLane(target)); // before its click opens the menu
+		if (event.GetId() == Rml::EventId::Mousedown && closest(target, "track-versions-toggle") != nullptr)
+			if (const Row* row = rowOf(target))
+				openVersionsMenu(row->id); // before its click opens the menu
 		if (event.GetId() == Rml::EventId::Click)
 		{
 			if (closest(target, "automation-toggle") != nullptr)
@@ -1504,6 +1725,7 @@ namespace gnubase::ui
 				if (!m_showingTempo)
 					tempoChanged(*target, event);
 				rulerChange(*target, event.GetParameter<Rml::String>("value", ""));
+				midiChannelChange(*target, event.GetParameter<Rml::String>("value", ""));
 				markerChange(*target, event.GetParameter<Rml::String>("value", ""));
 				// Select Track for Auditioning.
 				const Json& project = m_display.project();
@@ -1568,7 +1790,7 @@ namespace gnubase::ui
 
 	void TrackList::control(const Row& row, const std::string& name, bool exclusive, bool defeat, bool shift)
 	{
-		if (name == "currentTempo" || name == "tempoType" || markerMenu(name))
+		if (name == "currentTempo" || name == "tempoType" || name == "midiChannel" || markerMenu(name))
 			return; // fields and lists, which change
 		if (name == "addPositionMarker")
 		{
@@ -1682,6 +1904,17 @@ namespace gnubase::ui
 				if (item.id == marker)
 					m_display.zoomTo(item.start, item.end);
 		}
+	}
+
+	void TrackList::midiChannelChange(Rml::Element& control, const std::string& value)
+	{
+		const Row* row = rowOf(&control);
+		if (row == nullptr || control.GetAttribute<Rml::String>("control", "") != "midiChannel" || value.empty())
+			return;
+		const Json* channel = channelOf(*row);
+		const Json midiChannel = value == "any" ? Json(nullptr) : Json(std::stoi(value));
+		if (channel != nullptr && channel->value("midiChannel", Json()) != midiChannel)
+			m_binding.send("channel.set", {{"channel", row->channel}, {"midiChannel", midiChannel}});
 	}
 
 	void TrackList::rulerChange(Rml::Element& control, const std::string& value)
@@ -2055,7 +2288,8 @@ namespace gnubase::ui
 		for (const Rml::Element* part = target; part != nullptr && part->GetTagName() != "listitem";
 			part = part->GetParentNode())
 			if (part->HasAttribute("control") || part->GetTagName() == "input" || part->IsClassSet("tree-toggle") ||
-				part->IsClassSet("automation-rows") || part->IsClassSet("automation-toggle"))
+				part->IsClassSet("automation-rows") || part->IsClassSet("automation-toggle") ||
+				part->IsClassSet("track-versions-toggle"))
 				return; // the control's, or the automation tracks'
 		Rml::Element* element = rowElement(row->id);
 		const auto y = event.GetParameter<float>("mouse_y", 0.0F);
