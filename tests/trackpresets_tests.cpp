@@ -1945,8 +1945,9 @@ TEST_CASE("a track preset that changes a MIDI slot's effect takes the slot's aut
 	CHECK(run(client, "project.get").at("automation").size() == 2);
 }
 
-TEST_CASE(
-	"track.import and project.load leave an extracted media file with the entry's content as it is", "[integration]")
+TEST_CASE("track.import and project.load leave an extracted media file as it is and extract the entry beside one with "
+		  "other content",
+	"[integration]")
 {
 	const test::TempDir dir;
 	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
@@ -1987,13 +1988,16 @@ TEST_CASE(
 		CHECK(load() == extracted);
 		CHECK(fs::last_write_time(extracted) == written);
 
-		// A file of the entry's size with other content is written over: the CRC-32 tells them apart, not the size.
+		// A file of the entry's size with other content stays, as a project may play it, and the entry goes beside it:
+		// the CRC-32 tells them apart, not the size.
 		const uintmax_t size = fs::file_size(extracted);
 		test::Audio other;
 		other.samples.assign(480, 0.25f);
 		test::writeWav(extracted, other);
 		REQUIRE(fs::file_size(extracted) == size);
-		CHECK(load() == extracted);
-		CHECK(test::readWav(extracted).samples == audio.samples);
+		const fs::path beside = load();
+		CHECK(beside != extracted);
+		CHECK(test::readWav(beside).samples == audio.samples);
+		CHECK(test::readWav(extracted).samples == other.samples);
 	}
 }
