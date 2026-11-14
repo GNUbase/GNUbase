@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <limits>
 #include <map>
 #include <optional>
@@ -26,10 +27,15 @@ TEST_CASE("StopAndJoin joins a thread before an exception leaves its scope", "[u
 	bool finished = false;
 	std::thread worker([&] { finished = true; });
 	bool joinedBeforeCatch = false;
-	try
+	// Keep the throwing scope behind a callable so optimized MSVC observes the thread changed during unwinding.
+	const std::function<void()> fail = [&worker]
 	{
 		const StopAndJoin cleanup(worker);
 		throw std::runtime_error("simulated assertion failure");
+	};
+	try
+	{
+		fail();
 	}
 	catch (const std::runtime_error&)
 	{
@@ -57,10 +63,14 @@ TEST_CASE("StopAndJoin signals a stop flag before joining on an exception", "[un
 		});
 	bool joinedBeforeCatch = false;
 	bool stoppedBeforeCatch = false;
-	try
+	const std::function<void()> fail = [&stop, &worker]
 	{
 		const StopAndJoin cleanup(stop, worker);
 		throw std::runtime_error("simulated assertion failure");
+	};
+	try
+	{
+		fail();
 	}
 	catch (const std::runtime_error&)
 	{
