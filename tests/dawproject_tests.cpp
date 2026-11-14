@@ -428,6 +428,7 @@ TEST_CASE("projects saved on two threads at the same time both load", "[integrat
 		thread.join();
 	for (size_t i = 0; i < files.size(); ++i)
 	{
+		INFO(errors[i]);
 		CHECK(errors[i].empty());
 		CHECK(loadDawProject(files[i], utf8(dir.path() / "media")).tracks == project.tracks);
 	}
