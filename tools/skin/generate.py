@@ -39,10 +39,12 @@ THEMES = {
         # frameless mute, solo and record buttons. The other themes keep framed widgets.
         "flat": True,
         # Events in the event display, tinted in their colors as the mockup shows (#1312): how opaque a body is, the
-        # tint laid over an event's color for its outline and waveform, the stroke that events without a color are
-        # outlined in, and the alpha of the selected events' light. None in the other themes: opaque events in their
-        # colors, outlined in the stroke color, selected ones painted over, as before.
-        "events": {"fillOpacity": 0.45, "tint": "#ffffff59", "stroke": ("#ffffff", .35), "selected": "29"},
+        # shade laid over an event's color for its outline and waveform and over the accent for the outline of events
+        # without a color, how opaque the selected events' light is, and how far events and their waveforms keep off
+        # their lanes' edges (<waveform> takes event-inset, inside the 2dp padding every theme keeps between a waveform
+        # and its event's edges, resources/styles/base.rcss). None in the other themes: opaque events in their colors,
+        # outlined in the stroke color, selected ones painted over, at their lanes' full height, as before.
+        "events": {"fillOpacity": 0.45, "shade": ("#ffffff", .35), "selected": .16, "inset": "2dp"},
     },
     "dark": {
         "displayName": "Dark",
@@ -520,19 +522,24 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
     ivory, ebony = sorted((c["text"], c["background"]), key=luminance, reverse=True)
 
     events = theme["events"]
+
+    def alpha(opacity: float) -> str:
+        """An opacity from 0 to 1 as the two hex digits of a color's alpha."""
+        return f"{round(opacity * 255):02x}"
+
     if events is None:
         event_look = {"lanes": {"own-fill-opacity": "1", "own-color-tint": "none"}, "tint": "none", "inset": "0dp",
-                      "wave": "2dp 0",
                       "selected": {"color": mix(c["surfaceRaised"], c["accent"], .7), "stroke-color": c["text"]}}
     else:
+        shade, strength = events["shade"]
+        tint = shade + alpha(strength)
         event_look = {
-            "lanes": {"color": c["accent"] + f"{round(events['fillOpacity'] * 255):02x}",
-                      "stroke-color": mix(c["accent"], *events["stroke"]),
-                      "own-fill-opacity": f"{events['fillOpacity']:g}", "own-color-tint": events["tint"]},
-            "tint": events["tint"],
-            "inset": "2dp",
-            "wave": "4dp 0",  # the inset and the 2dp every theme keeps between a waveform and its event's edges
-            "selected": {"color": c["text"] + events["selected"], "stroke-color": c["text"]},
+            "lanes": {"color": c["accent"] + alpha(events["fillOpacity"]),
+                      "stroke-color": mix(c["accent"], shade, strength),
+                      "own-fill-opacity": f"{events['fillOpacity']:g}", "own-color-tint": tint},
+            "tint": tint,
+            "inset": events["inset"],
+            "selected": {"color": c["text"] + alpha(events["selected"]), "stroke-color": c["text"]},
         }
 
     def skin(asset: str) -> str:
@@ -683,7 +690,7 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
          ".event-display event-lanes.selected-events, .event-display event-lanes.folder-data",
          {"event-inset": event_look["inset"]}),
         (".event-display event-lanes.events", event_look["lanes"]),
-        (".event-display .waveforms waveform", {"own-color-tint": event_look["tint"], "padding": event_look["wave"]}),
+        (".event-display .waveforms waveform", {"own-color-tint": event_look["tint"], "event-inset": event_look["inset"]}),
         (".event-display .overview", {"background-color": c["surface"]}),
         (".event-display .overview event-lanes", {"color": mix(c["surface"], c["accent"], .45),
                                                   "stroke-color": "transparent"}),
