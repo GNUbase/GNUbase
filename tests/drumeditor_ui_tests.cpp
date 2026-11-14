@@ -681,6 +681,10 @@ TEST_CASE("with Use Snap from Drum Map a note moves and resizes to its sound's s
 	f.scroll(36);
 	// Moved by 3.2 sixteenths: to the nearest eighth, the fourth sixteenth.
 	f.click(of(".drum-note"));
+	// A second later: the drag's press must not make a double click with the click, whose drag would delete the note.
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	clock->advance(1.0);
 	f.app.ui().drag(f.window, f.at(0.0, 36), f.at(3.2, 36));
 	f.app.shell().step(std::chrono::milliseconds(0));
 	REQUIRE(f.app.waitUntil([&] { return f.partNotes()[0].at("position") != 0; }));
