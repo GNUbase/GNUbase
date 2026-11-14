@@ -3,6 +3,7 @@
 // ui::Automation as MCP's UI tools drive them: the info line shows the first selected event or part and its edits
 // change every selected one, as one undo step; the inspector shows the selected track's basics, routing, inserts and
 // notepad, and its controls change the track's channel.
+#include "testutils/commandholds.h"
 #include "testutils/testutils.h"
 #include "uiapp.h"
 
@@ -10,6 +11,7 @@
 #include "engine/time/tempomap.h"
 #include "ui/automation.h"
 #include "ui/docking.h"
+#include "ui/enginebinding.h"
 #include "ui/eventdisplay.h"
 #include "ui/markers.h"
 #include "ui/tracklist.h"
@@ -1026,10 +1028,17 @@ TEST_CASE("Warp Quantize On/Off goes from the toolbar before any section does", 
 	const std::vector<std::string> defaults = docking.sections("project", "toolbar");
 	const auto noRoom = [&window](const std::string& selector) { return hasClass(window.app, selector, "no-room"); };
 	const std::string warp = "#toolbar-quantize-warp";
-	// Narrower in dp step by step, from about 1463 dp, until the quantize section goes.
+	// Narrower in dp step by step, from about 1463 dp, until the quantize section goes, and on until the section
+	// before it goes too: the steps, about 10 to 20 dp, are narrower than the toggle, so they pass through the room the
+	// toggle frees, which only the quantize section may take (#1382).
+	const auto quantize = std::find(defaults.begin(), defaults.end(), "quantize");
+	REQUIRE(quantize != defaults.end());
+	REQUIRE(quantize != defaults.begin());
+	const std::string before = "#toolbar [section=" + *(quantize - 1) + "]";
 	bool warpGone = false;
+	bool quantizeGone = false;
 	bool alone = false; // gone while every section showed
-	for (int step = 0;; ++step)
+	for (int step = 0; !noRoom(before); ++step)
 	{
 		const float ratio = 0.7F + (0.01F * static_cast<float>(step));
 		REQUIRE(ratio < 2.0F);
@@ -1039,15 +1048,20 @@ TEST_CASE("Warp Quantize On/Off goes from the toolbar before any section does", 
 		if (noRoom("#toolbar [section=quantize]"))
 		{
 			CHECK(!noRoom(warp)); // the section's parts show with it again
-			break;
+			quantizeGone = true;
 		}
-		if (warpGone)
-			CHECK(noRoom(warp)); // once gone, it stays gone in narrower windows
-		warpGone = noRoom(warp);
+		else
+		{
+			CHECK(!quantizeGone); // once gone, it stays gone in narrower windows
+			if (warpGone)
+				CHECK(noRoom(warp)); // so does the toggle while the section shows
+			warpGone = noRoom(warp);
+		}
 		const ToolbarGaps reference = toolbarGaps(window, defaults, false); // the gaps at this dp ratio
 		const std::vector<std::string> shown = checkToolbarRoom(window, defaults, reference, false);
 		alone = alone || (warpGone && shown.size() == defaults.size());
 	}
+	CHECK(quantizeGone);
 	CHECK(alone);
 
 	// Wider again: the section and its toggle show.
@@ -1215,6 +1229,66 @@ TEST_CASE("the inspector's volume and pan fields dragged while the engine answer
 	window.call("channel.set", {{"channel", window.channel(audio).at("id")}, {"volume", -12.0}, {"pan", 0.25}});
 	CHECK(window.shows(".inspector valuefield[control=volume]", "-12"));
 	CHECK(window.shows(".inspector valuefield[control=pan]", "25"));
+}
+
+TEST_CASE("the inspector's dragged volume stays while it shows a project read from before the drag again", "[ui]")
+{
+	test::CommandHolds holds; // declared before the window: its engine's command thread waits in hold()
+	Window window;
+	const test::ReleaseHolds releaseHolds{holds};
+	window.app.engine().registerCommand(
+		{"test.hold", 1, "Waits for the test to release it.", engine::CommandInfo{}.parameters, Json::object(), false},
+		[&holds](engine::CommandContext&) { return holds.hold(); });
+	engine::Client holder(window.app.engine(), "holder");
+	const uint64_t audio = window.addTrack({{"type", "audio"}, {"name", "Vox"}});
+	const uint64_t other = window.addTrack({{"type", "midi"}, {"name", "Keys"}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 2; }));
+	window.list.select({audio});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Vox"));
+	const Json channel = window.channel(audio).at("id");
+	// The volume in the project that the event display, and with it the inspector, shows.
+	const auto shown = [&]
+	{
+		const Json& channels = window.display.project().at("channels");
+		const auto found = std::find_if(
+			channels.begin(), channels.end(), [&channel](const Json& each) { return each.at("id") == channel; });
+		REQUIRE(found != channels.end());
+		return found->at("volume").get<double>();
+	};
+
+	// A drag while the engine answers late. Once no step of it is out, its last one goes at once, and the engine
+	// takes it before the shell hands anything on: its answer and history.changed wait in the binding's mailbox.
+	const std::string field = ".inspector valuefield[control=volume]";
+	ui::EngineBinding& binding = window.app.appUi().binding();
+	test::LateDrag drag(window.app, std::nullopt, field);
+	drag.move(15, 1);
+	REQUIRE(window.app.waitUntil([&] { return binding.waiting("history.transaction") == 0; }));
+	drag.nudge(1);
+	const double dragged = drag.value();
+	drag.release(false);
+	REQUIRE(window.channel(audio).at("volume").get<double>() == Catch::Approx(dragged).margin(1e-5));
+	// The project read that the display sends for that history.changed queues behind a hold: the display shows a read
+	// from before the last step until the test lets the engine go on (#1305).
+	holder.send("test.hold");
+	REQUIRE(holds.waitEntered(1));
+	window.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(binding.waiting("history.transaction") == 0);
+	REQUIRE(binding.waiting("project.get") != 0); // the display's, and other views'
+	REQUIRE(shown() != Catch::Approx(dragged).margin(1e-5));
+	CHECK(drag.value() == Catch::Approx(dragged).margin(1e-5));
+
+	// Another track and back shows that older read again: the field stays where the drag left it. The other is a
+	// MIDI track, whose inspector shows no volume, so the field shows only the dragged track's.
+	window.list.select({other});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Keys"));
+	window.list.select({audio});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Vox"));
+	CHECK(drag.value() == Catch::Approx(dragged).margin(1e-5));
+
+	// The read after the last step agrees with it.
+	holds.release(1);
+	REQUIRE(window.app.waitUntil([&] { return shown() == Catch::Approx(dragged).margin(1e-5); }));
+	CHECK(drag.value() == Catch::Approx(dragged).margin(1e-5));
 }
 
 TEST_CASE("the info line's volume turned or dragged while the engine answers late follows the mouse", "[ui]")

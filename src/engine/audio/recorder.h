@@ -217,7 +217,8 @@ namespace gnubase::engine
 
 		// Command thread: what the retrospective buffer of the channel holds, oldest first. The next input to it
 		// starts the buffer afresh. Doesn't wait while the disk thread lists the record folder and creates a
-		// recording's files: the input sent after the chunk that started the recording isn't in it yet then.
+		// recording's files, and leaves a recording's start to it: the input sent after the chunk that starts the
+		// recording isn't in it yet then.
 		std::vector<RetrospectiveEvent> retrospective(ObjectId channel);
 		// Command thread: empties the channel's retrospective buffer, or every one for 0. Like retrospective, input
 		// still behind a recording's start comes in afterwards.
@@ -284,7 +285,9 @@ namespace gnubase::engine
 
 		void run();
 		// Disk thread, or the command thread, holding m_mutex.
-		bool drain(); // handles the chunks the audio thread sent; false if there were none
+		// Handles the chunks the audio thread sent, or false if there were none. Without mayBegin it stops before a
+		// chunk that starts a recording: that one's folder listing and files are the disk thread's.
+		bool drain(bool mayBegin);
 		void handle(const Chunk& chunk);
 		void begin(const Chunk& chunk);
 		void write(const float* samples, uint32_t frames);

@@ -164,6 +164,8 @@ namespace gnubase::ui
 		void markerChange(Rml::Element& control, const std::string& value);
 		// A ruler track's time format chosen or time offset typed (reference manual p. 159).
 		void rulerChange(Rml::Element& control, const std::string& value);
+		// The MIDI channel a MIDI track's row chose (channel.set midiChannel).
+		void midiChannelChange(Rml::Element& control, const std::string& value);
 		void step(int direction);
 		void reveal(uint64_t track); // scrolls the display so that the track's lane shows
 		void finishRename(bool keep);

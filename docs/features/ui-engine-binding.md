@@ -38,10 +38,13 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   channel follow each step the engine took, also during the drag. A control's steps leave nothing behind: the record
   of them goes away in the `update` after the one that handed on a project read (`project.get`) sent after its last
   taken step, such as the one after that step's `history.changed`, once no other project read is out (#746), so a
-  session keeps no entry for every channel and parameter a gesture touched. Until then a view may have no read newer
-  than the control, and one that shows an older read again, such as the inspector after a track change, still leaves
-  the control as it is (#1305); a view showing what that update handed on still asks `sending` and `ahead` about it,
-  and a later gesture makes the record again.
+  session keeps no entry for every channel and parameter a gesture touched. A failed read is none, as the view that
+  sent it still shows its older one (#1370). Until then a view may have no read newer than the control, and one that
+  shows an older read again, such as the inspector after a track change, still leaves the control as it is (#1305); a
+  view showing what that update handed on still asks `sending` and `ahead` about it, and a later gesture makes the
+  record again. The records go only while some view reads the project, as the event display does: a binding without
+  one keeps them all for the session, and a view that asks `ahead` about another query's answer than `project.get`'s
+  may find the record gone before that query answers again.
 - **Events.** `on(name, handler)` calls `handler` with every event of that name, from whichever client caused it: a
   change made through MCP, Lua or another window reaches the UI the same way as the UI's own. The returned
   `Subscription` ends the handler when it goes, so a view that closes stops listening; subscriptions must not outlive

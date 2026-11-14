@@ -210,3 +210,26 @@ TEST_CASE("the inspector chooses the MIDI channel a MIDI track's patch goes out 
 	app.call("channel.set", {{"channel", channel(app).at("id")}, {"midiChannel", nullptr}});
 	CHECK(shows("any"));
 }
+
+TEST_CASE("the track list's MIDI channel control chooses the MIDI channel of a MIDI track", "[ui]")
+{
+	test::UiApp app{{1200, 600}};
+	ui::EventDisplay& display = app.appUi().showProject();
+	app.setDpRatio(1.0F);
+	app.call("settings.set",
+		{{"key", "ui.trackControls"}, {"value", {{"midi", {"mute", "solo", "midiChannel"}}, {"audio", {"mute"}}}}});
+	app.call("track.add", {{"type", "midi"}});
+	app.call("track.add", {{"type", "audio"}});
+	REQUIRE(app.waitUntil([&] { return display.project().at("tracks").size() == 2; }));
+	const std::string list = ".track-list select[control=midiChannel]";
+	REQUIRE(app.waitUntil([&] { return elements(app, list).size() == 1; })); // MIDI tracks only
+	REQUIRE(app.waitUntil([&] { return attribute(app, list, "value") == "any"; }));
+	CHECK(selected(app, list) == "Any");
+
+	choose(app, list, 3);
+	REQUIRE(app.waitUntil([&] { return channel(app).at("midiChannel") == 2; }));
+	CHECK(app.waitUntil([&] { return attribute(app, list, "value") == "2"; }));
+	CHECK(selected(app, list) == "3");
+	app.call("channel.set", {{"channel", channel(app).at("id")}, {"midiChannel", nullptr}});
+	CHECK(app.waitUntil([&] { return attribute(app, list, "value") == "any"; }));
+}

@@ -778,7 +778,9 @@ namespace gnubase::engine::settings
 					"The controls the track list shows, by track type (audio, instrument, midi, group, effect, "
 					"folder, marker, ruler, tempo, transpose, chord), in order: mute, solo, record, monitor (audio, "
 					"instrument "
-					"and MIDI tracks), read (automation), timeBase, on the tempo track tempoTrack (Activate Tempo "
+					"and MIDI tracks), read (automation), timeBase, midiChannel (MIDI tracks: their channel.set "
+					"midiChannel, Any or "
+					"1 to 16), on the tempo track tempoTrack (Activate Tempo "
 					"Track), currentTempo (Current Tempo) and tempoType (Type of New Tempo Points), for marker tracks "
 					"addPositionMarker (Add Position Marker), addCycleMarker (Add Cycle Marker), activateMarkerTrack "
 					"(Activate Track) and the menus markerLocate (Locate), markerCycle (Cycle) and markerZoom (Zoom), "
@@ -795,12 +797,13 @@ namespace gnubase::engine::settings
 								{"items",
 									{{"type", "string"},
 										{"enum",
-											{"mute", "solo", "record", "monitor", "read", "timeBase", "tempoTrack",
-												"currentTempo", "tempoType", "timeFormat", "timeOffsetOn", "timeOffset",
-												"setTimeOffset", "transposeMute", "keepInOctave", "transposeLock",
-												"chordRecord", "chordMute", "chordAudition", "showScales",
-												"addPositionMarker", "addCycleMarker", "activateMarkerTrack",
-												"markerLocate", "markerCycle", "markerZoom"}}}}}}},
+											{"mute", "solo", "record", "monitor", "read", "timeBase", "midiChannel",
+												"tempoTrack", "currentTempo", "tempoType", "timeFormat", "timeOffsetOn",
+												"timeOffset", "setTimeOffset", "transposeMute", "keepInOctave",
+												"transposeLock", "chordRecord", "chordMute", "chordAudition",
+												"showScales", "addPositionMarker", "addCycleMarker",
+												"activateMarkerTrack", "markerLocate", "markerCycle",
+												"markerZoom"}}}}}}},
 					Json{{"audio", {"mute", "solo", "record", "monitor", "read"}},
 						{"instrument", {"mute", "solo", "record", "monitor", "read"}},
 						{"midi", {"mute", "solo", "record", "monitor", "read"}}, {"group", {"mute", "solo", "read"}},

@@ -791,9 +791,11 @@ namespace gnubase::engine
 			sequence->liveInput = channel.liveInput;
 			sequence->articulations = channel.articulations;
 			sequence->drumInput = channel.drumInput;
+			sequence->inputChannel = channel.inputChannel;
 			sequence->inserts = channel.midiInserts;
 			sequence->sends = channel.midiSends;
 			sequence->preNotes = channel.preNotes;
+			sequence->preExpressions = channel.preExpressions;
 			for (size_t s = 0; s < channel.midiSendOutputs.size(); ++s)
 				if (const int output = channel.midiSendOutputs[s]; output >= 0)
 					sequence->sendOutputs[s] = snapshot.channels[static_cast<size_t>(output)].id;
