@@ -600,6 +600,44 @@ TEST_CASE("the track list's Current Tempo reads the display's time context, not 
 	REQUIRE(app.waitUntil([&value] { return value() == "120.000"; }));
 }
 
+TEST_CASE(
+	"the track list's Current Tempo follows the cursor after tracks are added and removed during playback", "[ui]")
+{
+	test::UiApp app{{1024, 500}};
+	app.appUi().showProject();
+	const auto track = app.call("track.add", {{"type", "tempo"}}).at("track").at("id").get<uint64_t>();
+	const std::string row = "#track-list listitem[value=\"" + std::to_string(track) + "\"]";
+	const auto value = [&app, &row]
+	{
+		const Json found = elements(app, row + " input.current-tempo");
+		return found.empty() ? std::string() : found[0].value("value", std::string());
+	};
+	app.call("project.set", {{"tempoTrackActive", true}});
+	app.call("tempo.add", {{"position", 2 * g_quarter}, {"bpm", 100.0}, {"ramp", false}});
+	app.call("tempo.add", {{"position", 8 * g_quarter}, {"bpm", 90.0}, {"ramp", false}}); // at 4.6 seconds
+	REQUIRE(app.waitUntil([&value] { return value() == "120.000"; }));
+
+	app.call("audio.setDevice", {{"blockSize", 256}}); // the dummy device
+	app.call("audio.start");
+	app.call("transport.play");
+	REQUIRE(app.waitUntil([&value] { return value() == "100.000"; }));
+
+	// Tracks added before and after the tempo track and removed again rebuild the rows: the list keeps the new
+	// fields and drops the old ones (#1406), and the frames of the playback go on filling the new field.
+	const auto before = app.call("track.add", {{"type", "midi"}, {"index", 0}}).at("track").at("id").get<uint64_t>();
+	const auto after = app.call("track.add", {{"type", "audio"}}).at("track").at("id").get<uint64_t>();
+	// The UI steps between the changes, so that it builds the rows with the added tracks and again without them.
+	const auto rowOf = [](uint64_t id) { return "#track-list listitem[value=\"" + std::to_string(id) + "\"]"; };
+	REQUIRE(
+		app.waitUntil([&] { return !elements(app, rowOf(before)).empty() && !elements(app, rowOf(after)).empty(); }));
+	app.call("track.remove", {{"track", before}});
+	app.call("track.remove", {{"track", after}});
+	REQUIRE(app.waitUntil([&] { return elements(app, rowOf(before)).empty() && elements(app, rowOf(after)).empty(); }));
+	CHECK(app.call("transport.get").at("position").get<int64_t>() < 4 * g_second); // before the tempo event
+	REQUIRE(app.waitUntil([&value] { return value() == "90.000"; }, std::chrono::seconds(10)));
+	app.call("transport.stop");
+}
+
 TEST_CASE("Insert Tempo Event at Cursor asks for a tempo and adds a tempo event at the cursor", "[ui]")
 {
 	test::UiApp app{{1024, 500}};

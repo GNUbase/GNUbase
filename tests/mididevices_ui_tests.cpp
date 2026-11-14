@@ -221,7 +221,7 @@ TEST_CASE("the track list's MIDI channel control chooses the MIDI channel of a M
 			{"value", {{"midi", {"mute", "solo", "midiChannel"}}, {"audio", {"mute", "midiChannel"}}}}});
 	app.call("track.add", {{"type", "midi"}});
 	app.call("track.add", {{"type", "audio"}});
-	REQUIRE(app.waitUntil([&] { return display.project().at("tracks").size() == 2; }));
+	REQUIRE(app.waitUntil([&] { return display.project().is_object() && display.project().at("tracks").size() == 2; }));
 	const std::string list = ".track-list select[control=midiChannel]";
 	// MIDI tracks only: the audio track's row doesn't show it, although its controls name it.
 	REQUIRE(app.waitUntil([&] { return elements(app, ".track-list [control=mute]").size() == 2; }));
