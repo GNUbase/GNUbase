@@ -43,21 +43,25 @@ They emit `pattern.added`, `pattern.changed` and `pattern.removed` with the patt
 - **Mode switches** (p. 913): between drum and melodic mode the pattern is cleared; from poly to mono mode the lowest
   step at each position stays and the lanes' own settings go; mono to poly changes nothing. In mono mode a step can't
   overlap another, ties included.
-- **Pattern events** are MIDI parts with a `pattern`: they play it from their start over and over instead of their
-  own notes, each lane looping on its own length and resolution. Every change of the pattern is in its events at once.
-  They move, copy, split, resize and undo as parts do (#1040): their `patternOffset` (`project.get`) is how many ticks
-  of the pattern went before their start, so the pieces of a split, and a start sized later or earlier, continue the
-  pattern instead of starting it again; another pattern, or none, starts from the part's start again (#1091). Glued to the pieces that continue it, a pattern event stays one; glued to
-  anything else, the pattern events' steps become notes of the glued ordinary part, as they played.
+- **Pattern events** are MIDI parts with a `pattern`: they play it from their start over and over instead of their own
+  notes, each lane looping on its own length and resolution. Every change of the pattern is in its events at once. They
+  move, copy, split, resize and undo as parts do (#1040): their `patternOffset` (`project.get`) is how many ticks of the
+  pattern went before their start, so the pieces of a split, and a start sized later or earlier, continue the pattern
+  instead of starting it again; another pattern, or none, starts from the part's start again (#1091). Glued to the
+  pieces that continue it, a pattern event stays one; glued to anything else, the pattern events' steps become notes of
+  the glued ordinary part, as they played.
 - **Other tracks** (pp. 936-937): a pattern event copied or moved to another track, or on a duplicated track, plays a
   copy of its pattern on its own track, whose pattern management lists it (`midi::adoptPatterns` after every edit). A
-  track without pattern events of its own gets copies of all the patterns of the event's track, one with pattern
-  events only the event's pattern; a copy the track has already, made from that pattern and unchanged since, plays it
-  again instead of another one (#1091). An equal pattern that isn't its copy doesn't count (#1202): equal patterns of
-  the event's track each get a copy, and a track's own pattern doesn't play events copied there. Which pattern a copy
-  was made from isn't saved, so in a loaded project the next copy is a new one. `midiPart.add` and `midiPart.set`
-  return the part with the copy. Duplicate Track copies all of the track's patterns, those no event plays too, and the
-  pattern events of all its versions play the copies (#1202). Removing a track removes its patterns.
+  track without pattern events of its own gets copies of all the patterns of the event's track, one with pattern events
+  only the event's pattern; a copy the track has already, made from that pattern and unchanged since, plays it again
+  instead of another one (#1091). An equal pattern that isn't its copy doesn't count (#1202): equal patterns of the
+  event's track each get a copy, and a track's own pattern doesn't play events copied there. Which pattern a copy was
+  made from isn't saved, so in a loaded project the next copy is a new one. `midiPart.add` and `midiPart.set` return the
+  part with the copy. Duplicate Track copies all of the track's patterns, those no event plays too, and the pattern
+  events of all its versions play the copies (#1202). Removing a track removes its patterns. Moved back to the track it
+  came from, a pattern event plays the pattern its copy was made from again, as long as neither changed since (#1347).
+  Track export, import and presets bring the tracks' patterns with new ids, which the pattern events of all their
+  versions play; imported onto a track, the patterns become that track's (#1347).
 - **MIDI functions** read what a pattern event plays (`midi::playedNotes`): Merge, Dissolve Part and Bounce make notes
   of its steps. The functions that change notes (`midi.transpose` and the others) leave pattern events, whose steps
   the pattern editor edits, as they are; the controller functions (`midi.deleteControllers`,
@@ -65,12 +69,11 @@ They emit `pattern.added`, `pattern.changed` and `pattern.removed` with the patt
 - **Playback** (`midi::patternNotes`, `src/engine/document/rendersnapshot.cpp`): each step plays a note of its lane's
   pitch from its position, as long as it and its ties times the gate, its repeats as that many sub-steps; backward a
   step plays where its last tied step is forward. The sub-steps of a tie that wraps past the lane's end play at the
-  start of the next cycle, in a piece after a split too. Swing moves every second step, the step's and the lane's offsets
-  move it by parts of a step: a step that a negative offset moves before the event's start plays at its start when
-  the pattern starts with the event, and a step of the repeat after the event's end that it moves before the end
-  plays. Probability and velocity variance are the notes' (#128), with their own chance in every
-  repeat of the pattern. The notes then play as a part's do: through the track's drum map, articulation map and MIDI
-  modifiers.
+  start of the next cycle, in a piece after a split too. Swing moves every second step, the step's and the lane's
+  offsets move it by parts of a step: a step that a negative offset moves before the event's start plays at its start
+  when the pattern starts with the event, and a step of the repeat after the event's end that it moves before the end
+  plays. Probability and velocity variance are the notes' (#128), with their own chance in every repeat of the pattern.
+  The notes then play as a part's do: through the track's drum map, articulation map and MIDI modifiers.
 
 ## In the UI
 
@@ -122,10 +125,12 @@ part's pattern.
 - A gesture edits a copy of the pattern and changes only the steps' classes while it goes on, so that its mouseup
   reaches the elements it started on; it ends with one `pattern.set` in a `history.transaction`, one undo step. A
   project change that comes while it goes on (a script's, an MCP client's, an undo) shows when it ends, without dropping
-  what it changed: its `pattern.set` sends the lanes it edited and the others as the engine has them then (#1091); if the engine refuses its `pattern.set`, the engine's pattern shows again. A project read before the last
-  `pattern.set` was answered (a `project.get` answered before it, or the project the editor has with a newer view)
-  doesn't have its lanes yet: the editor shows, and the next gesture sends, the lanes it sent instead of that
-  project's (#1202). `ui::MidiEditor` tells it when it read the project (`EngineBinding::handed`).
+  what it changed: its `pattern.set` sends the lanes it edited and the others as the engine has them then (#1091); if
+  the engine refuses its `pattern.set`, the engine's pattern shows again. A project read before the last `pattern.set`
+  was answered (a `project.get` answered before it, or the project the editor has with a newer view) doesn't have its
+  lanes yet: the editor shows, and the next gesture sends, the lanes it sent instead of that project's (#1202). Double
+  Length and Double Resolution send theirs the same way, an undo step each (#1347). `ui::MidiEditor` tells it when it
+  read the project (`EngineBinding::handed`).
 - **Commands** (Edit menu, `app::AppUi`): `editor.openPattern` (Open Pattern Editor) opens the selected MIDI parts in
   the editor window's pattern editor; `pattern.loadPreset` and `pattern.savePreset` (Load and Save Pattern Preset...)
   load a preset into, and save the patterns of, the editor's active track through the OS's file dialogs.
@@ -135,33 +140,34 @@ part's pattern.
 
 ## Not yet
 
-Play with Project and patterns without pattern events; overlapping pattern events playing only the topmost (p. 935);
-the mode-switching rules and the drum lanes matched from top to bottom for pattern events copied to a track whose
-pattern events are in another mode (p. 937); the pattern events' menu in the event display, drawing them with the project window's draw tool and Drag Pattern to
-Project; the Event Type of the Add Track dialog; the Inspector's generators (Euclidean, Randomization, Add Every Nth
-Step, Shapes, Variation, Density, Voices) and Nudge; the scale, pitch range and chord lane sections of melodic mode;
-step input and Acoustic Feedback; Legato; ties drawn by dragging a step's end and cut with scissors; moving and copying
-steps by dragging, cut, copy, paste and duplicate; the step lane context menu (Copy Steps to Lane, Rename, Sort Lanes
-by Pitch); Randomize Parameter and parameters beyond the six (automation, MIDI controllers); Auto-Scroll and the
-playback cursor; the colors menu; confirmation dialogs for mode switches that lose steps; the reference's own pattern
-bank files; the notes of pattern events in MIDI file export and in the DAWproject content that other applications
-read, which have the parts' own notes.
+Play with Project and patterns without pattern events; overlapping pattern events playing only the topmost (p. 935); the
+mode-switching rules and the drum lanes matched from top to bottom for pattern events copied to a track whose pattern
+events are in another mode (p. 937); the pattern events' menu in the event display, drawing them with the project
+window's draw tool and Drag Pattern to Project; the Event Type of the Add Track dialog; the Inspector's generators
+(Euclidean, Randomization, Add Every Nth Step, Shapes, Variation, Density, Voices) and Nudge; the scale, pitch range and
+chord lane sections of melodic mode; step input and Acoustic Feedback; Legato; ties drawn by dragging a step's end and
+cut with scissors; moving and copying steps by dragging, cut, copy, paste and duplicate; the step lane context menu
+(Copy Steps to Lane, Rename, Sort Lanes by Pitch); Randomize Parameter and parameters beyond the six (automation, MIDI
+controllers); Auto-Scroll and the playback cursor; the colors menu; confirmation dialogs for mode switches that lose
+steps; the reference's own pattern bank files; the notes of pattern events in MIDI file export and in the DAWproject
+content that other applications read, which have the parts' own notes.
 
 ## Checks
 
 - `tests/patterns_tests.cpp`: new, melodic and duplicated patterns, a part becoming a pattern event, steps with their
-  parameters and every check, undo, removing a pattern with its events; mode switches; rendered playback of steps,
-  ties, repeats, gate, offsets, swing, the play directions, a lane's own length and resolution, mute, solo, longer and
-  muted events; split, sized and glued pattern events continuing their pattern, glued to ordinary parts, negative
-  offsets at the event's edges; Bounce, Dissolve Part, Merge and the other functions on pattern events; pattern
-  events copied and moved to other tracks, copied again, equal patterns that aren't copies, Duplicate Track with
-  patterns no event plays and other versions, and removing a track; the pattern offset after a change of pattern; a split's pieces against the whole event for a wrapping tie;
-  the controller functions on pattern events; probability per repeat; Convert
-  Pattern Event to MIDI Part; presets saved and loaded, with errors; the project file; the pattern editor content.
-- `tests/patterneditor_ui_tests.cpp` drives the app with `ui::Automation`: the lanes of a drum pattern, the draw
-  tool's click and drag with undo, a drag that the project changes under, on its lane and another, and one that is
-  refused, a project read before the last `pattern.set` shown with and without a gesture going on, mono mode over a
-  tie, Double Resolution and Double Length with lanes of their own length and resolution, selecting, deleting and double-clicking steps, Tie and Split, mute, the parameter
-  lane's velocity and probability, the toolbar's menus and Double Length, Add Lane and melodic mode; New Melodic
-  Pattern for a plain part, the pattern menu choosing, duplicating and converting; Open Pattern Editor and the Edit
-  menu's entries.
+  parameters and every check, undo, removing a pattern with its events; mode switches; rendered playback of steps, ties,
+  repeats, gate, offsets, swing, the play directions, a lane's own length and resolution, mute, solo, longer and muted
+  events; split, sized and glued pattern events continuing their pattern, glued to ordinary parts, negative offsets at
+  the event's edges; Bounce, Dissolve Part, Merge and the other functions on pattern events; pattern events copied and
+  moved to other tracks, copied again, equal patterns that aren't copies, moved there and back, Duplicate Track with
+  patterns no event plays and other versions, and removing a track; track export and import with patterns, onto a track
+  too; the pattern offset after a change of pattern; a split's pieces against the whole event for a wrapping tie; the
+  controller functions on pattern events; probability per repeat; Convert Pattern Event to MIDI Part; presets saved and
+  loaded, with errors; the project file; the pattern editor content.
+- `tests/patterneditor_ui_tests.cpp` drives the app with `ui::Automation`: the lanes of a drum pattern, the draw tool's
+  click and drag with undo, a drag that the project changes under, on its lane and another, and one that is refused, a
+  project read before the last `pattern.set` shown with and without a gesture going on, mono mode over a tie, Double
+  Resolution and Double Length with lanes of their own length and resolution, a gesture right after Double Length,
+  selecting, deleting and double-clicking steps, Tie and Split, mute, the parameter lane's velocity and probability, the
+  toolbar's menus and Double Length, Add Lane and melodic mode; New Melodic Pattern for a plain part, the pattern menu
+  choosing, duplicating and converting; Open Pattern Editor and the Edit menu's entries.

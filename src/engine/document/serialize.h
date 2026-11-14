@@ -88,6 +88,11 @@ namespace gnubase::engine
 	Json toJson(const AudioEvent& event);
 	Json toJson(const AudioPart& part);
 	Json toJson(const Note& note);
+	// A note's expression points (Note::expressions) from [{type, position, value}], sorted by position; name names
+	// them in errors. Throws std::invalid_argument for unknown types, negative positions and values out of range.
+	std::vector<ExpressionPoint> expressionsFromJson(const Json& json, const std::string& name);
+	// The schema of a note's expressions in commands.
+	Json expressionsSchema();
 	Json toJson(const Controller& controller);
 	// A controller's type and the values the type uses, without checking them; the others are zero. Its id and
 	// position are left to the caller.
@@ -107,7 +112,8 @@ namespace gnubase::engine
 	Json toJson(const AutomationLane& lane); // with its points, sorted by position
 	Json toJson(const MixerView& view);      // {"hidden": [ids], "hiddenTypes": [types]}
 	// {hidden, sync, configurations: [{name, hidden}], configuration}; trackVisibilityFromJson takes what is valid
-	// JSON.
+	// JSON and leaves out the rest, and the project load checks the values as trackVisibility.set does
+	// (sanitizeTrackVisibility).
 	Json toJson(const TrackVisibility& visibility);
 	TrackVisibility trackVisibilityFromJson(const Json& json);
 	// A track's height in the track list, in dp before vertical zoom: trackLayout.set's range.

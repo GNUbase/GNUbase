@@ -7,6 +7,7 @@
 
 #include "engine/document/linkgroups.h"
 #include "engine/document/projectmodel.h"
+#include "engine/document/trackvisibility.h"
 #include "engine/midi/articulationmaps.h"
 #include "engine/midi/drummaps.h"
 #include "engine/midi/patterns.h"
@@ -771,6 +772,13 @@ namespace gnubase::engine
 			json["velocityVariance"] = note.velocityVariance;
 		if (!note.articulations.empty())
 			json["articulations"] = note.articulations;
+		if (!note.expressions.empty())
+		{
+			Json& points = json["expressions"] = Json::array();
+			for (const ExpressionPoint& point : note.expressions)
+				points.push_back({{"type", g_expressionNames.at(static_cast<size_t>(point.type))},
+					{"position", point.position}, {"value", point.value}});
+		}
 		return json;
 	}
 
@@ -1110,12 +1118,31 @@ namespace gnubase::engine
 	TrackVisibility trackVisibilityFromJson(const Json& json)
 	{
 		TrackVisibility visibility;
-		visibility.hidden = json.value("hidden", std::vector<ObjectId>());
-		visibility.sync = json.value("sync", std::string());
-		for (const Json& configuration : json.value("configurations", Json::array()))
-			visibility.configurations.push_back(
-				{configuration.value("name", std::string()), configuration.value("hidden", std::vector<ObjectId>())});
-		visibility.configuration = json.value("configuration", std::string());
+		const auto ids = [](const Json& object, const char* key)
+		{
+			std::vector<ObjectId> ids;
+			if (const auto found = object.find(key); found != object.end() && found->is_array())
+				for (const Json& id : *found)
+					if (id.is_number_unsigned())
+						ids.push_back(id.get<ObjectId>());
+			return ids;
+		};
+		visibility.hidden = ids(json, "hidden");
+		if (const auto sync = json.find("sync"); sync != json.end() && sync->is_string())
+			visibility.sync = sync->get<std::string>();
+		if (const auto configurations = json.find("configurations");
+			configurations != json.end() && configurations->is_array())
+			for (const Json& item : *configurations)
+			{
+				VisibilityConfiguration configuration;
+				if (const auto name = item.find("name"); name != item.end() && name->is_string())
+					configuration.name = name->get<std::string>();
+				configuration.hidden = ids(item, "hidden");
+				visibility.configurations.push_back(std::move(configuration));
+			}
+		if (const auto configuration = json.find("configuration");
+			configuration != json.end() && configuration->is_string())
+			visibility.configuration = configuration->get<std::string>();
 		return visibility;
 	}
 
@@ -1595,7 +1622,7 @@ namespace gnubase::engine
 					const auto mode = indexOf(g_arrangerRepeatModes, step.value("mode", std::string("normal")));
 					const auto event = step.at("event").get<ObjectId>();
 					if (events.count(event) != 0)
-						chain.steps.push_back({event, std::max(1, step.value("repeats", 1)),
+						chain.steps.push_back({event, std::clamp(step.value("repeats", 1), 1, 999),
 							static_cast<ArrangerRepeat>(mode.value_or(0))});
 				}
 				project.arranger.chains.push_back(std::move(chain));
@@ -1789,6 +1816,53 @@ namespace gnubase::engine
 						{{"on", limiter.on}, {"threshold", limiter.threshold}, {"release", limiter.release}}}}}};
 	}
 
+	std::vector<ExpressionPoint> expressionsFromJson(const Json& json, const std::string& name)
+	{
+		std::vector<ExpressionPoint> points;
+		for (size_t i = 0; i < json.size(); ++i)
+		{
+			const Json& item = json.at(i);
+			const std::string where = name + "[" + std::to_string(i) + "]";
+			const auto type = item.at("type").get<std::string>();
+			// An index, not an iterator: it is a pointer in some standard libraries.
+			const auto index = static_cast<size_t>(
+				std::find(g_expressionNames.begin(), g_expressionNames.end(), type) - g_expressionNames.begin());
+			if (index == g_expressionNames.size())
+				throw std::invalid_argument(where + ".type: there is no expression " += type);
+			ExpressionPoint point;
+			point.type = static_cast<plugin::NoteExpression>(index);
+			point.position = item.at("position").get<time::Ticks>();
+			if (point.position < 0)
+				throw std::invalid_argument(where + ".position must not be negative");
+			double minimum = 0.0;
+			double maximum = 1.0;
+			if (point.type == plugin::NoteExpression::Tuning)
+			{
+				minimum = -120.0;
+				maximum = 120.0;
+			}
+			else if (point.type == plugin::NoteExpression::Volume)
+			{
+				maximum = 4.0;
+			}
+			point.value = checkedNumber(item.at("value"), minimum, maximum, where + ".value");
+			points.push_back(point);
+		}
+		std::stable_sort(points.begin(), points.end(),
+			[](const ExpressionPoint& a, const ExpressionPoint& b) { return a.position < b.position; });
+		return points;
+	}
+
+	Json expressionsSchema()
+	{
+		return {{"type", "array"},
+			{"items",
+				{{"type", "object"}, {"additionalProperties", false}, {"required", {"type", "position", "value"}},
+					{"properties",
+						{{"type", {{"type", "string"}, {"enum", g_expressionNames}}},
+							{"position", {{"type", "integer"}}}, {"value", {{"type", "number"}}}}}}}};
+	}
+
 	ChannelSections sectionsFromJson(const Json& json, const ChannelSections& fallback)
 	{
 		ChannelSections sections = fallback;
@@ -1976,6 +2050,10 @@ namespace gnubase::engine
 						".effect must be a built-in MIDI effect (midiEffect.list) or empty, not " + effect.dump());
 				if (id != slot.effect) // another effect starts from its defaults
 				{
+					// A send whose effect is removed plays nowhere: an output the inspector doesn't show any more
+					// mustn't count as a loop (#1149).
+					if (id.empty() && !given.contains("output"))
+						slot.output = 0;
 					slot.effect = id;
 					slot.parameters.clear();
 					if (info != nullptr)
@@ -2478,6 +2556,8 @@ namespace gnubase::engine
 				note.probability = std::clamp(n.value("probability", 1.0), 0.0, 1.0);
 				note.velocityVariance = std::clamp(n.value("velocityVariance", 0.0), -1.0, 1.0);
 				note.articulations = n.value("articulations", std::vector<std::string>()); // before #175 none
+				note.expressions =
+					expressionsFromJson(n.value("expressions", Json::array()), noteName + " expressions");
 				part.notes[note.id] = note;
 			}
 			for (const Json& c : item.at("controllers"))
@@ -2677,6 +2757,9 @@ namespace gnubase::engine
 							 }),
 				folded.end());
 		}
+		// A file's track visibility is checked as trackVisibility.set checks it, and hidden folders come in with
+		// the tracks inside them (#906).
+		sanitizeTrackVisibility(project);
 		// Files from before the metronome have none; values that aren't valid keep their defaults.
 		if (const auto found = json.find("metronome"); found != json.end())
 			metronome::apply(project.metronome, *found, false);

@@ -269,3 +269,37 @@ TEST_CASE("opening the setup, the profile manager or the workspaces organizer ag
 		CHECK(handlers(dialog[3]) == before);
 	}
 }
+
+TEST_CASE("the articulation map setup opened again for another track assigns to that track", "[ui]")
+{
+	Fixture f;
+	// Track A, the fixture's, has the second of two maps; track B none.
+	f.app.call("articulationMap.add", {{"name", "Brass"}});
+	const auto second = f.app.call("articulationMap.add", {{"name", "Strings"}}).at("map").at("id").get<uint64_t>();
+	f.app.call("track.set", {{"track", f.track}, {"articulationMap", second}});
+	const auto other =
+		f.app.call("track.add", {{"type", "instrument"}, {"name", "Winds"}}).at("track").at("id").get<uint64_t>();
+	REQUIRE(f.app.waitUntil([&f] { return f.display.project().value("tracks", Json::array()).size() == 2; }));
+	// The setup for B, then for A, which selects A's map, then for B again, which keeps it: Assign to Track
+	// assigns it to B.
+	for (const uint64_t track : {other, f.track, other})
+	{
+		f.app.appUi().trackList()->select({track});
+		f.app.shell().step(std::chrono::milliseconds(0));
+		f.app.keys().run("midi.articulationMapSetup", Json::object(), f.app.main(), nullptr);
+		REQUIRE(f.app.waitUntil([&f] { return f.shown("#articulation-maps-dialog"); }));
+		f.app.shell().step(std::chrono::milliseconds(0));
+	}
+	CHECK(f.elements("#articulation-maps-dialog").size() == 1);
+	f.click("#articulation-map-assign");
+	REQUIRE(f.app.waitUntil(
+		[&f, other, second]
+		{
+			const Json project = f.app.call("project.get");
+			for (const Json& each : project.at("tracks"))
+				if (each.at("id") == other)
+					return each.value("articulationMap", uint64_t{0}) == second;
+			return false;
+		}));
+	CHECK(f.trackMap() == second);
+}

@@ -748,6 +748,8 @@ TEST_CASE("the sample loader waits only for the files asked for, and its end for
 		REQUIRE(wake.wait_for(lock, std::chrono::seconds(30), [&] { return reading; }));
 	}
 	loader->request("next.wav");
+	// Not ending yet: the wait for the end gives up rather than hanging the run (#1337).
+	CHECK(!loader->waitUntilEnding(std::chrono::milliseconds(0)));
 	// No wait for a file that is read but not asked for (#1180); one for the file behind it.
 	CHECK(loader->waitUntilRead(std::chrono::milliseconds(0), {"other.wav"}));
 	CHECK(!loader->waitUntilRead(std::chrono::milliseconds(20), {"next.wav"}));
@@ -756,13 +758,15 @@ TEST_CASE("the sample loader waits only for the files asked for, and its end for
 	// begun, so that the check doesn't rely on the ending thread winning a race against a sleep (#1272).
 	SampleLoader* const endingLoader = loader.get();
 	std::thread ending([&loader] { loader.reset(); });
-	endingLoader->waitUntilEnding();
+	// The read is let go whether the wait failed or not, so that a lost notify fails the test rather than hanging it.
+	const bool ended = endingLoader->waitUntilEnding(std::chrono::seconds(30));
 	{
 		const std::scoped_lock lock(mutex);
 		open = true;
 	}
 	wake.notify_all();
 	ending.join();
+	REQUIRE(ended);
 	CHECK(read == std::vector<std::string>{"slow.wav"});
 }
 
@@ -1592,6 +1596,37 @@ TEST_CASE(
 	run(client, "sampler.load", {{"track", track}, {"clip", later}});
 	run(client, "audio.render", {{"frames", 64}});
 	CHECK(held.reads() == std::vector<fs::path>{"sine.wav", "later.wav"});
+}
+
+TEST_CASE("recording from stop waits for the samples like starting playback, a count-in doesn't", "[integration]")
+{
+	Session session;
+	Client& client = session.client;
+	const auto track = run(client, "sampler.create").at("track").at("id").get<ObjectId>();
+	HeldRead held(session.engine, session.file);
+	run(client, "sampler.load", {{"track", track}, {"clip", session.clip}});
+	REQUIRE(held.reading());
+
+	// With a count-in, recording answers while the file is read: the count-in plays meanwhile.
+	run(client, "metronome.set", {{"countIn", {{"enabled", true}}}});
+	const auto before = std::chrono::steady_clock::now();
+	run(client, "transport.record");
+	CHECK(std::chrono::steady_clock::now() - before < std::chrono::seconds(1));
+	CHECK(held.reads().empty());
+	run(client, "transport.stop");
+
+	// Without one, playback starts at once, so recording waits for the sample as transport.play does (#1200).
+	run(client, "metronome.set", {{"countIn", {{"enabled", false}}}});
+	std::thread releasing(
+		[&held]
+		{
+			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+			held.release();
+		});
+	run(client, "transport.record");
+	releasing.join();
+	CHECK(held.reads() == std::vector<fs::path>{"sine.wav"});
+	run(client, "transport.stop");
 }
 
 TEST_CASE("an offline render waits for a sample however long its file takes", "[integration]")

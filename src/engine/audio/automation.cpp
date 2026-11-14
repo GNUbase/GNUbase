@@ -859,6 +859,7 @@ namespace gnubase::engine
 		case Type::PolyPressure: // its note was ended
 		case Type::SysEx:
 		case Type::Parameter:
+		case Type::NoteExpression:
 			return -1;
 		}
 		return -1;

@@ -286,6 +286,26 @@ TEST_CASE("every theme dims the audio part editor's events that their part hides
 	}
 }
 
+TEST_CASE("every theme marks the arranger editor's row that is playing", "[unit]")
+{
+	// The arranger editor (docs/features/arranger.md): the row of the chain step or event playing carries .current and
+	// the theme decides how that looks, since the document's own locate arrows show on every row and mark nothing. The
+	// rule lives in the generated style sheets (tools/skin/generate.py), so a regeneration that drops it fails here.
+	for (const char* theme : g_themes)
+	{
+		INFO("theme " << theme);
+		bool marked = false;
+		for (const auto& [selector, declarations] : rules(gnubase::test::readText(themesDir() / theme / "theme.rcss")))
+		{
+			const size_t first = selector.find_first_not_of(" \t");
+			const std::string name = selector.substr(first, selector.find_last_not_of(" \t\r") + 1 - first);
+			if (name == ".arranger-row.current")
+				marked = declarations.find(':') != std::string::npos; // it says how the row looks
+		}
+		CHECK(marked);
+	}
+}
+
 TEST_CASE("the shared style sheets leave font sizes to the themes", "[unit]")
 {
 	const std::string base =

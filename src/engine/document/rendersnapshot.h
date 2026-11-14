@@ -98,6 +98,16 @@ namespace gnubase::engine
 		bool keySwitch = false;
 	};
 
+	// A point of a note's per-note expression (#176), with the note's played pitch and channel.
+	struct RenderExpression
+	{
+		time::Samples position = 0;
+		uint8_t pitch = 60;
+		uint8_t channel = 0;
+		plugin::NoteExpression type = plugin::NoteExpression::Volume;
+		double value = 0.0;
+	};
+
 	struct RenderController
 	{
 		time::Samples position = 0;
@@ -247,6 +257,7 @@ namespace gnubase::engine
 		std::vector<RenderAudioEvent> audioEvents;    // sorted by start
 		std::vector<RenderNote> notes;                // sorted by start, key switches first, then pitch
 		std::vector<RenderController> controllers;    // sorted by position
+		std::vector<RenderExpression> expressions;    // the notes' points that lie within them, sorted by position
 		std::vector<RenderPart> midiParts;            // sorted by start
 		std::vector<RenderAutomationLane> automation; // in the order of the lanes' ids
 		std::vector<RenderSlot> slots;                // from top to bottom

@@ -52,6 +52,10 @@ namespace gnubase::ui
 			if (Rml::Element* found = element.get())
 				found->RemoveEventListener(Rml::EventId::Click, listener);
 		}
+
+		// How much a track indents per folder level around it, in dp, sized from its level as the tree views'
+		// indents (viewwidgets.cpp): folders nest without a limit, which no rule per level covers (#906).
+		constexpr int g_indent = 12;
 	}
 
 	TrackVisibility::TrackVisibility(EngineBinding& binding, Rml::ElementDocument& document)
@@ -90,6 +94,7 @@ namespace gnubase::ui
 		if (auto* dialog = dynamic_cast<Rml::ElementDocument*>(m_dialog.get()))
 		{
 			dialog->RemoveEventListener(g_dialogCloseEvent, this);
+			dialog->RemoveEventListener(Rml::EventId::Click, this);
 			closeDialog(*dialog, "cancel");
 		}
 	}
@@ -201,9 +206,18 @@ namespace gnubase::ui
 			levels[id] = level;
 			rml += R"(<button class="track-visibility-item)" + std::string(m_hidden.count(id) == 0 ? " checked" : "") +
 				R"(" track=")" + std::to_string(id) + R"(" level=")" + std::to_string(level) + R"(">)" +
+				(level > 0 ? R"(<span class="track-visibility-indent"/>)" : "") +
 				encode(track.at("name").get<std::string>()) + "</button>";
 		}
-		setInner(panel->QuerySelector(".track-visibility-list"), rml);
+		Rml::Element* list = panel->QuerySelector(".track-visibility-list");
+		setInner(list, rml);
+		if (list != nullptr)
+			for (int i = 0; i < list->GetNumChildren(); ++i)
+			{
+				Rml::Element* item = list->GetChild(i);
+				if (Rml::Element* indent = item->QuerySelector(".track-visibility-indent"))
+					indent->SetProperty("width", std::to_string(item->GetAttribute<int>("level", 0) * g_indent) + "dp");
+			}
 		const std::string sync = m_visibility.at("sync").get<std::string>();
 		if (Rml::Element* button = panel->QuerySelector("#track-visibility-sync"))
 			button->SetClass("checked", !sync.empty());
@@ -225,6 +239,24 @@ namespace gnubase::ui
 			if (std::find(found.begin(), found.end(), item.at("parent").get<uint64_t>()) != found.end())
 				found.push_back(item.at("id").get<uint64_t>());
 		return found;
+	}
+
+	// The ids that are tracks as project.get last answered. After an undo step the engine answers project.get and
+	// trackVisibility.get on its own thread, so a frame can take the first reply without the second: what a click
+	// sends then mustn't hold the tracks that went, which trackVisibility.set refuses (#907).
+	std::set<uint64_t> TrackVisibility::current(std::set<uint64_t> ids) const
+	{
+		std::set<uint64_t> known;
+		for (const Json& track : m_tracks)
+			known.insert(track.at("id").get<uint64_t>());
+		for (auto it = ids.begin(); it != ids.end();)
+			it = known.count(*it) != 0 ? std::next(it) : ids.erase(it);
+		return ids;
+	}
+
+	Json TrackVisibility::current(const Json& ids) const
+	{
+		return current(ids.get<std::set<uint64_t>>());
 	}
 
 	// A click hides or shows the track with the tracks inside it; shown, the folders around it show too, so that the
@@ -250,7 +282,7 @@ namespace gnubase::ui
 		else
 			for (const uint64_t id : inside(track))
 				hidden.insert(id);
-		m_binding.send("trackVisibility.set", {{"hidden", hidden}}); // trackVisibility.changed shows it
+		m_binding.send("trackVisibility.set", {{"hidden", current(hidden)}}); // trackVisibility.changed shows it
 	}
 
 	void TrackVisibility::choose(const std::string& item)
@@ -270,7 +302,8 @@ namespace gnubase::ui
 					continue;
 				configuration["hidden"] = m_hidden; // update
 			}
-			configurations.push_back(configuration);
+			configuration["hidden"] = current(configuration.at("hidden"));
+			configurations.push_back(std::move(configuration));
 		}
 		m_binding.send("trackVisibility.set", {{"configurations", configurations}});
 	}
@@ -299,7 +332,37 @@ namespace gnubase::ui
 		}
 		m_dialog = dialog->GetObserverPtr();
 		dialog->AddEventListener(g_dialogCloseEvent, this);
+		dialog->AddEventListener(Rml::EventId::Click, this); // its OK, which validates before it closes (#906)
 		dialog->Show(Rml::ModalFlag::Modal);
+	}
+
+	// OK in the name dialog: a name that trackVisibility.set would refuse keeps the dialog open with the reason in
+	// #visibility-configuration-error (#906); a name it takes closes it, and closedDialog sends the change.
+	void TrackVisibility::dialogOk()
+	{
+		auto* dialog = dynamic_cast<Rml::ElementDocument*>(m_dialog.get());
+		if (dialog == nullptr || !m_visibility.is_object())
+			return;
+		auto* field = dynamic_cast<Rml::ElementFormControl*>(dialog->GetElementById("visibility-configuration-name"));
+		const std::string name = field != nullptr ? field->GetValue() : std::string();
+		std::string problem;
+		if (name.empty())
+		{
+			problem = "A configuration needs a name.";
+		}
+		else
+		{
+			const auto active = m_visibility.at("configuration").get<std::string>();
+			for (const Json& configuration : m_visibility.at("configurations"))
+				if (configuration.at("name").get<std::string>() == name && !(m_renaming && name == active))
+				{
+					problem = "A configuration is named " + name + " already.";
+					break;
+				}
+		}
+		setInner(dialog->GetElementById("visibility-configuration-error"), encode(problem));
+		if (problem.empty())
+			closeDialog(*dialog, "ok");
 	}
 
 	// Add Configuration keeps the tracks hidden now under the name typed, Rename Configuration renames the active one.
@@ -307,6 +370,7 @@ namespace gnubase::ui
 	{
 		Rml::Element* dialog = m_dialog.get();
 		dialog->RemoveEventListener(g_dialogCloseEvent, this);
+		dialog->RemoveEventListener(Rml::EventId::Click, this);
 		m_dialog.reset();
 		auto* field = dynamic_cast<Rml::ElementFormControl*>(dialog->GetElementById("visibility-configuration-name"));
 		const std::string name = field != nullptr ? field->GetValue() : std::string();
@@ -323,9 +387,11 @@ namespace gnubase::ui
 		{
 			configurations.push_back({{"name", name}, {"hidden", m_hidden}});
 		}
+		for (Json& configuration : configurations)
+			configuration["hidden"] = current(configuration.at("hidden"));
 		// With the tracks hidden now: renaming a modified configuration keeps them (p. 455).
-		m_binding.send(
-			"trackVisibility.set", {{"configurations", configurations}, {"configuration", name}, {"hidden", m_hidden}});
+		m_binding.send("trackVisibility.set",
+			{{"configurations", configurations}, {"configuration", name}, {"hidden", current(m_hidden)}});
 	}
 
 	void TrackVisibility::ProcessEvent(Rml::Event& event)
@@ -335,6 +401,9 @@ namespace gnubase::ui
 		{
 			if (event.GetType() == g_dialogCloseEvent)
 				closedDialog(event);
+			else if (const Rml::Element* target = event.GetTargetElement(); event.GetId() == Rml::EventId::Click &&
+				target != nullptr && target->GetId() == "visibility-configuration-ok")
+				dialogOk();
 			return;
 		}
 		Rml::Element* target = event.GetTargetElement();
