@@ -1409,6 +1409,7 @@ namespace gnubase::app
 				fitSections(window, *controls);
 		}
 		else
+		{
 			shown.controls->onSize(
 				[this, id = window.id()](int size)
 				{
@@ -1420,6 +1421,7 @@ namespace gnubase::app
 					bounds.height = sized.height;
 					m_shell.setBounds(id, bounds);
 				});
+		}
 	}
 
 	void AppUi::fitSections(ui::Window& window, Rml::Element& controls)
