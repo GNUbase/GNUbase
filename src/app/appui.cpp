@@ -1607,6 +1607,13 @@ namespace gnubase::app
 		m_infoLine.reset();
 		m_toolbarQuantize.reset();
 		m_eventDisplay = std::make_unique<ui::EventDisplay>(m_engine, m_binding, *root);
+		// The quantize panel lists the tracks of the selected audio events with hitpoints (#1344).
+		m_eventDisplay->onSelectionShown(
+			[this]
+			{
+				if (const std::shared_ptr<ui::QuantizePanel> panel = m_quantizePanel.lock())
+					panel->showHitpointTracks(hitpointTracks());
+			});
 		if (Rml::Element* quantize = document->GetElementById("toolbar-quantize"))
 			m_toolbarQuantize = std::make_unique<ui::QuantizePanel>(m_binding, *quantize,
 				ui::QuantizePanel::Layout::Toolbar,

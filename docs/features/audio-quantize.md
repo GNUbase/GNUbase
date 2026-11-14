@@ -130,21 +130,27 @@ the project's settings ([hitpoints.md](hitpoints.md)), kept as a preset, so it i
   toolbar's quantize section, where it is the first thing to go when the toolbar has no room for all its sections
   (`fit="spare"`, [docking.md](docking.md)).
   Both are `.checked` while `warpQuantize` is on and switch it with `quantize.set`.
-- **Several audio tracks** (`#quantize-tracks`, below Apply): Range (`#quantize-range`) and Offset
-  (`#quantize-offset`) in ms, Slice (`#quantize-slice`), or with warp quantizing on Create
-  (`#quantize-create-markers`; the other one is `.hidden`), and Crossfade Length (`#quantize-crossfade-length`) with
-  Crossfade (`#quantize-crossfade`). Each sends its engine command with the selected audio events and those of the
-  selected audio parts, every track at priority 1. Nudge Crossfade Left and Right (`#quantize-nudge-left`,
+- **Several audio tracks** (`#quantize-tracks`, below Apply): the Hitpoint Tracks (`#quantize-hitpoint-tracks`, pp.
+  378, 380), Range (`#quantize-range`) and Offset (`#quantize-offset`) in ms, Slice (`#quantize-slice`), or with warp
+  quantizing on Create (`#quantize-create-markers`; the other one is `.hidden`), and Crossfade Length
+  (`#quantize-crossfade-length`) with Crossfade (`#quantize-crossfade`). Each sends its engine command with the
+  selected audio events and those of the selected audio parts.
+- **Hitpoint Tracks** lists the tracks of those events whose clips have hitpoints, in the project's track order, each
+  with its priority in a value field (`.quantize-priority`, its `track` attribute the track's id): 0 to 5, dragged
+  left or right or typed, 1 until it is changed. Slice and Create send them as `priorities`, so 0 leaves a track's
+  hitpoints out. The list follows the project window's selection and every project update
+  (`ui::EventDisplay::onSelectionShown`); a track keeps its priority while the panel is open, also when it leaves the
+  list and comes back. The reference manual shows the priority as up to five stars; a value field is the panel's own
+  widget for a number dragged left and right. Nudge Crossfade Left and Right (`#quantize-nudge-left`,
   `#quantize-nudge-right`, next to Crossfade) send `quantize.nudgeCrossfade` with -1 and 1 ms.
 - **Edit > Advanced Quantize > Create Groove Quantize Preset** (`edit.createGrooveQuantize`) takes the first selected
   audio event when no MIDI part is selected, and makes its groove the project's settings, as for a MIDI part.
 
 ## Not yet
 
-Group editing of folder tracks (the commands take the events, of any tracks); the panel's Hitpoint Tracks list with
-each track's priority (the engine takes `priorities`); Slice Rules' Reset (undo does it) and
-cutting positions shown in the project window; Open Crossfade Editor in the Crossfades section; quantizing a
-selection range of an event; the quantize functions on the sample editor's toolbar.
+Group editing of folder tracks (the commands take the events, of any tracks); the Reset of Slice Rules and of Warp
+Marker Creation Rules (undo does it) and cutting positions shown in the project window; Open Crossfade Editor in the
+Crossfades section; quantizing a selection range of an event; the quantize functions on the sample editor's toolbar.
 
 ## Checks
 
@@ -173,4 +179,5 @@ left and back, with reset after it, not past a clip's start and not with a locke
 event's hitpoints that then quantizes another event, its name and its errors.
 `tests/audioquantize_ui_tests.cpp` drives the app with `ui::Automation`: Edit > Quantize and Reset Quantize on a
 selected audio event, Warp Quantize On/Off, the panel's Slice, Apply, Crossfade, Nudge Crossfade and Create on two
-tracks, and Create Groove Quantize Preset from a selected audio event.
+tracks, the Hitpoint Tracks following the selection and a track at priority 0 leaving its hitpoints out of Slice, and
+Create Groove Quantize Preset from a selected audio event.

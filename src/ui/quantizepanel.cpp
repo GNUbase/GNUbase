@@ -231,7 +231,8 @@ namespace gnubase::ui
 				R"(<button id="quantize-apply" class="primary" action="apply" title="Apply Quantize">Apply</button>)"
 				// Several audio tracks (pp. 370-372, 378-380): Slice Rules, or with warp quantizing Warp Marker
 				// Creation Rules, and Crossfades.
-				R"(</div><div id="quantize-tracks" class="quantize-settings">)" +
+				R"(</div><div id="quantize-tracks" class="quantize-settings">)"
+				R"(<div class="quantize-row">Hitpoint Tracks</div><div id="quantize-hitpoint-tracks"/>)" +
 				field("Range", milliseconds("quantize-range", 0, 1000, 20, "Range")) +
 				field("Offset", milliseconds("quantize-offset", 0, 1000, 0, "Offset")) +
 				R"(<div class="quantize-row"><div class="quantize-spacer"/>)"
@@ -316,7 +317,15 @@ namespace gnubase::ui
 		if (event == Rml::EventId::Change)
 		{
 			// A value field's own change has the number; its text field's has the text typed.
-			if (target->GetTagName() != "valuefield" || !target->HasAttribute("setting"))
+			if (target->GetTagName() != "valuefield")
+				return;
+			if (target->HasAttribute("track"))
+			{
+				m_priorities[std::stoull(attribute(*target, "track"))] =
+					static_cast<int>(std::lround(event.GetParameter<float>("value", 1.0F)));
+				return;
+			}
+			if (!target->HasAttribute("setting"))
 				return;
 			const std::string setting = attribute(*target, "setting");
 			const auto value = static_cast<double>(event.GetParameter<float>("value", 0.0F));
@@ -366,9 +375,11 @@ namespace gnubase::ui
 				set({{"settings", {{"warpQuantize", !button->HasAttribute("checked")}}}});
 			else if (m_audio && action == "slice")
 				m_audio("quantize.slice",
-					{{"range", fieldValue("quantize-range")}, {"offset", fieldValue("quantize-offset")}});
+					{{"range", fieldValue("quantize-range")}, {"offset", fieldValue("quantize-offset")},
+						{"priorities", priorities()}});
 			else if (m_audio && action == "createWarpMarkers")
-				m_audio("quantize.createWarpMarkers", {{"range", fieldValue("quantize-range")}});
+				m_audio("quantize.createWarpMarkers",
+					{{"range", fieldValue("quantize-range")}, {"priorities", priorities()}});
 			else if (m_audio && action == "crossfade")
 				m_audio("quantize.crossfade", {{"length", fieldValue("quantize-crossfade-length")}});
 			else if (m_audio && (action == "nudgeLeft" || action == "nudgeRight"))
@@ -398,6 +409,35 @@ namespace gnubase::ui
 			m_binding.send("quantize.savePreset", {{"name", name}});
 		else if (isUserPreset(currentPreset()))
 			m_binding.send("quantize.renamePreset", {{"name", currentPreset()}, {"newName", name}});
+	}
+
+	void QuantizePanel::showHitpointTracks(const Json& tracks)
+	{
+		m_hitpointTracks = tracks;
+		std::string rml;
+		for (const Json& track : tracks)
+		{
+			const auto id = track.at("track").get<uint64_t>();
+			const auto found = m_priorities.find(id);
+			rml += R"(<div class="quantize-field"><span class="quantize-label">)" +
+				encode(track.at("name").get<std::string>()) +
+				R"(</span><valuefield class="quantize-priority" track=")" + std::to_string(id) +
+				R"(" min="0" max="5" step="1" decimals="0" value=")" +
+				std::to_string(found != m_priorities.end() ? found->second : 1) + R"(" title="Priority"/></div>)";
+		}
+		setInner(find("quantize-hitpoint-tracks"), rml);
+	}
+
+	Json QuantizePanel::priorities() const
+	{
+		Json list = Json::array();
+		for (const Json& track : m_hitpointTracks)
+		{
+			const auto id = track.at("track").get<uint64_t>();
+			const auto found = m_priorities.find(id);
+			list.push_back({{"track", id}, {"priority", found != m_priorities.end() ? found->second : 1}});
+		}
+		return list;
 	}
 
 	double QuantizePanel::fieldValue(const std::string& id) const

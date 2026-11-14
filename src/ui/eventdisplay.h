@@ -385,6 +385,9 @@ namespace gnubase::ui
 		// Runs listener after every change of the view, for what others draw on the timeline, such as marker lines
 		// (ui/markers.h).
 		void onViewChanged(std::function<void()> listener) { m_viewListeners.push_back(std::move(listener)); }
+		// Runs listener after the selection changed and after every project update, which can change what is selected,
+		// such as the quantize panel's Hitpoint Tracks (ui/quantizepanel.h).
+		void onSelectionShown(std::function<void()> listener) { m_selectionListeners.push_back(std::move(listener)); }
 		// The element around the event lanes, which they fill.
 		Rml::Element& eventArea() const { return *m_area; }
 
@@ -978,6 +981,7 @@ namespace gnubase::ui
 		std::map<std::string, std::function<void()>> m_actions;
 		std::map<std::string, bool> m_rangeActions; // the actions that need a range (canRun), whether with a length
 		std::vector<std::function<void()>> m_viewListeners;
+		std::vector<std::function<void()>> m_selectionListeners; // onSelectionShown
 		std::vector<Subscription> m_subscriptions;
 		std::optional<Subscription> m_position; // while playing
 	};

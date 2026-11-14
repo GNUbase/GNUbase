@@ -247,6 +247,8 @@ namespace gnubase::ui
 		for (const uint64_t id : m_selection)
 			ids += (ids.empty() ? "" : " ") + std::to_string(id);
 		m_root->SetAttribute("selection", ids);
+		for (const std::function<void()>& listener : m_selectionListeners)
+			listener();
 	}
 
 	void EventDisplay::edit(const std::string& command, Json parameters, bool selectResult)

@@ -10,6 +10,7 @@
 #include <array>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -52,7 +53,7 @@ namespace gnubase::app
 		// The quantize panel (pp. 372-378), a window of its own there: the right zone, or a window of its own here.
 		m_docking.add({"quantize", "Quantize", "project", "right", [this](Rml::Element& element)
 			{
-				return std::make_shared<ui::QuantizePanel>(
+				auto panel = std::make_shared<ui::QuantizePanel>(
 					m_binding, element, ui::QuantizePanel::Layout::Panel,
 					[this](const std::string& command)
 					{
@@ -61,6 +62,9 @@ namespace gnubase::app
 					},
 					[this](const std::string& command, Json parameters)
 					{ quantizeAudioTracks(command, std::move(parameters)); });
+				panel->showHitpointTracks(hitpointTracks());
+				m_quantizePanel = panel;
+				return panel;
 			}});
 		m_keys.add({"window.quantizePanel", "Opens the quantize panel.",
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_docking.open("quantize"); }});
@@ -159,7 +163,7 @@ namespace gnubase::app
 		return target;
 	}
 
-	void AppUi::quantizeAudioTracks(const std::string& command, Json parameters)
+	std::vector<uint64_t> AppUi::selectedAudioEvents() const
 	{
 		std::vector<uint64_t> events = selected("audioEvents");
 		const std::vector<uint64_t> parts = selected("audioParts");
@@ -167,6 +171,35 @@ namespace gnubase::app
 			for (const Json& event : m_eventDisplay->project().value("audioEvents", Json::array()))
 				if (std::find(parts.begin(), parts.end(), event.value("part", uint64_t{0})) != parts.end())
 					events.push_back(event.at("id").get<uint64_t>());
+		return events;
+	}
+
+	Json AppUi::hitpointTracks() const
+	{
+		Json tracks = Json::array();
+		const std::vector<uint64_t> events = selectedAudioEvents();
+		if (!m_eventDisplay || events.empty())
+			return tracks;
+		const Json& project = m_eventDisplay->project();
+		std::set<uint64_t> withHitpoints; // clips
+		for (const Json& clip : project.value("clips", Json::array()))
+			if (!clip.value("hitpoints", Json::array()).empty())
+				withHitpoints.insert(clip.at("id").get<uint64_t>());
+		std::set<uint64_t> found; // tracks
+		for (const Json& event : project.value("audioEvents", Json::array()))
+			if (std::find(events.begin(), events.end(), event.at("id").get<uint64_t>()) != events.end() &&
+				withHitpoints.count(event.at("clip").get<uint64_t>()) != 0)
+				found.insert(event.at("track").get<uint64_t>());
+		for (const Json& track : project.value("tracks", Json::array()))
+			if (found.count(track.at("id").get<uint64_t>()) != 0)
+				tracks.push_back({{"track", track.at("id")}, {"name", track.value("name", std::string())}});
+		return tracks;
+	}
+
+	void AppUi::quantizeAudioTracks(const std::string& command, Json parameters)
+	{
+		const std::vector<uint64_t> parts = selected("audioParts");
+		std::vector<uint64_t> events = selectedAudioEvents();
 		if (events.empty())
 			return;
 		parameters["events"] = events;
