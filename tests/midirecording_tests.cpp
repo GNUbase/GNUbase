@@ -416,6 +416,56 @@ TEST_CASE("the catch range records input from just before recording started at i
 	}
 }
 
+TEST_CASE(
+	"notes caught at a recording's start aren't caught again by the next one within the catch range", "[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	run(client, "settings.set", {{"key", "midi.snapPartsToBars"}, {"value", false}});
+	run(client, "settings.set", {{"key", "midi.recordCatchRange"}, {"value", 1000}}); // 48000 frames
+	setup.inject({message(500, {0x90, 60, 100}), message(600, {0x80, 60, 0})});
+	run(client, "audio.render", {{"frames", 1000}});
+	run(client, "transport.record"); // shorter than the catch range
+	run(client, "audio.render", {{"frames", 5000}});
+	REQUIRE(setup.stop().is_object());
+	run(client, "transport.locate", {{"position", 48000}});
+	run(client, "audio.render", {{"frames", 64}});
+	run(client, "transport.record");
+	setup.inject({message(1000, {0x90, 62, 100}), message(2000, {0x80, 62, 0})});
+	run(client, "audio.render", {{"frames", 5000}});
+	REQUIRE(setup.stop().is_object());
+	const std::vector<Json> parts = setup.parts();
+	REQUIRE(parts.size() == 2);
+	REQUIRE(notesOf(parts[0]).size() == 1);
+	CHECK(notesOf(parts[0])[0][2] == 60);
+	const std::vector<std::vector<int64_t>> notes = notesOf(parts[1]);
+	REQUIRE(notes.size() == 1);
+	CHECK(notes[0][2] == 62);
+}
+
+TEST_CASE("the catch range leaves out input from before the audio device was set again", "[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	run(client, "settings.set", {{"key", "midi.snapPartsToBars"}, {"value", false}});
+	run(client, "settings.set", {{"key", "midi.recordCatchRange"}, {"value", 1000}}); // 48000 frames
+	run(client, "audio.render", {{"frames", 20000}});
+	setup.inject({message(20100, {0x90, 60, 100}), message(20200, {0x80, 60, 0})}); // in stop mode, recorded by none
+	run(client, "audio.render", {{"frames", 1000}});
+	// The new device counts its frames from 0 again: the note's old frames are within the next start's catch range.
+	run(client, "audio.setDevice", {{"blockSize", 64}, {"inputChannels", 0}, {"captureSeconds", 1}});
+	run(client, "audio.render", {{"frames", 30000}});
+	run(client, "transport.record"); // from the new device's frame 30000
+	setup.inject({message(31000, {0x90, 62, 100}), message(32000, {0x80, 62, 0})});
+	run(client, "audio.render", {{"frames", 5000}});
+	REQUIRE(setup.stop().is_object());
+	const std::vector<Json> parts = setup.parts();
+	REQUIRE(parts.size() == 1);
+	const std::vector<std::vector<int64_t>> notes = notesOf(parts[0]);
+	REQUIRE(notes.size() == 1);
+	CHECK(notes[0][2] == 62);
+}
+
 TEST_CASE("retrospective recording inserts what a track's input played while it didn't record", "[integration]")
 {
 	Setup setup;
