@@ -379,8 +379,12 @@ namespace gnubase::engine::plugins
 				const int64_t into = map->toSamples(point->position, sampleRate) - segment.position;
 				if (into >= segment.frames)
 					break;
+				// One on the first frame of the last segment, or on the same sample as the point before, sets its
+				// tempo: a segment has at least a frame.
 				if (into <= 0)
 					segments[first].transport.tempo = point->bpm;
+				else if (segments[count - 1].transport.position == segment.position + into)
+					segments[count - 1].transport.tempo = point->bpm;
 				else
 					segments[count++] = segmentAt(
 						segment.offset + static_cast<uint32_t>(into), segment.position + into, flags, point->bpm);
@@ -515,9 +519,13 @@ namespace gnubase::engine::plugins
 			convertTransport(context.transport, m_activeRate.load(std::memory_order_relaxed), m_transport)};
 		const plugin::ProcessStatus status = m_started ? m_plugin->process(process) : plugin::ProcessStatus::Error;
 		m_steadyTime += context.frames;
-		if (const size_t dropped = m_eventsIn.dropped() + m_eventsOut.dropped(); dropped > 0)
-			logging::warning("The plugin {} dropped events that didn't fit its event lists: {} in a block",
+		// Logged once while it lasts, so that a steady overload doesn't fill the logger's queue.
+		const size_t dropped = m_eventsIn.dropped() + m_eventsOut.dropped();
+		if (dropped > 0 && !m_dropping)
+			logging::warning("The plugin {} dropped events that didn't fit its event lists: {} in a block, and isn't "
+							 "logged again until a block drops none",
 				m_plugin->descriptor().id, dropped);
+		m_dropping = dropped > 0;
 
 		const bool failed = status == plugin::ProcessStatus::Error || m_outputs.empty();
 		m_failed.store(failed, std::memory_order_relaxed);

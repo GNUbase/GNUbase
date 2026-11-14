@@ -10,11 +10,13 @@
 #include "engine/plugins/slotinstances.h"
 #include "engine/processors/builtinplugin.h"
 #include "engine/time/tempomap.h"
+#include "platform/log.h"
 #include "platform/rt/workerpool.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
 #include <array>
@@ -22,6 +24,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <optional>
@@ -33,6 +36,7 @@
 #include <vector>
 
 using namespace gnubase::engine;
+using Catch::Matchers::ContainsSubstring;
 using Catch::Matchers::WithinAbs;
 
 namespace
@@ -118,7 +122,7 @@ namespace
 	};
 
 	// A plugin with parameters 0 to count - 1 that keeps the last value each got in a block; one that doesn't
-	// initialize, if asked. It has no audio ports.
+	// initialize, if asked. It has no audio ports. It plays flood parameter events out per block.
 	class CountingPlugin final : public gnubase::plugin::Plugin, public gnubase::plugin::Params
 	{
 	public:
@@ -131,6 +135,7 @@ namespace
 		std::atomic<size_t> changes{0};
 		std::array<gnubase::plugin::TransportSegment, 4> transport{}; // of the last block
 		uint32_t transportCount = 0;
+		std::atomic<uint32_t> flood{0};
 		gnubase::plugin::ProcessMode mode = gnubase::plugin::ProcessMode::Prefetch; // of the last block
 
 		const gnubase::plugin::Descriptor& descriptor() const override { return m_descriptor; }
@@ -151,6 +156,10 @@ namespace
 					values[event.param] = event.value;
 					++changes;
 				}
+			gnubase::plugin::Event played;
+			played.type = gnubase::plugin::EventType::ParamValue;
+			for (uint32_t i = 0; i < flood; ++i)
+				process.eventsOut.push(played);
 			return gnubase::plugin::ProcessStatus::Continue;
 		}
 		void* extension(std::string_view id) override
@@ -549,6 +558,39 @@ TEST_CASE(
 	CHECK(converted[1].transport.tempo < 120.0);
 }
 
+TEST_CASE("tempo points closer than a sample start one transport segment, with the later point's tempo", "[unit]")
+{
+	using gnubase::time::TempoMap;
+	using gnubase::time::TempoPoint;
+	constexpr gnubase::time::Ticks beat = gnubase::time::g_ticksPerQuarter;
+	// 120 BPM, 60 from the second beat on, at 24000 at 48 kHz, and 90 ten ticks later, on the same sample.
+	const TempoMap close(std::vector<TempoPoint>{{0, 120.0, false}, {beat, 60.0, false}, {beat + 10, 90.0, false}});
+	const std::array<graph::TransportSegment, 1> segments{{{0, 64, 23968, false}}};
+	graph::TransportBlock transport;
+	transport.playing = true;
+	transport.position = 23968;
+	transport.tempo = 120.0;
+	transport.segments = segments.data();
+	transport.segmentCount = segments.size();
+	transport.tempoMap = &close;
+	std::vector<gnubase::plugin::TransportSegment> converted(8);
+	REQUIRE(plugins::convertTransport(transport, 48000.0, converted) == 2);
+	CHECK(converted[0].transport.tempo == 120.0);
+	CHECK(converted[1].offset == 32);
+	CHECK(converted[1].transport.position == 24000);
+	CHECK(converted[1].transport.tempo == 90.0);
+	// A built-in processor behind the plugin wrapper gets no segment of no frames from them.
+	const gnubase::plugin::EventList in(4);
+	gnubase::plugin::EventList out(4);
+	const gnubase::plugin::Process process{
+		64, -1, gnubase::plugin::ProcessMode::Realtime, nullptr, 0, nullptr, 0, in, out, converted.data(), 2};
+	std::vector<graph::TransportSegment> blocks(4);
+	const graph::TransportBlock block = processors::toTransportBlock(process, blocks);
+	REQUIRE(block.segmentCount == 2);
+	CHECK(block.segments[0].frames == 32);
+	CHECK(block.segments[1].frames == 32);
+}
+
 TEST_CASE("a built-in delay in a plugin slot follows the transport's tempo with its note values", "[unit]")
 {
 	TestHost host;
@@ -639,6 +681,35 @@ TEST_CASE("more parameter changes than a block has room for reach the plugin in 
 	processBlock(slot, left, right);
 	CHECK(plugin.changes == count + 1);
 	CHECK(plugin.values[7] == 0.25);
+}
+
+TEST_CASE(
+	"events that don't fit a plugin's event lists are dropped, and the log says so once while it drops them", "[unit]")
+{
+	const gnubase::test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "gnubase.log";
+	const gnubase::logging::Session log(file);
+	auto made = std::make_unique<CountingPlugin>(0, true);
+	CountingPlugin& plugin = *made;
+	plugins::PluginSlot slot(std::move(made));
+	REQUIRE(slot.activate(48000.0, 128));
+	std::vector<float> left(128);
+	std::vector<float> right(128);
+	// Three blocks that drop events, one that doesn't, and one that does again.
+	plugin.flood = 2 * graph::g_maxEventsPerBlock;
+	for (int block = 0; block < 3; ++block)
+		processBlock(slot, left, right);
+	plugin.flood = 0;
+	processBlock(slot, left, right);
+	plugin.flood = 2 * graph::g_maxEventsPerBlock;
+	processBlock(slot, left, right);
+	gnubase::logging::flush();
+	const std::string text = gnubase::test::readText(file);
+	CHECK_THAT(text, ContainsSubstring("test:counting dropped events"));
+	size_t lines = 0;
+	for (size_t at = text.find("dropped events"); at != std::string::npos; at = text.find("dropped events", at + 1))
+		++lines;
+	CHECK(lines == 2);
 }
 
 TEST_CASE("a slot whose plugin can't be made is unavailable, and one whose plugin doesn't initialize failed", "[unit]")
