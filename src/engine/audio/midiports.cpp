@@ -172,6 +172,17 @@ namespace gnubase::engine
 					if (inAll)
 						allInputs.add(message);
 				}
+				else if (m_padListen.load(std::memory_order_relaxed) &&
+					((status == 0xD0 && message.size >= 2) ||
+						(message.size == 3 && (status == 0xE0 || status == 0xB0))))
+				{
+					// MIDI Learn of what moves all pads: the control plays on as it is.
+					const uint8_t source = status == 0xD0 ? 1 : (status == 0xE0 ? 2 : 3);
+					m_padEvents.tryPush(PadEvent{PadEvent::Kind::ControlInput, source,
+						static_cast<uint8_t>(status == 0xB0 ? message.bytes[1] & 0x7F : 0)});
+					if (inAll)
+						allInputs.add(message);
+				}
 				else
 				{
 					// The remote keys come from all MIDI inputs, or only from the chosen one, which may be outside
@@ -234,6 +245,8 @@ namespace gnubase::engine
 		const auto tell = [this, key](PadEvent::Kind kind, uint8_t velocity)
 		{ m_padEvents.tryPush(PadEvent{kind, static_cast<uint8_t>(key), velocity}); };
 		const bool off = status == 0x80 || message.bytes[2] == 0;
+		if (off)
+			m_sectionHeld.at(key) = 0; // also after the player mode changed
 		// Select/Mute Player's keys play nothing; the command thread selects or mutes (p. 1389).
 		if (keys.active && std::find(keys.playerKeys.begin(), keys.playerKeys.end(), key) != keys.playerKeys.end())
 		{
@@ -249,6 +262,8 @@ namespace gnubase::engine
 				std::find(keys.subsectionKeys.begin(), keys.subsectionKeys.end(), key) != keys.subsectionKeys.end();
 			if (section)
 			{
+				if (!off)
+					m_sectionHeld.at(key) = message.bytes[2];
 				if (off)
 					offAll();
 				else
@@ -264,6 +279,17 @@ namespace gnubase::engine
 					m_sectionPad = static_cast<int>(key);
 					m_sectionPadDown = true;
 					tell(PadEvent::Kind::Triggered, message.bytes[2]);
+					// Combination: section keys pressed first start with the pad key (p. 1384).
+					if (keys.sectionPlay == 2)
+						for (size_t held = 0; held < m_sectionHeld.size(); ++held)
+							if (m_sectionHeld.at(held) > 0)
+							{
+								for (size_t player = 0; player < m_padVoices.size(); ++player)
+									m_padVoices.at(player).off(held, emitTo(player));
+								audio::MidiMessage press = message;
+								press.bytes = {0x90, static_cast<uint8_t>(held), m_sectionHeld.at(held)};
+								playSection(press, keys, pads);
+							}
 				}
 				else if (static_cast<int>(key) == m_sectionPad)
 				{
@@ -336,8 +362,8 @@ namespace gnubase::engine
 				section = keys.subsectionSections.at(i);
 				offset = keys.subsectionOffsets.at(i);
 			}
-		// sections needs the pad key down (or latched), chordPads and combination take the pad triggered last.
-		const bool padPlays = m_sectionPad >= 0 && (m_sectionPadDown || keys.latchPads || keys.sectionPlay != 0);
+		// sections and combination need the pad key down (or latched), chordPads takes the pad triggered last.
+		const bool padPlays = m_sectionPad >= 0 && (m_sectionPadDown || keys.latchPads || keys.sectionPlay == 1);
 		if (section < 0 || section >= 5 || keys.mutedSections.at(static_cast<size_t>(section)) || !padPlays)
 			return false;
 		const auto pad = static_cast<size_t>(m_sectionPad);
@@ -371,7 +397,7 @@ namespace gnubase::engine
 					note.bytes = {static_cast<uint8_t>((on ? 0x90 : 0x80) | channel), pitch, level};
 					pads.at(player).add(note);
 				};
-				m_padVoices.at(player).on(key, notes.data(), n, velocity, midi::PadOverlap::HoldFirst, emit);
+				m_padVoices.at(player).on(key, notes.data(), n, velocity, keys.overlap, emit);
 			}
 		}
 		return true;

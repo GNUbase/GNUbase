@@ -1788,6 +1788,16 @@ namespace gnubase::engine
 					}
 				if (chordsChanged)
 					context.emit("chord.changed", chordJson(project));
+				// A chord pads player that played it plays none now (reference manual p. 1377).
+				bool padsChanged = false;
+				for (ChordPlayer& player : project.chordPads.players)
+					if (player.track == removed)
+					{
+						player.track = 0;
+						padsChanged = true;
+					}
+				if (padsChanged)
+					context.emit("chordPads.changed", chordPadsJson(project));
 				if (gone.channel != 0)
 					for (const ObjectId slot : project.channels.at(gone.channel).slots)
 						project.slots.erase(slot);

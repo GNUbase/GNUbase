@@ -358,8 +358,8 @@ namespace gnubase::engine
 
 	Json AudioEngine::padEvents()
 	{
-		static constexpr std::array<const char*, 6> kinds = {
-			"triggered", "released", "modifier", "note", "player", "control"};
+		static constexpr std::array<const char*, 7> kinds = {
+			"triggered", "released", "modifier", "note", "player", "control", "controlInput"};
 		Json events;
 		MidiPorts::PadEvent event;
 		while (m_midi.takePadEvent(event))
