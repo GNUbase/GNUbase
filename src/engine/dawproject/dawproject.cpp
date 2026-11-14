@@ -2230,6 +2230,12 @@ namespace gnubase::engine
 			for (auto& entry : project.channels)
 				if (lockedByFreeze(project, entry.second))
 					entry.second.monitor = entry.second.recordEnable = false;
+			// A clip in musical mode without a tempo, which only a file edited elsewhere holds, would take the
+			// project's at its first event whenever it plays, so its length in beats would change with the tempo,
+			// such as by a MIDI file import (#1288). It keeps the tempo it has now.
+			for (auto& entry : project.clips)
+				if (entry.second.warp.musical && entry.second.warp.tempo <= 0.0)
+					entry.second.warp.tempo = definitionTempo(project, entry.second);
 			return project;
 		}
 		catch (const std::exception&)
