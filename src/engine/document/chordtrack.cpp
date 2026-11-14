@@ -525,7 +525,8 @@ namespace gnubase::engine
 					channel.liveInput.push_back(
 						{samplesOf(position), classesOf(harmony, follow->second.liveInput == "scales")});
 			// Acoustic Feedback: the chord events' voicings on the audition track, from each event to the next, the
-			// last a bar long.
+			// last a bar long, on the MIDI channel of a MIDI track set to one, where chord.audition plays too.
+			const auto on = static_cast<uint8_t>(std::max<int>(channel.inputChannel, 0));
 			if (chords.acousticFeedback && chords.audition != 0 && channel.track == chords.audition)
 				for (size_t i = 0; i < progression.size(); ++i)
 				{
@@ -536,7 +537,7 @@ namespace gnubase::engine
 						: start + project.signatures.barStart(bar + 1) - project.signatures.barStart(bar);
 					for (const int pitch : progression[i].second.voicing)
 						channel.notes.push_back({samplesOf(start), samplesOf(end), static_cast<uint8_t>(pitch),
-							static_cast<uint16_t>(49151), uint8_t{0}});
+							static_cast<uint16_t>(49151), on});
 				}
 		}
 	}
