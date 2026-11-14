@@ -1174,13 +1174,12 @@ namespace gnubase::engine
 				"Exports tracks as a track archive (Export Selected Tracks, reference manual pp. 205-206): a "
 				"DAWproject file with the tracks, a folder with the tracks inside it, their channels, events, patterns "
 				"and automation, which track.import imports into other projects and other applications open as a "
-				"project. "
-				"The project's sample rate, tempo, time signatures, fader top and busses come along so that positions, "
-				"volumes and routing mean the same. copyMedia (default true) copies the media files into the archive, "
-				"otherwise it refers to them where they are. Marker and ruler tracks can be exported; tempo, "
-				"signature, arranger, transpose, chord and VCA tracks not yet: listed, also inside a listed folder, "
-				"they are refused, otherwise they stay behind. Changes nothing in the project. Returns the file and "
-				"the tracks that stayed behind (skipped).",
+				"project. The project's sample rate, tempo, time signatures, fader top and busses come along so that "
+				"positions, volumes and routing mean the same. copyMedia (default true) copies the media files into "
+				"the archive, otherwise it refers to them where they are. Marker and ruler tracks can be exported; "
+				"tempo, signature, arranger, transpose, chord and VCA tracks not yet: listed, also inside a listed "
+				"folder, they are refused, otherwise they stay behind. Changes nothing in the project. Returns the "
+				"file and the tracks that stayed behind (skipped).",
 				objectSchema(
 					{{"tracks", idsSchema}, {"path", stringSchema}, {"copyMedia", booleanSchema}}, {"tracks", "path"}),
 				objectSchema({{"file", stringSchema}, {"skipped", skippedSchema}}, {"file", "skipped"}), false},
@@ -1285,8 +1284,7 @@ namespace gnubase::engine
 				"active version has, so that the tracks imported onto get one ID when their sources played versions "
 				"that shared one, and a version with the name of one of the track's gets a name of its own. events "
 				"(default true) brings their events, parts, patterns, markers and track versions, settings (default "
-				"true) "
-				"their channel settings and inserts, automation (default true) their automation, replacing the "
+				"true) their channel settings and inserts, automation (default true) their automation, replacing the "
 				"track's; without automation, a track that events or settings are imported onto loses its automation "
 				"(p. 204). position (Import Position) puts the events where they were in the file's timecode "
 				"(absolute, the default: moved by the difference of the project start times), as far from the project "
