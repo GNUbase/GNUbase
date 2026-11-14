@@ -914,5 +914,11 @@ TEST_CASE("a frozen instrument track's MIDI send to another instrument track sta
 		CHECK(message.at("bytes").at(1).get<int>() % 12 != 1);
 	// The send keeps its output, which plays again once the track is unfrozen.
 	run(project.client, "track.unfreeze", {{"tracks", {synth.track}}});
-	run(project.client, "audio.render", {{"frames", 4096}});
+	run(project.client, "midi.capture", {{"start", true}});
+	run(project.client, "transport.locate", {{"position", 0}});
+	run(project.client, "audio.render", {{"frames", 48000}});
+	const Json again = run(project.client, "midi.capture").at("captured");
+	INFO(again.dump());
+	CHECK(std::any_of(again.begin(), again.end(),
+		[](const Json& message) { return message.at("bytes").at(1).get<int>() % 12 == 1; }));
 }

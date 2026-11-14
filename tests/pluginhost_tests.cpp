@@ -461,6 +461,23 @@ TEST_CASE("plugin slots pass every kind of MIDI event on to the plugin", "[unit]
 		REQUIRE(list[0].data[1] == std::size(message));
 		CHECK(std::memcmp(list.bytes(list[0]), message, std::size(message)) == 0);
 	}
+
+	SECTION("per-note expression (#176)")
+	{
+		graph::ProcessEvent expression = midiEvent(Type::NoteExpression, 3, 62, 0);
+		expression.offset = 20;
+		expression.parameter = plugin::expressionId(plugin::NoteExpression::Tuning);
+		expression.parameterValue = -2.5;
+		convert(expression);
+		REQUIRE(list.size() == 1);
+		CHECK(list[0].type == plugin::EventType::NoteExpression);
+		CHECK(list[0].offset == 20);
+		CHECK(list[0].channel == 3);
+		CHECK(list[0].key == 62);
+		CHECK(list[0].noteId == -1);
+		CHECK(list[0].expression == plugin::expressionId(plugin::NoteExpression::Tuning));
+		CHECK(list[0].value == -2.5);
+	}
 }
 
 TEST_CASE("a test plugin processes audio through the host process sample-exactly", "[integration]")

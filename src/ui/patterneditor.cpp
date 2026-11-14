@@ -196,7 +196,9 @@ namespace gnubase::ui
 			if (each.at("id") == pattern)
 				m_pattern = each;
 		if (behind())
-			m_pattern["lanes"] = m_sent.at("lanes");
+			for (const auto& [key, value] : m_sent.items())
+				if (key != "pattern")
+					m_pattern[key] = value;
 		if (m_pattern.is_object() && lane(m_lane) == nullptr)
 			m_lane = m_pattern.at("lanes").empty() ? -1 : m_pattern.at("lanes").at(0).at("pitch").get<int>();
 		render();
@@ -391,11 +393,15 @@ namespace gnubase::ui
 		}
 	}
 
-	void PatternEditor::sendLanes(const std::string& description)
+	void PatternEditor::sendLanes(const std::string& description, Json changes)
 	{
 		if (!m_pattern.is_object())
 			return;
-		m_sent = {{"pattern", m_pattern.at("id")}, {"lanes", m_pattern.at("lanes")}};
+		for (const auto& [key, value] : changes.items())
+			m_pattern[key] = value;
+		changes["pattern"] = m_pattern.at("id");
+		changes["lanes"] = m_pattern.at("lanes");
+		m_sent = std::move(changes);
 		m_answered = 0;
 		m_binding.send("history.transaction",
 			{{"description", description},
@@ -513,7 +519,7 @@ namespace gnubase::ui
 			each["steps"] = std::move(steps);
 		}
 		changes["lanes"] = std::move(lanes);
-		set(std::move(changes));
+		sendLanes(resolution ? "Double Step Resolution" : "Double Length", std::move(changes));
 	}
 
 	void PatternEditor::ProcessEvent(Rml::Event& event)

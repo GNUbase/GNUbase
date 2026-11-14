@@ -114,6 +114,21 @@ namespace
 		click(app, select);
 	}
 
+	// Presses a key. A drop-down list moves its selection with the arrow keys while it is open, which is when
+	// its change event runs.
+	void press(test::UiApp& app, const std::string& keys)
+	{
+		app.ui().key(std::nullopt, keys);
+		app.shell().step(std::chrono::milliseconds(0));
+	}
+
+	// Clicks a button of the confirmation dialog (confirm.rml) and waits for it to close.
+	void confirm(test::UiApp& app, const std::string& button)
+	{
+		REQUIRE(app.waitUntil([&app, &button] { return !elements(app, button).empty(); }));
+		click(app, button);
+		REQUIRE(app.waitUntil([&app] { return elements(app, "#confirm-dialog").empty(); }));
+	}
 	bool open(test::UiApp& app)
 	{
 		return !elements(app, "#preferences").empty();
@@ -565,6 +580,52 @@ TEST_CASE("the tool modifiers page keeps the overrides it doesn't show", "[ui]")
 	click(app, "#preferences-ok");
 	CHECK(closed(app));
 	CHECK(app.call("settings.get", {{"key", "ui.toolModifiers"}}).at("value") == modifiers);
+}
+
+TEST_CASE("a settings change while the tool modifiers question is open keeps the answer and the page", "[ui]")
+{
+	// The dialog follows settings.changed while it is open, and the Tool Modifiers page asks before an action
+	// takes the keys another action of its tool has (p. 1602). A change that renders the page again while the
+	// question is up replaces its controls: the answer must reach the new ones, and Cancel must not put back keys
+	// the engine has changed since.
+	test::UiApp app({1000, 760});
+	openDialog(app);
+	page(app, "editing-tool-modifiers");
+	const std::string copy = "#pref-tool-dragDrop-copy";             // Copy: alt
+	const std::string sharedCopy = "#pref-tool-dragDrop-sharedCopy"; // Shared Copy: alt+shift
+	REQUIRE(shown(app, copy) == "alt");
+	REQUIRE(shown(app, sharedCopy) == "alt+shift");
+
+	// The list moves Shared Copy onto Copy's Alt, which asks; the list keeps that choice until it has an answer.
+	// The choices are None, Ctrl, Alt, Shift, Ctrl-Alt, Ctrl-Shift, Alt-Shift, Ctrl-Alt-Shift, so Alt-Shift is four
+	// steps above Alt, and none of the three in between is another Drag & Drop action's keys.
+	click(app, sharedCopy);
+	for (int step = 0; step < 4; ++step)
+		press(app, "Up");
+	REQUIRE(shown(app, sharedCopy) == "alt");
+	REQUIRE(app.waitUntil([&app] { return !elements(app, "#confirm-dialog").empty(); }));
+
+	// A script changes the setting the page shows, so the page renders again while the question is up.
+	app.call("settings.set", {{"key", "ui.toolModifiers"}, {"value", Json{{"dragDrop.sharedCopy", "ctrl"}}}});
+	REQUIRE(app.waitUntil([&] { return shown(app, sharedCopy) == "ctrl"; }));
+	REQUIRE(!elements(app, "#confirm-dialog").empty()); // the question is still there
+
+	// Cancel leaves the page at what the engine has now, not at the Alt-Shift the question was about.
+	confirm(app, "#confirm-cancel");
+	CHECK(shown(app, sharedCopy) == "ctrl");
+	CHECK(shown(app, copy) == "alt");
+
+	// Replace still answers a question, on the controls the render made: Copy takes the keys, Shared Copy goes
+	// without any.
+	click(app, "#pref-tool-assign-dragDrop-copy", {"ctrl"});
+	confirm(app, "#confirm-ok");
+	CHECK(shown(app, copy) == "ctrl");
+	CHECK(shown(app, sharedCopy) == "");
+
+	click(app, "#preferences-ok");
+	CHECK(closed(app));
+	CHECK(app.call("settings.get", {{"key", "ui.toolModifiers"}}).at("value") ==
+		Json({{"dragDrop.copy", "ctrl"}, {"dragDrop.sharedCopy", ""}}));
 }
 
 TEST_CASE("the theme list carries the names the UI shows for the themes", "[ui]")

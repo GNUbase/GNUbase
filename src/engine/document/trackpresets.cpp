@@ -79,11 +79,12 @@ namespace gnubase::engine
 		}
 
 		// Copies tracks of one project into another with new ids: their channels, inserts, events, automation, and the
-		// clips, media files and drum maps those use. Routing within the copied tracks stays; routing to busses and
-		// channels that weren't copied goes to those of the same name in the project, if it has them (reference manual
-		// p. 200). The buttons (mute, solo, listen, monitor, record enable) are off in the copies, and their automation
-		// reads, as the reference doesn't import these states. replacedMarkers marker tracks of to are about to be
-		// replaced by copies, so these copies don't count towards the limit of marker tracks.
+		// clips, media files and drum maps those use; with the events their patterns, which their pattern events play.
+		// Routing within the copied tracks stays; routing to busses and channels that weren't copied goes to those of
+		// the same name in the project, if it has them (reference manual p. 200). The buttons (mute, solo, listen,
+		// monitor, record enable) are off in the copies, and their automation reads, as the reference doesn't import
+		// these states. replacedMarkers marker tracks of to are about to be replaced by copies, so these copies don't
+		// count towards the limit of marker tracks.
 		class TrackCopier
 		{
 		public:
@@ -118,13 +119,17 @@ namespace gnubase::engine
 					track.versions.clear();
 					track.activeVersion = 1;
 				}
+				else
+				{
+					copyPatterns(id, track.id);
+				}
 				for (TrackVersion& version : track.versions)
 				{
 					version = copyVersion(m_to, version, track.id);
 					for (AudioEvent& event : version.audioEvents)
 						event.clip = clip(event.clip);
 					for (MidiPart& part : version.midiParts)
-						unshare(part);
+						copyPart(part);
 				}
 				if (track.channel != 0)
 					track.channel = copyChannel(track.channel, track.id);
@@ -256,7 +261,7 @@ namespace gnubase::engine
 						MidiPart part = original;
 						part.id = m_to.newId();
 						part.track = track;
-						unshare(part);
+						copyPart(part);
 						m_to.midiParts[part.id] = std::move(part);
 					}
 				for (const auto& [id, original] : m_from.markers)
@@ -300,11 +305,29 @@ namespace gnubase::engine
 				}
 			}
 
+			// The track's patterns with new ids (#1347).
+			void copyPatterns(ObjectId source, ObjectId track)
+			{
+				for (const auto& [id, original] : m_from.patterns)
+					if (original.track == source)
+					{
+						Pattern pattern = original;
+						pattern.id = m_to.newId();
+						pattern.track = track;
+						pattern.copiedFrom = 0;
+						m_patterns[id] = pattern.id;
+						m_to.patterns[pattern.id] = std::move(pattern);
+					}
+			}
+
 			// ponytail: shared copies of MIDI parts come as parts of their own; keeping them shared needs their notes'
-			// ids mapped alike.
-			void unshare(MidiPart& part)
+			// ids mapped alike. A pattern event plays the copy of its pattern; one of a pattern that wasn't copied
+			// (another track's) becomes an ordinary part.
+			void copyPart(MidiPart& part)
 			{
 				part.shared = 0;
+				const auto pattern = m_patterns.find(part.pattern);
+				part.pattern = pattern == m_patterns.end() ? 0 : pattern->second;
 				renumber(m_to, part);
 			}
 
@@ -420,6 +443,7 @@ namespace gnubase::engine
 			std::map<ObjectId, ObjectId> m_channels;
 			std::map<ObjectId, ObjectId> m_slots;
 			std::map<ObjectId, ObjectId> m_clips;
+			std::map<ObjectId, ObjectId> m_patterns;
 			std::map<ObjectId, ObjectId> m_media;
 			std::vector<ObjectId> m_addedMedia;
 		};
@@ -777,6 +801,7 @@ namespace gnubase::engine
 				onto(project.audioEvents);
 				onto(project.audioParts);
 				onto(project.midiParts);
+				onto(project.patterns); // which the copy's pattern events play, in its other versions too (#1347)
 				Track& source = project.trackById.at(copy);
 				Track& track = project.trackById.at(id);
 				if (!source.versions.empty() && track.versions.empty())
@@ -870,8 +895,10 @@ namespace gnubase::engine
 			channel.midiChannel = sound.midiChannel;
 			channel.device = sound.device;
 			channel.modifiers = sound.modifiers;
+			const Channel before = channel;
 			channel.midiInserts = sound.midiInserts;
 			channel.midiSends = sound.midiSends;
+			removeMidiEffectLanes(project, context, before, channel);
 			for (midi::EffectSlot& slot : channel.midiSends.slots)
 				slot.output = 0; // the preset's tracks aren't this project's
 			if (channel.instrument != sound.instrument)

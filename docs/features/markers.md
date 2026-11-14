@@ -167,18 +167,19 @@ Marker Tracks and Off set `ui.markerLines`.
 
 `tests/marker_tests.cpp` covers the engine's commands, `marker.put` among them, and `range.cut` and `range.delete`
 cutting a range out of a cycle marker: split, shortened at either end, left whole when the range covers it or reaches
-out of it or with `time`, on the range's tracks only, in one undo step that redo repeats. `tests/markers_ui_tests.cpp`: on the
-fake window system, marker lines for the active track, every track and none as the setting changes, behind the
-events and on the display's timeline; marker events and labels on the marker tracks' lanes, following vertical zoom;
-Alt-click adding a marker only on a marker track and off cycle markers, a double click setting the locators and Alt
-zooming. In the app's UI (`test::UiApp`): Mod+M opening and closing the markers window, its rows, locating from the
-locate column and with Enter, the arrow at the cursor, editing descriptions and ids, the functions, adding and
-removing markers and picking the marker track; editing positions, ends and lengths in the primary time format and
-refusing what isn't valid; sorting by a column with the position second, moving and resizing columns and the
-setting's changes from MCP; Auto-Scroll on and off, Page Up and Page Down; changing the descriptions and lengths of
-several selected markers in one undo step; the marker settings: marker ids on the marker track, cycle follows and
-sync selection both ways, paused while recording; and the marker key commands locating, setting and recalling
-markers. `tests/marker_tests.cpp` covers `transport.cycleFollowsMarkers` for the three locate commands.
+out of it or with `time`, on the range's tracks only, in one undo step that redo repeats; two cycle markers around the
+range on one track both split, their new parts numbered one after the other; and a cycle marker on a linear marker
+track split in samples. `tests/markers_ui_tests.cpp`: on the fake window system, marker lines for the active track,
+every track and none as the setting changes, behind the events and on the display's timeline; marker events and labels
+on the marker tracks' lanes, following vertical zoom; Alt-click adding a marker only on a marker track and off cycle
+markers, a double click setting the locators and Alt zooming. In the app's UI (`test::UiApp`): Mod+M opening and closing
+the markers window, its rows, locating from the locate column and with Enter, the arrow at the cursor, editing
+descriptions and ids, the functions, adding and removing markers and picking the marker track; editing positions, ends
+and lengths in the primary time format and refusing what isn't valid; sorting by a column with the position second,
+moving and resizing columns and the setting's changes from MCP; Auto-Scroll on and off, Page Up and Page Down; changing
+the descriptions and lengths of several selected markers in one undo step; the marker settings: marker ids on the marker
+track, cycle follows and sync selection both ways, paused while recording; and the marker key commands locating, setting
+and recalling markers. `tests/marker_tests.cpp` covers `transport.cycleFollowsMarkers` for the three locate commands.
 `tests/markertrack_ui_tests.cpp`: on the fake window system, dragging a position marker, moving a cycle marker by its
 upper border, resizing it by its handles, a press inside it only selecting it, several selected markers moving in one
 undo step, snapping to bars and dropping on another marker track, also straight down; Ctrl-drag adding a cycle marker,
@@ -187,11 +188,12 @@ and without Alt, and with another key as the tool modifier; a drag released outs
 press; the range tool's double click between markers, also injected with a first press whose frame takes longer than
 the double click time, and on RmlUi's frozen clock its limits: presses 0.6 s or 4 dp apart are two clicks, 0.4 s or 2
 dp apart one double click; its drag by the marker track moving and, with Alt, copying the range's contents, a click
-in the range, a drag there straight up and Shift and a drag there selecting ranges as on another lane, and a range drag released outside the
-window putting the range back at the next press without moving anything. In the
-app's UI: the marker track's controls adding markers (Shift-click renaming), activating the track and locating,
-cycling and zooming from the lists, the Zoom lists having the active marker track's cycle markers; Delete, also
-with a range selected after a marker; and the context menu's Show Marker Lines. Marker files:
+in the range, a drag there straight up and Shift and a drag there selecting ranges as on another lane, and a range
+drag released outside the window putting the range back at the next press without moving anything. In the app's UI:
+the marker track's controls adding markers (Shift-click renaming), activating the track and locating, cycling and
+zooming from the lists, the Zoom lists having the active marker track's cycle markers; Delete, also with a range
+selected after a marker; a range dragged in a cycle marker on the marker track's lane and Mod+X leaving two cycle
+markers (p. 425); and the context menu's Show Marker Lines. Marker files:
 `tests/marker_tests.cpp` has the CSV round trip byte for byte with undo, also of marker tracks with the same name,
 a spreadsheet's file and files that change nothing, among them rows of one Track Number with different names;
 `tests/midifile_tests.cpp` the marker tracks in type 1 and type 0 files, the same file exported again and the limit

@@ -388,7 +388,7 @@ TEST_CASE("when a MIDI track leaves, its instrument ends the notes only that tra
 	// The audio thread does this when it starts the program without the departed track. The staying track still
 	// holds 31 and the instrument track its own 70.
 	player.heard.clear();
-	channel->releaseNotesOf(*departed, {staying});
+	channel->releaseNotesOf(*departed, {staying}, {});
 	player.play(8);
 	CHECK(player.heard == std::vector<Heard>{off(8, 30), off(8, 40)});
 

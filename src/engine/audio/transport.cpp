@@ -180,6 +180,7 @@ namespace gnubase::engine
 	{
 		m_position = position;
 		m_start = position;
+		m_inPreRoll = false;
 		m_arranger.entering = true;
 	}
 
@@ -188,6 +189,7 @@ namespace gnubase::engine
 	{
 		m_start = startWithoutPreRoll(m_settings, m_position);
 		m_position = withPreRoll(m_settings, m_start);
+		m_inPreRoll = m_position < m_start; // the pre-roll plays toward the start
 		m_playing = true;
 		m_stopAt = -1;
 		m_arranger.entering = true;
@@ -352,7 +354,10 @@ namespace gnubase::engine
 		else if (m_arranger.entering)
 			m_arranger = arrangerEnter(*plan, m_arranger, m_start);
 		else if (plan != m_plan)
-			m_arranger = arrangerEnter(*plan, m_arranger, m_position);
+			// A new plan finds the step playing again. During the pre-roll the position is before the start, where no
+			// step's event holds it yet, so enter at the start without the pre-roll to keep the chain playing (#885).
+			// After it, playback is at the position, even where the chain has played back before the start.
+			m_arranger = arrangerEnter(*plan, m_arranger, m_inPreRoll ? m_start : m_position);
 		m_plan = plan;
 		GNUBASE_ASSERT(frames <= m_segments.size());
 		frames = std::min(frames, static_cast<uint32_t>(m_segments.size()));
@@ -407,6 +412,7 @@ namespace gnubase::engine
 				{
 					m_arranger = turn.next;
 					m_position = turn.to;
+					m_inPreRoll = false; // the chain has taken over
 					if (turn.stops)
 					{
 						m_playing = false;
@@ -446,6 +452,8 @@ namespace gnubase::engine
 			m_block.recording = m_block.recording || m_recording;
 			offset += length;
 			m_position += length;
+			if (m_inPreRoll && m_position >= m_start)
+				m_inPreRoll = false; // the pre-roll has reached where playback starts
 			if (m_recording && punchesOut && m_position == m_settings.right)
 			{
 				m_recording = false;
@@ -456,7 +464,8 @@ namespace gnubase::engine
 			{
 				m_arranger = turn.next;
 				m_position = turn.to;
-				if (turn.stops) // Pause After Repeats: the rest of the block is silent
+				m_inPreRoll = false; // the chain has taken over
+				if (turn.stops)      // Pause After Repeats: the rest of the block is silent
 				{
 					m_playing = false;
 					m_recording = false;

@@ -196,6 +196,21 @@ namespace gnubase::engine
 						part.rootKey = project.rootKey;
 						context.emit("midiPart.changed", {{"part", toJson(part)}});
 					}
+				// The parts stashed in inactive track versions get it too, so that activating such a version shows
+				// them with it (#896). They lie inside their track, which is announced as changed.
+				for (auto& [id, track] : project.trackById)
+				{
+					bool changed = false;
+					for (TrackVersion& version : track.versions)
+						for (MidiPart& part : version.midiParts)
+							if (part.rootKey < 0)
+							{
+								part.rootKey = project.rootKey;
+								changed = true;
+							}
+					if (changed)
+						context.emit("track.changed", {{"track", toJson(track)}});
+				}
 				return Json::object();
 			});
 		add(engine,

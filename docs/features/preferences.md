@@ -38,8 +38,10 @@ presets to preferences and clients can tell them from the settings that have a p
     Notes Only (`editing.legatoBetweenSelected`). Tool Modifiers: each action's modifier keys (`ui.toolModifiers`, over
     the defaults that `ui::EventDisplay::defaultToolModifiers` has; the dialog keeps only those that differ), chosen
     from a list or, as in the reference (p. 1574), by holding the keys and clicking the action's Assign (Ctrl or Cmd,
-    Alt, Shift); another action of the same category with those keys is then left without any. Tools: Show Toolbox on
-    Right-Click (`ui.toolboxOnRightClick`), Show Notification when Switching Tool Mode with Key Command
+    Alt, Shift). Either way, when another action of the same tool already has those keys, the dialog asks first (p.
+    1602), naming the tool, that action and the keys; Replace gives them to the action and leaves the other without
+    any, and Cancel changes nothing (a list puts itself back). Tools: Show Toolbox on Right-Click
+    (`ui.toolboxOnRightClick`), Show Notification when Switching Tool Mode with Key Command
     (`ui.toolSwitchNotification`). Zoom: Zoom Tool Standard Mode: Horizontal Zooming Only (`ui.zoomToolHorizontalOnly`,
     [tools.md](tools.md)).
   - Event Display - Folders: Show Data on Folder Tracks (`ui.folderData`), Apply Color of Folder Track Automatically
@@ -73,7 +75,9 @@ presets to preferences and clients can tell them from the settings that have a p
     setting keeps the rest of it: the Tool Modifiers page sends `ui.toolModifiers` with the overrides of the actions it
     doesn't list, which a newer GNUbase, MCP or Lua can have set.
 - **While it is open.** The dialog follows `settings.changed`, so a setting a script or an MCP client changes shows up
-  in it at once; what the user changed in a page and hasn't applied stays.
+  in it at once; what the user changed in a page and hasn't applied stays. A page that renders again this way has new
+  controls, so the Tool Modifiers question looks them up when it is answered, not when it was asked, and its Cancel
+  puts the list back to what the page has then.
 - **Presets.** The Preference Presets list, a name field, Save, Rename and Delete. Save keeps what the dialog shows,
   applied or not, on every page, or with Save marked preferences only on the pages marked in the Save column that
   then shows in the list of pages. Choosing a preset puts its values into the dialog; the preferences it lacks keep
