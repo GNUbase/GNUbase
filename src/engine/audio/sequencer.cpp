@@ -451,7 +451,12 @@ namespace gnubase::engine
 			unmodified->expressions = sequence->preExpressions;
 			unmodified->controllers = sequence->controllers;
 			unmodified->chase = sequence->chase;
-			unmodified->inputChannel = sequence->inputChannel; // the input on the track's MIDI channel, as the parts'
+			// The input on the track's MIDI channel, through the drum map's input mapping or Live Input and the
+			// articulation map's remote triggers, as the parts' notes in preNotes go through both maps.
+			unmodified->inputChannel = sequence->inputChannel;
+			unmodified->liveInput = sequence->liveInput;
+			unmodified->drumInput = sequence->drumInput;
+			unmodified->articulations = sequence->articulations;
 			m_pre->setSequence(std::move(unmodified));
 			sequence->pre = m_pre;
 		}

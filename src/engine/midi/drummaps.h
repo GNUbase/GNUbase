@@ -5,7 +5,6 @@
 
 #include <array>
 #include <cstdint>
-#include <optional>
 #include <string>
 
 namespace gnubase::engine
@@ -25,9 +24,6 @@ namespace gnubase::engine::midi
 
 	// The drum map a track's notes play through, or none.
 	const DrumMap* drumMapOf(const Project& project, ObjectId track);
-	// The MIDI channel a MIDI track plays its events on instead of their own (reference manual p. 351), or none for
-	// Any, which keeps theirs, or no such track; a drum sound's own channel still wins.
-	std::optional<int> trackMidiChannel(const Project& project, ObjectId track);
 	// The pitch that a note played in on a track becomes: the first sound, by pitch, whose I-note it is, or itself.
 	uint8_t inputPitch(const Project& project, ObjectId track, uint8_t played);
 	// inputPitch for each of the 128 notes played in, through the map.

@@ -13,6 +13,7 @@
 #include "engine/midi/drummaps.h"
 #include "engine/midi/midivalues.h"
 #include "engine/midi/patterns.h"
+#include "engine/midi/trackchannel.h"
 #include "engine/processors/drummachine.h"
 
 #include <algorithm>

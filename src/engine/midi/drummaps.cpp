@@ -228,14 +228,6 @@ namespace gnubase::engine::midi
 		return map != project.drumMaps.end() ? &map->second : nullptr;
 	}
 
-	std::optional<int> trackMidiChannel(const Project& project, ObjectId track)
-	{
-		const auto found = project.trackById.find(track);
-		if (found == project.trackById.end() || found->second.type != TrackType::Midi || found->second.channel == 0)
-			return std::nullopt;
-		return project.channels.at(found->second.channel).midiChannel;
-	}
-
 	uint8_t inputPitch(const Project& project, ObjectId track, uint8_t played)
 	{
 		if (const DrumMap* map = drumMapOf(project, track))
