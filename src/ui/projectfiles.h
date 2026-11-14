@@ -149,7 +149,8 @@ namespace gnubase::ui
 		// project.backup, asked for in the window, returned: shows its error, or the job's progress in a dialog
 		// (backup-progress.rml) whose Cancel stops it. That dialog is outside openDialog's turns, so that it keeps no
 		// other dialog waiting. Each window shows one backup's progress at a time: a second backup asked for in a
-		// window that shows one already runs without. Its progress closed or gone with its window, it is cancelled.
+		// window that shows one already runs without; one whose window went before it started shows in the main window.
+		// Its progress closed or gone with its window, it is cancelled.
 		void backupStarted(WindowId window, const engine::Result& result);
 		// A backup's job ended (job.finished, or job.get for one that ended before backupStarted heard of it): if it is
 		// one of those this UI started, closes its progress and shows in its window, or in the main window if that
