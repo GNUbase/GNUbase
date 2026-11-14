@@ -150,7 +150,7 @@ TEST_CASE("transpose events transpose what follows global transpose from their p
 	CHECK(song.pitches() == std::vector<int>{62, 60, 67, 67});
 	CHECK(run(song.client, "transpose.get").at("events")[0].at("id") == second); // in timeline order
 
-	// Keep Transpose in Octave Range: never more than six semitones either way.
+	// Keep Transpose in Octave Range: never more than seven semitones either way.
 	run(song.client, "transpose.set", {{"events", {{{"event", first.at("event").at("id")}, {"value", 8}}}}});
 	CHECK(song.pitches() == std::vector<int>{62, 60, 70, 70});
 	run(song.client, "transpose.setTrack", {{"keepInOctave", true}});
@@ -193,16 +193,17 @@ TEST_CASE("Keep Transpose in Octave Range folds the part's own transpose into th
 	CHECK(song.pitches() == std::vector<int>{73, 73, 73, 73}); // the option off changes nothing
 	run(song.client, "transpose.setTrack", {{"keepInOctave", true}});
 	CHECK(song.pitches() == std::vector<int>{61, 61, 61, 61}); // 13 is 1 up
-	// The option folds into the nearest octave; at 6 up and down are equally near and the sum keeps its sign:
-	// 2 + 8 + 8 = 18 is 6 up...
-	run(song.client, "midiPart.set", {{"part", song.part}, {"transpose", 8}});
-	CHECK(song.pitches() == std::vector<int>{66, 66, 66, 66});
-	// ... and 2 + 8 - 16 = -6 is 6 down.
-	run(song.client, "midiPart.set", {{"part", song.part}, {"transpose", -16}});
-	CHECK(song.pitches() == std::vector<int>{54, 54, 54, 54});
-	// 7 up is nearer 5 down: 2 + 8 - 3 = 7.
+	// Seven semitones either way stay as they are: 2 + 8 - 3 = 7 is 7 up...
 	run(song.client, "midiPart.set", {{"part", song.part}, {"transpose", -3}});
-	CHECK(song.pitches() == std::vector<int>{55, 55, 55, 55});
+	CHECK(song.pitches() == std::vector<int>{67, 67, 67, 67});
+	// ... and 2 + 8 - 17 = -7 is 7 down.
+	run(song.client, "midiPart.set", {{"part", song.part}, {"transpose", -17}});
+	CHECK(song.pitches() == std::vector<int>{53, 53, 53, 53});
+	// Eight fold: 2 + 8 - 2 = 8 is 4 down, and 2 + 8 - 18 = -8 is 4 up.
+	run(song.client, "midiPart.set", {{"part", song.part}, {"transpose", -2}});
+	CHECK(song.pitches() == std::vector<int>{56, 56, 56, 56});
+	run(song.client, "midiPart.set", {{"part", song.part}, {"transpose", -18}});
+	CHECK(song.pitches() == std::vector<int>{64, 64, 64, 64});
 	// Muted, the event drops out of the sum, which the option still folds: 2 + 12 = 14 is 2 up.
 	run(song.client, "midiPart.set", {{"part", song.part}, {"transpose", 12}});
 	run(song.client, "transpose.setTrack", {{"mute", true}});

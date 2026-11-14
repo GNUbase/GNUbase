@@ -35,11 +35,12 @@ transpose events and controls, and MIDI parts that follow it or are excluded fro
 `globalTranspose` (`document.h`) is the transposition a part plays its notes with at a position: an independent part's
 own transpose as it is; a part that follows global transposition plays its own transpose plus the step from its root key
 to the project root key the nearer way (-5 to 6 semitones, nothing unless both have one), plus the value of the
-transpose event playing there unless the track is muted. With Keep Transpose in Octave Range the whole sum folds into
-the nearest octave, -6 to +6 (7 up plays 5 down): the option keeps even a part's own transpose in the range, which the
-reference manual's p. 421 recommends it for, and a sum of 6 either way keeps its sign, as up and down are then equally
-near. The render snapshot adds it to each note's MIDI modifiers' transpose at the note's start, with the track's
-modifiers, before their ranges.
+transpose event playing there unless the track is muted. With Keep Transpose in Octave Range the whole sum stays within
+7 semitones either way (7 up plays 7 up, 8 up plays 4 down): the option keeps even a part's own transpose in the range,
+which the reference manual's p. 421 recommends it for. So with the option on, a following part's own transpose of an
+octave or more is folded away (12 plays 0); a part that should keep such a transpose has to be Independent. The render
+snapshot adds it to each note's MIDI modifiers' transpose at the note's start, with the track's modifiers, before their
+ranges.
 
 ## UI
 
@@ -66,7 +67,7 @@ modifiers, before their ranges.
 `tests/transpose_tests.cpp`: the pitches the render snapshot plays for the root key (both ways, with the part's own
 transpose, Independent, undo), transpose events (adding the track, timeline order, Keep Transpose in Octave Range, mute,
 moving, the value range, lock, the track's removal), the octave-range option folding the whole sum a part plays, its own
-transpose included (the tie at 6, a muted track, an Independent part left as it is), `transpose.changed` and
+transpose included (7 staying 7 and 8 folding, a muted track, an Independent part left as it is), `transpose.changed` and
 `arranger.changed` announced by undo and redo, glue refusing parts that follow global transpose differently and keeping
 the sound of parts the option folds differently, Set Root Key for Unassigned Events (also in inactive track versions),
 Delete Time and Insert Silence moving the events, recorded parts with and without transpose events, and saving and

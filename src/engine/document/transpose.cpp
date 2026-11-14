@@ -167,8 +167,8 @@ namespace gnubase::engine
 			{"transpose.setTrack", 1,
 				"Changes the transpose track's controls: mute (Mute Transpose Events: the events don't play), "
 				"keepInOctave (Keep Transpose in Octave Range: what a part that follows plays — the root key's step, "
-				"the transpose events and the part's own transpose together — stays within 6 semitones either way, "
-				"7 up plays 5 down) and lock (the events can't be added, changed or removed).",
+				"the transpose events and the part's own transpose together — stays within 7 semitones either way, "
+				"8 up plays 4 down) and lock (the events can't be added, changed or removed).",
 				objectSchema({{"mute", booleanSchema}, {"keepInOctave", booleanSchema}, {"lock", booleanSchema}}),
 				transposeResult, false},
 			[](Project& project, CommandContext& context)

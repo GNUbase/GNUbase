@@ -324,11 +324,10 @@ namespace gnubase::engine
 		}
 		if (track.keepInOctave)
 		{
-			// The whole sum into the nearest octave (#896); at 6 up and down are equally near, and the sum keeps
-			// its sign, as it did before the part's own transpose joined it.
-			while (semitones > 6)
+			// The whole sum, the part's own transpose included (#896), never more than 7 semitones either way.
+			while (semitones > 7)
 				semitones -= 12;
-			while (semitones < -6)
+			while (semitones < -7)
 				semitones += 12;
 		}
 		return semitones;

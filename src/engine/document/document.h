@@ -876,7 +876,7 @@ namespace gnubase::engine
 	{
 		std::vector<TransposeEvent> events; // in timeline order
 		bool mute = false;                  // Mute Transpose Events: the events don't play
-		bool keepInOctave = false;          // Keep Transpose in Octave Range: never more than 6 semitones either way
+		bool keepInOctave = false;          // Keep Transpose in Octave Range: never more than 7 semitones either way
 		bool lock = false;                  // the events can't be added, changed or removed
 	};
 
@@ -1591,7 +1591,7 @@ namespace gnubase::engine
 	// transpose as it is; a part that follows global transposition plays its own transpose plus the step from its
 	// root key to the project root key, the nearer way (-5 to 6; nothing unless both have one), plus the value of
 	// the transpose event playing there unless the transpose track is muted — with Keep Transpose in Octave Range
-	// the whole sum folded into the nearest octave, -6 to +6 (#896, reference manual pp. 419-421).
+	// the whole sum kept within 7 semitones either way, 8 up playing 4 down (#896, reference manual pp. 419-421).
 	int globalTranspose(const Project& project, const MidiPart& part, time::Samples at);
 
 	// Whether folder is the pool's Audio folder (0) or a pool folder whose parents lead there without passing
