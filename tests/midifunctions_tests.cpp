@@ -3676,6 +3676,57 @@ TEST_CASE("merge and bounce take the global transpose at each note's position", 
 	}
 }
 
+TEST_CASE("merge, bounce and dissolve play the part's own transpose as Keep Transpose in Octave Range folds it",
+	"[integration]")
+{
+	Fixture fixture;
+	Client& client = fixture.client;
+	const ObjectId track = fixture.track;
+	// The part's own transpose of 4 and the transpose event's 5 add up to 9, which the option folds to 3 down (#896):
+	// 60 and 64 play 57 and 61. A new part that follows plays 5 up, so it stores them 8 lower.
+	run(client, "transpose.add", {{"position", 0}, {"value", 5}});
+	run(client, "transpose.setTrack", {{"keepInOctave", true}});
+	run(client, "midiPart.set", {{"part", fixture.part}, {"transpose", 4}});
+	const auto before = playedOn(fixture.engine, track);
+	REQUIRE(before == std::vector<std::vector<int64_t>>{{0, 57, 0}, {24000, 61, 0}, {24000, 61, 0}});
+	const auto mergeOntoNewTrack = [&](bool includeInserts)
+	{
+		const Json merged = run(client, "midi.merge",
+			{{"start", 0}, {"end", g_eightQuarters}, {"tracks", {track}}, {"includeInserts", includeInserts}});
+		REQUIRE(merged.at("tracks").size() == 1);
+		return merged.at("tracks").at(0).get<ObjectId>();
+	};
+
+	SECTION("bounce")
+	{
+		run(client, "midi.bounce", {{"parts", {fixture.part}}});
+		CHECK(playedOn(fixture.engine, track) == before);
+		const Json part = onlyPartJson(client, track);
+		CHECK(part.at("transpose") == 0);
+		CHECK(storedPitches(part) == std::vector<int>{52, 56, 56});
+	}
+
+	SECTION("merge")
+	{
+		const ObjectId added = mergeOntoNewTrack(false);
+		CHECK(playedOn(fixture.engine, added) == before);
+		CHECK(storedPitches(onlyPartJson(client, added)) == std::vector<int>{52, 56, 56});
+	}
+
+	SECTION("merge with Include Inserts")
+	{
+		const ObjectId added = mergeOntoNewTrack(true);
+		CHECK(playedOn(fixture.engine, added) == before);
+		CHECK(storedPitches(onlyPartJson(client, added)) == std::vector<int>{52, 56, 56});
+	}
+
+	SECTION("dissolve, whose parts keep the part's transpose")
+	{
+		run(client, "midi.dissolve", {{"parts", {fixture.part}}, {"by", "pitch"}, {"to", "lanes"}});
+		CHECK(playedOn(fixture.engine, track) == before);
+	}
+}
+
 TEST_CASE("the new part's root key and Global Transpose setting come from the parts with notes in it", "[integration]")
 {
 	Fixture fixture;

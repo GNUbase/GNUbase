@@ -126,14 +126,15 @@ namespace gnubase::ui
 		// The drag on the keyboard's left part (p. 1261): to the right or left it zooms the pitches vertically, up or
 		// down it scrolls the note display.
 		void zoomScroll(Rml::Event& event);
-		// Scales the pitch rows and the keyboard by the zoom, clamped to its limits; the row height is what the style
-		// sheet gives it at 1.
+		// Scales the pitch rows' height that the style sheet gives them by the zoom, and with them the keyboard; at 1
+		// the rows have the style sheet's height itself. Without a length to scale the zoom stays 1.
 		void setPitchZoom(float zoom);
 		// The grid of another in-place editor under the event's target, and its track: where a move's release drops
 		// the selected notes (p. 1261); null when the target isn't in one or this editor isn't an in-place one.
 		std::pair<Rml::Element*, uint64_t> foreignInPlaceGrid(const Rml::Event& event) const;
-		// A move released over that grid: the selected notes go to the target track's part at the drop's time, as
-		// note.move, which keeps their distances to the pressed one and everything they have; one undo step.
+		// A move released over that grid: the selected notes and controller events go to the target track's part at
+		// the drop's time, as note.move, which keeps their distances to the pressed note and everything they have;
+		// one undo step. A part that gives only controller events sends a note.move with no notes.
 		void moveToInPlace(const Rml::Event& event, Rml::Element& grid, uint64_t track);
 		// What a press on a note's box starts: a resize near its ends, else a move.
 		Gesture edgeGesture(Rml::Element* target, const Rml::Event& event) const;
@@ -240,7 +241,6 @@ namespace gnubase::ui
 		bool m_snapOff = false;
 		float m_pitchZoom = 1.0F;               // the pitch rows' scale, which the keyboard's left part drags (p. 1261)
 		float m_zoomStart = 1.0F;               // m_pitchZoom at the press
-		float m_rowDp = 0.0F;                   // the pitch rows' height at zoom 1, read from the style at the press
 		float m_scrollStart = 0.0F;             // the note display's scroll top at the press, in pixels
 		bool m_zoomDrag = false;                // the drag went past the threshold
 		Rml::ObserverPtr<Rml::Element> m_drawn; // the note a draw drags out

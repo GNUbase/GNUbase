@@ -98,10 +98,11 @@ namespace gnubase::ui
 		// A selected MIDI part or audio event (of m_events) as the display's project has it, for its root key and
 		// Global Transpose (#1368), or null.
 		const engine::Json* transposableOf(const engine::Json& event) const;
-		// What a value field shows for the project's value of event, the first selected: while the project is older
-		// than the field's own steps (#716), the value that the steps that changed event gave it instead, also after
-		// other events showed in the field meanwhile (#1421), and when it was dragged with others (#1471).
-		std::string fieldValue(const std::string& field, uint64_t event, std::string value) const;
+		// What a value field shows for the project's value of item, the first selected event or note (edits "events"
+		// or "notes"): while the project is older than the field's own steps (#716), the value that the steps that
+		// changed item gave it instead, also after other items showed in the field meanwhile (#1421), and when it was
+		// dragged with others (#1471, #1550).
+		std::string fieldValue(const char* edits, const std::string& field, uint64_t item, std::string value) const;
 		// The notes a selection of an in-place editor names, from the display's project, by start, then pitch.
 		std::vector<Note> notesOf(const engine::Json& selection) const;
 		// A part's start in project ticks, a linear track's position converted as the key editor does.
