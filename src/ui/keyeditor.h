@@ -139,6 +139,8 @@ namespace gnubase::ui
 		Gesture edgeGesture(Rml::Element* target, const Rml::Event& event) const;
 		// Starts drawing a note at the snapped position under the press, as the draw tool's press does.
 		void startDraw(double ticks);
+		// Where a note drawn from the ticks pressed starts: the grid's step it falls in, unsnapped with Snap off.
+		int64_t drawStart(double ticks, int pitch) const;
 		// The drumstick's note as a drag changes it (p. 1241): where it starts, its length, pitch and velocity, and how
 		// many times it repeats at the grid's steps.
 		struct DrumDraw

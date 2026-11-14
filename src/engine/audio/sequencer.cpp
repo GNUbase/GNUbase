@@ -1153,6 +1153,9 @@ namespace gnubase::engine
 			return true;
 		}
 		const size_t from = ((event.channel % 16) * 128) + (event.key % 128);
+		// Whether the key is a drum sound's pitch (midi.inject drumSounds): past here the note is what plays, so the
+		// flag means nothing downstream.
+		const bool drumSound = std::exchange(event.drumSound, false);
 		// The key no longer holds the note it played (a second note-on, or its note-off).
 		const auto letGo = [this, from]
 		{
@@ -1171,7 +1174,7 @@ namespace gnubase::engine
 			if (sequence.drumInput.size() == 2 * static_cast<size_t>(g_drumSounds))
 			{
 				// The I-notes' sounds, or with drumSounds the sounds themselves (the second 128).
-				const LiveDrumNote& drum = sequence.drumInput[(event.drumSound ? g_drumSounds : 0) + (event.key % 128)];
+				const LiveDrumNote& drum = sequence.drumInput[(drumSound ? g_drumSounds : 0) + (event.key % 128)];
 				pitch = drum.key;
 				channel = drum.channel >= 0 ? drum.channel : channel;
 				plays = !drum.mute;

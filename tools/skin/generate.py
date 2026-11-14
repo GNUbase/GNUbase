@@ -840,7 +840,7 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".editor-visibility-check.partial", {"decorator": skin("checkbox-mixed")}),
         # The key editor (docs/features/key-editor.md): the keyboard's white and black keys, the keys of selected
         # notes lit, the grid's rows of black keys darker, the notes, selected ones in the second accent, those
-        # outside the part editing mode dimmed, the note being drawn, and the step input cursor
+        # outside the part editing mode dimmed, the note being drawn with its velocity, and the step input cursor
         (".key-editor-key", {"background-color": mix(c["surfaceRaised"], ivory, .8), "color": ebony,
                              "border-bottom-width": f"{widths['hairline']}px",
                              "border-bottom-color": c["textMuted"]}),
@@ -857,6 +857,7 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".key-note.inactive", {"background-color": mix(c["surface"], c["textMuted"], .3),
                                 "border-color": c["textMuted"]}),
         (".key-note.drawing", {"background-color": c["accent"] + "66"}),
+        (".key-editor-velocity", {"color": c["text"]}),
         (".key-editor-step-cursor", {"background-color": c["accent"]}),
         # The in-place editor (docs/features/in-place-editor.md): opaque over its track's events, a line below it
         (".in-place-editor", {"background-color": c["background"], "border-bottom-width": f"{widths['hairline']}px",

@@ -297,7 +297,8 @@ namespace gnubase::ui
 			info + R"(</div><div class="editor-parts"/><div class="key-editor-body"><div class="key-editor-keys">)" +
 			keys + (drum ? std::string() : std::string(R"(<div class="key-editor-keys-zoom"/>)")) +
 			R"(</div><div class="key-editor-grid"><div class="key-editor-rows">)" + rows +
-			R"(</div><div class="key-editor-notes"/><div class="key-editor-step-cursor off"/></div></div>)"
+			R"(</div><div class="key-editor-notes"/><div class="key-editor-step-cursor off"/>)"
+			R"(<div class="key-editor-velocity off"/></div></div>)"
 			R"(<div class="controller-lanes"/>)");
 		Rml::ElementList placed;
 		root.QuerySelectorAll(placed, ".key-editor-key");
@@ -1161,10 +1162,12 @@ namespace gnubase::ui
 		{
 			// A key's pitch ends wherever the mouse is released; the document hears that, the root only within.
 			sound(std::nullopt);
-			// A drumstick's deletion and a keyboard's drag end wherever the mouse is released; the other gestures
-			// only within.
+			if (Rml::Element* velocity = m_root.get()->QuerySelector(".key-editor-velocity"))
+				velocity->SetClass("off", true);
+			// The drumstick's insertion and deletion and a keyboard's drag end wherever the mouse is released; the
+			// other gestures only within.
 			if (event.GetCurrentElement() == m_root.get() || m_gesture == Gesture::Erase ||
-				m_gesture == Gesture::ZoomScroll)
+				m_gesture == Gesture::ZoomScroll || (m_gesture == Gesture::Draw && m_drum))
 			{
 				release(event);
 			}
@@ -1434,8 +1437,7 @@ namespace gnubase::ui
 	{
 		Rml::Element* root = m_root.get();
 		const int pitch = m_pressedAt.second;
-		const int64_t start =
-			snap(ticks - (m_snapOff ? 0.0 : static_cast<double>(grid(pitch)) / 2.0), m_snapOff, pitch);
+		const int64_t start = drawStart(ticks, pitch);
 		if (partAt(start) == nullptr)
 			return;
 		m_pressedAt.first = static_cast<double>(start);
@@ -1452,32 +1454,42 @@ namespace gnubase::ui
 		m_drawn = added->GetObserverPtr();
 	}
 
+	int64_t KeyEditor::drawStart(double ticks, int pitch) const
+	{
+		return snap(ticks - (m_snapOff ? 0.0 : static_cast<double>(grid(pitch)) / 2.0), m_snapOff, pitch);
+	}
+
 	KeyEditor::DrumDraw KeyEditor::drumDraw(const Rml::Event& event) const
 	{
 		const auto [ticks, pitch] = at(event);
 		const Rml::Context* context = m_root.get()->GetContext();
 		const float ratio = context != nullptr ? context->GetDensityIndependentPixelRatio() : 1.0F;
-		DrumDraw draw{std::llround(m_pressedAt.first), lengthQuantize(m_pressedAt.second), m_pressedAt.second,
+		// Up or down changes the velocity, a step of 127 per dp once the mouse went up or down by the drag threshold,
+		// so that a click that slips or a drag to the right that drifts keeps Insert Velocity; with Alt the pitch
+		// instead, and the note takes the length and the grid of the sound under the mouse.
+		const bool alt = event.GetParameter("alt_key", 0) != 0;
+		DrumDraw draw{std::llround(m_pressedAt.first), 0, alt ? pitch : m_pressedAt.second,
 			m_view.value("insertVelocity", 100.0 / g_maxVelocity)};
-		// Up or down changes the velocity, a step of 127 per dp; with Alt the pitch instead.
-		if (event.GetParameter("alt_key", 0) != 0)
-			draw.pitch = pitch;
-		else
-			draw.velocity = static_cast<double>(std::clamp<int64_t>(std::lround(draw.velocity * g_maxVelocity) +
-									std::lround((m_pressedY - event.GetParameter("mouse_y", 0.0F)) / ratio),
-								1, static_cast<int64_t>(g_maxVelocity))) /
+		if (draw.pitch != m_pressedAt.second)
+			draw.start = drawStart(m_drawnFrom, draw.pitch);
+		draw.length = lengthQuantize(draw.pitch);
+		const float up = (m_pressedY - event.GetParameter("mouse_y", 0.0F)) / ratio;
+		if (!alt && std::abs(up) >= g_dragThreshold)
+			draw.velocity =
+				static_cast<double>(std::clamp<int64_t>(std::lround(draw.velocity * g_maxVelocity) + std::lround(up), 1,
+					static_cast<int64_t>(g_maxVelocity))) /
 				g_maxVelocity;
 		// With Shift the note moves along; with Snap off and Show Note Length a drag changes its length; else it
 		// repeats at every step of the grid it was dragged over.
 		const double moved = ticks - m_drawnFrom;
 		if (event.GetParameter("shift_key", 0) != 0)
-			draw.start += snap(moved, m_snapOff, m_pressedAt.second);
+			draw.start += snap(moved, m_snapOff, draw.pitch);
 		else if (m_snapOff && !diamonds())
 			draw.length = std::max<int64_t>(draw.length + std::llround(moved), 1);
 		else
 			draw.repeats = std::max<int64_t>(1,
 				static_cast<int64_t>(
-					std::ceil((ticks - m_pressedAt.first) / static_cast<double>(grid(m_pressedAt.second)))));
+					std::ceil((ticks - static_cast<double>(draw.start)) / static_cast<double>(grid(draw.pitch)))));
 		return draw;
 	}
 
@@ -1509,6 +1521,13 @@ namespace gnubase::ui
 			{
 				const DrumDraw draw = drumDraw(event);
 				place(*drawn, draw.start, draw.length, draw.pitch);
+				// The new notes' velocity shows beside them while dragging.
+				if (Rml::Element* velocity = m_root.get()->QuerySelector(".key-editor-velocity"))
+				{
+					velocity->SetInnerRML(std::to_string(std::lround(draw.velocity * g_maxVelocity)));
+					place(*velocity, draw.start, draw.length, draw.pitch);
+					velocity->SetClass("off", false);
+				}
 			}
 			else if (drawn != nullptr)
 			{
@@ -1609,7 +1628,7 @@ namespace gnubase::ui
 			{
 				// The drumstick repeats notes at every step of the grid it was dragged over (p. 1241).
 				const DrumDraw draw = drumDraw(event);
-				const int64_t step = grid(m_pressedAt.second);
+				const int64_t step = grid(draw.pitch);
 				const Part* part = partAt(draw.start);
 				std::vector<int64_t> starts;
 				for (int64_t i = 0; part != nullptr && i < draw.repeats && draw.start + (i * step) < part->end; ++i)

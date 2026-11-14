@@ -153,7 +153,7 @@ Further rules:
 | 4 | `space` | uint16 | the namespace of `type`; `g_coreEventSpace` (0) for `EventType` |
 | 6 | `type` | uint8 | `EventType` in the core namespace |
 | 7 | `reserved0` | uint8 | 0 |
-| 8 | `flags` | uint16 | `Live`, `DontRecord` |
+| 8 | `flags` | uint16 | `Live`, `DontRecord`, `DrumSound` (notes whose key is a drum sound's pitch, which the built-in MIDI effects keep on the notes they play for them) |
 | 10 | `port` | int16 | note port, -1 for any |
 | 12 | `noteId` | int32 | -1 for any |
 | 16 | `channel` | int16 | -1 for any |

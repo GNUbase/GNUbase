@@ -64,6 +64,9 @@ namespace gnubase::plugin
 		{
 			Live = 1,       // played live, not from the timeline
 			DontRecord = 2, // an output the host must not record, e.g. a parameter the plugin changes itself
+			// Notes: the key is a drum sound's pitch, not an I-note (graph::ProcessEvent::drumSound). GNUbase's
+			// built-in MIDI effects keep it on the notes they play for such a note; other plugins ignore it.
+			DrumSound = 4,
 		};
 
 		uint32_t offset = 0;                // frame within the block

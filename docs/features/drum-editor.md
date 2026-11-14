@@ -46,8 +46,10 @@ They emit `drumMap.added`, `drumMap.changed` and `drumMap.removed` with the map 
   the sequencer maps the notes it gets with them on the audio thread (`MidiSequencer::modifyInput`) before the
   track's MIDI modifiers, instead of Live Input. With `midi.inject`'s `drumSounds` the notes' keys are the sounds'
   pitches, not I-notes: they play their sounds as the track's notes do (the second 128 entries of `drumInput`), so
-  that the drum editor auditions a sound whose I-note an earlier sound has too. They are no MIDI input: the recorder
-  leaves them out of recordings and the retrospective buffer (`Recorder::sendMidi`).
+  that the drum editor auditions a sound whose I-note an earlier sound has too. The notes the MIDI inserts above the
+  divider play for them keep the flag (`ProcessEvent::drumSound`), and the sequencer clears it once it has mapped a
+  note. They are no MIDI input: the recorder leaves them out of recordings and the retrospective buffer
+  (`Recorder::sendMidi`).
 - **Loading**: a note's pitch must be 0-127 and its channel 0-15 in the GNUbase entry of a project (as the DAWproject
   import clamps them), since the maps and the editors take the pitch as an index; an entry that has others is
   damaged, and the project loads from `project.xml`.
@@ -92,23 +94,27 @@ content is `drum`. It is the key editor ([key-editor.md](key-editor.md)) with th
   I-note and O-note as a name such as C1 or a number, the channel as 1-16 or Any, the output as a name or Default. The
   mute button mutes the sound. A click on a sound's pitch auditions it (p. 1236): it goes into the track as if
   played (`midi.inject` with `drumSounds`), so the map plays it on the sound's O-note and channel while the mouse is
-  down, also when an earlier sound has its I-note. With
-  Pitch Visibility and Reverse Drum Sound List the list goes from the bottom of the map's order.
+  down, also when an earlier sound has its I-note. With Pitch Visibility and Reverse Drum Sound List the list goes
+  from the bottom of the map's order.
 - **Drumstick** (pp. 1240-1242). A click inserts a note at the snapped position, as long as Insert Length says; a drag
-  to the right inserts one at every step of the quantize grid; a click on a note deletes it, and a drag from it to the
-  right (4 dp or more) also the notes of its sound that start up to where the mouse is released, in one undo step, also
-  when it is released outside the editor. A click that hardly moves deletes only the note clicked, not the doubles and
-  close flams under the mouse. The object selection tool's double click does the same: in the empty grid it inserts,
-  with a drag to the right at every step of the grid; on a note it deletes it, with a drag to the right and Snap on
-  (Ctrl/Cmd not held) the sound's notes up to the release. A move goes from row to row in the list's order.
-  While a drag inserts (p. 1241), up or down changes the new notes' velocity by one step of 127 per dp, with Alt their
-  pitch to the sound under the mouse; with Shift a drag moves the note along the grid instead of repeating it; with
-  Snap off (Ctrl/Cmd at the press) and Show Note Length it changes the note's length.
+  to the right inserts one at every step of the quantize grid, also when it is released outside the editor; a click on a
+  note deletes it, and a drag from it to the right (4 dp or more) also the notes of its sound that start up to where the
+  mouse is released, in one undo step, also when it is released outside the editor. A click that hardly moves deletes
+  only the note clicked, not the doubles and close flams under the mouse. The object selection tool's double click does
+  the same: in the empty grid it inserts, with a drag to the right at every step of the grid; on a note it deletes it,
+  with a drag to the right and Snap on (Ctrl/Cmd not held) the sound's notes up to the release. A move goes from row to
+  row in the list's order. While a drag inserts (p. 1241), up or down changes the new notes' velocity by one step of 127
+  per dp once the mouse went up or down by 4 dp, so that a click that slips keeps Insert Velocity, and
+  `.key-editor-velocity` shows it beside the notes; with Alt up or down changes their pitch to the sound under the mouse
+  instead, whose length (with Drum-Map Link) and grid (with Use Snap from Drum Map) they then take; with Shift a drag
+  moves the note along the grid instead of repeating it; with Snap off (Ctrl/Cmd at the press) and Show Note Length it
+  changes the note's length.
 - **Map menu** (pp. 1234, 1236, 1239). Choosing a map, or No Drum Map, sends `track.set` for the active track. New Map
   and New Copy add a map that becomes the track's, in one undo step (`drumMap.add track`); Remove removes the track's
   map; Drum Map Setup... opens the setup.
 - **Grid Type** (p. 1227): Use Quantize snaps to the quantize grid; Use Snap from Drum Map snaps what the drumstick
-  inserts, repeats and moves along, and the notes moved or resized, to the snap of the note's sound.
+  inserts, repeats and moves along, and the notes moved or resized, to the snap of the note's sound: a note moved to
+  another row to that of the sound it came from. The split tool and the step input cursor snap to the quantize grid.
 - **Show Note Length** (p. 1227) shows the notes as boxes of their length, which the object selection tool and the
   drumstick resize at their ends as in the key editor (p. 1242); in its middle the drumstick still deletes the note.
 - **Commands** (Edit menu, `app::AppUi`): `editor.openDrum` (Open Drum Editor, p. 1221) opens the selected MIDI parts
@@ -139,21 +145,24 @@ reference's own drum map files.
 
 - `tests/drummaps_tests.cpp`: the GM Map of a new project, New Map and New Copy, also for a track in one undo step,
   changing sounds and the order with their errors and undo, a track's map refused for audio tracks and unknown maps,
-  removing a map taking it from the track; export and import round trip of a changed map, with errors for a missing
-  and a wrong file; maps and the tracks' maps saved and loaded, and a note pitch beyond 0-127 or a channel beyond 0-15
-  not loading; playback and MIDI thru through the I-notes, O-notes, channels and mutes, and `drumSounds` playing the
-  sounds themselves but not recorded; `inputPitches` giving a shared I-note to the first sound by pitch as `inputPitch` does; step
-  input and recording through the I-notes with Drum-Map Link; O-Note Conversion; the drum editor content, its view
-  settings and parts of a track with a map opening in it unless the preference is off.
-- `tests/drumeditor_ui_tests.cpp` drives the app with `ui::Automation`: the sound list with the map's names, diamonds
-  on their sounds' rows, the mute button and typing an O-note, a channel and a name; the drumstick inserting a note
-  with Drum-Map Link, deleting it and inserting a row of notes with a drag, and deleting a sound's notes with a drag;
-  the Map menu adding a map that becomes the track's, removing it and choosing another; the output typed, Pitch
-  Visibility's reverse order, auditioning a sound through the map, also one whose I-note an earlier sound has, Show
-  Note Length's boxes, which the object selection tool and the drumstick resize; the drumstick's click deleting only
-  the note clicked, a drag deleting when released outside the editor, and a drag to the left not deleting the
-  clicked note's doubles; a drag changing the velocity, with Alt the pitch, with Shift the position and with Snap off
-  and Show Note Length the length; Use Snap from Drum Map snapping new notes to their sound's snap; the object selection tool's double click and drag inserting and deleting several
-  notes; the Drum Map Setup renaming a map, changing each setting of a sound, refusing a wrong snap, adding and
-  removing maps, following a map added elsewhere, and Save... and Load... through the file dialogs; the MIDI menu's
-  Drum Map Setup and O-Note Conversion.
+  removing a map taking it from the track; export and import round trip of a changed map, with errors for a missing and
+  a wrong file; maps and the tracks' maps saved and loaded, and a note pitch beyond 0-127 or a channel beyond 0-15 not
+  loading; playback and MIDI thru through the I-notes, O-notes, channels and mutes, and `drumSounds` playing the sounds
+  themselves but not recorded, also through a chord generator and an arpeggiator above the divider; `inputPitches`
+  giving a shared I-note to the first sound by pitch as `inputPitch` does; step input and recording through the I-notes
+  with Drum-Map Link; O-Note Conversion; the drum editor content, its view settings and parts of a track with a map
+  opening in it unless the preference is off.
+- `tests/drumeditor_ui_tests.cpp` drives the app with `ui::Automation`: the sound list with the map's names, diamonds on
+  their sounds' rows, the mute button and typing an O-note, a channel and a name; the drumstick inserting a note with
+  Drum-Map Link, deleting it and inserting a row of notes with a drag, and deleting a sound's notes with a drag; the Map
+  menu adding a map that becomes the track's, removing it and choosing another; the output typed, Pitch Visibility's
+  reverse order, auditioning a sound through the map, also one whose I-note an earlier sound has, Show Note Length's
+  boxes, which the object selection tool and the drumstick resize; the drumstick's click deleting only the note clicked,
+  a drag deleting when released outside the editor, and a drag to the left not deleting the clicked note's doubles; a
+  drag changing the velocity, with Alt the pitch, with Shift the position and with Snap off and Show Note Length the
+  length, a slip of less than 4 dp keeping the insert velocity, which shows while dragging; with Alt the sound under the
+  mouse's length and snap; a drag released outside the editor inserting; Use Snap from Drum Map snapping new notes, a
+  moved note and a resized one to their sound's snap; the object selection tool's double click and drag inserting and
+  deleting several notes; the Drum Map Setup renaming a map, changing each setting of a sound, refusing a wrong snap,
+  adding and removing maps, following a map added elsewhere, and Save... and Load... through the file dialogs; the MIDI
+  menu's Drum Map Setup and O-Note Conversion.
