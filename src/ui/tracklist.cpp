@@ -932,15 +932,18 @@ namespace gnubase::ui
 			return;
 		std::string rml;
 		for (const Row& row : m_tracks)
+		{
+			const bool versions = hasVersions(row.type);
 			rml += R"(<listitem value=")" + std::to_string(row.id) + R"(" level=")" + std::to_string(row.level) +
-				R"(" type=")" + row.type +
-				R"("><span class="track-color"/><span class="track-name"/><input type="text" class="track-name-field"/>)" +
-				// The Track Versions pop-up menu's arrow, to the right of the name of a track with versions
-				// (reference manual p. 231).
-				(hasVersions(row.type) ? R"(<button class="track-versions-toggle icon-only" menu="track-versions-menu")"
-										 R"( title="Track Versions">)"
-										 R"(<svg class="icon" src="../icons/general-arrow-down.svg"/></button>)"
-									   : "") +
+				R"(" type=")" + row.type + (versions ? R"(" class="versions")" : R"(")") +
+				R"(><span class="track-color"/><span class="track-name"/><input type="text" class="track-name-field"/>)" +
+				// The Track Versions pop-up menu's arrow, at the right end of the name of a track with versions
+				// (reference manual p. 231). It sits in the name's own right padding, so that the name keeps the width
+				// the user chose and the controls area keeps its place.
+				(versions ? R"(<button class="track-versions-toggle icon-only" menu="track-versions-menu")"
+							R"( title="Track Versions">)"
+							R"(<svg class="icon" src="../icons/general-arrow-down.svg"/></button>)"
+						  : "") +
 				R"(<div class="track-controls"/>)" +
 				// Show/Hide Automation in the lower left corner, and the automation tracks below (#121).
 				(row.channel != 0 ? R"(<button class="automation-toggle icon-only" title="Show/Hide Automation">)"
@@ -948,6 +951,7 @@ namespace gnubase::ui
 									R"(<div class="automation-rows"/>)"
 								  : "") +
 				"</listitem>";
+		}
 		finishRename(false);
 		const auto selected = m_view->GetAttribute<Rml::String>("value", "");
 		m_view->SetInnerRML(rml);

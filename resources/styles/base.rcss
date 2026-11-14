@@ -1555,15 +1555,22 @@ meter .meter-peak
 	height: 18dp;
 }
 
-/* The Track Versions pop-up menu's arrow, to the right of the name of a track with versions
-   (docs/features/track-versions.md). */
+/* The Track Versions pop-up menu's arrow, at the right end of the name of a track with versions
+   (docs/features/track-versions.md). Its negative margin takes back the room it needs, which is the name's own right
+   padding, so the name keeps the width the user chose and the controls area keeps its place. */
+.track-list listitem.versions .track-name
+{
+	box-sizing: border-box;
+	padding-right: 16dp;
+}
+
 .track-list .track-versions-toggle
 {
 	flex: 0 0 auto;
 	min-width: 14dp;
 	width: 14dp;
 	height: 18dp;
-	margin-left: 2dp;
+	margin-left: -14dp;
 	padding: 0;
 	text-align: center;
 }
@@ -1573,6 +1580,11 @@ meter .meter-peak
 	width: 10dp;
 	height: 10dp;
 	vertical-align: 0;
+}
+
+.track-list listitem.renaming .track-versions-toggle
+{
+	display: none;
 }
 
 .track-list .track-controls
