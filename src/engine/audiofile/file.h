@@ -36,7 +36,7 @@ namespace gnubase::engine::detail
 	// Which way the last successful replacement went: Rename for replaceFile's classic rename, PosixRename for its
 	// Windows rename with POSIX semantics, Aside for replaceFileMovingAside, None before the first. For tests that
 	// show the atomic path is taken where it can be.
-	enum class ReplacePath
+	enum class ReplacePath : uint8_t
 	{
 		None,
 		Rename,
