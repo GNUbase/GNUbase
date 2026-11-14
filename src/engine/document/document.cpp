@@ -170,6 +170,15 @@ namespace gnubase::engine
 		return result;
 	}
 
+	void followLinkedMove(const Project& project, Channel& to, const std::string& key, double moved)
+	{
+		const bool audio = to.format != ChannelFormat::None;
+		if (key == "pan" && audio)
+			to.pan = std::clamp(to.pan + moved, -1.0, 1.0);
+		else if (key == "volume" && (audio || project.trackById.at(to.track).type == TrackType::Vca))
+			to.volume = std::clamp(to.volume + moved, g_minChannelVolume, project.maxVolume);
+	}
+
 	time::Ticks longestProjectTicks(const Project& project)
 	{
 		return project.tempo.toTicks(

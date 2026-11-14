@@ -1558,6 +1558,11 @@ namespace gnubase::engine
 	// pan, eq, strip, sends, or one of its buttons (mute, solo, soloDefeat, listen, monitor, recordEnable).
 	std::vector<ObjectId> linkedTo(const Project& project, ObjectId channel, const std::string& key, bool linked);
 
+	// Moves the fader (key volume) or the pan (key pan) of a channel linked to one whose own moved by moved, as
+	// channel.set and parameter.set both pass it on (docs/features/link-groups.md): by as much, stopping at its ends,
+	// on a channel that has it. A channel with audio has both, a VCA fader's channel only the fader.
+	void followLinkedMove(const Project& project, Channel& to, const std::string& key, double moved);
+
 	// Gives a part's notes and controllers new ids.
 	void renumber(Project& project, MidiPart& part);
 
