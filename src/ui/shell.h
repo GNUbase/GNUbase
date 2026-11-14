@@ -175,9 +175,10 @@ namespace gnubase::ui
 		// the playback position, the shell steps at least once a frame (g_framePeriod).
 		void eachStep(std::function<bool()> task);
 
-		// Runs task in every step after the eachStep tasks, right before drawing, e.g. to fit a layout to what they
-		// changed.
-		void beforeDraw(std::function<void()> task) { m_beforeDraw.push_back(std::move(task)); }
+		// Runs task whenever a window's context updated to draw the window or take a screenshot of it, e.g. to fit a
+		// layout to the room the update gave it. If a task returns true, because it changed the document, the context
+		// updates again before the window is drawn. Windows that don't draw in a step don't run it.
+		void afterUpdate(std::function<bool(Window&)> task) { m_afterUpdate.push_back(std::move(task)); }
 
 		// Runs handler for every key pressed in a window that none of its elements used, e.g. for key commands
 		// (ui/keycommands.h). Elements that use a key stop its propagation.
@@ -229,6 +230,7 @@ namespace gnubase::ui
 		void handle(const WindowEvent& event);
 		void refresh(Window& window);
 		void draw(Window& window);
+		void update(Window& window); // its context, with the afterUpdate tasks
 		// When the window needs updating next, also for updates its context requested since it was drawn, e.g. by an
 		// element that changed (Rml::Context::RequestNextUpdate).
 		static Clock::time_point nextUpdate(const Window& window, Clock::time_point now);
@@ -252,7 +254,7 @@ namespace gnubase::ui
 		std::mutex m_postedMutex; // guards m_posted, which other threads add to
 		std::vector<std::function<void()>> m_posted;
 		std::vector<std::function<bool()>> m_stepTasks;
-		std::vector<std::function<void()>> m_beforeDraw;
+		std::vector<std::function<bool(Window&)>> m_afterUpdate;
 		Clock::time_point m_nextFrame = Clock::time_point::max(); // when a step task that follows values runs again
 		std::function<void(Window&, const KeyPress&)> m_unusedKey;
 		std::function<void(Window&, const KeyPress&)> m_keyReleased;

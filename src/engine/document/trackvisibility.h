@@ -19,6 +19,11 @@ namespace gnubase::engine
 	// theirs. Emits trackVisibility.changed and mixer.changed for what changed.
 	void followMixer(Project& project, const std::string& mixer, CommandContext& context);
 
+	// What a loaded project keeps of its trackVisibility, once its tracks are there: the checks trackVisibility.set
+	// makes, so an unknown sync, configurations without a name or with a name twice, an active name that isn't there
+	// and ids that aren't tracks don't come in, and hidden folders come in with the tracks inside them (#906).
+	void sanitizeTrackVisibility(Project& project);
+
 	// As trackLayout.get returns it: the heights and folded folders of the tracks that are in the project. The project
 	// keeps those of removed tracks too, for undo.
 	Json trackLayoutJson(const Project& project);

@@ -1063,7 +1063,16 @@ namespace gnubase::engine::midi
 		};
 		std::vector<Candidate> candidates;
 		std::vector<Controller> controllers;
-		std::vector<Controller> resets; // where parts start in the range: they play from the default slot
+		// The directions of the merged tracks by their maps' groups, and where parts start in the range a reset of each
+		// group, as they play from the default slot.
+		struct GroupEvent
+		{
+			Ticks position;
+			bool direction; // else a part's reset
+			size_t group;
+			Controller controller;
+		};
+		std::vector<GroupEvent> groupEvents;
 		std::map<LaneKey, Controller> chased;
 		std::map<LaneKey, Ticks> chasedAt;
 		const TrackPitches destinationPitches(project, settings.destination); // a new track maps nothing
@@ -1085,7 +1094,7 @@ namespace gnubase::engine::midi
 			modifiers.transpose += part.transpose;
 			modifiers.velocityShift += part.velocity;
 			// Playback resolves directions per part (#175): a reset of each group where a part starts in the range
-			// keeps the directions of the parts before it from its notes.
+			// keeps the directions of the parts before it from its notes, if one is in effect there (below).
 			if (articulations != nullptr && sampleOf(partFrom) > settings.start && sampleOf(partFrom) < settings.end)
 				for (size_t group = 0; group < articulations->groups.size(); ++group)
 				{
@@ -1102,7 +1111,7 @@ namespace gnubase::engine::midi
 						reset.type = ControllerType::Articulation;
 						reset.value = 1;
 						reset.articulation = direction->name;
-						resets.push_back(reset);
+						groupEvents.push_back({partFrom, false, group, reset});
 					}
 				}
 			for (const auto& [noteId, note] : playedNotes(project, part))
@@ -1142,6 +1151,8 @@ namespace gnubase::engine::midi
 				if (inRange(at))
 				{
 					controllers.push_back(copy);
+					if (group >= 0)
+						groupEvents.push_back({at, true, static_cast<size_t>(group), copy});
 				}
 				else if (sampleOf(at) < settings.start &&
 					(controller.type == ControllerType::Articulation
@@ -1160,6 +1171,29 @@ namespace gnubase::engine::midi
 						chased[key] = copy;
 					}
 				}
+			}
+		}
+
+		// A part's reset goes in only where a direction of its group is in effect in the merged part, which has the
+		// directions of all merged tracks (#1265); before the directions at the same position.
+		for (const auto& [key, controller] : chased)
+			if (std::get<0>(key) == ControllerType::Articulation)
+				groupEvents.push_back({controller.position, true, std::get<2>(key), controller});
+		std::stable_sort(groupEvents.begin(), groupEvents.end(), [](const GroupEvent& a, const GroupEvent& b)
+			{ return std::tie(a.position, a.direction) < std::tie(b.position, b.direction); });
+		std::vector<Controller> resets;
+		std::map<size_t, bool> inEffect;
+		for (const GroupEvent& event : groupEvents)
+		{
+			bool& directed = inEffect[event.group];
+			if (event.direction)
+			{
+				directed = event.controller.value == 0;
+			}
+			else if (directed)
+			{
+				resets.push_back(event.controller);
+				directed = false;
 			}
 		}
 

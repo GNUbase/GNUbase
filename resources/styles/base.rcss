@@ -309,9 +309,10 @@ tabset tab
 	margin-right: 0;
 }
 
-/* A section the toolbar has no room for: out of the flow and unseen, so it takes no room and no gap, and still laid
-   out, so the docking system knows the width it needs to show again. */
-.toolbar-section.no-room
+/* A section the toolbar has no room for, or a part it gives up first (fit="spare", such as Warp Quantize On/Off): out
+   of the flow and unseen, so it takes no room and no gap, and still laid out, so the docking system knows the width it
+   needs to show again. */
+.toolbar-section.no-room, .toolbar-section .no-room
 {
 	position: absolute;
 	left: 0;
@@ -543,9 +544,31 @@ valuefield.editing .valuefield-text
 	min-width: 72dp;
 }
 
-.transport .primary-time
+/* The project cursor's displays keep their width while the transport runs, locates or scrubs (#1335): the width of
+   their format's widest text, which the format's state class picks, in em, so that it follows the font size. The
+   themes show displays in a font whose digits are all 0.6 em wide: 12 characters for bars and beats
+   (999.16.4.119), 11 for seconds, timecode and user frames (9:59:59.999, 00:00:00:00) and 10 for samples. */
+.transport textdisplay[time=position]
 {
-	min-width: 96dp;
+	box-sizing: content-box;
+	min-width: 0;
+	height: 16dp;
+}
+
+.transport textdisplay[time=position].format-barsBeats
+{
+	width: 7.2em;
+}
+
+.transport textdisplay[time=position].format-seconds, .transport textdisplay[time=position].format-timecode,
+.transport textdisplay[time=position].format-userFrames
+{
+	width: 6.6em;
+}
+
+.transport textdisplay[time=position].format-samples
+{
+	width: 6em;
 }
 
 /* The time display window's digits; their size at each of the window's sizes (.size-0 to .size-4) is the theme's. */
@@ -1490,19 +1513,12 @@ meter .meter-peak
 	text-align: left;
 }
 
-.track-visibility-item[level="1"]
+/* The indent of a track in folders, which code sizes from the track's level as the tree views' indents: folders
+   nest without a limit, which no rule per level covers (#906). */
+.track-visibility-indent
 {
-	margin-left: 12dp;
-}
-
-.track-visibility-item[level="2"]
-{
-	margin-left: 24dp;
-}
-
-.track-visibility-item[level="3"]
-{
-	margin-left: 36dp;
+	display: inline-block;
+	height: 1dp;
 }
 
 /* The track's color (#94), which code gives it as user data; without one it shows nothing. */

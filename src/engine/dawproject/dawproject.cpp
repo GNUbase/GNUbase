@@ -26,6 +26,7 @@
 #include <iomanip>
 #include <limits>
 #include <map>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -207,6 +208,11 @@ namespace gnubase::engine
 			void add(const std::string& name, const void* data, size_t size, bool compress)
 			{
 				const mz_uint level = compress ? MZ_DEFAULT_LEVEL : MZ_NO_COMPRESSION;
+				// miniz stamps each entry with localtime(), whose static result isn't thread-safe outside Windows, so
+				// projects saved at the same time (two backups, say) add their entries one at a time.
+				// One lock for all writers: if parallel saves get slow, miniz could use localtime_r instead.
+				static std::mutex mutex;
+				const std::scoped_lock lock(mutex);
 				if (mz_zip_writer_add_mem(&m_zip, name.c_str(), data, size, level) == MZ_FALSE)
 					throw DawProjectError("can't write " + name + " into " + m_path);
 			}

@@ -3706,7 +3706,14 @@ namespace gnubase::engine
 		require(static_cast<size_t>(steps) <= available,
 			"only " + std::to_string(available) + (undo ? " steps can be undone" : " steps can be redone"));
 		const std::string timeFormat = m_project.setup.timeFormat;
-		const Project before = m_project;
+		// Only what announceWarpedEvents reads: a copy of the whole project made undo slow in large projects (#1266).
+		Project before;
+		before.sampleRate = m_project.sampleRate;
+		before.tempo = m_project.tempo;
+		before.media = m_project.media;
+		before.clips = m_project.clips;
+		before.audioEvents = m_project.audioEvents;
+		const Json layout = trackLayoutJson(m_project);
 		for (int64_t i = 0; i < steps; ++i)
 		{
 			const HistoryStep& step = undo ? m_history.undo() : m_history.redo();
@@ -3717,7 +3724,7 @@ namespace gnubase::engine
 		followTimeFormat(m_project, timeFormat, context);
 		// The project keeps the heights and fold states of removed tracks for undo: a track that comes back or goes
 		// brings its own back or takes them away (#1131).
-		if (Json now = trackLayoutJson(m_project); now != trackLayoutJson(before))
+		if (Json now = trackLayoutJson(m_project); now != layout)
 			context.emit("trackLayout.changed", std::move(now));
 		announceHistory(context);
 		publish();
