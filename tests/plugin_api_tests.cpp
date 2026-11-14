@@ -278,7 +278,7 @@ TEST_CASE("the built-in MIDI effects are builtin: plugins with note ports, param
 		REQUIRE(in.push(controller));
 		REQUIRE(in.push(paramValue(10, ChordGenerator::Chord, 1.0))); // minor
 		note(20, EventType::NoteOn, 70);
-		TransportSegment segment;
+		const TransportSegment segment;
 		Process process = blockWith(in, out);
 		process.frames = g_frames;
 		process.transport = &segment;

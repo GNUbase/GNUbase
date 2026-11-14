@@ -296,7 +296,7 @@ namespace gnubase::engine
 				value.value = parameters[parameter];
 				values.push(value);
 			}
-			if (plugin::Params* params = plugin::extension<plugin::Params>(*effect))
+			if (auto* params = plugin::extension<plugin::Params>(*effect))
 				params->flushParams(values, ignored);
 			return effect;
 		}
@@ -581,8 +581,8 @@ namespace gnubase::engine
 			m_pluginOut[((running.send ? midi::g_effectSlots : 0) + running.slot) % m_pluginOut.size()];
 		out.clear();
 		m_host.setTempoMap(transport.tempoMap);
-		plugin::Process process{frames, -1, plugin::ProcessMode::Realtime, nullptr, 0, nullptr, 0, m_pluginIn, out,
-			m_pluginTransport.data(), plugins::convertTransport(transport, m_pluginTransport)};
+		const plugin::Process process{frames, -1, plugin::ProcessMode::Realtime, nullptr, 0, nullptr, 0, m_pluginIn,
+			out, m_pluginTransport.data(), plugins::convertTransport(transport, m_pluginTransport)};
 		if (frames == 0 || running.effect->process(process) == plugin::ProcessStatus::Error)
 			return;
 		graph::ProcessEvent played;

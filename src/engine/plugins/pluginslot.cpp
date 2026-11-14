@@ -354,7 +354,7 @@ namespace gnubase::engine::plugins
 		{
 			const graph::TransportSegment& segment = transport.segments[i];
 			segments[count++] = segmentAt(segment.offset, segment.position,
-				plugin::Transport::Playing | (segment.recording ? plugin::Transport::Recording : 0U));
+				plugin::Transport::Playing | (segment.recording ? uint32_t{plugin::Transport::Recording} : 0U));
 		}
 		return count;
 	}
