@@ -1084,6 +1084,7 @@ namespace gnubase::ui
 				}
 			}
 		}
+		followTempo(); // the tempo field may have come or gone with the rows or the controls (#1338)
 		showTempo();
 		if (Rml::Context* context = m_view->GetContext())
 			context->RequestNextUpdate(0);
@@ -1091,19 +1092,28 @@ namespace gnubase::ui
 
 	void TrackList::followTransport(const Json& status)
 	{
-		// While playing the display's cursor follows the playback position once a frame, without events; Current Tempo
-		// follows it (#831). The display's own playback watch, made before this one, moves the cursor first.
-		if (status.value("playing", false))
-		{
-			if (!m_playback && alive())
-				m_playback = m_binding.watch<double>(
-					m_root.get(), [this] { return m_display.cursor(); }, [this](const double&) { return showTempo(); });
-		}
-		else
+		m_playing = status.value("playing", false);
+		followTempo();
+		showTempo();
+	}
+
+	void TrackList::followTempo()
+	{
+		if (!m_playing || !alive())
 		{
 			m_playback.reset();
+			return;
 		}
-		showTempo();
+		// The watch runs showTempo once a frame: only watch while the list has a Current Tempo field (#1338).
+		Rml::ElementList fields;
+		m_view->QuerySelectorAll(fields, "[control=currentTempo]");
+		if (fields.empty())
+			m_playback.reset();
+		else if (!m_playback)
+			// While playing the display's cursor follows the playback position once a frame, without events; Current
+			// Tempo follows it (#831). The display's own playback watch, made before this one, moves the cursor first.
+			m_playback = m_binding.watch<double>(
+				m_root.get(), [this] { return m_display.cursor(); }, [this](const double&) { return showTempo(); });
 	}
 
 	bool TrackList::showTempo()
@@ -1111,7 +1121,9 @@ namespace gnubase::ui
 		const Json& project = m_display.project();
 		if (!alive() || !project.is_object())
 			return false;
-		const TimeContext context = projectTime(project);
+		// The display reads its time context once per project answer: the frames of the playback watch must not
+		// build one each (#1338), as the transport bar's tempo field doesn't.
+		const TimeContext& context = m_display.time();
 		const auto cursor = static_cast<int64_t>(std::llround(m_display.cursor() * context.sampleRate));
 		const std::string tempo = tempoText(currentTempo(context, cursor));
 		Rml::ElementList fields;
