@@ -2,10 +2,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Runs clang-tidy on the C++ files a branch changes, so that most of CI's clang-tidy findings turn up before a push:
 # the changed and new .cpp files under src/ and tests/, and the .cpp file next to each changed header. It reports only
-# findings on the lines the branch changed, since the rest passed CI already (and Windows' headers bring a few findings
-# that CI's don't). It needs a compile database, not a build: it configures one in build/tidy, again when a changed
-# file isn't in it yet. CI checks more (every line of every file that includes a changed header), so CI has the last
-# word. On Linux, and so in WSL, it also compiles those files with GCC as CI's linux-x64-gcc job does (build/tidy-gcc).
+# findings on the lines the branch changed and a few around them (below), since the rest passed CI already (and
+# Windows' headers bring a few findings that CI's don't). It needs a compile database, not a build: it configures one
+# in build/tidy, again when a changed file isn't in it yet. CI checks more (every line of every file that includes a
+# changed header), so CI has the last word. On Linux, and so in WSL, it also compiles those files with GCC as CI's
+# linux-x64-gcc job does (build/tidy-gcc).
 # Usage: tools/tidy-changed.sh [base]    base: where the branch starts from (default origin/main)
 # Linux uses a clang-tidy 22 on the PATH (CONTRIBUTING.md). CI's clang-tidy runs on Linux, where libstdc++ and the
 # non-Windows #ifdef branches bring findings that Windows doesn't see (bugprone-unchecked-optional-access never fires
