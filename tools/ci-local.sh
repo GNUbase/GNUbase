@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Runs CI's checks on this machine, all at once, e.g. to reproduce a CI failure (CONTRIBUTING.md):
-# - format: license headers, clang-format and, where the private keyword list is, the keyword scan;
+# - format: license headers, the generated themes, clang-format and, where the private keyword list is, the keyword
+#   scan;
 # - on Windows: windows-x64 (build and tests) and windows-arm64 (cross-compiled; its tests need an ARM64 machine);
 # - on Linux, and on Windows in WSL: linux-gcc and linux-clang (builds and tests), asan-ubsan, tsan and clang-tidy.
 # macOS is left to CI. It checks the commit at HEAD, so commit first: on Windows the Linux jobs run in a clone inside
@@ -114,6 +115,11 @@ job()
 	case $1 in
 	format)
 		sh tools/check-spdx.sh || return 1
+		# resources/themes must be what tools/skin/generate.py writes, as in CI's "Check the generated themes"
+		local python=python3
+		python3 --version >/dev/null 2>&1 || python=python
+		rm -rf "$logs/themes"
+		"$python" tools/skin/generate.py "$logs/themes" && diff -rq resources/themes "$logs/themes" || return 1
 		local format=${CLANG_FORMAT:-clang-format}
 		if [ $os = windows ] && ! command -v "$format" >/dev/null; then
 			format="$("$vswhere" -latest -property installationPath | tr -d '\r')/VC/Tools/Llvm/x64/bin/clang-format.exe"
