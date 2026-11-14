@@ -12,11 +12,13 @@
 #include "platform/log.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <filesystem>
 #include <functional>
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -449,13 +451,21 @@ namespace gnubase::engine::midi
 		void resetAudio(ProjectModel& model, Project& project, CommandContext& context, Json& result)
 		{
 			const std::vector<ObjectId> events = audioTargets(project, context.parameters());
-			// The clip frames each target plays before resetting, to find the piece before a removed one.
-			std::map<ObjectId, std::pair<time::Samples, time::Samples>> played;
-			for (const ObjectId id : events)
+			// Where each event of a target's clip plays before resetting, in project samples and in clip frames, to
+			// find the piece before a removed one.
+			struct Played
 			{
-				const AudioEvent& event = project.audioEvents.at(id);
-				played[id] = {event.offset, event.offset + event.length};
-			}
+				EventSpan span;
+				time::Samples from = 0;
+				time::Samples to = 0;
+			};
+			std::set<ObjectId> targetClips;
+			for (const ObjectId id : events)
+				targetClips.insert(project.audioEvents.at(id).clip);
+			std::map<ObjectId, Played> played;
+			for (const auto& [id, event] : project.audioEvents)
+				if (targetClips.count(event.clip) != 0)
+					played[id] = {eventSpan(project, event), event.offset, event.offset + event.length};
 			Json moved = Json::array();
 			Json removed = Json::array();
 			Json clips = Json::array();
@@ -486,27 +496,31 @@ namespace gnubase::engine::midi
 			{
 				const auto isRemoved = [&removed](ObjectId id)
 				{ return std::find(removed.begin(), removed.end(), Json(id)) != removed.end(); };
-				// The piece before a removed one: the event of its track and clip that played up to where it starts,
-				// or past it into a crossfade. It is the whole original again, or removed too and then has one of
-				// its own; its clip frames come before the piece's, so the chain ends. 0 without one.
-				const auto pieceBefore = [&](ObjectId id)
+				// The piece before a removed one: of the events of its track and clip but follower, whose crossfade
+				// from it is followed, those that played its clip frames up to where it starts, or past it into a
+				// crossfade, the one that ended nearest to where it starts, as the event it was split from did. Not
+				// the first in id order: the follower stretched back over those frames by the Crossfade step, or
+				// another copy of the clip elsewhere on the track, play them too. It is the whole original again,
+				// or removed too and then has one of its own; its clip frames come before the piece's, so the chain
+				// ends. 0 without one.
+				const auto pieceBefore = [&](ObjectId id, ObjectId follower)
 				{
 					while (isRemoved(id))
 					{
 						const AudioEvent& piece = project.audioEvents.at(id);
-						const time::Samples start = played.at(id).first;
+						const Played& where = played.at(id);
 						id = 0;
-						for (const auto& [otherId, other] : project.audioEvents)
+						time::Samples nearest = 0;
+						for (const auto& [otherId, other] : played)
 						{
-							const auto found = played.find(otherId);
-							const auto [from, to] = found != played.end()
-								? found->second
-								: std::make_pair(other.offset, other.offset + other.length);
-							if (otherId != piece.id && other.track == piece.track && other.clip == piece.clip &&
-								from < start && to >= start)
+							const AudioEvent& event = project.audioEvents.at(otherId);
+							const time::Samples distance = std::abs(other.span.end - where.span.start);
+							if (otherId != piece.id && otherId != follower && event.track == piece.track &&
+								event.clip == piece.clip && other.from < where.from && other.to >= where.from &&
+								(id == 0 || distance < nearest))
 							{
 								id = otherId;
-								break;
+								nearest = distance;
 							}
 						}
 					}
@@ -522,11 +536,11 @@ namespace gnubase::engine::midi
 				{
 					if (isRemoved(other))
 						continue;
-					const auto follow = [&](Crossfade& crossfade)
+					const auto follow = [&, follower = other](Crossfade& crossfade)
 					{
 						if (!isRemoved(crossfade.from))
 							return false;
-						crossfade.from = pieceBefore(crossfade.from);
+						crossfade.from = pieceBefore(crossfade.from, follower);
 						if (crossfade.from == 0)
 							crossfade = Crossfade();
 						return true;

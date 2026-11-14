@@ -8,6 +8,7 @@
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
@@ -943,8 +944,23 @@ TEST_CASE(
 	// removes that piece (#1435) and the hand-made crossfade comes back from the piece before it, which is the
 	// whole original again (reference manual p. 367).
 	const Track loop = addTrack(client, dir, "loop", clicks({1000}, 4 * g_quarter));
+	// The piece before is the event that ended where the piece starts, not the first in id order of those that
+	// play its clip frames (#1566): the second event, stretched back over them, and another copy of the clip
+	// elsewhere on the track play them too.
+	enum class Created : uint8_t
+	{
+		FirstFirst,
+		SecondFirst,
+		CopyFirst,
+	};
+	const Created created = GENERATE(Created::FirstFirst, Created::SecondFirst, Created::CopyFirst);
+	CAPTURE(created);
+	if (created == Created::CopyFirst)
+		loop.add(client, 200000, 0, 20000);
+	ObjectId second = created == Created::SecondFirst ? loop.add(client, 19000, 18000, 30000) : 0;
 	const ObjectId first = loop.add(client, 1000, 0, 20000);
-	const ObjectId second = loop.add(client, 19000, 18000, 30000);
+	if (second == 0)
+		second = loop.add(client, 19000, 18000, 30000);
 	run(client, "crossfade.set", {{"from", first}, {"to", second}, {"mode", "equalPower"}});
 	const std::vector<std::vector<int64_t>> before = eventsOn(client, loop.track);
 	run(client, "quantize.set", {{"preset", "1/4"}});
@@ -1071,6 +1087,7 @@ TEST_CASE(
 		CHECK(reset.at("removed").empty());
 		std::vector<std::vector<int64_t>> expected = before;
 		expected.push_back({21000, 20000, length - 100});
+		std::sort(expected.begin(), expected.end());
 		CHECK(eventsOn(client, loop.track) == expected);
 		CHECK(crossfadeOf(client, second).at("from") == first);
 	}
