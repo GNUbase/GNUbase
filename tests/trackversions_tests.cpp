@@ -546,3 +546,42 @@ TEST_CASE("a version command that skips a track leaves it without a version of i
 	CHECK(f.withVersions().empty());
 	CHECK_THAT(f.fails("trackVersion.remove", {{"tracks", {plain}}}), ContainsSubstring("only one"));
 }
+
+TEST_CASE("a tempo change separates the shared copies of an inactive version that it retimes differently", "[unit]")
+{
+	Fixture f;
+	constexpr int64_t quarterSamples = 24000; // at 48 kHz and 120 BPM
+	f.call("project.set", {{"tempoTrackActive", true}});
+	const int64_t track = f.track("midi");
+	const int64_t first = f.call("midiPart.add", {{"track", track}, {"position", 0}, {"length", 4 * quarterSamples}})
+							  .at("part")
+							  .at("id")
+							  .get<int64_t>();
+	f.call("note.add",
+		{{"part", first},
+			{"notes", {{{"position", g_quarter}, {"length", g_quarter}, {"pitch", 60}, {"velocity", 1.0}}}}});
+	const int64_t later = f.call("event.copy", {{"events", {first}}, {"delta", 8 * quarterSamples}, {"shared", true}})
+							  .at("events")
+							  .at(0)
+							  .get<int64_t>();
+	const auto group = [&f](int64_t id) { return f.part(id).at("shared").get<int64_t>(); };
+	REQUIRE(group(first) != 0);
+	REQUIRE(group(later) == group(first));
+	f.call("trackVersion.add", {{"tracks", {track}}});
+
+	// Half the tempo from the sixth quarter, while both copies lie in the inactive version: the copy after the tempo
+	// event retimes its note, the first one doesn't, so they can't share their notes any more.
+	f.call("tempo.add", {{"position", 6 * g_quarter}, {"bpm", 60.0}, {"ramp", false}});
+	f.call("trackVersion.activate", {{"tracks", {track}}, {"version", 1}});
+	CHECK(group(first) == 0);
+	CHECK(group(later) == 0);
+	const Json firstNote = f.part(first).at("notes").at(0);
+	const Json laterNote = f.part(later).at("notes").at(0);
+	CHECK(firstNote.at("id") != laterNote.at("id"));
+	CHECK(firstNote.at("position") == g_quarter);
+	CHECK(laterNote.at("position") == g_quarter / 2);
+	CHECK(laterNote.at("length") == g_quarter / 2);
+	// They are edited apart now.
+	f.call("note.set", {{"part", first}, {"notes", {{{"id", firstNote.at("id")}, {"pitch", 72}}}}});
+	CHECK(f.part(later).at("notes").at(0).at("pitch") == 60);
+}
