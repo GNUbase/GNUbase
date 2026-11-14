@@ -7,6 +7,7 @@
 #include "platform/rt/realtime.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace gnubase::engine::plugins
@@ -17,6 +18,7 @@ namespace gnubase::engine::plugins
 		constexpr uint32_t g_maxBank = 16383; // MIDI's bank select: 14 bits
 		constexpr uint32_t g_bankSelect = 0;
 		constexpr uint32_t g_bankSelectLsb = 32;
+		constexpr uint32_t g_midi2Voice = 0x40000000; // a MIDI 2.0 channel voice message on group 0
 
 		void silence(const graph::ProcessContext& context) noexcept
 		{
@@ -214,7 +216,7 @@ namespace gnubase::engine::plugins
 		m_seenChanges = changes;
 	}
 
-	void convertEvent(const graph::ProcessEvent& event, uint32_t frames, plugin::EventList& out) noexcept
+	void convertEvent(const graph::ProcessEvent& event, uint32_t frames, plugin::EventList& out, bool midi2) noexcept
 	{
 		using Type = graph::ProcessEvent::Type;
 		plugin::Event converted;
@@ -230,6 +232,43 @@ namespace gnubase::engine::plugins
 			converted.data[0] = (status | (event.channel & 0x0FU)) | ((data1 & 0x7FU) << 8) | ((data2 & 0x7FU) << 16);
 			out.push(converted);
 		};
+		// A MIDI 2.0 channel voice message: status and two bytes in the first word, the value in the second.
+		const auto packet = [&](uint32_t status, uint32_t byte3, uint32_t byte4, uint32_t value)
+		{
+			converted.type = plugin::EventType::Midi2;
+			converted.key = -1;
+			converted.data[0] =
+				g_midi2Voice | ((status | (event.channel & 0x0FU)) << 16) | ((byte3 & 0xFFU) << 8) | (byte4 & 0xFFU);
+			converted.data[1] = value;
+			out.push(converted);
+		};
+		if (midi2)
+		{
+			switch (event.type)
+			{
+			case Type::Controller:
+				packet(0xB0U, event.key, 0, event.value);
+				return;
+			case Type::PitchBend:
+				packet(0xE0U, 0, 0, event.value);
+				return;
+			case Type::ChannelPressure:
+				packet(0xD0U, 0, 0, event.value);
+				return;
+			case Type::PolyPressure:
+				packet(0xA0U, event.key, 0, event.value);
+				return;
+			case Type::Program:
+			{
+				const bool bank = event.value <= g_maxBank;
+				packet(0xC0U, 0, bank ? 1 : 0,
+					(uint32_t{event.key} << 24) | (bank ? (((event.value >> 7U) << 8) | (event.value & 0x7FU)) : 0));
+				return;
+			}
+			default:
+				break;
+			}
+		}
 		switch (event.type)
 		{
 		case Type::NoteOn:
@@ -290,34 +329,107 @@ namespace gnubase::engine::plugins
 			convertEvent(event, context.frames, m_eventsIn);
 	}
 
-	uint32_t PluginSlot::convertTransport(const graph::TransportBlock& transport) noexcept
+	uint32_t convertTransport(
+		const graph::TransportBlock& transport, std::vector<plugin::TransportSegment>& segments) noexcept
 	{
+		const auto segmentAt = [&transport](uint32_t offset, int64_t position, uint32_t flags)
+		{
+			plugin::TransportSegment converted;
+			converted.offset = offset;
+			converted.transport.flags = flags | plugin::Transport::TempoValid;
+			converted.transport.tempo = transport.tempo;
+			converted.transport.position = position;
+			return converted;
+		};
 		if (!transport.playing || transport.segmentCount == 0)
 		{
-			m_transport[0] = plugin::TransportSegment{};
-			m_transport[0].transport.position = transport.position;
+			segments[0] = segmentAt(0, transport.position, 0);
 			return 1;
 		}
 		// After a count-in, playback starts within the block: until then it is stopped.
 		uint32_t count = 0;
 		if (transport.segments[0].offset > 0)
-		{
-			m_transport[0] = plugin::TransportSegment{};
-			m_transport[0].transport.position = transport.position;
-			count = 1;
-		}
-		for (size_t i = 0; i < transport.segmentCount && count < m_transport.size(); ++i)
+			segments[count++] = segmentAt(0, transport.position, 0);
+		for (size_t i = 0; i < transport.segmentCount && count < segments.size(); ++i)
 		{
 			const graph::TransportSegment& segment = transport.segments[i];
-			plugin::TransportSegment& converted = m_transport[count++];
-			converted = plugin::TransportSegment{};
-			converted.offset = segment.offset;
-			converted.transport.flags = plugin::Transport::Playing;
-			if (segment.recording)
-				converted.transport.flags |= plugin::Transport::Recording;
-			converted.transport.position = segment.position;
+			segments[count++] = segmentAt(segment.offset, segment.position,
+				plugin::Transport::Playing | (segment.recording ? plugin::Transport::Recording : 0U));
 		}
 		return count;
+	}
+
+	bool toGraphEvent(const plugin::Event& event, const plugin::EventList& list, graph::ProcessEvent& out) noexcept
+	{
+		using Type = graph::ProcessEvent::Type;
+		if (event.space != plugin::g_coreEventSpace)
+			return false;
+		out = graph::ProcessEvent{};
+		out.offset = event.offset;
+		out.channel = static_cast<uint8_t>(std::clamp<int>(event.channel, 0, 15));
+		out.key = static_cast<uint8_t>(std::clamp<int>(event.key, 0, 127));
+		switch (event.type)
+		{
+		case plugin::EventType::NoteOn:
+		case plugin::EventType::NoteOff:
+			out.type = event.type == plugin::EventType::NoteOn ? Type::NoteOn : Type::NoteOff;
+			out.velocity = static_cast<uint16_t>(std::lround(std::clamp(event.value, 0.0, 1.0) * 65535.0));
+			return true;
+		case plugin::EventType::ParamValue:
+			out.type = Type::Parameter;
+			out.channel = 0;
+			out.key = 0;
+			out.parameter = event.param;
+			out.parameterValue = event.value;
+			return true;
+		case plugin::EventType::NoteExpression:
+			out.type = Type::NoteExpression;
+			out.parameter = event.expression;
+			out.parameterValue = event.value;
+			return true;
+		case plugin::EventType::Sysex:
+			out.type = Type::SysEx;
+			out.channel = 0;
+			out.key = 0;
+			out.data = list.bytes(event);
+			out.size = event.data[1];
+			return true;
+		case plugin::EventType::Midi2:
+			break;
+		default:
+			return false;
+		}
+		const uint32_t word = event.data[0];
+		if ((word & 0xF0000000U) != g_midi2Voice)
+			return false;
+		out.channel = static_cast<uint8_t>((word >> 16) & 0x0FU);
+		out.key = static_cast<uint8_t>((word >> 8) & 0xFFU); // all 8 bits, as the graph has them
+		out.value = event.data[1];
+		switch ((word >> 16) & 0xF0U)
+		{
+		case 0xB0U:
+			out.type = Type::Controller;
+			return true;
+		case 0xE0U:
+			out.type = Type::PitchBend;
+			out.key = 0;
+			return true;
+		case 0xD0U:
+			out.type = Type::ChannelPressure;
+			out.key = 0;
+			return true;
+		case 0xA0U:
+			out.type = Type::PolyPressure;
+			return true;
+		case 0xC0U:
+			out.type = Type::Program;
+			out.key = static_cast<uint8_t>((event.data[1] >> 24) & 0x7FU);
+			out.value =
+				(word & 1U) != 0 ? (((event.data[1] >> 8) & 0x7FU) << 7) | (event.data[1] & 0x7FU) : 0xFFFFFFFFU;
+			return true;
+		default:
+			return false;
+		}
 	}
 
 	void PluginSlot::process(const graph::ProcessContext& context) noexcept
@@ -369,7 +481,7 @@ namespace gnubase::engine::plugins
 		const plugin::Process process{context.frames, m_steadyTime, m_mode.load(std::memory_order_relaxed),
 			m_inputs.data(), static_cast<uint32_t>(m_inputs.size()), m_outputs.data(),
 			static_cast<uint32_t>(m_outputs.size()), m_eventsIn, m_eventsOut, m_transport.data(),
-			convertTransport(context.transport)};
+			convertTransport(context.transport, m_transport)};
 		const plugin::ProcessStatus status = m_started ? m_plugin->process(process) : plugin::ProcessStatus::Error;
 		m_steadyTime += context.frames;
 

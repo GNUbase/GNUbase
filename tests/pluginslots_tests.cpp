@@ -455,6 +455,7 @@ TEST_CASE("a plugin sees which segments of a block record", "[unit]")
 	transport.playing = true;
 	transport.recording = true;
 	transport.position = 1000;
+	transport.tempo = 90.0;
 	transport.segments = segments.data();
 	transport.segmentCount = segments.size();
 	const graph::EventBuffer eventsIn(4);
@@ -465,8 +466,11 @@ TEST_CASE("a plugin sees which segments of a block record", "[unit]")
 	slot.process({audio.data(), 2, 128, eventsIn, eventsOut, transport});
 	REQUIRE(plugin.transportCount == 2);
 	using gnubase::plugin::Transport;
-	CHECK(plugin.transport[0].transport.flags == Transport::Playing);
-	CHECK(plugin.transport[1].transport.flags == (Transport::Playing | Transport::Recording));
+	// Every segment has the block's tempo.
+	CHECK(plugin.transport[0].transport.flags == (Transport::Playing | Transport::TempoValid));
+	CHECK(plugin.transport[1].transport.flags == (Transport::Playing | Transport::Recording | Transport::TempoValid));
+	CHECK(plugin.transport[0].transport.tempo == 90.0);
+	CHECK(plugin.transport[1].transport.tempo == 90.0);
 	CHECK(plugin.transport[1].offset == 64);
 	CHECK(plugin.transport[1].transport.position == 1064);
 }
@@ -492,10 +496,11 @@ TEST_CASE("a plugin sees a block where playback starts within it as stopped unti
 	slot.process({audio.data(), 2, 128, eventsIn, eventsOut, transport});
 	REQUIRE(plugin.transportCount == 2);
 	CHECK(plugin.transport[0].offset == 0);
-	CHECK(plugin.transport[0].transport.flags == 0); // stopped
+	using gnubase::plugin::Transport;
+	CHECK(plugin.transport[0].transport.flags == Transport::TempoValid); // stopped
 	CHECK(plugin.transport[0].transport.position == 28000);
 	CHECK(plugin.transport[1].offset == 64);
-	CHECK(plugin.transport[1].transport.flags == gnubase::plugin::Transport::Playing);
+	CHECK(plugin.transport[1].transport.flags == (Transport::Playing | Transport::TempoValid));
 	CHECK(plugin.transport[1].transport.position == 24000);
 }
 
