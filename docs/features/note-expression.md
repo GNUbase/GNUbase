@@ -22,16 +22,21 @@ that has any, and they are saved in the project's GNUbase entry. A project whose
 with them clamped, as the notes' other values, and without points of expressions it doesn't know.
 
 **Cutting and resizing.** Splitting a part with `splitNotes` (`event.split`) leaves the first piece of a cut note its
-points before the cut, and the rest gets the points from the cut on, moved back by the cut, with each expression's value
-at the cut as its initial point. A note whose start `note.set` moves while its end stays (its start resized) keeps its
-expression where it is the same way: moved later, the values at the new start become its initial points; moved earlier,
-its initial values start at the new start and its other points stay where they were. The key editor's split tool cuts
-notes the same way through `note.split` (#1419); a position that cuts none of them changes nothing, and the project
-doesn't count as modified. Its glue tool joins a note to the next one of its pitch through `note.glue`: the glued note
-keeps its own points up to where the next one started, then has the next one's up to where it ended, so that it plays
-what the two played (the points a note has at or past its end, e.g. after the trim tool shortened it, never played);
-glued again after a split, it has an extra point at the cut, with the value it had there. The reference manual's glue
-keeps the first note's properties (p. 1215), and expression is no property but what the note plays over time.
+points before the cut, and the rest gets the points from the cut on, moved back by the cut, with each expression's
+value at the cut as its initial point. A note whose start `note.set` moves while its end stays (its start resized) keeps
+its expression where it is the same way: moved later, the values at the new start become its initial points; moved
+earlier, its initial values start at the new start and its other points stay where they were. The key editor's split
+tool cuts notes the same way through `note.split` (#1419); a position that cuts none of them changes nothing, and the
+project doesn't count as modified. Its glue tool joins a note to the next one of its pitch through `note.glue`: the
+glued note keeps its own points up to where the next one started, then has the next one's up to where it ended, and
+after a next one that ends inside it its own again, with its values there, so that it plays what the two played (the
+points a note has at or past its end, e.g. after the trim tool shortened it, never played). Where one note's points
+give way to the other's, an expression that the first one has and the other one has no point of at its start gets its
+default there, as the other note started with it: MPE's initial values for tuning, pressure and brightness, as playback
+gives them, unity gain for volume and the center for pan. Vibrato and expression have no default (the plugin decides),
+so they keep their value. Glued again after a split, the note has an extra point at the cut, with the value it had
+there. The reference manual's glue keeps the first note's properties (p. 1215), and expression is no property but what
+the note plays over time.
 
 **Recording MPE** (pp. 1295-1298). With the user setting `midi.mpeInput` on, MIDI recording and retrospective
 recording take their input as MPE's lower zone: channel 1 is the master channel, whose messages record as before, and
@@ -51,8 +56,9 @@ before its note-on, and of the three that the notes of its channel express, a no
 each it has no point of at its start (a centered bend, no pressure, CC 74 at 64), so that it doesn't start at what
 the channel's previous note left; plugins get these initial values too. What the channel's notes don't express it
 doesn't get: a channel whose notes bend and brighten but never press sends no channel pressure. The sequencer's
-snapshot marks which of the three each note has a point of at its start, so this costs no lookup per point. So a recording of an MPE controller plays
-back to an MPE instrument as it was played. MIDI sends before the modifiers get the notes' expression too.
+snapshot marks which of the three each note has a point of at its start, so this costs no lookup per point. So a
+recording of an MPE controller plays back to an MPE instrument as it was played. MIDI sends before the modifiers get
+the notes' expression too.
 
 The acceptance test records MPE through `midi.inject` and plays it back to the note probe, comparing what the
 instrument gets with what was played (`tests/noteexpression_tests.cpp`); retrospective recording takes MPE input with
@@ -60,11 +66,14 @@ instrument gets with what was played (`tests/noteexpression_tests.cpp`); retrosp
 
 ## Not yet
 
-The note expression editor and the expression overlay in the event display (pp. 1303-1315), the inspector's Note
-Expression section with its input assignments, MIDI learn, value ranges and bypass (pp. 1300-1302), recording MIDI
-controllers as note expression, overdub and converting controller events into note expression (pp. 1316-1318), the
-Note Expression Input Device page with its MIDI input, initial values, Use for Tuning and channel rotation (pp.
-1295-1298), the upper MPE zone, a plugin's own expressions with their names and ranges (VST3 custom note
-expressions), CLAP and MIDI 2.0 per-note controllers in the adapters, MPE output that allocates channels for notes
-that share one and a pitch range other than 48, chasing expression after a jump into a note, per-note expression in
-DAWproject's own note content, and MIDI effects that move notes moving their expression.
+- The note expression editor and the expression overlay in the event display (pp. 1303-1315, #1512).
+- The inspector's Note Expression section with its input assignments, MIDI learn, value ranges and bypass (pp.
+  1300-1302, #1513).
+- The Note Expression Input Device page with its MIDI input, initial values, Use for Tuning and channel rotation, and
+  the upper MPE zone (pp. 1295-1298, #1514).
+- Recording MIDI controllers as note expression, overdub and converting controller events into note expression (pp.
+  1316-1318, #1515).
+- A plugin's own expressions with their names and ranges (VST3 custom note expressions), CLAP and MIDI 2.0 per-note
+  controllers in the adapters, MPE output that allocates channels for notes that share one and a pitch range other
+  than 48, chasing expression after a jump into a note, per-note expression in DAWproject's own note content, and MIDI
+  effects that move notes moving their expression (#1516).

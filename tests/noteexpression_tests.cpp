@@ -454,25 +454,117 @@ TEST_CASE("a note.split that cuts nothing leaves the project unmodified", "[inte
 
 TEST_CASE("note.glue leaves out the next note's points from its end on: they didn't play", "[integration]")
 {
-	// Review of #1480: the next note ends inside the first, and has points at and past its end, e.g. after a trim.
+	// Review of #1480: the next note ends after the first, and has points at and past its end, e.g. after a trim.
 	Setup setup;
 	Client& client = setup.client;
 	const ObjectId part = addPart(client, setup.track);
 	const Json added = run(client, "note.add",
 		{{"part", part},
 			{"notes",
-				{{{"position", 0}, {"length", 2 * g_beatTicks}, {"pitch", 60}, {"velocity", 0.5},
+				{{{"position", 0}, {"length", g_beatTicks}, {"pitch", 60}, {"velocity", 0.5},
 					 {"expressions", {point("tuning", 0, 0.0)}}},
-					{{"position", g_beatTicks / 2}, {"length", g_beatTicks / 2}, {"pitch", 60}, {"velocity", 0.5},
+					{{"position", g_beatTicks / 2}, {"length", g_beatTicks}, {"pitch", 60}, {"velocity", 0.5},
 						{"expressions",
-							{point("tuning", 0, 1.0), point("tuning", g_beatTicks / 4, 2.0),
-								point("tuning", g_beatTicks / 2, 3.0), point("pressure", g_beatTicks, 0.5)}}}}}});
+							{point("tuning", 0, 1.0), point("tuning", g_beatTicks / 2, 2.0),
+								point("tuning", g_beatTicks, 3.0), point("pressure", 2 * g_beatTicks, 0.5)}}}}}});
 	const Json glued = run(client, "note.glue",
 		{{"part", part}, {"note", added.at("notes").at(0).at("id")}, {"next", added.at("notes").at(1).at("id")}})
 						   .at("note");
-	CHECK(glued.at("length") == 2 * g_beatTicks);
+	CHECK(glued.at("length") == 3 * g_beatTicks / 2);
+	CHECK(
+		pointsOf(glued) == Points{{"tuning", 0, 0}, {"tuning", g_beatTicks / 2, 1000}, {"tuning", g_beatTicks, 2000}});
+}
+
+TEST_CASE(
+	"note.glue gives the join the defaults of what the next note doesn't express, across a gap too", "[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	const ObjectId part = addPart(client, setup.track);
+	const Json added = run(client, "note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", 0}, {"length", g_beatTicks}, {"pitch", 60}, {"velocity", 0.5},
+					 {"expressions",
+						 {point("tuning", 0, 0.0), point("vibrato", 0, 0.5), point("tuning", g_beatTicks / 2, 2.0),
+							 point("pressure", g_beatTicks / 2, 0.8), point("volume", g_beatTicks / 2, 2.0)}}},
+					{{"position", 2 * g_beatTicks}, {"length", g_beatTicks}, {"pitch", 60}, {"velocity", 0.5},
+						{"expressions", {point("pressure", 0, 0.3), point("brightness", g_beatTicks / 2, 1.0)}}}}}});
+	const Json glued = run(client, "note.glue",
+		{{"part", part}, {"note", added.at("notes").at(0).at("id")}, {"next", added.at("notes").at(1).at("id")}})
+						   .at("note");
+	CHECK(glued.at("length") == 3 * g_beatTicks);
+	// Bent up and louder before the gap, the next note played unbent at unity gain: the join goes back to that.
+	// Vibrato has no default, so the note keeps its own; the next note's pressure at its start is its own.
 	CHECK(pointsOf(glued) ==
-		Points{{"tuning", 0, 0}, {"tuning", g_beatTicks / 2, 1000}, {"tuning", 3 * g_beatTicks / 4, 2000}});
+		Points{{"brightness", 5 * g_beatTicks / 2, 1000}, {"pressure", g_beatTicks / 2, 800},
+			{"pressure", 2 * g_beatTicks, 300}, {"tuning", 0, 0}, {"tuning", g_beatTicks / 2, 2000},
+			{"tuning", 2 * g_beatTicks, 0}, {"vibrato", 0, 500}, {"volume", g_beatTicks / 2, 2000},
+			{"volume", 2 * g_beatTicks, 1000}});
+}
+
+TEST_CASE("note.glue of a note inside the first one goes on with the first one's expression after it", "[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	const ObjectId part = addPart(client, setup.track);
+	const Json added = run(client, "note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", 0}, {"length", 4 * g_beatTicks}, {"pitch", 60}, {"velocity", 0.5},
+					 {"expressions",
+						 {point("tuning", 0, 1.0), point("tuning", 2 * g_beatTicks, 2.0),
+							 point("tuning", 3 * g_beatTicks, 3.0)}}},
+					{{"position", g_beatTicks}, {"length", 3 * g_beatTicks / 2}, {"pitch", 60}, {"velocity", 0.5},
+						{"expressions", {point("brightness", 0, 1.0), point("tuning", g_beatTicks / 2, -1.0)}}}}}});
+	const Json glued = run(client, "note.glue",
+		{{"part", part}, {"note", added.at("notes").at(0).at("id")}, {"next", added.at("notes").at(1).at("id")}})
+						   .at("note");
+	CHECK(glued.at("length") == 4 * g_beatTicks);
+	// Up to the next note's end its expression, unbent at its start; then the first one's again, as it was there.
+	CHECK(pointsOf(glued) ==
+		Points{{"brightness", g_beatTicks, 1000}, {"brightness", 5 * g_beatTicks / 2, 500}, {"tuning", 0, 1000},
+			{"tuning", g_beatTicks, 0}, {"tuning", 3 * g_beatTicks / 2, -1000}, {"tuning", 5 * g_beatTicks / 2, 2000},
+			{"tuning", 3 * g_beatTicks, 3000}});
+}
+
+TEST_CASE("note.split and note.glue refuse notes the part doesn't have, and undo in one step", "[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	const ObjectId part = addPart(client, setup.track);
+	const Json added = run(client, "note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", 0}, {"length", 2 * g_beatTicks}, {"pitch", 60}, {"velocity", 0.5}},
+					{{"position", g_beatTicks}, {"length", 2 * g_beatTicks}, {"pitch", 60}, {"velocity", 0.5}}}}});
+	const Json first = added.at("notes").at(0).at("id");
+	const Json second = added.at("notes").at(1).at("id");
+	const auto notes = [&] { return run(client, "project.get").at("midiParts").at(0).at("notes"); };
+	const Json before = notes();
+	CHECK_THAT(
+		reject(client, "note.split", {{"part", part}, {"notes", {first, 999999}}, {"position", g_beatTicks / 2}}),
+		ContainsSubstring("no note 999999"));
+	CHECK_THAT(reject(client, "note.glue", {{"part", part}, {"note", first}, {"next", 999999}}),
+		ContainsSubstring("no note 999999"));
+	CHECK_THAT(reject(client, "note.glue", {{"part", part}, {"note", 999999}, {"next", second}}),
+		ContainsSubstring("no note 999999"));
+	CHECK(notes() == before);
+
+	// Both notes cut at once, then put back by one undo.
+	CHECK(run(client, "note.split", {{"part", part}, {"notes", {first, second}}, {"position", 3 * g_beatTicks / 2}})
+			  .at("notes")
+			  .size() == 2);
+	CHECK(notes().size() == 4);
+	run(client, "history.undo");
+	CHECK(notes() == before);
+
+	// Overlapping notes glue to the later end, and one undo brings both back.
+	const Json glued = run(client, "note.glue", {{"part", part}, {"note", first}, {"next", second}}).at("note");
+	CHECK(glued.at("length") == 3 * g_beatTicks);
+	CHECK(notes().size() == 1);
+	run(client, "history.undo");
+	CHECK(notes() == before);
 }
 
 TEST_CASE("resizing a note's start keeps its expression where it was", "[integration]")

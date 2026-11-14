@@ -38,20 +38,29 @@ mkdir -p "$repo/src" "$repo/build/tidy" "$repo/build/tidy-gcc"
 lines() { i=1; while [ $i -le 30 ]; do echo "int v$i;"; i=$((i + 1)); done; }
 for file in a b c; do lines > "$repo/src/$file.cpp"; done
 printf 'build/\n' > "$repo/.gitignore"
-# Both databases list a.cpp and b.cpp; GCC's (Linux) compiles with "true".
-for file in a b; do
-	printf '{"directory": "%s", "file": "%s/src/%s.cpp", "command": "true -o x"}\n' "$repo" "$repo" "$file"
-done | paste -s -d, - | sed 's/.*/[&]/' | tee "$repo/build/tidy/compile_commands.json" > "$repo/build/tidy-gcc/compile_commands.json"
+# Both databases list a.cpp and b.cpp, compiled on Linux by stubs for Clang (build/tidy) and GCC (build/tidy-gcc)
+# that report an error, failing, when $tmp/<compiler>-error exists.
+for compiler in clang:tidy gcc:tidy-gcc; do
+	printf '#!/bin/sh\n[ -e "$0-error" ] || exit 0\necho "a.cpp:1:1: error: %s failed"\nexit 1\n' "${compiler%:*}" \
+		> "$tmp/${compiler%:*}"
+	chmod +x "$tmp/${compiler%:*}"
+	for file in a b; do
+		printf '{"directory": "%s", "file": "%s/src/%s.cpp", "command": "%s -o x"}\n' "$repo" "$repo" "$file" \
+			"$tmp/${compiler%:*}"
+	done | paste -s -d, - | sed 's/.*/[&]/' > "$repo/build/${compiler#*:}/compile_commands.json"
+done
 echo "GNUBASE_LTO:BOOL=OFF" > "$repo/build/tidy-gcc/CMakeCache.txt"
 git -C "$repo" init -q && git -C "$repo" add . && git -C "$repo" commit -q -m base || exit 1
 
 # a.cpp: line 2 changed, and lines 16-18 added after line 15, as a braced "else if" in the middle of a file would be.
-# b.cpp: lines 10-12 deleted. c.cpp: deleted.
+# b.cpp: a line that starts with "++ " added after line 1 (it reads "+++ " in the diff, like a file header), lines
+# 10-12 deleted. c.cpp: deleted.
 sed -i -e '2s/.*/int changed;/' -e '15a\
 else if (y)\
 {\
 }' "$repo/src/a.cpp"
-sed -i '10,12d' "$repo/src/b.cpp"
+sed -i -e '10,12d' -e '1a\
+++ b/x;' "$repo/src/b.cpp"
 git -C "$repo" rm -q src/c.cpp
 git -C "$repo" commit -q -am change || exit 1
 
@@ -84,17 +93,48 @@ expect()
 	fi
 }
 
+# printed <description> <text>: looks for the text in the script's output.
+printed()
+{
+	if grep -q -F "$2" "$tmp/output"; then
+		echo "ok: $1"
+	else
+		echo "FAILED: $1"
+		sed 's/^/    /' "$tmp/output"
+		failures=$((failures + 1))
+	fi
+}
+
 check "without findings the script passes" 0
 [ "$(wc -l < "$tmp/filters" | tr -d ' ')" -eq 2 ] && echo "ok: clang-tidy checks both changed files" ||
 	{ echo "FAILED: clang-tidy checks both changed files"; failures=$((failures + 1)); }
 expect "a change in the first lines starts at 1, a block 5 lines on both sides" -F 'a.cpp","lines":[[1,7],[11,23]]}'
-expect "a deletion gets the 5 lines on both sides of it" -F 'b.cpp","lines":[[4,14]]}'
+expect "a deletion gets the 5 lines on both sides of it, after an added line that reads like a file header" \
+	-F 'b.cpp","lines":[[1,7],[5,15]]}'
 expect "a deleted file gets no entry" -v -F 'c.cpp'
+if [ "$(uname -s)" = Linux ]; then
+	printed "Clang compiles the changed files" "Clang compiles them."
+	printed "GCC compiles the changed files" "GCC compiles them."
+	for compiler in clang gcc; do
+		touch "$tmp/$compiler-error"
+		check "an error from $compiler fails the script" 1
+		printed "the error from $compiler is printed" "error: $compiler failed"
+		rm "$tmp/$compiler-error"
+	done
+fi
 
 touch "$tmp/finding"
 check "a finding next to a change fails the script" 1
-grep -q "readability-inconsistent-ifelse-braces" "$tmp/output" && echo "ok: the finding is printed" ||
-	{ echo "FAILED: the finding is printed"; failures=$((failures + 1)); }
+printed "the finding is printed" "readability-inconsistent-ifelse-braces"
+rm "$tmp/finding"
+
+# A branch that only deletes a file has nothing to check.
+git -C "$repo" checkout -q --detach HEAD~1 && git -C "$repo" rm -q src/c.cpp && git -C "$repo" commit -q -m delete ||
+	exit 1
+check "only a deleted file passes" 0
+printed "only a deleted file says so" "No changed C++ lines to check."
+[ -s "$tmp/filters" ] && { echo "FAILED: only a deleted file runs no clang-tidy"; failures=$((failures + 1)); } ||
+	echo "ok: only a deleted file runs no clang-tidy"
 
 [ "$failures" -eq 0 ] && echo "all tidy-changed tests passed" && exit 0
 echo "$failures tidy-changed test(s) failed"
