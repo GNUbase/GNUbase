@@ -298,3 +298,45 @@ TEST_CASE("the articulation map setup opened again for another track assigns to 
 		}));
 	CHECK(f.trackMap() == second);
 }
+
+TEST_CASE("the articulation map setup opened again without a track can't assign, and for its track keeps the map shown",
+	"[ui]")
+{
+	Fixture f;
+	// The fixture's track has the second of two maps.
+	f.app.call("articulationMap.add", {{"name", "Brass"}});
+	const auto second = f.app.call("articulationMap.add", {{"name", "Strings"}}).at("map").at("id").get<uint64_t>();
+	f.app.call("track.set", {{"track", f.track}, {"articulationMap", second}});
+	const auto open = [&f]
+	{
+		f.app.keys().run("midi.articulationMapSetup", Json::object(), f.app.main(), nullptr);
+		REQUIRE(f.app.waitUntil([&f] { return f.shown("#articulation-maps-dialog"); }));
+		f.app.shell().step(std::chrono::milliseconds(0));
+	};
+	const auto selected = [&f]
+	{
+		const Json item = f.elements("#articulation-maps listitem.selected");
+		return item.size() == 1 ? item[0].value("text", std::string()) : std::string();
+	};
+	open();
+	REQUIRE(f.app.waitUntil([&] { return selected() == "Strings"; }));
+	// Browsed to the first map, then opened again for the same track: it stays.
+	f.app.ui().click(std::nullopt, {"#articulation-maps listitem", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return selected() == "Brass"; }));
+	open();
+	CHECK(selected() == "Brass");
+	CHECK(f.shown("#articulation-map-assign"));
+	// Without a MIDI or instrument track selected there is no track to assign to, as when it opens fresh.
+	f.app.appUi().trackList()->select({});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	open();
+	CHECK_FALSE(f.shown("#articulation-map-assign"));
+	// The track again: its map, and Assign to Track.
+	f.app.appUi().trackList()->select({f.track});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	open();
+	CHECK(selected() == "Strings");
+	CHECK(f.shown("#articulation-map-assign"));
+	CHECK(f.elements("#articulation-maps-dialog").size() == 1);
+}
