@@ -394,11 +394,22 @@ namespace gnubase::engine
 		uint64_t position = m_device->position();
 		// Every sampler plays its sample from the first block (#1180). A file whose read stalls fails the render
 		// after the last round instead of holding it for good (#1343).
-		for (int round = 1; !waitForSamples(m_offlineSampleWait); ++round)
+		// The error and the warnings name the files, so that a user knows where to look.
+		for (int round = 1;; ++round)
 		{
+			const std::set<std::string> waiting = waitForSamples(m_offlineSampleWait);
+			if (waiting.empty())
+				break;
+			std::string files;
+			for (const std::string& file : waiting)
+			{
+				if (!files.empty())
+					files += ", ";
+				files += file;
+			}
 			if (round == g_offlineSampleRounds)
-				throw CommandError("the render gave up waiting for the samplers' samples to be read");
-			logging::warning("The render still waits for the samplers' samples to be read");
+				throw CommandError("the render gave up waiting for the samplers' samples to be read: " + files);
+			logging::warning("The render still waits for the samplers' samples to be read: {}", files);
 		}
 		for (uint64_t done = 0; done < frames;)
 		{
@@ -903,12 +914,11 @@ namespace gnubase::engine
 		m_sampleLoader.setRead(std::move(read));
 	}
 
-	bool AudioEngine::waitForSamples(std::chrono::milliseconds timeout)
+	std::set<std::string> AudioEngine::waitForSamples(std::chrono::milliseconds timeout)
 	{
 		// Only for the files that samplers wait for, not for one being read that none wants any more.
-		const bool read = m_sampleLoader.waitUntilRead(timeout, updateSamples());
-		updateSamples();
-		return read;
+		m_sampleLoader.waitUntilRead(timeout, updateSamples());
+		return updateSamples();
 	}
 
 	void AudioEngine::postSampleUpdate()
@@ -2527,7 +2537,8 @@ namespace gnubase::engine
 		engine.registerCommand(
 			{"audio.render", 1,
 				"Offline mode: processes the given number of frames as fast as possible, then returns. Only the dummy "
-				"device, and only while it is stopped.",
+				"device, and only while it is stopped. First it waits for the samplers' samples to be read, logging a "
+				"warning that names the files every 30 s, and fails naming them after 10 minutes.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["frames"],
 					"properties": {"frames": {"type": "integer"}}})"),
 				statusSchema(), false},
