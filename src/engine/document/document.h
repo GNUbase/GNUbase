@@ -665,6 +665,11 @@ namespace gnubase::engine
 	// it, becomes a point at 0, and the later points move back by from.
 	std::vector<ExpressionPoint> expressionsFrom(const std::vector<ExpressionPoint>& points, time::Ticks from);
 
+	// Cuts a note at ticks from its start, inside it: the note keeps what comes before the cut, its expression points
+	// too, and the rest, which this returns without an id, starts at the cut with the expression from there on
+	// (expressionsFrom). Both lose their quantize origin.
+	Note splitNote(Note& note, time::Ticks at);
+
 	// The MIDI events besides notes, all held as controller events.
 	enum class ControllerType : uint8_t
 	{

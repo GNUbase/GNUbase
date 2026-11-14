@@ -32,6 +32,22 @@ namespace gnubase::engine
 {
 	namespace
 	{
+		// An expression's bit in RenderNote::startsWith: tuning, pressure and brightness have MPE initial values.
+		uint8_t initialBit(plugin::NoteExpression type)
+		{
+			switch (type)
+			{
+			case plugin::NoteExpression::Tuning:
+				return 1;
+			case plugin::NoteExpression::Pressure:
+				return 2;
+			case plugin::NoteExpression::Brightness:
+				return 4;
+			default:
+				return 0;
+			}
+		}
+
 		time::Samples toSamples(const Project& project, time::Position position)
 		{
 			return time::toSamples(position, project.tempo, project.sampleRate);
@@ -87,7 +103,7 @@ namespace gnubase::engine
 							continue;
 						if (output.status == OutputStatus::Note)
 							channel.notes.push_back({std::max<time::Samples>(at - 1, 0), std::max<time::Samples>(at, 1),
-								output.data1, midi::velocityFromMidi1(output.data2), on, true});
+								output.data1, midi::velocityFromMidi1(output.data2), on, true, 0});
 						else if (output.status == OutputStatus::Controller)
 							channel.controllers.push_back({at, ControllerType::Control, output.data1,
 								midi::controllerFromMidi1(output.data2), on, {}, index});
@@ -173,11 +189,17 @@ namespace gnubase::engine
 				const time::Ticks length = note.length > 0 ? midi::modifyLength(modifiers, seed, slotLength) : 0;
 				const time::Ticks noteEnd = std::min(start + position + length, end);
 				channel.notes.push_back({toSamples(project, start + position), toSamples(project, noteEnd), pitch,
-					velocity, playedChannel(note, sound, slot, trackChannel), false});
+					velocity, playedChannel(note, sound, slot, trackChannel), false, 0});
 				for (const ExpressionPoint& point : note.expressions)
-					if (start + position + point.position < noteEnd)
-						channel.expressions.push_back({toSamples(project, start + position + point.position), pitch,
-							channel.notes.back().channel, point.type, point.value});
+				{
+					if (start + position + point.position >= noteEnd)
+						continue;
+					channel.expressions.push_back({toSamples(project, start + position + point.position), pitch,
+						channel.notes.back().channel, point.type, point.value});
+					// A point within the note's first sample is one of its initial ones, as it plays at its start.
+					if (channel.expressions.back().position == channel.notes.back().start)
+						channel.notes.back().startsWith |= initialBit(point.type);
+				}
 			}
 			for (const auto& [id, controller] : part.controllers)
 				if (controller.position < end - start && controller.type != ControllerType::Articulation)
@@ -186,27 +208,22 @@ namespace gnubase::engine
 						static_cast<uint8_t>(trackChannel.value_or(controller.channel)), controller.data, index});
 		}
 
-		// MPE's initial values: a note on a MIDI channel whose notes express tuning, pressure or brightness gets the
-		// initial value of each of them that has no point at its start, a centered bend, no pressure and CC 74 at 64,
-		// so that as MIDI 1.0 it doesn't start at what the channel's previous note left.
+		// MPE's initial values: a note on a MIDI channel gets the initial value of each of tuning, pressure and
+		// brightness that the channel's notes express and that it has no point of at its start (RenderNote::
+		// startsWith), a centered bend, no pressure and CC 74 at 64, so that as MIDI 1.0 it doesn't start at what the
+		// channel's previous note left. Of what the channel's notes don't express it gets nothing.
 		void addInitialExpressions(const std::vector<RenderNote>& notes, std::vector<RenderExpression>& expressions)
 		{
 			using plugin::NoteExpression;
 			constexpr std::array<std::pair<NoteExpression, double>, 3> initial = {
 				{{NoteExpression::Tuning, 0.0}, {NoteExpression::Pressure, 0.0}, {NoteExpression::Brightness, 0.5}}};
-			std::array<std::array<bool, initial.size()>, 16> expressed{}; // by MIDI channel
-			std::set<std::tuple<time::Samples, uint8_t, uint8_t, NoteExpression>> points;
+			std::array<uint8_t, 16> expressed{}; // by MIDI channel, as RenderNote::startsWith
 			for (const RenderExpression& point : expressions)
-				for (size_t i = 0; i < initial.size(); ++i)
-					if (point.type == initial.at(i).first)
-					{
-						expressed.at(point.channel % 16).at(i) = true;
-						points.emplace(point.position, point.pitch, point.channel, point.type);
-					}
+				expressed.at(point.channel % 16) |= initialBit(point.type);
 			for (const RenderNote& note : notes)
 				for (size_t i = 0; i < initial.size(); ++i)
-					if (!note.keySwitch && note.end > note.start && expressed.at(note.channel % 16).at(i) &&
-						points.count({note.start, note.pitch, note.channel, initial.at(i).first}) == 0)
+					if (!note.keySwitch && note.end > note.start &&
+						(expressed.at(note.channel % 16) & ~note.startsWith & (1U << i)) != 0)
 						expressions.push_back(
 							{note.start, note.pitch, note.channel, initial.at(i).first, initial.at(i).second});
 		}

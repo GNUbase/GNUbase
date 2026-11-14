@@ -355,7 +355,12 @@ namespace gnubase::engine
 				"its instrument track's channel, its frame position on the audio device and its bytes: the events of "
 				"the track's parts, of the MIDI tracks routed to it and what midi.inject played into them, with "
 				"controller automation and the note-offs of a stop. A program change with a bank comes as bank "
-				"select MSB and LSB, then the program change; SysEx isn't captured. dropped counts the messages that "
+				"select MSB and LSB, then the program change; SysEx isn't captured. Per-note expression comes as MPE "
+				"on "
+				"the note's channel: tuning as pitch bend over 48 semitones, pressure as channel pressure, brightness "
+				"as CC 74, a note's initial ones before its note-on; a note on a channel whose notes express one of "
+				"them and that has no point of it at its start gets MPE's initial value (a centered bend, no "
+				"pressure, CC 74 at 64). dropped counts the messages that "
 				"didn't fit: while nobody reads, newer messages are dropped. start: true starts a fresh capture; it "
 				"drops what was captured so far and returns nothing. Each call empties what it returns, so a repeated "
 				"call doesn't return the same messages again.",

@@ -97,6 +97,9 @@ namespace gnubase::engine
 		uint8_t channel = 0;
 		// An articulation map's key switch (#175): a jump sends the last one of its pitch before it, sounding or not.
 		bool keySwitch = false;
+		// Which of tuning (1), pressure (2) and brightness (4) the note has a point of at its start (#176): MPE's
+		// initial value of the others comes before it (addInitialExpressions).
+		uint8_t startsWith = 0;
 	};
 
 	// A point of a note's per-note expression (#176), with the note's played pitch and channel.
