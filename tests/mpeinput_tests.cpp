@@ -442,6 +442,40 @@ TEST_CASE("an MPE port's input plays to the instrument as per-note expression, a
 	CHECK(captured(client) == std::vector<std::vector<int64_t>>{{0xE1, 0, 96}, {0x91, 60, 100}, {0x81, 60, 0}});
 }
 
+TEST_CASE("an MPE port's expression follows its note to the key and channel the track plays it on", "[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	run(client, "midi.setPort", {{"id", "MPE"}, {"input", true}, {"mpe", {{"mode", "lower"}, {"pitchRange", 24}}}});
+	// The initial bend comes before its note-on only where it is that note's expression: same key and channel.
+	SECTION("the track's MIDI modifiers transpose the note")
+	{
+		run(client, "channel.set", {{"channel", setup.channel}, {"modifiers", {{"transpose", 12}}}});
+		run(client, "audio.render", {{"frames", 64}});
+		run(client, "midi.capture", {{"start", true}});
+		setup.play(*setup.mpe, {{0xE1, 0, 96}, {0x91, 60, 100}});
+		setup.play(*setup.mpe, {{0xD1, 40}});
+		setup.play(*setup.mpe, {{0x81, 60, 0}});
+		CHECK(captured(client) ==
+			std::vector<std::vector<int64_t>>{{0xE1, 0, 80}, {0x91, 72, 100}, {0xD1, 40}, {0x81, 72, 0}});
+	}
+	SECTION("a MIDI track plays it on its MIDI channel")
+	{
+		// The MIDI track plays the instrument, record-enabled in its place.
+		const auto midi = run(client, "track.add", {{"type", "midi"}}).at("channel").at("id").get<ObjectId>();
+		run(client, "channel.set", {{"channel", setup.channel}, {"recordEnable", false}});
+		run(client, "channel.set",
+			{{"channel", midi}, {"output", setup.channel}, {"midiChannel", 4}, {"recordEnable", true}});
+		run(client, "audio.render", {{"frames", 64}});
+		run(client, "midi.capture", {{"start", true}});
+		setup.play(*setup.mpe, {{0xE1, 0, 96}, {0x91, 60, 100}});
+		setup.play(*setup.mpe, {{0xD1, 40}});
+		setup.play(*setup.mpe, {{0x81, 60, 0}});
+		CHECK(captured(client) ==
+			std::vector<std::vector<int64_t>>{{0xE4, 0, 80}, {0x94, 60, 100}, {0xD4, 40}, {0x84, 60, 0}});
+	}
+}
+
 TEST_CASE("recording records an MPE port's input as the notes' expression", "[integration]")
 {
 	Setup setup;

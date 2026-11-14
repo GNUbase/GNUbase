@@ -59,11 +59,13 @@ pitch bend, `initialY` for CC 74) a note starts at a fixed value instead, for de
 center (no bend, or CC 74 at 64), or for CC 74 the minimum or maximum, whatever the channel's previous note left.
 
 So live MPE input reaches the instrument as per-note expression, as playback sends it (below): MIDI thru passes the
-events to the tracks that monitor or are record-enabled, and the instrument plays them as note expression, a VST3
-plugin as VST3 note expressions. Recording, retrospective recording and the catch range record what the tracks get:
-each note expression event is a point of its note where it came (`MidiTakeBuilder`), its initial values at the note's
-start. Notes keep their channels. The MIDI record filter filters note expression by its channel only, as it is no
-MIDI message. `midi.inject` and the on-screen keyboard are no port and play plain MIDI.
+events to the tracks that monitor or are record-enabled, and the instrument plays them as note expression, a VST3 plugin
+as VST3 note expressions. On the track a note's expression follows the note its key plays, as poly pressure does
+(`MidiSequencer::modifyInput`): to the track's MIDI channel and the pitch the MIDI modifiers, Live Input, a drum map or
+a sound slot make of it, and nowhere where the note doesn't play. Recording, retrospective recording and the catch range
+record what the tracks get: each note expression event is a point of its note where it came (`MidiTakeBuilder`), its
+initial values at the note's start. Notes keep their channels. The MIDI record filter filters note expression by its
+channel only, as it is no MIDI message. `midi.inject` and the on-screen keyboard are no port and play plain MIDI.
 
 **Playback.** The sequencer sends a note's points that lie within it as note expression events
 (`graph::ProcessEvent::Type::NoteExpression`, with the note's pitch and channel) where they are, after the note-on at
@@ -83,7 +85,8 @@ The acceptance test plays MPE into a dummy MIDI port set to MPE's lower zone, re
 note probe, comparing what the instrument gets with what was played (`tests/mpeinput_tests.cpp`). Its other tests check
 `midi::MpeInput` with the lower and upper zone, channel rotation, Send Initial Value and without Use for Tuning; that
 `midi.setPort` sets a port's setup, which `midi.ports` lists and `midi.portSettings` keeps; that an MPE port with a
-pitch range of 24 plays to the instrument as note expression while another port plays its pitch bend as it is; and
+pitch range of 24 plays to the instrument as note expression while another port plays its pitch bend as it is; that
+the expression follows its note through a track that transposes and a MIDI track with a MIDI channel; and
 that recording and retrospective recording record the upper zone and channel rotation as the notes' expression.
 
 ## Not yet
