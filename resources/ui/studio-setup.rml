@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-<!-- The studio setup dialog (#79, docs/features/studio-setup.md): the audio system, the audio device with its ports and
-     the MIDI ports, each a page that the devices list on the left selects. app::AppUi opens it (the UI command
+<!-- The studio setup dialog (#79, docs/features/studio-setup.md): the audio system, the audio device with its ports,
+     the MIDI ports and the MIDI inputs' MPE setup, each a page that the devices list on the left selects. app::AppUi opens it (the UI command
      window.studioSetup). Its Lua reads everything from the engine when the dialog loads and after Apply, and changes
      it only through engine commands: Apply and OK send what the pages changed, Cancel drops it. -->
 <rml>
@@ -94,6 +94,22 @@
 		.ports input.text
 		{
 			width: 130dp;
+		}
+
+		/* The Note Expression Input page: the selected input's settings. */
+		.mpe-port
+		{
+			display: none;
+		}
+
+		.mpe-port.shown
+		{
+			display: block;
+		}
+
+		.mpe-port input.text
+		{
+			width: 60dp;
 		}
 
 		.row
@@ -270,6 +286,57 @@
 				table.concat(rows) .. "</tbody></table>"
 		end
 
+		-- The Note Expression Input page (reference manual pp. 1295-1298): the MIDI Input list selects an input, whose
+		-- MPE setup (mpe in midi.ports) shows below it; each input has its fields, the others' hidden.
+		local mpeModes = {{"off", "Off"}, {"lower", "MPE Mode, Lower Zone"}, {"upper", "MPE Mode, Upper Zone"},
+			{"rotation", "Channel Rotation"}}
+		local initialsX = {{"off", "Off"}, {"center", "Center (64)"}}
+		local initialsY = {{"off", "Off"}, {"min", "Min (0)"}, {"center", "Center (64)"}, {"max", "Max (127)"}}
+
+		local function named(class, values, current, extra)
+			local options = {}
+			for _, value in ipairs(values) do
+				options[#options + 1] = option(value[1], value[2], value[1] == current)
+			end
+			return '<select class="' .. class .. '"' .. (extra or "") .. ">" .. table.concat(options) .. "</select>"
+		end
+
+		local function numbered(class, last, current, disabled)
+			local values = {}
+			for number = 1, last do
+				values[#values + 1] = {number, tostring(number)}
+			end
+			return named(class, values, current, disabled and " disabled" or "")
+		end
+
+		local function mpePage(ports)
+			local inputs, fields = {}, {}
+			for index, port in ipairs(ports) do
+				if port.input then
+					local mpe = port.mpe
+					local shown = #inputs == 0
+					inputs[#inputs + 1] = option(index, port.showAs, shown)
+					fields[#fields + 1] = '<div class="mpe-port' .. (shown and " shown" or "") .. '" index="' .. index ..
+						'">' ..
+						field("Multi-Channel Input Mode", named("mpe-mode", mpeModes, mpe.mode,
+							' onchange="StudioSetup.mpeModeChanged(element)"')) ..
+						field("Used Channels", numbered("mpe-channels", 16, mpe.channels)) ..
+						field("First Channel", numbered("mpe-first-channel", 16, mpe.firstChannel,
+							mpe.mode ~= "rotation")) ..
+						field("Pitch Range", '<input type="text" class="mpe-pitch-range" value="' .. mpe.pitchRange ..
+							'"/>') ..
+						field("Use for Tuning", checkbox('class="mpe-tuning"', mpe.tuning)) ..
+						field("Horizontal/X Initial Value", named("mpe-initial-x", initialsX, mpe.initialX)) ..
+						field("Vertical/Y Initial Value", named("mpe-initial-y", initialsY, mpe.initialY)) .. "</div>"
+				end
+			end
+			if #inputs == 0 then
+				return "<p>No MIDI input.</p>"
+			end
+			return field("MIDI Input", '<select id="mpe-input" onchange="StudioSetup.showMpeInput(document, ' ..
+				"element:GetAttribute('value'))\">" .. table.concat(inputs) .. "</select>") .. table.concat(fields)
+		end
+
 		-- Why the device chosen last can't be used while the dummy device plays instead (failed in audio.get), or nil.
 		local function failure(status)
 			local failed = status.failed
@@ -298,12 +365,34 @@
 			document:GetElementById("page-system").inner_rml = audioSystemPage(devices, setup.status)
 			document:GetElementById("page-device").inner_rml = audioDevicePage(setup.status, setup.audioPorts)
 			document:GetElementById("page-midi").inner_rml = midiPage(setup.midiPorts)
+			document:GetElementById("page-mpe").inner_rml = mpePage(setup.midiPorts)
 			report(document, {})
+		end
+
+		-- Shows the selected MIDI input's MPE setup.
+		function setup.showMpeInput(document, index)
+			for _, fields in ipairs(document:QuerySelectorAll(".mpe-port")) do
+				fields:SetClass("shown", fields:GetAttribute("index") == tostring(index))
+			end
+		end
+
+		-- First Channel is only for channel rotation. The page starts with it as the mode is; while it is built, the
+		-- mode's select reports its value before First Channel exists.
+		function setup.mpeModeChanged(element)
+			local first = element.parent_node.parent_node:QuerySelector("select.mpe-first-channel")
+			if first == nil then
+				return
+			end
+			if element:GetAttribute("value") == "rotation" then
+				first:RemoveAttribute("disabled")
+			else
+				first:SetAttribute("disabled", "")
+			end
 		end
 
 		-- Shows the page that the devices list selects.
 		function setup.show(document, page)
-			for _, name in ipairs{"system", "device", "midi"} do
+			for _, name in ipairs{"system", "device", "midi", "mpe"} do
 				document:GetElementById("page-" .. name):SetClass("shown", name == page)
 			end
 		end
@@ -412,6 +501,27 @@
 						inAllInputs = inAllInputs})
 				end
 			end
+			for _, fields in ipairs(document:QuerySelectorAll(".mpe-port")) do
+				local port = setup.midiPorts[tonumber(fields:GetAttribute("index"))]
+				local pitchRange = math.tointeger(tonumber(valueOf(fields:QuerySelector("input.mpe-pitch-range"))))
+				if pitchRange == nil or pitchRange < 1 or pitchRange > 96 then
+					errors[#errors + 1] = "Pitch Range must be a whole number of semitones from 1 to 96"
+				else
+					local mpe = {mode = valueOf(fields:QuerySelector("select.mpe-mode")),
+						channels = math.tointeger(tonumber(valueOf(fields:QuerySelector("select.mpe-channels")))),
+						firstChannel = math.tointeger(tonumber(valueOf(fields:QuerySelector("select.mpe-first-channel")))),
+						pitchRange = pitchRange, tuning = checked(fields:QuerySelector("input.mpe-tuning")),
+						initialX = valueOf(fields:QuerySelector("select.mpe-initial-x")),
+						initialY = valueOf(fields:QuerySelector("select.mpe-initial-y"))}
+					local changed = false
+					for name, value in pairs(mpe) do
+						changed = changed or port.mpe[name] ~= value
+					end
+					if changed then
+						call(errors, gnubase.midi.setPort, {backend = port.backend, id = port.id, input = true, mpe = mpe})
+					end
+				end
+			end
 			return errors
 		end
 
@@ -463,10 +573,12 @@
 				<listitem id="devices-system" value="system" class="selected">Audio System</listitem>
 				<listitem id="devices-device" value="device">Audio Device</listitem>
 				<listitem id="devices-midi" value="midi">MIDI Port Setup</listitem>
+				<listitem id="devices-mpe" value="mpe">Note Expression Input</listitem>
 			</listview>
 			<div class="page shown" id="page-system"/>
 			<div class="page" id="page-device"/>
 			<div class="page" id="page-midi"/>
+			<div class="page" id="page-mpe"/>
 		</div>
 		<div class="row">
 			<div id="studio-setup-message"/>
