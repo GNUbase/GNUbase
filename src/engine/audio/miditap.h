@@ -3,6 +3,7 @@
 
 #include "engine/audio/sequencer.h"
 #include "engine/document/document.h"
+#include "engine/graph/events.h"
 #include "platform/audio/device.h"
 #include "platform/rt/spscqueue.h"
 
@@ -59,6 +60,13 @@ namespace gnubase::engine
 		// sequencer that thru marks (MIDI thru, docs/features/midi-recording.md), after what was injected.
 		static void thru(
 			const audio::MidiBuffer& input, const Sequencers& sequencers, const std::vector<uint8_t>& thru) noexcept;
+		// The same for input that is events already: the MIDI inputs' (MidiPorts::take), whose MPE input is per-note
+		// expression.
+		static void thru(
+			const graph::EventBuffer& input, const Sequencers& sequencers, const std::vector<uint8_t>& thru) noexcept;
+
+		// A MIDI 1.0 channel message as an event; a note-on of velocity 0 is a note-off of velocity 64.
+		static graph::ProcessEvent toEvent(const audio::MidiMessage& message, uint32_t offset) noexcept;
 
 		// Audio thread, after the graph processed the block at position: keeps what each instrument got.
 		void capture(uint64_t position, const Instruments& instruments) noexcept;

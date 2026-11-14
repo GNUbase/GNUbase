@@ -82,14 +82,11 @@ namespace gnubase::engine
 	// the next note-off of its pitch and channel make a note, a note-on of a pitch that sounds ends it first. Each
 	// note and controller event says which take it was recorded in ("take"), for the MIDI cycle record modes.
 	//
-	// With MPE input (setMpe, docs/features/note-expression.md), the pitch bend, channel pressure and CC 74 of
-	// channels 2 to 16 are the expression of the notes on their channel: points of their tuning, pressure and
-	// brightness in project samples, and each channel's latest values are the initial ones of its next note.
+	// Note expression events, what MPE input makes of its notes' messages (midi::MpeInput,
+	// docs/features/note-expression.md), are points of the note they belong to, in project samples.
 	class MidiTakeBuilder
 	{
 	public:
-		// MPE input with this pitch range in semitones, or 0 for none (the default).
-		void setMpe(int pitchRange) { m_mpeRange = pitchRange; }
 		void add(time::Samples position, const graph::ProcessEvent& event);
 		// What comes from now on belongs to the take with this index; end the notes that sound first.
 		void setTake(size_t take) { m_take = take; }
@@ -106,29 +103,15 @@ namespace gnubase::engine
 		{
 			time::Samples position = -1; // -1: not sounding
 			uint16_t velocity = 0;
-			Json expressions; // MPE: its expression points so far, positions in project samples
+			Json expressions; // its expression points so far, positions in project samples
 		};
 
-		// MPE: whether the event is expression of a member channel's notes; then adds it to them.
-		bool addExpression(time::Samples position, const graph::ProcessEvent& event);
-
 		std::array<Sounding, size_t{16} * 128> m_sounding{};
-		int m_mpeRange = 0;
-		// MPE: each channel's latest tuning, pressure and brightness, null before the first.
-		std::array<std::array<Json, 3>, 16> m_mpeState{};
 		Json m_notes = Json::array();
 		Json m_controllers = Json::array();
 		time::Samples m_last = -1;
 		size_t m_take = 0;
 	};
-
-	namespace settings
-	{
-		class Store;
-	}
-
-	// The pitch range of MPE input: midi.mpePitchRange with the user setting midi.mpeInput on, 0 with it off.
-	int mpePitchRange(const settings::Store& store);
 
 	// The format of the project's record files: the project setup's record file type and bit depth at the project's
 	// sample rate. A Broadcast Wave file gets a bext chunk; the recorder fills in what belongs to each file.
@@ -152,7 +135,6 @@ namespace gnubase::engine
 		int64_t catchFrames = 0;  // midi.recordCatchRange, in device frames
 		size_t retrospective = 0; // midi.retrospectiveEvents: what each track's retrospective buffer holds
 		int64_t pauseFrames = 0;  // a pause after which input in stop mode starts the buffer afresh
-		int mpePitchRange = 0;    // with midi.mpeInput on, midi.mpePitchRange; 0 without MPE input
 
 		bool operator==(const RecordSetup& other) const
 		{
@@ -164,8 +146,7 @@ namespace gnubase::engine
 				preRecordFrames == other.preRecordFrames && tracks == other.tracks && midiTracks == other.midiTracks &&
 				midiMode == other.midiMode && midiCycleMode == other.midiCycleMode && midiFilter == other.midiFilter &&
 				snapToBars == other.snapToBars && catchFrames == other.catchFrames &&
-				retrospective == other.retrospective && pauseFrames == other.pauseFrames &&
-				mpePitchRange == other.mpePitchRange;
+				retrospective == other.retrospective && pauseFrames == other.pauseFrames;
 		}
 	};
 

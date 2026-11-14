@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Per-note expression (#176, reference manual pp. 1293-1318): notes carry expression points that move with them, MPE
-// input records into them, and playback sends them to the instrument, to an MPE instrument as MPE.
+// input records into them (tests/mpeinput_tests.cpp), and playback sends them to the instrument, to an MPE instrument
+// as MPE.
 #include "engine/document/document.h"
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
-#include "engine/midi/midivalues.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -98,22 +98,6 @@ namespace
 		return points;
 	}
 
-	int64_t milli(double value)
-	{
-		return std::llround(value * 1000.0);
-	}
-
-	// What a MIDI 1.0 value records as: a controller's 0-1, and a pitch bend's semitones of MPE's 48.
-	int64_t unit(uint8_t value)
-	{
-		return milli(midi::controllerToUnit(midi::controllerFromMidi1(value)));
-	}
-
-	int64_t semitones(uint16_t bend, double range = 48.0)
-	{
-		return milli(midi::bendToSemitones(midi::pitchBendFromMidi1(bend), range));
-	}
-
 	// What the instruments played since capturing started, as [position from start, bytes].
 	std::vector<std::vector<int64_t>> capturedFrom(Client& client, int64_t start)
 	{
@@ -141,69 +125,6 @@ namespace
 	{
 		return {{"type", type}, {"position", position}, {"value", value}};
 	}
-}
-
-TEST_CASE("MPE input is recorded as per-note expression and played back to an MPE instrument", "[integration]")
-{
-	Setup setup;
-	Client& client = setup.client;
-	run(client, "settings.set", {{"key", "midi.snapPartsToBars"}, {"value", false}});
-	run(client, "settings.set", {{"key", "midi.mpeInput"}, {"value", true}});
-	CHECK(run(client, "transport.record").at("recording") == true);
-	// MPE's lower zone: channel 1 (0) is the master channel, the notes come on channels 2 to 16, each with its own
-	// pitch bend, channel pressure and CC 74, sent before its note-on for its initial state.
-	run(client, "midi.inject",
-		{{"channel", setup.channel},
-			{"messages",
-				{message(900, {0xE1, 0, 96}), message(900, {0xD1, 40}), message(900, {0xB1, 74, 64}),
-					message(1000, {0x91, 60, 100}), message(1500, {0x92, 64, 90}), message(2000, {0xE1, 0, 80}),
-					message(2200, {0xD2, 100}), message(2400, {0xB0, 1, 64}), message(2500, {0xB1, 74, 100}),
-					message(3000, {0x81, 60, 0}),
-					// No note sounds on channel 2: its state for the next note, nothing recorded.
-					message(3200, {0xE1, 0, 64}), message(3500, {0x82, 64, 0})}}});
-	run(client, "audio.render", {{"frames", 4000}});
-	run(client, "transport.stop");
-	run(client, "audio.render", {{"frames", 640}});
-	REQUIRE(waitFor(client, "recording.added").is_object());
-
-	const Json parts = run(client, "project.get").at("midiParts");
-	REQUIRE(parts.size() == 1);
-	const Json& part = parts[0];
-	const int64_t partStart = part.at("position").get<int64_t>();
-	REQUIRE(part.at("notes").size() == 2);
-	Json first = part.at("notes")[0];
-	Json second = part.at("notes")[1];
-	if (first.at("pitch") != 60)
-		std::swap(first, second);
-	CHECK(first.at("position").get<int64_t>() + partStart == ticksOf(1000));
-	CHECK(first.at("channel") == 1);
-	// Pitch bend is tuning in semitones, by the MPE pitch range of 48; channel pressure is pressure, CC 74 brightness.
-	CHECK(pointsOf(first) ==
-		Points{{"brightness", 0, unit(64)}, {"brightness", ticksOf(1500), unit(100)}, {"pressure", 0, unit(40)},
-			{"tuning", 0, semitones(96 << 7)}, {"tuning", ticksOf(1000), semitones(80 << 7)}});
-	CHECK(semitones(96 << 7) == 24003); // a quarter of 14 bits up, by MIDI 2.0's scaling
-	CHECK(unit(64) == 500);
-	CHECK(second.at("channel") == 2);
-	CHECK(pointsOf(second) == Points{{"pressure", ticksOf(700), unit(100)}});
-	// The master channel's messages stay controller events.
-	REQUIRE(part.at("controllers").size() == 1);
-	CHECK(part.at("controllers")[0].at("type") == "controller");
-	CHECK(part.at("controllers")[0].at("number") == 1);
-
-	// Played back, the instrument gets each note on its channel with its expression as that channel's pitch bend,
-	// channel pressure and CC 74, where it was played. The second note wasn't pressed before its note-on: it starts
-	// without pressure, MPE's initial value.
-	const auto start = run(client, "audio.get").at("position").get<int64_t>();
-	run(client, "midi.capture", {{"start", true}});
-	run(client, "transport.locate", {{"position", 0}});
-	run(client, "transport.play");
-	run(client, "audio.render", {{"frames", 4000}});
-	std::vector<std::vector<int64_t>> played = capturedFrom(client, start);
-	std::sort(played.begin(), played.end());
-	CHECK(played ==
-		std::vector<std::vector<int64_t>>{{1000, 0x91, 60, 100}, {1000, 0xB1, 74, 64}, {1000, 0xD1, 40},
-			{1000, 0xE1, 0, 96}, {1500, 0x92, 64, 90}, {1500, 0xD2, 0}, {2000, 0xE1, 0, 80}, {2200, 0xD2, 100},
-			{2400, 0xB0, 1, 64}, {2500, 0xB1, 74, 100}, {3000, 0x81, 60, 0}, {3500, 0x82, 64, 0}});
 }
 
 TEST_CASE("without MPE input, MIDI on every channel records as controller events", "[integration]")
@@ -630,54 +551,6 @@ TEST_CASE("sends before the modifiers get the notes' expression", "[integration]
 		// The transformer moves the note, but not yet its expression: its initial point no longer comes before it.
 		CHECK(sent == std::vector<std::vector<int64_t>>{{0, 0x92, pre ? 61 : 73}, {0, 0xE2, 0}, {100, 0xE2, 0}});
 	}
-}
-
-TEST_CASE("retrospective recording records MPE input by midi.mpePitchRange", "[integration]")
-{
-	Setup setup;
-	Client& client = setup.client;
-	run(client, "settings.set", {{"key", "midi.snapPartsToBars"}, {"value", false}});
-	run(client, "settings.set", {{"key", "midi.mpeInput"}, {"value", true}});
-	run(client, "settings.set", {{"key", "midi.mpePitchRange"}, {"value", 24}});
-	run(client, "channel.set", {{"channel", setup.channel}, {"recordEnable", false}});
-	// In stop mode: a bend before the note-on, its initial tuning, and one while it sounds.
-	run(client, "midi.inject",
-		{{"channel", setup.channel},
-			{"messages",
-				{message(900, {0xE1, 0, 96}), message(1000, {0x91, 60, 100}), message(2000, {0xE1, 0, 80}),
-					message(3000, {0x81, 60, 0})}}});
-	run(client, "audio.render", {{"frames", 4000}});
-	run(client, "midi.insertRetrospective", {{"track", setup.track}});
-	const Json part = run(client, "project.get").at("midiParts").at(0);
-	REQUIRE(part.at("notes").size() == 1);
-	CHECK(part.at("controllers").empty());
-	CHECK(pointsOf(part.at("notes").at(0)) ==
-		Points{{"tuning", 0, semitones(96 << 7, 24.0)}, {"tuning", ticksOf(1000), semitones(80 << 7, 24.0)}});
-	CHECK(semitones(96 << 7, 24.0) == 12001);
-}
-
-TEST_CASE("recording records MPE input by midi.mpePitchRange", "[integration]")
-{
-	Setup setup;
-	Client& client = setup.client;
-	run(client, "settings.set", {{"key", "midi.snapPartsToBars"}, {"value", false}});
-	run(client, "settings.set", {{"key", "midi.mpeInput"}, {"value", true}});
-	run(client, "settings.set", {{"key", "midi.mpePitchRange"}, {"value", 24}});
-	run(client, "transport.record");
-	run(client, "midi.inject",
-		{{"channel", setup.channel},
-			{"messages",
-				{message(900, {0xE1, 0, 96}), message(1000, {0x91, 60, 100}), message(2000, {0xE1, 0, 80}),
-					message(3000, {0x81, 60, 0})}}});
-	run(client, "audio.render", {{"frames", 4000}});
-	run(client, "transport.stop");
-	run(client, "audio.render", {{"frames", 640}});
-	REQUIRE(waitFor(client, "recording.added").is_object());
-	const Json part = run(client, "project.get").at("midiParts").at(0);
-	REQUIRE(part.at("notes").size() == 1);
-	CHECK(part.at("controllers").empty());
-	CHECK(pointsOf(part.at("notes").at(0)) ==
-		Points{{"tuning", 0, semitones(96 << 7, 24.0)}, {"tuning", ticksOf(1000), semitones(80 << 7, 24.0)}});
 }
 
 TEST_CASE(

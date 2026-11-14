@@ -198,6 +198,7 @@ add_library(gnubase-engine STATIC
 	midi/logicalcommands.cpp midi/logicalcommands.h
 	midi/midivalues.cpp midi/midivalues.h
 	midi/modifiers.cpp midi/modifiers.h
+	midi/mpeinput.cpp midi/mpeinput.h
 	midi/padvoices.h
 	midi/patterns.cpp midi/patterns.h
 	midi/quantize.cpp midi/quantize.h

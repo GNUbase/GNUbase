@@ -1399,7 +1399,10 @@ TEST_CASE("midi.ports lists the MIDI ports and keeps their settings while they a
 	REQUIRE(ports.size() == 2);
 	CHECK(ports[0] ==
 		Json{{"backend", "dummy"}, {"id", "Keys"}, {"input", true}, {"name", "Keys"}, {"showAs", "Keys"},
-			{"visible", true}, {"inAllInputs", true}, {"present", true}, {"open", true}, {"midi2", false}});
+			{"visible", true}, {"inAllInputs", true}, {"present", true}, {"open", true}, {"midi2", false},
+			{"mpe",
+				{{"mode", "off"}, {"channels", 15}, {"firstChannel", 1}, {"pitchRange", 48}, {"tuning", true},
+					{"initialX", "off"}, {"initialY", "off"}}}});
 	CHECK(ports[1].at("input") == false);
 	CHECK(ports[1].at("open") == false); // outputs open once something sends to them
 

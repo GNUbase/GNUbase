@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/audio/midiports.h"
 #include "engine/engine.h"
+#include "engine/graph/events.h"
 #include "engine/settings/usersettings.h"
 #include "platform/hosttime.h"
 #include "platform/midi/dummyport.h"
@@ -759,12 +760,12 @@ TEST_CASE("only inputs that belong to all MIDI inputs reach them", "[unit]")
 	pads->send(noteOn(61), now - g_ms);
 	MidiBuffer midiIn(8);
 	MidiBuffer midiOut(8);
-	MidiBuffer allInputs(8);
+	gnubase::engine::graph::EventBuffer allInputs(8);
 	gnubase::engine::MidiPorts::PadBuffers padOutput;
 	const DeviceBlock block{nullptr, nullptr, 480, 1000, now, midiIn, midiOut};
 	ports.take(block, 48000.0, allInputs, padOutput, gnubase::engine::ChordPadKeys());
 	REQUIRE(allInputs.size() == 1);
-	CHECK(allInputs[0].bytes[1] == 60);
+	CHECK(allInputs[0].key == 60);
 	CHECK(allInputs[0].offset == 432); // 9 ms into the 10 ms before the block
 }
 
@@ -790,10 +791,10 @@ TEST_CASE("a hidden input that becomes visible reaches all MIDI inputs", "[unit]
 	keys->send(noteOn(60), now - g_ms);
 	MidiBuffer midiIn(8);
 	MidiBuffer midiOut(8);
-	MidiBuffer allInputs(8);
+	gnubase::engine::graph::EventBuffer allInputs(8);
 	gnubase::engine::MidiPorts::PadBuffers padOutput;
 	const DeviceBlock block{nullptr, nullptr, 480, 1000, now, midiIn, midiOut};
 	ports.take(block, 48000.0, allInputs, padOutput, gnubase::engine::ChordPadKeys());
 	REQUIRE(allInputs.size() == 1);
-	CHECK(allInputs[0].bytes[1] == 60);
+	CHECK(allInputs[0].key == 60);
 }
