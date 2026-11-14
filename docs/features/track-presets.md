@@ -73,12 +73,16 @@ they are.
   folder around it. An audio, instrument or MIDI track gives the track what it brings, and the track keeps its id, name
   and buttons: with `events` its events and parts as `existing` says (On Import on Existing Tracks: `replace` removes
   the track's first, `add` adds them, `version`, the default, puts them into a new version of the track, as the
-  manual's note on Events and Parts says; the tracks imported onto get their new versions together, with one ID), and
-  its other versions after the track's, versions that share an ID in the file sharing a new one in the project, and a
-  version named as one of the track's getting the next free `vN` name; with `settings` its channel settings, inserts,
-  routing and drum and articulation maps, the track's plugins going with their automation; with `automation` its
-  automation in place of the track's, and without it, once events or settings are imported onto the track, the track
-  loses its automation (the note on Automation, p. 204). What played or sent into the copy's channel, such as another
+  manual's note on Events and Parts says; the tracks imported onto get their new versions together), and its other
+  versions after the track's, versions that share an ID in the file sharing a new one in the project, and a version
+  named as one of the track's getting the next free `vN` name; with `settings` its channel settings, inserts, routing
+  and drum and articulation maps, the track's plugins going with their automation; with `automation` its automation in
+  place of the track's, and without it, once events or settings are imported onto the track, the track loses its
+  automation (the note on Automation, p. 204). The IDs of the file's versions become new ones, one for each ID of the
+  file, on the new tracks too, so that none of them falls into a version group the project has of its own; the new
+  version of a track imported onto gets the ID its source's active version has, so that the tracks imported onto get
+  one ID when the versions their sources played shared one in the file, and the versions that shared one there keep
+  playing together here when they didn't (p. 233). What played or sent into the copy's channel, such as another
   imported track, goes into the track's. Its events, parts, versions and automation take the track's time base. A
   source goes onto one track, and not one inside a listed folder, which brings it along.
 - **Where the events go** (Import Position, p. 204). `position` `absolute` (the default) puts them at the timecode
@@ -161,14 +165,16 @@ message shows and the dialog stays open.
 Of the Import Options dialog: Range cuts nothing, so events and parts that start in it come whole, and musical positions
 move by the same time rather than by bars and beats when Bars+Beats is the primary time format (p. 204); tracks inside
 an imported folder are all imported or none; the media files are copied and converted after the import, as undo steps of
-their own. Importing chord, signature and tempo tracks, VCA tracks and link groups; the Export Selected Tracks dialog
-with Reference Media Files (the engine's `copyMedia` false); routing of exported tracks to tracks that weren't exported;
-frozen tracks keep their freeze file only in their own project, so they import unfrozen; shared copies of MIDI parts
-import as parts of their own. Presets: the media browser with attributes, previews, the type subfolders, renaming and
-removing presets, factory presets, instrument plugin presets and extracting the sound of an instrument (p. 241), loading
-only the inserts or the equalizer of a preset (p. 243), drum maps and Input Transformer settings in presets, sampler
-track presets, pattern banks, quick control presets (pp. 243-244), dragging presets onto tracks, and the inspector's
-Load Track Preset button.
+their own; Convert Sample Rate is offered for the media files of the whole file (`mediaSampleRates` covers every one of
+them), not only for those of the chosen tracks or of the range, so a project file with other media at another rate
+offers it without anything to convert. Importing chord, signature and tempo tracks, VCA tracks and link groups; the
+Export Selected Tracks dialog with Reference Media Files (the engine's `copyMedia` false); routing of exported tracks to
+tracks that weren't exported; frozen tracks keep their freeze file only in their own project, so they import unfrozen;
+shared copies of MIDI parts import as parts of their own. Presets: the media browser with attributes, previews, the type
+subfolders, renaming and removing presets, factory presets, instrument plugin presets and extracting the sound of an
+instrument (p. 241), loading only the inserts or the equalizer of a preset (p. 243), drum maps and Input Transformer
+settings in presets, sampler track presets, pattern banks, quick control presets (pp. 243-244), dragging presets onto
+tracks, and the inspector's Load Track Preset button.
 
 ## Checks
 
@@ -188,16 +194,22 @@ Load Track Preset button.
   also in a folder around it, and gives an instrument track the settings and a new version with the part (or replaces or
   adds to its parts), keeping its buttons, in one undo step, and refuses tracks of another type and sources that aren't
   imported; a marker track replaces one of a project with 10, as the active one; merged versions keep the IDs they
-  shared and get names of their own, and the new versions share an ID; without automation, importing events or settings
-  onto a track resets its automation; musical tracks merge onto linear ones with their versions and automation;
-  Absolute, Relative and Cursor Position and Range, in samples at the project's rate, place the parts, and events before
-  the project start are refused; the project's end moves after what is imported. `tests/backup_tests.cpp`:
-  `media.prepareArchive` with `media` copies only those. `tests/mixer_tests.cpp`: a lower fader top brings volume
-  automation down, and the project saved then opens with GNUbase's own data. In the app: File > Export > Selected Tracks
-  and File > Import > Tracks through the file dialogs and the Import Options dialog, which imports below the selected
-  track, imports onto the track of the same name with Select Matching, shows the engine's refusal and the tracks that
-  can't be imported, shows the file's and the project's settings, folds and searches the tracks, leaves a track inside a
-  matched folder at New Track, resets the destinations, offers Convert Sample Rate for media files at another rate, and
-  imports a range from the locators' timecodes at Relative Position; the engine's refusals of an export in the project
-  error dialog and the tracks it left out in the dialog titled Export Selected Tracks; and the track preset dialog's
-  Save, Load (with only matching presets listed) and Add.
+  shared and get names of their own, the new versions of the tracks imported onto getting the ID their sources' active
+  versions share, also when the sources don't play the versions they share, and the versions of new tracks getting IDs
+  of their own, which a saved project keeps; without automation, importing events or settings onto a track resets its
+  automation, while importing neither leaves it and records no undo step; musical tracks merge onto linear ones with
+  their versions and automation; Absolute, Relative and Cursor Position and Range, in samples at the project's rate,
+  place the parts, and events before the project start are refused; the project's end moves after what is imported,
+  also after an audio event's end at the project's rate, an empty audio part and an automation point, up to 24 hours;
+  `track.importSources` lists the sample rates of the file's media files, each once from the lowest.
+  `tests/backup_tests.cpp`: `media.prepareArchive` with `media` copies only those. `tests/mixer_tests.cpp`: a lower
+  fader top brings volume automation down, and the project saved then opens with GNUbase's own data. In the app:
+  File > Export > Selected Tracks and File > Import > Tracks through the file dialogs and the Import Options dialog,
+  which imports below the selected track, imports onto the track of the same name with Select Matching, shows the
+  engine's refusal and the tracks that can't be imported, shows the file's and the project's settings, folds and
+  searches the tracks, leaves a track inside a matched folder at New Track, keeps the upper of two file tracks of one
+  name on the project's track and leaves a track that goes along with its folder at New Track, resets the destinations,
+  offers Convert Sample Rate for media files at another rate but not for a file at another rate whose media files are
+  at the project's, and imports a range from the locators' timecodes at Relative Position; the engine's refusals of an
+  export in the project error dialog and the tracks it left out in the dialog titled Export Selected Tracks; and the
+  track preset dialog's Save, Load (with only matching presets listed) and Add.

@@ -502,9 +502,9 @@ namespace gnubase::engine
 			throw std::invalid_argument("AIFF files record 16, 24 or 32 bit, not " + depth);
 		if (type == "flac" && depth != "int16" && depth != "int24")
 			throw std::invalid_argument("FLAC files record 16 or 24 bit, not " + depth);
-		if (!std::isfinite(setup.startTime) || setup.startTime < 0.0 || setup.startTime >= 86400.0)
+		if (!std::isfinite(setup.startTime) || setup.startTime < 0.0 || setup.startTime >= g_maxProjectLength)
 			throw std::invalid_argument("startTime must be from 0 to less than 24 hours (86400 seconds)");
-		if (!std::isfinite(setup.length) || setup.length <= 0.0 || setup.length > 86400.0)
+		if (!std::isfinite(setup.length) || setup.length <= 0.0 || setup.length > g_maxProjectLength)
 			throw std::invalid_argument("length must be more than 0 and at most 24 hours (86400 seconds)");
 		if (setup.barOffset < -9999 || setup.barOffset > 9999)
 			throw std::invalid_argument("barOffset must be from -9999 to 9999");
