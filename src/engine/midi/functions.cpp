@@ -1313,7 +1313,9 @@ namespace gnubase::engine::midi
 		// lie between the part's transpose and the new part's global transpose, in an Independent part as it played;
 		// without, in a part with its part's transpose and Global Transpose setting.
 		std::map<BouncedSetting, std::vector<Note>> made;
-		std::map<BouncedSetting, Ticks> firstStart;     // of each new part's earliest source part
+		std::map<BouncedSetting, Ticks> firstStart;   // of each new part's earliest source part
+		const BouncedSetting plain{0, 0, newSetting}; // of the parts that need none of their own
+		const auto isPlain = [&](const BouncedSetting& setting) { return !(setting < plain) && !(plain < setting); };
 		std::map<std::pair<int, int>, bool> velocities; // velocityInNote by MIDI 1.0 velocity and part velocity
 		for (size_t i = 0; i < sources.size(); ++i)
 		{
@@ -1359,6 +1361,9 @@ namespace gnubase::engine::midi
 										   : GlobalSetting{newSetting.rootKey, true};
 				writeAll(pitchKept); // which holds every note
 			}
+			// A part of its own that no note goes into (all left out, or playing nowhere) isn't made (#1491).
+			if (notes.empty() && !isPlain(setting))
+				continue;
 			std::vector<Note>& into = made[setting];
 			into.insert(into.end(), notes.begin(), notes.end());
 			const Ticks from = partStart(project, *source);
@@ -1369,15 +1374,11 @@ namespace gnubase::engine::midi
 		// The new part with the setting of the parts that need none of their own first, the others in the order of
 		// their earliest source parts, as bounce orders its parts; where nothing is merged, the first is there without
 		// notes.
-		const BouncedSetting plain{0, 0, newSetting};
 		if (made.empty())
 			made[plain];
 		std::vector<std::pair<BouncedSetting, std::vector<Note>>> groups(made.begin(), made.end());
 		const auto order = [&](const BouncedSetting& setting)
-		{
-			const bool isPlain = !(setting < plain) && !(plain < setting);
-			return std::make_pair(!isPlain, isPlain ? Ticks{0} : firstStart.at(setting));
-		};
+		{ return std::make_pair(!isPlain(setting), isPlain(setting) ? Ticks{0} : firstStart.at(setting)); };
 		std::stable_sort(groups.begin(), groups.end(),
 			[&](const auto& a, const auto& b) { return order(a.first) < order(b.first); });
 

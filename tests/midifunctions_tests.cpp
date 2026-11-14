@@ -3336,6 +3336,58 @@ TEST_CASE("merge keeps on a part of its own the transpose and velocity the notes
 		CHECK(parts[1].at("transpose") == 12);
 	}
 
+	SECTION("the part with the shared setting first, the parts of their own after it in the order of their starts")
+	{
+		// The earliest part's transpose of 24 sorts after the latest one's 12, and its part of its own starts before
+		// the part with the shared setting; both take a pitch beyond 127 that the track's transpose brings back.
+		const ObjectId other = addInstrumentTrack(client);
+		const ObjectId earliest = addPartWith(client, other, 0, 4 * g_quarter, {{0, 110}});
+		run(client, "midiPart.set", {{"part", earliest}, {"transpose", 24}});
+		addPartWith(client, other, 4 * g_quarter, 4 * g_quarter, {{0, 60}});
+		const ObjectId latest = addPartWith(client, other, 8 * g_quarter, 4 * g_quarter, {{0, 120}});
+		run(client, "midiPart.set", {{"part", latest}, {"transpose", 12}});
+		setModifiers(client, other, Json{{"transpose", -12}});
+		const auto before = playedOn(fixture.engine, other);
+		REQUIRE(before.size() == 3);
+		run(client, "midi.merge",
+			{{"start", 0}, {"end", 2 * g_eightQuarters}, {"tracks", {other}}, {"destination", other},
+				{"eraseDestination", true}});
+		CHECK(playedOn(fixture.engine, other) == before);
+		const std::vector<Json> parts = partsOn(client, other);
+		REQUIRE(parts.size() == 3);
+		CHECK(parts[0].at("lane") == 0);
+		CHECK(parts[0].at("transpose") == 0);
+		CHECK(storedPitches(parts[0]) == std::vector<int>{60});
+		CHECK(parts[1].at("lane") == 1);
+		CHECK(parts[1].at("transpose") == 24);
+		CHECK(parts[2].at("lane") == 2);
+		CHECK(parts[2].at("transpose") == 12);
+	}
+
+	SECTION("a part of its own that no note goes into is left out")
+	{
+		// The later part keeps its velocity for its note's variance, but the note's pitch, 120 + 12, plays nowhere
+		// on a new track without the source track's transpose (#1491).
+		const auto high =
+			run(client, "midiPart.add", {{"track", track}, {"position", 8 * g_quarter}, {"length", 4 * g_quarter}})
+				.at("part")
+				.at("id")
+				.get<ObjectId>();
+		run(client, "midiPart.set", {{"part", high}, {"transpose", 12}, {"velocity", 20}});
+		run(client, "note.add",
+			{{"part", high},
+				{"notes",
+					{{{"position", 0}, {"length", 10}, {"pitch", 120}, {"velocity", 0.5},
+						{"velocityVariance", -1.0}}}}});
+		setModifiers(client, track, Json{{"transpose", -12}});
+		const Json merged =
+			run(client, "midi.merge", {{"start", 0}, {"end", 2 * g_eightQuarters}, {"tracks", {track}}});
+		const std::vector<Json> parts = partsOn(client, merged.at("tracks").at(0).get<ObjectId>());
+		REQUIRE(parts.size() == 1);
+		CHECK(parts[0].at("velocity") == 0);
+		CHECK(storedPitches(parts[0]) == std::vector<int>{60, 64, 64});
+	}
+
 	SECTION("without includeInserts, a pitch only the source track's modifiers bring back plays nowhere on a new track")
 	{
 		// 120 + 12 - 12 plays 120 on the track; on a new track without its transpose, 132 plays nowhere.
