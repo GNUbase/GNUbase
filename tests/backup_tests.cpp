@@ -978,7 +978,7 @@ TEST_CASE("whileHeld fails a test whose hold lapsed", "[integration][!shouldfail
 			// Replaces the HeldJob's hook, which holds the job at its first job.progress until the hold lapses.
 			auto there = std::make_shared<std::promise<void>>();
 			auto once = std::make_shared<std::atomic<bool>>(false);
-			std::future<void> arrived = there->get_future();
+			const std::future<void> arrived = there->get_future();
 			song.engine.setJobProgressHook(
 				[job, there, once](uint64_t progressed, const std::string& /*kind*/)
 				{
