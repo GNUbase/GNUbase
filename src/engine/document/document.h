@@ -1621,11 +1621,11 @@ namespace gnubase::engine
 	// Independent part and unless both have a root key. project.get gives it as each part's rootKeyTranspose.
 	int rootKeyTranspose(const Project& project, const MidiPart& part);
 
-	// The semitones that global transposition adds to a part's notes at a position (project samples): nothing for an
-	// Independent part; otherwise the step from the part's root key to the project root key, the nearer way (-5 to
-	// 6; nothing unless both have one), plus the value of the transpose event playing there unless the transpose track
-	// is muted, kept within 7 semitones either way with Keep Transpose in Octave Range. The part's own transpose adds
-	// to that.
+	// The semitones a part's notes play transposed by at a position (project samples): an Independent part's own
+	// transpose as it is; a part that follows global transposition plays its own transpose plus the step from its
+	// root key to the project root key, the nearer way (-5 to 6; nothing unless both have one), plus the value of
+	// the transpose event playing there unless the transpose track is muted — with Keep Transpose in Octave Range
+	// the whole sum kept within 7 semitones either way, 8 up playing 4 down (#896, reference manual pp. 419-421).
 	int globalTranspose(const Project& project, const MidiPart& part, time::Samples at);
 
 	// Whether folder is the pool's Audio folder (0) or a pool folder whose parents lead there without passing

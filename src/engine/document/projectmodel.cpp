@@ -4665,8 +4665,10 @@ namespace gnubase::engine
 		add(engine,
 			{"midiPart.set", 1,
 				"Changes a MIDI part's name, position or length, or how its notes play: transpose (semitones) and "
-				"velocity (added to MIDI 1.0 velocities), each -127 to 127 and added to the track's MIDI modifiers "
-				"(channel.set modifiers), also while they are bypassed. The notes themselves stay as they are. "
+				"velocity (added to MIDI 1.0 velocities), each -127 to 127. Velocity adds to the track's MIDI "
+				"modifiers (channel.set modifiers), also while they are bypassed; transpose adds to what each note "
+				"plays with, folded into the octave range together with global transposition while the part follows "
+				"it (transpose.setTrack keepInOctave). The notes themselves stay as they are. "
 				"rootKey is the part's root key (\"\" for none, C, C# and so on to B), which the project root key "
 				"transposes it to (project.set rootKey); globalTranspose follow (the default) or independent says "
 				"whether the project root key and the transpose track transpose it (transpose.add). pattern is the "

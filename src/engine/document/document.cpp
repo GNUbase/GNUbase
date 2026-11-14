@@ -307,22 +307,24 @@ namespace gnubase::engine
 	int globalTranspose(const Project& project, const MidiPart& part, time::Samples at)
 	{
 		if (part.independent)
-			return 0;
-		int semitones = rootKeyTranspose(project, part);
+			return part.transpose;
+		int semitones = rootKeyTranspose(project, part) + part.transpose;
 		const TransposeTrack& track = project.transpose;
-		if (track.mute)
-			return semitones;
-		// ponytail: a scan of the events per note; a song has a handful of them.
-		int value = 0;
-		for (const TransposeEvent& event : track.events)
+		if (!track.mute)
 		{
-			if (time::toSamples(event.position, project.tempo, project.sampleRate) > at)
-				break;
-			value = event.value;
+			// ponytail: a scan of the events per note; a song has a handful of them.
+			int value = 0;
+			for (const TransposeEvent& event : track.events)
+			{
+				if (time::toSamples(event.position, project.tempo, project.sampleRate) > at)
+					break;
+				value = event.value;
+			}
+			semitones += value;
 		}
-		semitones += value;
 		if (track.keepInOctave)
 		{
+			// The whole sum, the part's own transpose included (#896), never more than 7 semitones either way.
 			while (semitones > 7)
 				semitones -= 12;
 			while (semitones < -7)

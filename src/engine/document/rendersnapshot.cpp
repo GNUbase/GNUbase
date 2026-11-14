@@ -116,8 +116,8 @@ namespace gnubase::engine
 		}
 
 		// Adds a part's notes and controllers, cut at the part's end, the notes as the chord track maps them if the
-		// track follows it (#173), then as the channel's MIDI modifiers, the part's transpose and velocity and global
-		// transposition (#168) at their start play them. follower is the part's track's.
+		// track follows it (#173), then as the channel's MIDI modifiers, the part's velocity and the transposition it
+		// plays its notes with (#168, #896) at their start play them. follower is the part's track's.
 		void compilePart(const Project& project, ObjectId partId, const MidiPart& part, const ChordFollower& follower,
 			RenderChannel& channel)
 		{
@@ -126,9 +126,9 @@ namespace gnubase::engine
 			const time::Ticks end = time::toTicks(endPosition, project.tempo, project.sampleRate);
 			const auto index = static_cast<int32_t>(channel.midiParts.size());
 			channel.midiParts.push_back({toSamples(project, start), toSamples(project, end)});
-			// The part's transpose and velocity add to the track's modifiers, also while those are bypassed.
+			// The part's velocity adds to the track's modifiers, also while those are bypassed; its transpose plays
+			// in globalTranspose's sum per note, which Keep Transpose in Octave Range folds as one (#896).
 			midi::Modifiers modifiers = channel.modifiers.bypass ? midi::Modifiers() : channel.modifiers;
-			modifiers.transpose += part.transpose;
 			modifiers.velocityShift += part.velocity;
 			// The track's drum map plays each note's sound: its O-note, on its channel unless that is Any, and not
 			// at all if it is muted (#129). The modifiers then apply to the O-note.
