@@ -12,6 +12,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -35,7 +36,11 @@ namespace gnubase::ui
 	// (history.transaction): relative to each one's value, or with Ctrl (Cmd) held when Enter takes the value, the same
 	// value for all. With followMarkers it shows the markers selected on the marker tracks too, when their selection
 	// changed last (class markers): the first one's description, position and, for a cycle marker, end and length,
-	// which marker.set edits the same way. Use it on the UI thread; the display and the binding must outlive it.
+	// which marker.set edits the same way. When the selection of an in-place editor changed last (class notes), it
+	// shows the first of its selected notes as that editor's own info line does (p. 1259): start, end and length in
+	// bars and beats, the pitch as a name, the velocities 0-127 and the channel 1-16, which note.set edits the same
+	// way, relative to the first note or with Ctrl (Cmd)+Enter the same value for all, the channel set for all. Use
+	// it on the UI thread; the display and the binding must outlive it.
 	class InfoLine final : private Rml::EventListener
 	{
 	public:
@@ -52,19 +57,48 @@ namespace gnubase::ui
 		void followMarkers(std::function<std::vector<uint64_t>()> selection) { m_markerSource = std::move(selection); }
 
 	private:
+		// A note selected in an in-place editor, as the key editor's info line shows it (p. 1259).
+		struct Note
+		{
+			uint64_t part = 0;
+			uint64_t id = 0;
+			int64_t start = 0; // project ticks
+			int64_t length = 0;
+			int pitch = 60;
+			double velocity = 0.0;
+			double releaseVelocity = 0.5;
+			int channel = 0;
+		};
+
 		void ProcessEvent(Rml::Event& event) override;
+		// An editor.changed of an in-place editor: when its selection changed, the info line shows its notes.
+		void followEditor(const engine::Json& view);
 		void show();
 		// Edits the selected events; gesture is the value field's (ValueControl), 0 for others.
 		void edit(const std::string& field, const std::string& text, float number, int gesture = 0);
 		void showMarkers();
 		void editMarkers(const std::string& field, const std::string& text);
-		bool shows() const { return m_showsMarkers ? !m_markers.empty() : !m_events.empty(); }
+		void showNotes();
+		// Edits the in-place editor's selected notes as the key editor's info line does (pp. 1140, 1259).
+		void editNotes(const std::string& field, const std::string& text, float number, int gesture);
+		bool shows() const
+		{
+			if (m_showsNotes)
+			{
+				return !m_notes.empty();
+			}
+			return m_showsMarkers ? !m_markers.empty() : !m_events.empty();
+		}
 		// The selected event's volume in dB, from the display's project.
 		double volumeOf(uint64_t event) const;
 		// A MIDI part's transpose or velocity (key), from the display's project.
 		int partValue(uint64_t part, const char* key) const;
 		// A MIDI part as the display's project has it, or null.
 		const engine::Json* partOf(uint64_t part) const;
+		// The notes a selection of an in-place editor names, from the display's project, by start, then pitch.
+		std::vector<Note> notesOf(const engine::Json& selection) const;
+		// A part's start in project ticks, a linear track's position converted as the key editor does.
+		int64_t partStart(const engine::Json& part) const;
 
 		EventDisplay& m_display;
 		EngineBinding& m_binding;
@@ -82,6 +116,13 @@ namespace gnubase::ui
 		std::vector<uint64_t> m_markerSelection; // shown
 		bool m_showsMarkers = false;             // the markers' selection changed last
 		std::vector<MarkerItem> m_markers;       // the selected ones in timeline order, the first one first
+		Subscription m_editors;                  // editor.changed
+		std::map<std::string, engine::Json> m_viewSelections; // each open in-place editor's selection seen
+		std::string m_noteView;                               // the editor whose notes show
+		engine::Json m_noteSelection = engine::Json::array(); // its selection shown, or to show
+		std::vector<Note> m_notes;                            // the selected ones, the first one first
+		bool m_showsNotes = false;                            // an in-place editor's selection changed last
+		bool m_notesDirty = false;                            // the notes wait to be read again
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 	};
 }
