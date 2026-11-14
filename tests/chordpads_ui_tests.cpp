@@ -5,6 +5,8 @@
 #include "uiapp.h"
 
 #include "engine/engine.h"
+#include "engine/midifile/smf.h"
+#include "testutils/testutils.h"
 #include "ui/automation.h"
 #include "ui/docking.h"
 #include "ui/enginebinding.h"
@@ -15,6 +17,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <vector>
@@ -651,10 +654,10 @@ TEST_CASE("the toolbar and the settings panes change output mode, players, playe
 	window.app.ui().key(std::nullopt, "Down");
 	window.click("#chord-pads-controlSource-2");
 	REQUIRE(window.app.waitUntil([&] { return pads().at("controlSources")[2] == "controller"; }));
-	window.click("#chord-pads-learnRange");
+	window.click("#chord-pads-learn-range");
 	REQUIRE(window.app.waitUntil([&] { return pads().at("listening") == Json{{"learn", "range"}}; }));
-	CHECK(window.app.waitUntil([&] { return window.hasClass("#chord-pads-learnRange", "checked"); }));
-	window.click("#chord-pads-learnRange");
+	CHECK(window.app.waitUntil([&] { return window.hasClass("#chord-pads-learn-range", "checked"); }));
+	window.click("#chord-pads-learn-range");
 	REQUIRE(window.app.waitUntil([&] { return pads().at("listening").is_null(); }));
 
 	// Display: roman numerals as the primary symbol, Nashville numbers below, the grid layout.
@@ -792,9 +795,15 @@ TEST_CASE("pad modifier buttons play the pad, the keyboard shows the notes, and 
 	REQUIRE(window.app.waitUntil([&] { return window.elements(".chord-suggestion").size() == 24; }));
 	const Json first = window.elements(".chord-suggestion")[0];
 	const std::string chord = first.at("attributes").at("chord").get<std::string>();
-	window.app.ui().drag(std::nullopt, {".chord-suggestion", 0, std::nullopt}, {Window::pad(5), 0, std::nullopt});
+	// While it is dragged, the pad it would go onto shows the drop location's frame (p. 1354).
+	window.app.ui().press(std::nullopt, {".chord-suggestion", 0, std::nullopt}, ui::MouseButton::Left);
+	window.app.ui().move(std::nullopt, {Window::pad(5), 0, std::nullopt});
+	window.step();
+	CHECK(window.app.waitUntil([&] { return window.hasClass(Window::pad(5), "drop-target"); }));
+	window.app.ui().release(std::nullopt, {Window::pad(5), 0, std::nullopt}, ui::MouseButton::Left);
 	window.step();
 	REQUIRE(window.app.waitUntil([&] { return window.pads()[5].at("chord") == chord; }));
+	CHECK_FALSE(window.hasClass(Window::pad(5), "drop-target"));
 
 	// The List assistant's colors on the pads, after the first selected pad's chord.
 	window.call("settings.set", {{"key", "ui.chordPads"}, {"value", {{"listColors", true}}}});
@@ -871,4 +880,107 @@ TEST_CASE("a pad dragged onto a track's lane makes a MIDI part there, onto the c
 	window.step();
 	REQUIRE(window.app.waitUntil([&] { return window.call("chord.get").at("events").size() == 1; }));
 	CHECK(window.call("chord.get").at("events")[0].at("chord") == "G");
+}
+
+TEST_CASE("the chord assistant keeps the hint for a pad without a chord selected before an answer came", "[ui]")
+{
+	// #1391: only the latest question's answer is drawn.
+	Window window;
+	window.open();
+	window.app.appUi().docking().setSize("project", "lower", 400.0);
+	window.step();
+	window.click("#chord-pads-assistant");
+	window.click(Window::pad(0));
+	REQUIRE(window.app.waitUntil([&] { return window.elements(".chord-suggestion").size() == 24; }));
+	// A question for pad 1's chord, and then a pad without a chord selected, with no step between them.
+	for (const int pad : {1, 9})
+		window.app.ui().click(std::nullopt, {Window::pad(pad), 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+	window.step();
+	REQUIRE(window.app.waitUntil([&] { return window.app.appUi().binding().waiting("chordPads.assistant") == 0; }));
+	window.step();
+	CHECK(window.text("#chord-pads-suggestions .chord-pads-hint") == "Select a pad with a chord");
+	CHECK(window.elements(".chord-suggestion").empty());
+}
+
+TEST_CASE(
+	"MIDI Learn of every remote key and control, the section keys, the pad layout and Import from MIDI Loop", "[ui]")
+{
+	// Reference manual pp. 1355, 1379, 1387-1391 (#1236).
+	Window window;
+	window.open();
+	const auto pads = [&] { return window.call("chordPads.get"); };
+	const auto learning = [&](const std::string& target)
+	{
+		window.click("#chord-pads-learn-" + target);
+		REQUIRE(window.app.waitUntil([&] { return pads().at("listening") == Json{{"learn", target}}; }));
+		CHECK(window.app.waitUntil([&] { return window.hasClass("#chord-pads-learn-" + target, "checked"); }));
+	};
+	window.click("#chord-pads-pane-remote-button");
+	learning("nextVoicing");
+	learning("transposeAllPads"); // another target instead
+	CHECK_FALSE(window.hasClass("#chord-pads-learn-nextVoicing", "checked"));
+	window.click("#chord-pads-learn-transposeAllPads");
+	REQUIRE(window.app.waitUntil([&] { return pads().at("listening").is_null(); }));
+	window.click("#chord-pads-pane-playerRemote-button");
+	learning("sectionKeys");
+	learning("playerKeys");
+	window.click("#chord-pads-learn-playerKeys");
+	REQUIRE(window.app.waitUntil([&] { return pads().at("listening").is_null(); }));
+
+	// The keyboard shows the section and subsection keys in the sections player mode (p. 1355).
+	const auto key = [](int pitch) { return ".chord-pads-key[pitch=" + std::to_string(pitch) + "]"; };
+	window.call("chordPads.set", {{"remote", true}, {"subsectionKeys", {62}}});
+	REQUIRE(window.app.waitUntil([&] { return window.hasClass(key(36), "remote"); }));
+	CHECK_FALSE(window.hasClass(key(55), "section"));
+	window.call("chordPads.set", {{"mode", "sections"}});
+	REQUIRE(window.app.waitUntil([&] { return window.hasClass(key(55), "section"); }));
+	CHECK(window.hasClass(key(59), "section"));
+	CHECK(window.hasClass(key(62), "section"));
+	CHECK_FALSE(window.hasClass(key(60), "section"));
+
+	// Number of Pads and Start Note in the keyboard layout, Number of Rows in the grid (p. 1391).
+	const auto type = [&](const std::string& field, const std::string& text)
+	{
+		window.click(field, 2);
+		window.app.ui().key(std::nullopt, "Mod+A");
+		window.app.ui().text(std::nullopt, text);
+		window.app.ui().key(std::nullopt, "Enter");
+	};
+	window.click("#chord-pads-pane-display-button");
+	REQUIRE(window.visible("#chord-pads-padCount"));
+	CHECK(window.visible("#chord-pads-startNote"));
+	CHECK_FALSE(window.visible("#chord-pads-rows"));
+	type("#chord-pads-padCount", "16");
+	REQUIRE(window.app.waitUntil([&] { return window.elements(".chord-pad").size() == 16; }));
+	type("#chord-pads-startNote", "48");
+	REQUIRE(window.app.waitUntil([&] { return pads().at("remoteStart") == 48; }));
+	CHECK(pads().at("remoteEnd") == 59); // the range as long as it was
+	window.call("settings.set", {{"key", "ui.chordPads"}, {"value", {{"layout", "grid"}, {"columns", 4}}}});
+	REQUIRE(window.app.waitUntil([&] { return window.visible("#chord-pads-rows"); }));
+	CHECK_FALSE(window.visible("#chord-pads-padCount"));
+	type("#chord-pads-rows", "3");
+	REQUIRE(window.app.waitUntil([&] { return window.elements(".chord-pad").size() == 12; }));
+
+	// Import from MIDI Loop: the loop chosen in the file dialog becomes the pattern (p. 1379).
+	const gnubase::test::TempDir dir;
+	const std::filesystem::path loop = dir.path() / "Loop.mid";
+	engine::midifile::File file;
+	file.ticksPerQuarter = 480;
+	engine::midifile::Track track;
+	for (int i = 0; i < 3; ++i)
+	{
+		const int64_t tick = int64_t{i} * 480;
+		track.events.push_back(engine::midifile::channelEvent(tick, 0x90, static_cast<uint8_t>(50 + i), 100));
+		track.events.push_back(engine::midifile::channelEvent(tick + 240, 0x80, static_cast<uint8_t>(50 + i), 0));
+	}
+	track.end = int64_t{4} * 480;
+	file.tracks.push_back(track);
+	engine::midifile::save(file, loop.u8string());
+	window.call("chordPads.set", {{"mode", "pattern"}});
+	window.click("#chord-pads-pane-mode-button");
+	REQUIRE(window.app.waitUntil([&] { return window.visible("#chord-pads-importLoop"); }));
+	window.click("#chord-pads-importLoop");
+	REQUIRE(window.app.waitUntil([&] { return window.app.shell().fileDialogs().size() == 1; }));
+	window.app.shell().answerFileDialog(window.app.shell().fileDialogs().begin()->first, {loop});
+	REQUIRE(window.app.waitUntil([&] { return pads().at("pattern").at("name") == "Loop"; }));
 }

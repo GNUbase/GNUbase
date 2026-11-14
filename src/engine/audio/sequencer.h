@@ -292,8 +292,9 @@ namespace gnubase::engine
 		// one before, then its own on events.
 		bool triggerSlot(
 			const MidiSequence& sequence, const graph::ProcessEvent& event, graph::EventBuffer& out) noexcept;
-		void selectSlot(
-			const ArticulationMap& map, int slot, uint8_t channel, uint32_t offset, graph::EventBuffer& out) noexcept;
+		// again sends the off and on events of the slot that is selected, as for a new one.
+		void selectSlot(const ArticulationMap& map, int slot, uint8_t channel, uint32_t offset, graph::EventBuffer& out,
+			bool again = false) noexcept;
 		void play(
 			const MidiSequence& sequence, const graph::TransportSegment& segment, graph::EventBuffer& out) noexcept;
 		// Each returns false if the event buffer was full; then the note didn't start or end (though noteOn may have
@@ -358,6 +359,8 @@ namespace gnubase::engine
 		uint8_t m_inputSlotChannel = 0;
 		int m_inputSlotHeld = -1;
 		uint64_t m_inputSlotsSerial = 0; // the MidiSequence::slotsSerial they belong to
+		int8_t m_inputSlotTrack = -1;    // the MidiSequence::inputChannel they belong to
+		uint8_t m_inputSlotTrigger = 0;  // the channel of the trigger that selected the slot
 		uint64_t m_instrument = 0;       // playOn: where its notes went in the graph that runs
 
 		// Command thread: the effect in each slot, the inserts' then the sends', while it plays.

@@ -17,7 +17,11 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
 - **Save, Save As.** `project.save` with `path` saves the project as that file, which is then its file; without `path`
   it saves to the project's file and fails for a project that has none. The engine saves under the path as it is,
   without adding `.dawproject`, so that a script or MCP client gets the file it named; Save As in the UI adds the
-  extension (see the File menu below).
+  extension (see the File menu below). Projects may be saved on several threads at once, as backup jobs run beside
+  each other and beside a save ([backup.md](backup.md)), each writing its own file without a lock: the ZIP entries
+  have no time stamps (miniz is built with `MINIZ_NO_TIME`), since miniz takes them from `localtime()`, whose result
+  is one static struct outside Windows (#1425; `projects saved on two threads at the same time both load` in
+  `tests/dawproject_tests.cpp`, which the tsan job runs).
 - **Save New Version.** `project.saveNewVersion` saves the project next to its file with the next number, as the
   reference does: `Song-01.dawproject` after `Song.dawproject`, and after `Song-02` the number after the highest
   `Song-NN` in the folder. The project goes on with the new file; the earlier versions stay. Numbers of more than nine

@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -105,6 +106,10 @@ namespace gnubase::engine
 	// and 10 on its MIDI channel (RenderChannel::midiChannel) when it has them, and the MIDI controllers that have
 	// curves. maxVolume is the project's, in dB.
 	std::unique_ptr<ChannelAutomation> channelAutomation(const RenderChannel& channel, double maxVolume);
+
+	// The instrument parameters that a channel's automation lanes target. A drum machine's pads (#182) have lanes for
+	// these alone; their other values come with its samples (processors::DrumMachine::setPadValues).
+	std::set<uint32_t> automatedInstrumentParameters(const RenderChannel& channel);
 
 	// The value of a curve at a project position (see AutomationLane): before the first point its value, after the
 	// last one its value, and where several points share a position the last one's.

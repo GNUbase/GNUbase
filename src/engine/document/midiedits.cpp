@@ -180,6 +180,53 @@ namespace gnubase::engine
 			return {{"note", glued}};
 		}
 
+		// The notes the parameters name, moved to another part by the offsets, as a drag from one in-place editor to
+		// another gives them (p. 1261): every note keeps its id and every field but its position and pitch.
+		Json moveNotes(Project& project, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			MidiPart& source = findPart(project, parameters);
+			const auto targetId = parameters.at("target").get<ObjectId>();
+			const auto target = project.midiParts.find(targetId);
+			require(target != project.midiParts.end(), "no MIDI part " + std::to_string(targetId));
+			require(source.id == targetId || source.shared == 0 || source.shared != target->second.shared,
+				"can't move notes between shared copies of one group: they must stay equal");
+			const auto ticks = parameters.value("ticks", time::Ticks{0});
+			const auto semitones = parameters.value("semitones", int64_t{0});
+			const auto ids = parameters.at("notes").get<std::vector<ObjectId>>();
+			// The offsets count on the project's timeline, while a note's position counts from its part's start:
+			// the difference of the two starts goes into the positions, in whatever time base the parts are.
+			const time::Ticks sourceStart = time::toTicks(source.position, project.tempo, project.sampleRate);
+			const time::Ticks targetStart = time::toTicks(target->second.position, project.tempo, project.sampleRate);
+			// Checked before anything moves. ProjectModel::add would restore the project anyway.
+			std::vector<Note> notes;
+			for (size_t i = 0; i < ids.size(); ++i)
+			{
+				const std::string name = "notes[" + std::to_string(i) + "]";
+				const auto found = source.notes.find(ids[i]);
+				require(found != source.notes.end(), name + ": the part has no note " + std::to_string(ids[i]));
+				Note note = found->second;
+				note.position = sourceStart + note.position + ticks - targetStart;
+				require(note.position >= 0, name + " would land before the target part's start");
+				const int64_t pitch = static_cast<int64_t>(note.pitch) + semitones;
+				require(pitch >= 0 && pitch <= 127, name + " would land outside the pitches 0 to 127");
+				note.pitch = static_cast<uint8_t>(pitch);
+				notes.push_back(std::move(note));
+			}
+			Json removed = Json::array();
+			Json added = Json::array();
+			for (size_t i = 0; i < notes.size(); ++i)
+			{
+				source.notes.erase(ids[i]);
+				const Note& stored = target->second.notes[ids[i]] = std::move(notes[i]);
+				removed.push_back(ids[i]);
+				added.push_back(toJson(stored));
+			}
+			context.emit("note.removed", {{"part", source.id}, {"notes", removed}});
+			context.emit("note.added", {{"part", target->second.id}, {"notes", added}});
+			return {{"notes", added}};
+		}
+
 		// The part's notes that the parameters' notes name, in that order.
 		std::vector<Note*> namedNotes(MidiPart& part, const Json& parameters)
 		{
@@ -344,6 +391,30 @@ namespace gnubase::engine
 						{"expressions", expressionsSchema()}}),
 				resultSchema("notes"), false},
 			setNotes);
+		const Json noteMove = {{"type", "object"}, {"additionalProperties", false},
+			{"required", {"part", "notes", "target"}},
+			{"properties",
+				{{"part", integer}, {"notes", {{"type", "array"}, {"items", integer}}}, {"target", integer},
+					{"ticks",
+						{{"type", "integer"},
+							{"description", "how far the notes move on the project's timeline, in ticks"}}},
+					{"semitones",
+						{{"type", "integer"}, {"description", "how far the notes move in pitch, in semitones"}}}}}};
+		add(engine,
+			{"note.move", 1,
+				"Moves notes of a MIDI part to another part, as dragging them from one in-place editor to another "
+				"does (reference manual p. 1261): each note keeps its id and every field but its position and pitch. "
+				"ticks moves the notes on the project's timeline and semitones in pitch; the command converts the "
+				"timeline shift to the target part's own positions, wherever the two parts start on the timeline and "
+				"whatever their time bases. The source part and the target part may be the same. The move "
+				"is one undo step, and the shared copies of both parts follow it. A note may reach past the target "
+				"part's end, as note.add and note.set allow. Refuses, changing nothing, a part or a note that "
+				"doesn't exist, a note that would land on the timeline before the target part's start or outside the "
+				"pitches 0 to 127, and a move between shared copies of one group, which must stay equal. Emits "
+				"note.removed for the source part and note.added for the target part. Returns the moved notes, as "
+				"the target part has them.",
+				noteMove, resultSchema("notes"), false},
+			moveNotes);
 		add(engine,
 			{"controller.set", 1,
 				"Changes controller events of a MIDI part: each change names a controller event by id and gives what "

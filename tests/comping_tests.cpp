@@ -409,6 +409,80 @@ TEST_CASE("two overlapping events at one place in the stack, as a file from befo
 	}
 }
 
+TEST_CASE("pieces of a split whose ranks disagree with their ids play, snap, copy and come to the front by their ranks",
+	"[integration]")
+{
+	// A sine that crosses zero every 100 frames, in an event from 0 to 4000.
+	const gnubase::test::TempDir dir;
+	Fixture f;
+	f.call("audio.setDevice", {{"blockSize", 64}, {"inputChannels", 0}, {"captureSeconds", 1}});
+	const auto wave = [](int64_t frame)
+	{ return static_cast<float>(0.5 * std::sin(static_cast<double>(frame) * 3.14159265358979323846 / 100.0)); };
+	gnubase::test::Audio audio;
+	audio.sampleRate = 48000;
+	for (int64_t frame = 0; frame < 9600; ++frame)
+		audio.samples.push_back(wave(frame));
+	const std::filesystem::path file = dir.path() / "sine.wav";
+	gnubase::test::writeWav(file, audio);
+	const Json media = f.call("media.add", {{"path", file.u8string()}}).at("media");
+	const auto clip = f.call("clip.add", {{"media", media.at("id")}}).at("clip").at("id").get<int64_t>();
+	const int64_t track = f.track("audio");
+	const int64_t event = f.take(track, clip, 0, 4000, 0);
+
+	// Split at 2000, then the first piece again at 1000: the newest piece, from 1000 to 2000, has the higher id but
+	// is behind the piece from 2000 on. That one moved left to 1050 overlaps it from 1050 to 2000 and plays there, its
+	// zero crossings 50 samples off the newest piece's.
+	const auto later =
+		f.call("event.split", {{"events", {event}}, {"positions", {2000}}}).at("events").at(0).get<int64_t>();
+	const auto newest =
+		f.call("event.split", {{"events", {event}}, {"positions", {1000}}}).at("events").at(0).get<int64_t>();
+	REQUIRE(newest > later);
+	REQUIRE(stackPlace(f.object("audioEvents", later)) > stackPlace(f.object("audioEvents", newest)));
+	f.call("event.move", {{"events", {later}}, {"delta", -950}});
+	const std::vector<float> output = f.render(4000);
+	size_t wrong = 0;
+	for (size_t i = 0; i < output.size(); ++i)
+	{
+		const auto position = static_cast<int64_t>(i);
+		float expected = 0.0f;
+		if (position < 1050)
+			expected = wave(position);
+		else if (position < 3050)
+			expected = wave(position + 950);
+		if (output[i] != expected)
+			++wrong;
+	}
+	CHECK(wrong == 0);
+	CHECK(f.call("snap.zeroCrossings", {{"positions", {1530}}, {"tracks", {track}}}).at("positions").at(0) == 1550);
+
+	// Copies and pieces brought to the front keep the later piece in front of the newest one, named in either order.
+	const auto laterInFront = [&f](int64_t position)
+	{
+		std::optional<std::array<int64_t, 3>> newestPlace;
+		std::optional<std::array<int64_t, 3>> laterPlace;
+		const Json project = f.call("project.get");
+		for (const Json& piece : project.at("audioEvents"))
+		{
+			if (piece.at("position") == position + 1000 && piece.at("offset") == 1000)
+				newestPlace = stackPlace(piece);
+			else if (piece.at("position") == position + 1050 && piece.at("offset") == 2000)
+				laterPlace = stackPlace(piece);
+		}
+		return newestPlace && laterPlace && *laterPlace > *newestPlace;
+	};
+	REQUIRE(laterInFront(0));
+	int64_t delta = 0;
+	for (const Json& named : {Json{newest, later}, Json{later, newest}})
+	{
+		INFO("named " << named.dump());
+		delta += 48000;
+		f.call("event.copy", {{"events", named}, {"delta", delta}});
+		CHECK(laterInFront(delta));
+		f.call("event.toFront", {{"events", named}});
+		CHECK(laterInFront(0));
+	}
+}
+
 TEST_CASE("event.comp takes a piece of a clip at another sample rate that a split rounds past the range", "[unit]")
 {
 	Fixture f;

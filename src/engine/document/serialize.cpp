@@ -12,6 +12,7 @@
 #include "engine/midi/drummaps.h"
 #include "engine/midi/patterns.h"
 #include "engine/processors/builtin.h"
+#include "engine/processors/drummachine.h"
 #include "engine/processors/midieffects.h"
 
 #include <algorithm>
@@ -503,9 +504,9 @@ namespace gnubase::engine
 			throw std::invalid_argument("AIFF files record 16, 24 or 32 bit, not " + depth);
 		if (type == "flac" && depth != "int16" && depth != "int24")
 			throw std::invalid_argument("FLAC files record 16 or 24 bit, not " + depth);
-		if (!std::isfinite(setup.startTime) || setup.startTime < 0.0 || setup.startTime >= 86400.0)
+		if (!std::isfinite(setup.startTime) || setup.startTime < 0.0 || setup.startTime >= g_maxProjectLength)
 			throw std::invalid_argument("startTime must be from 0 to less than 24 hours (86400 seconds)");
-		if (!std::isfinite(setup.length) || setup.length <= 0.0 || setup.length > 86400.0)
+		if (!std::isfinite(setup.length) || setup.length <= 0.0 || setup.length > g_maxProjectLength)
 			throw std::invalid_argument("length must be more than 0 and at most 24 hours (86400 seconds)");
 		if (setup.barOffset < -9999 || setup.barOffset > 9999)
 			throw std::invalid_argument("barOffset must be from -9999 to 9999");
@@ -608,6 +609,10 @@ namespace gnubase::engine
 				sends.push_back({{"destination", send.destination}, {"on", send.on}, {"level", send.level},
 					{"preFader", send.preFader}});
 		json["sends"] = std::move(sends);
+		Json pads = Json::array();
+		for (const auto& [pad, drum] : channel.pads)
+			pads.push_back({{"pad", pad}, {"name", drum.name}, {"sample", drum.sample}});
+		json["pads"] = std::move(pads);
 		return json;
 	}
 
@@ -2285,6 +2290,15 @@ namespace gnubase::engine
 			// Only the sampler plays a sample; files from before sampler tracks have none. Checked once the clips are
 			// read.
 			channel.sample = channel.instrument == "sampler" ? item.value("sample", ObjectId{0}) : 0;
+			// Only the drum machine has pads (#182); their clips too are checked once the clips are read.
+			channel.pads.clear();
+			if (channel.instrument == "drumMachine")
+				for (const Json& pad : item.value("pads", Json::array()))
+				{
+					const int note = pad.value("pad", -1);
+					if (note >= 0 && note < processors::g_drumPads)
+						channel.pads[note] = {pad.value("name", std::string()), pad.value("sample", ObjectId{0})};
+				}
 			// Audio, MIDI and instrument tracks and VCA faders have the buttons; files from before them have them off.
 			// MIDI input other than none is all MIDI inputs, also in files from before it.
 			const TrackType type = track != project.trackById.end() ? track->second.type : TrackType::Folder;
@@ -2418,10 +2432,14 @@ namespace gnubase::engine
 				item.value("folder", ObjectId{0}), std::move(regions), std::move(hitpoints), hitpointFilter,
 				clipWarpFromJson(item.value("warp", Json::object()))};
 		}
-		// A sampler whose clip isn't in the pool plays nothing.
+		// A sampler or a drum pad whose clip isn't in the pool plays nothing.
 		for (auto& [id, channel] : project.channels)
-			if (project.clips.count(channel.sample) == 0)
-				channel.sample = 0;
+			forEveryInstrumentClip(channel,
+				[&project](ObjectId& clip)
+				{
+					if (project.clips.count(clip) == 0)
+						clip = 0;
+				});
 		// Files from before the pool's folders have none. Folders inside folders that aren't there go to the top, and
 		// of each loop of folders inside each other the first one; clips in folders that aren't there go to the
 		// Audio folder.

@@ -6,6 +6,7 @@
 #include "engine/engine.h"
 #include "engine/plugins/slotinstances.h"
 #include "engine/processors/builtin.h"
+#include "engine/processors/drummachine.h"
 #include "engine/processors/sampler.h"
 #include "engine/settings/usersettings.h"
 #include "platform/hosttime.h"
@@ -259,9 +260,25 @@ namespace gnubase::engine
 		cue.playing = playing;
 		cue.settings = m_transport.settings();
 		cue.window = window;
-		const std::shared_ptr<const ArrangerPlan> plan = m_snapshots.latest().arranger;
-		cue.arranger = plan.get();
-		cue.arrangerState = m_transport.arranger();
+		CueState state;
+		{
+			const std::scoped_lock lock(m_cueMutex);
+			state = m_cueState; // keeps the plan it returns alive while this cues
+		}
+		// A consistent pair: the state and the plan of the generation its indices walk (#885).
+		const auto [plan, arrangerState] = cuePlan(state);
+		if (plan != nullptr)
+		{
+			cue.arranger = plan;
+			cue.arrangerState = arrangerState;
+		}
+		else
+		{
+			// An exact cue primes where playback goes: ground the state in the newest plan instead of skipping.
+			cue.arranger = state.arranger.get();
+			cue.arrangerState = arrangerState;
+			cue.arrangerState.entering = true;
+		}
 		cue.enter = enter;
 		cue.playsOn = playsOn;
 		m_playback.cue(cue);
@@ -297,12 +314,16 @@ namespace gnubase::engine
 						CueState state;
 						{
 							const std::scoped_lock lock(m_cueMutex);
-							state = m_cueState; // keeps the arranger plan alive while it cues
+							state = m_cueState; // keeps the arranger plans alive while it cues
 						}
 						cue.playing = state.playing;
 						cue.settings = state.settings;
-						cue.arranger = state.arranger.get();
-						cue.arrangerState = m_transport.arranger();
+						// The plan of the generation the transport's published state walks, not the newest one: a
+						// chain edit the audio thread hasn't played yet must not make this cue walk the new plan
+						// with the old plan's indices (#885).
+						const auto [plan, arrangerState] = cuePlan(state);
+						cue.arranger = plan;
+						cue.arrangerState = arrangerState;
 						// Read first: a request seen applied then shows where the audio thread went (transport.h). The
 						// count-in comes before the cursor because it ends after the cursor has moved.
 						const uint64_t applied = m_transport.appliedRequests();
@@ -324,7 +345,9 @@ namespace gnubase::engine
 							cue.playing = true;
 							cue.starting = true;
 						}
-						m_playback.cue(cue);
+						// A generation neither kept plan has: skip this pass, the next one catches up (#885).
+						if (plan != nullptr)
+							m_playback.cue(cue);
 					}
 					m_audition.cue(cue.window, true);
 					std::this_thread::sleep_for(g_cueInterval);
@@ -340,6 +363,37 @@ namespace gnubase::engine
 		m_cueState.enter = enter;
 		m_cueState.startRequests = m_transport.sentRequests() + 1;
 		m_cueState.playing = true; // until sent() reads the transport, also when the start is applied before it
+	}
+
+	void AudioEngine::rotatePlans(const std::shared_ptr<const ArrangerPlan>& newest)
+	{
+		const std::scoped_lock lock(m_cueMutex);
+		if (m_cueState.arranger == newest)
+			return;
+		// Keep the plan the transport's published state walks, so the audio thread's next re-entry finds it to remap
+		// from and the cue thread finds it to walk; free what is neither, here on the command thread (#885). The
+		// generation is published modulo g_arrangerGenerations: a match keeps a plan too many rather than freeing one
+		// still in use.
+		const uint64_t played = m_transport.arrangerAndGeneration().second;
+		if (m_cueState.arranger->generation % g_arrangerGenerations == played)
+			m_cueState.previousArranger = m_cueState.arranger;
+		else if (m_cueState.previousArranger != nullptr &&
+			m_cueState.previousArranger->generation % g_arrangerGenerations != played)
+			m_cueState.previousArranger = nullptr;
+		m_cueState.arranger = newest;
+	}
+
+	std::pair<const ArrangerPlan*, ArrangerState> AudioEngine::cuePlan(const CueState& state) const
+	{
+		const auto [arrangerState, generation] = m_transport.arrangerAndGeneration();
+		const ArrangerPlan* const newest = state.arranger.get();
+		if (const ArrangerPlan* plan = planOfGeneration(newest, state.previousArranger.get(), generation))
+			return {plan, arrangerState};
+		if (newest != nullptr && !newest->plays())
+			return {newest, arrangerState}; // nothing walks a chain: the state's indices don't matter
+		// The plan the state walks is neither of the two this keeps (a burst of edits inside one block): skip the
+		// pass rather than guess - a missed cue cycle is harmless, a wrong cue is not (#885).
+		return {nullptr, arrangerState};
 	}
 
 	void AudioEngine::startDevice()
@@ -360,8 +414,8 @@ namespace gnubase::engine
 
 	Json AudioEngine::padEvents()
 	{
-		static constexpr std::array<const char*, 6> kinds = {
-			"triggered", "released", "modifier", "note", "player", "control"};
+		static constexpr std::array<const char*, 7> kinds = {
+			"triggered", "released", "modifier", "note", "player", "control", "controlInput"};
 		Json events;
 		MidiPorts::PadEvent event;
 		while (m_midi.takePadEvent(event))
@@ -394,11 +448,22 @@ namespace gnubase::engine
 		uint64_t position = m_device->position();
 		// Every sampler plays its sample from the first block (#1180). A file whose read stalls fails the render
 		// after the last round instead of holding it for good (#1343).
-		for (int round = 1; !waitForSamples(m_offlineSampleWait); ++round)
+		// The error and the warnings name the files, so that a user knows where to look.
+		for (int round = 1;; ++round)
 		{
+			const std::set<std::string> waiting = waitForSamples(m_offlineSampleWait);
+			if (waiting.empty())
+				break;
+			std::string files;
+			for (const std::string& file : waiting)
+			{
+				if (!files.empty())
+					files += ", ";
+				files += file;
+			}
 			if (round == g_offlineSampleRounds)
-				throw CommandError("the render gave up waiting for the samplers' samples to be read");
-			logging::warning("The render still waits for the samplers' samples to be read");
+				throw CommandError("the render gave up waiting for the samplers' samples to be read: " + files);
+			logging::warning("The render still waits for the samplers' samples to be read: {}", files);
 		}
 		for (uint64_t done = 0; done < frames;)
 		{
@@ -588,10 +653,8 @@ namespace gnubase::engine
 		auto program = std::make_unique<Program>(desc, format.sampleRate, format.blockSize);
 		program->tempo = snapshot.tempo;
 		program->arranger = snapshot.arranger;
-		{
-			const std::scoped_lock lock(m_cueMutex);
-			m_cueState.arranger = snapshot.arranger;
-		}
+		rotatePlans(
+			snapshot.arranger); // the cue thread walks the plan the transport's state means, not just the new one
 		program->sampleRate = snapshot.sampleRate;
 		program->generation = generation;
 		program->releases = releases();
@@ -803,30 +866,39 @@ namespace gnubase::engine
 					instrument.id = channel.instrument;
 					std::shared_ptr<graph::Processor> played;
 					if (channel.instrument == "sampler")
-						played = instrument.sampler = std::make_shared<processors::Sampler>();
+						played = instrument.player = std::make_shared<processors::Sampler>();
+					else if (channel.instrument == "drumMachine")
+						played = instrument.player = std::make_shared<processors::DrumMachine>();
 					else if (processors::isInstrument(channel.instrument))
 						played = processors::createBuiltin(channel.instrument);
 					instrument.channel =
 						std::make_shared<InstrumentChannel>(sequencer, std::move(played), ++m_instrumentSerial);
 				}
-				// The sampler swaps its sample while it plays (sample hot swap). The sample loader reads a new one on
-				// its own thread, and the sampler plays the one before, or nothing, until updateSamples hands it over
-				// (#1122). A sampler of another project, which took over the instrument of a channel with the same id,
-				// plays nothing until then: the sample before is the other project's. The sampler lets go of a sample
-				// once the audio thread has moved on, by the next update.
-				if (instrument.sampler)
+				// The sampler swaps its sample while it plays (sample hot swap), the drum machine its pads'. The sample
+				// loader reads a new one on its own thread, and the instrument plays the one before, or nothing, until
+				// updateSamples hands it over (#1122). An instrument of another project, which took over the
+				// instrument of a channel with the same id, plays nothing until then: the sample before is the other
+				// project's. It lets go of a sample once the audio thread has moved on, by the next update.
+				if (instrument.player)
 				{
-					instrument.sampler->collect();
-					if (channel.sample != instrument.loaded && !instrument.loaded.empty() &&
-						(channel.sample.empty() || replaced))
+					instrument.player->collect();
+					instrument.loaded.resize(channel.samples.size());
+					for (size_t slot = 0; slot < channel.samples.size(); ++slot)
 					{
-						instrument.sampler->setSample(std::make_shared<const processors::Sample>());
-						instrument.loaded.clear();
+						const std::string& sample = channel.samples[slot];
+						std::string& loaded = instrument.loaded[slot];
+						if (sample != loaded && !loaded.empty() && (sample.empty() || replaced))
+						{
+							instrument.player->setSample(slot, std::make_shared<const processors::Sample>());
+							loaded.clear();
+						}
+						if (sample != loaded)
+							m_sampleLoader.request(sample);
 					}
-					if (channel.sample != instrument.loaded)
-						m_sampleLoader.request(channel.sample);
 				}
-				instrument.sample = channel.sample;
+				instrument.samples = channel.samples;
+				if (auto* drums = dynamic_cast<processors::DrumMachine*>(instrument.player.get()))
+					drums->setPadValues(channel.instrumentParameters, automatedInstrumentParameters(channel));
 				instrument.sources = from;
 				processor = instrument.channel;
 				instruments[channel.id] = instrument;
@@ -881,17 +953,23 @@ namespace gnubase::engine
 		for (auto& entry : m_instruments)
 		{
 			Instrument& instrument = entry.second;
-			if (!instrument.sampler || instrument.loaded == instrument.sample)
+			if (!instrument.player || instrument.loaded == instrument.samples)
 				continue;
-			if (std::shared_ptr<const processors::Sample> sample = m_sampleLoader.sample(instrument.sample))
+			instrument.player->collect();
+			for (size_t slot = 0; slot < instrument.samples.size(); ++slot)
 			{
-				instrument.sampler->collect();
-				instrument.sampler->setSample(std::move(sample));
-				instrument.loaded = instrument.sample;
-			}
-			else
-			{
-				waiting.insert(instrument.sample);
+				const std::string& path = instrument.samples[slot];
+				if (instrument.loaded[slot] == path)
+					continue;
+				if (std::shared_ptr<const processors::Sample> sample = m_sampleLoader.sample(path))
+				{
+					instrument.player->setSample(slot, std::move(sample));
+					instrument.loaded[slot] = path;
+				}
+				else
+				{
+					waiting.insert(path);
+				}
 			}
 		}
 		m_sampleLoader.keepOnly(waiting);
@@ -903,12 +981,11 @@ namespace gnubase::engine
 		m_sampleLoader.setRead(std::move(read));
 	}
 
-	bool AudioEngine::waitForSamples(std::chrono::milliseconds timeout)
+	std::set<std::string> AudioEngine::waitForSamples(std::chrono::milliseconds timeout)
 	{
 		// Only for the files that samplers wait for, not for one being read that none wants any more.
-		const bool read = m_sampleLoader.waitUntilRead(timeout, updateSamples());
-		updateSamples();
-		return read;
+		m_sampleLoader.waitUntilRead(timeout, updateSamples());
+		return updateSamples();
 	}
 
 	void AudioEngine::postSampleUpdate()
@@ -2527,7 +2604,8 @@ namespace gnubase::engine
 		engine.registerCommand(
 			{"audio.render", 1,
 				"Offline mode: processes the given number of frames as fast as possible, then returns. Only the dummy "
-				"device, and only while it is stopped.",
+				"device, and only while it is stopped. First it waits for the samplers' samples to be read, logging a "
+				"warning that names the files every 30 s, and fails naming them after 10 minutes.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["frames"],
 					"properties": {"frames": {"type": "integer"}}})"),
 				statusSchema(), false},
@@ -2863,16 +2941,19 @@ namespace gnubase::engine
 
 	void AudioEngine::arrange(const ArrangerState& state)
 	{
-		const ArrangerPlan& plan = *m_snapshots.latest().arranger;
+		// The plan travels with the request on this thread, so the state arrives with the events its indices mean
+		// and the generation it walks: a later plan change finds the state again, and the cue thread knows which plan
+		// the published state means (#885).
+		const std::shared_ptr<const ArrangerPlan> plan = m_snapshots.latest().arranger;
 		const int32_t section =
-			state.step >= 0 ? plan.steps.at(static_cast<size_t>(state.step)).section : state.section;
-		if (m_transport.playing() && plan.jump != ArrangerJump::None)
+			state.step >= 0 ? plan->steps.at(static_cast<size_t>(state.step)).section : state.section;
+		if (m_transport.playing() && plan->jump != ArrangerJump::None)
 		{
-			sent(m_transport.arrange(state, true));
+			sent(m_transport.arrange(state, true, plan.get()));
 			return;
 		}
-		locate({{"position", plan.sections.at(static_cast<size_t>(section)).start}});
-		sent(m_transport.arrange(state, false));
+		locate({{"position", plan->sections.at(static_cast<size_t>(section)).start}});
+		sent(m_transport.arrange(state, false, plan.get()));
 	}
 
 	void AudioEngine::registerArrangerCommands(Engine& engine)

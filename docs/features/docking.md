@@ -54,7 +54,8 @@ fill them (the Editor panel is the lower zone editor's, [midi-editors.md](midi-e
 the track visibility and the lower zone editor's, [track-visibility.md](track-visibility.md)), the Pool in the lower zone
 ([pool.md](pool.md), `window.pool`, Mod+P), the chord pads in the lower zone
 ([chord-pads.md](chord-pads.md), `window.chordPads`), the sampler panel in the lower zone
-([sampler-track.md](sampler-track.md), `window.sampler`) and the edit history on the right
+([sampler-track.md](sampler-track.md), `window.sampler`), the drum machine in the lower zone
+([drum-track.md](drum-track.md), `window.drumMachine`) and the edit history on the right
 ([edit-history.md](edit-history.md)).
 `open` shows a panel as its zone's active tab, with the zone shown; a panel in a window of its own stays there, and
 its window comes to the front with the keyboard focus, restored if it is minimized, so commands such as

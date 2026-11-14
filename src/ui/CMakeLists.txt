@@ -35,6 +35,8 @@ add_library(gnubase-ui STATIC
 	displays.h
 	docking.cpp
 	docking.h
+	drummachinepanel.cpp
+	drummachinepanel.h
 	enginebinding.cpp
 	enginebinding.h
 	eventdisplay.cpp

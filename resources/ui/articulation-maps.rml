@@ -12,7 +12,8 @@
      project.reset, so that it shows the maps as they are after an import, an undo or a change through MCP or Lua; it
      selects a map that comes. It unsubscribes its handlers when it closes (gnubase.off). Opened again for another
      track, or for none, app::AppUi sets or removes its attribute track and sends trackchange, which selects that
-     track's map, if it has one, and shows Assign to Track only with a track. The buttons are outside the rows that
+     track's map, if it has one, and shows Assign to Track only with a track. project.reset drops the track, since
+     object ids are per project. The buttons are outside the rows that
      the Lua writes again, since an element must not go while its own event runs: Remove Articulation,
      Remove Sound Slot and Remove Output Mapping remove the row picked with its radio button. -->
 <rml>
@@ -329,7 +330,16 @@
 		-- A change from elsewhere: an import, an undo, MCP or Lua. A map that comes is selected.
 		local function follow(event)
 			local document = dialog.document
-			if busy or document == nil then
+			if document == nil then
+				return
+			end
+			-- Object ids are per project: a new or loaded project's track with this id isn't the track.
+			if event.name == "project.reset" and track ~= nil then
+				track = nil
+				document:RemoveAttribute("track")
+				document:GetElementById("articulation-map-assign"):SetClass("unavailable", true)
+			end
+			if busy then
 				return
 			end
 			local added = event.name == "articulationMap.added" and type(event.data.map) == "table"
