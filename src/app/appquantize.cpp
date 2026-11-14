@@ -102,9 +102,14 @@ namespace gnubase::app
 										 : Json{{"part", target.parts.front().first}},
 					[this](const engine::Result& result)
 					{
-						if (result.ok())
-							m_binding.send(
-								"quantize.set", {{"preset", result.value.at("preset").at("name").get<std::string>()}});
+						// Refused, as for an audio event without hitpoints, it is logged as a refused Slice is.
+						if (!result.ok())
+						{
+							logging::warning("Creating a groove quantize preset failed: {}", result.error);
+							return;
+						}
+						m_binding.send(
+							"quantize.set", {{"preset", result.value.at("preset").at("name").get<std::string>()}});
 					});
 			}});
 		m_keys.enableWhen("edit.createGrooveQuantize",
@@ -175,8 +180,11 @@ namespace gnubase::app
 	{
 		std::vector<uint64_t> events = selected("audioEvents");
 		const std::vector<uint64_t> parts = selected("audioParts");
-		if (m_eventDisplay && !parts.empty())
-			for (const Json& event : m_eventDisplay->project().value("audioEvents", Json::array()))
+		if (!m_eventDisplay || parts.empty())
+			return events;
+		const Json& project = m_eventDisplay->project();
+		if (const auto all = project.find("audioEvents"); all != project.end())
+			for (const Json& event : *all)
 				if (std::find(parts.begin(), parts.end(), event.value("part", uint64_t{0})) != parts.end())
 					events.push_back(event.at("id").get<uint64_t>());
 		return events;
@@ -188,17 +196,26 @@ namespace gnubase::app
 		const std::vector<uint64_t> events = selectedAudioEvents();
 		if (!m_eventDisplay || events.empty())
 			return tracks;
+		// It runs on every selection change and project update while the panel is open: by reference, not through
+		// Json::value's copies.
 		const Json& project = m_eventDisplay->project();
+		const Json none = Json::array();
+		const auto list = [&project, &none](const char* key) -> const Json&
+		{
+			const auto found = project.find(key);
+			return found != project.end() ? *found : none;
+		};
+		const std::set<uint64_t> selection(events.begin(), events.end());
 		std::set<uint64_t> withHitpoints; // clips
-		for (const Json& clip : project.value("clips", Json::array()))
-			if (!clip.value("hitpoints", Json::array()).empty())
+		for (const Json& clip : list("clips"))
+			if (const auto hitpoints = clip.find("hitpoints"); hitpoints != clip.end() && !hitpoints->empty())
 				withHitpoints.insert(clip.at("id").get<uint64_t>());
 		std::set<uint64_t> found; // tracks
-		for (const Json& event : project.value("audioEvents", Json::array()))
-			if (std::find(events.begin(), events.end(), event.at("id").get<uint64_t>()) != events.end() &&
+		for (const Json& event : list("audioEvents"))
+			if (selection.count(event.at("id").get<uint64_t>()) != 0 &&
 				withHitpoints.count(event.at("clip").get<uint64_t>()) != 0)
 				found.insert(event.at("track").get<uint64_t>());
-		for (const Json& track : project.value("tracks", Json::array()))
+		for (const Json& track : list("tracks"))
 			if (found.count(track.at("id").get<uint64_t>()) != 0)
 				tracks.push_back({{"track", track.at("id")}, {"name", track.value("name", std::string())}});
 		return tracks;
