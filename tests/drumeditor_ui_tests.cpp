@@ -921,3 +921,41 @@ TEST_CASE("with the grid type Adapt to Zoom the drumstick snaps to a note value 
 	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 1; }));
 	CHECK(f.partNotes()[0].at("position") == expected);
 }
+
+TEST_CASE("Show Drum Sounds in Use by Instrument shows the sounds of a drum track's kit", "[ui]")
+{
+	// p. 1234: only for an instrument that can tell, here the drum machine's pads that play something.
+	Fixture f;
+	f.click(of(".key-input[setting=pitchVisibility]"));
+	f.click(of("#drum-pitch-options"));
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			return f.elements("#drum-pitch-menu menuitem[visible-sounds=inUse]")
+				.at(0)
+				.at("attributes")
+				.contains("disabled");
+		}));
+	f.click(of("#drum-pitch-options")); // closes the menu
+
+	const Json drums = f.app.call("drum.create");
+	f.app.call("track.set", {{"track", drums.at("track").at("id")}, {"drumMap", f.map}});
+	const auto part =
+		f.app.call("midiPart.add", {{"track", drums.at("track").at("id")}, {"position", 0}, {"length", g_bar}})
+			.at("part")
+			.at("id");
+	f.app.call("editor.open", {{"editor", "window"}, {"parts", Json::array({part})}});
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			return !f.elements("#drum-pitch-menu menuitem[visible-sounds=inUse]")
+						.at(0)
+						.at("attributes")
+						.contains("disabled");
+		}));
+	f.click(of("#drum-pitch-options"));
+	f.click(of("#drum-pitch-menu menuitem[visible-sounds=inUse]"));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-sound").size() == 11; })); // the kit's pads
+	CHECK(f.elements(".drum-sound").at(0).at("attributes").at("pitch") == "36");
+	CHECK(f.elements(".key-editor-row").size() == 11);
+}

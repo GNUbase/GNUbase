@@ -15,6 +15,7 @@
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <fstream>
 #include <map>
 #include <memory>
@@ -603,7 +604,7 @@ TEST_CASE("Pitch Visibility's Show Drum Sounds with Events and a track's GM name
 	CHECK(f.call("editor.get", {{"editor", "window"}}).at("visibleSounds") == "all");
 	CHECK(f.call("editor.set", {{"editor", "window"}, {"visibleSounds", "withEvents"}}).at("visibleSounds") ==
 		"withEvents");
-	CHECK_FALSE(f.client.call("editor.set", {{"editor", "window"}, {"visibleSounds", "inUse"}}).ok());
+	CHECK_FALSE(f.client.call("editor.set", {{"editor", "window"}, {"visibleSounds", "used"}}).ok());
 
 	// GM Default names the pitches without a drum map (p. 1239); saved with the project, undone like the map.
 	CHECK(f.trackJson().at("gmNames") == false);
@@ -621,4 +622,36 @@ TEST_CASE("Pitch Visibility's Show Drum Sounds with Events and a track's GM name
 	CHECK(f.trackJson().at("gmNames") == true);
 	const auto audio = f.call("track.add", {{"type", "audio"}}).at("track").at("id").get<uint64_t>();
 	CHECK_THAT(f.fails("track.set", {{"track", audio}, {"gmNames", true}}), ContainsSubstring("name list"));
+}
+
+TEST_CASE("Show Drum Sounds in Use by Instrument has the sounds whose pads the drum machine plays", "[unit]")
+{
+	Fixture f;
+	const auto open = [&](uint64_t track)
+	{
+		const auto part = f.call("midiPart.add", {{"track", track}, {"position", 0}, {"length", g_bar}})
+							  .at("part")
+							  .at("id")
+							  .get<uint64_t>();
+		return f.call("editor.open", {{"editor", "window"}, {"parts", {part}}, {"content", "drum"}});
+	};
+	// p. 1234: only an instrument that can tell; the test's instrument track has no drum machine.
+	CHECK(open(f.track).at("soundsInUse").is_null());
+	CHECK(f.call("editor.set", {{"editor", "window"}, {"visibleSounds", "inUse"}}).at("visibleSounds") == "inUse");
+
+	// A drum track's kit (drum.create).
+	const Json drums = f.call("drum.create");
+	const std::vector<int> kit = {36, 38, 39, 42, 44, 45, 46, 48, 49, 50, 56};
+	CHECK(open(drums.at("track").at("id").get<uint64_t>()).at("soundsInUse").get<std::vector<int>>() == kit);
+
+	// A MIDI track playing to it, through its drum map's O-notes.
+	const Json midi = f.call("track.add", {{"type", "midi"}}).at("track");
+	f.call("channel.set", {{"channel", midi.at("channel")}, {"output", drums.at("channel").at("id")}});
+	const auto map = f.call("drumMap.add", {{"copy", f.gm()}}).at("map").at("id").get<uint64_t>();
+	f.call("drumMap.set", {{"map", map}, {"sounds", {{{"pitch", 40}, {"oNote", 36}}, {{"pitch", 36}, {"oNote", 0}}}}});
+	f.call("track.set", {{"track", midi.at("id")}, {"drumMap", map}});
+	const auto inUse = open(midi.at("id").get<uint64_t>()).at("soundsInUse").get<std::vector<int>>();
+	CHECK(std::find(inUse.begin(), inUse.end(), 40) != inUse.end());
+	CHECK(std::find(inUse.begin(), inUse.end(), 36) == inUse.end());
+	CHECK(std::find(inUse.begin(), inUse.end(), 38) != inUse.end());
 }

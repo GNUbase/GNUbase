@@ -69,7 +69,10 @@ They emit `drumMap.added`, `drumMap.changed` and `drumMap.removed` with the map 
   editor opens the parts of a track with a drum map in the drum editor while the user setting `editing.useDrumEditor` is
   on, as by default (Use Drum Editor when Drum Map is assigned, pp. 1221, 1603; the preferences' Editors page). The drum
   editor's view also has `pitchVisibility` (Pitch Visibility On/Off) with its options `reverseSounds` (Reverse Drum
-  Sound List) and `visibleSounds` (`all`, or `withEvents` for Show Drum Sounds with Events, p. 1234), `soloInstrument`
+  Sound List) and `visibleSounds` (`all`, `withEvents` for Show Drum Sounds with Events, or `inUse` for Show Drum Sounds
+  in Use by Instrument, p. 1234), with `soundsInUse`, the pitches of the active track's sounds whose pads its
+  instrument plays through the map's O-notes (`playingDrumPads`): the drum machine of a drum track or of the instrument
+  track a MIDI track plays to, `null` for an instrument that can't tell; `soloInstrument`
   (Solo Instrument, p. 1223), `showNoteLength` (Show Note Length On/Off, p. 1227) and `gridType` (Grid Type, p. 1227):
   `quantize` (Use Quantize), `zoom` (Adapt to Zoom, a note value the editor's zoom chooses), or `drumMap` (Use Snap from
   Drum Map), each note snapping to its sound's snap.
@@ -109,7 +112,8 @@ content is `drum`. It is the key editor ([key-editor.md](key-editor.md)) with th
   played (`midi.inject` with `drumSounds`), so the map plays it on the sound's O-note and channel while the mouse is
   down, also when an earlier sound has its I-note. With Pitch Visibility and Reverse Drum Sound List the list goes
   from the bottom of the map's order; with Show Drum Sounds with Events it has only the sounds that the shown parts
-  have notes of, and the grid a row for each of them (all of them while the parts have none).
+  have notes of, and the grid a row for each of them (all of them while the parts have none); with Show Drum Sounds in
+  Use by Instrument those of `soundsInUse`, an option the menu disables while the instrument can't tell.
 - **Names** (p. 1239): the Names menu chooses the active track's name list, No Names or GM Default (`track.set
   gmNames`). Without a map GM Default names the list's sounds; the key editor's keys show the active track's drum sound
   names, its map's or GM Default's, as their text and title, and the keyboard is wider then (`.key-editor-keys.named`).
@@ -160,10 +164,10 @@ content is `drum`. It is the key editor ([key-editor.md](key-editor.md)) with th
 
 Outputs per sound in playback and MIDI thru (the sounds play on the track's output), so also the setup's Output pop-up
 and auditioning there: MIDI tracks play only to instrument tracks yet, not to MIDI output ports; name lists other than
-GM Default, such as a MIDI device's; Pitch Visibility's Show Drum Sounds in Use by Instrument; Solo Instrument for what
-is played live; showing drum notes in the project window's parts; Create Drum Map from Instrument (p. 1238); reordering
-the list by dragging; the score settings (Display Note, Noteheads, Voice, Instrument Type, Technique); importing the
-reference's own drum map files.
+GM Default, such as a MIDI device's; Show Drum Sounds in Use by Instrument for plugin instruments; Solo Instrument for
+what is played live; showing drum notes in the project window's parts; Create Drum Map from Instrument (p. 1238);
+reordering the list by dragging; the score settings (Display Note, Noteheads, Voice, Instrument Type, Technique);
+importing the reference's own drum map files.
 
 ## Checks
 
@@ -178,7 +182,8 @@ reference's own drum map files.
   opening in it unless the preference is off; Solo Instrument playing only the selected notes' sounds, following a
   selected note to another sound, leaving the project as saved, and not for nothing selected, another content, a
   closed editor, a track without a map or with it off; `visibleSounds` and the grid type `zoom`, refusing other
-  values; `gmNames` saved and loaded, undone and refused for audio tracks.
+  values; `soundsInUse` null without a drum machine, a drum track's kit, and a MIDI track's sounds through its map's
+  O-notes to the drum track it plays to; `gmNames` saved and loaded, undone and refused for audio tracks.
 - `tests/midieffects_tests.cpp`: the sequencer clearing `drumSound` on the notes it maps, so that the inserts below the
   divider and the instrument don't get it.
 - `tests/drumeditor_ui_tests.cpp` drives the app with `ui::Automation`: the sound list with the map's names, diamonds on
@@ -198,5 +203,6 @@ reference's own drum map files.
   adding and removing maps, following a map added elsewhere, and Save... and Load... through the file dialogs; the MIDI
   menu's Drum Map Setup and O-Note Conversion; Show Drum Sounds with Events listing and gridding only the notes'
   sounds, the notes on their rows and the drumstick inserting on one, Solo Instrument's button, and the Names menu's GM
-  Default naming the list's sounds without a map and the key editor's keys; Adapt to Zoom snapping the drumstick to
+  Default naming the list's sounds without a map and the key editor's keys; Show Drum Sounds in Use by Instrument
+  disabled without a drum machine and listing a drum track's kit; Adapt to Zoom snapping the drumstick to
   the note value that the grid's width chooses.

@@ -8,6 +8,7 @@
 // so they are no undo steps and don't make the project modified; editor.input's notes are.
 #include "engine/document/editors.h"
 
+#include "engine/document/drumtrack.h"
 #include "engine/document/projectmodel.h"
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
@@ -271,6 +272,30 @@ namespace gnubase::engine
 			return view;
 		}
 
+		// Show Drum Sounds in Use by Instrument (#1493, p. 1234): the pitches of the track's drum sounds whose pads its
+		// instrument plays, the built-in drum machine of a drum track or of the instrument track a MIDI track plays to,
+		// through the track's drum map's O-notes; null for an instrument that can't tell.
+		Json soundsInUse(const Project& project, ObjectId track)
+		{
+			const Channel* drums = drumChannelOf(project, track);
+			if (const auto found = project.trackById.find(track); drums == nullptr && found != project.trackById.end())
+				if (const auto own = project.channels.find(found->second.channel);
+					own != project.channels.end() && own->second.format == ChannelFormat::None)
+					if (const auto output = project.channels.find(own->second.output);
+						output != project.channels.end() && output->second.instrument == "drumMachine")
+						drums = &output->second;
+			if (drums == nullptr)
+				return nullptr;
+			const std::vector<int> pads = playingDrumPads(*drums);
+			const DrumMap* map = midi::drumMapOf(project, track);
+			Json pitches = Json::array();
+			for (int pitch = 0; pitch < g_drumSounds; ++pitch)
+				if (std::binary_search(pads.begin(), pads.end(),
+						map != nullptr ? int{map->sounds.at(static_cast<size_t>(pitch)).oNote} : pitch))
+					pitches.push_back(pitch);
+			return pitches;
+		}
+
 		Json viewJson(const Project& project, const std::string& editor, const EditorView& view)
 		{
 			const ObjectId activeTrack = trackOf(project, view.activePart);
@@ -293,10 +318,11 @@ namespace gnubase::engine
 				{"keepNotes", view.keepNotes}, {"insertVelocity", view.insertVelocity},
 				{"lengthQuantize", view.lengthQuantize}, {"content", view.content},
 				{"pitchVisibility", view.pitchVisibility}, {"reverseSounds", view.reverseSounds},
-				{"visibleSounds", view.visibleSounds}, {"soloInstrument", view.soloInstrument},
-				{"showNoteLength", view.showNoteLength}, {"gridType", view.gridType}, {"lanes", lanes},
-				{"showLanes", view.showLanes}, {"autoSelectControllers", view.autoSelectControllers},
-				{"controllerSelection", controllerSelection}, {"eventSelection", view.eventSelection}};
+				{"visibleSounds", view.visibleSounds}, {"soundsInUse", soundsInUse(project, activeTrack)},
+				{"soloInstrument", view.soloInstrument}, {"showNoteLength", view.showNoteLength},
+				{"gridType", view.gridType}, {"lanes", lanes}, {"showLanes", view.showLanes},
+				{"autoSelectControllers", view.autoSelectControllers}, {"controllerSelection", controllerSelection},
+				{"eventSelection", view.eventSelection}};
 		}
 
 		// The controller events in the ranges of the selected notes, from a note's start to its end (p. 1188).
@@ -506,7 +532,7 @@ namespace gnubase::engine
 		const Json idSchema = {{"type", "integer"}};
 		const Json boolean = {{"type", "boolean"}};
 		const Json gridTypeSchema = {{"type", "string"}, {"enum", {"quantize", "zoom", "drumMap"}}};
-		const Json visibleSoundsSchema = {{"type", "string"}, {"enum", {"all", "withEvents"}}};
+		const Json visibleSoundsSchema = {{"type", "string"}, {"enum", {"all", "withEvents", "inUse"}}};
 		const Json selectionSchema = {{"type", "array"},
 			{"items",
 				{{"type", "object"}, {"additionalProperties", false}, {"required", {"part", "note"}},
@@ -543,10 +569,11 @@ namespace gnubase::engine
 				{"editor", "open", "parts", "activePart", "activeTrack", "editable", "editingMode", "keepContents",
 					"globalTracks", "selection", "stepInput", "midiInput", "stepPosition", "moveInsert", "recordPitch",
 					"recordVelocity", "recordReleaseVelocity", "keepNotes", "insertVelocity", "lengthQuantize",
-					"content", "pitchVisibility", "reverseSounds", "visibleSounds", "soloInstrument", "showNoteLength",
-					"gridType", "lanes", "showLanes", "autoSelectControllers", "controllerSelection",
+					"content", "pitchVisibility", "reverseSounds", "visibleSounds", "soundsInUse", "soloInstrument",
+					"showNoteLength", "gridType", "lanes", "showLanes", "autoSelectControllers", "controllerSelection",
 					"eventSelection"}}};
 		viewSchema["properties"].update(keyEditorSchema);
+		viewSchema["properties"]["soundsInUse"] = {{"type", {"array", "null"}}, {"items", idSchema}};
 		const std::string viewText =
 			"editor: lower (the editor in the project window's lower zone), window (the editor window) or "
 			"inPlace:<track>, the in-place editor of a MIDI or instrument track (editor.inPlace), which shows every "
@@ -567,8 +594,11 @@ namespace gnubase::engine
 			"shows the parts, key (the key editor), list (the list editor, pp. 1243-1258), drum (the drum editor, "
 			"pp. 1221-1242) or pattern (the pattern editor, pp. 895-937: the active part's pattern). The drum "
 			"editor's: pitchVisibility (Pitch Visibility On/Off) applies its options reverseSounds, the drum sound "
-			"list from the bottom, and visibleSounds, all, or withEvents for only the sounds that the parts have notes "
-			"of (pp. 1223-1224, 1234); soloInstrument (Solo Instrument, p. 1223) plays, of the tracks with a drum map "
+			"list from the bottom, and visibleSounds, all, withEvents for only the sounds that the parts have notes "
+			"of, or inUse for only soundsInUse (pp. 1223-1224, 1234): the pitches of the active track's drum sounds "
+			"(through its drum map's O-notes) whose pads its instrument plays, the built-in drum machine of a drum "
+			"track (drum.create) or of the instrument track a MIDI track plays to, null for an instrument that can't "
+			"tell; soloInstrument (Solo Instrument, p. 1223) plays, of the tracks with a drum map "
 			"that its selected notes are on, only the notes of the selected notes' sounds, while it is open with "
 			"content drum; showNoteLength shows its notes as boxes of their length, not "
 			"diamonds (p. 1227); gridType, what its notes snap to (p. 1227): quantize, the quantize grid, zoom, a note "

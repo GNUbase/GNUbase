@@ -334,6 +334,7 @@ namespace gnubase::ui
 			R"(</menu><menu id="key-editor-toolbox)" + m_menuSuffix + R"(" class="toolbox">)" + toolbox + "</menu>" +
 			(drum ? R"(<menu id="drum-map-menu)" + m_menuSuffix + R"("/><menu id="drum-pitch-menu)" + m_menuSuffix +
 						R"("><menuitem type="toggle" visible-sounds="withEvents">Show Drum Sounds with Events</menuitem>)"
+						R"(<menuitem type="toggle" visible-sounds="inUse">Show Drum Sounds in Use by Instrument</menuitem>)"
 						R"(<menuitem type="toggle" setting="reverseSounds">Reverse Drum Sound List</menuitem></menu>)"
 						R"(<menu id="drum-grid-menu)" +
 						m_menuSuffix +
@@ -723,12 +724,27 @@ namespace gnubase::ui
 						item->SetAttribute("checked", "");
 				}
 		}
-		const bool withEvents = m_view.value("visibleSounds", std::string("all")) == "withEvents";
+		const std::string visibleSounds = m_view.value("visibleSounds", std::string("all"));
+		// Show Drum Sounds in Use by Instrument only for an instrument that can tell (p. 1234).
+		if (Rml::Element* menu = m_menus.size() > 4 ? m_menus[4].get() : nullptr)
+			if (Rml::Element* item = menu->QuerySelector("menuitem[visible-sounds=inUse]"))
+			{
+				const bool tells = m_view.contains("soundsInUse") && m_view.at("soundsInUse").is_array();
+				if (tells == item->HasAttribute("disabled"))
+				{
+					if (tells)
+						item->RemoveAttribute("disabled");
+					else
+						item->SetAttribute("disabled", "");
+				}
+			}
 		const bool gmNames = activeTrack().value("gmNames", false);
 		setInner(root->QuerySelector("#drum-names"), gmNames ? "GM Default" : "No Names");
-		for (const auto& [index, selector, on] : {std::make_tuple(size_t{4}, "menuitem[visible-sounds]", withEvents),
-				 std::make_tuple(size_t{6}, "menuitem[gm-names=true]", gmNames),
-				 std::make_tuple(size_t{6}, "menuitem[gm-names=false]", !gmNames)})
+		for (const auto& [index, selector, on] :
+			{std::make_tuple(size_t{4}, "menuitem[visible-sounds=withEvents]", visibleSounds == "withEvents"),
+				std::make_tuple(size_t{4}, "menuitem[visible-sounds=inUse]", visibleSounds == "inUse"),
+				std::make_tuple(size_t{6}, "menuitem[gm-names=true]", gmNames),
+				std::make_tuple(size_t{6}, "menuitem[gm-names=false]", !gmNames)})
 			if (Rml::Element* menu = m_menus.size() > index ? m_menus[index].get() : nullptr)
 				if (Rml::Element* item = menu->QuerySelector(selector);
 					item != nullptr && on != item->HasAttribute("checked"))
@@ -1192,7 +1208,7 @@ namespace gnubase::ui
 		{
 			setView({{"gridType", attribute(target, "grid-type")}});
 		}
-		else if (target.HasAttribute("visible-sounds"))
+		else if (target.HasAttribute("visible-sounds") && !target.HasAttribute("disabled"))
 		{
 			const std::string shown = attribute(target, "visible-sounds");
 			setView({{"visibleSounds", m_view.value("visibleSounds", std::string("all")) == shown ? "all" : shown}});
@@ -2015,12 +2031,26 @@ namespace gnubase::ui
 		}
 		const bool visibility = m_drum && m_view.value("pitchVisibility", false);
 		// Show Drum Sounds with Events (#1493, p. 1234): the sounds that the shown parts have notes of, or all of them
-		// while they have none.
-		if (visibility && m_view.value("visibleSounds", std::string("all")) == "withEvents" && !m_notes.empty())
-		{
-			std::vector<bool> used(static_cast<size_t>(g_pitches), false);
+		// while they have none; Show Drum Sounds in Use by Instrument likewise.
+		const std::string visibleSounds = visibility ? m_view.value("visibleSounds", std::string("all")) : "all";
+		std::vector<bool> used(static_cast<size_t>(g_pitches), false);
+		bool filter = false;
+		if (visibleSounds == "withEvents")
 			for (const Note& note : m_notes)
+			{
 				used.at(static_cast<size_t>(note.pitch)) = true;
+				filter = true;
+			}
+		// Show Drum Sounds in Use by Instrument: the sounds whose pads the instrument plays, if it can tell.
+		if (const auto inUse = m_view.find("soundsInUse");
+			visibleSounds == "inUse" && inUse != m_view.end() && inUse->is_array())
+			for (const Json& pitch : *inUse)
+			{
+				used.at(pitch.get<size_t>()) = true;
+				filter = true;
+			}
+		if (filter)
+		{
 			m_order.erase(std::remove_if(m_order.begin(), m_order.end(),
 							  [&used](int pitch) { return !used.at(static_cast<size_t>(pitch)); }),
 				m_order.end());
