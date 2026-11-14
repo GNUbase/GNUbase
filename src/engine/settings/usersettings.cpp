@@ -64,7 +64,7 @@ namespace gnubase::engine::settings
 						{"sections", {{"type", "object"}, {"additionalProperties", sections}}},
 						{"sizes", {{"type", "object"}, {"additionalProperties", {{"type", "number"}, {"minimum", 0}}}}},
 						{"open", {{"type", "boolean"}}}, {"maximized", {{"type", "boolean"}}}, {"bounds", bounds},
-						{"monitor", text}}}};
+						{"monitor", text}, {"fittedWidth", size}}}};
 			const Json panel = {{"type", "object"},
 				{"properties", {{"floating", {{"type", "boolean"}}}, {"bounds", bounds}, {"monitor", text}}}};
 			return {{"type", "object"},
