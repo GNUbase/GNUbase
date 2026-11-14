@@ -494,29 +494,39 @@ namespace gnubase::engine
 
 	void rebaseTrack(Project& project, Track& track, time::TimeBase base, CommandContext& context)
 	{
-		for (auto& [id, event] : project.audioEvents)
-			if (event.track == track.id)
+		// The inactive versions' events and parts are in the track's time base too, and change without an event, since
+		// nothing shows them.
+		forEveryEventAndPart(
+			project,
+			[&](AudioEvent& event, bool plays)
 			{
+				if (event.track != track.id)
+					return;
 				event.position = time::rebase(event.position, base, project.tempo, project.sampleRate);
-				context.emit("audioEvent.changed", {{"event", toJson(event)}});
-			}
-		for (auto& [id, part] : project.audioParts)
-			if (part.track == track.id)
+				if (plays)
+					context.emit("audioEvent.changed", {{"event", toJson(event)}});
+			},
+			[&](AudioPart& part, bool plays)
 			{
+				if (part.track != track.id)
+					return;
 				const time::Position end = time::rebase(
 					{part.position.base, part.position.value + part.length}, base, project.tempo, project.sampleRate);
 				part.position = time::rebase(part.position, base, project.tempo, project.sampleRate);
 				part.length = end.value - part.position.value;
-				context.emit("audioPart.changed", {{"part", toJson(part)}});
-			}
-		for (auto& [id, part] : project.midiParts)
-			if (part.track == track.id)
+				if (plays)
+					context.emit("audioPart.changed", {{"part", toJson(part)}});
+			},
+			[&](MidiPart& part, bool plays)
 			{
+				if (part.track != track.id)
+					return;
 				const time::Position end = time::rebase(partEnd(part), base, project.tempo, project.sampleRate);
 				part.position = time::rebase(part.position, base, project.tempo, project.sampleRate);
 				part.length = end.value - part.position.value;
-				context.emit("midiPart.changed", {{"part", toJson(part)}});
-			}
+				if (plays)
+					context.emit("midiPart.changed", {{"part", toJson(part)}});
+			});
 		for (auto& [id, marker] : project.markers)
 			if (marker.track == track.id)
 			{
@@ -557,70 +567,42 @@ namespace gnubase::engine
 			}
 		track.timeOffset =
 			time::rebase({track.timeBase, track.timeOffset}, base, project.tempo, project.sampleRate).value;
-		// The inactive versions' events and parts are in the track's time base too.
-		for (TrackVersion& version : track.versions)
-		{
-			for (AudioEvent& event : version.audioEvents)
-				event.position = time::rebase(event.position, base, project.tempo, project.sampleRate);
-			for (AudioPart& part : version.audioParts)
-			{
-				const time::Position end = time::rebase(
-					{part.position.base, part.position.value + part.length}, base, project.tempo, project.sampleRate);
-				part.position = time::rebase(part.position, base, project.tempo, project.sampleRate);
-				part.length = end.value - part.position.value;
-			}
-			for (MidiPart& part : version.midiParts)
-			{
-				const time::Position end = time::rebase(partEnd(part), base, project.tempo, project.sampleRate);
-				part.position = time::rebase(part.position, base, project.tempo, project.sampleRate);
-				part.length = end.value - part.position.value;
-			}
-		}
 		track.timeBase = base;
 	}
 
 	void changeSampleRate(Project& project, double sampleRate, CommandContext& context)
 	{
 		const double factor = sampleRate / project.sampleRate;
-		for (auto& [id, event] : project.audioEvents)
-			if (event.position.base == time::TimeBase::Linear)
+		// Only linear positions are in samples; the inactive versions' events and parts change without an event, since
+		// nothing shows them. An audio event's offset and length stay: they are frames of its file.
+		forEveryEventAndPart(
+			project,
+			[&](AudioEvent& event, bool plays)
 			{
+				if (event.position.base != time::TimeBase::Linear)
+					return;
 				event.position.value = rescale(event.position.value, factor);
-				context.emit("audioEvent.changed", {{"event", toJson(event)}});
-			}
-		for (auto& [id, part] : project.midiParts)
-			if (part.position.base == time::TimeBase::Linear)
+				if (plays)
+					context.emit("audioEvent.changed", {{"event", toJson(event)}});
+			},
+			[&](AudioPart& part, bool plays)
 			{
+				if (part.position.base != time::TimeBase::Linear)
+					return;
 				part.position.value = rescale(part.position.value, factor);
 				part.length = rescale(part.length, factor);
-				context.emit("midiPart.changed", {{"part", toJson(part)}});
-			}
-		for (auto& [id, part] : project.audioParts)
-			if (part.position.base == time::TimeBase::Linear)
+				if (plays)
+					context.emit("audioPart.changed", {{"part", toJson(part)}});
+			},
+			[&](MidiPart& part, bool plays)
 			{
+				if (part.position.base != time::TimeBase::Linear)
+					return;
 				part.position.value = rescale(part.position.value, factor);
 				part.length = rescale(part.length, factor);
-				context.emit("audioPart.changed", {{"part", toJson(part)}});
-			}
-		for (auto& [id, track] : project.trackById)
-			for (TrackVersion& version : track.versions)
-			{
-				for (AudioEvent& event : version.audioEvents)
-					if (event.position.base == time::TimeBase::Linear)
-						event.position.value = rescale(event.position.value, factor);
-				for (AudioPart& part : version.audioParts)
-					if (part.position.base == time::TimeBase::Linear)
-					{
-						part.position.value = rescale(part.position.value, factor);
-						part.length = rescale(part.length, factor);
-					}
-				for (MidiPart& part : version.midiParts)
-					if (part.position.base == time::TimeBase::Linear)
-					{
-						part.position.value = rescale(part.position.value, factor);
-						part.length = rescale(part.length, factor);
-					}
-			}
+				if (plays)
+					context.emit("midiPart.changed", {{"part", toJson(part)}});
+			});
 		for (auto& [id, lane] : project.automation)
 		{
 			bool changed = false;

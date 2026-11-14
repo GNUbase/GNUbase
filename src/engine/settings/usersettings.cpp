@@ -740,6 +740,11 @@ namespace gnubase::engine::settings
 								{"listColors", {{"type", "boolean"}}}, {"voicingIndicators", {{"type", "boolean"}}},
 								{"patternProgress", {{"type", "boolean"}}}}}},
 					Json::object()},
+				{"ui.showVersionName",
+					"Whether the track list shows the active version's name after the name of a track with more than "
+					"one version: Show Version Name in Track List in the Track Versions pop-up menu (reference manual "
+					"p. 231).",
+					Json{{"type", "boolean"}}, true},
 				{"ui.theme", "The theme's folder name in resources/themes.", Json{{"type", "string"}}, "gnubase", true},
 				{"ui.timeDisplay",
 					"The time display window's options: beatCountOnly shows only the beat in its bar, size is the "

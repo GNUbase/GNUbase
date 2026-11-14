@@ -301,7 +301,7 @@ namespace gnubase::app
 		}
 
 		// The track list's commands (ui::TrackList::actions, docs/features/track-list.md) and their keys.
-		constexpr std::array<ProjectCommand, 37> g_trackCommands{{
+		constexpr std::array<ProjectCommand, 32> g_trackCommands{{
 			{"track.selectPrevious",
 				"Selects the track above the selected one, and its first event while an event is selected (unless "
 				"ui.upDownSelectsTracksOnly).",
@@ -370,13 +370,18 @@ namespace gnubase::app
 			// Lanes (docs/features/comping.md).
 			{"track.toggleLanesSelected",
 				"Shows the lanes of the selected tracks, or hides them if every one shows them.", nullptr},
-			// Track versions (docs/features/track-versions.md).
-			{"track.newVersion", "Gives the selected tracks a new, empty version.", nullptr},
-			{"track.duplicateVersion", "Gives the selected tracks a copy of their active version.", nullptr},
-			{"track.deleteVersion", "Deletes the active version of the selected tracks.", nullptr},
-			{"track.selectSameVersionId",
+		}};
+
+		// The track version commands (docs/features/track-versions.md), their own key command category as in the
+		// reference (manual p. 231).
+		constexpr std::array<ProjectCommand, 6> g_trackVersionCommands{{
+			{"trackVersions.new", "Gives the selected tracks a new, empty version.", nullptr},
+			{"trackVersions.duplicate", "Gives the selected tracks a copy of their active version.", nullptr},
+			{"trackVersions.rename", "Names the active version of the selected tracks.", nullptr},
+			{"trackVersions.remove", "Deletes the active version of the selected tracks.", nullptr},
+			{"trackVersions.selectSameId",
 				"Selects the tracks with a version of the ID of the first selected track's active version.", nullptr},
-			{"track.assignCommonVersionId", "Gives the active versions of the selected tracks a common ID.", nullptr},
+			{"trackVersions.assignCommonId", "Gives the active versions of the selected tracks a common ID.", nullptr},
 		}};
 	}
 
@@ -477,7 +482,7 @@ namespace gnubase::app
 					const uint64_t first = tracks.empty() ? 0 : tracks.front();
 					if (const std::shared_ptr<ui::Inspector> inspector = m_inspector.lock())
 						inspector->update(
-							first, m_eventDisplay->project(), m_eventDisplay->loads(), m_eventDisplay->read());
+							tracks, m_eventDisplay->project(), m_eventDisplay->loads(), m_eventDisplay->read());
 					if (const std::shared_ptr<ui::SamplerPanel> sampler = m_sampler.lock())
 						sampler->update(
 							first, m_eventDisplay->project(), m_eventDisplay->loads(), m_eventDisplay->read());
@@ -1105,6 +1110,20 @@ namespace gnubase::app
 			else
 				m_keys.enableWhen(command.id, [this, selected](ui::Window&, Rml::Element*)
 					{ return m_trackList != nullptr && (!selected || !m_trackList->selection().empty()); });
+			if (command.keys != nullptr)
+				m_keys.bind({command.keys, command.id, engine::Json::object(), "project"});
+		}
+		for (const ProjectCommand& command : g_trackVersionCommands)
+		{
+			m_keys.add(
+				{command.id, command.description, [this, id = std::string(command.id)](ui::Window&, Rml::Element*)
+					{
+						if (m_trackList)
+							m_trackList->actions().at(id)();
+					}});
+			// They work on the selected audio, instrument and MIDI tracks.
+			m_keys.enableWhen(command.id, [this](ui::Window&, Rml::Element*)
+				{ return m_trackList != nullptr && m_trackList->selectsVersions(); });
 			if (command.keys != nullptr)
 				m_keys.bind({command.keys, command.id, engine::Json::object(), "project"});
 		}

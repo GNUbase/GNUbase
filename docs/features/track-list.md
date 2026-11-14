@@ -95,10 +95,12 @@ sends engine commands, so whatever another client changes shows at once.
   .track-list-header              the global track controls: #add-track, #track-controls-settings (document)
   .track-rows                     clips the rows, under the overview line and ruler's height
     listview.tracks[multiple]     the list view (widgets.md), scrolled with the event display
-      listitem[value=<id>][level][type]   a tree row per track; .selected, .disabled, .renaming
+      listitem[value=<id>][level][type]   a tree row per track; .selected, .disabled, .renaming, .versions
         .tree-indent, .tree-toggle        from the list view, by level
         .track-color                      the track's color strip, attribute color (colors.md)
-        .track-name, input.track-name-field
+        .track-name, input.track-name-field   .track-version in the name while ui.showVersionName
+        .track-versions-toggle            .versions rows: the arrow that opens the Track Versions pop-up menu
+                                          #track-versions-menu (track-versions.md)
         .track-controls > button.toggle[control]   .checked while on, disabled without anything to do
         .track-controls > select.midi-channel[control=midiChannel]   MIDI tracks: value any or 0-15
     .drop-line                    where dragged tracks go, .shown while dragging

@@ -807,16 +807,37 @@ namespace gnubase::engine
 	// A track's versions, with its first one if it has none of its own yet.
 	std::vector<TrackVersion> versionsOf(const Track& track);
 
+	// Calls the three visitors with every audio event, audio part and MIDI part of the project: those that play, and
+	// those that inactive track versions hold. Each visitor gets its item and whether it plays, so that a rewrite
+	// across the whole project reaches the inactive versions too, and still announces only what is there to see.
+	// Project may be const.
+	template <typename P, typename AudioEvents, typename AudioParts, typename MidiParts>
+	void forEveryEventAndPart(P& project, AudioEvents audioEvents, AudioParts audioParts, MidiParts midiParts)
+	{
+		for (auto& entry : project.audioEvents)
+			audioEvents(entry.second, true);
+		for (auto& entry : project.audioParts)
+			audioParts(entry.second, true);
+		for (auto& entry : project.midiParts)
+			midiParts(entry.second, true);
+		for (auto& track : project.trackById)
+			for (auto& version : track.second.versions)
+			{
+				for (auto& event : version.audioEvents)
+					audioEvents(event, false);
+				for (auto& part : version.audioParts)
+					audioParts(part, false);
+				for (auto& part : version.midiParts)
+					midiParts(part, false);
+			}
+	}
+
 	// Calls visit with every audio event of the project, those that inactive track versions hold too: their clips are
 	// in use. Project may be const.
 	template <typename P, typename Visit> void forEveryAudioEvent(P& project, Visit visit)
 	{
-		for (auto& entry : project.audioEvents)
-			visit(entry.second);
-		for (auto& entry : project.trackById)
-			for (auto& version : entry.second.versions)
-				for (auto& event : version.audioEvents)
-					visit(event);
+		forEveryEventAndPart(
+			project, [&visit](auto& event, bool) { visit(event); }, [](const auto&, bool) {}, [](const auto&, bool) {});
 	}
 
 	// Calls visit with the pool clips a channel's instrument plays: a sampler's (#180), a drum machine's pads' (#182).
