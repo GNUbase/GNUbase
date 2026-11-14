@@ -1682,6 +1682,21 @@ TEST_CASE("the inspector's MIDI Inserts and MIDI Sends sections show and change 
 	CHECK_FALSE(hasClass(window.app, ".inspector .midi-divider[gap=1]", "at"));
 	REQUIRE(window.app.waitUntil([&]
 		{ return hasClass(window.app, ".inspector [section=midiInserts] .midi-effect-slot[slot=2]", "recorded"); }));
+	// When the inspector shows another track during a drag, the drag ends without moving a divider, neither the
+	// dragged track's nor the one shown at its end.
+	const ui::Target gap2 = {".inspector .midi-divider[gap=2]", 0, std::nullopt};
+	window.app.ui().press(std::nullopt, {".inspector .midi-divider[gap=3]", 0, std::nullopt}, ui::MouseButton::Left);
+	window.app.ui().move(std::nullopt, gap2);
+	window.list.select({bass});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Bass"));
+	window.app.ui().release(std::nullopt, gap2, ui::MouseButton::Left);
+	CHECK(hasClass(window.app, ".inspector .midi-divider[gap=0]", "at"));
+	window.list.select({keys});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Keys"));
+	CHECK(window.historyPosition() == beforeDrag + 1);
+	CHECK(window.channel(bass).at("midiInserts").at("divider") == 0);
+	CHECK(inserts().at("divider") == 3);
+	CHECK(hasClass(window.app, ".inspector .midi-divider[gap=3]", "at"));
 	// The edit button closes the control panel.
 	window.click(first + " .midi-effect-edit");
 	CHECK_FALSE(hasClass(window.app, first, "open"));

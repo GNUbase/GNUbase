@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/audio/sequencer.h"
 #include "engine/document/document.h"
+#include "engine/document/serialize.h"
 #include "engine/engine.h"
 #include "engine/processors/midieffects.h"
 #include "testutils/testutils.h"
@@ -169,6 +170,17 @@ TEST_CASE("midiEffect.list lists the built-in MIDI effects with their parameters
 	for (const processors::BuiltinInfo& info : processors::midiEffects())
 		for (size_t i = 0; i < info.parameters.size(); ++i)
 			CHECK(info.parameters[i].id == i);
+}
+
+TEST_CASE("the sequencer remembers the automated values of every MIDI effect's parameters", "[unit]")
+{
+	// A parameter beyond them would play its static value in a new instance of its effect.
+	for (const processors::BuiltinInfo& info : processors::midiEffects())
+		for (const processors::ParameterInfo& parameter : info.parameters)
+		{
+			INFO(info.id << " " << parameter.name);
+			CHECK(parameter.id < MidiSequencer::g_automated);
+		}
 }
 
 TEST_CASE("the arpeggiator plays the held notes in each mode at its rate, gate and octaves", "[integration]")
@@ -575,14 +587,16 @@ TEST_CASE("channel.set refuses unknown MIDI effects, parameters out of range and
 	CHECK_THAT(reject(track.client, "channel.set", {{"channel", track.channel}, {"midiSends", {{"divider", 1}}}}),
 		ContainsSubstring("only the MIDI inserts"));
 	const ObjectId midi = run(track.client, "track.add", {{"type", "midi"}}).at("channel").at("id").get<ObjectId>();
-	CHECK_THAT(reject(track.client, "channel.set",
-				   {{"channel", track.channel}, {"midiSends", {{"slots", {{{"output", midi}}}}}}}),
+	Json sent = slot("transformer");
+	sent["output"] = midi;
+	CHECK_THAT(reject(track.client, "channel.set", {{"channel", track.channel}, {"midiSends", {{"slots", {sent}}}}}),
 		ContainsSubstring("instrument track's channel"));
 	// Two instrument tracks can't send to each other.
 	const ObjectId other = track.addInstrument();
-	track.set("midiSends", {{"slots", {{{"output", other}}}}});
-	CHECK_THAT(reject(track.client, "channel.set",
-				   {{"channel", other}, {"midiSends", {{"slots", {{{"output", track.channel}}}}}}}),
+	sent["output"] = other;
+	track.set("midiSends", {{"slots", {sent}}});
+	sent["output"] = track.channel;
+	CHECK_THAT(reject(track.client, "channel.set", {{"channel", other}, {"midiSends", {{"slots", {sent}}}}}),
 		ContainsSubstring("loop"));
 	CHECK_THAT(refused(5), ContainsSubstring("midiInserts must be object"));
 
@@ -872,6 +886,35 @@ TEST_CASE("an effect that starts afresh takes its automated values, not the slot
 	track.inject({message(200, {0x90, 60, 100})});
 	track.render(64);
 	CHECK(track.captured() == "200 90 48 64\n");
+	// Moved across the divider, the insert plays a new instance too.
+	track.set("midiInserts", {{"divider", 1}});
+	track.render(64);
+	track.inject({message(330, {0x90, 62, 100})});
+	track.render(64);
+	CHECK(track.captured() == "256 80 48 00\n330 90 4a 64\n"); // the old instance's note ends
+}
+
+TEST_CASE("a send that starts afresh when Pre is switched takes its automated values", "[integration]")
+{
+	EffectTrack track;
+	track.set("midiSends", {{"slots", {slot("transformer")}}});
+	const Json target = {{"type", "midiEffect"}, {"number", 4}, {"parameter", processors::Transformer::Value}};
+	const auto lane = run(track.client, "automationLane.add", {{"track", track.track}, {"target", target}})
+						  .at("lane")
+						  .at("id")
+						  .get<ObjectId>();
+	run(track.client, "automationPoint.add",
+		{{"lane", lane}, {"points", {{{"position", 0}, {"value", 12}, {"shape", "step"}}}}});
+	run(track.client, "transport.play");
+	track.render(64);
+	track.set("midiSends", {{"pre", true}});
+	track.render(64);
+	// The track's own note and the send's, an octave up.
+	track.inject({message(150, {0x90, 60, 100})});
+	track.render(64);
+	const std::string played = track.captured();
+	CHECK(played.find("150 90 3c 64\n") != std::string::npos);
+	CHECK(played.find("150 90 48 64\n") != std::string::npos);
 }
 
 TEST_CASE("the inserts above the divider take their automation at its sample", "[integration]")
@@ -887,13 +930,14 @@ TEST_CASE("the inserts above the divider take their automation at its sample", "
 		{{"lane", lane},
 			{"points",
 				{{{"position", 0}, {"value", 0}, {"shape", "step"}},
-					{{"position", g_beatTicks}, {"value", 12}, {"shape", "step"}}}}});
+					{{"position", g_beatTicks + (25 * g_beatTicks / g_beat)}, {"value", 12}, {"shape", "step"}}}}});
 	run(track.client, "transport.play");
 	track.render(g_beat);
-	// The value changes at the block's first sample, where the note comes.
-	track.inject({message(g_beat + 10, {0x90, 60, 100})});
+	// The value changes 25 samples into the block, between its two notes.
+	track.inject({message(g_beat + 10, {0x90, 60, 100}), message(g_beat + 40, {0x90, 62, 100})});
 	track.render(64);
-	CHECK(track.captured() == std::to_string(g_beat + 10) + " 90 48 64\n");
+	CHECK(
+		track.captured() == std::to_string(g_beat + 10) + " 90 3c 64\n" + std::to_string(g_beat + 40) + " 90 4a 64\n");
 }
 
 TEST_CASE("a send that goes leaves the notes another track's send holds on the instrument", "[integration]")
@@ -918,7 +962,8 @@ TEST_CASE("a send that goes leaves the notes another track's send holds on the i
 	CHECK(track.capturedBy()[target] == "");
 }
 
-TEST_CASE("a send slot that loses its effect loses its output, which then counts for no loop", "[integration]")
+TEST_CASE(
+	"a send slot without an effect has no output, also in an older project, and counts for no loop", "[integration]")
 {
 	EffectTrack track;
 	const ObjectId other = track.addInstrument();
@@ -926,6 +971,17 @@ TEST_CASE("a send slot that loses its effect loses its output, which then counts
 	sent["output"] = other;
 	track.set("midiSends", {{"slots", {sent}}});
 	CHECK(track.set("midiSends", {{"slots", {slot("")}}}).at("slots")[0].at("output") == 0);
+	// Nor does an empty slot take an output, with or without the effect given.
+	const auto refused = [&](const Json& slot)
+	{ return reject(track.client, "channel.set", {{"channel", track.channel}, {"midiSends", {{"slots", {slot}}}}}); };
+	CHECK_THAT(refused({{"output", other}}), ContainsSubstring("without an effect has no output"));
+	CHECK_THAT(refused({{"effect", ""}, {"output", other}}), ContainsSubstring("without an effect has no output"));
+	// A project saved with an output on an empty slot loads without it.
+	Json saved = run(track.client, "project.get");
+	for (Json& channel : saved.at("channels"))
+		if (channel.at("id") == track.channel)
+			channel.at("midiSends").at("slots")[0]["output"] = other;
+	CHECK(projectFromJson(saved).channels.at(track.channel).midiSends.slots[0].output == 0);
 	sent["output"] = track.channel;
 	CHECK(track.set("midiSends", {{"slots", {sent}}}, other).at("slots")[0].at("output") == track.channel);
 }

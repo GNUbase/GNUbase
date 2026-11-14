@@ -94,6 +94,7 @@ namespace gnubase::ui
 		bool m_dropping = false;       // while dropEdits ends edits, which then aren't taken
 		bool m_stale = false;          // a change was refused: show again
 		int m_dividerTo = -1;          // while the divider is dragged, where it goes
+		engine::Json m_dividerChannel; // and the id of the channel whose divider it is
 		Subscription m_reset;          // project.reset
 		Subscription m_devicesChanged; // settings.changed with midi.devices
 		bool m_devicesKnown = false;   // settings.changed came before settings.get's answer

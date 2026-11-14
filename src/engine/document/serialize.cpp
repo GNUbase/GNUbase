@@ -2304,7 +2304,13 @@ namespace gnubase::engine
 			if (midi && item.contains("midiInserts"))
 				channel.midiInserts = effectRackFromJson(item.at("midiInserts"), {}, false);
 			if (midi && item.contains("midiSends"))
+			{
 				channel.midiSends = effectRackFromJson(item.at("midiSends"), {}, true);
+				// Files from before #1350 can give a send without an effect an output, which channel.set refuses.
+				for (midi::EffectSlot& slot : channel.midiSends.slots)
+					if (slot.effect.empty())
+						slot.output = 0;
+			}
 			// Files from before #178 have no input transformers.
 			if (midi && item.contains("inputTransformer"))
 				channel.inputTransformer = midi::inputTransformerFromJson(item.at("inputTransformer"), {});
