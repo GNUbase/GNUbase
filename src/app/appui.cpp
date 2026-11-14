@@ -5,6 +5,7 @@
 #include "platform/files.h"
 #include "platform/log.h"
 #include "ui/chordpads.h"
+#include "ui/displays.h"
 #include "ui/fonts.h"
 #include "ui/historypanel.h"
 #include "ui/inspector.h"
@@ -22,6 +23,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <fstream>
 #include <memory>
 #include <optional>
@@ -1401,7 +1403,11 @@ namespace gnubase::app
 		}
 		shown.window = window.id();
 		if (root == controls)
+		{
 			m_docking.attach("transportPanel", *document);
+			if (!spec.bounds)
+				fitSections(window, *controls);
+		}
 		else
 			shown.controls->onSize(
 				[this, id = window.id()](int size)
@@ -1414,6 +1420,29 @@ namespace gnubase::app
 					bounds.height = sized.height;
 					m_shell.setBounds(id, bounds);
 				});
+	}
+
+	void AppUi::fitSections(ui::Window& window, Rml::Element& controls)
+	{
+		const std::vector<ui::Display> displays = m_shell.displays();
+		const ui::Size pixels = window.pixelSize();
+		if (displays.empty() || pixels.width <= 0)
+			return;
+		window.context().Update();
+		float right = 0;
+		Rml::ElementList sections;
+		controls.QuerySelectorAll(sections, ".transport-section");
+		for (Rml::Element* section : sections)
+			if (section->IsVisible())
+				right = std::max(right,
+					section->GetAbsoluteLeft() + section->GetOffsetWidth() +
+						section->GetBox().GetEdge(Rml::BoxArea::Margin, Rml::BoxEdge::Right));
+		if (right <= 0)
+			return;
+		const ui::Rect bounds = m_shell.bounds(window.id());
+		const int width =
+			static_cast<int>(std::ceil(right * static_cast<float>(bounds.width) / static_cast<float>(pixels.width)));
+		m_shell.setBounds(window.id(), ui::centred({width, bounds.height}, displays.front()));
 	}
 
 	void AppUi::toggleTransportPanel()
