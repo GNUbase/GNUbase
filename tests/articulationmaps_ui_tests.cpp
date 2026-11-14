@@ -340,3 +340,51 @@ TEST_CASE("the articulation map setup opened again without a track can't assign,
 	CHECK(f.shown("#articulation-map-assign"));
 	CHECK(f.elements("#articulation-maps-dialog").size() == 1);
 }
+
+TEST_CASE("the articulation map setup opened without a track can't assign, and a new project drops its track", "[ui]")
+{
+	Fixture f;
+	const auto open = [&f]
+	{
+		f.app.keys().run("midi.articulationMapSetup", Json::object(), f.app.main(), nullptr);
+		REQUIRE(f.app.waitUntil([&f] { return f.shown("#articulation-maps-dialog"); }));
+		f.app.shell().step(std::chrono::milliseconds(0));
+	};
+	// Opened fresh without a MIDI or instrument track selected: the map shows, but there is no track to assign it to.
+	f.app.call("articulationMap.add", {{"name", "Brass"}});
+	f.app.appUi().trackList()->select({});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	open();
+	REQUIRE(f.app.waitUntil([&f] { return f.shown("#articulation-map"); }));
+	CHECK_FALSE(f.shown("#articulation-map-assign"));
+	f.click("#articulation-maps-close");
+	REQUIRE(f.app.waitUntil([&f] { return f.elements("#articulation-maps-dialog").empty(); }));
+
+	// Opened for the track, then a new project: object ids are per project, so the setup has no track any more.
+	f.app.appUi().trackList()->select({f.track});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	open();
+	REQUIRE(f.app.waitUntil([&f] { return f.shown("#articulation-map-assign"); }));
+	CHECK(f.elements("body[track]").size() == 1);
+	f.app.call("project.new");
+	REQUIRE(f.app.waitUntil([&f] { return f.elements("body[track]").empty(); }));
+	CHECK(f.elements("#articulation-map-assign.unavailable").size() == 1);
+
+	// Opened again for a track of the new project: that track's setup, which assigns to it.
+	const auto map = f.app.call("articulationMap.add", {{"name", "Piano"}}).at("map").at("id").get<uint64_t>();
+	const auto track =
+		f.app.call("track.add", {{"type", "midi"}, {"name", "Piano"}}).at("track").at("id").get<uint64_t>();
+	// The old project has one track too, so wait for the new one by name, not by count.
+	REQUIRE(f.app.waitUntil(
+		[&f]
+		{
+			const Json tracks = f.display.project().value("tracks", Json::array());
+			return tracks.size() == 1 && tracks.at(0).value("name", std::string()) == "Piano";
+		}));
+	f.app.appUi().trackList()->select({track});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	open();
+	f.click("#articulation-map-assign");
+	f.track = track;
+	REQUIRE(f.app.waitUntil([&f, map] { return f.trackMap() == map; }));
+}
