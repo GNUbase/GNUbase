@@ -46,7 +46,8 @@ They emit `drumMap.added`, `drumMap.changed` and `drumMap.removed` with the map 
   the sequencer maps the notes it gets with them on the audio thread (`MidiSequencer::modifyInput`) before the
   track's MIDI modifiers, instead of Live Input. With `midi.inject`'s `drumSounds` the notes' keys are the sounds'
   pitches, not I-notes: they play their sounds as the track's notes do (the second 128 entries of `drumInput`), so
-  that the drum editor auditions a sound whose I-note an earlier sound has too.
+  that the drum editor auditions a sound whose I-note an earlier sound has too. They are no MIDI input: the recorder
+  leaves them out of recordings and the retrospective buffer (`Recorder::sendMidi`).
 - **Loading**: a note's pitch must be 0-127 and its channel 0-15 in the GNUbase entry of a project (as the DAWproject
   import clamps them), since the maps and the editors take the pitch as an index; an entry that has others is
   damaged, and the project loads from `project.xml`.
@@ -141,7 +142,7 @@ reference's own drum map files.
   removing a map taking it from the track; export and import round trip of a changed map, with errors for a missing
   and a wrong file; maps and the tracks' maps saved and loaded, and a note pitch beyond 0-127 or a channel beyond 0-15
   not loading; playback and MIDI thru through the I-notes, O-notes, channels and mutes, and `drumSounds` playing the
-  sounds themselves; `inputPitches` giving a shared I-note to the first sound by pitch as `inputPitch` does; step
+  sounds themselves but not recorded; `inputPitches` giving a shared I-note to the first sound by pitch as `inputPitch` does; step
   input and recording through the I-notes with Drum-Map Link; O-Note Conversion; the drum editor content, its view
   settings and parts of a track with a map opening in it unless the preference is off.
 - `tests/drumeditor_ui_tests.cpp` drives the app with `ui::Automation`: the sound list with the map's names, diamonds

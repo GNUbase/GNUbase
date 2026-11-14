@@ -292,8 +292,10 @@ namespace gnubase::engine
 				"the order they came. They wait until the device processes their block, at most 4096 at a time, and "
 				"are dropped when the device changes; a call whose messages don't all fit fails and injects none. "
 				"drumSounds: on a track with a drum map, the notes' keys are drum sounds' pitches, not I-notes: they "
-				"play their sounds as the track's notes do (the drum editor auditions sounds so; reference manual "
-				"p. 1236). midi.capture returns what instruments played.",
+				"play their sounds as the track's notes do but are neither recorded nor kept for "
+				"midi.insertRetrospective (the "
+				"drum editor auditions sounds so; reference manual p. 1236). midi.capture returns what instruments "
+				"played.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["channel", "messages"],
 					"properties": {"channel": {"type": "integer"}, "drumSounds": {"type": "boolean"},
 					"messages": {"type": "array", "items": {
