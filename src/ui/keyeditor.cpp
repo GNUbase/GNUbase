@@ -1770,18 +1770,23 @@ namespace gnubase::ui
 				placeItems();
 				return;
 			}
-		// The selected notes by their part: each part's notes go as one note.move, which keeps everything the notes
-		// have; several parts go in one history.transaction, so the move is one undo step either way.
+		// The selected notes and controller events by their part: each part's go as one note.move, which keeps
+		// everything they have; the controller events go along as in a move within the editor (p. 1188). Several
+		// parts go in one history.transaction, so the move is one undo step either way.
 		const int semitones = m_order.at(static_cast<size_t>(row)) - m_pressedAt.second;
-		std::map<uint64_t, Json> moving;
+		std::map<uint64_t, std::pair<Json, Json>> moving;
+		const auto of = [&moving](uint64_t part) -> std::pair<Json, Json>&
+		{ return moving.try_emplace(part, Json::array(), Json::array()).first->second; };
 		for (const Note* note : notes)
-			moving[note->part].push_back(note->id);
+			of(note->part).first.push_back(note->id);
+		for (const Json& selected : m_view.value("controllerSelection", Json::array()))
+			of(selected.at("part").get<uint64_t>()).second.push_back(selected.at("controller"));
 		Json commands = Json::array();
 		for (const auto& [part, ids] : moving)
 			commands.push_back({{"command", "note.move"},
 				{"parameters",
-					{{"part", part}, {"notes", ids}, {"target", target->at("id")}, {"ticks", dt},
-						{"semitones", semitones}}}});
+					{{"part", part}, {"notes", ids.first}, {"controllers", ids.second}, {"target", target->at("id")},
+						{"ticks", dt}, {"semitones", semitones}}}});
 		m_pressed.reset();
 		edit("Move", std::move(commands));
 	}

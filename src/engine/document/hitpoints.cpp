@@ -194,6 +194,26 @@ namespace gnubase::engine
 		}
 	}
 
+	HitpointGroove hitpointGroove(const Project& project, const AudioEvent& event)
+	{
+		const Clip& clip = project.clips.at(event.clip);
+		const std::vector<const Hitpoint*> points = counting(clip, event.offset, event.offset + event.length);
+		require(!points.empty(),
+			"audio event " + std::to_string(event.id) + " has no hitpoints that count: detect them first");
+		const EventSpan span = eventSpan(project, event);
+		HitpointGroove made;
+		made.origin = ticksOf(project, span.start);
+		made.groove.length = std::max<time::Ticks>(1, ticksOf(project, span.end) - made.origin);
+		for (const Hitpoint* point : points)
+		{
+			const time::Ticks position = std::clamp<time::Ticks>(
+				ticksOf(project, sampleOf(project, event, point->position)) - made.origin, 0, made.groove.length - 1);
+			if (made.groove.points.empty() || position > made.groove.points.back().position)
+				made.groove.points.push_back({position, std::nullopt, std::nullopt});
+		}
+		return made;
+	}
+
 	std::vector<Hitpoint> detectHitpoints(const MediaFile& media, JobContext* job)
 	{
 		std::vector<analysis::Onset> onsets;
@@ -546,15 +566,8 @@ namespace gnubase::engine
 				};
 				if (create == "groove")
 				{
-					Json grooved = Json::array();
-					time::Ticks last = -1;
-					for (const Hitpoint* point : points)
-						if (const time::Ticks position = at(point); position > last)
-						{
-							grooved.push_back({{"position", position}});
-							last = position;
-						}
-					const Json settings = {{"groove", {{"length", length}, {"points", grooved}}}, {"origin", start}};
+					const HitpointGroove groove = hitpointGroove(project, event);
+					const Json settings = {{"groove", midi::toJson(groove.groove)}, {"origin", groove.origin}};
 					return Json{{"quantize", run("quantize.set", {{"settings", settings}})}};
 				}
 				// midiNotes

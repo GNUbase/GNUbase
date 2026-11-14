@@ -148,7 +148,7 @@ namespace gnubase::app
 			const char* keys;
 		};
 
-		constexpr std::array<ProjectCommand, 91> g_projectCommands{{
+		constexpr std::array<ProjectCommand, 92> g_projectCommands{{
 			{"zoom.in", "Zooms the project window in.", "H"},
 			{"zoom.out", "Zooms the project window out.", "G"},
 			{"zoom.inVertically", "Makes the project window's tracks taller.", "Shift+H"},
@@ -193,6 +193,8 @@ namespace gnubase::app
 				nullptr},
 			{"audio.crossfade",
 				"Crossfades the selected audio events, or opens the crossfade editor for their crossfade.", "X"},
+			{"audio.crossfadeEditor", "Opens the crossfade editor for the crossfade of the selected audio events.",
+				nullptr},
 			{"audio.removeFadeIn", "Removes the fade in of the selected audio events.", nullptr},
 			{"audio.removeFadeOut", "Removes the fade out of the selected audio events.", nullptr},
 			{"audio.removeFades", "Removes the fades and crossfades of the selected audio events.", nullptr},
@@ -1608,6 +1610,13 @@ namespace gnubase::app
 		m_infoLine.reset();
 		m_toolbarQuantize.reset();
 		m_eventDisplay = std::make_unique<ui::EventDisplay>(m_engine, m_binding, *root);
+		// The quantize panel lists the tracks of the selected audio events with hitpoints (#1344).
+		m_eventDisplay->onSelectionShown(
+			[this]
+			{
+				if (const std::shared_ptr<ui::QuantizePanel> panel = m_quantizePanel.lock())
+					panel->showHitpointTracks(hitpointTracks());
+			});
 		if (Rml::Element* quantize = document->GetElementById("toolbar-quantize"))
 			m_toolbarQuantize = std::make_unique<ui::QuantizePanel>(m_binding, *quantize,
 				ui::QuantizePanel::Layout::Toolbar,
@@ -2166,6 +2175,7 @@ namespace gnubase::app
 		const bool shown = m_sampleEditor.window != 0 && m_shell.find(m_sampleEditor.window) != nullptr;
 		if (open == shown)
 			return;
+		m_sampleEditor.quantize.reset();
 		m_sampleEditor.editor.reset();
 		if (shown)
 		{
@@ -2192,6 +2202,15 @@ namespace gnubase::app
 		}
 		document->Show();
 		m_sampleEditor.editor = std::make_unique<ui::SampleEditor>(m_binding, *root);
+		// The quantize functions of the sample editor's toolbar (p. 367), on the event it edits (quantizeTarget).
+		if (Rml::Element* quantize = document->GetElementById("toolbar-quantize"))
+			m_sampleEditor.quantize =
+				std::make_unique<ui::QuantizePanel>(m_binding, *quantize, ui::QuantizePanel::Layout::Toolbar,
+					[this](const std::string& command)
+					{
+						if (ui::Window* window = m_shell.find(m_sampleEditor.window))
+							m_keys.run(command, engine::Json::object(), *window, nullptr);
+					});
 	}
 
 	void AppUi::followEditor(const engine::Json& view)
@@ -2266,6 +2285,7 @@ namespace gnubase::app
 		}
 		if (m_sampleEditor.window != 0 && m_shell.find(m_sampleEditor.window) == nullptr)
 		{
+			m_sampleEditor.quantize.reset();
 			m_sampleEditor.editor.reset();
 			m_sampleEditor.window = 0;
 			m_binding.send("sampleEditor.close");

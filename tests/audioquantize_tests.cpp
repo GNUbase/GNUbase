@@ -1194,3 +1194,113 @@ TEST_CASE("warp markers for several audio tracks come from the hitpoints of the 
 	CHECK(markersOf(client, a.clip) == markersOf(client, b.clip));
 	CHECK(markersOf(client, a.clip).at(1).at("target") == g_quarter);
 }
+
+TEST_CASE("Nudge Crossfade moves the crossfades of quantized slices by a millisecond", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	// Sliced, quantized and crossfaded as in the test of Reset Quantize after the Crossfade step: the first slice goes
+	// 96 samples (2 ms) into the second one. Nudging moves that area by 48 samples (1 ms) without changing its length,
+	// so it can go off an attack the Offset didn't keep clear (reference manual p. 379). Every crossfade moves, so a
+	// slice between two keeps its length: both its start and its end move.
+	const std::vector<int64_t> played{6200, 25600, 47300, 72800};
+	const Loop loop = addLoop(client, dir, "loop", clicks(played, 4 * g_quarter));
+	setHitpoints(client, loop.clip, played);
+	const Json sliced = run(client, "quantize.slice", {{"events", {loop.event}}, {"offset", 5.0}});
+	const Json& events = sliced.at("events");
+	const std::vector<std::vector<int64_t>> before = eventsOn(client, loop.track);
+	run(client, "quantize.set", {{"preset", "1/8"}});
+	run(client, "quantize.apply", {{"events", events}});
+	run(client, "quantize.crossfade", {{"events", events}, {"length", 2.0}});
+	const std::vector<std::vector<int64_t>> crossfaded = eventsOn(client, loop.track);
+	REQUIRE(crossfaded[0] == std::vector<int64_t>{0, 0, 6056});
+	REQUIRE(crossfaded[1] == std::vector<int64_t>{5960, 160, 17896});
+
+	SECTION("right")
+	{
+		run(client, "quantize.nudgeCrossfade", {{"events", events}});
+		CHECK(lastStep(client) == "Nudge crossfade");
+		const std::vector<std::vector<int64_t>> nudged = eventsOn(client, loop.track);
+		CHECK(nudged[0] == std::vector<int64_t>{0, 0, 6104});
+		CHECK(nudged[1] == std::vector<int64_t>{6008, 208, 17896});
+		CHECK(crossfades(client) == 4);
+		SECTION("and reset puts every slice back")
+		{
+			run(client, "quantize.reset", {{"events", events}});
+			CHECK(eventsOn(client, loop.track) == before);
+			CHECK(crossfades(client) == 0);
+		}
+		SECTION("and back left")
+		{
+			run(client, "quantize.nudgeCrossfade", {{"events", events}, {"amount", -1.0}});
+			CHECK(eventsOn(client, loop.track) == crossfaded);
+		}
+	}
+	SECTION("left")
+	{
+		run(client, "quantize.nudgeCrossfade", {{"events", events}, {"amount", -1.0}});
+		const std::vector<std::vector<int64_t>> nudged = eventsOn(client, loop.track);
+		CHECK(nudged[0] == std::vector<int64_t>{0, 0, 6008});
+		CHECK(nudged[1] == std::vector<int64_t>{5912, 112, 17896});
+	}
+	SECTION("not past the start of the clip")
+	{
+		// The second slice plays from frame 160: 4 ms earlier is the clip's start, so a crossfade can't go there.
+		run(client, "quantize.nudgeCrossfade", {{"events", {events.at(1)}}, {"amount", -4.0}});
+		CHECK(eventsOn(client, loop.track)[1] == std::vector<int64_t>{5960, 160, 17896});
+	}
+	SECTION("locked events stay")
+	{
+		run(client, "event.set", {{"events", {events.at(0)}}, {"lock", true}});
+		run(client, "quantize.nudgeCrossfade", {{"events", {events.at(1)}}});
+		CHECK(eventsOn(client, loop.track) == crossfaded);
+	}
+	SECTION("errors")
+	{
+		CHECK_THAT(reject(client, "quantize.nudgeCrossfade", {{"events", events}, {"amount", 200.0}}),
+			ContainsSubstring("-100 to 100"));
+		CHECK_THAT(
+			reject(client, "quantize.nudgeCrossfade", {{"events", {999}}}), ContainsSubstring("no audio event 999"));
+	}
+}
+
+TEST_CASE("Create Groove Quantize Preset makes a preset of an audio event's hitpoints", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	// Hits a little late on the second and fourth quarter of a bar-long loop at bar 2 (reference manual pp. 367, 373).
+	constexpr int64_t tick = 1720320; // per quarter
+	const int64_t bar = 4 * g_quarter;
+	const Loop loop = addLoop(client, dir, "late", clicks({27000, 48000, 75000}, bar), bar);
+	setHitpoints(client, loop.clip, {0, 27000, 48000, 75000});
+	const Json preset = run(client, "quantize.extractGroove", {{"event", loop.event}}).at("preset");
+	CHECK(preset.at("name") == "late"); // the clip's
+	const Json& settings = preset.at("settings");
+	CHECK(settings.at("origin") == 4 * tick);
+	CHECK(settings.at("groove").at("length") == 4 * tick);
+	const Json expected = {{{"position", 0}}, {{"position", tick * 27000 / g_quarter}}, {{"position", 2 * tick}},
+		{{"position", tick * 75000 / g_quarter}}};
+	CHECK(settings.at("groove").at("points") == expected);
+
+	// It quantizes as a MIDI part's groove does: a slice played on the quarter goes where the hit is late.
+	run(client, "quantize.set", {{"preset", "late"}});
+	const Loop played = addLoop(client, dir, "played", clicks({1000}, g_quarter), bar + g_quarter);
+	run(client, "quantize.apply", {{"events", {played.event}}});
+	CHECK(positionOf(client, played.event) == bar + 27000);
+
+	SECTION("named")
+	{
+		CHECK(
+			run(client, "quantize.extractGroove", {{"event", loop.event}, {"name", "Drag"}}).at("preset").at("name") ==
+			"Drag");
+	}
+	SECTION("errors")
+	{
+		CHECK_THAT(
+			reject(client, "quantize.extractGroove", {{"event", played.event}}), ContainsSubstring("no hitpoints"));
+		CHECK_THAT(reject(client, "quantize.extractGroove", {{"event", 999}}), ContainsSubstring("no audio event 999"));
+		CHECK_THAT(reject(client, "quantize.extractGroove", Json::object()), ContainsSubstring("give part or event"));
+	}
+}

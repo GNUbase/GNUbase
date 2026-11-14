@@ -46,6 +46,8 @@ first of them. Without either selected, Open/Close Editor closes it.
   .toolbar.sample-editor-toolbar
     button.se-tool[se-tool]       the tools; .checked for the current one
     #se-zero-crossing             Snap to Zero Crossing (the project's snap setting); .checked while on
+    #toolbar-quantize             the quantize functions (p. 367) on the event it edits: ui::QuantizePanel's toolbar
+                                  section, as in the project window ([audio-quantize.md](audio-quantize.md))
     button.se-layout[layout]      Set up Window Layout: info, overview, regions; .checked while shown
   .info-line.se-info              [field=format|length|selectionStart|selectionEnd|selectionLength|zoom]
   .se-overview                    waveform.se-overview-wave of the whole clip, .se-overview-event,

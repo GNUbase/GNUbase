@@ -323,6 +323,11 @@ namespace gnubase::app
 		// The quantize panel's commands for several audio tracks (#145): command with parameters on the project
 		// window's selected audio events and the events of its selected audio parts.
 		void quantizeAudioTracks(const std::string& command, engine::Json parameters);
+		// The project window's selected audio events and the events of its selected audio parts.
+		std::vector<uint64_t> selectedAudioEvents() const;
+		// The quantize panel's Hitpoint Tracks: [{track, name}] of the tracks of selectedAudioEvents whose clips have
+		// hitpoints, in the project's track order.
+		engine::Json hitpointTracks() const;
 		// The MIDI menu (#133, docs/features/midi-functions.md, appmidifunctions.cpp): MIDI > Functions on what
 		// quantizeTarget gives, and the dialogs of Transpose Setup, Merge MIDI in Loop, Dissolve Part and Restrict
 		// Polyphony (resources/ui/midi-function.rml).
@@ -412,6 +417,7 @@ namespace gnubase::app
 		std::unique_ptr<ui::TrackVisibility> m_trackVisibility; // the project window's (#166)
 		std::unique_ptr<ui::InfoLine> m_infoLine;               // and this too
 		std::unique_ptr<ui::QuantizePanel> m_toolbarQuantize;   // the toolbar's quantize section
+		std::weak_ptr<ui::QuantizePanel> m_quantizePanel;       // the quantize panel, while it is open
 		// What the undo history can undo and redo now, for the Edit menu's Undo and Redo.
 		bool m_canUndo = false;
 		bool m_canRedo = false;
@@ -454,6 +460,7 @@ namespace gnubase::app
 		{
 			ui::WindowId window = 0;
 			std::unique_ptr<ui::SampleEditor> editor;
+			std::unique_ptr<ui::QuantizePanel> quantize; // its toolbar's quantize functions (#1344)
 		};
 		SampleEditorWindow m_sampleEditor;
 		std::weak_ptr<ui::MidiEditor> m_lowerEditor;         // the docking system owns it while it is there
