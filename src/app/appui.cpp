@@ -1236,6 +1236,19 @@ namespace gnubase::app
 		addWorkspaces();
 	}
 
+	void AppUi::showKeyCommandsError(ui::WindowId window, const std::string& title, const std::string& error)
+	{
+		logging::warning("{}: {}", title, error);
+		Rml::Element* document = m_keyDialog.get();
+		Rml::Element* message = document != nullptr && document->GetParentNode() != nullptr
+			? document->GetElementById("keycommands-message")
+			: nullptr;
+		if (message != nullptr)
+			message->SetInnerRML(Rml::StringUtilities::EncodeRml(error));
+		else
+			m_files.showNotice(window, title, error);
+	}
+
 	void AppUi::addKeyCommandsDialog()
 	{
 		// The key commands dialog (#161, docs/features/key-commands.md, reference manual pp. 1554-1559), which
@@ -1257,18 +1270,23 @@ namespace gnubase::app
 					dialog.filters = {{"Key commands files", "json"}};
 					dialog.parent = window.id();
 					m_shell.showFileDialog(dialog,
-						[this, exporting](const ui::FileDialogResult& result)
+						[this, exporting, id = window.id(), title = dialog.title](const ui::FileDialogResult& result)
 						{
 							if (!result.error.empty())
 								logging::warning("The file dialog failed: {}", result.error);
 							if (result.files.empty())
 								return;
 							const std::filesystem::path& file = result.files.front();
+							const auto failed = [this, id, title](const engine::Result& done)
+							{
+								if (!done.ok())
+									showKeyCommandsError(id, title, done.error);
+							};
 							if (exporting)
-								m_binding.send("keyCommands.export", {{"path", file.u8string()}});
+								m_binding.send("keyCommands.export", {{"path", file.u8string()}}, failed);
 							else
 								m_binding.send("keyCommands.import",
-									{{"path", file.u8string()}, {"name", file.stem().u8string()}});
+									{{"path", file.u8string()}, {"name", file.stem().u8string()}}, failed);
 						});
 				}});
 		// File > Export > Key Command Assignments (reference manual p. 1560): an HTML list of every key that runs a
@@ -1283,7 +1301,7 @@ namespace gnubase::app
 				dialog.filters = {{"HTML files", "html"}};
 				dialog.parent = window.id();
 				m_shell.showFileDialog(dialog,
-					[this](const ui::FileDialogResult& result)
+					[this, id = window.id(), title = dialog.title](const ui::FileDialogResult& result)
 					{
 						if (!result.error.empty())
 							logging::warning("The file dialog failed: {}", result.error);
@@ -1298,8 +1316,8 @@ namespace gnubase::app
 						}
 						catch (const std::exception& error)
 						{
-							logging::warning(
-								"Can't write the key command assignments {}: {}", file.u8string(), error.what());
+							showKeyCommandsError(id, title,
+								"Can't write the key command assignments " + file.u8string() + ": " + error.what());
 						}
 					});
 			}});
