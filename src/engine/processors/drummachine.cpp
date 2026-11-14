@@ -508,6 +508,7 @@ namespace gnubase::engine::processors
 				case graph::ProcessEvent::Type::PolyPressure:
 				case graph::ProcessEvent::Type::Program:
 				case graph::ProcessEvent::Type::SysEx:
+				case graph::ProcessEvent::Type::NoteExpression:
 					break;
 				}
 			},
