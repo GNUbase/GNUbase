@@ -114,9 +114,10 @@ namespace gnubase::ui
 	}
 
 	DrumMachinePanel::DrumMachinePanel(EngineBinding& binding, Rml::Element& element,
-		std::function<void(uint64_t track, int pad)> loadSample, std::function<void()> addTrack)
+		std::function<void(uint64_t track, int pad)> loadSample, std::function<void()> addTrack,
+		std::function<void(uint64_t track, const std::string& mode)> preset)
 		: m_binding(binding), m_loadSample(std::move(loadSample)), m_addTrack(std::move(addTrack)),
-		  m_stepOwner(binding.stepOwner("drumMachine")), m_root(element.GetObserverPtr())
+		  m_preset(std::move(preset)), m_stepOwner(binding.stepOwner("drumMachine")), m_root(element.GetObserverPtr())
 	{
 		std::string groups;
 		for (int group = 0; group < g_pads / g_padsPerGroup; ++group)
@@ -136,6 +137,8 @@ namespace gnubase::ui
 							R"(<div class="drum-toolbar">)" +
 			tabs +
 			R"(<button id="drum-bypass" type="toggle" title="Bypass All Effects">Bypass FX</button>)"
+			R"(<button id="drum-load-preset" title="Load Track Preset">Load Preset</button>)"
+			R"(<button id="drum-save-preset" title="Save Track Preset">Save Preset</button>)"
 			R"(<input type="text" id="drum-pad-name" class="drum-pad-field" title="Rename Pad"/>)"
 			R"(<select id="drum-pad-color" title="Set Color"/>)"
 			R"(<button id="drum-load" title="Load Sample">Load</button>)"
@@ -555,6 +558,10 @@ namespace gnubase::ui
 			else if (id == "drum-load" && m_loadSample)
 			{
 				m_loadSample(m_track, m_pad);
+			}
+			else if ((id == "drum-load-preset" || id == "drum-save-preset") && m_preset)
+			{
+				m_preset(m_track, id == "drum-load-preset" ? "load" : "save");
 			}
 			else if (id == "drum-copy" || id == "drum-cut")
 			{

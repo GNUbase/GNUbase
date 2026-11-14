@@ -737,6 +737,14 @@ namespace gnubase::app
 						ui::Window* window = m_docking.windowOf("drumMachine");
 						m_keys.run("project.addDrumTrack", engine::Json::object(), window != nullptr ? *window : m_main,
 							nullptr);
+					},
+					[this](uint64_t track, const std::string& mode)
+					{
+						// The track preset dialog for the drum track shown, as the track list's Load and Save Track
+						// Preset open it for the selected tracks.
+						ui::Window* window = m_docking.windowOf("drumMachine");
+						openDialog(window != nullptr ? *window : m_main, "track-preset.rml",
+							{{"mode", mode}, {"tracks", std::to_string(track)}});
 					});
 				m_drums = drums;
 				return drums;

@@ -323,6 +323,35 @@ TEST_CASE("a pad plays at velocity 127 while the mouse button is down on it", "[
 	CHECK(f.has(Fixture::pad(38), "selected"));
 }
 
+TEST_CASE("the drum machine's Save Preset and Load Preset open the track preset dialog for its track", "[ui]")
+{
+	Fixture f;
+	f.open();
+	const auto dialog = [&]
+	{
+		const Json found = f.elements("#track-preset-dialog");
+		return found.size() == 1 && found[0].at("visible").get<bool>();
+	};
+	f.app.call("drum.setPad", {{"track", f.track}, {"pad", 36}, {"name", "Boom"}});
+	f.click("#drum-save-preset");
+	REQUIRE(f.app.waitUntil(dialog));
+	f.click("#preset-name");
+	f.app.ui().text(std::nullopt, "Kit");
+	f.click("#preset-confirm");
+	REQUIRE(f.app.waitUntil([&] { return !dialog(); }));
+	const Json presets = f.app.call("track.presets").at("presets");
+	REQUIRE(presets.size() == 1);
+	CHECK(presets[0].at("name") == "Kit");
+
+	// Loading it gives the drum track the pads it had.
+	f.app.call("drum.resetPad", {{"track", f.track}});
+	REQUIRE(f.padName(36).empty());
+	f.click("#drum-load-preset");
+	REQUIRE(f.app.waitUntil(dialog));
+	f.click("#preset-confirm");
+	REQUIRE(f.app.waitUntil([&] { return f.padName(36) == "Boom"; }));
+}
+
 TEST_CASE("Add Drum Track opens the add track dialog on its Drum page", "[ui]")
 {
 	Fixture f;

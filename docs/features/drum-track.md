@@ -89,8 +89,10 @@ a hint and Add Drum Track (`#drum-add-track`, p. 146), which opens the Add Track
 `project.addDrumTrack` does (the root `.drum-machine` has the class `.empty`):
 
 - **Toolbar**: the editing pages Instrument, Delay and Reverb (`#drum-page-instrument` and so on, the one shown
-  `.selected`), Bypass All Effects (`#drum-bypass`) and a message (`#drum-message`, `.error`) when loading a sample
-  failed.
+  `.selected`), Bypass All Effects (`#drum-bypass`), Load Preset and Save Preset (`#drum-load-preset`,
+  `#drum-save-preset`, Load Track Preset and preset management, pp. 939-940), which open the track preset dialog for
+  the drum track shown, as the track list's Load and Save Track Preset do for the selected tracks
+  ([track-presets.md](track-presets.md)), and a message (`#drum-message`, `.error`) when loading a sample failed.
 - **Pad section**: the eight groups (`.drum-group`, attribute `group`), and the 16 pads of the one shown (`.drum-pad`,
   attribute `pad`) in four rows of four, the lowest note at the bottom left, with their names and notes; a pad without a
   name of its own or a sample shows the General MIDI sound's of its note, which `processor.list` has for it
@@ -116,11 +118,10 @@ Noise), the sample layer's fades, pre-filter, pitch and filter envelopes, filter
 965-968), Pad FX (pp. 968-972), the Group page (p. 973), low and high keys for melodic playing, the 31 output busses,
 the delay's Cross mode and L/R offsets, the reverb's chorusing, shape, density and band times, Delay and Reverb presets,
 the drum machine's own undo history, MIDI Reset, MIDI Follow, the triggered pad's highlight, Hot Swap Preview, the media
-browser's Find Samples and Find Instruments, layer and pad presets, the toolbar's Read/Write Automation, Load Track
-Preset and preset management (pp. 939-940), the automation parameters with their quick controls, Learn CC and ranges
-(pp. 978-980), and the Add Track dialog's Event Type (pattern event or MIDI part) and Input Routing. A track preset has
-the whole file of a sample that a pad or a sampler plays a section of; `project.backup`'s `minimize` cuts such files
-down for backups.
+browser's Find Samples and Find Instruments, layer and pad presets, the toolbar's Read/Write Automation (p. 939), the
+automation parameters with their quick controls, Learn CC and ranges (pp. 978-980), and the Add Track dialog's Event
+Type (pattern event or MIDI part) and Input Routing. A track preset has the whole file of a sample that a pad or a
+sampler plays a section of; `project.backup`'s `minimize` cuts such files down for backups.
 
 ## Tests
 
@@ -136,6 +137,7 @@ instrument's, tracks added from a preset or imported from another project with t
 parameter and the values set without it, and offline renders of a drum track against the sample itself and the golden
 file `drum-track-beat` (a pattern event playing the kit with its sends); `tests/rtcheck_tests.cpp` plays samples, every
 synth, groups and the effects without allocating; `tests/drummachine_ui_tests.cpp` drives the panel (following the
-selection, the names of pads without their own, groups, pages, controls, playing a pad with a click, renaming, coloring,
-copying (a synth pad's copy shown by the sound it was copied from), cutting, pasting, resetting and dropping a file on a
-pad) and the Add Track dialog's Drum page, from the Project menu's command and from the empty panel.
+selection, the names of pads without their own, groups, pages, controls, playing a pad with a click, saving and loading
+track presets, renaming, coloring, copying (a synth pad's copy shown by the sound it was copied from), cutting, pasting,
+resetting and dropping a file on a pad) and the Add Track dialog's Drum page, from the Project menu's command and from
+the empty panel.

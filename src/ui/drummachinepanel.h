@@ -40,9 +40,11 @@ namespace gnubase::ui
 	{
 	public:
 		// loadSample asks for a file to load onto a pad of a drum track; addTrack adds one (Add Drum Track, the
-		// button of the empty panel).
+		// button of the empty panel); preset opens the track preset dialog for the drum track, mode "load" or "save"
+		// (Load Track Preset and preset management, reference manual pp. 939-940).
 		DrumMachinePanel(EngineBinding& binding, Rml::Element& element,
-			std::function<void(uint64_t track, int pad)> loadSample = {}, std::function<void()> addTrack = {});
+			std::function<void(uint64_t track, int pad)> loadSample = {}, std::function<void()> addTrack = {},
+			std::function<void(uint64_t track, const std::string& mode)> preset = {});
 		~DrumMachinePanel() override;
 		DrumMachinePanel(const DrumMachinePanel&) = delete;
 		DrumMachinePanel& operator=(const DrumMachinePanel&) = delete;
@@ -89,6 +91,7 @@ namespace gnubase::ui
 		EngineBinding& m_binding;
 		std::function<void(uint64_t track, int pad)> m_loadSample;
 		std::function<void()> m_addTrack;
+		std::function<void(uint64_t track, const std::string& mode)> m_preset;
 		const std::string m_stepOwner;
 		Rml::ObserverPtr<Rml::Element> m_root;
 		std::vector<Parameter> m_padParameters;    // pad 0's, from processor.list
