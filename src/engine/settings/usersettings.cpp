@@ -581,27 +581,28 @@ namespace gnubase::engine::settings
 					"Import to Left Locator (reference manual p. 365): File > Import > MIDI File places the file at "
 					"the left locator instead of the project start (midiFile.import position).",
 					Json{{"type", "boolean"}}, false, true},
-				{"midi.mpeInput",
-					"MPE input (reference manual pp. 1295-1298): MIDI recording takes its input as MPE's lower zone, "
-					"channel 1 the master channel and channels 2 to 16 the notes' own, whose pitch bend, channel "
-					"pressure and CC 74 record as the tuning, pressure and brightness of the note on their channel "
-					"(docs/features/note-expression.md).",
-					Json{{"type", "boolean"}}, false},
-				{"midi.mpePitchRange",
-					"The pitch range of MPE input's pitch bend on the notes' channels, in semitones (midi.mpeInput).",
-					Json{{"type", "integer"}, {"minimum", 1}, {"maximum", 96}}, 48},
 				{"midi.portSettings",
 					"The MIDI ports' settings (midi.setPort), by backend/in or out/port id, also for ports that aren't "
 					"connected: the name shown (showAs), whether it is visible, and for inputs whether it belongs to "
-					"all MIDI inputs (inAllInputs). Ports without an entry show their system name, are visible and "
-					"belong to all MIDI inputs. Members of an entry that this GNUbase doesn't know, from a later one, "
-					"stay.",
+					"all MIDI inputs (inAllInputs) and its MPE input (mpe). Ports without an entry show their system "
+					"name, are visible, belong to all MIDI inputs and have no MPE input. Members of an entry that this "
+					"GNUbase doesn't know, from a later one, stay.",
 					Json{{"type", "object"},
 						{"additionalProperties",
 							{{"type", "object"},
 								{"properties",
 									{{"showAs", {{"type", "string"}}}, {"visible", {{"type", "boolean"}}},
-										{"inAllInputs", {{"type", "boolean"}}}}}}}},
+										{"inAllInputs", {{"type", "boolean"}}},
+										{"mpe",
+											{{"type", "object"},
+												{"properties",
+													{{"mode", {{"type", "string"}}},
+														{"channels", {{"type", "integer"}}},
+														{"firstChannel", {{"type", "integer"}}},
+														{"pitchRange", {{"type", "integer"}}},
+														{"tuning", {{"type", "boolean"}}},
+														{"initialX", {{"type", "string"}}},
+														{"initialY", {{"type", "string"}}}}}}}}}}}},
 					Json::object()},
 				{"midi.recordCatchRange",
 					"MIDI record catch range in ms, 0 to 1000: MIDI input that comes this long before a recording "

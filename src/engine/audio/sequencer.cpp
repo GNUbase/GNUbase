@@ -1149,8 +1149,10 @@ namespace gnubase::engine
 	{
 		const midi::Modifiers& modifiers = sequence.modifiers;
 		using Type = graph::ProcessEvent::Type;
-		// The track's MIDI channel plays them on it (reference manual p. 351); the keys stay where they came in.
-		if (event.type != Type::NoteOn && event.type != Type::NoteOff && event.type != Type::PolyPressure)
+		// The track's MIDI channel plays them on it (reference manual p. 351); the keys stay where they came in. Poly
+		// pressure and a note's expression follow the note its key plays, as MPE input's does (#1514).
+		if (event.type != Type::NoteOn && event.type != Type::NoteOff && event.type != Type::PolyPressure &&
+			event.type != Type::NoteExpression)
 		{
 			if (sequence.inputChannel >= 0 &&
 				(event.type == Type::Controller || event.type == Type::PitchBend ||

@@ -136,6 +136,7 @@ add_executable(gnubase-tests
 	mixerviews_tests.cpp
 	mixerwindow_tests.cpp
 	monitoring_tests.cpp
+	mpeinput_tests.cpp
 	multicore_tests.cpp
 	noteexpression_tests.cpp
 	onscreenkeyboard_tests.cpp

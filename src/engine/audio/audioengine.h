@@ -499,7 +499,7 @@ namespace gnubase::engine
 		std::map<ObjectId, int> m_sourceNodes;          // rebuild: per channel
 		Transport m_transport;                          // advanced by the audio thread
 		MidiPorts m_midi;
-		audio::MidiBuffer m_midiInput;     // the block's messages from all MIDI inputs, for MIDI thru (MidiTap::thru)
+		graph::EventBuffer m_midiInput;    // the block's events from all MIDI inputs, for MIDI thru (MidiTap::thru)
 		MidiPorts::PadBuffers m_padOutput; // and the chord pads' notes, by player
 		// Which wait for the grid with Snap Playback to Musical Grid, by player.
 		std::array<midi::PadSnap, ChordPadKeys::g_maxPlayers> m_padSnap;

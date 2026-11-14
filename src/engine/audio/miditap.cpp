@@ -22,8 +22,6 @@ namespace gnubase::engine
 	{
 		using Type = graph::ProcessEvent::Type;
 
-		constexpr uint32_t g_noBank = 0xFFFFFFFFU;
-
 		void require(bool condition, const std::string& message)
 		{
 			if (!condition)
@@ -46,51 +44,6 @@ namespace gnubase::engine
 			message.size = static_cast<uint8_t>(size);
 			std::copy(bytes.begin(), bytes.end(), message.bytes.begin());
 			return message;
-		}
-
-		// A MIDI 1.0 channel message as an event; a note-on of velocity 0 is a note-off of velocity 64.
-		graph::ProcessEvent toEvent(const audio::MidiMessage& message, uint32_t offset) noexcept
-		{
-			const uint8_t data1 = message.bytes[1];
-			const uint8_t data2 = message.bytes[2];
-			graph::ProcessEvent event;
-			event.offset = offset;
-			event.channel = static_cast<uint8_t>(message.bytes[0] & 0x0FU);
-			event.key = data1;
-			switch (message.bytes[0] & 0xF0U)
-			{
-			case 0x80U:
-				event.type = Type::NoteOff;
-				event.velocity = midi::velocityFromMidi1(data2);
-				break;
-			case 0x90U:
-				event.type = data2 == 0 ? Type::NoteOff : Type::NoteOn;
-				event.velocity = midi::velocityFromMidi1(data2 == 0 ? 64 : data2);
-				break;
-			case 0xA0U:
-				event.type = Type::PolyPressure;
-				event.value = midi::controllerFromMidi1(data2);
-				break;
-			case 0xB0U:
-				event.type = Type::Controller;
-				event.value = midi::controllerFromMidi1(data2);
-				break;
-			case 0xC0U:
-				event.type = Type::Program;
-				event.value = g_noBank;
-				break;
-			case 0xD0U:
-				event.type = Type::ChannelPressure;
-				event.key = 0;
-				event.value = midi::controllerFromMidi1(data1);
-				break;
-			default: // 0xE0
-				event.type = Type::PitchBend;
-				event.key = 0;
-				event.value = midi::pitchBendFromMidi1(static_cast<uint16_t>(data1 | (uint32_t{data2} << 7U)));
-				break;
-			}
-			return event;
 		}
 
 		// An event as MIDI 1.0 messages: none for SysEx and parameter changes, three for a program change with a bank
@@ -160,6 +113,50 @@ namespace gnubase::engine
 			}
 			return count;
 		}
+	}
+
+	graph::ProcessEvent MidiTap::toEvent(const audio::MidiMessage& message, uint32_t offset) noexcept
+	{
+		const uint8_t data1 = message.bytes[1];
+		const uint8_t data2 = message.bytes[2];
+		graph::ProcessEvent event;
+		event.offset = offset;
+		event.channel = static_cast<uint8_t>(message.bytes[0] & 0x0FU);
+		event.key = data1;
+		switch (message.bytes[0] & 0xF0U)
+		{
+		case 0x80U:
+			event.type = Type::NoteOff;
+			event.velocity = midi::velocityFromMidi1(data2);
+			break;
+		case 0x90U:
+			event.type = data2 == 0 ? Type::NoteOff : Type::NoteOn;
+			event.velocity = midi::velocityFromMidi1(data2 == 0 ? 64 : data2);
+			break;
+		case 0xA0U:
+			event.type = Type::PolyPressure;
+			event.value = midi::controllerFromMidi1(data2);
+			break;
+		case 0xB0U:
+			event.type = Type::Controller;
+			event.value = midi::controllerFromMidi1(data2);
+			break;
+		case 0xC0U:
+			event.type = Type::Program;
+			event.value = g_noBank;
+			break;
+		case 0xD0U:
+			event.type = Type::ChannelPressure;
+			event.key = 0;
+			event.value = midi::controllerFromMidi1(data1);
+			break;
+		default: // 0xE0
+			event.type = Type::PitchBend;
+			event.key = 0;
+			event.value = midi::pitchBendFromMidi1(static_cast<uint16_t>(data1 | (uint32_t{data2} << 7U)));
+			break;
+		}
+		return event;
 	}
 
 	MidiTap::MidiTap() : m_waiting(g_size)
@@ -240,6 +237,16 @@ namespace gnubase::engine
 					message.bytes[0] < 0xF0)
 					events.add(toEvent(message, message.offset));
 		}
+	}
+
+	void MidiTap::thru(
+		const graph::EventBuffer& input, const Sequencers& sequencers, const std::vector<uint8_t>& thru) noexcept
+	{
+		if (input.empty())
+			return;
+		for (size_t i = 0; i < sequencers.size() && i < thru.size(); ++i)
+			if (thru[i] != 0)
+				sequencers[i].second->input().merge(input);
 	}
 
 	void MidiTap::capture(uint64_t position, const Instruments& instruments) noexcept
@@ -427,7 +434,6 @@ namespace gnubase::engine
 				const double ratio = m_snapshots.latest().sampleRate / m_device->format().sampleRate;
 				const time::Samples cursor = m_transport.position();
 				MidiTakeBuilder builder;
-				builder.setMpe(mpePitchRange(m_settings));
 				time::Samples start = -1;
 				int64_t stopped = -1; // the device frame of the first input in stop mode
 				for (const RetrospectiveEvent& kept : events)
