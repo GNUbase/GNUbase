@@ -395,10 +395,9 @@ namespace
 		return note;
 	}
 
-	// The notes out still holds after its events, as channel * 128 + pitch.
-	std::vector<int> hanging(const EventBuffer& out)
+	// Follows out's notes in held, as channel * 128 + pitch.
+	void follow(const EventBuffer& out, std::vector<int>& held)
 	{
-		std::vector<int> held;
 		for (const ProcessEvent& e : out)
 		{
 			const int index = (e.channel * 128) + e.key;
@@ -407,6 +406,13 @@ namespace
 			else if (e.type == ProcessEvent::Type::NoteOff)
 				held.erase(std::remove(held.begin(), held.end(), index), held.end());
 		}
+	}
+
+	// The notes out still holds after its events, as channel * 128 + pitch.
+	std::vector<int> hanging(const EventBuffer& out)
+	{
+		std::vector<int> held;
+		follow(out, held);
 		return held;
 	}
 }
@@ -1006,14 +1012,15 @@ namespace
 	namespace plugin = gnubase::plugin;
 
 	// Makes the built-in MIDI effects, each behind a plugin::CheckedPlugin that counts the calls on the wrong thread or
-	// in the wrong state, or behind a FailingEffect. The audio thread is the real-time context; while idle, no block
-	// processes the effects, so they may stop processing there too, as a plugin slot stops its plugin before it
-	// deactivates it.
+	// in the wrong state, and behind a FailingEffect that fails its blocks while failing is set. The audio thread is
+	// the real-time context; while idle, no block processes the effects, so they may stop processing there too, as a
+	// plugin slot stops its plugin before it deactivates it.
 	class TestEffects final : public plugin::Factory, public plugin::ThreadCheck
 	{
 	public:
-		explicit TestEffects(bool failing = false) : m_failing(failing) {}
+		explicit TestEffects(bool fail = false) : failing(fail) {}
 
+		std::atomic<bool> failing{false};
 		std::atomic<bool> idle{true};
 		std::atomic<uint32_t> violations{0};
 		std::atomic<const char*> lastViolation{nullptr};
@@ -1034,14 +1041,16 @@ namespace
 		}
 
 		processors::BuiltinFactory m_builtins;
-		bool m_failing = false;
 	};
 
-	// A plugin that fails every block it gets, as a third-party one might.
+	// A plugin that fails every block it gets while failing is set, as a third-party one might.
 	class FailingEffect final : public plugin::Plugin
 	{
 	public:
-		explicit FailingEffect(std::unique_ptr<plugin::Plugin> plugin) : m_plugin(std::move(plugin)) {}
+		FailingEffect(std::unique_ptr<plugin::Plugin> plugin, const std::atomic<bool>& failing)
+			: m_plugin(std::move(plugin)), m_failing(failing)
+		{
+		}
 
 		const plugin::Descriptor& descriptor() const override { return m_plugin->descriptor(); }
 		bool init() override { return m_plugin->init(); }
@@ -1053,21 +1062,22 @@ namespace
 		bool startProcessing() noexcept override { return m_plugin->startProcessing(); }
 		void stopProcessing() noexcept override { m_plugin->stopProcessing(); }
 		void reset() noexcept override { (*m_plugin).reset(); }
-		plugin::ProcessStatus process(const plugin::Process& /*process*/) noexcept override
+		plugin::ProcessStatus process(const plugin::Process& process) noexcept override
 		{
-			return plugin::ProcessStatus::Error;
+			return m_failing ? plugin::ProcessStatus::Error : m_plugin->process(process);
 		}
 		void* extension(std::string_view id) override { return m_plugin->extension(id); }
 
 	private:
 		std::unique_ptr<plugin::Plugin> m_plugin;
+		const std::atomic<bool>& m_failing;
 	};
 
 	std::unique_ptr<plugin::Plugin> TestEffects::create(std::string_view id, plugin::Host& host)
 	{
 		std::unique_ptr<plugin::Plugin> made = m_builtins.create(id, host);
-		if (made && m_failing)
-			made = std::make_unique<FailingEffect>(std::move(made));
+		if (made)
+			made = std::make_unique<FailingEffect>(std::move(made), failing);
 		if (made)
 			made = std::make_unique<plugin::CheckedPlugin>(std::move(made), *this, &TestEffects::violated, this);
 		return made;
@@ -1102,6 +1112,15 @@ namespace
 	{
 		gnubase::logging::flush();
 		return gnubase::test::readText(file);
+	}
+
+	// How often the text has the part.
+	size_t occurrences(const std::string& text, std::string_view part)
+	{
+		size_t count = 0;
+		for (size_t at = text.find(part); at != std::string::npos; at = text.find(part, at + 1))
+			++count;
+		return count;
 	}
 }
 
@@ -1140,6 +1159,7 @@ TEST_CASE("an effect that fails a block passes its events on as they came, and t
 {
 	const gnubase::test::TempDir dir;
 	const std::filesystem::path file = dir.path() / "gnubase.log";
+	gnubase::logging::flush(); // what earlier tests logged goes to stderr, not into this log
 	const gnubase::logging::Session log(file);
 	auto effects = std::make_shared<TestEffects>(true);
 	MidiSequencer sequencer(effects);
@@ -1158,13 +1178,61 @@ TEST_CASE("an effect that fails a block passes its events on as they came, and t
 	const std::string text = logged(file);
 	CHECK_THAT(text, ContainsSubstring("chordGenerator in MIDI insert 1 failed"));
 	// Once while it fails, not every block.
-	CHECK(text.find("failed") == text.rfind("failed"));
+	CHECK(occurrences(text, "failed a block") == 1);
+}
+
+TEST_CASE("an insert that starts to fail ends the notes it played, which would hang otherwise", "[unit]")
+{
+	auto effects = std::make_shared<TestEffects>();
+	MidiSequencer sequencer(effects);
+	sequencer.prepareFor(48000.0, 128);
+	sequencer.setSequence(withInsert("chordGenerator"));
+	effects->idle = false;
+	std::vector<int> held;
+	follow(playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOn, 5, 60)}), held);
+	REQUIRE(held.size() > 1); // the chord
+	// It fails from now on: the notes of the chord end, and the note-off that passes it ends the note again.
+	effects->failing = true;
+	follow(playBlock(sequencer, {}), held);
+	CHECK(held.empty());
+	follow(playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOff, 7, 60)}), held);
+	CHECK(held.empty());
+	effects->idle = true;
+}
+
+TEST_CASE("a send that starts to fail ends its notes and plays nothing while it fails", "[unit]")
+{
+	auto effects = std::make_shared<TestEffects>();
+	MidiSequencer sequencer(effects);
+	sequencer.prepareFor(48000.0, 128);
+	auto sequence = std::make_unique<MidiSequence>();
+	sequence->sends.slots[0].effect = "chordGenerator";
+	sequencer.setSequence(std::move(sequence));
+	effects->idle = false;
+	std::vector<int> held;
+	follow(playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOn, 5, 60)}), held);
+	REQUIRE(held.size() > 2); // the note, and the chord the send played
+	effects->failing = true;
+	// The send's chord ends; the track's own note sounds on, and a new note plays once, not again through the send.
+	const EventBuffer failed = playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOn, 5, 62)});
+	follow(failed, held);
+	std::sort(held.begin(), held.end());
+	held.erase(std::unique(held.begin(), held.end()), held.end()); // both played 60
+	CHECK(held == std::vector<int>{60, 62});
+	CHECK(std::count_if(failed.begin(), failed.end(),
+			  [](const ProcessEvent& e) { return e.type == ProcessEvent::Type::NoteOn && e.key == 62; }) == 1);
+	follow(
+		playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOff, 7, 60), noteAt(ProcessEvent::Type::NoteOff, 7, 62)}),
+		held);
+	CHECK(held.empty());
+	effects->idle = true;
 }
 
 TEST_CASE("events that don't fit an effect's event lists are dropped, and the log says so", "[unit]")
 {
 	const gnubase::test::TempDir dir;
 	const std::filesystem::path file = dir.path() / "gnubase.log";
+	gnubase::logging::flush(); // what earlier tests logged goes to stderr, not into this log
 	const gnubase::logging::Session log(file);
 	MidiSequencer sequencer;
 	sequencer.prepareFor(48000.0, 128);
@@ -1178,7 +1246,13 @@ TEST_CASE("events that don't fit an effect's event lists are dropped, and the lo
 	sysex.data = dump.data();
 	sysex.size = static_cast<uint32_t>(dump.size());
 	CHECK(playBlock(sequencer, {sysex}).empty());
-	CHECK_THAT(logged(file), ContainsSubstring("transformer in MIDI insert 1 dropped events"));
+	// Once while it drops them, not every block, and again when it drops some after a block without.
+	playBlock(sequencer, {sysex});
+	playBlock(sequencer, {});
+	playBlock(sequencer, {sysex});
+	const std::string text = logged(file);
+	CHECK_THAT(text, ContainsSubstring("transformer in MIDI insert 1 dropped events"));
+	CHECK(occurrences(text, "dropped events") == 2);
 }
 
 TEST_CASE("the sequencer clears the drumSound flag of the notes it maps, so the inserts below never see it", "[unit]")

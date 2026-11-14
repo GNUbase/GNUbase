@@ -305,8 +305,8 @@ namespace gnubase::engine
 	}
 
 	MidiSequencer::MidiSequencer(std::shared_ptr<plugin::Factory> effects)
-		: m_factory(effects ? std::move(effects) : std::make_shared<processors::BuiltinFactory>()),
-		  m_sequence(std::make_unique<const MidiSequence>()), m_input(graph::g_maxEventsPerBlock),
+		: m_factory(std::move(effects)), m_sequence(std::make_unique<const MidiSequence>()),
+		  m_input(graph::g_maxEventsPerBlock),
 		  m_stripChase(std::make_shared<graph::EventBuffer>(graph::g_maxEventsPerBlock))
 	{
 		std::iota(m_inputTo.begin(), m_inputTo.end(), uint16_t{0});
@@ -386,6 +386,8 @@ namespace gnubase::engine
 			{
 				// The slot's values, not on the audio thread yet. Later the lanes of its automation carry them, which
 				// they send again only when they change (#992); the audio thread gives it the last ones they sent.
+				if (!m_factory)
+					m_factory = std::make_shared<processors::BuiltinFactory>();
 				kept.effect = makeEffect(*m_factory, slot.effect, slot.parameters, m_host);
 				if (!kept.effect)
 				{
@@ -553,13 +555,14 @@ namespace gnubase::engine
 			return;
 		}
 		// The inserts above the divider play the input as it comes, which the track then records and plays.
+		bool inputFails = false;
 		if (sequence.inputCount > 0)
 		{
 			const graph::EventBuffer* played = &m_input;
 			for (size_t i = 0; i < sequence.inputCount; ++i)
 			{
 				graph::EventBuffer& to = played == &m_chainA ? m_chainB : m_chainA;
-				runEffect(sequence.effects[i], *played, to, frames, context.transport);
+				inputFails = runEffect(sequence.effects[i], *played, to, frames, context.transport) || inputFails;
 				played = &to;
 			}
 			m_input.clear();
@@ -578,10 +581,10 @@ namespace gnubase::engine
 		}
 		m_own.clear();
 		playOwn(sequence, context, m_own);
-		runEffects(sequence, context, context.eventsOut);
+		runEffects(sequence, context, context.eventsOut, inputFails);
 	}
 
-	void MidiSequencer::runEffect(const RunningEffect& running, const graph::EventBuffer& in, graph::EventBuffer& to,
+	bool MidiSequencer::runEffect(const RunningEffect& running, const graph::EventBuffer& in, graph::EventBuffer& to,
 		uint32_t frames, const graph::TransportBlock& transport) noexcept
 	{
 		const uint32_t first =
@@ -611,33 +614,38 @@ namespace gnubase::engine
 		plugin::EventList& out = m_pluginOut[slot];
 		out.clear();
 		if (frames == 0)
-			return;
+			return false;
 		m_host.setTempoMap(transport.tempoMap);
 		const plugin::Process process{frames, -1, plugin::ProcessMode::Realtime, nullptr, 0, nullptr, 0, m_pluginIn,
 			out, m_pluginTransport.data(), plugins::convertTransport(transport, m_sampleRate, m_pluginTransport)};
 		const plugin::ProcessStatus status = running.effect->process(process);
 		const std::string_view id = running.info != nullptr ? std::string_view(running.info->id) : std::string_view();
 		const std::string_view section = running.send ? "send" : "insert";
-		if (const size_t dropped = m_pluginIn.dropped() + out.dropped(); dropped > 0)
+		// Logged once while it lasts, so that a steady overload doesn't fill the logger's queue.
+		const size_t dropped = m_pluginIn.dropped() + out.dropped();
+		if (dropped > 0 && m_dropping[slot] != running.serial)
 			logging::warning("The MIDI effect {} in MIDI {} {} dropped events that didn't fit its event lists: {} in a "
-							 "block",
+							 "block, and isn't logged again until a block drops none",
 				id, section, running.slot + 1, dropped);
+		m_dropping[slot] = dropped > 0 ? running.serial : 0;
 		if (status == plugin::ProcessStatus::Error)
 		{
-			if (m_failing[slot] != running.serial)
-				logging::warning("The MIDI effect {} in MIDI {} {} failed a block: its events pass it as they come "
-								 "until it processes again",
-					id, section, running.slot + 1);
+			const bool starts = m_failing[slot] != running.serial;
+			if (starts)
+				logging::warning("The MIDI effect {} in MIDI {} {} failed a block: {} until it processes again", id,
+					section, running.slot + 1, running.send ? "it plays nothing" : "its events pass it as they come");
 			m_failing[slot] = running.serial;
-			for (const graph::ProcessEvent& event : in)
-				to.add(event);
-			return;
+			if (!running.send)
+				for (const graph::ProcessEvent& event : in)
+					to.add(event);
+			return starts;
 		}
 		m_failing[slot] = 0;
 		graph::ProcessEvent played;
 		for (const plugin::Event& event : out)
 			if (plugins::toGraphEvent(event, out, played))
 				to.add(played);
+		return false;
 	}
 
 	void MidiSequencer::takeEffects(const MidiSequence& sequence, graph::EventBuffer& out) noexcept
@@ -758,11 +766,28 @@ namespace gnubase::engine
 				m_sendHeld[slot].fill(false);
 	}
 
-	void MidiSequencer::runEffects(
-		const MidiSequence& sequence, const graph::ProcessContext& context, graph::EventBuffer& out) noexcept
+	void MidiSequencer::endHeld(std::array<bool, g_notes>& held, graph::EventBuffer& out, bool shared) noexcept
 	{
-		const auto run = [this, &context](const RunningEffect& running, const graph::EventBuffer& in,
-							 graph::EventBuffer& to) { runEffect(running, in, to, context.frames, context.transport); };
+		for (uint16_t index = 0; index < g_notes; ++index)
+		{
+			if (!held[index])
+				continue;
+			held[index] = false;
+			bool stays = shared && m_insertsHeld[index];
+			for (size_t slot = 0; slot < m_sendHeld.size() && shared && !stays; ++slot)
+				stays = !m_sendElsewhere[slot] && m_sendHeld[slot][index];
+			if (!stays)
+				out.addEnd(noteEvent(graph::ProcessEvent::Type::NoteOff, index, 0));
+		}
+		out.nextSource();
+	}
+
+	void MidiSequencer::runEffects(const MidiSequence& sequence, const graph::ProcessContext& context,
+		graph::EventBuffer& out, bool insertsFail) noexcept
+	{
+		const auto run = [this, &context](
+							 const RunningEffect& running, const graph::EventBuffer& in, graph::EventBuffer& to)
+		{ return runEffect(running, in, to, context.frames, context.transport); };
 		const auto hold = [](const graph::EventBuffer& events, std::array<bool, g_notes>& held)
 		{
 			for (const graph::ProcessEvent& event : events)
@@ -774,9 +799,11 @@ namespace gnubase::engine
 		for (size_t i = sequence.inputCount; i < sequence.insertCount; ++i)
 		{
 			graph::EventBuffer& to = played == &m_chainA ? m_chainB : m_chainA;
-			run(sequence.effects[i], *played, to);
+			insertsFail = run(sequence.effects[i], *played, to) || insertsFail;
 			played = &to;
 		}
+		if (insertsFail)
+			endHeld(m_insertsHeld, out, true);
 		hold(*played, m_insertsHeld);
 		out.merge(*played);
 		if (sequence.insertCount == sequence.effects.size())
@@ -791,7 +818,8 @@ namespace gnubase::engine
 			const RunningEffect& running = sequence.effects[i];
 			if (!running.elsewhere)
 				continue;
-			run(running, source, sent);
+			if (run(running, source, sent))
+				endHeld(m_sendHeld[running.slot], m_sendOut[running.slot], false);
 			m_sendOut[running.slot].merge(sent);
 			hold(sent, m_sendHeld[running.slot]);
 		}
@@ -807,7 +835,8 @@ namespace gnubase::engine
 		{
 			if (sequence.effects[i].elsewhere)
 				continue;
-			run(sequence.effects[i], source, sent);
+			if (run(sequence.effects[i], source, sent))
+				endHeld(m_sendHeld[sequence.effects[i].slot], out, true);
 			hold(sent, m_sendHeld[sequence.effects[i].slot]);
 			out.merge(sent);
 		}

@@ -244,8 +244,8 @@ namespace gnubase::engine
 		// What is chased by itself: a control change per channel and number, a program and a pitch bend per channel.
 		static constexpr size_t g_chased = g_notes + (size_t{16} * 2);
 
-		// effects makes the MIDI effects' plugins by "builtin:" and the effect's id; nullptr:
-		// processors::BuiltinFactory.
+		// effects makes the MIDI effects' plugins by "builtin:" and the effect's id; nullptr: a
+		// processors::BuiltinFactory, made with the first effect.
 		explicit MidiSequencer(std::shared_ptr<plugin::Factory> effects = nullptr);
 
 		// Command thread: what to play from the next block on. Indexes the notes for chasing, and makes the MIDI
@@ -326,13 +326,19 @@ namespace gnubase::engine
 		void playOwn(
 			const MidiSequence& sequence, const graph::ProcessContext& context, graph::EventBuffer& out) noexcept;
 		// Runs an effect on in, with the parameter events of its automation (m_effectEvents), into to. Logs the events
-		// its event lists drop, and passes in on as it is in a block the effect fails, which it logs as it starts to
-		// fail: a third-party effect that fails would otherwise swallow the block's note-offs.
-		void runEffect(const RunningEffect& running, const graph::EventBuffer& in, graph::EventBuffer& to,
+		// its event lists drop as it starts to drop them. In a block the effect fails, an insert passes in on as it is,
+		// as a third-party effect that fails would otherwise swallow the block's note-offs, and a send plays nothing,
+		// as the inserts' notes play already. Returns true as the effect starts to fail, which it logs: then the notes
+		// its slot holds end, as those it played itself get no note-off.
+		bool runEffect(const RunningEffect& running, const graph::EventBuffer& in, graph::EventBuffer& to,
 			uint32_t frames, const graph::TransportBlock& transport) noexcept;
-		// Runs the effects below the divider on the events in m_own and adds what they play to out.
-		void runEffects(
-			const MidiSequence& sequence, const graph::ProcessContext& context, graph::EventBuffer& out) noexcept;
+		// Runs the effects below the divider on the events in m_own and adds what they play to out. insertsFail: an
+		// insert above the divider started to fail in the block.
+		void runEffects(const MidiSequence& sequence, const graph::ProcessContext& context, graph::EventBuffer& out,
+			bool insertsFail) noexcept;
+		// Ends the notes held holds, at offset 0 in out, unless another of the effects' outputs to the track's output
+		// holds them too (shared), and forgets them.
+		void endHeld(std::array<bool, g_notes>& held, graph::EventBuffer& out, bool shared) noexcept;
 		// When the sequence is new: ends the notes that the effects that go played, at the track's output unless one
 		// that stays holds them too, and at the instrument tracks the sends played to. The inserts' output counts as
 		// gone when any insert is new or gone, as the effects that arrive didn't see the note-ons. A new instance
@@ -458,11 +464,12 @@ namespace gnubase::engine
 		graph::EventBuffer m_effectIn;
 		// An effect's events in and its transport as the plugin API has them, and per slot, the inserts' then the
 		// sends', what its effect played, whose SysEx bytes stay there until it plays again, and the serial of the
-		// effect that fails its blocks there, 0 for none.
+		// effect that fails its blocks there, and of the one that drops events there, 0 for none.
 		plugin::EventList m_pluginIn;
 		std::array<plugin::EventList, 2 * midi::g_effectSlots> m_pluginOut;
 		std::vector<plugin::TransportSegment> m_pluginTransport;
 		std::array<uint64_t, 2 * midi::g_effectSlots> m_failing{};
+		std::array<uint64_t, 2 * midi::g_effectSlots> m_dropping{};
 		plugin::EventList m_automatedIn; // the values the automation sent a new instance's slot last, and nothing out
 		plugin::EventList m_automatedOut;
 		uint64_t m_serial = 0; // the sequence it took last
