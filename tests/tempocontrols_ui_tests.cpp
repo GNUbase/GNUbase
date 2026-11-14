@@ -15,6 +15,7 @@
 #include "ui/rmlui.h"
 #include "ui/shell.h"
 #include "ui/tempotrack.h"
+#include "ui/timeformat.h"
 #include "ui/tracklist.h"
 #include "ui/transport.h"
 #include "uiapp.h"
@@ -531,6 +532,71 @@ TEST_CASE("Current Tempo on the tempo track and in the editor follows the cursor
 	REQUIRE(app.waitUntil([&editorValue] { return editorValue() == "100.000"; }));
 	CHECK(app.call("transport.get").at("position").get<int64_t>() >= g_second);
 	app.call("transport.stop");
+}
+
+TEST_CASE("the track list watches the cursor while playing only when it has a Current Tempo field", "[ui]")
+{
+	test::UiApp app{{1024, 500}};
+	app.appUi().showProject();
+	app.call("project.set", {{"tempoTrackActive", true}});
+	app.call("tempo.add", {{"position", 2 * g_quarter}, {"bpm", 100.0}, {"ramp", false}});
+	app.call("audio.setDevice", {{"blockSize", 256}}); // the dummy device
+	app.call("audio.start");
+	const auto position = [&app] { return app.call("transport.get").at("position").get<int64_t>(); };
+
+	// Without a tempo track the list has no Current Tempo field: the frames of the playback build no time context
+	// (#1338).
+	app.call("transport.play");
+	REQUIRE(app.waitUntil([&position] { return position() >= g_second; }));
+	const uint64_t builds = ui::projectTimeBuilds();
+	REQUIRE(app.waitUntil([&position] { return position() >= 2 * g_second; }));
+	CHECK(ui::projectTimeBuilds() == builds);
+
+	// A tempo track added while playing brings the field, and it follows the cursor right away.
+	const auto track = app.call("track.add", {{"type", "tempo"}}).at("track").at("id").get<uint64_t>();
+	const std::string row = "#track-list listitem[value=\"" + std::to_string(track) + "\"]";
+	const auto value = [&app, &row]
+	{
+		const Json found = elements(app, row + " input.current-tempo");
+		return found.empty() ? std::string() : found[0].value("value", std::string());
+	};
+	REQUIRE(app.waitUntil([&value] { return value() == "100.000"; }));
+	app.call("transport.stop");
+}
+
+TEST_CASE("the track list's Current Tempo reads the display's time context, not one built per frame", "[ui]")
+{
+	test::UiApp app{{1024, 500}};
+	app.appUi().showProject();
+	const auto track = app.call("track.add", {{"type", "tempo"}}).at("track").at("id").get<uint64_t>();
+	const std::string row = "#track-list listitem[value=\"" + std::to_string(track) + "\"]";
+	const auto value = [&app, &row]
+	{
+		const Json found = elements(app, row + " input.current-tempo");
+		return found.empty() ? std::string() : found[0].value("value", std::string());
+	};
+	app.call("project.set", {{"tempoTrackActive", true}});
+	app.call("tempo.add", {{"position", 2 * g_quarter}, {"bpm", 100.0}, {"ramp", false}});
+	REQUIRE(app.waitUntil([&value] { return value() == "120.000"; }));
+
+	// Playback carries the cursor over the tempo event; the frames that follow it read the context the display
+	// keeps (#1338), as the transport bar reads its own.
+	app.call("audio.setDevice", {{"blockSize", 256}}); // the dummy device
+	app.call("audio.start");
+	app.call("transport.play");
+	REQUIRE(app.waitUntil([&value] { return value() == "100.000"; }));
+	const uint64_t builds = ui::projectTimeBuilds();
+	REQUIRE(app.waitUntil([&app] { return app.call("transport.get").at("position").get<int64_t>() >= 2 * g_second; }));
+	CHECK(ui::projectTimeBuilds() == builds);
+	app.call("transport.stop");
+
+	// Locates and undo keep the field following.
+	app.call("transport.locate", {{"position", 0}});
+	REQUIRE(app.waitUntil([&value] { return value() == "120.000"; }));
+	type(app, row + " input.current-tempo", "90", 1);
+	REQUIRE(app.waitUntil([&value] { return value() == "90.000"; }));
+	app.call("history.undo");
+	REQUIRE(app.waitUntil([&value] { return value() == "120.000"; }));
 }
 
 TEST_CASE("Insert Tempo Event at Cursor asks for a tempo and adds a tempo event at the cursor", "[ui]")

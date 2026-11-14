@@ -1223,6 +1223,7 @@ TEST_CASE("the inspector's dragged volume stays while it shows a project read fr
 {
 	test::CommandHolds holds; // declared before the window: its engine's command thread waits in hold()
 	Window window;
+	const test::ReleaseHolds releaseHolds{holds};
 	window.app.engine().registerCommand(
 		{"test.hold", 1, "Waits for the test to release it.", engine::CommandInfo{}.parameters, Json::object(), false},
 		[&holds](engine::CommandContext&) { return holds.hold(); });

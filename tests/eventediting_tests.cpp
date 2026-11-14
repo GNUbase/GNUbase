@@ -30,6 +30,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <utility>
@@ -614,15 +615,47 @@ TEST_CASE("a drag of an event's edge shows the size the release gives it at ever
 	CHECK(bothEnds(3.7, 4.2));
 }
 
+namespace
+{
+	// Registers test.hold, a command whose runs wait in holds.
+	void registerHold(Fixture& f, test::CommandHolds& holds)
+	{
+		f.engine.registerCommand({"test.hold", 1, "Waits for the test to release it.", engine::CommandInfo{}.parameters,
+									 Json::object(), false},
+			[&holds](engine::CommandContext&) { return holds.hold(); });
+	}
+}
+
+TEST_CASE("a test that fails while a command is held ends at once", "[unit]")
+{
+	// A failing REQUIRE throws, as this does, while a run of test.hold holds the engine's command thread.
+	auto failed = std::chrono::steady_clock::now();
+	CHECK_THROWS_AS(
+		[&failed]
+		{
+			test::CommandHolds holds;
+			Fixture f;
+			const test::ReleaseHolds releaseHolds{holds};
+			registerHold(f, holds);
+			engine::Client holder(f.engine, "holder");
+			holder.send("test.hold");
+			REQUIRE(holds.waitEntered(1));
+			failed = std::chrono::steady_clock::now();
+			throw std::runtime_error("a failing check");
+		}(),
+		std::runtime_error);
+	// Well below hold()'s 30 s, which the fixture's engine would wait if the holds went after it.
+	CHECK(std::chrono::steady_clock::now() - failed < std::chrono::seconds(10));
+}
+
 TEST_CASE("a second resize release can precede the first release's project", "[unit]")
 {
-	test::CommandHolds holds; // declared before the fixture: its engine's command thread waits in hold()
+	test::CommandHolds holds;
 	Fixture f;
+	const test::ReleaseHolds releaseHolds{holds};
 	// The engine answers only when the test lets it: a command that holds its command thread until it is released,
 	// so what queues behind it runs, and answers, in an order the test chooses, not one a busy machine chooses.
-	f.engine.registerCommand(
-		{"test.hold", 1, "Waits for the test to release it.", engine::CommandInfo{}.parameters, Json::object(), false},
-		[&holds](engine::CommandContext&) { return holds.hold(); });
+	registerHold(f, holds);
 	engine::Client holder(f.engine, "holder");
 	f.display.select({f.part});
 	REQUIRE(f.waitUntil([&f] { return f.lanes("selected-events")[1].events.size() == 1; }));

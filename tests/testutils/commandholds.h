@@ -19,8 +19,6 @@ namespace gnubase::test
 		CommandHolds() = default;
 		CommandHolds(const CommandHolds&) = delete;
 		CommandHolds& operator=(const CommandHolds&) = delete;
-		// Lets every run go, so that a test that fails on the way doesn't leave the engine's thread waiting.
-		~CommandHolds() { release(std::numeric_limits<size_t>::max()); }
 
 		// The command's handler, on the engine's command thread. It gives up after 30 s, so that an engine that is
 		// stopping can end even if the test never releases it.
@@ -54,5 +52,14 @@ namespace gnubase::test
 		std::condition_variable changed;
 		size_t entered = 0;  // the runs that have entered hold()
 		size_t released = 0; // the runs let go: release(n) frees the n-th
+	};
+
+	// Lets every run of holds go when it goes. Declared after the fixture, it goes before the fixture's engine waits
+	// for its command thread to end, so that a test that fails while a run is held ends at once, not after hold()'s
+	// 30 s (#1308). The holds themselves are declared before the fixture: the engine's command thread waits in them.
+	struct ReleaseHolds
+	{
+		CommandHolds& holds;
+		~ReleaseHolds() { holds.release(std::numeric_limits<size_t>::max()); }
 	};
 }

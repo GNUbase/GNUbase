@@ -761,9 +761,12 @@ namespace gnubase::engine
 		{
 			const MidiInput& input = chunk.events[i];
 			const auto builder = m_midiBuilders.find(input.channel);
-			if (builder == m_midiBuilders.end())
+			// A track that only monitors records only chord events, no part: its input stays retrospective too.
+			const bool chordsOnly = std::any_of(m_midiCurrent.midiTracks.begin(), m_midiCurrent.midiTracks.end(),
+				[&input](const MidiRecordTrack& track) { return track.channel == input.channel && track.chordsOnly; });
+			if (builder == m_midiBuilders.end() || chordsOnly)
 				keepRetrospective(input, chunk.deviceFrame);
-			else if (m_midiCurrent.midiFilter.records(input.event))
+			if (builder != m_midiBuilders.end() && m_midiCurrent.midiFilter.records(input.event))
 				builder->second.add(chunk.position + input.offset, input.event);
 		}
 	}

@@ -37,7 +37,8 @@ namespace gnubase::engine::midi
 	// there or on a duplicated track, plays a copy of the pattern on its own track. A track without pattern events
 	// of its own gets copies of all the patterns of that track, else just the one (reference manual pp. 936-937); a
 	// copy the track has already, made from the pattern and the same as it, plays it instead of another one
-	// (Pattern::copiedFrom), an equal pattern that isn't its copy doesn't.
+	// (Pattern::copiedFrom), as does the pattern a copy was made from, the same as the copy, for an event moved back
+	// (#1347); an equal pattern that isn't its copy doesn't.
 	// The patterns of a removed track go. Emits pattern.added, midiPart.changed and pattern.removed.
 	void adoptPatterns(Project& project, CommandContext& context);
 
