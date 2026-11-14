@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Audio quantizing in the app (#145, docs/features/audio-quantize.md), driven with ui::Automation as MCP's UI tools
-// drive it: Edit > Quantize and Reset Quantize on the project window's selected audio events, Warp Quantize On/Off in
-// the quantize panel and the toolbar, the panel's section for several audio tracks: the Hitpoint Tracks' priorities,
-// Slice, Create, Crossfade, Nudge Crossfade and Open Crossfade Editor, and Create Groove Quantize Preset from an audio
-// event.
+// drive it: Edit > Quantize and Reset Quantize on the project window's selected audio events, the sample editor
+// toolbar's quantize functions, Warp Quantize On/Off in the quantize panel and the toolbar, the panel's section for
+// several audio tracks: the Hitpoint Tracks' priorities, Slice, Create, Crossfade, Nudge Crossfade and Open Crossfade
+// Editor, and Create Groove Quantize Preset from an audio event.
 // tests/audioquantize_tests.cpp checks the engine's side.
 #include "platform/log.h"
 #include "ui/eventdisplay.h"
 #include "ui/keycommands.h"
+#include "ui/sampleeditor.h"
 #include "uiapp.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -148,6 +149,30 @@ TEST_CASE("Edit > Quantize and Reset Quantize quantize the selected audio events
 	CHECK(f.positions(f.tracks[1]) == std::vector<int64_t>{2000});
 	f.menu("edit.resetQuantize");
 	CHECK(f.positionsAre(f.tracks[0], {2000}));
+}
+
+TEST_CASE("the sample editor's toolbar quantizes the event it edits", "[ui]")
+{
+	Fixture f;
+	// Apply Quantize there quantizes the event it edits (reference manual p. 367).
+	f.display.select({f.events[0]});
+	f.app.keys().run("editor.openClose", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().sampleEditorWindow() != nullptr; }));
+	const ui::WindowId window = f.app.appUi().sampleEditorWindowId();
+	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().sampleEditorWindow()->event() == f.events[0]; }));
+	const auto shown = [&](const std::string& selector)
+	{
+		const Json found = f.app.ui().dom(window, selector, 0).at("elements");
+		return !found.empty() && found[0].at("visible").get<bool>();
+	};
+	REQUIRE(f.app.waitUntil([&] { return shown("#toolbar-quantize-apply"); }));
+	CHECK(shown("#toolbar-quantize-presets"));
+	CHECK(shown("#toolbar-quantize-soft"));
+	CHECK(shown("#toolbar-quantize-panel"));
+	f.app.ui().click(window, {"#toolbar-quantize-apply", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.positionsAre(f.tracks[0], {0}));
+	CHECK(f.positions(f.tracks[1]) == std::vector<int64_t>{2000});
 }
 
 TEST_CASE("Warp Quantize On/Off in the quantize panel follows the settings, as the toolbar does", "[ui]")

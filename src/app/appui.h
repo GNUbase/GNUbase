@@ -459,6 +459,7 @@ namespace gnubase::app
 		{
 			ui::WindowId window = 0;
 			std::unique_ptr<ui::SampleEditor> editor;
+			std::unique_ptr<ui::QuantizePanel> quantize; // its toolbar's quantize functions (#1344)
 		};
 		SampleEditorWindow m_sampleEditor;
 		std::weak_ptr<ui::MidiEditor> m_lowerEditor;         // the docking system owns it while it is there

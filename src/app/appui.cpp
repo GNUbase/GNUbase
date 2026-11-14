@@ -2174,6 +2174,7 @@ namespace gnubase::app
 		const bool shown = m_sampleEditor.window != 0 && m_shell.find(m_sampleEditor.window) != nullptr;
 		if (open == shown)
 			return;
+		m_sampleEditor.quantize.reset();
 		m_sampleEditor.editor.reset();
 		if (shown)
 		{
@@ -2200,6 +2201,15 @@ namespace gnubase::app
 		}
 		document->Show();
 		m_sampleEditor.editor = std::make_unique<ui::SampleEditor>(m_binding, *root);
+		// The quantize functions of the sample editor's toolbar (p. 367), on the event it edits (quantizeTarget).
+		if (Rml::Element* quantize = document->GetElementById("toolbar-quantize"))
+			m_sampleEditor.quantize =
+				std::make_unique<ui::QuantizePanel>(m_binding, *quantize, ui::QuantizePanel::Layout::Toolbar,
+					[this](const std::string& command)
+					{
+						if (ui::Window* window = m_shell.find(m_sampleEditor.window))
+							m_keys.run(command, engine::Json::object(), *window, nullptr);
+					});
 	}
 
 	void AppUi::followEditor(const engine::Json& view)
@@ -2274,6 +2284,7 @@ namespace gnubase::app
 		}
 		if (m_sampleEditor.window != 0 && m_shell.find(m_sampleEditor.window) == nullptr)
 		{
+			m_sampleEditor.quantize.reset();
 			m_sampleEditor.editor.reset();
 			m_sampleEditor.window = 0;
 			m_binding.send("sampleEditor.close");

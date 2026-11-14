@@ -344,7 +344,8 @@ namespace gnubase::ui
 				}},
 			// Crossfade (reference manual pp. 388-389): crossfades the selected events, or opens the crossfade editor
 			// for the crossfade that one of them has.
-			{"audio.crossfade", [this]
+			{"audio.crossfade",
+				[this]
 				{
 					const std::vector<uint64_t> events = selectedAudio();
 					if (!openSelectedCrossfade() && !events.empty())

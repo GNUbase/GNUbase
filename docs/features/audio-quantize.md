@@ -146,6 +146,10 @@ the project's settings ([hitpoints.md](hitpoints.md)), kept as a preset, so it i
   (`#quantize-crossfade-editor`) runs the UI command `audio.crossfadeEditor`, which opens the crossfade editor
   ([fades.md](fades.md)) of the first crossfade into or out of a selected audio event, as Crossfade (`audio.crossfade`)
   does when there is one, but never crossfades events itself.
+- **The sample editor's toolbar** has the quantize functions of the project window's toolbar (p. 367): Apply
+  Quantize, Quantize Presets, Soft Quantize, Warp Quantize On/Off and Open Quantize Panel (`#toolbar-quantize` in its
+  window, a `ui::QuantizePanel` toolbar section). Run there, Quantize and Reset Quantize, from the toolbar, the Edit
+  menu or a key, take the event the sample editor edits, not the project window's selection.
 - **Edit > Advanced Quantize > Create Groove Quantize Preset** (`edit.createGrooveQuantize`) takes the first selected
   audio event when no MIDI part is selected, and makes its groove the project's settings, as for a MIDI part.
 
@@ -153,7 +157,7 @@ the project's settings ([hitpoints.md](hitpoints.md)), kept as a preset, so it i
 
 Group editing of folder tracks (the commands take the events, of any tracks); the Reset of Slice Rules and of Warp
 Marker Creation Rules (undo does it) and cutting positions shown in the project window; quantizing a selection range
-of an event; the quantize functions on the sample editor's toolbar.
+of an event (#1344's follow-up).
 
 ## Checks
 
@@ -181,6 +185,7 @@ origins keep no offset or length yet; warp markers for several tracks of the sam
 left and back, with reset after it, not past a clip's start and not with a locked event; a groove preset from an audio
 event's hitpoints that then quantizes another event, its name and its errors.
 `tests/audioquantize_ui_tests.cpp` drives the app with `ui::Automation`: Edit > Quantize and Reset Quantize on a
-selected audio event, Warp Quantize On/Off, the panel's Slice, Apply, Crossfade, Nudge Crossfade, Open Crossfade
-Editor and Create on two tracks, the Hitpoint Tracks following the selection and a track at priority 0 leaving its hitpoints out of Slice, and
-Create Groove Quantize Preset from a selected audio event.
+selected audio event, the sample editor toolbar's Apply Quantize on the event it edits, Warp Quantize On/Off, the
+panel's Slice, Apply, Crossfade, Nudge Crossfade, Open Crossfade Editor and Create on two tracks, the Hitpoint Tracks
+following the selection and a track at priority 0 leaving its hitpoints out of Slice, and Create Groove Quantize Preset
+from a selected audio event.

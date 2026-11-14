@@ -417,6 +417,10 @@ namespace gnubase::ui
 
 	void QuantizePanel::showHitpointTracks(const Json& tracks)
 	{
+		// Only a change of the list rebuilds it, so that a field being dragged or typed into stays: the selection
+		// shows again after every project update.
+		if (tracks == m_hitpointTracks)
+			return;
 		m_hitpointTracks = tracks;
 		std::string rml;
 		for (const Json& track : tracks)
@@ -429,7 +433,8 @@ namespace gnubase::ui
 				R"(" min="0" max="5" step="1" decimals="0" value=")" +
 				std::to_string(found != m_priorities.end() ? found->second : 1) + R"(" title="Priority"/></div>)";
 		}
-		setInner(find("quantize-hitpoint-tracks"), rml);
+		if (Rml::Element* list = find("quantize-hitpoint-tracks"))
+			list->SetInnerRML(rml);
 	}
 
 	Json QuantizePanel::priorities() const

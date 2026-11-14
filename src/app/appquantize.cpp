@@ -144,6 +144,14 @@ namespace gnubase::app
 				m_inPlace ? m_inPlace->view(std::stoull(zone->GetAttribute<Rml::String>("track", "0"))) : nullptr;
 			return view != nullptr ? ofView(*view, false) : QuantizeTarget{};
 		}
+		// From the sample editor's window (its toolbar, p. 367): the event it edits.
+		if (m_sampleEditor.window != 0 && window.id() == m_sampleEditor.window)
+		{
+			QuantizeTarget target;
+			if (m_sampleEditor.editor && m_sampleEditor.editor->event() != 0)
+				target.events.push_back(m_sampleEditor.editor->event());
+			return target;
+		}
 		// From an editor: its window, or the lower zone while the zone shows the Editor tab.
 		if (m_editor.window != 0 && window.id() == m_editor.window)
 			return ofEditor("window", false);
