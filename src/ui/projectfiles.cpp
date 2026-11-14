@@ -768,32 +768,27 @@ namespace gnubase::ui
 										asked(nullptr);
 									return;
 								}
+								// asked hears of the question as it shows, not once the engine answered the second
+								// look below: the user can answer it meanwhile, and a quit request after that Cancel
+								// asks again instead of finding the quit question still coming (#1454).
+								if (asked)
+									asked(opened);
 								// The question may have waited: the project can have been saved meanwhile, so ask
 								// the engine again now that it opens, and run the action at once if there is nothing
-								// left to discard (#985). asked runs whichever way this answers, so a quit question
-								// always clears m_quitting, and the next quit request asks again.
+								// left to discard (#985).
 								const Rml::ObserverPtr<Rml::Element> shown = opened->GetObserverPtr();
 								m_binding.send("project.revision", Json::object(),
-									[this, shown, action, asked](const engine::Result& result)
+									[this, shown, action](const engine::Result& result)
 									{
 										auto* opened = dynamic_cast<Rml::ElementDocument*>(shown.get());
+										// answered or gone with its window while the engine was asked
 										if (opened == nullptr || opened != m_dialog.get())
-										{
-											// answered or gone with its window while the engine was asked
-											if (asked)
-												asked(nullptr);
 											return;
-										}
 										if (result.ok() && !result.value.at("modified").get<bool>())
 										{
 											ui::closeDialog(*opened, "cancel");
-											if (asked)
-												asked(nullptr);
 											action();
-											return;
 										}
-										if (asked)
-											asked(opened);
 									});
 							},
 							[action](Rml::ElementDocument&, const std::string& answer)

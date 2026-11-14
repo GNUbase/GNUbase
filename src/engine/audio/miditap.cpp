@@ -213,8 +213,10 @@ namespace gnubase::engine
 					[](const auto& entry, ObjectId channel) { return entry.first < channel; });
 				const uint32_t offset =
 					message.position > position ? static_cast<uint32_t>(message.position - position) : 0;
-				wait = found != sequencers.end() && found->first == message.channel &&
-					!found->second->input().add(toEvent(message.message, offset));
+				graph::ProcessEvent event = toEvent(message.message, offset);
+				event.drumSound = message.drumSound;
+				wait =
+					found != sequencers.end() && found->first == message.channel && !found->second->input().add(event);
 			}
 			if (wait)
 				m_waiting[kept++] = message;
@@ -289,9 +291,14 @@ namespace gnubase::engine
 				"frames the device has processed already play at the start of its next block, those for one frame in "
 				"the order they came. They wait until the device processes their block, at most 4096 at a time, and "
 				"are dropped when the device changes; a call whose messages don't all fit fails and injects none. "
-				"midi.capture returns what instruments played.",
+				"drumSounds: on a track with a drum map, the notes' keys are drum sounds' pitches, not I-notes: they "
+				"play their sounds as the track's notes do but are neither recorded nor kept for "
+				"midi.insertRetrospective (the "
+				"drum editor auditions sounds so; reference manual p. 1236). midi.capture returns what instruments "
+				"played.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["channel", "messages"],
-					"properties": {"channel": {"type": "integer"}, "messages": {"type": "array", "items": {
+					"properties": {"channel": {"type": "integer"}, "drumSounds": {"type": "boolean"},
+					"messages": {"type": "array", "items": {
 						"type": "object", "additionalProperties": false, "required": ["position", "bytes"],
 						"properties": {"position": {"type": "integer", "minimum": 0}, "bytes": {"type": "array",
 							"items": {"type": "integer", "minimum": 0, "maximum": 255}}}}}}})"),
@@ -305,12 +312,13 @@ namespace gnubase::engine
 					"channel " + std::to_string(channel) + " is not a MIDI or instrument track's channel");
 				const Json& messages = parameters.at("messages");
 				require(messages.size() <= MidiTap::g_size, "at most 4096 messages at a time");
+				const bool drumSounds = parameters.value("drumSounds", false);
 				std::vector<MidiTap::Message> injected;
 				injected.reserve(messages.size());
 				for (size_t i = 0; i < messages.size(); ++i)
 				{
 					injected.push_back({channel, messages[i].at("position").get<uint64_t>(),
-						channelMessage(messages[i].at("bytes"), "messages[" + std::to_string(i) + "]: ")});
+						channelMessage(messages[i].at("bytes"), "messages[" + std::to_string(i) + "]: "), drumSounds});
 				}
 				require(m_tap.inject(injected),
 					"too many MIDI messages wait for the audio device; none were injected, try again later");
@@ -355,7 +363,12 @@ namespace gnubase::engine
 				"its instrument track's channel, its frame position on the audio device and its bytes: the events of "
 				"the track's parts, of the MIDI tracks routed to it and what midi.inject played into them, with "
 				"controller automation and the note-offs of a stop. A program change with a bank comes as bank "
-				"select MSB and LSB, then the program change; SysEx isn't captured. dropped counts the messages that "
+				"select MSB and LSB, then the program change; SysEx isn't captured. Per-note expression comes as MPE "
+				"on "
+				"the note's channel: tuning as pitch bend over 48 semitones, pressure as channel pressure, brightness "
+				"as CC 74, a note's initial ones before its note-on; a note on a channel whose notes express one of "
+				"them and that has no point of it at its start gets MPE's initial value (a centered bend, no "
+				"pressure, CC 74 at 64). dropped counts the messages that "
 				"didn't fit: while nobody reads, newer messages are dropped. start: true starts a fresh capture; it "
 				"drops what was captured so far and returns nothing. Each call empties what it returns, so a repeated "
 				"call doesn't return the same messages again.",

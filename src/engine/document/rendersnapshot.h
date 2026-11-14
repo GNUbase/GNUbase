@@ -97,6 +97,9 @@ namespace gnubase::engine
 		uint8_t channel = 0;
 		// An articulation map's key switch (#175): a jump sends the last one of its pitch before it, sounding or not.
 		bool keySwitch = false;
+		// Which of tuning (1), pressure (2) and brightness (4) the note has a point of at its start (#176): MPE's
+		// initial value of the others comes before it (addInitialExpressions).
+		uint8_t startsWith = 0;
 	};
 
 	// A point of a note's per-note expression (#176), with the note's played pitch and channel.
@@ -235,7 +238,8 @@ namespace gnubase::engine
 		// slot of the notes played into the track; without slots for none.
 		ArticulationMap articulations;
 		// MIDI and instrument channels with a drum map: what each note played into the track plays, by its pitch (128
-		// of them); empty without one.
+		// of them), then what each sound plays, by the sound's pitch (128 more, for midi.inject drumSounds); empty
+		// without one.
 		std::vector<LiveDrumNote> drumInput;
 		bool monitor = false; // the monitor and record enable buttons
 		bool recordEnable = false;

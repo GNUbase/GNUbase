@@ -298,7 +298,8 @@ namespace gnubase::ui
 						m_menuSuffix +
 						R"(" title="Select Pitch Visibility Options">Options</button>)"
 						R"(<button class="key-input" setting="showNoteLength" title="Show Note Length On/Off">)"
-						R"(Note Length</button>)"
+						R"(Note Length</button><button id="drum-grid-type" menu="drum-grid-menu)" +
+						m_menuSuffix + R"(" title="Grid Type"/>)"
 				  : "") +
 			R"(</div>)"
 			R"(<div class="info-line key-editor-info empty"><span class="info-empty">No Object Selected</span>)" +
@@ -333,6 +334,10 @@ namespace gnubase::ui
 			R"(</menu><menu id="key-editor-toolbox)" + m_menuSuffix + R"(" class="toolbox">)" + toolbox + "</menu>" +
 			(drum ? R"(<menu id="drum-map-menu)" + m_menuSuffix + R"("/><menu id="drum-pitch-menu)" + m_menuSuffix +
 						R"("><menuitem type="toggle" setting="reverseSounds">Reverse Drum Sound List</menuitem></menu>)"
+						R"(<menu id="drum-grid-menu)" +
+						m_menuSuffix +
+						R"("><menuitem type="toggle" grid-type="quantize">Use Quantize</menuitem>)"
+						R"(<menuitem type="toggle" grid-type="drumMap">Use Snap from Drum Map</menuitem></menu>)"
 				  : std::string()));
 		while (holder->HasChildNodes())
 		{
@@ -713,6 +718,22 @@ namespace gnubase::ui
 						item->SetAttribute("checked", "");
 				}
 		}
+		// The drum editor's grid type (p. 1227).
+		const std::string gridType = m_view.value("gridType", std::string("quantize"));
+		setInner(root->QuerySelector("#drum-grid-type"), gridType == "drumMap" ? "Drum Map Snap" : "Use Quantize");
+		if (Rml::Element* menu = m_menus.size() > 5 ? m_menus[5].get() : nullptr)
+		{
+			Rml::ElementList items;
+			menu->QuerySelectorAll(items, "menuitem");
+			for (Rml::Element* item : items)
+				if ((attribute(*item, "grid-type") == gridType) != item->HasAttribute("checked"))
+				{
+					if (item->HasAttribute("checked"))
+						item->RemoveAttribute("checked");
+					else
+						item->SetAttribute("checked", "");
+				}
+		}
 		if (Rml::Element* velocity = root->QuerySelector("#key-insert-velocity"))
 		{
 			const std::string value =
@@ -867,17 +888,26 @@ namespace gnubase::ui
 	}
 
 	// The quantize grid (quantize.set, p. 1196) from the project start; Ctrl (Cmd) turns snap off (p. 1213).
-	int64_t KeyEditor::grid() const
+	int64_t KeyEditor::grid(int pitch) const
 	{
+		// The drum editor's Use Snap from Drum Map (p. 1227): the sound's snap.
+		if (const Json* map = m_drum && pitch >= 0 && m_view.value("gridType", "") == "drumMap" ? activeMap() : nullptr)
+			return soundSnap(*map, pitch);
 		const std::string grid = m_project.value("quantize", Json::object()).value("grid", std::string("1/16"));
 		return engine::midi::noteValueFromString(grid).value_or(engine::midi::NoteValue{}).ticks();
 	}
 
-	int64_t KeyEditor::snap(double ticks, bool off) const
+	int64_t KeyEditor::soundSnap(const Json& map, int pitch)
+	{
+		const std::string snap = map.at("sounds").at(static_cast<size_t>(pitch)).at("snap").get<std::string>();
+		return engine::midi::noteValueFromString(snap).value_or(engine::midi::NoteValue{}).ticks();
+	}
+
+	int64_t KeyEditor::snap(double ticks, bool off, int pitch) const
 	{
 		if (off)
 			return std::llround(ticks);
-		const auto step = static_cast<double>(grid());
+		const auto step = static_cast<double>(grid(pitch));
 		return std::llround(std::round(ticks / step) * step);
 	}
 
@@ -887,10 +917,7 @@ namespace gnubase::ui
 		if (length == "drumMap")
 		{
 			const Json* map = activeMap();
-			if (map == nullptr)
-				return grid();
-			const std::string snap = map->at("sounds").at(static_cast<size_t>(pitch)).at("snap").get<std::string>();
-			return engine::midi::noteValueFromString(snap).value_or(engine::midi::NoteValue{}).ticks();
+			return map != nullptr ? soundSnap(*map, pitch) : grid();
 		}
 		if (length == "link")
 			return grid();
@@ -923,13 +950,14 @@ namespace gnubase::ui
 			m_binding.send("history.transaction", {{"description", description}, {"commands", std::move(commands)}});
 	}
 
-	void KeyEditor::addNotes(const Part& part, const std::vector<int64_t>& starts, int64_t length, int pitch)
+	void KeyEditor::addNotes(
+		const Part& part, const std::vector<int64_t>& starts, int64_t length, int pitch, std::optional<double> velocity)
 	{
-		const double velocity = m_view.value("insertVelocity", 100.0 / g_maxVelocity);
+		const double inserted = velocity.value_or(m_view.value("insertVelocity", 100.0 / g_maxVelocity));
 		Json notes = Json::array();
 		for (const int64_t start : starts)
 			notes.push_back({{"position", start - part.start}, {"length", std::max<int64_t>(length, 1)},
-				{"pitch", pitch}, {"velocity", velocity}});
+				{"pitch", pitch}, {"velocity", inserted}});
 		m_binding.send("note.add", {{"part", part.id}, {"notes", notes}});
 	}
 
@@ -1103,6 +1131,10 @@ namespace gnubase::ui
 		{
 			setView({{"lengthQuantize", attribute(target, "length")}});
 		}
+		else if (target.HasAttribute("grid-type"))
+		{
+			setView({{"gridType", attribute(target, "grid-type")}});
+		}
 		else if (target.HasAttribute("line-mode"))
 		{
 			m_lineMode = attribute(target, "line-mode");
@@ -1235,14 +1267,11 @@ namespace gnubase::ui
 			sound(std::stoi(attribute(*key, "pitch")));
 			return;
 		}
-		// A click on a drum sound's pitch auditions it: its I-note, which the track's map plays as the sound
-		// (#882, p. 1236).
+		// A click on a drum sound's pitch auditions it as the track's map plays the sound (#882, p. 1236).
 		if (const Rml::Element* row = withAttribute(target, "pitch", root);
 			m_drum && row != nullptr && target->IsClassSet("drum-sound-pitch"))
 		{
-			const int pitch = std::stoi(attribute(*row, "pitch"));
-			const Json* map = activeMap();
-			sound(map != nullptr ? map->at("sounds").at(static_cast<size_t>(pitch)).at("iNote").get<int>() : pitch);
+			sound(std::stoi(attribute(*row, "pitch")));
 			return;
 		}
 		const Rml::Element* area = root->QuerySelector(".key-editor-grid");
@@ -1256,6 +1285,7 @@ namespace gnubase::ui
 		const bool alt = event.GetParameter("alt_key", 0) != 0;
 		m_pressedAt = at(event);
 		m_pressedX = event.GetParameter("mouse_x", 0.0F);
+		m_pressedY = event.GetParameter("mouse_y", 0.0F);
 		m_snapOff = ctrl;
 		m_gesture = Gesture::None;
 		const Note* pressed = noteOf(target);
@@ -1352,26 +1382,17 @@ namespace gnubase::ui
 			std::vector<const Note*> notes = {pressed};
 			if (selected(*pressed))
 				notes = selectedNotes();
+			// note.split per part, which gives the rests the notes' values and expression from the cut on.
 			Json commands = Json::array();
-			for (const Note* each : notes)
+			for (const Part& part : m_parts)
 			{
-				if (cut <= each->start || cut >= each->start + each->length)
-					continue;
-				int64_t partStart = 0;
-				for (const Part& part : m_parts)
-					if (part.id == each->part)
-						partStart = part.start;
-				Json change = noteChange(each->id);
-				change["length"] = cut - each->start;
-				commands.push_back({{"command", "note.set"},
-					{"parameters", {{"part", each->part}, {"notes", Json::array({change})}}}});
-				commands.push_back({{"command", "note.add"},
-					{"parameters",
-						{{"part", each->part},
-							{"notes",
-								{{{"position", cut - partStart}, {"length", each->start + each->length - cut},
-									{"pitch", each->pitch}, {"velocity", each->velocity},
-									{"releaseVelocity", each->releaseVelocity}, {"channel", each->channel}}}}}}});
+				Json ids = Json::array();
+				for (const Note* each : notes)
+					if (each->part == part.id && cut > each->start && cut < each->start + each->length)
+						ids.push_back(each->id);
+				if (!ids.empty())
+					commands.push_back({{"command", "note.split"},
+						{"parameters", {{"part", part.id}, {"notes", ids}, {"position", cut - part.start}}}});
 			}
 			edit("Split", std::move(commands));
 			return;
@@ -1380,7 +1401,8 @@ namespace gnubase::ui
 			return;
 		case KeyTool::Glue:
 		{
-			// Glues the note to the next one of its pitch in its part; the first one's values stay (p. 1215).
+			// Glues the note to the next one of its pitch in its part; the first one's values stay (p. 1215), and the
+			// next one's expression joins its own.
 			if (pressed == nullptr)
 				return;
 			const Note* next = nullptr;
@@ -1390,13 +1412,9 @@ namespace gnubase::ui
 					next = &each;
 			if (next == nullptr)
 				return;
-			Json change = noteChange(pressed->id);
-			change["length"] = std::max(next->start + next->length, pressed->start + pressed->length) - pressed->start;
 			edit("Glue",
-				Json::array({{{"command", "note.set"},
-								 {"parameters", {{"part", pressed->part}, {"notes", Json::array({change})}}}},
-					{{"command", "note.remove"},
-						{"parameters", {{"part", pressed->part}, {"notes", Json::array({next->id})}}}}}));
+				Json::array({{{"command", "note.glue"},
+					{"parameters", {{"part", pressed->part}, {"note", pressed->id}, {"next", next->id}}}}}));
 			return;
 		}
 		}
@@ -1424,10 +1442,13 @@ namespace gnubase::ui
 	void KeyEditor::startDraw(double ticks)
 	{
 		Rml::Element* root = m_root.get();
-		const int64_t start = snap(ticks - (m_snapOff ? 0.0 : static_cast<double>(grid()) / 2.0), m_snapOff);
+		const int pitch = m_pressedAt.second;
+		const int64_t start =
+			snap(ticks - (m_snapOff ? 0.0 : static_cast<double>(grid(pitch)) / 2.0), m_snapOff, pitch);
 		if (partAt(start) == nullptr)
 			return;
 		m_pressedAt.first = static_cast<double>(start);
+		m_drawnFrom = ticks;
 		m_gesture = Gesture::Draw;
 		Rml::Element* notes = root->QuerySelector(".key-editor-notes");
 		Rml::ElementPtr drawn = root->GetOwnerDocument()->CreateElement("div");
@@ -1440,13 +1461,42 @@ namespace gnubase::ui
 		m_drawn = added->GetObserverPtr();
 	}
 
+	KeyEditor::DrumDraw KeyEditor::drumDraw(const Rml::Event& event) const
+	{
+		const auto [ticks, pitch] = at(event);
+		const Rml::Context* context = m_root.get()->GetContext();
+		const float ratio = context != nullptr ? context->GetDensityIndependentPixelRatio() : 1.0F;
+		DrumDraw draw{std::llround(m_pressedAt.first), lengthQuantize(m_pressedAt.second), m_pressedAt.second,
+			m_view.value("insertVelocity", 100.0 / g_maxVelocity)};
+		// Up or down changes the velocity, a step of 127 per dp; with Alt the pitch instead.
+		if (event.GetParameter("alt_key", 0) != 0)
+			draw.pitch = pitch;
+		else
+			draw.velocity = static_cast<double>(std::clamp<int64_t>(std::lround(draw.velocity * g_maxVelocity) +
+									std::lround((m_pressedY - event.GetParameter("mouse_y", 0.0F)) / ratio),
+								1, static_cast<int64_t>(g_maxVelocity))) /
+				g_maxVelocity;
+		// With Shift the note moves along; with Snap off and Show Note Length a drag changes its length; else it
+		// repeats at every step of the grid it was dragged over.
+		const double moved = ticks - m_drawnFrom;
+		if (event.GetParameter("shift_key", 0) != 0)
+			draw.start += snap(moved, m_snapOff, m_pressedAt.second);
+		else if (m_snapOff && !diamonds())
+			draw.length = std::max<int64_t>(draw.length + std::llround(moved), 1);
+		else
+			draw.repeats = std::max<int64_t>(1,
+				static_cast<int64_t>(
+					std::ceil((ticks - m_pressedAt.first) / static_cast<double>(grid(m_pressedAt.second)))));
+		return draw;
+	}
+
 	// How far a move or resize goes: the pressed note's start, or its end, snapped where the mouse took it.
 	int64_t KeyEditor::delta(Gesture gesture, double ticks) const
 	{
 		if (!m_pressed)
 			return 0;
 		const int64_t edge = gesture == Gesture::ResizeEnd ? m_pressed->start + m_pressed->length : m_pressed->start;
-		return snap(static_cast<double>(edge) + ticks - m_pressedAt.first, m_snapOff) - edge;
+		return snap(static_cast<double>(edge) + ticks - m_pressedAt.first, m_snapOff, m_pressed->pitch) - edge;
 	}
 
 	void KeyEditor::drag(Rml::Event& event)
@@ -1464,7 +1514,12 @@ namespace gnubase::ui
 			return;
 		if (m_gesture == Gesture::Draw)
 		{
-			if (Rml::Element* drawn = m_drawn.get(); drawn != nullptr && !m_drum)
+			if (Rml::Element* drawn = m_drawn.get(); drawn != nullptr && m_drum)
+			{
+				const DrumDraw draw = drumDraw(event);
+				place(*drawn, draw.start, draw.length, draw.pitch);
+			}
+			else if (drawn != nullptr)
 			{
 				const int64_t step = lengthQuantize(m_pressedAt.second);
 				const auto steps = std::max<int64_t>(
@@ -1500,11 +1555,12 @@ namespace gnubase::ui
 	void KeyEditor::sound(std::optional<int> pitch)
 	{
 		// Into the track's channel as if from its MIDI input (midi.inject), on MIDI channel 1 as chord.audition plays;
-		// without an audio device or an instrument nothing sounds, which is no error to report.
+		// without an audio device or an instrument nothing sounds, which is no error to report. The drum editor plays
+		// the sound of the pitch itself, not the first with its I-note (drumSounds).
 		const auto inject = [this](uint64_t channel, int note, bool on)
 		{
 			m_binding.send("midi.inject",
-				{{"channel", channel},
+				{{"channel", channel}, {"drumSounds", m_drum},
 					{"messages", Json::array({{{"position", 0}, {"bytes", {on ? 0x90 : 0x80, note, on ? 100 : 0}}}})}},
 				[](const engine::Result&) {});
 		};
@@ -1540,7 +1596,7 @@ namespace gnubase::ui
 			// close flams under the mouse.
 			const Rml::Context* context = m_root.get()->GetContext();
 			const float ratio = context != nullptr ? context->GetDensityIndependentPixelRatio() : 1.0F;
-			const bool dragged = std::abs(event.GetParameter("mouse_x", 0.0F) - m_pressedX) >= g_dragThreshold * ratio;
+			const bool dragged = event.GetParameter("mouse_x", 0.0F) - m_pressedX >= g_dragThreshold * ratio;
 			std::map<uint64_t, Json> removed;
 			const int64_t until = std::max(static_cast<int64_t>(std::llround(ticks)), m_pressed->start);
 			for (const Note& each : m_notes)
@@ -1558,24 +1614,25 @@ namespace gnubase::ui
 			Rml::Element* drawn = m_drawn.get();
 			if (drawn != nullptr && drawn->GetParentNode() != nullptr)
 				drawn->GetParentNode()->RemoveChild(drawn);
+			if (m_drum)
+			{
+				// The drumstick repeats notes at every step of the grid it was dragged over (p. 1241).
+				const DrumDraw draw = drumDraw(event);
+				const int64_t step = grid(m_pressedAt.second);
+				const Part* part = partAt(draw.start);
+				std::vector<int64_t> starts;
+				for (int64_t i = 0; part != nullptr && i < draw.repeats && draw.start + (i * step) < part->end; ++i)
+					starts.push_back(draw.start + (i * step));
+				if (part != nullptr)
+					addNotes(*part, starts, draw.length, draw.pitch, draw.velocity);
+				return;
+			}
 			const auto start = std::llround(m_pressedAt.first);
 			const int64_t length = lengthQuantize(m_pressedAt.second);
-			// The drumstick repeats notes at every step of the grid it was dragged over (p. 1241).
-			const int64_t step = m_drum ? grid() : length;
 			const auto steps = std::max<int64_t>(
-				1, static_cast<int64_t>(std::ceil((ticks - m_pressedAt.first) / static_cast<double>(step))));
-			const Part* part = partAt(start);
-			if (part != nullptr && m_drum)
-			{
-				std::vector<int64_t> starts;
-				for (int64_t i = 0; i < steps && start + (i * step) < part->end; ++i)
-					starts.push_back(start + (i * step));
-				addNotes(*part, starts, length, m_pressedAt.second);
-			}
-			else if (part != nullptr)
-			{
-				addNotes(*part, {start}, steps * step, m_pressedAt.second);
-			}
+				1, static_cast<int64_t>(std::ceil((ticks - m_pressedAt.first) / static_cast<double>(length))));
+			if (const Part* part = partAt(start))
+				addNotes(*part, {start}, steps * length, m_pressedAt.second);
 			return;
 		}
 		if (!m_pressed)
@@ -1775,6 +1832,7 @@ namespace gnubase::ui
 		if (m_drum)
 		{
 			m_pressedAt.second = pitch;
+			m_pressedY = event.GetParameter("mouse_y", 0.0F);
 			m_snapOff = ctrl;
 			startDraw(ticks); // the release inserts, as the drumstick's does
 			return;

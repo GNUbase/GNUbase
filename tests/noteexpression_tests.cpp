@@ -326,6 +326,30 @@ TEST_CASE("playback sends a note's expression points inside the note, as MIDI 1.
 			{1100, 0x83, 62}, {2000, 0xE3, 0}, {2000, 0xB3, 74}, {2000, 0x93, 64}, {2500, 0x83, 64}});
 }
 
+TEST_CASE("a note's point within its first sample, not at its start, is its initial one", "[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	const ObjectId part = addPart(client, setup.track);
+	// Its tuning point lies 10 ticks after its start, within the sample it starts at, and it has none at 0.
+	run(client, "note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", ticksOf(100)}, {"length", ticksOf(1000)}, {"pitch", 62}, {"velocity", 0.5},
+					{"channel", 3}, {"expressions", {point("tuning", 10, -48.0)}}}}}});
+	run(client, "audio.render", {{"frames", 64}});
+	const auto start = run(client, "audio.get").at("position").get<int64_t>();
+	run(client, "midi.capture", {{"start", true}});
+	run(client, "transport.play");
+	run(client, "audio.render", {{"frames", 2000}});
+	std::vector<std::vector<int64_t>> played;
+	for (const std::vector<int64_t>& each : capturedFrom(client, start))
+		if (each.size() > 3 && (each[1] == 0xE3 || each[1] == 0x93))
+			played.push_back({each[0], each[1], each[1] == 0xE3 ? each[2] : 0, each[1] == 0xE3 ? each[3] : 0});
+	// Its own bend, all the way down, before its note-on, and no centered one after it.
+	CHECK(played == std::vector<std::vector<int64_t>>{{100, 0xE3, 0, 0}, {100, 0x93, 0, 0}});
+}
+
 TEST_CASE("splitting a part's notes keeps their expression where it was", "[integration]")
 {
 	Setup setup;
@@ -351,6 +375,63 @@ TEST_CASE("splitting a part's notes keeps their expression where it was", "[inte
 	// The rest starts with the values at the split and goes on from there.
 	CHECK(pointsOf(right.at("notes").at(0)) ==
 		Points{{"brightness", 0, 1000}, {"pressure", 0, 500}, {"tuning", 0, 2000}, {"tuning", g_beatTicks / 2, 4000}});
+}
+
+TEST_CASE("note.split cuts notes with their expression where it was, note.glue joins it again", "[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	const ObjectId part = addPart(client, setup.track);
+	const Json added = run(client, "note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", 0}, {"length", 2 * g_beatTicks}, {"pitch", 60}, {"velocity", 0.5}, {"channel", 2},
+					 {"probability", 0.5},
+					 {"expressions",
+						 {point("tuning", 0, 0.0), point("pressure", 0, 0.5), point("tuning", g_beatTicks / 2, 2.0),
+							 point("brightness", g_beatTicks, 1.0), point("tuning", 3 * g_beatTicks / 2, 4.0)}}},
+					{{"position", 3 * g_beatTicks}, {"length", g_beatTicks}, {"pitch", 62}, {"velocity", 0.5}}}}});
+	const Json note = added.at("notes").at(0);
+	const Json other = added.at("notes").at(1);
+	// The cut at the first beat cuts the first note only; the rest keeps its values.
+	const Json rests = run(
+		client, "note.split", {{"part", part}, {"notes", {note.at("id"), other.at("id")}}, {"position", g_beatTicks}})
+						   .at("notes");
+	REQUIRE(rests.size() == 1);
+	const Json& rest = rests[0];
+	CHECK(rest.at("position") == g_beatTicks);
+	CHECK(rest.at("length") == g_beatTicks);
+	CHECK(rest.at("pitch") == 60);
+	CHECK(rest.at("channel") == 2);
+	CHECK(rest.at("probability") == 0.5);
+	CHECK(pointsOf(rest) ==
+		Points{{"brightness", 0, 1000}, {"pressure", 0, 500}, {"tuning", 0, 2000}, {"tuning", g_beatTicks / 2, 4000}});
+	const auto notes = [&]
+	{
+		Json all = run(client, "project.get").at("midiParts").at(0).at("notes");
+		std::sort(all.begin(), all.end(), [](const Json& a, const Json& b)
+			{ return a.at("position").get<int64_t>() < b.at("position").get<int64_t>(); });
+		return all;
+	};
+	Json now = notes();
+	REQUIRE(now.size() == 3);
+	CHECK(now[0].at("length") == g_beatTicks);
+	CHECK(pointsOf(now[0]) == Points{{"pressure", 0, 500}, {"tuning", 0, 0}, {"tuning", g_beatTicks / 2, 2000}});
+	CHECK(now[2].at("length") == g_beatTicks);
+
+	// Glued, the note plays what the two played: its own points up to the rest's start, then the rest's.
+	const Json glued =
+		run(client, "note.glue", {{"part", part}, {"note", note.at("id")}, {"next", rest.at("id")}}).at("note");
+	CHECK(glued.at("length") == 2 * g_beatTicks);
+	CHECK(pointsOf(glued) ==
+		Points{{"brightness", g_beatTicks, 1000}, {"pressure", 0, 500}, {"pressure", g_beatTicks, 500},
+			{"tuning", 0, 0}, {"tuning", g_beatTicks / 2, 2000}, {"tuning", g_beatTicks, 2000},
+			{"tuning", 3 * g_beatTicks / 2, 4000}});
+	now = notes();
+	REQUIRE(now.size() == 2);
+	CHECK(now[0] == glued);
+	CHECK_THAT(reject(client, "note.glue", {{"part", part}, {"note", other.at("id")}, {"next", note.at("id")}}),
+		ContainsSubstring("must start after"));
 }
 
 TEST_CASE("resizing a note's start keeps its expression where it was", "[integration]")
@@ -440,6 +521,30 @@ TEST_CASE("retrospective recording records MPE input by midi.mpePitchRange", "[i
 	CHECK(pointsOf(part.at("notes").at(0)) ==
 		Points{{"tuning", 0, semitones(96 << 7, 24.0)}, {"tuning", ticksOf(1000), semitones(80 << 7, 24.0)}});
 	CHECK(semitones(96 << 7, 24.0) == 12001);
+}
+
+TEST_CASE("recording records MPE input by midi.mpePitchRange", "[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	run(client, "settings.set", {{"key", "midi.snapPartsToBars"}, {"value", false}});
+	run(client, "settings.set", {{"key", "midi.mpeInput"}, {"value", true}});
+	run(client, "settings.set", {{"key", "midi.mpePitchRange"}, {"value", 24}});
+	run(client, "transport.record");
+	run(client, "midi.inject",
+		{{"channel", setup.channel},
+			{"messages",
+				{message(900, {0xE1, 0, 96}), message(1000, {0x91, 60, 100}), message(2000, {0xE1, 0, 80}),
+					message(3000, {0x81, 60, 0})}}});
+	run(client, "audio.render", {{"frames", 4000}});
+	run(client, "transport.stop");
+	run(client, "audio.render", {{"frames", 640}});
+	REQUIRE(waitFor(client, "recording.added").is_object());
+	const Json part = run(client, "project.get").at("midiParts").at(0);
+	REQUIRE(part.at("notes").size() == 1);
+	CHECK(part.at("controllers").empty());
+	CHECK(pointsOf(part.at("notes").at(0)) ==
+		Points{{"tuning", 0, semitones(96 << 7, 24.0)}, {"tuning", ticksOf(1000), semitones(80 << 7, 24.0)}});
 }
 
 TEST_CASE(

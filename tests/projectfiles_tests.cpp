@@ -4,9 +4,11 @@
 // screen in the app's UI.
 #include "engine/engine.h"
 #include "platform/log.h"
+#include "testutils/commandholds.h"
 #include "testutils/heldjob.h"
 #include "testutils/testutils.h"
 #include "ui/automation.h"
+#include "ui/enginebinding.h"
 #include "uiapp.h"
 
 #include <RmlUi/Core/Context.h>
@@ -1341,6 +1343,43 @@ TEST_CASE(
 
 	// The next request asks again, and Discard quits.
 	closeLastWindow(app);
+	click(app, "#discard-changes");
+	REQUIRE(app.waitUntil([&app] { return !app.shell().running(); }));
+}
+
+TEST_CASE("a quit question cancelled before the engine answered its second look lets the next quit request ask", "[ui]")
+{
+	test::CommandHolds holds; // declared before the app: its engine's command thread waits in hold()
+	test::UiApp app({900, 640});
+	const test::ReleaseHolds releaseHolds{holds};
+	app.engine().registerCommand(
+		{"test.hold", 1, "Waits for the test to release it.", CommandInfo{}.parameters, Json::object(), false},
+		[&holds](CommandContext&) { return holds.hold(); });
+	Client holder(app.engine(), "holder");
+	app.appUi().showProject();
+	app.call("track.add", {{"type", "audio"}});
+	gnubase::ui::EngineBinding& binding = app.appUi().binding();
+
+	// The engine answers whether to ask, and then holds: the question opens, and the engine answers its second look
+	// at project.revision only once the test lets it go, as on a busy machine.
+	holder.send("test.hold");
+	REQUIRE(holds.waitEntered(1));
+	app.ui().close(std::nullopt, false);
+	REQUIRE(app.waitUntil([&binding] { return binding.waiting("project.revision") != 0; }));
+	holder.send("test.hold");
+	holds.release(1);
+	REQUIRE(holds.waitEntered(2));
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#discard-changes-dialog"); }));
+
+	// Cancel before the engine answered, and quit again, as dialog.lua's test does at once (#1454): the request asks
+	// again instead of finding the question still coming.
+	click(app, "#discard-changes-dialog button[result=cancel]");
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#discard-changes-dialog"); }));
+	app.ui().close(std::nullopt, true);
+	for (int i = 0; i < 5; ++i)
+		app.shell().step(std::chrono::milliseconds(0));
+	holds.release(2);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#discard-changes-dialog"); }));
 	click(app, "#discard-changes");
 	REQUIRE(app.waitUntil([&app] { return !app.shell().running(); }));
 }

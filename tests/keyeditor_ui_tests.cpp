@@ -693,7 +693,15 @@ TEST_CASE("the erase, trim, split and glue tools", "[ui]")
 	f.settle();
 	CHECK(std::abs(f.note(ids[1]).at("position").get<int64_t>() - (5 * g_sixteenth)) < g_sixteenth / 4);
 
-	// Split cuts the note in two at the snapped position (p. 1215).
+	// Split cuts the note in two at the snapped position (p. 1215), its expression too: the rest starts with the
+	// values at the cut.
+	const auto tuning = [](int64_t position, double value)
+	{ return Json{{"type", "tuning"}, {"position", position}, {"value", value}}; };
+	f.app.call("note.set",
+		{{"part", f.part},
+			{"notes",
+				{{{"id", ids[2]},
+					{"expressions", {tuning(0, 0.0), tuning(g_sixteenth, 2.0), tuning(3 * g_sixteenth, 4.0)}}}}}});
 	f.tool("split");
 	f.click(f.at(10.2, 64));
 	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 4; }));
@@ -703,6 +711,8 @@ TEST_CASE("the erase, trim, split and glue tools", "[ui]")
 	CHECK(pieces[2].at("position") == 10 * g_sixteenth);
 	CHECK(pieces[2].at("length") == 2 * g_sixteenth);
 	CHECK(pieces[2].at("pitch") == 64);
+	CHECK(f.note(ids[2]).at("expressions") == Json::array({tuning(0, 0.0), tuning(g_sixteenth, 2.0)}));
+	CHECK(pieces[2].at("expressions") == Json::array({tuning(0, 2.0), tuning(g_sixteenth, 4.0)}));
 
 	// Glue joins the note to the next one of its pitch (p. 1215).
 	f.tool("glue");
@@ -710,6 +720,9 @@ TEST_CASE("the erase, trim, split and glue tools", "[ui]")
 	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 3; }));
 	f.settle();
 	CHECK(f.note(ids[2]).at("length") == g_quarter);
+	CHECK(f.note(ids[2]).at("expressions") ==
+		Json::array(
+			{tuning(0, 0.0), tuning(g_sixteenth, 2.0), tuning(2 * g_sixteenth, 2.0), tuning(3 * g_sixteenth, 4.0)}));
 	f.click(f.at(8.5, 64));
 	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 2; }));
 	f.settle();

@@ -261,8 +261,12 @@ namespace gnubase::engine::midi
 	// shared copy leaving its copies for that: its notes get new ids, so their play probability, velocity variance and
 	// random MIDI modifier values draw anew. includeChase adds the last controller value of every controller, program
 	// and channel before start at the new part's start, and in any case the new part starts with the directions of
-	// the tracks' articulation maps in effect at start (#175). A new destination track goes to the end of the track
-	// list, routed to the instrument of the first track merged.
+	// the tracks' articulation maps in effect at start (#175). What a source part's notes can't hold (a pitch beyond
+	// 0-127, its velocity under a note's velocity variance or the destination's modifiers) stays on a new part of its
+	// own with the part's setting (#1240, #1253): the first new part, on the first lane, is the one with the shared
+	// setting, else the one of the earliest source part, and has the controllers; the others follow in the order of
+	// their earliest source parts on new lanes, with the articulation events only. A new destination track goes to
+	// the end of the track list, routed to the instrument of the first track merged.
 	PartChanges merge(Project& project, const MergeSettings& settings);
 
 	enum class DissolveBy : uint8_t

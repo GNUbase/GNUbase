@@ -3357,6 +3357,8 @@ namespace gnubase::engine
 			{"note.remove", "Remove notes"},
 			{"note.move", "Move notes"},
 			{"note.set", "Change notes"},
+			{"note.split", "Split notes"},
+			{"note.glue", "Glue notes"},
 			{"note.voicing", "Change chord"},
 			{"controller.add", "Add controllers"},
 			{"controller.remove", "Remove controllers"},

@@ -733,19 +733,10 @@ namespace gnubase::engine
 				if (splitNotes && note.position + note.length > offset)
 				{
 					// The rest of the note starts the part after the split, its expression from the split on.
-					Note rest = note;
+					Note rest = splitNote(note, offset - note.position);
 					rest.id = project.newId();
 					rest.position = 0;
-					rest.length = note.position + note.length - offset;
-					rest.origin.reset();
-					rest.expressions = expressionsFrom(note.expressions, offset - note.position);
 					right.notes[rest.id] = rest;
-					note.length = offset - note.position;
-					note.origin.reset();
-					note.expressions.erase(
-						std::remove_if(note.expressions.begin(), note.expressions.end(),
-							[&note](const ExpressionPoint& point) { return point.position >= note.length; }),
-						note.expressions.end());
 				}
 				++it;
 			}

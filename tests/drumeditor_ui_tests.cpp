@@ -388,6 +388,26 @@ TEST_CASE("the drum sound list types an output, reverses with Pitch Visibility a
 			}
 			return played == std::vector<std::vector<int>>{{0x93, 35}, {0x83, 35}};
 		}));
+	// A sound whose I-note an earlier sound has too plays itself, not the earlier one.
+	f.app.call("drumMap.set", {{"map", f.map}, {"sounds", Json::array({{{"pitch", 47}, {"iNote", 45}}})}});
+	f.app.call("audio.render", {{"frames", 128}});
+	f.app.call("midi.capture", {{"start", true}});
+	played.clear();
+	f.scroll(47);
+	f.click(of(sound(47) + " .drum-sound-pitch"));
+	CHECK(f.app.waitUntil(
+		[&]
+		{
+			f.app.call("audio.render", {{"frames", 128}});
+			const Json captured = f.app.call("midi.capture");
+			for (const Json& message : captured.at("captured"))
+			{
+				const auto bytes = message.at("bytes").get<std::vector<int>>();
+				if ((bytes.at(0) & 0xE0) == 0x80)
+					played.push_back({bytes.at(0), bytes.at(1)});
+			}
+			return played == std::vector<std::vector<int>>{{0x99, 47}, {0x89, 47}};
+		}));
 }
 
 TEST_CASE("Show Note Length shows boxes, and the drumstick deletes a sound's notes with a drag", "[ui]")
@@ -516,6 +536,93 @@ TEST_CASE("the drumstick's click deletes only the note clicked, and a drag also 
 	f.app.ui().drag(f.window, f.at(0.0, 36), outside);
 	f.app.shell().step(std::chrono::milliseconds(0));
 	REQUIRE(f.app.waitUntil([&] { return f.partNotes().empty(); }));
+}
+
+TEST_CASE("the drumstick's drag to the left deletes only the note clicked, not its doubles", "[ui]")
+{
+	Fixture f;
+	f.app.call("note.add",
+		{{"part", f.part},
+			{"notes",
+				{{{"position", 0}, {"length", g_sixteenth}, {"pitch", 36}, {"velocity", 0.5}},
+					{{"position", 4 * g_sixteenth}, {"length", g_sixteenth}, {"pitch", 36}, {"velocity", 0.5}},
+					{{"position", 4 * g_sixteenth}, {"length", g_sixteenth}, {"pitch", 36}, {"velocity", 0.5}}}}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-note").size() == 3; }));
+	f.scroll(36);
+	f.click(of(".key-tool[key-tool=draw]"));
+	// Only a drag to the right deletes the sound's later notes (p. 1242); to the left it is a click.
+	f.app.ui().drag(f.window, f.at(4.0, 36), f.at(1.0, 36));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 2; }));
+	CHECK(f.partNotes()[0].at("position") == 0);
+	CHECK(f.partNotes()[1].at("position") == 4 * g_sixteenth);
+}
+
+TEST_CASE("the drumstick's drag changes the velocity, with Alt the pitch, with Shift the position", "[ui]")
+{
+	// Modifying note values while inserting notes (p. 1241).
+	Fixture f;
+	f.scroll(36);
+	f.click(of(".key-tool[key-tool=draw]"));
+	const double velocity = f.app.call("editor.get", {{"editor", "window"}}).at("insertVelocity").get<double>();
+	const auto up = [&](const ui::Target& target, int dp)
+	{
+		ui::Target moved = target;
+		moved.point->y -= dp;
+		return moved;
+	};
+	// Up: a louder note, one step of 127 per dp, still one note of its sound.
+	f.app.ui().drag(f.window, f.at(0.3, 36), up(f.at(0.3, 36), 20));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 1; }));
+	CHECK(f.partNotes()[0].at("pitch") == 36);
+	CHECK(std::lround(f.partNotes()[0].at("velocity").get<double>() * 127) == std::lround(velocity * 127) + 20);
+	// With Alt down a row: the next sound in the list, at the insert velocity.
+	f.app.ui().drag(f.window, f.at(4.3, 36), f.at(4.3, 37), {"alt"});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 2; }));
+	CHECK(f.partNotes()[1].at("pitch") == 37);
+	CHECK(f.partNotes()[1].at("position") == 4 * g_sixteenth);
+	CHECK(std::lround(f.partNotes()[1].at("velocity").get<double>() * 127) == std::lround(velocity * 127));
+	// With Shift to the right: one note, where the mouse is let go, not a row of them.
+	f.app.ui().drag(f.window, f.at(8.3, 36), f.at(11.3, 36), {"shift"});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 3; }));
+	CHECK(f.partNotes()[2].at("position") == 11 * g_sixteenth);
+	CHECK(f.partNotes()[2].at("pitch") == 36);
+	// With Snap off (Ctrl/Cmd) and Show Note Length to the right: one longer note.
+	f.click(of(".key-input[setting=showNoteLength]"));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-note").empty() && f.elements(".key-note").size() == 3; }));
+	f.app.ui().drag(f.window, f.at(12.3, 36), f.at(15.3, 36), {"ctrl"});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 4; }));
+	CHECK(f.partNotes()[3].at("length").get<int64_t>() > 2 * g_sixteenth);
+}
+
+TEST_CASE("with the grid type Use Snap from Drum Map the drumstick snaps to the sound's snap", "[ui]")
+{
+	// p. 1227: the bass drum's snap is 1/8, the snare's stays 1/16.
+	Fixture f;
+	f.app.call("drumMap.set", {{"map", f.map}, {"sounds", Json::array({{{"pitch", 36}, {"snap", "1/8"}}})}});
+	f.scroll(36);
+	f.click(of("#drum-grid-type"));
+	f.click(of("#drum-grid-menu menuitem[grid-type=drumMap]"));
+	REQUIRE(
+		f.app.waitUntil([&] { return f.app.call("editor.get", {{"editor", "window"}}).at("gridType") == "drumMap"; }));
+	f.click(of(".key-tool[key-tool=draw]"));
+	// A drag over 3.5 sixteenths: a note at every eighth, the first where the click falls in its eighth.
+	f.app.ui().drag(f.window, f.at(0.3, 36), f.at(3.5, 36));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 2; }));
+	CHECK(f.partNotes()[0].at("position") == 0);
+	CHECK(f.partNotes()[1].at("position") == 2 * g_sixteenth);
+	f.click(f.at(7.5, 36));
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 3; }));
+	CHECK(f.partNotes()[2].at("position") == 6 * g_sixteenth);
+	f.click(f.at(7.5, 38)); // the snare's sixteenths
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 4; }));
+	CHECK(f.partNotes()[3].at("position") == 7 * g_sixteenth);
+	CHECK(f.partNotes()[3].at("pitch") == 38);
 }
 
 TEST_CASE("the object selection tool's double click and drag inserts and deletes several notes of a sound", "[ui]")
