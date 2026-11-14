@@ -1939,21 +1939,13 @@ namespace gnubase::engine
 			};
 			const auto typeOf = [&project](const Channel& other) { return project.trackById.at(other.track).type; };
 			std::set<ObjectId> soloed;
-			if (parameters.contains("volume") && channel.volume != before.volume)
-				for (const ObjectId other : linkedTo(project, id, "volume", linked))
-				{
-					Channel& to = follower(other);
-					if (to.format != ChannelFormat::None || typeOf(to) == TrackType::Vca)
-						to.volume = std::clamp(
-							to.volume + (channel.volume - before.volume), g_minChannelVolume, project.maxVolume);
-				}
-			if (parameters.contains("pan") && channel.pan != before.pan)
-				for (const ObjectId other : linkedTo(project, id, "pan", linked))
-				{
-					Channel& to = follower(other);
-					if (to.format != ChannelFormat::None)
-						to.pan = std::clamp(to.pan + (channel.pan - before.pan), -1.0, 1.0);
-				}
+			for (const auto& [key, member] : {std::pair{"volume", &Channel::volume}, std::pair{"pan", &Channel::pan}})
+			{
+				const double moved = channel.*member - before.*member;
+				if (parameters.contains(key) && moved != 0.0)
+					for (const ObjectId other : linkedTo(project, id, key, linked))
+						followLinkedMove(project, follower(other), key, moved);
+			}
 			for (const char* key : {"eq", "strip", "sends"})
 			{
 				if (!parameters.contains(key))
