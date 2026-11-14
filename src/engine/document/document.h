@@ -207,6 +207,17 @@ namespace gnubase::engine
 	// An audio channel has this many sends (reference manual p. 542).
 	inline constexpr size_t g_maxSends = 8;
 
+	// A pad of a drum track's drum machine (#182): its name, or empty for the General MIDI sound's of its note, and
+	// the pool clip it plays, or 0.
+	struct DrumPad
+	{
+		std::string name;
+		ObjectId sample = 0;
+
+		bool operator==(const DrumPad& other) const { return name == other.name && sample == other.sample; }
+		bool operator!=(const DrumPad& other) const { return !(*this == other); }
+	};
+
 	// The mixer channel of a track. MIDI tracks have a MIDI channel: no audio channels, and their output is an
 	// instrument track's channel.
 	// NOLINTNEXTLINE(bugprone-exception-escape): MSVC's std::map allocates when moved; only out of memory throws
@@ -261,6 +272,10 @@ namespace gnubase::engine
 		// Sampler tracks, instrument tracks that play the built-in sampler (#180): the pool clip whose media file the
 		// sampler plays, or 0 for none (docs/features/sampler-track.md).
 		ObjectId sample = 0;
+		// Drum tracks, instrument tracks that play the built-in drum machine (#182): the pads with a name or a
+		// sample, by pad, which is the MIDI note that plays it (docs/features/drum-track.md).
+		// NOLINTNEXTLINE(readability-redundant-member-init): see instrumentParameters
+		std::map<int, DrumPad> pads = {};
 		// Audio, MIDI and instrument tracks: the monitor and record enable buttons
 		// (docs/features/latency-and-monitoring.md, docs/features/midi-recording.md).
 		bool monitor = false;
@@ -799,12 +814,23 @@ namespace gnubase::engine
 					visit(event);
 	}
 
-	// Calls visit with the pool clip of every sampler track (#180): their clips are in use too. Project may be const.
+	// Calls visit with the pool clips a channel's instrument plays: a sampler's (#180), a drum machine's pads' (#182).
+	// Channel may be const.
+	template <typename C, typename Visit> void forEveryInstrumentClip(C& channel, Visit visit)
+	{
+		if (channel.sample != 0)
+			visit(channel.sample);
+		for (auto& entry : channel.pads)
+			if (entry.second.sample != 0)
+				visit(entry.second.sample);
+	}
+
+	// Calls visit with the pool clip of every sampler track (#180) and drum track pad (#182): their clips are in use
+	// too. Project may be const.
 	template <typename P, typename Visit> void forEverySamplerClip(P& project, Visit visit)
 	{
 		for (auto& entry : project.channels)
-			if (entry.second.sample != 0)
-				visit(entry.second.sample);
+			forEveryInstrumentClip(entry.second, visit);
 	}
 
 	// Whether tracks of a type can be disabled (reference manual p. 219): audio, instrument and MIDI tracks.
@@ -1429,6 +1455,10 @@ namespace gnubase::engine
 		std::string timeFormat = "barsBeats"; // the primary time format: one of g_rulerTimeFormats
 	};
 
+	// The longest a project can be, in seconds: 24 hours, which its start time stays under too (reference manual
+	// p. 128).
+	inline constexpr double g_maxProjectLength = 86400.0;
+
 	// The sample rates a project can have, in Hz: from the lowest common one to the highest that export writes. Far
 	// outside them the conversions between ticks and samples leave a time::Ticks or a time::Samples.
 	inline constexpr double g_lowestSampleRate = 8000.0;
@@ -1640,11 +1670,11 @@ namespace gnubase::engine
 		return std::tie(a.id, a.track, a.format, a.input, a.output, a.instrument, a.volume, a.pan, a.panner, a.panLeft,
 				   a.panRight, a.panBypass, a.midiVolume, a.midiPan, a.program, a.bank, a.midiChannel, a.device,
 				   a.modifiers, a.midiInserts, a.midiSends, a.inputTransformer, a.instrumentParameters, a.sample,
-				   a.monitor, a.recordEnable, a.midiInput, a.mute, a.solo, a.soloDefeat, a.listen, a.slots, a.notes,
-				   a.sections, a.sends) ==
+				   a.pads, a.monitor, a.recordEnable, a.midiInput, a.mute, a.solo, a.soloDefeat, a.listen, a.slots,
+				   a.notes, a.sections, a.sends) ==
 			std::tie(b.id, b.track, b.format, b.input, b.output, b.instrument, b.volume, b.pan, b.panner, b.panLeft,
 				b.panRight, b.panBypass, b.midiVolume, b.midiPan, b.program, b.bank, b.midiChannel, b.device,
-				b.modifiers, b.midiInserts, b.midiSends, b.inputTransformer, b.instrumentParameters, b.sample,
+				b.modifiers, b.midiInserts, b.midiSends, b.inputTransformer, b.instrumentParameters, b.sample, b.pads,
 				b.monitor, b.recordEnable, b.midiInput, b.mute, b.solo, b.soloDefeat, b.listen, b.slots, b.notes,
 				b.sections, b.sends);
 	}

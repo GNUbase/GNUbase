@@ -5,6 +5,7 @@
 #include "scripting/runtime.h"
 #include "ui/colormenu.h"
 #include "ui/docking.h"
+#include "ui/drummachinepanel.h"
 #include "ui/enginebinding.h"
 #include "ui/eventdisplay.h"
 #include "ui/gpurenderer.h"
@@ -418,6 +419,7 @@ namespace gnubase::app
 		std::weak_ptr<ui::PoolPanel> m_pool;               // the docking system owns it while it is there
 		std::weak_ptr<ui::Inspector> m_inspector;          // so too
 		std::weak_ptr<ui::SamplerPanel> m_sampler;         // so too
+		std::weak_ptr<ui::DrumMachinePanel> m_drums;       // so too
 		std::vector<ui::Subscription> m_poolResults;       // what the pool commands did, for the pool
 		std::vector<ui::Subscription> m_lockRecord;        // stops refused while recording is locked
 		Rml::ObserverPtr<Rml::Element> m_lockRecordDialog; // the open lock record dialog's document

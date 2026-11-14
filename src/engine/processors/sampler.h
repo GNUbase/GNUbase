@@ -6,9 +6,11 @@
 #include "platform/rt/snapshotpublisher.h"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace gnubase::engine::processors
@@ -30,12 +32,23 @@ namespace gnubase::engine::processors
 
 	inline constexpr int g_samplerVoices = 128;
 
+	// A built-in instrument that plays samples of the pool, which the audio engine's sample loader reads for it: the
+	// sampler (one slot) and the drum machine (a slot per pad).
+	class SamplePlayer : public graph::Processor
+	{
+	public:
+		// Command thread: the sample of a slot to play from the next block on.
+		virtual void setSample(size_t slot, std::shared_ptr<const Sample> sample) = 0;
+		// Command thread: lets go of the samples played before the last setSample once the audio thread has moved on.
+		virtual void collect() = 0;
+	};
+
 	// The sampler track's instrument (#180, reference manual pp. 712-735): plays a sample chromatically from its root
 	// key, or in slice mode a slice per key from the root key up. Positions (start, end, loop start and end) are
 	// shares of the sample's length, so they stay where they are when the sample's sample rate changes. Reverse plays
 	// the sample backwards with every position measured from its end. Each voice has an amp envelope (attack, decay,
 	// sustain, release) and its own filter, whose cutoff follows the key by the key follow share.
-	class Sampler : public graph::Processor
+	class Sampler : public SamplePlayer
 	{
 	public:
 		enum Parameter : uint8_t
@@ -88,9 +101,8 @@ namespace gnubase::engine::processors
 
 		// Command thread: the sample to play from the next block on. Voices that play keep their positions.
 		void setSample(std::shared_ptr<const Sample> sample);
-
-		// Command thread: lets go of the samples played before the last setSample once the audio thread has moved on.
-		void collect();
+		void setSample(size_t /*slot*/, std::shared_ptr<const Sample> sample) override { setSample(std::move(sample)); }
+		void collect() override;
 
 		void process(const graph::ProcessContext& context) noexcept override;
 		void reset() noexcept override;

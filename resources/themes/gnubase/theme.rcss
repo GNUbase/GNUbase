@@ -663,6 +663,10 @@
 	{
 		border-color: #ff5270;
 	}
+	.chord-pad.drop-target
+	{
+		border-color: #39ddb2;
+	}
 	.chord-pad.level-0
 	{
 		border-bottom-color: #39ddb2;
@@ -705,6 +709,10 @@
 	.chord-pads-key.black.remote
 	{
 		background-color: #0d8a9b;
+	}
+	.chord-pads-key.section
+	{
+		background-color: #907135;
 	}
 	.chord-pads-key.modifier
 	{
@@ -1124,6 +1132,44 @@
 		background-color: #f1f4ff;
 	}
 	.sampler-message.error
+	{
+		color: #ff5270;
+	}
+	.drum-pad
+	{
+		color: #aeb7d0;
+		background-color: #101426;
+		border-color: #303754;
+		border-radius: 3dp;
+	}
+	.drum-pad.assigned
+	{
+		color: #f1f4ff;
+		background-color: #171c32;
+	}
+	.drum-pad.selected
+	{
+		border-color: #10dff2;
+	}
+	.drum-pad.muted, .drum-pad.soloed-out
+	{
+		color: #aeb7d0;
+		background-color: #090b18;
+	}
+	.drum-pad.soloed
+	{
+		border-color: #e12ad8;
+	}
+	.drum-pad-note, .drum-label
+	{
+		color: #aeb7d0;
+		font-size: 11dp;
+	}
+	.drum-group.selected, .drum-page-tab.selected
+	{
+		color: #10dff2;
+	}
+	.drum-message.error
 	{
 		color: #ff5270;
 	}

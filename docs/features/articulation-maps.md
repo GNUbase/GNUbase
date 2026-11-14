@@ -110,8 +110,9 @@ removed).
   the UI command through MCP, brings the open one to the front, so that one set of handlers follows the engine.
   Opened again for another track, it is that track's setup: it selects the track's map, if it has one, and Assign
   to Track assigns to it (the setup's `track` attribute and its `trackchange` event). Opened again without a MIDI or
-  instrument track selected, it has no track, as when it opens so, and hides Assign to Track. Opened again for the
-  same track, it keeps the map it shows.
+  instrument track selected, it has no track, as when it opens without one, and hides Assign to Track. Opened again
+  for the same track, it keeps the map it shows. A new or loaded project (`project.reset`) drops its track too, since
+  object ids are per project: Assign to Track would otherwise assign to whatever track has that id in the new project.
 - **Inspector** ([inspector.md](inspector.md), p. 1263): MIDI and instrument tracks' Articulation Map section chooses
   the track's map, or No Map (`track.set articulationMap`), and opens the setup.
 - **Empty lists from Lua.** Lua has no empty list apart from an empty table, which becomes a JSON object: where a
@@ -140,7 +141,9 @@ applications' maps.
   twice each and counts their Lua handlers (`gnubase.on`): one set while open, none after. Its fourth test case
   opens the setup for one track, another and the first again, and assigns the map it selected to the last. Its fifth
   opens it again for the same track, which keeps the map browsed to, then without a track, which hides Assign to
-  Track, then for the track again. `tests/scripting_tests.cpp` checks empty Lua tables as lists and `gnubase.off`.
+  Track, then for the track again. Its sixth opens it fresh without a track, which hides Assign to Track, then for
+  the track and starts a new project, which drops the track, then for a track of the new project.
+  `tests/scripting_tests.cpp` checks empty Lua tables as lists and `gnubase.off`.
 - `tests/articulationmaps_tests.cpp`: maps added, copied, changed and removed with their errors and undo, a track's map;
   directions and attributes; playback through the slots' output events and MIDI modifiers, the closest slot and resets;
   export and import round trip with errors; maps, the tracks' maps and articulations saved and loaded; remote triggers

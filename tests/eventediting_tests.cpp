@@ -30,6 +30,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -2107,6 +2108,9 @@ TEST_CASE("a press runs the edits still waiting for a range's zero crossings aft
 	for (int frame = 0; frame < 96000; ++frame)
 		sine.samples.push_back(static_cast<float>(0.5 * std::sin(frame * 3.14159265358979323846 / 100.0)));
 	test::writeWav(file, sine);
+	// The flag that lets the busy command below go outlives the fixture, whose engine reads it until the command
+	// returns: also when a REQUIRE fails before the press.
+	std::atomic<bool> pressed{false};
 	Fixture f;
 	const uint64_t audio = f.call("project.get").at("tracks")[0].at("id").get<uint64_t>();
 	const Json media =
@@ -2120,7 +2124,6 @@ TEST_CASE("a press runs the edits still waiting for a range's zero crossings aft
 	f.display.setTool(ui::Tool::RangeSelection);
 	// A command that keeps the engine busy until the test lets it go after the press, so that the zero crossings
 	// answer only after the press gave up on them, however slow the machine.
-	std::atomic<bool> pressed{false};
 	f.engine.registerCommand(
 		{"test.busy", 1, "Waits for the press.", engine::CommandInfo{}.parameters, Json::object(), false},
 		[&pressed](engine::CommandContext&)
@@ -2932,6 +2935,82 @@ TEST_CASE("with editing.treatMutedAudioLikeDeleted off, a muted take in front co
 	f.call("settings.set", {{"key", "editing.treatMutedAudioLikeDeleted"}, {"value", true}});
 	REQUIRE(f.waitUntil([&f] { return f.lanes("events")[0].events.size() == 1; }));
 	CHECK(f.lanes("muted-events")[0].events.empty());
+}
+
+TEST_CASE("the track's lane shows the pieces of a split in front by their ranks where these disagree with their ids",
+	"[unit]")
+{
+	Fixture f;
+	// The event from 2 to 2.5 seconds split at 2.2, then its first piece at 2.1: the newest piece, from 2.1 to 2.2, has
+	// the higher id but is behind the piece from 2.2 on (#1281). That one moved left to 2.15 covers it from there.
+	const auto later =
+		f.call("event.split", {{"events", {f.event}}, {"positions", {105600}}}).at("events").at(0).get<uint64_t>();
+	const auto newest =
+		f.call("event.split", {{"events", {f.event}}, {"positions", {100800}}}).at("events").at(0).get<uint64_t>();
+	REQUIRE(newest > later);
+	f.call("event.move", {{"events", {later}}, {"delta", -2400}});
+	REQUIRE(f.waitUntil(
+		[&f]
+		{
+			const std::vector<ui::TimeSpan>& shown = f.lanes("events")[0].events;
+			return shown.size() == 3 && std::abs(shown[2].end() - 2.45) < 1e-6;
+		}));
+	const std::vector<ui::TimeSpan>& shown = f.lanes("events")[0].events;
+	CHECK(std::abs(shown[1].start - 2.1) < 1e-6);
+	CHECK(std::abs(shown[1].end() - 2.15) < 1e-6);
+	CHECK(std::abs(shown[2].start - 2.15) < 1e-6);
+	// A click in the overlap finds the piece in front.
+	f.click(217, 20);
+	CHECK(f.display.selection() == std::vector<uint64_t>{later});
+}
+
+TEST_CASE("of two events at one place in the stack, as a file from before #1189 has them, the track's lane shows the "
+		  "one with the higher id in front",
+	"[unit]")
+{
+	const test::TempDir dir;
+	Fixture f;
+	// A second event from 2.2 to 2.7 seconds, added after the first; the file gives it the first's place, without a
+	// rank.
+	const auto audioTrack = f.call("project.get").at("tracks").at(0).at("id").get<uint64_t>();
+	const auto second =
+		f.call("audioEvent.add",
+			 {{"track", audioTrack}, {"clip", f.audioEvents()[0].at("clip")}, {"position", 105600}, {"length", 24000}})
+			.at("event")
+			.at("id")
+			.get<uint64_t>();
+	const std::string path = (dir.path() / "tie.dawproject").u8string();
+	f.call("project.save", {{"path", path}, {"embedMedia", false}});
+	std::map<std::string, std::string> entries = test::readZip(path);
+	Json extension = Json::parse(entries.at("gnubase.json"));
+	for (Json& event : extension.at("project").at("audioEvents"))
+	{
+		event.erase("rank");
+		if (event.at("id") == second)
+			event["front"] = f.event;
+	}
+	entries["gnubase.json"] = extension.dump();
+	test::writeZip(path, entries);
+	f.call("project.new");
+	f.call("project.load", {{"path", path}});
+	REQUIRE(f.waitUntil(
+		[&f, second]
+		{
+			for (const Json& event : f.display.project().at("audioEvents"))
+				if (event.at("id") == second)
+					return event.at("front") == f.event && f.lanes("events")[0].events.size() == 2;
+			return false;
+		}));
+
+	// The second event covers the first from 2.2 seconds on, and a click there finds it.
+	const std::vector<ui::TimeSpan>& shown = f.lanes("events")[0].events;
+	CHECK(std::abs(shown[0].end() - 2.2) < 1e-6);
+	CHECK(std::abs(shown[1].start - 2.2) < 1e-6);
+	CHECK(std::abs(shown[1].end() - 2.7) < 1e-6);
+	f.click(230, 20);
+	CHECK(f.display.selection() == std::vector<uint64_t>{second});
+	f.click(210, 20);
+	CHECK(f.display.selection() == std::vector<uint64_t>{f.event});
 }
 
 TEST_CASE("the draw tool draws parts on the lane it draws on", "[unit]")

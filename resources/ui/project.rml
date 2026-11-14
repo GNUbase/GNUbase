@@ -356,6 +356,8 @@
 		<menuitem command="project.addTrack">Add Track...</menuitem>
 		<!-- Sampler tracks (reference manual pp. 143-144, docs/features/sampler-track.md) -->
 		<menuitem command="project.addSamplerTrack">Add Sampler Track...</menuitem>
+		<!-- Drum tracks (reference manual pp. 145-146, docs/features/drum-track.md) -->
+		<menuitem command="project.addDrumTrack">Add Drum Track...</menuitem>
 		<menuseparator/>
 		<menuitem command="project.colorsSetup">Project Colors Setup...</menuitem>
 		<!-- docs/features/midi-rules.md -->
@@ -390,6 +392,8 @@
 		<menuitem command="window.chordPads">Show/Hide Chord Pads</menuitem>
 		<!-- The sampler panel (reference manual p. 712, docs/features/sampler-track.md) -->
 		<menuitem command="window.sampler">Show Sampler</menuitem>
+		<!-- The drum machine (reference manual p. 938, docs/features/drum-track.md) -->
+		<menuitem command="window.drumMachine">Show Drum Machine</menuitem>
 		<menuseparator/>
 		<menuitem command="track.removeSelected">Remove Selected Tracks</menuitem>
 		<menuitem command="track.removeEmpty">Remove Empty Tracks</menuitem>
@@ -521,6 +525,7 @@
 	<menu id="track-list-menu">
 		<menuitem command="project.addTrack">Add Track...</menuitem>
 		<menuitem command="project.addSamplerTrack">Add Sampler Track...</menuitem>
+		<menuitem command="project.addDrumTrack">Add Drum Track...</menuitem>
 		<!-- Track presets (reference manual pp. 199, 238-243, docs/features/track-presets.md) -->
 		<menuitem command="project.addTrackFromPreset">Add Track from Preset...</menuitem>
 		<menuitem command="track.saveTrackPreset">Save Track Preset...</menuitem>
