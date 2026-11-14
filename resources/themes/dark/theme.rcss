@@ -708,19 +708,19 @@
 	{
 		background-color: #416d75;
 	}
-	.chord-pads-key.section
+	.chord-pads-key.section, .chord-pads-key.black.section
 	{
 		background-color: #7a663f;
 	}
-	.chord-pads-key.modifier
+	.chord-pads-key.modifier, .chord-pads-key.black.modifier
 	{
 		background-color: #67ad8b;
 	}
-	.chord-pads-key.hover
+	.chord-pads-key.hover, .chord-pads-key.black.hover
 	{
 		background-color: #cda85f;
 	}
-	.chord-pads-key.played
+	.chord-pads-key.played, .chord-pads-key.black.played
 	{
 		background-color: #7896bd;
 	}

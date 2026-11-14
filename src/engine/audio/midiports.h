@@ -159,6 +159,9 @@ namespace gnubase::engine
 		int m_sectionPad = -1;
 		bool m_sectionPadDown = false;
 		std::array<uint8_t, 128> m_sectionHeld{};
+		uint64_t m_sectionHeldPort = 0; // the remote's input (ChordPadKeys::portHash) the keys are down on
+		// Per key, 1 + the pad whose section it plays, else 0: the sections of one pad don't overlap each other.
+		std::array<uint8_t, 128> m_sectionPadOf{};
 		// The sections player mode's keys: a section or subsection key's notes for the pad that plays them.
 		bool playSection(const audio::MidiMessage& message, const ChordPadKeys& keys, PadBuffers& pads) noexcept;
 		rt::SpscQueue<PadEvent> m_padEvents{512};

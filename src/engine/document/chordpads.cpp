@@ -72,6 +72,17 @@ namespace gnubase::engine
 			return keys;
 		}
 
+		// Where the controls that move all pads left them (reference manual p. 1387): per control (voicings,
+		// tensions, transposition) its step from its rest, and per pad how far it followed, which is less for a pad
+		// that has tensions already or reaches the limit of 12 inversions (#1448), and per pad the tensions the
+		// tensions control added, in the order it added them, which the way back takes away again.
+		struct ControlSteps
+		{
+			std::array<int, 3> steps{};
+			std::array<std::vector<int>, 3> followed;
+			std::vector<std::vector<std::string>> added;
+		};
+
 		// What chordPads.listen listens for, and what chordPads.remoteInput saw of the remote keys (#1089).
 		struct RemoteState
 		{
@@ -80,7 +91,7 @@ namespace gnubase::engine
 			int auditioned = -1; // the pad a chord modifier's key plays while it is down, or -1
 			// How far the controls moved all pads' voicings, tensions and transposition, after each history step a
 			// control made: the latest of them that is done says where the pads are, also after undo and redo.
-			std::map<uint64_t, std::array<int, 3>> controlSteps;
+			std::map<uint64_t, ControlSteps> controlSteps;
 			// Each control's gesture for its undo step's merge key, a new one after a second without its messages.
 			std::array<int, 3> gestures{};
 			std::array<Clock::TimePoint, 3> lastControl{};
@@ -1151,6 +1162,131 @@ namespace gnubase::engine
 			}
 			return Json{{"suggestions", suggestions}};
 		}
+		// chordPads.set: the settings the parameters give.
+		void applyPadSettings(Project& project, const Json& parameters)
+		{
+			ChordPads& pads = project.chordPads;
+			if (parameters.contains("rootKey"))
+			{
+				const int key = parameters.at("rootKey").get<int>();
+				require(key >= 0 && key < 12, "rootKey must be 0 to 11");
+				if (parameters.value("transposePads", false))
+				{
+					int step = pitchClass(key - pads.rootKey);
+					step = step > 6 ? step - 12 : step;
+					for (ChordPad& pad : pads.pads)
+						if (!pad.chord.empty() && !pad.locked)
+							pad.chord = midi::chordName(chordpads::transposed(chordOf(pad.chord), step));
+				}
+				pads.rootKey = key;
+			}
+			if (parameters.contains("padCount"))
+			{
+				const int count = parameters.at("padCount").get<int>();
+				require(count >= 1 && count <= g_maxPads, "padCount must be 1 to 32");
+				pads.pads.resize(static_cast<size_t>(count));
+				if (pads.reference >= count)
+					pads.reference = -1;
+			}
+			if (parameters.contains("player"))
+			{
+				pads.player = parameters.at("player").get<int>();
+				require(pads.player >= 0 && pads.player < static_cast<int>(pads.players.size()),
+					"no chord pads player " + std::to_string(pads.player));
+			}
+			if (parameters.contains("octaveOffset"))
+			{
+				ChordPlayer& player = pads.players.at(static_cast<size_t>(pads.player));
+				require(player.library == "basic", "the octave offset is a basic player's");
+				player.octaveOffset = parameters.at("octaveOffset").get<int>();
+				require(player.octaveOffset >= -3 && player.octaveOffset <= 3, "octaveOffset must be -3 to 3");
+			}
+			pads.velocity = parameters.value("velocity", pads.velocity);
+			require(pads.velocity >= 1 && pads.velocity <= 127, "velocity must be 1 to 127");
+			pads.remote = parameters.value("remote", pads.remote);
+			pads.remoteStart = parameters.value("remoteStart", pads.remoteStart);
+			pads.remoteEnd = parameters.value("remoteEnd", pads.remoteEnd);
+			require(pads.remoteStart >= 0 && pads.remoteEnd <= 127 && pads.remoteStart <= pads.remoteEnd,
+				"the remote keys must be MIDI notes, remoteStart up to remoteEnd");
+			pads.stepInput = parameters.value("stepInput", pads.stepInput);
+			pads.moveInsert = parameters.value("moveInsert", pads.moveInsert);
+			pads.outputMode = parameters.value("outputMode", pads.outputMode);
+			pads.latch = parameters.value("latch", pads.latch);
+			pads.overlaps = parameters.value("overlaps", pads.overlaps);
+			pads.filterNotes = parameters.value("filterNotes", pads.filterNotes);
+			pads.modifiers = parameters.value("modifiers", pads.modifiers);
+			if (parameters.contains("modifierKeys"))
+				for (size_t i = 0; i < g_modifierNames.size(); ++i)
+					if (const Json& keys = parameters.at("modifierKeys"); keys.contains(g_modifierNames.at(i)))
+					{
+						const int key = keys.at(g_modifierNames.at(i)).get<int>();
+						require(key >= 0 && key <= 127, "modifierKeys must be MIDI notes, 0 to 127");
+						pads.modifierKeys.at(i) = key;
+					}
+			pads.remotePort = parameters.value("remotePort", pads.remotePort);
+			pads.snapPlayback = parameters.value("snapPlayback", pads.snapPlayback);
+			pads.mode = parameters.value("mode", pads.mode);
+			pads.velocityFromKeyboard = parameters.value("velocityFromKeyboard", pads.velocityFromKeyboard);
+			pads.flats = parameters.value("flats", pads.flats);
+			readFive(pads.sectionKeys, parameters.value("sectionKeys", Json()), -1, 127, "sectionKeys");
+			readFive(pads.subsectionKeys, parameters.value("subsectionKeys", Json()), -1, 127, "subsectionKeys");
+			readFive(
+				pads.subsectionSections, parameters.value("subsectionSections", Json()), 0, 4, "subsectionSections");
+			readFive(
+				pads.subsectionOffsets, parameters.value("subsectionOffsets", Json()), -48, 48, "subsectionOffsets");
+			pads.sectionPlay = parameters.value("sectionPlay", pads.sectionPlay);
+			pads.latchPads = parameters.value("latchPads", pads.latchPads);
+			pads.spread = parameters.value("spread", pads.spread);
+			if (parameters.contains("mutedSections"))
+			{
+				const Json& muted = parameters.at("mutedSections");
+				for (size_t i = 0; i < pads.mutedSections.size() && i < muted.size(); ++i)
+					pads.mutedSections.at(i) = muted[i].get<bool>();
+			}
+			if (parameters.contains("playerKeys"))
+			{
+				std::array<int, 5> keys = {pads.playerKeys.at(0), pads.playerKeys.at(1), pads.playerKeys.at(2), -1, -1};
+				readFive(keys, parameters.at("playerKeys"), -1, 127, "playerKeys");
+				pads.playerKeys = {keys.at(0), keys.at(1), keys.at(2)};
+			}
+			if (parameters.contains("controlSources"))
+			{
+				const Json& sources = parameters.at("controlSources");
+				for (size_t i = 0; i < pads.controlSources.size() && i < sources.size(); ++i)
+					pads.controlSources.at(i) = sources[i].get<std::string>();
+			}
+			if (parameters.contains("controlNumbers"))
+			{
+				std::array<int, 5> numbers = {
+					pads.controlNumbers.at(0), pads.controlNumbers.at(1), pads.controlNumbers.at(2), 0, 0};
+				readFive(numbers, parameters.at("controlNumbers"), 0, 127, "controlNumbers");
+				pads.controlNumbers = {numbers.at(0), numbers.at(1), numbers.at(2)};
+			}
+			if (parameters.contains("stepPosition"))
+			{
+				const time::Ticks end = stepEnd(project);
+				pads.stepPosition = parameters.at("stepPosition").get<time::Ticks>();
+				require(pads.stepPosition >= 0 && pads.stepPosition <= end,
+					"stepPosition must be 0 to " + std::to_string(end) + " ticks");
+			}
+			if (parameters.contains("stepBars"))
+			{
+				// An unsigned number past int64_t's range is as far on as any; the bars are clamped before the
+				// sum, which then can't overflow, and after it, to the bars step input writes at.
+				const Json& given = parameters.at("stepBars");
+				constexpr int64_t most = std::numeric_limits<int64_t>::max();
+				const int64_t requested =
+					given.is_number_unsigned() && given.get<uint64_t>() > static_cast<uint64_t>(most)
+					? most
+					: given.get<int64_t>();
+				const time::SignatureMap& signatures = project.signatures;
+				const int64_t lastBar = lastStepBar(project);
+				const int64_t bars = std::clamp<int64_t>(requested, -lastBar - 1, lastBar + 1);
+				pads.stepPosition = signatures.barStart(
+					std::clamp<int64_t>(signatures.toBarsBeats(pads.stepPosition).bar + bars, 0, lastBar));
+			}
+		}
+
 	}
 
 	void ProjectModel::registerChordPadCommands(Engine& engine)
@@ -1267,11 +1403,12 @@ namespace gnubase::engine
 				"select the previous and the next player and mute or unmute the selected one, -1 for none. "
 				"controlSources (Modify All Pad Voicings, Modify All Pad Tensions, Transpose All Pads, p. 1387): what "
 				"moves them from the remote's input, none, aftertouch, pitchBend or controller (of controlNumbers): "
-				"a control at rest changes nothing: aftertouch and controllers rest at 0 and go up to 3 inversions up, "
-				"3 "
-				"more tensions and 6 semitones up; pitch bend rests in its middle and goes from 3 inversions and 6 "
-				"semitones down to 3 and 6 up, and from none to 3 more tensions above its middle. Each gesture of a "
-				"control is one undo step; a second without a move ends the gesture.",
+				"a control at rest changes nothing: aftertouch and controllers rest at 0 and go up to 3 inversions "
+				"up, 3 more tensions and 6 semitones up; pitch bend rests in its middle and goes from 3 inversions "
+				"and 6 semitones down to 3 and 6 up, and from none to 3 more tensions above its middle. A pad that "
+				"follows a move only partly, such as one with tensions or at the limit of 12 inversions, goes back "
+				"as far as it went. Each gesture of a control is one undo step; a second without a move ends the "
+				"gesture.",
 				objectSchema({{"rootKey", integerSchema}, {"transposePads", booleanSchema}, {"padCount", integerSchema},
 					{"octaveOffset", integerSchema}, {"player", integerSchema}, {"velocity", integerSchema},
 					{"remote", booleanSchema}, {"remoteStart", integerSchema}, {"remoteEnd", integerSchema},
@@ -1305,128 +1442,7 @@ namespace gnubase::engine
 				padsResult, false},
 			[changed](Project& project, CommandContext& context)
 			{
-				const Json& parameters = context.parameters();
-				ChordPads& pads = project.chordPads;
-				if (parameters.contains("rootKey"))
-				{
-					const int key = parameters.at("rootKey").get<int>();
-					require(key >= 0 && key < 12, "rootKey must be 0 to 11");
-					if (parameters.value("transposePads", false))
-					{
-						int step = pitchClass(key - pads.rootKey);
-						step = step > 6 ? step - 12 : step;
-						for (ChordPad& pad : pads.pads)
-							if (!pad.chord.empty() && !pad.locked)
-								pad.chord = midi::chordName(chordpads::transposed(chordOf(pad.chord), step));
-					}
-					pads.rootKey = key;
-				}
-				if (parameters.contains("padCount"))
-				{
-					const int count = parameters.at("padCount").get<int>();
-					require(count >= 1 && count <= g_maxPads, "padCount must be 1 to 32");
-					pads.pads.resize(static_cast<size_t>(count));
-					if (pads.reference >= count)
-						pads.reference = -1;
-				}
-				if (parameters.contains("player"))
-				{
-					pads.player = parameters.at("player").get<int>();
-					require(pads.player >= 0 && pads.player < static_cast<int>(pads.players.size()),
-						"no chord pads player " + std::to_string(pads.player));
-				}
-				if (parameters.contains("octaveOffset"))
-				{
-					ChordPlayer& player = pads.players.at(static_cast<size_t>(pads.player));
-					require(player.library == "basic", "the octave offset is a basic player's");
-					player.octaveOffset = parameters.at("octaveOffset").get<int>();
-					require(player.octaveOffset >= -3 && player.octaveOffset <= 3, "octaveOffset must be -3 to 3");
-				}
-				pads.velocity = parameters.value("velocity", pads.velocity);
-				require(pads.velocity >= 1 && pads.velocity <= 127, "velocity must be 1 to 127");
-				pads.remote = parameters.value("remote", pads.remote);
-				pads.remoteStart = parameters.value("remoteStart", pads.remoteStart);
-				pads.remoteEnd = parameters.value("remoteEnd", pads.remoteEnd);
-				require(pads.remoteStart >= 0 && pads.remoteEnd <= 127 && pads.remoteStart <= pads.remoteEnd,
-					"the remote keys must be MIDI notes, remoteStart up to remoteEnd");
-				pads.stepInput = parameters.value("stepInput", pads.stepInput);
-				pads.moveInsert = parameters.value("moveInsert", pads.moveInsert);
-				pads.outputMode = parameters.value("outputMode", pads.outputMode);
-				pads.latch = parameters.value("latch", pads.latch);
-				pads.overlaps = parameters.value("overlaps", pads.overlaps);
-				pads.filterNotes = parameters.value("filterNotes", pads.filterNotes);
-				pads.modifiers = parameters.value("modifiers", pads.modifiers);
-				if (parameters.contains("modifierKeys"))
-					for (size_t i = 0; i < g_modifierNames.size(); ++i)
-						if (const Json& keys = parameters.at("modifierKeys"); keys.contains(g_modifierNames.at(i)))
-						{
-							const int key = keys.at(g_modifierNames.at(i)).get<int>();
-							require(key >= 0 && key <= 127, "modifierKeys must be MIDI notes, 0 to 127");
-							pads.modifierKeys.at(i) = key;
-						}
-				pads.remotePort = parameters.value("remotePort", pads.remotePort);
-				pads.snapPlayback = parameters.value("snapPlayback", pads.snapPlayback);
-				pads.mode = parameters.value("mode", pads.mode);
-				pads.velocityFromKeyboard = parameters.value("velocityFromKeyboard", pads.velocityFromKeyboard);
-				pads.flats = parameters.value("flats", pads.flats);
-				readFive(pads.sectionKeys, parameters.value("sectionKeys", Json()), -1, 127, "sectionKeys");
-				readFive(pads.subsectionKeys, parameters.value("subsectionKeys", Json()), -1, 127, "subsectionKeys");
-				readFive(pads.subsectionSections, parameters.value("subsectionSections", Json()), 0, 4,
-					"subsectionSections");
-				readFive(pads.subsectionOffsets, parameters.value("subsectionOffsets", Json()), -48, 48,
-					"subsectionOffsets");
-				pads.sectionPlay = parameters.value("sectionPlay", pads.sectionPlay);
-				pads.latchPads = parameters.value("latchPads", pads.latchPads);
-				pads.spread = parameters.value("spread", pads.spread);
-				if (parameters.contains("mutedSections"))
-				{
-					const Json& muted = parameters.at("mutedSections");
-					for (size_t i = 0; i < pads.mutedSections.size() && i < muted.size(); ++i)
-						pads.mutedSections.at(i) = muted[i].get<bool>();
-				}
-				if (parameters.contains("playerKeys"))
-				{
-					std::array<int, 5> keys = {
-						pads.playerKeys.at(0), pads.playerKeys.at(1), pads.playerKeys.at(2), -1, -1};
-					readFive(keys, parameters.at("playerKeys"), -1, 127, "playerKeys");
-					pads.playerKeys = {keys.at(0), keys.at(1), keys.at(2)};
-				}
-				if (parameters.contains("controlSources"))
-				{
-					const Json& sources = parameters.at("controlSources");
-					for (size_t i = 0; i < pads.controlSources.size() && i < sources.size(); ++i)
-						pads.controlSources.at(i) = sources[i].get<std::string>();
-				}
-				if (parameters.contains("controlNumbers"))
-				{
-					std::array<int, 5> numbers = {
-						pads.controlNumbers.at(0), pads.controlNumbers.at(1), pads.controlNumbers.at(2), 0, 0};
-					readFive(numbers, parameters.at("controlNumbers"), 0, 127, "controlNumbers");
-					pads.controlNumbers = {numbers.at(0), numbers.at(1), numbers.at(2)};
-				}
-				if (parameters.contains("stepPosition"))
-				{
-					const time::Ticks end = stepEnd(project);
-					pads.stepPosition = parameters.at("stepPosition").get<time::Ticks>();
-					require(pads.stepPosition >= 0 && pads.stepPosition <= end,
-						"stepPosition must be 0 to " + std::to_string(end) + " ticks");
-				}
-				if (parameters.contains("stepBars"))
-				{
-					// An unsigned number past int64_t's range is as far on as any; the bars are clamped before the
-					// sum, which then can't overflow, and after it, to the bars step input writes at.
-					const Json& given = parameters.at("stepBars");
-					constexpr int64_t most = std::numeric_limits<int64_t>::max();
-					const int64_t requested =
-						given.is_number_unsigned() && given.get<uint64_t>() > static_cast<uint64_t>(most)
-						? most
-						: given.get<int64_t>();
-					const time::SignatureMap& signatures = project.signatures;
-					const int64_t lastBar = lastStepBar(project);
-					const int64_t bars = std::clamp<int64_t>(requested, -lastBar - 1, lastBar + 1);
-					pads.stepPosition = signatures.barStart(
-						std::clamp<int64_t>(signatures.toBarsBeats(pads.stepPosition).bar + bars, 0, lastBar));
-				}
+				applyPadSettings(project, context.parameters());
 				return changed(project, context);
 			});
 		add(engine,
@@ -1640,9 +1656,10 @@ namespace gnubase::engine
 			{"chordPads.modify", 1,
 				"The pad modifiers (reference manual pp. 1351-1352) on the assigned, unlocked pads of pads: transpose "
 				"moves their chords by semitones, tensions adds (more) or takes away (fewer) as many tensions, voicing "
-				"steps through their voicings (inversions), which turns their adaptive voicing off.",
+				"steps through their voicings (inversions), which turns their adaptive voicing off, and without takes "
+				"away the tensions it names, as chord names write them (\"9\", \"#11\").",
 				objectSchema({{"pads", padsSchema}, {"transpose", integerSchema}, {"tensions", integerSchema},
-								 {"voicing", integerSchema}},
+								 {"voicing", integerSchema}, {"without", {{"type", "array"}, {"items", stringSchema}}}},
 					{"pads"}),
 				padsResult, false},
 			[changed](Project& project, CommandContext& context)
@@ -1658,6 +1675,10 @@ namespace gnubase::engine
 					midi::ChordSymbol chord = chordOf(pad.chord);
 					chord = chordpads::transposed(chord, parameters.value("transpose", 0));
 					chord = chordpads::withTensions(chord, parameters.value("tensions", 0), pads.rootKey);
+					for (const Json& tension : parameters.value("without", Json::array()))
+						chord.tensions.erase(
+							std::remove(chord.tensions.begin(), chord.tensions.end(), tension.get<std::string>()),
+							chord.tensions.end());
 					if (parameters.contains("voicing"))
 					{
 						if (pad.adaptive)
@@ -2273,41 +2294,125 @@ namespace gnubase::engine
 							static_cast<int>(std::lround(std::max(velocity - rest, 0) /
 								static_cast<double>(127 - rest) * (highest.at(which) - low)));
 						// Where the controls left the pads, as the latest done step of theirs says.
-						std::array<int, 3> steps{};
+						ControlSteps where;
 						for (size_t i = m_history.position(); i-- > 0;)
 							if (const auto found = state.controlSteps.find(m_history.steps().at(i).id);
 								found != state.controlSteps.end())
 							{
-								steps = found->second;
+								where = found->second;
 								break;
 							}
 						const Clock::TimePoint now = m_clock->now();
 						if (now - state.lastControl.at(which) > std::chrono::seconds(1))
 							++state.gestures.at(which);
 						state.lastControl.at(which) = now;
-						const int delta = step - steps.at(which);
-						std::vector<int> all(pads.pads.size());
-						std::iota(all.begin(), all.end(), 0);
-						if (delta != 0)
+						const int from = where.steps.at(which);
+						if (step == from)
+							continue;
+						// Each pad as far as the control goes, but on the way back no further than it followed on
+						// the way out, so that a control back at rest leaves the pads as they were (#1448).
+						std::vector<int>& followed = where.followed.at(which);
+						followed.resize(pads.pads.size(), 0);
+						std::map<int, std::vector<int>> moves; // by how much, which pads
+						for (size_t i = 0; i < followed.size(); ++i)
 						{
-							steps.at(which) = step;
-							context.call("history.transaction",
-								{{"description", "Modify chord pads"},
-									{"merge",
-										std::string("chordPads.control ") + changes.at(which) + " " +
-											std::to_string(state.gestures.at(which))},
-									{"commands",
-										{{{"command", "chordPads.modify"},
-											{"parameters", {{"pads", all}, {changes.at(which), delta}}}}}}});
-							// The steps after the history's last done step; those of steps gone from it go too.
-							if (m_history.position() > 0)
-								state.controlSteps[m_history.steps().at(m_history.position() - 1).id] = steps;
-							for (auto it = state.controlSteps.begin(); it != state.controlSteps.end();)
-								it = std::any_of(m_history.steps().begin(), m_history.steps().end(),
-										 [&it](const HistoryStep& done) { return done.id == it->first; })
-									? std::next(it)
-									: state.controlSteps.erase(it);
+							int to = step;
+							if (from > 0 && followed.at(i) < from)
+								to = std::min(step, followed.at(i));
+							else if (from < 0 && followed.at(i) > from)
+								to = std::max(step, followed.at(i));
+							if (to != followed.at(i))
+								moves[to - followed.at(i)].push_back(static_cast<int>(i));
 						}
+						// What a pad has of the control's change: its voicing's inversion or its tensions.
+						const auto measure = [this, which](const std::vector<std::vector<int>>& voicings, size_t i)
+						{
+							const ChordPads& current = m_project.chordPads;
+							const ChordPad& pad = current.pads.at(i);
+							if (pad.chord.empty() || which == 2)
+								return 0;
+							if (which == 1)
+								return static_cast<int>(chordOf(pad.chord).tensions.size());
+							return pad.adaptive ? inversionOf(current, chordOf(pad.chord), voicings.at(i))
+												: voicingOf(pad, current.player);
+						};
+						const std::vector<std::vector<int>> voicings = chordPadVoicings(pads);
+						// A pad's tensions; those the control added are the ones it takes away again, not the last ones
+						// in the tensions' order, which may be the pad's own (#1447).
+						const auto tensionsOf = [this](size_t i)
+						{
+							const ChordPad& pad = m_project.chordPads.pads.at(i);
+							return pad.chord.empty() ? std::vector<std::string>() : chordOf(pad.chord).tensions;
+						};
+						std::vector<std::vector<std::string>>& added = where.added;
+						added.resize(followed.size());
+						std::vector<int> before(followed.size());
+						std::vector<std::vector<std::string>> tensionsBefore(followed.size());
+						for (size_t i = 0; i < followed.size(); ++i)
+						{
+							before.at(i) = measure(voicings, i);
+							tensionsBefore.at(i) = tensionsOf(i);
+						}
+						Json commands = Json::array();
+						for (const auto& [by, targets] : moves)
+						{
+							if (which == 1 && by < 0)
+								for (const int target : targets)
+								{
+									const std::vector<std::string>& mine = added.at(static_cast<size_t>(target));
+									const auto count =
+										static_cast<std::ptrdiff_t>(std::min(static_cast<size_t>(-by), mine.size()));
+									commands.push_back({{"command", "chordPads.modify"},
+										{"parameters",
+											{{"pads", Json::array({target})},
+												{"without",
+													std::vector<std::string>(mine.end() - count, mine.end())}}}});
+								}
+							else
+								commands.push_back({{"command", "chordPads.modify"},
+									{"parameters", {{"pads", targets}, {changes.at(which), by}}}});
+						}
+						if (commands.empty())
+							continue;
+						context.call("history.transaction",
+							{{"description", "Modify chord pads"},
+								{"merge",
+									std::string("chordPads.control ") + changes.at(which) + " " +
+										std::to_string(state.gestures.at(which))},
+								{"commands", commands}});
+						for (const auto& [by, targets] : moves)
+							for (const int target : targets)
+							{
+								const auto i = static_cast<size_t>(target);
+								const ChordPad& moved = pads.pads.at(i);
+								if (which == 1)
+								{
+									// The ones it added that the pad still has, then the ones new to it.
+									const std::vector<std::string> after = tensionsOf(i);
+									const auto has = [](const std::vector<std::string>& tensions, const std::string& t)
+									{ return std::find(tensions.begin(), tensions.end(), t) != tensions.end(); };
+									std::vector<std::string>& mine = added.at(i);
+									mine.erase(std::remove_if(mine.begin(), mine.end(),
+												   [&](const std::string& t) { return !has(after, t); }),
+										mine.end());
+									for (const std::string& tension : after)
+										if (!has(tensionsBefore.at(i), tension))
+											mine.push_back(tension);
+								}
+								if (which != 2)
+									followed.at(i) += measure(voicings, i) - before.at(i);
+								else if (!moved.chord.empty() && !moved.locked)
+									followed.at(i) += by;
+							}
+						where.steps.at(which) = step;
+						// The steps after the history's last done step; those of steps gone from it go too.
+						if (m_history.position() > 0)
+							state.controlSteps[m_history.steps().at(m_history.position() - 1).id] = where;
+						for (auto it = state.controlSteps.begin(); it != state.controlSteps.end();)
+							it = std::any_of(m_history.steps().begin(), m_history.steps().end(),
+									 [&it](const HistoryStep& done) { return done.id == it->first; })
+								? std::next(it)
+								: state.controlSteps.erase(it);
 					}
 					else if (kind == "player")
 					{

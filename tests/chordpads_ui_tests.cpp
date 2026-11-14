@@ -952,9 +952,15 @@ TEST_CASE(
 	CHECK_FALSE(window.visible("#chord-pads-rows"));
 	type("#chord-pads-padCount", "16");
 	REQUIRE(window.app.waitUntil([&] { return window.elements(".chord-pad").size() == 16; }));
-	type("#chord-pads-startNote", "48");
-	REQUIRE(window.app.waitUntil([&] { return pads().at("remoteStart") == 48; }));
-	CHECK(pads().at("remoteEnd") == 59); // the range as long as it was
+	// Start Note is the keyboard layout's: from B the second pad is on C, a white key, and the remote range stays.
+	const auto padAt = [](int index) { return ".chord-pad:nth-child(" + std::to_string(index + 1) + ")"; };
+	CHECK(window.hasClass(padAt(1), "black-key"));
+	type("#chord-pads-startNote", "47");
+	REQUIRE(window.app.waitUntil([&]
+		{ return window.call("settings.get", {{"key", "ui.chordPads"}}).at("value").value("startNote", 0) == 47; }));
+	REQUIRE(window.app.waitUntil([&] { return !window.hasClass(padAt(1), "black-key"); }));
+	CHECK(window.hasClass(padAt(2), "black-key"));
+	CHECK(pads().at("remoteStart") == 36);
 	window.call("settings.set", {{"key", "ui.chordPads"}, {"value", {{"layout", "grid"}, {"columns", 4}}}});
 	REQUIRE(window.app.waitUntil([&] { return window.visible("#chord-pads-rows"); }));
 	CHECK_FALSE(window.visible("#chord-pads-padCount"));
@@ -983,4 +989,20 @@ TEST_CASE(
 	REQUIRE(window.app.waitUntil([&] { return window.app.shell().fileDialogs().size() == 1; }));
 	window.app.shell().answerFileDialog(window.app.shell().fileDialogs().begin()->first, {loop});
 	REQUIRE(window.app.waitUntil([&] { return pads().at("pattern").at("name") == "Loop"; }));
+	CHECK(window.app.waitUntil([&] { return window.text("#chord-pads-pattern-info") == "Loop (3 voices)"; }));
+
+	// A loop without 3 to 5 voices changes nothing, and the pattern information field says why (p. 1381, #1447).
+	const std::filesystem::path two = dir.path() / "Two.mid";
+	file.tracks.front().events.resize(4);
+	engine::midifile::save(file, two.u8string());
+	window.click("#chord-pads-importLoop");
+	REQUIRE(window.app.waitUntil([&] { return window.app.shell().fileDialogs().size() == 1; }));
+	window.app.shell().answerFileDialog(window.app.shell().fileDialogs().begin()->first, {two});
+	CHECK(window.app.waitUntil(
+		[&] { return window.text("#chord-pads-pattern-info").find("3 to 5 voices") != std::string::npos; }));
+	CHECK(pads().at("pattern").at("name") == "Loop");
+	window.click("#chord-pads-importLoop");
+	REQUIRE(window.app.waitUntil([&] { return window.app.shell().fileDialogs().size() == 1; }));
+	window.app.shell().answerFileDialog(window.app.shell().fileDialogs().begin()->first, {loop});
+	CHECK(window.app.waitUntil([&] { return window.text("#chord-pads-pattern-info") == "Loop (3 voices)"; }));
 }
