@@ -297,13 +297,16 @@ namespace gnubase::engine::midi
 
 		// One block of the chord pads' notes, starting at position (samples on the transport) and frames long:
 		// nextGrid(sample) is the first grid position at or after a sample. With snap off or the transport stopped,
-		// what waits plays at the block's start and the rest as it comes.
+		// what waits plays at the block's start and the rest as it comes. So does what waits when the transport
+		// jumped, by a cycle or a locate, since it may never get to where that waits.
 		template <typename NextGrid> void process(audio::MidiBuffer& pads, bool snap, bool playing, int64_t position,
 			uint32_t frames, NextGrid&& nextGrid) noexcept
 		{
+			const int64_t end = position + frames;
+			const bool jumped = position != m_next;
+			m_next = end;
 			if (pads.empty() && m_pending == 0)
 				return;
-			const int64_t end = position + frames;
 			size_t count = 0;
 			const auto out = [this, &count](audio::MidiMessage message, int64_t offset)
 			{
@@ -316,8 +319,10 @@ namespace gnubase::engine::midi
 			size_t kept = 0;
 			for (size_t i = 0; i < m_pending; ++i)
 			{
-				if (!snap || !playing || m_waiting.at(i).at < end)
+				if (m_waiting.at(i).at < end)
 					out(m_waiting.at(i).message, m_waiting.at(i).at - position);
+				else if (!snap || !playing || jumped)
+					out(m_waiting.at(i).message, 0);
 				else
 					m_waiting.at(kept++) = m_waiting.at(i);
 			}
@@ -367,6 +372,7 @@ namespace gnubase::engine::midi
 		};
 		std::array<Waiting, g_capacity> m_waiting{};
 		size_t m_pending = 0;
+		int64_t m_next = 0; // where the transport goes on after the last block
 		std::array<audio::MidiMessage, g_capacity> m_out{};
 	};
 }

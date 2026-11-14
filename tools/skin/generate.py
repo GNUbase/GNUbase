@@ -591,10 +591,12 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".chord-pad .chord-pad-adaptive", {"background-color": c["accent"],
                                             "border-radius": f"{theme['radii']['round']}dp"}),
         (".chord-pad.triggered", {"background-color": mix(c["surfaceRaised"], c["accent"], .45)}),
-        # Assign from MIDI Input's pad in red, the List assistant's colors along the bottom, the voicing indicator, the
-        # pads on black keys, and the zone's keyboard: played notes, the remote range in blue, the chord modifiers'
-        # keys in green and the hovered pad's key (reference manual pp. 1353-1355)
+        # Assign from MIDI Input's pad in red, a chord's drop location in green, the List assistant's colors along the
+        # bottom, the voicing indicator, the pads on black keys, and the zone's keyboard: played notes, the remote range
+        # in blue, the section keys in brown, the chord modifiers' keys in green and the hovered pad's key (reference
+        # manual pp. 1353-1355)
         (".chord-pad.listening", {"border-color": c["danger"]}),
+        (".chord-pad.drop-target", {"border-color": c["success"]}),
         (".chord-pad.level-0", {"border-bottom-color": c["success"]}),
         (".chord-pad.level-1", {"border-bottom-color": c["warning"]}),
         (".chord-pad.level-2", {"border-bottom-color": c["danger"]}),
@@ -606,6 +608,7 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".chord-pads-key.black", {"background-color": c["background"]}),
         (".chord-pads-key.remote", {"background-color": mix(c["text"], c["accent"], .5)}),
         (".chord-pads-key.black.remote", {"background-color": mix(c["background"], c["accent"], .6)}),
+        (".chord-pads-key.section", {"background-color": mix(c["warning"], c["background"], .45)}),
         (".chord-pads-key.modifier", {"background-color": c["success"]}),
         (".chord-pads-key.hover", {"background-color": c["warning"]}),
         (".chord-pads-key.played", {"background-color": c["accent2"]}),

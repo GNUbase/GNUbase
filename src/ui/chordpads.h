@@ -50,8 +50,10 @@ namespace gnubase::ui
 		// selectedEvents, if given, gives the event display's selected events and parts, of which the first MIDI part
 		// becomes the pattern with From Selected Part.
 		using Selection = std::function<std::vector<uint64_t>()>;
-		ChordPadsPanel(
-			EngineBinding& binding, Rml::Element& element, DropTarget dropOn = {}, Selection selectedEvents = {});
+		// importLoop, if given, asks for a MIDI loop to import as the pattern (Import from MIDI Loop, reference
+		// manual p. 1379), such as with a file dialog, and imports it with chordPads.setPattern file.
+		ChordPadsPanel(EngineBinding& binding, Rml::Element& element, DropTarget dropOn = {},
+			Selection selectedEvents = {}, std::function<void()> importLoop = {});
 		~ChordPadsPanel() override;
 		ChordPadsPanel(const ChordPadsPanel&) = delete;
 		ChordPadsPanel& operator=(const ChordPadsPanel&) = delete;
@@ -87,6 +89,7 @@ namespace gnubase::ui
 		void showEditor();
 		void showRecent();
 		void showKeys();
+		void showDropTarget();
 		void dragKeyboard(const Rml::Event& event);
 		void pressEditor(const Rml::Element& button);
 		void modifyPressed(const std::string& name);
@@ -98,19 +101,20 @@ namespace gnubase::ui
 		EngineBinding& m_binding;
 		DropTarget m_dropOn;
 		Selection m_selectedEvents;
+		std::function<void()> m_importLoop;
 		Rml::ObserverPtr<Rml::Element> m_root;
 		Rml::ObserverPtr<Rml::Element> m_document; // for the mouse button going up outside the panel
 		engine::Json m_pads = engine::Json::object();
 		std::set<int> m_selection;
-		int m_pressed = -1;                              // the pad the mouse button went down on, until it goes up
-		std::string m_auditioned;                        // the assistant's chord that plays while pressed
-		int m_editing = -1;                              // the pad whose chord the field types
-		std::string m_page = "list";                     // the assistant's page: list or circle
+		int m_pressed = -1;          // the pad the mouse button went down on, until it goes up
+		std::string m_auditioned;    // the assistant's chord that plays while pressed
+		int m_editing = -1;          // the pad whose chord the field types
+		std::string m_page = "list"; // the assistant's page: list or circle
+		int m_asked = 0; // counts what the assistant drew or asked for: only the latest question's answer is drawn
 		std::optional<int> m_rootKeySent;                // the root key the wheel sent last, until the pads show it
 		int m_rootKeysSending = 0;                       // the wheel's root keys that the engine hasn't answered yet
 		engine::Json m_display = engine::Json::object(); // the user setting ui.chordPads
 		engine::Json m_presets = engine::Json::array();  // chordPads.presets
-		engine::Json m_ports = engine::Json::array();    // the MIDI inputs, for the remote's MIDI Input
 		widgets::Options m_tracks;                       // the MIDI and instrument tracks, for a player's track
 		std::vector<std::string> m_recent;               // the last three chords auditioned in the assistant
 		// The zone's keyboard (p. 1355): its lowest key and how many it shows, which a drag scrolls and zooms, and the
