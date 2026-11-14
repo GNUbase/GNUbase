@@ -29,9 +29,13 @@ namespace gnubase::engine
 				text += (text.empty() ? "" : " or ") + name.get<std::string>();
 		}
 		else if (type.is_string())
+		{
 			text = type.get<std::string>();
+		}
 		else
+		{
 			text = "any";
+		}
 		const std::optional<size_t> maxLength = maxStringLength(schema);
 		if (const auto pattern = schema.find("pattern"); pattern != schema.end())
 			text += " matching `" + pattern->get<std::string>() + "`" +

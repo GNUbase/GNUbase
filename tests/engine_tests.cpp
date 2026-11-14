@@ -575,7 +575,7 @@ TEST_CASE("every keyword in a command's or setting's schema is one validate chec
 
 TEST_CASE("schema guards detect unbounded patterns and unsupported keywords", "[unit]")
 {
-	for (const Json schema : {Json{{"pattern", "a"}}, Json{{"pattern", "a"}, {"maxLength", 65}}})
+	for (const Json& schema : {Json{{"pattern", "a"}}, Json{{"pattern", "a"}, {"maxLength", 65}}})
 	{
 		int patterns = 0;
 		std::vector<std::string> unbounded;
@@ -583,7 +583,7 @@ TEST_CASE("schema guards detect unbounded patterns and unsupported keywords", "[
 		CHECK(patterns == 1);
 		CHECK(unbounded == std::vector<std::string>{"test"});
 	}
-	for (const Json schema : {Json{{"format", "uri"}}, Json{{"anyOf", Json::array()}}, Json{{"minItems", -1}},
+	for (const Json& schema : {Json{{"format", "uri"}}, Json{{"anyOf", Json::array()}}, Json{{"minItems", -1}},
 			 Json{{"minItems", 1.5}}, Json{{"exclusiveMinimum", true}}})
 	{
 		std::vector<std::string> unchecked;
