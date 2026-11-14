@@ -1160,6 +1160,46 @@ TEST_CASE("a track preset with another instrument takes the sampler's sample awa
 	CHECK(run(client, "pool.get").at("clips").at(0).at("used") == 0);
 }
 
+TEST_CASE("a sampler's track preset brings its sample, embedded in the preset, into the pool once", "[integration]")
+{
+	const gnubase::test::TempDir settings;
+	Engine engine(gnubase::audio::makeBackends(), settings.path() / "settings");
+	Client client(engine);
+	gnubase::test::Audio audio;
+	audio.samples.assign(480, 0.5f);
+	const fs::path file = settings.path() / "dc.wav";
+	gnubase::test::writeWav(file, audio);
+	const Json media = run(client, "media.add", {{"path", file.u8string()}});
+	const auto clip = run(client, "clip.add", {{"media", media.at("media").at("id")}}).at("clip").at("id");
+	const Json sampler = run(client, "sampler.create", {{"clip", clip}});
+	run(client, "track.savePreset", {{"tracks", Json::array({sampler.at("track").at("id")})}, {"name", "DC"}});
+
+	// The preset has the file in it: it loads after the file is gone.
+	run(client, "project.new");
+	fs::remove(file);
+	const Json empty = run(client, "sampler.create");
+	const auto synth = run(client, "track.add", {{"type", "instrument"}, {"instrument", "testSynth"}});
+	const auto loadOnto = [&](const Json& track)
+	{
+		run(client, "track.loadPreset", {{"tracks", Json::array({track.at("track").at("id")})}, {"name", "DC"}});
+		const Json project = run(client, "project.get");
+		Json sample;
+		for (const Json& item : project.at("channels"))
+			if (item.at("id") == track.at("channel").at("id"))
+				sample = item.at("sample");
+		REQUIRE(project.at("clips").size() == 1); // the same clip again, not a copy
+		const Json& loaded = project.at("clips").at(0);
+		CHECK(sample == loaded.at("id"));
+		REQUIRE(project.at("media").size() == 1);
+		const fs::path extracted = fs::u8path(project.at("media").at(0).at("path").get<std::string>());
+		CHECK(extracted != file);
+		CHECK(fs::is_regular_file(extracted));
+	};
+	loadOnto(empty);
+	loadOnto(empty);
+	loadOnto(synth);
+}
+
 TEST_CASE(
 	"a sampler track's clip counts as used in the pool, and the sample is saved with the project", "[integration]")
 {

@@ -19,7 +19,8 @@ Each is one undo step and emits `channel.changed`; `sampler.create` also `track.
 (`channel.set`, or a track preset's in `track.loadPreset`) drops the sample. A sampler's clip counts as used in the pool (`pool.get`, `pool.removeUnused`,
 `clip.remove` refuses it, `media.removeMissing` empties the sampler) and in a backup (`project.backup`, p. 710: its
 `removeUnused` keeps it, and `minimize` copies a file that a sampler plays whole, as Start, End and the loop are shares
-of it). Imported and exported tracks (`track.import`, `track.export`) take their sample along. The sample is saved
+of it). Imported and exported tracks (`track.import`, `track.export`) and track presets
+(`track.savePreset`, with the sample's file in the preset, and `track.loadPreset`) take their sample along. The sample is saved
 with the channel in `gnubase.json`; a clip that isn't in the pool when the project loads is dropped.
 
 The sampler's settings are its parameters (`processor.list`, `parameter.set`, automatable like any instrument's):
