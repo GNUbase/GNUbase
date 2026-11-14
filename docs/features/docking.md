@@ -265,7 +265,9 @@ also checks the toolbar's room in windows from 700 to 1024 pixels at dp ratios o
 window at 0.9316, 0.8 and 0.7 (about 560 to 1463 dp, with 1099.2 dp between whole dp), in three orders:
 the shown sections come first and the next one wouldn't fit, no button covers the next, the gaps stay the same, the
 last section ends as far from the right edge as the first button starts from the left one (within 2 px of rounding),
-and a wider window shows the sections again; with the snap and grid types' longest names fewer sections show, and sections hidden in the setup
-pane make room for the next one. As the window narrows, Warp Quantize On/Off goes before any section, and it stays gone
-while the quantize section shows. `tests/shell_tests.cpp` checks that the shell lays a window out again before drawing
+and a wider window shows the sections again; with the snap and grid types' longest names fewer sections show, and
+sections hidden in the setup pane make room for the next one. As the window narrows, Warp Quantize On/Off goes before
+any section, and it stays gone while the quantize section shows; narrowing on in steps smaller than the toggle until the
+section before the quantize section goes too, the room checks hold at every step, so the room the toggle frees goes to
+the quantize section only (#1382). `tests/shell_tests.cpp` checks that the shell lays a window out again before drawing
 it when the fit changed it, and fits only windows it draws.
