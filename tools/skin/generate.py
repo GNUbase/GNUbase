@@ -1204,7 +1204,7 @@ def main() -> int:
     manifests = {name: write_theme(root, name, theme) for name, theme in THEMES.items()}
     write_preview(root, manifests)
     write_readme(root, len(NINE_NAMES) + len(FIXED_NAMES))
-    print(f"Wrote {len(manifests)} themes × {len(NINE_NAMES) + len(FIXED_NAMES)} SVG assets to {root}")
+    print(f"Wrote {len(manifests)} themes x {len(NINE_NAMES) + len(FIXED_NAMES)} SVG assets to {root}")
     return 0
 
 
