@@ -18,7 +18,20 @@ namespace gnubase::engine::plugins
 	// Appends a graph event to a plugin's events, at the offset clamped to the block of `frames`: notes and parameter
 	// changes as plugin events, the other MIDI messages as MIDI 1.0 bytes (a program change after its bank select)
 	// and SysEx with its bytes copied. Real-time safe.
-	void convertEvent(const graph::ProcessEvent& event, uint32_t frames, plugin::EventList& out) noexcept;
+	// With midi2, for a note port that takes MIDI 2.0 (a MIDI effect's, #1380), the other MIDI messages are MIDI 2.0
+	// universal MIDI packets instead, at the graph's full resolution, and a program change carries its bank.
+	void convertEvent(
+		const graph::ProcessEvent& event, uint32_t frames, plugin::EventList& out, bool midi2 = false) noexcept;
+
+	// A plugin's event of list as a graph event: notes, parameter changes, note expressions, MIDI 2.0 channel voice
+	// messages and SysEx, whose bytes stay in list. False for the others (MIDI 1.0, other namespaces), which have no
+	// graph event. Real-time safe.
+	bool toGraphEvent(const plugin::Event& event, const plugin::EventList& list, graph::ProcessEvent& out) noexcept;
+
+	// A block's transport as the plugin's segments, as many as fit in segments, each with the block's tempo: a stopped
+	// segment while stopped and for the frames before a count-in ends. Returns how many there are, at least one.
+	uint32_t convertTransport(
+		const graph::TransportBlock& transport, std::vector<plugin::TransportSegment>& segments) noexcept;
 
 	// The processor of a plugin slot node (graph::NodeKind::PluginSlot): hosts any plugin::Plugin, a built-in one or
 	// a remote plugin::remote::RemotePlugin, so the graph doesn't know the difference (docs/plugin-api.md). The engine
@@ -90,7 +103,6 @@ namespace gnubase::engine::plugins
 		// The plugin's main output as the node's audio, and its notes unless bypassed.
 		void output(const graph::ProcessContext& context, bool bypass) noexcept;
 		void convertEvents(const graph::ProcessContext& context) noexcept;
-		uint32_t convertTransport(const graph::TransportBlock& transport) noexcept;
 
 		std::unique_ptr<plugin::Plugin> m_plugin;
 		plugin::AudioPorts* m_ports = nullptr;
