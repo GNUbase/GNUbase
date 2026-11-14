@@ -68,8 +68,11 @@ Layout and Mod+I show and hide ([docking.md](docking.md)). It follows the event 
   editors' `editor.changed`, so it shows whichever editor's selection changed last, also while the editor's own toolbar,
   and with it its info line, is hidden. Edits go to every selected note as one `history.transaction` of `note.set`s per
   part (p. 1140): relative to the first note's value, or with Ctrl+Enter the value typed for every one, the channel set
-  for all; positions are in ticks. An event or part selected in the project window, an empty selection in the editor or
-  the editor closing gives the info line back to what was selected before.
+  for all; positions are in ticks. The velocity field's steps work as the events' volume does: each keeps the velocity
+  of every note it changes, by note id, so another note selected while the last step is out shows its own velocity and a
+  dragged note the drag's, and wheel turns over the field on two selections are an undo step for each (#1550,
+  [ui-engine-binding.md](ui-engine-binding.md)). An event or part selected in the project window, an empty selection in
+  the editor or the editor closing gives the info line back to what was selected before.
 
 ## Inspector
 
@@ -217,5 +220,8 @@ instrument and MIDI tracks (pp. 173–176) wait for #97. Set up Sections for the
   track without them. A drag of the inspector's volume up to the project's maximum, wheel turns on the pan and a drag of
   the info line's volume are one undo step each, and a MIDI modifier and a part's transpose dragged back to where they
   started while the engine answers late end there. The info line's volume step that the engine refuses, one of the two
-  selected events being gone, shows in the command log, leaves no undo step and shows the engine's value again.
+  selected events being gone, shows in the command log, leaves no undo step and shows the engine's value again. While
+  a dragged note's last velocity step is out, another note selected in an in-place editor shows its own velocity and
+  the dragged one the drag's; wheel turns on the velocity of one note, then of the next with the mouse still over the
+  field, are two undo steps.
 - `tests/mixerwindow_tests.cpp`: a drag of a mixer fader is one undo step.

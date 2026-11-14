@@ -203,6 +203,21 @@ TEST_CASE("the steps of one control go one at a time, the newest of a gesture re
 	CHECK(binding.waiting("history.transaction") == 1);
 	updateUntil(binding, [&binding] { return !binding.sending("volume"); });
 	CHECK(read("volume") == -2.0);
+
+	// A gesture's steps under two merge names, such as the info line's for two selections (#1556): the newest of a
+	// name replaces only a waiting step of that name, so the first name's last value still goes, as an undo step of
+	// its own.
+	const int64_t merged = position();
+	binding.sendStep(14, "field", "Change Volume", set("volume", -3.0), {}, nullptr, "one");
+	binding.sendStep(14, "field", "Change Volume", set("volume", -4.0), {}, nullptr, "one");
+	binding.sendStep(14, "field", "Change Pan", set("pan", -0.25), {}, nullptr, "two");
+	updateUntil(binding, [&binding] { return !binding.sending("field"); });
+	CHECK(read("volume") == -4.0);
+	CHECK(read("pan") == -0.25);
+	CHECK(position() == merged + 2);
+	REQUIRE(client.call("history.undo").ok());
+	CHECK(read("volume") == -4.0);
+	CHECK(read("pan") == 0.5);
 }
 
 TEST_CASE("a control's steps leave no record behind once a read after their last answer was handed on", "[unit]")
@@ -335,6 +350,21 @@ TEST_CASE("a control's record keeps what the control shows while it is ahead, an
 	binding.sendStep(0, "pan", "Change Pan", set("pan", 0.5));
 	CHECK(binding.ahead("pan", 0));
 	CHECK(binding.shown("pan", 0) == nullptr);
+	CHECK(binding.settle(std::chrono::seconds(10)));
+
+	// A step taken and no read since: the next step keeps what the record has, as the project may not have it yet.
+	binding.sendStep(9, "transpose", "Change Transpose", set("volume", -6.0), {}, Json{{"1", "-6"}});
+	updateUntil(binding, [&binding] { return !binding.sending("transpose"); });
+	binding.sendStep(10, "transpose", "Change Transpose", set("volume", -7.0), {}, Json{{"2", "-7"}});
+	REQUIRE(binding.shown("transpose", 0) != nullptr);
+	CHECK(*binding.shown("transpose", 0) == Json{{"1", "-6"}, {"2", "-7"}});
+	// Once a read after its last taken step is in, the project has what the record kept, and an undo since may have
+	// changed it: the next step starts the record's values afresh, also before the record goes (#1550).
+	updateUntil(binding, [&binding] { return !binding.sending("transpose"); });
+	readProject();
+	binding.sendStep(11, "transpose", "Change Transpose", set("volume", -8.0), {}, Json{{"2", "-8"}});
+	REQUIRE(binding.shown("transpose", 0) != nullptr);
+	CHECK(*binding.shown("transpose", 0) == Json{{"2", "-8"}});
 	CHECK(binding.settle(std::chrono::seconds(10)));
 }
 
