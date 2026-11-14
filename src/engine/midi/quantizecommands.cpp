@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -448,6 +449,13 @@ namespace gnubase::engine::midi
 		void resetAudio(ProjectModel& model, Project& project, CommandContext& context, Json& result)
 		{
 			const std::vector<ObjectId> events = audioTargets(project, context.parameters());
+			// The clip frames each target plays before resetting, to find the piece before a removed one.
+			std::map<ObjectId, std::pair<time::Samples, time::Samples>> played;
+			for (const ObjectId id : events)
+			{
+				const AudioEvent& event = project.audioEvents.at(id);
+				played[id] = {event.offset, event.offset + event.length};
+			}
 			Json moved = Json::array();
 			Json removed = Json::array();
 			Json clips = Json::array();
@@ -455,6 +463,9 @@ namespace gnubase::engine::midi
 			{
 				AudioEvent& event = project.audioEvents.at(id);
 				const bool reset = resetEventQuantize(event);
+				// An original crossfade from an event removed since has nothing to come from (#1566).
+				if (reset && event.crossfade.from != 0 && project.audioEvents.count(event.crossfade.from) == 0)
+					event.crossfade = Crossfade();
 				if (reset && event.length == 0)
 				{
 					removed.push_back(id);
@@ -473,13 +484,62 @@ namespace gnubase::engine::midi
 			}
 			if (!removed.empty())
 			{
-				// Removing a piece ends the crossfades from it. An event left out whose crossfade from the piece is
-				// still as the panel left it keeps its origin in step, so that resetting it later still puts back
-				// its crossfade from before quantizing rather than taking the ended one for a change by other means.
+				const auto isRemoved = [&removed](ObjectId id)
+				{ return std::find(removed.begin(), removed.end(), Json(id)) != removed.end(); };
+				// The piece before a removed one: the event of its track and clip that played up to where it starts,
+				// or past it into a crossfade. It is the whole original again, or removed too and then has one of
+				// its own; its clip frames come before the piece's, so the chain ends. 0 without one.
+				const auto pieceBefore = [&](ObjectId id)
+				{
+					while (isRemoved(id))
+					{
+						const AudioEvent& piece = project.audioEvents.at(id);
+						const time::Samples start = played.at(id).first;
+						id = 0;
+						for (const auto& [otherId, other] : project.audioEvents)
+						{
+							const auto found = played.find(otherId);
+							const auto [from, to] = found != played.end()
+								? found->second
+								: std::make_pair(other.offset, other.offset + other.length);
+							if (otherId != piece.id && other.track == piece.track && other.clip == piece.clip &&
+								from < start && to >= start)
+							{
+								id = otherId;
+								break;
+							}
+						}
+					}
+					return id;
+				};
+				// Removing a piece moves the crossfades still from it to the piece before it, which is the whole
+				// original again, as gluing moves them to the event it keeps (#1566): those of events left out or
+				// locked, and those changed by hand since quantizing, which resetting kept as the original. Their
+				// origins follow, so that resetting such an event later still takes its crossfade as the panel left
+				// it and puts back the one from before quantizing. Without a piece before, the crossfade ends, and
+				// the origin takes the ended one as the panel's.
 				for (auto& [other, each] : project.audioEvents)
-					if (each.quantizeOrigin && each.crossfade == each.quantizeOrigin->quantized.crossfade &&
-						std::find(removed.begin(), removed.end(), Json(each.crossfade.from)) != removed.end())
-						each.quantizeOrigin->quantized.crossfade = Crossfade();
+				{
+					if (isRemoved(other))
+						continue;
+					const auto follow = [&](Crossfade& crossfade)
+					{
+						if (!isRemoved(crossfade.from))
+							return false;
+						crossfade.from = pieceBefore(crossfade.from);
+						if (crossfade.from == 0)
+							crossfade = Crossfade();
+						return true;
+					};
+					bool changed = follow(each.crossfade);
+					if (each.quantizeOrigin)
+					{
+						changed = follow(each.quantizeOrigin->original.crossfade) || changed;
+						changed = follow(each.quantizeOrigin->quantized.crossfade) || changed;
+					}
+					if (changed)
+						context.emit("audioEvent.changed", {{"event", toJson(each)}});
+				}
 				model.runEdit("event.remove", project, {{"events", removed}}, context);
 			}
 			result["events"] = std::move(moved);
@@ -686,9 +746,10 @@ namespace gnubase::engine::midi
 				"so the crossfades quantize.crossfade made go and the ones they had before come back, and their "
 				"clips go back to their warp markers before warp quantizing, unless they were changed by other means "
 				"since; returns those events and clips too. Locked events stay as they are, and their clips' warp "
-				"markers too. A piece of an event split "
-				"past its original's length, which the quantize panel added, has nothing of the original to go back "
-				"to and is removed (removed).",
+				"markers too. A piece of an event that the quantize panel made longer than its original, split past "
+				"the original's length, has nothing of the original to go back to and is removed (removed); the "
+				"crossfades from it go to the piece before it. An original crossfade from an event removed since "
+				"doesn't come back.",
 				objectSchema(audioProperties), resetResult, false},
 			"Reset quantize",
 			[&model](Project& project, CommandContext& context)
@@ -841,6 +902,7 @@ namespace gnubase::engine::midi
 				QuantizePreset preset;
 				if (parameters.contains("event"))
 				{
+					require(!parameters.contains("length"), "length goes with part, not with event");
 					const auto id = parameters.at("event").get<ObjectId>();
 					const auto found = project.audioEvents.find(id);
 					require(found != project.audioEvents.end(), "no audio event " + std::to_string(id));
