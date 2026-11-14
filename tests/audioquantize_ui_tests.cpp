@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Audio quantizing in the app (#145, docs/features/audio-quantize.md), driven with ui::Automation as MCP's UI tools
 // drive it: Edit > Quantize and Reset Quantize on the project window's selected audio events, Warp Quantize On/Off in
-// the quantize panel and the toolbar, and the panel's section for several audio tracks: Slice, Create and Crossfade.
+// the quantize panel and the toolbar, the panel's section for several audio tracks: Slice, Create, Crossfade and Nudge
+// Crossfade, and Create Groove Quantize Preset from an audio event.
 // tests/audioquantize_tests.cpp checks the engine's side.
 #include "platform/log.h"
 #include "ui/eventdisplay.h"
@@ -193,6 +194,36 @@ TEST_CASE("the quantize panel slices, quantizes and crossfades several audio tra
 			return std::count_if(now.at("audioEvents").begin(), now.at("audioEvents").end(),
 					   [](const Json& event) { return event.at("crossfade").is_object(); }) == 6;
 		}));
+
+	// Nudge Crossfade Right moves every crossfaded slice's start a millisecond later, Left back again.
+	const std::vector<int64_t> crossfaded = f.positions(f.tracks[0]);
+	f.click("#quantize-nudge-right");
+	CHECK(f.app.waitUntil([&] { return f.positions(f.tracks[0]) != crossfaded; }));
+	const std::vector<int64_t> nudged = f.positions(f.tracks[0]);
+	REQUIRE(nudged.size() == crossfaded.size());
+	for (size_t i = 0; i < nudged.size(); ++i)
+		CHECK((nudged[i] == crossfaded[i] || nudged[i] == crossfaded[i] + 48));
+	f.click("#quantize-nudge-left");
+	CHECK(f.positionsAre(f.tracks[0], crossfaded));
+}
+
+TEST_CASE("Create Groove Quantize Preset makes a groove of the selected audio event's hitpoints", "[ui]")
+{
+	Fixture f;
+	CHECK(!f.app.keys().canRun("edit.createGrooveQuantize", f.app.main(), nullptr));
+	f.display.select({f.events[0]});
+	CHECK(f.app.keys().canRun("edit.createGrooveQuantize", f.app.main(), nullptr));
+	f.app.keys().run("edit.createGrooveQuantize", Json::object(), f.app.main(), nullptr);
+	// A groove of the four hitpoints, which the project's settings then are.
+	CHECK(f.app.waitUntil(
+		[&]
+		{
+			const Json groove = f.settings().at("groove");
+			return groove.is_object() && groove.at("points").size() == 4;
+		}));
+	const Json presets = f.app.call("quantize.presets").at("presets");
+	CHECK(std::any_of(presets.begin(), presets.end(),
+		[&](const Json& preset) { return preset.at("name") == f.app.call("quantize.get").at("preset"); }));
 }
 
 TEST_CASE("a refused Slice in the quantize panel is logged", "[ui]")

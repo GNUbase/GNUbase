@@ -83,16 +83,19 @@ namespace gnubase::app
 				m_keys.bind({each.keys, each.id});
 		}
 
-		// Create Groove Quantize Preset (pp. 373, 376): a groove of the first part it would quantize, which then is the
-		// project's quantize settings.
+		// Create Groove Quantize Preset (pp. 367, 373, 376): a groove of the first part it would quantize, or of the
+		// first selected audio event's hitpoints, which then is the project's quantize settings.
 		m_keys.add({"edit.createGrooveQuantize",
-			"Makes a groove quantize preset of the selected MIDI part's rhythm and quantizes to it.",
+			"Makes a groove quantize preset of the selected MIDI part's rhythm, or of the selected audio event's "
+			"hitpoints, and quantizes to it.",
 			[this](ui::Window& window, Rml::Element* zone)
 			{
 				const QuantizeTarget target = quantizeTarget(window, zone);
-				if (target.parts.empty())
+				if (target.parts.empty() && target.events.empty())
 					return;
-				m_binding.send("quantize.extractGroove", {{"part", target.parts.front().first}},
+				m_binding.send("quantize.extractGroove",
+					target.parts.empty() ? Json{{"event", target.events.front()}}
+										 : Json{{"part", target.parts.front().first}},
 					[this](const engine::Result& result)
 					{
 						if (result.ok())
@@ -101,7 +104,11 @@ namespace gnubase::app
 					});
 			}});
 		m_keys.enableWhen("edit.createGrooveQuantize",
-			[this](ui::Window& window, Rml::Element* zone) { return !quantizeTarget(window, zone).parts.empty(); });
+			[this](ui::Window& window, Rml::Element* zone)
+			{
+				const QuantizeTarget target = quantizeTarget(window, zone);
+				return !target.parts.empty() || !target.events.empty();
+			});
 	}
 
 	AppUi::QuantizeTarget AppUi::quantizeTarget(ui::Window& window, Rml::Element* zone) const

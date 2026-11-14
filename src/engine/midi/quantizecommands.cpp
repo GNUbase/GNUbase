@@ -2,6 +2,7 @@
 #include "engine/midi/quantizecommands.h"
 
 #include "engine/document/audioquantize.h"
+#include "engine/document/hitpoints.h"
 #include "engine/document/projectmodel.h"
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
@@ -823,28 +824,47 @@ namespace gnubase::engine::midi
 				"Makes a groove preset from a MIDI part's rhythm: a groove position at every note start, with the "
 				"highest velocity and the longest length of the notes there. The groove is length ticks long, by "
 				"default the part's length, and the preset is named name, by default after the part. The groove's "
-				"origin is the part's start, so it repeats in phase with the part. Like quantize.savePreset, it "
-				"replaces the user's preset of that name, and quantize.changed announces when another preset is the "
-				"one the project's settings are (see quantize.get).",
-				objectSchema({{"part", idSchema}, {"name", stringSchema}, {"length", idSchema}}, {"part"}),
+				"origin is the part's start, so it repeats in phase with the part. With event instead of part, from "
+				"an audio event's hitpoints that count (Create Groove Quantize Preset, reference manual pp. 367, "
+				"373): a position at each, as long as the event and starting where it does, named by default after "
+				"its clip. Like quantize.savePreset, it replaces the user's preset of that name, and "
+				"quantize.changed announces when another preset is the one the project's settings are (see "
+				"quantize.get).",
+				objectSchema(
+					{{"part", idSchema}, {"event", idSchema}, {"name", stringSchema}, {"length", idSchema}}, {}),
 				presetResult, false},
 			[presets, &model](CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
 				const Project& project = model.project();
-				const ObjectId id = parameters.at("part").get<ObjectId>();
-				const auto found = project.midiParts.find(id);
-				require(found != project.midiParts.end(), "no MIDI part " + std::to_string(id));
-				const MidiPart& part = found->second;
-				const PartSpan span = spanOf(project, part);
-				const auto length = parameters.value("length", span.end - span.start);
-				require(length > 0, "length must be positive");
-				QuantizePreset preset{parameters.value("name", part.name), {}};
-				preset.settings.groove = extractGroove(part, length);
-				// The points are relative to the part's start: the groove repeats from there, in phase with the part.
-				preset.settings.origin = span.start;
-				require(!preset.settings.groove->points.empty(),
-					"MIDI part " + std::to_string(id) + " has no notes to make a groove from");
+				require(parameters.contains("part") != parameters.contains("event"), "give part or event");
+				QuantizePreset preset;
+				if (parameters.contains("event"))
+				{
+					const auto id = parameters.at("event").get<ObjectId>();
+					const auto found = project.audioEvents.find(id);
+					require(found != project.audioEvents.end(), "no audio event " + std::to_string(id));
+					const HitpointGroove made = hitpointGroove(project, found->second);
+					preset.name = parameters.value("name", project.clips.at(found->second.clip).name);
+					preset.settings.groove = made.groove;
+					preset.settings.origin = made.origin;
+				}
+				else
+				{
+					const ObjectId id = parameters.at("part").get<ObjectId>();
+					const auto found = project.midiParts.find(id);
+					require(found != project.midiParts.end(), "no MIDI part " + std::to_string(id));
+					const MidiPart& part = found->second;
+					const PartSpan span = spanOf(project, part);
+					const auto length = parameters.value("length", span.end - span.start);
+					require(length > 0, "length must be positive");
+					preset.name = parameters.value("name", part.name);
+					preset.settings.groove = extractGroove(part, length);
+					// The points are relative to the part's start: the groove repeats from there, in phase with it.
+					preset.settings.origin = span.start;
+					require(!preset.settings.groove->points.empty(),
+						"MIDI part " + std::to_string(id) + " has no notes to make a groove from");
+				}
 				const Json before = settingsResult(project, *presets);
 				presets->save(preset);
 				presets->announce(context);

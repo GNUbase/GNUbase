@@ -25,8 +25,9 @@ and the toolbar's section.
 - **Edit menu.** Quantize (`edit.quantize`, Q), Reset Quantize (`edit.resetQuantize`), Quantize Panel
   (`window.quantizePanel`) and Advanced Quantize: Quantize MIDI Event Lengths (`edit.quantizeLengths`), Quantize MIDI
   Event Ends (`edit.quantizeEnds`), Freeze MIDI Quantize (`edit.freezeQuantize`) and Create Groove Quantize Preset
-  (`edit.createGrooveQuantize`, which makes a preset of the first MIDI part with `quantize.extractGroove` and makes
-  it the project's settings). They are UI commands that send `quantize.apply`, `quantize.reset`, `quantize.lengths`,
+  (`edit.createGrooveQuantize`, which makes a preset of the first MIDI part, or without one of the first selected
+  audio event's hitpoints ([audio-quantize.md](audio-quantize.md)), with `quantize.extractGroove` and makes it the
+  project's settings). They are UI commands that send `quantize.apply`, `quantize.reset`, `quantize.lengths`,
   `quantize.ends` and `quantize.freeze`, so what they do is what MCP and Lua can do.
 - **What they quantize.** Run from an editor (the editor window, the lower zone while it shows the Editor tab, or an
   in-place editor in the project window, [in-place-editor.md](in-place-editor.md)), the

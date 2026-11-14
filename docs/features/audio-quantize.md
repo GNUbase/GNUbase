@@ -87,6 +87,7 @@ commands on the events of several tracks. Each is one undo step.
 | `quantize.slice` | Cuts every event `offset` ms before each position, gives each slice that starts there its snap point at the position and clears the snap point of every other slice | pp. 370, 378-379 |
 | `quantize.createWarpMarkers` | Adds a warp marker at each position to every event's clip, changing nothing until it is quantized | pp. 371-372, 379-380 |
 | `quantize.crossfade` | On each track: an event overlapping the next ends where it starts, an event after a gap starts where the one before ends, then each goes `length` ms into the next with a crossfade. `quantize.reset` undoes all of it | pp. 367, 379 |
+| `quantize.nudgeCrossfade` | Moves each crossfade into one of the events by `amount` ms (default 1, negative earlier): the end of the event before and the start of the event alike, so the crossfade keeps its length. `quantize.reset` undoes it too | p. 379 |
 
 The positions are the hitpoints that count of the events' clips: those of the tracks with the highest priority
 (`priorities`, 0 to 5 per track, default 1; 0 leaves a track out), then those of the others with none of a higher
@@ -104,6 +105,20 @@ Quantize resets the length changes made in the quantize panel too (p. 367), and 
 What the user changed by hand since is not: resetting only puts back a part of the event that still is where the panel
 left it.
 
+`quantize.nudgeCrossfade` moves the audio a crossfade plays, for example off an attack that the slices' Offset didn't
+keep clear (p. 379): the event the crossfade comes from ends that much earlier or later, and the event it goes into
+starts there, playing its clip from that much earlier or later. A crossfade moves only as far as both clips have audio
+and it still plays, so a step that would take it past either clip's start or end leaves it where it is; locked events
+stay. It records what it changed in the events' origins as `quantize.crossfade` does, so resetting still puts every
+slice back.
+
+## Groove quantize presets from hitpoints
+
+`quantize.extractGroove` makes a groove preset of an audio event's hitpoints that count with `event` instead of a MIDI
+part (Create Groove Quantize Preset, pp. 367, 373): a groove position at each, the groove as long as the event and
+repeating from its start, named by default after its clip. It is the groove `event.fromHitpoints` with `groove` makes
+the project's settings ([hitpoints.md](hitpoints.md)), kept as a preset, so it is on every Quantize Presets menu.
+
 ## In the UI
 
 `src/app/appquantize.cpp` and `ui::QuantizePanel` (`src/ui/quantizepanel.h`), as for MIDI ([quantize.md](quantize.md)):
@@ -119,15 +134,17 @@ left it.
   (`#quantize-offset`) in ms, Slice (`#quantize-slice`), or with warp quantizing on Create
   (`#quantize-create-markers`; the other one is `.hidden`), and Crossfade Length (`#quantize-crossfade-length`) with
   Crossfade (`#quantize-crossfade`). Each sends its engine command with the selected audio events and those of the
-  selected audio parts, every track at priority 1.
+  selected audio parts, every track at priority 1. Nudge Crossfade Left and Right (`#quantize-nudge-left`,
+  `#quantize-nudge-right`, next to Crossfade) send `quantize.nudgeCrossfade` with -1 and 1 ms.
+- **Edit > Advanced Quantize > Create Groove Quantize Preset** (`edit.createGrooveQuantize`) takes the first selected
+  audio event when no MIDI part is selected, and makes its groove the project's settings, as for a MIDI part.
 
 ## Not yet
 
 Group editing of folder tracks (the commands take the events, of any tracks); the panel's Hitpoint Tracks list with
 each track's priority (the engine takes `priorities`); Slice Rules' Reset (undo does it) and
-cutting positions shown in the project window; Nudge Crossfade Left/Right and the crossfade editor of the Crossfades
-section; quantizing a selection range of an event; Create Groove Quantize Preset from an audio event's hitpoints in
-the Edit menu (`event.fromHitpoints` with `groove` makes it).
+cutting positions shown in the project window; Open Crossfade Editor in the Crossfades section; quantizing a
+selection range of an event; the quantize functions on the sample editor's toolbar.
 
 ## Checks
 
@@ -151,6 +168,9 @@ and with the piece's end trimmed by hand, which keeps it; resetting keeping a cr
 while the one the Crossfade step made goes, also across a save and a load and from the piece after a split of the event
 it comes from; resetting keeping an end trimmed and a crossfade made by hand after quantizing, and an end trimmed by
 hand on a slice the step stretched; resetting leaving a locked event where quantizing left it; a project file whose
-origins keep no offset or length yet; warp markers for several tracks of the same priority.
+origins keep no offset or length yet; warp markers for several tracks of the same priority; Nudge Crossfade right,
+left and back, with reset after it, not past a clip's start and not with a locked event; a groove preset from an audio
+event's hitpoints that then quantizes another event, its name and its errors.
 `tests/audioquantize_ui_tests.cpp` drives the app with `ui::Automation`: Edit > Quantize and Reset Quantize on a
-selected audio event, Warp Quantize On/Off, and the panel's Slice, Apply, Crossfade and Create on two tracks.
+selected audio event, Warp Quantize On/Off, the panel's Slice, Apply, Crossfade, Nudge Crossfade and Create on two
+tracks, and Create Groove Quantize Preset from a selected audio event.
