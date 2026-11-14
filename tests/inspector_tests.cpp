@@ -202,6 +202,103 @@ TEST_CASE("the info line shows the first selected part, and its edits change eve
 	CHECK(window.app.waitUntil([&] { return hasClass(window.app, "#info-line", "empty"); }));
 }
 
+TEST_CASE("the info line shows the note an in-place editor has selected, and edits it", "[ui]")
+{
+	// Reference manual p. 1259: the same information the key editor's info line shows, and its value editing
+	// (p. 1140): relative to the first note, with Ctrl+Enter the same value for all.
+	Window window;
+	const uint64_t midi = window.addTrack({{"type", "midi"}});
+	const uint64_t part = window.addPart(midi, 0, 4 * g_quarter, "Keys");
+	const Json added = window.call("note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", g_quarter}, {"length", g_quarter}, {"pitch", 60}, {"velocity", 0.5}},
+					{{"position", 2 * g_quarter}, {"length", g_quarter}, {"pitch", 64}, {"velocity", 0.5},
+						{"channel", 3}, {"releaseVelocity", 0.25}}}}});
+	REQUIRE(window.app.waitUntil([&] { return window.part(part).at("notes").size() == 2; }));
+	const uint64_t first = added.at("notes").at(0).at("id").get<uint64_t>();
+	const uint64_t second = added.at("notes").at(1).at("id").get<uint64_t>();
+	const auto noteOf = [&](uint64_t id)
+	{
+		const Json shown = window.part(part); // the temporary must outlive the loop over its notes
+		for (const Json& note : shown.at("notes"))
+			if (note.at("id") == id)
+				return note;
+		return Json(nullptr);
+	};
+	const std::string editor = "inPlace:" + std::to_string(midi);
+	const auto select = [&](const Json& notes)
+	{ window.call("editor.set", {{"editor", editor}, {"selection", notes}}); };
+	window.call("editor.inPlace", {{"tracks", {midi}}, {"open", true}});
+	REQUIRE(window.app.waitUntil(
+		[&] { return window.call("editor.get", {{"editor", editor}}).value("open", false) == true; }));
+
+	// One note selected: the info line shows it as the key editor's info line does; the other fields are
+	// unavailable.
+	select(Json::array({{{"part", part}, {"note", first}}}));
+	REQUIRE(window.shows("#info-line textdisplay[field=start]", "1.2.1.0"));
+	CHECK_FALSE(hasClass(window.app, "#info-line", "empty"));
+	CHECK(attribute(window.app, "#info-line textdisplay[field=end]", "value") == "1.3.1.0");
+	CHECK(attribute(window.app, "#info-line textdisplay[field=length]", "value") == "0.1.0.0");
+	CHECK(attribute(window.app, "#info-line textdisplay[field=pitch]", "value") == "C3");
+	CHECK(attribute(window.app, "#info-line valuefield[field=velocity]", "value") == "64");
+	CHECK(attribute(window.app, "#info-line textdisplay[field=releaseVelocity]", "value") == "64");
+	CHECK(attribute(window.app, "#info-line textdisplay[field=channel]", "value") == "1");
+	CHECK(hasClass(window.app, "#info-line [info-field=name]", "unavailable"));
+	CHECK(hasClass(window.app, "#info-line [info-field=volume]", "unavailable"));
+	CHECK(hasClass(window.app, "#info-line [info-field=mute]", "unavailable"));
+	CHECK(hasClass(window.app, "#info-line [info-field=transpose]", "unavailable"));
+	CHECK(hasClass(window.app, "#info-line [info-field=rootKey]", "unavailable"));
+
+	// Two notes: the one that starts first shows, in the multiple color.
+	select(Json::array({{{"part", part}, {"note", second}}, {{"part", part}, {"note", first}}}));
+	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, "#info-line", "multiple"); }));
+	CHECK(attribute(window.app, "#info-line textdisplay[field=pitch]", "value") == "C3");
+	const auto steps = window.historyPosition();
+
+	// A pitch typed moves both notes by as much, as one undo step; with Ctrl+Enter both get the value typed.
+	window.type("#info-line textdisplay[field=pitch]", "D3");
+	REQUIRE(window.app.waitUntil([&] { return noteOf(first).at("pitch") == 62; }));
+	CHECK(noteOf(second).at("pitch") == 66);
+	CHECK(window.historyPosition() == steps + 1);
+	REQUIRE(window.shows("#info-line textdisplay[field=pitch]", "D3"));
+	window.type("#info-line textdisplay[field=pitch]", "C3", "Ctrl+Enter");
+	REQUIRE(window.app.waitUntil([&] { return noteOf(second).at("pitch") == 60; }));
+	CHECK(noteOf(first).at("pitch") == 60);
+
+	// A velocity typed moves both by as much; a channel is set for all; a start moves both.
+	window.type("#info-line valuefield[field=velocity]", "100");
+	REQUIRE(window.app.waitUntil([&] { return noteOf(first).at("velocity").get<double>() > 0.78; }));
+	CHECK(noteOf(second).at("velocity").get<double>() == noteOf(first).at("velocity").get<double>());
+	REQUIRE(window.shows("#info-line valuefield[field=velocity]", "100"));
+	window.type("#info-line textdisplay[field=channel]", "5");
+	REQUIRE(window.app.waitUntil([&] { return noteOf(first).at("channel") == 4; }));
+	CHECK(noteOf(second).at("channel") == 4);
+	window.type("#info-line textdisplay[field=start]", "1.3.1.0");
+	REQUIRE(window.app.waitUntil([&] { return noteOf(first).at("position") == 2 * g_quarter; }));
+	CHECK(noteOf(second).at("position") == 3 * g_quarter);
+	REQUIRE(window.shows("#info-line textdisplay[field=start]", "1.3.1.0"));
+
+	// Undo takes the last edit back.
+	window.call("history.undo");
+	REQUIRE(window.app.waitUntil([&] { return noteOf(first).at("position") == g_quarter; }));
+
+	// A part selected in the project window wins; the editor's next selection change shows its notes again,
+	// and an empty one leaves the part.
+	window.display.select({part});
+	REQUIRE(window.shows("#info-line textdisplay[field=name]", "Keys"));
+	select(Json::array({{{"part", part}, {"note", first}}}));
+	REQUIRE(window.shows("#info-line textdisplay[field=pitch]", "C3"));
+	select(Json::array());
+	REQUIRE(window.shows("#info-line textdisplay[field=name]", "Keys"));
+
+	// The editor closing ends its notes; a new selection shows them again.
+	select(Json::array({{{"part", part}, {"note", first}}}));
+	REQUIRE(window.shows("#info-line textdisplay[field=pitch]", "C3"));
+	window.call("editor.inPlace", {{"tracks", {midi}}, {"open", false}});
+	REQUIRE(window.shows("#info-line textdisplay[field=name]", "Keys"));
+}
+
 TEST_CASE("Ctrl+Enter in the info line takes the first part's own value for all, and only that take", "[ui]")
 {
 	Window window;
@@ -692,8 +789,8 @@ TEST_CASE("the info line's setup pane shows, hides and orders its fields, with p
 	ui::Docking& docking = window.app.appUi().docking();
 	const std::vector<std::string> defaults = docking.sections("project", "infoLine");
 	CHECK(defaults ==
-		std::vector<std::string>{"name", "start", "end", "length", "volume", "mute", "lock", "transpose", "velocity",
-			"rootKey", "globalTranspose"});
+		std::vector<std::string>{"name", "start", "end", "length", "pitch", "volume", "mute", "lock", "transpose",
+			"velocity", "releaseVelocity", "channel", "rootKey", "globalTranspose"});
 	const auto openPane = [&window]
 	{
 		if (!hasClass(window.app, "#info-line-setup", "open"))
