@@ -172,6 +172,27 @@ namespace gnubase::engine
 		syncMixers(project, context, mixer);
 	}
 
+	void followTrackFolders(Project& project, CommandContext& context)
+	{
+		TrackVisibility& visibility = project.trackVisibility;
+		bool changed = false;
+		const auto close = [&project, &changed](std::vector<ObjectId>& ids)
+		{
+			std::vector<ObjectId> all = withInside(project, ids);
+			if (all == ids)
+				return;
+			ids = std::move(all);
+			changed = true;
+		};
+		close(visibility.hidden);
+		for (VisibilityConfiguration& configuration : visibility.configurations)
+			close(configuration.hidden);
+		if (!changed)
+			return;
+		context.emit("trackVisibility.changed", visibilityJson(project));
+		syncMixers(project, context);
+	}
+
 	void sanitizeTrackVisibility(Project& project)
 	{
 		TrackVisibility& visibility = project.trackVisibility;
@@ -211,7 +232,8 @@ namespace gnubase::engine
 			{"required", {"hidden", "sync", "configurations", "configuration", "modified"}}};
 		const std::string text =
 			"hidden: the tracks (by id) the project window's track list and event display don't show; the tracks "
-			"inside a folder in it hide with it, nested ones too, and join the list. sync: the mixer window (window1 "
+			"inside a folder in it hide with it, nested ones too, also those that join it later, and join the list. "
+			"sync: the mixer window (window1 "
 			"to window4) whose channel visibility follows the tracks', and back (Sync Visibility of Project and "
 			"Mixer), or empty; the lower zone's mixer always follows, so a hidden track's channel is hidden in it, "
 			"and a channel hidden there hides its track. "
@@ -228,8 +250,8 @@ namespace gnubase::engine
 			{"trackVisibility.set", 1,
 				"Changes what the project window hides; what isn't given stays. " + text +
 					" configurations replaces the list; names are unique and not empty. Without the active one in it, "
-					"none is active. configuration makes one active and, without hidden, hides its tracks, with the "
-					"tracks that joined its folders since, which become its own. A setting, not an undo step, saved "
+					"none is active. configuration makes one active and, without hidden, hides its tracks. A setting, "
+					"not an undo step, saved "
 					"with the project. Emits trackVisibility.changed, and mixer.changed for the mixers that follow.",
 				{{"type", "object"},
 					{"properties",
@@ -265,13 +287,9 @@ namespace gnubase::engine
 						{ return item.name == visibility.configuration; });
 					require(visibility.configuration.empty() || configuration != visibility.configurations.end(),
 						"no configuration " + visibility.configuration);
-					// Applied, the tracks that joined its folders since are the configuration's too, so that it doesn't
-					// show as modified right after (#1366).
+					// With the ids of removed tracks, which an undo brings back (#1475).
 					if (configuration != visibility.configurations.end() && !parameters.contains("hidden"))
-					{
-						configuration->hidden = withInside(project, existing(project, configuration->hidden));
 						visibility.hidden = configuration->hidden;
-					}
 				}
 				if (parameters.contains("hidden"))
 					visibility.hidden = withInside(project, tracksFrom(project, parameters.at("hidden")));

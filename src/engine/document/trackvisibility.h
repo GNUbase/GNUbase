@@ -19,6 +19,11 @@ namespace gnubase::engine
 	// theirs. Emits trackVisibility.changed and mixer.changed for what changed.
 	void followMixer(Project& project, const std::string& mixer, CommandContext& context);
 
+	// After every edit and undo step: a track that joined a hidden folder, by track.add, track.move or the undo step,
+	// joins the tracks hidden and the configurations with the folder, and the mixers that follow hide its channel
+	// (#1475). Emits trackVisibility.changed and mixer.changed for what changed.
+	void followTrackFolders(Project& project, CommandContext& context);
+
 	// What a loaded project keeps of its trackVisibility, once its tracks are there: the checks trackVisibility.set
 	// makes, so an unknown sync, configurations without a name or with a name twice, an active name that isn't there
 	// and ids that aren't tracks don't come in, and hidden folders come in with the tracks inside them (#906). The
