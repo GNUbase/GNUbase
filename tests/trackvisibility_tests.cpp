@@ -261,6 +261,13 @@ TEST_CASE("a hidden folder hides the tracks inside it in the mixers that follow,
 	CHECK(f.hidden() == sorted({folder, nested, guitar, keys}));
 	CHECK(f.mixerHidden("lower") == sorted({group, guitarChannel, keysChannel}));
 
+	// Showing the folder's group channel again shows the tracks inside it too, and the mixers that follow show their
+	// channels (#1366).
+	f.call("mixer.set", {{"mixer", "window1"}, {"hidden", sorted({guitarChannel, keysChannel})}});
+	CHECK(f.hidden().empty());
+	CHECK(f.mixerHidden("window1").empty());
+	CHECK(f.mixerHidden("lower").empty());
+
 	// A configuration with the folder keeps the tracks inside it with it, and applying it hides them.
 	f.call("trackVisibility.set", {{"sync", ""}, {"hidden", Json::array()}});
 	f.call("trackVisibility.set",
@@ -268,6 +275,17 @@ TEST_CASE("a hidden folder hides the tracks inside it in the mixers that follow,
 	CHECK(f.hidden() == sorted({folder, nested, guitar, keys}));
 	CHECK(f.visibility().at("configurations") ==
 		Json{{{"name", "Without Band"}, {"hidden", sorted({folder, nested, guitar, keys})}}});
+
+	// A track that joined the folder since is the configuration's too once it is applied, which then doesn't show as
+	// modified (#1366).
+	f.call("trackVisibility.set", {{"hidden", Json::array()}});
+	const uint64_t drums =
+		f.call("track.add", {{"type", "audio"}, {"parent", folder}, {"index", 0}}).at("track").at("id").get<uint64_t>();
+	const Json applied = f.call("trackVisibility.set", {{"configuration", "Without Band"}});
+	CHECK(applied.at("hidden") == sorted({folder, nested, guitar, keys, drums}));
+	CHECK(applied.at("modified") == false);
+	CHECK(applied.at("configurations") ==
+		Json{{{"name", "Without Band"}, {"hidden", sorted({folder, nested, guitar, keys, drums})}}});
 }
 
 // #906: what a file has for the track visibility is checked on load as trackVisibility.set checks it: an unknown sync,
@@ -306,8 +324,7 @@ TEST_CASE("the track visibility from a file is checked like trackVisibility.set 
 	CHECK(f.visibility().at("configuration") == "");
 	// The unknown sync didn't make a mixer view of its own, which the project would save.
 	CHECK(!f.call("project.get").at("mixers").contains("bogus"));
-	// The lower zone's mixer follows the loaded visibility.
-	f.call("trackVisibility.set", {{"hidden", {folder}}});
+	// The lower zone's mixer follows the loaded visibility, with the tracks that joined it from their folder (#1366).
 	CHECK(f.mixerHidden("lower") == sorted({group, guitarChannel}));
 
 	// Values of the wrong JSON types are left out, not refused.
