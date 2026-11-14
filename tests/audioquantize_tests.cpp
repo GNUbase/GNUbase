@@ -730,54 +730,69 @@ TEST_CASE("Reset Quantize undoes what the panel's Crossfade step changed", "[int
 		CHECK(crossfades(client) == 0);
 	}
 
-	SECTION("splitting a slice inside the part the Crossfade step added to it leaves the piece after without an origin")
+	SECTION("resetting removes a piece split off inside the part the Crossfade step added")
 	{
 		// The step grew the first slice by the crossfade into the next one: it is {0, 0, 6056}, its original was
 		// {0, 0, 5960}. A split at 6000 falls inside the added part, past the end of the original's content, so
-		// there is nothing of the original left for the piece after it: that piece keeps no origin and stays where
-		// it is, as a piece of an event moved by other means since does, the piece before it resets to the whole
-		// original slice, and no event may come out of a reset with a length of zero or less (#1333).
+		// there is nothing of the original left for the piece after it: its original has no length. Resetting
+		// returns to the original, unquantized state and resets the panel's length changes (reference manual
+		// p. 367), so that piece goes, in the same undo step, and the piece before it is the whole original slice
+		// again (#1435).
 		const ObjectId firstSlice = sliced.at("events").at(0).get<ObjectId>();
 		REQUIRE(eventsOn(client, loop.track).at(0) == std::vector<int64_t>{0, 0, 6056});
 		const Json pieces = run(client, "event.split", {{"events", {firstSlice}}, {"positions", {6000}}}).at("events");
 		REQUIRE(pieces.size() == 1);
 		const auto right = pieces.at(0).get<ObjectId>();
-		CHECK(!byId(client, "audioEvents", right).contains("quantizeOrigin"));
+		CHECK(byId(client, "audioEvents", right).at("quantizeOrigin") ==
+			Json({{"original", originState(6000, 6000, 0)}, {"quantized", originState(6000, 6000, 56)}}));
+		const std::vector<std::vector<int64_t>> split = eventsOn(client, loop.track);
 
 		Json events = sliced.at("events");
 		events.push_back(right);
-		run(client, "quantize.reset", {{"events", events}});
-		const std::vector<std::vector<int64_t>> after = eventsOn(client, loop.track);
-		for (const std::vector<int64_t>& each : after)
-			CHECK(each.at(2) > 0);
-		CHECK(after ==
-			std::vector<std::vector<int64_t>>{{0, 0, 5960}, {5960, 5960, 19400}, {6000, 6000, 56},
-				{25360, 25360, 21700}, {47060, 47060, 25500}, {72560, 72560, 23440}});
+		const Json reset = run(client, "quantize.reset", {{"events", events}});
+		CHECK(reset.at("removed") == Json::array({right}));
+		CHECK(eventsOn(client, loop.track) == before);
 		CHECK(crossfades(client) == 0);
+
+		run(client, "history.undo");
+		CHECK(eventsOn(client, loop.track) == split);
+		CHECK(crossfades(client) == 4);
 	}
 
-	SECTION("a crossfade into the next slice follows a split that leaves the piece after without an origin")
+	SECTION("a locked piece split off inside the added part stays")
 	{
-		// A split at 5960 falls exactly at the end of the first slice's original: the piece after it keeps no
-		// origin, but the second slice starts there, so its crossfade from the first follows the split onto that
-		// piece all the same, and its origin's crossfades follow with it: resetting still tells the crossfade the
-		// panel made from one made by hand and takes it out (#1333).
+		const ObjectId firstSlice = sliced.at("events").at(0).get<ObjectId>();
+		const auto right = run(client, "event.split", {{"events", {firstSlice}}, {"positions", {6000}}})
+							   .at("events")
+							   .at(0)
+							   .get<ObjectId>();
+		run(client, "event.set", {{"events", {right}}, {"lock", true}});
+		Json events = sliced.at("events");
+		events.push_back(right);
+		const Json reset = run(client, "quantize.reset", {{"events", events}});
+		CHECK(reset.at("removed").empty());
+		CHECK(eventsOn(client, loop.track) ==
+			std::vector<std::vector<int64_t>>{{0, 0, 5960}, {5960, 5960, 19400}, {6000, 6000, 56},
+				{25360, 25360, 21700}, {47060, 47060, 25500}, {72560, 72560, 23440}});
+	}
+
+	SECTION("a crossfade into the next slice follows a split at the original's end, which resetting removes")
+	{
+		// A split at 5960 falls exactly at the end of the first slice's original: the piece after it has nothing
+		// of the original, but the second slice starts there, so its crossfade from the first follows the split
+		// onto that piece all the same (#1333). Resetting removes the piece and takes out the crossfade the panel
+		// made (#1435).
 		const ObjectId firstSlice = sliced.at("events").at(0).get<ObjectId>();
 		const Json pieces = run(client, "event.split", {{"events", {firstSlice}}, {"positions", {5960}}}).at("events");
 		REQUIRE(pieces.size() == 1);
 		const auto right = pieces.at(0).get<ObjectId>();
-		CHECK(!byId(client, "audioEvents", right).contains("quantizeOrigin"));
 		REQUIRE(crossfadeOf(client, sliced.at("events").at(1).get<ObjectId>()).at("from") == right);
 
 		Json events = sliced.at("events");
 		events.push_back(right);
-		run(client, "quantize.reset", {{"events", events}});
-		const std::vector<std::vector<int64_t>> after = eventsOn(client, loop.track);
-		for (const std::vector<int64_t>& each : after)
-			CHECK(each.at(2) > 0);
-		CHECK(after ==
-			std::vector<std::vector<int64_t>>{{0, 0, 5960}, {5960, 5960, 96}, {5960, 5960, 19400},
-				{25360, 25360, 21700}, {47060, 47060, 25500}, {72560, 72560, 23440}});
+		const Json reset = run(client, "quantize.reset", {{"events", events}});
+		CHECK(reset.at("removed") == Json::array({right}));
+		CHECK(eventsOn(client, loop.track) == before);
 		CHECK(crossfades(client) == 0);
 	}
 
@@ -886,6 +901,46 @@ TEST_CASE("Reset Quantize keeps a crossfade the event had before quantizing", "[
 		CHECK(kept.at("mode") == "equalPower");
 		CHECK(!crossfadeOf(client, third).is_object());
 	}
+}
+
+TEST_CASE(
+	"Reset Quantize removes a piece split off past the original and keeps the crossfade before it", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	// Two overlapping events, the first crossfading into the second by hand before quantizing. Quantizing opens a
+	// gap between them, which the panel's Crossfade step closes by stretching the second's start back to the
+	// first's end, and then the first grows into the second by the crossfade. A split at the end of the first's
+	// original leaves a piece with nothing of the original, which the second's crossfade now comes from. Resetting
+	// removes that piece (#1435) and the hand-made crossfade comes back from the piece before it, which is the
+	// whole original again (reference manual p. 367).
+	const Track loop = addTrack(client, dir, "loop", clicks({1000}, 4 * g_quarter));
+	const ObjectId first = loop.add(client, 1000, 0, 20000);
+	const ObjectId second = loop.add(client, 19000, 18000, 30000);
+	run(client, "crossfade.set", {{"from", first}, {"to", second}, {"mode", "equalPower"}});
+	const std::vector<std::vector<int64_t>> before = eventsOn(client, loop.track);
+	run(client, "quantize.set", {{"preset", "1/4"}});
+	const Json events = Json::array({first, second});
+	run(client, "quantize.apply", {{"events", events}});
+	run(client, "quantize.crossfade", {{"events", events}});
+	REQUIRE(eventsOn(client, loop.track).at(1) == std::vector<int64_t>{20000, 14000, 34000});
+	REQUIRE(eventsOn(client, loop.track).at(0).at(2) > 20000);
+
+	const Json pieces = run(client, "event.split", {{"events", {first}}, {"positions", {20000}}}).at("events");
+	REQUIRE(pieces.size() == 1);
+	const auto right = pieces.at(0).get<ObjectId>();
+	REQUIRE(crossfadeOf(client, second).at("from") == right);
+
+	Json all = events;
+	all.push_back(right);
+	const Json reset = run(client, "quantize.reset", {{"events", all}});
+	CHECK(reset.at("removed") == Json::array({right}));
+	CHECK(eventsOn(client, loop.track) == before);
+	const Json kept = crossfadeOf(client, second);
+	REQUIRE(kept.is_object());
+	CHECK(kept.at("from") == first);
+	CHECK(kept.at("mode") == "equalPower");
 }
 
 TEST_CASE("Reset Quantize keeps an end trimmed by hand after quantizing", "[integration]")
