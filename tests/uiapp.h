@@ -146,6 +146,10 @@ namespace gnubase::test
 		// answers. Returns the control's value.
 		double move(int steps, int direction, int perAnswer = 1);
 
+		// Moves the mouse by one step of two pixels, down (1) or up (-1), without waiting for the engine, e.g. while
+		// the test holds it.
+		void nudge(int direction);
+
 		// Releases the button. If stays, checks that the control then stays where the drag left it while the engine
 		// answers late; it doesn't if another client set its value during the drag.
 		void release(bool stays = true);
