@@ -43,7 +43,9 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   shows an older read again, such as the inspector after a track change, shows the value that the control sent last
   (#1305): the inspector shows every track in the same fields, so it keeps that value by step key, which names the
   channel, and back on a dragged track the field shows the drag's value, not the other track's (#1421). The info line's
-  step keys name the selected events, so other events selected meanwhile show their own values. A view showing what that
+  step keys name the selected events, so other events selected meanwhile show their own values, and it keeps the values
+  its fields sent by step key the same way: back on the dragged events the field shows the drag's value. A view showing
+  what that
   update handed on still asks `sending` and `ahead` about it, and a later gesture makes the record again. The records go
   only while some view reads the project, as the event display does: a binding without
   one keeps them all for the session, and a view that asks `ahead` about another query's answer than `project.get`'s
@@ -128,7 +130,8 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   flight shows the engine's volume at once, not the widget's default. With the engine held behind a drag's last step
   (`test::CommandHolds`), so that the display shows a read from before it: the inspector shows another audio track's own
   volume in the dragged field, and back on the dragged track the drag's value; the info line shows another audio event's
-  own volume, not the dragged event's. One test changes the transport through MCP and
+  own volume, not the dragged event's, and back on the dragged event, answered after the last step while the read after
+  it is held, the drag's value. One test changes the transport through MCP and
   checks a document shows it, then clicks the document's button and finds the command in `engine.commandLog`, sent by
   `ui`. Two more check drawing without input: a watched value draws its own window in the step it changed in, and no
   other window; events from MCP, results (a command's `done` or an `onResult` handler) and posted work draw every window

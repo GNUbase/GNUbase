@@ -1343,6 +1343,9 @@ TEST_CASE("the info line shows another event's own volume while a dragged one's 
 	test::CommandHolds holds; // declared before the window: its engine's command thread waits in hold()
 	Window window;
 	const test::ReleaseHolds releaseHolds{holds};
+	// Without the inspector: it reads the in-place editors (editor.inPlace, not a query) for each history.changed,
+	// which sends a waiting step at once, before the display's read for the step before.
+	window.app.appUi().docking().setTabHidden("inspector", true);
 	window.app.engine().registerCommand(
 		{"test.hold", 1, "Waits for the test to release it.", engine::CommandInfo{}.parameters, Json::object(), false},
 		[&holds](engine::CommandContext&) { return holds.hold(); });
@@ -1368,19 +1371,37 @@ TEST_CASE("the info line shows another event's own volume while a dragged one's 
 	const std::string field = "#info-line valuefield[field=volume]";
 	REQUIRE(window.shows(field, "0"));
 	ui::EngineBinding& binding = window.app.appUi().binding();
+	// The dragged event's volume in the project that the event display, and with it the info line, shows.
+	const auto shown = [&]
+	{
+		const Json& events = window.display.project().at("audioEvents");
+		const auto found = std::find_if(
+			events.begin(), events.end(), [dragged](const Json& each) { return each.at("id") == dragged; });
+		REQUIRE(found != events.end());
+		return found->at("volume").get<double>();
+	};
 
-	// A drag while the engine answers late, and its last step while the test holds the engine.
+	// A drag while the engine answers late, and two steps while the test holds the engine: the first goes behind the
+	// hold, the last waits in the binding.
 	test::LateDrag drag(window.app, std::nullopt, field);
 	drag.move(15, 1);
-	REQUIRE(window.app.waitUntil([&] { return binding.waiting("history.transaction") == 0; }));
+	// Once the reads after it, and what they send, are answered: no other command goes out while the steps wait.
+	REQUIRE(window.app.waitUntil(
+		[&]
+		{
+			return binding.waiting("history.transaction") == 0 && binding.waiting("project.get") == 0 &&
+				binding.waiting("editor.inPlace") == 0;
+		}));
 	holder.send("test.hold");
 	REQUIRE(holds.waitEntered(1));
 	drag.nudge(1);
+	drag.nudge(1);
 	const double value = drag.value();
 	drag.release(false);
-	// The other event, asked for (event.get) after the last step. A second hold after that question keeps the
-	// project read that the display sends for the step's history.changed out: the display shows a read from before
-	// the last step (#1305).
+	REQUIRE(binding.waiting("history.transaction") == 1);
+	// The other event, asked for (event.get), a query, so before the last step. A second hold after that question
+	// keeps the project read that the display sends for the first step's history.changed out, and the last step
+	// goes behind it.
 	window.display.select({other});
 	window.app.shell().step(std::chrono::milliseconds(0));
 	REQUIRE(binding.waiting("event.get") != 0);
@@ -1390,12 +1411,25 @@ TEST_CASE("the info line shows another event's own volume while a dragged one's 
 	CHECK(window.shows(field, "3")); // its own, not the dragged event's
 	REQUIRE(binding.waiting("project.get") != 0);
 
-	// Back on the dragged event, the field shows where the drag left it, and so does the engine.
+	// Back on the dragged event, asked for after the last step. A third hold keeps the project read after the last
+	// step out: the display shows the read after the first one, and the field where the drag left it, not the other
+	// event's volume (#1421).
 	window.display.select({dragged});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(binding.waiting("event.get") != 0);
+	holder.send("test.hold");
 	holds.release(2);
-	REQUIRE(window.app.waitUntil(
-		[&] { return window.find("audioEvents", dragged).at("volume") == Catch::Approx(value).margin(1e-5); }));
+	REQUIRE(holds.waitEntered(3));
 	CHECK(window.app.waitUntil([&] { return drag.value() == Catch::Approx(value).margin(1e-5); }));
+	REQUIRE(binding.waiting("history.transaction") == 0);
+	REQUIRE(binding.waiting("project.get") != 0);
+	REQUIRE(shown() != Catch::Approx(value).margin(1e-5));
+
+	// The read after the last step agrees with it, and so does the engine.
+	holds.release(3);
+	REQUIRE(window.app.waitUntil([&] { return shown() == Catch::Approx(value).margin(1e-5); }));
+	CHECK(drag.value() == Catch::Approx(value).margin(1e-5));
+	CHECK(window.find("audioEvents", dragged).at("volume") == Catch::Approx(value).margin(1e-5));
 	CHECK(window.find("audioEvents", other).at("volume") == 3.0);
 }
 
