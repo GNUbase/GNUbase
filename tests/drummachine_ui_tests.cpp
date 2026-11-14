@@ -4,14 +4,17 @@
 // selects a pad and sets its parameters and the global ones, renames, copies, cuts, pastes and resets pads, loads a
 // dropped file onto a pad, and the add track dialog's Drum page adds drum tracks. tests/drummachine_tests.cpp checks
 // the engine's side.
+#include "testutils/commandholds.h"
 #include "uiapp.h"
 
 #include "engine/engine.h"
 #include "ui/automation.h"
+#include "ui/enginebinding.h"
 #include "ui/shell.h"
 #include "ui/tracklist.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -22,6 +25,7 @@
 #include <vector>
 
 using namespace gnubase;
+using Catch::Matchers::WithinAbs;
 using engine::Json;
 
 namespace
@@ -176,6 +180,60 @@ TEST_CASE("the drum machine panel shows the selected drum track's pads and sets 
 	// Another track: the panel is empty.
 	f.select(f.audio);
 	REQUIRE(f.app.waitUntil([&] { return f.has("#drum-machine", "empty"); }));
+}
+
+TEST_CASE("the drum machine panel shows another track's own value while a turned one's last step is out, and back on "
+		  "it the turn's",
+	"[ui]")
+{
+	test::CommandHolds holds; // declared before the app: its engine's command thread waits in hold()
+	Fixture f;
+	const test::ReleaseHolds releaseHolds{holds};
+	f.app.engine().registerCommand(
+		{"test.hold", 1, "Waits for the test to release it.", engine::CommandInfo{}.parameters, Json::object(), false},
+		[&holds](engine::CommandContext&) { return holds.hold(); });
+	engine::Client holder(f.app.engine(), "holder");
+	const Json created = f.app.call("drum.create");
+	const uint64_t other = created.at("track").at("id").get<uint64_t>();
+	const uint32_t id = (36 * g_padStride) + g_level;
+	f.app.call("parameter.set",
+		{{"channel", created.at("channel").at("id")}, {"target", {{"type", "instrument"}, {"parameter", id}}},
+			{"value", -12.0}});
+	f.open();
+	const std::string level = "#drum-parameter-" + std::to_string(id);
+	const auto value = [&] { return test::controlValue(f.app, std::nullopt, level); };
+	REQUIRE(f.app.waitUntil([&] { return !f.elements(level).empty(); }));
+	const double before = value();
+	ui::EngineBinding& binding = f.app.appUi().binding();
+	REQUIRE(f.app.waitUntil(
+		[&] { return binding.waiting("history.transaction") == 0 && binding.waiting("project.get") == 0; }));
+
+	// A wheel turn that the engine takes before a hold: the project read after it waits behind the hold, so the panel
+	// has a read from before the turn (#1305).
+	f.app.ui().wheel(std::nullopt, of(level), 0.0F, -1.0F);
+	holder.send("test.hold");
+	REQUIRE(holds.waitEntered(1));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(binding.waiting("history.transaction") == 0);
+	REQUIRE(binding.waiting("project.get") != 0);
+	const double turned = value();
+	CHECK(turned > before);
+
+	// The other drum track shows its own value, and back on the turned one the turn's, not the other track's (#1471).
+	f.select(other);
+	CHECK(f.app.waitUntil([&] { return value() == -12.0; }));
+	f.select(f.track);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(value() == turned);
+
+	REQUIRE(binding.waiting("project.get") != 0);
+
+	// The read after the turn agrees with it.
+	holds.release(1);
+	REQUIRE(f.app.waitUntil([&] { return binding.waiting("project.get") == 0; }));
+	CHECK_THAT(f.parameter(id, 0.0), WithinAbs(turned, 1e-5));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(value() == turned);
 }
 
 TEST_CASE("the drum machine panel renames, copies, cuts, pastes, resets and loads pads", "[ui]")

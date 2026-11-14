@@ -94,26 +94,6 @@ namespace gnubase::engine
 			return kit;
 		}
 
-		// Renames the lanes of the track's drum patterns that play the pad after it, emitting pattern.changed.
-		void syncLanes(Project& project, const Channel& channel, int pad, CommandContext& context)
-		{
-			const std::string name = drumPadName(project, channel, pad);
-			for (auto& [id, pattern] : project.patterns)
-			{
-				if (pattern.track != channel.track || pattern.mode != PatternMode::Drum)
-					continue;
-				bool changed = false;
-				for (PatternLane& lane : pattern.lanes)
-					if (lane.pitch == pad && lane.name != name)
-					{
-						lane.name = name;
-						changed = true;
-					}
-				if (changed)
-					context.emit("pattern.changed", {{"pattern", toJson(pattern)}});
-			}
-		}
-
 		Json result(const Project& project, const Channel& channel, CommandContext& context)
 		{
 			Json json = {{"channel", toJson(channel)}};
@@ -146,6 +126,29 @@ namespace gnubase::engine
 				return clip->second.name;
 		}
 		return midi::gmDrumMap().sounds.at(static_cast<size_t>(pad)).name;
+	}
+
+	void syncDrumLanes(Project& project, const Channel& channel, CommandContext& context, int pad)
+	{
+		for (auto& [id, pattern] : project.patterns)
+		{
+			if (pattern.track != channel.track || pattern.mode != PatternMode::Drum)
+				continue;
+			bool changed = false;
+			for (PatternLane& lane : pattern.lanes)
+			{
+				if (pad >= 0 && lane.pitch != pad)
+					continue;
+				std::string name = drumPadName(project, channel, lane.pitch);
+				if (lane.name != name)
+				{
+					lane.name = std::move(name);
+					changed = true;
+				}
+			}
+			if (changed)
+				context.emit("pattern.changed", {{"pattern", toJson(pattern)}});
+		}
 	}
 
 	const Channel* drumChannelOf(const Project& project, ObjectId track)
@@ -234,7 +237,7 @@ namespace gnubase::engine
 				if (section.end < section.length)
 					channel.instrumentParameters[id(DrumMachine::End)] = static_cast<double>(section.end) / length;
 				channel.pads[note].sample = section.clip;
-				syncLanes(project, channel, note, context);
+				syncDrumLanes(project, channel, context, note);
 				return result(project, channel, context);
 			});
 
@@ -256,14 +259,16 @@ namespace gnubase::engine
 				channel.pads[note].name = parameters.at("name").get<std::string>();
 				if (channel.pads[note] == DrumPad())
 					channel.pads.erase(note);
-				syncLanes(project, channel, note, context);
+				syncDrumLanes(project, channel, context, note);
 				return result(project, channel, context);
 			});
 
 		model.addEdit(engine,
 			{"drum.copyPad", 1,
 				"Copies a pad of a drum track onto another, to (Copy Pad and Paste Pad, reference manual p. 943): its "
-				"name, its sample and all its settings, in place of the other's. With move the pad is reset "
+				"name, its sample and all its settings, in place of the other's; a pad that plays something without a "
+				"name of its own or a sample's gets the General MIDI sound's name it went by. With move the pad is "
+				"reset "
 				"afterwards (Cut Pad). Lanes of the track's drum patterns that play either pad take its name. Emits "
 				"channel.changed. Returns the track and its channel.",
 				objectSchema({{"track", integer}, {"pad", pad}, {"to", pad}, {"move", {{"type", "boolean"}}}},
@@ -278,6 +283,10 @@ namespace gnubase::engine
 				const int to = padOf(parameters, "to");
 				if (from == to)
 					return result(project, channel, context);
+				const std::string name = drumPadName(project, channel, from);
+				const auto layer =
+					channel.instrumentParameters.find(DrumMachine::padParameter(from, DrumMachine::Instrument));
+				const bool plays = layer != channel.instrumentParameters.end() && layer->second >= 0.5;
 				clearParameters(channel, to);
 				const uint32_t first = DrumMachine::padParameter(from, DrumMachine::Instrument);
 				std::map<uint32_t, double> copied;
@@ -289,13 +298,16 @@ namespace gnubase::engine
 					channel.pads[to] = source->second;
 				else
 					channel.pads.erase(to);
+				// A pad that went by the General MIDI sound of its note keeps that name on the other note.
+				if (plays && drumPadName(project, channel, to) != name)
+					channel.pads[to].name = name;
 				if (parameters.value("move", false))
 				{
 					clearParameters(channel, from);
 					channel.pads.erase(from);
 				}
-				syncLanes(project, channel, from, context);
-				syncLanes(project, channel, to, context);
+				syncDrumLanes(project, channel, context, from);
+				syncDrumLanes(project, channel, context, to);
 				return result(project, channel, context);
 			});
 
@@ -321,7 +333,7 @@ namespace gnubase::engine
 				{
 					clearParameters(channel, note);
 					channel.pads.erase(note);
-					syncLanes(project, channel, note, context);
+					syncDrumLanes(project, channel, context, note);
 				}
 				return result(project, channel, context);
 			});

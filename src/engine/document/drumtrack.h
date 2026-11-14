@@ -10,6 +10,7 @@
 // pads' names and samples in their channel.
 namespace gnubase::engine
 {
+	class CommandContext;
 	class Engine;
 	class ProjectModel;
 
@@ -21,6 +22,10 @@ namespace gnubase::engine
 
 	// A pad's name: its own, else its sample's clip's, else the General MIDI sound's of its note.
 	std::string drumPadName(const Project& project, const Channel& channel, int pad);
+
+	// Renames the lanes of the track's drum patterns that play the pad, or every pad with a negative one, after it,
+	// emitting pattern.changed.
+	void syncDrumLanes(Project& project, const Channel& channel, CommandContext& context, int pad = -1);
 
 	// The drum machine's channel of a drum track, or nullptr for any other track.
 	const Channel* drumChannelOf(const Project& project, ObjectId track);

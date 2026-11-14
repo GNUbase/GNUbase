@@ -13,7 +13,9 @@ they are.
   Presets/<name>.dawproject` in the settings folder: of one track, or of several as a multi-track preset (p. 241).
   Audio, instrument, MIDI, group and effect tracks have presets; other types are refused. The tracks keep the track
   list's order, whatever the order of `tracks`. The file has the tracks with their channels and inserts, without events
-  or automation, and the project's busses, tempo, time signatures and fader top. It isn't an undo step. A preset name
+  or automation, and the project's busses, tempo, time signatures and fader top, and the media files of the samples
+  that a sampler and drum pads play (p. 940), so that it keeps playing them when the project moves or goes. It isn't an
+  undo step. A preset name
   must be a file name, as a template's must. A MIDI track's preset keeps both its MIDI channel and its patch, where
   the reference lets a MIDI track preset include either the channel or the patch (p. 238). Choosing one when saving is
   not done yet: the preset file would need to say which one it left out, so that loading it keeps the track's own.
@@ -23,8 +25,11 @@ they are.
   step (the reference can't undo it; GNUbase can, as every edit): the pre section, the equalizer, the strip, the fader
   and pan, the inserts (copies of the preset's, which replace the track's own and the automation of their plugins, as
   Paste Channel Settings does), the MIDI modifiers, inserts, sends, volume, pan, program, bank and device, the MIDI
-  channel (`channel.set` `midiChannel`), the instrument with its parameters, and for MIDI and instrument tracks the
-  color. Not the name, routing, sends, buttons
+  channel (`channel.set` `midiChannel`), the instrument with its parameters, a sampler's sample, a drum machine's pads
+  with their names and samples, and for MIDI and instrument tracks the color. The samples' files are extracted next to
+  the preset (`Track Presets/<name> media`), as `track.import` extracts an archive's; their clips come into the pool
+  (`media.added`, `clip.added`) unless it has the same clips already, so loading a preset again adds none, and the
+  lanes of a drum track's patterns take the names of the pads (`pattern.changed`). Not the name, routing, sends, buttons
   or notes. The tracks must be as many as the preset's, of the same types in the same order (p. 241): the first of
   `tracks` gets the sound of the preset's top track, and so on.
 - **Adding tracks from a preset** (Use Track Preset, p. 199). `track.addFromPreset` `{name, track}` adds the preset's
@@ -181,7 +186,7 @@ exported tracks to tracks that weren't exported; frozen tracks keep their freeze
 they import unfrozen; shared copies of MIDI parts import as parts of their own. Presets: the media browser with
 attributes, previews, the type subfolders, renaming and removing presets, factory presets, instrument plugin presets
 and extracting the sound of an instrument (p. 241), loading only the inserts or the equalizer of a preset (p. 243),
-drum maps and Input Transformer settings in presets, sampler track presets, pattern banks, quick control presets
+drum maps and Input Transformer settings in presets, pattern banks, quick control presets
 (pp. 243-244), dragging presets onto tracks, and the inspector's Load Track Preset button.
 
 ## Checks
