@@ -90,7 +90,7 @@ TEST_CASE("the inspector chooses a MIDI track's patch by bank and program, or fr
 	app.appUi().docking().open("inspector");
 	app.shell().step(std::chrono::milliseconds(0));
 	const uint64_t track = app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
-	REQUIRE(app.waitUntil([&] { return display.project().at("tracks").size() == 1; }));
+	REQUIRE(app.waitUntil([&] { return display.project().is_object() && display.project().at("tracks").size() == 1; }));
 	app.appUi().trackList()->select({track});
 	const auto shows = [&](const std::string& selector, const std::string& value)
 	{ return app.waitUntil([&] { return attribute(app, ".inspector " + selector, "value") == value; }); };
@@ -192,7 +192,7 @@ TEST_CASE("the inspector chooses the MIDI channel a MIDI track's patch goes out 
 	app.appUi().docking().open("inspector");
 	app.shell().step(std::chrono::milliseconds(0));
 	const uint64_t track = app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
-	REQUIRE(app.waitUntil([&] { return display.project().at("tracks").size() == 1; }));
+	REQUIRE(app.waitUntil([&] { return display.project().is_object() && display.project().at("tracks").size() == 1; }));
 	app.appUi().trackList()->select({track});
 	const auto shows = [&](const std::string& value)
 	{
