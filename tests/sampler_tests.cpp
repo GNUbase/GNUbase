@@ -1634,35 +1634,52 @@ TEST_CASE("recording from stop waits for the samples like starting playback, a c
 	run(client, "transport.stop");
 }
 
-TEST_CASE("an offline render logs a warning at every round of its wait for a sample", "[integration]")
+TEST_CASE("an offline render logs a warning naming the file at every round of its wait for a sample", "[integration]")
 {
 	Session session;
 	const fs::path logFile = session.folder.path() / "gnubase.log";
 	const gnubase::logging::Session log(logFile);
 	Client& client = session.client;
 	const auto track = run(client, "sampler.create").at("track").at("id").get<ObjectId>();
-	// Rounds of 20 ms instead of 30 s, so that a read held back for 100 ms takes several, but fewer than the 20
-	// after which the render gives up.
-	session.engine.setOfflineSampleWait(std::chrono::milliseconds(20));
+	// Rounds of 50 ms instead of 30 s, and the read is held back until the log shows two warnings (#1407): their
+	// count doesn't depend on when the render starts to wait, and the 20 rounds after which it gives up leave a
+	// second for the polling.
+	session.engine.setOfflineSampleWait(std::chrono::milliseconds(50));
 	HeldRead held(session.engine, session.file);
 	run(client, "sampler.load", {{"track", track}, {"clip", session.clip}});
 	REQUIRE(held.reading());
-	std::thread releasing(
-		[&held]
+	// The warnings in the log so far, each with the file it names.
+	const auto warnings = [&logFile]
+	{
+		gnubase::logging::flush();
+		const std::string text = gnubase::test::readText(logFile);
+		const std::string warning = "The render still waits for the samplers' samples to be read: ";
+		std::vector<std::string> files;
+		for (size_t at = text.find(warning); at != std::string::npos; at = text.find(warning, at + 1))
 		{
-			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+			const size_t start = at + warning.size();
+			files.push_back(text.substr(start, text.find('\n', start) - start));
+		}
+		return files;
+	};
+	std::thread releasing(
+		[&held, &warnings]
+		{
+			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+			while (warnings().size() < 2 && std::chrono::steady_clock::now() < deadline)
+				std::this_thread::sleep_for(std::chrono::milliseconds(5));
 			held.release();
 		});
-	run(client, "audio.render", {{"frames", 64}});
+	// Not run: a failed REQUIRE would throw past the joinable thread.
+	const Result result = client.call("audio.render", {{"frames", 64}});
 	releasing.join();
+	INFO(result.error);
+	CHECK(result.ok());
 	CHECK(held.reads() == std::vector<fs::path>{"sine.wav"});
-	gnubase::logging::flush();
-	const std::string text = gnubase::test::readText(logFile);
-	const std::string warning = "The render still waits for the samplers' samples to be read";
-	size_t warnings = 0;
-	for (size_t at = text.find(warning); at != std::string::npos; at = text.find(warning, at + 1))
-		++warnings;
-	CHECK(warnings >= 2);
+	const std::vector<std::string> files = warnings();
+	CHECK(files.size() >= 2);
+	for (const std::string& file : files)
+		CHECK_THAT(file, ContainsSubstring("sine.wav"));
 }
 
 TEST_CASE("an offline render gives up with an error after its last round of waiting for a sample", "[integration]")
@@ -1676,13 +1693,44 @@ TEST_CASE("an offline render gives up with an error after its last round of wait
 	run(client, "sampler.load", {{"track", track}, {"clip", session.clip}});
 	REQUIRE(held.reading());
 	const auto before = std::chrono::steady_clock::now();
-	CHECK_THAT(reject(client, "audio.render", {{"frames", 64}}),
-		ContainsSubstring("the render gave up waiting for the samplers' samples to be read"));
+	const std::string error = reject(client, "audio.render", {{"frames", 64}});
+	CHECK_THAT(error, ContainsSubstring("the render gave up waiting for the samplers' samples to be read: "));
+	CHECK_THAT(error, ContainsSubstring("sine.wav")); // where to look (#1414)
 	CHECK(std::chrono::steady_clock::now() - before >= std::chrono::milliseconds(400));
 	// Once the read ends, a render works again.
 	held.release();
 	run(client, "audio.render", {{"frames", 64}});
 	CHECK(held.reads() == std::vector<fs::path>{"sine.wav"});
+}
+
+TEST_CASE("an export that gives up waiting for a sample leaves no files and puts the transport back", "[integration]")
+{
+	// The render's limit fails mixdown.export inside the render, where the error leaves through what puts the
+	// transport and the device back and removes the part files (#1414).
+	Session session;
+	Client& client = session.client;
+	const auto track = run(client, "sampler.create").at("track").at("id").get<ObjectId>();
+	addNotes(client, track, {{60, 0, 1}});
+	session.engine.setOfflineSampleWait(std::chrono::milliseconds(20));
+	HeldRead held(session.engine, session.file);
+	run(client, "sampler.load", {{"track", track}, {"clip", session.clip}});
+	REQUIRE(held.reading());
+	run(client, "transport.locate", {{"position", 777}});
+	run(client, "audio.start");
+	const gnubase::test::TempDir out;
+	const std::string error = reject(
+		client, "mixdown.export", {{"folder", out.path().u8string()}, {"name", "mix"}, {"start", 0}, {"end", 4800}});
+	CHECK_THAT(error, ContainsSubstring("the render gave up waiting for the samplers' samples to be read: "));
+	CHECK_THAT(error, ContainsSubstring("sine.wav"));
+	CHECK(fs::directory_iterator(out.path()) == fs::directory_iterator());
+	const Json transport = run(client, "transport.get");
+	CHECK(transport.at("position") == 777);
+	CHECK(transport.at("playing") == false);
+	// The device that ran runs again.
+	CHECK(run(client, "audio.get").at("running") == true);
+	const int64_t start = captured(client);
+	CHECK(playOn(client, start, 480) >= start + 480);
+	run(client, "audio.stop");
 }
 
 TEST_CASE("an offline render waits for a sample whose file takes long to read", "[integration]")
