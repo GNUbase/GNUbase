@@ -216,10 +216,20 @@ TEST_CASE("the channel strip's sections have parameters that parameter.set and c
 	CHECK(groups.at(10) == "Equalizer");
 	CHECK(groups.at(70) == "Strip");
 
-	// Only audio channels have them.
+	// Only audio channels have them, and a refusal names the kind of channel it is: a MIDI channel has only its mute,
+	// a VCA channel only its fader (#878).
 	const TestTrack midi = addTrack(client, "midi");
 	CHECK_THAT(reject(client, "parameter.get", {{"channel", midi.channel}, {"target", stripTarget(0)}}),
-		ContainsSubstring("MIDI"));
+		ContainsSubstring("a MIDI channel has no channel strip sections"));
+	CHECK_THAT(reject(client, "parameter.get", {{"channel", midi.channel}, {"target", {{"type", "volume"}}}}),
+		ContainsSubstring("a MIDI channel has no volume or pan"));
+	const TestTrack vca = addTrack(client, "vca");
+	CHECK_THAT(reject(client, "parameter.get", {{"channel", vca.channel}, {"target", stripTarget(0)}}),
+		ContainsSubstring("a VCA channel has no channel strip sections"));
+	CHECK_THAT(reject(client, "parameter.get", {{"channel", vca.channel}, {"target", {{"type", "pan"}}}}),
+		ContainsSubstring("a VCA channel has no pan"));
+	CHECK_THAT(reject(client, "parameter.get", {{"channel", vca.channel}, {"target", {{"type", "mute"}}}}),
+		ContainsSubstring("a VCA channel's mute isn't a parameter"));
 	CHECK_THAT(reject(client, "parameter.get", {{"channel", audio.channel}, {"target", stripTarget(99)}}),
 		ContainsSubstring("no parameter 99"));
 }

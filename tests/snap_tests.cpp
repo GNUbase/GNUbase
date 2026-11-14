@@ -896,6 +896,46 @@ TEST_CASE("snap.zeroCrossings follows the audio event that plays: in front, unmu
 	CHECK(moved() == onB);
 }
 
+TEST_CASE("snap.zeroCrossings: with editing.treatMutedAudioLikeDeleted off, a muted event in front silences what lies "
+		  "behind it",
+	"[unit]")
+{
+	// The sine crosses zero every 100 frames. On the first track, muted A from frame 0 lies in front of B from frame
+	// 50, from a second on; on the second track, C from frame 0.
+	const test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "sine.wav";
+	test::Audio sine;
+	for (int frame = 0; frame < 9600; ++frame)
+		sine.samples.push_back(static_cast<float>(0.5 * std::sin(frame * 3.14159265358979323846 / 100.0)));
+	test::writeWav(file, sine);
+
+	Fixture f;
+	const int64_t first = f.track("audio", "linear");
+	const int64_t second = f.track("audio", "linear");
+	f.audioEvent(first, file.u8string(), 9600, g_second, 50, 4800);
+	const int64_t a = f.audioEvent(first, file.u8string(), 9600, g_second, 0, 1480);
+	f.audioEvent(second, file.u8string(), 9600, g_second, 0, 4800);
+	f.call("event.set", {{"events", {a}}, {"mute", true}});
+	const auto moved = [&f, first, second](int64_t position)
+	{
+		return f.call("snap.zeroCrossings", {{"positions", {g_second + position}}, {"tracks", {first, second}}})
+				   .at("positions")
+				   .at(0)
+				   .get<int64_t>() -
+			g_second;
+	};
+	// Treated as deleted (the default), muted A hides nothing: B plays on the first track.
+	CHECK(moved(1030) == 1050);
+	CHECK(moved(1490) == 1450);
+	f.call("settings.set", {{"key", "editing.treatMutedAudioLikeDeleted"}, {"value", false}});
+	// Off, nothing plays on the first track where A is in front, so the second track's event moves the position. B
+	// plays from A's end at 1480 on: its crossing at 1450 lies under A, so the position goes to the one at 1550.
+	CHECK(moved(1030) == 1000);
+	CHECK(moved(1490) == 1550);
+	f.call("settings.set", {{"key", "editing.treatMutedAudioLikeDeleted"}, {"value", true}});
+	CHECK(moved(1030) == 1050);
+}
+
 TEST_CASE("snap.zeroCrossings moves a position only to where the event playing there plays", "[unit]")
 {
 	// A sine that crosses zero every 100 frames, in an event A from a second on. 1080 samples into A, the crossing at

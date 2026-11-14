@@ -3,6 +3,7 @@
 
 #include "engine/document/document.h"
 
+#include <map>
 #include <string>
 
 // Track versions (#165, docs/features/track-versions.md): trackVersion.add, trackVersion.duplicate, trackVersion.set,
@@ -22,6 +23,8 @@ namespace gnubase::engine
 
 	// A copy of a track version with its events and parts, for track: new ids, its audio events in the copies of their
 	// parts, joined by the copies of their crossfades and in the same stack order. A shared copy among its MIDI parts
-	// stays one, with the notes and controllers it shares, as track.duplicate copies them.
-	TrackVersion copyVersion(Project& project, const TrackVersion& version, ObjectId track);
+	// stays one, with the notes and controllers it shares, as track.duplicate copies them. Its pattern events play the
+	// copies that patterns maps their patterns to, the others the patterns they played.
+	TrackVersion copyVersion(Project& project, const TrackVersion& version, ObjectId track,
+		const std::map<ObjectId, ObjectId>& patterns = {});
 }

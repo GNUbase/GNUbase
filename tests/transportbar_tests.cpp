@@ -15,6 +15,7 @@
 #include "ui/enginebinding.h"
 #include "ui/eventdisplay.h"
 #include "ui/keycommands.h"
+#include "ui/timeformat.h"
 #include "ui/transport.h"
 
 #include <RmlUi/Core/Context.h>
@@ -376,6 +377,71 @@ TEST_CASE("the time displays show the cursor in their formats and take positions
 	app.shell().step(std::chrono::milliseconds(0));
 	CHECK(transport(app).at("left") == 96000);
 	CHECK(shows(app, "#left-locator") == "2.1.1.0");
+}
+
+TEST_CASE("the time displays keep their width while the cursor moves, and their format's width after a change", "[ui]")
+{
+	test::UiApp app({1024, 700});
+	showBar(app);
+	Rml::Context& context = app.main().context();
+	const auto rml = [&context](const char* id)
+	{
+		Rml::Element* found = nullptr;
+		for (int i = 0; i < context.GetNumDocuments(); ++i)
+			if (Rml::Element* in = context.GetDocument(i)->GetElementById(id))
+				found = in;
+		REQUIRE(found != nullptr);
+		return found;
+	};
+	const auto width = [&app](const char* selector)
+	{ return element(app, selector).at("box").at("width").get<double>(); };
+	const auto x = [&app](const char* selector) { return element(app, selector).at("box").at("x").get<double>(); };
+	const ui::TimeContext time; // the new project's: 120 BPM in 4/4 at 48 kHz and 25 fps
+	// Positions whose texts have more and fewer digits, up to bar 1000 (#1335).
+	const std::array<int64_t, 8> positions = {0, 1234, 72001, 431999, 863999, 864000, 2000000, 95999999};
+	for (const char* name : {"barsBeats", "seconds", "timecode", "samples", "userFrames"})
+	{
+		INFO("format " << name);
+		const std::optional<ui::TimeFormat> format = ui::timeFormatFromName(name);
+		REQUIRE(format.has_value());
+		const ui::TimeFormat displayed = format.value_or(ui::TimeFormat::BarsBeats);
+		// A format change may change the width.
+		app.call("project.set", {{"timeFormat", name}});
+		app.call("settings.set",
+			{{"key", "ui.timeFormats"},
+				{"value", {{"primary", name}, {"secondary", name}, {"timeDisplay", "barsBeats"}}}});
+		REQUIRE(app.waitUntil(
+			[&]
+			{
+				return element(app, "#secondary-time")
+						   .value("classes", Json::array())
+						   .dump()
+						   .find(std::string("format-") + name) != std::string::npos;
+			}));
+		std::array<double, 4> first{};
+		bool measured = false;
+		for (const int64_t position : positions)
+		{
+			INFO("position " << position);
+			app.call("transport.locate", {{"position", position}});
+			const std::string text = ui::formatTime(displayed, static_cast<double>(position) / time.sampleRate, time);
+			REQUIRE(app.waitUntil(
+				[&] { return shows(app, "#primary-time") == text && shows(app, "#secondary-time") == text; }));
+			app.shell().step(std::chrono::milliseconds(0));
+			// The displays and the controls to their right stay where they are, and the text fits.
+			const std::array<double, 4> now = {
+				width("#primary-time"), width("#secondary-time"), x("#exchange-formats"), x("#tempo")};
+			if (!measured)
+				first = now;
+			measured = true;
+			CHECK(now == first);
+			for (const char* id : {"primary-time", "secondary-time"})
+			{
+				Rml::Element* display = rml(id);
+				CHECK(display->GetScrollWidth() <= display->GetClientWidth() + 0.5F);
+			}
+		}
+	}
 }
 
 TEST_CASE("the transport bar and the transport panel show the same time formats", "[ui]")
@@ -858,6 +924,47 @@ TEST_CASE("a drag or wheel gesture on the tempo field is one undo step", "[ui]")
 	REQUIRE(app.waitUntil([&app, dragged] { return tempo(app) == dragged; }));
 	app.call("history.undo");
 	REQUIRE(app.waitUntil([&app] { return element(app, "#tempo").at("attributes").at("value") == "120"; }));
+}
+
+TEST_CASE("a drag or wheel gesture on the tempo field in tempo track mode changes the event at the cursor", "[ui]")
+{
+	test::UiApp app({1024, 700});
+	showBar(app);
+	app.call("project.set", {{"tempoTrackActive", true}});
+	app.call("tempo.add", {{"position", 4 * g_quarter}, {"bpm", 100.0}, {"ramp", false}});
+	// The cursor after the event, three seconds in: the field shows its tempo, and a gesture changes that event,
+	// not the first one (reference manual p. 1446).
+	app.call("transport.locate", {{"position", 3 * 48000}});
+	REQUIRE(app.waitUntil([&app] { return element(app, "#tempo").at("attributes").at("value") == "100"; }));
+	const size_t before = undoSteps(app);
+	const auto events = [&app] { return app.call("project.get").at("tempo"); };
+
+	// A drag up raises the tempo of the event at the cursor in many steps of the field, and sets it once, at its end.
+	const Json box = element(app, "#tempo").at("box");
+	const int x = static_cast<int>(box.at("x").get<double>() + (box.at("width").get<double>() / 2));
+	const int y = static_cast<int>(box.at("y").get<double>() + (box.at("height").get<double>() / 2));
+	app.ui().drag(std::nullopt, at("#tempo"), {std::string(), 0, ui::Point{x, y - 40}});
+	REQUIRE(app.waitUntil([&events] { return events()[1].at("bpm").get<double>() > 100.0; }));
+	CHECK(events()[0].at("bpm").get<double>() == 120.0); // the first event stays
+	settle(app);
+	CHECK(undoSteps(app) == before + 1);
+	const double dragged = events()[1].at("bpm").get<double>();
+
+	// Turns of the wheel in a row are one step on the same event too.
+	for (int turn = 0; turn < 3; ++turn)
+		app.ui().wheel(std::nullopt, at("#tempo"), 0, -1);
+	REQUIRE(app.waitUntil(
+		[&events, dragged] { return std::abs(events()[1].at("bpm").get<double>() - (dragged + 3.0)) < 0.001; }));
+	CHECK(events()[0].at("bpm").get<double>() == 120.0);
+	settle(app);
+	CHECK(undoSteps(app) == before + 2);
+
+	app.call("history.undo");
+	REQUIRE(app.waitUntil([&events, dragged] { return events()[1].at("bpm").get<double>() == dragged; }));
+	app.call("history.undo");
+	REQUIRE(app.waitUntil([&events] { return events()[1].at("bpm").get<double>() == 100.0; }));
+	CHECK(events()[0].at("bpm").get<double>() == 120.0);
+	REQUIRE(app.waitUntil([&app] { return element(app, "#tempo").at("attributes").at("value") == "100"; }));
 }
 
 TEST_CASE("the tempo field changes the tempo only when a number is typed, also the one it shows", "[ui]")

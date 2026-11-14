@@ -196,6 +196,7 @@ namespace gnubase::ui
 				if (result.ok())
 				{
 					m_project = result.value;
+					m_read = m_binding.handed();
 					// The view leaves out parts that are gone; ask again, so that it has their removal too.
 					requestView();
 				}
@@ -269,7 +270,7 @@ namespace gnubase::ui
 			if (m_audio)
 				m_audio->show(m_project, m_view);
 			if (m_pattern)
-				m_pattern->show(m_project, m_view);
+				m_pattern->show(m_project, m_view, m_read);
 			fillMenus();
 		}
 		else if (m_part == EditorPart::Visibility)

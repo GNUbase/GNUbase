@@ -818,6 +818,33 @@ TEST_CASE("a clip loaded with a section beyond the real-time range still takes e
 	// The section itself is still checked when an edit changes it.
 	CHECK_THAT(reject(client, "clip.addWarpMarker", {{"clip", loop.clip}, {"position", 93000}, {"target", 95600}}),
 		ContainsSubstring("4 times"));
+	// A marker inserted on it, its target rounded: 93001 plays at 95750.08 (#1266). Both its sections stay beyond the
+	// range, as the section was.
+	run(client, "clip.addWarpMarker", {{"clip", loop.clip}, {"position", 93001}, {"target", 95750}});
+	CHECK(warpOf(client, loop.clip).at("markers").size() == 6);
+}
+
+// Follow-ups of #1129 (#1266).
+TEST_CASE("a marker inserted next to a section at the limit of the real-time range may be off by its rounding only",
+	"[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	const Loop loop = addLoop(client, dir, clicks({1000, 25000, 52000, 73000}, 4 * g_quarter), "linear");
+	// The first 4000 frames play in 1000, a quarter, and the first 1000 of the other clip in 4000.
+	run(client, "clip.addWarpMarker", {{"clip", loop.clip}, {"position", 4000}, {"target", 1000}});
+	const Loop other = addLoop(client, dir, clicks({1000, 25000, 52000, 73000}, 4 * g_quarter), "linear");
+	run(client, "clip.addWarpMarker", {{"clip", other.clip}, {"position", 1000}, {"target", 4000}});
+	// A frame off the map: 8 frames in 1, which plays at 2, and 1 frame 5 times as long.
+	CHECK_THAT(reject(client, "clip.addWarpMarker", {{"clip", loop.clip}, {"position", 8}, {"target", 1}}),
+		ContainsSubstring("4 times"));
+	CHECK_THAT(reject(client, "clip.addWarpMarker", {{"clip", other.clip}, {"position", 1}, {"target", 5}}),
+		ContainsSubstring("4 times"));
+	// Rounded onto the map: 9 frames in 2 for the 2.25 the map plays them in.
+	run(client, "clip.addWarpMarker", {{"clip", loop.clip}, {"position", 9}, {"target", 2}});
+	CHECK(warpOf(client, loop.clip).at("markers") ==
+		Json::array({{{"position", 9}, {"target", 2}}, {{"position", 4000}, {"target", 1000}}}));
 }
 
 TEST_CASE("Crossfade closes a gap and overlaps through the warp of warped events", "[integration]")
@@ -1134,8 +1161,9 @@ TEST_CASE("warped events reach other applications through DAWproject's Warps", "
 		const std::vector<std::tuple<std::vector<std::pair<double, double>>, double, double>> cases{
 			{{{0.0, 0.0}, {1.0, 0.5}, {2.0, 0.500000001}}, 0.0, 8.0},
 			{{{1e17, -0.001}, {2e17, 1e16}}, 1.0000000000000016e17, 64.0},
-			// The audio's end so far out that its frame is no 64-bit number (#1184).
-			{{{0.0, 0.0}, {1.0, 1e300}}, 0.0, 8.0}};
+			// The audio's start so far before it that its frame is no 64-bit number, and the end within it (#1184,
+			// #1266).
+			{{{0.0, 0.0}, {1.0, 1e300}}, -1.0, 1.0}};
 		for (const auto& [points, playStart, duration] : cases)
 		{
 			pugi::xml_document document;

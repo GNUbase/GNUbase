@@ -226,12 +226,17 @@ namespace gnubase::ui
 	bool EngineBinding::update()
 	{
 		// The records of controls whose steps have all been answered go away, so a session leaves no entry per channel
-		// and parameter a gesture touched (#746). One update late, so that the views showing what the last update
-		// handed on still ask sending() and ahead() about them; a step in flight keeps its record, so the keys the
-		// answers carry outlive them (sendNextStep).
+		// and parameter a gesture touched (#746). Only once a project read answered after the last step that the
+		// engine took was handed on and no other is out, since until then a view may have no read newer than the
+		// control and show an older one again, e.g. the inspector after a track change (#1305). One update late, so
+		// that the views showing what the last update handed on still ask sending() and ahead() about them; a step in
+		// flight keeps its record, so the keys the answers carry outlive them (sendNextStep).
+		const bool reading = waiting("project.get") != 0;
 		for (auto entry = m_steps.begin(); entry != m_steps.end();)
-			entry = entry->second.inFlight.empty() && entry->second.waiting.empty() ? m_steps.erase(entry)
-																					: std::next(entry);
+			entry = entry->second.inFlight.empty() && entry->second.waiting.empty() && !reading &&
+					entry->second.taken < m_projectRead
+				? m_steps.erase(entry)
+				: std::next(entry);
 		m_woken = false; // before taking the messages, so one that arrives meanwhile wakes the UI again
 		bool handled = false;
 		while (std::optional<engine::Message> message = m_client.poll())
@@ -309,6 +314,8 @@ namespace gnubase::ui
 		m_waiting.erase(found);
 		if (waiting.awaited)
 			--m_awaited;
+		if (waiting.command == "project.get")
+			m_projectRead = m_handed;
 		if (waiting.done)
 			waiting.done(result);
 		else if (!result.ok())

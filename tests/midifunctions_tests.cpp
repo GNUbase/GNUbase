@@ -44,7 +44,7 @@ namespace
 			ObjectId id, Ticks position, Ticks length, int pitch, int channel = 0, uint16_t velocity = g_velocity)
 		{
 			part.notes[id] = Note{id, position, length, static_cast<uint8_t>(pitch), velocity,
-				static_cast<uint8_t>(channel), g_defaultReleaseVelocity, std::nullopt, 1.0, 0.0, {}};
+				static_cast<uint8_t>(channel), g_defaultReleaseVelocity, std::nullopt, 1.0, 0.0, {}, {}};
 			return *this;
 		}
 
