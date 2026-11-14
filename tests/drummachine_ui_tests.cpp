@@ -298,6 +298,31 @@ TEST_CASE("the drum machine panel renames, copies, cuts, pastes, resets and load
 	CHECK(f.has(Fixture::pad(43), "assigned"));
 }
 
+TEST_CASE("a pad plays at velocity 127 while the mouse button is down on it", "[ui]")
+{
+	Fixture f;
+	f.open();
+	f.app.call("audio.setDevice", {{"blockSize", 128}, {"inputChannels", 0}, {"captureSeconds", 1}});
+	f.app.call("audio.render", {{"frames", 128}}); // the new graph
+	f.app.call("midi.capture", {{"start", true}});
+	f.click(Fixture::pad(38));
+	std::vector<std::vector<int>> played;
+	CHECK(f.app.waitUntil(
+		[&]
+		{
+			f.app.call("audio.render", {{"frames", 128}});
+			const Json captured = f.app.call("midi.capture");
+			for (const Json& message : captured.at("captured"))
+			{
+				const auto bytes = message.at("bytes").get<std::vector<int>>();
+				if (message.at("channel") == f.channel && (bytes.at(0) & 0xE0) == 0x80)
+					played.push_back(bytes);
+			}
+			return played == std::vector<std::vector<int>>{{0x90, 38, 127}, {0x80, 38, 0}};
+		}));
+	CHECK(f.has(Fixture::pad(38), "selected"));
+}
+
 TEST_CASE("Add Drum Track opens the add track dialog on its Drum page", "[ui]")
 {
 	Fixture f;

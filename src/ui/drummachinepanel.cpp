@@ -23,7 +23,8 @@ namespace gnubase::ui
 
 	namespace
 	{
-		constexpr std::array<Rml::EventId, 2> g_events = {Rml::EventId::Click, Rml::EventId::Change};
+		constexpr std::array<Rml::EventId, 4> g_events = {
+			Rml::EventId::Click, Rml::EventId::Change, Rml::EventId::Mousedown, Rml::EventId::Mouseup};
 
 		constexpr int g_pads = 128;
 		constexpr int g_padsPerGroup = 16;
@@ -161,6 +162,7 @@ namespace gnubase::ui
 
 	DrumMachinePanel::~DrumMachinePanel()
 	{
+		sound(-1);
 		if (Rml::Element* root = m_root.get())
 		{
 			for (const Rml::EventId id : g_events)
@@ -168,6 +170,27 @@ namespace gnubase::ui
 			root->RemoveEventListener(Rml::EventId::Blur, this, true);
 			root->RemoveEventListener(m_dropEvent, this);
 		}
+	}
+
+	// Ends the note of the pad that sounds and plays pad, unless it is negative: into the track's channel as if from
+	// its MIDI input (midi.inject), as the drum editor auditions sounds, so that a drum map's pitches play their pads.
+	// Without an audio device nothing sounds, which is no error to report.
+	void DrumMachinePanel::sound(int pad)
+	{
+		const auto inject = [this](uint64_t channel, int note, bool on)
+		{
+			m_binding.send("midi.inject",
+				{{"channel", channel}, {"drumSounds", true},
+					{"messages", Json::array({{{"position", 0}, {"bytes", {on ? 0x90 : 0x80, note, on ? 127 : 0}}}})}},
+				[](const engine::Result&) {});
+		};
+		if (const auto sounding = std::exchange(m_sounding, std::nullopt))
+			inject(sounding->first, sounding->second, false);
+		const Json channel = m_channel.is_object() ? m_channel.value("id", Json()) : Json();
+		if (pad < 0 || !channel.is_number_unsigned())
+			return;
+		m_sounding = std::make_pair(channel.get<uint64_t>(), pad);
+		inject(m_sounding->first, pad, true);
 	}
 
 	Rml::Element* DrumMachinePanel::find(const std::string& id) const
@@ -492,6 +515,18 @@ namespace gnubase::ui
 		}
 		switch (event.GetId())
 		{
+		case Rml::EventId::Mousedown:
+		{
+			// A pad plays while the mouse button is down on it, at velocity 127 (reference manual p. 942).
+			const Rml::Element* pad = target != nullptr ? withAttribute(target, "pad") : nullptr;
+			if (pad != nullptr && m_track != 0 && event.GetParameter<int>("button", 0) == 0)
+				sound(std::clamp(pad->GetAttribute<int>("pad", 0), 0, g_pads - 1));
+			return;
+		}
+		case Rml::EventId::Mouseup:
+			// ponytail: a button released outside the panel ends the note with the next press or the panel's end.
+			sound(-1);
+			return;
 		case Rml::EventId::Click:
 		{
 			if (target != nullptr && target->GetId() == "drum-add-track" && m_addTrack)

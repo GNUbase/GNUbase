@@ -96,8 +96,10 @@ a hint and Add Drum Track (`#drum-add-track`, p. 146), which opens the Add Track
   name of its own or a sample shows the General MIDI sound's of its note, which `processor.list` has for it
   (`padNames`), as pattern lanes do; pads that play something are `.assigned`, the selected one `.selected`, muted,
   soloed and soloed-out ones `.muted`, `.soloed` and `.soloed-out`, and those with a color `.colored`, with the color
-  in their strip (`.drum-pad-color`, attribute `color` and `background-color`, user data). A click selects a pad; it
-  opens on the third group, with the kick.
+  in their strip (`.drum-pad-color`, attribute `color` and `background-color`, user data). A click selects a pad, and
+  the pad plays at velocity 127 while the mouse button is down on it (p. 942): a note on and off into the track's
+  channel through `midi.inject` with `drumSounds`, as the drum editor auditions sounds; a button released outside the
+  panel ends the note with the next press. It opens on the third group, with the kick.
 - **Pad tools**, in the toolbar too: the selected pad's name (`#drum-pad-name`, Rename Pad when Enter is pressed or the
   field loses the focus), Set Color (`#drum-pad-color`, a drop-down list of No Color and the project's color set, the
   16 colors of the factory set in a new project, [colors.md](colors.md)), Load (`#drum-load`, a file dialog, then
@@ -113,7 +115,7 @@ Snare 1-3, the rimshots, HiHat 1-4 and so on, pp. 948-964, of which GNUbase has 
 Noise), the sample layer's fades, pre-filter, pitch and filter envelopes, filter shapes and distortion types
 (pp. 965-968), Pad FX (pp. 968-972), the Group page (p. 973), low and high keys for melodic playing, the 31 output
 busses, the delay's Cross mode and L/R offsets, the reverb's chorusing, shape, density and band times, Delay
-and Reverb presets, the drum machine's own undo history, MIDI Reset, MIDI Follow, playing a pad with a click, the
+and Reverb presets, the drum machine's own undo history, MIDI Reset, MIDI Follow, the
 triggered pad's highlight, Hot Swap Preview, the media browser's Find Samples and Find Instruments, layer and pad
 presets, the toolbar's Read/Write Automation, Load Track Preset and preset management (pp. 939-940), the automation
 parameters with their quick controls, Learn CC and ranges (pp. 978-980), the pool folder of the drum machine's samples
@@ -135,6 +137,6 @@ or imported from another project with their pads' clips, automation of a pad's p
 and offline renders of a drum track against the sample itself and the golden file `drum-track-beat` (a pattern event
 playing the kit with its sends); `tests/rtcheck_tests.cpp` plays samples, every synth, groups and the effects without
 allocating; `tests/drummachine_ui_tests.cpp` drives the panel (following the selection, the names of pads without their
-own, groups, pages, controls, renaming, coloring, copying (a synth pad's copy shown by the sound it was copied from),
-cutting, pasting, resetting and dropping a file on a pad) and the Add Track dialog's Drum page, from the Project menu's
-command and from the empty panel.
+own, groups, pages, controls, playing a pad with a click, renaming, coloring, copying (a synth pad's copy shown by the
+sound it was copied from), cutting, pasting, resetting and dropping a file on a pad) and the Add Track dialog's Drum
+page, from the Project menu's command and from the empty panel.

@@ -13,6 +13,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -29,12 +30,12 @@ namespace gnubase::ui
 	// Bypass All Effects, the pad section with the eight groups of 16 pads, and the page shown. The root gets the class
 	// empty while the selected track isn't a drum track, and it then shows Add Drum Track (p. 146).
 	//
-	// A click on a pad selects it; the Instrument page shows the selected pad's name and a control per pad parameter
-	// (from processor.list), the Delay and Reverb pages the global ones. The pad tools load an audio file onto the pad
-	// (loadSample asks for it), and copy, cut, paste and reset it; a file dropped on a pad loads onto that pad.
-	// Controls set the drum machine's parameters (parameter.set), a widget's gesture one undo step
-	// (EngineBinding::sendStep). Pads show their names, and the classes assigned (they play something), selected,
-	// muted and soloed. Use it on the UI thread; the binding must outlive it.
+	// A click on a pad selects it and plays it while the button is down (midi.inject); the Instrument page shows the
+	// selected pad's name and a control per pad parameter (from processor.list), the Delay and Reverb pages the global
+	// ones. The pad tools load an audio file onto the pad (loadSample asks for it), and copy, cut, paste and reset it;
+	// a file dropped on a pad loads onto that pad. Controls set the drum machine's parameters (parameter.set), a
+	// widget's gesture one undo step (EngineBinding::sendStep). Pads show their names, and the classes assigned (they
+	// play something), selected, muted and soloed. Use it on the UI thread; the binding must outlive it.
 	class DrumMachinePanel final : private Rml::EventListener
 	{
 	public:
@@ -80,6 +81,7 @@ namespace gnubase::ui
 		void showMessage(const std::string& text);
 		double value(uint32_t id) const;
 		std::string padName(int pad) const;
+		void sound(int pad);
 		uint32_t idOf(const Parameter& parameter) const;
 		std::string stepKey(uint32_t id) const;
 		Rml::Element* find(const std::string& id) const;
@@ -98,7 +100,8 @@ namespace gnubase::ui
 		std::vector<std::pair<std::string, std::string>> m_colorSet; // No Color and the project's color set (Set Color)
 		std::vector<std::string> m_padNames; // without these: the General MIDI sounds', from processor.list
 		uint64_t m_track = 0;
-		uint64_t m_selected = 0; // the track update showed last, a drum track or not
+		std::optional<std::pair<uint64_t, int>> m_sounding; // the channel and pad that a click plays
+		uint64_t m_selected = 0;                            // the track update showed last, a drum track or not
 		uint64_t m_loads = 0;
 		uint64_t m_read = 0;
 		engine::Json m_channel; // the drum track's, null without one
