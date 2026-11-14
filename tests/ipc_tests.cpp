@@ -4,6 +4,7 @@
 #include "ipc/protocol.h"
 #include "ipc/rings.h"
 #include "platform/sharedmemory.h"
+#include "testutils/stopandjoin.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
@@ -195,10 +196,11 @@ TEST_CASE("a message ring passes messages between two threads", "[unit]")
 	MessageRingStorage storage(1024);
 	ipc::MessageRing& ring = storage.ring;
 	constexpr uint32_t count = 100000;
+	std::atomic<bool> stop{false};
 	std::thread producer(
-		[&ring]
+		[&ring, &stop]
 		{
-			for (uint32_t i = 0; i < count;)
+			for (uint32_t i = 0; i < count && !stop;)
 			{
 				// Messages of 4 to 40 bytes, each filled with its number.
 				std::array<uint32_t, 10> values{};
@@ -209,6 +211,7 @@ TEST_CASE("a message ring passes messages between two threads", "[unit]")
 					std::this_thread::yield();
 			}
 		});
+	const gnubase::test::StopAndJoin stopProducer(stop, producer);
 	std::array<uint32_t, 10> values{};
 	bool inOrder = true;
 	for (uint32_t i = 0; i < count && inOrder;)
@@ -225,7 +228,7 @@ TEST_CASE("a message ring passes messages between two threads", "[unit]")
 			header.size == sizeof(uint32_t) * (1 + (i % 10)) && values[0] == i && values[(header.size / 4) - 1] == i;
 		++i;
 	}
-	producer.join();
+	stopProducer.join();
 	CHECK(inOrder);
 }
 

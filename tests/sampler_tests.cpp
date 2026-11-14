@@ -7,6 +7,7 @@
 #include "engine/processors/sampler.h"
 #include "engine/time/tempomap.h"
 #include "platform/log.h"
+#include "testutils/stopandjoin.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -1588,12 +1589,10 @@ TEST_CASE(
 			std::this_thread::sleep_for(std::chrono::milliseconds(100));
 			held.release();
 		});
-	// Not run: a failed REQUIRE would throw past the joinable thread.
-	const Result played = client.call("transport.play");
+	const gnubase::test::StopAndJoin joinRelease(releasing);
+	run(client, "transport.play");
 	const auto answered = std::chrono::steady_clock::now();
-	releasing.join();
-	INFO(played.error);
-	REQUIRE(played.ok());
+	joinRelease.join();
 	CHECK(answered - releaseStart >= std::chrono::milliseconds(100));
 	CHECK(held.reads() == std::vector<fs::path>{"sine.wav"});
 	run(client, "transport.stop");
@@ -1631,12 +1630,10 @@ TEST_CASE("recording from stop waits for the samples like starting playback, a c
 			std::this_thread::sleep_for(std::chrono::milliseconds(100));
 			held.release();
 		});
-	// Not run: a failed REQUIRE would throw past the joinable thread.
-	const Result recorded = client.call("transport.record");
+	const gnubase::test::StopAndJoin joinRelease(releasing);
+	run(client, "transport.record");
 	const auto answered = std::chrono::steady_clock::now();
-	releasing.join();
-	INFO(recorded.error);
-	REQUIRE(recorded.ok());
+	joinRelease.join();
 	CHECK(answered - releaseStart >= std::chrono::milliseconds(100));
 	CHECK(held.reads() == std::vector<fs::path>{"sine.wav"});
 	run(client, "transport.stop");
@@ -1670,19 +1667,18 @@ TEST_CASE("an offline render logs a warning naming the file at every round of it
 		}
 		return files;
 	};
+	std::atomic<bool> stop{false};
 	std::thread releasing(
-		[&held, &warnings]
+		[&held, &warnings, &stop]
 		{
 			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-			while (warnings().size() < 2 && std::chrono::steady_clock::now() < deadline)
+			while (!stop && warnings().size() < 2 && std::chrono::steady_clock::now() < deadline)
 				std::this_thread::sleep_for(std::chrono::milliseconds(5));
 			held.release();
 		});
-	// Not run: a failed REQUIRE would throw past the joinable thread.
-	const Result result = client.call("audio.render", {{"frames", 64}});
-	releasing.join();
-	INFO(result.error);
-	CHECK(result.ok());
+	const gnubase::test::StopAndJoin joinRelease(stop, releasing);
+	run(client, "audio.render", {{"frames", 64}});
+	joinRelease.join();
 	CHECK(held.reads() == std::vector<fs::path>{"sine.wav"});
 	const std::vector<std::string> files = warnings();
 	CHECK(files.size() >= 2);
@@ -1762,11 +1758,9 @@ TEST_CASE("an offline render waits for a sample whose file takes long to read", 
 			std::this_thread::sleep_for(std::chrono::milliseconds(200));
 			held.release();
 		});
-	// Not run: a failed REQUIRE would throw past the joinable thread.
-	const Result rendered = client.call("audio.render", {{"frames", 64}});
-	releasing.join();
-	INFO(rendered.error);
-	REQUIRE(rendered.ok());
+	const gnubase::test::StopAndJoin joinRelease(releasing);
+	run(client, "audio.render", {{"frames", 64}});
+	joinRelease.join();
 	CHECK(held.reads() == std::vector<fs::path>{"sine.wav"});
 	// The update the loader posts runs on its own and stays out of the command log.
 	run(client, "transport.get");

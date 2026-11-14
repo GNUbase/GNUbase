@@ -6,6 +6,7 @@ add_library(gnubase-testutils STATIC
 	testutils/heldjob.cpp testutils/heldjob.h
 	testutils/library.h
 	testutils/slowframe.h
+	testutils/stopandjoin.h
 	testutils/testutils.cpp testutils/testutils.h)
 target_include_directories(gnubase-testutils PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(gnubase-testutils PUBLIC gnubase-ui)
