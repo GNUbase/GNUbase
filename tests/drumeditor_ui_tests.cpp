@@ -691,11 +691,9 @@ TEST_CASE("with Use Snap from Drum Map a note moves and resizes to its sound's s
 	const double width = f.box(".key-note").at("width").get<double>();
 	const double x = f.box(".key-note").at("x").get<double>() + width - 2.0;
 	const double sixteenth = f.box(".key-editor-grid").at("width").get<double>() / 16.0;
-	ui::Target end = f.at(6.0, 36);
-	end.point->x = static_cast<int>(std::lround(x));
-	ui::Target later = end;
-	later.point->x = static_cast<int>(std::lround(x + (3.2 * sixteenth)));
-	f.resize(end, later);
+	const int y = f.at(6.0, 36).point.value_or(ui::Point{}).y;
+	f.resize({"", 0, ui::Point{static_cast<int>(std::lround(x)), y}},
+		{"", 0, ui::Point{static_cast<int>(std::lround(x + (3.2 * sixteenth))), y}});
 	CHECK(f.partNotes()[0].at("length") == 6 * g_sixteenth);
 }
 
