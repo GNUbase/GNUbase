@@ -720,7 +720,8 @@ namespace gnubase::engine
 		{
 			reader = AudioFileReader::open(path->second);
 			if (const auto warp = m_warps.find(media); warp != m_warps.end())
-				reader = std::make_unique<dsp::WarpReader>(std::move(reader), warp->second.map, warp->second.preset);
+				reader = std::make_unique<dsp::WarpReader>(
+					std::move(reader), warp->second.map, warp->second.preset, warp->second.pitch);
 		}
 		catch (const AudioFileError&)
 		{

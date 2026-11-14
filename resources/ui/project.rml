@@ -18,6 +18,7 @@
      the tempo in #tap-tempo-message, over the event display.
      The toolbar also has button[tool] controls and #combine-selection-tools (docs/features/tools.md), which the
      display drives too, with the toolbox #toolbox, the context menu #event-display-menu and #tool-notification, and
+     #edit-refused, which says why the engine refused an edit of events (docs/features/event-display.md), and
      #select-color with #color-menu, which ui::ColorMenu fills with the project's colors (docs/features/colors.md).
      ui::StatusLine fills #record-format, #record-time and #lost-device (docs/features/status-line.md). ui::InfoLine fills
      #info-line; #inspector-setup is the inspector's Set up Sections pane (docs/features/inspector.md), #toolbar-setup
@@ -173,6 +174,7 @@
 					<button class="ruler-format icon-only" menu="ruler-format-menu" title="Ruler Time Format"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>
 					<notification id="tool-notification" class="tool-notification tooltip"/>
 					<notification id="tap-tempo-message" class="tap-tempo-message tool-notification tooltip" duration="2"/>
+					<notification id="edit-refused" class="edit-refused tool-notification tooltip" duration="4"/>
 				</div>
 			</div>
 			<splitter for="lower" resize="next"/>

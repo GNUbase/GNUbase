@@ -1412,6 +1412,13 @@ meter .meter-peak
 	text-align: center;
 }
 
+/* Why the engine refused an edit of events (#1367), a little longer and wider than a tool's name. */
+.event-display .edit-refused
+{
+	width: 480dp;
+	margin-left: -240dp;
+}
+
 /* The track list (docs/features/track-list.md): the global track controls over a row per track, level with the
    event display's lanes under its overview line and ruler. Code sets the rows' heights from the tracks' and where the
    list is scrolled to; the line where dragged tracks go shows while they are dragged. */

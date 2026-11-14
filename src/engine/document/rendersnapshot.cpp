@@ -278,16 +278,40 @@ namespace gnubase::engine
 			return event.length > 0;
 		}
 
-		// An event of a warped clip plays a media file of its own (RenderMedia::warp), whose frames start at the
-		// event's start: its clip fades and its volume curve where its audio plays.
+		// The pitch map of an audio event that global transposition shifts (#1368): the semitones it plays shifted by
+		// from its start, and from each transpose event within it, in its media file's frames from its start, where
+		// its warp map plays them. Empty when it plays as it is.
+		std::vector<dsp::PitchPoint> pitchMap(const Project& project, const AudioEvent& event, time::Samples start,
+			const std::vector<dsp::WarpPoint>& map)
+		{
+			const double ratio = project.sampleRate / project.media.at(project.clips.at(event.clip).media).sampleRate;
+			const auto end = start + std::llround(map.back().target * ratio);
+			std::vector<dsp::PitchPoint> pitch{{0.0, static_cast<double>(globalTranspose(project, event, start))}};
+			bool shifted = pitch.front().semitones != 0.0;
+			if (!event.independent && !project.transpose.mute)
+				for (const TransposeEvent& transpose : project.transpose.events)
+					if (const time::Samples at = toSamples(project, transpose.position); at > start && at < end)
+					{
+						const auto semitones = static_cast<double>(globalTranspose(project, event, at));
+						shifted = shifted || semitones != 0.0;
+						pitch.push_back({static_cast<double>(at - start) / ratio, semitones});
+					}
+			if (!shifted)
+				pitch.clear();
+			return pitch;
+		}
+
+		// An event of a warped clip, or one that global transposition shifts, plays a media file of its own
+		// (RenderMedia::warp), whose frames start at the event's start: its clip fades and its volume curve where its
+		// audio plays.
 		// ponytail: its own fades keep their length in clip frames, whatever the stretch there.
-		void warpEvent(
-			const Project& project, const AudioEvent& event, RenderSnapshot& snapshot, RenderAudioEvent& render)
+		void warpEvent(const Project& project, const AudioEvent& event, std::vector<dsp::WarpPoint> map,
+			std::vector<dsp::PitchPoint> pitch, RenderSnapshot& snapshot, RenderAudioEvent& render)
 		{
 			const Clip& clip = project.clips.at(event.clip);
 			const MediaFile& file = project.media.at(clip.media);
-			RenderMedia media{event.id, file.path, file.sampleRate, file.channels, 0, warpMap(project, event),
-				dsp::stretchPresetFromString(clip.warp.preset).value_or(dsp::StretchPreset::Quality)};
+			RenderMedia media{event.id, file.path, file.sampleRate, file.channels, 0, std::move(map),
+				dsp::stretchPresetFromString(clip.warp.preset).value_or(dsp::StretchPreset::Quality), std::move(pitch)};
 			media.length = std::llround(media.warp.back().target);
 			const auto moved = [&media](time::Samples frame)
 			{
@@ -350,7 +374,7 @@ namespace gnubase::engine
 			event.length = frozen.length;
 			channel.audioEvents.push_back(std::move(event));
 			snapshot.media.push_back({channel.id, frozen.path, frozen.sampleRate, frozen.channels, frozen.length, {},
-				dsp::StretchPreset::Quality});
+				dsp::StretchPreset::Quality, {}});
 		}
 
 		// Mute, solo and disabled tracks: with a channel soloed, only soloed channels, those they play into and those
@@ -610,7 +634,7 @@ namespace gnubase::engine
 		{
 			mediaIndex[id] = static_cast<int>(snapshot->media.size());
 			snapshot->media.push_back(
-				{id, media.path, media.sampleRate, media.channels, media.length, {}, dsp::StretchPreset::Quality});
+				{id, media.path, media.sampleRate, media.channels, media.length, {}, dsp::StretchPreset::Quality, {}});
 		}
 		for (const auto& [id, clip] : project.clips)
 			snapshot->clips.push_back({id, clip.media, clip.fadeIn, clip.fadeOut});
@@ -764,8 +788,15 @@ namespace gnubase::engine
 				event.fadeOut, clip.fadeIn, clip.fadeOut,
 				crossfadeApplies(project, event) ? event.crossfade : Crossfade(), gainPoints(event.volumeCurve),
 				frontOf(event), event.rank, 0, 0};
-			if (warped(clip))
-				warpEvent(project, event, *snapshot, render);
+			// An event that plays as it is maps its clip's frames from its offset onto its own.
+			const auto offset = static_cast<double>(event.offset);
+			const auto length = static_cast<double>(std::max<time::Samples>(event.length, 1));
+			std::vector<dsp::WarpPoint> map = warped(clip)
+				? warpMap(project, event)
+				: std::vector<dsp::WarpPoint>{{offset, 0.0}, {offset + length, length}};
+			std::vector<dsp::PitchPoint> pitch = pitchMap(project, event, render.start, map);
+			if (warped(clip) || !pitch.empty())
+				warpEvent(project, event, std::move(map), std::move(pitch), *snapshot, render);
 			if (const auto part = project.audioParts.find(event.part); part != project.audioParts.end() &&
 				!inPart(project, part->second, project.sampleRate / project.media.at(clip.media).sampleRate, render))
 				continue;

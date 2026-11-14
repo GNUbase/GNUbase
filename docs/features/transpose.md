@@ -1,7 +1,7 @@
 # Transpose track and project root key
 
 Global transposition (#168, reference manual pp. 165, 414-421): the Project Root Key, the transpose track with its
-transpose events and controls, and MIDI parts that follow it or are excluded from it.
+transpose events and controls, and MIDI parts and audio events that follow it or are excluded from it.
 
 ## Engine
 
@@ -15,6 +15,11 @@ transpose events and controls, and MIDI parts that follow it or are excluded fro
   to it (see Playback); it is derived, so the project file doesn't keep it. `event.glue` refuses MIDI parts that
   follow global transpose differently, by their root key or Global Transpose: the glued part keeps the first one's
   setting, so the others' notes would play at another pitch.
+- **An audio event's root key and Global Transpose** (#1368, pp. 415-416, 421): `audioEvent.set` `rootKey` and
+  `globalTranspose`, as a part's, in the event's JSON, saved with the project, kept by splits and copies; the audio
+  file stays as it is. `transpose.assignRootKey` gives audio events without a root key the project's too, also those
+  in inactive track versions, and `event.glue` refuses audio events that continue each other in their clip but follow
+  global transpose differently, as it refuses such parts. Audio events have no Transpose of their own yet.
 - **The transpose track** (`TrackType::Transpose`, `"transpose"`) has no channel, stays at the top level and is there
   at most once. Its events and controls are `Project::transpose`; removing the track removes them. Switching its time
   base and changing the sample rate keep the events where they are, as for markers.
@@ -24,11 +29,14 @@ transpose events and controls, and MIDI parts that follow it or are excluded fro
   `transpose.set` (moves or changes events) and `transpose.remove` are undo steps; `transpose.changed` announces
   every change with what `transpose.get` returns, undo and redo included. Delete Time (`range.delete` `time`) and
   Insert Silence (`range.insertSilence`) move the events with the music, over the whole project or the tracks they
-  name, unless the transpose track is locked; Delete Time drops the events in its range.
+  name, unless the transpose track is locked; Delete Time drops the events in its range, and the transposition in
+  force at the range's end goes on from the cut with an event there (#1367), as Process Bars carries the signature in
+  force, so that the music after the range keeps its pitch.
 - **Controls** (`transpose.setTrack`, an undo step): `mute` (Mute Transpose Events: the events don't play),
   `keepInOctave` (Keep Transpose in Octave Range) and `lock` (the events can't be added, changed or removed).
-- **Recording** (p. 420): a recorded part follows global transpose with the project root key, or, if the project has
-  transpose events, is independent without a root key.
+- **Recording** (p. 420): a recorded part or audio event follows global transpose with the project root key, or, if
+  the project has transpose events, is independent without a root key. So is an event that render in place adds,
+  as the render already holds the transposition.
 
 ## Playback
 
@@ -42,16 +50,25 @@ octave or more is folded away (12 plays 0); a part that should keep such a trans
 snapshot adds it to each note's MIDI modifiers' transpose at the note's start, with the track's modifiers, before their
 ranges.
 
+An audio event plays the same sum without a transpose of its own (#1368), shifted in real time by the time stretcher
+([time-stretch.md](../time-stretch.md)) on the disk thread: the render snapshot gives an event that some of it
+shifts a media entry of its own, as a warped event has ([warp.md](warp.md)), with a pitch map
+(`RenderMedia::pitch`): the semitones from the event's start and from each transpose event within it, in the event's
+frames. `dsp::WarpReader` sets the stretcher's pitch from each point on, through the warp map of a warped event or
+an identity map of a plain one, with the clip's warp preset, clamped to the real-time range of 24 semitones. An event
+that nothing shifts, Independent or without a root key and transpose events, plays its file as before.
+
 ## UI
 
 - **The toolbar** has the Project Root Key (`#root-key` with `#root-key-menu`), which the event display shows and
   sets.
-- **The info line** has a MIDI part's Root Key and Global Transpose ([inspector.md](inspector.md)). Its Transpose
+- **The info line** has a MIDI part's and an audio event's Root Key and Global Transpose
+  ([inspector.md](inspector.md)). Its Transpose
   field shows what the project root key adds in brackets after the part's own transpose (p. 420), such as `(+2)`
   for a part in C in a project in D, from `rootKeyTranspose`. Its Global Transpose button reads the value it holds
   (p. 421): Follow, or Independent while it is checked.
-- **Independent parts** show an icon (`part-independent.svg`) in their upper right corner in the event display
-  (p. 421): a `.part-mark.independent` with attribute `part` in the display's `.part-marks`.
+- **Independent parts and audio events** show an icon (`part-independent.svg`) in their upper right corner in the
+  event display (p. 421): a `.part-mark.independent` with attribute `part` in the display's `.part-marks`.
 - **The transpose track's lane** (`ui::GlobalEventLane`, `src/ui/transposetrack.h`, shared with the chord track's
   lanes) shows each event's value from its position: the draw tool adds an event at the nearest bar and opens its
   value for typing, a double click opens it too, a drag moves it to the nearest bar and the erase tool removes it.
@@ -59,6 +76,8 @@ ranges.
   Events (`transposeMute`), Keep Transpose in Octave Range (`keepInOctave`), Switch Time Base and Lock
   (`transposeLock`).
 - **Add Track** has Transpose, once per project.
+- **Refused edits**: the event display shows why the engine refused an edit, such as a glue of parts that follow global
+  transpose differently, in its notification `#edit-refused` (#1367, [event-display.md](event-display.md)).
 - **The track list's context menu** has Set Root Key for Unassigned Events (`transpose.assignRootKey`, p. 416),
   enabled while the transpose track is selected, as a right click on it selects it.
 
@@ -70,15 +89,23 @@ moving, the value range, lock, the track's removal), the octave-range option fol
 transpose included (7 staying 7 and 8 folding, a muted track, an Independent part left as it is), `transpose.changed` and
 `arranger.changed` announced by undo and redo, glue refusing parts that follow global transpose differently and keeping
 the sound of parts the option folds differently, Set Root Key for Unassigned Events (also in inactive track versions),
-Delete Time and Insert Silence moving the events, recorded parts with and without transpose events, and saving and
-loading. `tests/transpose_ui_tests.cpp`: the toolbar's root key, the info line's Root Key, Global Transpose (its button
-reading Follow or Independent) and the root key's step, the mark of Independent parts, drawing, typing, dragging,
-double-clicking and erasing transpose events on the lane, the track list's controls and its context menu's Set Root Key
-for Unassigned Events.
+Delete Time and Insert Silence moving the events, Delete Time carrying the transposition at the range's end to the cut
+and nothing when an event is at the end or none in the range, recorded parts with and without transpose events, and
+saving and loading. For audio events: the pitch map of the render snapshot for the root key, transpose events, a muted
+track, the octave range and Independent, with undo and splits; Set Root Key for Unassigned Events and glue; recorded
+events with and without transpose events; saving and loading. `tests/renderinplace_tests.cpp`: a rendered event under a
+transpose event Independent with an empty pitch map. `tests/warp_tests.cpp`: `dsp::WarpReader` shifting a sine an octave
+up from a point of its pitch map, also after a seek, clicks after a pitch point an octave up and down where its map puts
+them, read through and after a seek, and an audio event in C playing 4 semitones up in a
+project in E and 8 down after a transpose event, measured in an offline render, and unshifted when Independent.
+`tests/transpose_ui_tests.cpp`: the toolbar's root key, the info line's Root Key and Global Transpose (its button
+reading Follow or Independent) for parts and audio events and a part's root key step, the mark of Independent parts and
+audio events, the reason of a refused glue in `#edit-refused`, drawing, typing, dragging, double-clicking and erasing
+transpose events on the lane, the track list's controls and its context menu's Set Root Key for Unassigned Events.
 
 ## Not yet
 
-Audio events: their Global Transpose, root key and the info line's fields for them wait for real-time pitch shifting
-in the disk streams, which #1368 tracks, as does the pool's Key column; live MIDI input through the transpose track;
-Indicate Transpositions in the key editor; the transpose track's controls in the track controls dialog; drums and
-effects tagged Independent by default; selecting several transpose events and the Delete key.
+Audio events: a Transpose of their own on the info line, the pool's Key column, the root key and Global Transpose of
+audio parts, and ready-made events tagged as drums or effects set to Independent (p. 421); live MIDI input through the
+transpose track; Indicate Transpositions in the key editor; the transpose track's controls in the track controls dialog;
+selecting several transpose events and the Delete key.

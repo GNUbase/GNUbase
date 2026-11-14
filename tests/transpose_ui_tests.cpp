@@ -130,6 +130,82 @@ TEST_CASE("the toolbar sets the project root key, the info line a part's root ke
 	CHECK(window.app.waitUntil([&] { return globalTransposeLabel() == "Follow"; }));
 }
 
+TEST_CASE("the info line sets an audio event's root key and Global Transpose", "[ui]")
+{
+	Window window;
+	const gnubase::test::TempDir dir;
+	test::Audio audio;
+	audio.samples.assign(48000, 0.0F);
+	const auto file = dir.path() / "silence.wav";
+	test::writeWav(file, audio);
+	const auto track = window.call("track.add", {{"type", "audio"}, {"channels", 1}}).at("track").at("id");
+	const auto media = window.call("media.add", {{"path", file.u8string()}}).at("media").at("id");
+	const auto clip = window.call("clip.add", {{"media", media}}).at("clip").at("id");
+	const auto event =
+		window.call("audioEvent.add", {{"track", track}, {"clip", clip}, {"position", 0}, {"length", 48000}})
+			.at("event")
+			.at("id")
+			.get<uint64_t>();
+	const auto audioEvent = [&window, event]
+	{
+		const Json project = window.call("project.get");
+		for (const Json& each : project.at("audioEvents"))
+			if (each.at("id") == event)
+				return each;
+		return Json::object();
+	};
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("audioEvents").size() == 1; }));
+	window.display.select({event});
+	REQUIRE(window.app.waitUntil([&] { return !window.hasClass("#info-line", "empty"); }));
+	// An audio event has a root key and Global Transpose as a MIDI part has (#1368, reference manual pp. 416, 421).
+	CHECK_FALSE(window.hasClass("#info-line [info-field=rootKey]", "unavailable"));
+	CHECK_FALSE(window.hasClass("#info-line [info-field=globalTranspose]", "unavailable"));
+	window.click("#info-line select[field=rootKey]");
+	window.app.ui().key(std::nullopt, "Down");
+	window.click("#info-line select[field=rootKey]");
+	REQUIRE(window.app.waitUntil([&] { return audioEvent().at("rootKey") == "C"; }));
+	const std::string mark = ".part-mark.independent[part=" + std::to_string(event) + "]";
+	CHECK(window.app.ui().dom(std::nullopt, mark, 0).at("elements").empty());
+	window.click("#info-line button[field=globalTranspose]");
+	REQUIRE(window.app.waitUntil([&] { return audioEvent().at("globalTranspose") == "independent"; }));
+	// Independent events show the mark in their upper right corner, as parts do (p. 421).
+	CHECK(window.app.waitUntil([&] { return window.app.ui().dom(std::nullopt, mark, 0).at("elements").size() == 1; }));
+	CHECK(window.app.waitUntil(
+		[&]
+		{
+			return window.element("#info-line button[field=globalTranspose]").value("text", std::string()) ==
+				"Independent";
+		}));
+}
+
+TEST_CASE("the event display says why the engine refused a glue of parts that follow transpose differently", "[ui]")
+{
+	Window window;
+	const auto midi = window.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	const auto add = [&window, midi](int64_t at, const std::string& key)
+	{
+		const auto part = window.call("midiPart.add", {{"track", midi}, {"position", at}, {"length", 4 * g_quarter}})
+							  .at("part")
+							  .at("id")
+							  .get<uint64_t>();
+		window.call("midiPart.set", {{"part", part}, {"rootKey", key}});
+		return part;
+	};
+	// In a project in E, the part in C plays 4 semitones up and the one in D 2.
+	window.call("project.set", {{"rootKey", "E"}});
+	const uint64_t first = add(0, "C");
+	const uint64_t second = add(4 * g_quarter, "D");
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("midiParts").size() == 2; }));
+	CHECK(window.element("#edit-refused").at("visible") == false);
+	window.display.select({first, second});
+	window.display.actions().at("edit.glue")();
+	// The engine's reason shows for a moment over the lanes (#1367); the parts stay as they were.
+	REQUIRE(window.app.waitUntil([&] { return window.element("#edit-refused").at("visible") == true; }));
+	CHECK(window.element("#edit-refused").value("text", std::string()).find("follow global transpose differently") !=
+		std::string::npos);
+	CHECK(window.call("project.get").at("midiParts").size() == 2);
+}
+
 TEST_CASE("the transpose track's context menu sets the root key for unassigned events", "[ui]")
 {
 	Window window;

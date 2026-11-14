@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <utility>
 #include <variant>
@@ -90,6 +91,60 @@ namespace
 		ObjectId track = 0;
 		ObjectId part = 0;
 	};
+
+	// A song with an audio track too, linear, with a mono event of a second of silence at 48 kHz from 0 (#1368).
+	struct AudioSong : Song
+	{
+		AudioSong()
+		{
+			gnubase::test::Audio audio;
+			audio.samples.assign(48000, 0.0F);
+			gnubase::test::writeWav(file, audio);
+			const Json added = run(client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}, {"channels", 1}});
+			audioChannel = added.at("channel").at("id").get<ObjectId>();
+			audioTrack = added.at("track").at("id").get<ObjectId>();
+			const Json media = run(client, "media.add", {{"path", file.u8string()}}).at("media");
+			clip = run(client, "clip.add", {{"media", media.at("id")}}).at("clip").at("id").get<ObjectId>();
+			event = run(client, "audioEvent.add",
+				{{"track", audioTrack}, {"clip", clip}, {"position", 0}, {"offset", 0}, {"length", 48000}})
+						.at("event")
+						.at("id")
+						.get<ObjectId>();
+		}
+
+		Json eventJson(ObjectId id = 0)
+		{
+			const Json project = run(client, "project.get");
+			for (const Json& item : project.at("audioEvents"))
+				if (item.at("id") == (id != 0 ? id : event))
+					return item;
+			return {};
+		}
+
+		// The pitch map the event plays with, as {target, semitones} pairs: empty while it plays its file as it is.
+		std::vector<std::pair<double, double>> pitch()
+		{
+			const auto snapshot = engine.renderSnapshots().acquire();
+			std::vector<std::pair<double, double>> result;
+			for (const RenderChannel& render : snapshot.channels)
+				if (render.id == audioChannel)
+					for (const RenderAudioEvent& played : render.audioEvents)
+						if (played.id == event)
+							for (const dsp::PitchPoint& point :
+								snapshot.media.at(static_cast<size_t>(played.media)).pitch)
+								result.emplace_back(point.target, point.semitones);
+			return result;
+		}
+
+		gnubase::test::TempDir dir;
+		std::filesystem::path file = dir.path() / "silence.wav";
+		ObjectId audioChannel = 0;
+		ObjectId audioTrack = 0;
+		ObjectId clip = 0;
+		ObjectId event = 0;
+	};
+
+	using Pitch = std::vector<std::pair<double, double>>;
 }
 
 TEST_CASE("the project root key transposes parts with a root key of their own to it", "[integration]")
@@ -308,6 +363,105 @@ TEST_CASE("Set Root Key for Unassigned Events reaches the parts of inactive trac
 	CHECK(song.partJson().at("rootKey") == "E");
 }
 
+TEST_CASE("audio events follow the root key and the transpose track with their pitch", "[integration]")
+{
+	AudioSong song;
+	// Without a root key nothing shifts them, and they play their file as it is.
+	CHECK(song.eventJson().at("rootKey") == "");
+	CHECK(song.eventJson().at("globalTranspose") == "follow");
+	run(song.client, "project.set", {{"rootKey", "D"}});
+	CHECK(song.pitch().empty());
+	// An event in C plays 2 semitones up in a project in D (#1368, reference manual p. 415).
+	run(song.client, "audioEvent.set", {{"event", song.event}, {"rootKey", "C"}});
+	CHECK(song.eventJson().at("rootKey") == "C");
+	CHECK(song.pitch() == Pitch{{0.0, 2.0}});
+	// A transpose event within it shifts it from there on (p. 418), in the event's frames.
+	const auto transpose =
+		run(song.client, "transpose.add", {{"position", g_beatTicks}, {"value", 5}}).at("event").at("id");
+	CHECK(song.pitch() == Pitch{{0.0, 2.0}, {24000.0, 7.0}});
+	// Muted transpose events don't play; Keep Transpose in Octave Range folds the sum.
+	run(song.client, "transpose.setTrack", {{"mute", true}});
+	CHECK(song.pitch() == Pitch{{0.0, 2.0}});
+	run(song.client, "transpose.setTrack", {{"mute", false}, {"keepInOctave", true}});
+	run(song.client, "transpose.set", {{"events", {{{"event", transpose}, {"value", 6}}}}});
+	CHECK(song.pitch() == Pitch{{0.0, 2.0}, {24000.0, -4.0}});
+	// Independent events are left as they are (p. 421).
+	run(song.client, "audioEvent.set", {{"event", song.event}, {"globalTranspose", "independent"}});
+	CHECK(song.eventJson().at("globalTranspose") == "independent");
+	CHECK(song.pitch().empty());
+	run(song.client, "history.undo");
+	CHECK(song.eventJson().at("globalTranspose") == "follow");
+	CHECK(song.pitch() == Pitch{{0.0, 2.0}, {24000.0, -4.0}});
+	// Splits keep the root key.
+	run(song.client, "event.split", {{"events", {song.event}}, {"positions", {12000}}});
+	const Json split = run(song.client, "project.get");
+	REQUIRE(split.at("audioEvents").size() == 2);
+	for (const Json& event : split.at("audioEvents"))
+		CHECK(event.at("rootKey") == "C");
+	reject(song.client, "audioEvent.set", {{"event", song.event}, {"rootKey", "H"}});
+	reject(song.client, "audioEvent.set", {{"event", song.event}, {"globalTranspose", "sometimes"}});
+}
+
+TEST_CASE("audio events get the project root key, and glue only when they follow transpose alike", "[integration]")
+{
+	AudioSong song;
+	run(song.client, "project.set", {{"rootKey", "E"}});
+	run(song.client, "transpose.assignRootKey");
+	CHECK(song.eventJson().at("rootKey") == "E");
+	// The pieces of a split continue each other in the clip and glue into one event, unless one of them follows
+	// global transpose differently.
+	run(song.client, "event.split", {{"events", {song.event}}, {"positions", {24000}}});
+	std::vector<ObjectId> pieces;
+	const Json split = run(song.client, "project.get");
+	for (const Json& event : split.at("audioEvents"))
+		pieces.push_back(event.at("id").get<ObjectId>());
+	REQUIRE(pieces.size() == 2);
+	run(song.client, "audioEvent.set", {{"event", pieces[1]}, {"rootKey", "C"}});
+	CHECK(reject(song.client, "event.glue", {{"events", pieces}}).find("follow global transpose differently") !=
+		std::string::npos);
+	run(song.client, "audioEvent.set", {{"event", pieces[1]}, {"rootKey", "E"}});
+	run(song.client, "event.glue", {{"events", pieces}});
+	CHECK(run(song.client, "project.get").at("audioEvents").size() == 1);
+}
+
+TEST_CASE("recorded audio events follow the root key without transpose events, and are independent with them",
+	"[integration]")
+{
+	AudioSong song;
+	run(song.client, "project.set", {{"rootKey", "D"}});
+	const auto record = [&song](int64_t at)
+	{
+		const Json added = run(song.client, "recording.add",
+			{{"tracks",
+				{{{"track", song.audioTrack}, {"path", song.file.u8string()},
+					{"takes", {{{"position", at}, {"offset", 0}, {"length", g_beat}}}}}}}});
+		return song.eventJson(added.at("events")[0].get<ObjectId>());
+	};
+	// p. 420: without transpose events with the project root key, following it.
+	Json recorded = record(4 * g_beat);
+	CHECK(recorded.at("rootKey") == "D");
+	CHECK(recorded.at("globalTranspose") == "follow");
+	run(song.client, "transpose.add", {{"position", 0}, {"value", 3}});
+	recorded = record(8 * g_beat);
+	CHECK(recorded.at("rootKey") == "");
+	CHECK(recorded.at("globalTranspose") == "independent");
+}
+
+TEST_CASE("an audio event's root key and Global Transpose are saved with the project", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	const std::string path = (dir.path() / "Song.dawproject").u8string();
+	AudioSong song;
+	run(song.client, "audioEvent.set", {{"event", song.event}, {"rootKey", "F#"}, {"globalTranspose", "independent"}});
+	run(song.client, "project.save", {{"path", path}});
+	Engine engine;
+	Client client{engine};
+	run(client, "project.load", {{"path", path}});
+	const Json loaded = run(client, "project.get").at("audioEvents")[0];
+	CHECK(loaded.at("rootKey") == "F#");
+	CHECK(loaded.at("globalTranspose") == "independent");
+}
+
 TEST_CASE("Delete Time and Insert Silence move the transpose events with the music", "[integration]")
 {
 	Song song;
@@ -324,9 +478,35 @@ TEST_CASE("Delete Time and Insert Silence move the transpose events with the mus
 	run(song.client, "transpose.add", {{"position", 8 * g_beatTicks}, {"value", -1}});
 	CHECK(positions() == std::vector<int64_t>{0, 2 * g_beatTicks, 8 * g_beatTicks});
 
-	// Delete Time over beats 1 to 3: the event at 2 goes with the range, the one at 8 moves back by two beats.
+	const auto values = [&song]
+	{
+		std::vector<int> result;
+		const Json transpose = run(song.client, "transpose.get");
+		for (const Json& event : transpose.at("events"))
+			result.push_back(event.at("value").get<int>());
+		return result;
+	};
+	// Delete Time over beats 1 to 3: the event at 2 goes with the range, the one at 8 moves back by two beats. The
+	// transposition in force at the range's end, +5, goes on from the cut (#1367), so that the music after the range
+	// keeps its pitch, as Process Bars carries the signature in force.
 	run(song.client, "range.delete", {{"start", g_beat}, {"end", 3 * g_beat}, {"time", true}});
-	CHECK(positions() == std::vector<int64_t>{0, 6 * g_beatTicks});
+	CHECK(positions() == std::vector<int64_t>{0, g_beatTicks, 6 * g_beatTicks});
+	CHECK(values() == std::vector<int>{2, 5, -1});
+	CHECK(song.pitches() == std::vector<int>{62, 65});
+	run(song.client, "history.undo");
+	CHECK(values() == std::vector<int>{2, 5, -1});
+	// An event at the range's end moves to the cut and carries nothing more; a range without events in it neither.
+	run(song.client, "range.delete", {{"start", g_beat}, {"end", 2 * g_beat}, {"time", true}});
+	CHECK(positions() == std::vector<int64_t>{0, g_beatTicks, 7 * g_beatTicks});
+	run(song.client, "history.undo");
+	run(song.client, "range.delete", {{"start", 3 * g_beat}, {"end", 4 * g_beat}, {"time", true}});
+	CHECK(positions() == std::vector<int64_t>{0, 2 * g_beatTicks, 7 * g_beatTicks});
+	run(song.client, "history.undo");
+	// A range that drops events whose last one has the value in force before it carries nothing either.
+	run(song.client, "transpose.add", {{"position", 3 * g_beatTicks}, {"value", 2}});
+	run(song.client, "range.delete", {{"start", g_beat}, {"end", 4 * g_beat}, {"time", true}});
+	CHECK(positions() == std::vector<int64_t>{0, 5 * g_beatTicks});
+	run(song.client, "history.undo");
 	run(song.client, "history.undo");
 	CHECK(positions() == std::vector<int64_t>{0, 2 * g_beatTicks, 8 * g_beatTicks});
 
