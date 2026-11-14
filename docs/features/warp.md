@@ -91,6 +91,11 @@ The clip's fades play where the warp puts the clip's ends (`warpedClipEdges`, `R
 `clipEnd`), also for an event that starts or ends inside them. These entries carry the event's id but aren't media
 files: the peak cache and `audition.start` skip them.
 
+An event that global transposition shifts (#1368, [transpose.md](transpose.md)) gets such an entry too, warped or not
+(an unwarped one with a map from its offset that plays its frames as they are), with a pitch map
+(`RenderMedia::pitch`): `dsp::WarpReader` sets the stretcher's pitch from each of its points on, the same way it sets
+each segment's ratio a start pad early.
+
 `Playback` opens such a file through `dsp::WarpReader` (`src/engine/dsp/warp.h`): a real-time `TimeStretcher` whose
 ratio is the slope of the map, fed and read by the disk thread that fills the voice's disk stream, so the audio thread
 reads finished frames as before and the real-time rules hold. A ratio change takes effect on the input that leaves the

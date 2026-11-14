@@ -81,7 +81,7 @@ namespace gnubase::ui
 			R"(<div class="info-field" info-field="channel" section="channel" label="Channel">)"
 			R"(<span class="info-label">Channel</span>)"
 			R"(<textdisplay class="display" field="channel"/></div>)"
-			// A MIDI part's root key and Global Transpose (pp. 417, 421, #168).
+			// A MIDI part's or an audio event's root key and Global Transpose (pp. 417, 421, #168, #1368).
 			R"(<div class="info-field" info-field="rootKey" section="rootKey" label="Root Key">)"
 			R"(<span class="info-label">Root Key</span>)"
 			R"(<select field="rootKey" title="Root Key"/></div>)"
@@ -89,7 +89,7 @@ namespace gnubase::ui
 			R"(<button type="toggle" field="globalTranspose")"
 			R"( title="Global Transpose: Follow">Follow</button></div>)";
 
-		// The root keys, as midiPart.set takes them.
+		// The root keys, as midiPart.set and audioEvent.set take them.
 		const widgets::Options& rootKeys()
 		{
 			static const widgets::Options keys = {{"", "-"}, {"C", "C"}, {"C#", "C#"}, {"D", "D"}, {"D#", "D#"},
@@ -323,6 +323,17 @@ namespace gnubase::ui
 		return 0;
 	}
 
+	const engine::Json* InfoLine::audioEventOf(uint64_t event) const
+	{
+		const Json& project = m_display.project();
+		if (!project.is_object())
+			return nullptr;
+		for (const Json& audio : project.at("audioEvents"))
+			if (audio.at("id") == event)
+				return &audio;
+		return nullptr;
+	}
+
 	const engine::Json* InfoLine::partOf(uint64_t part) const
 	{
 		const Json& project = m_display.project();
@@ -405,7 +416,10 @@ namespace gnubase::ui
 					fieldValue(
 						field, widgets::format(static_cast<float>(partValue(first.at("id").get<uint64_t>(), field)))));
 		}
-		const Json* part = midi ? partOf(first.at("id").get<uint64_t>()) : nullptr;
+		// A MIDI part's or an audio event's root key and Global Transpose (#1368).
+		const Json* part = midi ? partOf(first.at("id").get<uint64_t>())
+			: audio             ? audioEventOf(first.at("id").get<uint64_t>())
+								: nullptr;
 		for (const char* field : {"rootKey", "globalTranspose"})
 			if (Rml::Element* shown = root.QuerySelector("[info-field=" + std::string(field) + "]"))
 				setClass(*shown, "unavailable", part == nullptr);
@@ -912,10 +926,16 @@ namespace gnubase::ui
 			const std::string value =
 				field == "rootKey" ? text : std::string(number != 0.0F ? "independent" : "follow");
 			for (const Json& event : m_events)
-				if (const Json* part = event.at("kind") == "midi" ? partOf(event.at("id").get<uint64_t>()) : nullptr;
-					part != nullptr && part->value(field, std::string()) != value)
-					commands.push_back(
-						{{"command", "midiPart.set"}, {"parameters", {{"part", event.at("id")}, {field, value}}}});
+			{
+				const bool midi = event.at("kind") == "midi";
+				const auto id = event.at("id").get<uint64_t>();
+				if (const Json* item = midi           ? partOf(id)
+						: event.at("kind") == "audio" ? audioEventOf(id)
+													  : nullptr;
+					item != nullptr && item->value(field, std::string()) != value)
+					commands.push_back({{"command", midi ? "midiPart.set" : "audioEvent.set"},
+						{"parameters", {{midi ? "part" : "event", id}, {field, value}}}});
+			}
 		}
 		else if (field == "mute" || field == "lock")
 		{

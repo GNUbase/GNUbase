@@ -827,8 +827,8 @@ namespace gnubase::ui
 		EventLanes* m_selectedLanes = nullptr; // selected events over those
 		EventLanes* m_folderLanes = nullptr;   // folders' data blocks, under the events
 		FadeLines* m_fadeLines = nullptr;      // over the waveforms
-		// A .part-mark.independent (attribute part, its id) at the upper right corner of each MIDI part shown that is
-		// excluded from global transpose (#168, reference manual p. 421).
+		// A .part-mark.independent (attribute part, its id) at the upper right corner of each MIDI part and audio event
+		// shown that is excluded from global transpose (#168, #1368, reference manual p. 421).
 		Rml::Element* m_partMarks = nullptr;
 		std::set<uint64_t> m_independent;
 		std::string m_partMarksRml;             // what m_partMarks holds
