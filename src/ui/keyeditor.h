@@ -94,6 +94,7 @@ namespace gnubase::ui
 			double releaseVelocity = 0.5;
 			int channel = 0;
 			bool editable = false;
+			std::vector<std::string> articulations; // its attributes (#1112)
 		};
 
 		struct Part
