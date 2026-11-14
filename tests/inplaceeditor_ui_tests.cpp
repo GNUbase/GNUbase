@@ -523,8 +523,11 @@ TEST_CASE("a note dragged from one in-place editor to another moves to that trac
 	// Reference manual p. 1261: "You can drag notes from one In-Place Editor to another."
 	Fixture f;
 	const uint64_t other = f.app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	// The other track's part starts a bar later than this one's, so the move can't but count on the timeline.
 	const uint64_t otherPart =
-		f.app.call("midiPart.add", {{"track", other}, {"position", g_bar}, {"length", 2 * g_bar}, {"name", "Strings"}})
+		f.app
+			.call(
+				"midiPart.add", {{"track", other}, {"position", 2 * g_bar}, {"length", 2 * g_bar}, {"name", "Strings"}})
 			.at("part")
 			.at("id")
 			.get<uint64_t>();
@@ -558,8 +561,9 @@ TEST_CASE("a note dragged from one in-place editor to another moves to that trac
 			source = note;
 	REQUIRE(source.is_object());
 
-	// The first note, C3 on the bar's first beat, dragged into the other editor's second bar at E3: it moves to
-	// that track's part, at the drop's time and pitch, with its length and velocity, as one undo step.
+	// The first note, C3 on the bar's first beat, dragged into the other editor's third bar at E3: it moves to
+	// that track's part, under the mouse less the half beat the press grabbed it by, with its length and velocity,
+	// as one undo step. Its position counts from the other part's later start.
 	f.app.ui().drag(std::nullopt, f.at(g_bar + (g_quarter / 2), 60), otherAt((2 * g_bar) + (g_quarter / 2), 64));
 	f.app.shell().step(std::chrono::milliseconds(0));
 	REQUIRE(f.app.waitUntil([&] { return partNotes(otherPart).size() == 1; }));
@@ -567,8 +571,9 @@ TEST_CASE("a note dragged from one in-place editor to another moves to that trac
 	CHECK(partNotes(f.part).size() == 1);
 	const Json moved = partNotes(otherPart).at(0);
 	CHECK(moved.at("id") == f.notes[0]); // note.move keeps the ids
-	CHECK(moved.at("position") == g_bar);
+	CHECK(moved.at("position") == 0);
 	CHECK(moved.at("pitch") == 64);
+	CHECK(std::abs(f.box(lane + " .key-note").at("x").get<double>() - f.timelineX(2 * g_bar)) <= 1.5);
 	CHECK(moved.at("length") == g_quarter);
 	CHECK(moved.at("velocity") == source.at("velocity"));
 	CHECK(f.app.call("history.get").at("steps").size() == steps + 1);
@@ -606,7 +611,7 @@ TEST_CASE("a note dragged from one in-place editor to another moves to that trac
 	f.app.shell().step(std::chrono::milliseconds(0));
 	REQUIRE(f.app.waitUntil([&] { return f.view().at("selection").size() == 2; }));
 	const auto position = f.app.call("history.get").at("position").get<int64_t>();
-	f.app.ui().drag(std::nullopt, f.at(g_bar + (g_quarter / 2), 60), otherAt(g_bar + (g_quarter / 2), 62));
+	f.app.ui().drag(std::nullopt, f.at(g_bar + (g_quarter / 2), 60), otherAt((2 * g_bar) + (g_quarter / 2), 62));
 	f.app.shell().step(std::chrono::milliseconds(0));
 	REQUIRE(f.app.waitUntil([&] { return partNotes(otherPart).size() == 2; }));
 	CHECK(partNotes(f.part).empty());
@@ -623,8 +628,10 @@ TEST_CASE("a note dragged from one in-place editor to another moves to that trac
 	f.app.call("history.undo");
 	restored();
 	REQUIRE(f.app.waitUntil([&] { return f.view().at("selection").size() == 2; }));
-	// The press on the second note, dropped at the other part's start: the first note would land before it.
-	f.app.ui().drag(std::nullopt, f.at(g_bar + g_quarter + (g_quarter / 2), 64), otherAt(g_bar + (g_quarter / 2), 62));
+	// The press on the second note, dropped at the other part's start: the first note would land on the timeline
+	// before it.
+	f.app.ui().drag(
+		std::nullopt, f.at(g_bar + g_quarter + (g_quarter / 2), 64), otherAt((2 * g_bar) + (g_quarter / 2), 62));
 	f.app.shell().step(std::chrono::milliseconds(0));
 	CHECK(partNotes(otherPart).empty());
 	CHECK(partNotes(f.part).size() == 2);

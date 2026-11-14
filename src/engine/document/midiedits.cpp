@@ -123,6 +123,10 @@ namespace gnubase::engine
 			const auto ticks = parameters.value("ticks", time::Ticks{0});
 			const auto semitones = parameters.value("semitones", int64_t{0});
 			const auto ids = parameters.at("notes").get<std::vector<ObjectId>>();
+			// The offsets count on the project's timeline, while a note's position counts from its part's start:
+			// the difference of the two starts goes into the positions, in whatever time base the parts are.
+			const time::Ticks sourceStart = time::toTicks(source.position, project.tempo, project.sampleRate);
+			const time::Ticks targetStart = time::toTicks(target->second.position, project.tempo, project.sampleRate);
 			// Checked before anything moves. ProjectModel::add would restore the project anyway.
 			std::vector<Note> notes;
 			for (size_t i = 0; i < ids.size(); ++i)
@@ -131,7 +135,7 @@ namespace gnubase::engine
 				const auto found = source.notes.find(ids[i]);
 				require(found != source.notes.end(), name + ": the part has no note " + std::to_string(ids[i]));
 				Note note = found->second;
-				note.position += ticks;
+				note.position = sourceStart + note.position + ticks - targetStart;
 				require(note.position >= 0, name + " would land before the target part's start");
 				const int64_t pitch = static_cast<int64_t>(note.pitch) + semitones;
 				require(pitch >= 0 && pitch <= 127, name + " would land outside the pitches 0 to 127");
@@ -319,18 +323,24 @@ namespace gnubase::engine
 			{"required", {"part", "notes", "target"}},
 			{"properties",
 				{{"part", integer}, {"notes", {{"type", "array"}, {"items", integer}}}, {"target", integer},
-					{"ticks", integer}, {"semitones", integer}}}};
+					{"ticks",
+						{{"type", "integer"},
+							{"description", "how far the notes move on the project's timeline, in ticks"}}},
+					{"semitones",
+						{{"type", "integer"}, {"description", "how far the notes move in pitch, in semitones"}}}}}};
 		add(engine,
 			{"note.move", 1,
 				"Moves notes of a MIDI part to another part, as dragging them from one in-place editor to another "
-				"does (reference manual p. 1261): each note keeps its id and every field but its position and pitch, "
-				"which move by ticks and by semitones. The source part and the target part may be the same. The move "
+				"does (reference manual p. 1261): each note keeps its id and every field but its position and pitch. "
+				"ticks moves the notes on the project's timeline and semitones in pitch; the command converts the "
+				"timeline shift to the target part's own positions, wherever the two parts start on the timeline and "
+				"whatever their time bases. The source part and the target part may be the same. The move "
 				"is one undo step, and the shared copies of both parts follow it. A note may reach past the target "
 				"part's end, as note.add and note.set allow. Refuses, changing nothing, a part or a note that "
-				"doesn't exist, a note that would land before the target part's start or outside the pitches 0 to "
-				"127, and a move between shared copies of one group, which must stay equal. Emits note.removed for "
-				"the source part and note.added for the target part. Returns the moved notes, as the target part has "
-				"them.",
+				"doesn't exist, a note that would land on the timeline before the target part's start or outside the "
+				"pitches 0 to 127, and a move between shared copies of one group, which must stay equal. Emits "
+				"note.removed for the source part and note.added for the target part. Returns the moved notes, as "
+				"the target part has them.",
 				noteMove, resultSchema("notes"), false},
 			moveNotes);
 		add(engine,

@@ -294,6 +294,78 @@ TEST_CASE("note.move refuses what doesn't fit and changes nothing then", "[unit]
 	CHECK(notesOf(client, source).at(0).at("position") == 120);
 }
 
+TEST_CASE("note.move counts ticks on the project's timeline, whatever the parts' starts", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const int64_t track = call(client, "track.add", {{"type", "midi"}}).at("track").at("id").get<int64_t>();
+	const int64_t other = call(client, "track.add", {{"type", "instrument"}}).at("track").at("id").get<int64_t>();
+	const int64_t source =
+		call(client, "midiPart.add", {{"track", track}, {"position", 2 * g_sixteenth}, {"length", 8 * g_sixteenth}})
+			.at("part")
+			.at("id")
+			.get<int64_t>();
+	const int64_t target =
+		call(client, "midiPart.add", {{"track", other}, {"position", 8 * g_sixteenth}, {"length", 8 * g_sixteenth}})
+			.at("part")
+			.at("id")
+			.get<int64_t>();
+	const int64_t note = call(client, "note.add",
+		{{"part", source},
+			{"notes",
+				Json::array({{{"position", g_sixteenth}, {"length", g_sixteenth}, {"pitch", 60}, {"velocity", 1.0}}})}})
+							 .at("notes")
+							 .at(0)
+							 .at("id")
+							 .get<int64_t>();
+
+	// The note lies on the timeline at 3 sixteenths; 6 more put it at 9, one sixteenth into the target, which
+	// starts at 8.
+	const Json moved =
+		call(client, "note.move", {{"part", source}, {"notes", {note}}, {"target", target}, {"ticks", 6 * g_sixteenth}})
+			.at("notes");
+	CHECK(moved.at(0).at("position") == g_sixteenth);
+	CHECK(moved.at(0).at("id") == note);
+	CHECK(notesOf(client, source).empty());
+	call(client, "history.undo");
+	REQUIRE(notesOf(client, source).size() == 1);
+	CHECK(notesOf(client, target).empty());
+
+	// 4 sixteenths put it at 7, before the target's start on the timeline: refused, although its position in the
+	// target would be positive.
+	CHECK_THAT(
+		client.call("note.move", {{"part", source}, {"notes", {note}}, {"target", target}, {"ticks", 4 * g_sixteenth}})
+			.error,
+		ContainsSubstring("would land before the target part's start"));
+	CHECK(notesOf(client, source).size() == 1);
+	CHECK(notesOf(client, target).empty());
+
+	// Within the source part itself the move shifts the note on the timeline, as before.
+	CHECK(call(client, "note.move", {{"part", source}, {"notes", {note}}, {"target", source}, {"ticks", g_sixteenth}})
+			  .at("notes")
+			  .at(0)
+			  .at("position") == 2 * g_sixteenth);
+	call(client, "history.undo");
+
+	// A target part on a linear track: its position counts samples, which the tempo map converts. At 120 BPM and
+	// 48 kHz, 48000 samples are 8 sixteenths; the note at 3, moved by 7, lands 2 into it.
+	const int64_t linear =
+		call(client, "track.add", {{"type", "midi"}, {"timeBase", "linear"}}).at("track").at("id").get<int64_t>();
+	const int64_t linearPart = call(client, "midiPart.add", {{"track", linear}, {"position", 48000}, {"length", 48000}})
+								   .at("part")
+								   .at("id")
+								   .get<int64_t>();
+	const Json toLinear = call(
+		client, "note.move", {{"part", source}, {"notes", {note}}, {"target", linearPart}, {"ticks", 7 * g_sixteenth}})
+							  .at("notes");
+	CHECK(toLinear.at(0).at("position") == 2 * g_sixteenth);
+	CHECK(toLinear.at(0).at("id") == note);
+	call(client, "history.undo");
+	CHECK(notesOf(client, linearPart).empty());
+	REQUIRE(notesOf(client, source).size() == 1);
+	CHECK(notesOf(client, source).at(0).at("position") == g_sixteenth);
+}
+
 TEST_CASE("note.move keeps the shared copies of the source and of the target consistent", "[unit]")
 {
 	Engine engine;

@@ -15,7 +15,7 @@ project closes it.
 | Command | What it does | Reference |
 |---|---|---|
 | `editor.inPlace` | Opens (`open` true), closes (false) or toggles (without `open`) the in-place editors of `tracks`; returns `tracks`, those whose in-place editors are open, in the track list's order. Without `tracks` it only lists them | pp. 1259, 1261 |
-| `note.move` | Moves a MIDI `part`'s named `notes` to a `target` part, by `ticks` and by `semitones`, as the drag between in-place editors sends it: each note keeps its id and every other field, the move is one undo step and the shared copies of both parts follow it. A note may reach past the target part's end, as `note.add` and `note.set` allow. It refuses a part or a note that doesn't exist, a note that would land before the target part's start or outside the pitches 0-127, and a move between shared copies of one group, which must stay equal; nothing changes then. Emits `note.removed` for the source part and `note.added` for the target, and returns the moved notes | p. 1261 |
+| `note.move` | Moves a MIDI `part`'s named `notes` to a `target` part: `ticks` shifts them on the project's timeline — the command converts to the target part's own positions, wherever the two parts start and whatever their time bases — and `semitones` shifts their pitch, as the drag between in-place editors sends it. Each note keeps its id and every other field, the move is one undo step and the shared copies of both parts follow it. A note may reach past the target part's end, as `note.add` and `note.set` allow. It refuses a part or a note that doesn't exist, a note that would land on the timeline before the target part's start or outside the pitches 0-127, and a move between shared copies of one group, which must stay equal; nothing changes then. Emits `note.removed` for the source part and `note.added` for the target, and returns the moved notes | p. 1261 |
 
 - Reading `editor.inPlace` without `tracks` leaves `engine.commandLog` unchanged; calls with `tracks` remain logged.
 - **Parts.** An open in-place editor shows every MIDI part of its track, in order, and parts added later; its parts
@@ -119,7 +119,8 @@ yet).
   with the notes while the project window zooms.
 - `tests/midiedit_tests.cpp`: `note.move` moving notes to another part as one undo step, keeping every field, a quantize
   origin included, and their ids, two notes keeping their distance, with its `note.removed` and `note.added` events,
-  undo and redo; refusing a part or a note that doesn't exist, a note that would land before the target part's start or
-  outside the pitches and a move between shared copies of one group, changing nothing then; a note reaching past the
-  target part's end, a move within the source part itself, and the shared copies of the source and of the target staying
-  consistent.
+  undo and redo; ticks counting on the project's timeline, so that parts starting at different places and a part on a
+  linear-time track take the notes where the timeline puts them, and a move that would land on the timeline before the
+  target part's start is refused; refusing too a part or a note that doesn't exist, a note that would land outside the
+  pitches and a move between shared copies of one group, changing nothing then; a note reaching past the target part's
+  end, a move within the source part itself, and the shared copies of the source and of the target staying consistent.
