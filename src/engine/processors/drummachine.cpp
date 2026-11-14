@@ -276,7 +276,7 @@ namespace gnubase::engine::processors
 	}
 
 	// One frame of a synth layer before its envelope, about -1 to 1. Tuning, tone and noise are the note on's.
-	double DrumMachine::synth(Voice& voice) noexcept
+	double DrumMachine::synth(Voice& voice) const noexcept
 	{
 		const double t = voice.frame / m_sampleRate;
 		const double pitch = voice.pitch;

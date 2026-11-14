@@ -156,7 +156,7 @@ namespace gnubase::engine::processors
 		void noteOff(uint8_t note) noexcept;
 		void fadeOut(Voice& voice) const noexcept;
 		void render(const graph::ProcessContext& context, uint32_t begin, uint32_t end, const Kit& kit) noexcept;
-		double synth(Voice& voice) noexcept;
+		double synth(Voice& voice) const noexcept;
 		static double nextNoise(Voice& voice) noexcept;
 
 		void publish(std::unique_ptr<Kit> kit);
