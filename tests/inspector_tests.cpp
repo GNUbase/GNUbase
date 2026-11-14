@@ -1665,6 +1665,152 @@ TEST_CASE("the info line shows another part's own transpose while a dragged sele
 	CHECK(window.part(other).value("transpose", 0) == 5);
 }
 
+TEST_CASE("the info line shows another note's own velocity while a dragged note's last step is out, and back on the "
+		  "dragged one the drag's",
+	"[ui]")
+{
+	test::CommandHolds holds; // declared before the window: its engine's command thread waits in hold()
+	Window window;
+	const test::ReleaseHolds releaseHolds{holds};
+	// Without the inspector: it reads the in-place editors (editor.inPlace, not a query) for each history.changed,
+	// which sends a waiting step at once, before the display's read for the step before.
+	window.app.appUi().docking().setTabHidden("inspector", true);
+	window.app.engine().registerCommand(
+		{"test.hold", 1, "Waits for the test to release it.", engine::CommandInfo{}.parameters, Json::object(), false},
+		[&holds](engine::CommandContext&) { return holds.hold(); });
+	engine::Client holder(window.app.engine(), "holder");
+	const uint64_t midi = window.addTrack({{"type", "midi"}});
+	const uint64_t part = window.addPart(midi, 0, 4 * g_quarter, "Keys");
+	const Json added = window.call("note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", 0}, {"length", g_quarter}, {"pitch", 60}, {"velocity", 0.5}},
+					{{"position", g_quarter}, {"length", g_quarter}, {"pitch", 64}, {"velocity", 100.0 / 127.0}}}}});
+	const uint64_t dragged = added.at("notes").at(0).at("id").get<uint64_t>();
+	const uint64_t other = added.at("notes").at(1).at("id").get<uint64_t>();
+	const std::string editor = "inPlace:" + std::to_string(midi);
+	window.call("editor.inPlace", {{"tracks", {midi}}, {"open", true}});
+	REQUIRE(window.app.waitUntil([&] { return window.part(part).at("notes").size() == 2; }));
+	const auto selection = [&](uint64_t note) { return Json::array({{{"part", part}, {"note", note}}}); };
+	window.call("editor.set", {{"editor", editor}, {"selection", selection(dragged)}});
+	const std::string field = "#info-line valuefield[field=velocity]";
+	REQUIRE(window.shows("#info-line textdisplay[field=pitch]", "C3"));
+	REQUIRE(window.shows(field, "64"));
+	ui::EngineBinding& binding = window.app.appUi().binding();
+	// The dragged note's velocity, 0-127, in the project that the event display, and with it the info line, shows.
+	const auto shown = [&]
+	{
+		for (const Json& each : window.display.project().at("midiParts"))
+			if (each.at("id") == part)
+				for (const Json& note : each.at("notes"))
+					if (note.at("id") == dragged)
+						return static_cast<double>(std::lround(note.at("velocity").get<double>() * 127.0));
+		return -1.0; // gone
+	};
+
+	// A drag while the engine answers late, and two steps while the test holds the engine: the first goes behind the
+	// hold, the last waits in the binding.
+	test::LateDrag drag(window.app, std::nullopt, field);
+	drag.move(5, 1);
+	REQUIRE(window.app.waitUntil(
+		[&]
+		{
+			return binding.waiting("history.transaction") == 0 && binding.waiting("project.get") == 0 &&
+				binding.waiting("editor.inPlace") == 0;
+		}));
+	holder.send("test.hold");
+	REQUIRE(holds.waitEntered(1));
+	drag.nudge(1);
+	drag.nudge(1);
+	const auto value = static_cast<double>(std::lround(drag.value())); // the field shows whole velocities sent
+	drag.release(false);
+	REQUIRE(binding.waiting("history.transaction") == 1);
+	// The other note, selected behind the first step. A second hold after it keeps the project read that the display
+	// sends for the first step's history.changed out, and the last step goes behind it.
+	holder.send("editor.set", {{"editor", editor}, {"selection", selection(other)}});
+	holder.send("test.hold");
+	holds.release(1);
+	REQUIRE(holds.waitEntered(2));
+	REQUIRE(window.shows("#info-line textdisplay[field=pitch]", "E3"));
+	CHECK(window.shows(field, "100")); // its own, not the dragged note's (#1550)
+	REQUIRE(binding.waiting("project.get") != 0);
+
+	// Back on the dragged note, after the last step. A third hold keeps the project read after the last step out:
+	// the display shows the read after the first one, and the field where the drag left the note.
+	holder.send("editor.set", {{"editor", editor}, {"selection", selection(dragged)}});
+	holder.send("test.hold");
+	holds.release(2);
+	REQUIRE(holds.waitEntered(3));
+	REQUIRE(window.shows("#info-line textdisplay[field=pitch]", "C3"));
+	CHECK(window.app.waitUntil([&] { return drag.value() == value; }));
+	REQUIRE(binding.waiting("history.transaction") == 0);
+	REQUIRE(binding.waiting("project.get") != 0);
+	REQUIRE(shown() != value);
+
+	// The read after the last step agrees with it, and so does the engine; the other note kept its own.
+	holds.release(3);
+	REQUIRE(window.app.waitUntil([&] { return shown() == value; }));
+	CHECK(drag.value() == value);
+	CHECK(window.shows(field, std::to_string(std::lround(value))));
+	const Json notes = window.part(part); // the temporary must outlive the loop over its notes
+	for (const Json& note : notes.at("notes"))
+		CHECK(static_cast<double>(std::lround(note.at("velocity").get<double>() * 127.0)) ==
+			(note.at("id") == dragged ? value : 100.0));
+}
+
+TEST_CASE("the info line's note velocity turned on one note, then on the next with the mouse still over it: two "
+		  "undo steps",
+	"[ui]")
+{
+	Window window;
+	const uint64_t midi = window.addTrack({{"type", "midi"}});
+	const uint64_t part = window.addPart(midi, 0, 4 * g_quarter, "Keys");
+	const Json added = window.call("note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", 0}, {"length", g_quarter}, {"pitch", 60}, {"velocity", 0.5}},
+					{{"position", g_quarter}, {"length", g_quarter}, {"pitch", 64}, {"velocity", 0.5}}}}});
+	const uint64_t first = added.at("notes").at(0).at("id").get<uint64_t>();
+	const uint64_t second = added.at("notes").at(1).at("id").get<uint64_t>();
+	const std::string editor = "inPlace:" + std::to_string(midi);
+	window.call("editor.inPlace", {{"tracks", {midi}}, {"open", true}});
+	const auto velocity = [&](uint64_t id)
+	{
+		const Json shown = window.part(part); // the temporary must outlive the loop over its notes
+		for (const Json& note : shown.at("notes"))
+			if (note.at("id") == id)
+				return note.at("velocity").get<double>();
+		return -1.0; // gone
+	};
+	const auto select = [&](uint64_t note)
+	{
+		window.call("editor.set", {{"editor", editor}, {"selection", Json::array({{{"part", part}, {"note", note}}})}});
+	};
+	const std::string field = "#info-line valuefield[field=velocity]";
+	const auto wheel = [&] { window.app.ui().wheel(std::nullopt, {field, 0, std::nullopt}, 0.0F, 1.0F); };
+	select(first);
+	REQUIRE(window.shows("#info-line textdisplay[field=pitch]", "C3"));
+	REQUIRE(window.shows(field, "64"));
+	const int64_t position = window.historyPosition();
+	const double untouched = velocity(second); // the engine keeps velocities in steps of 1/65535
+
+	// One wheel gesture: the mouse stays over the field while the next note is selected.
+	wheel();
+	REQUIRE(window.app.waitUntil([&] { return velocity(first) != untouched; }));
+	const double turned = velocity(first);
+	select(second);
+	REQUIRE(window.shows("#info-line textdisplay[field=pitch]", "E3"));
+	REQUIRE(window.shows(field, "64")); // the second one's, not the turned first one's
+	wheel();
+	REQUIRE(window.app.waitUntil([&] { return velocity(second) != untouched; }));
+
+	// Each note's change is an undo step of its own (#1550).
+	CHECK(window.historyPosition() == position + 2);
+	window.call("history.undo");
+	REQUIRE(window.app.waitUntil([&] { return velocity(second) == untouched; }));
+	CHECK(velocity(first) == turned);
+}
+
 TEST_CASE("the info line's refused volume step shows the engine's value again", "[ui]")
 {
 	Window window;
