@@ -79,10 +79,11 @@ TEST_CASE("a MIDI editor opens with several parts on several tracks, in the trac
 		{"globalTracks", Json::array()}};
 	// The key editor's settings (tests/keyeditor_tests.cpp) and the list editor's (tests/listeditor_tests.cpp) aside.
 	Json shown = f.view("window");
-	for (const char* key : {"selection", "stepInput", "midiInput", "stepPosition", "moveInsert", "recordPitch",
-			 "recordVelocity", "recordReleaseVelocity", "keepNotes", "insertVelocity", "lengthQuantize", "content",
-			 "lanes", "showLanes", "autoSelectControllers", "controllerSelection", "eventSelection", "pitchVisibility",
-			 "reverseSounds", "showNoteLength", "gridType"})
+	for (const char* key :
+		{"selection", "stepInput", "midiInput", "stepPosition", "moveInsert", "recordPitch", "recordVelocity",
+			"recordReleaseVelocity", "keepNotes", "insertVelocity", "lengthQuantize", "content", "lanes", "showLanes",
+			"autoSelectControllers", "controllerSelection", "eventSelection", "pitchVisibility", "reverseSounds",
+			"showNoteLength", "gridType", "showExpression", "expressionDoubleClick", "expressionType"})
 		shown.erase(key);
 	CHECK(shown == closed);
 

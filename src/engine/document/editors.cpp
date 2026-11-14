@@ -77,6 +77,11 @@ namespace gnubase::engine
 			std::vector<std::pair<ObjectId, ObjectId>> controllerSelection; // each a part and a controller event of it
 			// The audio part editor (#146): the selected audio events of its parts.
 			std::vector<ObjectId> eventSelection;
+			// Per-note expression in the key editor (#1512): Show Note Expression Data, Double-Click Opens Note
+			// Expression Editor and the expression editor's parameter (pp. 1303, 1308-1309).
+			bool showExpression = false;
+			bool expressionDoubleClick = false;
+			std::string expressionType = "tuning";
 		};
 
 		using Views = std::map<std::string, EditorView>;
@@ -292,7 +297,9 @@ namespace gnubase::engine
 				{"pitchVisibility", view.pitchVisibility}, {"reverseSounds", view.reverseSounds},
 				{"showNoteLength", view.showNoteLength}, {"gridType", view.gridType}, {"lanes", lanes},
 				{"showLanes", view.showLanes}, {"autoSelectControllers", view.autoSelectControllers},
-				{"controllerSelection", controllerSelection}, {"eventSelection", view.eventSelection}};
+				{"controllerSelection", controllerSelection}, {"eventSelection", view.eventSelection},
+				{"showExpression", view.showExpression}, {"expressionDoubleClick", view.expressionDoubleClick},
+				{"expressionType", view.expressionType}};
 		}
 
 		// The controller events in the ranges of the selected notes, from a note's start to its end (p. 1188).
@@ -484,6 +491,8 @@ namespace gnubase::engine
 		const Json idSchema = {{"type", "integer"}};
 		const Json boolean = {{"type", "boolean"}};
 		const Json gridTypeSchema = {{"type", "string"}, {"enum", {"quantize", "drumMap"}}};
+		const Json expressionTypeSchema = {
+			{"type", "string"}, {"enum", std::vector<std::string>(g_expressionNames.begin(), g_expressionNames.end())}};
 		const Json selectionSchema = {{"type", "array"},
 			{"items",
 				{{"type", "object"}, {"additionalProperties", false}, {"required", {"part", "note"}},
@@ -509,7 +518,8 @@ namespace gnubase::engine
 			{"recordVelocity", boolean}, {"recordReleaseVelocity", boolean}, {"keepNotes", boolean},
 			{"insertVelocity", {{"type", "number"}}}, {"lengthQuantize", {{"type", "string"}}}, {"lanes", lanesSchema},
 			{"showLanes", boolean}, {"autoSelectControllers", boolean}, {"pitchVisibility", boolean},
-			{"reverseSounds", boolean}, {"showNoteLength", boolean}, {"gridType", gridTypeSchema}};
+			{"reverseSounds", boolean}, {"showNoteLength", boolean}, {"gridType", gridTypeSchema},
+			{"showExpression", boolean}, {"expressionDoubleClick", boolean}, {"expressionType", expressionTypeSchema}};
 		Json viewSchema = {{"type", "object"},
 			{"properties",
 				{{"editor", editorSchema}, {"open", {{"type", "boolean"}}}, {"parts", idsSchema},
@@ -520,7 +530,8 @@ namespace gnubase::engine
 					"globalTracks", "selection", "stepInput", "midiInput", "stepPosition", "moveInsert", "recordPitch",
 					"recordVelocity", "recordReleaseVelocity", "keepNotes", "insertVelocity", "lengthQuantize",
 					"content", "pitchVisibility", "reverseSounds", "showNoteLength", "gridType", "lanes", "showLanes",
-					"autoSelectControllers", "controllerSelection", "eventSelection"}}};
+					"autoSelectControllers", "controllerSelection", "eventSelection", "showExpression",
+					"expressionDoubleClick", "expressionType"}}};
 		viewSchema["properties"].update(keyEditorSchema);
 		const std::string viewText =
 			"editor: lower (the editor in the project window's lower zone), window (the editor window) or "
@@ -555,7 +566,10 @@ namespace gnubase::engine
 			"pitch) or program, or articulations (the directions and attributes of the track's articulation map, "
 			"articulationMap.add, pp. 1287-1289); showLanes, whether the controller display shows them; "
 			"autoSelectControllers, "
-			"whether selecting notes selects the controller events from their start to their end. View state: no "
+			"whether selecting notes selects the controller events from their start to their end. Per-note "
+			"expression (pp. 1303-1313): showExpression shows the notes' expression over them, expressionDoubleClick "
+			"makes a double click on a note open the expression editor instead of deleting it, and expressionType is "
+			"the expression it edits: volume, pan, tuning, vibrato, expression, brightness or pressure. View state: no "
 			"undo steps, not saved, and a new or loaded project closes the editors.";
 		const auto editorOnly = [&](Json properties = Json::object())
 		{
@@ -656,7 +670,9 @@ namespace gnubase::engine
 					{"content", contentSchema}, {"pitchVisibility", boolean}, {"reverseSounds", boolean},
 					{"showNoteLength", boolean}, {"gridType", gridTypeSchema}, {"lanes", lanesSchema},
 					{"showLanes", boolean}, {"autoSelectControllers", boolean},
-					{"controllerSelection", controllerSelectionSchema}, {"eventSelection", idsSchema}}),
+					{"controllerSelection", controllerSelectionSchema}, {"eventSelection", idsSchema},
+					{"showExpression", boolean}, {"expressionDoubleClick", boolean},
+					{"expressionType", expressionTypeSchema}}),
 				viewSchema, false},
 			[views, &model, store](CommandContext& context)
 			{
@@ -812,6 +828,9 @@ namespace gnubase::engine
 				view.reverseSounds = parameters.value("reverseSounds", view.reverseSounds);
 				view.showNoteLength = parameters.value("showNoteLength", view.showNoteLength);
 				view.gridType = parameters.value("gridType", view.gridType);
+				view.showExpression = parameters.value("showExpression", view.showExpression);
+				view.expressionDoubleClick = parameters.value("expressionDoubleClick", view.expressionDoubleClick);
+				view.expressionType = parameters.value("expressionType", view.expressionType);
 				const bool autoSelectTurnsOn = parameters.value("autoSelectControllers", view.autoSelectControllers) &&
 					!view.autoSelectControllers;
 				if (parameters.contains("autoSelectControllers"))
