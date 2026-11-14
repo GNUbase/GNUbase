@@ -955,6 +955,57 @@ TEST_CASE("a clip whose first event is on an inactive track version takes the te
 	CHECK(warpOf(client, loop.clip).at("tempo") == 140.0);
 }
 
+// Follow-ups of #1461 (#1534).
+TEST_CASE("a clip's events on the active track versions decide its tempo over earlier ones on inactive versions",
+	"[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	run(client, "project.set", {{"tempoTrackActive", true}});
+	run(client, "tempo.add", {{"position", 0}, {"bpm", 100.0}, {"ramp", false}});
+	run(client, "tempo.add", {{"position", 4 * g_ticksPerQuarter}, {"bpm", 140.0}, {"ramp", false}});
+	const Loop loop = addLoop(client, dir, clicks({1000, 25000}, 48000)); // at the start, where the tempo is 100
+	run(client, "trackVersion.add", {{"tracks", {loop.track}}});          // the event stays on the first version
+	run(client, "audioEvent.add",
+		{{"track", loop.track}, {"clip", loop.clip}, {"position", 8 * g_ticksPerQuarter}, {"offset", 0},
+			{"length", 48000}});
+
+	// The event that plays keeps playing as it did, until the tempo changes.
+	run(client, "clip.setWarp", {{"clip", loop.clip}, {"musical", true}});
+	CHECK(warpOf(client, loop.clip).at("tempo") == 140.0);
+}
+
+TEST_CASE("a clip in musical mode loaded without a tempo whose first event is on an inactive track version takes the "
+		  "tempo there",
+	"[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	run(client, "project.set", {{"tempoTrackActive", true}});
+	run(client, "tempo.add", {{"position", 0}, {"bpm", 100.0}, {"ramp", false}});
+	run(client, "tempo.add", {{"position", 4 * g_ticksPerQuarter}, {"bpm", 140.0}, {"ramp", false}});
+	const Loop loop = addLoop(client, dir, clicks({1000, 25000}, 48000));
+	run(client, "audioEvent.set", {{"event", loop.event}, {"position", 8 * g_ticksPerQuarter}});
+	run(client, "clip.setWarp", {{"clip", loop.clip}, {"musical", true}, {"tempo", 120.0}});
+	run(client, "trackVersion.add", {{"tracks", {loop.track}}}); // the event stays on the first version
+
+	// Without a tempo in the file, the inactive version's event is read before the clip takes the tempo there.
+	const std::string file = (dir.path() / "edited.dawproject").u8string();
+	run(client, "project.save", {{"path", file}, {"embedMedia", false}});
+	std::map<std::string, std::string> entries = test::readZip(file);
+	Json extension = Json::parse(entries.at("gnubase.json"));
+	for (Json& clip : extension.at("project").at("clips"))
+		if (clip.at("id") == loop.clip)
+			clip.at("warp")["tempo"] = 0.0;
+	entries["gnubase.json"] = extension.dump();
+	test::writeZip(file, entries);
+	run(client, "project.load", {{"path", file}});
+	REQUIRE(run(client, "project.get").at("audioEvents").empty());
+	CHECK(warpOf(client, loop.clip).at("tempo") == 140.0);
+}
+
 // Follow-ups of #1129 (#1266).
 TEST_CASE("a marker inserted next to a section at the limit of the real-time range may be off by its rounding only",
 	"[integration]")

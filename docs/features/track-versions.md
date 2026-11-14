@@ -38,18 +38,20 @@ and activating versions across tracks.
   on after the highest one, inactive versions' too.
 - **What else knows about inactive versions.** Their audio events use their clips: the pool counts them
   (`pool.removeUnused`, a clip's uses, `clip.remove` refuses), `media.removeMissing` removes them with their clips, and
-  backups keep and minimize their media (`forEveryAudioEvent`). `media.relinkResampled`, including when called by
-  `media.conform`, rescales their audio events and crossfades. `track.duplicate` copies every version with ids of its
-  own, and the copies of a version's shared MIDI parts get a group of their own as `trackVersion.duplicate` gives them
-  (its copies of the parts that play stay in their group, as those play together), `track.removeEmpty` keeps a track
-  with more than one version, and the track list's warning before Remove Selected Tracks counts them too. A new time
-  base or sample rate moves inactive versions' events and parts as it moves the active ones. A tempo change retimes
-  notes and controllers in their linear MIDI parts, and separates a version's shared copies whose notes it retimes
-  apart, as it separates those that play ([time-base.md](time-base.md)). A MIDI part that goes into an inactive
-  version stops being a shared copy of the parts that play, since only the active parts are edited together
-  ([parts-and-events.md](parts-and-events.md)); a group every copy of which goes into the version stays one, with its
-  group and its note and controller ids, and edits reach all of them again once it is active. A group is never spread
-  over two versions, since two versions never play together.
+  backups keep and minimize their media (`forEveryAudioEvent`). A clip in musical mode without a tempo takes the
+  project's at its first event on an inactive version when it has none on the active ones ([warp.md](warp.md)).
+  `media.relinkResampled`, including when called by `media.conform`, rescales their audio events and crossfades.
+  `track.duplicate` copies every version with ids of its own, and the copies of a version's shared MIDI parts get a
+  group of their own as `trackVersion.duplicate` gives them (its copies of the parts that play stay in their group, as
+  those play together), `track.removeEmpty` keeps a track with more than one version, and the track list's warning
+  before Remove Selected Tracks counts them too. A new time base or sample rate moves inactive versions' events and
+  parts as it moves the active ones. A tempo change retimes notes and controllers in their linear MIDI parts, and
+  separates a version's shared copies whose notes it retimes apart, as it separates those that play
+  ([time-base.md](time-base.md)). A MIDI part that goes into an inactive version stops being a shared copy of the parts
+  that play, since only the active parts are edited together ([parts-and-events.md](parts-and-events.md)); a group
+  every copy of which goes into the version stays one, with its group and its note and controller ids, and edits reach
+  all of them again once it is active. A group is never spread over two versions, since two versions never play
+  together.
 - **One visitor for the rewrites that reach every event and part.** `forEveryEventAndPart` (`document.h`) calls three
   visitors with every audio event, audio part and MIDI part of the project, those that inactive versions hold too,
   and tells each visitor whether its item plays, so that a rewrite announces only what there is to see;
