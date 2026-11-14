@@ -899,3 +899,25 @@ TEST_CASE("Pitch Visibility shows the drum sounds with events, Solo Instrument a
 	REQUIRE(f.app.waitUntil([&] { return !f.has(".key-editor-keys", "named"); }));
 	CHECK(f.elements(".key-editor-key[pitch=\"36\"]").at(0).at("attributes").value("title", "x").empty());
 }
+
+TEST_CASE("with the grid type Adapt to Zoom the drumstick snaps to a note value the zoom chooses", "[ui]")
+{
+	// p. 1227: the finest note value from a half note down to a 64th that is at least 12 dp wide.
+	Fixture f;
+	f.scroll(36);
+	f.click(of("#drum-grid-type"));
+	f.click(of("#drum-grid-menu menuitem[grid-type=zoom]"));
+	REQUIRE(f.app.waitUntil([&] { return f.app.call("editor.get", {{"editor", "window"}}).at("gridType") == "zoom"; }));
+	REQUIRE(f.app.waitUntil([&] { return f.elements("#drum-grid-type").at(0).value("text", "") == "Adapt to Zoom"; }));
+	const double width = f.box(".key-editor-grid").at("width").get<double>(); // a bar, at a dp ratio of 1
+	double step = 8.0;                                                        // sixteenths
+	for (int halvings = 0; halvings <= 5; ++halvings)
+		if (const double each = std::ldexp(8.0, -halvings); width * each / 16.0 >= 12.0)
+			step = each;
+	const auto expected = static_cast<int64_t>(std::floor(7.6 / step) * step * static_cast<double>(g_sixteenth));
+	REQUIRE(expected != 7 * g_sixteenth); // not the quantize grid's sixteenths
+	f.click(of(".key-tool[key-tool=draw]"));
+	f.click(f.at(7.6, 36));
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 1; }));
+	CHECK(f.partNotes()[0].at("position") == expected);
+}

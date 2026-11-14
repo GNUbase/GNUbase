@@ -71,8 +71,8 @@ namespace gnubase::engine
 			std::string visibleSounds = "all";
 			bool soloInstrument = false;
 			bool showNoteLength = false;
-			std::string gridType =
-				"quantize"; // the drum editor's grid (p. 1227): quantize, or drumMap: the sounds' snap
+			std::string gridType = "quantize"; // the drum editor's grid (p. 1227): quantize, zoom (Adapt to Zoom), or
+											   // drumMap: the sounds' snap
 			// The controller lanes (#128): each a type (midi::g_laneTypes) and a controller number or pitch.
 			std::vector<std::pair<std::string, int>> lanes = {{"velocity", 0}};
 			bool showLanes = true;
@@ -505,7 +505,7 @@ namespace gnubase::engine
 		const Json idsSchema = {{"type", "array"}, {"items", {{"type", "integer"}}}};
 		const Json idSchema = {{"type", "integer"}};
 		const Json boolean = {{"type", "boolean"}};
-		const Json gridTypeSchema = {{"type", "string"}, {"enum", {"quantize", "drumMap"}}};
+		const Json gridTypeSchema = {{"type", "string"}, {"enum", {"quantize", "zoom", "drumMap"}}};
 		const Json visibleSoundsSchema = {{"type", "string"}, {"enum", {"all", "withEvents"}}};
 		const Json selectionSchema = {{"type", "array"},
 			{"items",
@@ -571,8 +571,9 @@ namespace gnubase::engine
 			"of (pp. 1223-1224, 1234); soloInstrument (Solo Instrument, p. 1223) plays, of the tracks with a drum map "
 			"that its selected notes are on, only the notes of the selected notes' sounds, while it is open with "
 			"content drum; showNoteLength shows its notes as boxes of their length, not "
-			"diamonds (p. 1227); gridType, what its notes snap to (p. 1227): quantize, the quantize grid, or drumMap, "
-			"the snap of each note's sound in the track's drum map; "
+			"diamonds (p. 1227); gridType, what its notes snap to (p. 1227): quantize, the quantize grid, zoom, a note "
+			"value that the editor's zoom chooses (Adapt to Zoom), or drumMap, the snap of each note's sound in the "
+			"track's drum map; "
 			"controllerSelection, the "
 			"list editor's selected controller events, each {part, controller}, of the editable parts. Audio parts "
 			"show in the audio part editor (content audioPart, pp. 692-702), whose eventSelection is the selected "

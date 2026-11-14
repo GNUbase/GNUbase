@@ -1,9 +1,9 @@
 # Drum editor and drum maps
 
-The drum editor (#129, #882, reference manual pp. 1221-1242): the MIDI editors' content ([midi-editors.md](midi-editors.md))
-for drum parts, with the drum sound list of the track's drum map, notes as diamonds, the drumstick and the controller
-lanes ([controller-lanes.md](controller-lanes.md)); and drum maps, which change how the notes of the tracks that use
-them play and come in.
+The drum editor (#129, #882, reference manual pp. 1221-1242): the MIDI editors' content
+([midi-editors.md](midi-editors.md)) for drum parts, with the drum sound list of the track's drum map, notes as
+diamonds, the drumstick and the controller lanes ([controller-lanes.md](controller-lanes.md)); and drum maps, which
+change how the notes of the tracks that use them play and come in.
 
 ## In the engine
 
@@ -42,16 +42,16 @@ They emit `drumMap.added`, `drumMap.changed` and `drumMap.removed` with the map 
 - **Input**: notes played into a track with a map take the pitch of the first sound, by pitch, whose I-note they are:
   `editor.input`'s step and MIDI input and `recording.add`.
 - **MIDI thru** (pp. 1239-1240): what is played live into a track with a map, from its MIDI input or `midi.inject`,
-  plays as recording it would: through the I-notes to the sound, then the sound's O-note on its channel, not at all
-  if the sound is muted. The render snapshot gives each such channel the 128 notes (`RenderChannel::drumInput`), and
-  the sequencer maps the notes it gets with them on the audio thread (`MidiSequencer::modifyInput`) before the
-  track's MIDI modifiers, instead of Live Input. With `midi.inject`'s `drumSounds` the notes' keys are the sounds'
-  pitches, not I-notes: they play their sounds as the track's notes do (the second 128 entries of `drumInput`), so
-  that the drum editor auditions a sound whose I-note an earlier sound has too. The notes the built-in MIDI inserts
-  above the divider play for them keep the flag (`ProcessEvent::drumSound`, `plugin::Event::DrumSound`), and the
-  sequencer clears it once it has mapped a note. A third-party MIDI effect there plays events of its own that the
-  format adapter makes without the flag: behind one, an auditioned sound goes through the I-notes. They are no MIDI input: the recorder leaves them out of recordings and the retrospective buffer
-  (`Recorder::sendMidi`).
+  plays as recording it would: through the I-notes to the sound, then the sound's O-note on its channel, not at all if
+  the sound is muted. The render snapshot gives each such channel the 128 notes (`RenderChannel::drumInput`), and the
+  sequencer maps the notes it gets with them on the audio thread (`MidiSequencer::modifyInput`) before the track's MIDI
+  modifiers, instead of Live Input. With `midi.inject`'s `drumSounds` the notes' keys are the sounds' pitches, not
+  I-notes: they play their sounds as the track's notes do (the second 128 entries of `drumInput`), so that the drum
+  editor auditions a sound whose I-note an earlier sound has too. The notes the built-in MIDI inserts above the divider
+  play for them keep the flag (`ProcessEvent::drumSound`, `plugin::Event::DrumSound`), and the sequencer clears it once
+  it has mapped a note. A third-party MIDI effect there plays events of its own that the format adapter makes without
+  the flag: behind one, an auditioned sound goes through the I-notes. They are no MIDI input: the recorder leaves them
+  out of recordings and the retrospective buffer (`Recorder::sendMidi`).
 - **Solo Instrument** (p. 1223): while a drum editor is open with `soloInstrument` on, of the tracks with a map that
   its selected notes are on only the notes of the selected notes' sounds play; with no note selected every sound
   plays. The editor views set `Project::soloNotes` (`ProjectModel::setSoloNotes`), the selected notes, which the render
@@ -66,12 +66,13 @@ They emit `drumMap.added`, `drumMap.changed` and `drumMap.removed` with the map 
   are Empty Map's; an order that isn't each pitch once is the pitch order.
 - **The editor views** ([midi-editors.md](midi-editors.md)) have the content `drum`, and `lengthQuantize` also takes
   `drumMap` (Drum-Map Link): new notes are as long as their sound's snap, or without a map the quantize grid. A closed
-  editor opens the parts of a track with a drum map in the drum editor while the user setting `editing.useDrumEditor`
-  is on, as by default (Use Drum Editor when Drum Map is assigned, pp. 1221, 1603; the preferences' Editors page).
-  The drum editor's view also has `pitchVisibility` (Pitch Visibility On/Off) with its options `reverseSounds`
-  (Reverse Drum Sound List) and `visibleSounds` (`all`, or `withEvents` for Show Drum Sounds with Events, p. 1234),
-  `soloInstrument` (Solo Instrument, p. 1223), `showNoteLength` (Show Note Length On/Off, p. 1227) and `gridType` (Grid Type, p. 1227):
-  `quantize` (Use Quantize), or `drumMap` (Use Snap from Drum Map), each note snapping to its sound's snap.
+  editor opens the parts of a track with a drum map in the drum editor while the user setting `editing.useDrumEditor` is
+  on, as by default (Use Drum Editor when Drum Map is assigned, pp. 1221, 1603; the preferences' Editors page). The drum
+  editor's view also has `pitchVisibility` (Pitch Visibility On/Off) with its options `reverseSounds` (Reverse Drum
+  Sound List) and `visibleSounds` (`all`, or `withEvents` for Show Drum Sounds with Events, p. 1234), `soloInstrument`
+  (Solo Instrument, p. 1223), `showNoteLength` (Show Note Length On/Off, p. 1227) and `gridType` (Grid Type, p. 1227):
+  `quantize` (Use Quantize), `zoom` (Adapt to Zoom, a note value the editor's zoom chooses), or `drumMap` (Use Snap from
+  Drum Map), each note snapping to its sound's snap.
 
 ## In the UI
 
@@ -133,10 +134,11 @@ content is `drum`. It is the key editor ([key-editor.md](key-editor.md)) with th
 - **Map menu** (pp. 1234, 1236, 1239). Choosing a map, or No Drum Map, sends `track.set` for the active track. New Map
   and New Copy add a map that becomes the track's, in one undo step (`drumMap.add track`); Remove removes the track's
   map; Drum Map Setup... opens the setup.
-- **Grid Type** (p. 1227): Use Quantize snaps to the quantize grid; Use Snap from Drum Map snaps what the drumstick
-  inserts, repeats and moves along, and the notes moved or resized, to the snap of the note's sound: a note moved to
-  another row to that of the sound it goes to, which it then is. The split tool and the step input cursor snap to the
-  quantize grid: neither belongs to a sound, as the notes step input enters there can be any.
+- **Grid Type** (p. 1227): Use Quantize snaps to the quantize grid; Adapt to Zoom to the finest note value, from a half
+  note down to a 64th, that is at least 12 dp wide in the grid, so zooming in makes it finer; Use Snap from Drum Map
+  snaps what the drumstick inserts, repeats and moves along, and the notes moved or resized, to the snap of the note's
+  sound: a note moved to another row to that of the sound it goes to, which it then is. The split tool and the step
+  input cursor snap to the quantize grid: neither belongs to a sound, as the notes step input enters there can be any.
 - **Show Note Length** (p. 1227) shows the notes as boxes of their length, which the object selection tool and the
   drumstick resize at their ends as in the key editor (p. 1242); in its middle the drumstick still deletes the note.
 - **Commands** (Edit menu, `app::AppUi`): `editor.openDrum` (Open Drum Editor, p. 1221) opens the selected MIDI parts
@@ -158,9 +160,9 @@ content is `drum`. It is the key editor ([key-editor.md](key-editor.md)) with th
 
 Outputs per sound in playback and MIDI thru (the sounds play on the track's output), so also the setup's Output pop-up
 and auditioning there: MIDI tracks play only to instrument tracks yet, not to MIDI output ports; name lists other than
-GM Default, such as a MIDI device's; Pitch Visibility's Show Drum Sounds in Use by Instrument; Solo Instrument for
-what is played live; the grid type Adapt to Zoom; showing drum notes in the project window's parts; Create Drum Map from Instrument (p. 1238); reordering the
-list by dragging; the score settings (Display Note, Noteheads, Voice, Instrument Type, Technique); importing the
+GM Default, such as a MIDI device's; Pitch Visibility's Show Drum Sounds in Use by Instrument; Solo Instrument for what
+is played live; showing drum notes in the project window's parts; Create Drum Map from Instrument (p. 1238); reordering
+the list by dragging; the score settings (Display Note, Noteheads, Voice, Instrument Type, Technique); importing the
 reference's own drum map files.
 
 ## Checks
@@ -175,8 +177,8 @@ reference's own drum map files.
   with Drum-Map Link; O-Note Conversion; the drum editor content, its view settings and parts of a track with a map
   opening in it unless the preference is off; Solo Instrument playing only the selected notes' sounds, following a
   selected note to another sound, leaving the project as saved, and not for nothing selected, another content, a
-  closed editor, a track without a map or with it off; `visibleSounds` and refusing other values; `gmNames` saved and
-  loaded, undone and refused for audio tracks.
+  closed editor, a track without a map or with it off; `visibleSounds` and the grid type `zoom`, refusing other
+  values; `gmNames` saved and loaded, undone and refused for audio tracks.
 - `tests/midieffects_tests.cpp`: the sequencer clearing `drumSound` on the notes it maps, so that the inserts below the
   divider and the instrument don't get it.
 - `tests/drumeditor_ui_tests.cpp` drives the app with `ui::Automation`: the sound list with the map's names, diamonds on
@@ -196,4 +198,5 @@ reference's own drum map files.
   adding and removing maps, following a map added elsewhere, and Save... and Load... through the file dialogs; the MIDI
   menu's Drum Map Setup and O-Note Conversion; Show Drum Sounds with Events listing and gridding only the notes'
   sounds, the notes on their rows and the drumstick inserting on one, Solo Instrument's button, and the Names menu's GM
-  Default naming the list's sounds without a map and the key editor's keys.
+  Default naming the list's sounds without a map and the key editor's keys; Adapt to Zoom snapping the drumstick to
+  the note value that the grid's width chooses.

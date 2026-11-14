@@ -4,6 +4,7 @@
 #include "engine/midi/chords.h"
 #include "engine/midi/drummaps.h"
 #include "engine/midi/quantizesettings.h"
+#include "engine/time/tempomap.h"
 #include "platform/log.h"
 #include "ui/articulationnames.h"
 #include "ui/controllerlanes.h"
@@ -40,6 +41,8 @@ namespace gnubase::ui
 		constexpr float g_minPitchZoom = 0.25F;
 		constexpr float g_maxPitchZoom = 4.0F;
 		constexpr float g_zoomDoubling = 100.0F;
+		// dp: the drum editor's Adapt to Zoom (p. 1227) snaps to the finest note value at least this wide
+		constexpr double g_minGridWidth = 12.0;
 
 		constexpr std::array<std::pair<KeyTool, const char*>, 7> g_tools = {{
 			{KeyTool::ObjectSelection, "objectSelection"},
@@ -335,6 +338,7 @@ namespace gnubase::ui
 						R"(<menu id="drum-grid-menu)" +
 						m_menuSuffix +
 						R"("><menuitem type="toggle" grid-type="quantize">Use Quantize</menuitem>)"
+						R"(<menuitem type="toggle" grid-type="zoom">Adapt to Zoom</menuitem>)"
 						R"(<menuitem type="toggle" grid-type="drumMap">Use Snap from Drum Map</menuitem></menu>)"
 						R"(<menu id="drum-names-menu)" +
 						m_menuSuffix +
@@ -760,7 +764,12 @@ namespace gnubase::ui
 		}
 		// The drum editor's grid type (p. 1227).
 		const std::string gridType = m_view.value("gridType", std::string("quantize"));
-		setInner(root->QuerySelector("#drum-grid-type"), gridType == "drumMap" ? "Drum Map Snap" : "Use Quantize");
+		const char* gridLabel = "Use Quantize";
+		if (gridType == "drumMap")
+			gridLabel = "Drum Map Snap";
+		else if (gridType == "zoom")
+			gridLabel = "Adapt to Zoom";
+		setInner(root->QuerySelector("#drum-grid-type"), gridLabel);
 		if (Rml::Element* menu = m_menus.size() > 5 ? m_menus[5].get() : nullptr)
 		{
 			Rml::ElementList items;
@@ -934,6 +943,21 @@ namespace gnubase::ui
 		// The drum editor's Use Snap from Drum Map (p. 1227): the sound's snap.
 		if (const Json* map = m_drum && pitch >= 0 && m_view.value("gridType", "") == "drumMap" ? activeMap() : nullptr)
 			return soundSnap(*map, pitch);
+		// Adapt to Zoom (#1493, p. 1227): the finest note value, from a half note down to a 64th, at least
+		// g_minGridWidth wide.
+		if (m_drum && m_view.value("gridType", "") == "zoom")
+		{
+			Rml::Element* shown = m_root.get() != nullptr ? m_root.get()->QuerySelector(".key-editor-grid") : nullptr;
+			const Rml::Context* context = shown != nullptr ? shown->GetContext() : nullptr;
+			const double ratio = context != nullptr ? context->GetDensityIndependentPixelRatio() : 1.0;
+			const double width = shown != nullptr ? shown->GetBox().GetSize(Rml::BoxArea::Border).x / ratio : 0.0;
+			const auto range = static_cast<double>(m_to - m_from);
+			int64_t step = 2 * time::g_ticksPerQuarter;
+			for (int64_t each = step; each >= time::g_ticksPerQuarter / 16; each /= 2)
+				if (static_cast<double>(each) / range * width >= g_minGridWidth)
+					step = each;
+			return step;
+		}
 		const std::string grid = m_project.value("quantize", Json::object()).value("grid", std::string("1/16"));
 		return engine::midi::noteValueFromString(grid).value_or(engine::midi::NoteValue{}).ticks();
 	}

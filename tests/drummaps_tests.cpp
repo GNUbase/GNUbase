@@ -326,7 +326,8 @@ TEST_CASE("the drum editor is an editor content, and parts of a track with a dru
 	// The grid type (p. 1227): Use Quantize, or Use Snap from Drum Map.
 	CHECK(view.at("gridType") == "quantize");
 	CHECK(f.call("editor.set", {{"editor", "window"}, {"gridType", "drumMap"}}).at("gridType") == "drumMap");
-	CHECK_FALSE(f.client.call("editor.set", {{"editor", "window"}, {"gridType", "zoom"}}).ok());
+	CHECK(f.call("editor.set", {{"editor", "window"}, {"gridType", "zoom"}}).at("gridType") == "zoom"); // Adapt to Zoom
+	CHECK_FALSE(f.client.call("editor.set", {{"editor", "window"}, {"gridType", "bar"}}).ok());
 	// Not with the preference off; content still opens the drum editor.
 	f.call("editor.close", {{"editor", "window"}});
 	f.call("settings.set", {{"key", "editing.useDrumEditor"}, {"value", false}});
