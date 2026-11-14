@@ -35,13 +35,16 @@ namespace gnubase::engine::processors
 			return static_cast<uint16_t>(((event.channel % 16) * 128) + (event.key % 128));
 		}
 
-		graph::ProcessEvent noteEvent(Type type, uint16_t index, uint16_t velocity, uint32_t offset)
+		// A note the effect plays for one played into it: drumSound as that one's, so that an auditioned drum sound's
+		// notes stay drum sounds' pitches (midi.inject drumSounds).
+		graph::ProcessEvent noteEvent(Type type, uint16_t index, uint16_t velocity, uint32_t offset, bool drumSound)
 		{
 			graph::ProcessEvent event;
 			event.offset = offset;
 			event.type = type;
 			event.channel = static_cast<uint8_t>(index / 128);
 			event.key = static_cast<uint8_t>(index % 128);
+			event.drumSound = drumSound;
 			event.velocity = velocity;
 			return event;
 		}
@@ -219,7 +222,7 @@ namespace gnubase::engine::processors
 			if (isHeld)
 				held->velocity = event.velocity;
 			else if (m_heldCount < m_held.size())
-				m_held[m_heldCount++] = {event.channel, event.key, event.velocity};
+				m_held[m_heldCount++] = {event.channel, event.key, event.velocity, event.drumSound};
 			if (!m_running)
 			{
 				m_running = true;
@@ -322,8 +325,8 @@ namespace gnubase::engine::processors
 			index = static_cast<size_t>(number % count);
 		}
 		const Note& note = pattern[index];
-		if (!out.add(
-				noteEvent(Type::NoteOn, static_cast<uint16_t>((note.channel * 128) + note.key), note.velocity, offset)))
+		if (!out.add(noteEvent(Type::NoteOn, static_cast<uint16_t>((note.channel * 128) + note.key), note.velocity,
+				offset, note.drumSound)))
 			return true; // the step is left out
 		m_sounding = true;
 		m_playing = note;
@@ -334,8 +337,8 @@ namespace gnubase::engine::processors
 	bool Arpeggiator::end(uint32_t offset, graph::EventBuffer& out) noexcept
 	{
 		if (m_sounding &&
-			out.add(
-				noteEvent(Type::NoteOff, static_cast<uint16_t>((m_playing.channel * 128) + m_playing.key), 0, offset)))
+			out.add(noteEvent(Type::NoteOff, static_cast<uint16_t>((m_playing.channel * 128) + m_playing.key), 0,
+				offset, m_playing.drumSound)))
 			m_sounding = false;
 		return !m_sounding;
 	}
@@ -384,7 +387,7 @@ namespace gnubase::engine::processors
 				continue;
 			const auto note = static_cast<uint16_t>(index + interval);
 			if (m_sounding[note]++ == 0)
-				context.eventsOut.add(noteEvent(Type::NoteOn, note, event.velocity, event.offset));
+				context.eventsOut.add(noteEvent(Type::NoteOn, note, event.velocity, event.offset, event.drumSound));
 		}
 	}
 
@@ -401,8 +404,8 @@ namespace gnubase::engine::processors
 				continue;
 			--m_sounding[note];
 			if (m_sounding[note] == 0)
-				out.addEnd(
-					noteEvent(Type::NoteOff, note, event.type == Type::NoteOff ? event.velocity : 0, event.offset));
+				out.addEnd(noteEvent(Type::NoteOff, note, event.type == Type::NoteOff ? event.velocity : 0,
+					event.offset, event.drumSound));
 		}
 		m_chordOf[index] = g_none;
 	}
@@ -614,7 +617,7 @@ namespace gnubase::engine::processors
 			if (uses(held, index, note))
 				--m_sounding[note]; // counted again below
 			else if (release(note))
-				put(out, noteEvent(Type::NoteOff, note, 0, event.offset));
+				put(out, noteEvent(Type::NoteOff, note, 0, event.offset, event.drumSound));
 		}
 		// A note another note already plays sounds once.
 		const auto start = [&](uint16_t note) { return m_sounding[note]++ == 0 || uses(previous, index, note); };

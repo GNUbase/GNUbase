@@ -86,6 +86,7 @@ namespace gnubase::engine::processors
 			uint8_t channel = 0;
 			uint8_t key = 0;
 			uint16_t velocity = 0;
+			bool drumSound = false; // graph::ProcessEvent::drumSound
 		};
 
 		// Both return false when the output is full and they must be called again; a step whose note-on doesn't fit

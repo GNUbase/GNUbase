@@ -15,9 +15,10 @@
 
 namespace gnubase::engine::plugins
 {
-	// Appends a graph event to a plugin's events, at the offset clamped to the block of `frames`: notes and parameter
-	// changes as plugin events, the other MIDI messages as MIDI 1.0 bytes (a program change after its bank select)
-	// and SysEx with its bytes copied. Real-time safe.
+	// Appends a graph event to a plugin's events, at the offset clamped to the block of `frames`: notes (drumSound as
+	// plugin::Event::DrumSound, which toGraphEvent reads back) and parameter changes as plugin events, the other MIDI
+	// messages as MIDI 1.0 bytes (a program change after its bank select) and SysEx with its bytes copied. Real-time
+	// safe.
 	// With midi2, for a note port that takes MIDI 2.0 (a MIDI effect's, #1380), the other MIDI messages are MIDI 2.0
 	// universal MIDI packets instead, at the graph's full resolution, and a program change carries its bank.
 	void convertEvent(

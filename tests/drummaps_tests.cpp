@@ -474,6 +474,16 @@ TEST_CASE("notes played live into a track with a drum map go through its I-notes
 	CHECK(play(0x90, 47, true) == std::vector<std::vector<int>>{{0x99, 47}, {0x89, 47}});
 	CHECK(play(0x90, 36, true) == std::vector<std::vector<int>>{{0x93, 35}, {0x83, 35}});
 	CHECK(play(0x90, 38, true).empty()); // muted
+	// An insert above the divider that plays notes of its own keeps them the sounds themselves: the octave of the
+	// low tom, not the bass drum whose I-note it is.
+	run("channel.set",
+		{{"channel", channel},
+			{"midiInserts",
+				{{"divider", 1}, {"slots", {{{"effect", "chordGenerator"}, {"parameters", {{"chord", "Octave"}}}}}}}}});
+	run("audio.render", {{"frames", 64}});
+	CHECK(play(0x90, 45, true) == std::vector<std::vector<int>>{{0x99, 45}, {0x99, 57}, {0x89, 45}, {0x89, 57}});
+	run("channel.set", {{"channel", channel}, {"midiInserts", {{"slots", {{{"effect", ""}}}}}}});
+	run("audio.render", {{"frames", 64}});
 	// Without the map they play as they come in.
 	run("track.set", {{"track", track}, {"drumMap", 0}});
 	run("audio.render", {{"frames", 64}});

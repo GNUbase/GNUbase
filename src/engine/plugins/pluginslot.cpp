@@ -279,6 +279,7 @@ namespace gnubase::engine::plugins
 		case Type::NoteOff:
 			converted.type = event.type == Type::NoteOn ? plugin::EventType::NoteOn : plugin::EventType::NoteOff;
 			converted.value = event.velocity / 65535.0;
+			converted.flags = event.drumSound ? plugin::Event::DrumSound : 0;
 			out.push(converted);
 			break;
 		case Type::Controller:
@@ -403,6 +404,7 @@ namespace gnubase::engine::plugins
 		case plugin::EventType::NoteOff:
 			out.type = event.type == plugin::EventType::NoteOn ? Type::NoteOn : Type::NoteOff;
 			out.velocity = static_cast<uint16_t>(std::lround(std::clamp(event.value, 0.0, 1.0) * 65535.0));
+			out.drumSound = (event.flags & plugin::Event::DrumSound) != 0;
 			return true;
 		case plugin::EventType::ParamValue:
 			out.type = Type::Parameter;
