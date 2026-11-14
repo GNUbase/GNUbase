@@ -249,6 +249,43 @@ TEST_CASE(
 	CHECK(sound(channelOf(project, "Other")) == sound(channelOf(project, "Vocals")));
 }
 
+TEST_CASE("a MIDI track's preset keeps its channel or its patch, which loading it leaves as the track has it", "[unit]")
+{
+	const test::TempDir dir;
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	const Added strings = add(client, {{"type", "midi"}, {"name", "Strings"}});
+	run(client, "channel.set",
+		{{"channel", strings.channel}, {"program", 48}, {"bank", 2}, {"midiVolume", 90}, {"midiChannel", 5}});
+	run(client, "track.savePreset", {{"tracks", {strings.track}}, {"name", "Channel"}, {"keep", "channel"}});
+	run(client, "track.savePreset", {{"tracks", {strings.track}}, {"name", "Patch"}, {"keep", "patch"}});
+	CHECK_THAT(reject(client, "track.savePreset", {{"tracks", {strings.track}}, {"name", "Both"}, {"keep", "both"}}),
+		ContainsSubstring("keep"));
+
+	const auto patch = [](const Json& channel)
+	{ return Json{channel.at("program"), channel.at("bank"), channel.at("midiChannel"), channel.at("midiVolume")}; };
+	const Added first = add(client, {{"type", "midi"}, {"name", "First"}});
+	const Added second = add(client, {{"type", "midi"}, {"name", "Second"}});
+	for (const ObjectId channel : {first.channel, second.channel})
+		run(client, "channel.set", {{"channel", channel}, {"program", 10}, {"bank", 1}, {"midiChannel", 3}});
+	run(client, "track.loadPreset", {{"tracks", {first.track}}, {"name", "Channel"}});
+	run(client, "track.loadPreset", {{"tracks", {second.track}}, {"name", "Patch"}});
+	Json project = run(client, "project.get");
+	CHECK(patch(channelOf(project, "First")) == Json{10, 1, 5, 90});
+	CHECK(patch(channelOf(project, "Second")) == Json{48, 2, 3, 90});
+
+	// New tracks from them have the defaults of what the preset left out.
+	const ObjectId channelTrack =
+		run(client, "track.addFromPreset", {{"name", "Channel"}}).at("tracks").at(0).get<ObjectId>();
+	const ObjectId patchTrack =
+		run(client, "track.addFromPreset", {{"name", "Patch"}}).at("tracks").at(0).get<ObjectId>();
+	project = run(client, "project.get");
+	const auto channelOfTrack = [&project](ObjectId track)
+	{ return find(project.at("channels"), find(project.at("tracks"), track).at("channel").get<ObjectId>()); };
+	CHECK(patch(channelOfTrack(channelTrack)) == Json{nullptr, nullptr, 5, 90});
+	CHECK(patch(channelOfTrack(patchTrack)) == Json{48, 2, nullptr, 90});
+}
+
 TEST_CASE("track.addFromPreset adds the preset's tracks below a track, with their sound", "[unit]")
 {
 	const test::TempDir dir;
@@ -1830,6 +1867,8 @@ TEST_CASE("the track preset dialog saves, loads and adds track presets", "[ui]")
 	select(app, {vocals.at("track").at("id").get<ObjectId>()});
 	app.keys().run("track.saveTrackPreset", Json::object(), app.main(), nullptr);
 	click(app, "#preset-name");
+	// Only a MIDI track's preset offers keeping its channel or its patch alone (reference manual p. 238).
+	CHECK(app.ui().dom(std::nullopt, "#preset-keep", 0).at("elements").empty());
 	app.ui().text(std::nullopt, "Vox");
 	click(app, "#preset-confirm");
 	REQUIRE(app.waitUntil([&app] { return !shown(app, "#track-preset-dialog"); }));
@@ -1845,17 +1884,35 @@ TEST_CASE("the track preset dialog saves, loads and adds track presets", "[ui]")
 	CHECK(app.ui().dom(std::nullopt, "#preset-list option", 0).at("elements").empty());
 	click(app, "#track-preset-dialog button[result=cancel]");
 
+	// Its preset keeps the patch alone: Patch is the last choice.
+	app.call("channel.set", {{"channel", midi.at("channel").at("id")}, {"program", 48}, {"midiChannel", 5}});
+	app.keys().run("track.saveTrackPreset", Json::object(), app.main(), nullptr);
+	click(app, "#preset-keep");
+	app.ui().key(std::nullopt, "Down");
+	app.ui().key(std::nullopt, "Down");
+	click(app, "#preset-keep");
+	click(app, "#preset-name");
+	app.ui().text(std::nullopt, "Keys");
+	click(app, "#preset-confirm");
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#track-preset-dialog"); }));
+	app.call("channel.set", {{"channel", midi.at("channel").at("id")}, {"program", 10}, {"midiChannel", 3}});
+	app.call("track.loadPreset", {{"tracks", {midi.at("track").at("id")}}, {"name", "Keys"}});
+	const Json keys = channelOf(app.call("project.get"), "Keys");
+	CHECK(keys.at("program") == 48);
+	CHECK(keys.at("midiChannel") == 3);
+
 	const Json other = app.call("track.add", {{"type", "audio"}, {"name", "Other"}});
 	select(app, {other.at("track").at("id").get<ObjectId>()});
 	app.keys().run("track.loadTrackPreset", Json::object(), app.main(), nullptr);
 	click(app, "#preset-confirm");
 	REQUIRE(app.waitUntil([&app] { return channelOf(app.call("project.get"), "Other").at("volume") == -6.0; }));
 
+	// Add adds the first preset listed, Keys.
 	app.keys().run("project.addTrackFromPreset", Json::object(), app.main(), nullptr);
 	click(app, "#preset-confirm");
 	REQUIRE(app.waitUntil([&app] { return app.call("project.get").at("tracks").size() == 4; }));
 	CHECK(outline(app.call("project.get")) ==
-		std::vector<std::string>{"Vocals:audio", "Keys:midi", "Other:audio", "Vocals:audio"});
+		std::vector<std::string>{"Vocals:audio", "Keys:midi", "Other:audio", "Keys:midi"});
 }
 
 TEST_CASE("track presets keep a MIDI send's effect but not its output to another track", "[unit]")

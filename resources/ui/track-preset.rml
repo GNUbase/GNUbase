@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- Track presets (#164, docs/features/track-presets.md, reference manual pp. 199, 238-243): app::AppUi opens it with
-     the document's mode and tracks. Save names a preset of the selected tracks (track.savePreset); Load applies the
+     the document's mode and tracks. Save names a preset of the selected tracks (track.savePreset), with MIDI tracks
+     their channel and patch or only one of them (p. 238); Load applies the
      preset chosen to them (track.loadPreset), listing only the presets of their types; Add adds the tracks of the
      preset chosen below the first of them, or at the bottom (track.addFromPreset). The engine's message shows when it
      refuses. -->
@@ -25,7 +26,7 @@
 			margin-right: 8dp;
 		}
 
-		#preset-name, #preset-list
+		#preset-name, #preset-list, #preset-keep
 		{
 			flex: 1;
 		}
@@ -62,15 +63,8 @@
 			end
 			local titles = {save = "Save Track Preset", load = "Load Track Preset", add = "Add Track from Preset"}
 			document:GetElementById("preset-title").inner_rml = titles[dialog.mode]
-			if dialog.mode == "save" then
-				document:GetElementById("preset-row").inner_rml =
-					'<label for="preset-name">Preset Name</label><input type="text" id="preset-name"/>'
-				document:GetElementById("preset-name"):Focus()
-				return
-			end
-			-- Load lists the presets for the selected tracks' types, in their order (reference manual p. 241).
 			local types = {}
-			if dialog.mode == "load" then
+			if dialog.mode ~= "add" then
 				local byId = {}
 				for _, track in ipairs(gnubase.project.get().tracks) do
 					byId[track.id] = track.type
@@ -79,6 +73,26 @@
 					types[index] = byId[id]
 				end
 			end
+			local keepRow = document:GetElementById("preset-keep-row")
+			keepRow:SetClass("row", false)
+			keepRow.inner_rml = ""
+			if dialog.mode == "save" then
+				document:GetElementById("preset-row").inner_rml =
+					'<label for="preset-name">Preset Name</label><input type="text" id="preset-name"/>'
+				-- MIDI tracks' presets keep their channel, their patch or both (reference manual p. 238).
+				for _, type in ipairs(types) do
+					if type == "midi" then
+						keepRow:SetClass("row", true)
+						keepRow.inner_rml = '<label for="preset-keep">MIDI Tracks Keep</label><select id="preset-keep">' ..
+							'<option value="" selected>Channel and Patch</option><option value="channel">Channel</option>' ..
+							'<option value="patch">Patch</option></select>'
+						break
+					end
+				end
+				document:GetElementById("preset-name"):Focus()
+				return
+			end
+			-- Load lists the presets for the selected tracks' types, in their order (reference manual p. 241).
 			local options = {}
 			for _, preset in ipairs(gnubase.track.presets().presets) do
 				if dialog.mode == "add" or table.concat(preset.tracks, ",") == table.concat(types, ",") then
@@ -93,7 +107,11 @@
 		function dialog.confirm(document)
 			local ok, problem
 			if dialog.mode == "save" then
-				ok, problem = pcall(gnubase.track.savePreset, {tracks = dialog.tracks, name = value(document, "preset-name")})
+				local parameters = {tracks = dialog.tracks, name = value(document, "preset-name")}
+				if value(document, "preset-keep") ~= "" then
+					parameters.keep = value(document, "preset-keep")
+				end
+				ok, problem = pcall(gnubase.track.savePreset, parameters)
 			elseif value(document, "preset-list") == "" then
 				ok, problem = false, "There is no track preset to choose."
 			elseif dialog.mode == "load" then
@@ -117,6 +135,7 @@
 	<dialog id="track-preset-dialog">
 		<div class="dialog-titlebar" id="preset-title">Track Preset</div>
 		<div class="row" id="preset-row"/>
+		<div id="preset-keep-row"/>
 		<div class="row" id="preset-message"/>
 		<div class="row buttons">
 			<button result="cancel">Cancel</button>

@@ -1272,6 +1272,8 @@ namespace gnubase::engine
 			{"trackLayout", toJson(project.trackLayout)}, {"metronome", metronome::toJson(project.metronome)},
 			{"workspaces", toJson(project.workspaces)}};
 		json.update(toJson(project.setup));
+		if (!project.presetKeeps.empty())
+			json["presetKeeps"] = project.presetKeeps;
 		// What the inactive track versions hold (#165).
 		Json versionContents = Json::array();
 		for (const ObjectId id : project.trackOrder())
@@ -2742,6 +2744,9 @@ namespace gnubase::engine
 			if (project.patterns.count(part.pattern) == 0)
 				part.pattern = 0;
 		project.virginTerritory = json.value("virginTerritory", false); // files from before #124 have none
+		// Track presets that keep both, and projects, have none.
+		if (const Json keeps = json.value("presetKeeps", Json()); keeps == "channel" || keeps == "patch")
+			project.presetKeeps = keeps.get<std::string>();
 		// Files from before quantizing have neither.
 		if (json.contains("quantize"))
 			project.quantize = midi::quantizeSettingsFromJson(json.at("quantize"));

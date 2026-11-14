@@ -1549,6 +1549,10 @@ namespace gnubase::engine
 		// first and after their last point too, where their parameters have their static values. A setting saved with
 		// the project, not part of undo.
 		bool virginTerritory = false;
+		// A track preset's (track.savePreset keep): which of their MIDI channel and patch (program and bank) its MIDI
+		// tracks keep, "channel" or "patch", the other left at its default, which loading the preset leaves as the
+		// track has it (reference manual p. 238); empty: both, and in projects.
+		std::string presetKeeps;
 
 		// The quantize settings that apply when none are given, and whether recording quantizes (#132). Settings,
 		// not part of undo.
