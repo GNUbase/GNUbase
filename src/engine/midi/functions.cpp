@@ -1233,9 +1233,18 @@ namespace gnubase::engine::midi
 		// source part's global transposition differs from the new part's, the difference goes into the note, so that
 		// it keeps the pitch it played with.
 		std::vector<const MidiPart*> sources;
+		std::vector<std::vector<const Candidate*>> sourceCandidates; // each source's, in the order of sources
 		for (const Candidate& candidate : candidates)
-			if (std::find(sources.begin(), sources.end(), candidate.source) == sources.end())
+		{
+			const auto index =
+				static_cast<size_t>(std::find(sources.begin(), sources.end(), candidate.source) - sources.begin());
+			if (index == sources.size())
+			{
 				sources.push_back(candidate.source);
+				sourceCandidates.emplace_back();
+			}
+			sourceCandidates[index].push_back(&candidate);
+		}
 		const GlobalSetting newSetting = sharedSetting(project, sources);
 		// Without includeInserts the destination's MIDI modifiers play the merged notes, after the stored pitch and
 		// before the part's velocity.
@@ -1294,12 +1303,20 @@ namespace gnubase::engine::midi
 		// lie between the part's transpose and the new part's global transpose, in an Independent part as it played;
 		// without, in a part with its part's transpose and Global Transpose setting.
 		std::map<BouncedSetting, std::vector<Note>> made;
-		for (const MidiPart* source : sources)
+		std::map<BouncedSetting, Ticks> firstStart;     // of each new part's earliest source part
+		std::map<std::pair<int, int>, bool> velocities; // velocityInNote by MIDI 1.0 velocity and part velocity
+		for (size_t i = 0; i < sources.size(); ++i)
 		{
-			std::vector<const Candidate*> own;
-			for (const Candidate& candidate : candidates)
-				if (candidate.source == source)
-					own.push_back(&candidate);
+			const MidiPart* source = sources[i];
+			const std::vector<const Candidate*>& own = sourceCandidates[i];
+			const auto inNote = [&](const Candidate* candidate)
+			{
+				const std::pair<int, int> key{velocityToMidi1(candidate->note.velocity), source->velocity};
+				const auto found = velocities.find(key);
+				if (found != velocities.end())
+					return found->second;
+				return velocities[key] = velocityInNote(destinationModifiers, key.first, key.second);
+			};
 			// With includeInserts the track's modifiers then play the notes without the part's velocity, so only where
 			// every note comes out alike.
 			const bool velocityKept = source->velocity != 0 &&
@@ -1307,9 +1324,7 @@ namespace gnubase::engine::midi
 					[&](const Candidate* candidate)
 					{
 						return candidate->note.velocityVariance != 0.0 ||
-							(!settings.includeInserts &&
-								!velocityInNote(
-									destinationModifiers, velocityToMidi1(candidate->note.velocity), source->velocity));
+							(!settings.includeInserts && !inNote(candidate));
 					}) &&
 				(!settings.includeInserts ||
 					std::all_of(own.begin(), own.end(),
@@ -1336,14 +1351,25 @@ namespace gnubase::engine::midi
 			}
 			std::vector<Note>& into = made[setting];
 			into.insert(into.end(), notes.begin(), notes.end());
+			const Ticks from = partStart(project, *source);
+			const auto first = firstStart.find(setting);
+			if (first == firstStart.end() || from < first->second)
+				firstStart[setting] = from;
 		}
-		// The new part with the setting of the parts that need none of their own first; it is there without notes too.
+		// The new part with the setting of the parts that need none of their own first, the others in the order of
+		// their earliest source parts, as bounce orders its parts; where nothing is merged, the first is there without
+		// notes.
 		const BouncedSetting plain{0, 0, newSetting};
 		if (made.empty())
 			made[plain];
 		std::vector<std::pair<BouncedSetting, std::vector<Note>>> groups(made.begin(), made.end());
-		std::stable_partition(groups.begin(), groups.end(),
-			[&](const auto& group) { return !(group.first < plain) && !(plain < group.first); });
+		const auto order = [&](const BouncedSetting& setting)
+		{
+			const bool isPlain = !(setting < plain) && !(plain < setting);
+			return std::make_pair(!isPlain, isPlain ? Ticks{0} : firstStart.at(setting));
+		};
+		std::stable_sort(groups.begin(), groups.end(),
+			[&](const auto& a, const auto& b) { return order(a.first) < order(b.first); });
 
 		PartChanges changes;
 		ObjectId destination = settings.destination;

@@ -34,36 +34,38 @@ Functions that edit MIDI parts as a whole (#133, #838).
   one beyond 1-127, before playback adds the part's; with `includeInserts` such a note's variance then applies to the
   velocity the track's modifiers made, and the part's velocity stays on the new part only where the track's modifiers
   play every note of the part alike with it added after them (their compression, Velocity Limit and Velocity Filter and
-  the clamp to 1-127 come before it in playback), else it goes into the notes. The first new part, with the
-  controllers, is on the first lane, the others, with the articulation events only (playback resolves directions per
-  part and never sends them), on new lanes below the destination's parts. With `eraseDestination`, a shared copy that
-  loses events leaves its copies, which keep theirs; its events get new ids, so the play probability, velocity variance
-  and random MIDI modifier values of the notes that stay draw anew. `midi.dissolve` copies events by channel or pitch
-  into new parts at the same place and
-  mutes the parts (pp. 1121-1122): `to: tracks` puts them on new MIDI tracks routed to the same instrument, `to: lanes`
-  on new lanes of the track below the lanes its parts are on (`optimize` only works with tracks). Events of no channel
-  or pitch go with the first new part of their part, so none is lost; new parts keep their part's mute, transpose,
-  velocity, root key and Global Transpose setting, and new tracks get the track's MIDI modifiers. The copied events get
-  new ids, so play probability and velocity variance, drawn from part and note ids, draw anew. `midi.bounce` combines a
-  track's parts into one on the lowest of their lanes, removes muted parts and writes the parts' transpose and velocity
-  into the notes (p. 1123), as playback applies them. The new part gets the root key and Global Transpose setting the
-  parts with notes share, or, when they differ, the project root key and follow, as merge does (#954, #1240), and each
-  part's difference in global transpose goes into its notes with its transpose, so that it keeps the pitch it played
-  with. Playback checks the range after the track's MIDI modifiers' transpose and random pitch, so a pitch that the
-  part's transpose takes beyond 0-127 and the track's brings back plays; a note that plays nowhere, also so, stays,
-  transposed, where the track's drum map or chord track following make of that what they make of the note, so that it
-  comes back alike when the modifiers change; where they don't, its part keeps its transpose (#1240), and a pitch beyond
-  0-127 is left out. What the notes can't hold stays on a part, for each part on its own. Its transpose: where a pitch
-  that plays would go beyond 0-127, or where the track's drum map or chord track following, which map a note before its
-  part's transpose and the global transposition, would play another pitch, asked at each note's position; such a part
-  keeps its root key and Global Transpose setting, with its transpose in the notes if they hold that alone, else on the
-  part. Its velocity: where the track's MIDI modifiers, which compress a note's velocity before playback adds the
-  part's, or a velocity beyond 1-127 that their shift or random velocity brings back, would play another velocity
-  (checked for every random value), and where a note has velocity variance, which playback applies before the part's
-  velocity. Parts with the same settings make one new part; a new part that overlaps another one, or a part of the track
-  that stays, on its lane moves to the next lane free of them. So everything plays as before. The track's MIDI modifiers
-  stay on the track, and the copied notes get new ids, so play probability and velocity variance, drawn from part and
-  note ids, draw anew.
+  the clamp to 1-127 come before it in playback), else it goes into the notes. The first new part, with the controllers,
+  is on the first lane: the one with the setting the parts share, else the one of the earliest source part. The others,
+  in the order of their earliest source parts as bounce orders its parts, with the articulation events only (playback
+  resolves directions per part and never sends them), are on new lanes below the destination's parts. Playback sends a
+  sound slot's output events per part ([articulation-maps.md](articulation-maps.md)), so on a track with an articulation
+  map a note of one new part can sound under the key switch another new part sent (#1432). With `eraseDestination`, a
+  shared copy that loses events leaves its copies, which keep theirs; its events get new ids, so the play probability,
+  velocity variance and random MIDI modifier values of the notes that stay draw anew. `midi.dissolve` copies events by
+  channel or pitch into new parts at the same place and mutes the parts (pp. 1121-1122): `to: tracks` puts them on new
+  MIDI tracks routed to the same instrument, `to: lanes` on new lanes of the track below the lanes its parts are on
+  (`optimize` only works with tracks). Events of no channel or pitch go with the first new part of their part, so none
+  is lost; new parts keep their part's mute, transpose, velocity, root key and Global Transpose setting, and new tracks
+  get the track's MIDI modifiers. The copied events get new ids, so play probability and velocity variance, drawn from
+  part and note ids, draw anew. `midi.bounce` combines a track's parts into one on the lowest of their lanes, removes
+  muted parts and writes the parts' transpose and velocity into the notes (p. 1123), as playback applies them. The new
+  part gets the root key and Global Transpose setting the parts with notes share, or, when they differ, the project root
+  key and follow, as merge does (#954, #1240), and each part's difference in global transpose goes into its notes with
+  its transpose, so that it keeps the pitch it played with. Playback checks the range after the track's MIDI modifiers'
+  transpose and random pitch, so a pitch that the part's transpose takes beyond 0-127 and the track's brings back plays;
+  a note that plays nowhere, also so, stays, transposed, where the track's drum map or chord track following make of
+  that what they make of the note, so that it comes back alike when the modifiers change; where they don't, its part
+  keeps its transpose (#1240), and a pitch beyond 0-127 is left out. What the notes can't hold stays on a part, for each
+  part on its own. Its transpose: where a pitch that plays would go beyond 0-127, or where the track's drum map or chord
+  track following, which map a note before its part's transpose and the global transposition, would play another pitch,
+  asked at each note's position; such a part keeps its root key and Global Transpose setting, with its transpose in the
+  notes if they hold that alone, else on the part. Its velocity: where the track's MIDI modifiers, which compress a
+  note's velocity before playback adds the part's, or a velocity beyond 1-127 that their shift or random velocity brings
+  back, would play another velocity (checked for every random value), and where a note has velocity variance, which
+  playback applies before the part's velocity. Parts with the same settings make one new part; a new part that overlaps
+  another one, or a part of the track that stays, on its lane moves to the next lane free of them. So everything plays
+  as before. The track's MIDI modifiers stay on the track, and the copied notes get new ids, so play probability and
+  velocity variance, drawn from part and note ids, draw anew.
 - **Extract MIDI Automation** (`midi.extractAutomation`, p. 1129) moves the continuous controllers of parts into controller automation lanes of their tracks (`automationLane.*`, [automation.md](automation.md)), one per controller and channel: a step point where each event plays, its value scaled to 0-1. An existing lane loses its points in the part's range first, except those an earlier part of the same call added, so overlapping parts keep each other's, and reads from then on, so that what was moved plays. The points play at the part's place only, so a shared copy leaves its copies, which keep their controllers; all its events get new ids, so the play probability, velocity variance and random MIDI modifier values of its notes, drawn from part and note ids, draw anew. Pitch bend, pressure, switches such as the sustain pedal, events past a part's end and muted parts stay, as on p. 1129.
 - **The MIDI menu** (`resources/ui/project.rml`, `src/app/appmidifunctions.cpp`, reference manual pp. 1118-1131) runs them in the app. As in the reference, they work on what the Edit menu's quantize commands take ([quantize.md](quantize.md)): in an editor, its selected notes, or every note it edits without a selection; from no zone (Lua, MCP, the menu in the project window), an open editor's selected notes first, else the project window's selected MIDI parts. MIDI > Functions: Legato (`midi.functionsLegato`) extends by the user setting `editing.legatoOverlap` (Legato Overlap, in ticks of 480 to a quarter note, negative for a gap) and, with `editing.legatoBetweenSelected` (Legato Mode: Between Selected Notes Only, p. 1599), only to the next selected note; Fixed Lengths sets the editor's length quantize, or the quantize grid's step with its tuplet when that is linked to it, as in the project window and as Edit > Quantize Lengths takes it (swing and grooves, which change from step to step, don't count); Fixed Velocity the editor's insert velocity (100 in the project window); Pedals to Note Length, Delete Overlaps (mono) and (poly), Delete Doubles, Delete Controllers, Delete Continuous Controllers, Thin Out Data, Extract MIDI Automation, Reverse and Mirror (`midi.invert`) run with no settings; Velocity... (Type with Amount, Ratio in percent, Lower and Upper, or Variance in percent; velocities in MIDI 1.0 values, which it converts as playback does (`velocityFromMidi1`), so 64 less 1 is 63; out-of-range values are refused in the dialog's units), Delete Notes... (Minimum Length in ticks of 480 to a quarter note, Minimum Velocity, Remove when under with both; p. 1140) and Restrict Polyphony... ask first. Transpose Setup... asks for the semitones, Scale Correction from a current to a new scale and Keep Notes in Range with the highest and lowest note. Merge MIDI in Loop... (MIDI Merge Options: Include Inserts, on by default, Erase Destination, Include Chase) merges between the locators the tracks that play onto the first selected MIDI or instrument track, or a new one. Dissolve Part... separates the project window's selected parts by channel or by pitch, onto tracks with Optimized Display or onto lanes; Bounce MIDI bounces the selected parts of each track, one undo step for several tracks. The dialogs are one document, `resources/ui/midi-function.rml`, whose Lua runs the engine's command and shows its error if it refuses, and it enables the fields the chosen settings use.
 - **One dialog at a time.** Dialogs whose Lua keeps its state in a global table open with `AppUi::openOnce`, which takes the document's attributes: while one is open, opening it again, from another window or through MCP, brings it to the front as it is. The MIDI menu's dialogs, Add Track and Auto Fades work this way; the fade and crossfade editors already open one at a time through `EventDisplay::openFadeDialog`.
@@ -89,22 +91,28 @@ bring back, merged without Include Inserts onto the track itself, and a transpos
 a part of its own a pitch that plays and that the new part's global transpose or the part's transpose takes beyond
 0-127, with and without Include Inserts, the part's velocity with a note's velocity variance, and without Include
 Inserts onto the track itself a pitch the part's transpose takes beyond 127 that the track's modifiers bring back and
-the part's velocity under their compression; merge and bounce taking the global transpose at each note's position (an
-Independent part, then one that follows the transpose track across an event, with a Note Filter in merge); the new
-part's setting coming only from parts with notes (in merge's range); bounce with a Velocity Limit, a Velocity Filter and
-a Note Filter that leaves out pitch 60 under a compression, a note that plays nowhere with its part's transpose in it
-and one that keeps it on the part under a drum map, the one new part moving past a part that stays, and undo and redo of
-a bounce into parts with different root keys; dissolve to lanes and to tracks of a part in another root key and an
-Independent part under a transpose event, playing as before; with random pitch and velocity and with velocity variance,
-which draw anew, it checks what stays on the part. `tests/midifunctions_ui_tests.cpp` drives the menu with
-`ui::Automation`: every item of MIDI > Functions without a dialog, once each, run on a part through the menu and the
-engine's command with the expected settings on a copy of it on another track, comparing notes, controllers and
-automation, so that a wrong command or mode fails; the item list is checked against the submenu, and no two items may
-give the same result. It also runs Legato with and without an overlap and between selected notes, Fixed Lengths with a
-tuplet grid, Fixed Velocity, Reverse and Mirror on the project window's selected parts and on an editor's selected
-notes, and the dialogs: Transpose Setup by semitones, with scale correction, keeping notes in range and with a value the
-engine refuses, Velocity (Add/Subtract by 1 from 64, values out of range, Compress/Expand, Variance, Fixed To and
-Limit), Delete Notes (by length, and by velocity, keeping a note exactly at Minimum Velocity), Restrict Polyphony,
-Dissolve Part by channel, by pitch and to lanes, Merge MIDI in Loop onto a new track, refused with no track playing and
-onto the selected one with Erase Destination and Include Inserts, Bounce MIDI, and that a second dialog brings the open
-one to the front.
+the part's velocity under their compression; merge with Include Inserts putting the part's velocity into the notes where
+a Velocity Filter lets a velocity a note's variance gives it through only with the part's velocity, and keeping it on
+the part under a velocity shift and a random velocity; without Include Inserts onto a new track, a pitch that only the
+source track's modifiers bring back left out; parts of their own on a destination with a drum map or following the chord
+track; the first new part being the earliest part's where none goes into the one with the shared setting; undo and redo
+of a merge into several parts, and Erase Destination with a part that stays on a higher lane; merge and bounce taking
+the global transpose at each note's position (an Independent part, then one that follows the transpose track across an
+event, with a Note Filter in merge), and merge with Include Inserts taking the new part's where a random position moves
+a note across a transpose event; the new part's setting coming only from parts with notes (in merge's range); bounce
+with a Velocity Limit, a Velocity Filter and a Note Filter that leaves out pitch 60 under a compression, a note that
+plays nowhere with its part's transpose in it and one that keeps it on the part under a drum map, the one new part
+moving past a part that stays, and undo and redo of a bounce into parts with different root keys; dissolve to lanes and
+to tracks of a part in another root key and an Independent part under a transpose event, playing as before; with random
+pitch and velocity and with velocity variance, which draw anew, it checks what stays on the part.
+`tests/midifunctions_ui_tests.cpp` drives the menu with `ui::Automation`: every item of MIDI > Functions without a
+dialog, once each, run on a part through the menu and the engine's command with the expected settings on a copy of it on
+another track, comparing notes, controllers and automation, so that a wrong command or mode fails; the item list is
+checked against the submenu, and no two items may give the same result. It also runs Legato with and without an overlap
+and between selected notes, Fixed Lengths with a tuplet grid, Fixed Velocity, Reverse and Mirror on the project window's
+selected parts and on an editor's selected notes, and the dialogs: Transpose Setup by semitones, with scale correction,
+keeping notes in range and with a value the engine refuses, Velocity (Add/Subtract by 1 from 64, values out of range,
+Compress/Expand, Variance, Fixed To and Limit), Delete Notes (by length, and by velocity, keeping a note exactly at
+Minimum Velocity), Restrict Polyphony, Dissolve Part by channel, by pitch and to lanes, Merge MIDI in Loop onto a new
+track, refused with no track playing and onto the selected one with Erase Destination and Include Inserts, Bounce MIDI,
+and that a second dialog brings the open one to the front.
