@@ -642,6 +642,26 @@ namespace gnubase::engine
 		}
 	};
 
+	// What a note plays of an expression that it has no point of at its start: unity gain, the center, no tuning and
+	// no pressure, and brightness at the center, MPE's initial values of the last three, which playback sends before
+	// a note that doesn't start with its own (#176). Vibrato and expression have none: the plugin decides.
+	constexpr std::optional<double> defaultExpression(plugin::NoteExpression type)
+	{
+		switch (type)
+		{
+		case plugin::NoteExpression::Volume:
+			return 1.0;
+		case plugin::NoteExpression::Pan:
+		case plugin::NoteExpression::Brightness:
+			return 0.5;
+		case plugin::NoteExpression::Tuning:
+		case plugin::NoteExpression::Pressure:
+			return 0.0;
+		default:
+			return std::nullopt;
+		}
+	}
+
 	// The expressions' names, by plugin::NoteExpression.
 	inline constexpr std::array<const char*, 7> g_expressionNames = {
 		"volume", "pan", "tuning", "vibrato", "expression", "brightness", "pressure"};
