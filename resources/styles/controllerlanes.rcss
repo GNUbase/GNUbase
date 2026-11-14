@@ -74,6 +74,7 @@
 
 .controller-lane[lane-kind=articulations] .controller-lane-type
 {
+	display: block; /* not on a line of the header's, which is taller than the row beside it */
 	height: 14dp;
 	padding: 0 2dp;
 	white-space: nowrap;
@@ -92,6 +93,7 @@
 .articulation-row
 {
 	position: relative;
+	box-sizing: border-box; /* the sound slots lane's line is inside its height, so the names stay beside the rows */
 	height: 14dp;
 }
 

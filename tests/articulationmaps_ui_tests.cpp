@@ -12,6 +12,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -660,4 +661,197 @@ TEST_CASE("the list editor lists directions as Articulation events and edits the
 	REQUIRE(f.app.waitUntil([&f] { return f.articulations(f.notes[0]) == Json{"Staccato"}; }));
 	f.type(noteRow(f.notes[2]), "");
 	REQUIRE(f.app.waitUntil([&f] { return f.articulations(f.notes[2]).empty(); }));
+}
+
+TEST_CASE("the Articulations lane drops a cleared slot color and width, and its rows line up with their names", "[ui]")
+{
+	// #1498: the lane keeps its elements while their RML is the same, so what code set on them must go again.
+	Editor f;
+	const std::string first = inLane(" .sound-slot[note=\"" + std::to_string(f.notes[0]) + "\"]");
+	const auto has = [&f](const std::string& selector, const std::string& name)
+	{
+		const Json found = f.elements(selector);
+		const Json names = found.empty() ? Json::array() : found.at(0).value("classes", Json::array());
+		return std::find(names.begin(), names.end(), name) != names.end();
+	};
+	// The themes write slot names in a dark color on a light slot color and in a light one on a dark slot color.
+	REQUIRE(f.app.waitUntil([&] { return has(first, "dark"); }));
+	CHECK_FALSE(has(first, "light"));
+	const auto arco = [&f](const std::string& color)
+	{
+		Json map = f.app.call("project.get").at("articulationMaps").at(0);
+		map["slots"][0]["color"] = color;
+		f.app.call("articulationMap.set", {{"map", map.at("id")}, {"slots", map.at("slots")}});
+	};
+	arco("#f0e0a0");
+	REQUIRE(f.app.waitUntil([&] { return has(first, "light"); }));
+	CHECK_FALSE(has(first, "dark"));
+	// Cleared, the slot has the theme's look again, not the color it had.
+	arco("");
+	REQUIRE(f.app.waitUntil([&] { return !has(first, "light") && !has(first, "dark"); }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const ui::Image shown = f.app.ui().screenshot(f.window, of(first));
+	REQUIRE(shown.width > 4);
+	const std::array<uint8_t, 4> pixel = shown.pixel(shown.width - 3, shown.height / 2);
+	CHECK_FALSE((pixel[0] == 0xf0 && pixel[1] == 0xe0 && pixel[2] == 0xa0));
+
+	// A direction that another one of its group now starts with has no width of its own left.
+	const Json added = f.app.call("controller.add",
+		{{"part", f.part},
+			{"controllers",
+				{{{"position", 0}, {"type", "articulation"}, {"articulation", "Pizzicato"}},
+					{{"position", 8 * g_sixteenth}, {"type", "articulation"}, {"articulation", "Arco"}}}}});
+	const std::string pizzicato = inLane(" .articulation-row[articulation-row=\"1\"] .articulation-item");
+	const double area = f.box(inLane(" .controller-lane-area")).at("width").get<double>();
+	REQUIRE(
+		f.app.waitUntil([&] { return std::abs(f.box(pizzicato).at("width").get<double>() - (area / 2.0)) <= 2.0; }));
+	f.app.call("controller.set",
+		{{"part", f.part}, {"controllers", {{{"id", added.at("controllers").at(1).at("id")}, {"position", 0}}}}});
+	REQUIRE(f.app.waitUntil([&] { return f.box(pizzicato).at("width").get<double>() < area / 16.0; }));
+
+	// The line under the sound slots lane is inside its height: each articulation's name is beside its row.
+	const Json names = f.elements(inLane(" .articulation-name"));
+	const Json rows = f.elements(inLane(" .articulation-row"));
+	REQUIRE(rows.size() == names.size() + 1);
+	for (size_t i = 0; i < names.size(); ++i)
+		CHECK(std::abs(names.at(i).at("box").at("y").get<double>() - rows.at(i + 1).at("box").at("y").get<double>()) <
+			0.5);
+}
+
+TEST_CASE("the Articulations lane adds no second direction where one starts, and selects its directions", "[ui]")
+{
+	// #1498.
+	Editor f;
+	f.tool("draw");
+	f.click(f.at(2, 4.2));
+	REQUIRE(f.app.waitUntil([&f] { return f.elements(inLane(" .articulation-item.direction")).size() == 1; }));
+	// Left of the bar, the click snaps to where it starts: nothing is added there. A click in the Arco row is.
+	f.click(f.at(2, 3.8));
+	f.click(f.at(1, 8.0));
+	REQUIRE(f.app.waitUntil([&f] { return f.elements(inLane(" .articulation-item.direction")).size() == 2; }));
+	CHECK(f.midiPart().at("controllers").size() == 2);
+
+	// Select All Events on Lane selects the lane's directions.
+	f.click(of(inLane(" .controller-lane-type")));
+	const std::string item = "#controller-lane-menu menuitem[lane-action=selectAll]";
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const Json found = f.elements(item);
+			return !found.empty() && found.at(0).at("visible") == true;
+		}));
+	f.click(of(item));
+	REQUIRE(f.app.waitUntil(
+		[&f] { return f.app.call("editor.get", {{"editor", "window"}}).at("controllerSelection").size() == 2; }));
+	REQUIRE(f.app.waitUntil([&f] { return f.elements(inLane(" .articulation-item.selected")).size() == 2; }));
+}
+
+TEST_CASE("the Articulations lane shows and edits only the parts whose track has its map", "[ui]")
+{
+	// #1498: a second track without a map, its part over the first one's, with notes at the same places.
+	Editor f;
+	const uint64_t other = f.app.call("track.add", {{"type", "instrument"}}).at("track").at("id").get<uint64_t>();
+	const uint64_t part = f.app.call("midiPart.add", {{"track", other}, {"position", 0}, {"length", g_bar}})
+							  .at("part")
+							  .at("id")
+							  .get<uint64_t>();
+	Json items = Json::array();
+	for (const int at : {0, 4, 8})
+		items.push_back(
+			{{"position", at * g_sixteenth}, {"length", 2 * g_sixteenth}, {"pitch", 64}, {"velocity", 0.5}});
+	f.app.call("note.add", {{"part", part}, {"notes", items}});
+	f.app.call("controller.add",
+		{{"part", part},
+			{"controllers", {{{"position", 0}, {"type", "articulation"}, {"articulation", "Pizzicato"}}}}});
+	// The other part is the active one: the lane shows the first track's map, and only its part.
+	f.app.call("editor.open", {{"editor", "window"}, {"parts", Json::array({f.part, part})}});
+	f.app.call("editor.set", {{"editor", "window"}, {"activePart", part}, {"lanes", {{{"type", "articulations"}}}}});
+	REQUIRE(f.app.waitUntil([&f] { return f.app.call("editor.get", {{"editor", "window"}}).at("parts").size() == 2; }));
+	REQUIRE(f.app.waitUntil([&f] { return f.elements(inLane(" .sound-slot")).size() == 3; }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.elements(inLane(" .articulation-item")).empty());
+	const auto partOf = [](const Json& shown)
+	{ return std::stoull(shown.at("attributes").at("part").get<std::string>()); };
+	for (const Json& shown : f.elements(inLane(" .sound-slot")))
+		CHECK(partOf(shown) == f.part);
+
+	// The draw tool adds a direction and an attribute to the part of the map's track only.
+	f.tool("draw");
+	f.click(f.at(2, 4.0));
+	REQUIRE(f.app.waitUntil([&f] { return f.midiPart().at("controllers").size() == 1; }));
+	f.click(f.at(3, 9.0));
+	REQUIRE(f.app.waitUntil([&f] { return f.articulations(f.notes[2]) == Json{"Staccato"}; }));
+	const Json project = f.app.call("project.get");
+	for (const Json& each : project.at("midiParts"))
+		if (each.at("id") == part)
+		{
+			CHECK(each.at("controllers").size() == 1);
+			for (const Json& note : each.at("notes"))
+				CHECK(note.value("articulations", Json::array()).empty());
+		}
+	REQUIRE(f.app.waitUntil([&f] { return f.elements(inLane(" .articulation-item")).size() == 2; }));
+	for (const Json& shown : f.elements(inLane(" .articulation-item")))
+		CHECK(partOf(shown) == f.part);
+}
+
+TEST_CASE("the in-place editor has the Articulations lane", "[ui]")
+{
+	// Reference manual p. 1288: the key, drum and in-place editors have it.
+	test::UiApp app{{1200, 800}};
+	app.appUi().showProject();
+	app.setDpRatio(1.0F);
+	const uint64_t track = app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	const Json map = app.call("articulationMap.add",
+		{{"name", "Strings"}, {"groups", {"Technique"}},
+			{"articulations",
+				{{{"name", "Arco"}, {"type", "direction"}, {"group", 0}},
+					{{"name", "Pizzicato"}, {"type", "direction"}, {"group", 0}}}},
+			{"slots", {{{"name", "Arco"}}, {{"name", "Pizzicato"}, {"articulations", {"Pizzicato"}}}}}});
+	app.call("track.set", {{"track", track}, {"articulationMap", map.at("map").at("id")}});
+	const uint64_t part = app.call("midiPart.add", {{"track", track}, {"position", g_bar}, {"length", g_bar}})
+							  .at("part")
+							  .at("id")
+							  .get<uint64_t>();
+	const Json added = app.call("note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", 0}, {"length", 4 * g_sixteenth}, {"pitch", 60}, {"velocity", 0.5}},
+					{{"position", 8 * g_sixteenth}, {"length", 4 * g_sixteenth}, {"pitch", 60}, {"velocity", 0.5}}}}});
+	const uint64_t second = added.at("notes").at(1).at("id").get<uint64_t>();
+	app.call("editor.inPlace", {{"tracks", {track}}, {"open", true}});
+	app.call("editor.set", {{"editor", "inPlace:" + std::to_string(track)}, {"lanes", {{{"type", "articulations"}}}}});
+	const std::string editor = ".in-place-editor[track=\"" + std::to_string(track) + "\"]";
+	const std::string lane = editor + " .controller-lane[lane-kind=articulations]";
+	const std::string slot = lane + " .sound-slot[note=\"" + std::to_string(second) + "\"]";
+	const auto elements = [&app](const std::string& selector)
+	{ return app.ui().dom(std::nullopt, selector, 0).at("elements"); };
+	const auto visible = [&](const std::string& selector)
+	{
+		const Json found = elements(selector);
+		return !found.empty() && found.at(0).at("visible") == true;
+	};
+	const auto click = [&app](const ui::Target& target)
+	{
+		app.ui().click(std::nullopt, target, ui::MouseButton::Left, 1, {});
+		app.shell().step(std::chrono::milliseconds(0));
+	};
+	REQUIRE(app.waitUntil([&] { return elements(lane + " .sound-slot").size() == 2; }));
+	CHECK(elements(slot).at(0).at("attributes").at("title") == "Arco");
+
+	// The draw tool adds a direction in its row, where the second note starts.
+	REQUIRE(app.waitUntil([&] { return visible(editor + " .in-place-toolbar-toggle"); }));
+	click(of(editor + " .in-place-toolbar-toggle"));
+	const std::string draw = editor + " .key-tool[key-tool=draw]";
+	REQUIRE(app.waitUntil([&] { return visible(draw); }));
+	click(of(draw));
+	REQUIRE(app.waitUntil([&] { return visible(slot); }));
+	const Json box = elements(slot).at(0).at("box");
+	const Json row = elements(lane + " .articulation-row").at(2).at("box");
+	click({"", 0,
+		ui::Point{static_cast<int>(std::lround(box.at("x").get<double>() + 1.0)),
+			static_cast<int>(std::lround(row.at("y").get<double>() + (row.at("height").get<double>() / 2.0)))}});
+	REQUIRE(app.waitUntil([&] { return elements(slot).at(0).at("attributes").at("title") == "Pizzicato"; }));
+	const Json direction = app.call("project.get").at("midiParts").at(0).at("controllers").at(0);
+	CHECK(direction.at("articulation") == "Pizzicato");
+	CHECK(direction.at("position") == 8 * g_sixteenth);
 }

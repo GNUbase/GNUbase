@@ -718,6 +718,10 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".articulation-row.sound-slots", {"border-bottom-width": f"{widths['hairline']}px",
                                            "border-bottom-color": c["border"]}),
         (".sound-slot", {"background-color": c["surfaceRaised"], "color": c["text"]}),
+        # On a slot color of the user's, light or dark (#1498), the name is in the darker or the lighter of the text
+        # and background colors
+        (".sound-slot.light", {"color": ebony}),
+        (".sound-slot.dark", {"color": ivory}),
         (".articulation-item.direction", {"background-color": mix(c["surfaceRaised"], c["accent"], .3)}),
         (".articulation-item.attribute", {"background-color": mix(c["surfaceRaised"], c["accent"], .6)}),
         (".articulation-item.reset", {"background-color": c["textMuted"]}),

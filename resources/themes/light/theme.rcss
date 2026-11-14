@@ -989,6 +989,14 @@
 		background-color: #f7f9fc;
 		color: #17202d;
 	}
+	.sound-slot.light
+	{
+		color: #17202d;
+	}
+	.sound-slot.dark
+	{
+		color: #eef1f5;
+	}
 	.articulation-item.direction
 	{
 		background-color: #b0cef2;
