@@ -1939,21 +1939,13 @@ namespace gnubase::engine
 			};
 			const auto typeOf = [&project](const Channel& other) { return project.trackById.at(other.track).type; };
 			std::set<ObjectId> soloed;
-			if (parameters.contains("volume") && channel.volume != before.volume)
-				for (const ObjectId other : linkedTo(project, id, "volume", linked))
-				{
-					Channel& to = follower(other);
-					if (to.format != ChannelFormat::None || typeOf(to) == TrackType::Vca)
-						to.volume = std::clamp(
-							to.volume + (channel.volume - before.volume), g_minChannelVolume, project.maxVolume);
-				}
-			if (parameters.contains("pan") && channel.pan != before.pan)
-				for (const ObjectId other : linkedTo(project, id, "pan", linked))
-				{
-					Channel& to = follower(other);
-					if (to.format != ChannelFormat::None)
-						to.pan = std::clamp(to.pan + (channel.pan - before.pan), -1.0, 1.0);
-				}
+			for (const auto& [key, member] : {std::pair{"volume", &Channel::volume}, std::pair{"pan", &Channel::pan}})
+			{
+				const double moved = channel.*member - before.*member;
+				if (parameters.contains(key) && moved != 0.0)
+					for (const ObjectId other : linkedTo(project, id, key, linked))
+						followLinkedMove(project, follower(other), key, moved);
+			}
 			for (const char* key : {"eq", "strip", "sends"})
 			{
 				if (!parameters.contains(key))
@@ -3363,6 +3355,7 @@ namespace gnubase::engine
 			{"midiPart.remove", "Remove MIDI part"},
 			{"note.add", "Add notes"},
 			{"note.remove", "Remove notes"},
+			{"note.move", "Move notes"},
 			{"note.set", "Change notes"},
 			{"note.voicing", "Change chord"},
 			{"controller.add", "Add controllers"},
@@ -4665,8 +4658,10 @@ namespace gnubase::engine
 		add(engine,
 			{"midiPart.set", 1,
 				"Changes a MIDI part's name, position or length, or how its notes play: transpose (semitones) and "
-				"velocity (added to MIDI 1.0 velocities), each -127 to 127 and added to the track's MIDI modifiers "
-				"(channel.set modifiers), also while they are bypassed. The notes themselves stay as they are. "
+				"velocity (added to MIDI 1.0 velocities), each -127 to 127. Velocity adds to the track's MIDI "
+				"modifiers (channel.set modifiers), also while they are bypassed; transpose adds to what each note "
+				"plays with, folded into the octave range together with global transposition while the part follows "
+				"it (transpose.setTrack keepInOctave). The notes themselves stay as they are. "
 				"rootKey is the part's root key (\"\" for none, C, C# and so on to B), which the project root key "
 				"transposes it to (project.set rootKey); globalTranspose follow (the default) or independent says "
 				"whether the project root key and the transpose track transpose it (transpose.add). pattern is the "

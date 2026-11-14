@@ -771,17 +771,17 @@ namespace gnubase::ui
 					else
 						button->RemoveAttribute("checked");
 				}
-			// Not while the project is older than the fields' own steps (#716).
-			const auto sending = [this, channel](const char* name)
-			{ return m_binding.ahead(stepKey(m_stepOwner, channel->at("id"), name), m_read); };
+			const auto key = [this, channel](const char* name)
+			{ return stepKey(m_stepOwner, channel->at("id"), name); };
 			if (Rml::Element* volume = element("valuefield[control=volume]"); volume != nullptr && (audio || vca))
 			{
 				volume->SetAttribute("max", widgets::format(m_project->value("maxVolume", 6.0F)));
-				if (!sending("volume"))
-					volume->SetAttribute("value", widgets::format(channel->at("volume").get<float>()));
+				setAttribute(
+					*volume, "value", fieldValue(key("volume"), widgets::format(channel->at("volume").get<float>())));
 			}
-			if (Rml::Element* pan = element("valuefield[control=pan]"); pan != nullptr && audio && !sending("pan"))
-				pan->SetAttribute("value", widgets::format(channel->at("pan").get<float>() * 100.0F));
+			if (Rml::Element* pan = element("valuefield[control=pan]"); pan != nullptr && audio)
+				setAttribute(
+					*pan, "value", fieldValue(key("pan"), widgets::format(channel->at("pan").get<float>() * 100.0F)));
 			const auto id = channel->at("id").get<uint64_t>();
 			if (Rml::Element* output = element("select[control=output]"))
 				widgets::fill(
@@ -903,9 +903,9 @@ namespace gnubase::ui
 						shown /= static_cast<double>(g_ticksPerShownTick);
 				}
 			}
-			// Not while the project is older than the field's own steps (#716).
-			if (!m_binding.ahead(stepKey(m_stepOwner, m_channel.at("id"), name), m_read))
-				setAttribute(*control, "value", widgets::format(static_cast<float>(std::round(shown) + 0.0))); // not -0
+			setAttribute(*control, "value",
+				fieldValue(stepKey(m_stepOwner, m_channel.at("id"), name),
+					widgets::format(static_cast<float>(std::round(shown) + 0.0)))); // not -0
 		}
 	}
 
@@ -989,10 +989,11 @@ namespace gnubase::ui
 						options.emplace_back(std::to_string(option), names[option].get<std::string>());
 					widgets::fill(*select, options, std::to_string(std::lround(value.get<double>())));
 				}
-				else if (Rml::Element* field = panel->QuerySelector("valuefield[control=" + control + "]");
-					field != nullptr && !m_binding.ahead(stepKey(m_stepOwner, m_channel.at("id"), control), m_read))
+				else if (Rml::Element* field = panel->QuerySelector("valuefield[control=" + control + "]"))
 				{
-					setAttribute(*field, "value", widgets::format(value.get<float>()));
+					setAttribute(*field, "value",
+						fieldValue(
+							stepKey(m_stepOwner, m_channel.at("id"), control), widgets::format(value.get<float>())));
 				}
 			}
 		}
@@ -1075,8 +1076,8 @@ namespace gnubase::ui
 				const Json channel = m_channel.at("id");
 				const Json step = {{"command", "channel.set"},
 					{"parameters", {{"channel", channel}, {section, {{"slots", std::move(slots)}}}}}};
-				m_binding.sendStep(gesture, stepKey(m_stepOwner, channel, control), "Change MIDI Effect",
-					Json::array({step}), whenRefused());
+				sendFieldStep(gesture, stepKey(m_stepOwner, channel, control), static_cast<float>(value),
+					"Change MIDI Effect", Json::array({step}));
 				return;
 			}
 			else
@@ -1317,8 +1318,8 @@ namespace gnubase::ui
 			const Json channel = m_channel.at("id");
 			const Json step = {{"command", "channel.set"},
 				{"parameters", {{"channel", channel}, {name, name == "volume" ? number : number / 100.0}}}};
-			m_binding.sendStep(event.GetParameter<int>("gesture", 0), stepKey(m_stepOwner, channel, name),
-				name == "volume" ? "Change Volume" : "Change Pan", Json::array({step}), whenRefused());
+			sendFieldStep(event.GetParameter<int>("gesture", 0), stepKey(m_stepOwner, channel, name),
+				static_cast<float>(number), name == "volume" ? "Change Volume" : "Change Pan", Json::array({step}));
 			return;
 		}
 		std::string key = name;
@@ -1447,8 +1448,22 @@ namespace gnubase::ui
 		const Json channel = m_channel.at("id");
 		const Json step = {
 			{"command", "channel.set"}, {"parameters", {{"channel", channel}, {"modifiers", std::move(modifiers)}}}};
-		m_binding.sendStep(gesture, stepKey(m_stepOwner, channel, control), "Change MIDI Modifiers",
-			Json::array({step}), whenRefused());
+		sendFieldStep(gesture, stepKey(m_stepOwner, channel, control), event.GetParameter<float>("value", 0.0F),
+			"Change MIDI Modifiers", Json::array({step}));
+	}
+
+	void Inspector::sendFieldStep(
+		int gesture, const std::string& key, float shown, std::string description, Json commands)
+	{
+		m_sent[key] = widgets::format(shown);
+		m_binding.sendStep(gesture, key, std::move(description), std::move(commands), whenRefused());
+	}
+
+	std::string Inspector::fieldValue(const std::string& key, std::string value) const
+	{
+		if (const auto sent = m_sent.find(key); sent != m_sent.end() && m_binding.ahead(key, m_read))
+			return sent->second;
+		return value;
 	}
 
 	void Inspector::sendChannel(Json parameters)

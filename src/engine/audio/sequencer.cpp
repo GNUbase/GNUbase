@@ -373,6 +373,7 @@ namespace gnubase::engine
 			unmodified->expressions = sequence->preExpressions;
 			unmodified->controllers = sequence->controllers;
 			unmodified->chase = sequence->chase;
+			unmodified->inputChannel = sequence->inputChannel; // the input on the track's MIDI channel, as the parts'
 			m_pre->setSequence(std::move(unmodified));
 			sequence->pre = m_pre;
 		}
@@ -696,6 +697,21 @@ namespace gnubase::engine
 			m_inputSlotsSerial = sequence.slotsSerial;
 			m_inputSlot = -1;
 			m_inputSlotHeld = -1;
+		}
+		// The track set to another MIDI channel: the selected slot's off events on the channel its on events went to,
+		// and its on events on the new one, as the track's patch goes out again there.
+		if (sequence.inputChannel != m_inputSlotTrack)
+		{
+			m_inputSlotTrack = sequence.inputChannel;
+			const std::vector<SoundSlot>& slots = sequence.articulations.slots;
+			if (m_inputSlot >= 0 && static_cast<size_t>(m_inputSlot) < slots.size())
+			{
+				const SoundSlot& selected = slots[static_cast<size_t>(m_inputSlot)];
+				const auto to =
+					static_cast<uint8_t>(sequence.inputChannel >= 0 ? sequence.inputChannel : m_inputSlotTrigger);
+				if (selected.channel < 0 && to != m_inputSlotChannel)
+					selectSlot(sequence.articulations, m_inputSlot, to, 0, out, true);
+			}
 		}
 		for (graph::ProcessEvent event : m_input)
 		{
@@ -1101,19 +1117,23 @@ namespace gnubase::engine
 			if (slot == m_inputSlotHeld)
 			{
 				m_inputSlotHeld = -1;
+				if (m_inputSlot != 0)
+					m_inputSlotTrigger = event.channel % 16;
 				selectSlot(map, 0, channel, event.offset, out);
 			}
 			return true;
 		}
 		m_inputSlotHeld = event.type == Type::NoteOn && !map.latch ? slot : -1;
+		if (slot != m_inputSlot)
+			m_inputSlotTrigger = event.channel % 16;
 		selectSlot(map, slot, channel, event.offset, out);
 		return true;
 	}
 
-	void MidiSequencer::selectSlot(
-		const ArticulationMap& map, int slot, uint8_t channel, uint32_t offset, graph::EventBuffer& out) noexcept
+	void MidiSequencer::selectSlot(const ArticulationMap& map, int slot, uint8_t channel, uint32_t offset,
+		graph::EventBuffer& out, bool again) noexcept
 	{
-		if (slot == m_inputSlot)
+		if (slot == m_inputSlot && !again)
 			return;
 		// As in playback (rendersnapshot.cpp): the off events on the channel the slot's on events went to, the on
 		// events on the slot's channel or else the given one (the track's or the trigger's). A key switch is a note-on

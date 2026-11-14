@@ -874,6 +874,97 @@ TEST_CASE("merge copies the events in a range into a new part", "[unit]")
 	}
 }
 
+TEST_CASE("merge writes the events of a MIDI track set to a MIDI channel on that channel", "[unit]")
+{
+	Project project = newProject();
+	const ObjectId piano = addTrack(project, TrackType::Instrument, "Piano");
+	const ObjectId strings = addTrack(project, TrackType::Midi, "Strings");
+	Channel& channel = project.channels.at(project.trackById.at(strings).channel);
+	channel.output = project.trackById.at(piano).channel;
+	channel.midiChannel = 3;
+	// Notes and controllers on channels 1 and 2, a CC 1 before the range that is chased, and a drum map whose sound
+	// D1 has channel 10 of its own.
+	addPart(project, strings, 0, 8 * g_quarter,
+		PartBuilder()
+			.cc(1, 0, 1, 50, 1)
+			.note(2, 2 * g_quarter, g_quarter, 60)
+			.note(3, 2 * g_quarter, g_quarter, 38, 1)
+			.cc(4, 2 * g_quarter, 7, 90, 1)
+			.controller(5, 2 * g_quarter, ControllerType::Program, 9, g_noBank)
+			.part);
+	DrumMap map;
+	map.id = project.newId();
+	for (size_t pitch = 0; pitch < map.sounds.size(); ++pitch)
+		map.sounds.at(pitch).oNote = static_cast<uint8_t>(pitch);
+	map.sounds.at(38).channel = 9;
+	MergeSettings settings;
+	settings.start = project.tempo.toSamples(g_quarter, project.sampleRate);
+	settings.end = project.tempo.toSamples(4 * g_quarter, project.sampleRate);
+	settings.includeChase = true;
+	const auto channels = [&project](const PartChanges& changes)
+	{
+		REQUIRE(changes.addedParts.size() == 1);
+		const MidiPart& part = project.midiParts.at(changes.addedParts[0]);
+		std::vector<std::vector<int64_t>> events = notesOf(part);
+		for (const auto& [id, controller] : part.controllers)
+			events.push_back({controller.position, -static_cast<int64_t>(controller.type) - 1, controller.number,
+				controller.channel});
+		std::sort(events.begin(), events.end());
+		return events;
+	};
+
+	// On the track's channel 4: the notes, the controllers and the chased CC 1.
+	const int64_t control = -static_cast<int64_t>(ControllerType::Control) - 1;
+	const int64_t program = -static_cast<int64_t>(ControllerType::Program) - 1;
+	const auto expected = [&](int64_t drumChannel)
+	{
+		std::vector<std::vector<int64_t>> events = {{g_quarter, 38, g_quarter, drumChannel},
+			{g_quarter, 60, g_quarter, 3}, {0, control, 1, 3}, {g_quarter, control, 7, 3}, {g_quarter, program, 9, 3}};
+		std::sort(events.begin(), events.end());
+		return events;
+	};
+	CHECK(channels(merge(project, settings)) == expected(3));
+	// A drum sound's own channel wins, as in playback.
+	project.drumMaps[map.id] = map;
+	project.trackById.at(strings).drumMap = map.id;
+	settings.tracks = {strings};
+	CHECK(channels(merge(project, settings)) == expected(9));
+}
+
+TEST_CASE("dissolve sets the new tracks to the MIDI channel they hold, or by pitch to the track's", "[unit]")
+{
+	Project project = newProject();
+	const ObjectId piano = addTrack(project, TrackType::Instrument, "Piano");
+	const ObjectId strings = addTrack(project, TrackType::Midi, "Strings");
+	Channel& channel = project.channels.at(project.trackById.at(strings).channel);
+	channel.output = project.trackById.at(piano).channel;
+	channel.midiChannel = 4;
+	const ObjectId source =
+		addPart(project, strings, 0, 4 * g_quarter, PartBuilder().note(1, 0, 10, 60).note(2, 0, 10, 62, 2).part);
+	const auto midiChannel = [&project](ObjectId track)
+	{ return project.channels.at(project.trackById.at(track).channel).midiChannel; };
+
+	SECTION("by channel, each new track to its channel (reference manual p. 1122)")
+	{
+		const PartChanges changes = dissolve(project, {source}, DissolveBy::Channel, false);
+		REQUIRE(changes.tracks.size() == 2);
+		CHECK(midiChannel(changes.tracks[0]) == 0);
+		CHECK(midiChannel(changes.tracks[1]) == 2);
+	}
+	SECTION("by pitch, the new tracks to the track's, so that they play as the part did")
+	{
+		const PartChanges changes = dissolve(project, {source}, DissolveBy::Pitch, false);
+		REQUIRE(changes.tracks.size() == 2);
+		for (const ObjectId track : changes.tracks)
+			CHECK(midiChannel(track) == 4);
+		channel.midiChannel = std::nullopt;
+		project.midiParts.at(source).mute = false;
+		const PartChanges any = dissolve(project, {source}, DissolveBy::Pitch, false);
+		REQUIRE(any.tracks.size() == 2);
+		CHECK(!midiChannel(any.tracks[0]).has_value());
+	}
+}
+
 TEST_CASE("merge compares positions with the locators in samples", "[unit]")
 {
 	Project project = newProject();

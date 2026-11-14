@@ -304,6 +304,53 @@ TEST_CASE("parameter.set passes on what its channel's link group links, unless l
 	CHECK(channelJson(client, two).at("instrumentParameters") == Json::array());
 }
 
+TEST_CASE("channel.set and parameter.set pass a fader and pan move on alike", "[unit]")
+{
+	// Both go through followLinkedMove: a channel with audio follows the fader and the pan, stopping at their ends, a
+	// VCA fader's channel only the fader, a MIDI channel neither (#1384).
+	for (const bool throughParameters : {false, true})
+	{
+		INFO((throughParameters ? "parameter.set" : "channel.set"));
+		Engine engine;
+		Client client(engine);
+		const ObjectId a = add(client, "audio");
+		const ObjectId b = add(client, "audio");
+		const ObjectId midi = add(client, "midi");
+		const ObjectId vca = add(client, "vca");
+		run(client, "channel.set", {{"channel", b}, {"volume", 4.0}, {"pan", -0.5}});
+		run(client, "channel.set", {{"channel", vca}, {"volume", -3.0}});
+		run(client, "linkGroup.add", {{"channels", {a, b, midi, vca}}, {"pan", true}});
+		const auto set = [&](const std::string& key, double value)
+		{
+			if (throughParameters)
+				run(client, "parameter.set", {{"channel", a}, {"target", {{"type", key}}}, {"value", value}});
+			else
+				run(client, "channel.set", {{"channel", a}, {key, value}});
+		};
+		set("volume", 5.0);
+		set("pan", -0.75);
+		CHECK(channelJson(client, b).at("volume") == 6.0); // stops at the top of the fader
+		CHECK(channelJson(client, b).at("pan") == -1.0);
+		CHECK(channelJson(client, vca).at("volume") == 2.0);
+		CHECK(channelJson(client, vca).at("pan") == 0.0);
+		CHECK(channelJson(client, midi).at("volume") == 0.0);
+		CHECK(channelJson(client, midi).at("pan") == 0.0);
+	}
+
+	// The fader stops at its bottom too, and at the project's top.
+	Project project;
+	project.maxVolume = 12.0;
+	Channel to;
+	to.volume = -140.0;
+	to.pan = 0.5;
+	followLinkedMove(project, to, "volume", -10.0);
+	followLinkedMove(project, to, "pan", 0.25);
+	CHECK(to.volume == g_minChannelVolume);
+	CHECK(to.pan == 0.75);
+	followLinkedMove(project, to, "volume", 200.0);
+	CHECK(to.volume == 12.0);
+}
+
 TEST_CASE("VCA faders control one link group each, pass their buttons on and never control themselves", "[unit]")
 {
 	Engine engine;

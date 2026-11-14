@@ -266,6 +266,138 @@ TEST_CASE("a chain edit while the chain plays back into the project keeps the st
 	CHECK(transport.arranger().repeat == 2);
 }
 
+TEST_CASE("a new plan finds the step and the event waiting again by what they play, not by their old index", "[unit]")
+{
+	const uint32_t blockSize = GENERATE(1u, 64u, 100u);
+	INFO("block size " << blockSize);
+	ArrangerPlan plan = abPlan();
+	plan.jump = ArrangerJump::End;
+	for (ArrangerSection& section : plan.sections)
+		section.jumps = {section.end};
+	plan.steps = {{0, 3, ArrangerRepeat::Normal}, {2, 1, ArrangerRepeat::Normal}}; // A three times, C
+
+	SECTION("a step chosen while playing is found again after a step is inserted before it")
+	{
+		Transport transport;
+		REQUIRE(transport.locate(1000));
+		REQUIRE(transport.play());
+		CHECK(play(transport, plan, 100, blockSize) == path({{1000, 1100}}, 100));
+		ArrangerState chosen;
+		chosen.step = 1; // C, waiting for A's end
+		REQUIRE(transport.arrange(chosen, true, &plan));
+		// A step is inserted before the one waiting, so its index moves from 1 to 2.
+		ArrangerPlan edited = plan;
+		edited.steps.insert(edited.steps.begin(), {1, 1, ArrangerRepeat::Normal}); // B first: B, A, C
+		CHECK(play(transport, edited, 250, blockSize) == path({{1100, 1300}, {3000, 3050}}, 250));
+		CHECK(transport.arranger().step == 2); // C takes over, not the step now at the old index (A again)
+	}
+	SECTION("the step playing is found again by its event, keeping its repeat")
+	{
+		Transport transport;
+		REQUIRE(transport.locate(1000));
+		REQUIRE(transport.play());
+		// A's three repeats, 100 samples into the third one.
+		CHECK(play(transport, plan, 700, blockSize) == path({{1000, 1300}, {1000, 1300}, {1000, 1100}}, 700));
+		CHECK(transport.arranger().step == 0);
+		CHECK(transport.arranger().repeat == 2);
+		// C moves before A: the step playing is found again at its new index, with the repeat it had.
+		ArrangerPlan edited = plan;
+		edited.steps = {{2, 1, ArrangerRepeat::Normal}, {0, 3, ArrangerRepeat::Normal}}; // C, A three times
+		CHECK(play(transport, edited, 150, blockSize) == path({{1100, 1250}}, 150));
+		CHECK(transport.arranger().step == 1);
+		CHECK(transport.arranger().repeat == 2);
+		// The last repeat ends and playback goes on linearly, not back to A's start.
+		CHECK(play(transport, edited, 250, blockSize) == path({{1250, 1500}}, 250));
+		CHECK(transport.arranger().step == -1);
+	}
+	SECTION("a chain that uses one event in two steps goes on at the one playing")
+	{
+		ArrangerPlan twice = abPlan();
+		twice.steps = {
+			{0, 1, ArrangerRepeat::Normal}, {1, 1, ArrangerRepeat::Normal}, {0, 1, ArrangerRepeat::Normal}}; // A, B, A
+		Transport transport;
+		REQUIRE(transport.locate(2000)); // B
+		REQUIRE(transport.play());
+		CHECK(play(transport, twice, 200, blockSize) == path({{2000, 2100}, {1000, 1100}}, 200));
+		CHECK(transport.arranger().step == 2); // the second A
+		// B goes, so the second A moves from index 2 to 1: playback goes on at it, not at the first A.
+		ArrangerPlan edited = twice;
+		edited.steps = {{0, 1, ArrangerRepeat::Normal}, {0, 1, ArrangerRepeat::Normal}}; // A, A
+		CHECK(play(transport, edited, 100, blockSize) == path({{1100, 1200}}, 100));
+		CHECK(transport.arranger().step == 1);
+	}
+}
+
+TEST_CASE("the transport publishes the generation of the plan its arranger state walks", "[unit]")
+{
+	ArrangerPlan plan = abPlan();
+	plan.generation = 7;
+	plan.steps = {{0, 1, ArrangerRepeat::Normal}};
+	Transport transport;
+	REQUIRE(transport.locate(1000));
+	REQUIRE(transport.play());
+	CHECK(play(transport, plan, 10, 10) == path({{1000, 1010}}, 10));
+	CHECK(transport.arrangerAndGeneration().second == 7);
+	CHECK(transport.arrangerAndGeneration().first == transport.arranger());
+	ArrangerPlan other = plan;
+	other.generation = 8;
+	other.steps = {{0, 2, ArrangerRepeat::Normal}};
+	CHECK(play(transport, other, 10, 10) == path({{1010, 1020}}, 10));
+	CHECK(transport.arrangerAndGeneration().second == 8);
+}
+
+TEST_CASE("a plan change whose generation wraps the packed field still finds the step playing", "[unit]")
+{
+	ArrangerPlan plan = abPlan();
+	plan.generation = 5;
+	plan.steps = {{0, 2, ArrangerRepeat::Normal}}; // A twice
+	Transport transport;
+	REQUIRE(transport.locate(1000));
+	REQUIRE(transport.play());
+	CHECK(play(transport, plan, 100, 100) == path({{1000, 1100}}, 100));
+	// A whole wrap of the packed generation further: the published key comes back around to the old plan's, but the
+	// transport remaps by the events its state plays, never by a plan it no longer holds or by that number (#885).
+	ArrangerPlan edited = plan;
+	edited.generation = plan.generation + g_arrangerGenerations;
+	edited.steps = {{2, 1, ArrangerRepeat::Normal}, {0, 2, ArrangerRepeat::Normal}}; // C, then A twice
+	CHECK(play(transport, edited, 50, 50) == path({{1100, 1150}}, 50));
+	CHECK(transport.arranger().step == 1); // A moved from 0 to 1
+	CHECK(transport.arranger().repeat == 0);
+}
+
+TEST_CASE("a cue walks the plan of the published generation, and skips when neither kept plan is it", "[unit]")
+{
+	ArrangerPlan older = abPlan();
+	older.generation = 5;
+	ArrangerPlan newer = older;
+	newer.generation = 6;
+	const uint64_t published = 5 % g_arrangerGenerations;
+	CHECK(planOfGeneration(&newer, &older, published) == &older);
+	CHECK(planOfGeneration(&newer, &older, 6 % g_arrangerGenerations) == &newer);
+	CHECK(planOfGeneration(&newer, &older, 4 % g_arrangerGenerations) == nullptr); // skip rather than guess
+	CHECK(planOfGeneration(&newer, nullptr, published) == nullptr);
+	// A generation a whole wrap away shares the key: unreachable, as a wrap takes more plan changes inside one audio
+	// block than a machine builds (#885).
+	ArrangerPlan wrapped = older;
+	wrapped.generation = older.generation + g_arrangerGenerations;
+	CHECK(planOfGeneration(&wrapped, nullptr, published) == &wrapped);
+}
+
+TEST_CASE("a locate from a repeated step enters the step it lands in at its own first repeat", "[unit]")
+{
+	ArrangerPlan plan = abPlan();
+	plan.steps = {{0, 4, ArrangerRepeat::Normal}, {1, 4, ArrangerRepeat::Normal}}; // A four times, B four times
+	Transport transport;
+	REQUIRE(transport.locate(1000));
+	REQUIRE(transport.play());
+	CHECK(play(transport, plan, 700, 100) == path({{1000, 1300}, {1000, 1300}, {1000, 1100}}, 700));
+	CHECK(transport.arranger().repeat == 2); // A's third repeat
+	REQUIRE(transport.locate(2050));         // into B
+	CHECK(play(transport, plan, 100, 100) == path({{2050, 2100}, {2000, 2050}}, 100));
+	CHECK(transport.arranger().step == 1);
+	CHECK(transport.arranger().repeat == 1); // B's own second repeat, not the repeat A was in
+}
+
 TEST_CASE("a stop or a cycle jump ends the pre-roll the transport remembers", "[unit]")
 {
 	ArrangerPlan plan = abPlan();
@@ -349,9 +481,21 @@ TEST_CASE("arranger state survives packing", "[unit]")
 	state.repeat = 7;
 	state.pendingSection = 2;
 	state.entering = true;
-	const auto [a, b] = pack(state);
+	const auto [a, b] = pack(state, 105);
 	CHECK(unpackArranger(a, b) == state);
-	CHECK(unpackArranger(pack(ArrangerState()).first, pack(ArrangerState()).second) == ArrangerState());
+	CHECK(unpackGeneration(a, b) == 105 % g_arrangerGenerations); // 105 puts a bit in the word's sign bit
+	const auto [zeroA, zeroB] = pack(ArrangerState(), 0);
+	CHECK(unpackArranger(zeroA, zeroB) == ArrangerState());
+	CHECK(unpackGeneration(zeroA, zeroB) == 0);
+	const auto [wrappedA, wrappedB] = pack(state, g_arrangerGenerations + 5); // the generation wraps
+	CHECK(unpackArranger(wrappedA, wrappedB) == state);
+	CHECK(unpackGeneration(wrappedA, wrappedB) == 5);
+	const auto [wideA, wideB] = pack(state, g_arrangerGenerations - 1); // the widest generation the packing carries
+	CHECK(unpackArranger(wideA, wideB) == state);
+	CHECK(unpackGeneration(wideA, wideB) == g_arrangerGenerations - 1);
+	ArrangerState clamped = state;
+	clamped.repeat = 5000; // the packed repeat field tops out: a Forever loop's counter clamps there
+	CHECK(unpackArranger(pack(clamped, 0).first, pack(clamped, 0).second).repeat == 1023);
 }
 
 namespace
@@ -625,6 +769,68 @@ TEST_CASE("chain playback in real time renders the same as offline", "[integrati
 	CHECK(difference.first == actual.end());
 }
 
+TEST_CASE("a chain edit while playing renders the same in real time as offline", "[integration][realtime]")
+{
+	const gnubase::test::TempDir dir;
+	const auto build = [&dir](Song& song, const std::string& name)
+	{
+		song.addAudio(dir, name);
+		run(song.client, "arranger.setChain",
+			{{"steps", {{{"event", song.b}}, {{"event", song.a}, {"repeats", 2}}}}}); // B, A A
+		run(song.client, "arranger.setMode", {{"mode", true}});
+		run(song.client, "transport.play"); // from the cursor at 0, outside the chain: at B
+	};
+	// The edit moves B from index 0 to 1 and puts A in front: while B plays, the cue thread sees the new generation
+	// before the audio thread adopts it, and the chain goes on at B, found again by its event (#885).
+	const auto edit = [](Song& song)
+	{
+		run(song.client, "arranger.setChain",
+			{{"steps", {{{"event", song.a}}, {{"event", song.b}}, {{"event", song.a}, {"repeats", 2}}}}}); // A, B, A A
+	};
+	// Sections of a quarter to a third of a second, as short as a bar of fast music.
+	constexpr int64_t scale = 25;
+	constexpr int64_t b = 2000 * scale; // B's start, where playback begins
+	constexpr int64_t frames = 12500 + 30000 + 2500;
+	Song offline(256, scale);
+	build(offline, "cue-offline");
+	run(offline.client, "audio.render", {{"frames", 5000}}); // into B
+	edit(offline);
+	run(offline.client, "audio.render", {{"frames", frames - 5000}});
+	Song realtime(256, scale);
+	build(realtime, "cue-realtime");
+	run(realtime.client, "audio.start");
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+	bool edited = false;
+	while (std::chrono::steady_clock::now() < deadline)
+	{
+		const int64_t position = run(realtime.client, "audio.get").at("position").get<int64_t>();
+		if (!edited && position >= b + 1000 && position < b + 12000)
+		{
+			edit(realtime); // while B plays
+			edited = true;
+		}
+		const int64_t step = run(realtime.client, "transport.get").at("arranger").at("step").get<int64_t>();
+		if (edited && step == -1 && position >= (1600 * scale) + 2500) // past the chain, where the offline render ends
+			break;
+		std::this_thread::sleep_for(std::chrono::milliseconds(5));
+	}
+	REQUIRE(edited);
+	run(realtime.client, "audio.stop");
+	CHECK(run(realtime.client, "audio.get").at("playbackDropouts").get<int64_t>() == 0);
+	const auto capture = [](Song& song, int64_t count)
+	{
+		return run(song.client, "audio.capture", {{"channel", 0}, {"start", 0}, {"frames", count}})
+			.at("samples")
+			.get<std::vector<float>>();
+	};
+	const std::vector<float> actual = capture(realtime, frames);
+	const std::vector<float> expected = capture(offline, frames);
+	REQUIRE(actual.size() == expected.size());
+	const auto difference = std::mismatch(actual.begin(), actual.end(), expected.begin());
+	INFO("first difference at frame " << (difference.first - actual.begin()));
+	CHECK(difference.first == actual.end());
+}
+
 TEST_CASE("arranger.goToStep and arranger.trigger choose what plays, and transport.get shows it", "[integration]")
 {
 	const gnubase::test::TempDir dir;
@@ -732,6 +938,92 @@ TEST_CASE("transport.play keeps a triggered event that isn't in the chain", "[in
 	CHECK(run(song.client, "transport.get").at("arranger").at("event") == song.b);
 	CHECK(run(song.client, "transport.get").at("arranger").at("step") == -1);
 	CHECK(run(song.client, "transport.get").at("position") == 2000);
+}
+
+TEST_CASE("a step chosen while playing still takes over after a step is inserted before it", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	Song song(100);
+	song.addAudio(dir);
+	run(song.client, "arranger.setChain", {{"steps", {{{"event", song.a}}, {{"event", song.b}}}}}); // A, B
+	run(song.client, "arranger.setMode", {{"mode", true}, {"jumpMode", "end"}});
+	run(song.client, "transport.locate", {{"position", 1000}});
+	run(song.client, "transport.play");
+	run(song.client, "audio.render", {{"frames", 100}});  // in A, at 1100
+	run(song.client, "arranger.goToStep", {{"step", 1}}); // B waits for the end of A
+	// A step is inserted before the one waiting, so its index moves from 1 to 2.
+	run(song.client, "arranger.setChain",
+		{{"steps", {{{"event", song.a}}, {{"event", song.a}}, {{"event", song.b}}}}}); // A, A, B
+	run(song.client, "audio.render", {{"frames", 900}});
+	// A ends at 1600 and the chosen step takes over there, by its event: B plays, not the second A the old index
+	// now names.
+	checkOutput(song, path({{1000, 1600}, {2000, 2400}}, 1000));
+	CHECK(run(song.client, "transport.get").at("arranger").at("step") == 2);
+	CHECK(run(song.client, "transport.get").at("position") == 2400);
+}
+
+TEST_CASE("a cue between two plan generations keeps the chain playing", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	Song song;
+	song.addAudio(dir);
+	run(song.client, "arranger.setChain", {{"steps", {{{"event", song.b}}, {{"event", song.a}, {"repeats", 2}}}}});
+	run(song.client, "arranger.setMode", {{"mode", true}});
+	run(song.client, "transport.play");                  // from the cursor at 0, outside the chain: at B
+	run(song.client, "audio.render", {{"frames", 300}}); // in B, at 2300
+	// A real plan change between two rendered blocks: the next block's cue falls between the generations and walks
+	// the plan the transport's state means, and the block adopts the new plan at the step it plays, by its event.
+	run(song.client, "arranger.setChain",
+		{{"steps", {{{"event", song.a}}, {{"event", song.b}}, {{"event", song.a}, {"repeats", 2}}}}}); // A, B, A A
+	run(song.client, "audio.render", {{"frames", 900}});
+	checkOutput(song, path({{2000, 2500}, {1000, 1600}, {1000, 1100}}, 1200));
+	CHECK(run(song.client, "transport.get").at("arranger").at("step") == 2); // B moved from 0 to 1, A's repeats play
+	CHECK(run(song.client, "transport.get").at("arranger").at("repeat") == 1);
+	CHECK(run(song.client, "transport.get").at("position") == 1100);
+}
+
+TEST_CASE("chain edits without a block between them keep the step playing", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	Song song;
+	song.addAudio(dir);
+	run(song.client, "arranger.setChain", {{"steps", {{{"event", song.b}}, {{"event", song.a}, {"repeats", 2}}}}});
+	run(song.client, "arranger.setMode", {{"mode", true}});
+	run(song.client, "transport.play");                  // from the cursor at 0, outside the chain: at B
+	run(song.client, "audio.render", {{"frames", 100}}); // in B, at 2100
+
+	SECTION("two rebuilds back to back")
+	{
+		run(song.client, "arranger.setChain",
+			{{"steps", {{{"event", song.a}, {"repeats", 2}}, {{"event", song.b}}}}}); // A A, B: B moves to 1
+		run(song.client, "arranger.setChain",
+			{{"steps", {{{"event", song.a}, {"repeats", 2}}, {{"event", song.b}}, {{"event", song.a}}}}});
+		run(song.client, "audio.render", {{"frames", 100}}); // one block adopts the newest of them
+		// B is found again by its event, not the A its old index names in the new chain.
+		CHECK(run(song.client, "transport.get").at("arranger").at("step") == 1);
+		CHECK(run(song.client, "transport.get").at("position") == 2200);
+		run(song.client, "arranger.setChain",
+			{{"steps", {{{"event", song.b}}, {{"event", song.a}, {"repeats", 2}}, {{"event", song.a}}}}});
+		run(song.client, "audio.render", {{"frames", 100}});
+		CHECK(run(song.client, "transport.get").at("arranger").at("step") == 0); // B moved back to 0
+		CHECK(run(song.client, "transport.get").at("position") == 2300);
+	}
+	SECTION("129 plan changes with no block between them")
+	{
+		// More plans than the transport's published generation used to count, none of them played: the audio thread
+		// remaps by its state's events, and the plan the state walks stays the cue state's previous one (#885).
+		for (int i = 0; i < 129; ++i)
+			run(song.client, "arranger.setChain",
+				{{"steps", {{{"event", song.a}, {"repeats", 2 + (i % 2)}}, {{"event", song.b}}}}});
+		run(song.client, "arranger.setChain",
+			{{"steps", {{{"event", song.a}, {"repeats", 2}}, {{"event", song.b}}}}}); // A A, B at last
+		run(song.client, "audio.render", {{"frames", 100}}); // the first block after all of them
+		CHECK(run(song.client, "transport.get").at("arranger").at("step") == 1);
+		CHECK(run(song.client, "transport.get").at("position") == 2200);
+		run(song.client, "audio.render", {{"frames", 400}}); // B ends and playback goes on past the chain
+		checkOutput(song, path({{2000, 2600}}, 600));
+		CHECK(run(song.client, "transport.get").at("arranger").at("step") == -1);
+	}
 }
 
 TEST_CASE(

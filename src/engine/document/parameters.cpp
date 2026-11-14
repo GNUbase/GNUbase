@@ -309,8 +309,6 @@ namespace gnubase::engine
 			const char* const key = linkKey(parameter.target);
 			if (key == nullptr)
 				return;
-			const auto isVca = [&project](const Channel& other)
-			{ return project.trackById.at(other.track).type == TrackType::Vca; };
 			for (const ObjectId other : linkedTo(project, channel.id, key, linked))
 			{
 				Channel& to = project.channels.at(other);
@@ -318,12 +316,8 @@ namespace gnubase::engine
 				switch (parameter.target.type)
 				{
 				case AutomationTargetType::Volume:
-					if (to.format != ChannelFormat::None || isVca(to))
-						to.volume = std::clamp(to.volume + (newValue - before), g_minChannelVolume, project.maxVolume);
-					break;
 				case AutomationTargetType::Pan:
-					if (to.format != ChannelFormat::None)
-						to.pan = std::clamp(to.pan + (newValue - before), -1.0, 1.0);
+					followLinkedMove(project, to, key, newValue - before);
 					break;
 				case AutomationTargetType::Mute:
 					to.mute = newValue != 0.0;
