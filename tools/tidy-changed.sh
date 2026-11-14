@@ -127,17 +127,20 @@ done
 [ ${#skipped[@]} -gt 0 ] && echo "Not checked, in no target of this platform: ${skipped[*]}"
 
 # The changed lines as clang-tidy's line filter: {"name": file, "lines": [[first, last], ...]} per file; a new file
-# without "lines" counts with all of them.
+# without "lines" counts with all of them. Each range takes 5 lines more on both sides: some checks report a finding a
+# change causes on an unchanged line next to it, such as readability-inconsistent-ifelse-braces on the unbraced first
+# "if" of a chain that gained a braced "else if" (#1400).
 filter=$(
 	{
-		changes -U0 | awk '
+		changes -U0 | awk -v margin=5 '
 			/^\+\+\+ b\// { file = substr($0, 7) }
 			/^@@ / {
 				split(substr($3, 2), range, ",")
 				count = range[2] == "" ? 1 : range[2]
 				if (count > 0) {
 					separator = file in lines ? "," : ""
-					lines[file] = lines[file] separator "[" range[1] "," (range[1] + count - 1) "]"
+					first = range[1] > margin ? range[1] - margin : 1
+					lines[file] = lines[file] separator "[" first "," (range[1] + count - 1 + margin) "]"
 				}
 			}
 			END { for (file in lines) print file "\t" lines[file] }'
