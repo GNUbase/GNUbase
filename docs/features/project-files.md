@@ -20,7 +20,11 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
   extension (see the File menu below). Projects may be saved on several threads at once, as backup jobs run beside
   each other and beside a save ([backup.md](backup.md)), each writing its own file without a lock: the ZIP entries
   have no time stamps (miniz is built with `MINIZ_NO_TIME`), since miniz takes them from `localtime()`, whose result
-  is one static struct outside Windows (#1425; `projects saved on two threads at the same time both load` in
+  is one static struct outside Windows. Their date and time fields hold zero, which is no date (month 0, day 0):
+  ZIP readers open such files without complaint, but archive tools list the entries as 1980-00-00, 30 Nov 1979 or
+  without a date, and give that date to the files they extract. Stamping the save time again would take a miniz that
+  uses `localtime_r` (a patch in `ext/patches` or a fork), as `mz_zip_writer_add_mem_ex_v2`'s `last_modified` goes
+  through `localtime()` too (#1425; `projects saved on two threads at the same time both load` in
   `tests/dawproject_tests.cpp`, which the tsan job runs).
 - **Save New Version.** `project.saveNewVersion` saves the project next to its file with the next number, as the
   reference does: `Song-01.dawproject` after `Song.dawproject`, and after `Song-02` the number after the highest
