@@ -45,22 +45,26 @@ and activating versions across tracks.
   group of their own as `trackVersion.duplicate` gives them (its copies of the parts that play stay in their group, as
   those play together), `track.removeEmpty` keeps a track with more than one version, and the track list's warning
   before Remove Selected Tracks counts them too. A new time base or sample rate moves inactive versions' events and
-  parts as it moves the active ones. A tempo change retimes notes and controllers in their linear MIDI parts. A MIDI
-  part that goes into an inactive version stops being a shared copy of the parts that play, since only the active parts
-  are edited together ([parts-and-events.md](parts-and-events.md)); a group every copy of which goes into the version
-  stays one, with its group and its note and controller ids, and edits reach all of them again once it is active. A
-  group is never spread over two versions, since two versions never play together.
+  parts as it moves the active ones. A tempo change retimes notes and controllers in their linear MIDI parts, and
+  separates a version's shared copies whose notes it retimes apart, as it separates those that play
+  ([time-base.md](time-base.md)). A MIDI part that goes into an inactive version stops being a shared copy of the parts
+  that play, since only the active parts are edited together ([parts-and-events.md](parts-and-events.md)); a group
+  every copy of which goes into the version stays one, with its group and its note and controller ids, and edits reach
+  all of them again once it is active. A group is never spread over two versions, since two versions never play
+  together.
 - **One visitor for the rewrites that reach every event and part.** `forEveryEventAndPart` (`document.h`) calls three
   visitors with every audio event, audio part and MIDI part of the project, those that inactive versions hold too,
   and tells each visitor whether its item plays, so that a rewrite announces only what there is to see;
   `forEveryAudioEvent` is its audio events alone. A new time base (`rebaseTrack`), a new sample rate
-  (`changeSampleRate`), a tempo change (`tempoChanged`) and resampled media (`rescaleUses`) go through them, so none
-  of them can miss an inactive version.
+  (`changeSampleRate`), a tempo change (`tempoChanged`, both its retiming and its separating of shared copies),
+  resampled media (`rescaleUses`), Set Root Key for Unassigned Events (`transpose.assignRootKey`) and renamed or
+  removed articulations (`followArticulations`) go through them, so none of them can miss an inactive version.
 
 Tests: `tests/trackversions_tests.cpp` renders a track whose new version is empty and whose first one plays again once
 activated, across two tracks with one ID, and checks duplicating, names, deleting, common IDs, undo, the project file,
-`track.duplicate`, a new time base, the pool, resampled media relinking, tempo changes, the shared copies a version
-keeps, the group of its own that a duplicated version's shared copies get, and the tracks a command skips.
+`track.duplicate`, a new time base, the pool, resampled media relinking, tempo changes, the shared copies of a version
+that a tempo change retimes apart, the shared copies a version keeps, the group of its own that a duplicated version's
+shared copies get, and the tracks a command skips.
 
 ## UI
 

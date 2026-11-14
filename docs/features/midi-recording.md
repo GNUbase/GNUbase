@@ -43,7 +43,9 @@ undo step.
   overlaps.
 - **Preferences.** User settings: `midi.snapPartsToBars` (on by default) makes recorded parts start and end at whole
   bars (p. 1616); `midi.recordCatchRange` (ms, 0 by default) records input that came that long before recording started
-  at its start, unless a recording took it already (a track that only monitors while the chord track records) (p. 1616);
+  at its start, unless a recording took it already: caught at an earlier recording's start, or recorded by a track that
+  only monitors while the chord track records. Input from before the audio device was set again is left out, as the
+  new device counts its frames from 0 (p. 1616);
   `midi.recordFilter` leaves message types (notes, controllers, pitch bend, channel and poly pressure, program changes),
   MIDI channels and controller numbers out of recordings, while they still play (MIDI Filter, Record, Channels and
   Controller, p. 1613).

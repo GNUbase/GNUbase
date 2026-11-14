@@ -20,8 +20,9 @@ tempo track's ([tempo-track.md](tempo-track.md)).
   controllers, every other such set shares its notes in a new group with new ids, and a copy that matches no other
   becomes a real copy, as `event.toRealCopy` makes it. A `midiPart.changed` event comes for every part whose notes or
   controllers this moves and for every copy that the split gives new ids or takes out of its group, even if its notes
-  stay where they are; not for the other parts, such as those before the change. Each linear part's notes and
-  controllers are retimed through the exact time of the part's start and rounded once, so shared copies at the same
+  stay where they are; not for the other parts, such as those before the change. The shared copies an inactive track
+  version holds split the same way, without events ([track-versions.md](track-versions.md)). Each linear part's notes
+  and controllers are retimed through the exact time of the part's start and rounded once, so shared copies at the same
   tempo round to the same ticks and stay shared, also at sample positions that aren't on a tick; they don't drift apart
   a tick at a time (#865). Copies that genuinely retime differently still split, however little they differ: a tempo
   event between them, a ramp under one of them, or a musical copy that a change never retimes. Cycle markers that a

@@ -1180,3 +1180,29 @@ TEST_CASE("events that don't fit an effect's event lists are dropped, and the lo
 	CHECK(playBlock(sequencer, {sysex}).empty());
 	CHECK_THAT(logged(file), ContainsSubstring("transformer in MIDI insert 1 dropped events"));
 }
+
+TEST_CASE("the sequencer clears the drumSound flag of the notes it maps, so the inserts below never see it", "[unit]")
+{
+	// midi.inject drumSounds (docs/features/drum-editor.md): the key is a sound's pitch, which the drum map plays as
+	// its O-note. Past the sequencer the note is what plays, and a flag left set would reach the inserts below the
+	// divider and the instrument as plugin::Event::DrumSound.
+	MidiSequencer sequencer;
+	sequencer.prepareFor(48000.0, 128);
+	auto sequence = withInsert("");
+	sequence->drumInput.resize(2 * static_cast<size_t>(g_drumSounds));
+	for (size_t i = 0; i < sequence->drumInput.size(); ++i)
+		sequence->drumInput[i].key = static_cast<uint8_t>(i % 128);
+	sequence->drumInput[g_drumSounds + 45] = {50, 9, false}; // the sound itself: O-note 50 on channel 10
+	sequencer.setSequence(std::move(sequence));
+	for (const ProcessEvent::Type type : {ProcessEvent::Type::NoteOn, ProcessEvent::Type::NoteOff})
+	{
+		ProcessEvent played = noteAt(type, 0, 45);
+		played.drumSound = true;
+		const EventBuffer out = playBlock(sequencer, {played});
+		REQUIRE(out.size() == 1);
+		CHECK(out[0].type == type);
+		CHECK(out[0].key == 50);
+		CHECK(out[0].channel == 9);
+		CHECK(!out[0].drumSound);
+	}
+}

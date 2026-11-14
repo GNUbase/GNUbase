@@ -210,8 +210,11 @@ namespace gnubase::engine
 			track.all.controllers.push_back(controller);
 			if (controller.part >= 0 && static_cast<size_t>(controller.part) < parts.size())
 				track.parts[static_cast<size_t>(controller.part)].index.controllers.push_back(controller);
+			else if (controller.part == g_soundSlotPart)
+				track.slots.controllers.push_back(controller);
 		}
 		index(track.all);
+		index(track.slots);
 		for (ChasePart& part : track.parts)
 			index(part.index);
 		return track;
@@ -1026,6 +1029,9 @@ namespace gnubase::engine
 				if (part.range.end > position)
 					consider(part.index, index, position, chase, stopped);
 			}
+			// The sound slot the track sent last, wherever the part that sent it is (#1521); after the parts' events,
+			// as it plays after them at one position.
+			consider(track.slots, index, position, chase, stopped);
 		}
 
 		// The kinds found, in time order; at one position by track, then kind, so a bank select precedes its program.

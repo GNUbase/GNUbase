@@ -1604,6 +1604,7 @@ namespace gnubase::app
 		m_transposeLane.reset();
 		m_chordLane.reset();
 		m_scaleLane.reset();
+		m_arrangerLane.reset();
 		m_rulerLanes.reset();
 		m_inPlace.reset();
 		// The transport bar's sections are there when the docking system reads them.
@@ -1651,6 +1652,7 @@ namespace gnubase::app
 		m_transposeLane = std::make_unique<ui::GlobalEventLane>(*m_eventDisplay, m_binding);
 		m_chordLane = std::make_unique<ui::GlobalEventLane>(*m_eventDisplay, m_binding, ui::LaneKind::Chord);
 		m_scaleLane = std::make_unique<ui::GlobalEventLane>(*m_eventDisplay, m_binding, ui::LaneKind::Scale);
+		m_arrangerLane = std::make_unique<ui::GlobalEventLane>(*m_eventDisplay, m_binding, ui::LaneKind::Arranger);
 		m_rulerLanes = std::make_unique<ui::RulerLanes>(*m_eventDisplay);
 		m_inPlace = std::make_unique<ui::InPlaceEditors>(*m_eventDisplay, m_binding);
 		if (m_infoLine)

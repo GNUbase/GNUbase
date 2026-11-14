@@ -73,12 +73,11 @@ namespace gnubase::engine
 		}
 
 		// A note that selects a sound slot (#175): where it starts in the project and where its slot's events go
-		// there, its part's index in the channel's midiParts, its slot and the channel it plays on.
+		// there, its slot and the channel it plays on.
 		struct SlotNote
 		{
 			time::Ticks order = 0;
 			time::Ticks at = 0;
-			int32_t part = 0;
 			const SoundSlot* slot = nullptr;
 			uint8_t channel = 0;
 		};
@@ -86,7 +85,7 @@ namespace gnubase::engine
 		// The notes of a part that select a sound slot: notes that don't play (their probability, a muted drum
 		// sound) select none.
 		void addSlotNotes(const Project& project, const MidiPart& part, time::Ticks start, time::Ticks end,
-			int32_t index, const ArticulationMap& map, const std::map<ObjectId, size_t>& slots, const DrumMap* drums,
+			const ArticulationMap& map, const std::map<ObjectId, size_t>& slots, const DrumMap* drums,
 			std::vector<SlotNote>& into)
 		{
 			const std::optional<int> trackChannel = midi::trackMidiChannel(project, part.track);
@@ -95,8 +94,8 @@ namespace gnubase::engine
 					(drums == nullptr || !drums->sounds.at(note.pitch).mute))
 				{
 					const SoundSlot& slot = map.slots.at(slots.at(id));
-					into.push_back({start + note.position, start + std::max<time::Ticks>(note.position, 0), index,
-						&slot, playedChannel(note, nullptr, &slot, trackChannel)});
+					into.push_back({start + note.position, start + std::max<time::Ticks>(note.position, 0), &slot,
+						playedChannel(note, nullptr, &slot, trackChannel)});
 				}
 		}
 
@@ -104,7 +103,8 @@ namespace gnubase::engine
 		// of the notes' starts (#1491): where a note's slot differs from the last one the track sent, the off events
 		// of that one, on the channel its notes played on, and the on events of the new one, on the channel of the
 		// note. Key switches play for a sample, ending where the note starts; a jump after them sends them again
-		// (MidiSequencer::chaseNotes).
+		// (MidiSequencer::chaseNotes). The controller and program changes are the track's (g_soundSlotPart), not the
+		// part's of the note, so a chase limited to parts finds them where a part continues the slot of another.
 		void addOutputEvents(const Project& project, std::vector<SlotNote>& notes, RenderChannel& channel)
 		{
 			std::stable_sort(
@@ -126,10 +126,10 @@ namespace gnubase::engine
 								output.data1, midi::velocityFromMidi1(output.data2), on, true, 0});
 						else if (output.status == OutputStatus::Controller)
 							channel.controllers.push_back({at, ControllerType::Control, output.data1,
-								midi::controllerFromMidi1(output.data2), on, {}, note.part});
+								midi::controllerFromMidi1(output.data2), on, {}, g_soundSlotPart});
 						else
 							channel.controllers.push_back(
-								{at, ControllerType::Program, output.data1, g_noBank, on, {}, note.part});
+								{at, ControllerType::Program, output.data1, g_noBank, on, {}, g_soundSlotPart});
 					}
 				};
 				if (previous != nullptr)
@@ -171,7 +171,7 @@ namespace gnubase::engine
 																		: nullptr;
 			};
 			if (slotNotes != nullptr && articulations != nullptr && !slots.empty())
-				addSlotNotes(project, part, start, end, index, *articulations, slots, map, *slotNotes);
+				addSlotNotes(project, part, start, end, *articulations, slots, map, *slotNotes);
 			for (const auto& [id, note] : part.notes)
 			{
 				// Notes the part hides beyond its end don't play, wherever a random position would move them.
@@ -914,12 +914,14 @@ namespace gnubase::engine
 			std::stable_sort(channel.audioEvents.begin(), channel.audioEvents.end(),
 				[](const RenderAudioEvent& a, const RenderAudioEvent& b) { return a.start < b.start; });
 			// At one sample key switches come first (#175): at the project's start one can't come a sample before.
+			// They keep the order the track sent them in, whatever their pitch, so that the instrument ends in the
+			// slot the track sent last (#1521).
 			for (std::vector<RenderNote>* notes : {&channel.notes, &channel.preNotes})
 				std::stable_sort(notes->begin(), notes->end(),
 					[](const RenderNote& a, const RenderNote& b)
 					{
-						return std::make_tuple(a.start, !a.keySwitch, a.pitch) <
-							std::make_tuple(b.start, !b.keySwitch, b.pitch);
+						return std::make_tuple(a.start, !a.keySwitch, a.keySwitch ? 0 : a.pitch) <
+							std::make_tuple(b.start, !b.keySwitch, b.keySwitch ? 0 : b.pitch);
 					});
 			std::stable_sort(channel.controllers.begin(), channel.controllers.end(),
 				[](const RenderController& a, const RenderController& b) { return a.position < b.position; });
