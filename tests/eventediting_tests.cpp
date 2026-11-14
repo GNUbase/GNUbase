@@ -4,6 +4,7 @@
 // the selection; snapping them (#87). tests/eventedit_tests.cpp checks the event.* commands themselves.
 #include "engine/engine.h"
 #include "engine/time/tempomap.h"
+#include "testutils/commandholds.h"
 #include "testutils/fakeui.h"
 #include "testutils/testutils.h"
 #include "ui/automation.h"
@@ -24,14 +25,12 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
-#include <limits>
 #include <memory>
-#include <mutex>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <utility>
@@ -618,61 +617,45 @@ TEST_CASE("a drag of an event's edge shows the size the release gives it at ever
 
 namespace
 {
-	// The runs of a command that holds the engine's command thread while it waits for the test to let it go: what
-	// the test sends meanwhile queues behind it, and the engine answers it only once the hold is released, however
-	// busy the machine is (#1272). The n-th run of the command waits for the n-th release.
-	struct CommandHolds
+	// Registers test.hold, a command whose runs wait in holds.
+	void registerHold(Fixture& f, test::CommandHolds& holds)
 	{
-		CommandHolds() = default;
-		CommandHolds(const CommandHolds&) = delete;
-		CommandHolds& operator=(const CommandHolds&) = delete;
-		// Lets every run go, so that a test that fails on the way doesn't leave the engine's thread waiting.
-		~CommandHolds() { release(std::numeric_limits<size_t>::max()); }
+		f.engine.registerCommand({"test.hold", 1, "Waits for the test to release it.", engine::CommandInfo{}.parameters,
+									 Json::object(), false},
+			[&holds](engine::CommandContext&) { return holds.hold(); });
+	}
+}
 
-		// The command's handler, on the engine's command thread. It gives up after 30 s, so that an engine that is
-		// stopping can end even if the test never releases it.
-		Json hold()
+TEST_CASE("a test that fails while a command is held ends at once", "[unit]")
+{
+	// A failing REQUIRE throws, as this does, while a run of test.hold holds the engine's command thread.
+	auto failed = std::chrono::steady_clock::now();
+	CHECK_THROWS_AS(
+		[&failed]
 		{
-			std::unique_lock lock(mutex);
-			const size_t own = entered++;
-			changed.notify_all();
-			changed.wait_for(lock, std::chrono::seconds(30), [this, own] { return released > own; });
-			return Json::object();
-		}
-
-		// Whether count runs have entered hold(), waiting up to 30 s for them.
-		[[nodiscard]] bool waitEntered(size_t count)
-		{
-			std::unique_lock lock(mutex);
-			return changed.wait_for(lock, std::chrono::seconds(30), [this, count] { return entered >= count; });
-		}
-
-		// Lets the first count runs go on.
-		void release(size_t count)
-		{
-			{
-				const std::scoped_lock lock(mutex);
-				released = count;
-			}
-			changed.notify_all();
-		}
-
-		std::mutex mutex;
-		std::condition_variable changed;
-		size_t entered = 0;  // the runs that have entered hold()
-		size_t released = 0; // the runs let go: release(n) frees the n-th
-	};
+			test::CommandHolds holds;
+			Fixture f;
+			const test::ReleaseHolds releaseHolds{holds};
+			registerHold(f, holds);
+			engine::Client holder(f.engine, "holder");
+			holder.send("test.hold");
+			REQUIRE(holds.waitEntered(1));
+			failed = std::chrono::steady_clock::now();
+			throw std::runtime_error("a failing check");
+		}(),
+		std::runtime_error);
+	// Well below hold()'s 30 s, which the fixture's engine would wait if the holds went after it.
+	CHECK(std::chrono::steady_clock::now() - failed < std::chrono::seconds(10));
 }
 
 TEST_CASE("a second resize release can precede the first release's project", "[unit]")
 {
-	CommandHolds holds; // declared before the fixture: its engine's command thread waits in hold()
+	test::CommandHolds holds;
 	Fixture f;
+	const test::ReleaseHolds releaseHolds{holds};
 	// The engine answers only when the test lets it: a command that holds its command thread until it is released,
 	// so what queues behind it runs, and answers, in an order the test chooses, not one a busy machine chooses.
-	f.engine.registerCommand(
-		{"test.hold", 1, "Waits for the test to release it.", engine::CommandInfo{}.parameters, Json::object(), false},
-		[&holds](engine::CommandContext&) { return holds.hold(); });
+	registerHold(f, holds);
 	engine::Client holder(f.engine, "holder");
 	f.display.select({f.part});
 	REQUIRE(f.waitUntil([&f] { return f.lanes("selected-events")[1].events.size() == 1; }));

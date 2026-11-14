@@ -251,6 +251,28 @@ TEST_CASE("a project read before the editor's last pattern.set doesn't undo it",
 	CHECK(f.steps(38) == std::vector<int>{4});
 }
 
+TEST_CASE("a gesture right after Double Length keeps the lanes it sent", "[ui]")
+{
+	Fixture f;
+	ui::PatternEditor* editor = f.app.appUi().editorWindow()->patternEditor();
+	REQUIRE(editor != nullptr);
+	f.click(of(cell(36, 0)));
+	REQUIRE(f.app.waitUntil([&] { return f.steps(36) == std::vector<int>{0}; }));
+	f.settle();
+	const Json old = editor->project();
+	const Json view = f.app.call("editor.get", {{"editor", "window"}});
+	f.click(of("#pattern-double-length"));
+	REQUIRE(f.app.waitUntil([&] { return f.patternJson().at("length") == 32; }));
+	// A project read before Double Length's pattern.set shows after it (#1347): the lanes it sent stay, and the next
+	// gesture keeps them.
+	editor->show(old, view, 0);
+	CHECK(f.has(cell(36, 16), "on"));
+	f.click(of(cell(38, 20)));
+	REQUIRE(f.app.waitUntil([&] { return f.steps(38) == std::vector<int>{20}; }));
+	CHECK(f.steps(36) == std::vector<int>{0, 16});
+	CHECK(f.patternJson().at("length") == 32);
+}
+
 TEST_CASE("in mono mode the draw tool moves tied steps to the pitch drawn", "[ui]")
 {
 	Fixture f;

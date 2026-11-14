@@ -314,7 +314,7 @@ namespace gnubase::ui
 		m_waiting.erase(found);
 		if (waiting.awaited)
 			--m_awaited;
-		if (waiting.command == "project.get")
+		if (waiting.command == "project.get" && result.ok()) // a failed one leaves the views with their older read
 			m_projectRead = m_handed;
 		if (waiting.done)
 			waiting.done(result);

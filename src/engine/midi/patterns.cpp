@@ -579,15 +579,19 @@ namespace gnubase::engine::midi
 				for (Pattern& copy : copied)
 				{
 					const ObjectId original = copy.id;
+					const ObjectId origin = copy.copiedFrom;
 					copy.track = part.track;
 					copy.copiedFrom = original;
-					// A copy of it that the track has already, from a copy before and unchanged since, plays it again;
-					// an equal pattern that isn't its copy doesn't.
+					// A copy of it that the track has already, from a copy before and unchanged since, plays it again,
+					// as does the pattern it is a copy of, on its way back (#1347); an equal pattern that isn't its
+					// copy doesn't.
 					const auto same = std::find_if(project.patterns.begin(), project.patterns.end(),
-						[&copy](const auto& each)
+						[&copy, origin](const auto& each)
 						{
 							Pattern other = each.second;
 							other.id = copy.id;
+							if (origin != 0 && each.first == origin)
+								other.copiedFrom = copy.copiedFrom;
 							return other == copy;
 						});
 					if (same != project.patterns.end())

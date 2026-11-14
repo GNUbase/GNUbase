@@ -167,7 +167,7 @@ namespace gnubase::ui
 			R"(<button id="controller-lane-setup" menu="controller-setup-menu)" +
 			m_menuSuffix + R"(" title="Controller Lane Setup">Setup</button></div>)");
 		Rml::ElementDocument* document = root.GetOwnerDocument();
-		const std::array<std::pair<const char*, std::string>, 3> menus = {{
+		const std::array<std::pair<const char*, std::string>, 4> menus = {{
 			{"controller-lane-menu",
 				typeItems() + "<menuseparator/>" + actionItem("selectAll", "Select All Events on Lane") +
 					actionItem("remove", "Remove This Lane") + "<menuseparator/>" +
@@ -180,6 +180,9 @@ namespace gnubase::ui
 					actionItem("velocityOnly", "Show Velocity Lane Only") +
 					actionItem("toggle", "Show/Hide Controller Lanes")},
 			{"controller-setup-menu", ""},
+			// What a right click below a lane's name opens (p. 1261): the lanes to add, and this one to remove.
+			{"controller-lane-context-menu",
+				typeItems() + "<menuseparator/>" + actionItem("remove", "Remove This Lane")},
 		}};
 		for (const auto& [id, items] : menus)
 		{
@@ -366,7 +369,9 @@ namespace gnubase::ui
 			rml += index;
 			rml += R"(" lane-kind=")";
 			rml += lane.type;
-			rml += R"("><div class="controller-lane-header"><button class="controller-lane-type" lane-menu=")";
+			rml += R"("><div class="controller-lane-header" contextmenu="controller-lane-context-menu)";
+			rml += m_menuSuffix;
+			rml += R"("><button class="controller-lane-type" lane-menu=")";
 			rml += index;
 			rml += R"(" menu="controller-lane-menu)";
 			rml += m_menuSuffix;
@@ -594,9 +599,20 @@ namespace gnubase::ui
 		{
 		case Rml::EventId::Mousedown:
 			if (const Rml::Element* button = withAttribute(target, "lane-menu", m_root.get()))
+			{
 				m_menuLane = static_cast<size_t>(std::stoul(attribute(*button, "lane-menu")));
+			}
+			else if (event.GetParameter("button", 0) == 1)
+			{
+				// A right click below a lane's name opens that lane's context menu (p. 1261), which the document's
+				// popup behavior shows; its Remove This Lane takes the lane the click was in.
+				if (const Rml::Element* lane = withAttribute(target, "lane", m_root.get()))
+					m_menuLane = static_cast<size_t>(std::stoul(attribute(*lane, "lane")));
+			}
 			else if (event.GetParameter("button", 0) == 0)
+			{
 				press(event);
+			}
 			break;
 		case Rml::EventId::Mousemove:
 			drag(event);
@@ -687,7 +703,9 @@ namespace gnubase::ui
 				}
 			setLanes(lanes);
 		}
-		if (!laneMenu || !m_menuLane || *m_menuLane >= m_lanes.size())
+		// The lane menu and a lane's context menu act on the lane their menu opened for.
+		const bool oneLane = laneMenu || (m_menus.size() > 3 && &menu == m_menus[3].get());
+		if (!oneLane || !m_menuLane || *m_menuLane >= m_lanes.size())
 			return;
 		const Lane lane = m_lanes[*m_menuLane];
 		if (action == "remove")

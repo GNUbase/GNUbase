@@ -44,8 +44,9 @@ namespace gnubase::ui
 	// input, length quantize), the info line of the first selected note, the parts it shows by track (a click
 	// activates one, as MidiEditor handles it), the note display, a piano keyboard beside a grid of 128 pitches
 	// with the notes as boxes and the step input cursor, and below it the controller lanes (ControllerLanes). The
-	// notes' time axis fits the parts' range into the width. A right click in the note display opens the toolbox
-	// #key-editor-toolbox, the toolbar's tools at the mouse, as in the event display (reference manual p. 65): with
+	// notes' time axis fits the parts' range into the width. A drag on the keyboard's left part zooms the pitches
+	// vertically and scrolls the note display (reference manual p. 1261). A right click in the note display opens
+	// the toolbox #key-editor-toolbox, the toolbar's tools at the mouse, as in the event display (p. 65): with
 	// the user setting ui.toolboxOnRightClick, else with a modifier key; the key editor has no context menu yet.
 	// show() gives it the project and the engine's editor view
 	// whenever they change; the selection is the view's (editor.set selection), and every edit goes to the engine as
@@ -112,7 +113,8 @@ namespace gnubase::ui
 			ResizeStart,
 			ResizeEnd,
 			Draw,
-			Erase, // the drumstick's press on a note
+			Erase,      // the drumstick's press on a note
+			ZoomScroll, // the press on the keyboard's left part (p. 1261)
 		};
 
 		void ProcessEvent(Rml::Event& event) override;
@@ -120,6 +122,12 @@ namespace gnubase::ui
 		void drag(Rml::Event& event);
 		void release(Rml::Event& event);
 		void doubleClick(Rml::Event& event);
+		// The drag on the keyboard's left part (p. 1261): to the right or left it zooms the pitches vertically, up or
+		// down it scrolls the note display.
+		void zoomScroll(Rml::Event& event);
+		// Scales the pitch rows and the keyboard by the zoom, clamped to its limits; the row height is what the style
+		// sheet gives it at 1.
+		void setPitchZoom(float zoom);
 		// What a press on a note's box starts: a resize near its ends, else a move.
 		Gesture edgeGesture(Rml::Element* target, const Rml::Event& event) const;
 		// Starts drawing a note at the snapped position under the press, as the draw tool's press does.
@@ -199,10 +207,15 @@ namespace gnubase::ui
 		Gesture m_gesture = Gesture::None;
 		std::pair<double, int> m_pressedAt;
 		float m_pressedX = 0.0F;       // the mouse's x at the press, in pixels
+		float m_pressedY = 0.0F;       // the mouse's y at the press, in pixels
 		std::optional<Note> m_pressed; // the note pressed, as it was
 		bool m_snapOff = false;
-		Rml::ObserverPtr<Rml::Element> m_drawn;             // the note a draw drags out
-		int64_t m_drawnLength = 0;                          // its length, at m_pressedAt
+		float m_pitchZoom = 1.0F;               // the pitch rows' scale, which the keyboard's left part drags (p. 1261)
+		float m_zoomStart = 1.0F;               // m_pitchZoom at the press
+		float m_scrollStart = 0.0F;             // the note display's scroll top at the press, in pixels
+		bool m_zoomDrag = false;                // the drag went past the threshold
+		Rml::ObserverPtr<Rml::Element> m_drawn; // the note a draw drags out
+		int64_t m_drawnLength = 0;              // its length, at m_pressedAt
 		std::optional<std::pair<uint64_t, int>> m_sounding; // the channel and pitch of the key pressed
 		Rml::ObserverPtr<Rml::Element> m_document;          // ends the key's pitch on a release anywhere in it
 		// the length quantize menu, the line tool's menu, the toolbox, then the drum editor's Map menu

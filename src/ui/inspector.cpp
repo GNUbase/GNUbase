@@ -607,6 +607,9 @@ namespace gnubase::ui
 		setClass(root, "empty", track == nullptr);
 		const Json* channel = track == nullptr ? nullptr : findIn(m_project, "channels", track->at("channel"));
 		m_channel = channel != nullptr ? *channel : Json();
+		// A divider drag ends without moving it when the inspector shows another channel.
+		if (m_dividerTo >= 0 && (channel == nullptr || channel->at("id") != m_dividerChannel))
+			m_dividerTo = -1;
 		if (track == nullptr)
 			return;
 		m_showing = true;
@@ -1163,6 +1166,7 @@ namespace gnubase::ui
 			if (grip == nullptr || !grip->IsClassSet("midi-divider") || !m_channel.contains("midiInserts"))
 				return;
 			m_dividerTo = m_channel.at("midiInserts").at("divider").get<int>();
+			m_dividerChannel = m_channel.at("id");
 			return;
 		}
 		if (m_dividerTo < 0)

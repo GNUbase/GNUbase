@@ -75,10 +75,10 @@ namespace gnubase::engine
 			});
 	}
 
-	void SampleLoader::waitUntilEnding()
+	bool SampleLoader::waitUntilEnding(std::chrono::milliseconds timeout)
 	{
 		std::unique_lock lock(m_mutex);
-		m_done.wait(lock, [this] { return m_stopping; });
+		return m_done.wait_for(lock, timeout, [this] { return m_stopping; });
 	}
 
 	void SampleLoader::setRead(Read read)

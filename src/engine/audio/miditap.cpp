@@ -244,13 +244,38 @@ namespace gnubase::engine
 	{
 		std::array<audio::MidiMessage, 3> messages;
 		for (const auto& [channel, instrument] : instruments)
-			for (const graph::ProcessEvent& event : instrument->played())
+		{
+			const auto keep = [&, channel = channel](const graph::ProcessEvent& event)
 			{
 				const size_t count = toMidi1(event, messages);
 				for (size_t i = 0; i < count; ++i)
 					if (!m_captured.tryPush(Message{channel, position + event.offset, messages[i]}))
 						m_dropped.fetch_add(1, std::memory_order_relaxed);
+			};
+			// The expression of a note that starts at the same frame, which follows its note-on, as MPE before it:
+			// its initial pitch bend, pressure and CC 74 (docs/features/note-expression.md).
+			const graph::EventBuffer& played = instrument->played();
+			const auto initial = [&played](size_t expression, size_t noteOn)
+			{
+				const graph::ProcessEvent& a = played[expression];
+				const graph::ProcessEvent& b = played[noteOn];
+				return a.type == graph::ProcessEvent::Type::NoteExpression &&
+					b.type == graph::ProcessEvent::Type::NoteOn && a.offset == b.offset && a.key == b.key &&
+					a.channel == b.channel;
+			};
+			for (size_t i = 0; i < played.size(); ++i)
+			{
+				bool sent = false; // before its note-on
+				for (size_t j = i; j > 0 && played[j - 1].offset == played[i].offset && !sent; --j)
+					sent = initial(i, j - 1);
+				if (sent)
+					continue;
+				for (size_t j = i + 1; j < played.size() && played[j].offset == played[i].offset; ++j)
+					if (initial(j, i))
+						keep(played[j]);
+				keep(played[i]);
 			}
+		}
 	}
 
 	void AudioEngine::registerMidiTapCommands(Engine& engine)

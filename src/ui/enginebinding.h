@@ -111,7 +111,10 @@ namespace gnubase::ui
 		// handed() returned read: a step of it is on its way, or the last one that the engine took was answered after
 		// that answer. A refused step changes nothing, so it doesn't count. Once what's last step is answered and a
 		// project read (project.get) answered after it was handed on, such as the one after its history.changed, and no
-		// other is out, its record goes away in the next update(), so it is ahead of no answer from then on.
+		// other is out, its record goes away in the next update(), so it is ahead of no answer from then on; a failed
+		// read doesn't count. So records go only while some view reads the project, as the event display does: a
+		// binding without one keeps them for the session, and a view that asks about another query's answer may find
+		// the record gone before that query answers again.
 		bool ahead(const std::string& what, uint64_t read) const;
 
 		// A name for one view to begin the whats of its steps with, e.g. "mixer 3 ", a new one for each call. Views
@@ -242,7 +245,7 @@ namespace gnubase::ui
 		std::deque<std::function<void()>> m_held; // afterAwaited's, in order
 		bool m_runningHeld = false;               // runHeld runs one
 		uint64_t m_handed = 0;
-		uint64_t m_projectRead = 0; // m_handed when the last project.get's answer was handed on
+		uint64_t m_projectRead = 0; // m_handed when the last successful project.get's answer was handed on
 		uint64_t m_owners = 0;      // stepOwner's
 		uint64_t m_nextId = 1;
 	};
