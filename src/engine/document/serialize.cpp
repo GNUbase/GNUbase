@@ -503,9 +503,9 @@ namespace gnubase::engine
 			throw std::invalid_argument("AIFF files record 16, 24 or 32 bit, not " + depth);
 		if (type == "flac" && depth != "int16" && depth != "int24")
 			throw std::invalid_argument("FLAC files record 16 or 24 bit, not " + depth);
-		if (!std::isfinite(setup.startTime) || setup.startTime < 0.0 || setup.startTime >= 86400.0)
+		if (!std::isfinite(setup.startTime) || setup.startTime < 0.0 || setup.startTime >= g_maxProjectLength)
 			throw std::invalid_argument("startTime must be from 0 to less than 24 hours (86400 seconds)");
-		if (!std::isfinite(setup.length) || setup.length <= 0.0 || setup.length > 86400.0)
+		if (!std::isfinite(setup.length) || setup.length <= 0.0 || setup.length > g_maxProjectLength)
 			throw std::invalid_argument("length must be more than 0 and at most 24 hours (86400 seconds)");
 		if (setup.barOffset < -9999 || setup.barOffset > 9999)
 			throw std::invalid_argument("barOffset must be from -9999 to 9999");
@@ -735,7 +735,7 @@ namespace gnubase::engine
 			{"lock", event.lock}, {"fadeIn", toJson(event.fadeIn)}, {"fadeOut", toJson(event.fadeOut)},
 			{"crossfade", toJson(event.crossfade)}, {"snapPoint", event.snapPoint ? Json(*event.snapPoint) : Json()},
 			{"color", colorJson(event.color)}, {"part", event.part}, {"lane", event.lane},
-			{"volumeCurve", toJson(event.volumeCurve)}, {"front", event.front}};
+			{"volumeCurve", toJson(event.volumeCurve)}, {"front", event.front}, {"rank", event.rank}};
 		// Only an origin in the event's time base still counts (#145): one from before the track's time base changed
 		// is gone, as the event isn't where quantizing put it.
 		if (const auto& origin = event.quantizeOrigin; origin &&
@@ -1811,7 +1811,7 @@ namespace gnubase::engine
 						{{"on", limiter.on}, {"threshold", limiter.threshold}, {"release", limiter.release}}}}}};
 	}
 
-	std::vector<ExpressionPoint> expressionsFromJson(const Json& json, const std::string& name)
+	std::vector<ExpressionPoint> expressionsFromJson(const Json& json, const std::string& name, bool loading)
 	{
 		std::vector<ExpressionPoint> points;
 		for (size_t i = 0; i < json.size(); ++i)
@@ -1822,11 +1822,15 @@ namespace gnubase::engine
 			// An index, not an iterator: it is a pointer in some standard libraries.
 			const auto index = static_cast<size_t>(
 				std::find(g_expressionNames.begin(), g_expressionNames.end(), type) - g_expressionNames.begin());
+			if (index == g_expressionNames.size() && loading)
+				continue;
 			if (index == g_expressionNames.size())
 				throw std::invalid_argument(where + ".type: there is no expression " += type);
 			ExpressionPoint point;
 			point.type = static_cast<plugin::NoteExpression>(index);
 			point.position = item.at("position").get<time::Ticks>();
+			if (point.position < 0 && loading)
+				point.position = 0;
 			if (point.position < 0)
 				throw std::invalid_argument(where + ".position must not be negative");
 			double minimum = 0.0;
@@ -1840,7 +1844,8 @@ namespace gnubase::engine
 			{
 				maximum = 4.0;
 			}
-			point.value = checkedNumber(item.at("value"), minimum, maximum, where + ".value");
+			point.value = loading ? std::clamp(item.at("value").get<double>(), minimum, maximum)
+								  : checkedNumber(item.at("value"), minimum, maximum, where + ".value");
 			points.push_back(point);
 		}
 		std::stable_sort(points.begin(), points.end(),
@@ -2304,7 +2309,13 @@ namespace gnubase::engine
 			if (midi && item.contains("midiInserts"))
 				channel.midiInserts = effectRackFromJson(item.at("midiInserts"), {}, false);
 			if (midi && item.contains("midiSends"))
+			{
 				channel.midiSends = effectRackFromJson(item.at("midiSends"), {}, true);
+				// Files from before #1350 can give a send without an effect an output, which channel.set refuses.
+				for (midi::EffectSlot& slot : channel.midiSends.slots)
+					if (slot.effect.empty())
+						slot.output = 0;
+			}
 			// Files from before #178 have no input transformers.
 			if (midi && item.contains("inputTransformer"))
 				channel.inputTransformer = midi::inputTransformerFromJson(item.at("inputTransformer"), {});
@@ -2460,6 +2471,7 @@ namespace gnubase::engine
 			event.part = item.value("part", ObjectId{0});    // files from before #471 have no audio parts
 			event.lane = std::max(0, item.value("lane", 0)); // files from before #98 have no lanes
 			event.front = item.value("front", ObjectId{0});  // nor from before #99 a stack order
+			event.rank = item.value("rank", int64_t{0});     // nor from before #1281 ranks of a split's pieces
 			if (const auto origin = item.find("quantizeOrigin"); origin != item.end()) // files from before #145
 				event.quantizeOrigin = EventQuantizeOrigin{
 					eventTimingFrom(origin->at("original"), event), eventTimingFrom(origin->at("quantized"), event)};
@@ -2539,7 +2551,7 @@ namespace gnubase::engine
 				note.velocityVariance = std::clamp(n.value("velocityVariance", 0.0), -1.0, 1.0);
 				note.articulations = n.value("articulations", std::vector<std::string>()); // before #175 none
 				note.expressions =
-					expressionsFromJson(n.value("expressions", Json::array()), noteName + " expressions");
+					expressionsFromJson(n.value("expressions", Json::array()), noteName + " expressions", true);
 				part.notes[note.id] = note;
 			}
 			for (const Json& c : item.at("controllers"))

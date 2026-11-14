@@ -21,6 +21,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <utility>
 
 namespace gnubase::ui
@@ -548,8 +549,9 @@ namespace gnubase::ui
 		const auto front = [asDeleted](const Json* event)
 		{
 			const auto own = event->value("front", uint64_t{0});
-			return std::make_pair(
-				asDeleted && !event->value("mute", false), own != 0 ? own : event->at("id").get<uint64_t>());
+			const auto id = event->at("id").get<uint64_t>();
+			return std::make_tuple(
+				asDeleted && !event->value("mute", false), own != 0 ? own : id, event->value("rank", int64_t{0}), id);
 		};
 		std::stable_sort(
 			stacked.begin(), stacked.end(), [&front](const Json* a, const Json* b) { return front(a) < front(b); });

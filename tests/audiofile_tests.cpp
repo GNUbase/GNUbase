@@ -330,6 +330,98 @@ TEST_CASE("a file being read can be deleted, and reads on", "[integration]")
 	CHECK(std::abs(buffer[47999] - audio.samples[47999]) < 1e-4f);
 }
 
+TEST_CASE("replaceFile moves one file over another", "[integration]")
+{
+	const test::TempDir dir;
+	const std::filesystem::path from = dir.path() / "from.bin";
+	const std::filesystem::path to = dir.path() / "to.bin";
+	const auto writeText = [](const std::filesystem::path& file, const std::string& text)
+	{
+		std::ofstream out(file, std::ios::binary);
+		out << text;
+	};
+	writeText(from, "new");
+	writeText(to, "old");
+	CHECK(detail::replaceFile(utf8(from), utf8(to)));
+	CHECK(detail::lastReplacePath() == detail::ReplacePath::Rename);
+	CHECK(test::readText(to) == "new");
+	CHECK_FALSE(std::filesystem::exists(from));
+	// A file that isn't there is reported through lastError().
+	CHECK_FALSE(detail::replaceFile(utf8(from), utf8(to)));
+	CHECK_FALSE(detail::lastError().empty());
+}
+
+TEST_CASE("replaceFile replaces a file a reader has open, on Windows too", "[integration]")
+{
+	// The POSIX-semantic rename behind replaceFile takes the place of a file whose handles share deletion, which the
+	// classic rename refuses on Windows (#1387): the reader in the old file reads on, and the name is never missing.
+	const test::TempDir dir;
+	const std::filesystem::path from = dir.path() / "from.bin";
+	const std::filesystem::path to = dir.path() / "to.bin";
+	{
+		std::ofstream out(to, std::ios::binary);
+		out << "old";
+	}
+	{
+		std::ofstream out(from, std::ios::binary);
+		out << "new";
+	}
+	const detail::File reader = detail::openFile(utf8(to), "rb");
+	REQUIRE(reader);
+	CHECK(detail::replaceFile(utf8(from), utf8(to)));
+#ifdef _WIN32
+	// The classic rename can't have done this over the open reader: the POSIX-semantic one took its place.
+	CHECK(detail::lastReplacePath() == detail::ReplacePath::PosixRename);
+#endif
+	CHECK(test::readText(to) == "new");
+	CHECK_FALSE(std::filesystem::exists(from));
+	// The held reader reads the old file on.
+	char buffer[4] = {};
+	CHECK(std::fread(buffer, 1, 3, reader.get()) == 3);
+	CHECK(std::string(buffer, 3) == "old");
+	CHECK(std::distance(std::filesystem::directory_iterator(dir.path()), std::filesystem::directory_iterator()) == 1);
+}
+
+TEST_CASE("the aside replacement leaves the old file when the new one can't take its place", "[integration]")
+{
+	// The Windows fallback for replacing a file that a reader has open, which the classic and the POSIX-semantic
+	// rename both refuse there: move the old file aside, which works while its handles share deletion, put the new
+	// file in its place and end the aside (#963). When the new file can't take the place, the old one has to come
+	// back (#1387).
+	const test::TempDir dir;
+	const std::filesystem::path oldPath = dir.path() / "file.bin";
+	const std::filesystem::path asidePath = dir.path() / "file.bin.aside";
+	const std::filesystem::path newPath = dir.path() / "new.bin";
+	{
+		std::ofstream out(oldPath, std::ios::binary);
+		out << "old";
+	}
+	const detail::File reader = detail::openFile(utf8(oldPath), "rb");
+	REQUIRE(reader);
+
+	// Nothing to move into place, while a reader is in the old file.
+	CHECK_FALSE(detail::replaceFileMovingAside(utf8(newPath), utf8(oldPath), utf8(asidePath)));
+	CHECK(test::readText(oldPath) == "old");
+	CHECK_FALSE(std::filesystem::exists(asidePath));
+
+	// A real new file replaces the old one and leaves nothing behind.
+	{
+		std::ofstream out(newPath, std::ios::binary);
+		out << "new";
+	}
+	CHECK(detail::replaceFileMovingAside(utf8(newPath), utf8(oldPath), utf8(asidePath)));
+	CHECK(test::readText(oldPath) == "new");
+	CHECK_FALSE(std::filesystem::exists(asidePath));
+	CHECK_FALSE(std::filesystem::exists(newPath));
+
+	// The held reader reads the old file through it all.
+	char buffer[4] = {};
+	CHECK(detail::seekFile(reader.get(), 0, SEEK_SET));
+	CHECK(std::fread(buffer, 1, 3, reader.get()) == 3);
+	CHECK(std::string(buffer, 3) == "old");
+	CHECK(std::distance(std::filesystem::directory_iterator(dir.path()), std::filesystem::directory_iterator()) == 1);
+}
+
 TEST_CASE("the decoders leave the files that the readers hand them open", "[integration]")
 {
 	// The decoders close a file at the end if their read callback is the one for files they open themselves, which

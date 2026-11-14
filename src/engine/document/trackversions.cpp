@@ -334,7 +334,7 @@ namespace gnubase::engine
 		// New ids in stack order keep it, with every copy ordered by its id.
 		std::vector<AudioEvent> events = version.audioEvents;
 		std::stable_sort(events.begin(), events.end(),
-			[](const AudioEvent& a, const AudioEvent& b) { return frontOf(a) < frontOf(b); });
+			[](const AudioEvent& a, const AudioEvent& b) { return stackKey(a) < stackKey(b); });
 		std::map<ObjectId, ObjectId> ids;
 		for (const AudioEvent& event : events)
 			ids[event.id] = project.newId();

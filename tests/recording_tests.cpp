@@ -12,6 +12,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
@@ -22,6 +23,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <thread>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -872,4 +874,37 @@ TEST_CASE("the retrospective buffer doesn't wait while the disk thread creates a
 		changed.notify_all();
 	}
 	CHECK(sawAnswer);
+}
+
+TEST_CASE("the retrospective buffer leaves a recording's start to the disk thread", "[unit]")
+{
+	namespace engine = gnubase::engine;
+	const gnubase::test::TempDir dir;
+	// A file where the record folder should be: the thread that starts a recording reports the failure.
+	const std::filesystem::path notAFolder = dir.path() / "file";
+	std::ofstream(notAFolder) << "not a folder";
+	const std::thread::id commandThread = std::this_thread::get_id();
+	std::atomic<bool> startedOnCommandThread{false};
+	{
+		engine::Recorder recorder(
+			[&](const std::string& name, const Json&)
+			{
+				if (name == "recording.failed" && std::this_thread::get_id() == commandThread)
+					startedOnCommandThread = true;
+			});
+		recorder.prepare(1, g_blockFrames);
+		recorder.setup(recordInto(notAFolder));
+		// The command comes right after the chunk that starts a recording, well within the disk thread's poll.
+		engine::PlayedPositions played(size_t{64} * g_blockFrames);
+		for (uint64_t index = 0; index < 32; index += 2)
+		{
+			processBlock(recorder, played, index, true);
+			if (index % 4 == 0)
+				CHECK(recorder.retrospective(1).empty());
+			else
+				recorder.clearRetrospective(0);
+			processBlock(recorder, played, index + 1, false);
+		}
+	}
+	CHECK_FALSE(startedOnCommandThread);
 }

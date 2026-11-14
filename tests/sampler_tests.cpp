@@ -6,6 +6,7 @@
 #include "engine/processors/builtin.h"
 #include "engine/processors/sampler.h"
 #include "engine/time/tempomap.h"
+#include "platform/log.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -748,6 +749,8 @@ TEST_CASE("the sample loader waits only for the files asked for, and its end for
 		REQUIRE(wake.wait_for(lock, std::chrono::seconds(30), [&] { return reading; }));
 	}
 	loader->request("next.wav");
+	// Not ending yet: the wait for the end gives up rather than hanging the run (#1337).
+	CHECK(!loader->waitUntilEnding(std::chrono::milliseconds(0)));
 	// No wait for a file that is read but not asked for (#1180); one for the file behind it.
 	CHECK(loader->waitUntilRead(std::chrono::milliseconds(0), {"other.wav"}));
 	CHECK(!loader->waitUntilRead(std::chrono::milliseconds(20), {"next.wav"}));
@@ -756,13 +759,15 @@ TEST_CASE("the sample loader waits only for the files asked for, and its end for
 	// begun, so that the check doesn't rely on the ending thread winning a race against a sleep (#1272).
 	SampleLoader* const endingLoader = loader.get();
 	std::thread ending([&loader] { loader.reset(); });
-	endingLoader->waitUntilEnding();
+	// The read is let go whether the wait failed or not, so that a lost notify fails the test rather than hanging it.
+	const bool ended = endingLoader->waitUntilEnding(std::chrono::seconds(30));
 	{
 		const std::scoped_lock lock(mutex);
 		open = true;
 	}
 	wake.notify_all();
 	ending.join();
+	REQUIRE(ended);
 	CHECK(read == std::vector<std::string>{"slow.wav"});
 }
 
@@ -1575,7 +1580,8 @@ TEST_CASE(
 	const auto before = std::chrono::steady_clock::now();
 	run(client, "transport.locate", {{"position", 4800}});
 	CHECK(std::chrono::steady_clock::now() - before < std::chrono::seconds(1));
-	// Starting playback does.
+	// Starting playback does: it answers only after the release.
+	const auto releaseStart = std::chrono::steady_clock::now();
 	std::thread releasing(
 		[&held]
 		{
@@ -1583,6 +1589,7 @@ TEST_CASE(
 			held.release();
 		});
 	run(client, "transport.play");
+	CHECK(std::chrono::steady_clock::now() - releaseStart >= std::chrono::milliseconds(100));
 	releasing.join();
 	CHECK(held.reads() == std::vector<fs::path>{"sine.wav"});
 	run(client, "transport.stop");
@@ -1613,6 +1620,7 @@ TEST_CASE("recording from stop waits for the samples like starting playback, a c
 
 	// Without one, playback starts at once, so recording waits for the sample as transport.play does (#1200).
 	run(client, "metronome.set", {{"countIn", {{"enabled", false}}}});
+	const auto releaseStart = std::chrono::steady_clock::now();
 	std::thread releasing(
 		[&held]
 		{
@@ -1620,12 +1628,64 @@ TEST_CASE("recording from stop waits for the samples like starting playback, a c
 			held.release();
 		});
 	run(client, "transport.record");
+	CHECK(std::chrono::steady_clock::now() - releaseStart >= std::chrono::milliseconds(100));
 	releasing.join();
 	CHECK(held.reads() == std::vector<fs::path>{"sine.wav"});
 	run(client, "transport.stop");
 }
 
-TEST_CASE("an offline render waits for a sample however long its file takes", "[integration]")
+TEST_CASE("an offline render logs a warning at every round of its wait for a sample", "[integration]")
+{
+	Session session;
+	const fs::path logFile = session.folder.path() / "gnubase.log";
+	const gnubase::logging::Session log(logFile);
+	Client& client = session.client;
+	const auto track = run(client, "sampler.create").at("track").at("id").get<ObjectId>();
+	// Rounds of 20 ms instead of 30 s, so that a read held back for 100 ms takes several, but fewer than the 20
+	// after which the render gives up.
+	session.engine.setOfflineSampleWait(std::chrono::milliseconds(20));
+	HeldRead held(session.engine, session.file);
+	run(client, "sampler.load", {{"track", track}, {"clip", session.clip}});
+	REQUIRE(held.reading());
+	std::thread releasing(
+		[&held]
+		{
+			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+			held.release();
+		});
+	run(client, "audio.render", {{"frames", 64}});
+	releasing.join();
+	CHECK(held.reads() == std::vector<fs::path>{"sine.wav"});
+	gnubase::logging::flush();
+	const std::string text = gnubase::test::readText(logFile);
+	const std::string warning = "The render still waits for the samplers' samples to be read";
+	size_t warnings = 0;
+	for (size_t at = text.find(warning); at != std::string::npos; at = text.find(warning, at + 1))
+		++warnings;
+	CHECK(warnings >= 2);
+}
+
+TEST_CASE("an offline render gives up with an error after its last round of waiting for a sample", "[integration]")
+{
+	Session session;
+	Client& client = session.client;
+	const auto track = run(client, "sampler.create").at("track").at("id").get<ObjectId>();
+	// 20 rounds of 20 ms instead of 30 s: a read that stalls fails the render after 400 ms, not 10 minutes.
+	session.engine.setOfflineSampleWait(std::chrono::milliseconds(20));
+	HeldRead held(session.engine, session.file);
+	run(client, "sampler.load", {{"track", track}, {"clip", session.clip}});
+	REQUIRE(held.reading());
+	const auto before = std::chrono::steady_clock::now();
+	CHECK_THAT(reject(client, "audio.render", {{"frames", 64}}),
+		ContainsSubstring("the render gave up waiting for the samplers' samples to be read"));
+	CHECK(std::chrono::steady_clock::now() - before >= std::chrono::milliseconds(400));
+	// Once the read ends, a render works again.
+	held.release();
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(held.reads() == std::vector<fs::path>{"sine.wav"});
+}
+
+TEST_CASE("an offline render waits for a sample whose file takes long to read", "[integration]")
 {
 	Session session;
 	Client& client = session.client;

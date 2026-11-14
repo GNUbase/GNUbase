@@ -364,6 +364,11 @@ namespace gnubase::engine
 		m_audio->setSampleReader(std::move(read));
 	}
 
+	void Engine::setOfflineSampleWait(std::chrono::milliseconds wait)
+	{
+		m_audio->setOfflineSampleWait(wait);
+	}
+
 	void Engine::setJobProgressHook(std::function<void(uint64_t job, const std::string& kind)> hook)
 	{
 		m_jobs->setProgressHook(std::move(hook));

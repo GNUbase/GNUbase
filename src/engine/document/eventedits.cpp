@@ -126,7 +126,7 @@ namespace gnubase::engine
 		{
 			std::vector<AudioEvent*> events = eventsIn(project, part);
 			std::stable_sort(events.begin(), events.end(),
-				[](const AudioEvent* a, const AudioEvent* b) { return frontOf(*a) < frontOf(*b); });
+				[](const AudioEvent* a, const AudioEvent* b) { return stackKey(*a) < stackKey(*b); });
 			return events;
 		}
 
@@ -135,7 +135,7 @@ namespace gnubase::engine
 		// order keeps it among them.
 		std::vector<size_t> stackOrder(Project& project, const std::vector<Item>& items)
 		{
-			std::vector<std::pair<ObjectId, ObjectId>> places(items.size());
+			std::vector<std::tuple<ObjectId, int64_t, ObjectId>> places(items.size());
 			for (size_t index = 0; index < items.size(); ++index)
 			{
 				const Item& item = items[index];
@@ -614,20 +614,27 @@ namespace gnubase::engine
 					return {};
 				AudioEvent right = event;
 				right.id = project.newId();
-				// The piece after the split comes right in front of its event, as its id is the newest place, and
-				// what was in front of the event stays in front of it: new places after it, in the order it had
-				// (#1189), so that a second split of a piece doesn't bring it in front of the piece after it.
-				right.front = 0;
-				std::vector<AudioEvent*> inFront;
+				// The piece after the split comes right in front of its event, behind whatever was in front of it: at
+				// its event's place, ranked right after it (#1189, #1281). Only the events at that place, the pieces
+				// of the event, get new ranks; ties from before ranks go by id, as stackKey orders them.
+				right.front = frontOf(event);
+				std::vector<AudioEvent*> place;
 				for (auto& [id, other] : project.audioEvents)
-					if (other.track == event.track && stackKey(other) > stackKey(event))
-						inFront.push_back(&other);
-				std::sort(inFront.begin(), inFront.end(),
+					if (frontOf(other) == right.front)
+						place.push_back(&other);
+				std::sort(place.begin(), place.end(),
 					[](const AudioEvent* a, const AudioEvent* b) { return stackKey(*a) < stackKey(*b); });
-				for (AudioEvent* other : inFront)
+				int64_t rank = 0;
+				for (AudioEvent* other : place)
 				{
-					other->front = project.newId();
-					context.emit("audioEvent.changed", {{"event", toJson(*other)}});
+					if (other->rank != rank)
+					{
+						other->rank = rank;
+						context.emit("audioEvent.changed", {{"event", toJson(*other)}});
+					}
+					if (other == &event)
+						right.rank = ++rank;
+					++rank;
 				}
 				right.position = rebased(project, {time::TimeBase::Linear, at}, event.position.base);
 				right.offset += frames;
@@ -636,32 +643,54 @@ namespace gnubase::engine
 				right.crossfade = Crossfade();
 				event.length = frames;
 				event.fadeOut = Fade();
-				// Both pieces of a quantized event keep where they were before quantizing, each with its own length,
-				// so that resetting puts them back and they tile again (#910). The piece after the split was as far
-				// from its original, in samples, as the split is from where quantizing put the event; it goes through
-				// samples because a musical event's position is in ticks while its audio keeps its length in samples
-				// (#414), so the tempo between the two counts. An origin that has stopped counting, of an event moved
-				// by other means since, doesn't come along.
+				// Both pieces of a quantized event keep where they were before quantizing, so that resetting puts
+				// them back and they tile again (#910). The piece after the split was as far from its original, in
+				// samples, as the split is from where quantizing put the event; it goes through samples because a
+				// musical event's position is in ticks while its audio keeps its length in samples (#414), so the
+				// tempo between the two counts. Its original offset and length are the recorded original's, cut
+				// where the piece before it ends, not its current ones: with a start the Crossfade step stretched
+				// the two differ, and resetting would play the wrong clip section and leave a gap (#1333). The
+				// panel can also have made the event longer than its original, so the piece before the split
+				// keeps at most the whole original, and a split past the original's end leaves nothing of it for
+				// the piece after, which then keeps no origin, as for an event moved by other means since (#1333).
+				// Such an origin, one that has stopped counting, doesn't come along either.
 				if (auto& origin = right.quantizeOrigin; origin && origin->quantized.position == event.position)
 				{
-					const time::Samples original =
-						samples(project, origin->original.position) + (at - samples(project, event.position));
-					const time::Position shifted =
-						rebased(project, {time::TimeBase::Linear, original}, event.position.base);
-					*origin = EventQuantizeOrigin{EventTiming{shifted, right.offset, right.length, right.crossfade},
-						EventTiming{right.position, right.offset, right.length, right.crossfade}};
-					event.quantizeOrigin->original.length = frames;
+					event.quantizeOrigin->original.length = std::min(frames, origin->original.length);
 					event.quantizeOrigin->quantized.length = frames;
+					if (frames < origin->original.length)
+					{
+						const time::Samples original =
+							samples(project, origin->original.position) + (at - samples(project, event.position));
+						const time::Position shifted =
+							rebased(project, {time::TimeBase::Linear, original}, event.position.base);
+						const EventTiming originalTiming{shifted, origin->original.offset + frames,
+							origin->original.length - frames, right.crossfade};
+						*origin = EventQuantizeOrigin{
+							originalTiming, EventTiming{right.position, right.offset, right.length, right.crossfade}};
+					}
+					else
+					{
+						right.quantizeOrigin.reset();
+					}
 				}
 				else
 				{
 					right.quantizeOrigin.reset();
 				}
-				// An event that crossfaded from this one now overlaps the piece after the split.
+				// An event that crossfaded from this one now overlaps the piece after the split. Its origin's
+				// crossfades follow, so that resetting still knows them as the panel left them (#1333).
 				for (auto& [id, other] : project.audioEvents)
 					if (other.crossfade.from == event.id && eventSpan(project, other).start >= at)
 					{
 						other.crossfade.from = right.id;
+						if (other.quantizeOrigin)
+						{
+							if (other.quantizeOrigin->original.crossfade.from == event.id)
+								other.quantizeOrigin->original.crossfade.from = right.id;
+							if (other.quantizeOrigin->quantized.crossfade.from == event.id)
+								other.quantizeOrigin->quantized.crossfade.from = right.id;
+						}
 						context.emit("audioEvent.changed", {{"event", toJson(other)}});
 					}
 				return {&(project.audioEvents[right.id] = right), nullptr};
@@ -703,15 +732,20 @@ namespace gnubase::engine
 				}
 				if (splitNotes && note.position + note.length > offset)
 				{
-					// The rest of the note starts the part after the split.
+					// The rest of the note starts the part after the split, its expression from the split on.
 					Note rest = note;
 					rest.id = project.newId();
 					rest.position = 0;
 					rest.length = note.position + note.length - offset;
 					rest.origin.reset();
+					rest.expressions = expressionsFrom(note.expressions, offset - note.position);
 					right.notes[rest.id] = rest;
 					note.length = offset - note.position;
 					note.origin.reset();
+					note.expressions.erase(
+						std::remove_if(note.expressions.begin(), note.expressions.end(),
+							[&note](const ExpressionPoint& point) { return point.position >= note.length; }),
+						note.expressions.end());
 				}
 				++it;
 			}
@@ -1923,7 +1957,7 @@ namespace gnubase::engine
 			clipboard.automation = automationIn(project, range);
 			// In stack order: pasted copies stack in the order they are added, and a split moves no piece in the stack.
 			std::stable_sort(clipboard.audioEvents.begin(), clipboard.audioEvents.end(),
-				[](const AudioEvent& a, const AudioEvent& b) { return frontOf(a) < frontOf(b); });
+				[](const AudioEvent& a, const AudioEvent& b) { return stackKey(a) < stackKey(b); });
 			return clipboard;
 		}
 
@@ -2192,7 +2226,7 @@ namespace gnubase::engine
 			std::vector<size_t> stacked(copiedEvents.size());
 			std::iota(stacked.begin(), stacked.end(), size_t{0});
 			std::stable_sort(stacked.begin(), stacked.end(),
-				[&copiedEvents](size_t a, size_t b) { return frontOf(copiedEvents[a]) < frontOf(copiedEvents[b]); });
+				[&copiedEvents](size_t a, size_t b) { return stackKey(copiedEvents[a]) < stackKey(copiedEvents[b]); });
 			std::vector<ObjectId> newIds(copiedEvents.size());
 			for (const size_t index : stacked)
 				newIds[index] = project.newId();
@@ -2272,7 +2306,7 @@ namespace gnubase::engine
 				}
 			}
 			std::stable_sort(movedAudio.begin(), movedAudio.end(),
-				[](const AudioEvent* a, const AudioEvent* b) { return frontOf(*a) < frontOf(*b); });
+				[](const AudioEvent* a, const AudioEvent* b) { return stackKey(*a) < stackKey(*b); });
 			std::set<ObjectId> movedEvents;
 			for (AudioEvent* event : movedAudio)
 			{
@@ -2770,7 +2804,8 @@ namespace gnubase::engine
 			{"event.split", 1,
 				"Splits audio events and MIDI parts at positions (project samples): events, or without it every "
 				"unlocked one that a position cuts. A MIDI part's notes stay in the part they start in, or with "
-				"splitNotes are cut in two. With zeroCrossing, audio events split at the nearest point within 50 ms "
+				"splitNotes are cut in two, the rest with the expression from the cut on. With zeroCrossing, audio "
+				"events split at the nearest point within 50 ms "
 				"and inside the event where their audio crosses zero. The pieces of a pattern event continue its "
 				"pattern (patternOffset). The piece of a quantized audio event after the split keeps where it "
 				"was before quantizing, shifted by the split, so that quantize.reset puts both pieces back. "
