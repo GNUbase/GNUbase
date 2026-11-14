@@ -66,7 +66,8 @@ namespace gnubase::ui
 			R"(<div class="info-field" info-field="lock" section="lock" label="Lock">)"
 			R"(<button type="toggle" field="lock")"
 			R"( title="Lock">Lock</button></div>)"
-			// A MIDI part's transpose and velocity (p. 1107), added to the track's MIDI modifiers.
+			// A MIDI part's transpose and velocity (p. 1107), added to the track's MIDI modifiers; an audio event's
+			// transpose (p. 420, #1555), within the time stretcher's real-time range.
 			R"(<div class="info-field" info-field="transpose" section="transpose" label="Transpose">)"
 			R"(<span class="info-label">Transpose</span>)"
 			R"(<valuefield field="transpose" min="-127" max="127" default="0" step="1" decimals="0"/>)"
@@ -89,12 +90,11 @@ namespace gnubase::ui
 			R"(<button type="toggle" field="globalTranspose")"
 			R"( title="Global Transpose: Follow">Follow</button></div>)";
 
-		// The root keys, as midiPart.set and audioEvent.set take them.
-		const widgets::Options& rootKeys()
+		// The transpose a selected event or part can have either way: a MIDI part's -127 to 127, an audio event's
+		// -24 to 24, the time stretcher's real-time range (#1555).
+		int limitOf(const engine::Json& event)
 		{
-			static const widgets::Options keys = {{"", "-"}, {"C", "C"}, {"C#", "C#"}, {"D", "D"}, {"D#", "D#"},
-				{"E", "E"}, {"F", "F"}, {"F#", "F#"}, {"G", "G"}, {"G#", "G#"}, {"A", "A"}, {"A#", "A#"}, {"B", "B"}};
-			return keys;
+			return event.at("kind") == "audio" ? 24 : 127;
 		}
 
 		void setClass(Rml::Element& element, const char* name, bool set)
@@ -298,6 +298,13 @@ namespace gnubase::ui
 			});
 	}
 
+	const widgets::Options& rootKeyOptions()
+	{
+		static const widgets::Options keys = {{"", "-"}, {"C", "C"}, {"C#", "C#"}, {"D", "D"}, {"D#", "D#"}, {"E", "E"},
+			{"F", "F"}, {"F#", "F#"}, {"G", "G"}, {"G#", "G#"}, {"A", "A"}, {"A#", "A#"}, {"B", "B"}};
+		return keys;
+	}
+
 	double InfoLine::volumeOf(uint64_t event) const
 	{
 		const Json& project = m_display.project();
@@ -309,15 +316,21 @@ namespace gnubase::ui
 		return 0.0;
 	}
 
-	int InfoLine::partValue(uint64_t part, const char* key) const
+	int InfoLine::partValue(const Json& event, const char* key) const
 	{
+		const Json* item = transposableOf(event);
+		return item != nullptr ? item->value(key, 0) : 0;
+	}
+
+	std::vector<const engine::Json*> InfoLine::eventsOf(uint64_t part) const
+	{
+		std::vector<const Json*> events;
 		const Json& project = m_display.project();
-		if (!project.is_object())
-			return 0;
-		for (const Json& midi : project.at("midiParts"))
-			if (midi.at("id") == part)
-				return midi.value(key, 0);
-		return 0;
+		if (project.is_object())
+			for (const Json& audio : project.at("audioEvents"))
+				if (audio.value("part", uint64_t{0}) == part)
+					events.push_back(&audio);
+		return events;
 	}
 
 	const engine::Json* InfoLine::transposableOf(const Json& event) const
@@ -326,6 +339,11 @@ namespace gnubase::ui
 		const auto kind = event.at("kind").get<std::string>();
 		if (kind == "midi")
 			return partOf(event.at("id").get<uint64_t>());
+		if (kind == "audioPart")
+		{
+			const std::vector<const Json*> events = eventsOf(event.at("id").get<uint64_t>());
+			return events.empty() ? nullptr : events.front();
+		}
 		if (kind != "audio" || !project.is_object())
 			return nullptr;
 		for (const Json& audio : project.at("audioEvents"))
@@ -406,19 +424,25 @@ namespace gnubase::ui
 		for (const char* field : {"mute", "lock"})
 			if (Rml::Element* button = root.QuerySelector("button[field=" + std::string(field) + "]"))
 				setFlag(*button, "checked", first.at(field).get<bool>());
-		// A MIDI part's transpose and velocity.
+		// A MIDI part's transpose and velocity, an audio event's transpose (#1555).
 		const bool midi = first.at("kind") == "midi";
 		for (const char* field : {"transpose", "velocity"})
 		{
+			const bool has = midi || (audio && std::string(field) == "transpose");
 			if (Rml::Element* shown = root.QuerySelector("[info-field=" + std::string(field) + "]"))
-				setClass(*shown, "unavailable", !midi);
-			if (Rml::Element* value = root.QuerySelector("valuefield[field=" + std::string(field) + "]");
-				value != nullptr && midi)
-				setValue(*value,
-					fieldValue(field, first.at("id").get<uint64_t>(),
-						widgets::format(static_cast<float>(partValue(first.at("id").get<uint64_t>(), field)))));
+				setClass(*shown, "unavailable", !has);
+			Rml::Element* value = root.QuerySelector("valuefield[field=" + std::string(field) + "]");
+			if (value == nullptr || !has)
+				continue;
+			const std::string limit = std::to_string(limitOf(first));
+			for (const auto& [attribute, bound] : {std::pair{"min", "-" + limit}, std::pair{"max", limit}})
+				if (value->GetAttribute<Rml::String>(attribute, "") != bound)
+					value->SetAttribute(attribute, bound);
+			setValue(*value,
+				fieldValue(field, first.at("id").get<uint64_t>(),
+					widgets::format(static_cast<float>(partValue(first, field)))));
 		}
-		// A MIDI part's or an audio event's root key and Global Transpose (#1368).
+		// A MIDI part's or an audio event's root key and Global Transpose (#1368), an audio part's events' (#1555).
 		const Json* part = transposableOf(first);
 		for (const char* field : {"rootKey", "globalTranspose"})
 			if (Rml::Element* shown = root.QuerySelector("[info-field=" + std::string(field) + "]"))
@@ -435,7 +459,7 @@ namespace gnubase::ui
 				step->SetInnerRML(text);
 		}
 		if (Rml::Element* key = root.QuerySelector("select[field=rootKey]"))
-			widgets::fill(*key, rootKeys(), part->value("rootKey", std::string()));
+			widgets::fill(*key, rootKeyOptions(), part->value("rootKey", std::string()));
 		if (Rml::Element* button = root.QuerySelector("button[field=globalTranspose]"))
 		{
 			const bool independent = part->value("globalTranspose", std::string()) == "independent";
@@ -908,22 +932,26 @@ namespace gnubase::ui
 		}
 		else if (field == "transpose" || field == "velocity")
 		{
-			// Relative to the first part's value, or with Ctrl+Enter the same for all; each from -127 to 127.
+			// Relative to the first one's value, or with Ctrl+Enter the same for all: a MIDI part's from -127 to 127,
+			// an audio event's transpose from -24 to 24 (#1555).
 			const auto typed = static_cast<int>(std::lround(number));
-			const int change = typed - partValue(first.at("id").get<uint64_t>(), field.c_str());
+			const int change = typed - partValue(first, field.c_str());
 			for (const Json& event : m_events)
-				if (event.at("kind") == "midi")
-				{
-					const uint64_t id = event.at("id").get<uint64_t>();
-					const int own = partValue(id, field.c_str());
-					const int value = std::clamp(m_absolute ? typed : own + change, -127, 127);
-					// During a gesture the project may not have its earlier steps yet: a drag back to where it
-					// started still sends that value.
-					if (value != own || gesture != 0)
-						commands.push_back(
-							{{"command", "midiPart.set"}, {"parameters", {{"part", id}, {field, value}}}});
-					shown[std::to_string(id)] = widgets::format(static_cast<float>(value));
-				}
+			{
+				const bool midi = event.at("kind") == "midi";
+				if (!midi && (event.at("kind") != "audio" || field != "transpose"))
+					continue;
+				const uint64_t id = event.at("id").get<uint64_t>();
+				const int own = partValue(event, field.c_str());
+				const int limit = limitOf(event);
+				const int value = std::clamp(m_absolute ? typed : own + change, -limit, limit);
+				// During a gesture the project may not have its earlier steps yet: a drag back to where it
+				// started still sends that value.
+				if (value != own || gesture != 0)
+					commands.push_back({{"command", midi ? "midiPart.set" : "audioEvent.set"},
+						{"parameters", {{midi ? "part" : "event", id}, {field, value}}}});
+				shown[std::to_string(id)] = widgets::format(static_cast<float>(value));
+			}
 		}
 		else if (field == "rootKey" || field == "globalTranspose")
 		{
@@ -933,10 +961,20 @@ namespace gnubase::ui
 			{
 				const bool midi = event.at("kind") == "midi";
 				const auto id = event.at("id").get<uint64_t>();
-				if (const Json* item = transposableOf(event);
+				if (event.at("kind") == "audioPart")
+				{
+					// An audio part has no root key of its own: its events get it (#1555).
+					for (const Json* audio : eventsOf(id))
+						if (audio->value(field, std::string()) != value)
+							commands.push_back({{"command", "audioEvent.set"},
+								{"parameters", {{"event", audio->at("id")}, {field, value}}}});
+				}
+				else if (const Json* item = transposableOf(event);
 					item != nullptr && item->value(field, std::string()) != value)
+				{
 					commands.push_back({{"command", midi ? "midiPart.set" : "audioEvent.set"},
 						{"parameters", {{midi ? "part" : "event", id}, {field, value}}}});
+				}
 			}
 		}
 		else if (field == "mute" || field == "lock")

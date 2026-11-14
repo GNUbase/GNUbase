@@ -2,7 +2,9 @@
 #include "ui/poolpanel.h"
 
 #include "platform/log.h"
+#include "ui/infoline.h"
 #include "ui/widgets.h"
+#include "ui/widgetutils.h"
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/ElementDocument.h>
@@ -160,7 +162,8 @@ namespace gnubase::ui
 		rml += R"(</div><div class="pool-status"><div id="pool-message" class="pool-message"/>)"
 			   R"(<button id="pool-stop">Stop</button></div><div id="pool-info" class="pool-info"/>)"
 			   R"(<div class="pool-header"><span class="name">Media</span><span class="used">Used</span>)"
-			   R"(<span class="status">Status</span><span class="info">Info</span><span class="path">Path</span></div>)"
+			   R"(<span class="status">Status</span><span class="key">Key</span><span class="info">Info</span>)"
+			   R"(<span class="path">Path</span></div>)"
 			   R"(<listview id="pool" class="pool-list" multiple/></div>)";
 		element.SetInnerRML(rml);
 		Rml::Element* root = element.GetFirstChild();
@@ -274,6 +277,10 @@ namespace gnubase::ui
 					else
 						m_binding.send(button.command);
 				}
+		}
+		else if (event == Rml::EventId::Change && target->GetAttribute<Rml::String>("field", "") == "rootKey")
+		{
+			setKey(rowValue(target), event.GetParameter<Rml::String>("value", ""));
 		}
 		else if (field && (event == Rml::EventId::Blur || event.GetParameter<bool>("linebreak", false)))
 		{
@@ -474,6 +481,7 @@ namespace gnubase::ui
 			std::string info;
 			std::string path;
 			bool missing = false;
+			std::string key; // a clip's root key (pool.get rootKey)
 		};
 
 		// The tree's rows: the Audio folder, then in each folder its folders and its clips.
@@ -512,7 +520,8 @@ namespace gnubase::ui
 					const int used = clip->at("used").get<int>();
 					result.push_back({"c" + std::to_string(clip->at("id").get<uint64_t>()), level,
 						clip->at("name").get<std::string>(), used == 0 ? "" : std::to_string(used), status(*clip),
-						info(*clip), clip->at("path").get<std::string>(), missing});
+						info(*clip), clip->at("path").get<std::string>(), missing,
+						clip->value("rootKey", std::string())});
 				}
 			};
 			add(0, 1);
@@ -541,7 +550,9 @@ namespace gnubase::ui
 					(folder && m_collapsed.count(row.value) == 0 ? " expanded" : "") + R"( class=")" +
 					(folder ? "folder" : "clip") + R"("><span class="name">)" +
 					(row.value == "f0" ? encode(row.name) : R"(<input type="text"/>)") +
-					R"(</span><span class="used"/><span class="status"/><span class="info"/><span class="path"/></listitem>)";
+					R"(</span><span class="used"/><span class="status"/><span class="key">)" +
+					(folder ? "" : R"(<select field="rootKey" title="Root Key"/>)") +
+					R"(</span><span class="info"/><span class="path"/></listitem>)";
 			}
 			view->SetInnerRML(rml);
 			m_values = std::move(values);
@@ -557,6 +568,9 @@ namespace gnubase::ui
 			if (Rml::Element* field = name->GetFirstChild();
 				field != nullptr && field->GetTagName() == "input" && !field->IsPseudoClassSet("focus"))
 				field->SetAttribute("value", data.name);
+			// The Key column (reference manual p. 417): the root key the clip's events share.
+			if (Rml::Element* key = row->QuerySelector("select[field=rootKey]"))
+				widgets::fill(*key, rootKeyOptions(), data.key);
 			const std::string texts[] = {data.used, data.status, data.info, data.path};
 			for (size_t column = 0; column < std::size(g_columns); ++column)
 				setText(*row->QuerySelector(std::string("span.") + g_columns[column]), texts[column]);
@@ -598,6 +612,16 @@ namespace gnubase::ui
 				send("Rename", folder ? "poolFolder.set" : "clip.set",
 					{{folder ? "folder" : "clip", id}, {"name", name}});
 		}
+	}
+
+	void PoolPanel::setKey(const std::string& row, const std::string& key)
+	{
+		if (row.size() < 2 || row[0] != 'c')
+			return;
+		const uint64_t id = idOf(row);
+		for (const Json& clip : m_pool.value("clips", Json::array()))
+			if (clip.at("id").get<uint64_t>() == id && clip.value("rootKey", std::string()) != key)
+				send("Root Key", "clip.set", {{"clip", id}, {"rootKey", key}});
 	}
 
 	void PoolPanel::drop(const std::string& folder)
