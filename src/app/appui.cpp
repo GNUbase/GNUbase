@@ -285,6 +285,8 @@ namespace gnubase::app
 			{"signature", "enter.signature", "Edits the time signature in the transport bar.", "Shift+C"},
 		}};
 
+		// A new transport panel's size until it takes the width of its shown sections (AppUi::fitSections), and the
+		// one it keeps without a display or without a shown section.
 		constexpr ui::Size g_transportPanelSize{1100, 48};
 		// The time display window at each of its sizes (ui.timeDisplay); the theme sizes its digits to fit.
 		constexpr std::array<ui::Size, 5> g_timeDisplaySizes{
@@ -1456,8 +1458,24 @@ namespace gnubase::app
 		if (root == controls)
 		{
 			m_docking.attach("transportPanel", *document);
+			// The controls show the project once the engine answered their queries, and their displays grow with
+			// their text: a query sent now is answered after those, so the sections are measured again as they show
+			// it, and the bounds kept at once (#1474). Fitted to the controls' defaults until then, so that a panel
+			// closed before the answer doesn't keep the unfitted width in ui.layout.
 			if (!spec.bounds)
+			{
 				fitSections(window, *controls);
+				m_binding.send("engine.version", engine::Json::object(),
+					[this, id = window.id(), fitted = controls->GetObserverPtr()](const engine::Result&)
+					{
+						ui::Window* shownWindow = m_shell.find(id);
+						if (Rml::Element* element = fitted.get(); element != nullptr && shownWindow != nullptr)
+						{
+							fitSections(*shownWindow, *element);
+							m_docking.saveWindows();
+						}
+					});
+			}
 		}
 		else
 		{
