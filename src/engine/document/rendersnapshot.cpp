@@ -204,7 +204,8 @@ namespace gnubase::engine
 						continue;
 					channel.expressions.push_back({toSamples(project, start + position + point.position), pitch,
 						channel.notes.back().channel, point.type, point.value});
-					if (point.position == 0)
+					// A point within the note's first sample is one of its initial ones, as it plays at its start.
+					if (channel.expressions.back().position == channel.notes.back().start)
 						channel.notes.back().startsWith |= initialBit(point.type);
 				}
 			}

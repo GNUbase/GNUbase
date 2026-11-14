@@ -326,6 +326,30 @@ TEST_CASE("playback sends a note's expression points inside the note, as MIDI 1.
 			{1100, 0x83, 62}, {2000, 0xE3, 0}, {2000, 0xB3, 74}, {2000, 0x93, 64}, {2500, 0x83, 64}});
 }
 
+TEST_CASE("a note's point within its first sample, not at its start, is its initial one", "[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	const ObjectId part = addPart(client, setup.track);
+	// Its tuning point lies 10 ticks after its start, within the sample it starts at, and it has none at 0.
+	run(client, "note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", ticksOf(100)}, {"length", ticksOf(1000)}, {"pitch", 62}, {"velocity", 0.5},
+					{"channel", 3}, {"expressions", {point("tuning", 10, -48.0)}}}}}});
+	run(client, "audio.render", {{"frames", 64}});
+	const auto start = run(client, "audio.get").at("position").get<int64_t>();
+	run(client, "midi.capture", {{"start", true}});
+	run(client, "transport.play");
+	run(client, "audio.render", {{"frames", 2000}});
+	std::vector<std::vector<int64_t>> played;
+	for (const std::vector<int64_t>& each : capturedFrom(client, start))
+		if (each.size() > 3 && (each[1] == 0xE3 || each[1] == 0x93))
+			played.push_back({each[0], each[1], each[1] == 0xE3 ? each[2] : 0, each[1] == 0xE3 ? each[3] : 0});
+	// Its own bend, all the way down, before its note-on, and no centered one after it.
+	CHECK(played == std::vector<std::vector<int64_t>>{{100, 0xE3, 0, 0}, {100, 0x93, 0, 0}});
+}
+
 TEST_CASE("splitting a part's notes keeps their expression where it was", "[integration]")
 {
 	Setup setup;
