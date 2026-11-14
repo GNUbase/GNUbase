@@ -293,6 +293,51 @@ TEST_CASE("a control's steps leave no record behind once a read after their last
 	CHECK(binding.ahead("volume", 0));
 }
 
+TEST_CASE("a control's record keeps what the control shows while it is ahead, and lets it go with the record", "[unit]")
+{
+	engine::Engine engine;
+	ui::EngineBinding binding(engine);
+	engine::Client client(engine);
+	const Json channel = client.call("track.add", {{"type", "audio"}}).value.at("channel").at("id");
+	const auto set = [&channel](const char* key, double value)
+	{ return Json::array({Json{{"command", "channel.set"}, {"parameters", {{"channel", channel}, {key, value}}}}}); };
+	const auto readProject = [&binding]
+	{
+		uint64_t handed = 0;
+		binding.send(
+			"project.get", Json::object(), [&binding, &handed](const engine::Result&) { handed = binding.handed(); });
+		updateUntil(binding, [&handed] { return handed != 0; });
+		return handed;
+	};
+
+	// A drag of two events' values: each step's values are merged into what the record keeps, the newest of each.
+	binding.sendStep(7, "volume", "Change Volume", set("volume", -1.0), {}, Json{{"1", "-1"}, {"2", "-3"}});
+	binding.sendStep(7, "volume", "Change Volume", set("volume", -2.0), {}, Json{{"1", "-2"}});
+	const Json dragged = {{"1", "-2"}, {"2", "-3"}};
+	REQUIRE(binding.shown("volume", 0) != nullptr);
+	CHECK(*binding.shown("volume", 0) == dragged);
+	CHECK(binding.shown("pan", 0) == nullptr);
+	updateUntil(binding, [&binding] { return !binding.sending("volume"); });
+	binding.update();
+	REQUIRE(binding.shown("volume", 0) != nullptr); // still ahead of a read from before the drag
+	CHECK(*binding.shown("volume", 0) == dragged);
+	const uint64_t fresh = readProject();
+	CHECK(binding.shown("volume", fresh) == nullptr);
+	binding.update();
+	CHECK(binding.shown("volume", 0) == nullptr); // gone with the record (#1471)
+
+	// A later gesture keeps its own; a value that isn't an object replaces what is kept, and a step without one
+	// keeps nothing.
+	binding.sendStep(8, "volume", "Change Volume", set("volume", -4.0), {}, Json{{"1", "-4"}});
+	binding.sendStep(8, "volume", "Change Volume", set("volume", -5.0), {}, -5.0);
+	REQUIRE(binding.shown("volume", 0) != nullptr);
+	CHECK(*binding.shown("volume", 0) == -5.0);
+	binding.sendStep(0, "pan", "Change Pan", set("pan", 0.5));
+	CHECK(binding.ahead("pan", 0));
+	CHECK(binding.shown("pan", 0) == nullptr);
+	CHECK(binding.settle(std::chrono::seconds(10)));
+}
+
 TEST_CASE(
 	"settling sends the steps that wait and hands on results until no command that changes things is out", "[unit]")
 {

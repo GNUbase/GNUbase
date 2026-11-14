@@ -299,6 +299,10 @@ namespace gnubase::ui
 		const Parameter* found = parameter(name);
 		if (found == nullptr)
 			return 0.0;
+		// A parameter whose change is on its way keeps what the user gave it, not the engine's older value, also after
+		// another sampler track showed meanwhile (#1471).
+		if (const Json* shown = m_channel.is_object() ? m_binding.shown(stepKey(found->id), m_read) : nullptr)
+			return shown->get<double>();
 		const auto set = m_values.find(found->id);
 		return set != m_values.end() ? set->second : found->defaultValue;
 	}
@@ -327,14 +331,10 @@ namespace gnubase::ui
 			showMessage(""); // what failed concerned the track shown before
 		m_track = channel != nullptr ? track : 0;
 		m_channel = channel != nullptr ? *channel : Json();
-		// A parameter whose change is on its way keeps what the user gave it, not the engine's older value.
 		std::map<uint32_t, double> values;
 		if (channel != nullptr)
 			for (const Json& item : channel->value("instrumentParameters", Json::array()))
 				values[item.at("parameter").get<uint32_t>()] = item.at("value").get<double>();
-		for (const auto& [id, set] : m_values)
-			if (channel != nullptr && m_binding.ahead(stepKey(id), m_read))
-				values[id] = set;
 		m_values = std::move(values);
 		uint64_t media = 0;
 		int64_t length = 0;
@@ -516,13 +516,12 @@ namespace gnubase::ui
 			return;
 		const auto found = std::find_if(
 			m_parameters.begin(), m_parameters.end(), [id](const Parameter& each) { return each.id == id; });
-		m_values[id] = value;
 		const Json step = {{"command", "parameter.set"},
 			{"parameters",
 				{{"channel", m_channel.at("id")}, {"target", {{"type", "instrument"}, {"parameter", id}}},
 					{"value", value}}}};
 		m_binding.sendStep(gesture, stepKey(id), "Change " + (found != m_parameters.end() ? found->name : "Sampler"),
-			Json::array({step}));
+			Json::array({step}), {}, value);
 	}
 
 	// Moves the marker dragged to the mouse: Start stays before End, and the loop's start before its end.

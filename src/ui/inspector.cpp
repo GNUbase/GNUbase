@@ -1561,14 +1561,15 @@ namespace gnubase::ui
 	void Inspector::sendFieldStep(
 		int gesture, const std::string& key, float shown, std::string description, Json commands)
 	{
-		m_sent[key] = widgets::format(shown);
-		m_binding.sendStep(gesture, key, std::move(description), std::move(commands), whenRefused());
+		m_binding.sendStep(
+			gesture, key, std::move(description), std::move(commands), whenRefused(), widgets::format(shown));
 	}
 
 	std::string Inspector::fieldValue(const std::string& key, std::string value) const
 	{
-		if (const auto sent = m_sent.find(key); sent != m_sent.end() && m_binding.ahead(key, m_read))
-			return sent->second;
+		const Json* shown = m_binding.shown(key, m_read);
+		if (shown != nullptr)
+			return shown->get<std::string>();
 		return value;
 	}
 
