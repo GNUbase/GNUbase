@@ -87,7 +87,9 @@ namespace gnubase::engine
 				result.repeat = step >= 0 ? std::min(state.repeat, stepOf(plan, step).repeats - 1) : 0;
 			}
 			else if (state.step < 0 && validSection(previous, state.section))
+			{
 				result.section = sectionOfEvent(plan, sectionOf(previous, state.section).event);
+			}
 			else
 			{
 				result.step = -1;
@@ -103,7 +105,9 @@ namespace gnubase::engine
 				result.pendingSection = -1;
 			}
 			else if (state.pendingStep < 0 && validSection(previous, state.pendingSection))
+			{
 				result.pendingSection = sectionOfEvent(plan, sectionOf(previous, state.pendingSection).event);
+			}
 			else
 			{
 				result.pendingStep = -1;

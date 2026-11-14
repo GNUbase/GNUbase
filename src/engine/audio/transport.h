@@ -252,7 +252,7 @@ namespace gnubase::engine
 		std::atomic<uint64_t> m_changes{0};
 		// Written by the audio thread: m_arranger packed, with the plan its step and section indices walk, so a
 		// reader never pairs the state with another plan (arrangerAndPlan()).
-		rt::SeqLockTriple<int64_t, int64_t, int64_t> m_arrangerShared;
+		rt::SeqLockTriple<int64_t, int64_t, const ArrangerPlan*> m_arrangerShared;
 	};
 
 	// Where the transport played each of the device's last frames, so recorded input finds where it belongs: with

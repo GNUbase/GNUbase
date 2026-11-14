@@ -10,17 +10,6 @@ namespace gnubase::engine
 	namespace
 	{
 		constexpr size_t g_maxRequests = 256;
-
-		// The plan pointer as the seqlock's third word, and back (#885).
-		int64_t planValue(const ArrangerPlan* plan)
-		{
-			return static_cast<int64_t>(reinterpret_cast<uintptr_t>(plan));
-		}
-
-		const ArrangerPlan* planAt(int64_t value)
-		{
-			return reinterpret_cast<const ArrangerPlan*>(static_cast<uintptr_t>(value));
-		}
 	}
 
 	// A block has at most one segment per frame: a jump at every frame, with a one-sample cycle.
@@ -192,7 +181,7 @@ namespace gnubase::engine
 	std::pair<ArrangerState, const ArrangerPlan*> Transport::arrangerAndPlan() const
 	{
 		const auto [a, b, plan] = m_arrangerShared.load();
-		return {unpackArranger(a, b), planAt(plan)};
+		return {unpackArranger(a, b), plan};
 	}
 
 	void Transport::locateTo(time::Samples position) noexcept
@@ -339,7 +328,7 @@ namespace gnubase::engine
 			m_publishedArranger = m_arranger;
 			m_publishedPlan = m_statePlan;
 			const auto [a, b] = pack(m_arranger);
-			m_arrangerShared.store(a, b, planValue(m_statePlan));
+			m_arrangerShared.store(a, b, m_statePlan);
 		}
 		const auto state = static_cast<uint8_t>(
 			(m_playing || m_countingIn ? 1U : 0U) | (recording ? 2U : 0U) | (m_countingIn ? 4U : 0U));
