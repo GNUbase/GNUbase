@@ -1019,6 +1019,53 @@ TEST_CASE("track.import gives the versions of new tracks IDs of their own, share
 	CHECK(kept.at("midiParts")[0].at("position") == 0);
 }
 
+TEST_CASE("track.import keeps implicit first versions in the imported version group", "[integration]")
+{
+	const test::TempDir dir;
+	const fs::path song = dir.path() / "Mixed versions.dawproject";
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	const Added versioned = add(client, {{"type", "midi"}, {"name", "Versioned"}});
+	const Added plain = add(client, {{"type", "midi"}, {"name", "Plain"}});
+	run(client, "midiPart.add", {{"track", versioned.track}, {"position", 0}, {"length", 960}});
+	run(client, "midiPart.add", {{"track", plain.track}, {"position", 960}, {"length", 960}});
+	run(client, "trackVersion.add", {{"tracks", {versioned.track}}});
+	run(client, "midiPart.add", {{"track", versioned.track}, {"position", 1920}, {"length", 960}});
+	run(client, "project.save", {{"path", song.u8string()}});
+	const Project source = loadDawProject(song.u8string(), dir.path().u8string(), false);
+	REQUIRE(source.trackById.at(versioned.track).versions.size() == 2);
+	REQUIRE(source.trackById.at(plain.track).versions.empty());
+
+	run(client, "project.new");
+	const Added existing = add(client, {{"type", "midi"}, {"name", "Existing"}});
+	run(client, "trackVersion.add", {{"tracks", {existing.track}}});
+	const Json imported = run(client, "track.import", {{"path", song.u8string()}}).at("tracks");
+	REQUIRE(imported.size() == 2);
+	const Json project = run(client, "project.get");
+	const Json first = trackNamed(project, "Versioned");
+	const Json second = trackNamed(project, "Plain");
+	const ObjectId firstTrack = first.at("id").get<ObjectId>();
+	const ObjectId secondTrack = second.at("id").get<ObjectId>();
+	const int firstVersion = first.at("versions")[0].at("id").get<int>();
+	CHECK(firstVersion > 2);
+	CHECK(idsOf(second) == std::vector<int>{firstVersion});
+	CHECK(second.at("activeVersion") == firstVersion);
+
+	// Leave both imported first versions, then activate their group without touching the project's own group.
+	run(client, "trackVersion.add", {{"tracks", {firstTrack, secondTrack}}});
+	const Json activated = run(client, "trackVersion.activate",
+		{{"tracks", {firstTrack, secondTrack, existing.track}}, {"version", firstVersion}});
+	CHECK(activated.at("tracks").size() == 2);
+	const Json playingFirst = run(client, "project.get");
+	CHECK(playing(playingFirst, firstTrack) == std::vector<int64_t>{0});
+	CHECK(playing(playingFirst, secondTrack) == std::vector<int64_t>{960});
+	CHECK(trackNamed(playingFirst, "Existing").at("activeVersion") == 2);
+	run(client, "history.undo");
+	CHECK(run(client, "project.get").at("midiParts").empty());
+	run(client, "history.redo");
+	CHECK(playing(run(client, "project.get"), secondTrack) == std::vector<int64_t>{960});
+}
+
 TEST_CASE("track.import without automation resets the automation of a track that it imports events or settings onto",
 	"[integration]")
 {
