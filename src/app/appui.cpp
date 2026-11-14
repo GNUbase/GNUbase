@@ -412,6 +412,7 @@ namespace gnubase::app
 						  document != nullptr && document->GetParentNode() != nullptr)
 						  document->Close();
 				  m_projectDialogs.clear();
+				  ++m_resets;
 			  })),
 		  m_files(m_keys, m_binding, m_shell, resources / "ui")
 	{
@@ -2392,11 +2393,11 @@ namespace gnubase::app
 		dialog.filters = {{"Images", "png;jpg;jpeg;svg"}, {"All files", "*"}};
 		dialog.parent = m_main.id();
 		m_shell.showFileDialog(dialog,
-			[this, track](const ui::FileDialogResult& result)
+			[this, track, resets = m_resets](const ui::FileDialogResult& result)
 			{
 				if (!result.error.empty())
 					logging::warning("The file dialog failed: {}", result.error);
-				if (!result.files.empty())
+				if (!result.files.empty() && resets == m_resets)
 					m_binding.send("track.set", {{"track", track}, {"picture", result.files.front().u8string()}});
 			});
 	}
@@ -2419,13 +2420,15 @@ namespace gnubase::app
 				dialog.filters = {{"DAWproject files", "dawproject"}, {"All files", "*"}};
 				dialog.parent = window.id();
 				m_shell.showFileDialog(dialog,
-					[this, below = selection(), id = window.id()](const ui::FileDialogResult& chosen)
+					[this, selection, id = window.id()](const ui::FileDialogResult& chosen)
 					{
 						if (!chosen.error.empty())
 							logging::warning("The file dialog failed: {}", chosen.error);
 						ui::Window* parent = m_shell.find(id);
 						if (chosen.files.empty() || parent == nullptr)
 							return;
+						// The selection now: a project.reset while the file dialog was open replaced the one before.
+						const std::vector<uint64_t> below = selection();
 						openDialog(*parent, "track-import.rml",
 							{{"path", chosen.files.front().u8string()},
 								{"below", below.empty() ? std::string() : std::to_string(below.front())}});
@@ -2442,11 +2445,12 @@ namespace gnubase::app
 				dialog.location = "Tracks.dawproject";
 				dialog.parent = window.id();
 				m_shell.showFileDialog(dialog,
-					[this, tracks = selection(), id = window.id()](const ui::FileDialogResult& chosen)
+					[this, tracks = selection(), id = window.id(), resets = m_resets](
+						const ui::FileDialogResult& chosen)
 					{
 						if (!chosen.error.empty())
 							logging::warning("The file dialog failed: {}", chosen.error);
-						if (chosen.files.empty())
+						if (chosen.files.empty() || resets != m_resets)
 							return;
 						std::filesystem::path file = chosen.files.front();
 						if (file.extension().empty())
@@ -2504,11 +2508,11 @@ namespace gnubase::app
 				dialog.filters = {{"Pattern presets", "patternpreset"}};
 				dialog.parent = parent;
 				m_shell.showFileDialog(dialog,
-					[this, save, track](const ui::FileDialogResult& result)
+					[this, save, track, resets = m_resets](const ui::FileDialogResult& result)
 					{
 						if (!result.error.empty())
 							logging::warning("The file dialog failed: {}", result.error);
-						if (!result.files.empty())
+						if (!result.files.empty() && resets == m_resets)
 							m_binding.send(save ? "pattern.export" : "pattern.import",
 								{{"track", track}, {"path", result.files.front().u8string()}});
 					});
@@ -2556,11 +2560,11 @@ namespace gnubase::app
 		dialog.filters = {{"Drum maps", "drm"}};
 		dialog.parent = parent;
 		m_shell.showFileDialog(dialog,
-			[this, map](const ui::FileDialogResult& result)
+			[this, map, resets = m_resets](const ui::FileDialogResult& result)
 			{
 				if (!result.error.empty())
 					logging::warning("The file dialog failed: {}", result.error);
-				if (result.files.empty())
+				if (result.files.empty() || resets != m_resets)
 					return;
 				std::filesystem::path file = result.files.front();
 				if (file.extension() != ".drm")
@@ -2601,7 +2605,7 @@ namespace gnubase::app
 	}
 
 	Rml::ElementDocument& AppUi::openOnce(ui::Window& window, const char* name, Rml::ObserverPtr<Rml::Element>& open,
-		const std::vector<std::pair<std::string, std::string>>& attributes) const
+		const std::vector<std::pair<std::string, std::string>>& attributes)
 	{
 		// One dialog: a second document would share the first one's table in the UI's Lua. A closed document has left
 		// its context, until the context releases it.
@@ -2655,7 +2659,7 @@ namespace gnubase::app
 	}
 
 	Rml::ElementDocument& AppUi::openDialog(
-		ui::Window& window, const char* name, const std::vector<std::pair<std::string, std::string>>& attributes) const
+		ui::Window& window, const char* name, const std::vector<std::pair<std::string, std::string>>& attributes)
 	{
 		const std::filesystem::path file = m_resources / "ui" / name;
 		Rml::ElementDocument* document = window.context().LoadDocument(file.generic_u8string());
