@@ -5,8 +5,9 @@
      Track or a track of the project of the same type), and on OK sends track.import with the options, then for Copy
      to Active Project Folder media.conform for the imported media files at another sample rate (Convert Sample Rate,
      available when what the import brings plays media files at another rate than the project's, which
-     track.importSources lists for the range and Events and Parts) and media.prepareArchive for the others. Tracks
-     that can't be imported yet show, disabled. The engine's message shows when it refuses, and the dialog stays open. -->
+     track.importSources lists for the range and Events and Parts) and media.prepareArchive for the others.
+     Tracks that can't be imported yet show, disabled. The engine's message shows when it refuses, and the dialog
+     stays open. -->
 <rml>
 <head>
 	<title>Import Options</title>
@@ -229,7 +230,11 @@
 					range = {start = start, ["end"] = finish}
 				end
 			end
+			-- Without events the range changes nothing: the instruments' samples count wherever it is.
 			local events = checked("import-events")
+			if not events then
+				range = nil
+			end
 			local key = (range and (range.start .. ":" .. range["end"]) or "") .. (events and "" or ":no events")
 			if dialog.ratesKey ~= key then
 				local tracks = dialog.sources

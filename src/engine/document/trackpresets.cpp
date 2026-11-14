@@ -1213,17 +1213,19 @@ namespace gnubase::engine
 				if (range || !options.events)
 				{
 					// What track.import brings with the range and options: with a range the file at the project's
-					// rate, as it imports it; the media files' rates stay.
+					// rate, as it imports it; the media files' rates stay. Without events the range changes nothing,
+					// as the instruments' samples count wherever it is.
+					const auto within = options.events ? range : std::nullopt;
 					const Project& project = model.project();
 					Project placed = file;
 					const Json none = Json::object();
 					CommandContext inner(none);
-					if (range && placed.sampleRate != project.sampleRate)
+					if (within && placed.sampleRate != project.sampleRate)
 						changeSampleRate(placed, project.sampleRate, inner);
 					std::set<ObjectId> every;
 					for (const auto& [id, track] : placed.trackById)
 						every.insert(id);
-					place(placed, project, 0, range, every, options);
+					place(placed, project, 0, within, every, options);
 					rates = mediaSampleRatesByTrack(placed);
 				}
 				else
