@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <filesystem>
 #include <sstream>
@@ -260,6 +261,39 @@ TEST_CASE("every theme's piano keyboard has light white keys and dark black keys
 		REQUIRE(black.size() == 7);
 		CHECK(luminance(white) > luminance(black));
 		CHECK(contrast(white, black) >= 3.0);
+	}
+}
+
+TEST_CASE("every theme shows the chord pads' black section and modifier keys as such inside the remote range", "[unit]")
+{
+	// #1447: what the engine takes a key as wins over the remote range, on black keys too. The rules live in the
+	// generated style sheets (tools/skin/generate.py), so a regeneration that drops them or puts them before the
+	// black remote keys' rule fails here.
+	for (const char* theme : g_themes)
+	{
+		INFO("theme " << theme);
+		const std::vector<std::pair<std::string, std::string>> found =
+			rules(gnubase::test::readText(themesDir() / theme / "theme.rcss"));
+		// The index of the last rule that sets the background color of selector, or -1.
+		const auto last = [&found](const std::string& selector)
+		{
+			int result = -1;
+			for (size_t i = 0; i < found.size(); ++i)
+			{
+				std::string names = found.at(i).first;
+				names.erase(
+					std::remove_if(names.begin(), names.end(), [](unsigned char c) { return std::isspace(c) != 0; }),
+					names.end());
+				if (("," + names + ",").find("," + selector + ",") != std::string::npos &&
+					found.at(i).second.find("background-color:") != std::string::npos)
+					result = static_cast<int>(i);
+			}
+			return result;
+		};
+		const int remote = last(".chord-pads-key.black.remote");
+		REQUIRE(remote >= 0);
+		CHECK(last(".chord-pads-key.black.section") > remote);
+		CHECK(last(".chord-pads-key.black.modifier") > remote);
 	}
 }
 

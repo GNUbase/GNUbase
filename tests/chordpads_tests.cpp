@@ -1720,12 +1720,15 @@ TEST_CASE(
 
 TEST_CASE("a pad that follows a control only partly is as before once the control rests again", "[integration]")
 {
-	// #1448: Dm7 takes two of three more tensions, a voicing of 11 inversions one of three more.
+	// #1448: Dm7 takes two of three more tensions, a voicing of 11 inversions one of three more. Dm11 and C13 take
+	// the 9, which sorts before their own 11 and 13: the way back takes the 9 away again, not those (#1447).
 	RemoteRig remote;
 	Client& client = remote.rig.client;
 	run(client, "chordPads.set",
 		{{"controlSources", {"controller", "controller", "none"}}, {"controlNumbers", {20, 21, 1}}});
-	run(client, "chordPads.assign", {{"assignments", {{{"pad", 1}, {"chord", "Dm7"}}}}});
+	run(client, "chordPads.assign",
+		{{"assignments",
+			{{{"pad", 1}, {"chord", "Dm7"}}, {{"pad", 3}, {"chord", "Dm11"}}, {{"pad", 4}, {"chord", "C13"}}}}});
 	run(client, "chordPads.modify", {{"pads", Json::array({2})}, {"voicing", 11}});
 	run(client, "audio.render", {{"frames", 64}});
 	const auto sounds = [&]
@@ -1741,6 +1744,8 @@ TEST_CASE("a pad that follows a control only partly is as before once the contro
 	sendBytes(remote, {0xB0, 21, 127});
 	CHECK(remote.until([&] { return pad(client, 0).at("chord") != before.at(0).at(0); }));
 	CHECK(pad(client, 1).at("chord") != "Dm7");
+	CHECK(pad(client, 3).at("chord") != before.at(3).at(0));
+	CHECK(pad(client, 4).at("chord") != before.at(4).at(0));
 	sendBytes(remote, {0xB0, 21, 0});
 	CHECK(remote.until([&] { return sounds() == before; }));
 	sendBytes(remote, {0xB0, 20, 127});

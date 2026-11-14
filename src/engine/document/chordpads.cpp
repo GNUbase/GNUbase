@@ -74,11 +74,13 @@ namespace gnubase::engine
 
 		// Where the controls that move all pads left them (reference manual p. 1387): per control (voicings,
 		// tensions, transposition) its step from its rest, and per pad how far it followed, which is less for a pad
-		// that has tensions already or reaches the limit of 12 inversions (#1448).
+		// that has tensions already or reaches the limit of 12 inversions (#1448), and per pad the tensions the
+		// tensions control added, in the order it added them, which the way back takes away again.
 		struct ControlSteps
 		{
 			std::array<int, 3> steps{};
 			std::array<std::vector<int>, 3> followed;
+			std::vector<std::vector<std::string>> added;
 		};
 
 		// What chordPads.listen listens for, and what chordPads.remoteInput saw of the remote keys (#1089).
@@ -1650,9 +1652,10 @@ namespace gnubase::engine
 			{"chordPads.modify", 1,
 				"The pad modifiers (reference manual pp. 1351-1352) on the assigned, unlocked pads of pads: transpose "
 				"moves their chords by semitones, tensions adds (more) or takes away (fewer) as many tensions, voicing "
-				"steps through their voicings (inversions), which turns their adaptive voicing off.",
+				"steps through their voicings (inversions), which turns their adaptive voicing off, and without takes "
+				"away the tensions it names, as chord names write them (\"9\", \"#11\").",
 				objectSchema({{"pads", padsSchema}, {"transpose", integerSchema}, {"tensions", integerSchema},
-								 {"voicing", integerSchema}},
+								 {"voicing", integerSchema}, {"without", {{"type", "array"}, {"items", stringSchema}}}},
 					{"pads"}),
 				padsResult, false},
 			[changed](Project& project, CommandContext& context)
@@ -1668,6 +1671,10 @@ namespace gnubase::engine
 					midi::ChordSymbol chord = chordOf(pad.chord);
 					chord = chordpads::transposed(chord, parameters.value("transpose", 0));
 					chord = chordpads::withTensions(chord, parameters.value("tensions", 0), pads.rootKey);
+					for (const Json& tension : parameters.value("without", Json::array()))
+						chord.tensions.erase(
+							std::remove(chord.tensions.begin(), chord.tensions.end(), tension.get<std::string>()),
+							chord.tensions.end());
 					if (parameters.contains("voicing"))
 					{
 						if (pad.adaptive)
@@ -2326,13 +2333,41 @@ namespace gnubase::engine
 												: voicingOf(pad, current.player);
 						};
 						const std::vector<std::vector<int>> voicings = chordPadVoicings(pads);
+						// A pad's tensions; those the control added are the ones it takes away again, not the last ones
+						// in the tensions' order, which may be the pad's own (#1447).
+						const auto tensionsOf = [this](size_t i)
+						{
+							const ChordPad& pad = m_project.chordPads.pads.at(i);
+							return pad.chord.empty() ? std::vector<std::string>() : chordOf(pad.chord).tensions;
+						};
+						std::vector<std::vector<std::string>>& added = where.added;
+						added.resize(followed.size());
 						std::vector<int> before(followed.size());
+						std::vector<std::vector<std::string>> tensionsBefore(followed.size());
 						for (size_t i = 0; i < followed.size(); ++i)
+						{
 							before.at(i) = measure(voicings, i);
+							tensionsBefore.at(i) = tensionsOf(i);
+						}
 						Json commands = Json::array();
 						for (const auto& [by, targets] : moves)
-							commands.push_back({{"command", "chordPads.modify"},
-								{"parameters", {{"pads", targets}, {changes.at(which), by}}}});
+						{
+							if (which == 1 && by < 0)
+								for (const int target : targets)
+								{
+									const std::vector<std::string>& mine = added.at(static_cast<size_t>(target));
+									const auto count =
+										static_cast<std::ptrdiff_t>(std::min(static_cast<size_t>(-by), mine.size()));
+									commands.push_back({{"command", "chordPads.modify"},
+										{"parameters",
+											{{"pads", Json::array({target})},
+												{"without",
+													std::vector<std::string>(mine.end() - count, mine.end())}}}});
+								}
+							else
+								commands.push_back({{"command", "chordPads.modify"},
+									{"parameters", {{"pads", targets}, {changes.at(which), by}}}});
+						}
 						if (commands.empty())
 							continue;
 						context.call("history.transaction",
@@ -2346,6 +2381,20 @@ namespace gnubase::engine
 							{
 								const auto i = static_cast<size_t>(target);
 								const ChordPad& moved = pads.pads.at(i);
+								if (which == 1)
+								{
+									// The ones it added that the pad still has, then the ones new to it.
+									const std::vector<std::string> after = tensionsOf(i);
+									const auto has = [](const std::vector<std::string>& tensions, const std::string& t)
+									{ return std::find(tensions.begin(), tensions.end(), t) != tensions.end(); };
+									std::vector<std::string>& mine = added.at(i);
+									mine.erase(std::remove_if(mine.begin(), mine.end(),
+												   [&](const std::string& t) { return !has(after, t); }),
+										mine.end());
+									for (const std::string& tension : after)
+										if (!has(tensionsBefore.at(i), tension))
+											mine.push_back(tension);
+								}
 								if (which != 2)
 									followed.at(i) += measure(voicings, i) - before.at(i);
 								else if (!moved.chord.empty() && !moved.locked)

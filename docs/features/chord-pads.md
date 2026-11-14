@@ -138,8 +138,9 @@ chord track's music theory ([chord-track.md](chord-track.md)).
   `history.transaction`; a control's gesture ends after a second without its messages). How far the controls moved the
   pads is kept for each undo step they made, so after undo and redo the next move goes from where the pads are, and
   so is how far each pad followed: a pad with tensions takes fewer more, a voicing near the limit of 12 inversions
-  fewer inversions, and on the way back each goes no further than it went, so a control at rest leaves the pads as
-  they were (`ControlSteps`).
+  fewer inversions, and on the way back each goes no further than it went and loses exactly the tensions the control
+  added (`chordPads.modify` `without`), not its own, so a control at rest leaves the pads as they were
+  (`ControlSteps`).
 - **Assign from MIDI Input and MIDI Learn** (pp. 1360, 1388): `chordPads.listen` `assign` (a pad) takes the next notes
   from the MIDI inputs, which play as they are meanwhile, and once they are all released assigns their chord
   (`chordPads.assign` `pitches`); `learn` `range` takes the next two keys as the remote range, `learn` with a
