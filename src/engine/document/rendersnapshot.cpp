@@ -713,7 +713,7 @@ namespace gnubase::engine
 				event.length, static_cast<float>(std::pow(10.0, event.volume / 20.0)), event.mute, event.fadeIn,
 				event.fadeOut, clip.fadeIn, clip.fadeOut,
 				crossfadeApplies(project, event) ? event.crossfade : Crossfade(), gainPoints(event.volumeCurve),
-				frontOf(event), 0, 0};
+				frontOf(event), event.rank, 0, 0};
 			if (warped(clip))
 				warpEvent(project, event, *snapshot, render);
 			if (const auto part = project.audioParts.find(event.part); part != project.audioParts.end() &&

@@ -108,7 +108,11 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   not one sent before it nor while another is out, also after a refused one, and a later gesture makes it again;
   settling sends the steps that wait and waits for commands that change things and for queries sent with `sendAwaited`,
   and for what their answers send; what `afterAwaited` holds runs after the answer, in order, what a held one runs
-  itself at once, and after another awaited query that a held one sends.
+  itself at once, and after another awaited query that a held one sends; `awaitHeld`, as a press calls it, waits for
+  the awaited answers only, not for a slow command that isn't a query, and what is still held when it times out stays
+  held. `tests/eventediting_tests.cpp` checks that a press gives up on the zero crossings after two seconds and runs the
+  held edit on the range as it is, while a command holds the engine until after the press, and that an action of an
+  event display that is gone by the time it runs sends nothing.
   `tests/scripts_ui_tests.cpp` has a user script draw a range with Snap to Zero Crossing on and delete it through the
   UI: the delete is in the script's undo step, and an undo after it undoes the delete. `tests/mixerwindow_tests.cpp` and
   `tests/inspector_tests.cpp` drag faders, knobs and value fields (the inspector's and the info line's) and turn the

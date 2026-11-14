@@ -239,7 +239,7 @@ namespace gnubase::engine
 					if (event.track == source)
 						events.push_back(event);
 				std::stable_sort(events.begin(), events.end(),
-					[](const AudioEvent& a, const AudioEvent& b) { return frontOf(a) < frontOf(b); });
+					[](const AudioEvent& a, const AudioEvent& b) { return stackKey(a) < stackKey(b); });
 				std::map<ObjectId, ObjectId> ids;
 				for (const AudioEvent& event : events)
 					ids[event.id] = m_to.newId();
