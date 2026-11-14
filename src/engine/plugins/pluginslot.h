@@ -47,7 +47,7 @@ namespace gnubase::engine::plugins
 	// as transport segments, and the main output port back as the node's audio. Other ports get silence. A block the
 	// plugin fails (ProcessStatus::Error, which a remote plugin also returns once its host crashed or hung) outputs
 	// silence. A bypassed slot processes the plugin and outputs its input, delayed by the plugin's latency. Events that
-	// don't fit its event lists are dropped, and it logs how many.
+	// don't fit its event lists are dropped, and it logs how many in the first block that drops them.
 	//
 	// Threads: [main] calls are the plugin's main thread, the plugin job thread in the engine; they may only happen
 	// while no graph processes the slot.
@@ -142,6 +142,7 @@ namespace gnubase::engine::plugins
 		plugin::EventList m_eventsOut;
 		std::vector<plugin::TransportSegment> m_transport;
 		bool m_started = false;
+		bool m_dropping = false; // the last block dropped events
 		int64_t m_steadyTime = 0;
 		// The input, delayed by the plugin's latency for bypass: a ring of g_maxAudioChannels × m_dryLength.
 		std::vector<float> m_dry;

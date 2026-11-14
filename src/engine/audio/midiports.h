@@ -2,6 +2,8 @@
 #pragma once
 
 #include "engine/document/rendersnapshot.h"
+#include "engine/graph/events.h"
+#include "engine/midi/mpeinput.h"
 #include "engine/schema.h"
 #include "platform/audio/device.h"
 #include "platform/hosttime.h"
@@ -27,12 +29,13 @@ namespace gnubase::engine
 		class Store;
 	}
 
-	// The ports of every MIDI backend, with their settings: the name they are shown as, whether they are visible, and
-	// whether an input belongs to "all MIDI inputs". The settings are the user setting midi.portSettings, so they last
-	// across restarts and wait for ports that aren't connected. The first midi command lists the ports and opens the
-	// visible inputs, so an engine that never uses MIDI leaves the hardware alone. Their messages reach the audio
-	// thread, which places them in its blocks. A port that disappears is listed as not present and opens again when it
-	// comes back. Only the command thread changes ports; outputs open once something sends to them.
+	// The ports of every MIDI backend, with their settings: the name they are shown as, whether they are visible,
+	// whether an input belongs to "all MIDI inputs", and an input's MPE setup (midi::MpeSetup). The settings are the
+	// user setting midi.portSettings, so they last across restarts and wait for ports that aren't connected. The first
+	// midi command lists the ports and opens the visible inputs, so an engine that never uses MIDI leaves the hardware
+	// alone. Their messages reach the audio thread, which places them in its blocks. A port that disappears is listed
+	// as not present and opens again when it comes back. Only the command thread changes ports; outputs open once
+	// something sends to them.
 	class MidiPorts
 	{
 	public:
@@ -56,14 +59,15 @@ namespace gnubase::engine
 		void applySettings(CommandContext& context);
 
 		// Audio thread, once per block: the messages that arrived for this block go into allInputs if their port
-		// belongs to all MIDI inputs, and to the monitor (midi.monitor) at their frame position. While the chord pads'
+		// belongs to all MIDI inputs, those of a port with MPE input as per-note expression (midi::MpeInput), and to
+		// the monitor (midi.monitor) at their frame position. While the chord pads'
 		// remote is active, a port's note on a remote key plays the pad's pitches into pads instead (#174), the
 		// highest on MIDI channel 1, the next on channel 2 and so on, over the chords that sound as padKeys' overlap
 		// says (midi::PadVoices); its note-off ends them, or with latch its next note-on. With filter, the remote
 		// keys without a chord play nothing (#1089). pads also gets what playPads plays.
 		// pads has a buffer per player (ChordPadKeys::players): each player's voicings go into its own.
 		using PadBuffers = std::array<audio::MidiBuffer, ChordPadKeys::g_maxPlayers>;
-		void take(const audio::DeviceBlock& block, double sampleRate, audio::MidiBuffer& allInputs, PadBuffers& pads,
+		void take(const audio::DeviceBlock& block, double sampleRate, graph::EventBuffer& allInputs, PadBuffers& pads,
 			const ChordPadKeys& padKeys) noexcept;
 
 		// Any thread but an audio thread: a message from the on-screen keyboard (midi.keyboard), which belongs to all
@@ -141,6 +145,10 @@ namespace gnubase::engine
 		Json setting(const Port& port) const;                  // its entry there; empty while it has the defaults
 		bool visible(const Port& port) const { return setting(port).value("visible", true); }
 		bool inAllInputs(const Port& port) const { return port.info.input && setting(port).value("inAllInputs", true); }
+		midi::MpeSetup mpe(const Port& port) const;
+		// Audio thread: a message of the input slot (or the on-screen keyboard's) into allInputs, by the slot's MPE
+		// setup.
+		void addInput(int slot, const audio::MidiMessage& message, graph::EventBuffer& allInputs) noexcept;
 		Json toJson(const Port& port) const;
 		Json list() const;
 
@@ -151,6 +159,11 @@ namespace gnubase::engine
 		int m_nextSlot = 0;
 		gnubase::midi::InputQueue m_queue;
 		std::array<std::atomic<bool>, g_maxInputs> m_allInputs{};
+		// Per input slot, its port's MPE setup (midi::MpeSetup::pack); the audio thread's state of each, and the setup
+		// it was made for, which starts it afresh when the setup changes.
+		std::array<std::atomic<uint32_t>, g_maxInputs> m_mpeSetups{};
+		std::vector<midi::MpeInput> m_mpeInputs;
+		std::array<uint32_t, g_maxInputs> m_mpeApplied{};
 		rt::SpscQueue<Received> m_monitor;
 		// Audio thread: the pitches each remote key's note-on played, until its note-off.
 		std::array<midi::PadVoices, ChordPadKeys::g_maxPlayers> m_padVoices; // per player

@@ -10,17 +10,22 @@ mixers whose channel visibility follows the tracks'.
 `Project::trackVisibility`:
 
 - `hidden`: the tracks the project window hides, by id, sorted. Any track type; a folder in the list hides the tracks
-  inside it too, nested ones included, and they join the list, so what `trackVisibility.get` returns holds them all.
-  A track that joins a hidden folder later, by `track.add`, `track.move` or an undo step, joins the list right away,
-  and the configurations with the folder too, and the mixers that follow hide its channel (`followTrackFolders`, after
-  every edit and undo step, #1475). Hidden tracks play as usual.
+  inside it too, nested ones included, and they are in the list, so what `trackVisibility.get` returns holds them all.
+  The project keeps the folder without them (`withoutInside`) and adds them where the list is read (`withInside`,
+  `hiddenTracks`): a track that joins a hidden folder later, by `track.add`, `track.move` or an undo step, is in the
+  list right away, and in the configurations with the folder too, and one that leaves the folder leaves them, unless it
+  was hidden on its own before (#1533). After every edit and undo step, `trackVisibility.changed` goes out when what
+  `trackVisibility.get` returns changed, as when a hidden track goes, and the mixers that follow sync, hiding the
+  channel of a track that joined a hidden folder or a group channel a hidden folder gets (`followTrackFolders`, #1475,
+  #1539). Hidden tracks play as usual.
 - `sync`: the mixer window (`window1` to `window4`) whose channel visibility follows the tracks', or empty (Sync
   Visibility of Project and Mixer, p. 82): one window at a time. The lower zone's mixer (`lower`) always follows
   (p. 81).
 - `configurations` and `configuration`: the track visibility configurations, each a name and its hidden tracks, and the
   active one's name; `modified` (read only) says whether the hidden tracks differ from it, which the toolbar shows with
   an asterisk. `configurations` replaces the list (Add, Update, Rename, Delete and reorder are all that);
-  `configuration` makes one active and, without `hidden`, hides its tracks. A configuration keeps the ids of removed
+  `configuration` makes one active and, without `hidden`, hides its tracks, with those inside its folders now, also in
+  a transaction after a `track.add` or `track.move` (#1539). A configuration keeps the ids of removed
   tracks, applied too, so undoing the removal brings the track back into it, hidden: after undo and redo steps,
   `trackVisibility.changed` goes out when what `trackVisibility.get` returns changed, and the mixers that follow sync
   in any case (#1475).
@@ -40,8 +45,8 @@ Like the mixer views, it is a setting, not an undo step, saved with the project 
 `trackVisibility.get` returns, and refused by `trackVisibility.set`; names of configurations are unique and not empty. A
 loaded project's values are checked the same way (`sanitizeTrackVisibility`): an unknown `sync`, a configuration name
 that is empty or there twice, an active name that isn't there and ids that aren't tracks are dropped, and hidden folders
-come in with the tracks inside them (#906); the mixers that follow then hide those tracks' channels, and a mixer without
-a view gets one only for channels to hide (#1366).
+hide the tracks inside them (#906); the mixers that follow then hide those tracks' channels, and a mixer without a view
+gets one only for channels to hide (#1366).
 
 ## The UI
 
@@ -96,9 +101,13 @@ dividing the track list, whose upper part the sync leaves alone.
   are gone, saved and loaded with the configurations; a hidden folder hiding the tracks inside it in the mixers that
   follow both ways, showing the folder's group channel again showing them, and configurations keeping them, with a track
   that joined the folder later, not modified then, a track that joins a hidden folder later by `track.add` or
-  `track.move` hidden right away with its channel, also after a `mixer.set` and an undo, and an applied configuration
-  keeping a removed track for undo, announced and with its channel hidden when the undo brings it back, and a track
-  that an undo step puts back into a folder hidden since hidden with it (#1475); the values from a file checked as the command checks them, the
+  `track.move` hidden right away with its channel, also after a `mixer.set`, and an applied configuration keeping a
+  removed track for undo, announced and with its channel hidden when the undo brings it back, and a track that an undo
+  step puts back into a folder hidden since hidden with it (#1475); a track that leaves a hidden folder by
+  `track.move`, undo or redo showing again and leaving a configuration that isn't active, one hidden on its own staying
+  hidden (#1533); a hidden folder's new group channel hidden in the lower zone's mixer, a removed hidden track
+  announced, and a configuration applied in a transaction after a `track.add` into its folder (#1539); the values from
+  a file checked as the command checks them, the
   lower zone's mixer hiding the channels of the tracks that joined from their folders; the lower zone's mixer and the
   synced window following both ways, busses and tracks without a channel keeping their state, one window at a time;
   configurations added, applied, modified, updated, renamed and deleted, names checked, gone tracks left out.

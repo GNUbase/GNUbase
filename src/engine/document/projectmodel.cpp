@@ -3596,7 +3596,7 @@ namespace gnubase::engine
 						return result;
 					syncSharedParts(before.midiParts, m_project, context);
 					midi::adoptPatterns(m_project, context);
-					followTrackFolders(m_project, context);
+					followTrackFolders(m_project, context, before);
 				}
 				catch (...)
 				{
