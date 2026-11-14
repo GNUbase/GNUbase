@@ -297,6 +297,31 @@ TEST_CASE("the percussion synths sound, decay and render the same in any block s
 	CHECK(peak(held, 8000) < 0.01);
 }
 
+TEST_CASE("a synth voice keeps its pad's tuning, tone and noise from its note on", "[unit]")
+{
+	// One kick as it sounds, then the same with the pad's Tune, Tone and Noise changed while it sounds.
+	std::vector<float> renders[2];
+	for (const bool change : {false, true})
+	{
+		DrumMachine drums;
+		Bench bench(drums);
+		bench.set(36, DrumMachine::Instrument, static_cast<double>(Layer::Kick));
+		bench.set(36, DrumMachine::Decay, 100.0);
+		bench.add(note(0, true, 36));
+		renders[change ? 1 : 0] = bench.left(10);
+		if (change)
+		{
+			bench.set(36, DrumMachine::Tune, 12.0);
+			bench.set(36, DrumMachine::Tone, 100.0);
+			bench.set(36, DrumMachine::Noise, 100.0);
+		}
+		const std::vector<float> rest = bench.left(40);
+		renders[change ? 1 : 0].insert(renders[change ? 1 : 0].end(), rest.begin(), rest.end());
+	}
+	CHECK(peak(renders[0], 640) > 0.01);
+	CHECK(renders[0] == renders[1]);
+}
+
 TEST_CASE("the drum machine's delay and reverb play what the pads send them", "[unit]")
 {
 	DrumMachine drums;
@@ -468,6 +493,13 @@ TEST_CASE("drum.loadPad, drum.setPad, drum.copyPad and drum.resetPad change the 
 	Client& client = session.client;
 	const auto track = run(client, "drum.create").at("track").at("id").get<ObjectId>();
 
+	// A copy of a synth pad without a name keeps the name it went by, not the General MIDI sound's of its new note.
+	Json copied = run(client, "drum.copyPad", {{"track", track}, {"pad", 36}, {"to", 40}}).at("channel");
+	CHECK(padOf(copied, 40).at("name") == "Bass Drum 1");
+	CHECK(padOf(copied, 36).is_null());
+	copied = run(client, "drum.copyPad", {{"track", track}, {"pad", 41}, {"to", 40}}).at("channel"); // an empty pad
+	CHECK(padOf(copied, 40).is_null());
+
 	// A sample onto the kick's pad: its settings go, the sample plays from its start to its end.
 	run(client, "parameter.set",
 		{{"channel", run(client, "project.get").at("channels").back().at("id")},
@@ -546,6 +578,16 @@ TEST_CASE("a drum track's patterns have a lane per pad, named after it", "[integ
 	CHECK(lanes().at(0).at("name") == "tick");
 	run(client, "drum.resetPad", {{"track", track}, {"pad", 36}});
 	CHECK(lanes().at(0).at("name") == "Bass Drum 1");
+
+	// A track preset renames the lanes of the pads it replaces.
+	const auto kit = run(client, "drum.create").at("track").at("id").get<ObjectId>();
+	run(client, "drum.loadPad", {{"track", kit}, {"pad", 36}, {"clip", session.clip}});
+	run(client, "drum.setPad", {{"track", kit}, {"pad", 38}, {"name", "Snap"}});
+	run(client, "track.savePreset", {{"tracks", Json::array({kit})}, {"name", "Kit"}});
+	run(client, "track.loadPreset", {{"tracks", Json::array({track})}, {"name", "Kit"}});
+	CHECK(lanes().at(0).at("name") == "tick");
+	CHECK(lanes().at(1).at("name") == "Snap");
+	CHECK(lanes().at(2).at("name") == "Hand Clap");
 }
 
 TEST_CASE("a drum track's pads are saved with the project, and a missing clip leaves its pad empty", "[integration]")
@@ -739,10 +781,13 @@ TEST_CASE(
 	run(client, "project.save", {{"path", file.u8string()}});
 	run(client, "project.new");
 	const Json imported = run(client, "track.import", {{"path", file.u8string()}});
-	const fs::path copy = playsTick(channelOf(imported.at("tracks").at(0).get<ObjectId>()));
+	playsTick(channelOf(imported.at("tracks").at(0).get<ObjectId>()));
 
-	// A missing file empties the pads that played it.
-	fs::remove(copy);
+	// Missing files empty the pads that played them: the tracks from the preset play the copy of the sample that the
+	// preset has in it.
+	const Json files = run(client, "project.get").at("media");
+	for (const Json& media : files)
+		fs::remove(fs::u8path(media.at("path").get<std::string>()));
 	CHECK(!run(client, "media.removeMissing").at("clips").empty());
 	const Json project = run(client, "project.get");
 	for (const Json& channel : project.at("channels"))

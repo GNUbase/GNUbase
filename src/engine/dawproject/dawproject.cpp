@@ -269,6 +269,26 @@ namespace gnubase::engine
 				return text;
 			}
 
+			// Whether target has the entry's content already: its size and CRC-32. Extracting over such a file would
+			// fail or cut it short under a reader that plays it, as when the same track preset loads again (#1503).
+			bool holds(const std::string& name, const std::string& target)
+			{
+				mz_zip_archive_file_stat stat{};
+				std::error_code error;
+				if (mz_zip_reader_file_stat(&m_zip, locate(name), &stat) == MZ_FALSE ||
+					std::filesystem::file_size(std::filesystem::u8path(target), error) != stat.m_uncomp_size || error)
+					return false;
+				const detail::File file = detail::openFile(target, "rb");
+				if (!file)
+					return false;
+				mz_ulong crc = MZ_CRC32_INIT;
+				std::vector<unsigned char> buffer(size_t{1} << 16);
+				size_t read = 0;
+				while ((read = std::fread(buffer.data(), 1, buffer.size(), file.get())) > 0)
+					crc = mz_crc32(crc, buffer.data(), read);
+				return std::ferror(file.get()) == 0 && crc == stat.m_crc32;
+			}
+
 			void extract(const std::string& name, const std::string& target)
 			{
 				const mz_uint index = locate(name);
@@ -1192,7 +1212,8 @@ namespace gnubase::engine
 					target = freeTarget(m_mediaFolder / inside);
 					std::error_code error;
 					std::filesystem::create_directories(target.parent_path(), error);
-					m_zip.extract(xmlPath, target.u8string());
+					if (!m_zip.holds(xmlPath, target.u8string()))
+						m_zip.extract(xmlPath, target.u8string());
 					if (const auto identity = files::fileIdentity(target))
 						m_extracted.insert(*identity);
 				}

@@ -17,14 +17,14 @@ automation work on it as on any instrument track. The drum machine is a GNUbase 
 | `drum.create` | A new drum track, named `name` or Drum 01, Drum 02 and so on, placed and routed with `parent`, `index` and `output` as `track.add` does; its pads start with the default kit (below), or all off with `kit` false | pp. 145-146 |
 | `drum.loadPad` | Loads a sample onto pad `pad`: a pool clip (`clip`), an audio event's clip (`event`) or an audio file (`path`), which goes into the pool in the same undo step, from `start` to `end` in clip frames. The pad's instrument becomes Sample, its other settings go back to their defaults unless `keepSettings` (Apply Hot Swap) | pp. 941, 944 |
 | `drum.setPad` | Rename Pad: an empty `name` goes back to the sample's clip's name | p. 943 |
-| `drum.copyPad` | Copy Pad and Paste Pad onto `to`: name, sample and settings; with `move` Cut Pad | p. 943 |
+| `drum.copyPad` | Copy Pad and Paste Pad onto `to`: name, sample and settings; with `move` Cut Pad. A pad that plays something and goes by the General MIDI sound of its note keeps that name in the copy | p. 943 |
 | `drum.resetPad` | Reset Pad, or Reset All Pads without `pad`: no name, no sample, every setting at its default | p. 943 |
 
 Each is one undo step and emits `channel.changed`. Another instrument (`channel.set`, a track preset's) drops the
 pads. The pads' clips count as used in the pool (`pool.get`, `pool.removeUnused`, `clip.remove` refuses them,
 `media.removeMissing` empties their pads) and in backups, as a sampler's do; imported and exported tracks and track
 presets take them along (`track.loadPreset` and `track.addFromPreset` bring the preset's clips into the pool, as
-`track.import` does), and they are saved with the channel in `gnubase.json`, where a clip that isn't in the pool when
+`track.import` does, unless it has the same clips already; a preset has the samples' files in it), and they are saved with the channel in `gnubase.json`, where a clip that isn't in the pool when
 the project loads is dropped.
 
 **The default kit** of `drum.create` (p. 942) is made of the percussion synths on the General MIDI notes that new drum
@@ -33,8 +33,8 @@ or a name: kick 36, snare 38, clap 39, closed, pedal and open hi-hats 42, 44 and
 and 50, crash 49 and cowbell 56.
 
 **Synchronization with the pattern editor** (p. 938): a new drum pattern on a drum track (`pattern.add`) has a lane
-per pad that plays, named after it; renaming, loading, copying or resetting a pad renames the lanes that play it in
-the track's drum patterns (`pattern.changed`). A pad's name is its own, else its sample's clip's, else the General
+per pad that plays, named after it; renaming, loading, copying or resetting a pad, and loading a track preset
+(`track.loadPreset`), renames the lanes that play it in the track's drum patterns (`pattern.changed`). A pad's name is its own, else its sample's clip's, else the General
 MIDI sound's of its note.
 
 The drum machine's settings are its parameters (`processor.list`, `parameter.set`, automatable like any
@@ -120,7 +120,8 @@ parameters with their quick controls, Learn CC and ranges (pp. 978-980), the poo
 reverse; level, pan, velocity, mute and solo; exclusive groups and the gate; every synth sounding, decaying, held and
 the same in any block size; the delay and reverb sends and Bypass All Effects; its parameters in `processor.list`),
 a pad parameter ignoring the events of its removed lane, the commands, the default kit and the names it goes by
-(`processor.list`'s `padNames`), pattern lanes that follow the pads, saving and loading, another instrument dropping
+(`processor.list`'s `padNames`), a copy keeping the name a synth pad went by, a synth voice keeping its tuning, tone
+and noise from its note on, pattern lanes that follow the pads and track presets, saving and loading, another instrument dropping
 the pads, the pads' clips in the pool (`pool.removeUnused`, `media.removeMissing`), track presets loaded onto a drum
 track and onto another instrument's, tracks added from a preset or imported from another project with their pads'
 clips, automation of a pad's parameter and the values set without it, and offline renders of a drum track against the

@@ -8,6 +8,7 @@
 #include "engine/dawproject/dawproject.h"
 #include "engine/document/channelsettings.h"
 #include "engine/document/document.h"
+#include "engine/document/drumtrack.h"
 #include "engine/document/projectmodel.h"
 #include "engine/document/serialize.h"
 #include "engine/document/trackversions.h"
@@ -205,7 +206,9 @@ namespace gnubase::engine
 			// The media files that were added, not the project's that the copies share.
 			const std::vector<ObjectId>& addedMedia() const { return m_addedMedia; }
 
-			// The copy of a clip, with its media file: a file the project has already is used as it is.
+			// The copy of a clip, with its media file: a file the project has already is used as it is, and so is a
+			// clip of the project that is the same but for its id, folder and region ids, so that loading a preset
+			// again adds no copies of its clips to the pool.
 			ObjectId clip(ObjectId id)
 			{
 				if (const auto found = m_clips.find(id); found != m_clips.end())
@@ -214,9 +217,12 @@ namespace gnubase::engine
 				if (original == m_from.clips.end())
 					return 0;
 				Clip clip = original->second;
+				clip.media = media(clip.media);
+				for (const auto& [mine, other] : m_to.clips)
+					if (sameClip(clip, other))
+						return m_clips[id] = mine;
 				clip.id = m_to.newId();
 				clip.folder = 0;
-				clip.media = media(clip.media);
 				for (ClipRegion& region : clip.regions)
 					region.id = m_to.newId();
 				m_clips[id] = clip.id;
@@ -225,6 +231,17 @@ namespace gnubase::engine
 			}
 
 		private:
+			static bool sameClip(Clip a, Clip b)
+			{
+				a.id = b.id;
+				a.folder = b.folder;
+				if (a.regions.size() != b.regions.size())
+					return false;
+				for (size_t i = 0; i < a.regions.size(); ++i)
+					a.regions[i].id = b.regions[i].id;
+				return a == b;
+			}
+
 			ObjectId copyChannel(ObjectId source, ObjectId track)
 			{
 				const Channel& original = m_from.channels.at(source);
@@ -975,11 +992,14 @@ namespace gnubase::engine
 			}
 			channel.instrument = sound.instrument;
 			channel.instrumentParameters = sound.instrumentParameters;
+			if (sound.instrument == "sampler") // its sample, as copies take it (#1503)
+				channel.sample = copier.clip(sound.sample);
 			if (sound.instrument == "drumMachine") // the pads with their names and samples, as copies take them (#1361)
 			{
 				channel.pads = sound.pads;
 				for (auto& [pad, drum] : channel.pads)
 					drum.sample = copier.clip(drum.sample);
+				syncDrumLanes(project, channel, context);
 			}
 			if (channel.format != ChannelFormat::None)
 			{
@@ -1020,7 +1040,8 @@ namespace gnubase::engine
 				"device, the MIDI channel (channel.set midiChannel; a MIDI track's preset keeps both its channel and "
 				"its patch, of which the reference manual's keeps one, p. 238), the instrument with its parameters "
 				"and a drum machine's pads, and the color. Presets are DAWproject files in the folder Track "
-				"Presets in the user settings' folder. Changes nothing in the project. Returns the preset's file.",
+				"Presets in the user settings' folder, with the media files of a sampler's and drum pads' samples in "
+				"them. Changes nothing in the project. Returns the preset's file.",
 				objectSchema({{"tracks", idsSchema}, {"name", stringSchema}}, {"tracks", "name"}), fileResult, false},
 			[&model, &engine](CommandContext& context)
 			{
@@ -1039,7 +1060,7 @@ namespace gnubase::engine
 							" tracks have no track presets: audio, instrument, MIDI, group and effect tracks have");
 				}
 				const fs::path file = presetFile(engine, name);
-				save(tracksFile(project, tracks, {false, true, false}), file, false);
+				save(tracksFile(project, tracks, {false, true, false}), file, true); // with the samples (#1503)
 				return Json{{"file", file.u8string()}};
 			});
 		engine.registerCommand(
@@ -1091,8 +1112,10 @@ namespace gnubase::engine
 				"replaced by copies of the preset's, the automation of the plugins they had goes with them. The "
 				"tracks must be as many as the preset's, and of the same types in the same order: the first of tracks "
 				"gets the sound of the preset's top track, and so on. Faders above the project's fader top come down "
-				"to it. A drum machine's pads come with their names and samples, whose clips come into the pool. "
-				"Emits track.changed, channel.changed, plugin.removed, plugin.added, media.added and clip.added.",
+				"to it. A sampler's sample and a drum machine's pads with their names and samples come along, their "
+				"clips into the pool unless it has the same ones, and the lanes of a drum track's patterns take the "
+				"pads' names. Emits track.changed, channel.changed, plugin.removed, plugin.added, media.added, "
+				"clip.added and pattern.changed.",
 				objectSchema({{"tracks", idsSchema}, {"name", stringSchema}}, {"tracks", "name"}), tracksResult, false},
 			"Load track preset",
 			[&model, &engine](Project& project, CommandContext& context)
@@ -1114,8 +1137,7 @@ namespace gnubase::engine
 						"track " + std::to_string(tracks[i]) + " is not of the type " + trackTypeName(type) +
 							" that the preset has there: presets go to tracks of their types, in their order");
 				}
-				// The clips the preset's drum pads play come into the pool, their media files unless the project has
-				// them.
+				// The clips the preset's sampler and drum pads play come into the pool, unless the project has them.
 				const ObjectId firstNew = project.nextId;
 				TrackCopier copier(preset, project, {}, 0, nullptr);
 				for (size_t i = 0; i < tracks.size(); ++i)
