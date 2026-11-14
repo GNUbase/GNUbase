@@ -558,6 +558,47 @@ TEST_CASE("the drumstick's drag to the left deletes only the note clicked, not i
 	CHECK(f.partNotes()[1].at("position") == 4 * g_sixteenth);
 }
 
+TEST_CASE("the drumstick's drag changes the velocity, with Alt the pitch, with Shift the position", "[ui]")
+{
+	// Modifying note values while inserting notes (p. 1241).
+	Fixture f;
+	f.scroll(36);
+	f.click(of(".key-tool[key-tool=draw]"));
+	const double velocity = f.app.call("editor.get", {{"editor", "window"}}).at("insertVelocity").get<double>();
+	const auto up = [&](const ui::Target& target, int dp)
+	{
+		ui::Target moved = target;
+		moved.point->y -= dp;
+		return moved;
+	};
+	// Up: a louder note, one step of 127 per dp, still one note of its sound.
+	f.app.ui().drag(f.window, f.at(0.3, 36), up(f.at(0.3, 36), 20));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 1; }));
+	CHECK(f.partNotes()[0].at("pitch") == 36);
+	CHECK(std::lround(f.partNotes()[0].at("velocity").get<double>() * 127) == std::lround(velocity * 127) + 20);
+	// With Alt down a row: the next sound in the list, at the insert velocity.
+	f.app.ui().drag(f.window, f.at(4.3, 36), f.at(4.3, 37), {"alt"});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 2; }));
+	CHECK(f.partNotes()[1].at("pitch") == 37);
+	CHECK(f.partNotes()[1].at("position") == 4 * g_sixteenth);
+	CHECK(std::lround(f.partNotes()[1].at("velocity").get<double>() * 127) == std::lround(velocity * 127));
+	// With Shift to the right: one note, where the mouse is let go, not a row of them.
+	f.app.ui().drag(f.window, f.at(8.3, 36), f.at(11.3, 36), {"shift"});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 3; }));
+	CHECK(f.partNotes()[2].at("position") == 11 * g_sixteenth);
+	CHECK(f.partNotes()[2].at("pitch") == 36);
+	// With Snap off (Ctrl/Cmd) and Show Note Length to the right: one longer note.
+	f.click(of(".key-input[setting=showNoteLength]"));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-note").empty() && f.elements(".key-note").size() == 3; }));
+	f.app.ui().drag(f.window, f.at(12.3, 36), f.at(15.3, 36), {"ctrl"});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 4; }));
+	CHECK(f.partNotes()[3].at("length").get<int64_t>() > 2 * g_sixteenth);
+}
+
 TEST_CASE("the object selection tool's double click and drag inserts and deletes several notes of a sound", "[ui]")
 {
 	Fixture f;

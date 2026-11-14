@@ -1023,7 +1023,7 @@ namespace gnubase::engine
 			int channel = sequence.inputChannel >= 0 ? sequence.inputChannel : event.channel % 16;
 			bool plays = true;
 			uint8_t pitch = 0;
-			if (sequence.drumInput.size() == static_cast<size_t>(2 * g_drumSounds))
+			if (sequence.drumInput.size() == 2 * static_cast<size_t>(g_drumSounds))
 			{
 				// The I-notes' sounds, or with drumSounds the sounds themselves (the second 128).
 				const LiveDrumNote& drum = sequence.drumInput[(event.drumSound ? g_drumSounds : 0) + (event.key % 128)];

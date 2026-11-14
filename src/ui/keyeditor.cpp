@@ -912,13 +912,14 @@ namespace gnubase::ui
 			m_binding.send("history.transaction", {{"description", description}, {"commands", std::move(commands)}});
 	}
 
-	void KeyEditor::addNotes(const Part& part, const std::vector<int64_t>& starts, int64_t length, int pitch)
+	void KeyEditor::addNotes(
+		const Part& part, const std::vector<int64_t>& starts, int64_t length, int pitch, std::optional<double> velocity)
 	{
-		const double velocity = m_view.value("insertVelocity", 100.0 / g_maxVelocity);
+		const double inserted = velocity.value_or(m_view.value("insertVelocity", 100.0 / g_maxVelocity));
 		Json notes = Json::array();
 		for (const int64_t start : starts)
 			notes.push_back({{"position", start - part.start}, {"length", std::max<int64_t>(length, 1)},
-				{"pitch", pitch}, {"velocity", velocity}});
+				{"pitch", pitch}, {"velocity", inserted}});
 		m_binding.send("note.add", {{"part", part.id}, {"notes", notes}});
 	}
 
@@ -1195,6 +1196,7 @@ namespace gnubase::ui
 		const bool alt = event.GetParameter("alt_key", 0) != 0;
 		m_pressedAt = at(event);
 		m_pressedX = event.GetParameter("mouse_x", 0.0F);
+		m_pressedY = event.GetParameter("mouse_y", 0.0F);
 		m_snapOff = ctrl;
 		m_gesture = Gesture::None;
 		const Note* pressed = noteOf(target);
@@ -1367,6 +1369,7 @@ namespace gnubase::ui
 		if (partAt(start) == nullptr)
 			return;
 		m_pressedAt.first = static_cast<double>(start);
+		m_drawnFrom = ticks;
 		m_gesture = Gesture::Draw;
 		Rml::Element* notes = root->QuerySelector(".key-editor-notes");
 		Rml::ElementPtr drawn = root->GetOwnerDocument()->CreateElement("div");
@@ -1377,6 +1380,34 @@ namespace gnubase::ui
 		m_drawnLength = lengthQuantize(m_pressedAt.second);
 		place(*added, start, m_drawnLength, m_pressedAt.second);
 		m_drawn = added->GetObserverPtr();
+	}
+
+	KeyEditor::DrumDraw KeyEditor::drumDraw(const Rml::Event& event) const
+	{
+		const auto [ticks, pitch] = at(event);
+		const Rml::Context* context = m_root.get()->GetContext();
+		const float ratio = context != nullptr ? context->GetDensityIndependentPixelRatio() : 1.0F;
+		DrumDraw draw{std::llround(m_pressedAt.first), lengthQuantize(m_pressedAt.second), m_pressedAt.second,
+			m_view.value("insertVelocity", 100.0 / g_maxVelocity)};
+		// Up or down changes the velocity, a step of 127 per dp; with Alt the pitch instead.
+		if (event.GetParameter("alt_key", 0) != 0)
+			draw.pitch = pitch;
+		else
+			draw.velocity = static_cast<double>(std::clamp<int64_t>(std::lround(draw.velocity * g_maxVelocity) +
+									std::lround((m_pressedY - event.GetParameter("mouse_y", 0.0F)) / ratio),
+								1, static_cast<int64_t>(g_maxVelocity))) /
+				g_maxVelocity;
+		// With Shift the note moves along; with Snap off and Show Note Length a drag changes its length; else it
+		// repeats at every step of the grid it was dragged over.
+		const double moved = ticks - m_drawnFrom;
+		if (event.GetParameter("shift_key", 0) != 0)
+			draw.start += snap(moved, m_snapOff);
+		else if (m_snapOff && !diamonds())
+			draw.length = std::max<int64_t>(draw.length + std::llround(moved), 1);
+		else
+			draw.repeats = std::max<int64_t>(
+				1, static_cast<int64_t>(std::ceil((ticks - m_pressedAt.first) / static_cast<double>(grid()))));
+		return draw;
 	}
 
 	// How far a move or resize goes: the pressed note's start, or its end, snapped where the mouse took it.
@@ -1403,7 +1434,12 @@ namespace gnubase::ui
 			return;
 		if (m_gesture == Gesture::Draw)
 		{
-			if (Rml::Element* drawn = m_drawn.get(); drawn != nullptr && !m_drum)
+			if (Rml::Element* drawn = m_drawn.get(); drawn != nullptr && m_drum)
+			{
+				const DrumDraw draw = drumDraw(event);
+				place(*drawn, draw.start, draw.length, draw.pitch);
+			}
+			else if (drawn != nullptr)
 			{
 				const int64_t step = lengthQuantize(m_pressedAt.second);
 				const auto steps = std::max<int64_t>(
@@ -1498,24 +1534,25 @@ namespace gnubase::ui
 			Rml::Element* drawn = m_drawn.get();
 			if (drawn != nullptr && drawn->GetParentNode() != nullptr)
 				drawn->GetParentNode()->RemoveChild(drawn);
+			if (m_drum)
+			{
+				// The drumstick repeats notes at every step of the grid it was dragged over (p. 1241).
+				const DrumDraw draw = drumDraw(event);
+				const int64_t step = grid();
+				const Part* part = partAt(draw.start);
+				std::vector<int64_t> starts;
+				for (int64_t i = 0; part != nullptr && i < draw.repeats && draw.start + (i * step) < part->end; ++i)
+					starts.push_back(draw.start + (i * step));
+				if (part != nullptr)
+					addNotes(*part, starts, draw.length, draw.pitch, draw.velocity);
+				return;
+			}
 			const auto start = std::llround(m_pressedAt.first);
 			const int64_t length = lengthQuantize(m_pressedAt.second);
-			// The drumstick repeats notes at every step of the grid it was dragged over (p. 1241).
-			const int64_t step = m_drum ? grid() : length;
 			const auto steps = std::max<int64_t>(
-				1, static_cast<int64_t>(std::ceil((ticks - m_pressedAt.first) / static_cast<double>(step))));
-			const Part* part = partAt(start);
-			if (part != nullptr && m_drum)
-			{
-				std::vector<int64_t> starts;
-				for (int64_t i = 0; i < steps && start + (i * step) < part->end; ++i)
-					starts.push_back(start + (i * step));
-				addNotes(*part, starts, length, m_pressedAt.second);
-			}
-			else if (part != nullptr)
-			{
-				addNotes(*part, {start}, steps * step, m_pressedAt.second);
-			}
+				1, static_cast<int64_t>(std::ceil((ticks - m_pressedAt.first) / static_cast<double>(length))));
+			if (const Part* part = partAt(start))
+				addNotes(*part, {start}, steps * length, m_pressedAt.second);
 			return;
 		}
 		if (!m_pressed)
@@ -1610,6 +1647,7 @@ namespace gnubase::ui
 		if (m_drum)
 		{
 			m_pressedAt.second = pitch;
+			m_pressedY = event.GetParameter("mouse_y", 0.0F);
 			m_snapOff = ctrl;
 			startDraw(ticks); // the release inserts, as the drumstick's does
 			return;

@@ -132,6 +132,17 @@ namespace gnubase::ui
 		Gesture edgeGesture(Rml::Element* target, const Rml::Event& event) const;
 		// Starts drawing a note at the snapped position under the press, as the draw tool's press does.
 		void startDraw(double ticks);
+		// The drumstick's note as a drag changes it (p. 1241): where it starts, its length, pitch and velocity, and how
+		// many times it repeats at the grid's steps.
+		struct DrumDraw
+		{
+			int64_t start = 0;
+			int64_t length = 0;
+			int pitch = 0;
+			double velocity = 0.0;
+			int64_t repeats = 1;
+		};
+		DrumDraw drumDraw(const Rml::Event& event) const;
 		// Plays the pitch on the active track's instrument, as a pressed key of the keyboard does (p. 1204), after
 		// ending the pitch played before; without one only ends it.
 		void sound(std::optional<int> pitch);
@@ -178,7 +189,9 @@ namespace gnubase::ui
 		// Sends note.* commands, each {command, parameters}: one alone, several in a history.transaction.
 		void edit(const std::string& description, engine::Json commands);
 		// Notes of the pitch at the starts, each of the length.
-		void addNotes(const Part& part, const std::vector<int64_t>& starts, int64_t length, int pitch);
+		// At the view's insert velocity unless one is given.
+		void addNotes(const Part& part, const std::vector<int64_t>& starts, int64_t length, int pitch,
+			std::optional<double> velocity = std::nullopt);
 		void transpose(int semitones);
 		void editInfo(const std::string& field, const std::string& text);
 
@@ -216,6 +229,7 @@ namespace gnubase::ui
 		bool m_zoomDrag = false;                // the drag went past the threshold
 		Rml::ObserverPtr<Rml::Element> m_drawn; // the note a draw drags out
 		int64_t m_drawnLength = 0;              // its length, at m_pressedAt
+		double m_drawnFrom = 0.0;               // the mouse's ticks at the press that started it
 		std::optional<std::pair<uint64_t, int>> m_sounding; // the channel and pitch of the key pressed
 		Rml::ObserverPtr<Rml::Element> m_document;          // ends the key's pitch on a release anywhere in it
 		// the length quantize menu, the line tool's menu, the toolbox, then the drum editor's Map menu

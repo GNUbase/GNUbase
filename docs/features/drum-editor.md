@@ -98,6 +98,9 @@ content is `drum`. It is the key editor ([key-editor.md](key-editor.md)) with th
   close flams under the mouse. The object selection tool's double click does the same: in the empty grid it inserts,
   with a drag to the right at every step of the grid; on a note it deletes it, with a drag to the right and Snap on
   (Ctrl/Cmd not held) the sound's notes up to the release. A move goes from row to row in the list's order.
+  While a drag inserts (p. 1241), up or down changes the new notes' velocity by one step of 127 per dp, with Alt their
+  pitch to the sound under the mouse; with Shift a drag moves the note along the grid instead of repeating it; with
+  Snap off (Ctrl/Cmd at the press) and Show Note Length it changes the note's length.
 - **Map menu** (pp. 1234, 1236, 1239). Choosing a map, or No Drum Map, sends `track.set` for the active track. New Map
   and New Copy add a map that becomes the track's, in one undo step (`drumMap.add track`); Remove removes the track's
   map; Drum Map Setup... opens the setup.
@@ -123,8 +126,7 @@ content is `drum`. It is the key editor ([key-editor.md](key-editor.md)) with th
 Outputs per sound in playback and MIDI thru (the sounds play on the track's output), so also the setup's Output
 pop-up and auditioning there; name lists without a drum map and drum sound names in the key editor (p. 1239); Pitch
 Visibility's Show Drum Sounds with Events and Show Drum Sounds in Use by Instrument; the grid type Use Snap from Drum
-Map and snapping to the sound's snap; the drumstick's modifier keys for velocity, pitch, length and position; Solo
-Instrument; showing drum notes in the project window's parts; Create Drum Map from Instrument (p. 1238); reordering
+Map and snapping to the sound's snap; Solo Instrument; showing drum notes in the project window's parts; Create Drum Map from Instrument (p. 1238); reordering
 the list by dragging; the score settings (Display Note, Noteheads, Voice, Instrument Type, Technique); importing the
 reference's own drum map files.
 
@@ -145,7 +147,8 @@ reference's own drum map files.
   Visibility's reverse order, auditioning a sound through the map, also one whose I-note an earlier sound has, Show
   Note Length's boxes, which the object selection tool and the drumstick resize; the drumstick's click deleting only
   the note clicked, a drag deleting when released outside the editor, and a drag to the left not deleting the
-  clicked note's doubles; the object selection tool's double click and drag inserting and deleting several
+  clicked note's doubles; a drag changing the velocity, with Alt the pitch, with Shift the position and with Snap off
+  and Show Note Length the length; the object selection tool's double click and drag inserting and deleting several
   notes; the Drum Map Setup renaming a map, changing each setting of a sound, refusing a wrong snap, adding and
   removing maps, following a map added elsewhere, and Save... and Load... through the file dialogs; the MIDI menu's
   Drum Map Setup and O-Note Conversion.
