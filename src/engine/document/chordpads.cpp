@@ -1162,6 +1162,131 @@ namespace gnubase::engine
 			}
 			return Json{{"suggestions", suggestions}};
 		}
+		// chordPads.set: the settings the parameters give.
+		void applyPadSettings(Project& project, const Json& parameters)
+		{
+			ChordPads& pads = project.chordPads;
+			if (parameters.contains("rootKey"))
+			{
+				const int key = parameters.at("rootKey").get<int>();
+				require(key >= 0 && key < 12, "rootKey must be 0 to 11");
+				if (parameters.value("transposePads", false))
+				{
+					int step = pitchClass(key - pads.rootKey);
+					step = step > 6 ? step - 12 : step;
+					for (ChordPad& pad : pads.pads)
+						if (!pad.chord.empty() && !pad.locked)
+							pad.chord = midi::chordName(chordpads::transposed(chordOf(pad.chord), step));
+				}
+				pads.rootKey = key;
+			}
+			if (parameters.contains("padCount"))
+			{
+				const int count = parameters.at("padCount").get<int>();
+				require(count >= 1 && count <= g_maxPads, "padCount must be 1 to 32");
+				pads.pads.resize(static_cast<size_t>(count));
+				if (pads.reference >= count)
+					pads.reference = -1;
+			}
+			if (parameters.contains("player"))
+			{
+				pads.player = parameters.at("player").get<int>();
+				require(pads.player >= 0 && pads.player < static_cast<int>(pads.players.size()),
+					"no chord pads player " + std::to_string(pads.player));
+			}
+			if (parameters.contains("octaveOffset"))
+			{
+				ChordPlayer& player = pads.players.at(static_cast<size_t>(pads.player));
+				require(player.library == "basic", "the octave offset is a basic player's");
+				player.octaveOffset = parameters.at("octaveOffset").get<int>();
+				require(player.octaveOffset >= -3 && player.octaveOffset <= 3, "octaveOffset must be -3 to 3");
+			}
+			pads.velocity = parameters.value("velocity", pads.velocity);
+			require(pads.velocity >= 1 && pads.velocity <= 127, "velocity must be 1 to 127");
+			pads.remote = parameters.value("remote", pads.remote);
+			pads.remoteStart = parameters.value("remoteStart", pads.remoteStart);
+			pads.remoteEnd = parameters.value("remoteEnd", pads.remoteEnd);
+			require(pads.remoteStart >= 0 && pads.remoteEnd <= 127 && pads.remoteStart <= pads.remoteEnd,
+				"the remote keys must be MIDI notes, remoteStart up to remoteEnd");
+			pads.stepInput = parameters.value("stepInput", pads.stepInput);
+			pads.moveInsert = parameters.value("moveInsert", pads.moveInsert);
+			pads.outputMode = parameters.value("outputMode", pads.outputMode);
+			pads.latch = parameters.value("latch", pads.latch);
+			pads.overlaps = parameters.value("overlaps", pads.overlaps);
+			pads.filterNotes = parameters.value("filterNotes", pads.filterNotes);
+			pads.modifiers = parameters.value("modifiers", pads.modifiers);
+			if (parameters.contains("modifierKeys"))
+				for (size_t i = 0; i < g_modifierNames.size(); ++i)
+					if (const Json& keys = parameters.at("modifierKeys"); keys.contains(g_modifierNames.at(i)))
+					{
+						const int key = keys.at(g_modifierNames.at(i)).get<int>();
+						require(key >= 0 && key <= 127, "modifierKeys must be MIDI notes, 0 to 127");
+						pads.modifierKeys.at(i) = key;
+					}
+			pads.remotePort = parameters.value("remotePort", pads.remotePort);
+			pads.snapPlayback = parameters.value("snapPlayback", pads.snapPlayback);
+			pads.mode = parameters.value("mode", pads.mode);
+			pads.velocityFromKeyboard = parameters.value("velocityFromKeyboard", pads.velocityFromKeyboard);
+			pads.flats = parameters.value("flats", pads.flats);
+			readFive(pads.sectionKeys, parameters.value("sectionKeys", Json()), -1, 127, "sectionKeys");
+			readFive(pads.subsectionKeys, parameters.value("subsectionKeys", Json()), -1, 127, "subsectionKeys");
+			readFive(
+				pads.subsectionSections, parameters.value("subsectionSections", Json()), 0, 4, "subsectionSections");
+			readFive(
+				pads.subsectionOffsets, parameters.value("subsectionOffsets", Json()), -48, 48, "subsectionOffsets");
+			pads.sectionPlay = parameters.value("sectionPlay", pads.sectionPlay);
+			pads.latchPads = parameters.value("latchPads", pads.latchPads);
+			pads.spread = parameters.value("spread", pads.spread);
+			if (parameters.contains("mutedSections"))
+			{
+				const Json& muted = parameters.at("mutedSections");
+				for (size_t i = 0; i < pads.mutedSections.size() && i < muted.size(); ++i)
+					pads.mutedSections.at(i) = muted[i].get<bool>();
+			}
+			if (parameters.contains("playerKeys"))
+			{
+				std::array<int, 5> keys = {pads.playerKeys.at(0), pads.playerKeys.at(1), pads.playerKeys.at(2), -1, -1};
+				readFive(keys, parameters.at("playerKeys"), -1, 127, "playerKeys");
+				pads.playerKeys = {keys.at(0), keys.at(1), keys.at(2)};
+			}
+			if (parameters.contains("controlSources"))
+			{
+				const Json& sources = parameters.at("controlSources");
+				for (size_t i = 0; i < pads.controlSources.size() && i < sources.size(); ++i)
+					pads.controlSources.at(i) = sources[i].get<std::string>();
+			}
+			if (parameters.contains("controlNumbers"))
+			{
+				std::array<int, 5> numbers = {
+					pads.controlNumbers.at(0), pads.controlNumbers.at(1), pads.controlNumbers.at(2), 0, 0};
+				readFive(numbers, parameters.at("controlNumbers"), 0, 127, "controlNumbers");
+				pads.controlNumbers = {numbers.at(0), numbers.at(1), numbers.at(2)};
+			}
+			if (parameters.contains("stepPosition"))
+			{
+				const time::Ticks end = stepEnd(project);
+				pads.stepPosition = parameters.at("stepPosition").get<time::Ticks>();
+				require(pads.stepPosition >= 0 && pads.stepPosition <= end,
+					"stepPosition must be 0 to " + std::to_string(end) + " ticks");
+			}
+			if (parameters.contains("stepBars"))
+			{
+				// An unsigned number past int64_t's range is as far on as any; the bars are clamped before the
+				// sum, which then can't overflow, and after it, to the bars step input writes at.
+				const Json& given = parameters.at("stepBars");
+				constexpr int64_t most = std::numeric_limits<int64_t>::max();
+				const int64_t requested =
+					given.is_number_unsigned() && given.get<uint64_t>() > static_cast<uint64_t>(most)
+					? most
+					: given.get<int64_t>();
+				const time::SignatureMap& signatures = project.signatures;
+				const int64_t lastBar = lastStepBar(project);
+				const int64_t bars = std::clamp<int64_t>(requested, -lastBar - 1, lastBar + 1);
+				pads.stepPosition = signatures.barStart(
+					std::clamp<int64_t>(signatures.toBarsBeats(pads.stepPosition).bar + bars, 0, lastBar));
+			}
+		}
+
 	}
 
 	void ProjectModel::registerChordPadCommands(Engine& engine)
@@ -1317,128 +1442,7 @@ namespace gnubase::engine
 				padsResult, false},
 			[changed](Project& project, CommandContext& context)
 			{
-				const Json& parameters = context.parameters();
-				ChordPads& pads = project.chordPads;
-				if (parameters.contains("rootKey"))
-				{
-					const int key = parameters.at("rootKey").get<int>();
-					require(key >= 0 && key < 12, "rootKey must be 0 to 11");
-					if (parameters.value("transposePads", false))
-					{
-						int step = pitchClass(key - pads.rootKey);
-						step = step > 6 ? step - 12 : step;
-						for (ChordPad& pad : pads.pads)
-							if (!pad.chord.empty() && !pad.locked)
-								pad.chord = midi::chordName(chordpads::transposed(chordOf(pad.chord), step));
-					}
-					pads.rootKey = key;
-				}
-				if (parameters.contains("padCount"))
-				{
-					const int count = parameters.at("padCount").get<int>();
-					require(count >= 1 && count <= g_maxPads, "padCount must be 1 to 32");
-					pads.pads.resize(static_cast<size_t>(count));
-					if (pads.reference >= count)
-						pads.reference = -1;
-				}
-				if (parameters.contains("player"))
-				{
-					pads.player = parameters.at("player").get<int>();
-					require(pads.player >= 0 && pads.player < static_cast<int>(pads.players.size()),
-						"no chord pads player " + std::to_string(pads.player));
-				}
-				if (parameters.contains("octaveOffset"))
-				{
-					ChordPlayer& player = pads.players.at(static_cast<size_t>(pads.player));
-					require(player.library == "basic", "the octave offset is a basic player's");
-					player.octaveOffset = parameters.at("octaveOffset").get<int>();
-					require(player.octaveOffset >= -3 && player.octaveOffset <= 3, "octaveOffset must be -3 to 3");
-				}
-				pads.velocity = parameters.value("velocity", pads.velocity);
-				require(pads.velocity >= 1 && pads.velocity <= 127, "velocity must be 1 to 127");
-				pads.remote = parameters.value("remote", pads.remote);
-				pads.remoteStart = parameters.value("remoteStart", pads.remoteStart);
-				pads.remoteEnd = parameters.value("remoteEnd", pads.remoteEnd);
-				require(pads.remoteStart >= 0 && pads.remoteEnd <= 127 && pads.remoteStart <= pads.remoteEnd,
-					"the remote keys must be MIDI notes, remoteStart up to remoteEnd");
-				pads.stepInput = parameters.value("stepInput", pads.stepInput);
-				pads.moveInsert = parameters.value("moveInsert", pads.moveInsert);
-				pads.outputMode = parameters.value("outputMode", pads.outputMode);
-				pads.latch = parameters.value("latch", pads.latch);
-				pads.overlaps = parameters.value("overlaps", pads.overlaps);
-				pads.filterNotes = parameters.value("filterNotes", pads.filterNotes);
-				pads.modifiers = parameters.value("modifiers", pads.modifiers);
-				if (parameters.contains("modifierKeys"))
-					for (size_t i = 0; i < g_modifierNames.size(); ++i)
-						if (const Json& keys = parameters.at("modifierKeys"); keys.contains(g_modifierNames.at(i)))
-						{
-							const int key = keys.at(g_modifierNames.at(i)).get<int>();
-							require(key >= 0 && key <= 127, "modifierKeys must be MIDI notes, 0 to 127");
-							pads.modifierKeys.at(i) = key;
-						}
-				pads.remotePort = parameters.value("remotePort", pads.remotePort);
-				pads.snapPlayback = parameters.value("snapPlayback", pads.snapPlayback);
-				pads.mode = parameters.value("mode", pads.mode);
-				pads.velocityFromKeyboard = parameters.value("velocityFromKeyboard", pads.velocityFromKeyboard);
-				pads.flats = parameters.value("flats", pads.flats);
-				readFive(pads.sectionKeys, parameters.value("sectionKeys", Json()), -1, 127, "sectionKeys");
-				readFive(pads.subsectionKeys, parameters.value("subsectionKeys", Json()), -1, 127, "subsectionKeys");
-				readFive(pads.subsectionSections, parameters.value("subsectionSections", Json()), 0, 4,
-					"subsectionSections");
-				readFive(pads.subsectionOffsets, parameters.value("subsectionOffsets", Json()), -48, 48,
-					"subsectionOffsets");
-				pads.sectionPlay = parameters.value("sectionPlay", pads.sectionPlay);
-				pads.latchPads = parameters.value("latchPads", pads.latchPads);
-				pads.spread = parameters.value("spread", pads.spread);
-				if (parameters.contains("mutedSections"))
-				{
-					const Json& muted = parameters.at("mutedSections");
-					for (size_t i = 0; i < pads.mutedSections.size() && i < muted.size(); ++i)
-						pads.mutedSections.at(i) = muted[i].get<bool>();
-				}
-				if (parameters.contains("playerKeys"))
-				{
-					std::array<int, 5> keys = {
-						pads.playerKeys.at(0), pads.playerKeys.at(1), pads.playerKeys.at(2), -1, -1};
-					readFive(keys, parameters.at("playerKeys"), -1, 127, "playerKeys");
-					pads.playerKeys = {keys.at(0), keys.at(1), keys.at(2)};
-				}
-				if (parameters.contains("controlSources"))
-				{
-					const Json& sources = parameters.at("controlSources");
-					for (size_t i = 0; i < pads.controlSources.size() && i < sources.size(); ++i)
-						pads.controlSources.at(i) = sources[i].get<std::string>();
-				}
-				if (parameters.contains("controlNumbers"))
-				{
-					std::array<int, 5> numbers = {
-						pads.controlNumbers.at(0), pads.controlNumbers.at(1), pads.controlNumbers.at(2), 0, 0};
-					readFive(numbers, parameters.at("controlNumbers"), 0, 127, "controlNumbers");
-					pads.controlNumbers = {numbers.at(0), numbers.at(1), numbers.at(2)};
-				}
-				if (parameters.contains("stepPosition"))
-				{
-					const time::Ticks end = stepEnd(project);
-					pads.stepPosition = parameters.at("stepPosition").get<time::Ticks>();
-					require(pads.stepPosition >= 0 && pads.stepPosition <= end,
-						"stepPosition must be 0 to " + std::to_string(end) + " ticks");
-				}
-				if (parameters.contains("stepBars"))
-				{
-					// An unsigned number past int64_t's range is as far on as any; the bars are clamped before the
-					// sum, which then can't overflow, and after it, to the bars step input writes at.
-					const Json& given = parameters.at("stepBars");
-					constexpr int64_t most = std::numeric_limits<int64_t>::max();
-					const int64_t requested =
-						given.is_number_unsigned() && given.get<uint64_t>() > static_cast<uint64_t>(most)
-						? most
-						: given.get<int64_t>();
-					const time::SignatureMap& signatures = project.signatures;
-					const int64_t lastBar = lastStepBar(project);
-					const int64_t bars = std::clamp<int64_t>(requested, -lastBar - 1, lastBar + 1);
-					pads.stepPosition = signatures.barStart(
-						std::clamp<int64_t>(signatures.toBarsBeats(pads.stepPosition).bar + bars, 0, lastBar));
-				}
+				applyPadSettings(project, context.parameters());
 				return changed(project, context);
 			});
 		add(engine,
