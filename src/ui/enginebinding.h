@@ -97,7 +97,8 @@ namespace gnubase::ui
 		// sent is dropped with its done.
 		// shown, unless null, is what the control shows once the engine took the step, kept with the record of what's
 		// steps for shown(): an object's members are merged into what the record keeps (a JSON merge patch), e.g. one
-		// per event that the step changes, anything else replaces it.
+		// per event that the step changes, anything else replaces it. A step sent while none of what's is out and a
+		// project read after the last one that the engine took is in starts what the record keeps afresh (#1550).
 		// merge, unless empty, names the merge key instead of what, for steps whose record what is shared by things
 		// that undo apart, such as the info line's fields for each selection of events.
 		void sendStep(int gesture, const std::string& what, std::string description, engine::Json commands,
