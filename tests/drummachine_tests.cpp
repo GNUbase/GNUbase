@@ -522,6 +522,24 @@ TEST_CASE("drum.loadPad, drum.setPad, drum.copyPad and drum.resetPad change the 
 				  .at("channel");
 	CHECK(padOf(channel, 38).at("sample") != session.clip);
 	CHECK(instrumentParameter(channel, padParameter(38, DrumMachine::Decay)) == 220.0);
+	// The file's clip goes into the pool's Drum Machine folder (p. 980), which a second file shares.
+	const auto folderOf = [&](const Json& clipId)
+	{
+		const Json pool = run(client, "pool.get");
+		for (const Json& clip : pool.at("clips"))
+			if (clip.at("id") == clipId)
+				for (const Json& folder : pool.at("folders"))
+					if (folder.at("id") == clip.at("folder"))
+						return folder;
+		return Json();
+	};
+	const Json folder = folderOf(padOf(channel, 38).at("sample"));
+	REQUIRE(folder.is_object());
+	CHECK(folder.at("name") == "Drum Machine");
+	CHECK(folder.at("parent") == 0);
+	const Json second = run(client, "drum.loadPad", {{"track", track}, {"pad", 39}, {"path", session.file.u8string()}});
+	CHECK(folderOf(padOf(second.at("channel"), 39).at("sample")) == folder);
+	CHECK(folderOf(session.clip).is_null());
 	CHECK(
 		instrumentParameter(channel, padParameter(38, DrumMachine::Instrument)) == static_cast<double>(Layer::Sample));
 

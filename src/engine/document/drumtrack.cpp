@@ -28,6 +28,9 @@ namespace gnubase::engine
 		using processors::g_drumPadStride;
 		using Layer = DrumMachine::Layer;
 
+		// The pool folder of the samples that drum.loadPad brings into the pool (reference manual p. 980).
+		constexpr const char* g_poolFolder = "Drum Machine";
+
 		void require(bool condition, const std::string& message)
 		{
 			if (!condition)
@@ -209,7 +212,8 @@ namespace gnubase::engine
 			{"drum.loadPad", 1,
 				"Loads a sample onto a pad of a drum track (reference manual pp. 942, 944): a pool clip, clip, the "
 				"clip of the audio event event, or an audio file, path, which goes into the pool as a clip, from "
-				"start to end in the clip's frames (default: the event's or the whole clip). The pad then plays the "
+				"start to end in the clip's frames (default: the event's or the whole clip); a file's clip goes into "
+				"the pool folder Drum Machine, which is made if the pool has none (p. 980). The pad then plays the "
 				"sample (its instrument parameter is Sample) from its start to its end, shares of the clip; its "
 				"other settings go back to their defaults, unless keepSettings keeps them (Apply Hot Swap, p. 941). "
 				"Lanes of the track's drum patterns that play the pad take its name. Emits channel.changed. Returns "
@@ -225,6 +229,20 @@ namespace gnubase::engine
 				const Json parameters = withSampleClip(model, project, context.parameters(), context);
 				Channel& channel = drumChannel(project, parameters.at("track").get<ObjectId>());
 				const int note = padOf(parameters, "pad");
+				// A file's clip goes into the pool's Drum Machine folder, made when the first one comes (p. 980).
+				if (context.parameters().contains("path"))
+				{
+					ObjectId folder = 0;
+					for (const auto& [id, each] : project.poolFolders)
+						if (each.parent == 0 && each.name == g_poolFolder)
+							folder = id;
+					if (folder == 0)
+						folder = model.runEdit("poolFolder.add", project, {{"name", g_poolFolder}}, context)
+									 .at("folder")
+									 .at("id")
+									 .get<ObjectId>();
+					model.runEdit("clip.set", project, {{"clip", parameters.at("clip")}, {"folder", folder}}, context);
+				}
 				const SampleSection section = sampleSection(project, parameters);
 				const auto id = [note](DrumMachine::PadParameter parameter)
 				{ return DrumMachine::padParameter(note, parameter); };
