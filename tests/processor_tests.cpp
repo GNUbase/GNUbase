@@ -304,10 +304,10 @@ TEST_CASE("processor.list describes every built-in processor and its parameters"
 	for (const Json& processor : list)
 		ids.push_back(processor.at("id").get<std::string>());
 	CHECK(ids ==
-		std::vector<std::string>{"compressor", "delay", "dither", "eq", "gainPan", "gate", "impulse", "limiter",
-			"noise", "noteProbe", "positionProbe", "reverb", "sampler", "sine", "testSynth"});
+		std::vector<std::string>{"compressor", "delay", "dither", "drumMachine", "eq", "gainPan", "gate", "impulse",
+			"limiter", "noise", "noteProbe", "positionProbe", "reverb", "sampler", "sine", "testSynth"});
 
-	const Json& synth = list[14];
+	const Json& synth = list[15];
 	CHECK(synth.at("instrument") == true);
 	CHECK(list[0].at("instrument") == false);
 	const Json& release = synth.at("parameters")[TestSynth::Release];
@@ -319,7 +319,7 @@ TEST_CASE("processor.list describes every built-in processor and its parameters"
 	CHECK(release.at("options").empty());
 
 	// Stepped parameters, with names for their values or without.
-	const Json& eq = list[3];
+	const Json& eq = list[4];
 	CHECK(eq.at("name") == "Parametric EQ");
 	const Json& type = eq.at("parameters")[2];
 	CHECK(type.at("name") == "Band 1 type");

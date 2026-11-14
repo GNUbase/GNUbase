@@ -445,9 +445,11 @@ namespace gnubase::engine
 			// The MIDI sends of other tracks that play to it, by channel and slot.
 			std::map<std::pair<ObjectId, size_t>, std::shared_ptr<MidiSendTap>> sends;
 			std::shared_ptr<InstrumentChannel> channel;
-			std::shared_ptr<processors::Sampler> sampler; // the sampler's, which loads its sample when it changes
-			std::string sample;                           // the media file that sampler is to play
-			std::string loaded; // the media file whose sample it has: until sample is read, the one before or none
+			// A sampler or drum machine, which loads its samples when they change.
+			std::shared_ptr<processors::SamplePlayer> player;
+			std::vector<std::string> samples; // the media files it is to play, by slot (RenderChannel::samples)
+			// The media files whose samples it has: until samples are read, the ones before or none.
+			std::vector<std::string> loaded;
 		};
 		std::map<ObjectId, std::shared_ptr<MidiSequencer>> m_sequencers; // per MIDI and instrument channel
 		// Per MIDI and instrument channel with an input transformer.

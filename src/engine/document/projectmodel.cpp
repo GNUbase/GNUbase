@@ -9,6 +9,7 @@
 #include "engine/document/channelsettings.h"
 #include "engine/document/chordpads.h"
 #include "engine/document/chordtrack.h"
+#include "engine/document/drumtrack.h"
 #include "engine/document/editors.h"
 #include "engine/document/hitpoints.h"
 #include "engine/document/linkgroups.h"
@@ -1175,7 +1176,8 @@ namespace gnubase::engine
 				if (changed.instrument != channel.instrument)
 				{
 					changed.instrumentParameters.clear();
-					changed.sample = 0; // only the sampler plays one
+					changed.sample = 0;   // only the sampler plays one
+					changed.pads.clear(); // and only the drum machine has pads (#182)
 				}
 			}
 		}
@@ -2842,9 +2844,17 @@ namespace gnubase::engine
 			find(project.clips, id, "clip");
 			forEveryAudioEvent(project, [id](const AudioEvent& event)
 				{ require(event.clip != id, "clip " + idText(id) + " is used by audio event " + idText(event.id)); });
-			for (const auto& [channelId, channel] : project.channels)
-				require(channel.sample != id,
-					"clip " + idText(id) + " is played by sampler track " + idText(channel.track));
+			for (const auto& entry : project.channels)
+			{
+				const Channel& channel = entry.second; // C++17 lambdas can't capture structured bindings
+				forEveryInstrumentClip(channel,
+					[&](ObjectId clip)
+					{
+						require(clip != id,
+							"clip " + idText(id) + " is played by " + (channel.sample == id ? "sampler" : "drum") +
+								" track " + idText(channel.track));
+					});
+			}
 			project.clips.erase(id);
 			context.emit("clip.removed", {{"clip", id}});
 			return Json::object();
@@ -4769,6 +4779,7 @@ namespace gnubase::engine
 		registerEditorCommands(*this, engine);
 		registerSampleEditorCommands(*this, engine);
 		registerSamplerCommands(*this, engine);
+		registerDrumCommands(*this, engine);
 		registerHitpointCommands(*this, engine, jobs);
 		registerWarpCommands(engine);
 		registerTimeWarpCommands(*this, engine);

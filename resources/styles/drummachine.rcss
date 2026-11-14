@@ -1,0 +1,137 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* The drum machine panel (ui/drummachinepanel.h, docs/features/drum-track.md): the toolbar with the page tabs and the
+   pad tools, the pad section with the group buttons and the 4x4 grid of pads, and the page beside it. The root gets
+   .empty without a drum track, the selected group, page tab and pad .selected, pads .assigned (they play something),
+   .muted, .soloed and .soloed-out, and the toolbar's message .error; the themes color them. */
+.drum-machine
+{
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	overflow: hidden;
+}
+
+.drum-hint
+{
+	display: none;
+	padding: 8dp;
+}
+
+.drum-machine.empty .drum-hint
+{
+	display: block;
+}
+
+.drum-machine.empty .drum-toolbar, .drum-machine.empty .drum-body
+{
+	display: none;
+}
+
+.drum-toolbar
+{
+	display: flex;
+	flex-shrink: 0;
+	align-items: center;
+	gap: 4dp;
+	padding: 2dp 4dp;
+}
+
+.drum-message
+{
+	flex: 1 1 0;
+	overflow: hidden;
+	white-space: nowrap;
+}
+
+.drum-body
+{
+	display: flex;
+	flex: 1 1 0;
+	min-height: 0;
+	gap: 8dp;
+	padding: 4dp;
+}
+
+.drum-pads
+{
+	display: flex;
+	flex-direction: column;
+	flex-shrink: 0;
+	gap: 4dp;
+	width: 264dp;
+}
+
+.drum-groups
+{
+	display: flex;
+	gap: 2dp;
+}
+
+.drum-group
+{
+	flex: 1 1 0;
+}
+
+.drum-grid
+{
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4dp;
+}
+
+.drum-pad
+{
+	display: flex;
+	flex-direction: column;
+	justify-content: space-between;
+	width: 60dp;
+	height: 30dp;
+	padding: 2dp 3dp;
+	border-width: 1dp;
+	overflow: hidden;
+}
+
+.drum-pad-name
+{
+	white-space: nowrap;
+	overflow: hidden;
+}
+
+.drum-pad-field
+{
+	width: 120dp;
+}
+
+.drum-page
+{
+	display: flex;
+	flex-direction: column;
+	flex-wrap: wrap;
+	flex: 1 1 0;
+	align-content: flex-start;
+	gap: 2dp 12dp;
+	min-width: 0;
+	overflow: auto;
+}
+
+.drum-control
+{
+	display: flex;
+	flex-shrink: 0;
+	align-items: center;
+	gap: 4dp;
+	width: 200dp;
+	height: 20dp;
+}
+
+.drum-label
+{
+	width: 96dp;
+	white-space: nowrap;
+	overflow: hidden;
+}
+
+.drum-control valuefield, .drum-control select
+{
+	flex: 1 1 0;
+}

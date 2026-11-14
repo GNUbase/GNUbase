@@ -225,6 +225,9 @@ namespace gnubase::engine
 				channel.id = m_to.newId();
 				channel.track = track;
 				channel.sample = clip(original.sample); // a sampler's (#180), with the instrument
+				channel.pads = original.pads;           // a drum machine's (#182)
+				for (auto& [pad, drum] : channel.pads)
+					drum.sample = clip(drum.sample);
 				// The fader top may be lower here (as project.set brings volumes down to it).
 				channel.volume = std::min(channel.volume, m_to.maxVolume);
 				for (Send& send : channel.sends)
@@ -951,7 +954,10 @@ namespace gnubase::engine
 			for (midi::EffectSlot& slot : channel.midiSends.slots)
 				slot.output = 0; // the preset's tracks aren't this project's
 			if (channel.instrument != sound.instrument)
+			{
 				channel.sample = 0; // only the sampler plays one (#180), as with channel.set
+				channel.pads.clear();
+			}
 			channel.instrument = sound.instrument;
 			channel.instrumentParameters = sound.instrumentParameters;
 			if (channel.format != ChannelFormat::None)

@@ -805,13 +805,22 @@ namespace gnubase::engine
 									std::remove_if(version.audioEvents.begin(), version.audioEvents.end(),
 										[clipId](const AudioEvent& event) { return event.clip == clipId; }),
 									version.audioEvents.end());
-						// Sampler tracks play nothing (#180).
+						// Sampler tracks and drum pads play nothing (#180, #182).
 						for (auto& [channelId, channel] : project.channels)
-							if (channel.sample == clipId)
-							{
-								channel.sample = 0;
+						{
+							bool played = false;
+							forEveryInstrumentClip(channel,
+								[clipId, &played](ObjectId& clip)
+								{
+									if (clip == clipId)
+									{
+										clip = 0;
+										played = true;
+									}
+								});
+							if (played)
 								context.emit("channel.changed", {{"channel", toJson(channel)}});
-							}
+						}
 						project.clips.erase(clipId);
 						context.emit("clip.removed", {{"clip", clipId}});
 						clips.push_back(clipId);
