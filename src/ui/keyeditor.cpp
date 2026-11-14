@@ -8,7 +8,6 @@
 #include "ui/controllerlanes.h"
 #include "ui/timeformat.h"
 
-#include <RmlUi/Core/ComputedValues.h>
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
@@ -571,7 +570,10 @@ namespace gnubase::ui
 		if (!m_zoomDrag && std::abs(dx) < g_dragThreshold * ratio && std::abs(dy) < g_dragThreshold * ratio)
 			return; // still a click on a key
 		m_zoomDrag = true;
-		setPitchZoom(m_zoomStart * std::exp2(dx / ratio / g_zoomDoubling));
+		if (const float zoom =
+				std::clamp(m_zoomStart * std::exp2(dx / ratio / g_zoomDoubling), g_minPitchZoom, g_maxPitchZoom);
+			zoom != m_pitchZoom)
+			setPitchZoom(zoom);
 		body->SetScrollTop((m_scrollStart * m_pitchZoom / m_zoomStart) - dy);
 		if (context != nullptr)
 			context->RequestNextUpdate(0);
@@ -579,21 +581,29 @@ namespace gnubase::ui
 
 	void KeyEditor::setPitchZoom(float zoom)
 	{
-		zoom = std::clamp(zoom, g_minPitchZoom, g_maxPitchZoom);
-		if (zoom == m_pitchZoom)
-			return;
-		m_pitchZoom = zoom;
 		Rml::Element* root = m_root.get();
 		if (root == nullptr || m_drum)
 			return;
-		// The keyboard and the rows follow the zoom; the keys, the notes and the cursor lie in percent of them, so
-		// they scale with them.
-		if (Rml::Element* keys = root->QuerySelector(".key-editor-keys"))
-			keys->SetProperty(Rml::PropertyId::Height, dp(static_cast<float>(g_pitches) * m_rowDp * zoom));
+		// The rows' height without a zoom is the style sheet's, read past the zoom's own each time, so that a theme
+		// or style change reaches a zoomed editor too (#1547). The keyboard is as high as the rows; the keys, the
+		// notes and the cursor lie in percent of them, so they scale with them.
 		Rml::ElementList rows;
 		root->QuerySelectorAll(rows, ".key-editor-row");
 		for (Rml::Element* row : rows)
-			row->SetProperty(Rml::PropertyId::Height, dp(m_rowDp * zoom));
+			row->RemoveProperty(Rml::PropertyId::Height);
+		const Rml::Property* height = rows.empty() ? nullptr : rows.front()->GetProperty(Rml::PropertyId::Height);
+		if (height == nullptr || !Rml::Any(height->unit & Rml::Unit::LENGTH))
+		{
+			m_pitchZoom = 1.0F; // a percentage or auto: no height to scale
+			return;
+		}
+		const Rml::Context* context = root->GetContext();
+		const float ratio = context != nullptr ? context->GetDensityIndependentPixelRatio() : 1.0F;
+		const float rowDp = rows.front()->ResolveLength(height->GetNumericValue()) / ratio;
+		m_pitchZoom = zoom;
+		if (zoom != 1.0F)
+			for (Rml::Element* row : rows)
+				row->SetProperty(Rml::PropertyId::Height, dp(rowDp * zoom));
 	}
 
 	void KeyEditor::place(Rml::Element& element, int64_t start, int64_t length, int pitch) const
@@ -1246,17 +1256,9 @@ namespace gnubase::ui
 			m_pressed.reset(); // a note an earlier press remembered must not resize on this gesture's release
 			m_pressedX = event.GetParameter("mouse_x", 0.0F);
 			m_pressedY = event.GetParameter("mouse_y", 0.0F);
+			setPitchZoom(m_pitchZoom); // the zoom scales the style sheet's row height as it is now (#1369, #1547)
 			m_zoomStart = m_pitchZoom;
 			m_scrollStart = body != nullptr ? body->GetScrollTop() : 0.0F;
-			// The rows' height unzoomed, as the style sheet gives it (#1369): the zoom scales it.
-			if (const Rml::Element* rowElement = root->QuerySelector(".key-editor-row"))
-				if (const Rml::Style::LengthPercentageAuto height = rowElement->GetComputedValues().height();
-					height.type == Rml::Style::LengthPercentageAuto::Length && height.value > 0.0F)
-				{
-					const Rml::Context* context = root->GetContext();
-					const float ratio = context != nullptr ? context->GetDensityIndependentPixelRatio() : 1.0F;
-					m_rowDp = height.value / ratio / m_pitchZoom;
-				}
 			return;
 		}
 		if (const Rml::Element* key = withAttribute(target, "pitch", root);
