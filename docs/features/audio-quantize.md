@@ -157,7 +157,7 @@ the project's settings ([hitpoints.md](hitpoints.md)), kept as a preset, so it i
 
 Group editing of folder tracks (the commands take the events, of any tracks); the Reset of Slice Rules and of Warp
 Marker Creation Rules (undo does it) and cutting positions shown in the project window; quantizing a selection range
-of an event (#1344's follow-up).
+of an event (#1579).
 
 ## Checks
 
