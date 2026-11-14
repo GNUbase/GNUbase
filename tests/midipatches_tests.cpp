@@ -619,7 +619,8 @@ TEST_CASE("of two lanes of the MIDI volume, the first plays it before its first 
 	run(track.client, "transport.play");
 	const Bytes played = track.played(4096);
 	run(track.client, "transport.stop");
-	CHECK(played == Bytes{{0xB2, 7, 90}, {0xB2, 7, 127}, {0xB2, 7, 0}, {0xB2, 7, 90}});
+	// At frame 2000 the first lane's gap plays the MIDI volume, the second lane's terminator its 0, which then stands.
+	CHECK(played == Bytes{{0xB2, 7, 90}, {0xB2, 7, 127}, {0xB2, 7, 0}, {0xB2, 7, 90}, {0xB2, 7, 0}});
 }
 
 TEST_CASE("lanes of one controller side by side send every point and keep their last value past a gap", "[integration]")
@@ -657,4 +658,48 @@ TEST_CASE("lanes of one controller side by side send every point and keep their 
 	// A cycle jump back to frame 1500 sends channel 2's 20, whose point lies latest there.
 	run(track.client, "transport.set", {{"left", 1500}, {"right", 2500}, {"cycle", true}});
 	CHECK(played(2400, 256) == Bytes{{0xB2, 11, 100}, {0xB2, 11, 20}});
+}
+
+TEST_CASE("lanes of one controller side by side send a point that a gap follows, which a locate past it sends again",
+	"[integration]")
+{
+	PatchTrack track;
+	constexpr int64_t frame = 72; // ticks, about one at 48 kHz
+	const Json trackId = run(track.client, "project.get").at("channels")[1].at("track");
+	track.set({{"midiChannel", 2}});
+	const auto lane = [&](int channel, const Json& points)
+	{
+		const Json added = run(track.client, "automationLane.add",
+			{{"track", trackId}, {"target", {{"type", "controller"}, {"number", 11}, {"channel", channel}}}});
+		run(track.client, "automationPoint.add", {{"lane", added.at("lane").at("id")}, {"points", points}});
+	};
+	const auto point = [](int64_t at, int value, bool terminator = false)
+	{ return Json{{"position", at * frame}, {"shape", "step"}, {"value", value / 127.0}, {"terminator", terminator}}; };
+	const auto played = [&track](int64_t from, int frames)
+	{
+		run(track.client, "transport.locate", {{"position", from}});
+		track.played();
+		run(track.client, "transport.play");
+		const Bytes bytes = track.played(frames);
+		run(track.client, "transport.stop");
+		track.played();
+		return bytes;
+	};
+
+	SECTION("a terminator that repeats its lane's value")
+	{
+		// Channel 2's terminator at frame 3000 repeats its 20 after channel 1's 100 at frame 2000.
+		lane(0, {point(0, 100), point(2000, 100)});
+		lane(1, {point(1000, 20), point(3000, 20, true)});
+		CHECK(played(0, 4096) == Bytes{{0xB2, 11, 100}, {0xB2, 11, 20}, {0xB2, 11, 100}, {0xB2, 11, 20}});
+		CHECK(played(3500, 64) == Bytes{{0xB2, 11, 20}});
+	}
+	SECTION("the lanes' last points in virgin territory")
+	{
+		run(track.client, "automation.set", {{"virginTerritory", true}});
+		lane(0, {point(0, 100), point(2000, 100)});
+		lane(1, Json::array({point(1000, 60)}));
+		CHECK(played(0, 4096) == Bytes{{0xB2, 11, 100}, {0xB2, 11, 60}, {0xB2, 11, 100}});
+		CHECK(played(2500, 64) == Bytes{{0xB2, 11, 100}});
+	}
 }

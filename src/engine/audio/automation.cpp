@@ -246,9 +246,9 @@ namespace gnubase::engine
 
 		// The value a lane sends where it arrives at points at a position (a step, the end of a ramp or a jump between
 		// points at one position), if there are points there and they send one: the value from there on, or a
-		// terminator's that a gap follows; nothing where a gap starts or where the value doesn't change, unless every
-		// and no gap follows: a lane side by side with others (PlayedLane::shared), one of which may have changed the
-		// controller since.
+		// terminator's that a gap follows; nothing where a gap starts or where the value doesn't change, unless every:
+		// a lane side by side with others (PlayedLane::shared), one of which may have changed the controller since, and
+		// whose chase counts that point also where a gap follows.
 		std::optional<double> arriving(const Points& points, int64_t at, bool glides, bool every)
 		{
 			const size_t next = after(points, at);
@@ -266,9 +266,8 @@ namespace gnubase::engine
 			// points[0].
 			const bool fromGap = points[first == 0 ? 0 : first - 1].gap;
 			const double approached = first == 0 || fromRamp ? points[first].value : points[first - 1].value;
-			// A terminator sends its value only if it changes: one that ends a lane doesn't play it again.
-			if (last > first &&
-				((every && last == next) || points[last - 1].value != approached || (fromRamp && !glides) || fromGap))
+			// Otherwise a terminator sends its value only if it changes: one that ends a lane doesn't play it again.
+			if (last > first && (every || points[last - 1].value != approached || (fromRamp && !glides) || fromGap))
 				return points[last - 1].value;
 			return std::nullopt;
 		}
