@@ -30,7 +30,8 @@ they are.
   with their names and samples, and for MIDI and instrument tracks the color. The samples' files are extracted next to
   the preset (`Track Presets/<name> media`), as `track.import` extracts an archive's: a file there with other content,
   as after the preset was saved again with another file of the same name, stays, as a project may play it, and the
-  new one goes beside it under a numbered name (`2-kick.wav`); one with the same content is used as it is (#1567).
+  new one goes beside it under a numbered name (`2-kick.wav`); one with the same content (size and CRC-32) is used as it
+  is, write time included, so that loading the preset again doesn't write over the files the project plays (#1567).
   Their clips come into the pool (`media.added`, `clip.added`) unless it has the same clips already, so loading a
   preset again adds none, a media file with the same audio as one of the project's, as in the project the preset was
   saved in, shares the project's file, and the
@@ -77,7 +78,9 @@ they are.
   hitpoints and warp), as after importing the file before: then the tracks share it, and two clips of the file that are
   the same become one (#1567). Media files the project has already, at the same path or with the same audio, are shared;
   drum maps the project has with the same name and sounds too. Media files embedded in the file are extracted next to
-  it, into `<name> media`, as `project.load` does, and the result lists the media files the import added as `media`.
+  it, into `<name> media`, as `project.load` does: a file that is there with the entry's content stays as it is, write
+  time included, and so does one with other content, the entry going beside it under a numbered name. The result lists
+  the media files the import added as `media`.
   Linear positions from a file at another sample rate are rescaled to keep their time, as `project.set` does; faders,
   send levels and volume automation above the project's fader top come down to it, from presets too. When what is
   imported ends after the project's end (its length in the project setup), the end moves to where it ends, up to the
