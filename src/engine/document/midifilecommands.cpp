@@ -376,6 +376,10 @@ namespace gnubase::engine
 			};
 			if (!imported.markers.empty())
 				addMarkers(active != 0 ? active : newTrack(""), imported.markers);
+			else if (active == 0 && !imported.markerTracks.empty())
+				// Keep the tempo track's empty marker role. Promoting a populated file track would move its markers
+				// into the tempo track on the next export, changing the MIDI file.
+				newTrack("");
 			for (const midifile::ImportedMarkerTrack& track : imported.markerTracks)
 			{
 				const auto markerTracks = std::count_if(project.tracks.begin(), project.tracks.end(),
