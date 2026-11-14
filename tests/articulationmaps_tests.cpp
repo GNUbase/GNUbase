@@ -746,6 +746,88 @@ TEST_CASE("Merge MIDI in Loop adds resets only where a direction of their group 
 		CHECK(controller.at("position").get<int64_t>() < g_bar); // A's own, no reset where B starts
 }
 
+TEST_CASE("Merge MIDI in Loop gives every new part the directions, which playback resolves per part", "[unit]")
+{
+	Fixture f;
+	f.strings();
+	// Part A, bar 1, plays Arco; part B, bar 2, plays Pizzicato with a velocity of 20 and a note with velocity
+	// variance, which merge keeps on a new part of its own (#1240).
+	f.call("note.add",
+		{{"part", f.part}, {"notes", {{{"position", 0}, {"length", 60}, {"pitch", 60}, {"velocity", 0.5}}}}});
+	const Json b =
+		f.call("midiPart.add", {{"track", f.track}, {"position", g_bar}, {"length", g_bar}}).at("part").at("id");
+	f.call("midiPart.set", {{"part", b}, {"velocity", 20}});
+	f.call("controller.add",
+		{{"part", b}, {"controllers", {{{"position", 0}, {"type", "articulation"}, {"articulation", "Pizzicato"}}}}});
+	f.call("note.add",
+		{{"part", b},
+			{"notes",
+				{{{"position", 0}, {"length", 60}, {"pitch", 62}, {"velocity", 0.5}, {"velocityVariance", 0.5}}}}});
+	// The key switches a track plays: start, pitch and channel.
+	const auto keySwitches = [&](uint64_t track)
+	{
+		std::vector<std::tuple<int64_t, int, int>> played;
+		for (const engine::RenderChannel& channel : f.engine.renderSnapshots().acquire().channels)
+			if (channel.track == track)
+				for (const engine::RenderNote& note : channel.notes)
+					if (note.keySwitch)
+						played.emplace_back(note.start, note.pitch, note.channel);
+		std::sort(played.begin(), played.end());
+		return played;
+	};
+	const auto before = keySwitches(f.track);
+	REQUIRE(before.size() == 2); // C0 for Arco, C#0 for Pizzicato
+	// At 120 BPM and 48 kHz a bar is 96000 samples: bars 1 and 2, onto a new track.
+	const Json changes = f.call("midi.merge", {{"start", 0}, {"end", 192000}});
+	REQUIRE(changes.at("parts").size() == 2);
+	CHECK(keySwitches(changes.at("tracks").at(0).get<uint64_t>()) == before);
+}
+
+TEST_CASE("Merge MIDI in Loop shares one lane between the tracks' directions", "[unit]")
+{
+	using Directions = std::vector<std::tuple<int64_t, std::string, bool>>;
+	Fixture f;
+	const auto map = f.strings();
+	// Track A's part, bar 1, plays Pizzicato; track B, with the same map, has a part from beat 3.
+	Directions expected;
+	SECTION("A's direction in effect where B's part starts: a reset there ends it")
+	{
+		f.call("controller.add",
+			{{"part", f.part},
+				{"controllers", {{{"position", 0}, {"type", "articulation"}, {"articulation", "Pizzicato"}}}}});
+		expected = {{0, "Pizzicato", false}, {2 * g_quarter, "Arco", true}};
+	}
+	SECTION("A's direction reset before B's part starts: no reset there")
+	{
+		f.call("controller.add",
+			{{"part", f.part},
+				{"controllers",
+					{{{"position", 0}, {"type", "articulation"}, {"articulation", "Pizzicato"}},
+						{{"position", g_quarter}, {"type", "articulation"}, {"articulation", "Arco"},
+							{"reset", true}}}}});
+		expected = {{0, "Pizzicato", false}, {g_quarter, "Arco", true}};
+	}
+	const auto other = f.call("track.add", {{"type", "instrument"}}).at("track").at("id").get<uint64_t>();
+	f.call("track.set", {{"track", other}, {"articulationMap", map}});
+	const Json b =
+		f.call("midiPart.add", {{"track", other}, {"position", 2 * g_quarter}, {"length", g_bar}}).at("part").at("id");
+	f.call("note.add", {{"part", b}, {"notes", {{{"position", 0}, {"length", 60}, {"pitch", 60}, {"velocity", 0.5}}}}});
+	// At 120 BPM and 48 kHz a bar is 96000 samples: bars 1 and 2 of both tracks, onto a new track.
+	const Json changes = f.call("midi.merge", {{"start", 0}, {"end", 192000}, {"tracks", {f.track, other}}});
+	Json merged;
+	const Json project = f.call("project.get");
+	for (const Json& part : project.at("midiParts"))
+		if (part.at("id") == changes.at("parts").at(0))
+			merged = part;
+	REQUIRE(merged.is_object());
+	Directions directions;
+	for (const Json& controller : merged.at("controllers"))
+		directions.emplace_back(controller.at("position").get<int64_t>(),
+			controller.at("articulation").get<std::string>(), controller.at("reset").get<bool>());
+	std::sort(directions.begin(), directions.end());
+	CHECK(directions == expected);
+}
+
 TEST_CASE("track presets and track import bring a track's articulation map along", "[integration]")
 {
 	const test::TempDir dir;

@@ -81,6 +81,7 @@ namespace gnubase::engine
 		Crossfade crossfade;                // only one that applies (crossfadeApplies)
 		std::vector<GainPoint> volumeCurve; // in the media file's sample frames
 		ObjectId front = 0;                 // frontOf: where events overlap, the highest plays
+		int64_t rank = 0;                   // of events at the same front, the highest plays (AudioEvent::rank)
 		// An event of a warped clip (RenderMedia::warp): where its clip's start and end play, in its media file's
 		// frames, for the clip fades. Other events' clips start and end with their media files.
 		time::Samples clipStart = 0;
@@ -211,6 +212,7 @@ namespace gnubase::engine
 		std::optional<int> program; // MIDI channels: the program change to send, with bank select if bank is set
 		std::optional<int> bank;
 		uint8_t midiChannel = 0;      // MIDI channels: the MIDI channel the above go out on, 0 to 15 (Any: 0)
+		int8_t inputChannel = -1;     // MIDI channels: the one the events played into it go out on, -1 (Any) for theirs
 		midi::Modifiers modifiers;    // MIDI and instrument channels: notes has them applied, live notes get them
 		midi::EffectRack midiInserts; // MIDI and instrument channels: the effects their sequencer runs
 		midi::EffectRack midiSends;
@@ -218,8 +220,10 @@ namespace gnubase::engine
 		// the track's own output.
 		std::array<int, midi::g_effectSlots> midiSendOutputs{-1, -1, -1, -1};
 		// MIDI and instrument channels whose MIDI sends play before modifiers that change notes: the notes of their
-		// parts without the track's MIDI modifiers, sorted as notes; empty otherwise.
+		// parts without the track's MIDI modifiers, sorted as notes, and their expression points, sorted as
+		// expressions; empty otherwise.
 		std::vector<RenderNote> preNotes;
+		std::vector<RenderExpression> preExpressions;
 		// MIDI and instrument channels: the rules of their input transformer's modules that are on, the track's or
 		// the project's, in order; empty for none.
 		std::vector<midi::LogicalRules> inputTransformer;

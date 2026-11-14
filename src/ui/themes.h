@@ -12,9 +12,17 @@ namespace gnubase::ui
 	// The theme of a fresh installation, also used when the user setting ui.theme names one that doesn't exist.
 	inline constexpr const char* g_defaultTheme = "gnubase";
 
+	// A theme: its id, and the name the UI shows for it.
+	struct Theme
+	{
+		std::string id;   // the folder's name in resources/themes, which the user setting ui.theme stores
+		std::string name; // the manifest's displayName; the id when the theme has none
+	};
+
 	// GNUbase's design system and themes (#53, docs/features/themes.md). The shared style sheets in
 	// <resources>/styles lay out every widget in dp. Each theme is a folder in <resources>/themes whose theme.rcss
-	// gives the widgets their colors, fonts and skins, all inside "@media (theme: <folder name>)".
+	// gives the widgets their colors, fonts and skins, all inside "@media (theme: <folder name>)", and whose
+	// manifest.json carries the name the UI shows for it.
 	//
 	// While the object lives, every document RmlUi loads gets the shared style sheets and every theme ahead of its own
 	// style, so documents never name a theme or a shared style sheet, and their own rules come last. The shell
@@ -33,14 +41,14 @@ namespace gnubase::ui
 		Themes(Themes&&) = delete;
 		Themes& operator=(Themes&&) = delete;
 
-		// The themes' names, sorted.
-		const std::vector<std::string>& names() const { return m_names; }
-		bool has(std::string_view name) const;
+		// The themes, by id, sorted.
+		const std::vector<Theme>& themes() const { return m_themes; }
+		bool has(std::string_view id) const;
 
 	private:
 		class Loader; // the RmlUi plugin that gives loaded documents the style sheets
 
-		std::vector<std::string> m_names;
+		std::vector<Theme> m_themes;
 		std::unique_ptr<Loader> m_loader;
 	};
 }

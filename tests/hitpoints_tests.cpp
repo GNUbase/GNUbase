@@ -11,7 +11,6 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -235,19 +234,10 @@ namespace
 						.get<int64_t>();
 		}
 
-		// Waits until a job is done and returns it as job.get has it.
+		// Waits until the started job is done and returns it.
 		Json waitForJob(const Json& started)
 		{
-			const auto job = started.at("job").at("id").get<uint64_t>();
-			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
-			while (std::chrono::steady_clock::now() < deadline)
-			{
-				client.wait(std::chrono::milliseconds(20));
-				if (Json state = call("job.get", {{"job", job}}).at("job"); state.at("state") != "running")
-					return state;
-			}
-			FAIL_CHECK("the job didn't finish");
-			return Json::object();
+			return test::waitForJob(client, started.at("job").at("id").get<uint64_t>());
 		}
 
 		// Detects the clip's hitpoints and returns the job's result: clip.setHitpoints' with them.

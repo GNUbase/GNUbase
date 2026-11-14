@@ -55,14 +55,14 @@ namespace gnubase::engine
 		return at;
 	}
 
-	time::Samples Transport::startPosition() const
+	time::Samples Transport::startPosition(time::Samples from) const
 	{
-		return withPreRoll(m_requested, startWithoutPreRoll(m_requested, position()));
+		return withPreRoll(m_requested, playStart(from));
 	}
 
-	time::Samples Transport::playStart() const
+	time::Samples Transport::playStart(time::Samples from) const
 	{
-		return startWithoutPreRoll(m_requested, position());
+		return from >= 0 ? from : startWithoutPreRoll(m_requested, position());
 	}
 
 	bool Transport::sync()
@@ -90,10 +90,10 @@ namespace gnubase::engine
 		return applied < locates ? target : cursor;
 	}
 
-	bool Transport::play()
+	bool Transport::play(time::Samples from)
 	{
-		const time::Samples start = startWithoutPreRoll(m_requested, position());
-		if (!send({Request::Type::Play, 0, {}, 0}))
+		const time::Samples start = playStart(from);
+		if (!send({Request::Type::Play, from, {}, 0}))
 			return false;
 		if (!m_requestedPlaying)
 			m_playbackStart = start;
@@ -184,10 +184,11 @@ namespace gnubase::engine
 		m_arranger.entering = true;
 	}
 
-	// Starts playback from the cursor or the left locator, less the pre-roll; returnToStart comes back to the former.
-	void Transport::start() noexcept
+	// Starts playback from the cursor or the left locator, or from where the caller says with from at or after 0 (the
+	// arranger's chain start, #880), less the pre-roll; returnToStart comes back to the former.
+	void Transport::start(time::Samples from) noexcept
 	{
-		m_start = startWithoutPreRoll(m_settings, m_position);
+		m_start = from >= 0 ? from : startWithoutPreRoll(m_settings, m_position);
 		m_position = withPreRoll(m_settings, m_start);
 		m_inPreRoll = m_position < m_start; // the pre-roll plays toward the start
 		m_playing = true;
@@ -220,10 +221,11 @@ namespace gnubase::engine
 		{
 		case Request::Type::Play:
 			if (!m_playing && !m_countingIn)
-				start();
+				start(request.position);
 			return;
 		case Request::Type::Stop:
 			m_countingIn = false;
+			m_inPreRoll = false; // playback isn't rolling in anymore
 			if (!m_playing)
 				return;
 			m_playing = false;
@@ -476,6 +478,7 @@ namespace gnubase::engine
 			else if (jumps)
 			{
 				m_position = m_settings.left;
+				m_inPreRoll = false; // the cycle jumped: playback isn't rolling in anymore
 			}
 		}
 		m_applied.store(m_locate, m_position);

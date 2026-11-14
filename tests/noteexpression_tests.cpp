@@ -2,6 +2,7 @@
 // Per-note expression (#176, reference manual pp. 1293-1318): notes carry expression points that move with them, MPE
 // input records into them, and playback sends them to the instrument, to an MPE instrument as MPE.
 #include "engine/document/document.h"
+#include "engine/document/serialize.h"
 #include "engine/engine.h"
 #include "engine/midi/midivalues.h"
 #include "testutils/testutils.h"
@@ -108,9 +109,37 @@ namespace
 		return milli(midi::controllerToUnit(midi::controllerFromMidi1(value)));
 	}
 
-	int64_t semitones(uint16_t bend)
+	int64_t semitones(uint16_t bend, double range = 48.0)
 	{
-		return milli(midi::bendToSemitones(midi::pitchBendFromMidi1(bend), 48.0));
+		return milli(midi::bendToSemitones(midi::pitchBendFromMidi1(bend), range));
+	}
+
+	// What the instruments played since capturing started, as [position from start, bytes].
+	std::vector<std::vector<int64_t>> capturedFrom(Client& client, int64_t start)
+	{
+		std::vector<std::vector<int64_t>> played;
+		const Json capture = run(client, "midi.capture");
+		for (const Json& captured : capture.at("captured"))
+		{
+			std::vector<int64_t> each{captured.at("position").get<int64_t>() - start};
+			for (const Json& byte : captured.at("bytes"))
+				each.push_back(byte.get<int64_t>());
+			played.push_back(std::move(each));
+		}
+		return played;
+	}
+
+	ObjectId addPart(Client& client, ObjectId track)
+	{
+		return run(client, "midiPart.add", {{"track", track}, {"position", 0}, {"length", 4 * g_beatTicks}})
+			.at("part")
+			.at("id")
+			.get<ObjectId>();
+	}
+
+	Json point(const char* type, int64_t position, double value)
+	{
+		return {{"type", type}, {"position", position}, {"value", value}};
 	}
 }
 
@@ -162,26 +191,19 @@ TEST_CASE("MPE input is recorded as per-note expression and played back to an MP
 	CHECK(part.at("controllers")[0].at("number") == 1);
 
 	// Played back, the instrument gets each note on its channel with its expression as that channel's pitch bend,
-	// channel pressure and CC 74, where it was played.
+	// channel pressure and CC 74, where it was played. The second note wasn't pressed before its note-on: it starts
+	// without pressure, MPE's initial value.
 	const auto start = run(client, "audio.get").at("position").get<int64_t>();
 	run(client, "midi.capture", {{"start", true}});
 	run(client, "transport.locate", {{"position", 0}});
 	run(client, "transport.play");
 	run(client, "audio.render", {{"frames", 4000}});
-	std::vector<std::vector<int64_t>> played;
-	const Json capture = run(client, "midi.capture");
-	for (const Json& captured : capture.at("captured"))
-	{
-		std::vector<int64_t> each{captured.at("position").get<int64_t>() - start};
-		for (const Json& byte : captured.at("bytes"))
-			each.push_back(byte.get<int64_t>());
-		played.push_back(std::move(each));
-	}
+	std::vector<std::vector<int64_t>> played = capturedFrom(client, start);
 	std::sort(played.begin(), played.end());
 	CHECK(played ==
 		std::vector<std::vector<int64_t>>{{1000, 0x91, 60, 100}, {1000, 0xB1, 74, 64}, {1000, 0xD1, 40},
-			{1000, 0xE1, 0, 96}, {1500, 0x92, 64, 90}, {2000, 0xE1, 0, 80}, {2200, 0xD2, 100}, {2400, 0xB0, 1, 64},
-			{2500, 0xB1, 74, 100}, {3000, 0x81, 60, 0}, {3500, 0x82, 64, 0}});
+			{1000, 0xE1, 0, 96}, {1500, 0x92, 64, 90}, {1500, 0xD2, 0}, {2000, 0xE1, 0, 80}, {2200, 0xD2, 100},
+			{2400, 0xB0, 1, 64}, {2500, 0xB1, 74, 100}, {3000, 0x81, 60, 0}, {3500, 0x82, 64, 0}});
 }
 
 TEST_CASE("without MPE input, MIDI on every channel records as controller events", "[integration]")
@@ -269,38 +291,177 @@ TEST_CASE(
 	CHECK(run(client, "project.get").at("midiParts") == before);
 }
 
-TEST_CASE("playback sends a note's expression points inside the note, after its note-on", "[integration]")
+TEST_CASE("playback sends a note's expression points inside the note, as MIDI 1.0 its initial ones before its note-on",
+	"[integration]")
 {
 	Setup setup;
 	Client& client = setup.client;
-	const ObjectId part =
-		run(client, "midiPart.add", {{"track", setup.track}, {"position", 0}, {"length", 4 * g_beatTicks}})
-			.at("part")
-			.at("id")
-			.get<ObjectId>();
-	// 1000 samples long on channel 3; a point at the note's end and one past it don't play.
+	const ObjectId part = addPart(client, setup.track);
+	// 1000 samples long on channel 3; a point at the note's end and one past it don't play. The next note on the
+	// channel has no points: it starts at MPE's initial values of what the channel's notes express.
 	run(client, "note.add",
 		{{"part", part},
 			{"notes",
 				{{{"position", ticksOf(100)}, {"length", ticksOf(1000)}, {"pitch", 62}, {"velocity", 0.5},
-					{"channel", 3},
-					{"expressions",
-						{{{"type", "tuning"}, {"position", 0}, {"value", -48.0}},
-							{{"type", "brightness"}, {"position", ticksOf(500)}, {"value", 1.0}},
-							{{"type", "volume"}, {"position", ticksOf(600)}, {"value", 1.0}},
-							{{"type", "pressure"}, {"position", ticksOf(1000)}, {"value", 1.0}},
-							{{"type", "pressure"}, {"position", ticksOf(5000)}, {"value", 1.0}}}}}}}});
+					 {"channel", 3},
+					 {"expressions",
+						 {point("tuning", 0, -48.0), point("brightness", ticksOf(500), 1.0),
+							 point("volume", ticksOf(600), 1.0), point("pressure", ticksOf(1000), 1.0),
+							 point("pressure", ticksOf(5000), 1.0)}}},
+					{{"position", ticksOf(2000)}, {"length", ticksOf(500)}, {"pitch", 64}, {"velocity", 0.5},
+						{"channel", 3}}}}});
 	run(client, "audio.render", {{"frames", 64}});
 	const auto start = run(client, "audio.get").at("position").get<int64_t>();
 	run(client, "midi.capture", {{"start", true}});
 	run(client, "transport.play");
 	run(client, "audio.render", {{"frames", 7000}});
 	std::vector<std::vector<int64_t>> played;
-	const Json capture = run(client, "midi.capture");
-	for (const Json& captured : capture.at("captured"))
-		played.push_back({captured.at("position").get<int64_t>() - start, captured.at("bytes").at(0).get<int64_t>(),
-			captured.at("bytes").size() > 1 ? captured.at("bytes").at(1).get<int64_t>() : -1});
-	// Volume has no MPE message; the note-on comes before its expression at the same frame.
+	for (const std::vector<int64_t>& each : capturedFrom(client, start))
+		played.push_back({each[0], each[1], each.size() > 2 ? each[2] : -1});
+	// Volume has no MPE message. MPE puts a note's initial pitch bend, pressure and CC 74 before its note-on, the
+	// note's own or MPE's initial ones (bend centered, CC 74 at 64), so that its voice doesn't start at the bend
+	// that the channel's previous note left.
 	CHECK(played ==
-		std::vector<std::vector<int64_t>>{{100, 0x93, 62}, {100, 0xE3, 0}, {600, 0xB3, 74}, {1100, 0x83, 62}});
+		std::vector<std::vector<int64_t>>{{100, 0xE3, 0}, {100, 0xB3, 74}, {100, 0x93, 62}, {600, 0xB3, 74},
+			{1100, 0x83, 62}, {2000, 0xE3, 0}, {2000, 0xB3, 74}, {2000, 0x93, 64}, {2500, 0x83, 64}});
+}
+
+TEST_CASE("splitting a part's notes keeps their expression where it was", "[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	const ObjectId part = addPart(client, setup.track);
+	run(client, "note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", 0}, {"length", 2 * g_beatTicks}, {"pitch", 60}, {"velocity", 0.5},
+					{"expressions",
+						{point("tuning", 0, 0.0), point("pressure", 0, 0.5), point("tuning", g_beatTicks / 2, 2.0),
+							point("brightness", g_beatTicks, 1.0), point("tuning", 3 * g_beatTicks / 2, 4.0)}}}}}});
+	// At the first beat, 24000 samples.
+	run(client, "event.split", {{"events", {part}}, {"positions", {24000}}, {"splitNotes", true}});
+	const Json parts = run(client, "project.get").at("midiParts");
+	REQUIRE(parts.size() == 2);
+	Json left = parts[0];
+	Json right = parts[1];
+	if (left.at("position") != 0)
+		std::swap(left, right);
+	CHECK(pointsOf(left.at("notes").at(0)) ==
+		Points{{"pressure", 0, 500}, {"tuning", 0, 0}, {"tuning", g_beatTicks / 2, 2000}});
+	// The rest starts with the values at the split and goes on from there.
+	CHECK(pointsOf(right.at("notes").at(0)) ==
+		Points{{"brightness", 0, 1000}, {"pressure", 0, 500}, {"tuning", 0, 2000}, {"tuning", g_beatTicks / 2, 4000}});
+}
+
+TEST_CASE("resizing a note's start keeps its expression where it was", "[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	const ObjectId part = addPart(client, setup.track);
+	const Json note = run(client, "note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", g_beatTicks}, {"length", g_beatTicks}, {"pitch", 60}, {"velocity", 0.5},
+					{"expressions", {point("tuning", 0, 1.0), point("tuning", g_beatTicks / 2, 3.0)}}}}}})
+						  .at("notes")
+						  .at(0);
+	const auto resize = [&](int64_t position)
+	{
+		return run(client, "note.set",
+			{{"part", part},
+				{"notes", {{{"id", note.at("id")}, {"position", position}, {"length", (2 * g_beatTicks) - position}}}}})
+			.at("notes")
+			.at(0);
+	};
+	// Later: the points before the new start become its initial values.
+	CHECK(pointsOf(resize(5 * g_beatTicks / 4)) == Points{{"tuning", 0, 1000}, {"tuning", g_beatTicks / 4, 3000}});
+	run(client, "history.undo");
+	// Earlier: the initial values start at the new start, the other points stay where they were.
+	CHECK(pointsOf(resize(g_beatTicks / 2)) == Points{{"tuning", 0, 1000}, {"tuning", g_beatTicks, 3000}});
+}
+
+TEST_CASE("sends before the modifiers get the notes' expression", "[integration]")
+{
+	for (const bool pre : {false, true})
+	{
+		Setup setup;
+		Client& client = setup.client;
+		const ObjectId part = addPart(client, setup.track);
+		run(client, "note.add",
+			{{"part", part},
+				{"notes",
+					{{{"position", 0}, {"length", g_beatTicks / 4}, {"pitch", 60}, {"velocity", 0.5}, {"channel", 2},
+						{"expressions", {point("tuning", ticksOf(100), 12.0)}}}}}});
+		// A send to another instrument track, which gets every event the send plays.
+		const ObjectId other =
+			run(client, "track.add", {{"type", "instrument"}}).at("channel").at("id").get<ObjectId>();
+		run(client, "channel.set", {{"channel", other}, {"instrument", "noteProbe"}});
+		run(client, "channel.set",
+			{{"channel", setup.channel}, {"recordEnable", false}, {"modifiers", {{"transpose", 12}}},
+				{"midiSends",
+					{{"pre", pre},
+						{"slots", {{{"effect", "transformer"}, {"parameters", {{"value", 1}}}, {"output", other}}}}}}});
+		run(client, "audio.render", {{"frames", 64}});
+		const auto start = run(client, "audio.get").at("position").get<int64_t>();
+		run(client, "midi.capture", {{"start", true}});
+		run(client, "transport.play");
+		run(client, "audio.render", {{"frames", 1000}});
+		std::vector<std::vector<int64_t>> sent; // what the other track's instrument played
+		const Json capture = run(client, "midi.capture");
+		for (const Json& captured : capture.at("captured"))
+			if (captured.at("channel") == other)
+				sent.push_back({captured.at("position").get<int64_t>() - start,
+					captured.at("bytes").at(0).get<int64_t>(), captured.at("bytes").at(1).get<int64_t>()});
+		INFO("sends " << (pre ? "pre" : "post"));
+		// The transformer moves the note, but not yet its expression: its initial point no longer comes before it.
+		CHECK(sent == std::vector<std::vector<int64_t>>{{0, 0x92, pre ? 61 : 73}, {0, 0xE2, 0}, {100, 0xE2, 0}});
+	}
+}
+
+TEST_CASE("retrospective recording records MPE input by midi.mpePitchRange", "[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	run(client, "settings.set", {{"key", "midi.snapPartsToBars"}, {"value", false}});
+	run(client, "settings.set", {{"key", "midi.mpeInput"}, {"value", true}});
+	run(client, "settings.set", {{"key", "midi.mpePitchRange"}, {"value", 24}});
+	run(client, "channel.set", {{"channel", setup.channel}, {"recordEnable", false}});
+	// In stop mode: a bend before the note-on, its initial tuning, and one while it sounds.
+	run(client, "midi.inject",
+		{{"channel", setup.channel},
+			{"messages",
+				{message(900, {0xE1, 0, 96}), message(1000, {0x91, 60, 100}), message(2000, {0xE1, 0, 80}),
+					message(3000, {0x81, 60, 0})}}});
+	run(client, "audio.render", {{"frames", 4000}});
+	run(client, "midi.insertRetrospective", {{"track", setup.track}});
+	const Json part = run(client, "project.get").at("midiParts").at(0);
+	REQUIRE(part.at("notes").size() == 1);
+	CHECK(part.at("controllers").empty());
+	CHECK(pointsOf(part.at("notes").at(0)) ==
+		Points{{"tuning", 0, semitones(96 << 7, 24.0)}, {"tuning", ticksOf(1000), semitones(80 << 7, 24.0)}});
+	CHECK(semitones(96 << 7, 24.0) == 12001);
+}
+
+TEST_CASE(
+	"a project loads with expression points out of range clamped and unknown expressions left out", "[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	const ObjectId part = addPart(client, setup.track);
+	run(client, "note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", 0}, {"length", g_beatTicks}, {"pitch", 60}, {"velocity", 0.5},
+					{"expressions", {point("tuning", 10, 0.0)}}}}}});
+	Json json = run(client, "project.get");
+	json["midiParts"][0]["notes"][0]["expressions"] =
+		Json::array({point("tuning", 10, 200.0), point("pressure", -5, -1.0), point("wobble", 0, 0.5)});
+	const Project loaded = projectFromJson(json);
+	const std::vector<ExpressionPoint>& points = loaded.midiParts.at(part).notes.begin()->second.expressions;
+	REQUIRE(points.size() == 2);
+	CHECK(points[0].type == gnubase::plugin::NoteExpression::Pressure);
+	CHECK(points[0].position == 0);
+	CHECK(points[0].value == 0.0);
+	CHECK(points[1].type == gnubase::plugin::NoteExpression::Tuning);
+	CHECK(points[1].value == 120.0);
 }

@@ -4,6 +4,7 @@
 // the selection; snapping them (#87). tests/eventedit_tests.cpp checks the event.* commands themselves.
 #include "engine/engine.h"
 #include "engine/time/tempomap.h"
+#include "testutils/commandholds.h"
 #include "testutils/fakeui.h"
 #include "testutils/testutils.h"
 #include "ui/automation.h"
@@ -22,16 +23,14 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
-#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
-#include <limits>
 #include <memory>
-#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -619,60 +618,8 @@ TEST_CASE("a drag of an event's edge shows the size the release gives it at ever
 
 namespace
 {
-	// The runs of a command that holds the engine's command thread while it waits for the test to let it go: what
-	// the test sends meanwhile queues behind it, and the engine answers it only once the hold is released, however
-	// busy the machine is (#1272). The n-th run of the command waits for the n-th release.
-	struct CommandHolds
-	{
-		CommandHolds() = default;
-		CommandHolds(const CommandHolds&) = delete;
-		CommandHolds& operator=(const CommandHolds&) = delete;
-
-		// The command's handler, on the engine's command thread. It gives up after 30 s, so that an engine that is
-		// stopping can end even if the test never releases it.
-		Json hold()
-		{
-			std::unique_lock lock(mutex);
-			const size_t own = entered++;
-			changed.notify_all();
-			changed.wait_for(lock, std::chrono::seconds(30), [this, own] { return released > own; });
-			return Json::object();
-		}
-
-		// Whether count runs have entered hold(), waiting up to 30 s for them.
-		[[nodiscard]] bool waitEntered(size_t count)
-		{
-			std::unique_lock lock(mutex);
-			return changed.wait_for(lock, std::chrono::seconds(30), [this, count] { return entered >= count; });
-		}
-
-		// Lets the first count runs go on.
-		void release(size_t count)
-		{
-			{
-				const std::scoped_lock lock(mutex);
-				released = count;
-			}
-			changed.notify_all();
-		}
-
-		std::mutex mutex;
-		std::condition_variable changed;
-		size_t entered = 0;  // the runs that have entered hold()
-		size_t released = 0; // the runs let go: release(n) frees the n-th
-	};
-
-	// Lets every run of holds go when it goes. Declared after the fixture, it goes before the fixture's engine waits
-	// for its command thread to end, so that a test that fails while a run is held ends at once, not after hold()'s
-	// 30 s (#1308). The holds themselves are declared before the fixture: the engine's command thread waits in them.
-	struct ReleaseHolds
-	{
-		CommandHolds& holds;
-		~ReleaseHolds() { holds.release(std::numeric_limits<size_t>::max()); }
-	};
-
 	// Registers test.hold, a command whose runs wait in holds.
-	void registerHold(Fixture& f, CommandHolds& holds)
+	void registerHold(Fixture& f, test::CommandHolds& holds)
 	{
 		f.engine.registerCommand({"test.hold", 1, "Waits for the test to release it.", engine::CommandInfo{}.parameters,
 									 Json::object(), false},
@@ -687,9 +634,9 @@ TEST_CASE("a test that fails while a command is held ends at once", "[unit]")
 	CHECK_THROWS_AS(
 		[&failed]
 		{
-			CommandHolds holds;
+			test::CommandHolds holds;
 			Fixture f;
-			const ReleaseHolds releaseHolds{holds};
+			const test::ReleaseHolds releaseHolds{holds};
 			registerHold(f, holds);
 			engine::Client holder(f.engine, "holder");
 			holder.send("test.hold");
@@ -704,9 +651,9 @@ TEST_CASE("a test that fails while a command is held ends at once", "[unit]")
 
 TEST_CASE("a second resize release can precede the first release's project", "[unit]")
 {
-	CommandHolds holds;
+	test::CommandHolds holds;
 	Fixture f;
-	const ReleaseHolds releaseHolds{holds};
+	const test::ReleaseHolds releaseHolds{holds};
 	// The engine answers only when the test lets it: a command that holds its command thread until it is released,
 	// so what queues behind it runs, and answers, in an order the test chooses, not one a busy machine chooses.
 	registerHold(f, holds);
@@ -2171,13 +2118,16 @@ TEST_CASE("a press runs the edits still waiting for a range's zero crossings aft
 	f.call("snap.set", {{"zeroCrossing", true}});
 	REQUIRE(f.waitUntil([&f] { return f.display.snap().zeroCrossing && f.lanes("events")[0].events.size() == 2; }));
 	f.display.setTool(ui::Tool::RangeSelection);
-	// A command that keeps the engine busy for three seconds, so that the zero crossings answer after the press gave
-	// up on them.
+	// A command that keeps the engine busy until the test lets it go after the press, so that the zero crossings
+	// answer only after the press gave up on them, however slow the machine.
+	std::atomic<bool> pressed{false};
 	f.engine.registerCommand(
-		{"test.busy", 1, "Takes three seconds.", engine::CommandInfo{}.parameters, Json::object(), false},
-		[](engine::CommandContext&)
+		{"test.busy", 1, "Waits for the press.", engine::CommandInfo{}.parameters, Json::object(), false},
+		[&pressed](engine::CommandContext&)
 		{
-			std::this_thread::sleep_for(std::chrono::seconds(3));
+			const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+			while (!pressed && std::chrono::steady_clock::now() < until)
+				std::this_thread::sleep_for(std::chrono::milliseconds(1));
 			return Json::object();
 		});
 	f.engine.post("test.busy");
@@ -2190,6 +2140,7 @@ TEST_CASE("a press runs the edits still waiting for a range's zero crossings aft
 	REQUIRE(f.binding.holding());
 	f.click(620, 20);
 	CHECK(!f.binding.holding());
+	pressed = true;
 	const auto cropped = [&f]
 	{
 		for (const Json& event : f.audioEvents())
@@ -2208,15 +2159,20 @@ TEST_CASE("an action that waits for zero crossings does nothing once its event d
 	// A second event display, whose action waits for an awaited query that the binding hasn't handed on yet.
 	Rml::Element* element = f.document.AppendChild(f.document.CreateElement("div"));
 	auto other = std::make_unique<ui::EventDisplay>(f.engine, f.binding, *element);
+	// Its action toggles Snap, a command that would show in the command log.
 	bool answered = false;
+	const Json snap = f.call("snap.get").at("on");
 	f.binding.sendAwaited(
 		"snap.get", Json::object(), [&answered](const engine::Result& /*result*/) { answered = true; });
-	other->actions().at("zoom.in")();
+	other->actions().at("edit.snap")();
 	REQUIRE(f.binding.holding());
 	other.reset();
 	CHECK(f.binding.settle(std::chrono::seconds(10)));
 	CHECK(answered);
 	CHECK(!f.binding.holding());
+	CHECK(f.call("snap.get").at("on") == snap);
+	const Json log = f.call("engine.commandLog").at("commands");
+	CHECK(std::none_of(log.begin(), log.end(), [](const Json& entry) { return entry.at("command") == "snap.set"; }));
 }
 
 TEST_CASE("the object selection tool with Alt draws an empty MIDI part on an empty spot", "[unit]")

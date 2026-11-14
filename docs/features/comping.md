@@ -8,16 +8,18 @@ own, and works the same on takes and overlapping events put on lanes by hand (`e
 
 - **The stack.** Where audio events overlap on a track, one plays: the one in front. Each audio event has a place in
   its track's stack, `front` in `project.get` and the events' announcements: 0 orders it by its id, so the event
-  added last is in front, as before; a number brings it before every event added until then. The render snapshot
-  orders a track's events by it (`frontOf` in `document.h`), and the playlist's front layer follows
-  (`makePlaylist`). A split puts the piece after it right in front of its event and behind whatever was in front of
-  the event, which gets new places after the piece in the order it had (#1189), so splitting a take behind another
-  doesn't bring half of it to the front, and a second split of a piece doesn't bring it in front of the piece after
-  it where the two overlap; a copy or a pasted event comes in
-  front, as added last. Events copied, duplicated or pasted together, the events of a copied audio part and those
-  of a duplicated track keep the order they were stacked in among them, and so do takes that `event.toFront` or
-  `event.comp` bring to the front together. The project file keeps `front` in GNUbase's entry; ids loaded go on after
-  the highest one.
+  added last is in front, as before; a number brings it before every event added until then. Events at the same
+  place, the pieces of a split, are ordered by `rank`, higher in front, and then by id, as in files from before
+  ranks (#1281). The render snapshot orders a track's events by place, rank and id (`stackKey` in `document.h`), and
+  the playlist's front layer follows (`makePlaylist`). A split puts the piece after it at its event's place, ranked
+  right after the event, so it is right in front of its event and behind whatever was in front of the event (#1189):
+  splitting a take behind another doesn't bring half of it to the front, and a second split of a piece doesn't bring
+  it in front of the piece after it where the two overlap. Only the pieces of the event get new ranks, so a split
+  changes no other event, however many lie in front of it. A copy or a pasted event comes in front, as added last.
+  Events copied, duplicated or pasted together, the events of a copied audio part and those of a duplicated track
+  keep the order they were stacked in among them, and so do takes that `event.toFront` or `event.comp` bring to the
+  front together. The project file keeps `front` and `rank` in GNUbase's entry; ids loaded go on after the highest
+  one.
 - **`event.toFront`** brings takes to the front, one undo step "To Front": an audio event gets a new place in front
   of every other, an audio part's events too, in the order they are stacked in. MIDI parts all play where they
   overlap (p. 226), so a MIDI take comes to the front unmuted, and the MIDI parts on its track's other lanes that it
@@ -43,7 +45,12 @@ second around it; undo brings back the second take everywhere, redo the comp (`t
 checks `event.toFront` on audio and MIDI takes, splits, the project file and undo, the stack order of takes copied,
 pasted or brought to the front together, `lane` on the commands that add events and parts, and that a muted take in
 front silences the take behind it only with `editing.treatMutedAudioLikeDeleted` off, also where the take behind
-crossfades into it).
+crossfades into it). It also renders the overlap of a split's pieces before and after a second split, after undo, redo
+and loading; names overlapping pieces of a split in both orders to copy them and bring them to the front; checks that a
+split at several positions and a second split change no event in front of the split one; and loads a file whose
+GNUbase entry gives two overlapping events one place without ranks, as files from before #1189 can, and renders the
+overlap, snaps in it, copies the events and brings them to the front named in both orders: the one with the higher id
+stays in front.
 
 ## Event display and track list
 

@@ -661,6 +661,10 @@
 	{
 		border-color: #d76a73;
 	}
+	.chord-pad.drop-target
+	{
+		border-color: #67ad8b;
+	}
 	.chord-pad.level-0
 	{
 		border-bottom-color: #67ad8b;
@@ -703,6 +707,10 @@
 	.chord-pads-key.black.remote
 	{
 		background-color: #416d75;
+	}
+	.chord-pads-key.section
+	{
+		background-color: #7a663f;
 	}
 	.chord-pads-key.modifier
 	{

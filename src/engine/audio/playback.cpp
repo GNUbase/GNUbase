@@ -508,8 +508,12 @@ namespace gnubase::engine
 			if (placed.end > placed.start)
 				events.push_back(placed);
 		}
-		std::sort(events.begin(), events.end(), [](const Placed& a, const Placed& b)
-			{ return std::tie(a.event->front, a.event->id) < std::tie(b.event->front, b.event->id); });
+		std::sort(events.begin(), events.end(),
+			[](const Placed& a, const Placed& b)
+			{
+				return std::tie(a.event->front, a.event->rank, a.event->id) <
+					std::tie(b.event->front, b.event->rank, b.event->id);
+			});
 
 		// Crossfades first: they replace the fades at the ends they join. Auto crossfades go where the front layer
 		// passes from one event to another, which the fades don't change.

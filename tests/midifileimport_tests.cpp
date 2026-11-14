@@ -677,6 +677,29 @@ TEST_CASE("midiFile.import extracts the first patch and volume and pan into the 
 		5);
 }
 
+TEST_CASE("midiFile.import with singlePart gives a new MIDI track the file's MIDI channel, or Any for several",
+	"[integration]")
+{
+	const test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	midifile::File one;
+	one.tracks.push_back(track("Strings", {note(0, 1, 60, true), note(480, 1, 60, false)}));
+	one.tracks.push_back(track("More Strings", {control(0, 1, 1, 64), note(0, 1, 64, true), note(480, 1, 64, false)}));
+	midifile::File several = one;
+	several.tracks.push_back(track("Piano", {note(0, 0, 67, true), note(480, 0, 67, false)}));
+	const auto midiChannel = [&client](const std::string& path)
+	{
+		const Json imported = run(client, "midiFile.import", {{"path", path}, {"singlePart", true}});
+		REQUIRE(imported.at("tracks").size() == 1);
+		const Json project = run(client, "project.get");
+		const Json& added = find(project.at("tracks"), "id", imported.at("tracks")[0]);
+		return find(project.at("channels"), "id", added.at("channel")).at("midiChannel");
+	};
+	CHECK(midiChannel(save(dir, "one.mid", one)) == 1);
+	CHECK(midiChannel(save(dir, "several.mid", several)).is_null());
+}
+
 TEST_CASE("midiFile.import keeps a track that the extraction leaves empty, without a part", "[integration]")
 {
 	const test::TempDir dir;

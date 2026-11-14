@@ -80,6 +80,9 @@ menu#in-place-editing-mode-menu-inPlace-<track>, menu#in-place-active-part-menu-
   [inspector.md](inspector.md)) the selected track's, checked while it is open. A double click on the controller lanes'
   footer strip, the place below the controller display (p. 1261, [controller-lanes.md](controller-lanes.md)), closes
   that track's editor too; one on the strip's Create and Setup buttons doesn't.
+- **The project window's info line** (p. 1259) shows an editor's selected notes while its selection changed last, also
+  while its own toolbar, and with it its own info line, is hidden, and edits them as that info line does
+  ([inspector.md](inspector.md)).
 
 `resources/styles/keyeditor.rcss` lays the editors out; the themes give them an opaque background over the events
 (`tools/skin/generate.py`).
@@ -87,11 +90,10 @@ menu#in-place-editing-mode-menu-inPlace-<track>, menu#in-place-active-part-menu-
 ## Not yet
 
 Tracked in #1158: the setup panes of the toolbar and the info line (p. 1575), which only the project window has so far
-([docking.md](docking.md)); the project window's info line showing the selected note (the editor's own info line shows
-it with the toolbar); a tempo-mapped time axis; the keyboard in the track list's column; Edit In-Place in the track
-list's controls, with the toolbar's triangle at the upper right of the track's row in the track list (p. 1259) instead
-of over the editor; the toolbar's Acoustic Feedback, Indicate Transpositions and Event Colors (the key editor has none
-yet).
+([docking.md](docking.md)); a tempo-mapped time axis; the keyboard in the track list's column; Edit In-Place in the
+track list's controls, with the toolbar's triangle at the upper right of the track's row in the track list (p. 1259)
+instead of over the editor; the toolbar's Acoustic Feedback, Indicate Transpositions and Event Colors (the key editor
+has none yet).
 
 ## Checks
 
@@ -124,3 +126,5 @@ yet).
   target part's start is refused; refusing too a part or a note that doesn't exist, a note that would land outside the
   pitches and a move between shared copies of one group, changing nothing then; a note reaching past the target part's
   end, a move within the source part itself, and the shared copies of the source and of the target staying consistent.
+- `tests/inspector_tests.cpp`: the project window's info line showing and editing the notes an in-place editor has
+  selected (inspector.md).

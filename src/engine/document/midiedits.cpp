@@ -82,9 +82,14 @@ namespace gnubase::engine
 				const Json& item = items[i];
 				const std::string name = "notes[" + std::to_string(i) + "]";
 				Note note = changed(part.notes, item, name, "note");
+				const time::Ticks end = note.position + note.length;
+				const time::Ticks start = note.position;
 				note.position = position(item, note.position, name);
 				note.length = item.value("length", note.length);
 				require(note.length > 0, name + ".length must be positive");
+				// A start resized, its end where it was: the expression stays where it is too.
+				if (note.position != start && note.position + note.length == end && !item.contains("expressions"))
+					note.expressions = expressionsFrom(note.expressions, note.position - start);
 				note.pitch = integer(item, "pitch", note.pitch, 0, 127, name);
 				note.channel = integer(item, "channel", note.channel, 0, 15, name);
 				note.velocity = scaled(item, "velocity", note.velocity, g_maxVelocity, name);
@@ -309,8 +314,9 @@ namespace gnubase::engine
 				"Changes notes of a MIDI part: each change names a note by id and gives what changes, position and "
 				"length in ticks, pitch 0-127, velocity 0-1, release velocity 0-1, MIDI channel 0-15, play probability "
 				"0-1, velocity variance -1 to 1, articulations, the attributes it has, or expressions, which replace "
-				"its "
-				"expression points (see note.add). Returns the changed notes.",
+				"its expression points (see note.add). The points move with the note's start, but for a start that "
+				"moves while the end stays: then they stay where they are, and the values at the new start become "
+				"its initial ones. Returns the changed notes.",
 				changesSchema("notes",
 					{{"position", integer}, {"length", integer}, {"pitch", integer}, {"velocity", number},
 						{"releaseVelocity", number}, {"channel", integer}, {"probability", number},

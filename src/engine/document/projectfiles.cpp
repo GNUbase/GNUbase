@@ -154,6 +154,8 @@ namespace gnubase::engine
 		m_clipboard.reset();           // it holds the old project's track and clip ids
 		m_automationClipboard.reset(); // so does this one
 		context.emit("project.reset");
+		if (m_chordPadsOpened)
+			m_chordPadsOpened(context);
 		announceHistory(context);
 		m_openedRevision = m_revision + 1; // the revision publish() makes, so that its snapshot is the new project's
 		publish();

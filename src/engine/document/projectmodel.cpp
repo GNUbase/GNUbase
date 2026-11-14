@@ -1609,7 +1609,7 @@ namespace gnubase::engine
 			for (const AudioEvent& event : audio)
 				stacked.push_back(&event);
 			std::stable_sort(stacked.begin(), stacked.end(),
-				[](const AudioEvent* a, const AudioEvent* b) { return frontOf(*a) < frontOf(*b); });
+				[](const AudioEvent* a, const AudioEvent* b) { return stackKey(*a) < stackKey(*b); });
 			for (const AudioEvent* event : stacked)
 				events[event->id] = project.newId();
 			for (AudioEvent& event : audio)
@@ -1788,6 +1788,16 @@ namespace gnubase::engine
 					}
 				if (chordsChanged)
 					context.emit("chord.changed", chordJson(project));
+				// A chord pads player that played it plays none now (reference manual p. 1377).
+				bool padsChanged = false;
+				for (ChordPlayer& player : project.chordPads.players)
+					if (player.track == removed)
+					{
+						player.track = 0;
+						padsChanged = true;
+					}
+				if (padsChanged)
+					context.emit("chordPads.changed", chordPadsJson(project));
 				if (gone.channel != 0)
 					for (const ObjectId slot : project.channels.at(gone.channel).slots)
 						project.slots.erase(slot);
@@ -4397,7 +4407,8 @@ namespace gnubase::engine
 				"change, after bank select MSB (CC 0) and LSB (CC 32) if bank is set, goes to the instrument on its "
 				"midiChannel whenever they change and when playback starts or jumps; without a program nothing is "
 				"sent. midiChannel is the MIDI channel they go out on, 0 to 15, or null (Any, the default) for MIDI "
-				"channel 1. device names the "
+				"channel 1. A MIDI track set to a channel also plays its parts' notes and controller events, what its "
+				"input plays and its MIDI automation on it; Any keeps their own channels. device names the "
 				"installed MIDI device (midiDevice.install) whose patches choose them, or is empty. monitor and "
 				"recordEnable are an audio track's buttons: monitor hears the input bus, recordEnable arms the track "
 				"for recording "

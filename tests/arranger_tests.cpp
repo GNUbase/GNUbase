@@ -266,6 +266,51 @@ TEST_CASE("a chain edit while the chain plays back into the project keeps the st
 	CHECK(transport.arranger().repeat == 2);
 }
 
+TEST_CASE("a stop or a cycle jump ends the pre-roll the transport remembers", "[unit]")
+{
+	ArrangerPlan plan = abPlan();
+	plan.steps = {{0, 1, ArrangerRepeat::Normal}}; // A
+	Transport transport;
+	TransportSettings settings;
+	settings.preRoll = true;
+	settings.preRollAmount = 200;
+	REQUIRE(transport.set(settings));
+	REQUIRE(transport.locate(1000)); // play starts at A; the pre-roll plays from 800
+	REQUIRE(transport.play());
+	CHECK(play(transport, plan, 50, 50) == path({{800, 850}}, 50)); // in the pre-roll, before A
+
+	SECTION("a stop during the pre-roll")
+	{
+		REQUIRE(transport.stop());
+		// A chain edit while stopped: playback is no longer rolling in, so the new plan enters where the transport
+		// stands, outside the chain, not at the start the pre-roll was for.
+		ArrangerPlan edited = plan;
+		edited.steps = {{0, 2, ArrangerRepeat::Normal}};
+		CHECK(play(transport, edited, 10, 10) == std::vector<Samples>(10, -1)); // stopped: nothing plays
+		CHECK(transport.arranger().step == -1);
+	}
+	SECTION("a cycle jump during the pre-roll")
+	{
+		// Cycling with the plan off: the right locator comes before the start, so the jump lands in the pre-roll.
+		ArrangerPlan off = plan;
+		off.active = false;
+		Transport cycling;
+		TransportSettings cycleSettings;
+		cycleSettings.cycle = true;
+		cycleSettings.left = 500;
+		cycleSettings.right = 1020;
+		cycleSettings.preRoll = true;
+		cycleSettings.preRollAmount = 50;
+		REQUIRE(cycling.set(cycleSettings));
+		REQUIRE(cycling.locate(1050)); // in A; the pre-roll plays from 1000
+		REQUIRE(cycling.play());
+		CHECK(play(cycling, off, 30, 30) == path({{1000, 1020}, {500, 510}}, 30));
+		// Arranger mode switched on: playback enters where it is (500, outside the chain), not at the stale start.
+		CHECK(play(cycling, plan, 10, 10) == path({{510, 520}}, 10));
+		CHECK(cycling.arranger().step == -1);
+	}
+}
+
 TEST_CASE("jump points for 4 bars, 2 bars, 1 bar and 1 beat from an event that starts in the middle of a bar", "[unit]")
 {
 	using gnubase::time::Position;
@@ -687,6 +732,43 @@ TEST_CASE("transport.play keeps a triggered event that isn't in the chain", "[in
 	CHECK(run(song.client, "transport.get").at("arranger").at("event") == song.b);
 	CHECK(run(song.client, "transport.get").at("arranger").at("step") == -1);
 	CHECK(run(song.client, "transport.get").at("position") == 2000);
+}
+
+TEST_CASE(
+	"with the start mode cycleStart a left locator outside the chain starts at the chain's first step", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	Song song(100);
+	song.addAudio(dir);
+	run(song.client, "arranger.setChain", {{"steps", {{{"event", song.b}}, {{"event", song.a}}}}}); // B, A
+	run(song.client, "arranger.setMode", {{"mode", true}});
+	// The cursor is in A, but playback starts at the left locator (startMode cycleStart), which is outside the chain.
+	run(song.client, "transport.set", {{"left", 3000}, {"startMode", "cycleStart"}});
+	run(song.client, "transport.locate", {{"position", 1200}});
+	run(song.client, "transport.play");
+	CHECK(run(song.client, "transport.get").at("position") == 2000); // the chain's first step, not the left locator
+	CHECK(run(song.client, "transport.get").at("arranger").at("step") == 0);
+	run(song.client, "audio.render", {{"frames", 1200}});
+	checkOutput(song, path({{2000, 2500}, {1000, 1600}, {1600, 1700}}, 1200));
+}
+
+TEST_CASE("with the start mode cycleStart a left locator inside the chain keeps the step holding it", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	Song song(100);
+	song.addAudio(dir);
+	run(song.client, "arranger.setChain", {{"steps", {{{"event", song.b}}, {{"event", song.a}}}}}); // B, then A
+	run(song.client, "arranger.setMode", {{"mode", true}});
+	// The cursor is in B, but playback starts at the left locator, which the step of A holds.
+	run(song.client, "transport.set", {{"left", 1200}, {"startMode", "cycleStart"}});
+	run(song.client, "transport.locate", {{"position", 2200}});
+	run(song.client, "transport.play");
+	CHECK(run(song.client, "transport.get").at("position") == 1200); // the left locator, not the cursor
+	run(song.client, "audio.render", {{"frames", 200}});
+	CHECK(run(song.client, "transport.get").at("arranger").at("step") == 1); // A's step plays
+	CHECK(run(song.client, "transport.get").at("position") == 1400);
+	run(song.client, "audio.render", {{"frames", 300}});
+	checkOutput(song, path({{1200, 1600}, {1600, 1700}}, 500)); // A, then on after the chain
 }
 
 TEST_CASE("transport.get reports no arranger step while the plan doesn't play", "[integration]")

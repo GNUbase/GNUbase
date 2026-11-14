@@ -198,6 +198,17 @@
 			return false
 		end
 
+		-- The tracks whose source is checked.
+		local function chosen()
+			local result = {}
+			for _, track in ipairs(dialog.sources) do
+				if track.importable and checked("import-source-" .. track.id) then
+					result[#result + 1] = track
+				end
+			end
+			return result
+		end
+
 		-- Tracks inside an imported folder go along with it, so their own choices are disabled.
 		function dialog.update()
 			if dialog.file == nil then
@@ -213,9 +224,15 @@
 			setDisabled(element("import-range-start"), not checked("import-range"))
 			setDisabled(element("import-range-end"), not checked("import-range"))
 			setDisabled(element("import-locators"), not checked("import-range"))
-			-- Convert Sample Rate only with Copy, for a file with media files at another sample rate than the project's
-			-- (reference manual p. 205), whatever the file's own rate.
-			setDisabled(element("import-convert"), not checked("import-copy") or not dialog.convertible)
+			-- Convert Sample Rate only with Copy, and only while one of the chosen tracks has a media file at another
+			-- sample rate than the project's (reference manual p. 205), whatever the file's own rate.
+			local convertible = false
+			for _, track in ipairs(chosen()) do
+				for _, rate in ipairs(track.mediaSampleRates) do
+					convertible = convertible or rate ~= dialog.project.sampleRate
+				end
+			end
+			setDisabled(element("import-convert"), not checked("import-copy") or not convertible)
 		end
 
 		local function row(track)
@@ -298,23 +315,8 @@
 				element("import-new-position"):SetAttribute("value", "bottom")
 				setDisabled(element("import-new-position"), true)
 			end
-			dialog.convertible = false
-			for _, rate in ipairs(listed.mediaSampleRates) do
-				dialog.convertible = dialog.convertible or rate ~= dialog.project.sampleRate
-			end
 			dialog.file = listed.project -- once its rows are there, for update
 			dialog.update()
-		end
-
-		-- The tracks whose source is checked.
-		local function chosen()
-			local result = {}
-			for _, track in ipairs(dialog.sources) do
-				if track.importable and checked("import-source-" .. track.id) then
-					result[#result + 1] = track
-				end
-			end
-			return result
 		end
 
 		function dialog.selectAll(on)

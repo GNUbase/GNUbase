@@ -36,8 +36,10 @@ namespace gnubase::engine
 		constexpr time::Samples g_maxRollAmount = time::Samples{3600} * 768000;
 		constexpr auto g_startWait = std::chrono::seconds(2);    // for the streams before playback starts or locates
 		constexpr auto g_offlineWait = std::chrono::seconds(30); // for the streams before an offline block
-		constexpr size_t g_offlineMidi = 1024;                   // MIDI messages per block another device renders
-		constexpr int64_t g_maxCaptureRead = int64_t{1} << 20;   // frames one audio.capture returns at most
+		// Rounds of the offline wait for the samplers' samples (10 minutes of 30 s) before a render gives up (#1343).
+		constexpr int g_offlineSampleRounds = 20;
+		constexpr size_t g_offlineMidi = 1024;                 // MIDI messages per block another device renders
+		constexpr int64_t g_maxCaptureRead = int64_t{1} << 20; // frames one audio.capture returns at most
 		constexpr int64_t g_maxThreads = 64;
 		constexpr int64_t g_maxLatency = 65536; // frames: the dummy device's latencies and the record shift
 		// Frames: the largest record offset, the latency each way and the record shift at their limits. The audio
@@ -358,8 +360,8 @@ namespace gnubase::engine
 
 	Json AudioEngine::padEvents()
 	{
-		static constexpr std::array<const char*, 6> kinds = {
-			"triggered", "released", "modifier", "note", "player", "control"};
+		static constexpr std::array<const char*, 7> kinds = {
+			"triggered", "released", "modifier", "note", "player", "control", "controlInput"};
 		Json events;
 		MidiPorts::PadEvent event;
 		while (m_midi.takePadEvent(event))
@@ -390,9 +392,14 @@ namespace gnubase::engine
 		const audio::MidiBuffer midiIn;
 		audio::MidiBuffer midiOut(g_offlineMidi);
 		uint64_t position = m_device->position();
-		// Every sampler plays its sample from the first block, however long its file takes to read (#1180).
-		while (!waitForSamples(g_offlineWait))
+		// Every sampler plays its sample from the first block (#1180). A file whose read stalls fails the render
+		// after the last round instead of holding it for good (#1343).
+		for (int round = 1; !waitForSamples(m_offlineSampleWait); ++round)
+		{
+			if (round == g_offlineSampleRounds)
+				throw CommandError("the render gave up waiting for the samplers' samples to be read");
 			logging::warning("The render still waits for the samplers' samples to be read");
+		}
 		for (uint64_t done = 0; done < frames;)
 		{
 			const auto block = static_cast<uint32_t>(std::min<uint64_t>(format.blockSize, frames - done));
@@ -743,9 +750,11 @@ namespace gnubase::engine
 			sequence->liveInput = channel.liveInput;
 			sequence->articulations = channel.articulations;
 			sequence->drumInput = channel.drumInput;
+			sequence->inputChannel = channel.inputChannel;
 			sequence->inserts = channel.midiInserts;
 			sequence->sends = channel.midiSends;
 			sequence->preNotes = channel.preNotes;
+			sequence->preExpressions = channel.preExpressions;
 			for (size_t s = 0; s < channel.midiSendOutputs.size(); ++s)
 				if (const int output = channel.midiSendOutputs[s]; output >= 0)
 					sequence->sendOutputs[s] = snapshot.channels[static_cast<size_t>(output)].id;
@@ -2712,11 +2721,13 @@ namespace gnubase::engine
 				return;
 			}
 		}
-		// In arranger mode playback outside the chain's events starts at the chain's start. A triggered event that
-		// loops where playback starts counts as inside too, so Play keeps it instead of the chain's first step (#880).
+		// In arranger mode playback outside the chain's events starts at the chain's start: where play starts (the
+		// cursor, or the left locator with startMode cycleStart), and a triggered event that loops there counts as
+		// inside too, so Play keeps it instead of the chain's first step (#880).
+		time::Samples from = -1; // with a start outside the chain: the chain's first step's start
 		if (plan.plays() && !m_transport.playing())
 		{
-			const time::Samples at = m_transport.position();
+			const time::Samples at = m_transport.playStart();
 			const ArrangerState state = m_transport.arranger();
 			const auto section = static_cast<size_t>(state.section);
 			const bool inLoop = state.step < 0 && state.section >= 0 && section < plan.sections.size() &&
@@ -2729,6 +2740,7 @@ namespace gnubase::engine
 				});
 			if (!inLoop && !inStep)
 			{
+				from = plan.sections.at(static_cast<size_t>(plan.steps.at(0).section)).start;
 				ArrangerState first;
 				first.step = 0;
 				arrange(first);
@@ -2736,12 +2748,13 @@ namespace gnubase::engine
 		}
 		if (m_device && !m_transport.playing())
 		{
-			cueStart(m_transport.startPosition(), m_transport.playStart());
-			cue(m_transport.startPosition(), false, m_device->format().blockSize, true, m_transport.playStart());
+			cueStart(m_transport.startPosition(from), m_transport.playStart(from));
+			cue(m_transport.startPosition(from), false, m_device->format().blockSize, true,
+				m_transport.playStart(from));
 			// Only starting playback waits for the samplers' samples, not locating or a count-in (#1180).
 			waitForSamples(g_startWait);
 		}
-		sent(m_transport.play());
+		sent(m_transport.play(from));
 	}
 
 	graph::CountIn AudioEngine::countInFrom(time::Samples start, time::Samples recordStart) const
@@ -3108,9 +3121,10 @@ namespace gnubase::engine
 		};
 		command("transport.play",
 			"Starts playback from the project cursor, or from the left locator if startMode is cycleStart, less the "
-			"pre-roll if preRoll is on (not before the project start). While playing it does nothing, except that it "
-			"ends a Repeat Forever loop: playback then goes on with the next chain step, or past the chain if the "
-			"looping step is the last one.",
+			"pre-roll if preRoll is on (not before the project start); in arranger mode a start outside the chain's "
+			"events starts at the chain's first step instead. While playing it does nothing, except that it ends a "
+			"Repeat Forever loop: playback then goes on with the next chain step, or past the chain if the looping "
+			"step is the last one.",
 			nullptr, [this](const Json&) { play(); });
 		// Lock Record: a recording doesn't stop or punch out by these commands, only by a confirmed stop.
 		const auto unlocked = [this]

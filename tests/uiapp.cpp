@@ -269,11 +269,14 @@ namespace gnubase::test
 			[this, direction, perAnswer]
 			{
 				for (int step = 0; step < perAnswer; ++step)
-				{
-					m_moved += 2 * direction;
-					m_context.ProcessMouseMove(m_at.x, m_at.y + m_moved, 0);
-				}
+					nudge(direction);
 			});
+	}
+
+	void LateDrag::nudge(int direction)
+	{
+		m_moved += 2 * direction;
+		m_context.ProcessMouseMove(m_at.x, m_at.y + m_moved, 0);
 	}
 
 	void LateDrag::release(bool stays)
