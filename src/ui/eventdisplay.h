@@ -656,6 +656,8 @@ namespace gnubase::ui
 		void showFades(); // the fade lines and the selected audio events' handles
 		// A double click on an event at seconds: in a crossfade's zone, opens the crossfade editor.
 		bool openCrossfadeAt(const Shown& shown, double seconds); // whether there is one
+		// The crossfade editor of the first crossfade into or out of a selected audio event; whether there is one.
+		bool openSelectedCrossfade();
 		// The selected audio events, by id.
 		std::vector<uint64_t> selectedAudio() const;
 		// The selected MIDI parts, by id.

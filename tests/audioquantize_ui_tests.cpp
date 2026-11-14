@@ -2,7 +2,8 @@
 // Audio quantizing in the app (#145, docs/features/audio-quantize.md), driven with ui::Automation as MCP's UI tools
 // drive it: Edit > Quantize and Reset Quantize on the project window's selected audio events, Warp Quantize On/Off in
 // the quantize panel and the toolbar, the panel's section for several audio tracks: the Hitpoint Tracks' priorities,
-// Slice, Create, Crossfade and Nudge Crossfade, and Create Groove Quantize Preset from an audio event.
+// Slice, Create, Crossfade, Nudge Crossfade and Open Crossfade Editor, and Create Groove Quantize Preset from an audio
+// event.
 // tests/audioquantize_tests.cpp checks the engine's side.
 #include "platform/log.h"
 #include "ui/eventdisplay.h"
@@ -205,6 +206,12 @@ TEST_CASE("the quantize panel slices, quantizes and crossfades several audio tra
 		CHECK((nudged[i] == crossfaded[i] || nudged[i] == crossfaded[i] + 48));
 	f.click("#quantize-nudge-left");
 	CHECK(f.positionsAre(f.tracks[0], crossfaded));
+
+	// Open Crossfade Editor opens the editor of a selected slice's crossfade, and crossfades nothing itself.
+	const Json before = f.project().at("audioEvents");
+	f.click("#quantize-crossfade-editor");
+	CHECK(f.app.waitUntil([&] { return f.shown("#crossfade-editor"); }));
+	CHECK(f.project().at("audioEvents") == before);
 }
 
 TEST_CASE("Create Groove Quantize Preset makes a groove of the selected audio event's hitpoints", "[ui]")

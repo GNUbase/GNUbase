@@ -244,7 +244,9 @@ namespace gnubase::ui
 				R"(<button id="quantize-nudge-left" class="icon-only" action="nudgeLeft" )"
 				R"(title="Nudge Crossfade Left">&lt;</button>)"
 				R"(<button id="quantize-nudge-right" class="icon-only" action="nudgeRight" )"
-				R"(title="Nudge Crossfade Right">&gt;</button><div class="quantize-spacer"/>)"
+				R"(title="Nudge Crossfade Right">&gt;</button>)"
+				R"(<button id="quantize-crossfade-editor" action="crossfadeEditor" title="Open Crossfade Editor">)"
+				R"(Editor</button><div class="quantize-spacer"/>)"
 				R"(<button id="quantize-crossfade" action="crossfade" title="Crossfade">Crossfade</button>)"
 				R"(</div></div></div>)");
 			menus += R"(<menu id="quantize-grid-menu">)" + menuItems("grid", noteValues(false), "") +
@@ -369,6 +371,8 @@ namespace gnubase::ui
 				m_run("edit.resetQuantize");
 			else if (action == "panel")
 				m_run("window.quantizePanel");
+			else if (action == "crossfadeEditor")
+				m_run("audio.crossfadeEditor");
 			else if (action == "soft") // the toggle's state before this click: m_settings may not have caught up yet
 				set({{"settings", {{"soft", !button->HasAttribute("checked")}}}});
 			else if (action == "warp")

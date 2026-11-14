@@ -148,7 +148,7 @@ namespace gnubase::app
 			const char* keys;
 		};
 
-		constexpr std::array<ProjectCommand, 91> g_projectCommands{{
+		constexpr std::array<ProjectCommand, 92> g_projectCommands{{
 			{"zoom.in", "Zooms the project window in.", "H"},
 			{"zoom.out", "Zooms the project window out.", "G"},
 			{"zoom.inVertically", "Makes the project window's tracks taller.", "Shift+H"},
@@ -193,6 +193,8 @@ namespace gnubase::app
 				nullptr},
 			{"audio.crossfade",
 				"Crossfades the selected audio events, or opens the crossfade editor for their crossfade.", "X"},
+			{"audio.crossfadeEditor", "Opens the crossfade editor for the crossfade of the selected audio events.",
+				nullptr},
 			{"audio.removeFadeIn", "Removes the fade in of the selected audio events.", nullptr},
 			{"audio.removeFadeOut", "Removes the fade out of the selected audio events.", nullptr},
 			{"audio.removeFades", "Removes the fades and crossfades of the selected audio events.", nullptr},

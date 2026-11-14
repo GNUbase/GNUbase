@@ -142,15 +142,18 @@ the project's settings ([hitpoints.md](hitpoints.md)), kept as a preset, so it i
   (`ui::EventDisplay::onSelectionShown`); a track keeps its priority while the panel is open, also when it leaves the
   list and comes back. The reference manual shows the priority as up to five stars; a value field is the panel's own
   widget for a number dragged left and right. Nudge Crossfade Left and Right (`#quantize-nudge-left`,
-  `#quantize-nudge-right`, next to Crossfade) send `quantize.nudgeCrossfade` with -1 and 1 ms.
+  `#quantize-nudge-right`, next to Crossfade) send `quantize.nudgeCrossfade` with -1 and 1 ms. Open Crossfade Editor
+  (`#quantize-crossfade-editor`) runs the UI command `audio.crossfadeEditor`, which opens the crossfade editor
+  ([fades.md](fades.md)) of the first crossfade into or out of a selected audio event, as Crossfade (`audio.crossfade`)
+  does when there is one, but never crossfades events itself.
 - **Edit > Advanced Quantize > Create Groove Quantize Preset** (`edit.createGrooveQuantize`) takes the first selected
   audio event when no MIDI part is selected, and makes its groove the project's settings, as for a MIDI part.
 
 ## Not yet
 
 Group editing of folder tracks (the commands take the events, of any tracks); the Reset of Slice Rules and of Warp
-Marker Creation Rules (undo does it) and cutting positions shown in the project window; Open Crossfade Editor in the
-Crossfades section; quantizing a selection range of an event; the quantize functions on the sample editor's toolbar.
+Marker Creation Rules (undo does it) and cutting positions shown in the project window; quantizing a selection range
+of an event; the quantize functions on the sample editor's toolbar.
 
 ## Checks
 
@@ -178,6 +181,6 @@ origins keep no offset or length yet; warp markers for several tracks of the sam
 left and back, with reset after it, not past a clip's start and not with a locked event; a groove preset from an audio
 event's hitpoints that then quantizes another event, its name and its errors.
 `tests/audioquantize_ui_tests.cpp` drives the app with `ui::Automation`: Edit > Quantize and Reset Quantize on a
-selected audio event, Warp Quantize On/Off, the panel's Slice, Apply, Crossfade, Nudge Crossfade and Create on two
-tracks, the Hitpoint Tracks following the selection and a track at priority 0 leaving its hitpoints out of Slice, and
+selected audio event, Warp Quantize On/Off, the panel's Slice, Apply, Crossfade, Nudge Crossfade, Open Crossfade
+Editor and Create on two tracks, the Hitpoint Tracks following the selection and a track at priority 0 leaving its hitpoints out of Slice, and
 Create Groove Quantize Preset from a selected audio event.

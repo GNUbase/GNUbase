@@ -1208,7 +1208,7 @@ TEST_CASE("Nudge Crossfade moves the crossfades of quantized slices by a millise
 	const Loop loop = addLoop(client, dir, "loop", clicks(played, 4 * g_quarter));
 	setHitpoints(client, loop.clip, played);
 	const Json sliced = run(client, "quantize.slice", {{"events", {loop.event}}, {"offset", 5.0}});
-	const Json events = sliced.at("events");
+	const Json& events = sliced.at("events");
 	const std::vector<std::vector<int64_t>> before = eventsOn(client, loop.track);
 	run(client, "quantize.set", {{"preset", "1/8"}});
 	run(client, "quantize.apply", {{"events", events}});

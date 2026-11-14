@@ -41,8 +41,9 @@ namespace gnubase::ui
 	// panel the section for several audio tracks: Range and Offset with Slice (quantize.slice), or with warp quantizing
 	// on Create (quantize.createWarpMarkers), Nudge Crossfade Left and Right (quantize.nudgeCrossfade, 1 ms), and
 	// Crossfade Length with Crossfade (quantize.crossfade). Those send the engine command with the panel's values
-	// through audio, which adds the audio events to quantize. Above them the Hitpoint Tracks (pp. 378, 380): each
-	// track showHitpointTracks lists with its priority, 0 to 5 (default 1), which Slice and Create send.
+	// through audio, which adds the audio events to quantize. Open Crossfade Editor runs the UI command
+	// audio.crossfadeEditor through run. Above them the Hitpoint Tracks (pp. 378, 380): each track
+	// showHitpointTracks lists with its priority, 0 to 5 (default 1), which Slice and Create send.
 	class QuantizePanel final : private Rml::EventListener
 	{
 	public:

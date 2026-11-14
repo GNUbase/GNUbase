@@ -199,7 +199,7 @@ namespace gnubase::app
 	void AppUi::quantizeAudioTracks(const std::string& command, Json parameters)
 	{
 		const std::vector<uint64_t> parts = selected("audioParts");
-		std::vector<uint64_t> events = selectedAudioEvents();
+		const std::vector<uint64_t> events = selectedAudioEvents();
 		if (events.empty())
 			return;
 		parameters["events"] = events;
