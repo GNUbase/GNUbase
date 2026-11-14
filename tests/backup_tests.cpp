@@ -869,6 +869,9 @@ TEST_CASE("a job held at its first progress keeps no command or event waiting", 
 	// command that sends events runs meanwhile, and the job is still at its first progress.
 	{
 		test::HeldJob held(song.engine, "project.backup");
+		// One HeldJob per engine at a time: a second would replace the first one's hook and unhook it when it goes.
+		// Refused before the job starts, it leaves the first one's hook in place, so the job is held (#1323).
+		CHECK_THROWS_AS(test::HeldJob(song.engine, "media.locate"), std::logic_error);
 		const uint64_t job = run(song.client, "project.backup", {{"folder", utf8(dir.path() / "backup")}})
 								 .at("job")
 								 .at("id")
@@ -884,16 +887,13 @@ TEST_CASE("a job held at its first progress keeps no command or event waiting", 
 		// Only the first job of the kind is held: another one runs through meanwhile.
 		CHECK(backup(song.client, {{"folder", utf8(dir.path() / "next")}}).at("missing").empty());
 
-		// One HeldJob per engine at a time: a second would unhold the first when it goes. Refused, it leaves the
-		// first one holding its job.
-		CHECK_THROWS_AS(test::HeldJob(song.engine, "media.locate"), std::logic_error);
 		CHECK(held.held());
-		const Json still = run(song.client, "job.get", {{"job", job}}).at("job");
-		CHECK(still.at("state") == "running");
-		CHECK(still.at("progress").get<double>() < 0.01);
 
+		// Released, the HeldJob holds the job no longer, and says so on a second release.
 		CHECK(held.release());
 		CHECK(!held.held());
+		CHECK(!held.waitUntilHeld(std::chrono::milliseconds(0)));
+		CHECK(!held.release());
 		CHECK(waitForJob(song.client, job).at("state") == "done");
 		CHECK(held.job() == job);
 		CHECK_THROWS_AS(test::HeldJob(song.engine, "media.locate"), std::logic_error);
@@ -936,6 +936,40 @@ TEST_CASE("a job whose hold lapsed runs free, and its HeldJob tells", "[integrat
 	CHECK(!held.held());
 	CHECK(!held.waitUntilHeld(std::chrono::milliseconds(0)));
 	CHECK(!held.release());
+}
+
+TEST_CASE("a HeldJob released before its job got there holds none, and its release tells", "[integration]")
+{
+	const test::TempDir dir;
+	writeNoise(dir.path() / "take.wav", 48000);
+	Song song;
+	song.addEvent(song.addClip(song.addMedia(dir.path() / "take.wav")), 0, 0, 4800);
+
+	// No job got to its first progress yet, so release says that none was held all along (#1323).
+	test::HeldJob held(song.engine, "project.backup");
+	CHECK(!held.release());
+	const uint64_t job = run(song.client, "project.backup", {{"folder", utf8(dir.path() / "backup")}})
+							 .at("job")
+							 .at("id")
+							 .get<uint64_t>();
+	CHECK(waitForJob(song.client, job).at("state") == "done");
+	CHECK(held.holds() == 0);
+	CHECK(held.job() == 0);
+	CHECK(!held.waitUntilHeld(std::chrono::milliseconds(0)));
+}
+
+// whileHeld checks that its hold didn't lapse before the test released the job, since what the test did meanwhile may
+// have come after the job went on (#1323). A hold that lapses while the test works fails the test; the job may have
+// ended by then too, which fails whileHeld's check that it still runs.
+TEST_CASE("whileHeld fails a test whose hold lapsed", "[integration][!shouldfail]")
+{
+	const test::TempDir dir;
+	writeNoise(dir.path() / "take.wav", 48000);
+	Song song;
+	song.addEvent(song.addClip(song.addMedia(dir.path() / "take.wav")), 0, 0, 4800);
+	whileHeld(
+		song.engine, song.client, "project.backup", {{"folder", utf8(dir.path() / "backup")}}, [](uint64_t /*job*/)
+		{ std::this_thread::sleep_for(std::chrono::seconds(1)); }, nullptr, std::chrono::milliseconds(200));
 }
 
 TEST_CASE("a HeldJob holds the first jobs of a kind, each once, and lets the later ones run", "[integration]")
