@@ -220,7 +220,7 @@ TEST_CASE("the track list's MIDI channel control chooses the MIDI channel of a M
 		{{"key", "ui.trackControls"}, {"value", {{"midi", {"mute", "solo", "midiChannel"}}, {"audio", {"mute"}}}}});
 	app.call("track.add", {{"type", "midi"}});
 	app.call("track.add", {{"type", "audio"}});
-	REQUIRE(app.waitUntil([&] { return display.project().at("tracks").size() == 2; }));
+	REQUIRE(app.waitUntil([&] { return display.project().is_object() && display.project().at("tracks").size() == 2; }));
 	const std::string list = ".track-list select[control=midiChannel]";
 	REQUIRE(app.waitUntil([&] { return elements(app, list).size() == 1; })); // MIDI tracks only
 	REQUIRE(app.waitUntil([&] { return attribute(app, list, "value") == "any"; }));
