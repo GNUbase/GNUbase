@@ -61,7 +61,7 @@ namespace gnubase::engine
 	// by type, by MIDI channel and by controller number. They still play.
 	struct MidiRecordFilter
 	{
-		std::bitset<9> types;     // by graph::ProcessEvent::Type
+		std::bitset<10> types;    // by graph::ProcessEvent::Type
 		std::bitset<16> channels; // by MIDI channel, 0-15
 		std::bitset<128> controllers;
 
@@ -81,9 +81,15 @@ namespace gnubase::engine
 	// Turns MIDI input at project positions into the notes and controller events recording.add takes: a note-on and
 	// the next note-off of its pitch and channel make a note, a note-on of a pitch that sounds ends it first. Each
 	// note and controller event says which take it was recorded in ("take"), for the MIDI cycle record modes.
+	//
+	// With MPE input (setMpe, docs/features/note-expression.md), the pitch bend, channel pressure and CC 74 of
+	// channels 2 to 16 are the expression of the notes on their channel: points of their tuning, pressure and
+	// brightness in project samples, and each channel's latest values are the initial ones of its next note.
 	class MidiTakeBuilder
 	{
 	public:
+		// MPE input with this pitch range in semitones, or 0 for none (the default).
+		void setMpe(int pitchRange) { m_mpeRange = pitchRange; }
 		void add(time::Samples position, const graph::ProcessEvent& event);
 		// What comes from now on belongs to the take with this index; end the notes that sound first.
 		void setTake(size_t take) { m_take = take; }
@@ -100,14 +106,29 @@ namespace gnubase::engine
 		{
 			time::Samples position = -1; // -1: not sounding
 			uint16_t velocity = 0;
+			Json expressions; // MPE: its expression points so far, positions in project samples
 		};
 
+		// MPE: whether the event is expression of a member channel's notes; then adds it to them.
+		bool addExpression(time::Samples position, const graph::ProcessEvent& event);
+
 		std::array<Sounding, size_t{16} * 128> m_sounding{};
+		int m_mpeRange = 0;
+		// MPE: each channel's latest tuning, pressure and brightness, null before the first.
+		std::array<std::array<Json, 3>, 16> m_mpeState{};
 		Json m_notes = Json::array();
 		Json m_controllers = Json::array();
 		time::Samples m_last = -1;
 		size_t m_take = 0;
 	};
+
+	namespace settings
+	{
+		class Store;
+	}
+
+	// The pitch range of MPE input: midi.mpePitchRange with the user setting midi.mpeInput on, 0 with it off.
+	int mpePitchRange(const settings::Store& store);
 
 	// The format of the project's record files: the project setup's record file type and bit depth at the project's
 	// sample rate. A Broadcast Wave file gets a bext chunk; the recorder fills in what belongs to each file.
@@ -131,6 +152,7 @@ namespace gnubase::engine
 		int64_t catchFrames = 0;  // midi.recordCatchRange, in device frames
 		size_t retrospective = 0; // midi.retrospectiveEvents: what each track's retrospective buffer holds
 		int64_t pauseFrames = 0;  // a pause after which input in stop mode starts the buffer afresh
+		int mpePitchRange = 0;    // with midi.mpeInput on, midi.mpePitchRange; 0 without MPE input
 
 		bool operator==(const RecordSetup& other) const
 		{
@@ -142,7 +164,8 @@ namespace gnubase::engine
 				preRecordFrames == other.preRecordFrames && tracks == other.tracks && midiTracks == other.midiTracks &&
 				midiMode == other.midiMode && midiCycleMode == other.midiCycleMode && midiFilter == other.midiFilter &&
 				snapToBars == other.snapToBars && catchFrames == other.catchFrames &&
-				retrospective == other.retrospective && pauseFrames == other.pauseFrames;
+				retrospective == other.retrospective && pauseFrames == other.pauseFrames &&
+				mpePitchRange == other.mpePitchRange;
 		}
 	};
 
@@ -170,12 +193,12 @@ namespace gnubase::engine
 		using Notify = std::function<void(const std::string& name, const Json& data)>;
 
 		explicit Recorder(Notify notify);
-		~Recorder(); // ends a recording that is still open
+		~Recorder(); // ends a recording that is still open, once its files are created
 		Recorder(const Recorder&) = delete;
 		Recorder& operator=(const Recorder&) = delete;
 
 		// Command thread, while no audio thread calls process: blocks of up to maxFrames frames of channels input
-		// channels from now on. Ends a recording that is still open.
+		// channels from now on. Ends a recording that is still open, once its files are created.
 		void prepare(int channels, uint32_t maxFrames);
 
 		// Command thread: what the next recording records and where it goes. The one that runs keeps its own, and so
@@ -193,9 +216,12 @@ namespace gnubase::engine
 		uint64_t dropped() const { return m_dropped.load(std::memory_order_relaxed); }
 
 		// Command thread: what the retrospective buffer of the channel holds, oldest first. The next input to it
-		// starts the buffer afresh.
+		// starts the buffer afresh. Doesn't wait while the disk thread lists the record folder and creates a
+		// recording's files, and leaves a recording's start to it: the input sent after the chunk that starts the
+		// recording isn't in it yet then.
 		std::vector<RetrospectiveEvent> retrospective(ObjectId channel);
-		// Command thread: empties the channel's retrospective buffer, or every one for 0.
+		// Command thread: empties the channel's retrospective buffer, or every one for 0. Like retrospective, input
+		// still behind a recording's start comes in afterwards.
 		void clearRetrospective(ObjectId channel);
 
 	private:
@@ -240,11 +266,31 @@ namespace gnubase::engine
 		{
 			std::deque<RetrospectiveEvent> events;
 			bool taken = false; // retrospective() returned it: the next input starts afresh
+			// Its events before this device frame went into a recording (a track that only monitors while the chord
+			// track records): the catch range of the next one leaves them out.
+			uint64_t recordedUntil = 0;
+		};
+
+		// Releases m_mutex while a recording's files are created, with m_opening set.
+		class Unlocked
+		{
+		public:
+			explicit Unlocked(Recorder& recorder);
+			~Unlocked();
+			Unlocked(const Unlocked&) = delete;
+			Unlocked& operator=(const Unlocked&) = delete;
+			Unlocked(Unlocked&&) = delete;
+			Unlocked& operator=(Unlocked&&) = delete;
+
+		private:
+			Recorder& m_recorder;
 		};
 
 		void run();
 		// Disk thread, or the command thread, holding m_mutex.
-		bool drain(); // handles the chunks the audio thread sent; false if there were none
+		// Handles the chunks the audio thread sent, or false if there were none. Without mayBegin it stops before a
+		// chunk that starts a recording: that one's folder listing and files are the disk thread's.
+		bool drain(bool mayBegin);
 		void handle(const Chunk& chunk);
 		void begin(const Chunk& chunk);
 		void write(const float* samples, uint32_t frames);
@@ -295,6 +341,7 @@ namespace gnubase::engine
 		std::mutex m_mutex;
 		std::condition_variable m_wake;
 		bool m_stopping = false;
+		bool m_opening = false;    // begin creates the files without m_mutex: the chunks behind wait
 		RecordSetup m_next;        // for the next recording
 		uint64_t m_nextNumber = 0; // its number
 		RecordSetup m_current;     // the recording's

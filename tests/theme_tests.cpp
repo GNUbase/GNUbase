@@ -125,7 +125,12 @@ TEST_CASE("every theme has the same assets, each a renderable SVG of its manifes
 	{
 		INFO("theme " << theme);
 		const std::filesystem::path dir = themesDir() / theme;
-		const nlohmann::json assets = readJson(dir / "manifest.json").at("assets");
+		const nlohmann::json manifest = readJson(dir / "manifest.json");
+		CHECK(manifest.at("theme") == theme);
+		// The name the UI shows for the theme (ui::Themes), so that no document has to name one.
+		// Not CHECK_FALSE: Catch2's ContinueOnFailure | FalseTest trips clang-analyzer's EnumCastOutOfRange check
+		CHECK(!manifest.value("displayName", std::string()).empty());
+		const nlohmann::json& assets = manifest.at("assets");
 		CHECK(assets.size() == reference.size());
 
 		for (const auto& [name, asset] : assets.items())
@@ -327,6 +332,26 @@ TEST_CASE("every theme dims the audio part editor's events that their part hides
 		REQUIRE(playing.size() == 7);
 		REQUIRE(outside.size() == 7);
 		CHECK(outside != playing);
+	}
+}
+
+TEST_CASE("every theme marks the arranger editor's row that is playing", "[unit]")
+{
+	// The arranger editor (docs/features/arranger.md): the row of the chain step or event playing carries .current and
+	// the theme decides how that looks, since the document's own locate arrows show on every row and mark nothing. The
+	// rule lives in the generated style sheets (tools/skin/generate.py), so a regeneration that drops it fails here.
+	for (const char* theme : g_themes)
+	{
+		INFO("theme " << theme);
+		bool marked = false;
+		for (const auto& [selector, declarations] : rules(gnubase::test::readText(themesDir() / theme / "theme.rcss")))
+		{
+			const size_t first = selector.find_first_not_of(" \t");
+			const std::string name = selector.substr(first, selector.find_last_not_of(" \t\r") + 1 - first);
+			if (name == ".arranger-row.current")
+				marked = declarations.find(':') != std::string::npos; // it says how the row looks
+		}
+		CHECK(marked);
 	}
 }
 

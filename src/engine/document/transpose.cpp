@@ -166,8 +166,9 @@ namespace gnubase::engine
 		add(engine,
 			{"transpose.setTrack", 1,
 				"Changes the transpose track's controls: mute (Mute Transpose Events: the events don't play), "
-				"keepInOctave (Keep Transpose in Octave Range: global transposition stays within 7 semitones either "
-				"way, 8 up plays 4 down) and lock (the events can't be added, changed or removed).",
+				"keepInOctave (Keep Transpose in Octave Range: what a part that follows plays — the root key's step, "
+				"the transpose events and the part's own transpose together — stays within 7 semitones either way, "
+				"8 up plays 4 down) and lock (the events can't be added, changed or removed).",
 				objectSchema({{"mute", booleanSchema}, {"keepInOctave", booleanSchema}, {"lock", booleanSchema}}),
 				transposeResult, false},
 			[](Project& project, CommandContext& context)
@@ -196,6 +197,21 @@ namespace gnubase::engine
 						part.rootKey = project.rootKey;
 						context.emit("midiPart.changed", {{"part", toJson(part)}});
 					}
+				// The parts stashed in inactive track versions get it too, so that activating such a version shows
+				// them with it (#896). They lie inside their track, which is announced as changed.
+				for (auto& [id, track] : project.trackById)
+				{
+					bool changed = false;
+					for (TrackVersion& version : track.versions)
+						for (MidiPart& part : version.midiParts)
+							if (part.rootKey < 0)
+							{
+								part.rootKey = project.rootKey;
+								changed = true;
+							}
+					if (changed)
+						context.emit("track.changed", {{"track", toJson(track)}});
+				}
 				return Json::object();
 			});
 		add(engine,

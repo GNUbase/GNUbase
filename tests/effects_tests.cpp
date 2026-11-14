@@ -71,12 +71,18 @@ namespace
 		// Applies the values at once, as a block without frames.
 		void set(const std::vector<std::pair<uint32_t, double>>& values)
 		{
+			// In as many empty blocks as the events take: the drum machine has more parameters than a block holds.
 			m_events.clear();
-			for (const auto& [id, value] : values)
-				REQUIRE(m_events.add(parameter(0, id, value)));
-			m_out.clear();
-			m_processor.process({nullptr, 0, 0, m_events, m_out, m_transport});
-			m_events.clear();
+			for (size_t i = 0; i < values.size(); ++i)
+			{
+				REQUIRE(m_events.add(parameter(0, values[i].first, values[i].second)));
+				if (m_events.size() == g_maxEventsPerBlock || i + 1 == values.size())
+				{
+					m_out.clear();
+					m_processor.process({nullptr, 0, 0, m_events, m_out, m_transport});
+					m_events.clear();
+				}
+			}
 		}
 
 		Signal run(Signal signal, const std::vector<Change>& changes = {})

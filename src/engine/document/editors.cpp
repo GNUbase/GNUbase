@@ -68,6 +68,8 @@ namespace gnubase::engine
 			bool pitchVisibility = false;
 			bool reverseSounds = false;
 			bool showNoteLength = false;
+			std::string gridType =
+				"quantize"; // the drum editor's grid (p. 1227): quantize, or drumMap: the sounds' snap
 			// The controller lanes (#128): each a type (midi::g_laneTypes) and a controller number or pitch.
 			std::vector<std::pair<std::string, int>> lanes = {{"velocity", 0}};
 			bool showLanes = true;
@@ -288,9 +290,9 @@ namespace gnubase::engine
 				{"keepNotes", view.keepNotes}, {"insertVelocity", view.insertVelocity},
 				{"lengthQuantize", view.lengthQuantize}, {"content", view.content},
 				{"pitchVisibility", view.pitchVisibility}, {"reverseSounds", view.reverseSounds},
-				{"showNoteLength", view.showNoteLength}, {"lanes", lanes}, {"showLanes", view.showLanes},
-				{"autoSelectControllers", view.autoSelectControllers}, {"controllerSelection", controllerSelection},
-				{"eventSelection", view.eventSelection}};
+				{"showNoteLength", view.showNoteLength}, {"gridType", view.gridType}, {"lanes", lanes},
+				{"showLanes", view.showLanes}, {"autoSelectControllers", view.autoSelectControllers},
+				{"controllerSelection", controllerSelection}, {"eventSelection", view.eventSelection}};
 		}
 
 		// The controller events in the ranges of the selected notes, from a note's start to its end (p. 1188).
@@ -481,6 +483,7 @@ namespace gnubase::engine
 		const Json idsSchema = {{"type", "array"}, {"items", {{"type", "integer"}}}};
 		const Json idSchema = {{"type", "integer"}};
 		const Json boolean = {{"type", "boolean"}};
+		const Json gridTypeSchema = {{"type", "string"}, {"enum", {"quantize", "drumMap"}}};
 		const Json selectionSchema = {{"type", "array"},
 			{"items",
 				{{"type", "object"}, {"additionalProperties", false}, {"required", {"part", "note"}},
@@ -506,7 +509,7 @@ namespace gnubase::engine
 			{"recordVelocity", boolean}, {"recordReleaseVelocity", boolean}, {"keepNotes", boolean},
 			{"insertVelocity", {{"type", "number"}}}, {"lengthQuantize", {{"type", "string"}}}, {"lanes", lanesSchema},
 			{"showLanes", boolean}, {"autoSelectControllers", boolean}, {"pitchVisibility", boolean},
-			{"reverseSounds", boolean}, {"showNoteLength", boolean}};
+			{"reverseSounds", boolean}, {"showNoteLength", boolean}, {"gridType", gridTypeSchema}};
 		Json viewSchema = {{"type", "object"},
 			{"properties",
 				{{"editor", editorSchema}, {"open", {{"type", "boolean"}}}, {"parts", idsSchema},
@@ -516,7 +519,7 @@ namespace gnubase::engine
 				{"editor", "open", "parts", "activePart", "activeTrack", "editable", "editingMode", "keepContents",
 					"globalTracks", "selection", "stepInput", "midiInput", "stepPosition", "moveInsert", "recordPitch",
 					"recordVelocity", "recordReleaseVelocity", "keepNotes", "insertVelocity", "lengthQuantize",
-					"content", "pitchVisibility", "reverseSounds", "showNoteLength", "lanes", "showLanes",
+					"content", "pitchVisibility", "reverseSounds", "showNoteLength", "gridType", "lanes", "showLanes",
 					"autoSelectControllers", "controllerSelection", "eventSelection"}}};
 		viewSchema["properties"].update(keyEditorSchema);
 		const std::string viewText =
@@ -540,8 +543,8 @@ namespace gnubase::engine
 			"pp. 1221-1242) or pattern (the pattern editor, pp. 895-937: the active part's pattern). The drum "
 			"editor's: pitchVisibility (Pitch Visibility On/Off) applies its option reverseSounds, the drum sound "
 			"list from the bottom (pp. 1223-1224, 1234); showNoteLength shows its notes as boxes of their length, not "
-			"diamonds "
-			"(p. 1227); "
+			"diamonds (p. 1227); gridType, what its notes snap to (p. 1227): quantize, the quantize grid, or drumMap, "
+			"the snap of each note's sound in the track's drum map; "
 			"controllerSelection, the "
 			"list editor's selected controller events, each {part, controller}, of the editable parts. Audio parts "
 			"show in the audio part editor (content audioPart, pp. 692-702), whose eventSelection is the selected "
@@ -549,7 +552,9 @@ namespace gnubase::engine
 			"1157-1188): lanes, from the top, each {type, number}: velocity, offVelocity, probability or "
 			"velocityVariance (the notes' play probability and velocity variance), or the controller events of a "
 			"type: controller (number is the controller), pitchBend, channelPressure, polyPressure (number is the "
-			"pitch) or program; showLanes, whether the controller display shows them; autoSelectControllers, "
+			"pitch) or program, or articulations (the directions and attributes of the track's articulation map, "
+			"articulationMap.add, pp. 1287-1289); showLanes, whether the controller display shows them; "
+			"autoSelectControllers, "
 			"whether selecting notes selects the controller events from their start to their end. View state: no "
 			"undo steps, not saved, and a new or loaded project closes the editors.";
 		const auto editorOnly = [&](Json properties = Json::object())
@@ -649,9 +654,9 @@ namespace gnubase::engine
 					{"recordVelocity", boolean}, {"recordReleaseVelocity", boolean}, {"keepNotes", boolean},
 					{"insertVelocity", {{"type", "number"}}}, {"lengthQuantize", {{"type", "string"}}},
 					{"content", contentSchema}, {"pitchVisibility", boolean}, {"reverseSounds", boolean},
-					{"showNoteLength", boolean}, {"lanes", lanesSchema}, {"showLanes", boolean},
-					{"autoSelectControllers", boolean}, {"controllerSelection", controllerSelectionSchema},
-					{"eventSelection", idsSchema}}),
+					{"showNoteLength", boolean}, {"gridType", gridTypeSchema}, {"lanes", lanesSchema},
+					{"showLanes", boolean}, {"autoSelectControllers", boolean},
+					{"controllerSelection", controllerSelectionSchema}, {"eventSelection", idsSchema}}),
 				viewSchema, false},
 			[views, &model, store](CommandContext& context)
 			{
@@ -806,6 +811,7 @@ namespace gnubase::engine
 				view.pitchVisibility = parameters.value("pitchVisibility", view.pitchVisibility);
 				view.reverseSounds = parameters.value("reverseSounds", view.reverseSounds);
 				view.showNoteLength = parameters.value("showNoteLength", view.showNoteLength);
+				view.gridType = parameters.value("gridType", view.gridType);
 				const bool autoSelectTurnsOn = parameters.value("autoSelectControllers", view.autoSelectControllers) &&
 					!view.autoSelectControllers;
 				if (parameters.contains("autoSelectControllers"))

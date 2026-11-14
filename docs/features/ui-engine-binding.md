@@ -36,9 +36,20 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   drag's value until it ends. Each view begins its `what`s with a name of its own, `stepOwner(view)` (`mixer 3 `,
   `inspector 7 `), so only the view whose control sends waits: the other mixers and the inspector that show the same
   channel follow each step the engine took, also during the drag. A control's steps leave nothing behind: the record
-  of them goes away in the `update` after the one that handed on its last step's answer (#746), so a session keeps no
-  entry for every channel and parameter a gesture touched; a view showing what that update handed on still asks
-  `sending` and `ahead` about it, and a later gesture makes the record again.
+  of them goes away in the `update` after the one that handed on a project read (`project.get`) sent after its last
+  taken step, such as the one after that step's `history.changed`, once no other project read is out (#746), so a
+  session keeps no entry for every channel and parameter a gesture touched. A failed read is none, as the view that
+  sent it still shows its older one (#1370). Until then a view may have no read newer than the control, and one that
+  shows an older read again, such as the inspector after a track change, shows the value that the control sent last
+  (#1305): the inspector shows every track in the same fields, so it keeps that value by step key, which names the
+  channel, and back on a dragged track the field shows the drag's value, not the other track's (#1421). The info line's
+  step keys name the selected events, so other events selected meanwhile show their own values, and it keeps the values
+  its fields sent by step key the same way: back on the dragged events the field shows the drag's value. A view showing
+  what that
+  update handed on still asks `sending` and `ahead` about it, and a later gesture makes the record again. The records go
+  only while some view reads the project, as the event display does: a binding without
+  one keeps them all for the session, and a view that asks `ahead` about another query's answer than `project.get`'s
+  may find the record gone before that query answers again.
 - **Events.** `on(name, handler)` calls `handler` with every event of that name, from whichever client caused it: a
   change made through MCP, Lua or another window reaches the UI the same way as the UI's own. The returned
   `Subscription` ends the handler when it goes, so a view that closes stops listening; subscriptions must not outlive
@@ -98,10 +109,16 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   results reach `onResult` handlers for the UI's own commands only; watched values arrive once an update, only when they
   changed; a gesture's steps go one at a time, the newest replacing those that wait, as one undo step, without holding
   up another control's, and steps without a gesture or of another gesture are kept, also after a refused one; the record
-  of a control's steps goes away in the update after the one that handed on their last answer, also after a refused one,
-  and a later gesture makes it again; settling sends the steps that wait and waits for commands that change things and
-  for queries sent with `sendAwaited`, and for what their answers send; what `afterAwaited` holds runs after the answer,
-  in order, what a held one runs itself at once, and after another awaited query that a held one sends.
+  of a control's steps goes away in the update after the one that handed on a project read sent after their last answer,
+  not one sent before it, nor while another is out, nor a failed one (#1370), also after a refused one, and a later
+  gesture makes it again;
+  settling sends the steps that wait and waits for commands that change things and for queries sent with `sendAwaited`,
+  and for what their answers send; what `afterAwaited` holds runs after the answer, in order, what a held one runs
+  itself at once, and after another awaited query that a held one sends; `awaitHeld`, as a press calls it, waits for
+  the awaited answers only, not for a slow command that isn't a query, and what is still held when it times out stays
+  held. `tests/eventediting_tests.cpp` checks that a press gives up on the zero crossings after two seconds and runs the
+  held edit on the range as it is, while a command holds the engine until after the press, and that an action of an
+  event display that is gone by the time it runs sends nothing.
   `tests/scripts_ui_tests.cpp` has a user script draw a range with Snap to Zero Crossing on and delete it through the
   UI: the delete is in the script's undo step, and an undo after it undoes the delete. `tests/mixerwindow_tests.cpp` and
   `tests/inspector_tests.cpp` drag faders, knobs and value fields (the inspector's and the info line's) and turn the
@@ -110,7 +127,11 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   engine answers, the other mixers and the inspector that show its channel follow its steps. A mixer step and an info
   line volume step that the engine refuses, its track or one of the selected events being gone, show in the command log,
   leave no undo step and let the control show the engine's value again; a strip made again while its fader's step is in
-  flight shows the engine's volume at once, not the widget's default. One test changes the transport through MCP and
+  flight shows the engine's volume at once, not the widget's default. With the engine held behind a drag's last step
+  (`test::CommandHolds`), so that the display shows a read from before it: the inspector shows another audio track's own
+  volume in the dragged field, and back on the dragged track the drag's value; the info line shows another audio event's
+  own volume, not the dragged event's, and back on the dragged event, answered after the last step while the read after
+  it is held, the drag's value. One test changes the transport through MCP and
   checks a document shows it, then clicks the document's button and finds the command in `engine.commandLog`, sent by
   `ui`. Two more check drawing without input: a watched value draws its own window in the step it changed in, and no
   other window; events from MCP, results (a command's `done` or an `onResult` handler) and posted work draw every window

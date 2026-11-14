@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Changing the notes and controllers of a MIDI part (#27): note.set and controller.set, and the key editor's chord
-// editing (#127): note.chord and note.voicing. Like every command that changes the project, each is one undo step and
-// changes nothing if it fails (ProjectModel::add).
+// Changing the notes and controllers of a MIDI part (#27): note.set and controller.set, the key editor's split and
+// glue tools (#1419): note.split and note.glue, and its chord editing (#127): note.chord and note.voicing. Like every
+// command that changes the project, each is one undo step and changes nothing if it fails (ProjectModel::add).
 #include "engine/document/document.h"
 #include "engine/document/projectmodel.h"
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
 #include "engine/midi/chords.h"
+#include "plugin/events.h"
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <optional>
@@ -82,9 +85,14 @@ namespace gnubase::engine
 				const Json& item = items[i];
 				const std::string name = "notes[" + std::to_string(i) + "]";
 				Note note = changed(part.notes, item, name, "note");
+				const time::Ticks end = note.position + note.length;
+				const time::Ticks start = note.position;
 				note.position = position(item, note.position, name);
 				note.length = item.value("length", note.length);
 				require(note.length > 0, name + ".length must be positive");
+				// A start resized, its end where it was: the expression stays where it is too.
+				if (note.position != start && note.position + note.length == end && !item.contains("expressions"))
+					note.expressions = expressionsFrom(note.expressions, note.position - start);
 				note.pitch = integer(item, "pitch", note.pitch, 0, 127, name);
 				note.channel = integer(item, "channel", note.channel, 0, 15, name);
 				note.velocity = scaled(item, "velocity", note.velocity, g_maxVelocity, name);
@@ -94,6 +102,8 @@ namespace gnubase::engine
 				note.velocityVariance = item.value("velocityVariance", note.velocityVariance);
 				require(std::abs(note.velocityVariance) <= 1.0, name + ".velocityVariance must be -1 to 1");
 				note.articulations = item.value("articulations", note.articulations);
+				if (item.contains("expressions"))
+					note.expressions = expressionsFromJson(item.at("expressions"), name + ".expressions");
 				notes.push_back(note);
 			}
 			// Changed only once every item is valid. ProjectModel::add would restore the project anyway.
@@ -105,6 +115,165 @@ namespace gnubase::engine
 			}
 			context.emit("note.changed", {{"part", part.id}, {"notes", result}});
 			return {{"notes", result}};
+		}
+
+		// The key editor's split tool (#1419, reference manual p. 1215): cuts the named notes that the position cuts.
+		Json splitNotes(Project& project, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			MidiPart& part = findPart(project, parameters);
+			const auto at = parameters.at("position").get<time::Ticks>();
+			std::vector<Note*> named;
+			for (const Json& id : parameters.at("notes"))
+			{
+				const auto found = part.notes.find(id.get<ObjectId>());
+				require(found != part.notes.end(), "the part has no note " + id.dump());
+				named.push_back(&found->second);
+			}
+			Json changed = Json::array();
+			Json added = Json::array();
+			for (Note* note : named)
+			{
+				if (at <= note->position || at >= note->position + note->length) // also a note named twice, once cut
+					continue;
+				Note rest = splitNote(*note, at - note->position);
+				rest.id = project.newId();
+				part.notes[rest.id] = rest;
+				changed.push_back(toJson(*note));
+				added.push_back(toJson(rest));
+			}
+			if (!added.empty())
+			{
+				context.emit("note.changed", {{"part", part.id}, {"notes", changed}});
+				context.emit("note.added", {{"part", part.id}, {"notes", added}});
+			}
+			return {{"notes", added}};
+		}
+
+		// What a note plays of an expression that it has no point of at its start: MPE's initial values for tuning,
+		// pressure and brightness (see addInitialExpressions), unity gain and the center. Vibrato and expression have
+		// none: the plugin decides.
+		std::optional<double> defaultOf(plugin::NoteExpression type)
+		{
+			switch (type)
+			{
+			case plugin::NoteExpression::Volume:
+				return 1.0;
+			case plugin::NoteExpression::Pan:
+			case plugin::NoteExpression::Brightness:
+				return 0.5;
+			case plugin::NoteExpression::Tuning:
+			case plugin::NoteExpression::Pressure:
+				return 0.0;
+			default:
+				return std::nullopt;
+			}
+		}
+
+		// points before cut, then from's moved to at. Of what points express and from has no point of at its start,
+		// the join gets the default, as the note that from belonged to started with it.
+		std::vector<ExpressionPoint> joined(const std::vector<ExpressionPoint>& points, time::Ticks cut,
+			const std::vector<ExpressionPoint>& from, time::Ticks at)
+		{
+			std::vector<ExpressionPoint> result;
+			std::array<bool, g_expressionNames.size()> open{};
+			for (const ExpressionPoint& point : points)
+				if (point.position < cut)
+				{
+					result.push_back(point);
+					open.at(static_cast<size_t>(point.type)) = true;
+				}
+			for (const ExpressionPoint& point : from)
+				if (point.position == 0)
+					open.at(static_cast<size_t>(point.type)) = false;
+			for (size_t type = 0; type < open.size(); ++type)
+			{
+				const auto expression = static_cast<plugin::NoteExpression>(type);
+				if (const std::optional<double> value = defaultOf(expression); open.at(type) && value.has_value())
+					result.push_back({expression, at, *value});
+			}
+			for (const ExpressionPoint& point : from)
+				result.push_back({point.type, point.position + at, point.value});
+			return result;
+		}
+
+		// The key editor's glue tool (#1419, p. 1215): the note lasts to the next one's end, which it replaces.
+		Json glueNotes(Project& project, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			MidiPart& part = findPart(project, parameters);
+			const auto noteNamed = [&part, &parameters](const char* key) -> Note&
+			{
+				const auto found = part.notes.find(parameters.at(key).get<ObjectId>());
+				require(found != part.notes.end(), std::string("the part has no note ") + parameters.at(key).dump());
+				return found->second;
+			};
+			Note& note = noteNamed("note");
+			const Note& next = noteNamed("next");
+			require(next.position > note.position, "next must start after note");
+			// What played goes on playing: the note's points up to where the next one starts, or to its own end, then
+			// the next one's, and after a next one that ends inside the note the note's own again.
+			const time::Ticks offset = next.position - note.position;
+			const time::Ticks nextEnd = offset + next.length;
+			std::vector<ExpressionPoint> points =
+				joined(note.expressions, std::min(offset, note.length), next.expressions, offset);
+			if (nextEnd < note.length)
+				points = joined(points, nextEnd, expressionsFrom(note.expressions, nextEnd), nextEnd);
+			note.expressions = std::move(points);
+			note.length = std::max(next.position + next.length, note.position + note.length) - note.position;
+			const ObjectId removed = next.id;
+			part.notes.erase(removed); // next dangles from here on
+			const Json glued = toJson(note);
+			context.emit("note.changed", {{"part", part.id}, {"notes", Json::array({glued})}});
+			context.emit("note.removed", {{"part", part.id}, {"notes", Json::array({removed})}});
+			return {{"note", glued}};
+		}
+
+		// The notes the parameters name, moved to another part by the offsets, as a drag from one in-place editor to
+		// another gives them (p. 1261): every note keeps its id and every field but its position and pitch.
+		Json moveNotes(Project& project, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			MidiPart& source = findPart(project, parameters);
+			const auto targetId = parameters.at("target").get<ObjectId>();
+			const auto target = project.midiParts.find(targetId);
+			require(target != project.midiParts.end(), "no MIDI part " + std::to_string(targetId));
+			require(source.id == targetId || source.shared == 0 || source.shared != target->second.shared,
+				"can't move notes between shared copies of one group: they must stay equal");
+			const auto ticks = parameters.value("ticks", time::Ticks{0});
+			const auto semitones = parameters.value("semitones", int64_t{0});
+			const auto ids = parameters.at("notes").get<std::vector<ObjectId>>();
+			// The offsets count on the project's timeline, while a note's position counts from its part's start:
+			// the difference of the two starts goes into the positions, in whatever time base the parts are.
+			const time::Ticks sourceStart = time::toTicks(source.position, project.tempo, project.sampleRate);
+			const time::Ticks targetStart = time::toTicks(target->second.position, project.tempo, project.sampleRate);
+			// Checked before anything moves. ProjectModel::add would restore the project anyway.
+			std::vector<Note> notes;
+			for (size_t i = 0; i < ids.size(); ++i)
+			{
+				const std::string name = "notes[" + std::to_string(i) + "]";
+				const auto found = source.notes.find(ids[i]);
+				require(found != source.notes.end(), name + ": the part has no note " + std::to_string(ids[i]));
+				Note note = found->second;
+				note.position = sourceStart + note.position + ticks - targetStart;
+				require(note.position >= 0, name + " would land before the target part's start");
+				const int64_t pitch = static_cast<int64_t>(note.pitch) + semitones;
+				require(pitch >= 0 && pitch <= 127, name + " would land outside the pitches 0 to 127");
+				note.pitch = static_cast<uint8_t>(pitch);
+				notes.push_back(std::move(note));
+			}
+			Json removed = Json::array();
+			Json added = Json::array();
+			for (size_t i = 0; i < notes.size(); ++i)
+			{
+				source.notes.erase(ids[i]);
+				const Note& stored = target->second.notes[ids[i]] = std::move(notes[i]);
+				removed.push_back(ids[i]);
+				added.push_back(toJson(stored));
+			}
+			context.emit("note.removed", {{"part", source.id}, {"notes", removed}});
+			context.emit("note.added", {{"part", target->second.id}, {"notes", added}});
+			return {{"notes", added}};
 		}
 
 		// The part's notes that the parameters' notes name, in that order.
@@ -259,15 +428,42 @@ namespace gnubase::engine
 			{"note.set", 1,
 				"Changes notes of a MIDI part: each change names a note by id and gives what changes, position and "
 				"length in ticks, pitch 0-127, velocity 0-1, release velocity 0-1, MIDI channel 0-15, play probability "
-				"0-1, velocity variance -1 to 1 or articulations, the attributes it has (see note.add). Returns the "
-				"changed notes.",
+				"0-1, velocity variance -1 to 1, articulations, the attributes it has, or expressions, which replace "
+				"its expression points (see note.add). The points move with the note's start, but for a start that "
+				"moves while the end stays: then they stay where they are, and the values at the new start become "
+				"its initial ones. Returns the changed notes.",
 				changesSchema("notes",
 					{{"position", integer}, {"length", integer}, {"pitch", integer}, {"velocity", number},
 						{"releaseVelocity", number}, {"channel", integer}, {"probability", number},
 						{"velocityVariance", number},
-						{"articulations", {{"type", "array"}, {"items", {{"type", "string"}}}}}}),
+						{"articulations", {{"type", "array"}, {"items", {{"type", "string"}}}}},
+						{"expressions", expressionsSchema()}}),
 				resultSchema("notes"), false},
 			setNotes);
+		const Json noteMove = {{"type", "object"}, {"additionalProperties", false},
+			{"required", {"part", "notes", "target"}},
+			{"properties",
+				{{"part", integer}, {"notes", {{"type", "array"}, {"items", integer}}}, {"target", integer},
+					{"ticks",
+						{{"type", "integer"},
+							{"description", "how far the notes move on the project's timeline, in ticks"}}},
+					{"semitones",
+						{{"type", "integer"}, {"description", "how far the notes move in pitch, in semitones"}}}}}};
+		add(engine,
+			{"note.move", 1,
+				"Moves notes of a MIDI part to another part, as dragging them from one in-place editor to another "
+				"does (reference manual p. 1261): each note keeps its id and every field but its position and pitch. "
+				"ticks moves the notes on the project's timeline and semitones in pitch; the command converts the "
+				"timeline shift to the target part's own positions, wherever the two parts start on the timeline and "
+				"whatever their time bases. The source part and the target part may be the same. The move "
+				"is one undo step, and the shared copies of both parts follow it. A note may reach past the target "
+				"part's end, as note.add and note.set allow. Refuses, changing nothing, a part or a note that "
+				"doesn't exist, a note that would land on the timeline before the target part's start or outside the "
+				"pitches 0 to 127, and a move between shared copies of one group, which must stay equal. Emits "
+				"note.removed for the source part and note.added for the target part. Returns the moved notes, as "
+				"the target part has them.",
+				noteMove, resultSchema("notes"), false},
+			moveNotes);
 		add(engine,
 			{"controller.set", 1,
 				"Changes controller events of a MIDI part: each change names a controller event by id and gives what "
@@ -288,6 +484,34 @@ namespace gnubase::engine
 						{"articulation", {{"type", "string"}}}, {"reset", {{"type", "boolean"}}}}),
 				resultSchema("controllers"), false},
 			setControllers);
+
+		add(engine,
+			{"note.split", 1,
+				"Splits notes of a MIDI part at a position in ticks from the part's start, as the key editor's split "
+				"tool does: each named note that the position cuts ends there, and its rest, a new note with the same "
+				"values, starts there; the others stay as they are. The expression points before the cut stay with "
+				"the note, the rest starts with the values at the cut and goes on with the later points (see "
+				"note.set). Both pieces lose their quantize origin, as with event.split: quantize.reset no longer "
+				"moves them. Returns the rests.",
+				{{"type", "object"}, {"additionalProperties", false}, {"required", {"part", "notes", "position"}},
+					{"properties",
+						{{"part", integer}, {"notes", {{"type", "array"}, {"items", integer}}},
+							{"position", {{"type", "integer"}, {"minimum", 0}}}}}},
+				resultSchema("notes"), false},
+			splitNotes);
+		add(engine,
+			{"note.glue", 1,
+				"Glues a note of a MIDI part to a later one, as the key editor's glue tool does: note then lasts to "
+				"the later of their ends and keeps its values, and next is removed. Its expression points go on "
+				"playing: note keeps its own up to next's start, then has next's, and after a next that ends inside "
+				"note its own again. Where one note's points give way to the other's, an expression that the first "
+				"one has and the other has no point of at its start goes back to its default, as the other note "
+				"started with it: no tuning, no pressure, brightness 0.5, volume 1 and pan 0.5; vibrato and "
+				"expression keep their value.",
+				{{"type", "object"}, {"additionalProperties", false}, {"required", {"part", "note", "next"}},
+					{"properties", {{"part", integer}, {"note", integer}, {"next", integer}}}},
+				{{"type", "object"}, {"required", {"note"}}, {"properties", {{"note", {{"type", "object"}}}}}}, false},
+			glueNotes);
 
 		Json chordTypes = Json::array();
 		for (const midi::ChordType& type : midi::chordTypes())

@@ -67,6 +67,9 @@ namespace gnubase::ui
 	//                                 sections before its .spacer that don't fit in its width get the state class
 	//                                 .no-room, the last first, and show again once it has room for them. Its style
 	//                                 must keep the widths they need, so they stay laid out, out of the flow
+	//   fit="spare"                   an element in a section of a fit="room" container that goes before any
+	//                                 section does, the last one first: it gets .no-room while the sections fit only
+	//                                 without it, and its style keeps its width the same way
 	//   setup="channel"               a setup pane's list of the set's sections, which the docking system fills with a
 	//                                 toggle button per section (setup-section="eq"); a button dragged onto another
 	//                                 moves its section there
@@ -226,9 +229,9 @@ namespace gnubase::ui
 		// Gives a zone or resizable element its size from ui.layout, or its default.
 		static void applySize(Rml::Element& element, const engine::Json* saved);
 		void applySections(const std::string& window, const Attached& attached, Rml::Element& root);
-		// Gives the sections of the shown windows' fit="room" containers the room they have, after the shell's step
-		// tasks, before it draws; fit does one container, laid out, and says whether it changed.
-		void fitSections();
+		// Gives the sections of the fit="room" containers in the context's shown documents the room they have, once
+		// the context laid them out to draw them, and says whether that changed any; fit does one container.
+		bool fitSections(Rml::Context& context);
 		static bool fit(Rml::Element& container);
 		// Runs change in the shell's next step, unless the docking system is gone by then.
 		void later(std::function<void()> change);

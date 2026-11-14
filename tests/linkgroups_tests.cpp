@@ -229,6 +229,128 @@ TEST_CASE("linked channels pass on the settings their group links, unless linked
 	CHECK_THAT(reject(client, "linkGroup.add", {{"channels", {a}}, {"vca", b}}), ContainsSubstring("VCA track"));
 }
 
+TEST_CASE("parameter.set passes on what its channel's link group links, unless linked is false", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId a = add(client, "audio");
+	const ObjectId b = add(client, "audio");
+	const ObjectId midi = add(client, "midi");
+	const ObjectId other = add(client, "audio");
+	run(client, "channel.set", {{"channel", b}, {"volume", -10.0}, {"pan", 0.5}});
+	const ObjectId group = groupOf(run(client, "linkGroup.add", {{"channels", {a, b, midi}}, {"pan", true}}));
+	const auto set = [&client](ObjectId channel, const Json& target, double value, const Json& linked = Json())
+	{
+		Json parameters{{"channel", channel}, {"target", target}, {"value", value}};
+		if (!linked.is_null())
+			parameters["linked"] = linked;
+		run(client, "parameter.set", std::move(parameters));
+	};
+	const auto section = [](uint32_t parameter) { return Json{{"type", "strip"}, {"parameter", parameter}}; };
+	const Json volume{{"type", "volume"}};
+	const Json pan{{"type", "pan"}};
+	const Json mute{{"type", "mute"}};
+
+	// The fader and the pan move by as much as the channel's, and stop at their ends; a channel outside the group
+	// keeps its own, and a MIDI channel has no fader to move.
+	set(a, volume, -4.0);
+	set(a, pan, 0.75);
+	CHECK(channelJson(client, b).at("volume") == -14.0);
+	CHECK(channelJson(client, b).at("pan") == 1.0);
+	CHECK(channelJson(client, midi).at("volume") == 0.0);
+	CHECK(channelJson(client, other).at("volume") == 0.0);
+
+	// The group links neither the equalizer nor the dynamics yet, and never the pre section, which channel.set
+	// doesn't pass on either.
+	set(a, section(14), 6.0);   // EQ 1's gain
+	set(a, section(51), -30.0); // the gate's threshold
+	set(a, section(0), -6.0);   // the pre gain
+	CHECK(channelJson(client, b).at("eq").at("bands").at(0).at("gain") == 0.0);
+	CHECK(channelJson(client, b).at("strip").at("gate").at("threshold") == -40.0);
+	CHECK(channelJson(client, b).at("pre").at("gain") == 0.0);
+	CHECK(channelJson(client, midi).at("eq").at("bands").at(0).at("gain") == 0.0);
+
+	run(client, "linkGroup.set", {{"group", group}, {"eq", true}, {"dynamics", true}, {"mute", true}});
+	set(a, section(24), 3.0); // EQ 2's gain
+	set(a, section(70), 1.0); // the limiter's switch
+	set(a, section(0), -12.0);
+	CHECK(channelJson(client, b).at("eq").at("bands").at(1).at("gain") == 3.0);
+	CHECK(channelJson(client, b).at("strip").at("limiter").at("on") == true);
+	CHECK(channelJson(client, b).at("pre").at("gain") == 0.0); // the pre gain stays the channel's own
+
+	// The mute goes on as it is now, to the MIDI channel too, and one undo step takes it back everywhere.
+	set(a, mute, 1.0);
+	CHECK(channelJson(client, b).at("mute") == true);
+	CHECK(channelJson(client, midi).at("mute") == true);
+	run(client, "history.undo");
+	CHECK(channelJson(client, a).at("mute") == false);
+	CHECK(channelJson(client, b).at("mute") == false);
+	CHECK(channelJson(client, midi).at("mute") == false);
+
+	// linked false changes only the channel (Sus, reference manual p. 460).
+	set(a, volume, 0.0, false);
+	CHECK(channelJson(client, a).at("volume") == 0.0);
+	CHECK(channelJson(client, b).at("volume") == -14.0);
+
+	// The parameters of an instrument aren't linked: two instrument tracks in the group keep their own.
+	const ObjectId one = add(client, "instrument");
+	const ObjectId two = add(client, "instrument");
+	run(client, "linkGroup.set", {{"group", group}, {"channels", {one, two}}});
+	for (const ObjectId id : {one, two})
+		run(client, "channel.set", {{"channel", id}, {"instrument", "testSynth"}});
+	set(one, Json{{"type", "instrument"}, {"parameter", 0}}, 0.5);
+	const Json level = Json::array({{{"parameter", 0}, {"value", 0.5}}});
+	CHECK(channelJson(client, one).at("instrumentParameters") == level);
+	CHECK(channelJson(client, two).at("instrumentParameters") == Json::array());
+}
+
+TEST_CASE("channel.set and parameter.set pass a fader and pan move on alike", "[unit]")
+{
+	// Both go through followLinkedMove: a channel with audio follows the fader and the pan, stopping at their ends, a
+	// VCA fader's channel only the fader, a MIDI channel neither (#1384).
+	for (const bool throughParameters : {false, true})
+	{
+		INFO((throughParameters ? "parameter.set" : "channel.set"));
+		Engine engine;
+		Client client(engine);
+		const ObjectId a = add(client, "audio");
+		const ObjectId b = add(client, "audio");
+		const ObjectId midi = add(client, "midi");
+		const ObjectId vca = add(client, "vca");
+		run(client, "channel.set", {{"channel", b}, {"volume", 4.0}, {"pan", -0.5}});
+		run(client, "channel.set", {{"channel", vca}, {"volume", -3.0}});
+		run(client, "linkGroup.add", {{"channels", {a, b, midi, vca}}, {"pan", true}});
+		const auto set = [&](const std::string& key, double value)
+		{
+			if (throughParameters)
+				run(client, "parameter.set", {{"channel", a}, {"target", {{"type", key}}}, {"value", value}});
+			else
+				run(client, "channel.set", {{"channel", a}, {key, value}});
+		};
+		set("volume", 5.0);
+		set("pan", -0.75);
+		CHECK(channelJson(client, b).at("volume") == 6.0); // stops at the top of the fader
+		CHECK(channelJson(client, b).at("pan") == -1.0);
+		CHECK(channelJson(client, vca).at("volume") == 2.0);
+		CHECK(channelJson(client, vca).at("pan") == 0.0);
+		CHECK(channelJson(client, midi).at("volume") == 0.0);
+		CHECK(channelJson(client, midi).at("pan") == 0.0);
+	}
+
+	// The fader stops at its bottom too, and at the project's top.
+	Project project;
+	project.maxVolume = 12.0;
+	Channel to;
+	to.volume = -140.0;
+	to.pan = 0.5;
+	followLinkedMove(project, to, "volume", -10.0);
+	followLinkedMove(project, to, "pan", 0.25);
+	CHECK(to.volume == g_minChannelVolume);
+	CHECK(to.pan == 0.75);
+	followLinkedMove(project, to, "volume", 200.0);
+	CHECK(to.volume == 12.0);
+}
+
 TEST_CASE("VCA faders control one link group each, pass their buttons on and never control themselves", "[unit]")
 {
 	Engine engine;
@@ -253,6 +375,12 @@ TEST_CASE("VCA faders control one link group each, pass their buttons on and nev
 	const Json parameters = run(client, "parameter.list", {{"channel", vca}}).at("parameters");
 	REQUIRE(parameters.size() == 1);
 	CHECK(parameters[0].at("target") == Json({{"type", "volume"}}));
+	// A refusal of the strip's sections names the VCA track, not a MIDI one (#878).
+	const Json preGain{{"type", "strip"}, {"parameter", 0}};
+	CHECK_THAT(reject(client, "automationLane.add", {{"track", vcaTrack.at("track").at("id")}, {"target", preGain}}),
+		ContainsSubstring("a VCA track has no channel strip sections"));
+	CHECK_THAT(reject(client, "parameter.get", {{"channel", vca}, {"target", preGain}}),
+		ContainsSubstring("a VCA channel has no channel strip sections"));
 
 	// With a VCA fader, the group doesn't link the volume (reference manual p. 517).
 	const ObjectId group = groupOf(run(client, "linkGroup.add", {{"channels", {a, b, c}}, {"vca", vca}}));

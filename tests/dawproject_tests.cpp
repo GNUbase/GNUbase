@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/audiofile/audiofile.h"
+#include "engine/dawproject/dawproject.h"
 #include "engine/document/document.h"
+#include "engine/document/serialize.h"
 #include "engine/engine.h"
 #include "engine/time/tempomap.h"
 #include "testutils/testutils.h"
@@ -18,6 +20,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -393,6 +396,44 @@ TEST_CASE("a GNUbase project comes back exactly from its DAWproject file", "[int
 	}
 }
 
+TEST_CASE("projects saved on two threads at the same time both load", "[integration]")
+{
+	// Backup jobs save beside each other and beside a save. Unless built with MINIZ_NO_TIME, miniz stamps ZIP entries
+	// through localtime(), whose result is one static struct outside Windows: the tsan job fails this test then
+	// (#1425).
+	const test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	run(client, "track.add", {{"type", "audio"}});
+	const Project project = projectFromJson(run(client, "project.get"));
+	const std::vector<std::string> files{utf8(dir.path() / "one.dawproject"), utf8(dir.path() / "two.dawproject")};
+	std::vector<std::string> errors(files.size());
+	std::vector<std::thread> threads;
+	threads.reserve(files.size());
+	for (size_t i = 0; i < files.size(); ++i)
+		threads.emplace_back(
+			[&project, &file = files[i], &error = errors[i]]
+			{
+				try
+				{
+					for (int save = 0; save < 10; ++save)
+						saveDawProject(project, file, DawProjectSaveOptions());
+				}
+				catch (const std::exception& e)
+				{
+					error = e.what();
+				}
+			});
+	for (std::thread& thread : threads)
+		thread.join();
+	for (size_t i = 0; i < files.size(); ++i)
+	{
+		INFO(errors[i]);
+		CHECK(errors[i].empty());
+		CHECK(loadDawProject(files[i], utf8(dir.path() / "media")).tracks == project.tracks);
+	}
+}
+
 TEST_CASE("without GNUbase's entry, a project is read from project.xml", "[integration]")
 {
 	const test::TempDir dir;
@@ -558,8 +599,12 @@ TEST_CASE("a project exported from Bitwig Studio loads", "[integration]")
 	const Json& event = project.at("audioEvents")[0];
 	CHECK(event.at("position") == 0);
 	CHECK(event.at("offset") == 0);
-	CHECK(event.at("length") == 135530); // eight beats at 149 BPM are longer than the file
+	CHECK(event.at("length") == 135530); // the whole file, which its Warps play as eight beats
+	// Musical mode at the tempo that puts the file's 2.8235 seconds on eight beats, in the file's own clip.
+	REQUIRE(project.at("clips").size() == 1);
 	CHECK(project.at("clips")[0].at("name") == "Drumfunk3 170bpm");
+	CHECK(project.at("clips")[0].at("warp").at("musical") == true);
+	CHECK(std::abs(project.at("clips")[0].at("warp").at("tempo").get<double>() - 170.0) < 0.1);
 	CHECK(project.at("media")[0].at("sampleRate").get<double>() == 48000.0);
 	CHECK(std::filesystem::exists(std::filesystem::u8path(project.at("media")[0].at("path").get<std::string>())));
 

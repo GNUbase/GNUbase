@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -65,6 +66,9 @@ namespace gnubase::engine
 		// set by AutomationPlayer::setAutomation. Other new automation doesn't send its value again, which would
 		// override a part's own program change or controller. Not compared.
 		uint64_t revision = 0;
+		// A MIDI lane that plays side by side with others of its target (channelAutomation): at a start, a locate or a
+		// jump only the one whose latest point lies latest sends its value there. Not compared.
+		bool shared = false;
 
 		bool operator==(const PlayedLane& other) const;
 		// Whether its target glides along ramps, frame by frame: the fader's parameters and the pre gain. The others
@@ -102,9 +106,13 @@ namespace gnubase::engine
 
 	// What a channel's automation plays: the fader's, the instrument's and the slots' built-in plugins' parameters
 	// with their static values or curves, a MIDI channel's program (with its bank) and volume and pan as controllers 7
-	// and 10 on MIDI channel 1 when it has them, and the MIDI controllers that have curves. maxVolume is the project's,
-	// in dB.
+	// and 10 on its MIDI channel (RenderChannel::midiChannel) when it has them, and the MIDI controllers that have
+	// curves. maxVolume is the project's, in dB.
 	std::unique_ptr<ChannelAutomation> channelAutomation(const RenderChannel& channel, double maxVolume);
+
+	// The instrument parameters that a channel's automation lanes target. A drum machine's pads (#182) have lanes for
+	// these alone; their other values come with its samples (processors::DrumMachine::setPadValues).
+	std::set<uint32_t> automatedInstrumentParameters(const RenderChannel& channel);
 
 	// The value of a curve at a project position (see AutomationLane): before the first point its value, after the
 	// last one its value, and where several points share a position the last one's.

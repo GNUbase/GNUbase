@@ -142,8 +142,12 @@ event queue runs its command; and text fields, also their arrow keys at the ends
 a modal dialog keep their keys, while Space after a click on a toolbar or transport button starts and stops playback
 (`tests/transportbar_tests.cpp`).
 
-`tests/keycommandsdialog_tests.cpp` checks the user's key commands and macros, their presets and files, and the
-dialog below.
+`tests/keycommandsdialog_tests.cpp` checks the user's key commands and macros, their presets and files (including an
+import whose `format` or `version` has the wrong type), and the dialog below: its confirmations before Remove Key
+Command and Defaults, Clear All also clearing the assignments of commands the dialog doesn't list, renaming a macro by
+double-clicking it and pressing Return, File > Export > Key Command Assignments, the messages of an export or import
+that fails, a confirmation's Cancel and Escape leaving no question behind for the next one, and the tool modifiers
+asking before one action takes another's keys, from Assign and from the list.
 
 ## The user's key commands and macros
 
@@ -170,8 +174,12 @@ user settings ([settings.md](settings.md)), so MCP and Lua change them with `set
   from it, which replaces both.
 - **Files.** `keyCommands.export {path}` writes the settings' key commands and macros into a JSON file
   (`"format": "gnubase.keyCommands"`, version 1), and `keyCommands.import {path, name}` makes a preset of one, to take
-  them to another computer. The UI commands `keyCommands.exportFile` and `keyCommands.importFile` ask for the file
-  with the OS's file dialog; an imported preset is named after the file.
+  them to another computer. A file whose `format` or `version` has another type is refused with a readable message, not
+  the JSON library's type error. The UI commands `keyCommands.exportFile` and `keyCommands.importFile` ask for the file
+  with the OS's file dialog; an imported preset is named after the file. File > Export > Key Command Assignments (the UI
+  command `keyCommands.exportAssignments`, p. 1560) writes an HTML table of every command and the keys that run it now
+  (`KeyCommands::assignments`), which the user saves where they choose. Why an export or import failed shows in the
+  dialog's message, or, without the dialog, in an error dialog titled after the command.
 - The app reads both settings when it starts and follows `settings.changed`.
 
 ## The dialog
@@ -193,20 +201,25 @@ own).
 - **Keys.** The selected command's keys and description. A key pressed into the key field ("Click here and press a
   key") is added to them, as Assign Additional Key does; if another command has it in the same zone, that command
   loses it, and the message says which. Escape still closes the dialog. Remove Key Command removes the key selected in
-  the keys list; Reset Key Command gives the command its default keys back, taking them from any command that has
-  them now. Defaults resets every command, Clear All removes every key.
+  the keys list and Defaults resets every command, each only after a confirmation the dialog's Lua opens with
+  `gnubase.ui.confirm` (confirm.rml); Cancel undoes either, as it drops the dialog's changes. The confirmation clears
+  its question (the global `ConfirmDialog`) however it closes, so a later one never answers to an earlier caller. Reset Key Command gives
+  the command its default keys back, taking them from any command that has them now. Clear All removes every
+  assignment, also those of commands the dialog doesn't list (its `kc.unlisted`).
 - **Macros.** Macros shows the macros section: New Macro, Duplicate Macro, Delete Macro, and Rename Macro with the
-  name in the field (the reference renames by double-clicking). Add Command adds the command selected in the list after
-  the selected command of the macro, or at its end; Remove Command, Move Up and Move Down change the macro's commands.
-  Macros are in the list under `macro`, so they get keys like any command. Run Macro runs the selected macro's
-  commands as the dialog shows them.
+  name in the field; double-clicking a macro in the list focuses that field to rename it, as in the reference (p.
+  1558), and Return there (the dialog's OK) or Rename Macro confirms the new name, which a name another macro has is
+  refused with a message. Add Command adds the command selected in the list after the selected command of the macro,
+  or at its end; Remove Command, Move Up and Move Down change the macro's commands. Macros are in the list under
+  `macro`, so they get keys like any command. Run Macro runs the selected macro's commands as the dialog shows them.
 - **Apply, OK, Cancel.** Apply sends what the dialog shows, in one `settings.set` with `ui.keyCommands` and
   `ui.macros`, or `settings.reset` for one that the dialog leaves empty (an empty Lua table would reach the engine as
-  an object); OK does the same and closes; Cancel and Escape drop it.
+  an object); OK does the same and closes; Cancel and Escape drop it. Both first rename the selected macro to the name
+  in its field if it differs, so Return after a double-click rename confirms it, and stay open with the message if the
+  name is taken.
 - **Presets.** The presets list, a name field, Save (applies what the dialog shows, then `keyCommands.savePreset`),
   Delete, and Import... and Export... (the file dialogs; Export applies first). Choosing a preset puts its key commands
   and macros into the dialog, for Apply or OK.
 
-Not yet: File > Export > Key Command Assignments, the HTML list of every key; the confirmations before Remove and
-Defaults (Cancel undoes either); keys in tooltips; a frame around the focused zone. While the on-screen keyboard shows,
-it takes most keys ([onscreen-keyboard.md](onscreen-keyboard.md)).
+Not yet: keys in tooltips; a frame around the focused zone. While the on-screen keyboard shows, it takes most keys
+([onscreen-keyboard.md](onscreen-keyboard.md)).

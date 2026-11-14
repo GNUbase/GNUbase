@@ -23,6 +23,7 @@
 #include <cstdio>
 #include <iterator>
 #include <limits>
+#include <optional>
 #include <utility>
 
 namespace gnubase::ui
@@ -97,6 +98,11 @@ namespace gnubase::ui
 	{
 		Rml::StyleSheetSpecification::RegisterProperty("stroke-color", "transparent", false).AddParser("color");
 		Rml::StyleSheetSpecification::RegisterProperty("stroke-width", "1px", false).AddParser("length");
+		Rml::StyleSheetSpecification::RegisterProperty("own-fill-opacity", "1", false).AddParser("number");
+		Rml::StyleSheetSpecification::RegisterProperty("own-color-tint", "none", false)
+			.AddParser("keyword", "none")
+			.AddParser("color");
+		Rml::StyleSheetSpecification::RegisterProperty("event-inset", "0px", false).AddParser("length");
 		rmlui.registerElement<EventLanes>("event-lanes");
 		rmlui.registerElement<Waveform>("waveform");
 		rmlui.registerElement<Curve>("curve");
@@ -134,6 +140,41 @@ namespace gnubase::ui
 		const Rml::Property* colour = GetProperty("stroke-color");
 		return colour == nullptr ? Colour()
 								 : colour->Get<Rml::Colourb>().ToPremultiplied(GetComputedValues().opacity());
+	}
+
+	Colour Canvas::ownFill(uint32_t rgba)
+	{
+		const Rml::Property* property = GetProperty("own-fill-opacity");
+		float opacity = property == nullptr ? 1.0F : property->Get<float>();
+		opacity = std::isfinite(opacity) ? std::clamp(opacity, 0.0F, 1.0F) : 1.0F;
+		const auto alpha = static_cast<uint8_t>(std::lround(static_cast<float>(rgba & 0xffU) * opacity));
+		return Rml::Colourb(static_cast<uint8_t>(rgba >> 24U), static_cast<uint8_t>(rgba >> 16U),
+			static_cast<uint8_t>(rgba >> 8U), alpha)
+			.ToPremultiplied(GetComputedValues().opacity());
+	}
+
+	std::optional<Colour> Canvas::ownLine(uint32_t rgba)
+	{
+		const Rml::Property* property = GetProperty("own-color-tint");
+		if (property == nullptr || property->unit != Rml::Unit::COLOUR)
+			return std::nullopt;
+		// The tint laid over the own color by the tint's alpha.
+		const auto tint = property->Get<Rml::Colourb>();
+		const auto over = [&tint](uint32_t own, uint8_t with)
+		{
+			return static_cast<uint8_t>(std::lround(static_cast<float>(own) +
+				((static_cast<float>(with) - static_cast<float>(own)) * static_cast<float>(tint.alpha) / 255.0F)));
+		};
+		return Rml::Colourb(over((rgba >> 24U) & 0xffU, tint.red), over((rgba >> 16U) & 0xffU, tint.green),
+			over((rgba >> 8U) & 0xffU, tint.blue), static_cast<uint8_t>(rgba & 0xffU))
+			.ToPremultiplied(GetComputedValues().opacity());
+	}
+
+	float Canvas::eventInset()
+	{
+		const Rml::Property* inset = GetProperty("event-inset");
+		const float pixels = inset == nullptr ? 0.0F : ResolveLength(inset->GetNumericValue());
+		return pixels > 0.0F ? std::round(pixels) : 0.0F;
 	}
 
 	float Canvas::strokeWidth()
@@ -230,15 +271,9 @@ namespace gnubase::ui
 		if (m_lanes.empty())
 			return;
 		const Colour body = fill();
-		const float opacity = GetComputedValues().opacity();
-		const auto own = [opacity](uint32_t rgba)
-		{
-			return Rml::Colourb(static_cast<uint8_t>(rgba >> 24U), static_cast<uint8_t>(rgba >> 16U),
-				static_cast<uint8_t>(rgba >> 8U), static_cast<uint8_t>(rgba))
-				.ToPremultiplied(opacity);
-		};
 		const Colour outline = stroke();
 		const float width = outline.alpha == 0 ? 0.0F : strokeWidth();
+		const float inset = eventInset();
 		// Events reaching beyond the frame end just outside it, so their outline there stays out of view.
 		const float first = -(width + 1.0F);
 		const float last = static_cast<float>(frame.right - frame.left) + width + 1.0F;
@@ -250,10 +285,16 @@ namespace gnubase::ui
 			std::upper_bound(m_tops.begin() + 1, m_tops.end(), frame.top / frame.dpRatio) - (m_tops.begin() + 1));
 		for (; lane < m_lanes.size() && m_tops[lane] * frame.dpRatio < frame.bottom; ++lane)
 		{
-			const float y0 = frame.y(std::round(m_tops[lane] * frame.dpRatio));
-			const float y1 = frame.y(std::round(m_tops[lane + 1] * frame.dpRatio));
+			float y0 = frame.y(std::round(m_tops[lane] * frame.dpRatio));
+			float y1 = frame.y(std::round(m_tops[lane + 1] * frame.dpRatio));
 			if (y1 <= y0)
 				continue;
+			// Off the lane's edges, if it is high enough to keep a pixel between them.
+			if (y1 - y0 > 2.0F * inset)
+			{
+				y0 += inset;
+				y1 -= inset;
+			}
 			// By start, none longer than the longest: the first event reaching into the frame starts at most that
 			// much before it.
 			const std::vector<TimeSpan>& events = m_lanes[lane].events;
@@ -265,7 +306,14 @@ namespace gnubase::ui
 					continue;
 				const float x0 = std::max(frame.x(event->start), first);
 				const float x1 = std::max(std::min(frame.x(event->end()), last), x0 + 1.0F);
-				outlined(mesh, x0, y0, x1, y1, event->color == 0 ? body : own(event->color), outline, width);
+				if (event->color == 0)
+				{
+					outlined(mesh, x0, y0, x1, y1, body, outline, width);
+					continue;
+				}
+				const std::optional<Colour> line = ownLine(event->color);
+				outlined(mesh, x0, y0, x1, y1, ownFill(event->color), line ? *line : outline,
+					line ? std::max(width, strokeWidth()) : width);
 			}
 		}
 		meshes.push_back({std::move(mesh), {}});
@@ -278,11 +326,20 @@ namespace gnubase::ui
 		changed();
 	}
 
+	void Waveform::setColor(uint32_t color)
+	{
+		if (m_span.color == color)
+			return;
+		m_span.color = color;
+		changed();
+	}
+
 	void Waveform::build(const Frame& frame, Rml::TexturedMeshList& meshes)
 	{
 		if (m_channels.empty() || !(m_span.length > 0.0))
 			return;
-		const Colour colour = fill();
+		const std::optional<Colour> own = m_span.color == 0 ? std::nullopt : ownLine(m_span.color);
+		const Colour colour = own ? *own : fill();
 		const float height = frame.size.y / static_cast<float>(m_channels.size());
 		const double first = std::max(frame.left, std::round(m_span.start / frame.unitsPerPixel));
 		const double last = std::min(frame.right, std::round(m_span.end() / frame.unitsPerPixel));

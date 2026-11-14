@@ -18,9 +18,11 @@ Layout and Mod+I show and hide ([docking.md](docking.md)). It follows the event 
   .info-field[info-field=…]   a label and its control, a section of the set infoLine (section=…)
     textdisplay[field=name]   a MIDI part's name; an audio event's clip name, disabled
     textdisplay[field=start], [field=end], [field=length]   in the ruler's time format
+    textdisplay[field=pitch]  a note's pitch as a name (an in-place editor's notes, below)
     valuefield[field=volume]  audio events, in dB; .unavailable for parts
     button[field=mute], button[field=lock]                  toggle buttons
     valuefield[field=transpose], [field=velocity]           MIDI parts, -127 to 127; .unavailable for others
+    textdisplay[field=releaseVelocity], [field=channel]     a note's off velocity, 0-127, and channel, 1-16
     span[field=rootKeyTranspose]                            what the project root key adds, "(+2)", empty for 0
     select[field=rootKey], button[field=globalTranspose]    MIDI parts' root key and Global Transpose; .unavailable for others
 ```
@@ -59,6 +61,15 @@ Layout and Mod+I show and hide ([docking.md](docking.md)). It follows the event 
   marker's length; end and length change the cycle markers. The project window selects events or markers:
   selecting an event deselects the markers (`AppUi`, `MarkerLines::deselect`), a marker clicked deselects the events.
   A selection that names only markers the project no longer has shows `.empty`, until the marker lines drop them.
+- **An in-place editor's notes** (p. 1259, [in-place-editor.md](in-place-editor.md)). When an in-place editor's
+  selection changed last, the info line has the class `notes` and shows its first selected note as that editor's own
+  info line shows it ([key-editor.md](key-editor.md)): start, end and length in bars and beats, the pitch as a name such
+  as C3, the velocity 0-127, the off velocity and the channel 1-16; its other fields are `.unavailable`. It follows the
+  editors' `editor.changed`, so it shows whichever editor's selection changed last, also while the editor's own toolbar,
+  and with it its info line, is hidden. Edits go to every selected note as one `history.transaction` of `note.set`s per
+  part (p. 1140): relative to the first note's value, or with Ctrl+Enter the value typed for every one, the channel set
+  for all; positions are in ticks. An event or part selected in the project window, an empty selection in the editor or
+  the editor closing gives the info line back to what was selected before.
 
 ## Inspector
 
@@ -78,7 +89,8 @@ one it has the class `empty` and says "No Track Selected".
     [section=modifiers]            MIDI and instrument tracks: button[control=modifiers-bypass], valuefields and the
                                    random generators' and ranges' select[control=modifiers-random-0-target] etc.
     [section=midiInserts]          MIDI and instrument tracks: button[control=midiInserts-bypass],
-                                   select[control=midiInserts-divider], .midi-effect-slot[slot=0..3] (.empty, .off,
+                                   select[control=midiInserts-divider], .midi-divider[gap=0..4] (.at where the
+                                   divider is) with .midi-divider-line, .midi-effect-slot[slot=0..3] (.empty, .off,
                                    .recorded above the divider, .open with its control panel): button[control=
                                    midiInserts-0-on], select[control=midiInserts-0-effect], button.midi-effect-edit,
                                    .midi-effect-panel with [control=midiInserts-0-parameter-rate] etc.
@@ -87,6 +99,10 @@ one it has the class `empty` and says "No Track Selected".
     [section=chords]               MIDI and instrument tracks with a chord track: select[control=followChords]
     [section=articulations]        MIDI and instrument tracks: select[control=articulationMap],
                                    button.inspector-articulation-setup
+    [section=trackVersions]        audio, instrument and MIDI tracks: textdisplay[control=versionName],
+                                   .inspector-version-id, .inspector-version-indicator (.multiple on the section),
+                                   .inspector-version[version] per version (.selected on the active one), and
+                                   button.inspector-version-add, -duplicate and -remove
     [section=inserts]              .insert per plugin slot, .bypassed and .inactive
     [section=notepad]              textarea.notepad
 ```
@@ -106,12 +122,13 @@ one it has the class `empty` and says "No Track Selected".
   older ones (#716, [ui-engine-binding.md](ui-engine-binding.md)).
 - **Refused changes.** When the engine refuses a change, such as an output that would make a routing loop, the
   inspector shows the channel as it is again.
-- **Routing** (p. 168): the input bus of an audio track, and where the channel plays: an output bus or a group
-  channel, for MIDI tracks an instrument track's channel, as in the add track dialog (`channel.set` `input` and
-  `output`). On MIDI tracks also the MIDI device, bank and program (pp. 1108, 1113, [midi-devices.md](midi-devices.md)).
-  On MIDI and instrument tracks the Input Transformer (pp. 1097, 1393, [midi-rules.md](midi-rules.md)): Off, Project
-  or Track (`channel.set` `inputTransformer` `mode`) and, while it isn't off, Open Panel..., which opens the project
-  input transformer or the track's and leaves the mode as it was.
+- **Routing** (p. 168): the input bus of an audio track, and where the channel plays: an output bus or a group channel,
+  for MIDI tracks an instrument track's channel, as in the add track dialog (`channel.set` `input` and `output`). On
+  MIDI tracks also the MIDI channel their patch, MIDI volume and pan go out on (Channel: Any or 1 to 16, p. 349,
+  `channel.set` `midiChannel`, [mixer.md](mixer.md)) and the MIDI device, bank and program (pp. 1108, 1113,
+  [midi-devices.md](midi-devices.md)). On MIDI and instrument tracks the Input Transformer (pp. 1097, 1393,
+  [midi-rules.md](midi-rules.md)): Off, Project or Track (`channel.set` `inputTransformer` `mode`) and, while it isn't
+  off, Open Panel..., which opens the project input transformer or the track's and leaves the mode as it was.
 - **MIDI Modifiers** (pp. 1099–1102, [midi-modifiers.md](midi-modifiers.md)): Bypass, Transpose, Velocity Shift,
   Velocity and Length Compression as numerator and denominator, Random 1 and 2 with their target and minimum and
   maximum, and Range 1 and 2 with their mode and minimum and maximum, sent with `channel.set` `modifiers`. Each control
@@ -121,7 +138,10 @@ one it has the class `empty` and says "No Track Selected".
   held arrow key on a value are one undo step, and a value the engine refuses, such as a minimum above the maximum,
   shows as it is again.
 - **MIDI Inserts and MIDI Sends** (pp. 1104-1106, [midi-effects.md](midi-effects.md)): Bypass, the inserts' divider
-  (the slots above it are recorded) and the sends' Pre/Post MIDI Modifiers and Inserts, and per slot Activate, Select
+  (the slots above it are recorded, marked at their side; a line between the slots that is dragged to another place,
+  p. 1105, or chosen from a drop-down list; a drag ends without moving it when the inspector shows another track
+  before it ends, also one without a channel), switched-off slots dimmed, and the sends' Pre/Post MIDI Modifiers and
+  Inserts, and per slot Activate, Select
   Effect Type (No Effect and the effects `midiEffect.list` lists), the sends' output (Track Output or another
   instrument track) and the edit button, which opens and closes the effect's control panel below the slot: a
   drop-down list for each parameter with options, a value field for the others, sent with `channel.set` `midiInserts`
@@ -135,6 +155,12 @@ one it has the class `empty` and says "No Track Selected".
   (`chord.setTrack`).
 - **Articulation Map** (pp. 1263, 1286, [articulation-maps.md](articulation-maps.md)): MIDI and instrument tracks'
   map, or No Map (`track.set` `articulationMap`), and Setup..., which opens the articulation map setup for the track.
+- **Track Versions** (pp. 231-232, [track-versions.md](track-versions.md)): the first selected track's active
+  version, its name, which a double click changes for every selected track that has versions (`trackVersion.set`), and
+  its ID, an indicator while the track has more than one version, the list of them all, in which a click activates one
+  on those tracks (`trackVersion.activate`), and New, Duplicate and Delete (`trackVersion.add`, `.duplicate` and
+  `.remove`), which work on them too; the engine refuses a command that names a track without versions, so the others
+  in the selection are left out. Delete only while there is a version to delete.
 - **Inserts**: an overview of the channel's plugin slots by name, top to bottom (`plugin.*` changes them).
 - **Notepad** (p. 168): the channel's notes. What is typed goes to the engine when the field loses the focus, also
   with Escape (`channel.set` `notes`, one undo step). When another track shows while the notepad or the name is being
@@ -156,15 +182,13 @@ one it has the class `empty` and says "No Track Selected".
 
 ## Not yet
 
-The info line's other fields (offset, fades, snap point; audio events' global transpose and root key), hiding fields from its
-context menu, and its own modifier setting (Preferences, Editing - Tool Modifiers); the inspector's other sections
-(track versions, chords, articulations, equalizer, fader, cue sends, remote controls), dragging the MIDI inserts'
-divider between the slots,
-sends (#108), the MIDI tracks' MIDI volume and pan, the folder track inspector's list of the tracks inside, the
-editor tab and the tempo, signature and marker track inspectors,
-Expand Sections Exclusively, and the Channel zone's channel strip (#107). Record and monitor on instrument and MIDI
-tracks (pp. 173–176) wait for #97. Set up Sections for the inspector in a window of its own, where `#inspector-setup`,
-which is in the project window's document, doesn't open, waits for #517.
+The info line's other fields (offset, fades, snap point; audio events' global transpose and root key), hiding fields
+from its context menu, and its own modifier setting (Preferences, Editing - Tool Modifiers); the inspector's other
+sections (chords, articulations, equalizer, fader, cue sends, remote controls), sends (#108), the MIDI tracks' MIDI
+volume and pan, the folder track inspector's list of the tracks inside, the editor tab and the tempo, signature and
+marker track inspectors, Expand Sections Exclusively, and the Channel zone's channel strip (#107). Record and monitor on
+instrument and MIDI tracks (pp. 173–176) wait for #97. Set up Sections for the inspector in a window of its own, where
+`#inspector-setup`, which is in the project window's document, doesn't open, waits for #517.
 
 ## Checks
 
@@ -172,24 +196,26 @@ which is in the project window's document, doesn't open, waits for #517.
 - `tests/dawproject_tests.cpp`: notes saved and loaded, also from `project.xml` alone.
 - `tests/inspector_tests.cpp` drives the app's project window with `ui::Automation`: the info line of one and of two
   selected parts, start, length (relative and with Ctrl+Enter absolute, also with the first part's own value, after
-  which an edit taken by leaving the field is relative again) and end edits with undo, name, mute and lock
-  for every selected part, changes from another client, an audio event's volume, the parts' transpose and velocity (relative, kept in range, with Ctrl+Enter, undo, hidden for audio events), and asking only while it shows; a
-  marker selected on the marker track with each field edited, two markers changed relatively and with Ctrl+Enter in
-  one undo step, and an event selected after it, the setup pane naming the fields as the info line does; a marker clicked again after a part, Ctrl+Enter on the first marker's
-  own position with a part shown before, and a selection naming removed markers; the inspector's buttons, volume and
-  pan both ways, the output from another client and from the drop-down list, a refused output, the inserts overview
-  with a bypassed slot, the notepad, renaming, notes and a name being typed when another track is selected and when
-  another client loads a project, arrow keys in the notepad and the name, closing a section, hiding one in Set up
-  Sections and opening it only from an empty area, and what a group and a marker track don't have; the info line's
-  and the toolbar's setup panes, a hidden field staying hidden when the selection shows again and Show All leaving an
-  unavailable one out; the MIDI Modifiers
-  section's bypass, values, a fraction's denominator, a generator's target with positions in ticks, a range the engine
-  refuses, changes from another client with undo, and an audio track without it; the MIDI Inserts and MIDI Sends
-  sections' effect, a parameter from a drop-down list and from a value field, on, bypass, the divider, the control
-  panel opened and closed, a send's output and Pre, changes from another client with undo, and an audio track without
-  them. A drag of the
-  inspector's volume up to the project's maximum, wheel turns on the pan and a drag of the info line's volume are one
-  undo step each, and a MIDI modifier and a part's transpose dragged back to where they started while the engine
-  answers late end there. The info line's volume step that the engine refuses, one of the two selected events being
-  gone, shows in the command log, leaves no undo step and shows the engine's value again.
+  which an edit taken by leaving the field is relative again) and end edits with undo, name, mute and lock for every
+  selected part, changes from another client, an audio event's volume, the parts' transpose and velocity (relative, kept
+  in range, with Ctrl+Enter, undo, hidden for audio events), and asking only while it shows; a marker selected on the
+  marker track with each field edited, two markers changed relatively and with Ctrl+Enter in one undo step, and an event
+  selected after it, the setup pane naming the fields as the info line does; a marker clicked again after a part,
+  Ctrl+Enter on the first marker's own position with a part shown before, and a selection naming removed markers; a note
+  selected in an in-place editor with its fields shown and edited, pitch relative and with Ctrl+Enter, velocity, channel
+  and start, a part selected after it, its editor deselecting and closing; the inspector's buttons, volume and pan both
+  ways, the output from another client and from the drop-down list, a refused output, the inserts overview with a
+  bypassed slot, the notepad, renaming, notes and a name being typed when another track is selected and when another
+  client loads a project, arrow keys in the notepad and the name, closing a section, hiding one in Set up Sections and
+  opening it only from an empty area, and what a group and a marker track don't have; the info line's and the toolbar's
+  setup panes, a hidden field staying hidden when the selection shows again and Show All leaving an unavailable one out;
+  the MIDI Modifiers section's bypass, values, a fraction's denominator, a generator's target with positions in ticks, a
+  range the engine refuses, changes from another client with undo, and an audio track without it; the MIDI Inserts and
+  MIDI Sends sections' effect, a parameter from a drop-down list and from a value field, on, bypass, the divider from
+  the list and dragged in one step, a drag dropped when the inspector shows another instrument track or a marker track,
+  the control panel opened and closed, a send's output and Pre, changes from another client with undo, and an audio
+  track without them. A drag of the inspector's volume up to the project's maximum, wheel turns on the pan and a drag of
+  the info line's volume are one undo step each, and a MIDI modifier and a part's transpose dragged back to where they
+  started while the engine answers late end there. The info line's volume step that the engine refuses, one of the two
+  selected events being gone, shows in the command log, leaves no undo step and shows the engine's value again.
 - `tests/mixerwindow_tests.cpp`: a drag of a mixer fader is one undo step.

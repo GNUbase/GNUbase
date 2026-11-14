@@ -4,6 +4,7 @@
 #include "ui/automation.h"
 #include "ui/docking.h"
 #include "ui/keycommands.h"
+#include "ui/mixer.h"
 #include "ui/renderer.h"
 #include "ui/shell.h"
 #include "ui/tracklist.h"
@@ -237,6 +238,17 @@ TEST_CASE("a channel strip's name shows its track's color, which the style sheet
 	app.call("track.set", {{"track", keys.track}, {"color", "#e12ad8"}});
 	REQUIRE(app.waitUntil(
 		[&] { return has(element(app, window, strip(keys.channel) + " .mixer-channel-name"), "colored"); }));
+	// Bright from where black text has more contrast than white text (between #757575 and #767676), also in upper-case
+	// digits, which track.set takes.
+	for (const auto& [color, bright] :
+		std::vector<std::pair<std::string, bool>>{{"#757575", false}, {"#767676", true}, {"#F0E060", true}})
+	{
+		INFO(color);
+		const std::string shown = color;
+		app.call("track.set", {{"track", track}, {"color", color}});
+		REQUIRE(app.waitUntil([&] { return element(app, window, guitar).at("attributes").at("color") == shown; }));
+		CHECK(has(element(app, window, guitar), "bright") == bright);
+	}
 
 	// Back to the default color: the theme's again.
 	app.call("track.set", {{"track", track}, {"color", nullptr}});
@@ -248,9 +260,33 @@ TEST_CASE("a channel strip's name shows its track's color, which the style sheet
 	CHECK(name->GetLocalProperty("background-color") == nullptr);
 }
 
+TEST_CASE("a track color that isn't #rrggbb counts as no color on the track's mixer strip", "[unit]")
+{
+	// A project file's GNUbase entry is loaded without checking its colors; track.set and track.add take #rrggbb only.
+	Json channels = Json::array();
+	Json tracks = Json::array();
+	uint64_t id = 0;
+	for (const char* color : {"red", "#12345", "#12345g", "#1234567", "#F0E060", "#204060"})
+	{
+		++id;
+		channels.push_back({{"id", id}, {"format", "stereo"}});
+		tracks.push_back({{"id", 100 + id}, {"channel", id}, {"type", "audio"}, {"name", color}, {"color", color}});
+	}
+	const Json project = {{"busses", Json::array()}, {"channels", channels}, {"tracks", tracks}};
+	const std::vector<ui::MixerChannel> shown = ui::mixerChannels(project);
+	REQUIRE(shown.size() == 6);
+	for (size_t i = 0; i < 4; ++i)
+	{
+		INFO(shown.at(i).name);
+		CHECK(shown.at(i).color.empty());
+	}
+	CHECK(shown.at(4).color == "#F0E060");
+	CHECK(shown.at(5).color == "#204060");
+}
+
 TEST_CASE("the lower zone's mixer in the default theme looks as its golden image", "[ui]")
 {
-	test::UiApp app({1200, 700});
+	test::UiApp app({1000, 700}); // CI's screens are 1024 pixels wide
 	app.appUi().showProject();
 	app.setDpRatio(1.0F);
 	// Strips with dark and bright track colors, one without, a group, and the busses; a muted and a soloed channel.
@@ -273,13 +309,17 @@ TEST_CASE("the lower zone's mixer in the default theme looks as its golden image
 		}));
 	app.shell().step(std::chrono::milliseconds(0));
 
-	// The strips only, so that changes elsewhere in the window or the zone don't touch this image.
-	const ui::Image window = app.screenshot("lower-zone-mixer-window", {1200, 700});
-	const Json box = element(app, std::nullopt, "#lower-zone .mixer-channels").at("box");
-	const int x = box.at("x").get<int>();
-	const int y = box.at("y").get<int>();
-	const int width = box.at("width").get<int>();
-	const int height = box.at("height").get<int>();
+	// The strips only, from the first one's left edge to the last one's right edge, so that changes elsewhere in the
+	// window or the zone, or its width, don't touch this image.
+	const ui::Image window = app.screenshot("lower-zone-mixer-window", {1000, 700});
+	const Json shown = elements(app, std::nullopt, "#lower-zone .mixer-channel");
+	REQUIRE(shown.size() == 6);
+	const Json first = shown.front().at("box");
+	const Json end = shown.back().at("box");
+	const int x = first.at("x").get<int>();
+	const int y = first.at("y").get<int>();
+	const int width = end.at("x").get<int>() + end.at("width").get<int>() - x;
+	const int height = first.at("height").get<int>();
 	REQUIRE(x >= 0);
 	REQUIRE(y >= 0);
 	REQUIRE(x + width <= window.width);

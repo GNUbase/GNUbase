@@ -4,7 +4,8 @@
      measures the section of the clip the event plays (clip.spectrum) and draws the chosen channel's levels as bars
      from -120 dB at the bottom to 0 dB at the top of #sa-graph, a bar per 1/24 octave from 20 Hz. The mouse over
      the graph shows the channel, frequency, note and level in #sa-value; a right click makes that frequency the one
-     the difference D is measured from (.reference), and a click drops it. -->
+     the difference D is measured from (.reference), and a click drops it. A clip whose file can't be read shows
+     clip.spectrum's error in #sa-value instead, as Detect Silence and Statistics show theirs. -->
 <rml>
 <head>
 	<title>Spectrum Analyzer</title>
@@ -110,8 +111,14 @@
 				document:Close()
 				return
 			end
-			dialog.result = gnubase.clip.spectrum({clip = event.clip, start = event.offset,
+			local ok, result = pcall(gnubase.clip.spectrum, {clip = event.clip, start = event.offset,
 				["end"] = event.offset + event.length})
+			if not ok then
+				dialog.result = nil
+				document:GetElementById("sa-value").inner_rml = escape(tostring(result))
+				return
+			end
+			dialog.result = result
 			local count = #dialog.result.channels
 			local options = {}
 			for i = 1, count do

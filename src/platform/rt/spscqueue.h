@@ -65,6 +65,19 @@ namespace gnubase::rt
 			return true;
 		}
 
+		// Consumer thread only: the value tryPop takes next, or nullptr if the queue is empty. Valid until that tryPop.
+		const T* peek()
+		{
+			const size_t tail = m_tail.load(std::memory_order_relaxed);
+			if (tail == m_cachedHead)
+			{
+				m_cachedHead = m_head.load(std::memory_order_acquire);
+				if (tail == m_cachedHead)
+					return nullptr;
+			}
+			return &m_slots[tail & m_mask];
+		}
+
 	private:
 		std::vector<T> m_slots;
 		size_t m_mask;

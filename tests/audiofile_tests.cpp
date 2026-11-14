@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -21,6 +22,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <system_error>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -312,20 +314,153 @@ TEST_CASE("the format is recognized from the content, not the file name", "[inte
 TEST_CASE("a file being read can be deleted, and reads on", "[integration]")
 {
 	// As on the other platforms, so that a file the engine plays, such as a frozen track's freeze file, can be removed
-	// meanwhile (#951).
+	// meanwhile (#951). Much larger than stdio's first-read buffer, so the reads after the remove come from the file
+	// itself and show that a deleted file reads on (#963).
 	const test::TempDir dir;
 	const std::string path = utf8(dir.path() / "open.wav");
-	const test::Audio audio = testSignal(1, 48000, 1000);
+	const test::Audio audio = testSignal(1, 48000, 48000);
 	writeFile(path, audio, {});
 	const auto reader = AudioFileReader::open(path);
-	std::vector<float> buffer(1000);
+	std::vector<float> buffer(48000);
 	REQUIRE(reader->read(buffer.data(), 500) == 500);
 	std::error_code error;
 	CHECK(std::filesystem::remove(std::filesystem::u8path(path), error));
 	CHECK_FALSE(error);
 	CHECK_FALSE(std::filesystem::exists(std::filesystem::u8path(path)));
-	CHECK(reader->read(buffer.data() + 500, 500) == 500);
-	CHECK(std::abs(buffer[999] - audio.samples[999]) < 1e-4f);
+	CHECK(reader->read(buffer.data() + 500, 47500) == 47500);
+	CHECK(std::abs(buffer[5000] - audio.samples[5000]) < 1e-4f);
+	CHECK(std::abs(buffer[47999] - audio.samples[47999]) < 1e-4f);
+}
+
+TEST_CASE("replaceFile moves one file over another", "[integration]")
+{
+	const test::TempDir dir;
+	const std::filesystem::path from = dir.path() / "from.bin";
+	const std::filesystem::path to = dir.path() / "to.bin";
+	const auto writeText = [](const std::filesystem::path& file, const std::string& text)
+	{
+		std::ofstream out(file, std::ios::binary);
+		out << text;
+	};
+	writeText(from, "new");
+	writeText(to, "old");
+	CHECK(detail::replaceFile(utf8(from), utf8(to)));
+	CHECK(detail::lastReplacePath() == detail::ReplacePath::Rename);
+	CHECK(test::readText(to) == "new");
+	CHECK_FALSE(std::filesystem::exists(from));
+	// A file that isn't there is reported through lastError(), with its cause on every platform (#1483).
+	CHECK_FALSE(detail::replaceFile(utf8(from), utf8(to)));
+	CHECK(detail::lastError() == std::generic_category().message(ENOENT));
+}
+
+TEST_CASE("opening a missing file names its cause", "[integration]")
+{
+	// Windows opens through its own API, whose error codes lastError() has to translate (#1483).
+	const test::TempDir dir;
+	CHECK_FALSE(detail::openFile(utf8(dir.path() / "missing.bin"), "rb"));
+	CHECK(detail::lastError() == std::generic_category().message(ENOENT));
+	CHECK_FALSE(detail::openFile(utf8(dir.path() / "missing" / "file.bin"), "rb"));
+	CHECK(detail::lastError() == std::generic_category().message(ENOENT));
+}
+
+TEST_CASE("replaceFile replaces a file a reader has open, on Windows too", "[integration]")
+{
+	// The POSIX-semantic rename behind replaceFile takes the place of a file whose handles share deletion, which the
+	// classic rename refuses on Windows (#1387): the reader in the old file reads on, and the name is never missing.
+	const test::TempDir dir;
+	const std::filesystem::path from = dir.path() / "from.bin";
+	const std::filesystem::path to = dir.path() / "to.bin";
+	{
+		std::ofstream out(to, std::ios::binary);
+		out << "old";
+	}
+	{
+		std::ofstream out(from, std::ios::binary);
+		out << "new";
+	}
+	const detail::File reader = detail::openFile(utf8(to), "rb");
+	REQUIRE(reader);
+	CHECK(detail::replaceFile(utf8(from), utf8(to)));
+#ifdef _WIN32
+	// The classic rename can't have done this over the open reader: the POSIX-semantic one took its place.
+	CHECK(detail::lastReplacePath() == detail::ReplacePath::PosixRename);
+#endif
+	CHECK(test::readText(to) == "new");
+	CHECK_FALSE(std::filesystem::exists(from));
+	// The held reader reads the old file on.
+	char buffer[4] = {};
+	CHECK(std::fread(buffer, 1, 3, reader.get()) == 3);
+	CHECK(std::string(buffer, 3) == "old");
+	CHECK(std::distance(std::filesystem::directory_iterator(dir.path()), std::filesystem::directory_iterator()) == 1);
+}
+
+TEST_CASE("the aside replacement leaves the old file when the new one can't take its place", "[integration]")
+{
+	// The Windows fallback for replacing a file that a reader has open, which the classic and the POSIX-semantic
+	// rename both refuse there: move the old file aside, which works while its handles share deletion, put the new
+	// file in its place and end the aside (#963). When the new file can't take the place, the old one has to come
+	// back (#1387).
+	const test::TempDir dir;
+	const std::filesystem::path oldPath = dir.path() / "file.bin";
+	const std::filesystem::path asidePath = dir.path() / "file.bin.aside";
+	const std::filesystem::path newPath = dir.path() / "new.bin";
+	{
+		std::ofstream out(oldPath, std::ios::binary);
+		out << "old";
+	}
+	const detail::File reader = detail::openFile(utf8(oldPath), "rb");
+	REQUIRE(reader);
+
+	// Nothing to move into place, while a reader is in the old file.
+	CHECK_FALSE(detail::replaceFileMovingAside(utf8(newPath), utf8(oldPath), utf8(asidePath)));
+	CHECK(test::readText(oldPath) == "old");
+	CHECK_FALSE(std::filesystem::exists(asidePath));
+
+	// A real new file replaces the old one and leaves nothing behind.
+	{
+		std::ofstream out(newPath, std::ios::binary);
+		out << "new";
+	}
+	CHECK(detail::replaceFileMovingAside(utf8(newPath), utf8(oldPath), utf8(asidePath)));
+	CHECK(test::readText(oldPath) == "new");
+	CHECK_FALSE(std::filesystem::exists(asidePath));
+	CHECK_FALSE(std::filesystem::exists(newPath));
+
+	// The held reader reads the old file through it all.
+	char buffer[4] = {};
+	CHECK(detail::seekFile(reader.get(), 0, SEEK_SET));
+	CHECK(std::fread(buffer, 1, 3, reader.get()) == 3);
+	CHECK(std::string(buffer, 3) == "old");
+	CHECK(std::distance(std::filesystem::directory_iterator(dir.path()), std::filesystem::directory_iterator()) == 1);
+}
+
+TEST_CASE("a failed aside replacement names its cause", "[integration]")
+{
+	// The renames report the system's own error codes, on Windows not C library ones: lastError() has to name the
+	// cause, not whatever C library error shares the Windows code's number (#1446).
+	const test::TempDir dir;
+	const std::filesystem::path newPath = dir.path() / "new.bin";
+	{
+		std::ofstream out(newPath, std::ios::binary);
+		out << "new";
+	}
+	// A folder that isn't there: ERROR_PATH_NOT_FOUND (3) on Windows, ESRCH's number.
+	const std::filesystem::path missing = dir.path() / "missing" / "file.bin";
+	CHECK_FALSE(detail::replaceFileMovingAside(utf8(newPath), utf8(missing), utf8(missing) + ".aside"));
+	CHECK(detail::lastError() == std::generic_category().message(ENOENT));
+#ifdef _WIN32
+	// A writer whose handle doesn't share deletion keeps the old file from moving aside: ERROR_SHARING_VIOLATION (32),
+	// EPIPE's number.
+	const std::filesystem::path oldPath = dir.path() / "file.bin";
+	{
+		std::ofstream out(oldPath, std::ios::binary);
+		out << "old";
+	}
+	std::ofstream writer(oldPath, std::ios::binary | std::ios::app);
+	REQUIRE(writer);
+	CHECK_FALSE(detail::replaceFileMovingAside(utf8(newPath), utf8(oldPath), utf8(oldPath) + ".aside"));
+	CHECK(detail::lastError() == std::generic_category().message(EACCES));
+#endif
 }
 
 TEST_CASE("the decoders leave the files that the readers hand them open", "[integration]")

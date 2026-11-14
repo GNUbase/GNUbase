@@ -205,7 +205,7 @@ TEST_CASE("the steps of one control go one at a time, the newest of a gesture re
 	CHECK(read("volume") == -2.0);
 }
 
-TEST_CASE("a control's steps leave no record behind once their last answer was handed on", "[unit]")
+TEST_CASE("a control's steps leave no record behind once a read after their last answer was handed on", "[unit]")
 {
 	engine::Engine engine;
 	ui::EngineBinding binding(engine);
@@ -216,23 +216,50 @@ TEST_CASE("a control's steps leave no record behind once their last answer was h
 	const auto read = [&client](const char* key)
 	{ return client.call("project.get").value.at("channels").at(0).at(key).get<double>(); };
 	const Json unknown = Json::array({Json{{"command", "channel.set"}, {"parameters", {{"channel", 999999}}}}});
+	// A read through the binding, as the event display reads the project after each history.changed; returns the
+	// handed() that the views keep with it.
+	const auto readProject = [&binding]
+	{
+		uint64_t handed = 0;
+		binding.send(
+			"project.get", Json::object(), [&binding, &handed](const engine::Result&) { handed = binding.handed(); });
+		updateUntil(binding, [&handed] { return handed != 0; });
+		return handed;
+	};
 
-	// A drag: the newest step replaces the waiting one, and the last is taken. The record outlives the update that
-	// handed the answers on by one, since a view showing what it handed on still asks ahead() about it.
+	// A drag: the newest step replaces the waiting one, and the last is taken. The record stays until a read after
+	// the last answer is in, so that a view showing an older read again meanwhile, e.g. the inspector after a track
+	// change, leaves the control as it is (#1305).
 	binding.sendStep(7, "volume", "Change Volume", set("volume", -1.0));
 	binding.sendStep(7, "volume", "Change Volume", set("volume", -2.0));
 	updateUntil(binding, [&binding] { return !binding.sending("volume"); });
 	CHECK(read("volume") == -2.0);
-	CHECK(binding.ahead("volume", 0)); // still ahead of an answer from before the drag
-	binding.update();                  // the next one lets the record go (#746)
+	binding.update();
+	binding.update();
+	CHECK(binding.ahead("volume", 0)); // still ahead of a read from before the drag
+	const uint64_t fresh = readProject();
+	CHECK(!binding.ahead("volume", fresh));
+	CHECK(binding.ahead("volume", 0)); // the views showing what this update handed on still ask about it
+	// Another project read out keeps it too: the view that sent it may show an older read until it is in.
+	binding.send("project.get");
+	binding.update();
+	CHECK(binding.ahead("volume", 0));
+	updateUntil(binding, [&binding] { return binding.waiting("project.get") == 0; });
+	binding.update(); // the next one lets the record go (#746)
 	CHECK(!binding.ahead("volume", 0));
 	CHECK(!binding.sending("volume"));
 
-	// Another control's record goes the same way.
+	// A read sent before the last step is answered before it: the record stays for the next one.
+	uint64_t early = 0;
+	binding.send(
+		"project.get", Json::object(), [&binding, &early](const engine::Result&) { early = binding.handed(); });
 	binding.sendStep(7, "pan", "Change Pan", set("pan", 0.5));
 	updateUntil(binding, [&binding] { return !binding.sending("pan"); });
 	CHECK(read("pan") == 0.5);
-	CHECK(binding.ahead("pan", 0));
+	CHECK(early != 0);
+	binding.update();
+	CHECK(binding.ahead("pan", early));
+	readProject();
 	binding.update();
 	CHECK(!binding.ahead("pan", 0));
 
@@ -240,10 +267,24 @@ TEST_CASE("a control's steps leave no record behind once their last answer was h
 	binding.sendStep(8, "volume", "Change Volume", set("volume", -3.0));
 	binding.sendStep(9, "volume", "Change Volume", unknown);
 	updateUntil(binding, [&binding] { return !binding.sending("volume"); });
+	binding.update();
 	CHECK(binding.ahead("volume", 0));
+	readProject();
 	binding.update();
 	CHECK(!binding.ahead("volume", 0));
 	CHECK(read("volume") == -3.0); // the refused step changed nothing
+
+	// A failed project read is none: the view that sent it shows its older read still, so the record stays (#1370).
+	binding.sendStep(11, "pan", "Change Pan", set("pan", -0.5));
+	updateUntil(binding, [&binding] { return !binding.sending("pan"); });
+	bool failed = false;
+	binding.send("project.get", {{"unknown", 1}}, [&failed](const engine::Result& result) { failed = !result.ok(); });
+	updateUntil(binding, [&failed] { return failed; });
+	binding.update();
+	CHECK(binding.ahead("pan", 0));
+	readProject();
+	binding.update();
+	CHECK(!binding.ahead("pan", 0));
 
 	// A later gesture makes the record again and works as before.
 	binding.sendStep(10, "volume", "Change Volume", set("volume", -4.0));

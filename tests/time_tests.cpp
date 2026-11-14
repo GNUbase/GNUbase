@@ -7,6 +7,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 
 using namespace gnubase::time;
@@ -66,6 +67,22 @@ TEST_CASE("a tempo ramp changes the speed linearly per beat", "[unit]")
 	CHECK(tempo.toSeconds(12 * g_quarter) == Catch::Approx(2.0 + rampSeconds).epsilon(1e-12));
 	CHECK(tempo.toSeconds(13 * g_quarter) == Catch::Approx(2.0 + rampSeconds + (60.0 / 180.0)).epsilon(1e-12));
 	CHECK(tempo.toTicks(2.0 + rampSeconds) == 12 * g_quarter);
+}
+
+TEST_CASE("ticks up to the largest Ticks value convert in the last segment", "[unit]")
+{
+	// INT64_MAX - 1 and INT64_MAX round up to 2^63 as doubles, past every Ticks value: the last segment holds them
+	// (#1391).
+	const auto largest = std::numeric_limits<Ticks>::max();
+	for (const Ticks tick : {largest - 1, largest})
+	{
+		const double quarters = static_cast<double>(tick) / static_cast<double>(g_quarter);
+		CHECK(TempoMap(120.0).toSeconds(tick) == Catch::Approx(quarters * 0.5).epsilon(1e-12));
+		// After the ramp to 180 BPM the tempo stays.
+		const TempoMap ramped = mixedTempo();
+		const double rampEnd = 2.0 + (4.0 * std::log(3.0));
+		CHECK(ramped.toSeconds(tick) == Catch::Approx(rampEnd + ((quarters - 12.0) * 60.0 / 180.0)).epsilon(1e-12));
+	}
 }
 
 TEST_CASE("sample positions survive a round trip through ticks across steps and ramps", "[unit]")

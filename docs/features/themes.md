@@ -11,8 +11,13 @@ how each state looks (CLAUDE.md, "UI conventions"). The code is in `src/ui/theme
 - **Themes.** A theme is a folder in `resources/themes` with its skins (SVG), `manifest.json`, `tokens.json` and
   `theme.rcss`. `tools/skin/generate.py` makes all of them from one table of tokens per theme (colors, radii, border
   widths, font sizes and families), so the skins and the style sheet always agree; change the generator and run it
-  again rather than editing its output (`resources/themes/README.md`). `theme.rcss` gives each widget state its colors,
-  fonts and skin, all inside `@media (theme: <name>)`.
+  again rather than editing its output (`resources/themes/README.md`); CI's format job runs it into a temporary folder
+  and fails when the output differs from `resources/themes`, naming the files that differ. `theme.rcss` gives each
+  widget state its colors, fonts and skin, all inside `@media (theme: <name>)`. The manifest's `theme` is the theme's
+  id, its folder's name, which `ui.theme` stores, and its `displayName` the name the UI shows for it, so a document
+  never names a theme: `ui::Themes` reads both and shows the id of a theme whose manifest has no name
+  (`Themes::themes`), and the preferences dialog lists the themes it gets from `gnubase.ui.themes()`
+  ([preferences.md](preferences.md)).
 - **Skins.** Widgets draw the theme's 9-slice SVGs with `decorator: svg-ninepatch(<file>, <top> <right> <bottom>
   <left>)`, a decorator in GNUbase's RmlUi fork. The skin is rasterized once per dp ratio at its own size (a 24 dp
   skin is 48 pixels at 200 %), whatever the size of the widgets that use it, and drawn as nine patches: the corners
@@ -57,7 +62,8 @@ The theme styles RmlUi's controls by their tags and states, and GNUbase's contai
   `.meter-fill`, `.meter-peak`, the color picker's `.color-field`, `.color-hue` and their thumbs, `.splitter-grip-vertical`, `.splitter-grip-horizontal`, `.dropdown-arrow`,
   `.focus-ring`.
 - **Canvas elements** ([canvas.md](canvas.md)) by their tags: `event-lanes`, `waveform`, `curve` and `ruler`, with
-  `color` and the canvas properties `stroke-color` and `stroke-width`.
+  `color` and the canvas properties `stroke-color`, `stroke-width`, `own-fill-opacity`, `own-color-tint` and
+  `event-inset`.
 - **Event display** ([event-display.md](event-display.md)): `.event-display` with `.overview`, `.overview-view`,
   `.project-cursor`, `.cross-hair-vertical` and `.cross-hair-horizontal`.
 

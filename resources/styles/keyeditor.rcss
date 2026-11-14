@@ -39,6 +39,13 @@
 	padding: 0 6dp;
 }
 
+/* The Articulations field: names, as wide as a few even while it is empty, so that it can be clicked. */
+.key-editor-info textdisplay[field=articulations]
+{
+	min-width: 80dp;
+	text-align: left;
+}
+
 .key-editor .editor-parts
 {
 	flex-shrink: 0;
@@ -116,6 +123,18 @@
 {
 	width: 60%;
 	padding-top: 0;
+}
+
+/* The keyboard's left part, where a drag zooms the pitches and scrolls the note display (reference manual p. 1261):
+   the pointer is the OS's four-point arrow over it. */
+.key-editor-keys-zoom
+{
+	position: absolute;
+	left: 0;
+	top: 0;
+	height: 100%;
+	width: 12dp;
+	cursor: move;
 }
 
 .key-editor-notes

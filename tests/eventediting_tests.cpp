@@ -4,6 +4,7 @@
 // the selection; snapping them (#87). tests/eventedit_tests.cpp checks the event.* commands themselves.
 #include "engine/engine.h"
 #include "engine/time/tempomap.h"
+#include "testutils/commandholds.h"
 #include "testutils/fakeui.h"
 #include "testutils/testutils.h"
 #include "ui/automation.h"
@@ -22,16 +23,16 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
-#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
-#include <limits>
+#include <map>
 #include <memory>
-#include <mutex>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <utility>
@@ -618,61 +619,45 @@ TEST_CASE("a drag of an event's edge shows the size the release gives it at ever
 
 namespace
 {
-	// The runs of a command that holds the engine's command thread while it waits for the test to let it go: what
-	// the test sends meanwhile queues behind it, and the engine answers it only once the hold is released, however
-	// busy the machine is (#1272). The n-th run of the command waits for the n-th release.
-	struct CommandHolds
+	// Registers test.hold, a command whose runs wait in holds.
+	void registerHold(Fixture& f, test::CommandHolds& holds)
 	{
-		CommandHolds() = default;
-		CommandHolds(const CommandHolds&) = delete;
-		CommandHolds& operator=(const CommandHolds&) = delete;
-		// Lets every run go, so that a test that fails on the way doesn't leave the engine's thread waiting.
-		~CommandHolds() { release(std::numeric_limits<size_t>::max()); }
+		f.engine.registerCommand({"test.hold", 1, "Waits for the test to release it.", engine::CommandInfo{}.parameters,
+									 Json::object(), false},
+			[&holds](engine::CommandContext&) { return holds.hold(); });
+	}
+}
 
-		// The command's handler, on the engine's command thread. It gives up after 30 s, so that an engine that is
-		// stopping can end even if the test never releases it.
-		Json hold()
+TEST_CASE("a test that fails while a command is held ends at once", "[unit]")
+{
+	// A failing REQUIRE throws, as this does, while a run of test.hold holds the engine's command thread.
+	auto failed = std::chrono::steady_clock::now();
+	CHECK_THROWS_AS(
+		[&failed]
 		{
-			std::unique_lock lock(mutex);
-			const size_t own = entered++;
-			changed.notify_all();
-			changed.wait_for(lock, std::chrono::seconds(30), [this, own] { return released > own; });
-			return Json::object();
-		}
-
-		// Whether count runs have entered hold(), waiting up to 30 s for them.
-		[[nodiscard]] bool waitEntered(size_t count)
-		{
-			std::unique_lock lock(mutex);
-			return changed.wait_for(lock, std::chrono::seconds(30), [this, count] { return entered >= count; });
-		}
-
-		// Lets the first count runs go on.
-		void release(size_t count)
-		{
-			{
-				const std::scoped_lock lock(mutex);
-				released = count;
-			}
-			changed.notify_all();
-		}
-
-		std::mutex mutex;
-		std::condition_variable changed;
-		size_t entered = 0;  // the runs that have entered hold()
-		size_t released = 0; // the runs let go: release(n) frees the n-th
-	};
+			test::CommandHolds holds;
+			Fixture f;
+			const test::ReleaseHolds releaseHolds{holds};
+			registerHold(f, holds);
+			engine::Client holder(f.engine, "holder");
+			holder.send("test.hold");
+			REQUIRE(holds.waitEntered(1));
+			failed = std::chrono::steady_clock::now();
+			throw std::runtime_error("a failing check");
+		}(),
+		std::runtime_error);
+	// Well below hold()'s 30 s, which the fixture's engine would wait if the holds went after it.
+	CHECK(std::chrono::steady_clock::now() - failed < std::chrono::seconds(10));
 }
 
 TEST_CASE("a second resize release can precede the first release's project", "[unit]")
 {
-	CommandHolds holds; // declared before the fixture: its engine's command thread waits in hold()
+	test::CommandHolds holds;
 	Fixture f;
+	const test::ReleaseHolds releaseHolds{holds};
 	// The engine answers only when the test lets it: a command that holds its command thread until it is released,
 	// so what queues behind it runs, and answers, in an order the test chooses, not one a busy machine chooses.
-	f.engine.registerCommand(
-		{"test.hold", 1, "Waits for the test to release it.", engine::CommandInfo{}.parameters, Json::object(), false},
-		[&holds](engine::CommandContext&) { return holds.hold(); });
+	registerHold(f, holds);
 	engine::Client holder(f.engine, "holder");
 	f.display.select({f.part});
 	REQUIRE(f.waitUntil([&f] { return f.lanes("selected-events")[1].events.size() == 1; }));
@@ -2123,6 +2108,9 @@ TEST_CASE("a press runs the edits still waiting for a range's zero crossings aft
 	for (int frame = 0; frame < 96000; ++frame)
 		sine.samples.push_back(static_cast<float>(0.5 * std::sin(frame * 3.14159265358979323846 / 100.0)));
 	test::writeWav(file, sine);
+	// The flag that lets the busy command below go outlives the fixture, whose engine reads it until the command
+	// returns: also when a REQUIRE fails before the press.
+	std::atomic<bool> pressed{false};
 	Fixture f;
 	const uint64_t audio = f.call("project.get").at("tracks")[0].at("id").get<uint64_t>();
 	const Json media =
@@ -2134,13 +2122,15 @@ TEST_CASE("a press runs the edits still waiting for a range's zero crossings aft
 	f.call("snap.set", {{"zeroCrossing", true}});
 	REQUIRE(f.waitUntil([&f] { return f.display.snap().zeroCrossing && f.lanes("events")[0].events.size() == 2; }));
 	f.display.setTool(ui::Tool::RangeSelection);
-	// A command that keeps the engine busy for three seconds, so that the zero crossings answer after the press gave
-	// up on them.
+	// A command that keeps the engine busy until the test lets it go after the press, so that the zero crossings
+	// answer only after the press gave up on them, however slow the machine.
 	f.engine.registerCommand(
-		{"test.busy", 1, "Takes three seconds.", engine::CommandInfo{}.parameters, Json::object(), false},
-		[](engine::CommandContext&)
+		{"test.busy", 1, "Waits for the press.", engine::CommandInfo{}.parameters, Json::object(), false},
+		[&pressed](engine::CommandContext&)
 		{
-			std::this_thread::sleep_for(std::chrono::seconds(3));
+			const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+			while (!pressed && std::chrono::steady_clock::now() < until)
+				std::this_thread::sleep_for(std::chrono::milliseconds(1));
 			return Json::object();
 		});
 	f.engine.post("test.busy");
@@ -2153,6 +2143,7 @@ TEST_CASE("a press runs the edits still waiting for a range's zero crossings aft
 	REQUIRE(f.binding.holding());
 	f.click(620, 20);
 	CHECK(!f.binding.holding());
+	pressed = true;
 	const auto cropped = [&f]
 	{
 		for (const Json& event : f.audioEvents())
@@ -2171,15 +2162,20 @@ TEST_CASE("an action that waits for zero crossings does nothing once its event d
 	// A second event display, whose action waits for an awaited query that the binding hasn't handed on yet.
 	Rml::Element* element = f.document.AppendChild(f.document.CreateElement("div"));
 	auto other = std::make_unique<ui::EventDisplay>(f.engine, f.binding, *element);
+	// Its action toggles Snap, a command that would show in the command log.
 	bool answered = false;
+	const Json snap = f.call("snap.get").at("on");
 	f.binding.sendAwaited(
 		"snap.get", Json::object(), [&answered](const engine::Result& /*result*/) { answered = true; });
-	other->actions().at("zoom.in")();
+	other->actions().at("edit.snap")();
 	REQUIRE(f.binding.holding());
 	other.reset();
 	CHECK(f.binding.settle(std::chrono::seconds(10)));
 	CHECK(answered);
 	CHECK(!f.binding.holding());
+	CHECK(f.call("snap.get").at("on") == snap);
+	const Json log = f.call("engine.commandLog").at("commands");
+	CHECK(std::none_of(log.begin(), log.end(), [](const Json& entry) { return entry.at("command") == "snap.set"; }));
 }
 
 TEST_CASE("the object selection tool with Alt draws an empty MIDI part on an empty spot", "[unit]")
@@ -2664,6 +2660,30 @@ TEST_CASE("volume curve points on a warped event go where its waveform shows the
 	CHECK(f.audioEvents()[0].at("volumeCurve").size() == 1);
 }
 
+TEST_CASE("the time warp tool's Free Warp on a warped event puts the marker at the clip frames it drags", "[unit]")
+{
+	Fixture f;
+	// At 240 BPM in musical mode the event's 24000 clip frames play from 2 to 3 seconds, at 24000 a second (#1184).
+	const Json clip = f.audioEvents()[0].at("clip");
+	f.call("clip.setWarp", {{"clip", clip}, {"musical", true}});
+	f.call("clip.setWarp", {{"clip", clip}, {"tempo", 240.0}});
+	REQUIRE(f.waitUntil([&f] { return std::abs(f.lanes("events")[0].events[0].length - 1.0) < 1e-6; }));
+	f.display.setTool(ui::Tool::TimeWarp);
+	f.display.setWarpMode(ui::WarpMode::Free);
+	const auto markers = [&f, &clip]
+	{
+		const Json project = f.call("project.get");
+		for (const Json& each : project.at("clips"))
+			if (each.at("id") == clip)
+				return each.at("warp").at("markers");
+		return Json::array();
+	};
+	// A drag from a quarter through the event to half way: clip frame 6000 plays where 12000 did.
+	f.drag(225, 30, 250, 30);
+	REQUIRE(f.waitUntil([&markers] { return markers().size() == 1; }));
+	CHECK(markers()[0] == Json{{"position", 6000}, {"target", 12000}});
+}
+
 TEST_CASE("the draw tool's click near a curve point leaves it, a drag moves it by the drag's distance", "[unit]")
 {
 	Fixture f;
@@ -2915,6 +2935,82 @@ TEST_CASE("with editing.treatMutedAudioLikeDeleted off, a muted take in front co
 	f.call("settings.set", {{"key", "editing.treatMutedAudioLikeDeleted"}, {"value", true}});
 	REQUIRE(f.waitUntil([&f] { return f.lanes("events")[0].events.size() == 1; }));
 	CHECK(f.lanes("muted-events")[0].events.empty());
+}
+
+TEST_CASE("the track's lane shows the pieces of a split in front by their ranks where these disagree with their ids",
+	"[unit]")
+{
+	Fixture f;
+	// The event from 2 to 2.5 seconds split at 2.2, then its first piece at 2.1: the newest piece, from 2.1 to 2.2, has
+	// the higher id but is behind the piece from 2.2 on (#1281). That one moved left to 2.15 covers it from there.
+	const auto later =
+		f.call("event.split", {{"events", {f.event}}, {"positions", {105600}}}).at("events").at(0).get<uint64_t>();
+	const auto newest =
+		f.call("event.split", {{"events", {f.event}}, {"positions", {100800}}}).at("events").at(0).get<uint64_t>();
+	REQUIRE(newest > later);
+	f.call("event.move", {{"events", {later}}, {"delta", -2400}});
+	REQUIRE(f.waitUntil(
+		[&f]
+		{
+			const std::vector<ui::TimeSpan>& shown = f.lanes("events")[0].events;
+			return shown.size() == 3 && std::abs(shown[2].end() - 2.45) < 1e-6;
+		}));
+	const std::vector<ui::TimeSpan>& shown = f.lanes("events")[0].events;
+	CHECK(std::abs(shown[1].start - 2.1) < 1e-6);
+	CHECK(std::abs(shown[1].end() - 2.15) < 1e-6);
+	CHECK(std::abs(shown[2].start - 2.15) < 1e-6);
+	// A click in the overlap finds the piece in front.
+	f.click(217, 20);
+	CHECK(f.display.selection() == std::vector<uint64_t>{later});
+}
+
+TEST_CASE("of two events at one place in the stack, as a file from before #1189 has them, the track's lane shows the "
+		  "one with the higher id in front",
+	"[unit]")
+{
+	const test::TempDir dir;
+	Fixture f;
+	// A second event from 2.2 to 2.7 seconds, added after the first; the file gives it the first's place, without a
+	// rank.
+	const auto audioTrack = f.call("project.get").at("tracks").at(0).at("id").get<uint64_t>();
+	const auto second =
+		f.call("audioEvent.add",
+			 {{"track", audioTrack}, {"clip", f.audioEvents()[0].at("clip")}, {"position", 105600}, {"length", 24000}})
+			.at("event")
+			.at("id")
+			.get<uint64_t>();
+	const std::string path = (dir.path() / "tie.dawproject").u8string();
+	f.call("project.save", {{"path", path}, {"embedMedia", false}});
+	std::map<std::string, std::string> entries = test::readZip(path);
+	Json extension = Json::parse(entries.at("gnubase.json"));
+	for (Json& event : extension.at("project").at("audioEvents"))
+	{
+		event.erase("rank");
+		if (event.at("id") == second)
+			event["front"] = f.event;
+	}
+	entries["gnubase.json"] = extension.dump();
+	test::writeZip(path, entries);
+	f.call("project.new");
+	f.call("project.load", {{"path", path}});
+	REQUIRE(f.waitUntil(
+		[&f, second]
+		{
+			for (const Json& event : f.display.project().at("audioEvents"))
+				if (event.at("id") == second)
+					return event.at("front") == f.event && f.lanes("events")[0].events.size() == 2;
+			return false;
+		}));
+
+	// The second event covers the first from 2.2 seconds on, and a click there finds it.
+	const std::vector<ui::TimeSpan>& shown = f.lanes("events")[0].events;
+	CHECK(std::abs(shown[0].end() - 2.2) < 1e-6);
+	CHECK(std::abs(shown[1].start - 2.2) < 1e-6);
+	CHECK(std::abs(shown[1].end() - 2.7) < 1e-6);
+	f.click(230, 20);
+	CHECK(f.display.selection() == std::vector<uint64_t>{second});
+	f.click(210, 20);
+	CHECK(f.display.selection() == std::vector<uint64_t>{f.event});
 }
 
 TEST_CASE("the draw tool draws parts on the lane it draws on", "[unit]")

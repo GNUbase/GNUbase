@@ -17,6 +17,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <limits>
 #include <set>
 #include <string>
 #include <utility>
@@ -58,6 +59,8 @@ namespace gnubase::ui
 			R"(<select control="input" title="Input Routing"/></div>)"
 			R"(<div class="inspector-row" row="output"><span class="inspector-label">Output</span>)"
 			R"(<select control="output" title="Output Routing"/></div>)"
+			R"(<div class="inspector-row" row="midiChannel"><span class="inspector-label">Channel</span>)"
+			R"(<select control="midiChannel" title="MIDI Channel"/></div>)"
 			R"(<div class="inspector-row" row="device"><span class="inspector-label">Device</span>)"
 			R"(<select control="device" title="MIDI Device"/></div>)"
 			R"(<div class="inspector-row" row="bank"><span class="inspector-label">Bank</span>)"
@@ -124,6 +127,22 @@ namespace gnubase::ui
 			R"(<select control="articulationMap" title="Active Articulation Map"/></div>)"
 			R"(<div class="inspector-buttons"><button class="inspector-articulation-setup")"
 			R"( title="Articulation Map Setup">Setup...</button></div>)"
+			R"(</div></div>)"
+			// The track's versions (reference manual pp. 231-232, docs/features/track-versions.md), which the commands
+			// change on every selected track.
+			R"(<div class="inspector-section" section="trackVersions" label="Track Versions">)"
+			R"(<button class="section-header">Track Versions</button><div class="section-body">)"
+			R"(<div class="inspector-row" row="versionName"><span class="inspector-label">Name</span>)"
+			R"(<textdisplay class="display" control="versionName" title="Track Version Name"/></div>)"
+			R"(<div class="inspector-row" row="versionId"><span class="inspector-label">ID</span>)"
+			R"(<span class="inspector-version-id"/><span class="inspector-version-indicator")"
+			R"( title="More Than One Track Version">+</span></div>)"
+			R"(<div class="inspector-versions"/>)"
+			R"(<div class="inspector-buttons">)"
+			R"(<button class="inspector-version-add" title="Add new Track Version">New</button>)"
+			R"(<button class="inspector-version-duplicate" title="Duplicate active Track Version">Duplicate</button>)"
+			R"(<button class="inspector-version-remove" title="Delete active Track Version">Delete</button>)"
+			R"(</div>)"
 			R"(</div></div>)"
 			R"(<div class="inspector-section" section="inserts" label="Inserts">)"
 			R"(<button class="section-header">Inserts</button><div class="section-body inserts"/></div>)"
@@ -203,7 +222,8 @@ namespace gnubase::ui
 		// midiInserts and midiSends in channel.set, the section, then the slot's index and its field or "parameter-"
 		// and a parameter's key ("midiInserts-0-effect", "midiSends-1-parameter-rate"), or the section's own field
 		// ("midiInserts-bypass", "midiInserts-divider", "midiSends-pre"). Each slot has the control panel of its effect
-		// below it, which its edit button opens and closes.
+		// below it, which its edit button opens and closes. The inserts have the divider between their slots too, a
+		// line in a grip at each of its five places, shown at the one it is at, which is dragged to another (p. 1105).
 		std::string midiEffectsRml(bool sends)
 		{
 			const std::string section = sends ? "midiSends" : "midiInserts";
@@ -218,9 +238,16 @@ namespace gnubase::ui
 			if (!sends)
 				rml += row("divider", "Divider",
 					R"(<select control="midiInserts-divider" title="Divider: the inserts above it are recorded"/>)");
+			const auto divider = [](size_t gap)
+			{
+				return R"(<div class="midi-divider" gap=")" + std::to_string(gap) +
+					R"(" title="Divider: drag it to record the inserts above it"><div class="midi-divider-line"/></div>)";
+			};
 			for (size_t slot = 0; slot < 4; ++slot)
 			{
 				const std::string name = section + "-" + std::to_string(slot);
+				if (!sends)
+					rml += divider(slot);
 				rml += R"(<div class="midi-effect-slot" slot=")";
 				rml += std::to_string(slot);
 				rml += R"("><div class="inspector-row"><button type="toggle" class="toggle" control=")";
@@ -236,6 +263,8 @@ namespace gnubase::ui
 					rml += row("output", "Output", R"(<select control=")" + name + R"(-output" title="Send Output"/>)");
 				rml += R"(<div class="midi-effect-panel"/></div>)";
 			}
+			if (!sends)
+				rml += divider(4);
 			return rml + "</div>";
 		}
 
@@ -349,6 +378,12 @@ namespace gnubase::ui
 				if (object.at("id") == id)
 					return &object;
 			return nullptr;
+		}
+
+		// Whether tracks of a type have versions (docs/features/track-versions.md).
+		bool hasVersions(const std::string& type)
+		{
+			return type == "audio" || type == "instrument" || type == "midi";
 		}
 
 		// Where the channel of a track of the type can play: output busses, group and effect channels, or for MIDI
@@ -500,6 +535,8 @@ namespace gnubase::ui
 		root.AddEventListener(Rml::EventId::Change, this);
 		root.AddEventListener(Rml::EventId::Blur, this, true);    // blur doesn't bubble
 		root.AddEventListener(Rml::EventId::Keydown, this, true); // Escape leaves the notepad
+		for (const Rml::EventId id : {Rml::EventId::Dragstart, Rml::EventId::Drag, Rml::EventId::Dragend})
+			root.AddEventListener(id, this); // the MIDI inserts' divider
 
 		readInPlace(); // the in-place editors open already (reference manual p. 1259)
 		// The MIDI devices are a user setting (reference manual p. 1109); the next update shows them.
@@ -531,21 +568,25 @@ namespace gnubase::ui
 		m_root->RemoveEventListener(Rml::EventId::Change, this);
 		m_root->RemoveEventListener(Rml::EventId::Blur, this, true);
 		m_root->RemoveEventListener(Rml::EventId::Keydown, this, true);
+		for (const Rml::EventId id : {Rml::EventId::Dragstart, Rml::EventId::Drag, Rml::EventId::Dragend})
+			m_root->RemoveEventListener(id, this);
 	}
 
-	void Inspector::update(uint64_t track, const Json& project, uint64_t loads, uint64_t read)
+	void Inspector::update(const std::vector<uint64_t>& tracks, const Json& project, uint64_t loads, uint64_t read)
 	{
 		m_project = &project;
 		m_read = read;
-		if (track == m_track && loads == m_loads && !m_stale)
+		if (tracks == m_selected && loads == m_loads && !m_stale)
 			return;
 		m_stale = false;
+		const uint64_t track = tracks.empty() ? 0 : tracks.front();
 		// An edit belongs to the track it started on: leaving the field takes it there before another track shows.
 		Rml::Context* context = m_root ? m_root->GetContext() : nullptr;
 		if (Rml::Element* focus = context != nullptr ? context->GetFocusElement() : nullptr;
 			track != m_track && focus != nullptr && focus != m_root.get() && m_root->Contains(focus))
 			focus->Blur();
 		m_track = track;
+		m_selected = tracks;
 		m_loads = loads;
 		show();
 	}
@@ -590,6 +631,9 @@ namespace gnubase::ui
 		setClass(root, "empty", track == nullptr);
 		const Json* channel = track == nullptr ? nullptr : findIn(m_project, "channels", track->at("channel"));
 		m_channel = channel != nullptr ? *channel : Json();
+		// A divider drag ends without moving it when the inspector shows another channel.
+		if (m_dividerTo >= 0 && (channel == nullptr || channel->at("id") != m_dividerChannel))
+			m_dividerTo = -1;
 		if (track == nullptr)
 			return;
 		m_showing = true;
@@ -729,16 +773,22 @@ namespace gnubase::ui
 		}
 		available("[row=volume]", audio || vca);
 		available("[row=pan]", audio);
-		available("[row=input]", type == "audio");
+		available("[row=input]", type == "audio" || noteTrack);
 		// A MIDI track's patch (pp. 1108, 1113): by its device's patches, or by bank and program without one.
 		const Json* device = nullptr;
 		if (channel != nullptr && type == "midi")
 			if (const auto found = m_devices.find(channel->value("device", std::string())); found != m_devices.end())
 				device = &*found;
+		available("[row=midiChannel]", type == "midi");
 		available("[row=device]", type == "midi");
 		available("[row=bank]", type == "midi" && device == nullptr);
 		available("[row=program]", type == "midi");
 		available("[row=inputTransformer]", noteTrack);
+		// The track's versions (reference manual pp. 231-232, docs/features/track-versions.md).
+		const bool versioned = type == "audio" || type == "instrument" || type == "midi";
+		available("[section=trackVersions]", versioned);
+		if (versioned)
+			showVersions(*track);
 		if (channel != nullptr)
 		{
 			for (const auto& [control, key] : {std::pair{"mute", "mute"}, std::pair{"solo", "solo"},
@@ -750,25 +800,40 @@ namespace gnubase::ui
 					else
 						button->RemoveAttribute("checked");
 				}
-			// Not while the project is older than the fields' own steps (#716).
-			const auto sending = [this, channel](const char* name)
-			{ return m_binding.ahead(stepKey(m_stepOwner, channel->at("id"), name), m_read); };
+			const auto key = [this, channel](const char* name)
+			{ return stepKey(m_stepOwner, channel->at("id"), name); };
 			if (Rml::Element* volume = element("valuefield[control=volume]"); volume != nullptr && (audio || vca))
 			{
 				volume->SetAttribute("max", widgets::format(m_project->value("maxVolume", 6.0F)));
-				if (!sending("volume"))
-					volume->SetAttribute("value", widgets::format(channel->at("volume").get<float>()));
+				setAttribute(
+					*volume, "value", fieldValue(key("volume"), widgets::format(channel->at("volume").get<float>())));
 			}
-			if (Rml::Element* pan = element("valuefield[control=pan]"); pan != nullptr && audio && !sending("pan"))
-				pan->SetAttribute("value", widgets::format(channel->at("pan").get<float>() * 100.0F));
+			if (Rml::Element* pan = element("valuefield[control=pan]"); pan != nullptr && audio)
+				setAttribute(
+					*pan, "value", fieldValue(key("pan"), widgets::format(channel->at("pan").get<float>() * 100.0F)));
 			const auto id = channel->at("id").get<uint64_t>();
 			if (Rml::Element* output = element("select[control=output]"))
 				widgets::fill(
 					*output, outputs(*m_project, type, id), std::to_string(channel->at("output").get<uint64_t>()));
 			if (Rml::Element* input = element("select[control=input]"); input != nullptr && type == "audio")
 				widgets::fill(*input, inputs(*m_project), std::to_string(channel->at("input").get<uint64_t>()));
+			// A MIDI or instrument track's MIDI input: all MIDI inputs, the chord pads (reference manual p. 1367) or
+			// none.
+			if (Rml::Element* input = element("select[control=input]");
+				input != nullptr && (type == "midi" || type == "instrument"))
+				widgets::fill(*input,
+					{{"all", "All MIDI Inputs"}, {"chordPads", "Chord Pads"}, {"none", "Not Connected"}},
+					channel->value("midiInput", std::string("all")));
 			if (type == "midi")
 			{
+				// The MIDI channel its patch, MIDI volume and pan go out on (reference manual p. 349): Any or 1-16.
+				Options midiChannels{{"any", "Any"}};
+				for (int number = 0; number < 16; ++number)
+					midiChannels.emplace_back(std::to_string(number), std::to_string(number + 1));
+				const Json midiChannel = channel->value("midiChannel", Json());
+				if (Rml::Element* select = element("select[control=midiChannel]"))
+					widgets::fill(*select, midiChannels,
+						midiChannel.is_number_integer() ? std::to_string(midiChannel.get<int>()) : "any");
 				const std::string named = channel->value("device", std::string());
 				Options devices{{"", "No Device"}};
 				for (const auto& [name, value] : m_devices.items())
@@ -819,6 +884,58 @@ namespace gnubase::ui
 		m_showing = false;
 	}
 
+	void Inspector::showVersions(const Json& track)
+	{
+		Rml::Element& root = *m_root.get();
+		const auto element = [&root](const std::string& selector) { return root.QuerySelector(selector); };
+		const Json& versions = track.at("versions");
+		const Json& active = track.at("activeVersion");
+		// A track that has versions always has at least the one it doesn't store (versionsOf).
+		const Json* shown = &versions.front();
+		for (const Json& version : versions)
+			if (version.at("id") == active)
+				shown = &version;
+		// The name, unless the user is typing a new one.
+		Rml::Element* field = element("textdisplay[control=versionName]");
+		Rml::Context* context = root.GetContext();
+		if (field != nullptr && (context == nullptr || context->GetFocusElement() != field))
+			field->SetAttribute("value", shown->at("name").get<std::string>());
+		if (Rml::Element* id = element(".inspector-version-id"))
+			id->SetInnerRML(std::to_string(shown->at("id").get<int>()));
+		// The indicator shows that there is more than one version.
+		if (Rml::Element* section = element("[section=trackVersions]"))
+			setClass(*section, "multiple", versions.size() > 1);
+		// The list, in which a click activates a version on every selected track; the active one is selected.
+		std::string rml;
+		for (const Json& version : versions)
+			rml += std::string(R"(<div class="list-item inspector-version)") +
+				(version.at("id") == active ? " selected" : "") + R"(" version=")" +
+				std::to_string(version.at("id").get<int>()) + R"("><span class="name">)" +
+				Rml::StringUtilities::EncodeRml(version.at("name").get<std::string>()) + R"(</span><span class="id">)" +
+				std::to_string(version.at("id").get<int>()) + "</span></div>";
+		if (Rml::Element* list = element(".inspector-versions"); list != nullptr && list->GetInnerRML() != rml)
+			list->SetInnerRML(rml);
+		// Delete needs a version to delete.
+		if (Rml::Element* button = element(".inspector-version-remove"))
+			setClass(*button, "unavailable", versions.size() < 2);
+	}
+
+	std::vector<uint64_t> Inspector::versioned() const
+	{
+		std::vector<uint64_t> tracks;
+		for (const uint64_t id : m_selected)
+			if (const Json* track = findIn(m_project, "tracks", id);
+				track != nullptr && hasVersions(track->at("type").get<std::string>()))
+				tracks.push_back(id);
+		return tracks;
+	}
+
+	void Inspector::versionCommand(const char* command)
+	{
+		if (const std::vector<uint64_t> tracks = versioned(); !tracks.empty())
+			m_binding.send(command, {{"tracks", tracks}}, whenRefused());
+	}
+
 	void Inspector::showModifiers(const Json& modifiers)
 	{
 		Rml::ElementList controls;
@@ -867,9 +984,9 @@ namespace gnubase::ui
 						shown /= static_cast<double>(g_ticksPerShownTick);
 				}
 			}
-			// Not while the project is older than the field's own steps (#716).
-			if (!m_binding.ahead(stepKey(m_stepOwner, m_channel.at("id"), name), m_read))
-				setAttribute(*control, "value", widgets::format(static_cast<float>(std::round(shown) + 0.0))); // not -0
+			setAttribute(*control, "value",
+				fieldValue(stepKey(m_stepOwner, m_channel.at("id"), name),
+					widgets::format(static_cast<float>(std::round(shown) + 0.0)))); // not -0
 		}
 	}
 
@@ -890,6 +1007,8 @@ namespace gnubase::ui
 				{{"0", "Above Slot 1"}, {"1", "Below Slot 1"}, {"2", "Below Slot 2"}, {"3", "Below Slot 3"},
 					{"4", "Below Slot 4"}},
 				std::to_string(divider));
+		if (!sends && m_dividerTo < 0)
+			showDivider(divider);
 		Options effects = {{"", "No Effect"}};
 		for (const Json& effect : m_midiEffects)
 			effects.emplace_back(effect.at("id").get<std::string>(), effect.at("name").get<std::string>());
@@ -951,10 +1070,11 @@ namespace gnubase::ui
 						options.emplace_back(std::to_string(option), names[option].get<std::string>());
 					widgets::fill(*select, options, std::to_string(std::lround(value.get<double>())));
 				}
-				else if (Rml::Element* field = panel->QuerySelector("valuefield[control=" + control + "]");
-					field != nullptr && !m_binding.ahead(stepKey(m_stepOwner, m_channel.at("id"), control), m_read))
+				else if (Rml::Element* field = panel->QuerySelector("valuefield[control=" + control + "]"))
 				{
-					setAttribute(*field, "value", widgets::format(value.get<float>()));
+					setAttribute(*field, "value",
+						fieldValue(
+							stepKey(m_stepOwner, m_channel.at("id"), control), widgets::format(value.get<float>())));
 				}
 			}
 		}
@@ -1037,8 +1157,8 @@ namespace gnubase::ui
 				const Json channel = m_channel.at("id");
 				const Json step = {{"command", "channel.set"},
 					{"parameters", {{"channel", channel}, {section, {{"slots", std::move(slots)}}}}}};
-				m_binding.sendStep(gesture, stepKey(m_stepOwner, channel, control), "Change MIDI Effect",
-					Json::array({step}), whenRefused());
+				sendFieldStep(gesture, stepKey(m_stepOwner, channel, control), static_cast<float>(value),
+					"Change MIDI Effect", Json::array({step}));
 				return;
 			}
 			else
@@ -1070,6 +1190,21 @@ namespace gnubase::ui
 				m_editChannel(m_track); // Edit Channel Settings (reference manual p. 500)
 			if (target->IsClassSet("inspector-articulation-setup") && m_setupArticulations && m_track != 0)
 				m_setupArticulations(m_track);
+			// The Track Versions section's buttons, and the version list, in which a click activates a version.
+			if (target->IsClassSet("inspector-version-add"))
+				versionCommand("trackVersion.add");
+			if (target->IsClassSet("inspector-version-duplicate"))
+				versionCommand("trackVersion.duplicate");
+			if (target->IsClassSet("inspector-version-remove") && !target->IsClassSet("unavailable"))
+				versionCommand("trackVersion.remove");
+			for (const Rml::Element* up = target; up != nullptr && up != m_root.get(); up = up->GetParentNode())
+				if (up->IsClassSet("inspector-version") && up->HasAttribute("version"))
+				{
+					if (const std::vector<uint64_t> tracks = versioned(); !tracks.empty())
+						m_binding.send("trackVersion.activate",
+							{{"tracks", tracks}, {"version", up->GetAttribute<int>("version", 1)}}, whenRefused());
+					break;
+				}
 			// A MIDI effect's edit button opens and closes its control panel.
 			if (target->IsClassSet("midi-effect-edit") && target->GetParentNode() != nullptr &&
 				target->GetParentNode()->GetParentNode() != nullptr)
@@ -1094,6 +1229,11 @@ namespace gnubase::ui
 			if (target->IsClassSet("notepad") && !m_dropping)
 				saveNotes();
 			break;
+		case Rml::EventId::Dragstart:
+		case Rml::EventId::Drag:
+		case Rml::EventId::Dragend:
+			dragDivider(*target, event);
+			break;
 		case Rml::EventId::Keydown:
 			if (target->IsClassSet("notepad") &&
 				event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN) == Rml::Input::KI_ESCAPE)
@@ -1107,12 +1247,67 @@ namespace gnubase::ui
 		}
 	}
 
+	void Inspector::showDivider(int gap)
+	{
+		Rml::ElementList gaps;
+		m_root->QuerySelectorAll(gaps, ".midi-divider");
+		for (Rml::Element* each : gaps)
+			setClass(*each, "at", each->GetAttribute<int>("gap", -1) == gap);
+	}
+
+	void Inspector::dragDivider(Rml::Element& target, const Rml::Event& event)
+	{
+		if (event == Rml::EventId::Dragstart)
+		{
+			const Rml::Element* grip = target.IsClassSet("midi-divider") ? &target : target.GetParentNode();
+			if (grip == nullptr || !grip->IsClassSet("midi-divider") || !m_channel.contains("midiInserts"))
+				return;
+			m_dividerTo = m_channel.at("midiInserts").at("divider").get<int>();
+			m_dividerChannel = m_channel.at("id");
+			return;
+		}
+		if (m_dividerTo < 0)
+			return;
+		// The divider goes to the place nearest to the mouse; the drag's end moves it there (p. 1105).
+		const float mouse = event.GetParameter("mouse_y", 0.0F);
+		Rml::ElementList gaps;
+		m_root->QuerySelectorAll(gaps, ".midi-divider");
+		float nearest = std::numeric_limits<float>::max();
+		for (Rml::Element* each : gaps)
+		{
+			const float middle = each->GetAbsoluteOffset(Rml::BoxArea::Border).y +
+				(each->GetBox().GetSize(Rml::BoxArea::Border).y / 2.0F);
+			if (std::abs(middle - mouse) < nearest)
+			{
+				nearest = std::abs(middle - mouse);
+				m_dividerTo = each->GetAttribute<int>("gap", m_dividerTo);
+			}
+		}
+		showDivider(m_dividerTo);
+		if (!(event == Rml::EventId::Dragend))
+			return;
+		const int to = m_dividerTo;
+		m_dividerTo = -1;
+		if (m_channel.at("midiInserts").at("divider") != to)
+			sendChannel({{"midiInserts", {{"divider", to}}}});
+	}
+
 	void Inspector::change(Rml::Element& control, const Rml::Event& event)
 	{
 		const auto name = control.GetAttribute<Rml::String>("control", "");
 		if (name == "name")
 		{
 			m_binding.send("track.set", {{"track", m_track}, {"name", event.GetParameter<Rml::String>("value", "")}});
+			return;
+		}
+		if (name == "versionName")
+		{
+			// Renaming the active version renames it on every selected track (reference manual p. 236).
+			const auto value = event.GetParameter<Rml::String>("value", "");
+			if (value.empty())
+				m_stale = true; // the engine refuses an empty name: show the version's own again
+			else if (const std::vector<uint64_t> tracks = versioned(); !tracks.empty())
+				m_binding.send("trackVersion.set", {{"tracks", tracks}, {"name", value}}, whenRefused());
 			return;
 		}
 		if (name == "editInPlace")
@@ -1229,8 +1424,8 @@ namespace gnubase::ui
 			const Json channel = m_channel.at("id");
 			const Json step = {{"command", "channel.set"},
 				{"parameters", {{"channel", channel}, {name, name == "volume" ? number : number / 100.0}}}};
-			m_binding.sendStep(event.GetParameter<int>("gesture", 0), stepKey(m_stepOwner, channel, name),
-				name == "volume" ? "Change Volume" : "Change Pan", Json::array({step}), whenRefused());
+			sendFieldStep(event.GetParameter<int>("gesture", 0), stepKey(m_stepOwner, channel, name),
+				static_cast<float>(number), name == "volume" ? "Change Volume" : "Change Pan", Json::array({step}));
 			return;
 		}
 		std::string key = name;
@@ -1240,6 +1435,12 @@ namespace gnubase::ui
 			key = name == "record" ? "recordEnable" : name;
 			value = event.GetParameter<bool>("value", false);
 		}
+		else if (const auto picked = event.GetParameter<Rml::String>("value", "");
+			name == "input" && (picked == "all" || picked == "chordPads" || picked == "none"))
+		{
+			key = "midiInput"; // a MIDI or instrument track's
+			value = picked;
+		}
 		else if (name == "input" || name == "output")
 		{
 			value = std::strtoull(event.GetParameter<Rml::String>("value", "0").c_str(), nullptr, 10);
@@ -1247,6 +1448,14 @@ namespace gnubase::ui
 		else if (name == "device")
 		{
 			value = event.GetParameter<Rml::String>("value", "");
+		}
+		else if (name == "midiChannel")
+		{
+			const auto chosen = event.GetParameter<Rml::String>("value", "any");
+			const Json midiChannel = chosen == "any" ? Json(nullptr) : Json(std::stoi(chosen));
+			if (m_channel.value("midiChannel", Json()) != midiChannel)
+				sendChannel({{"midiChannel", midiChannel}});
+			return;
 		}
 		else if (name == "bank")
 		{
@@ -1345,8 +1554,22 @@ namespace gnubase::ui
 		const Json channel = m_channel.at("id");
 		const Json step = {
 			{"command", "channel.set"}, {"parameters", {{"channel", channel}, {"modifiers", std::move(modifiers)}}}};
-		m_binding.sendStep(gesture, stepKey(m_stepOwner, channel, control), "Change MIDI Modifiers",
-			Json::array({step}), whenRefused());
+		sendFieldStep(gesture, stepKey(m_stepOwner, channel, control), event.GetParameter<float>("value", 0.0F),
+			"Change MIDI Modifiers", Json::array({step}));
+	}
+
+	void Inspector::sendFieldStep(
+		int gesture, const std::string& key, float shown, std::string description, Json commands)
+	{
+		m_sent[key] = widgets::format(shown);
+		m_binding.sendStep(gesture, key, std::move(description), std::move(commands), whenRefused());
+	}
+
+	std::string Inspector::fieldValue(const std::string& key, std::string value) const
+	{
+		if (const auto sent = m_sent.find(key); sent != m_sent.end() && m_binding.ahead(key, m_read))
+			return sent->second;
+		return value;
 	}
 
 	void Inspector::sendChannel(Json parameters)

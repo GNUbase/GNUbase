@@ -3,14 +3,20 @@
 
 #include "engine/engine.h"
 #include "ui/enginebinding.h"
+#include "ui/widgetutils.h"
 
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/ObserverPtr.h>
 
+#include <array>
+#include <cstdint>
+#include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace Rml
@@ -38,7 +44,16 @@ namespace gnubase::ui
 	class ChordPadsPanel final : private Rml::EventListener
 	{
 	public:
-		ChordPadsPanel(EngineBinding& binding, Rml::Element& element);
+		// dropOn, if given, finds the track and the position (ticks) at a point of the window (pixels) where a pad
+		// dragged out of the zone was released, such as on the event display's lanes.
+		using DropTarget = std::function<std::optional<std::pair<uint64_t, int64_t>>(float x, float y)>;
+		// selectedEvents, if given, gives the event display's selected events and parts, of which the first MIDI part
+		// becomes the pattern with From Selected Part.
+		using Selection = std::function<std::vector<uint64_t>()>;
+		// importLoop, if given, asks for a MIDI loop to import as the pattern (Import from MIDI Loop, reference
+		// manual p. 1379), such as with a file dialog, and imports it with chordPads.setPattern file.
+		ChordPadsPanel(EngineBinding& binding, Rml::Element& element, DropTarget dropOn = {},
+			Selection selectedEvents = {}, std::function<void()> importLoop = {});
 		~ChordPadsPanel() override;
 		ChordPadsPanel(const ChordPadsPanel&) = delete;
 		ChordPadsPanel& operator=(const ChordPadsPanel&) = delete;
@@ -63,21 +78,55 @@ namespace gnubase::ui
 		void openField(int pad);
 		void assignTyped();
 		void assignFirstFree(const std::string& chord);
+		void keyCommand(Rml::Event& event, const Rml::Element* target);
+		void showDisplay();
+		void showKeyboard();
+		void showListColors();
+		void requestPresets();
+		void requestPorts();
+		void requestTracks();
+		void showPlayerTrack();
+		void showEditor();
+		void showRecent();
+		void showKeys();
+		void showDropTarget();
+		void dragKeyboard(const Rml::Event& event);
+		void pressEditor(const Rml::Element& button);
+		void modifyPressed(const std::string& name);
+		static bool modifies(const std::string& name);
 		std::vector<int> selected() const;
 		void send(const std::string& command, engine::Json parameters);
 		Rml::Element* find(const std::string& id) const;
 
 		EngineBinding& m_binding;
+		DropTarget m_dropOn;
+		Selection m_selectedEvents;
+		std::function<void()> m_importLoop;
 		Rml::ObserverPtr<Rml::Element> m_root;
 		Rml::ObserverPtr<Rml::Element> m_document; // for the mouse button going up outside the panel
 		engine::Json m_pads = engine::Json::object();
 		std::set<int> m_selection;
-		int m_pressed = -1;               // the pad the mouse button went down on, until it goes up
-		std::string m_auditioned;         // the assistant's chord that plays while pressed
-		int m_editing = -1;               // the pad whose chord the field types
-		std::string m_page = "list";      // the assistant's page: list or circle
-		std::optional<int> m_rootKeySent; // the root key the wheel sent last, until the pads show it
-		int m_rootKeysSending = 0;        // the wheel's root keys that the engine hasn't answered yet
+		int m_pressed = -1;          // the pad the mouse button went down on, until it goes up
+		std::string m_auditioned;    // the assistant's chord that plays while pressed
+		int m_editing = -1;          // the pad whose chord the field types
+		std::string m_page = "list"; // the assistant's page: list or circle
+		int m_asked = 0; // counts what the assistant drew or asked for: only the latest question's answer is drawn
+		std::optional<int> m_rootKeySent;                // the root key the wheel sent last, until the pads show it
+		int m_rootKeysSending = 0;                       // the wheel's root keys that the engine hasn't answered yet
+		engine::Json m_display = engine::Json::object(); // the user setting ui.chordPads
+		engine::Json m_presets = engine::Json::array();  // chordPads.presets
+		widgets::Options m_tracks;                       // the MIDI and instrument tracks, for a player's track
+		std::vector<std::string> m_recent;               // the last three chords auditioned in the assistant
+		// The zone's keyboard (p. 1355): its lowest key and how many it shows, which a drag scrolls and zooms, and the
+		// drag's start: where, and the lowest key and count then.
+		int m_keyLow = 24;
+		int m_keyCount = 73;
+		std::optional<std::array<float, 4>> m_keyDrag;
+		engine::Json m_listening;                   // what chordPads.listen listens for, or null
+		std::map<int, std::vector<int>> m_sounding; // the pitches each pad plays (-1: an audition)
+		int m_hovered = -1;                         // the pad under the mouse
+		int m_auditionPad = -1;         // the pad that a pad modifier button's press plays until the button goes up
+		bool m_pressedModifier = false; // a pad modifier button acted on its press, so its click does nothing
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it went
 		std::vector<Subscription> m_subscriptions;
 	};

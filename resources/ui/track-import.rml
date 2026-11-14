@@ -4,9 +4,9 @@
      Its Lua lists the file's tracks with track.importSources, each with whether it is imported and where to (New
      Track or a track of the project of the same type), and on OK sends track.import with the options, then for Copy
      to Active Project Folder media.conform for the imported media files at another sample rate (Convert Sample Rate,
-     available when the file has media files at another rate than the project's) and media.prepareArchive for the
-     others. Tracks that can't be imported yet show, disabled. The engine's message shows when it refuses, and the
-     dialog stays open. -->
+     available when what the import brings plays media files at another rate than the project's, which
+     track.importSources lists for the range) and media.prepareArchive for the others. Tracks that can't be imported
+     yet show, disabled. The engine's message shows when it refuses, and the dialog stays open. -->
 <rml>
 <head>
 	<title>Import Options</title>
@@ -198,6 +198,51 @@
 			return false
 		end
 
+		-- The tracks whose source is checked.
+		local function chosen()
+			local result = {}
+			for _, track in ipairs(dialog.sources) do
+				if track.importable and checked("import-source-" .. track.id) then
+					result[#result + 1] = track
+				end
+			end
+			return result
+		end
+
+		-- A range field, a timecode of the file at the project's frame rate, as Use Locators fills it, as samples at
+		-- the project's sample rate from the file's start (track.import's range), or nil. The locators' timecodes in
+		-- the project are where Absolute Position puts what has that timecode in the file.
+		local function rangeValue(id)
+			local seconds = gnubase.ui.parseTimecode{text = value(id), frameRate = dialog.project.frameRate}.seconds
+			return seconds and math.floor((seconds - dialog.file.startTime) * dialog.project.sampleRate + 0.5)
+		end
+
+		-- The sample rates of the media files each track of the file plays, by its id: with Range, only of what the
+		-- range brings, as track.importSources lists them for it (once for each range), else of everything; also while
+		-- the range isn't two timecodes yet, or one the engine refuses.
+		local function sampleRates()
+			local range
+			if checked("import-range") then
+				local start, finish = rangeValue("import-range-start"), rangeValue("import-range-end")
+				if start ~= nil and finish ~= nil then
+					range = {start = start, ["end"] = finish}
+				end
+			end
+			local key = range and (range.start .. ":" .. range["end"]) or ""
+			if dialog.ratesKey ~= key then
+				local tracks = dialog.sources
+				if range then
+					local ok, listed = pcall(gnubase.track.importSources, {path = dialog.path, range = range})
+					tracks = ok and listed.tracks or tracks
+				end
+				dialog.rates, dialog.ratesKey = {}, key
+				for _, track in ipairs(tracks) do
+					dialog.rates[track.id] = track.mediaSampleRates
+				end
+			end
+			return dialog.rates
+		end
+
 		-- Tracks inside an imported folder go along with it, so their own choices are disabled.
 		function dialog.update()
 			if dialog.file == nil then
@@ -213,9 +258,19 @@
 			setDisabled(element("import-range-start"), not checked("import-range"))
 			setDisabled(element("import-range-end"), not checked("import-range"))
 			setDisabled(element("import-locators"), not checked("import-range"))
-			-- Convert Sample Rate only with Copy, for a file with media files at another sample rate than the project's
-			-- (reference manual p. 205), whatever the file's own rate.
-			setDisabled(element("import-convert"), not checked("import-copy") or not dialog.convertible)
+			-- Convert Sample Rate only with Copy, and only while one of the tracks imported, the chosen ones and those
+			-- that go along with a folder, has a media file at another sample rate than the project's in what the
+			-- import brings (reference manual p. 205), whatever the file's own rate.
+			local convertible = false
+			local rates = sampleRates()
+			for _, track in ipairs(dialog.sources) do
+				if track.importable and (checked("import-source-" .. track.id) or insideImported(track)) then
+					for _, rate in ipairs(rates[track.id] or {}) do
+						convertible = convertible or rate ~= dialog.project.sampleRate
+					end
+				end
+			end
+			setDisabled(element("import-convert"), not checked("import-copy") or not convertible)
 		end
 
 		local function row(track)
@@ -269,7 +324,7 @@
 
 		function dialog.load(document)
 			dialog.document = document
-			dialog.file = nil
+			dialog.file, dialog.ratesKey = nil, nil
 			dialog.path = document:GetAttribute("path") or ""
 			dialog.below = math.tointeger(tonumber(document:GetAttribute("below") or ""))
 			dialog.project = gnubase.project.get()
@@ -298,23 +353,8 @@
 				element("import-new-position"):SetAttribute("value", "bottom")
 				setDisabled(element("import-new-position"), true)
 			end
-			dialog.convertible = false
-			for _, rate in ipairs(listed.mediaSampleRates) do
-				dialog.convertible = dialog.convertible or rate ~= dialog.project.sampleRate
-			end
 			dialog.file = listed.project -- once its rows are there, for update
 			dialog.update()
-		end
-
-		-- The tracks whose source is checked.
-		local function chosen()
-			local result = {}
-			for _, track in ipairs(dialog.sources) do
-				if track.importable and checked("import-source-" .. track.id) then
-					result[#result + 1] = track
-				end
-			end
-			return result
 		end
 
 		function dialog.selectAll(on)
@@ -413,14 +453,7 @@
 				timecode(dialog.project.startTime + dialog.locators[1] / rate, dialog.project.frameRate))
 			element("import-range-end"):SetAttribute("value",
 				timecode(dialog.project.startTime + dialog.locators[2] / rate, dialog.project.frameRate))
-		end
-
-		-- A range field, a timecode of the file at the project's frame rate, as Use Locators fills it, as samples at
-		-- the project's sample rate from the file's start (track.import's range), or nil. The locators' timecodes in
-		-- the project are where Absolute Position puts what has that timecode in the file.
-		local function rangeValue(id)
-			local seconds = gnubase.ui.parseTimecode{text = value(id), frameRate = dialog.project.frameRate}.seconds
-			return seconds and math.floor((seconds - dialog.file.startTime) * dialog.project.sampleRate + 0.5)
+			dialog.update()
 		end
 
 		function dialog.confirm()
@@ -520,8 +553,8 @@
 				<div class="field">
 					<label class="label" for="import-range">Range</label>
 					<input type="checkbox" id="import-range" onchange="TrackImport.update()"/>
-					<input type="text" class="text" id="import-range-start"/>
-					<input type="text" class="text" id="import-range-end"/>
+					<input type="text" class="text" id="import-range-start" onchange="TrackImport.update()"/>
+					<input type="text" class="text" id="import-range-end" onchange="TrackImport.update()"/>
 				</div>
 				<div class="field">
 					<span class="label"/>

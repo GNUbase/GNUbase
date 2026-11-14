@@ -3,6 +3,7 @@
 // ui::Automation as MCP's UI tools drive them: the info line shows the first selected event or part and its edits
 // change every selected one, as one undo step; the inspector shows the selected track's basics, routing, inserts and
 // notepad, and its controls change the track's channel.
+#include "testutils/commandholds.h"
 #include "testutils/testutils.h"
 #include "uiapp.h"
 
@@ -10,6 +11,7 @@
 #include "engine/time/tempomap.h"
 #include "ui/automation.h"
 #include "ui/docking.h"
+#include "ui/enginebinding.h"
 #include "ui/eventdisplay.h"
 #include "ui/markers.h"
 #include "ui/tracklist.h"
@@ -198,6 +200,103 @@ TEST_CASE("the info line shows the first selected part, and its edits change eve
 	CHECK(window.shows("#info-line textdisplay[field=name]", "Bridge"));
 	window.display.select({});
 	CHECK(window.app.waitUntil([&] { return hasClass(window.app, "#info-line", "empty"); }));
+}
+
+TEST_CASE("the info line shows the note an in-place editor has selected, and edits it", "[ui]")
+{
+	// Reference manual p. 1259: the same information the key editor's info line shows, and its value editing
+	// (p. 1140): relative to the first note, with Ctrl+Enter the same value for all.
+	Window window;
+	const uint64_t midi = window.addTrack({{"type", "midi"}});
+	const uint64_t part = window.addPart(midi, 0, 4 * g_quarter, "Keys");
+	const Json added = window.call("note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", g_quarter}, {"length", g_quarter}, {"pitch", 60}, {"velocity", 0.5}},
+					{{"position", 2 * g_quarter}, {"length", g_quarter}, {"pitch", 64}, {"velocity", 0.5},
+						{"channel", 3}, {"releaseVelocity", 0.25}}}}});
+	REQUIRE(window.app.waitUntil([&] { return window.part(part).at("notes").size() == 2; }));
+	const uint64_t first = added.at("notes").at(0).at("id").get<uint64_t>();
+	const uint64_t second = added.at("notes").at(1).at("id").get<uint64_t>();
+	const auto noteOf = [&](uint64_t id)
+	{
+		const Json shown = window.part(part); // the temporary must outlive the loop over its notes
+		for (const Json& note : shown.at("notes"))
+			if (note.at("id") == id)
+				return note;
+		return Json(nullptr);
+	};
+	const std::string editor = "inPlace:" + std::to_string(midi);
+	const auto select = [&](const Json& notes)
+	{ window.call("editor.set", {{"editor", editor}, {"selection", notes}}); };
+	window.call("editor.inPlace", {{"tracks", {midi}}, {"open", true}});
+	REQUIRE(window.app.waitUntil(
+		[&] { return window.call("editor.get", {{"editor", editor}}).value("open", false) == true; }));
+
+	// One note selected: the info line shows it as the key editor's info line does; the other fields are
+	// unavailable.
+	select(Json::array({{{"part", part}, {"note", first}}}));
+	REQUIRE(window.shows("#info-line textdisplay[field=start]", "1.2.1.0"));
+	CHECK_FALSE(hasClass(window.app, "#info-line", "empty"));
+	CHECK(attribute(window.app, "#info-line textdisplay[field=end]", "value") == "1.3.1.0");
+	CHECK(attribute(window.app, "#info-line textdisplay[field=length]", "value") == "0.1.0.0");
+	CHECK(attribute(window.app, "#info-line textdisplay[field=pitch]", "value") == "C3");
+	CHECK(attribute(window.app, "#info-line valuefield[field=velocity]", "value") == "64");
+	CHECK(attribute(window.app, "#info-line textdisplay[field=releaseVelocity]", "value") == "64");
+	CHECK(attribute(window.app, "#info-line textdisplay[field=channel]", "value") == "1");
+	CHECK(hasClass(window.app, "#info-line [info-field=name]", "unavailable"));
+	CHECK(hasClass(window.app, "#info-line [info-field=volume]", "unavailable"));
+	CHECK(hasClass(window.app, "#info-line [info-field=mute]", "unavailable"));
+	CHECK(hasClass(window.app, "#info-line [info-field=transpose]", "unavailable"));
+	CHECK(hasClass(window.app, "#info-line [info-field=rootKey]", "unavailable"));
+
+	// Two notes: the one that starts first shows, in the multiple color.
+	select(Json::array({{{"part", part}, {"note", second}}, {{"part", part}, {"note", first}}}));
+	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, "#info-line", "multiple"); }));
+	CHECK(attribute(window.app, "#info-line textdisplay[field=pitch]", "value") == "C3");
+	const auto steps = window.historyPosition();
+
+	// A pitch typed moves both notes by as much, as one undo step; with Ctrl+Enter both get the value typed.
+	window.type("#info-line textdisplay[field=pitch]", "D3");
+	REQUIRE(window.app.waitUntil([&] { return noteOf(first).at("pitch") == 62; }));
+	CHECK(noteOf(second).at("pitch") == 66);
+	CHECK(window.historyPosition() == steps + 1);
+	REQUIRE(window.shows("#info-line textdisplay[field=pitch]", "D3"));
+	window.type("#info-line textdisplay[field=pitch]", "C3", "Ctrl+Enter");
+	REQUIRE(window.app.waitUntil([&] { return noteOf(second).at("pitch") == 60; }));
+	CHECK(noteOf(first).at("pitch") == 60);
+
+	// A velocity typed moves both by as much; a channel is set for all; a start moves both.
+	window.type("#info-line valuefield[field=velocity]", "100");
+	REQUIRE(window.app.waitUntil([&] { return noteOf(first).at("velocity").get<double>() > 0.78; }));
+	CHECK(noteOf(second).at("velocity").get<double>() == noteOf(first).at("velocity").get<double>());
+	REQUIRE(window.shows("#info-line valuefield[field=velocity]", "100"));
+	window.type("#info-line textdisplay[field=channel]", "5");
+	REQUIRE(window.app.waitUntil([&] { return noteOf(first).at("channel") == 4; }));
+	CHECK(noteOf(second).at("channel") == 4);
+	window.type("#info-line textdisplay[field=start]", "1.3.1.0");
+	REQUIRE(window.app.waitUntil([&] { return noteOf(first).at("position") == 2 * g_quarter; }));
+	CHECK(noteOf(second).at("position") == 3 * g_quarter);
+	REQUIRE(window.shows("#info-line textdisplay[field=start]", "1.3.1.0"));
+
+	// Undo takes the last edit back.
+	window.call("history.undo");
+	REQUIRE(window.app.waitUntil([&] { return noteOf(first).at("position") == g_quarter; }));
+
+	// A part selected in the project window wins; the editor's next selection change shows its notes again,
+	// and an empty one leaves the part.
+	window.display.select({part});
+	REQUIRE(window.shows("#info-line textdisplay[field=name]", "Keys"));
+	select(Json::array({{{"part", part}, {"note", first}}}));
+	REQUIRE(window.shows("#info-line textdisplay[field=pitch]", "C3"));
+	select(Json::array());
+	REQUIRE(window.shows("#info-line textdisplay[field=name]", "Keys"));
+
+	// The editor closing ends its notes; a new selection shows them again.
+	select(Json::array({{{"part", part}, {"note", first}}}));
+	REQUIRE(window.shows("#info-line textdisplay[field=pitch]", "C3"));
+	window.call("editor.inPlace", {{"tracks", {midi}}, {"open", false}});
+	REQUIRE(window.shows("#info-line textdisplay[field=name]", "Keys"));
 }
 
 TEST_CASE("Ctrl+Enter in the info line takes the first part's own value for all, and only that take", "[ui]")
@@ -690,8 +789,8 @@ TEST_CASE("the info line's setup pane shows, hides and orders its fields, with p
 	ui::Docking& docking = window.app.appUi().docking();
 	const std::vector<std::string> defaults = docking.sections("project", "infoLine");
 	CHECK(defaults ==
-		std::vector<std::string>{"name", "start", "end", "length", "volume", "mute", "lock", "transpose", "velocity",
-			"rootKey", "globalTranspose"});
+		std::vector<std::string>{"name", "start", "end", "length", "pitch", "volume", "mute", "lock", "transpose",
+			"velocity", "releaseVelocity", "channel", "rootKey", "globalTranspose"});
 	const auto openPane = [&window]
 	{
 		if (!hasClass(window.app, "#info-line-setup", "open"))
@@ -802,11 +901,12 @@ namespace
 
 	// Every gap between sections is the same and wider than one inside a section, and the first button stands as far
 	// from the toolbar's edge as in the order `expected` measured, whichever sections stand where.
-	void checkToolbarGaps(const ToolbarGaps& now, const ToolbarGaps& expected)
+	void checkToolbarGaps(const ToolbarGaps& now, const ToolbarGaps& expected, double ratio)
 	{
 		REQUIRE(!now.between.empty());
-		// 4 dp wider, which pixels round to less at small dp ratios: 3 against 2 pixels at 0.7.
-		CHECK(now.between.front() > now.within);
+		// 4 dp wider, which pixels round to less at small dp ratios: 3 against 2 pixels at 0.7, so wider by more than a
+		// dp (#1239).
+		CHECK(now.between.front() > now.within + ratio);
 		for (const double gap : now.between)
 			CHECK(std::abs(gap - now.between.front()) <= 1.0);
 		CHECK(std::abs(now.inset - expected.inset) <= 1.0);
@@ -845,7 +945,7 @@ TEST_CASE("the toolbar's setup pane shows, hides and orders its sections, with p
 		// Every place between sections has the same gap, whichever sections are in it, and the first button the same
 		// distance from the toolbar's left edge, as the user sees them (#1050).
 		const ToolbarGaps now = toolbarGaps(window, order);
-		checkToolbarGaps(now, reference);
+		checkToolbarGaps(now, reference, window.app.main().dpRatio());
 		CHECK(now.tightest >= 0.0);
 		CHECK(now.spacer >= 1.0);
 		CHECK(std::abs(rightInset(order) - rightEdge) <= 1.0);
@@ -922,15 +1022,16 @@ namespace
 		Window& window, const std::vector<std::string>& order, const ToolbarGaps& expected, bool step = true)
 	{
 		const ToolbarGaps gaps = toolbarGaps(window, order, step);
+		const double ratio = window.app.main().dpRatio();
 		if (gaps.between.empty())
 			CHECK(std::abs(gaps.inset - expected.inset) <= 1.0); // no gap between sections before the last place
 		else
-			checkToolbarGaps(gaps, expected);
+			checkToolbarGaps(gaps, expected, ratio);
 		CHECK(gaps.tightest >= 0.0);
 		CHECK(gaps.spacer >= 0.0);
-		const double ratio = window.app.main().dpRatio();
 		std::vector<std::string> shown;
 		bool roomLeft = true;
+		const bool warpGone = hasClass(window.app, "#toolbar-quantize-warp", "no-room");
 		for (size_t i = 0; i + 1 < order.size(); ++i)
 		{
 			INFO("section " << order[i]);
@@ -950,11 +1051,26 @@ namespace
 		}
 		CHECK(!hasClass(window.app, "#toolbar [section=" + order.back() + "]", "no-room")); // after the spacer
 		shown.push_back(order.back());
+		// Warp Quantize On/Off goes before any section, and only while the shown sections fit without it (#1234).
+		if (warpGone)
+		{
+			CHECK(!element(window.app, "#toolbar-quantize-warp").at("visible").get<bool>());
+			if (shown.size() == order.size()) // with its 2 dp margin it needs more than the spacer's width
+				CHECK(
+					element(window.app, "#toolbar-quantize-warp").at("box").at("width").get<double>() + (2.0 * ratio) >
+					gaps.spacer);
+		}
+		else if (order.back() != "quantize" && std::find(shown.begin(), shown.end(), "quantize") != shown.end())
+		{
+			CHECK(shown.size() == order.size());
+		}
+		// The shown sections fit inside the toolbar. x and width are rounded separately at fractional dp ratios, so
+		// the inset may differ by up to 2 px.
 		const Json bar = element(window.app, "#toolbar").at("box");
 		const Json last = element(window.app, "#toolbar [section=" + order.back() + "]").at("box");
 		const double rightInset = bar.at("x").get<double>() + bar.at("width").get<double>() -
 			last.at("x").get<double>() - last.at("width").get<double>();
-		CHECK(std::abs(rightInset - gaps.inset) <= 1.0);
+		CHECK(std::abs(rightInset - gaps.inset) <= 2.0);
 		return shown;
 	}
 }
@@ -999,6 +1115,57 @@ TEST_CASE("the toolbar shows the sections it has room for, the last before the s
 			checkToolbarRoom(window, inside, reference);
 		}
 	}
+}
+
+TEST_CASE("Warp Quantize On/Off goes from the toolbar before any section does", "[ui]")
+{
+	// The reference's toolbar hides its items one after another as the window narrows (the reference manual, p. 65).
+	Window window(1024);
+	const ui::Docking& docking = window.app.appUi().docking();
+	const std::vector<std::string> defaults = docking.sections("project", "toolbar");
+	const auto noRoom = [&window](const std::string& selector) { return hasClass(window.app, selector, "no-room"); };
+	const std::string warp = "#toolbar-quantize-warp";
+	// Narrower in dp step by step, from about 1463 dp, until the quantize section goes, and on until the section
+	// before it goes too: the steps, about 10 to 20 dp, are narrower than the toggle, so they pass through the room the
+	// toggle frees, which only the quantize section may take (#1382).
+	const auto quantize = std::find(defaults.begin(), defaults.end(), "quantize");
+	REQUIRE(quantize != defaults.end());
+	REQUIRE(quantize != defaults.begin());
+	const std::string before = "#toolbar [section=" + *(quantize - 1) + "]";
+	bool warpGone = false;
+	bool quantizeGone = false;
+	bool alone = false; // gone while every section showed
+	for (int step = 0; !noRoom(before); ++step)
+	{
+		const float ratio = 0.7F + (0.01F * static_cast<float>(step));
+		REQUIRE(ratio < 2.0F);
+		INFO("dp ratio " << ratio);
+		window.app.setDpRatio(ratio);
+		window.app.shell().step(std::chrono::milliseconds(0));
+		if (noRoom("#toolbar [section=quantize]"))
+		{
+			CHECK(!noRoom(warp)); // the section's parts show with it again
+			quantizeGone = true;
+		}
+		else
+		{
+			CHECK(!quantizeGone); // once gone, it stays gone in narrower windows
+			if (warpGone)
+				CHECK(noRoom(warp)); // so does the toggle while the section shows
+			warpGone = noRoom(warp);
+		}
+		const ToolbarGaps reference = toolbarGaps(window, defaults, false); // the gaps at this dp ratio
+		const std::vector<std::string> shown = checkToolbarRoom(window, defaults, reference, false);
+		alone = alone || (warpGone && shown.size() == defaults.size());
+	}
+	CHECK(quantizeGone);
+	CHECK(alone);
+
+	// Wider again: the section and its toggle show.
+	window.app.setDpRatio(0.7F);
+	window.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(element(window.app, warp).at("visible").get<bool>());
+	CHECK(!noRoom(warp));
 }
 
 TEST_CASE("the toolbar makes room for its sections with the widest labels, and for those the user hides", "[ui]")
@@ -1161,6 +1328,69 @@ TEST_CASE("the inspector's volume and pan fields dragged while the engine answer
 	CHECK(window.shows(".inspector valuefield[control=pan]", "25"));
 }
 
+TEST_CASE(
+	"the inspector's dragged volume stays while it shows a project read from before the drag's last step again", "[ui]")
+{
+	test::CommandHolds holds; // declared before the window: its engine's command thread waits in hold()
+	Window window;
+	const test::ReleaseHolds releaseHolds{holds};
+	window.app.engine().registerCommand(
+		{"test.hold", 1, "Waits for the test to release it.", engine::CommandInfo{}.parameters, Json::object(), false},
+		[&holds](engine::CommandContext&) { return holds.hold(); });
+	engine::Client holder(window.app.engine(), "holder");
+	const uint64_t audio = window.addTrack({{"type", "audio"}, {"name", "Vox"}});
+	const uint64_t other = window.addTrack({{"type", "audio"}, {"name", "Bass"}});
+	window.call("channel.set", {{"channel", window.channel(other).at("id")}, {"volume", 4.0}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 2; }));
+	window.list.select({audio});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Vox"));
+	const Json channel = window.channel(audio).at("id");
+	// The volume in the project that the event display, and with it the inspector, shows.
+	const auto shown = [&]
+	{
+		const Json& channels = window.display.project().at("channels");
+		const auto found = std::find_if(
+			channels.begin(), channels.end(), [&channel](const Json& each) { return each.at("id") == channel; });
+		REQUIRE(found != channels.end());
+		return found->at("volume").get<double>();
+	};
+
+	// A drag while the engine answers late. Once no step of it is out, its last one goes at once, and the engine
+	// takes it before the shell hands anything on: its answer and history.changed wait in the binding's mailbox.
+	const std::string field = ".inspector valuefield[control=volume]";
+	ui::EngineBinding& binding = window.app.appUi().binding();
+	test::LateDrag drag(window.app, std::nullopt, field);
+	drag.move(15, 1);
+	REQUIRE(window.app.waitUntil([&] { return binding.waiting("history.transaction") == 0; }));
+	drag.nudge(1);
+	const double dragged = drag.value();
+	drag.release(false);
+	REQUIRE(window.channel(audio).at("volume").get<double>() == Catch::Approx(dragged).margin(1e-5));
+	// The project read that the display sends for that history.changed queues behind a hold: the display shows a read
+	// from before the last step until the test lets the engine go on (#1305).
+	holder.send("test.hold");
+	REQUIRE(holds.waitEntered(1));
+	window.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(binding.waiting("history.transaction") == 0);
+	REQUIRE(binding.waiting("project.get") != 0); // the display's, and other views'
+	REQUIRE(shown() != Catch::Approx(dragged).margin(1e-5));
+	CHECK(drag.value() == Catch::Approx(dragged).margin(1e-5));
+
+	// Another audio track shows its own volume in the same field, and back on the dragged one that older read shows
+	// again: the field shows where the drag left it, not the other track's volume (#1421).
+	window.list.select({other});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Bass"));
+	CHECK(window.shows(field, "4"));
+	window.list.select({audio});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Vox"));
+	CHECK(drag.value() == Catch::Approx(dragged).margin(1e-5));
+
+	// The read after the last step agrees with it.
+	holds.release(1);
+	REQUIRE(window.app.waitUntil([&] { return shown() == Catch::Approx(dragged).margin(1e-5); }));
+	CHECK(drag.value() == Catch::Approx(dragged).margin(1e-5));
+}
+
 TEST_CASE("the info line's volume turned or dragged while the engine answers late follows the mouse", "[ui]")
 {
 	Window window;
@@ -1203,6 +1433,101 @@ TEST_CASE("the info line's volume turned or dragged while the engine answers lat
 	window.app.shell().step(std::chrono::milliseconds(0));
 	CHECK(drag.value() == Catch::Approx(dragged).margin(1e-5));
 	CHECK(window.historyPosition() == position + 1);
+}
+
+TEST_CASE("the info line shows another event's own volume while a dragged one's last step is out", "[ui]")
+{
+	test::CommandHolds holds; // declared before the window: its engine's command thread waits in hold()
+	Window window;
+	const test::ReleaseHolds releaseHolds{holds};
+	// Without the inspector: it reads the in-place editors (editor.inPlace, not a query) for each history.changed,
+	// which sends a waiting step at once, before the display's read for the step before.
+	window.app.appUi().docking().setTabHidden("inspector", true);
+	window.app.engine().registerCommand(
+		{"test.hold", 1, "Waits for the test to release it.", engine::CommandInfo{}.parameters, Json::object(), false},
+		[&holds](engine::CommandContext&) { return holds.hold(); });
+	engine::Client holder(window.app.engine(), "holder");
+	const uint64_t audio = window.addTrack({{"type", "audio"}, {"timeBase", "linear"}});
+	const Json media =
+		window.call("media.add", {{"path", "take.wav"}, {"sampleRate", 48000}, {"channels", 1}, {"length", 480000}})
+			.at("media");
+	const Json clip = window.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	const auto addEvent = [&](int64_t at)
+	{
+		return window
+			.call("audioEvent.add", {{"track", audio}, {"clip", clip.at("id")}, {"position", at}, {"length", 24000}})
+			.at("event")
+			.at("id")
+			.get<uint64_t>();
+	};
+	const uint64_t dragged = addEvent(96000);
+	const uint64_t other = addEvent(192000);
+	window.call("audioEvent.set", {{"event", other}, {"volume", 3.0}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("audioEvents").size() == 2; }));
+	window.display.select({dragged});
+	const std::string field = "#info-line valuefield[field=volume]";
+	REQUIRE(window.shows(field, "0"));
+	ui::EngineBinding& binding = window.app.appUi().binding();
+	// The dragged event's volume in the project that the event display, and with it the info line, shows.
+	const auto shown = [&]
+	{
+		const Json& events = window.display.project().at("audioEvents");
+		const auto found = std::find_if(
+			events.begin(), events.end(), [dragged](const Json& each) { return each.at("id") == dragged; });
+		REQUIRE(found != events.end());
+		return found->at("volume").get<double>();
+	};
+
+	// A drag while the engine answers late, and two steps while the test holds the engine: the first goes behind the
+	// hold, the last waits in the binding.
+	test::LateDrag drag(window.app, std::nullopt, field);
+	drag.move(15, 1);
+	// Once the reads after it, and what they send, are answered: no other command goes out while the steps wait.
+	REQUIRE(window.app.waitUntil(
+		[&]
+		{
+			return binding.waiting("history.transaction") == 0 && binding.waiting("project.get") == 0 &&
+				binding.waiting("editor.inPlace") == 0;
+		}));
+	holder.send("test.hold");
+	REQUIRE(holds.waitEntered(1));
+	drag.nudge(1);
+	drag.nudge(1);
+	const double value = drag.value();
+	drag.release(false);
+	REQUIRE(binding.waiting("history.transaction") == 1);
+	// The other event, asked for (event.get), a query, so before the last step. A second hold after that question
+	// keeps the project read that the display sends for the first step's history.changed out, and the last step
+	// goes behind it.
+	window.display.select({other});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(binding.waiting("event.get") != 0);
+	holder.send("test.hold");
+	holds.release(1);
+	REQUIRE(holds.waitEntered(2));
+	CHECK(window.shows(field, "3")); // its own, not the dragged event's
+	REQUIRE(binding.waiting("project.get") != 0);
+
+	// Back on the dragged event, asked for after the last step. A third hold keeps the project read after the last
+	// step out: the display shows the read after the first one, and the field where the drag left it, not the other
+	// event's volume (#1421).
+	window.display.select({dragged});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(binding.waiting("event.get") != 0);
+	holder.send("test.hold");
+	holds.release(2);
+	REQUIRE(holds.waitEntered(3));
+	CHECK(window.app.waitUntil([&] { return drag.value() == Catch::Approx(value).margin(1e-5); }));
+	REQUIRE(binding.waiting("history.transaction") == 0);
+	REQUIRE(binding.waiting("project.get") != 0);
+	REQUIRE(shown() != Catch::Approx(value).margin(1e-5));
+
+	// The read after the last step agrees with it, and so does the engine.
+	holds.release(3);
+	REQUIRE(window.app.waitUntil([&] { return shown() == Catch::Approx(value).margin(1e-5); }));
+	CHECK(drag.value() == Catch::Approx(value).margin(1e-5));
+	CHECK(window.find("audioEvents", dragged).at("volume") == Catch::Approx(value).margin(1e-5));
+	CHECK(window.find("audioEvents", other).at("volume") == 3.0);
 }
 
 TEST_CASE("the info line's refused volume step shows the engine's value again", "[ui]")
@@ -1553,13 +1878,33 @@ TEST_CASE("a MIDI modifier or a part's transpose dragged back to where it starte
 		"#info-line valuefield[field=transpose]", [&] { return window.part(part).at("transpose").get<int64_t>(); });
 }
 
+TEST_CASE("the inspector routes a MIDI or instrument track's MIDI input from all MIDI inputs or the chord pads", "[ui]")
+{
+	// Reference manual p. 1367: Chord Pads as the input routing (#1089).
+	Window window;
+	const uint64_t keys = window.addTrack({{"type", "instrument"}, {"name", "Keys"}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 1; }));
+	window.list.select({keys});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Keys"));
+	CHECK_FALSE(hasClass(window.app, ".inspector [row=input]", "unavailable"));
+	REQUIRE(window.shows(".inspector select[control=input]", "all"));
+	window.click(".inspector select[control=input]");
+	window.app.ui().key(std::nullopt, "Down");
+	window.click(".inspector select[control=input]");
+	REQUIRE(window.app.waitUntil([&] { return window.channel(keys).at("midiInput") == "chordPads"; }));
+	// Another client's choice shows.
+	window.call("channel.set", {{"channel", window.channel(keys).at("id")}, {"midiInput", "none"}});
+	CHECK(window.shows(".inspector select[control=input]", "none"));
+}
+
 TEST_CASE("the inspector's MIDI Inserts and MIDI Sends sections show and change the track's MIDI effects", "[ui]")
 {
 	Window window;
 	const uint64_t keys = window.addTrack({{"type", "instrument"}, {"name", "Keys"}});
 	const uint64_t bass = window.addTrack({{"type", "instrument"}, {"name", "Bass"}});
 	const uint64_t vox = window.addTrack({{"type", "audio"}, {"name", "Vox"}});
-	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 3; }));
+	const uint64_t marker = window.addTrack({{"type", "marker"}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 4; }));
 	window.list.select({keys});
 	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Keys"));
 	CHECK_FALSE(hasClass(window.app, ".inspector [section=midiInserts]", "unavailable"));
@@ -1596,6 +1941,43 @@ TEST_CASE("the inspector's MIDI Inserts and MIDI Sends sections show and change 
 	choose(".inspector select[control=midiInserts-divider]", 1);
 	REQUIRE(window.app.waitUntil([&] { return inserts().at("divider") == 1; }));
 	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, first, "recorded"); }));
+	// Dragged below the third slot, the divider goes there in one step (p. 1105).
+	const int64_t beforeDrag = window.historyPosition();
+	CHECK(hasClass(window.app, ".inspector .midi-divider[gap=1]", "at"));
+	window.app.ui().drag(std::nullopt, {".inspector .midi-divider[gap=1]", 0, std::nullopt},
+		{".inspector .midi-divider[gap=3]", 0, std::nullopt});
+	REQUIRE(window.app.waitUntil([&] { return inserts().at("divider") == 3; }));
+	CHECK(window.historyPosition() == beforeDrag + 1);
+	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, ".inspector .midi-divider[gap=3]", "at"); }));
+	CHECK_FALSE(hasClass(window.app, ".inspector .midi-divider[gap=1]", "at"));
+	REQUIRE(window.app.waitUntil([&]
+		{ return hasClass(window.app, ".inspector [section=midiInserts] .midi-effect-slot[slot=2]", "recorded"); }));
+	// When the inspector shows another track during a drag, the drag ends without moving a divider, neither the
+	// dragged track's nor the one shown at its end.
+	const ui::Target gap2 = {".inspector .midi-divider[gap=2]", 0, std::nullopt};
+	window.app.ui().press(std::nullopt, {".inspector .midi-divider[gap=3]", 0, std::nullopt}, ui::MouseButton::Left);
+	window.app.ui().move(std::nullopt, gap2);
+	window.list.select({bass});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Bass"));
+	window.app.ui().release(std::nullopt, gap2, ui::MouseButton::Left);
+	CHECK(hasClass(window.app, ".inspector .midi-divider[gap=0]", "at"));
+	window.list.select({keys});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Keys"));
+	CHECK(window.historyPosition() == beforeDrag + 1);
+	CHECK(window.channel(bass).at("midiInserts").at("divider") == 0);
+	CHECK(inserts().at("divider") == 3);
+	CHECK(hasClass(window.app, ".inspector .midi-divider[gap=3]", "at"));
+	// Nor when it shows a track without a channel, a marker track, released where the mouse is.
+	window.app.ui().press(std::nullopt, {".inspector .midi-divider[gap=3]", 0, std::nullopt}, ui::MouseButton::Left);
+	window.app.ui().move(std::nullopt, gap2);
+	window.list.select({marker});
+	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, ".inspector [section=basics]", "unavailable"); }));
+	window.app.ui().release(std::nullopt, {}, ui::MouseButton::Left);
+	window.list.select({keys});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Keys"));
+	CHECK(window.historyPosition() == beforeDrag + 1);
+	CHECK(inserts().at("divider") == 3);
+	CHECK(hasClass(window.app, ".inspector .midi-divider[gap=3]", "at"));
 	// The edit button closes the control panel.
 	window.click(first + " .midi-effect-edit");
 	CHECK_FALSE(hasClass(window.app, first, "open"));

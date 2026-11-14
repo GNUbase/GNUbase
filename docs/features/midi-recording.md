@@ -28,7 +28,8 @@ undo step.
   runs far ahead of the disk thread, doesn't run out of chunks. The disk thread pairs
   each note-on with the next note-off of its pitch and channel into a note (`MidiTakeBuilder`); a note-on of a pitch
   that sounds ends it first, and notes that still sound when a cycle lap or the recording ends end there. Other
-  channel messages become controller events. SysEx doesn't come from the inputs yet.
+  channel messages become controller events; with MPE input, those of the notes' channels become their per-note
+  expression ([note-expression.md](note-expression.md)). SysEx doesn't come from the inputs yet.
 - **Takes and parts.** Each run of consecutive positions is a take, as for audio. When the recording ends, the
   recorder hands each track that recorded anything to `recording.add` with its takes, notes and controller events in
   project samples. A recording of MIDI tracks only runs `recording.add` at once; with audio tracks, the MIDI tracks
@@ -41,19 +42,21 @@ undo step.
   removed the notes that start and the controller events that lie in the range from every unlocked part it
   overlaps.
 - **Preferences.** User settings: `midi.snapPartsToBars` (on by default) makes recorded parts start and end at whole
-  bars (p. 1616); `midi.recordCatchRange` (ms, 0 by default) records input that came that long before recording
-  started at its start (p. 1616); `midi.recordFilter` leaves message types (notes, controllers, pitch bend, channel
-  and poly pressure, program changes), MIDI channels and controller numbers out of recordings, while they still play
-  (MIDI Filter, Record, Channels and Controller, p. 1613).
+  bars (p. 1616); `midi.recordCatchRange` (ms, 0 by default) records input that came that long before recording started
+  at its start, unless a recording took it already (a track that only monitors while the chord track records) (p. 1616);
+  `midi.recordFilter` leaves message types (notes, controllers, pitch bend, channel and poly pressure, program changes),
+  MIDI channels and controller numbers out of recordings, while they still play (MIDI Filter, Record, Channels and
+  Controller, p. 1613).
 - **Auto quantize** (p. 353). With the project's auto quantize switch (`quantize.set` with `autoQuantize`),
   `recording.add` quantizes the recorded notes with the project's quantize settings, as `quantize.apply` does, so
   `quantize.reset` brings back what was played.
 - **Retrospective recording** (pp. 353-356). MIDI input that a track doesn't record, in stop mode or during playback,
-  goes into its retrospective buffer on the disk thread, which keeps the last `midi.retrospectiveEvents` events (10000
-  by default; 0 keeps none). `midi.insertRetrospective` inserts a track's buffer as one part through `recording.add`
-  in the new parts mode: input from playback where it played, input from stop mode at the project cursor with its
-  timing. Input after an insert, or in stop mode after a pause of over 30 seconds, starts the buffer afresh.
-  `midi.clearRetrospective` empties one track's buffer or all of them.
+  also that of a track that only monitors while the chord track records (it makes chord events, no part), goes into its
+  retrospective buffer on the disk thread, which keeps the last `midi.retrospectiveEvents` events (10000 by default; 0
+  keeps none). `midi.insertRetrospective` inserts a track's buffer as one part through `recording.add` in the new parts
+  mode, without chord events (`chordEvents` false): input from playback where it played, input from stop mode at the
+  project cursor with its timing. Input after an insert, or in stop mode after a pause of over 30 seconds, starts the
+  buffer afresh. `midi.clearRetrospective` empties one track's buffer or all of them.
 
 ## Not yet
 

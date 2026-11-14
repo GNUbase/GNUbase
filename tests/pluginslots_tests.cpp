@@ -3,11 +3,13 @@
 // a bypassed or inactive plugin passes it unchanged, and the engine makes, activates and destroys the plugins as the
 // slots change.
 #include "engine/document/document.h"
+#include "engine/dsp/delay.h"
 #include "engine/engine.h"
 #include "engine/plugins/hostmanager.h"
 #include "engine/plugins/pluginslot.h"
 #include "engine/plugins/slotinstances.h"
 #include "engine/processors/builtinplugin.h"
+#include "engine/time/tempomap.h"
 #include "platform/rt/workerpool.h"
 #include "testutils/testutils.h"
 
@@ -455,6 +457,7 @@ TEST_CASE("a plugin sees which segments of a block record", "[unit]")
 	transport.playing = true;
 	transport.recording = true;
 	transport.position = 1000;
+	transport.tempo = 90.0;
 	transport.segments = segments.data();
 	transport.segmentCount = segments.size();
 	const graph::EventBuffer eventsIn(4);
@@ -465,8 +468,11 @@ TEST_CASE("a plugin sees which segments of a block record", "[unit]")
 	slot.process({audio.data(), 2, 128, eventsIn, eventsOut, transport});
 	REQUIRE(plugin.transportCount == 2);
 	using gnubase::plugin::Transport;
-	CHECK(plugin.transport[0].transport.flags == Transport::Playing);
-	CHECK(plugin.transport[1].transport.flags == (Transport::Playing | Transport::Recording));
+	// Every segment has the block's tempo.
+	CHECK(plugin.transport[0].transport.flags == (Transport::Playing | Transport::TempoValid));
+	CHECK(plugin.transport[1].transport.flags == (Transport::Playing | Transport::Recording | Transport::TempoValid));
+	CHECK(plugin.transport[0].transport.tempo == 90.0);
+	CHECK(plugin.transport[1].transport.tempo == 90.0);
 	CHECK(plugin.transport[1].offset == 64);
 	CHECK(plugin.transport[1].transport.position == 1064);
 }
@@ -492,11 +498,91 @@ TEST_CASE("a plugin sees a block where playback starts within it as stopped unti
 	slot.process({audio.data(), 2, 128, eventsIn, eventsOut, transport});
 	REQUIRE(plugin.transportCount == 2);
 	CHECK(plugin.transport[0].offset == 0);
-	CHECK(plugin.transport[0].transport.flags == 0); // stopped
+	using gnubase::plugin::Transport;
+	CHECK(plugin.transport[0].transport.flags == Transport::TempoValid); // stopped
 	CHECK(plugin.transport[0].transport.position == 28000);
 	CHECK(plugin.transport[1].offset == 64);
-	CHECK(plugin.transport[1].transport.flags == gnubase::plugin::Transport::Playing);
+	CHECK(plugin.transport[1].transport.flags == (Transport::Playing | Transport::TempoValid));
 	CHECK(plugin.transport[1].transport.position == 24000);
+}
+
+TEST_CASE(
+	"a plugin's transport segments have the tempo where they start, and a new one starts where it changes", "[unit]")
+{
+	using gnubase::time::TempoMap;
+	using gnubase::time::TempoPoint;
+	constexpr gnubase::time::Ticks beat = gnubase::time::g_ticksPerQuarter;
+	// 120 BPM, then 60 from the second beat on, which is at 24000 at 48 kHz.
+	const TempoMap jump(std::vector<TempoPoint>{{0, 120.0, false}, {beat, 60.0, false}});
+	// The block plays up to the cycle's end at 24032, then from its start at 23950.
+	const std::array<graph::TransportSegment, 2> segments{{{0, 64, 23968, false}, {64, 64, 23950, false}}};
+	graph::TransportBlock transport;
+	transport.playing = true;
+	transport.position = 23968;
+	transport.tempo = 120.0;
+	transport.segments = segments.data();
+	transport.segmentCount = segments.size();
+	transport.tempoMap = &jump;
+	std::vector<gnubase::plugin::TransportSegment> converted(8);
+	REQUIRE(plugins::convertTransport(transport, 48000.0, converted) == 4);
+	const std::array<std::array<double, 3>, 4> expected{
+		{{0, 23968, 120.0}, {32, 24000, 60.0}, {64, 23950, 120.0}, {114, 24000, 60.0}}};
+	for (size_t i = 0; i < expected.size(); ++i)
+	{
+		INFO("segment " << i);
+		CHECK(converted[i].offset == static_cast<uint32_t>(expected[i][0]));
+		CHECK(converted[i].transport.position == static_cast<int64_t>(expected[i][1]));
+		CHECK(converted[i].transport.tempo == expected[i][2]);
+		CHECK(converted[i].transport.flags ==
+			(gnubase::plugin::Transport::Playing | gnubase::plugin::Transport::TempoValid));
+	}
+	// Without a sample rate there is only the block's tempo.
+	REQUIRE(plugins::convertTransport(transport, 0.0, converted) == 2);
+	CHECK(converted[1].transport.tempo == 120.0);
+
+	// Under a ramp each segment has the tempo of its first frame.
+	const TempoMap ramp(std::vector<TempoPoint>{{0, 120.0, false}, {4 * beat, 60.0, true}});
+	transport.tempoMap = &ramp;
+	REQUIRE(plugins::convertTransport(transport, 48000.0, converted) == 2);
+	CHECK(converted[0].transport.tempo == ramp.bpmAt(ramp.toTicks(int64_t{23968}, 48000.0)));
+	CHECK(converted[1].transport.tempo == ramp.bpmAt(ramp.toTicks(int64_t{23950}, 48000.0)));
+	CHECK(converted[1].transport.tempo < 120.0);
+}
+
+TEST_CASE("a built-in delay in a plugin slot follows the transport's tempo with its note values", "[unit]")
+{
+	TestHost host;
+	std::unique_ptr<gnubase::plugin::Plugin> delay = processors::BuiltinFactory().create("builtin:delay", host);
+	REQUIRE(delay);
+	REQUIRE(delay->init());
+	plugins::PluginSlot slot(std::move(delay));
+	REQUIRE(slot.activate(48000.0, 480));
+	// A quarter note (the default), the echo alone.
+	slot.setParameters({{gnubase::engine::dsp::Delay::Sync, 1.0}, {gnubase::engine::dsp::Delay::Feedback, 0.0},
+		{gnubase::engine::dsp::Delay::Mix, 100.0}});
+	graph::TransportBlock transport;
+	transport.tempo = 60.0;
+	const graph::EventBuffer eventsIn(4);
+	graph::EventBuffer eventsOut(4);
+	std::vector<float> left(480);
+	std::vector<float> right(480);
+	const std::array<float*, 2> audio{left.data(), right.data()};
+	std::vector<float> played;
+	// A second for the time and the mix to glide where they go, then an impulse.
+	for (int block = 0; block < 250; ++block)
+	{
+		std::fill(left.begin(), left.end(), 0.0f);
+		std::fill(right.begin(), right.end(), 0.0f);
+		left[0] = right[0] = block == 100 ? 1.0f : 0.0f;
+		eventsOut.clear();
+		slot.process({audio.data(), 2, 480, eventsIn, eventsOut, transport});
+		if (block >= 100)
+			played.insert(played.end(), left.begin(), left.end());
+	}
+	const auto loudest =
+		std::max_element(played.begin(), played.end(), [](float a, float b) { return std::abs(a) < std::abs(b); });
+	// A quarter note at 60 BPM is a second; at 120 it would be half of that.
+	CHECK(std::abs(std::distance(played.begin(), loudest) - 48000) <= 1);
 }
 
 TEST_CASE("a built-in processor behind the plugin wrapper sees which segments record", "[unit]")
@@ -596,6 +682,24 @@ TEST_CASE("a slot whose plugin can't be made is unavailable, and one whose plugi
 	CHECK(slots.status(1) == "unavailable");
 	CHECK(slots.processor(3) != nullptr);
 	CHECK(slots.status(4).empty());
+}
+
+TEST_CASE("an audio plugin slot that names a built-in MIDI effect is unavailable", "[unit]")
+{
+	plugins::HostManager jobs;
+	plugins::SlotInstances slots(jobs, [] {}, [](uint64_t /*generation*/) { return true; });
+	RenderSlot effect;
+	effect.id = 1;
+	effect.plugin = "builtin:chordGenerator";
+	RenderSlot gain;
+	gain.id = 2;
+	gain.plugin = "builtin:gainPan";
+	const std::vector<plugins::SlotInstances::Wanted> wanted{{&effect, 2}, {&gain, 2}};
+	slots.update(wanted, 48000.0, 128);
+	jobs.run([] {}).get();
+	CHECK(slots.status(1) == "unavailable");
+	CHECK(slots.processor(1) == nullptr);
+	CHECK(slots.status(2) == "active");
 }
 
 TEST_CASE("the slots' plugins get offline blocks while the engine renders offline, e.g. an export", "[unit]")
@@ -936,4 +1040,35 @@ TEST_CASE("a plugin leaving the graph goes when the device stops before it start
 	run(client, "plugin.set", {{"slot", slot}, {"active", false}});
 	run(client, "audio.stop");
 	waitFor(client, slot, "inactive"); // nothing else wakes the retirer
+}
+
+TEST_CASE("a loaded project's audio slot that names a built-in MIDI effect is unavailable and passes the audio",
+	"[integration]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId channel = monitorSine(client, 500.0, -24.0);
+	const Json slot = insert(client, channel, "builtin:gainPan");
+	waitFor(client, slot, "active");
+	setParameter(client, channel, slot, g_gain, -12.0);
+	CHECK_THAT(peakDb(client), WithinAbs(-36.0, 0.1));
+
+	// The file names a MIDI effect in the slot, which slotFromJson keeps as any <format>:<id>.
+	const gnubase::test::TempDir dir;
+	const std::string file = (dir.path() / "midi effect in a slot.dawproject").u8string();
+	run(client, "project.save", {{"path", file}});
+	std::map<std::string, std::string> entries = gnubase::test::readZip(file);
+	Json saved = Json::parse(entries.at("gnubase.json"));
+	Json& slots = saved.at("project").at("slots");
+	REQUIRE(slots.size() == 1);
+	slots[0]["plugin"] = "builtin:chordGenerator";
+	slots[0].erase("parameters");
+	entries["gnubase.json"] = saved.dump();
+	gnubase::test::writeZip(file, entries);
+	run(client, "project.new");
+	run(client, "project.load", {{"path", file}});
+
+	waitFor(client, slot, "unavailable");
+	CHECK(run(client, "plugin.get", {{"slot", slot}}).at("slot").at("plugin") == "builtin:chordGenerator");
+	CHECK_THAT(peakDb(client), WithinAbs(-24.0, 0.01));
 }

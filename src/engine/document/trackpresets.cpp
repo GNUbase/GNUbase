@@ -40,7 +40,6 @@ namespace gnubase::engine
 
 		constexpr const char* g_presets = "Track Presets"; // in the settings folder
 		constexpr const char* g_extension = ".dawproject";
-		constexpr double g_maxProjectLength = 86400.0; // seconds, as the project setup allows
 
 		void require(bool condition, const std::string& message)
 		{
@@ -78,17 +77,41 @@ namespace gnubase::engine
 				type == TrackType::Group || type == TrackType::Effect;
 		}
 
+		// The version IDs an import gives the file's: a new one for each ID of the file, shared by the versions that
+		// shared it there, so that they keep playing together (reference manual p. 233) and none of them falls into a
+		// version group the project has of its own.
+		class VersionIds
+		{
+		public:
+			explicit VersionIds(const Project& project) : m_next(newVersionId(project)) {}
+
+			int of(int id)
+			{
+				if (const auto found = m_ids.find(id); found != m_ids.end())
+					return found->second;
+				return m_ids.emplace(id, m_next++).first->second;
+			}
+
+		private:
+			std::map<int, int> m_ids;
+			int m_next;
+		};
+
 		// Copies tracks of one project into another with new ids: their channels, inserts, events, automation, and the
-		// clips, media files and drum maps those use. Routing within the copied tracks stays; routing to busses and
-		// channels that weren't copied goes to those of the same name in the project, if it has them (reference manual
-		// p. 200). The buttons (mute, solo, listen, monitor, record enable) are off in the copies, and their automation
-		// reads, as the reference doesn't import these states. replacedMarkers marker tracks of to are about to be
-		// replaced by copies, so these copies don't count towards the limit of marker tracks.
+		// clips, media files and drum maps those use; with the events their patterns, which their pattern events play.
+		// Routing within the copied tracks stays; routing to busses and channels that weren't copied goes to those of
+		// the same name in the project, if it has them (reference manual p. 200). The buttons (mute, solo, listen,
+		// monitor, record enable) are off in the copies, and their automation reads, as the reference doesn't import
+		// these states. replacedMarkers marker tracks of to are about to be replaced by copies, so these copies don't
+		// count towards the limit of marker tracks. versionIds gives the copies' track versions their ids in to;
+		// without it they keep the ones they have in from, as an export writes a project of its own.
 		class TrackCopier
 		{
 		public:
-			TrackCopier(const Project& from, Project& to, CopyOptions options, std::ptrdiff_t replacedMarkers)
-				: m_from(from), m_to(to), m_options(options), m_firstCopy(to.nextId), m_replacedMarkers(replacedMarkers)
+			TrackCopier(const Project& from, Project& to, CopyOptions options, std::ptrdiff_t replacedMarkers,
+				VersionIds* versionIds)
+				: m_from(from), m_to(to), m_options(options), m_firstCopy(to.nextId),
+				  m_replacedMarkers(replacedMarkers), m_versionIds(versionIds)
 			{
 			}
 
@@ -118,13 +141,23 @@ namespace gnubase::engine
 					track.versions.clear();
 					track.activeVersion = 1;
 				}
+				else
+				{
+					copyPatterns(id, track.id);
+					if (m_versionIds != nullptr && !track.versions.empty())
+					{
+						for (TrackVersion& version : track.versions)
+							version.id = m_versionIds->of(version.id);
+						track.activeVersion = m_versionIds->of(track.activeVersion);
+					}
+				}
 				for (TrackVersion& version : track.versions)
 				{
 					version = copyVersion(m_to, version, track.id);
 					for (AudioEvent& event : version.audioEvents)
 						event.clip = clip(event.clip);
 					for (MidiPart& part : version.midiParts)
-						unshare(part);
+						copyPart(part);
 				}
 				if (track.channel != 0)
 					track.channel = copyChannel(track.channel, track.id);
@@ -172,6 +205,25 @@ namespace gnubase::engine
 			// The media files that were added, not the project's that the copies share.
 			const std::vector<ObjectId>& addedMedia() const { return m_addedMedia; }
 
+			// The copy of a clip, with its media file: a file the project has already is used as it is.
+			ObjectId clip(ObjectId id)
+			{
+				if (const auto found = m_clips.find(id); found != m_clips.end())
+					return found->second;
+				const auto original = m_from.clips.find(id);
+				if (original == m_from.clips.end())
+					return 0;
+				Clip clip = original->second;
+				clip.id = m_to.newId();
+				clip.folder = 0;
+				clip.media = media(clip.media);
+				for (ClipRegion& region : clip.regions)
+					region.id = m_to.newId();
+				m_clips[id] = clip.id;
+				m_to.clips[clip.id] = std::move(clip);
+				return m_clips.at(id);
+			}
+
 		private:
 			ObjectId copyChannel(ObjectId source, ObjectId track)
 			{
@@ -192,6 +244,9 @@ namespace gnubase::engine
 				channel.id = m_to.newId();
 				channel.track = track;
 				channel.sample = clip(original.sample); // a sampler's (#180), with the instrument
+				channel.pads = original.pads;           // a drum machine's (#182)
+				for (auto& [pad, drum] : channel.pads)
+					drum.sample = clip(drum.sample);
 				// The fader top may be lower here (as project.set brings volumes down to it).
 				channel.volume = std::min(channel.volume, m_to.maxVolume);
 				for (Send& send : channel.sends)
@@ -234,7 +289,7 @@ namespace gnubase::engine
 					if (event.track == source)
 						events.push_back(event);
 				std::stable_sort(events.begin(), events.end(),
-					[](const AudioEvent& a, const AudioEvent& b) { return frontOf(a) < frontOf(b); });
+					[](const AudioEvent& a, const AudioEvent& b) { return stackKey(a) < stackKey(b); });
 				std::map<ObjectId, ObjectId> ids;
 				for (const AudioEvent& event : events)
 					ids[event.id] = m_to.newId();
@@ -256,7 +311,7 @@ namespace gnubase::engine
 						MidiPart part = original;
 						part.id = m_to.newId();
 						part.track = track;
-						unshare(part);
+						copyPart(part);
 						m_to.midiParts[part.id] = std::move(part);
 					}
 				for (const auto& [id, original] : m_from.markers)
@@ -300,31 +355,30 @@ namespace gnubase::engine
 				}
 			}
 
-			// ponytail: shared copies of MIDI parts come as parts of their own; keeping them shared needs their notes'
-			// ids mapped alike.
-			void unshare(MidiPart& part)
+			// The track's patterns with new ids (#1347).
+			void copyPatterns(ObjectId source, ObjectId track)
 			{
-				part.shared = 0;
-				renumber(m_to, part);
+				for (const auto& [id, original] : m_from.patterns)
+					if (original.track == source)
+					{
+						Pattern pattern = original;
+						pattern.id = m_to.newId();
+						pattern.track = track;
+						pattern.copiedFrom = 0;
+						m_patterns[id] = pattern.id;
+						m_to.patterns[pattern.id] = std::move(pattern);
+					}
 			}
 
-			// The copy of a clip, with its media file: a file the project has already is used as it is.
-			ObjectId clip(ObjectId id)
+			// ponytail: shared copies of MIDI parts come as parts of their own; keeping them shared needs their notes'
+			// ids mapped alike. A pattern event plays the copy of its pattern; one of a pattern that wasn't copied
+			// (another track's) becomes an ordinary part.
+			void copyPart(MidiPart& part)
 			{
-				if (const auto found = m_clips.find(id); found != m_clips.end())
-					return found->second;
-				const auto original = m_from.clips.find(id);
-				if (original == m_from.clips.end())
-					return 0;
-				Clip clip = original->second;
-				clip.id = m_to.newId();
-				clip.folder = 0;
-				clip.media = media(clip.media);
-				for (ClipRegion& region : clip.regions)
-					region.id = m_to.newId();
-				m_clips[id] = clip.id;
-				m_to.clips[clip.id] = std::move(clip);
-				return m_clips.at(id);
+				part.shared = 0;
+				const auto pattern = m_patterns.find(part.pattern);
+				part.pattern = pattern == m_patterns.end() ? 0 : pattern->second;
+				renumber(m_to, part);
 			}
 
 			ObjectId media(ObjectId id)
@@ -415,11 +469,13 @@ namespace gnubase::engine
 			CopyOptions m_options;
 			ObjectId m_firstCopy; // the copies' ids start here
 			std::ptrdiff_t m_replacedMarkers;
+			VersionIds* m_versionIds;              // the copies' track version ids, or null to keep the ones of from
 			std::map<ObjectId, ObjectId> m_copies; // by the track's id in from
 			std::vector<ObjectId> m_skipped;
 			std::map<ObjectId, ObjectId> m_channels;
 			std::map<ObjectId, ObjectId> m_slots;
 			std::map<ObjectId, ObjectId> m_clips;
+			std::map<ObjectId, ObjectId> m_patterns;
 			std::map<ObjectId, ObjectId> m_media;
 			std::vector<ObjectId> m_addedMedia;
 		};
@@ -435,9 +491,9 @@ namespace gnubase::engine
 		// Copies tracks of from, each listed once, into the folder parent of to at index, in from's order: a listed
 		// folder with the tracks inside it that can be copied, marker tracks at the top level. Listed tracks that can't
 		// be copied are refused, also inside a listed folder. Emits nothing: the commands announce what changed.
-		// replacedMarkers: see TrackCopier.
+		// replacedMarkers and versionIds: see TrackCopier.
 		Copied copyTracks(const Project& from, Project& to, const std::vector<ObjectId>& tracks, CopyOptions options,
-			ObjectId parent, size_t index, std::ptrdiff_t replacedMarkers = 0)
+			ObjectId parent, size_t index, std::ptrdiff_t replacedMarkers = 0, VersionIds* versionIds = nullptr)
 		{
 			require(!tracks.empty(), "no tracks given");
 			for (const ObjectId id : tracks)
@@ -449,7 +505,7 @@ namespace gnubase::engine
 			}
 			const auto listed = [&tracks](ObjectId id)
 			{ return std::find(tracks.begin(), tracks.end(), id) != tracks.end(); };
-			TrackCopier copier(from, to, options, replacedMarkers);
+			TrackCopier copier(from, to, options, replacedMarkers, versionIds);
 			std::vector<ObjectId> copies;
 			for (const ObjectId id : from.trackOrder())
 			{
@@ -488,6 +544,35 @@ namespace gnubase::engine
 					result.push_back({{"id", id}, {"name", track.name}, {"type", trackTypeName(track.type)}});
 				}
 			return result;
+		}
+
+		// The sample rates of the media files each track's audio events play, by the track's id, each once from the
+		// lowest, also the events of the versions that aren't active, and of its sampler's sample or drum machine's
+		// (#180, #182): what Convert Sample Rate has to convert for that track (reference manual p. 205). A media file
+		// nothing plays is nobody's.
+		std::map<ObjectId, std::set<double>> mediaSampleRatesByTrack(const Project& file)
+		{
+			std::map<ObjectId, std::set<double>> rates;
+			const auto add = [&file, &rates](ObjectId track, ObjectId clipId)
+			{
+				const auto clip = file.clips.find(clipId);
+				if (clip == file.clips.end())
+					return;
+				const auto media = file.media.find(clip->second.media);
+				if (media != file.media.end())
+					rates[track].insert(media->second.sampleRate);
+			};
+			for (const auto& [id, event] : file.audioEvents)
+				add(event.track, event.clip);
+			for (const auto& [id, track] : file.trackById)
+			{
+				for (const TrackVersion& version : track.versions)
+					for (const AudioEvent& event : version.audioEvents)
+						add(id, event.clip);
+				if (const auto channel = file.channels.find(track.channel); channel != file.channels.end())
+					forEveryInstrumentClip(channel->second, [&add, id = id](ObjectId clip) { add(id, clip); });
+			}
+			return rates;
 		}
 
 		// A file with the given tracks of the project as a project of its own, for track presets and archives: the
@@ -593,6 +678,17 @@ namespace gnubase::engine
 				if (keep(item))
 					kept.push_back(std::move(item));
 			items = std::move(kept);
+		}
+
+		// The range {start, end} of track.import and track.importSources, if given.
+		std::optional<std::pair<time::Samples, time::Samples>> rangeOf(const Json& parameters)
+		{
+			if (!parameters.contains("range"))
+				return std::nullopt;
+			const time::Samples start = parameters.at("range").at("start").get<time::Samples>();
+			const time::Samples end = parameters.at("range").at("end").get<time::Samples>();
+			require(start < end, "range must end after its start");
+			return std::pair{start, end};
 		}
 
 		// Where track.import puts what the file's tracks hold (Import Position and Range, reference manual p. 204):
@@ -751,10 +847,10 @@ namespace gnubase::engine
 		// already), and the copy's other versions after its own; with settings its channel settings, inserts and drum
 		// and articulation maps, but its own buttons; with automation its automation instead of the track's, without
 		// it none once events or settings come. What played or sent into the copy's channel goes into the track's, and
-		// the copy goes. versionIds maps the file's version IDs to the ones they get in the project, so that versions
-		// of several tracks that share an ID keep sharing one.
+		// the copy goes. The copy's versions have the IDs they get here already (VersionIds), so that versions of
+		// several tracks that shared an ID in the file keep sharing one.
 		void mergeTrack(ProjectModel& model, Project& project, ObjectId copy, ObjectId id, CopyOptions options,
-			Existing existing, std::map<int, int>& versionIds, CommandContext& inner)
+			Existing existing, CommandContext& inner)
 		{
 			// Positions are in the track's time base.
 			if (project.trackById.at(copy).timeBase != project.trackById.at(id).timeBase)
@@ -777,6 +873,7 @@ namespace gnubase::engine
 				onto(project.audioEvents);
 				onto(project.audioParts);
 				onto(project.midiParts);
+				onto(project.patterns); // which the copy's pattern events play, in its other versions too (#1347)
 				Track& source = project.trackById.at(copy);
 				Track& track = project.trackById.at(id);
 				if (!source.versions.empty() && track.versions.empty())
@@ -785,11 +882,6 @@ namespace gnubase::engine
 				{
 					if (version.id == source.activeVersion)
 						continue; // its events and parts went onto the track
-					// An ID above every version's, as for a new version, one for each of the file's IDs.
-					if (const auto found = versionIds.find(version.id); found != versionIds.end())
-						version.id = found->second;
-					else
-						version.id = versionIds[version.id] = newVersionId(project);
 					if (std::any_of(track.versions.begin(), track.versions.end(),
 							[&version](const TrackVersion& other) { return other.name == version.name; }))
 						version.name = newVersionName(track);
@@ -845,7 +937,7 @@ namespace gnubase::engine
 		// and pan, inserts, MIDI settings and instrument, and for MIDI and instrument tracks its color. Not its name,
 		// routing, sends, buttons or notes.
 		void applyPreset(const ProjectModel& model, Project& project, ObjectId id, const Project& preset,
-			ObjectId source, CommandContext& context)
+			ObjectId source, TrackCopier& copier, CommandContext& context)
 		{
 			Track& track = project.trackById.at(id);
 			const Track& original = preset.trackById.at(source);
@@ -867,16 +959,28 @@ namespace gnubase::engine
 			channel.midiPan = sound.midiPan;
 			channel.program = sound.program;
 			channel.bank = sound.bank;
+			channel.midiChannel = sound.midiChannel;
 			channel.device = sound.device;
 			channel.modifiers = sound.modifiers;
+			const Channel before = channel;
 			channel.midiInserts = sound.midiInserts;
 			channel.midiSends = sound.midiSends;
+			removeMidiEffectLanes(project, context, before, channel);
 			for (midi::EffectSlot& slot : channel.midiSends.slots)
 				slot.output = 0; // the preset's tracks aren't this project's
 			if (channel.instrument != sound.instrument)
+			{
 				channel.sample = 0; // only the sampler plays one (#180), as with channel.set
+				channel.pads.clear();
+			}
 			channel.instrument = sound.instrument;
 			channel.instrumentParameters = sound.instrumentParameters;
+			if (sound.instrument == "drumMachine") // the pads with their names and samples, as copies take them (#1361)
+			{
+				channel.pads = sound.pads;
+				for (auto& [pad, drum] : channel.pads)
+					drum.sample = copier.clip(drum.sample);
+			}
 			if (channel.format != ChannelFormat::None)
 			{
 				std::vector<Slot> slots;
@@ -912,8 +1016,10 @@ namespace gnubase::engine
 				"replacing a preset of that name: of one track, or of several as a multi-track preset (p. 241), "
 				"which keeps them in the order of the track list, whatever the order of tracks. "
 				"Audio, instrument, MIDI, group and effect tracks have one: their channel's pre section, equalizer, "
-				"strip, fader, pan and inserts, their MIDI modifiers, inserts, sends, volume, pan, program and device, "
-				"the instrument with its parameters, and the color. Presets are DAWproject files in the folder Track "
+				"strip, fader, pan and inserts, their MIDI modifiers, inserts, sends, volume, pan, program, bank and "
+				"device, the MIDI channel (channel.set midiChannel; a MIDI track's preset keeps both its channel and "
+				"its patch, of which the reference manual's keeps one, p. 238), the instrument with its parameters "
+				"and a drum machine's pads, and the color. Presets are DAWproject files in the folder Track "
 				"Presets in the user settings' folder. Changes nothing in the project. Returns the preset's file.",
 				objectSchema({{"tracks", idsSchema}, {"name", stringSchema}}, {"tracks", "name"}), fileResult, false},
 			[&model, &engine](CommandContext& context)
@@ -985,8 +1091,8 @@ namespace gnubase::engine
 				"replaced by copies of the preset's, the automation of the plugins they had goes with them. The "
 				"tracks must be as many as the preset's, and of the same types in the same order: the first of tracks "
 				"gets the sound of the preset's top track, and so on. Faders above the project's fader top come down "
-				"to it. Emits "
-				"track.changed, channel.changed, plugin.removed and plugin.added.",
+				"to it. A drum machine's pads come with their names and samples, whose clips come into the pool. "
+				"Emits track.changed, channel.changed, plugin.removed, plugin.added, media.added and clip.added.",
 				objectSchema({{"tracks", idsSchema}, {"name", stringSchema}}, {"tracks", "name"}), tracksResult, false},
 			"Load track preset",
 			[&model, &engine](Project& project, CommandContext& context)
@@ -1008,8 +1114,16 @@ namespace gnubase::engine
 						"track " + std::to_string(tracks[i]) + " is not of the type " + trackTypeName(type) +
 							" that the preset has there: presets go to tracks of their types, in their order");
 				}
+				// The clips the preset's drum pads play come into the pool, their media files unless the project has
+				// them.
+				const ObjectId firstNew = project.nextId;
+				TrackCopier copier(preset, project, {}, 0, nullptr);
 				for (size_t i = 0; i < tracks.size(); ++i)
-					applyPreset(model, project, tracks[i], preset, sources[i], context);
+					applyPreset(model, project, tracks[i], preset, sources[i], copier, context);
+				for (const ObjectId media : copier.addedMedia())
+					context.emit("media.added", {{"media", toJson(project.media.at(media))}});
+				for (auto clip = project.clips.lower_bound(firstNew); clip != project.clips.end(); ++clip)
+					context.emit("clip.added", {{"clip", toJson(clip->second)}});
 				return Json{{"tracks", tracks}};
 			});
 		model.addEdit(engine,
@@ -1035,8 +1149,9 @@ namespace gnubase::engine
 		engine.registerCommand(
 			{"track.export", 1,
 				"Exports tracks as a track archive (Export Selected Tracks, reference manual pp. 205-206): a "
-				"DAWproject file with the tracks, a folder with the tracks inside it, their channels, events and "
-				"automation, which track.import imports into other projects and other applications open as a project. "
+				"DAWproject file with the tracks, a folder with the tracks inside it, their channels, events, patterns "
+				"and automation, which track.import imports into other projects and other applications open as a "
+				"project. "
 				"The project's sample rate, tempo, time signatures, fader top and busses come along so that positions, "
 				"volumes and routing mean the same. copyMedia (default true) copies the media files into the archive, "
 				"otherwise it refers to them where they are. Marker and ruler tracks can be exported; tempo, "
@@ -1058,46 +1173,73 @@ namespace gnubase::engine
 		engine.registerCommand(
 			{"track.importSources", 1,
 				"The tracks of a DAWproject file that track.import can import from: a track archive (track.export) or "
-				"a project. Each with its id in the file, name, type, parent (the folder it is in, or 0) and whether "
-				"track.import can import it (importable), from top to bottom; the file's project settings as "
-				"project.get has them, to compare them with the project's (Project Settings, reference manual p. 205): "
-				"name, sampleRate, frameRate and startTime; and the sample rates of its media files, each once from "
-				"the lowest (mediaSampleRates), as media.conform converts those at another rate than the project's "
-				"(Convert Sample Rate). Extracts no media files.",
-				objectSchema({{"path", stringSchema}}, {"path"}),
+				"a project. Each with its id in the file, name, type, parent (the folder it is in, or 0), whether "
+				"track.import can import it (importable), and the sample rates of the media files its events and its "
+				"sampler's or drum machine's samples play, each once from the lowest (mediaSampleRates), as "
+				"media.conform converts those at another rate than the project's (Convert Sample Rate); from top to "
+				"bottom. With range {start, end} only the events that track.import brings with that range: what "
+				"starts from start up to end, in samples at the project's sample rate from the file's start (Range, "
+				"reference manual p. 204). And the file's project settings as project.get has them, to compare them "
+				"with the project's (Project Settings, p. 205): name, sampleRate, frameRate and startTime. Extracts no "
+				"media files.",
+				objectSchema(
+					{{"path", stringSchema},
+						{"range", objectSchema({{"start", samplesSchema}, {"end", samplesSchema}}, {"start", "end"})}},
+					{"path"}),
 				objectSchema(
 					{{"tracks",
 						 {{"type", "array"},
 							 {"items",
 								 objectSchema({{"id", idSchema}, {"name", stringSchema}, {"type", stringSchema},
-												  {"parent", idSchema}, {"importable", booleanSchema}},
-									 {"id", "name", "type", "parent", "importable"})}}},
+												  {"parent", idSchema}, {"importable", booleanSchema},
+												  {"mediaSampleRates", {{"type", "array"}, {"items", numberSchema}}}},
+									 {"id", "name", "type", "parent", "importable", "mediaSampleRates"})}}},
 						{"project",
 							objectSchema({{"name", stringSchema}, {"sampleRate", numberSchema},
 											 {"frameRate", stringSchema}, {"startTime", numberSchema}},
-								{"name", "sampleRate", "frameRate", "startTime"})},
-						{"mediaSampleRates", {{"type", "array"}, {"items", numberSchema}}}},
-					{"tracks", "project", "mediaSampleRates"}),
+								{"name", "sampleRate", "frameRate", "startTime"})}},
+					{"tracks", "project"}),
 				true},
-			[](CommandContext& context)
+			[&model](CommandContext& context)
 			{
-				const Project file = load(fs::u8path(context.parameters().at("path").get<std::string>()), false);
+				const Json& parameters = context.parameters();
+				const auto range = rangeOf(parameters);
+				const Project file = load(fs::u8path(parameters.at("path").get<std::string>()), false);
+				std::map<ObjectId, std::set<double>> rates;
+				if (range)
+				{
+					// What track.import brings with the range: the file at the project's rate, as it imports it.
+					const Project& project = model.project();
+					Project placed = file;
+					const Json none = Json::object();
+					CommandContext inner(none);
+					if (placed.sampleRate != project.sampleRate)
+						changeSampleRate(placed, project.sampleRate, inner);
+					std::set<ObjectId> every;
+					for (const auto& [id, track] : placed.trackById)
+						every.insert(id);
+					place(placed, project, 0, range, every, {});
+					rates = mediaSampleRatesByTrack(placed);
+				}
+				else
+				{
+					rates = mediaSampleRatesByTrack(file);
+				}
 				Json tracks = Json::array();
 				for (const ObjectId id : file.trackOrder())
 				{
 					const Track& track = file.trackById.at(id);
+					std::vector<double> each;
+					if (const auto found = rates.find(id); found != rates.end())
+						each.assign(found->second.begin(), found->second.end());
 					tracks.push_back({{"id", id}, {"name", track.name}, {"type", trackTypeName(track.type)},
-						{"parent", track.parent}, {"importable", importable(track.type)}});
+						{"parent", track.parent}, {"importable", importable(track.type)}, {"mediaSampleRates", each}});
 				}
-				std::set<double> rates;
-				for (const auto& [id, media] : file.media)
-					rates.insert(media.sampleRate);
 				return Json{{"tracks", std::move(tracks)},
 					{"project",
 						{{"name", file.name}, {"sampleRate", file.sampleRate},
 							{"frameRate", time::frameRateName(file.setup.frameRate)},
-							{"startTime", file.setup.startTime}}},
-					{"mediaSampleRates", std::vector<double>(rates.begin(), rates.end())}};
+							{"startTime", file.setup.startTime}}}};
 			});
 		model.addEdit(engine,
 			{"track.import", 1,
@@ -1113,17 +1255,21 @@ namespace gnubase::engine
 				"for its copy within the limit of marker tracks); new tracks below a track inside it go below it "
 				"instead; an audio, instrument or MIDI track gives the track its events and parts as existing says (On "
 				"Import on Existing Tracks: replace replaces the track's, add adds them, version, the default, puts "
-				"them into a new version, which the tracks imported onto get with one ID), with its other versions "
-				"after the track's (versions that share an ID in the file share one here, and one with the name of one "
-				"of the track's gets a name of its own), its settings and its automation, and the track keeps its name "
-				"and buttons, all in the track's time base. events (default true) brings their events, parts, markers "
-				"and track versions, settings (default true) their channel settings and inserts, automation (default "
-				"true) their automation, replacing the track's; without automation, a track that events or settings "
-				"are imported onto loses its automation (p. 204). position (Import Position) puts the events where "
-				"they were in the file's timecode (absolute, the default: moved by the difference of the project start "
-				"times), as far from the project start as from the file's (relative), or as far from the cursor "
-				"(cursor); refused if they would start before the project start. range {start, end} imports only what "
-				"starts from start up to end, in samples at the project's sample rate from the file's start (Range). "
+				"them into a new version, which the tracks imported onto get together), with its other versions after "
+				"the track's, its settings and its automation, and the track keeps its name and buttons, all in the "
+				"track's time base. The version IDs of the file become new ones, shared by the versions that shared "
+				"one there, on new tracks too; the new version of a track imported onto gets the ID its source's "
+				"active version has, so that the tracks imported onto get one ID when their sources played versions "
+				"that shared one, and a version with the name of one of the track's gets a name of its own. events "
+				"(default true) brings their events, parts, patterns, markers and track versions, settings (default "
+				"true) "
+				"their channel settings and inserts, automation (default true) their automation, replacing the "
+				"track's; without automation, a track that events or settings are imported onto loses its automation "
+				"(p. 204). position (Import Position) puts the events where they were in the file's timecode "
+				"(absolute, the default: moved by the difference of the project start times), as far from the project "
+				"start as from the file's (relative), or as far from the cursor (cursor); refused if they would start "
+				"before the project start. range {start, end} imports only what starts from start up to end, in "
+				"samples at the project's sample rate from the file's start (Range). "
 				"The project's length grows to the end of what is imported, up to 24 hours (p. 204). The buttons "
 				"(mute, solo, listen, monitor, record enable) of new tracks are off and automation reads, as these "
 				"states aren't imported (p. 200). Routing between the imported tracks stays; sends and outputs to "
@@ -1156,13 +1302,7 @@ namespace gnubase::engine
 			[&model](Project& project, CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
-				std::optional<std::pair<time::Samples, time::Samples>> range;
-				if (parameters.contains("range"))
-				{
-					range.emplace(parameters.at("range").at("start").get<time::Samples>(),
-						parameters.at("range").at("end").get<time::Samples>());
-					require(range->first < range->second, "range must end after its start");
-				}
+				const auto range = rangeOf(parameters);
 				Project file = load(fs::u8path(parameters.at("path").get<std::string>()));
 				const Json none = Json::object();
 				CommandContext inner(none); // for the parts of the import, which announces what changed at the end
@@ -1235,7 +1375,8 @@ namespace gnubase::engine
 					index = static_cast<size_t>(std::find(list.begin(), list.end(), folder) - list.begin()) + 1;
 				}
 				const Project before = project;
-				Copied copied = copyTracks(file, project, tracks, options, parent, index, replacedMarkers);
+				VersionIds versionIds(project);
+				Copied copied = copyTracks(file, project, tracks, options, parent, index, replacedMarkers, &versionIds);
 				// The project's end moves after what the import brings (the note on Import Position, p. 204).
 				std::set<ObjectId> copies;
 				for (const auto& [source, copy] : copied.copies)
@@ -1253,7 +1394,9 @@ namespace gnubase::engine
 					ObjectId copy = 0;
 					ObjectId track = 0;
 					bool merge = false;
+					int version = 0; // the ID the track's new version gets: its source's active version's here
 				};
+				const bool newVersions = options.events && existing == Existing::Version;
 				std::vector<Destination> onto;
 				std::vector<ObjectId> merged;
 				std::set<ObjectId> sources;
@@ -1278,21 +1421,32 @@ namespace gnubase::engine
 					require(std::find(copied.tracks.begin(), copied.tracks.end(), copy) != copied.tracks.end(),
 						"track " + std::to_string(source) +
 							" of the file is inside a folder that is imported: it comes along with the folder");
-					onto.push_back({copy, id, merges(type)});
-					if (merges(type))
+					const bool merge = merges(type);
+					onto.push_back({copy, id, merge,
+						merge && newVersions ? versionIds.of(file.trackById.at(source).activeVersion) : 0});
+					if (merge)
 						merged.push_back(id);
 				}
-				// The new versions of the tracks imported onto share an ID, as versions made together do.
-				if (options.events && existing == Existing::Version && !merged.empty())
+				// The tracks imported onto get their new versions together, each with the ID its source's active
+				// version has here, so that the versions that shared an ID in the file share one (p. 233): one ID when
+				// the tracks played versions that shared one there.
+				if (newVersions && !merged.empty())
+				{
 					model.runEdit("trackVersion.add", project, {{"tracks", merged}}, inner);
-				std::map<int, int> versionIds;
+					for (const Destination& destination : onto)
+						if (destination.merge)
+						{
+							Track& track = project.trackById.at(destination.track);
+							track.versions.back().id = destination.version; // the new version, which is active
+							track.activeVersion = destination.version;
+						}
+				}
 				for (const Destination& destination : onto)
 				{
 					if (destination.merge)
 					{
 						copied.tracks.erase(std::find(copied.tracks.begin(), copied.tracks.end(), destination.copy));
-						mergeTrack(
-							model, project, destination.copy, destination.track, options, existing, versionIds, inner);
+						mergeTrack(model, project, destination.copy, destination.track, options, existing, inner);
 					}
 					else
 					{

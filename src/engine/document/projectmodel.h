@@ -253,6 +253,8 @@ namespace gnubase::engine
 		bool m_automationFollowsEvents = false;    // a setting, not part of the project
 		std::optional<RangeClipboard> m_clipboard; // range.copy and range.cut
 		std::function<std::string(ObjectId)> m_slotStatus;
+		// What the chord pads' remote keys and chordPads.listen keep about the project, cleared when another one opens.
+		std::function<void(CommandContext& context)> m_chordPadsOpened;
 		// what automation.copy copied, for automation.paste
 		std::optional<AutomationClipboard> m_automationClipboard;
 		rt::SnapshotPublisher<RenderSnapshot> m_snapshots;

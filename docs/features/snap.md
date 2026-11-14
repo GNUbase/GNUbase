@@ -89,10 +89,11 @@ the project start. The sample grids count from the project start, as the samples
   nearer to zero. A split only looks inside the event, and only at events the position cuts. The file is read on the
   command thread; a file that can't be read leaves the position as it is. `snap.zeroCrossings` moves positions on
   tracks the same way, inside the audio event that plays there on the first of the tracks where one plays: the event
-  display's selection range edges (p. 285, [tools.md](tools.md)). The event that plays is unmuted, within its audio
-  part, which isn't muted, and where events overlap (takes on lanes, the stack of #99) the one in front; of two at
-  the same place in the stack (pieces of a split from projects before #1189) the one with the higher id, as in
-  playback. A position moves only to where that event plays (`zeroCrossingBetween`): strictly inside it and its part,
+  display's selection range edges (p. 285, [tools.md](tools.md)). The event that plays is within its audio part,
+  which isn't muted, and where events overlap (takes on lanes, the stack of #99) the one in front; of two at the same
+  place in the stack (pieces of a split from projects before #1189) the one with the higher id, as in playback. A
+  muted event plays nothing; as in playback, it hides nothing with `editing.treatMutedAudioLikeDeleted` on (the
+  default), and with it off keeps its place in the stack, where nothing plays on its track ([comping.md](comping.md)). A position moves only to where that event plays (`zeroCrossingBetween`): strictly inside it and its part,
   and not under an event in front of it, so that a range's edge never lands on audio that doesn't play there (#1086);
   a frame of a file at another sample rate that rounds back onto such a bound goes a sample inside it (#1179).
 - **What is heard** (#1179). The crossing is always one of the file of the event that plays in front. In a warped or
@@ -153,7 +154,8 @@ shuffling forwards, backwards, to the end and to the front, its errors and a loc
   crossings of a real file, not when sizing moves the contents or the file is missing; a split near an event's start
   still splits it, and one just outside an event leaves it alone; `snap.zeroCrossings` inside an event, outside it and
   on tracks without audio, and following the event in front, not a muted one, nor one outside its part or in a muted
-  part; a position moving only to where that event plays, not past its part's end, under an event in front of it, nor
+  part; with `editing.treatMutedAudioLikeDeleted` off, a muted event in front keeps the event behind it from moving a
+  position, which goes to the next track's event, and bounds where that event plays; a position moving only to where that event plays, not past its part's end, under an event in front of it, nor
   between two such events; of the two overlapping pieces of a split event the one playback plays in front, in the
   overlap and just before it; a position kept strictly inside a part whose start a file at another sample rate rounds a
   crossing onto.

@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/midi/midivalues.h"
 
+#include <algorithm>
+#include <cmath>
+
 namespace gnubase::engine::midi
 {
 	uint32_t scaleUp(uint32_t value, int fromBits, int toBits)
@@ -27,5 +30,36 @@ namespace gnubase::engine::midi
 	uint32_t scaleDown(uint32_t value, int fromBits, int toBits)
 	{
 		return value >> (fromBits - toBits);
+	}
+
+	namespace
+	{
+		constexpr double g_center = g_pitchBendCenter;
+		constexpr double g_maximum = 4294967295.0;
+
+		uint32_t rounded(double value)
+		{
+			return static_cast<uint32_t>(std::llround(std::clamp(value, 0.0, g_maximum)));
+		}
+	}
+
+	double bendToSemitones(uint32_t bend, double range)
+	{
+		return (static_cast<double>(bend) - g_center) / g_center * range;
+	}
+
+	uint32_t semitonesToBend(double semitones, double range)
+	{
+		return rounded(g_center + (semitones / range * g_center));
+	}
+
+	double controllerToUnit(uint32_t value)
+	{
+		return static_cast<double>(value) / g_maximum;
+	}
+
+	uint32_t controllerFromUnit(double value)
+	{
+		return rounded(value * g_maximum);
 	}
 }

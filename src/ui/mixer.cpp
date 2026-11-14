@@ -110,12 +110,11 @@ namespace gnubase::ui
 				element.RemoveAttribute("checked");
 		}
 
-		// Whether a color, "#rrggbb", is bright: by its relative luminance (WCAG 2.2), dark text over it has more
-		// contrast than light text.
-		bool bright(const std::string& color)
+		// WCAG 2.2's relative luminance of a color as "#rrggbb" (upper or lower case), nothing for other text.
+		std::optional<double> relativeLuminance(const std::string& color)
 		{
 			if (color.size() != 7 || color[0] != '#')
-				return false;
+				return std::nullopt;
 			const auto digit = [](char c)
 			{
 				const int lower = std::tolower(static_cast<unsigned char>(c));
@@ -130,12 +129,18 @@ namespace gnubase::ui
 				const int high = digit(color.at(1 + (2 * i)));
 				const int low = digit(color.at(2 + (2 * i)));
 				if (high < 0 || low < 0)
-					return false;
+					return std::nullopt;
 				const double channel = ((high * 16) + low) / 255.0;
 				luminance +=
 					weights.at(i) * (channel <= 0.04045 ? channel / 12.92 : std::pow((channel + 0.055) / 1.055, 2.4));
 			}
-			return luminance > 0.179; // where black and white text have the same contrast
+			return luminance;
+		}
+
+		// Whether a color is bright: black text over it has more contrast than white text.
+		bool bright(const std::string& color)
+		{
+			return relativeLuminance(color).value_or(0.0) > 0.179; // where black and white text have the same contrast
 		}
 
 		bool endsWith(const std::string& text, const std::string& end)
@@ -355,7 +360,9 @@ namespace gnubase::ui
 			const Json color = track.value("color", Json());
 			result.push_back({channel->first, track.at("id").get<uint64_t>(),
 				trackType(track.at("type").get<std::string>()), track.at("name").get<std::string>(), channel->second,
-				track.value("picture", std::string()), color.is_string() ? color.get<std::string>() : std::string()});
+				track.value("picture", std::string()),
+				color.is_string() && relativeLuminance(color.get<std::string>()).has_value() ? color.get<std::string>()
+																							 : std::string()});
 		}
 		busses("output");
 		return result;

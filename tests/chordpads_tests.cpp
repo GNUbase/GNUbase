@@ -4,6 +4,8 @@
 // record, step input, pads dragged onto tracks and the pads' remote keys on a MIDI input.
 #include "engine/document/chordpads.h"
 #include "engine/engine.h"
+#include "engine/midi/padvoices.h"
+#include "engine/midifile/smf.h"
 #include "mcp/server.h"
 #include "platform/audio/device.h"
 #include "platform/hosttime.h"
@@ -14,11 +16,17 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <array>
+#include <cctype>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
+#include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
+#include <thread>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -70,6 +78,12 @@ namespace
 		for (const Json& pad : pads.at("pads"))
 			result.push_back(pad.at("chord").get<std::string>());
 		return result;
+	}
+
+	std::vector<std::vector<int>> sorted(std::vector<std::vector<int>> notes)
+	{
+		std::sort(notes.begin(), notes.end());
+		return notes;
 	}
 
 	Json pad(Client& client, int index)
@@ -295,6 +309,16 @@ TEST_CASE("the root key, presets and the chord track's chords fill the pads", "[
 	// The degrees and the assistant's levels are the loaded preset's scale's.
 	CHECK(pads.at("pads")[0].at("degree") == "i");
 	CHECK(pads.at("pads")[2].at("degree") == "III");
+	// Enh. Shift (p. 1363): spelled with flats.
+	CHECK(chordpads::withFlats("F#m7/C#") == "Gbm7/Db");
+	CHECK(chordpads::withFlats("C7(#9)") == "C7(#9)");
+	CHECK(chordpads::withFlats("E#") == "F");
+	CHECK(pads.at("pads")[0].at("spelled") == "Dm");
+	// And the Nashville numbers (p. 1390).
+	CHECK(pads.at("pads")[0].at("nashville") == "1m");
+	CHECK(pads.at("pads")[2].at("nashville") == "3");
+	CHECK(pads.at("pads")[5].at("nashville") == "6\xC2\xB0");
+	CHECK(pads.at("pads")[7].at("nashville") == "");
 	const Json afterDm = run(client, "chordPads.assistant", {{"kind", "list"}, {"chord", "Dm"}});
 	const auto f = std::find_if(afterDm.at("suggestions").begin(), afterDm.at("suggestions").end(),
 		[](const Json& suggestion) { return suggestion.at("chord") == "F"; });
@@ -325,6 +349,127 @@ TEST_CASE("the root key, presets and the chord track's chords fill the pads", "[
 	CHECK_THAT(reject(client, "chordPads.set", {{"remoteStart", 60}, {"remoteEnd", 50}}), ContainsSubstring("remote"));
 }
 
+TEST_CASE("piano and guitar players voice the pads in their styles, and the selected player plays", "[unit]")
+{
+	// Reference manual pp. 1376-1377: the Player Settings pane's players.
+	Engine engine;
+	Client client(engine);
+	const auto voiced = [](const std::string& name, const std::string& library, const std::string& style)
+	{
+		midi::VoicingStyle voicing;
+		voicing.library = library;
+		voicing.style = style;
+		return midi::voiceChord(chord(name), {0, false}, {}, voicing);
+	};
+	Json pads = run(client, "chordPads.get");
+	REQUIRE(pads.at("players").size() == 1);
+	CHECK(pads.at("players")[0].at("library") == "basic");
+	CHECK(pads.at("player") == 0);
+	run(client, "chordPads.addPlayer", {{"library", "piano"}});
+	pads = run(client, "chordPads.get");
+	CHECK(pads.at("player") == 1);
+	CHECK(pads.at("players")[1].at("name") == "Piano Player");
+	CHECK(pads.at("pads")[0].at("pitches") == voiced("C", "piano", ""));
+	run(client, "chordPads.setPlayer", {{"style", "fourNote"}, {"name", "Keys"}});
+	CHECK(pad(client, 0).at("pitches") == voiced("C", "piano", "fourNote"));
+	CHECK(run(client, "chordPads.get").at("players")[1].at("name") == "Keys");
+	CHECK_THAT(reject(client, "chordPads.set", {{"octaveOffset", 1}}), ContainsSubstring("basic player"));
+	CHECK_THAT(reject(client, "chordPads.setPlayer", {{"style", "modernJazz"}}), ContainsSubstring("voicing style"));
+	run(client, "chordPads.addPlayer", {{"library", "guitar"}, {"style", "threeString"}});
+	CHECK(pad(client, 4).at("pitches") == voiced("G", "guitar", "threeString"));
+	// The voicing modifiers invert the selected player's voicing, and only its (p. 1378).
+	run(client, "chordPads.modify", {{"pads", {4}}, {"voicing", 1}});
+	CHECK(pad(client, 4).at("pitches") == chordpads::inverted(voiced("G", "guitar", "threeString"), 1));
+	CHECK(pad(client, 4).at("voicings") == std::vector<int>{0, 0, 1});
+	run(client, "chordPads.set", {{"player", 1}});
+	CHECK(pad(client, 4).at("voicing") == 0);
+	run(client, "chordPads.set", {{"player", 2}});
+	// Back to the basic player, whose octave offset changes its voicings only.
+	run(client, "chordPads.set", {{"player", 0}, {"octaveOffset", 1}});
+	CHECK(pad(client, 0).at("pitches") == std::vector<int>{60, 72, 76, 79});
+	run(client, "chordPads.removePlayer", {{"player", 1}});
+	pads = run(client, "chordPads.get");
+	CHECK(pads.at("players").size() == 2);
+	CHECK(pads.at("players")[1].at("library") == "guitar");
+	CHECK(pads.at("player") == 0);
+	run(client, "chordPads.removePlayer", {{"player", 1}});
+	CHECK_THAT(reject(client, "chordPads.removePlayer"), ContainsSubstring("keep one player"));
+	CHECK_THAT(reject(client, "chordPads.set", {{"player", 3}}), ContainsSubstring("no chord pads player"));
+	// A preset with players brings them back; a scale-based one loads the basic player alone.
+	run(client, "chordPads.addPlayer", {{"library", "piano"}});
+	run(client, "chordPads.savePreset", {{"name", "Two"}});
+	run(client, "chordPads.loadPreset", {{"preset", "major"}});
+	CHECK(run(client, "chordPads.get").at("players").size() == 1);
+	run(client, "chordPads.loadPreset", {{"preset", "Two"}, {"load", "players"}});
+	pads = run(client, "chordPads.get");
+	CHECK(pads.at("players").size() == 2);
+	CHECK(pads.at("player") == 1);
+	// A file from before the players keeps its octave offset.
+	Project project;
+	chordPadsFromJson(project, {{"octaveOffset", -2}});
+	REQUIRE(project.chordPads.players.size() == 1);
+	CHECK(project.chordPads.players[0].octaveOffset == -2);
+}
+
+TEST_CASE("the user's own chord pads presets are saved, listed, loaded and deleted", "[unit]")
+{
+	// Reference manual pp. 1348, 1371: Save Preset keeps the chords and the player, Previous and Next Preset step
+	// through the list that chordPads.presets gives.
+	Engine engine;
+	Client client(engine);
+	std::vector<std::string> names = run(client, "chordPads.presets").at("presets").get<std::vector<std::string>>();
+	CHECK(names == std::vector<std::string>{"major", "minor", "dorian", "phrygian", "lydian", "mixolydian", "locrian"});
+	run(client, "chordPads.loadPreset", {{"preset", "dorian"}, {"root", 2}});
+	run(client, "chordPads.assign", {{"assignments", {{{"pad", 8}, {"chord", "A7"}}}}});
+	run(client, "chordPads.modify", {{"pads", {1}}, {"voicing", 1}});
+	run(client, "chordPads.set", {{"octaveOffset", -1}});
+	const Json saved = run(client, "chordPads.get").at("pads");
+	const auto steps = run(client, "history.get").at("position");
+	run(client, "chordPads.savePreset", {{"name", "Song"}});
+	CHECK(run(client, "history.get").at("position") == steps); // a preset is no change to the project
+	names = run(client, "chordPads.presets").at("presets").get<std::vector<std::string>>();
+	CHECK(names.back() == "Song");
+	CHECK_THAT(reject(client, "chordPads.savePreset", {{"name", "major"}}), ContainsSubstring("built-in"));
+	CHECK_THAT(reject(client, "chordPads.savePreset", {{"name", ""}}), ContainsSubstring("name"));
+
+	// Loaded, it brings back the chords pad by pad with their voicings, the root key, the scale and the player.
+	run(client, "chordPads.loadPreset", {{"preset", "major"}});
+	run(client, "chordPads.loadPreset", {{"preset", "Song"}, {"load", "chords"}});
+	CHECK(run(client, "chordPads.get").at("pads") != saved); // the player isn't loaded
+	CHECK(run(client, "chordPads.get").at("octaveOffset") == 0);
+	run(client, "chordPads.loadPreset", {{"preset", "Song"}, {"load", "players"}});
+	const Json loaded = run(client, "chordPads.get");
+	CHECK(loaded.at("pads") == saved);
+	CHECK(loaded.at("rootKey") == 2);
+	CHECK(loaded.at("preset") == "Song");
+	CHECK(loaded.at("pads")[2].at("degree") == "III"); // in D dorian
+
+	// Deleted, it is gone.
+	run(client, "chordPads.deletePreset", {{"name", "Song"}});
+	CHECK(run(client, "chordPads.presets").at("presets").size() == 7);
+	CHECK_THAT(reject(client, "chordPads.loadPreset", {{"preset", "Song"}}), ContainsSubstring("no chord pads preset"));
+	CHECK_THAT(reject(client, "chordPads.deletePreset", {{"name", "Song"}}), ContainsSubstring("no chord pads preset"));
+}
+
+TEST_CASE("a user preset loaded in another project brings back its players without their tracks", "[unit]")
+{
+	// Presets are the user's, for every project; track ids are each project's.
+	Engine engine;
+	Client client(engine);
+	const auto track = run(client, "track.add", {{"type", "instrument"}}).at("track").at("id").get<ObjectId>();
+	run(client, "chordPads.addPlayer", {{"library", "piano"}, {"track", track}});
+	run(client, "chordPads.savePreset", {{"name", "Tracked"}});
+	run(client, "project.new");
+	run(client, "track.add", {{"type", "audio"}});
+	run(client, "chordPads.loadPreset", {{"preset", "Tracked"}, {"load", "players"}});
+	const Json players = run(client, "chordPads.get").at("players");
+	REQUIRE(players.size() == 2);
+	CHECK(players[1].at("library") == "piano");
+	CHECK(players[0].at("track") == 0);
+	CHECK(players[1].at("track") == 0);
+	run(client, "chordPads.deletePreset", {{"name", "Tracked"}});
+}
+
 TEST_CASE("the chord assistant suggests chords after a pad's and shows the circle of fifths", "[unit]")
 {
 	Engine engine;
@@ -348,6 +493,54 @@ TEST_CASE("the chord assistant suggests chords after a pad's and shows the circl
 	const Json minor = run(client, "chordPads.assistant", {{"kind", "circle"}, {"minor", true}});
 	CHECK(minor.at("outer")[0] == Json{{"chord", "C"}, {"degree", "III"}});
 	CHECK(minor.at("inner")[0] == Json{{"chord", "Am"}, {"degree", "i"}});
+}
+
+TEST_CASE("the Proximity assistant and the List assistant's cadence types", "[unit]")
+{
+	// Reference manual pp. 1373-1374 (#1089).
+	Engine engine;
+	Client client(engine);
+	const Json near = run(client, "chordPads.assistant", {{"kind", "proximity"}, {"chord", "C"}}).at("suggestions");
+	REQUIRE(near.size() == 24);
+	const auto distanceOf = [&near](const std::string& name)
+	{
+		for (const Json& suggestion : near)
+			if (suggestion.at("chord") == name)
+				return suggestion.at("distance").get<int>();
+		return -1;
+	};
+	// A chord that shares two notes is nearest, one with a seventh a step further, one that shares one note further.
+	CHECK(distanceOf("Am") == 1);
+	CHECK(distanceOf("Em") == 1);
+	CHECK(distanceOf("Cmaj7") == 2);
+	CHECK(distanceOf("F") == 2);
+	CHECK(near.front().at("distance") == 1);
+	CHECK(near.back().at("distance") >= near.front().at("distance"));
+	for (const Json& suggestion : near)
+		CHECK(suggestion.contains("level"));
+
+	// Cadence types keep the chords of one harmonic function in the key: the dominant's are on V and vii.
+	const Json dominant =
+		run(client, "chordPads.assistant", {{"kind", "list"}, {"chord", "C"}, {"cadenceType", "dominant"}})
+			.at("suggestions");
+	REQUIRE_FALSE(dominant.empty());
+	for (const Json& suggestion : dominant)
+	{
+		std::string numeral;
+		for (const char letter : suggestion.at("degree").get<std::string>())
+			if (letter == 'I' || letter == 'V' || letter == 'i' || letter == 'v')
+				numeral += static_cast<char>(std::toupper(static_cast<unsigned char>(letter)));
+		INFO(suggestion.at("chord"));
+		CHECK((numeral == "V" || numeral == "VII"));
+	}
+	const Json tonic = run(client, "chordPads.assistant", {{"kind", "list"}, {"chord", "G"}, {"cadenceType", "tonic"}})
+						   .at("suggestions");
+	CHECK(
+		std::any_of(tonic.begin(), tonic.end(), [](const Json& suggestion) { return suggestion.at("chord") == "C"; }));
+	CHECK(
+		std::none_of(tonic.begin(), tonic.end(), [](const Json& suggestion) { return suggestion.at("chord") == "F"; }));
+	CHECK_THAT(reject(client, "chordPads.assistant", {{"kind", "list"}, {"chord", "C"}, {"cadenceType", "plagal"}}),
+		ContainsSubstring("cadenceType"));
 }
 
 TEST_CASE("triggered pads play into all MIDI inputs, one channel per voice, and are recorded", "[integration]")
@@ -446,6 +639,675 @@ TEST_CASE("a MIDI input's notes on the remote keys trigger the pads while the re
 	CHECK(send(0x90, 60, 100) == std::vector<std::vector<int>>{{0x90, 60, 100}});
 	// D1 plays Dm.
 	CHECK(send(0x90, 38, 70).size() == 4);
+	CHECK(send(0x80, 38, 0).size() == 4);
+
+	// Filter Notes (reference manual p. 1379): the keys of unassigned pads play nothing, the others still themselves.
+	run(client, "chordPads.set", {{"filterNotes", true}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(send(0x90, 47, 100).empty());
+	CHECK(send(0x80, 47, 0).empty());
+	CHECK(send(0x90, 60, 100) == std::vector<std::vector<int>>{{0x90, 60, 100}});
+	// Latch Chords (p. 1386): a key's chord plays until the key comes again; its note-off ends nothing.
+	run(client, "chordPads.set", {{"latch", true}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(send(0x90, 36, 80).size() == 4);
+	CHECK(send(0x80, 36, 0).empty());
+	CHECK(sorted(send(0x90, 36, 80)) == sorted({{0x83, 53, 0}, {0x82, 65, 0}, {0x81, 69, 0}, {0x80, 72, 0}}));
+	CHECK(send(0x80, 36, 0).empty());
+	// With Chord Pad Output Mode off the pads play only into tracks whose MIDI input is the chord pads.
+	run(client, "chordPads.set", {{"outputMode", false}, {"latch", false}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(send(0x90, 36, 80).empty());
+	CHECK(send(0x80, 36, 0).empty());
+	run(client, "channel.set", {{"channel", rig.channel}, {"midiInput", "chordPads"}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(send(0x90, 36, 80).size() == 4);
+	CHECK(send(0x80, 36, 0).size() == 4);
+	CHECK(send(0x90, 60, 100).empty()); // the other keys don't reach it
+}
+
+namespace
+{
+	// A rig with two MIDI inputs, Keys and Other, and the pads' remote on.
+	struct RemoteRig
+	{
+		RemoteRig() : rig(backends())
+		{
+			run(rig.client, "midi.ports"); // opens the inputs
+			keys = backend->openOutput("Keys");
+			other = backend->openOutput("Other");
+			run(rig.client, "chordPads.set", {{"remote", true}});
+			run(rig.client, "audio.render", {{"frames", 64}});
+		}
+
+		std::vector<std::unique_ptr<gnubase::midi::Backend>> backends()
+		{
+			auto dummy = std::make_unique<gnubase::midi::DummyBackend>();
+			backend = dummy.get();
+			backend->addLoopback("Keys");
+			backend->addLoopback("Other");
+			std::vector<std::unique_ptr<gnubase::midi::Backend>> midi;
+			midi.push_back(std::move(dummy));
+			return midi;
+		}
+
+		// Sends a note from the input and returns what the instrument played.
+		std::vector<std::vector<int>> send(uint8_t status, uint8_t pitch, uint8_t velocity, bool fromOther = false)
+		{
+			gnubase::audio::MidiMessage message;
+			message.size = 3;
+			message.bytes = {status, pitch, velocity};
+			constexpr gnubase::HostTime second = 1000000000;
+			(fromOther ? other : keys)->send(message, gnubase::hostTime() - second);
+			return rig.played();
+		}
+
+		// Renders until the engine got what the remote keys did and the condition holds.
+		bool until(const std::function<bool()>& condition)
+		{
+			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+			while (std::chrono::steady_clock::now() < deadline)
+			{
+				run(rig.client, "audio.render", {{"frames", 64}});
+				if (condition())
+					return true;
+				std::this_thread::sleep_for(std::chrono::milliseconds(5));
+			}
+			return false;
+		}
+
+		gnubase::midi::DummyBackend* backend = nullptr;
+		Rig rig;
+		std::unique_ptr<gnubase::midi::Output> keys;
+		std::unique_ptr<gnubase::midi::Output> other;
+	};
+}
+
+TEST_CASE(
+	"remote keys light the pads, change them with the chord modifiers and come from the chosen input", "[integration]")
+{
+	// Reference manual pp. 1355, 1386-1387.
+	RemoteRig remote;
+	Client& client = remote.rig.client;
+	CHECK(remote.send(0x90, 36, 90).size() == 4);
+	const Json lit = waitFor(client, "chordPads.triggered");
+	REQUIRE(lit.is_object());
+	CHECK(lit.at("pad") == 0);
+	CHECK(lit.at("on") == true);
+	CHECK(lit.at("remote") == true);
+	CHECK(remote.send(0x80, 36, 0).size() == 4);
+	CHECK(waitFor(client, "chordPads.triggered").at("on") == false);
+
+	// The chord modifiers, once activated: a key above the pads' range transposes the pad last triggered.
+	const Json pads = run(client, "chordPads.get");
+	CHECK(pads.at("modifiers") == false);
+	CHECK(pads.at("modifierKeys").at("transposeUp") == 53);
+	CHECK(remote.send(0x90, 53, 90) == std::vector<std::vector<int>>{{0x90, 53, 90}}); // off: it plays itself
+	run(client, "chordPads.set", {{"modifiers", true}, {"modifierKeys", {{"transposeUp", 55}}}});
+	CHECK(run(client, "chordPads.get").at("modifierKeys").at("transposeUp") == 55);
+	// It plays the pad it changed while it is down, the pad's key being up.
+	CHECK(remote.send(0x90, 55, 90).empty());
+	CHECK(remote.until([&] { return pad(client, 0).at("chord") == "C#"; }));
+	CHECK(remote.until([&] { return remote.rig.played().size() == 4; }));
+	size_t offs = remote.send(0x80, 55, 0).size(); // the pad's note-offs
+	CHECK(remote.until(
+		[&]
+		{
+			offs += remote.rig.played().size();
+			return offs == 4;
+		}));
+	CHECK_THAT(
+		reject(client, "chordPads.set", {{"modifierKeys", {{"transposeUp", 128}}}}), ContainsSubstring("modifierKeys"));
+
+	// Transpose All Pads by a controller, from its rest at 0 up to 6 semitones, Modify All Pad Voicings by pitch bend,
+	// 3 inversions either way from its middle (p. 1387): as one undo step per gesture.
+	run(client, "chordPads.set",
+		{{"controlSources", {"pitchBend", "none", "controller"}}, {"controlNumbers", {1, 1, 74}}});
+	run(client, "audio.render", {{"frames", 64}});
+	const auto steps = run(client, "history.get").at("position").get<int64_t>();
+	const auto control = [&](uint8_t status, uint8_t number, uint8_t value)
+	{
+		gnubase::audio::MidiMessage message;
+		message.size = 3;
+		message.bytes = {status, number, value};
+		constexpr gnubase::HostTime second = 1000000000;
+		remote.keys->send(message, gnubase::hostTime() - second);
+		return remote.rig.played();
+	};
+	CHECK(control(0xB0, 74, 127).empty());
+	CHECK(remote.until([&] { return pad(client, 1).at("chord") == "G#m"; })); // Dm 6 semitones up
+	control(0xB0, 74, 106);
+	CHECK(remote.until([&] { return pad(client, 1).at("chord") == "Gm"; }));
+	CHECK(run(client, "history.get").at("position").get<int64_t>() == steps + 1);
+	CHECK(control(0xE0, 0, 127).empty());
+	CHECK(remote.until([&] { return pad(client, 1).at("voicing") == 3; }));
+	CHECK(control(0xB0, 7, 100) == std::vector<std::vector<int>>{}); // another controller plays on: no note
+
+	// Only the chosen MIDI input triggers the pads; the others' notes play themselves.
+	run(client, "chordPads.set", {{"remotePort", "dummy/in/Other"}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(remote.send(0x90, 38, 90) == std::vector<std::vector<int>>{{0x90, 38, 90}});
+	CHECK(remote.send(0x90, 38, 90, true).size() == 4);
+}
+
+TEST_CASE("Assign from MIDI Input and MIDI Learn take the next notes from a MIDI input", "[integration]")
+{
+	// Reference manual pp. 1360, 1386-1388.
+	RemoteRig remote;
+	Client& client = remote.rig.client;
+	run(client, "chordPads.listen", {{"assign", 3}});
+	CHECK(run(client, "chordPads.get").at("listening") == Json{{"assign", 3}});
+	// The notes play as they are, and once they are all released their chord goes onto the pad.
+	CHECK(remote.send(0x90, 62, 90).size() == 1);
+	remote.send(0x90, 65, 90);
+	remote.send(0x90, 69, 90);
+	remote.send(0x80, 62, 0);
+	CHECK(pad(client, 3).at("chord") == "F");
+	remote.send(0x80, 65, 0);
+	remote.send(0x80, 69, 0);
+	CHECK(remote.until([&] { return pad(client, 3).at("chord") == "Dm"; }));
+	CHECK(remote.until([&] { return run(client, "chordPads.get").at("listening").is_null(); }));
+	// The remote keys trigger the pads again.
+	CHECK(remote.send(0x90, 36, 90).size() == 4);
+	remote.send(0x80, 36, 0);
+
+	// MIDI Learn: two keys make the pads' remote range, one a modifier's key.
+	run(client, "chordPads.listen", {{"learn", "range"}});
+	remote.send(0x90, 59, 90);
+	remote.send(0x90, 48, 90);
+	CHECK(remote.until([&] { return run(client, "chordPads.get").at("remoteStart") == 48; }));
+	CHECK(run(client, "chordPads.get").at("remoteEnd") == 59);
+	run(client, "chordPads.listen", {{"learn", "nextVoicing"}});
+	remote.send(0x90, 72, 90);
+	CHECK(remote.until([&] { return run(client, "chordPads.get").at("modifierKeys").at("nextVoicing") == 72; }));
+	// And one that ends without a note.
+	run(client, "chordPads.listen", {{"learn", "range"}});
+	run(client, "chordPads.listen");
+	CHECK(run(client, "chordPads.get").at("listening").is_null());
+	CHECK_THAT(reject(client, "chordPads.listen", {{"assign", 40}}), ContainsSubstring("no chord pad"));
+}
+
+TEST_CASE("pads triggered while recording become chord events on the record-enabled chord track", "[integration]")
+{
+	// Reference manual p. 1368.
+	RemoteRig remote;
+	Client& client = remote.rig.client;
+	run(client, "track.add", {{"type", "chord"}});
+	run(client, "transport.record");
+	run(client, "audio.render", {{"frames", 4800}});
+	run(client, "chordPads.trigger", {{"pad", 3}});
+	run(client, "chordPads.trigger", {{"pad", 3}, {"on", false}});
+	CHECK(run(client, "chord.get").at("events").empty()); // the chord track isn't record-enabled
+	run(client, "chord.setTrack", {{"recordEnable", true}});
+	run(client, "chordPads.trigger", {{"pad", 3}});
+	run(client, "chordPads.trigger", {{"pad", 3}, {"on", false}});
+	Json events = run(client, "chord.get").at("events");
+	REQUIRE(events.size() == 1);
+	CHECK(events[0].at("chord") == "F");
+	CHECK(events[0].at("position") > 0);
+	// From the remote keys too.
+	run(client, "audio.render", {{"frames", 48000}});
+	remote.send(0x90, 40, 90);
+	CHECK(remote.until([&] { return run(client, "chord.get").at("events").size() == 2; }));
+	CHECK(run(client, "chord.get").at("events")[1].at("chord") == "G");
+	remote.send(0x80, 40, 0);
+	run(client, "transport.stop");
+}
+
+TEST_CASE("Chord Pad Output Mode and the Chord Pads MIDI input route the pads' chords", "[integration]")
+{
+	// Reference manual pp. 1347, 1366-1367: on, the pads play into every track that monitors or is record-enabled;
+	// off, only into those whose input routing is the chord pads, which take nothing else, and record them.
+	Rig rig;
+	Client& client = rig.client;
+	CHECK(run(client, "chordPads.get").at("outputMode") == true);
+	run(client, "chordPads.trigger", {{"pad", 0}});
+	run(client, "chordPads.trigger", {{"pad", 0}, {"on", false}});
+	CHECK(rig.played().size() == 8);
+	run(client, "chordPads.set", {{"outputMode", false}});
+	run(client, "audio.render", {{"frames", 64}});
+	run(client, "chordPads.trigger", {{"pad", 0}});
+	run(client, "chordPads.trigger", {{"pad", 0}, {"on", false}});
+	CHECK(rig.played().empty());
+	run(client, "channel.set", {{"channel", rig.channel}, {"midiInput", "chordPads"}});
+	run(client, "audio.render", {{"frames", 64}});
+	run(client, "chordPads.trigger", {{"pad", 0}});
+	CHECK(rig.played().size() == 4);
+	run(client, "chordPads.trigger", {{"pad", 0}, {"on", false}});
+	CHECK(rig.played().size() == 4);
+	run(client, "midi.keyboard", {{"messages", {{{"bytes", {0x90, 60, 100}}}}}});
+	CHECK(rig.played().empty());
+	// On, they play into it as well.
+	run(client, "chordPads.set", {{"outputMode", true}});
+	run(client, "audio.render", {{"frames", 64}});
+	run(client, "chordPads.trigger", {{"pad", 0}});
+	CHECK(rig.played().size() == 4);
+	run(client, "chordPads.trigger", {{"pad", 0}, {"on", false}});
+	CHECK(rig.played().size() == 4);
+	CHECK_THAT(reject(client, "chordPads.set", {{"overlaps", "sometimes"}}), ContainsSubstring("overlaps"));
+}
+
+TEST_CASE("several players on several tracks: each track plays its player's voicings", "[integration]")
+{
+	// Reference manual p. 1377 (#1089): the track of a player gets its voicings, the others the selected player's.
+	Rig rig;
+	Client& client = rig.client;
+	const Json added = run(client, "track.add", {{"type", "instrument"}});
+	const auto pianoTrack = added.at("track").at("id").get<ObjectId>();
+	const auto pianoChannel = added.at("channel").at("id").get<ObjectId>();
+	run(client, "channel.set", {{"channel", pianoChannel}, {"instrument", "noteProbe"}, {"monitor", true}});
+	run(client, "chordPads.addPlayer", {{"library", "piano"}, {"style", "fourNote"}, {"track", pianoTrack}});
+	run(client, "chordPads.set", {{"player", 0}});
+	run(client, "audio.render", {{"frames", 64}});
+	run(client, "midi.capture", {{"start", true}});
+	// The pitches each channel's instrument played.
+	const auto played = [&]
+	{
+		run(client, "audio.render", {{"frames", 64}});
+		std::map<ObjectId, std::vector<int>> pitches;
+		const Json capture = run(client, "midi.capture");
+		for (const Json& captured : capture.at("captured"))
+			if ((captured.at("bytes").at(0).get<int>() & 0xF0) == 0x90)
+				pitches[captured.at("channel").get<ObjectId>()].push_back(captured.at("bytes").at(1).get<int>());
+		for (auto& [channel, notes] : pitches)
+			std::sort(notes.begin(), notes.end());
+		return pitches;
+	};
+	midi::VoicingStyle piano;
+	piano.library = "piano";
+	piano.style = "fourNote";
+	std::vector<int> fourNote = midi::voiceChord(chord("C"), {0, false}, {}, piano);
+	std::sort(fourNote.begin(), fourNote.end());
+	const Json result = run(client, "chordPads.trigger", {{"pad", 0}});
+	CHECK(result.at("pitches") == std::vector<int>{48, 60, 64, 67}); // the selected player's
+	std::map<ObjectId, std::vector<int>> pitches = played();
+	CHECK(pitches[rig.channel] == std::vector<int>{48, 60, 64, 67});
+	CHECK(pitches[pianoChannel] == fourNote);
+	run(client, "chordPads.trigger", {{"pad", 0}, {"on", false}});
+	played();
+
+	// One player a track, and only MIDI and instrument tracks.
+	const Json players = run(client, "chordPads.get").at("players");
+	CHECK(players.at(1).at("track") == pianoTrack);
+	CHECK_THAT(reject(client, "chordPads.setPlayer", {{"player", 0}, {"track", pianoTrack}}),
+		ContainsSubstring("another chord pads player"));
+	CHECK_THAT(reject(client, "chordPads.setPlayer", {{"track", 9999}}), ContainsSubstring("MIDI or instrument track"));
+	// Without a track the player plays only while it is selected.
+	run(client, "chordPads.setPlayer", {{"player", 1}, {"track", 0}});
+	run(client, "audio.render", {{"frames", 64}});
+	run(client, "chordPads.trigger", {{"pad", 0}});
+	pitches = played();
+	CHECK(pitches[rig.channel] == std::vector<int>{48, 60, 64, 67});
+	CHECK(pitches[pianoChannel] == std::vector<int>{48, 60, 64, 67});
+	run(client, "chordPads.trigger", {{"pad", 0}, {"on", false}});
+}
+
+TEST_CASE("the pattern player mode plays a MIDI part's pattern with the notes of the chord that plays", "[integration]")
+{
+	// Reference manual pp. 1378-1380 (#1089): at 120 BPM and 48 kHz a quarter note is 24000 samples.
+	Rig rig;
+	Client& client = rig.client;
+	const auto midiTrack = run(client, "track.add", {{"type", "midi"}}).at("track").at("id").get<ObjectId>();
+	const auto part = run(client, "midiPart.add", {{"track", midiTrack}, {"position", 0}, {"length", 2 * g_beatTicks}})
+						  .at("part")
+						  .at("id")
+						  .get<ObjectId>();
+	// Four voices, one per eighth note: the lowest pitch is the bass, the highest the top voice.
+	Json notes = Json::array();
+	for (int i = 0; i < 4; ++i)
+		notes.push_back({{"position", i * g_beatTicks / 2}, {"length", g_beatTicks / 4}, {"pitch", 40 + (3 * i)},
+			{"velocity", 0.5}});
+	run(client, "note.add", {{"part", part}, {"notes", notes}});
+	CHECK_THAT(reject(client, "chordPads.setPattern", {{"part", 9999}}), ContainsSubstring("no MIDI part"));
+	run(client, "chordPads.setPattern", {{"part", part}});
+	Json pads = run(client, "chordPads.get");
+	CHECK(pads.at("mode") == "pattern");
+	CHECK(pads.at("pattern").at("voices") == 4);
+	CHECK(pads.at("pattern").at("length") == 2 * g_beatTicks);
+	REQUIRE(pads.at("pattern").at("notes").size() == 4);
+
+	// C plays 48 60 64 67 as voices 0 to 3: the bass at once, an eighth note (12000 samples) apart.
+	const auto ons = [](const std::vector<std::vector<int>>& played)
+	{
+		std::vector<int> pitches;
+		for (const std::vector<int>& note : played)
+			if ((note[0] & 0xF0) == 0x90)
+				pitches.push_back(note[1]);
+		return pitches;
+	};
+	// The windows end between the notes, which come a block or two after the trigger, as MIDI input does.
+	run(client, "chordPads.trigger", {{"pad", 0}});
+	run(client, "audio.render", {{"frames", 1000}});
+	CHECK(ons(rig.played()) == std::vector<int>{48});
+	run(client, "audio.render", {{"frames", 16872}}); // up to 18000
+	CHECK(ons(rig.played()) == std::vector<int>{60});
+	run(client, "audio.render", {{"frames", 11936}}); // 30000
+	CHECK(ons(rig.played()) == std::vector<int>{64});
+	run(client, "audio.render", {{"frames", 11936}}); // 42000
+	CHECK(ons(rig.played()) == std::vector<int>{67});
+	// Two beats later it starts over.
+	run(client, "audio.render", {{"frames", 11936}}); // 54000
+	CHECK(ons(rig.played()) == std::vector<int>{48});
+	// Releasing the pad ends it.
+	run(client, "chordPads.trigger", {{"pad", 0}, {"on", false}});
+	rig.played();
+	run(client, "audio.render", {{"frames", 48000}});
+	CHECK(ons(rig.played()).empty());
+
+	// A preset; plain chords again play the chord.
+	run(client, "chordPads.setPattern", {{"preset", "brokenChord"}});
+	CHECK(run(client, "chordPads.get").at("pattern").at("name") == "brokenChord");
+	run(client, "chordPads.set", {{"mode", "plainChords"}});
+	run(client, "audio.render", {{"frames", 64}});
+	run(client, "chordPads.trigger", {{"pad", 0}});
+	CHECK(ons(rig.played()).size() == 4);
+	run(client, "chordPads.trigger", {{"pad", 0}, {"on", false}});
+	// Import from MIDI Loop: a MIDI file's notes (p. 1379).
+	const gnubase::test::TempDir dir;
+	const std::string loop = (dir.path() / "Loop.mid").u8string();
+	midifile::File file;
+	file.ticksPerQuarter = 480;
+	midifile::Track track;
+	for (int i = 0; i < 3; ++i)
+	{
+		const int64_t tick = int64_t{i} * 480;
+		track.events.push_back(midifile::channelEvent(tick, 0x90, static_cast<uint8_t>(50 + i), 100));
+		track.events.push_back(midifile::channelEvent(tick + 240, 0x80, static_cast<uint8_t>(50 + i), 0));
+	}
+	track.end = int64_t{4} * 480;
+	file.tracks.push_back(track);
+	midifile::save(file, loop);
+	run(client, "chordPads.setPattern", {{"file", loop}});
+	Json imported = run(client, "chordPads.get").at("pattern");
+	CHECK(imported.at("name") == "Loop");
+	CHECK(imported.at("voices") == 3);
+	CHECK(imported.at("length") == 4 * g_beatTicks);
+	CHECK(imported.at("notes")[1].at("position") == g_beatTicks);
+	CHECK(imported.at("notes")[1].at("length") == g_beatTicks / 2);
+	CHECK_THAT(reject(client, "chordPads.setPattern", {{"file", (dir.path() / "None.mid").u8string()}}),
+		ContainsSubstring("can't read the MIDI loop"));
+	// A part of fewer than three voices is no pattern.
+	const auto two = run(client, "midiPart.add", {{"track", midiTrack}, {"position", 0}, {"length", g_beatTicks}})
+						 .at("part")
+						 .at("id")
+						 .get<ObjectId>();
+	run(client, "note.add",
+		{{"part", two},
+			{"notes",
+				{{{"position", 0}, {"length", 100}, {"pitch", 40}, {"velocity", 0.5}},
+					{{"position", 100}, {"length", 100}, {"pitch", 41}, {"velocity", 0.5}}}}});
+	CHECK_THAT(reject(client, "chordPads.setPattern", {{"part", two}}), ContainsSubstring("3 to 5 voices"));
+}
+
+TEST_CASE("the sections player mode plays a pad's chord section by section from the section keys", "[integration]")
+{
+	// Reference manual pp. 1381-1385, 1389 (#1089): C plays 48 60 64 67, the sections from the lowest note up.
+	RemoteRig remote;
+	Client& client = remote.rig.client;
+	run(client, "chordPads.set", {{"mode", "sections"}});
+	CHECK(run(client, "chordPads.get").at("sectionKeys") == std::vector<int>{55, 56, 57, 58, 59});
+	run(client, "audio.render", {{"frames", 64}});
+	// The pad's key alone plays nothing; with it down the section keys play its sections.
+	CHECK(remote.send(0x90, 36, 90).empty());
+	CHECK(remote.send(0x90, 55, 80) == std::vector<std::vector<int>>{{0x90, 48, 80}});
+	CHECK(remote.send(0x90, 57, 80) == std::vector<std::vector<int>>{{0x90, 64, 80}});
+	CHECK(remote.send(0x80, 57, 0) == std::vector<std::vector<int>>{{0x80, 64, 0}});
+	// The pad's key going up ends them.
+	CHECK(remote.send(0x80, 36, 0) == std::vector<std::vector<int>>{{0x80, 48, 0}});
+	CHECK(remote.send(0x80, 55, 0).empty());
+	// Without the pad's key down, sections play nothing; chordPads takes the pad triggered last.
+	CHECK(remote.send(0x90, 56, 80).empty());
+	remote.send(0x80, 56, 0);
+	run(client, "chordPads.set", {{"sectionPlay", "chordPads"}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(remote.send(0x90, 56, 80) == std::vector<std::vector<int>>{{0x90, 60, 80}});
+	CHECK(remote.send(0x80, 56, 0) == std::vector<std::vector<int>>{{0x80, 60, 0}});
+	// A muted section plays nothing; a subsection is its section moved.
+	run(client, "chordPads.set",
+		{{"mutedSections", {false, true}}, {"subsectionKeys", {62}}, {"subsectionSections", {3}},
+			{"subsectionOffsets", {12}}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(remote.send(0x90, 56, 80).empty());
+	remote.send(0x80, 56, 0);
+	CHECK(remote.send(0x90, 62, 80) == std::vector<std::vector<int>>{{0x90, 79, 80}});
+	remote.send(0x80, 62, 0);
+	CHECK_THAT(reject(client, "chordPads.set", {{"sectionKeys", {128}}}), ContainsSubstring("sectionKeys"));
+}
+
+TEST_CASE("a remote key's chord held or latched before the sections player mode ends with the key", "[integration]")
+{
+	RemoteRig remote;
+	Client& client = remote.rig.client;
+	const std::vector<std::vector<int>> offs = sorted({{0x83, 48, 0}, {0x82, 60, 0}, {0x81, 64, 0}, {0x80, 67, 0}});
+	CHECK(remote.send(0x90, 36, 90).size() == 4);
+	run(client, "chordPads.set", {{"mode", "sections"}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(sorted(remote.send(0x80, 36, 0)) == offs);
+	// Latched: the key's next press selects the pad for the sections, its off ends the chord.
+	run(client, "chordPads.set", {{"mode", "plainChords"}, {"latch", true}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(remote.send(0x90, 36, 90).size() == 4);
+	CHECK(remote.send(0x80, 36, 0).empty());
+	run(client, "chordPads.set", {{"mode", "sections"}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(remote.send(0x90, 36, 90).empty());
+	CHECK(sorted(remote.send(0x80, 36, 0)) == offs);
+}
+
+TEST_CASE("a remote key's latched chord ends with its next press when the key plays no pad any more", "[integration]")
+{
+	RemoteRig remote;
+	Client& client = remote.rig.client;
+	const std::vector<std::vector<int>> offs = sorted({{0x83, 48, 0}, {0x82, 60, 0}, {0x81, 64, 0}, {0x80, 67, 0}});
+	run(client, "chordPads.set", {{"latch", true}});
+	run(client, "audio.render", {{"frames", 64}});
+	// The remote range moves away from the key that latched the chord.
+	CHECK(remote.send(0x90, 36, 90).size() == 4);
+	CHECK(remote.send(0x80, 36, 0).empty());
+	run(client, "chordPads.set", {{"remoteStart", 60}, {"remoteEnd", 71}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(sorted(remote.send(0x90, 36, 90)) == offs);
+	// The key holds nothing now, so its off goes through as it would without the pads.
+	CHECK(remote.send(0x80, 36, 0) == std::vector<std::vector<int>>{{0x80, 36, 0}});
+	// A section key held in the sections mode latches its section once the player mode changes.
+	run(client, "chordPads.set", {{"remoteStart", 36}, {"remoteEnd", 47}, {"mode", "sections"}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(remote.send(0x90, 36, 90).empty());
+	CHECK(remote.send(0x90, 55, 80) == std::vector<std::vector<int>>{{0x90, 48, 80}});
+	run(client, "chordPads.set", {{"mode", "plainChords"}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(remote.send(0x80, 55, 0).empty());
+	CHECK(remote.send(0x80, 36, 0) == std::vector<std::vector<int>>{{0x80, 36, 0}});
+	CHECK(remote.send(0x90, 55, 80) == std::vector<std::vector<int>>{{0x80, 48, 0}});
+}
+
+TEST_CASE("Select/Mute Player's remote keys select the previous and next player and mute it", "[integration]")
+{
+	// Reference manual p. 1389.
+	RemoteRig remote;
+	Client& client = remote.rig.client;
+	run(client, "chordPads.addPlayer", {{"library", "piano"}});
+	run(client, "chordPads.set", {{"player", 0}, {"playerKeys", {70, 71, 72}}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(remote.send(0x90, 71, 90).empty());
+	remote.send(0x80, 71, 0);
+	CHECK(remote.until([&] { return run(client, "chordPads.get").at("player") == 1; }));
+	remote.send(0x90, 70, 90);
+	CHECK(remote.until([&] { return run(client, "chordPads.get").at("player") == 0; }));
+	remote.send(0x90, 72, 90);
+	CHECK(remote.until([&] { return run(client, "chordPads.get").at("players")[0].at("muted") == true; }));
+	// A muted player plays nothing.
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(remote.send(0x90, 36, 90).empty());
+}
+
+TEST_CASE("the pattern player repeats its pattern on the held chord's voices", "[unit]")
+{
+	// midi::PadPattern on its own: four eighth notes on four voices, two beats long, at 120 BPM and 48 kHz.
+	midi::PadPatternSteps steps;
+	steps.on = true;
+	steps.length = 2 * g_beatTicks;
+	for (int i = 0; i < 4; ++i)
+		steps.steps.at(steps.count++) = {i * g_beatTicks / 2, g_beatTicks / 4, static_cast<uint8_t>(i), 100};
+	midi::PadPattern pattern;
+	gnubase::audio::MidiBuffer pads(256);
+	for (const uint8_t pitch : std::array<uint8_t, 4>{48, 60, 64, 67})
+	{
+		gnubase::audio::MidiMessage on;
+		on.size = 3;
+		on.bytes = {0x90, pitch, 90};
+		pads.add(on);
+	}
+	const double ticksPerFrame = 2.0 * static_cast<double>(g_beatTicks) / 48000.0;
+	std::vector<std::pair<int64_t, int>> ons;
+	for (int64_t block = 0; block < 800; ++block)
+	{
+		pattern.process(pads, steps, 64, ticksPerFrame);
+		for (const gnubase::audio::MidiMessage& message : pads)
+			if ((message.bytes[0] & 0xF0) == 0x90)
+				ons.emplace_back((block * 64) + message.offset, message.bytes[1]);
+		pads.clear();
+	}
+	REQUIRE(ons.size() >= 5);
+	CHECK(ons[0] == std::pair<int64_t, int>{0, 48});
+	CHECK(ons[1].second == 60);
+	CHECK(std::abs(ons[1].first - 12000) <= 1);
+	CHECK(ons[3].second == 67);
+	CHECK(ons[4].second == 48);
+	CHECK(std::abs(ons[4].first - 48000) <= 1);
+}
+
+TEST_CASE("the pattern player passes on the offs of notes it didn't start", "[unit]")
+{
+	midi::PadPatternSteps steps;
+	steps.on = true;
+	steps.length = g_beatTicks;
+	steps.steps.at(steps.count++) = {0, g_beatTicks / 4, 0, 100};
+	midi::PadPattern pattern;
+	gnubase::audio::MidiBuffer pads(16);
+	gnubase::audio::MidiMessage off;
+	off.size = 3;
+	off.bytes = {0x82, 60, 0};
+	off.offset = 5;
+	pads.add(off);
+	pattern.process(pads, steps, 64, 1.0);
+	REQUIRE(pads.size() == 1);
+	CHECK(pads.begin()->bytes == off.bytes);
+	CHECK(pads.begin()->offset == 5);
+}
+
+TEST_CASE("chords held or latched while the player mode changes to pattern end on the track", "[integration]")
+{
+	Rig rig;
+	Client& client = rig.client;
+	const std::vector<std::vector<int>> offs = sorted({{0x83, 48, 0}, {0x82, 60, 0}, {0x81, 64, 0}, {0x80, 67, 0}});
+	run(client, "chordPads.trigger", {{"pad", 0}});
+	CHECK(rig.played().size() == 4);
+	run(client, "chordPads.setPattern", {{"preset", "brokenChord"}});
+	run(client, "audio.render", {{"frames", 64}});
+	run(client, "chordPads.trigger", {{"pad", 0}, {"on", false}});
+	CHECK(sorted(rig.played()) == offs);
+	// Latched, the pad's next trigger ends it.
+	run(client, "chordPads.set", {{"mode", "plainChords"}, {"latch", true}});
+	run(client, "audio.render", {{"frames", 64}});
+	run(client, "chordPads.trigger", {{"pad", 0}});
+	CHECK(rig.played().size() == 4);
+	run(client, "chordPads.set", {{"mode", "pattern"}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(run(client, "chordPads.trigger", {{"pad", 0}}).at("on") == false);
+	CHECK(sorted(rig.played()) == offs);
+}
+
+TEST_CASE("with Snap Playback a note-off in the block that snaps its note-on comes after it", "[unit]")
+{
+	// A note-on and its off in one block whose next grid position is at frame 40.
+	midi::PadSnap snap;
+	gnubase::audio::MidiBuffer pads(16);
+	gnubase::audio::MidiMessage note;
+	note.size = 3;
+	note.bytes = {0x91, 60, 90};
+	note.offset = 2;
+	pads.add(note);
+	note.bytes = {0x81, 60, 0};
+	note.offset = 3;
+	pads.add(note);
+	snap.process(pads, true, true, 1000, 64, [](int64_t) { return int64_t{1040}; });
+	std::vector<std::pair<int, uint32_t>> out;
+	for (const gnubase::audio::MidiMessage& message : pads)
+		out.emplace_back(message.bytes[0], message.offset);
+	CHECK(out == std::vector<std::pair<int, uint32_t>>{{0x91, 40}, {0x81, 40}});
+}
+
+TEST_CASE("with Snap Playback to Musical Grid a pad's chord starts at the next grid position", "[integration]")
+{
+	// Reference manual p. 1349: a quarter note grid at 120 BPM is 24000 samples at 48 kHz.
+	Rig rig;
+	Client& client = rig.client;
+	run(client, "quantize.set", {{"preset", "1/4"}});
+	run(client, "chordPads.set", {{"snapPlayback", true}});
+	CHECK(run(client, "chordPads.get").at("snapPlayback") == true);
+	// While the transport stands it plays at once.
+	run(client, "chordPads.trigger", {{"pad", 0}});
+	CHECK(rig.played().size() == 4);
+	run(client, "chordPads.trigger", {{"pad", 0}, {"on", false}});
+	CHECK(rig.played().size() == 4);
+	run(client, "transport.play");
+	run(client, "audio.render", {{"frames", 4800}});
+	rig.played();
+	run(client, "chordPads.trigger", {{"pad", 5}});
+	CHECK(rig.played().empty()); // a tenth of a second into the beat
+	run(client, "audio.render", {{"frames", 12000}});
+	CHECK(rig.played().empty());
+	run(client, "audio.render", {{"frames", 7104}}); // up to just past the second beat
+	CHECK(rig.played().size() == 4);
+	// An off before the grid position ends the chord right after it starts.
+	run(client, "chordPads.trigger", {{"pad", 5}, {"on", false}});
+	run(client, "chordPads.trigger", {{"pad", 4}});
+	run(client, "chordPads.trigger", {{"pad", 4}, {"on", false}});
+	CHECK(rig.played().size() == 4); // the offs of the Am chord
+	run(client, "audio.render", {{"frames", 24000}});
+	CHECK(rig.played().size() == 8); // G's ons and offs
+	run(client, "transport.stop");
+}
+
+TEST_CASE(
+	"a chord played over another holds, ties or stops the first one's notes, and latched pads toggle", "[integration]")
+{
+	// Reference manual pp. 1379, 1386: C (48 60 64 67) and Em (52 64 67 71) share E3 and G3.
+	Rig rig;
+	Client& client = rig.client;
+	const auto trigger = [&](int pad, bool on)
+	{
+		run(client, "chordPads.trigger", {{"pad", pad}, {"on", on}});
+		return sorted(rig.played());
+	};
+	CHECK(run(client, "chordPads.get").at("overlaps") == "holdFirst");
+	// Hold First: the common notes go on sounding, the first chord's others until its off.
+	CHECK(trigger(0, true).size() == 4);
+	CHECK(trigger(2, true) == sorted({{0x93, 52, 100}, {0x90, 71, 100}}));
+	CHECK(trigger(0, false) == sorted({{0x83, 48, 0}, {0x82, 60, 0}}));
+	CHECK(trigger(2, false) == sorted({{0x83, 52, 0}, {0x81, 64, 0}, {0x80, 67, 0}, {0x80, 71, 0}}));
+	// Legato: the first chord's other notes end, the common ones go on.
+	run(client, "chordPads.set", {{"overlaps", "legato"}});
+	CHECK(trigger(0, true).size() == 4);
+	CHECK(trigger(2, true) == sorted({{0x93, 52, 100}, {0x90, 71, 100}, {0x83, 48, 0}, {0x82, 60, 0}}));
+	CHECK(trigger(0, false).empty());
+	CHECK(trigger(2, false).size() == 4);
+	// Stop First: all of the first chord's notes end, and the second's all start.
+	run(client, "chordPads.set", {{"overlaps", "stopFirst"}});
+	CHECK(trigger(0, true).size() == 4);
+	CHECK(trigger(2, true).size() == 8);
+	CHECK(trigger(0, false).empty());
+	CHECK(trigger(2, false).size() == 4);
+	// Latch Chords: an off ends nothing, the pad's next trigger ends its chord.
+	run(client, "chordPads.set", {{"latch", true}});
+	CHECK(trigger(0, true).size() == 4);
+	CHECK(trigger(0, false).empty());
+	CHECK(run(client, "chordPads.trigger", {{"pad", 0}}).at("on") == false);
+	CHECK(rig.played().size() == 4);
+	CHECK(trigger(0, true).size() == 4);
+	CHECK(trigger(2, true).size() == 8); // Stop First ends the latched chord
+	CHECK(trigger(2, true).size() == 4);
 }
 
 TEST_CASE("step input and pads dragged onto tracks make chord events and MIDI parts", "[unit]")
@@ -612,6 +1474,103 @@ TEST_CASE("the step position stays within the longest project, however far stepB
 	CHECK(run(client, "chordPads.get").at("stepPosition") == g_bar);
 }
 
+TEST_CASE("moving the step input position is no undo step, and undoing a step takes it back", "[unit]")
+{
+	// #1089: moving the step input cursor is navigation, like moving the project cursor.
+	Engine engine;
+	Client client(engine);
+	const auto historyPosition = [&client] { return run(client, "history.get").at("position").get<int64_t>(); };
+	const auto stepPosition = [&client] { return run(client, "chordPads.get").at("stepPosition").get<int64_t>(); };
+	run(client, "chordPads.set", {{"stepInput", true}, {"moveInsert", true}});
+	const int64_t steps = historyPosition();
+	run(client, "chordPads.set", {{"stepBars", 3}});
+	run(client, "chordPads.set", {{"stepBars", -1}});
+	CHECK(stepPosition() == 2 * g_bar);
+	run(client, "chordPads.set", {{"stepPosition", g_bar}});
+	CHECK(historyPosition() == steps);
+	// #1174: a negative position is refused.
+	CHECK_THAT(reject(client, "chordPads.set", {{"stepPosition", -1}}), ContainsSubstring("stepPosition must be 0 to"));
+
+	// #1174: one undo takes back a step that adds the chord track: the chord, the track and the step position.
+	run(client, "chordPads.step", {{"pad", 0}});
+	CHECK(historyPosition() == steps + 1);
+	CHECK(run(client, "project.get").at("tracks").size() == 1);
+	CHECK(stepPosition() == 2 * g_bar);
+	run(client, "history.undo");
+	CHECK(run(client, "chord.get").at("events").empty());
+	CHECK(run(client, "project.get").at("tracks").empty());
+	CHECK(stepPosition() == g_bar);
+
+	// And a Move Insert step: the chord, the moved events and the step position; redo brings them back.
+	run(client, "chord.add", {{"position", g_bar}, {"chord", "Dm"}});
+	run(client, "chord.add", {{"position", 2 * g_bar}, {"chord", "G"}});
+	run(client, "chordPads.step", {{"pad", 0}});
+	Json chords = run(client, "chord.get");
+	REQUIRE(chords.at("events").size() == 3);
+	CHECK(chords.at("events")[0].at("chord") == "C");
+	CHECK(chords.at("events")[2].at("position") == 3 * g_bar);
+	CHECK(stepPosition() == 2 * g_bar);
+	run(client, "history.undo");
+	chords = run(client, "chord.get");
+	REQUIRE(chords.at("events").size() == 2);
+	CHECK(chords.at("events")[0].at("position") == g_bar);
+	CHECK(chords.at("events")[1].at("position") == 2 * g_bar);
+	CHECK(stepPosition() == g_bar);
+	run(client, "history.redo");
+	CHECK(run(client, "chord.get").at("events").size() == 3);
+	CHECK(stepPosition() == 2 * g_bar);
+
+	// Undoing an edit after the cursor moved leaves the cursor where it is.
+	run(client, "chordPads.set", {{"stepBars", 4}});
+	run(client, "chordPads.set", {{"velocity", 50}});
+	run(client, "history.undo");
+	CHECK(stepPosition() == 6 * g_bar);
+	// The position only goes along with an edit when the edit's command moved it.
+	run(client, "chordPads.set", {{"velocity", 60}, {"stepBars", -1}});
+	CHECK(stepPosition() == 5 * g_bar);
+	run(client, "history.undo");
+	CHECK(stepPosition() == 6 * g_bar);
+}
+
+TEST_CASE("step input stays in range at very low sample rates and refuses to move far chord events", "[unit]")
+{
+	// #1174: at 100 Hz the longest project's ticks would leave int64_t; step input stops where it does at 8 kHz, the
+	// lowest rate project.set takes (#1126), and a project at 100 Hz does too.
+	Engine engine;
+	Client client(engine);
+	run(client, "project.set", {{"sampleRate", g_lowestSampleRate}});
+	run(client, "chordPads.set", {{"stepInput", true}, {"stepBars", INT64_MAX}});
+	const auto last = run(client, "chordPads.get").at("stepPosition").get<int64_t>();
+	CHECK(last > 1000000 * g_bar);
+	CHECK(last % g_bar == 0);
+	run(client, "chordPads.set", {{"stepPosition", g_bar}});
+	run(client, "chordPads.step", {{"pad", 0}});
+	CHECK(run(client, "chord.get").at("events")[0].at("position") == g_bar);
+	CHECK(run(client, "chordPads.get").at("stepPosition") == 2 * g_bar);
+	Project project;
+	project.sampleRate = 100.0;
+	chordPadsFromJson(project, {{"stepPosition", INT64_MAX}});
+	CHECK(project.chordPads.stepPosition == last + g_bar);
+	project.sampleRate = 0.0;
+	chordPadsFromJson(project, {{"stepPosition", INT64_MAX}});
+	CHECK(project.chordPads.stepPosition == last + g_bar);
+
+	// Move Insert refuses to move a chord event past the longest project's end a bar on, in musical and in linear time
+	// base, and changes nothing.
+	run(client, "chord.add", {{"position", INT64_MAX - 1}, {"chord", "F"}});
+	run(client, "chordPads.set", {{"moveInsert", true}, {"stepPosition", 0}});
+	CHECK_THAT(reject(client, "chordPads.step", {{"pad", 4}}), ContainsSubstring("past the longest project's end"));
+	CHECK(run(client, "chord.get").at("events").size() == 2);
+	CHECK(run(client, "chord.get").at("events")[1].at("position") == INT64_MAX - 1);
+	Engine linearEngine;
+	Client linear(linearEngine);
+	run(linear, "track.add", {{"type", "chord"}, {"timeBase", "linear"}});
+	run(linear, "chord.add", {{"position", INT64_MAX - 1}, {"chord", "F"}});
+	run(linear, "chordPads.set", {{"stepInput", true}, {"moveInsert", true}});
+	CHECK_THAT(reject(linear, "chordPads.step", {{"pad", 4}}), ContainsSubstring("past the longest project's end"));
+	CHECK(run(linear, "chord.get").at("events").size() == 1);
+}
+
 TEST_CASE("chord pads from a file with no pads, a reference below -1 or a step position out of range keep sound values",
 	"[unit]")
 {
@@ -650,4 +1609,214 @@ TEST_CASE("the chord pads are saved with the project", "[integration]")
 	Client client(engine);
 	run(client, "project.load", {{"path", path}});
 	CHECK(run(client, "chordPads.get") == saved);
+}
+
+namespace
+{
+	// Sends a MIDI message of any size from the rig's Keys input and renders.
+	void sendBytes(RemoteRig& remote, const std::vector<uint8_t>& bytes)
+	{
+		gnubase::audio::MidiMessage message;
+		message.size = static_cast<uint8_t>(bytes.size());
+		std::copy(bytes.begin(), bytes.end(), message.bytes.begin());
+		constexpr gnubase::HostTime second = 1000000000;
+		remote.keys->send(message, gnubase::hostTime() - second);
+		remote.rig.played();
+	}
+}
+
+TEST_CASE("MIDI Learn takes the Player Remote Control tab's keys and what moves all pads", "[integration]")
+{
+	// Reference manual pp. 1387, 1389 (#1236).
+	RemoteRig remote;
+	Client& client = remote.rig.client;
+	run(client, "chordPads.listen", {{"learn", "sectionKeys"}});
+	// The keys fill the sections one after another and play as they are meanwhile.
+	CHECK(remote.send(0x90, 60, 90) == std::vector<std::vector<int>>{{0x90, 60, 90}});
+	CHECK(remote.until([&] { return run(client, "chordPads.get").at("sectionKeys")[0] == 60; }));
+	// A key pressed again leaves the keys learned so far, and the next new key goes into the next section.
+	for (const uint8_t key : std::array<uint8_t, 5>{61, 60, 62, 63, 64})
+		remote.send(0x90, key, 90);
+	CHECK(remote.until(
+		[&] { return run(client, "chordPads.get").at("sectionKeys") == std::vector<int>{60, 61, 62, 63, 64}; }));
+	CHECK(remote.until([&] { return run(client, "chordPads.get").at("listening").is_null(); }));
+	run(client, "chordPads.listen", {{"learn", "playerKeys"}});
+	for (const uint8_t key : std::array<uint8_t, 3>{70, 71, 72})
+		remote.send(0x90, key, 90);
+	CHECK(remote.until([&] { return run(client, "chordPads.get").at("playerKeys") == std::vector<int>{70, 71, 72}; }));
+
+	// The next control becomes what moves all pads.
+	run(client, "chordPads.listen", {{"learn", "modifyAllTensions"}});
+	CHECK(run(client, "chordPads.get").at("listening") == Json{{"learn", "modifyAllTensions"}});
+	sendBytes(remote, {0xB0, 21, 5});
+	CHECK(remote.until([&] { return run(client, "chordPads.get").at("controlSources")[1] == "controller"; }));
+	CHECK(run(client, "chordPads.get").at("controlNumbers")[1] == 21);
+	CHECK(remote.until([&] { return run(client, "chordPads.get").at("listening").is_null(); }));
+	run(client, "chordPads.listen", {{"learn", "transposeAllPads"}});
+	sendBytes(remote, {0xE0, 0, 64});
+	CHECK(remote.until([&] { return run(client, "chordPads.get").at("controlSources")[2] == "pitchBend"; }));
+	run(client, "chordPads.listen", {{"learn", "modifyAllVoicings"}});
+	sendBytes(remote, {0xD0, 10});
+	CHECK(remote.until([&] { return run(client, "chordPads.get").at("controlSources")[0] == "aftertouch"; }));
+}
+
+TEST_CASE(
+	"a control at rest changes nothing, each gesture is an undo step, and undo starts the steps again", "[integration]")
+{
+	// Reference manual p. 1387 (#1236).
+	RemoteRig remote;
+	Client& client = remote.rig.client;
+	run(client, "chordPads.set",
+		{{"controlSources", {"aftertouch", "pitchBend", "controller"}}, {"controlNumbers", {1, 1, 74}}});
+	run(client, "audio.render", {{"frames", 64}});
+	// Aftertouch at rest leaves the voicings; pressed a third of the way, one inversion up.
+	sendBytes(remote, {0xD0, 0});
+	sendBytes(remote, {0xD0, 42});
+	CHECK(remote.until([&] { return pad(client, 1).at("voicing") != 0; }));
+	CHECK(pad(client, 1).at("voicing") == 1);
+	sendBytes(remote, {0xD0, 0});
+	CHECK(remote.until([&] { return pad(client, 1).at("voicing") == 0; }));
+	// Pitch bend adds the tensions from its middle up: bent up and back to the middle, the chords are as before.
+	const Json chord = pad(client, 1).at("pitches");
+	sendBytes(remote, {0xE0, 0, 64});
+	sendBytes(remote, {0xE0, 0, 127});
+	CHECK(remote.until([&] { return pad(client, 1).at("pitches") != chord; }));
+	sendBytes(remote, {0xE0, 0, 64});
+	CHECK(remote.until([&] { return pad(client, 1).at("pitches") == chord; }));
+
+	// A controller's gesture is one undo step; after a second without it, the next is another.
+	const auto steps = run(client, "history.get").at("position").get<int64_t>();
+	sendBytes(remote, {0xB0, 74, 64});
+	CHECK(remote.until([&] { return pad(client, 1).at("chord") == "Fm"; })); // Dm 3 semitones up
+	sendBytes(remote, {0xB0, 74, 85});
+	CHECK(remote.until([&] { return pad(client, 1).at("chord") == "F#m"; }));
+	CHECK(run(client, "history.get").at("position") == steps + 1);
+	remote.rig.engine.advanceClock(std::chrono::seconds(2));
+	sendBytes(remote, {0xB0, 74, 106});
+	CHECK(remote.until([&] { return pad(client, 1).at("chord") == "Gm"; }));
+	CHECK(run(client, "history.get").at("position") == steps + 2);
+	// Undone, the pads are where the first gesture left them, and the controller's next move goes from there.
+	run(client, "history.undo");
+	CHECK(pad(client, 1).at("chord") == "F#m");
+	sendBytes(remote, {0xB0, 74, 21});
+	CHECK(remote.until([&] { return pad(client, 1).at("chord") == "D#m"; }));
+	run(client, "history.undo");
+	run(client, "history.undo");
+	CHECK(pad(client, 1).at("chord") == "Dm");
+	sendBytes(remote, {0xB0, 74, 0});
+	sendBytes(remote, {0xB0, 74, 21});
+	CHECK(remote.until([&] { return pad(client, 1).at("chord") == "D#m"; }));
+}
+
+TEST_CASE("another project ends Assign from MIDI Input, so the remote keys trigger the pads again", "[integration]")
+{
+	// #1236: what chordPads.listen listens for belongs to the project it was asked in.
+	RemoteRig remote;
+	Client& client = remote.rig.client;
+	run(client, "chordPads.listen", {{"assign", 3}});
+	run(client, "project.new");
+	CHECK(run(client, "chordPads.get").at("listening").is_null());
+	run(client, "chordPads.set", {{"remote", true}});
+	const Json added = run(client, "track.add", {{"type", "instrument"}});
+	run(client, "channel.set",
+		{{"channel", added.at("channel").at("id")}, {"instrument", "noteProbe"}, {"monitor", true}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(remote.send(0x90, 36, 90).size() == 4);
+}
+
+TEST_CASE("the sections player mode's combination waits for the pad key, and sections overlap as Overlaps says",
+	"[integration]")
+{
+	// Reference manual pp. 1382, 1384 (#1236): C plays 48 60 64 67.
+	RemoteRig remote;
+	Client& client = remote.rig.client;
+	run(client, "chordPads.set", {{"mode", "sections"}, {"sectionPlay", "combination"}});
+	run(client, "audio.render", {{"frames", 64}});
+	remote.send(0x90, 36, 90);
+	remote.send(0x80, 36, 0);
+	// A section key first plays nothing until a pad key comes, which plays the section of its own pad.
+	CHECK(remote.send(0x90, 55, 80).empty());
+	const int bass = pad(client, 1).at("pitches")[0].get<int>();
+	CHECK(remote.send(0x90, 37, 90) == std::vector<std::vector<int>>{{0x90, bass, 80}});
+	CHECK(remote.send(0x80, 55, 0) == std::vector<std::vector<int>>{{0x80, bass, 0}});
+	remote.send(0x80, 37, 0);
+
+	// Stop First: the next section ends the one before.
+	run(client, "chordPads.set", {{"sectionPlay", "sections"}, {"overlaps", "stopFirst"}});
+	run(client, "audio.render", {{"frames", 64}});
+	remote.send(0x90, 36, 90);
+	CHECK(remote.send(0x90, 55, 80) == std::vector<std::vector<int>>{{0x90, 48, 80}});
+	std::vector<std::vector<int>> next = remote.send(0x90, 56, 80);
+	std::sort(next.begin(), next.end());
+	CHECK(next == std::vector<std::vector<int>>{{0x80, 48, 0}, {0x90, 60, 80}});
+	remote.send(0x80, 36, 0);
+}
+
+TEST_CASE("with Snap Playback what waits plays when the transport jumps back", "[unit]")
+{
+	// #1236: a note-on snapped to the cycle end, or to a position before a locate backwards, isn't reached.
+	midi::PadSnap snap;
+	gnubase::audio::MidiBuffer pads(16);
+	gnubase::audio::MidiMessage note;
+	note.size = 3;
+	note.bytes = {0x90, 60, 90};
+	note.offset = 2;
+	pads.add(note);
+	const auto grid = [](int64_t) { return int64_t{2000}; };
+	snap.process(pads, true, true, 1000, 64, grid);
+	CHECK(pads.empty());
+	snap.process(pads, true, true, 1064, 64, grid); // on: it still waits
+	CHECK(pads.empty());
+	snap.process(pads, true, true, 500, 64, grid); // a jump back
+	std::vector<std::pair<int, uint32_t>> out;
+	for (const gnubase::audio::MidiMessage& message : pads)
+		out.emplace_back(message.bytes[1], message.offset);
+	CHECK(out == std::vector<std::pair<int, uint32_t>>{{60, 0}});
+}
+
+TEST_CASE(
+	"a player's track goes with the track, and a file's player tracks are its MIDI and instrument tracks", "[unit]")
+{
+	// Reference manual p. 1377 (#1236).
+	Engine engine;
+	Client client(engine);
+	const auto track = run(client, "track.add", {{"type", "instrument"}}).at("track").at("id").get<ObjectId>();
+	run(client, "chordPads.addPlayer", {{"library", "piano"}, {"track", track}});
+	run(client, "track.remove", {{"track", track}});
+	CHECK(run(client, "chordPads.get").at("players")[1].at("track") == 0);
+	run(client, "history.undo");
+	CHECK(run(client, "chordPads.get").at("players")[1].at("track") == track);
+
+	Project project;
+	Track instrument;
+	instrument.id = 7;
+	instrument.type = TrackType::Instrument;
+	project.trackById[7] = instrument;
+	Track audio;
+	audio.id = 8;
+	audio.type = TrackType::Audio;
+	project.trackById[8] = audio;
+	chordPadsFromJson(project, {{"players", {{{"track", 7}}, {{"track", 7}}, {{"track", 8}}, {{"track", 9}}}}});
+	REQUIRE(project.chordPads.players.size() == 4);
+	CHECK(project.chordPads.players[0].track == 7);
+	CHECK(project.chordPads.players[1].track == 0); // one player a track
+	CHECK(project.chordPads.players[2].track == 0); // an audio track
+	CHECK(project.chordPads.players[3].track == 0); // none
+}
+
+TEST_CASE("a user preset keeps the player mode with its pattern", "[unit]")
+{
+	// Reference manual p. 1370 (#1236).
+	Engine engine;
+	Client client(engine);
+	run(client, "chordPads.setPattern", {{"preset", "brokenChord"}});
+	CHECK(run(client, "chordPads.get").at("mode") == "pattern");
+	run(client, "chordPads.savePreset", {{"name", "Broken"}});
+	run(client, "chordPads.setPattern", {{"preset", "eighths"}});
+	run(client, "chordPads.set", {{"mode", "plainChords"}});
+	run(client, "chordPads.loadPreset", {{"preset", "Broken"}, {"load", "players"}});
+	const Json loaded = run(client, "chordPads.get");
+	CHECK(loaded.at("mode") == "pattern");
+	CHECK(loaded.at("pattern").at("name") == "brokenChord");
+	run(client, "chordPads.deletePreset", {{"name", "Broken"}});
 }

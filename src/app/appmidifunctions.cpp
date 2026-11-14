@@ -101,7 +101,19 @@ namespace gnubase::app
 		std::vector<std::pair<std::string, std::string>> attributes;
 		if (track != 0)
 			attributes.emplace_back("track", std::to_string(track));
-		openOnce(window, "articulation-maps.rml", m_articulationMaps, attributes);
+		const bool reused = m_articulationMaps.get() != nullptr && m_articulationMaps->GetParentNode() != nullptr;
+		Rml::ElementDocument& document = openOnce(window, "articulation-maps.rml", m_articulationMaps, attributes);
+		// Open already: now the setup of this track, whose map its Lua selects (#1265), or of none, which hides Assign
+		// to Track as a fresh one does (#1354). For the same track it keeps the map shown.
+		const std::string attribute = track != 0 ? std::to_string(track) : std::string();
+		if (reused && document.GetAttribute<Rml::String>("track", "") != attribute)
+		{
+			if (track != 0)
+				document.SetAttribute("track", attribute);
+			else
+				document.RemoveAttribute("track");
+			document.DispatchEvent("trackchange", Rml::Dictionary());
+		}
 	}
 
 	void AppUi::showArticulationMapError(const engine::Result& result)
@@ -322,7 +334,7 @@ namespace gnubase::app
 
 		// Merge MIDI in Loop (pp. 1119-1120): onto the first selected MIDI or instrument track, or a new one.
 		m_keys.add({"midi.mergeInLoop",
-			"Opens the MIDI Merge Options dialog, which merges the MIDI events between the locators into a new part.",
+			"Opens the MIDI Merge Options dialog, which merges the MIDI events between the locators into new parts.",
 			[this, openFunction](ui::Window& window, Rml::Element* /*zone*/)
 			{
 				Json parameters = Json::object();
@@ -352,9 +364,9 @@ namespace gnubase::app
 			}});
 		m_keys.enableWhen("midi.dissolvePart", hasParts);
 		m_keys.add({"midi.bounceMidi",
-			"Combines the selected MIDI parts of each track into one part with the first one's root key and Global "
-			"Transpose setting, and those whose transpose, velocity or global transpose the notes can't hold into one "
-			"for each.",
+			"Combines the selected MIDI parts of each track into one part with the root key and Global Transpose "
+			"setting they share, or else the project's, and those whose transpose, velocity, root key or Global "
+			"Transpose setting the notes can't hold into one for each.",
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/)
 			{
 				// The engine bounces the parts of one track; several tracks are one undo step.

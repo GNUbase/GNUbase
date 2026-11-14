@@ -461,6 +461,86 @@ TEST_CASE("plugin slots pass every kind of MIDI event on to the plugin", "[unit]
 		REQUIRE(list[0].data[1] == std::size(message));
 		CHECK(std::memcmp(list.bytes(list[0]), message, std::size(message)) == 0);
 	}
+
+	SECTION("per-note expression (#176)")
+	{
+		graph::ProcessEvent expression = midiEvent(Type::NoteExpression, 3, 62, 0);
+		expression.offset = 20;
+		expression.parameter = plugin::expressionId(plugin::NoteExpression::Tuning);
+		expression.parameterValue = -2.5;
+		convert(expression);
+		REQUIRE(list.size() == 1);
+		CHECK(list[0].type == plugin::EventType::NoteExpression);
+		CHECK(list[0].offset == 20);
+		CHECK(list[0].channel == 3);
+		CHECK(list[0].key == 62);
+		CHECK(list[0].noteId == -1);
+		CHECK(list[0].expression == plugin::expressionId(plugin::NoteExpression::Tuning));
+		CHECK(list[0].value == -2.5);
+	}
+}
+
+TEST_CASE("a MIDI effect's note port takes every kind of event in MIDI 2.0 and gives it back as it was", "[unit]")
+{
+	using Type = graph::ProcessEvent::Type;
+	const std::vector<uint8_t> sysex = {0xF0, 0x7D, 0x01, 0x02, 0xF7};
+	std::vector<graph::ProcessEvent> events = {
+		midiEvent(Type::NoteOn, 2, 60, 0),
+		midiEvent(Type::NoteOff, 15, 127, 0),
+		midiEvent(Type::Controller, 1, 7, 0x12345678),
+		midiEvent(Type::PitchBend, 3, 0, 0x80000001),
+		midiEvent(Type::ChannelPressure, 4, 0, 0xFEDCBA98),
+		midiEvent(Type::PolyPressure, 5, 61, 0x00000001),
+		midiEvent(Type::Program, 6, 5, (3U << 7) | 9U),
+		midiEvent(Type::Program, 7, 127, 0xFFFFFFFF),
+		midiEvent(Type::SysEx, 0, 0, 0),
+		midiEvent(Type::Parameter, 0, 0, 0),
+		midiEvent(Type::NoteExpression, 8, 62, 0),
+	};
+	events[0].velocity = 40000;
+	events[1].velocity = 1;
+	events[8].data = sysex.data();
+	events[8].size = static_cast<uint32_t>(sysex.size());
+	events[9].parameter = 3;
+	events[9].parameterValue = 0.25;
+	events[10].parameter = 2;
+	events[10].parameterValue = -0.5;
+
+	plugin::EventList list(16, 64);
+	for (size_t i = 0; i < events.size(); ++i)
+	{
+		events[i].offset = static_cast<uint32_t>(i);
+		plugins::convertEvent(events[i], 64, list, true);
+	}
+	REQUIRE(list.size() == events.size());
+	for (size_t i = 0; i < events.size(); ++i)
+	{
+		INFO("event " << i);
+		const graph::ProcessEvent& sent = events[i];
+		CHECK((list[i].type == plugin::EventType::Midi) == false);
+		graph::ProcessEvent back;
+		REQUIRE(plugins::toGraphEvent(list[i], list, back));
+		CHECK(back.offset == sent.offset);
+		CHECK(back.type == sent.type);
+		CHECK(back.channel == sent.channel);
+		CHECK(back.key == sent.key);
+		CHECK(back.velocity == sent.velocity);
+		CHECK(back.value == sent.value);
+		CHECK(back.parameter == sent.parameter);
+		CHECK(back.parameterValue == sent.parameterValue);
+		CHECK(back.size == sent.size);
+		if (sent.type == Type::SysEx)
+			CHECK(std::equal(back.data, back.data + back.size, sysex.begin()));
+	}
+
+	// MIDI 1.0 and events of other namespaces have no graph event.
+	plugin::Event other;
+	other.type = plugin::EventType::Midi;
+	graph::ProcessEvent back;
+	CHECK(!plugins::toGraphEvent(other, list, back));
+	other.type = plugin::EventType::NoteOn;
+	other.space = 7;
+	CHECK(!plugins::toGraphEvent(other, list, back));
 }
 
 TEST_CASE("a test plugin processes audio through the host process sample-exactly", "[integration]")

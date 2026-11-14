@@ -72,13 +72,37 @@ namespace
 		const Rml::Property* property = element.GetProperty("decorator");
 		return property != nullptr ? property->ToString() : std::string();
 	}
+
+	// The ids of the themes there are, sorted as ui::Themes keeps them.
+	std::vector<std::string> ids(const ui::Themes& themes)
+	{
+		std::vector<std::string> found;
+		for (const ui::Theme& theme : themes.themes())
+			found.push_back(theme.id);
+		return found;
+	}
+
+	// The name the UI shows for a theme; empty for one there isn't.
+	std::string name(const ui::Themes& themes, const std::string& id)
+	{
+		for (const ui::Theme& theme : themes.themes())
+			if (theme.id == id)
+				return theme.name;
+		return {};
+	}
 }
 
 TEST_CASE("GNUbase's themes are the folders in resources/themes with a theme style sheet", "[unit]")
 {
 	const test::FakeUi fake{{{1, "Monitor", {0, 0, 1920, 1080}, {0, 0, 1920, 1080}, 1.0F}}};
 	const ui::Themes themes(resources());
-	CHECK(themes.names() == std::vector<std::string>{"dark", "gnubase", "high-contrast", "light"});
+	CHECK(ids(themes) == std::vector<std::string>{"dark", "gnubase", "high-contrast", "light"});
+	// Each theme carries the name the UI shows for it, so that no document names a theme.
+	CHECK(name(themes, "gnubase") == "GNUbase");
+	CHECK(name(themes, "dark") == "Dark");
+	CHECK(name(themes, "light") == "Light");
+	CHECK(name(themes, "high-contrast") == "High Contrast");
+	CHECK(name(themes, "neon").empty());
 	CHECK(themes.has(ui::g_defaultTheme));
 	CHECK(themes.has("light"));
 	CHECK(!themes.has("neon"));
@@ -96,7 +120,10 @@ TEST_CASE("resources without themes, or a theme style sheet outside its media qu
 	write(temp.path() / "themes" / "neon" / "theme.rcss", "body { color: #ff00ff; }");
 	CHECK_THROWS_WITH(ui::Themes(temp.path()), ContainsSubstring("neon") && ContainsSubstring("@media (theme: neon)"));
 	write(temp.path() / "themes" / "neon" / "theme.rcss", "@media (theme: neon) { body { color: #ff00ff; } }");
-	CHECK(ui::Themes(temp.path()).names() == std::vector<std::string>{"neon"});
+	const ui::Themes neon(temp.path());
+	CHECK(ids(neon) == std::vector<std::string>{"neon"});
+	// A theme without a manifest shows its id.
+	CHECK(name(neon, "neon") == "neon");
 }
 
 TEST_CASE("every document gets the design system and the active theme's colors, fonts and skins", "[unit]")

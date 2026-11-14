@@ -466,15 +466,16 @@ namespace gnubase::engine
 		std::set<ObjectId> changed;
 		if (project.tempo != before)
 		{
-			for (auto& [id, part] : project.midiParts)
-				if (part.position.base == time::TimeBase::Linear && retimePart(part))
-					changed.insert(id);
-			// The linear parts of inactive track versions too, which aren't shared copies.
-			for (auto& [id, track] : project.trackById)
-				for (TrackVersion& version : track.versions)
-					for (MidiPart& part : version.midiParts)
-						if (part.position.base == time::TimeBase::Linear)
-							retimePart(part);
+			// The linear parts of inactive track versions too, which aren't shared copies and so aren't reported.
+			forEveryEventAndPart(
+				project, [](const AudioEvent&, bool) {}, [](const AudioPart&, bool) {},
+				[&](MidiPart& part, bool plays)
+				{
+					if (part.position.base != time::TimeBase::Linear || !retimePart(part))
+						return;
+					if (plays)
+						changed.insert(part.id);
+				});
 		}
 		// Shared copies that now hold different notes, such as copies before and after a tempo event, or a linear and
 		// a musical copy, can't share them all. Copies that still hold the same notes as each other stay shared: the

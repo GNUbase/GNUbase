@@ -9,9 +9,11 @@
 #include "ui/docking.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <optional>
 #include <string>
 #include <vector>
@@ -249,4 +251,205 @@ TEST_CASE("the Track page keeps working after a hidden track is removed", "[ui]"
 	REQUIRE(app.waitUntil([&] { return elements(app, std::nullopt, ".track-visibility-item").size() == 1; }));
 	click(app, std::nullopt, item(guitar.track));
 	REQUIRE(app.waitUntil([&] { return hidden(app) == Json{guitar.track}; }));
+
+	// A frame can take project.get's answer after the undo before trackVisibility.get's, with the visibility from
+	// before it still in hand (#907, #1366): an event with that visibility stands in for it here. The click sends only
+	// the tracks that are there.
+	app.engine().registerCommand({"test.staleVisibility", 1, "Announces the track visibility from before the undo.",
+									 engine::CommandInfo{}.parameters, Json::object(), false},
+		[gone = bass.track](engine::CommandContext& context)
+		{
+			context.emit("trackVisibility.changed",
+				{{"hidden", {gone}}, {"sync", ""}, {"configurations", Json::array()}, {"configuration", ""},
+					{"modified", false}});
+			return Json::object();
+		});
+	app.call("trackVisibility.set", {{"hidden", Json::array()}});
+	app.call("test.staleVisibility");
+	app.shell().step(std::chrono::milliseconds(0));
+	click(app, std::nullopt, item(guitar.track));
+	REQUIRE(app.waitUntil([&] { return hidden(app) == Json{guitar.track}; }));
+}
+
+// #1475: what Update, Delete, Add and Rename Configuration send leaves out the tracks that are gone too, with a
+// visibility from before the undo still in hand, which an event stands in for as above.
+TEST_CASE("the configuration commands send only the tracks that are there", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.setDpRatio(0.8F);
+	app.appUi().showProject();
+	const Added guitar = addTrack(app, "audio", "Guitar");
+	const Added bass = addTrack(app, "audio", "Bass");
+	app.appUi().docking().open("visibility");
+	REQUIRE(app.waitUntil([&] { return elements(app, std::nullopt, ".track-visibility-item").size() == 2; }));
+	app.call("history.undo"); // removes Bass
+	REQUIRE(app.waitUntil([&] { return elements(app, std::nullopt, ".track-visibility-item").size() == 1; }));
+	const auto configurations = [&app] { return app.call("trackVisibility.get").at("configurations"); };
+	const auto choose = [&app](const std::string& selector)
+	{
+		click(app, std::nullopt, "#track-visibility-configurations");
+		click(app, std::nullopt, "#track-visibility-configurations-menu " + selector);
+	};
+	const auto name = [&app](const std::string& text)
+	{
+		REQUIRE(
+			app.waitUntil([&] { return elements(app, std::nullopt, "#visibility-configuration-name").size() == 1; }));
+		app.ui().key(std::nullopt, "Mod+A");
+		app.ui().text(std::nullopt, text);
+		app.ui().key(std::nullopt, "Enter");
+	};
+	// Each configuration and the tracks hidden with the gone track, after what the engine announced.
+	Json stale;
+	app.engine().registerCommand({"test.staleVisibility", 1, "Announces the track visibility from before the undo.",
+									 engine::CommandInfo{}.parameters, Json::object(), false},
+		[&stale](engine::CommandContext& context)
+		{
+			context.emit("trackVisibility.changed", stale);
+			return Json::object();
+		});
+	const auto announceStale = [&]
+	{
+		const Json visibility = app.call("trackVisibility.get");
+		stale = visibility;
+		stale["hidden"] = {guitar.track, bass.track};
+		for (Json& configuration : stale.at("configurations"))
+			configuration["hidden"] = {guitar.track, bass.track};
+		stale["modified"] = true;
+		app.call("test.staleVisibility");
+		app.shell().step(std::chrono::milliseconds(0));
+	};
+	app.call("trackVisibility.set",
+		{{"configurations",
+			 {{{"name", "One"}, {"hidden", Json::array()}}, {{"name", "Two"}, {"hidden", Json::array()}}}},
+			{"configuration", "One"}});
+
+	// Update Configuration.
+	announceStale();
+	choose("menuitem[visibility-configuration=update]");
+	CHECK(app.waitUntil([&] { return configurations().at(0).at("hidden") == Json{guitar.track}; }));
+	CHECK(configurations().at(1).at("hidden") == Json{guitar.track});
+
+	// Add Configuration.
+	announceStale();
+	choose("menuitem[visibility-configuration=add]");
+	name("Three");
+	CHECK(app.waitUntil([&] { return configurations().size() == 3; }));
+	CHECK(app.call("trackVisibility.get").at("configuration") == "Three");
+	CHECK(hidden(app) == Json{guitar.track});
+
+	// Rename Configuration.
+	announceStale();
+	choose("menuitem[visibility-configuration=rename]");
+	name("Four");
+	CHECK(app.waitUntil([&] { return configurations().back().at("name") == "Four"; }));
+
+	// Delete Configuration.
+	announceStale();
+	choose("menuitem[visibility-configuration=delete]");
+	CHECK(app.waitUntil([&] { return configurations().size() == 2; }));
+}
+
+// #906: a name that trackVisibility.set would refuse keeps the dialog open with the reason.
+TEST_CASE("the configuration name dialog stays open for a name that is taken or empty", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.setDpRatio(0.8F);
+	app.appUi().showProject();
+	const auto configurations = [&app] { return app.call("trackVisibility.get").at("configurations"); };
+	const auto choose = [&app](const std::string& selector)
+	{
+		click(app, std::nullopt, "#track-visibility-configurations");
+		click(app, std::nullopt, "#track-visibility-configurations-menu " + selector);
+	};
+	const auto dialogOpen = [&app]
+	{ return elements(app, std::nullopt, "#visibility-configuration-name").size() == 1; };
+	const auto error = [&app]
+	{ return elements(app, std::nullopt, "#visibility-configuration-error").at(0).value("text", ""); };
+	app.call("trackVisibility.set",
+		{{"configurations", {{{"name", "One"}, {"hidden", Json::array()}}}}, {"configuration", "One"}});
+	REQUIRE(app.waitUntil([&] { return configurations().size() == 1; }));
+
+	// Add Configuration with a name that is taken: the dialog stays open with the reason, and nothing is added.
+	choose("menuitem[visibility-configuration=add]");
+	REQUIRE(app.waitUntil(dialogOpen));
+	app.ui().text(std::nullopt, "One");
+	app.ui().key(std::nullopt, "Enter");
+	REQUIRE(app.waitUntil([&] { return !error().empty(); }));
+	CHECK_THAT(error(), Catch::Matchers::ContainsSubstring("One"));
+	CHECK(dialogOpen());
+	CHECK(configurations().size() == 1);
+
+	// With a name of its own it closes and adds the configuration.
+	app.ui().key(std::nullopt, "Mod+A");
+	app.ui().text(std::nullopt, "Two");
+	app.ui().key(std::nullopt, "Enter");
+	REQUIRE(app.waitUntil([&] { return configurations().size() == 2; }));
+	REQUIRE(app.waitUntil([&] { return !dialogOpen(); }));
+
+	// Rename Configuration to the other's name stays open too; to its own it closes and changes nothing.
+	REQUIRE(app.waitUntil([&] { return configurations().at(1).at("name") == "Two"; }));
+	choose("menuitem[visibility-configuration=rename]");
+	REQUIRE(app.waitUntil(dialogOpen));
+	app.ui().key(std::nullopt, "Mod+A");
+	app.ui().text(std::nullopt, "One");
+	app.ui().key(std::nullopt, "Enter");
+	REQUIRE(app.waitUntil([&] { return !error().empty(); }));
+	CHECK(dialogOpen());
+	app.ui().key(std::nullopt, "Mod+A");
+	app.ui().text(std::nullopt, "Two");
+	app.ui().key(std::nullopt, "Enter");
+	REQUIRE(app.waitUntil([&] { return !dialogOpen(); }));
+	CHECK(configurations().at(1).at("name") == "Two");
+
+	// A name that is empty keeps it open as well; Cancel closes it without a change.
+	choose("menuitem[visibility-configuration=add]");
+	REQUIRE(app.waitUntil(dialogOpen));
+	app.ui().key(std::nullopt, "Enter");
+	REQUIRE(app.waitUntil([&] { return !error().empty(); }));
+	CHECK(dialogOpen());
+	app.ui().key(std::nullopt, "Escape");
+	REQUIRE(app.waitUntil([&] { return !dialogOpen(); }));
+	CHECK(configurations().size() == 2);
+}
+
+// #906: the Track page indents tracks by their folder level, however deep the folders nest.
+TEST_CASE("the Track page indents tracks by their folder level, however deep", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	// Five folders, one in the next, and a track in the last: the levels 0 to 5.
+	std::vector<uint64_t> folders;
+	uint64_t parent = 0;
+	for (int depth = 1; depth <= 5; ++depth)
+	{
+		Json parameters = {{"type", "folder"}, {"name", "Folder " + std::to_string(depth)}};
+		if (parent != 0)
+		{
+			parameters["parent"] = parent;
+			parameters["index"] = 0;
+		}
+		parent = app.call("track.add", parameters).at("track").at("id").get<uint64_t>();
+		folders.push_back(parent);
+	}
+	const uint64_t deep = app.call("track.add", {{"type", "audio"}, {"name", "Deep"}, {"parent", parent}, {"index", 0}})
+							  .at("track")
+							  .at("id")
+							  .get<uint64_t>();
+	app.appUi().docking().open("visibility");
+	REQUIRE(app.waitUntil([&] { return elements(app, std::nullopt, ".track-visibility-item").size() == 6; }));
+	const auto indent = [&app](uint64_t track)
+	{
+		const Json found = elements(app, std::nullopt, item(track) + " .track-visibility-indent");
+		return found.empty() ? 0.0 : found.at(0).at("box").at("width").get<double>();
+	};
+	CHECK(indent(folders.at(0)) == 0.0); // the top level has no indent
+	double previous = 0.0;
+	for (const uint64_t track : std::vector<uint64_t>(folders.begin() + 1, folders.end()))
+	{
+		CHECK(indent(track) > previous);
+		previous = indent(track);
+	}
+	CHECK(indent(deep) > previous);
+	// The levels step alike: the deepest track indents five times as much as the first folder's track.
+	CHECK(std::abs(indent(deep) - (5.0 * indent(folders.at(1)))) <= 1.0);
 }

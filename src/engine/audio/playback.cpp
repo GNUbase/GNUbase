@@ -144,17 +144,14 @@ namespace gnubase::engine
 			for (size_t i = 0; i < events.size(); ++i)
 			{
 				Placed& in = events[i];
-				if (in.muted) // a muted event is silent: it never crossfades, so nothing behind it plays through
-					continue;
 				const Crossfade& crossfade = in.event->crossfade;
 				const auto from = index.find(crossfade.from);
 				if (crossfade.from == 0 || from == index.end())
 					continue;
 				Placed& out = events[from->second];
-				if (out.muted)
-					continue;
-				// The snapshot only has crossfades that apply (crossfadeApplies): between events that overlap, the
-				// second one starting inside the first and ending after it. An edit that ends this rests a crossfade.
+				// The snapshot only has crossfades that apply (crossfadeApplies): between unmuted events that overlap,
+				// the second one starting inside the first and ending after it, so a muted event never crossfades and
+				// nothing behind it plays through. An edit that ends this rests a crossfade.
 				if (out.crossfadeOut || out.end <= in.start)
 					continue;
 				const time::Samples overlap = out.end - in.start;
@@ -511,8 +508,12 @@ namespace gnubase::engine
 			if (placed.end > placed.start)
 				events.push_back(placed);
 		}
-		std::sort(events.begin(), events.end(), [](const Placed& a, const Placed& b)
-			{ return std::tie(a.event->front, a.event->id) < std::tie(b.event->front, b.event->id); });
+		std::sort(events.begin(), events.end(),
+			[](const Placed& a, const Placed& b)
+			{
+				return std::tie(a.event->front, a.event->rank, a.event->id) <
+					std::tie(b.event->front, b.event->rank, b.event->id);
+			});
 
 		// Crossfades first: they replace the fades at the ends they join. Auto crossfades go where the front layer
 		// passes from one event to another, which the fades don't change.

@@ -5,6 +5,7 @@
 #include "engine/dawproject/dawproject.h"
 #include "engine/document/document.h"
 #include "engine/engine.h"
+#include "testutils/heldjob.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -24,6 +25,7 @@
 
 using namespace gnubase::engine;
 using Catch::Matchers::ContainsSubstring;
+using gnubase::test::waitForJob;
 
 namespace
 {
@@ -631,13 +633,7 @@ TEST_CASE("a backup carries the freeze files along", "[integration]")
 	};
 	const fs::path folder = project.folder.path() / "backup";
 	const Json job = run(project.client, "project.backup", {{"folder", folder.u8string()}, {"name", "copy"}});
-	Json state;
-	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
-	do
-	{
-		std::this_thread::sleep_for(std::chrono::milliseconds(1));
-		state = run(project.client, "job.get", {{"job", job.at("job").at("id")}}).at("job");
-	} while (state.at("state") == "running" && std::chrono::steady_clock::now() < deadline);
+	Json state = waitForJob(project.client, job.at("job").at("id").get<uint64_t>());
 	INFO(state.dump());
 	REQUIRE(state.at("state") == "done");
 	CHECK(state.at("result").at("missing").empty());
@@ -653,11 +649,7 @@ TEST_CASE("a backup carries the freeze files along", "[integration]")
 	fs::remove(fs::u8path(path));
 	const Json again =
 		run(project.client, "project.backup", {{"folder", (project.folder.path() / "again").u8string()}});
-	do
-	{
-		std::this_thread::sleep_for(std::chrono::milliseconds(1));
-		state = run(project.client, "job.get", {{"job", again.at("job").at("id")}}).at("job");
-	} while (state.at("state") == "running" && std::chrono::steady_clock::now() < deadline);
+	state = waitForJob(project.client, again.at("job").at("id").get<uint64_t>());
 	REQUIRE(state.at("state") == "done");
 	// Reported for each track that plays it.
 	const Json missing = state.at("result").at("missing");
@@ -914,5 +906,11 @@ TEST_CASE("a frozen instrument track's MIDI send to another instrument track sta
 		CHECK(message.at("bytes").at(1).get<int>() % 12 != 1);
 	// The send keeps its output, which plays again once the track is unfrozen.
 	run(project.client, "track.unfreeze", {{"tracks", {synth.track}}});
-	run(project.client, "audio.render", {{"frames", 4096}});
+	run(project.client, "midi.capture", {{"start", true}});
+	run(project.client, "transport.locate", {{"position", 0}});
+	run(project.client, "audio.render", {{"frames", 48000}});
+	const Json again = run(project.client, "midi.capture").at("captured");
+	INFO(again.dump());
+	CHECK(std::any_of(again.begin(), again.end(),
+		[](const Json& message) { return message.at("bytes").at(1).get<int>() % 12 == 1; }));
 }

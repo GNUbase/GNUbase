@@ -5,6 +5,7 @@
 #include "scripting/runtime.h"
 #include "ui/colormenu.h"
 #include "ui/docking.h"
+#include "ui/drummachinepanel.h"
 #include "ui/enginebinding.h"
 #include "ui/eventdisplay.h"
 #include "ui/gpurenderer.h"
@@ -269,6 +270,8 @@ namespace gnubase::app
 		std::unique_ptr<ui::TransportControls> transportControls(Rml::Element& root, ui::Window& window, bool fill);
 		// name is its window's in ui.layout (ui::Docking::addWindow).
 		void toggle(TransportWindow& shown, const char* name, const char* file, const char* title, ui::Size size);
+		// Gives a new transport panel the width of its shown sections, as far as the primary monitor has room (#1424).
+		void fitSections(ui::Window& window, Rml::Element& controls);
 		// Edits a display of the transport bar, or of the transport panel, which opens if the bar doesn't show.
 		void enter(const std::string& field);
 		// File > Import: the OS's file dialog for the window, then the event display imports what the user chose;
@@ -352,6 +355,9 @@ namespace gnubase::app
 		void openArticulationMaps(ui::Window& window, uint64_t track);
 		// Shows why an articulation map's import or export failed in the setup's message, if the setup is open.
 		void showArticulationMapError(const engine::Result& result);
+		// Shows why a key commands file or the assignments list couldn't be exported or imported: in the key commands
+		// dialog's message if it is open, in an error dialog of that title over the window otherwise.
+		void showKeyCommandsError(ui::WindowId window, const std::string& title, const std::string& error);
 		// openDialog for a dialog whose Lua keeps its state in a global table, so that there is only one: while open
 		// is open, brings it to the front instead, as it is, and the attributes go unused.
 		Rml::ElementDocument& openOnce(ui::Window& window, const char* name, Rml::ObserverPtr<Rml::Element>& open,
@@ -418,6 +424,7 @@ namespace gnubase::app
 		std::weak_ptr<ui::PoolPanel> m_pool;               // the docking system owns it while it is there
 		std::weak_ptr<ui::Inspector> m_inspector;          // so too
 		std::weak_ptr<ui::SamplerPanel> m_sampler;         // so too
+		std::weak_ptr<ui::DrumMachinePanel> m_drums;       // so too
 		std::vector<ui::Subscription> m_poolResults;       // what the pool commands did, for the pool
 		std::vector<ui::Subscription> m_lockRecord;        // stops refused while recording is locked
 		Rml::ObserverPtr<Rml::Element> m_lockRecordDialog; // the open lock record dialog's document

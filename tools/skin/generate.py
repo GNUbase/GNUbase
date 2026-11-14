@@ -16,6 +16,7 @@ from pathlib import Path
 
 THEMES = {
     "gnubase": {
+        "displayName": "GNUbase",
         "colors": {
             "background": "#090b18", "surface": "#101426", "surfaceRaised": "#171c32",
             "border": "#303754", "text": "#f1f4ff", "textMuted": "#aeb7d0",
@@ -33,8 +34,14 @@ THEMES = {
         "timeDisplaySizes": [32, 48, 64, 96, 128],
         "fontFamilies": {"ui": "Inter", "counter": "JetBrains Mono"},
         "glow": True,
+        # Events in the event display, tinted in their colors as the mockup shows (#1312): how opaque a body is, the
+        # tint laid over an event's color for its outline and waveform, the stroke that events without a color are
+        # outlined in, and the alpha of the selected events' light. None in the other themes: opaque events in their
+        # colors, outlined in the stroke color, selected ones painted over, as before.
+        "events": {"fillOpacity": 0.45, "tint": "#ffffff59", "stroke": ("#ffffff", .35), "selected": "29"},
     },
     "dark": {
+        "displayName": "Dark",
         "colors": {
             "background": "#151617", "surface": "#1e2022", "surfaceRaised": "#292c2f",
             "border": "#484c50", "text": "#f3f4f5", "textMuted": "#b7bbc0",
@@ -52,8 +59,10 @@ THEMES = {
         "timeDisplaySizes": [32, 48, 64, 96, 128],
         "fontFamilies": {"ui": "Inter", "counter": "JetBrains Mono"},
         "glow": False,
+        "events": None,
     },
     "light": {
+        "displayName": "Light",
         "colors": {
             "background": "#eef1f5", "surface": "#ffffff", "surfaceRaised": "#f7f9fc",
             "border": "#b9c1cc", "text": "#17202d", "textMuted": "#566273",
@@ -71,10 +80,12 @@ THEMES = {
         "timeDisplaySizes": [32, 48, 64, 96, 128],
         "fontFamilies": {"ui": "Inter", "counter": "JetBrains Mono"},
         "glow": False,
+        "events": None,
     },
     # Black, white and bright colors that meet WCAG's enhanced contrast (7:1) for text, white borders around every
     # control and a thicker focus ring (docs/features/accessibility.md).
     "high-contrast": {
+        "displayName": "High Contrast",
         "colors": {
             "background": "#000000", "surface": "#000000", "surfaceRaised": "#0d0d0d",
             "border": "#ffffff", "text": "#ffffff", "textMuted": "#c8c8c8",
@@ -93,6 +104,7 @@ THEMES = {
         "fontFamilies": {"ui": "Inter", "counter": "JetBrains Mono"},
         "glow": False,
         "focusRing": 2,
+        "events": None,
     },
 }
 
@@ -338,6 +350,22 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
     # The piano keyboard's light and dark colors, the same way round in light themes as in dark ones.
     ivory, ebony = sorted((c["text"], c["background"]), key=luminance, reverse=True)
 
+    events = theme["events"]
+    if events is None:
+        event_look = {"lanes": {"own-fill-opacity": "1", "own-color-tint": "none"}, "tint": "none", "inset": "0dp",
+                      "wave": "2dp 0",
+                      "selected": {"color": mix(c["surfaceRaised"], c["accent"], .7), "stroke-color": c["text"]}}
+    else:
+        event_look = {
+            "lanes": {"color": c["accent"] + f"{round(events['fillOpacity'] * 255):02x}",
+                      "stroke-color": mix(c["accent"], *events["stroke"]),
+                      "own-fill-opacity": f"{events['fillOpacity']:g}", "own-color-tint": events["tint"]},
+            "tint": events["tint"],
+            "inset": "2dp",
+            "wave": "4dp 0",  # the inset and the 2dp every theme keeps between a waveform and its event's edges
+            "selected": {"color": c["text"] + events["selected"], "stroke-color": c["text"]},
+        }
+
     def skin(asset: str) -> str:
         item = assets[asset]
         if "slice" not in item:
@@ -382,6 +410,8 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".list-item:hover, listitem:hover, listview tbody tr:hover", {"decorator": skin("list-item-hover")}),
         (".list-item.selected, listitem.selected, listview tr.selected, select selectbox option:checked",
          {"decorator": skin("list-item-selected")}),
+        # The row of the arranger chain step or event that is playing (docs/features/arranger.md)
+        (".arranger-row.current", {"decorator": skin("list-item-selected")}),
         ("listview thead td.sorted", {"color": c["accent"]}),
         # Tabs
         ("tabset tabs", {"decorator": skin("tabbar")}),
@@ -478,6 +508,13 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
                    "font-size": f"{sizes['small']}dp"}),
         # The event display (docs/features/event-display.md): overview line, ruler, lanes and cursors
         (".event-display", {"background-color": c["background"]}),
+        # Events in their colors (#1312): the lanes' events, muted and selected ones and folder data blocks, off the
+        # lanes' edges in the default theme; the events tinted, their waveforms in their colors.
+        (".event-display event-lanes.events, .event-display event-lanes.muted-events, "
+         ".event-display event-lanes.selected-events, .event-display event-lanes.folder-data",
+         {"event-inset": event_look["inset"]}),
+        (".event-display event-lanes.events", event_look["lanes"]),
+        (".event-display .waveforms waveform", {"own-color-tint": event_look["tint"], "padding": event_look["wave"]}),
         (".event-display .overview", {"background-color": c["surface"]}),
         (".event-display .overview event-lanes", {"color": mix(c["surface"], c["accent"], .45),
                                                   "stroke-color": "transparent"}),
@@ -486,8 +523,7 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         # Parts and events (docs/features/parts-and-events.md): muted ones greyed out, selected ones lit, over the rest
         (".event-display event-lanes.muted-events", {"color": mix(c["surface"], c["textMuted"], .25),
                                                      "stroke-color": mix(c["background"], c["textMuted"], .5)}),
-        (".event-display event-lanes.selected-events", {"color": mix(c["surfaceRaised"], c["accent"], .7),
-                                                        "stroke-color": c["text"]}),
+        (".event-display event-lanes.selected-events", event_look["selected"]),
         # Fades (docs/features/fades.md): fade lines over the waveforms, and the selected events' fade handles
         (".event-display fade-lines", {"color": c["text"], "stroke-color": c["text"],
                                        "stroke-width": f"{widths['hairline']}dp"}),
@@ -496,6 +532,8 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
                                                     "stroke-color": "transparent"}),
         (".event-display ruler", {"background-color": c["surface"]}),
         (".event-display .project-cursor", {"background-color": c["text"]}),
+        # The chord pads' step input cursor and its handle in the ruler, in blue (reference manual p. 1369)
+        (".event-display .step-input-cursor, .event-display .step-input-handle", {"background-color": c["accent"]}),
         (".event-display .cross-hair-vertical, .event-display .cross-hair-horizontal",
          {"background-color": mix(c["background"], c["textMuted"], .5)}),
         # Markers (docs/features/markers.md): lines behind the events, marker events and labels on marker tracks
@@ -553,6 +591,29 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".chord-pad .chord-pad-adaptive", {"background-color": c["accent"],
                                             "border-radius": f"{theme['radii']['round']}dp"}),
         (".chord-pad.triggered", {"background-color": mix(c["surfaceRaised"], c["accent"], .45)}),
+        # Assign from MIDI Input's pad in red, a chord's drop location in green, the List assistant's colors along the
+        # bottom, the voicing indicator, the pads on black keys, and the zone's keyboard: played notes, the remote range
+        # in blue, the section keys in brown, the chord modifiers' keys in green and the hovered pad's key (reference
+        # manual pp. 1353-1355)
+        (".chord-pad.listening", {"border-color": c["danger"]}),
+        (".chord-pad.drop-target", {"border-color": c["success"]}),
+        (".chord-pad.level-0", {"border-bottom-color": c["success"]}),
+        (".chord-pad.level-1", {"border-bottom-color": c["warning"]}),
+        (".chord-pad.level-2", {"border-bottom-color": c["danger"]}),
+        (".chord-pad .chord-pad-voicing", {"color": c["textMuted"], "font-size": f"{sizes['small']}dp"}),
+        (".chord-pad .chord-pad-progress", {"background-color": c["accent"]}),
+        (".chord-pad.black-key", {"background-color": mix(c["surfaceRaised"], c["background"], .6)}),
+        (".chord-pads-key.white", {"background-color": c["text"], "border-width": f"{widths['hairline']}dp",
+                                   "border-color": c["border"]}),
+        (".chord-pads-key.black", {"background-color": c["background"]}),
+        (".chord-pads-key.remote", {"background-color": mix(c["text"], c["accent"], .5)}),
+        (".chord-pads-key.black.remote", {"background-color": mix(c["background"], c["accent"], .6)}),
+        (".chord-pads-key.section", {"background-color": mix(c["warning"], c["background"], .45)}),
+        (".chord-pads-key.modifier", {"background-color": c["success"]}),
+        (".chord-pads-key.hover", {"background-color": c["warning"]}),
+        (".chord-pads-key.played", {"background-color": c["accent2"]}),
+        (".chord-proximity-reference", {"color": c["accent"]}),
+        (".chord-suggestion.recent .chord-suggestion-chord", {"font-weight": "bold"}),
         (".chord-suggestion", {"color": c["text"], "border-left-width": f"{widths['focus']}dp",
                                "border-left-color": c["border"]}),
         (".chord-suggestion.level-0", {"border-left-color": c["success"]}),
@@ -653,6 +714,19 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
             "decorator": f"repeating-linear-gradient(to top, {color} 0dp, {color} 3dp, {color}00 3dp, {color}00 5dp)"})
           for state, color in (("", mix(c["surfaceRaised"], c["accent"], .6)), (".selected", c["accent2"]),
                                (".inactive", mix(c["surface"], c["textMuted"], .3)))],
+        # The Articulations lane (docs/features/articulation-maps.md): the articulations' names muted beside their
+        # rows, a line under the sound slots lane, whose slots are raised unless the code gives them their slot's
+        # color, directions lighter than the attributes, which have the notes' color, resets in the muted text color,
+        # selected ones in the second accent, those outside the part editing mode dimmed
+        (".articulation-name", {"color": c["textMuted"]}),
+        (".articulation-row.sound-slots", {"border-bottom-width": f"{widths['hairline']}px",
+                                           "border-bottom-color": c["border"]}),
+        (".sound-slot", {"background-color": c["surfaceRaised"], "color": c["text"]}),
+        (".articulation-item.direction", {"background-color": mix(c["surfaceRaised"], c["accent"], .3)}),
+        (".articulation-item.attribute", {"background-color": mix(c["surfaceRaised"], c["accent"], .6)}),
+        (".articulation-item.reset", {"background-color": c["textMuted"]}),
+        (".articulation-item.selected", {"background-color": c["accent2"]}),
+        (".articulation-item.inactive", {"background-color": mix(c["surface"], c["textMuted"], .3)}),
         # The audio part editor (docs/features/audio-part-editor.md): lines between the lanes, the events, selected
         # ones in the second accent, and muted ones, those outside the part editing mode and those their part hides
         # entirely dimmed
@@ -713,6 +787,18 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".sampler-handle.root", {"background-color": c["accent"]}),
         (".sampler-handle.dragged", {"background-color": c["text"]}),
         (".sampler-message.error", {"color": c["danger"]}),
+        # The drum machine panel (docs/features/drum-track.md): pads raised when they play something, the selected
+        # one framed, muted and soloed-out ones dimmed, soloed ones in the second accent; the selected group and page
+        # in the accent, and the toolbar's message standing out
+        (".drum-pad", {"color": c["textMuted"], "background-color": c["surface"],
+                       "border-color": c["border"], "border-radius": f"{theme['radii']['small']}dp"}),
+        (".drum-pad.assigned", {"color": c["text"], "background-color": c["surfaceRaised"]}),
+        (".drum-pad.selected", {"border-color": c["accent"]}),
+        (".drum-pad.muted, .drum-pad.soloed-out", {"color": c["textMuted"], "background-color": c["background"]}),
+        (".drum-pad.soloed", {"border-color": c["accent2"]}),
+        (".drum-pad-note, .drum-label", {"color": c["textMuted"], "font-size": f"{sizes['small']}dp"}),
+        (".drum-group.selected, .drum-page-tab.selected", {"color": c["accent"]}),
+        (".drum-message.error", {"color": c["danger"]}),
         # The audio functions (docs/features/audio-functions.md): Detect Silence's sections along the event, the
         # Spectrum Analyzer's bars with the one D is measured from in the second accent, the Statistics' headings
         (".ds-display, .sa-graph", {"background-color": c["surface"]}),
@@ -757,6 +843,11 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".info-line.multiple .info-field", {"color": c["accent"]}),
         (".info-line .info-label, .inspector-label", {"color": c["textMuted"]}),
         (".inspector .insert.bypassed, .inspector .insert.inactive", {"color": c["textMuted"]}),
+        # The MIDI effect slots: switched-off ones dimmed, those above the divider, which are recorded, marked at their
+        # side, and the divider where it is
+        (".inspector .midi-effect-slot.off select", {"color": c["textMuted"]}),
+        (".inspector .midi-effect-slot.recorded", {"border-left-color": c["accent"]}),
+        (".inspector .midi-divider.at .midi-divider-line", {"background-color": c["accent"]}),
         # The pool's message line (docs/features/pool.md): why a pool command failed stands out
         (".pool-message.error", {"color": c["danger"]}),
         # The edit history (docs/features/edit-history.md): undone steps dimmed, and the separator after the done ones
@@ -836,7 +927,7 @@ def write_theme(root: Path, name: str, theme: dict) -> dict:
         filename = asset + ".svg"
         (dest / filename).write_text(data, encoding="utf-8", newline="\n")
         assets[asset] = {"file": filename, "width": w, "height": h}
-    manifest = {"theme": name, "units": "dp", "assets": assets}
+    manifest = {"theme": name, "displayName": theme["displayName"], "units": "dp", "assets": assets}
     (dest / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8", newline="\n")
     (dest / "tokens.json").write_text(json.dumps(tokens_for(theme), indent=2) + "\n", encoding="utf-8", newline="\n")
     (dest / "theme.rcss").write_text(theme_rcss(name, theme, manifest), encoding="utf-8", newline="\n")
@@ -892,11 +983,13 @@ def write_readme(root: Path, count: int) -> None:
     nine = ", ".join(f"`{n}`" for n in NINE_NAMES)
     text = f'''# GNUbase widget skins
 
-Generated by `python tools/skin/generate.py resources/themes`. The generator is the source of truth; edit its theme tokens and regenerate rather than hand-editing SVG output. `tests/theme_tests.cpp` checks every theme against the rules below.
+Generated by `python tools/skin/generate.py resources/themes`. The generator is the source of truth; edit its theme tokens and regenerate rather than hand-editing SVG output. CI's format job runs the generator into a temporary folder and fails when its output differs from this folder, naming the files that differ; check it yourself in place with `python tools/skin/generate.py resources/themes`, after which `git status --short resources/themes` lists the files the run changed. That works on every checkout; `diff -rq` against a temporary folder, as CI does, also lists every file of a Windows checkout made before the themes had LF line endings, which keeps them with CRLF until they are checked out again. `tests/theme_tests.cpp` checks every theme against the rules below.
 
 ## Layout and naming
 
 Each theme (`gnubase`, `dark`, `light`, `high-contrast`) contains {count} SVG assets, `manifest.json`, `tokens.json`, and `theme.rcss`. Stateful assets use `<component>-<state>.svg`. Manifest dimensions and slice insets are dp at 1×. Fixed assets omit `slice`.
+
+The manifest's `theme` is the theme's id, the folder's name, which the user setting `ui.theme` stores; its `displayName` is what the UI shows for the theme, through `gnubase.ui.themes()`, so no document names a theme.
 
 `theme.rcss` is the theme's style sheet: the colors, fonts, and skins of every widget state, all inside `@media (theme: <name>)`. GNUbase gives every document the shared style sheets in `resources/styles` and every theme's style sheet, and activates the theme the user chose; see `docs/features/themes.md`.
 

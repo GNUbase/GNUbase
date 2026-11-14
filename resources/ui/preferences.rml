@@ -2,9 +2,10 @@
 <!-- The preferences dialog (#162, docs/features/preferences.md, reference manual pp. 1593-1625): the user settings that
      are preferences, on the reference's pages, which the list on the left selects, and the preference presets.
      app::AppUi opens it (the UI command window.preferences). Its Lua reads the settings with settings.list when the
-     dialog loads and changes them only through engine commands: Apply and OK send what changed with one settings.set,
-     Cancel drops it, Defaults puts the page's preferences back to their defaults in the dialog. A preset holds what
-     the dialog shows (preferences.savePreset); choosing one puts its values into the dialog. -->
+     dialog loads, follows settings.changed while it is open, and changes them only through engine commands: Apply and
+     OK send what changed with one settings.set, Cancel drops it, Defaults puts the page's preferences back to their
+     defaults in the dialog. A preset holds what the dialog shows (preferences.savePreset); choosing one puts its
+     values into the dialog. -->
 <rml>
 <head>
 	<title>Preferences</title>
@@ -150,8 +151,9 @@
 		}
 	</style>
 	<script>
-		-- The dialog's state, in the UI's Lua: the settings as the engine had them when the dialog loaded, and what the
-		-- pages show.
+		-- The dialog's state, in the UI's Lua: the settings as the engine has them, and what the pages show. While
+		-- the dialog is open it follows settings.changed, so a script or an MCP client that changes a setting shows
+		-- up in it.
 		Preferences = {}
 		local prefs = Preferences
 
@@ -163,8 +165,12 @@
 			return math.tointeger(value) and tostring(math.tointeger(value)) or tostring(value)
 		end
 
-		-- Whether two values from the engine are the same, also objects and lists.
+		-- Whether two values from the engine are the same, also objects and lists. Numbers count as the same when
+		-- their fields show the same text, so one the dialog can't show exactly doesn't look changed.
 		local function same(a, b)
+			if type(a) == "number" or type(b) == "number" then
+				return numberText(a) == numberText(b)
+			end
 			if type(a) ~= "table" or type(b) ~= "table" then
 				return a == b
 			end
@@ -181,6 +187,34 @@
 			return true
 		end
 
+		local function sorted(list)
+			local result = {}
+			for _, item in ipairs(list) do
+				result[#result + 1] = item
+			end
+			table.sort(result)
+			return result
+		end
+
+		-- A setting's value in the form the dialog compares it in. The MIDI filter's lists are sets that the dialog
+		-- fills in its own order, so the engine's order doesn't make them look changed; what the dialog doesn't know
+		-- stays as it is.
+		local function normalize(key, setting)
+			if key ~= "midi.recordFilter" or type(setting) ~= "table" then
+				return setting
+			end
+			local filter = {}
+			for name, list in pairs(setting) do
+				filter[name] = type(list) == "table" and sorted(list) or list
+			end
+			return filter
+		end
+
+		-- Whether what a page shows for a setting differs from what the engine has.
+		local function differs(key, shown, saved)
+			return not same(normalize(key, shown), normalize(key, saved))
+		end
+
 		-- The control of a setting: its id, from the key, such as pref-ui-scale.
 		local function controlId(key)
 			return "pref-" .. key:gsub("%.", "-")
@@ -189,10 +223,11 @@
 		local modifierChoices = {{"", "None"}, {"ctrl", "Ctrl"}, {"alt", "Alt"}, {"shift", "Shift"},
 			{"ctrl+alt", "Ctrl-Alt"}, {"ctrl+shift", "Ctrl-Shift"}, {"alt+shift", "Alt-Shift"},
 			{"ctrl+alt+shift", "Ctrl-Alt-Shift"}}
-		-- The tool modifiers' categories and actions (p. 1601); an action this list lacks shows its name.
+		-- The tool modifiers' categories and actions (p. 1601); an action this list lacks shows its name. The names
+		-- are plain text: the page escapes them, and the question that asks before it takes another action's keys too.
 		local modifierActions = {
-			["dragDrop.copy"] = {"Drag &amp; Drop", "Copy"},
-			["dragDrop.sharedCopy"] = {"Drag &amp; Drop", "Shared Copy"},
+			["dragDrop.copy"] = {"Drag & Drop", "Copy"},
+			["dragDrop.sharedCopy"] = {"Drag & Drop", "Shared Copy"},
 			["erase.deleteLaterEvents"] = {"Erase Tool", "Delete later events"},
 			["glue.glueAllFollowing"] = {"Glue Tool", "Glue All Following Events"},
 			["range.selectFullVertical"] = {"Range Tool", "Select Full Vertical"},
@@ -204,7 +239,6 @@
 		-- The MIDI filter's Record section (p. 1613): the message types of midi.recordFilter.
 		local filterTypes = {{"notes", "Note"}, {"polyPressure", "Poly Pressure"}, {"controllers", "Controller"},
 			{"programs", "Program Change"}, {"channelPressure", "Aftertouch"}, {"pitchBend", "Pitchbend"}}
-		local themeNames = {gnubase = "GNUbase", dark = "Dark", light = "Light", ["high-contrast"] = "High Contrast"}
 
 		-- The pages, in the reference's order, with the preferences that GNUbase has (pp. 1595-1625). An item is a
 		-- setting with its label, choices for a drop-down list (otherwise a check box for booleans, a number field
@@ -359,8 +393,8 @@
 				local choices = item.choices
 				if choices == "themes" then
 					choices = {}
-					for _, name in ipairs(prefs.themes) do
-						choices[#choices + 1] = {name, themeNames[name] or name}
+					for _, theme in ipairs(prefs.themes) do
+						choices[#choices + 1] = {theme.id, theme.name}
 					end
 				end
 				if item.number then
@@ -380,6 +414,90 @@
 
 		local custom = {}
 
+		-- The tool an action belongs to: its category, or the action itself for one the page doesn't know.
+		local function toolOf(action)
+			local names = modifierActions[action]
+			return names and names[1] or action
+		end
+
+		-- The name the page shows for an action.
+		local function actionName(action)
+			local names = modifierActions[action]
+			return names and names[2] or action
+		end
+
+		-- What the modifier list shows for modifier keys.
+		local function keysText(keys)
+			for _, choice in ipairs(modifierChoices) do
+				if choice[1] == keys then
+					return choice[2]
+				end
+			end
+			return keys
+		end
+
+		-- The modifier keys a control shows.
+		local function controlKeys(control)
+			local text = control:GetAttribute("value")
+			return text ~= nil and tostring(text) or ""
+		end
+
+		-- The Tool Modifiers page's controls, by action. Queried fresh each time, since the page can be rendered again
+		-- while a question is open (a change of ui.toolModifiers from a script or MCP).
+		local function modifierControls(document)
+			local controls = {}
+			for _, control in ipairs(document:QuerySelectorAll("#page-editing-tool-modifiers select.preference[action]")) do
+				controls[tostring(control:GetAttribute("action"))] = control
+			end
+			return controls
+		end
+
+		-- The other actions of the action's tool that show these modifier keys already (p. 1602), sorted.
+		local function takenBy(document, action, keys)
+			local others = {}
+			if keys == "" then
+				return others
+			end
+			local own = toolOf(action)
+			for other, control in pairs(modifierControls(document)) do
+				if other ~= action and toolOf(other) == own and controlKeys(control) == keys then
+					others[#others + 1] = other
+				end
+			end
+			table.sort(others)
+			return others
+		end
+
+		-- Asks whether an action may take the modifier keys other actions of its tool have (p. 1602). The action keeps
+		-- what it has until the question is answered; onCancel runs for Cancel or Escape.
+		local function askReplace(document, action, keys, others, onCancel)
+			local names = {}
+			for _, other in ipairs(others) do
+				names[#names + 1] = actionName(other)
+			end
+			ConfirmDialog = {title = "Tool Modifiers",
+				message = toolOf(action) .. ": " .. table.concat(names, ", ") ..
+					(#others == 1 and " has " or " have ") .. keysText(keys) ..
+					" already. Replace the modifier keys?",
+				ok = "Replace",
+				onOk = function()
+					-- The action gets the keys, and the actions of its tool that had them are left without any.
+					local controls = modifierControls(document)
+					for _, other in ipairs(others) do
+						if controls[other] ~= nil then
+							controls[other]:SetAttribute("value", "")
+						end
+						prefs.shown[other] = ""
+					end
+					if controls[action] ~= nil then
+						controls[action]:SetAttribute("value", keys)
+					end
+					prefs.shown[action] = keys
+				end,
+				onCancel = onCancel}
+			gnubase.ui.confirm{}
+		end
+
 		-- Editing - Tool Modifiers (p. 1601): the modifier keys of each action, ui.toolModifiers over the defaults.
 		function custom.toolModifiers(values)
 			local set = values["ui.toolModifiers"] or {}
@@ -388,13 +506,16 @@
 				actions[#actions + 1] = action
 			end
 			table.sort(actions)
+			prefs.shown = {} -- what each control shows, to put it back when a question is cancelled
 			local rows = {}
 			for _, action in ipairs(actions) do
-				local names = modifierActions[action] or {"", escape(action)}
 				local id = action:gsub("%.", "-")
-				rows[#rows + 1] = "<tr><td>" .. names[1] .. "</td><td>" .. names[2] .. "</td><td>" ..
-					dropDown(attributes("pref-tool-" .. id, "ui.toolModifiers") ..
-						' action="' .. action .. '"', modifierChoices, set[action] or prefs.toolDefaults[action]) ..
+				local keys = set[action] or prefs.toolDefaults[action] or ""
+				prefs.shown[action] = keys
+				rows[#rows + 1] = "<tr><td>" .. escape(toolOf(action)) .. "</td><td>" .. escape(actionName(action)) ..
+					"</td><td>" ..
+					dropDown(attributes("pref-tool-" .. id, "ui.toolModifiers") .. ' action="' .. action ..
+						'" onchange="Preferences.modifiers(document, element)"', modifierChoices, keys) ..
 					'</td><td><button id="pref-tool-assign-' .. id .. '" action="' .. action ..
 					'" onclick="Preferences.assignModifiers(document, event, element)">Assign</button></td></tr>'
 			end
@@ -402,8 +523,29 @@
 				"</thead><tbody>" .. table.concat(rows) .. "</tbody></table>"
 		end
 
-		-- Assign (p. 1574): the modifier keys held while clicking it, for its action. Another action of the category
-		-- with the same modifiers is left without any.
+		-- The list chose modifier keys for an action: they are its, unless another action of its tool has them already,
+		-- which the reference asks about first (p. 1602); the action keeps what it had until the question is answered.
+		function prefs.modifiers(document, control)
+			local action = tostring(control:GetAttribute("action"))
+			local keys = controlKeys(control)
+			local others = takenBy(document, action, keys)
+			if #others == 0 then
+				prefs.shown[action] = keys
+				return
+			end
+			askReplace(document, action, keys, others, function()
+				-- Cancel: the list goes back to what the page has, which a settings.changed that rendered the page
+				-- again meanwhile has brought up to date (every render fills prefs.shown).
+				local controls = modifierControls(document)
+				local shown = prefs.shown[action] or ""
+				if controls[action] ~= nil and controlKeys(controls[action]) ~= shown then
+					controls[action]:SetAttribute("value", shown)
+				end
+			end)
+		end
+
+		-- Assign (p. 1574): the modifier keys held while clicking it, for its action. When another action of the tool
+		-- already has them, the reference asks before it overwrites them (p. 1602).
 		function prefs.assignModifiers(document, event, button)
 			local function held(name)
 				local state = event.parameters[name]
@@ -421,16 +563,16 @@
 			end
 			local assigned = table.concat(keys, "+")
 			local action = tostring(button:GetAttribute("action"))
-			local category = (modifierActions[action] or {action})[1]
-			for _, control in ipairs(document:QuerySelectorAll("select.preference[action]")) do
-				local other = tostring(control:GetAttribute("action"))
-				if other == action then
-					control:SetAttribute("value", assigned)
-				elseif assigned ~= "" and (modifierActions[other] or {other})[1] == category and
-					tostring(control:GetAttribute("value") or "") == assigned then
-					control:SetAttribute("value", "")
-				end
+			local others = takenBy(document, action, assigned)
+			if #others > 0 then
+				askReplace(document, action, assigned, others, nil)
+				return
 			end
+			local controls = modifierControls(document)
+			if controls[action] ~= nil then
+				controls[action]:SetAttribute("value", assigned)
+			end
+			prefs.shown[action] = assigned
 		end
 
 		local function controllerItems(controllers)
@@ -581,11 +723,18 @@
 		-- What a page's controls show, into values; what can't be read goes into errors.
 		local function readPage(document, page, values, errors)
 			if page.custom == "toolModifiers" then
+				-- What the page doesn't list stays as it is: an action a newer GNUbase added, or one set through
+				-- MCP or Lua.
 				local set = {}
+				for action, keys in pairs(prefs.values["ui.toolModifiers"] or {}) do
+					set[action] = keys
+				end
 				for _, control in ipairs(document:QuerySelectorAll("#page-" .. page.id .. " select.preference")) do
 					local action = tostring(control:GetAttribute("action"))
 					local keys = value(control)
-					if keys ~= prefs.toolDefaults[action] then
+					if keys == (prefs.toolDefaults[action] or "") then
+						set[action] = nil
+					else
 						set[action] = keys
 					end
 				end
@@ -651,7 +800,7 @@
 			end
 			local changed = {}
 			for key, shown in pairs(values) do
-				if not same(shown, prefs.saved[key]) then
+				if differs(key, shown, prefs.saved[key]) then
 					changed[key] = shown
 				end
 			end
@@ -760,7 +909,7 @@
 			end
 		end
 
-		-- Runs a preset command; shows the presets with chosen selected, or the error.
+		-- Runs a preset command; shows the presets with chosen selected, or the error. Whether it ran.
 		local function presetCommand(document, command, parameters, chosen)
 			local ok, problem = pcall(command, parameters)
 			if ok then
@@ -769,6 +918,7 @@
 			else
 				report(document, {tostring(problem)})
 			end
+			return ok
 		end
 
 		local function presetName(document)
@@ -806,18 +956,68 @@
 
 		function prefs.deletePreset(document)
 			local name = value(document:GetElementById("preferences-preset"))
-			presetCommand(document, gnubase.preferences.removePreset, {name = name}, "")
-			document:GetElementById("preferences-preset-name"):SetAttribute("value", "")
+			if presetCommand(document, gnubase.preferences.removePreset, {name = name}, "") then
+				document:GetElementById("preferences-preset-name"):SetAttribute("value", "")
+			end
+		end
+
+		-- A script or an MCP client changed settings while the dialog was open: the pages show what the engine has
+		-- now, and what the user changed in them and hasn't applied stays.
+		function prefs.follow(event)
+			local document = prefs.document
+			if document == nil then
+				return
+			end
+			local changed = {}
+			for key, now in pairs((event.data or {}).values or {}) do
+				if prefs.schemas[key] then
+					changed[key] = now
+				end
+			end
+			if next(changed) == nil then
+				return
+			end
+			for key, shown in pairs(read(document)) do
+				prefs.values[key] = shown
+			end
+			for key, now in pairs(changed) do
+				prefs.saved[key] = now
+				prefs.values[key] = now
+			end
+			for _, page in ipairs(pages) do
+				local shows = false
+				for _, key in ipairs(keysOf(page)) do
+					shows = shows or changed[key] ~= nil
+				end
+				if shows then
+					renderPage(document, page)
+				end
+			end
+			if changed["preferences.presets"] ~= nil then
+				showPresets(document, value(document:GetElementById("preferences-preset")))
+			end
 		end
 
 		function prefs.open(document)
+			prefs.document = document
 			prefs.built = false
 			prefs.load(document)
 			showPresets(document, "")
+			if not prefs.subscribed then
+				prefs.subscribed = true
+				gnubase.on("settings.changed", prefs.follow)
+			end
+		end
+
+		-- The handler goes with the document: the next one that opens loads this script again.
+		function prefs.closed()
+			prefs.document = nil
+			gnubase.off("settings.changed", prefs.follow)
+			prefs.subscribed = false
 		end
 	</script>
 </head>
-<body onload="Preferences.open(document)">
+<body onload="Preferences.open(document)" onunload="Preferences.closed()">
 	<dialog id="preferences">
 		<div class="dialog-titlebar">Preferences</div>
 		<div class="content">
