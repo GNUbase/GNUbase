@@ -201,7 +201,7 @@ TEST_CASE("Space starts and stops playback after a click on a toolbar or transpo
 TEST_CASE("a narrow window cuts off the transport bar's last sections instead of drawing them over each other", "[ui]")
 {
 	test::UiApp app({1024, 700});
-	showBar(app, 1.0F); // about 1310 dp of sections in 1024 dp
+	showBar(app, 1.0F); // about 1220 dp of sections in 1024 dp
 	Rml::Context& context = app.main().context();
 	Rml::Element* bar = nullptr;
 	for (int i = 0; i < context.GetNumDocuments(); ++i)
@@ -244,6 +244,64 @@ TEST_CASE("a narrow window cuts off the transport bar's last sections instead of
 	}
 	click(app, "#punch-in");
 	REQUIRE(waitFor(app, [](const Json& state) { return state.at("punchIn") == true; }));
+}
+
+TEST_CASE("every control of the default transport bar fits a 1024-pixel window at a dp ratio of 0.8", "[ui]")
+{
+	// 1280 dp, a 1920-pixel display at 150 % (#1450): the bar holds bars and beats, timecode and a new project's
+	// locators.
+	test::UiApp app({1024, 700});
+	showBar(app, 0.8F);
+	Rml::Context& context = app.main().context();
+	Rml::Element* bar = nullptr;
+	for (int i = 0; i < context.GetNumDocuments(); ++i)
+		if (Rml::Element* found = context.GetDocument(i)->GetElementById("transport-bar"))
+			bar = found;
+	REQUIRE(bar != nullptr);
+	const float right = bar->GetAbsoluteLeft() + bar->GetOffsetWidth();
+	Rml::ElementList controls;
+	bar->QuerySelectorAll(controls, ".transport-section > *");
+	REQUIRE(!controls.empty());
+	for (Rml::Element* control : controls)
+	{
+		INFO(control->GetId());
+		CHECK(control->GetAbsoluteLeft() + control->GetOffsetWidth() <= right);
+	}
+}
+
+TEST_CASE("a new transport panel takes the width of its sections", "[ui]")
+{
+	for (const float dpRatio : {0.5F, 0.75F})
+	{
+		INFO("dp ratio " << dpRatio);
+		test::UiApp app({1024, 700});
+		app.setDpRatio(dpRatio);
+		app.appUi().showProject();
+		app.ui().key(std::nullopt, "F2");
+		ui::Window* panel = app.appUi().transportPanel();
+		REQUIRE(panel != nullptr);
+		app.shell().step(std::chrono::milliseconds(0));
+		Rml::Context& context = panel->context();
+		Rml::Element* transport = nullptr;
+		for (int i = 0; i < context.GetNumDocuments(); ++i)
+			if (Rml::Element* found = context.GetDocument(i)->GetElementById("transport"))
+				transport = found;
+		REQUIRE(transport != nullptr);
+		// Every control is inside the window, and the window ends a section gap after the last one.
+		const auto width = static_cast<float>(panel->pixelSize().width);
+		float last = 0;
+		Rml::ElementList controls;
+		transport->QuerySelectorAll(controls, ".transport-section > *");
+		REQUIRE(!controls.empty());
+		for (Rml::Element* control : controls)
+		{
+			INFO(control->GetId());
+			const float end = control->GetAbsoluteLeft() + control->GetOffsetWidth();
+			CHECK(end <= width);
+			last = std::max(last, end);
+		}
+		CHECK(width - last <= (16.0F * dpRatio) + 1.0F);
+	}
 }
 
 TEST_CASE("the transport bar goes to markers, the project's ends and the selection", "[ui]")
@@ -415,14 +473,17 @@ TEST_CASE("the time displays keep their width while the cursor moves, and their 
 		{"seconds", {{17279999952}, 12}},                                       // 99:59:59.999
 		{"timecode", {{17279999000}, 11}},                                      // 99:59:59:24
 		{"samples", {{99999999999}, 11}}, {"userFrames", {{17279999000}, 11}}}; // 99:59:59:29
-	// FreeType rounds the font to whole pixels, and its advances too: at a dp ratio of 1 a 13 dp digit is 8 px, at 0.85
-	// an 11 px face's is 7 px of 11.05, the most a character takes of its em (#1379).
+	// RmlUi cuts the font size to whole pixels before it asks for the face, and FreeType rounds the hinted advances: at
+	// a dp ratio of 1 a 13 dp digit is 8 px, at 0.85 an 11 px face's is 7 px of 11.05, the most a character takes of
+	// its em (#1379).
 	for (const float dpRatio : {1.0F, 0.85F})
 		for (const char* theme : {"gnubase", "dark", "light", "high-contrast"})
 		{
 			INFO("dp ratio " << dpRatio << ", theme " << theme);
 			app.setDpRatio(dpRatio);
 			app.call("settings.set", {{"key", "ui.theme"}, {"value", theme}});
+			// The shell applies the setting in a task, and a name it has no theme for would keep the default (#1424).
+			REQUIRE(app.waitUntil([&app, theme] { return app.shell().theme() == theme; }));
 			for (const auto& [name, widest] : formats)
 			{
 				INFO("format " << name);

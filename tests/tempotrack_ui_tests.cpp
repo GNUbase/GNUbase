@@ -148,7 +148,8 @@ namespace
 		ui::Automation automation{ui.shell};
 	};
 
-	// The project window with its transport bar shown, at a dp ratio at which all its sections fit 1024 pixels.
+	// The project window with its transport bar shown, at a dp ratio at which all its sections fit 1024 pixels: about
+	// 1220 dp in 1280 dp, which tests/transportbar_tests.cpp checks (#1424, #1450).
 	void showBar(test::UiApp& app)
 	{
 		app.setDpRatio(0.8F);
