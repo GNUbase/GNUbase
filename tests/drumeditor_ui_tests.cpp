@@ -10,6 +10,7 @@
 #include "ui/rmlui.h"
 #include "uiapp.h"
 
+#include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Core.h>
 #include <catch2/catch_test_macros.hpp>
 
@@ -571,21 +572,26 @@ TEST_CASE("the drumstick's drag changes the velocity, with Alt the pitch, with S
 		moved.point->y -= dp;
 		return moved;
 	};
-	// Up: a louder note, one step of 127 per dp, still one note of its sound.
+	// Up: a louder note, one step of 127 per dp counted from the drag threshold of 4 dp, still one note of its sound.
 	f.app.ui().drag(f.window, f.at(0.3, 36), up(f.at(0.3, 36), 20));
 	f.app.shell().step(std::chrono::milliseconds(0));
 	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 1; }));
 	CHECK(f.partNotes()[0].at("pitch") == 36);
-	CHECK(std::lround(f.partNotes()[0].at("velocity").get<double>() * 127) == std::lround(velocity * 127) + 20);
-	// The velocity shows while dragging, and a slip of less than 4 dp keeps the insert velocity.
+	CHECK(std::lround(f.partNotes()[0].at("velocity").get<double>() * 127) == std::lround(velocity * 127) + 16);
+	// The velocity shows while dragging, and a slip of less than 4 dp keeps the insert velocity. Past it every value
+	// is reached, also the ones next to the insert velocity.
 	const auto shown = [&] { return f.elements(".key-editor-velocity").at(0).value("text", std::string()); };
 	CHECK(f.has(".key-editor-velocity", "off"));
 	f.app.ui().press(f.window, f.at(2.3, 36), ui::MouseButton::Left);
 	f.app.ui().move(f.window, up(f.at(2.3, 36), 3));
 	REQUIRE(f.app.waitUntil([&] { return !f.has(".key-editor-velocity", "off"); }));
 	CHECK(shown() == std::to_string(std::lround(velocity * 127)));
+	f.app.ui().move(f.window, up(f.at(2.3, 36), 5));
+	CHECK(f.app.waitUntil([&] { return shown() == std::to_string(std::lround(velocity * 127) + 1); }));
+	f.app.ui().move(f.window, up(f.at(2.3, 36), -5));
+	CHECK(f.app.waitUntil([&] { return shown() == std::to_string(std::lround(velocity * 127) - 1); }));
 	f.app.ui().move(f.window, up(f.at(2.3, 36), 12));
-	CHECK(f.app.waitUntil([&] { return shown() == std::to_string(std::lround(velocity * 127) + 12); }));
+	CHECK(f.app.waitUntil([&] { return shown() == std::to_string(std::lround(velocity * 127) + 8); }));
 	f.app.ui().move(f.window, up(f.at(2.3, 36), 3));
 	f.app.ui().release(f.window, up(f.at(2.3, 36), 3), ui::MouseButton::Left);
 	f.app.shell().step(std::chrono::milliseconds(0));
@@ -716,6 +722,78 @@ TEST_CASE("a drumstick drag released outside the editor still inserts its notes"
 	CHECK(f.partNotes()[3].at("pitch") == 36);
 	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note.drawing").empty(); }));
 	CHECK(f.has(".key-editor-velocity", "off"));
+}
+
+TEST_CASE("a drumstick drag follows the mouse outside the editor and ends when it leaves the window", "[ui]")
+{
+	Fixture f;
+	f.scroll(36);
+	f.click(of(".key-tool[key-tool=draw]"));
+	const double velocity = f.app.call("editor.get", {{"editor", "window"}}).at("insertVelocity").get<double>();
+	const auto shown = [&] { return f.elements(".key-editor-velocity").at(0).value("text", std::string()); };
+	// To the right over 3.5 sixteenths, then above the editor: the velocity the note will have follows the mouse
+	// there, as the release there takes it.
+	f.app.ui().press(f.window, f.at(0.3, 36), ui::MouseButton::Left);
+	f.app.ui().move(f.window, f.at(3.5, 36));
+	REQUIRE(f.app.waitUntil([&] { return !f.has(".key-editor-velocity", "off"); }));
+	CHECK(shown() == std::to_string(std::lround(velocity * 127)));
+	const ui::Point later = f.at(3.5, 36).point.value_or(ui::Point{});
+	f.app.ui().move(f.window, {"", 0, ui::Point{later.x, f.box(".key-editor").at("y").get<int>() - 4}});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return shown() != std::to_string(std::lround(velocity * 127)); }));
+	const long outside = std::stol(shown());
+	CHECK(outside > std::lround(velocity * 127));
+	// Out of the window, where no mouseup arrives, the draw ends as there: the notes drawn so far go in, with that
+	// velocity.
+	ui::Window* window = f.app.shell().find(f.app.appUi().editorWindowId());
+	REQUIRE(window != nullptr);
+	Rml::Context& context = window->context();
+	context.ProcessMouseLeave();
+	context.ProcessMouseButtonUp(0, 0);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 4; }));
+	for (const Json& note : f.partNotes())
+		CHECK(std::lround(note.at("velocity").get<double>() * 127) == outside);
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note.drawing").empty(); }));
+	CHECK(f.has(".key-editor-velocity", "off"));
+	// Back in the editor the mouse draws nothing more.
+	f.app.ui().move(f.window, f.at(8.5, 36));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.elements(".key-note.drawing").empty());
+	CHECK(f.has(".key-editor-velocity", "off"));
+	CHECK(f.partNotes().size() == 4);
+}
+
+TEST_CASE("with Use Snap from Drum Map a note moved to another sound snaps to that sound's snap", "[ui]")
+{
+	// p. 1227: events snap to the snap of their sound, so a note moved to another sound to that one's. The bass
+	// drum's snap is 1/8, the snare's and the quantize grid's 1/16.
+	Fixture f;
+	f.app.call("drumMap.set", {{"map", f.map}, {"sounds", Json::array({{{"pitch", 36}, {"snap", "1/8"}}})}});
+	f.app.call("editor.set", {{"editor", "window"}, {"gridType", "drumMap"}});
+	f.app.call("note.add",
+		{{"part", f.part}, {"notes", {{{"position", 0}, {"length", g_sixteenth}, {"pitch", 38}, {"velocity", 0.5}}}}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-note").size() == 1; }));
+	REQUIRE(
+		f.app.waitUntil([&] { return f.app.call("editor.get", {{"editor", "window"}}).at("gridType") == "drumMap"; }));
+	f.scroll(36);
+	// From the snare to the bass drum by 3.2 sixteenths: to the nearest eighth, the fourth sixteenth, not the third.
+	f.click(of(".drum-note"));
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	clock->advance(1.0); // no double click with the click, whose drag would delete the note
+	f.app.ui().drag(f.window, f.at(0.0, 38), f.at(3.2, 36));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes()[0].at("pitch") == 36; }));
+	CHECK(f.partNotes()[0].at("position") == 4 * g_sixteenth);
+	// The step input cursor belongs to no sound, as the notes played there can be any: a click on the bass drum's
+	// row puts it on the quantize grid.
+	f.app.call("editor.set", {{"editor", "window"}, {"stepInput", true}});
+	REQUIRE(f.app.waitUntil([&] { return !f.has(".key-editor-step-cursor", "off"); }));
+	clock->advance(1.0);
+	f.click(f.at(9.2, 36));
+	CHECK(f.app.waitUntil(
+		[&] { return f.app.call("editor.get", {{"editor", "window"}}).at("stepPosition") == 9 * g_sixteenth; }));
 }
 
 TEST_CASE("the object selection tool's double click and drag inserts and deletes several notes of a sound", "[ui]")

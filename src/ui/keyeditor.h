@@ -152,6 +152,8 @@ namespace gnubase::ui
 			int64_t repeats = 1;
 		};
 		DrumDraw drumDraw(const Rml::Event& event) const;
+		// Ends the drumstick's draw: removes the drawn note and the velocity and inserts the draw's notes.
+		void endDrumDraw(const DrumDraw& draw);
 		// Plays the pitch on the active track's instrument, as a pressed key of the keyboard does (p. 1204), after
 		// ending the pitch played before; without one only ends it.
 		void sound(std::optional<int> pitch);
@@ -181,7 +183,9 @@ namespace gnubase::ui
 		std::pair<double, int> at(const Rml::Event& event) const;
 		// With a pitch, the drum editor snaps it to its sound's snap while the grid type is drumMap.
 		int64_t snap(double ticks, bool off, int pitch = -1) const;
-		int64_t delta(Gesture gesture, double ticks) const;
+		// How far a gesture moves the pressed note's edge, snapped; a move rows away in the display's order snaps to
+		// the snap of the pitch it moves to.
+		int64_t delta(Gesture gesture, double ticks, int rows = 0) const;
 		int64_t grid(int pitch = -1) const;
 		static int64_t soundSnap(const engine::Json& map, int pitch); // a drum sound's snap, in ticks
 		// The length of new notes of the pitch: with Drum-Map Link its sound's snap.
@@ -242,6 +246,7 @@ namespace gnubase::ui
 		Rml::ObserverPtr<Rml::Element> m_drawn; // the note a draw drags out
 		int64_t m_drawnLength = 0;              // its length, at m_pressedAt
 		double m_drawnFrom = 0.0;               // the mouse's ticks at the press that started it
+		DrumDraw m_drumDrawn;                   // what the drumstick's draw shows, for the mouse leaving the window
 		std::optional<std::pair<uint64_t, int>> m_sounding; // the channel and pitch of the key pressed
 		Rml::ObserverPtr<Rml::Element> m_document;          // ends the key's pitch on a release anywhere in it
 		// the length quantize menu, the line tool's menu, the toolbox, then the drum editor's Map, Pitch Visibility
