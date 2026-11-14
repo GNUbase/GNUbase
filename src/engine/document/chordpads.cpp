@@ -1214,8 +1214,11 @@ namespace gnubase::engine
 				"select the previous and the next player and mute or unmute the selected one, -1 for none. "
 				"controlSources (Modify All Pad Voicings, Modify All Pad Tensions, Transpose All Pads, p. 1387): what "
 				"moves them from the remote's input, none, aftertouch, pitchBend or controller (of controlNumbers): "
-				"across its range the voicings go from 3 inversions down to 3 up, the tensions from none to 3 more and "
-				"the transposition from 6 semitones down to 6 up, each move of a control one undo step.",
+				"a control at rest changes nothing: aftertouch and controllers rest at 0 and go up to 3 inversions up, "
+				"3 "
+				"more tensions and 6 semitones up; pitch bend rests in its middle and goes from 3 inversions and 6 "
+				"semitones down to 3 and 6 up, and from none to 3 more tensions above its middle. Each gesture of a "
+				"control is one undo step; a second without a move ends the gesture.",
 				objectSchema({{"rootKey", integerSchema}, {"transposePads", booleanSchema}, {"padCount", integerSchema},
 					{"octaveOffset", integerSchema}, {"player", integerSchema}, {"velocity", integerSchema},
 					{"remote", booleanSchema}, {"remoteStart", integerSchema}, {"remoteEnd", integerSchema},
@@ -2204,14 +2207,18 @@ namespace gnubase::engine
 					{
 						// All pads, from where the controls left them to where it is: one undo step per gesture. A
 						// control at rest changes nothing: pitch bend rests in the middle of its range, from 3
-						// inversions (6 semitones) down to 3 (6) up; aftertouch and controllers rest at 0 and go up.
+						// inversions (6 semitones) down to 3 (6) up, and adds the tensions from its middle up;
+						// aftertouch and controllers rest at 0 and go up.
 						static constexpr std::array<const char*, 3> changes = {"voicing", "tensions", "transpose"};
 						static constexpr std::array<int, 3> lowest = {-3, 0, -6};
 						static constexpr std::array<int, 3> highest = {3, 3, 6};
 						const auto which = static_cast<size_t>(key);
-						const int low = pads.controlSources.at(which) == "pitchBend" ? lowest.at(which) : 0;
-						const int step =
-							low + static_cast<int>(std::lround(velocity / 127.0 * (highest.at(which) - low)));
+						const bool bend = pads.controlSources.at(which) == "pitchBend";
+						const int low = bend ? lowest.at(which) : 0;
+						const int rest = bend && low == 0 ? 64 : 0;
+						const int step = low +
+							static_cast<int>(std::lround(std::max(velocity - rest, 0) /
+								static_cast<double>(127 - rest) * (highest.at(which) - low)));
 						// Where the controls left the pads, as the latest done step of theirs says.
 						std::array<int, 3> steps{};
 						for (size_t i = m_history.position(); i-- > 0;)
@@ -2266,10 +2273,12 @@ namespace gnubase::engine
 					}
 					else if (kind == "note" && !state.listen.empty())
 					{
+						bool fresh = false; // a key new to the ones pressed while listening
 						if (velocity > 0)
 						{
 							state.down.insert(key);
-							if (std::find(state.pitches.begin(), state.pitches.end(), key) == state.pitches.end())
+							fresh = std::find(state.pitches.begin(), state.pitches.end(), key) == state.pitches.end();
+							if (fresh)
 								state.pitches.push_back(key);
 						}
 						else
@@ -2289,17 +2298,21 @@ namespace gnubase::engine
 							context.call("chordPads.set", {{"remoteStart", low}, {"remoteEnd", high}});
 							done = true;
 						}
-						else if (state.listen == "learn" && learnsKeys(state.target) && velocity > 0)
+						else if (state.listen == "learn" && learnsKeys(state.target))
 						{
-							// The Player Remote Control tab's keys, one after another (p. 1389).
-							Json keys = chordPadsJson(m_project).at(state.target);
-							const size_t index = state.pitches.size() - 1;
-							if (index < keys.size() && keys.at(index) != key)
+							// The Player Remote Control tab's keys, one after another (p. 1389); a key pressed again
+							// changes nothing.
+							if (fresh)
 							{
-								keys.at(index) = key;
-								context.call("chordPads.set", {{state.target, keys}});
+								Json keys = chordPadsJson(m_project).at(state.target);
+								const size_t index = state.pitches.size() - 1;
+								if (index < keys.size() && keys.at(index) != key)
+								{
+									keys.at(index) = key;
+									context.call("chordPads.set", {{state.target, keys}});
+								}
+								done = state.pitches.size() >= keys.size();
 							}
-							done = state.pitches.size() >= keys.size();
 						}
 						else if (state.listen == "learn" && state.target != "range" && controlOf(state.target) < 0 &&
 							velocity > 0)

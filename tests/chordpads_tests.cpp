@@ -1634,7 +1634,8 @@ TEST_CASE("MIDI Learn takes the Player Remote Control tab's keys and what moves 
 	// The keys fill the sections one after another and play as they are meanwhile.
 	CHECK(remote.send(0x90, 60, 90) == std::vector<std::vector<int>>{{0x90, 60, 90}});
 	CHECK(remote.until([&] { return run(client, "chordPads.get").at("sectionKeys")[0] == 60; }));
-	for (const uint8_t key : std::array<uint8_t, 4>{61, 62, 63, 64})
+	// A key pressed again leaves the keys learned so far, and the next new key goes into the next section.
+	for (const uint8_t key : std::array<uint8_t, 5>{61, 60, 62, 63, 64})
 		remote.send(0x90, key, 90);
 	CHECK(remote.until(
 		[&] { return run(client, "chordPads.get").at("sectionKeys") == std::vector<int>{60, 61, 62, 63, 64}; }));
@@ -1666,7 +1667,7 @@ TEST_CASE(
 	RemoteRig remote;
 	Client& client = remote.rig.client;
 	run(client, "chordPads.set",
-		{{"controlSources", {"aftertouch", "none", "controller"}}, {"controlNumbers", {1, 1, 74}}});
+		{{"controlSources", {"aftertouch", "pitchBend", "controller"}}, {"controlNumbers", {1, 1, 74}}});
 	run(client, "audio.render", {{"frames", 64}});
 	// Aftertouch at rest leaves the voicings; pressed a third of the way, one inversion up.
 	sendBytes(remote, {0xD0, 0});
@@ -1675,6 +1676,13 @@ TEST_CASE(
 	CHECK(pad(client, 1).at("voicing") == 1);
 	sendBytes(remote, {0xD0, 0});
 	CHECK(remote.until([&] { return pad(client, 1).at("voicing") == 0; }));
+	// Pitch bend adds the tensions from its middle up: bent up and back to the middle, the chords are as before.
+	const Json chord = pad(client, 1).at("pitches");
+	sendBytes(remote, {0xE0, 0, 64});
+	sendBytes(remote, {0xE0, 0, 127});
+	CHECK(remote.until([&] { return pad(client, 1).at("pitches") != chord; }));
+	sendBytes(remote, {0xE0, 0, 64});
+	CHECK(remote.until([&] { return pad(client, 1).at("pitches") == chord; }));
 
 	// A controller's gesture is one undo step; after a second without it, the next is another.
 	const auto steps = run(client, "history.get").at("position").get<int64_t>();

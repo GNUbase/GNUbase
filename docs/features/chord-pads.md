@@ -126,10 +126,10 @@ sections player modes, presets, step input and the List, Proximity and Circle of
   (`controlSources`: aftertouch, pitchBend or a controller of `controlNumbers`) move all pads across the control's
   range, and a control at rest changes nothing: pitch bend from its middle, the voicings 3 inversions and the
   transposition 6 semitones either way; aftertouch and controllers from 0, up to 3 inversions and 6 semitones; the
-  tensions from none to 3 more. The audio thread hands the control's value to the command thread
-  (`PadEvent::Kind::Control`), which modifies the pads as one undo step per gesture (a merged `history.transaction`; a
-  control's gesture ends after a second without its messages). How far the controls moved the pads is kept for each
-  undo step they made, so after undo and redo the next move goes from where the pads are.
+  tensions from none to 3 more, with pitch bend from its middle up. The audio thread hands the control's value to the
+  command thread (`PadEvent::Kind::Control`), which modifies the pads as one undo step per gesture (a merged
+  `history.transaction`; a control's gesture ends after a second without its messages). How far the controls moved the
+  pads is kept for each undo step they made, so after undo and redo the next move goes from where the pads are.
 - **Assign from MIDI Input and MIDI Learn** (pp. 1360, 1388): `chordPads.listen` `assign` (a pad) takes the next notes
   from the MIDI inputs, which play as they are meanwhile, and once they are all released assigns their chord
   (`chordPads.assign` `pitches`); `learn` `range` takes the next two keys as the remote range, `learn` with a
