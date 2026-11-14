@@ -60,13 +60,13 @@ How it plays:
   engine so, since a channel of the same id keeps its instrument and the sample before is the other project's.
   Starting playback, with `transport.play` or with `transport.record` from stop without a count-in, waits for the
   samples as for the audio tracks' streams (up to 2 seconds); locating and a count-in don't. Offline renders
-  (`audio.render`, `mixdown.export`, render in place) wait until every sample is there, however long its file takes
-  (logging a warning every 30 seconds), so they come out the same every time. None of them can be cancelled yet: a
-  file whose read never ends, e.g. on a network drive that stalls, holds them and the engine's end until it does. Both
-  wait only for the files that samplers wait for, not for one being read that none wants any more. Files that no
-  sampler waits for any more, after an undo or another project, are dropped from the loader's queue unread; the one
-  being read can't be stopped, and the engine's end waits for it. A read that fails plays nothing, as a missing file
-  does.
+  (`audio.render`, `mixdown.export`, render in place) wait until every sample is there, so they come out the same every
+  time: they log a warning every 30 seconds and fail with an error after 10 minutes (#1343), so a file whose read
+  never ends, e.g. on a network drive that stalls, doesn't hold them for good; none of them can be cancelled while
+  it waits. Both wait only for the files that samplers wait for, not for one being read that none wants any more.
+  Files that no sampler waits for any more, after an undo or another project, are dropped from the loader's queue
+  unread; the one being read can't be stopped, and the engine's end waits for it. A read that fails plays nothing, as
+  a missing file does.
 - Hot swap: the sampler takes the new sample without a lock (`rt::SnapshotPublisher`); voices keep playing on the new
   one. It lets go of the sample before by the next update, once the audio thread has moved on.
 - Samples are read through `processors::sharedSample`, which reads a file once while something holds its sample:
@@ -104,7 +104,9 @@ root `.sampler-panel` has the class `.empty`):
   loads keep the settings with (`keepSettings`). The lock and the level are the user setting `ui.samplerPanel`
   (`lockParameters`, `normalizeLevel`; what later versions add to it is kept), so they stay as they were when the panel is made anew, e.g. in a window of its
   own. While the panel's own changes of it are on their way, e.g. during a drag of the level, the older ones that
-  `settings.changed` brings back don't set the field back. Why a load (a file that isn't audio) or Normalize Sample (a silent or missing sample) failed shows in the
+  `settings.changed` brings back don't set the field back. A change from elsewhere still shows: results and events
+  reach the panel in the engine's order, so one made after the panel's last `settings.set` comes after that save's
+  answer, when none of the panel's own is on its way. Why a load (a file that isn't audio) or Normalize Sample (a silent or missing sample) failed shows in the
   toolbar's message (`#sampler-message`, `.error`) until the next one succeeds or another track is shown.
 - **Waveform display** (`#sampler-display`): the sample's waveform from `media.peaks`, its parts before Start and
   after End shaded (`.sampler-outside`), the loop (`.sampler-loop`) and the markers (`.sampler-marker`, attribute
@@ -153,3 +155,6 @@ when the window loses the focus, the message going with another track and its to
 panel closed while the dialog was open.
 #1200 added recording from stop that waits for the samples unless a count-in plays, the handles apart on a narrow
 keyboard, and a change of the panel's setting from elsewhere right after the panel's own quick ones.
+#1343 added the warnings at every round of an offline render's wait for a sample and the error after the last of its
+20 rounds, tested with rounds of 20 ms instead of 30 s (`Engine::setOfflineSampleWait`), and checks that starting
+playback and recording from stop answer only after the held read is released.
