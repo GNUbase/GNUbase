@@ -950,18 +950,24 @@ namespace gnubase::engine
 			resizeEvents(copy, inner);
 			syncSharedParts(project.midiParts, copy, inner); // as ProjectModel does after the edit
 			Json result = {{"audioEvents", Json::array()}, {"audioParts", Json::array()}, {"midiParts", Json::array()}};
+			// With a warped event's playedLength and the derived rootKeyTranspose, as project.get gives them.
+			const auto audioEvent = [&copy](const AudioEvent& event)
+			{
+				Json json = audioEventJson(copy, event);
+				json["rootKeyTranspose"] = rootKeyTranspose(copy, event);
+				return json;
+			};
 			for (const Item& item : itemsFrom(copy, context.parameters(), true))
 			{
 				if (item.audio != nullptr)
 				{
-					result["audioEvents"].push_back(
-						audioEventJson(copy, *item.audio)); // with a warped event's playedLength
+					result["audioEvents"].push_back(audioEvent(*item.audio));
 				}
 				else if (item.audioPart != nullptr)
 				{
 					result["audioParts"].push_back(toJson(*item.audioPart));
 					for (const AudioEvent* event : eventsIn(copy, item.audioPart->id))
-						result["audioEvents"].push_back(audioEventJson(copy, *event));
+						result["audioEvents"].push_back(audioEvent(*event));
 				}
 				else
 				{
