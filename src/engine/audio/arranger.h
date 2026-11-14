@@ -86,6 +86,10 @@ namespace gnubase::engine
 
 	// Where arranger playback is: a chain step and its repeat, or an event that loops since it was triggered, and
 	// the step or event that takes over at the next jump point. -1 for none: playback outside the chain is linear.
+	// The event and rank fields say what the indices mean: the event a step or section plays and, where a chain plays
+	// one event in several steps, which of them, counted from 0. A new plan finds them again by what they play, so a
+	// chain edit can't hand a step to another one (#885). They travel with the state but not in its published
+	// packing, and the equality that announces changes ignores them: they describe the indices, not the playback.
 	struct ArrangerState
 	{
 		int32_t step = -1;
@@ -94,7 +98,13 @@ namespace gnubase::engine
 		int32_t pendingStep = -1;
 		int32_t pendingRepeat = 0;
 		int32_t pendingSection = -1;
-		bool entering = false; // playback started or was located: arrangerEnter finds where it is first
+		bool entering = false;  // playback started or was located: arrangerEnter finds where it is first
+		uint64_t stepEvent = 0; // the event the step plays, and its rank among that event's steps
+		int32_t stepRank = 0;
+		uint64_t sectionEvent = 0; // the event the looping section is
+		uint64_t pendingEvent = 0; // the same for the step or event that takes over
+		int32_t pendingRank = 0;
+		uint64_t pendingSectionEvent = 0;
 
 		bool operator==(const ArrangerState& other) const
 		{
@@ -124,20 +134,34 @@ namespace gnubase::engine
 	};
 
 	// Where playback that starts or is located at a position is in the plan: in the step it is in if that holds the
-	// position, else in the first step whose event holds it, else outside the chain. previous is the plan the state's
-	// indices walk (the plan the transport played last), or null: with it, the step playing and a step or event that
-	// waits are found again in plan by the event they play, so a chain edit doesn't hand them to another step, and a
-	// step found again keeps its repeat (#885). Real-time safe.
-	ArrangerState arrangerEnter(const ArrangerPlan& plan, const ArrangerPlan* previous, const ArrangerState& state,
-		time::Samples position) noexcept;
+	// position, else in the first step whose event holds it, else outside the chain. A step the search finds starts
+	// at its first repeat: a repeat belongs to the step that was playing, not to the event's other steps. A state
+	// whose indices come from another plan goes through arrangerRemapped first. Real-time safe.
+	ArrangerState arrangerEnter(const ArrangerPlan& plan, const ArrangerState& state, time::Samples position) noexcept;
 
 	// The next turn after position (at at or after it) for playback in state. Real-time safe.
 	ArrangerTurn arrangerNext(const ArrangerPlan& plan, const ArrangerState& state, time::Samples position) noexcept;
 
-	// The plan generations that travel in the packed state: the two sequence-lock words have seven bits to spare for
-	// it (#885). Plans whose generations differ by a multiple of this share a key; a state that is that stale makes
-	// its readers fall back to re-entering the newest plan instead of pairing it with a wrong one.
-	inline constexpr uint64_t g_arrangerGenerations = 128;
+	// The state's event and rank fields filled in from plan, so a later plan finds its indices again (#885).
+	// Real-time safe.
+	ArrangerState arrangerIdentity(const ArrangerPlan& plan, const ArrangerState& state) noexcept;
+
+	// The state's indices found again in plan by the events and ranks it carries (#885): a step that is still there
+	// keeps its repeat, clamped to the ones it has now, and one whose event left the chain goes back to -1, where the
+	// position decides; a step or event that waits and is gone is dropped, instead of taking over as whatever its old
+	// index names. Indices without events pass through as they are. Real-time safe.
+	ArrangerState arrangerRemapped(const ArrangerPlan& plan, const ArrangerState& state) noexcept;
+
+	// The plan of a published generation out of the two a cue keeps, or null when neither is it: a cue skips the
+	// pass then, rather than walk a plan the state's indices don't mean (#885).
+	const ArrangerPlan* planOfGeneration(
+		const ArrangerPlan* newest, const ArrangerPlan* previous, uint64_t generation) noexcept;
+
+	// The plan generations that travel in the packed state: the fields leave 27 bits for it in the two sequence-lock
+	// words (#885). Plans whose generations differ by a multiple of this share a key; reaching that would take more
+	// plan changes inside one audio block than a machine can build, and a cue whose published generation matches
+	// neither plan it keeps skips the pass instead of walking a wrong plan.
+	inline constexpr uint64_t g_arrangerGenerations = uint64_t{1} << 27;
 
 	// The state and the generation of the plan its step and section indices walk, packed into two integers for a
 	// lock-free hand-over, and back. The generation comes back modulo g_arrangerGenerations.

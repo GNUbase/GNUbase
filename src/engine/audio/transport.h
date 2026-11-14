@@ -123,10 +123,10 @@ namespace gnubase::engine
 		bool locate(time::Samples position);         // also the new start position for returnToStart
 		bool set(const TransportSettings& settings); // new locators and modes
 		// Arranger playback: makes state the one playing (after a locate to where it plays), or with pending lets its
-		// step or event take over at the next jump point. generation is the generation of the plan the state's indices
-		// walk (ArrangerPlan::generation, 0 for none), so a later plan change finds them again by their events and
-		// readers of arrangerAndGeneration() know what the state means (#885).
-		bool arrange(const ArrangerState& state, bool pending, uint64_t generation = 0);
+		// step or event take over at the next jump point. plan is the plan the state's indices walk, on the caller's
+		// thread: the request then carries the state's events and ranks and the plan's generation, so a later plan
+		// change finds the state again and readers of arrangerAndGeneration() know what it means (#885).
+		bool arrange(const ArrangerState& state, bool pending, const ArrangerPlan* plan = nullptr);
 		// Any thread but the audio thread: where arranger playback is, as of the last block or request.
 		ArrangerState arranger() const;
 		// The same, with the generation of the plan its step and section indices walk, published together with it:
@@ -204,11 +204,6 @@ namespace gnubase::engine
 		bool send(const Request& request);
 		void apply(const Request& request) noexcept;
 		void locateTo(time::Samples position) noexcept;
-		// The plan the arranger state's indices walk, to find them again when a new plan arrives (#885): the last
-		// played plan if the state came from it, or the block's plan if the state arrived tagged with it, else none
-		// and the position decides where playback is. Only dereferences plans whose lifetime is guaranteed: the
-		// block's plan, and the published generation's, which the engine's cue-state rotation keeps.
-		const ArrangerPlan* remapBasis(const ArrangerPlan* plan) const noexcept;
 		void start(time::Samples from = -1) noexcept;
 		void startRecording() noexcept;
 		void autoStop() noexcept;
@@ -240,10 +235,9 @@ namespace gnubase::engine
 		uint8_t m_published = 0;       // what m_state says
 		std::vector<graph::TransportSegment> m_segments;
 		graph::TransportBlock m_block;
-		ArrangerState m_arranger;
-		const ArrangerPlan* m_plan = nullptr; // the plan advance last played, only compared and remapped from
-		uint64_t m_planGeneration = 0;        // the generation of that plan (#885)
-		uint64_t m_stateGeneration = 0;       // the generation the m_arranger indices walk: m_planGeneration, or an
+		ArrangerState m_arranger; // with the events and ranks its indices mean, for the next plan to find them (#885)
+		const ArrangerPlan* m_plan = nullptr; // the plan advance last played, only compared
+		uint64_t m_stateGeneration = 0;       // the generation the m_arranger indices walk: the last plan played, or an
 											  // arrange request's tag until the next block grounds them again
 		ArrangerState m_publishedArranger;
 		uint64_t m_publishedGeneration = 0; // published with m_publishedArranger, in one pair

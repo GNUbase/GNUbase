@@ -266,8 +266,18 @@ namespace gnubase::engine
 		}
 		// A consistent pair: the state and the plan of the generation its indices walk (#885).
 		const auto [plan, arrangerState] = cuePlan(state);
-		cue.arranger = plan;
-		cue.arrangerState = arrangerState;
+		if (plan != nullptr)
+		{
+			cue.arranger = plan;
+			cue.arrangerState = arrangerState;
+		}
+		else
+		{
+			// An exact cue primes where playback goes: ground the state in the newest plan instead of skipping.
+			cue.arranger = state.arranger.get();
+			cue.arrangerState = arrangerState;
+			cue.arrangerState.entering = true;
+		}
 		cue.enter = enter;
 		cue.playsOn = playsOn;
 		m_playback.cue(cue);
@@ -334,7 +344,9 @@ namespace gnubase::engine
 							cue.playing = true;
 							cue.starting = true;
 						}
-						m_playback.cue(cue);
+						// A generation neither kept plan has: skip this pass, the next one catches up (#885).
+						if (plan != nullptr)
+							m_playback.cue(cue);
 					}
 					m_audition.cue(cue.window, true);
 					std::this_thread::sleep_for(g_cueInterval);
@@ -374,15 +386,13 @@ namespace gnubase::engine
 	{
 		const auto [arrangerState, generation] = m_transport.arrangerAndGeneration();
 		const ArrangerPlan* const newest = state.arranger.get();
-		if (newest != nullptr && newest->generation % g_arrangerGenerations == generation)
-			return {newest, arrangerState};
-		if (state.previousArranger != nullptr &&
-			state.previousArranger->generation % g_arrangerGenerations == generation)
-			return {state.previousArranger.get(), arrangerState};
-		// The plan the state walks isn't kept (anymore): walk the newest one, entered again where this cues.
-		ArrangerState entered = arrangerState;
-		entered.entering = true;
-		return {newest, entered};
+		if (const ArrangerPlan* plan = planOfGeneration(newest, state.previousArranger.get(), generation))
+			return {plan, arrangerState};
+		if (newest != nullptr && !newest->plays())
+			return {newest, arrangerState}; // nothing walks a chain: the state's indices don't matter
+		// The plan the state walks is neither of the two this keeps (a burst of edits inside one block): skip the
+		// pass rather than guess - a missed cue cycle is harmless, a wrong cue is not (#885).
+		return {nullptr, arrangerState};
 	}
 
 	void AudioEngine::startDevice()
@@ -2904,18 +2914,19 @@ namespace gnubase::engine
 
 	void AudioEngine::arrange(const ArrangerState& state)
 	{
-		// The generation of the plan the state's indices walk travels with the request, so a later plan change finds
-		// them again by their events, and the cue thread knows which plan the published state means (#885).
+		// The plan travels with the request on this thread, so the state arrives with the events its indices mean
+		// and the generation it walks: a later plan change finds the state again, and the cue thread knows which plan
+		// the published state means (#885).
 		const std::shared_ptr<const ArrangerPlan> plan = m_snapshots.latest().arranger;
 		const int32_t section =
 			state.step >= 0 ? plan->steps.at(static_cast<size_t>(state.step)).section : state.section;
 		if (m_transport.playing() && plan->jump != ArrangerJump::None)
 		{
-			sent(m_transport.arrange(state, true, plan->generation));
+			sent(m_transport.arrange(state, true, plan.get()));
 			return;
 		}
 		locate({{"position", plan->sections.at(static_cast<size_t>(section)).start}});
-		sent(m_transport.arrange(state, false, plan->generation));
+		sent(m_transport.arrange(state, false, plan.get()));
 	}
 
 	void AudioEngine::registerArrangerCommands(Engine& engine)

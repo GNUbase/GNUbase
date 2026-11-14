@@ -554,9 +554,10 @@ namespace gnubase::engine
 		// still walks it. What leaves these two slots is freed here, never on the audio thread (#885).
 		void rotatePlans(const std::shared_ptr<const ArrangerPlan>& newest);
 		// The plan the transport's published arranger state walks, with that state, so a cue never walks a new plan
-		// with an old plan's indices (#885); the newest plan, entered again at the cue's position, while the state's
-		// generation isn't one of the state's plans. The caller passes a CueState copy that keeps the returned plan
-		// alive while the cue runs.
+		// with an old plan's indices (#885); the newest plan when it plays no chain and the state's indices don't
+		// matter, and null while the state's generation is neither of the two plans: the caller skips the cue then,
+		// rather than walk a plan the indices don't mean. The caller passes a CueState copy that keeps the returned
+		// plan alive while the cue runs.
 		std::pair<const ArrangerPlan*, ArrangerState> cuePlan(const CueState& state) const;
 		std::atomic<bool> m_cueing{false};
 		std::thread m_cueThread;

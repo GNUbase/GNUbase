@@ -162,12 +162,13 @@ namespace gnubase::engine
 		return true;
 	}
 
-	bool Transport::arrange(const ArrangerState& state, bool pending, uint64_t generation)
+	bool Transport::arrange(const ArrangerState& state, bool pending, const ArrangerPlan* plan)
 	{
 		Request request{Request::Type::Arrange, 0, {}, 0};
-		request.arranger = state;
+		// On the caller's thread, which holds the plan: the state travels with the events its indices mean (#885).
+		request.arranger = plan != nullptr ? arrangerIdentity(*plan, state) : state;
 		request.record = pending;
-		request.arrangerGeneration = generation;
+		request.arrangerGeneration = plan != nullptr ? plan->generation : 0;
 		return send(request);
 	}
 
@@ -189,18 +190,6 @@ namespace gnubase::engine
 		m_start = position;
 		m_inPreRoll = false;
 		m_arranger.entering = true;
-	}
-
-	const ArrangerPlan* Transport::remapBasis(const ArrangerPlan* plan) const noexcept
-	{
-		// The state came from the plan played last unless an arrange tagged it with the block's plan. m_plan is safe
-		// to read while its generation is the published one: the engine keeps that plan alive for exactly this
-		// hand-over, and frees it on the command thread once the transport has moved on (#885).
-		if (m_plan != nullptr && m_plan != plan && m_planGeneration == m_stateGeneration)
-			return m_plan;
-		if (plan != nullptr && plan->generation == m_stateGeneration)
-			return plan;
-		return nullptr; // no plan to remap from: the position decides
 	}
 
 	// Starts playback from the cursor or the left locator, or from where the caller says with from at or after 0 (the
@@ -270,6 +259,9 @@ namespace gnubase::engine
 				m_arranger.pendingStep = request.arranger.step;
 				m_arranger.pendingRepeat = request.arranger.repeat;
 				m_arranger.pendingSection = request.arranger.step >= 0 ? -1 : request.arranger.section;
+				m_arranger.pendingEvent = request.arranger.pendingEvent;
+				m_arranger.pendingRank = request.arranger.pendingRank;
+				m_arranger.pendingSectionEvent = request.arranger.pendingSectionEvent;
 			}
 			else
 			{
@@ -372,20 +364,26 @@ namespace gnubase::engine
 		update();
 		const bool arranged = plan != nullptr && plan->plays();
 		// Playback enters the chain where it starts without the pre-roll, so that the pre-roll plays into the step. A
-		// new plan (a chain edit, another active chain) has other step indices: playback finds its place again.
+		// new plan (a chain edit, another active chain) has other step indices: the state finds its step and a step
+		// or event waiting again by the events they play in the state, never in a plan the block didn't bring (#885).
 		if (!arranged)
+		{
 			m_arranger.entering = false; // linear playback is where it is: arranger mode switched on enters there
+		}
 		else if (m_arranger.entering)
-			m_arranger = arrangerEnter(*plan, remapBasis(plan), m_arranger, m_start);
+		{
+			m_arranger = arrangerEnter(*plan, arrangerRemapped(*plan, m_arranger), m_start);
+			m_stateGeneration = plan->generation;
+		}
 		else if (plan != m_plan)
-			// A new plan finds the step playing again, by the event its indices walk in the plan they come from.
+		{
 			// During the pre-roll the position is before the start, where no step's event holds it yet, so enter at
 			// the start without the pre-roll to keep the chain playing (#885). After it, playback is at the position,
 			// even where the chain has played back before the start.
-			m_arranger = arrangerEnter(*plan, remapBasis(plan), m_arranger, m_inPreRoll ? m_start : m_position);
+			m_arranger = arrangerEnter(*plan, arrangerRemapped(*plan, m_arranger), m_inPreRoll ? m_start : m_position);
+			m_stateGeneration = plan->generation;
+		}
 		m_plan = plan;
-		m_planGeneration = plan != nullptr ? plan->generation : 0;
-		m_stateGeneration = m_planGeneration; // every state this block computes walks it
 		GNUBASE_ASSERT(frames <= m_segments.size());
 		frames = std::min(frames, static_cast<uint32_t>(m_segments.size()));
 		if (m_playing && m_stopAt >= 0 && m_position >= m_stopAt)
