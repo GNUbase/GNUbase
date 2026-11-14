@@ -27,7 +27,9 @@ they are.
   Paste Channel Settings does), the MIDI modifiers, inserts, sends, volume, pan, program, bank and device, the MIDI
   channel (`channel.set` `midiChannel`), the instrument with its parameters, a sampler's sample, a drum machine's pads
   with their names and samples, and for MIDI and instrument tracks the color. The samples' files are extracted next to
-  the preset (`Track Presets/<name> media`), as `track.import` extracts an archive's; their clips come into the pool
+  the preset (`Track Presets/<name> media`), as `track.import` extracts an archive's (a file that is there with the
+  entry's size and CRC-32 stays as it is, write time included, so that loading the preset again doesn't write over
+  the files the project plays; one with other content is written over); their clips come into the pool
   (`media.added`, `clip.added`) unless it has the same clips already, so loading a preset again adds none, and the
   lanes of a drum track's patterns take the names of the pads (`pattern.changed`). Not the name, routing, sends, buttons
   or notes. The tracks must be as many as the preset's, of the same types in the same order (p. 241): the first of
@@ -70,7 +72,8 @@ they are.
   outputs to busses to its busses with the same name, or else the main output (p. 200). Clips come with the events, in
   the pool's top folder, and media files the project has already are shared; drum maps the project has with the same
   name and sounds too. Media files embedded in the file are extracted next to it, into `<name> media`, as `project.load`
-  does, and the result lists the media files the import added as `media`. Linear positions from a file at another sample
+  does: a file that is there with the entry's content stays as it is, one with other content is written over. The
+  result lists the media files the import added as `media`. Linear positions from a file at another sample
   rate are rescaled to keep their time, as `project.set` does; faders, send levels and volume automation above the
   project's fader top come down to it, from presets too. When what is imported ends after the project's end (its length
   in the project setup), the end moves to where it ends, up to the setup's 24 hours (the note on Import Position,

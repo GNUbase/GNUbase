@@ -1202,12 +1202,22 @@ TEST_CASE("a sampler's track preset brings its sample, embedded in the preset, i
 	// Loading it again leaves the extracted file alone, also while a reader has it open, which reads all of it.
 	const fs::file_time_type written = fs::last_write_time(extracted) - std::chrono::hours(1);
 	fs::last_write_time(extracted, written);
-	const std::unique_ptr<AudioFileReader> reader = AudioFileReader::open(extracted.u8string());
+	std::unique_ptr<AudioFileReader> reader = AudioFileReader::open(extracted.u8string());
 	CHECK(loadOnto(empty) == extracted);
 	CHECK(loadOnto(synth) == extracted);
 	CHECK(fs::last_write_time(extracted) == written);
 	std::vector<float> samples(static_cast<size_t>(1000 * reader->info().channels));
 	CHECK(reader->read(samples.data(), 1000) == 480);
+	reader.reset();
+
+	// A file of the entry's size with other content is written over: the CRC-32 tells them apart, not the size.
+	const uintmax_t size = fs::file_size(extracted);
+	gnubase::test::Audio other;
+	other.samples.assign(480, 0.25f);
+	gnubase::test::writeWav(extracted, other);
+	REQUIRE(fs::file_size(extracted) == size);
+	CHECK(loadOnto(empty) == extracted);
+	CHECK(gnubase::test::readWav(extracted).samples == audio.samples);
 }
 
 TEST_CASE(

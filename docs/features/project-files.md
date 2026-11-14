@@ -13,7 +13,10 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
 - **New.** `project.new` starts an empty project with the default busses, or with `template` a copy of that project
   template. Either way it has no file until it is saved, and the undo history is cleared. A template name must be a
   file name, as for `project.saveTemplate`, so that only templates in `Project Templates` open.
-- **Open.** `project.load` opens a DAWproject file.
+- **Open.** `project.load` opens a DAWproject file. Media files embedded in it are extracted next to it, into
+  `<name> media`. A file that is there already with the entry's size and CRC-32 stays as it is, write time included,
+  so that opening the project again doesn't write over files that are playing; one with other content is written over
+  (`ZipReader::holds` in `engine/dawproject/dawproject.cpp`).
 - **Save, Save As.** `project.save` with `path` saves the project as that file, which is then its file; without `path`
   it saves to the project's file and fails for a project that has none. The engine saves under the path as it is,
   without adding `.dawproject`, so that a script or MCP client gets the file it named; Save As in the UI adds the
