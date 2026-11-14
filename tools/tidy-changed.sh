@@ -127,21 +127,21 @@ done
 [ ${#skipped[@]} -gt 0 ] && echo "Not checked, in no target of this platform: ${skipped[*]}"
 
 # The changed lines as clang-tidy's line filter: {"name": file, "lines": [[first, last], ...]} per file; a new file
-# without "lines" counts with all of them. Each range takes 5 lines more on both sides: some checks report a finding a
-# change causes on an unchanged line next to it, such as readability-inconsistent-ifelse-braces on the unbraced first
-# "if" of a chain that gained a braced "else if" (#1400).
+# without "lines" counts with all of them. Each range takes 5 lines more on both sides, and a deletion the 5 lines on
+# both sides of it: some checks report a finding a change causes on an unchanged line next to it, such as
+# readability-inconsistent-ifelse-braces on the unbraced first "if" of a chain that gained a braced "else if", or on
+# the braced branches of a chain that one branch lost its braces in (#1400).
 filter=$(
 	{
 		changes -U0 | awk -v margin=5 '
-			/^\+\+\+ b\// { file = substr($0, 7) }
-			/^@@ / {
+			/^\+\+\+ / { file = /^\+\+\+ b\// ? substr($0, 7) : "" } # "+++ /dev/null" for a deleted file
+			/^@@ / && file != "" {
 				split(substr($3, 2), range, ",")
 				count = range[2] == "" ? 1 : range[2]
-				if (count > 0) {
-					separator = file in lines ? "," : ""
-					first = range[1] > margin ? range[1] - margin : 1
-					lines[file] = lines[file] separator "[" first "," (range[1] + count - 1 + margin) "]"
-				}
+				first = range[1] > margin ? range[1] - margin : 1
+				last = range[1] + (count > 0 ? count - 1 : 0) + margin
+				separator = file in lines ? "," : ""
+				lines[file] = lines[file] separator "[" first "," last "]"
 			}
 			END { for (file in lines) print file "\t" lines[file] }'
 		git ls-files --others --exclude-standard -- src tests | sed 's/$/\t/'
@@ -151,7 +151,7 @@ filter=$(
 		done
 	done | paste -s -d, -
 )
-# Nothing but deletions: no line to check (an empty filter would let clang-tidy report every line).
+# No changed line, say only deleted files: nothing to check (an empty filter would let clang-tidy report every line).
 if [ ${#files[@]} -eq 0 ] || [ -z "$filter" ]; then
 	echo "No changed C++ lines to check."
 	exit 0
