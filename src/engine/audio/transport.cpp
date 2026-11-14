@@ -162,11 +162,13 @@ namespace gnubase::engine
 		return true;
 	}
 
-	bool Transport::arrange(const ArrangerState& state, bool pending)
+	bool Transport::arrange(const ArrangerState& state, bool pending, const ArrangerPlan* plan)
 	{
 		Request request{Request::Type::Arrange, 0, {}, 0};
-		request.arranger = state;
+		// On the caller's thread, which holds the plan: the state travels with the events its indices mean (#885).
+		request.arranger = plan != nullptr ? arrangerIdentity(*plan, state) : state;
 		request.record = pending;
+		request.arrangerGeneration = plan != nullptr ? plan->generation : 0;
 		return send(request);
 	}
 
@@ -174,6 +176,12 @@ namespace gnubase::engine
 	{
 		const auto [a, b] = m_arrangerShared.load();
 		return unpackArranger(a, b);
+	}
+
+	std::pair<ArrangerState, uint64_t> Transport::arrangerAndGeneration() const
+	{
+		const auto [a, b] = m_arrangerShared.load();
+		return {unpackArranger(a, b), unpackGeneration(a, b)};
 	}
 
 	void Transport::locateTo(time::Samples position) noexcept
@@ -251,11 +259,16 @@ namespace gnubase::engine
 				m_arranger.pendingStep = request.arranger.step;
 				m_arranger.pendingRepeat = request.arranger.repeat;
 				m_arranger.pendingSection = request.arranger.step >= 0 ? -1 : request.arranger.section;
+				m_arranger.pendingEvent = request.arranger.stepEvent;
+				m_arranger.pendingRank = request.arranger.stepRank;
+				m_arranger.pendingSectionEvent = request.arranger.sectionEvent;
 			}
 			else
 			{
 				m_arranger = request.arranger;
 				m_arranger.entering = false;
+				if (request.arrangerGeneration != 0)
+					m_stateGeneration = request.arrangerGeneration; // the state's indices walk that plan
 			}
 			return;
 		case Request::Type::Record:
@@ -311,12 +324,13 @@ namespace gnubase::engine
 			recording = recordStart(m_settings, start, countInStart) == countInStart;
 		}
 		m_countInStart.store(countInStart, std::memory_order_release);
-		if (m_arranger != m_publishedArranger)
+		if (m_arranger != m_publishedArranger || m_stateGeneration != m_publishedGeneration)
 		{
 			// Only where playback is counts as a change, not whether it still has to find that out.
 			changed = changed || !samePlace(m_arranger, m_publishedArranger);
 			m_publishedArranger = m_arranger;
-			const auto [a, b] = pack(m_arranger);
+			m_publishedGeneration = m_stateGeneration;
+			const auto [a, b] = pack(m_arranger, m_stateGeneration);
 			m_arrangerShared.store(a, b);
 		}
 		const auto state = static_cast<uint8_t>(
@@ -350,16 +364,25 @@ namespace gnubase::engine
 		update();
 		const bool arranged = plan != nullptr && plan->plays();
 		// Playback enters the chain where it starts without the pre-roll, so that the pre-roll plays into the step. A
-		// new plan (a chain edit, another active chain) has other step indices: playback finds its place again.
+		// new plan (a chain edit, another active chain) has other step indices: the state finds its step and a step
+		// or event waiting again by the events they play in the state, never in a plan the block didn't bring (#885).
 		if (!arranged)
+		{
 			m_arranger.entering = false; // linear playback is where it is: arranger mode switched on enters there
+		}
 		else if (m_arranger.entering)
-			m_arranger = arrangerEnter(*plan, m_arranger, m_start);
+		{
+			m_arranger = arrangerEnter(*plan, arrangerRemapped(*plan, m_arranger), m_start);
+			m_stateGeneration = plan->generation;
+		}
 		else if (plan != m_plan)
-			// A new plan finds the step playing again. During the pre-roll the position is before the start, where no
-			// step's event holds it yet, so enter at the start without the pre-roll to keep the chain playing (#885).
-			// After it, playback is at the position, even where the chain has played back before the start.
-			m_arranger = arrangerEnter(*plan, m_arranger, m_inPreRoll ? m_start : m_position);
+		{
+			// During the pre-roll the position is before the start, where no step's event holds it yet, so enter at
+			// the start without the pre-roll to keep the chain playing (#885). After it, playback is at the position,
+			// even where the chain has played back before the start.
+			m_arranger = arrangerEnter(*plan, arrangerRemapped(*plan, m_arranger), m_inPreRoll ? m_start : m_position);
+			m_stateGeneration = plan->generation;
+		}
 		m_plan = plan;
 		GNUBASE_ASSERT(frames <= m_segments.size());
 		frames = std::min(frames, static_cast<uint32_t>(m_segments.size()));

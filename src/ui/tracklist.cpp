@@ -1014,6 +1014,7 @@ namespace gnubase::ui
 		const double nameWidth = widthOf(m_widths, "name", widthOf(m_defaultWidths, "name"));
 		const Json controlsWidths = m_widths.value("controls", Json::object());
 		const Json defaultControls = m_defaultWidths.value("controls", Json::object());
+		m_tempoFields.clear(); // the rows' fields as they are now, for showTempo's frames (#1406)
 		for (int i = 0; i < m_view->GetNumChildren() && static_cast<size_t>(i) < m_tracks.size(); ++i)
 		{
 			Rml::Element* element = m_view->GetChild(i);
@@ -1081,7 +1082,10 @@ namespace gnubase::ui
 				Rml::Element* button = controls->GetChild(c);
 				const auto name = button->GetAttribute<Rml::String>("control", "");
 				if (name == "currentTempo" || name == "tempoType")
-					continue; // fields, which showTempo fills
+				{
+					m_tempoFields.emplace_back(button->GetObserverPtr()); // fields, which showTempo fills
+					continue;
+				}
 				if (name == "timeFormat")
 				{
 					widgets::fill(*button, timeFormatOptions(), track.value("timeFormat", std::string()));
@@ -1179,9 +1183,10 @@ namespace gnubase::ui
 			return;
 		}
 		// The watch runs showTempo once a frame: only watch while the list has a Current Tempo field (#1338).
-		Rml::ElementList fields;
-		m_view->QuerySelectorAll(fields, "[control=currentTempo]");
-		if (fields.empty())
+		const bool hasField =
+			std::any_of(m_tempoFields.begin(), m_tempoFields.end(), [](const Rml::ObserverPtr<Rml::Element>& field)
+				{ return field && field->GetAttribute<Rml::String>("control", "") == "currentTempo"; });
+		if (!hasField)
 			m_playback.reset();
 		else if (!m_playback)
 			// While playing the display's cursor follows the playback position once a frame, without events; Current
@@ -1200,16 +1205,16 @@ namespace gnubase::ui
 		const TimeContext& context = m_display.time();
 		const auto cursor = static_cast<int64_t>(std::llround(m_display.cursor() * context.sampleRate));
 		const std::string tempo = tempoText(currentTempo(context, cursor));
-		Rml::ElementList fields;
-		m_view->QuerySelectorAll(fields, "[control=currentTempo], [control=tempoType]");
 		bool changed = false;
-		for (Rml::Element* field : fields)
+		for (const Rml::ObserverPtr<Rml::Element>& field : m_tempoFields)
 		{
-			auto* control = dynamic_cast<Rml::ElementFormControl*>(field);
-			const bool typed = field->IsPseudoClassSet("focus"); // what is being typed stays
+			auto* control = dynamic_cast<Rml::ElementFormControl*>(field.get());
+			if (control == nullptr) // gone with its row
+				continue;
+			const bool typed = control->IsPseudoClassSet("focus"); // what is being typed stays
 			const std::string value =
-				field->GetAttribute<Rml::String>("control", "") == "tempoType" ? m_tempoType : tempo;
-			if (control != nullptr && !typed && control->GetValue() != value)
+				control->GetAttribute<Rml::String>("control", "") == "tempoType" ? m_tempoType : tempo;
+			if (!typed && control->GetValue() != value)
 			{
 				m_showingTempo = true;
 				control->SetValue(value);

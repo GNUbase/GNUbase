@@ -5,6 +5,7 @@
 #include "scripting/runtime.h"
 #include "ui/colormenu.h"
 #include "ui/docking.h"
+#include "ui/drummachinepanel.h"
 #include "ui/enginebinding.h"
 #include "ui/eventdisplay.h"
 #include "ui/gpurenderer.h"
@@ -269,6 +270,8 @@ namespace gnubase::app
 		std::unique_ptr<ui::TransportControls> transportControls(Rml::Element& root, ui::Window& window, bool fill);
 		// name is its window's in ui.layout (ui::Docking::addWindow).
 		void toggle(TransportWindow& shown, const char* name, const char* file, const char* title, ui::Size size);
+		// Gives a new transport panel the width of its shown sections, as far as the primary monitor has room (#1424).
+		void fitSections(ui::Window& window, Rml::Element& controls);
 		// Edits a display of the transport bar, or of the transport panel, which opens if the bar doesn't show.
 		void enter(const std::string& field);
 		// File > Import: the OS's file dialog for the window, then the event display imports what the user chose;
@@ -418,6 +421,7 @@ namespace gnubase::app
 		std::weak_ptr<ui::PoolPanel> m_pool;               // the docking system owns it while it is there
 		std::weak_ptr<ui::Inspector> m_inspector;          // so too
 		std::weak_ptr<ui::SamplerPanel> m_sampler;         // so too
+		std::weak_ptr<ui::DrumMachinePanel> m_drums;       // so too
 		std::vector<ui::Subscription> m_poolResults;       // what the pool commands did, for the pool
 		std::vector<ui::Subscription> m_lockRecord;        // stops refused while recording is locked
 		Rml::ObserverPtr<Rml::Element> m_lockRecordDialog; // the open lock record dialog's document

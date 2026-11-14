@@ -205,6 +205,25 @@ namespace gnubase::engine
 			// The media files that were added, not the project's that the copies share.
 			const std::vector<ObjectId>& addedMedia() const { return m_addedMedia; }
 
+			// The copy of a clip, with its media file: a file the project has already is used as it is.
+			ObjectId clip(ObjectId id)
+			{
+				if (const auto found = m_clips.find(id); found != m_clips.end())
+					return found->second;
+				const auto original = m_from.clips.find(id);
+				if (original == m_from.clips.end())
+					return 0;
+				Clip clip = original->second;
+				clip.id = m_to.newId();
+				clip.folder = 0;
+				clip.media = media(clip.media);
+				for (ClipRegion& region : clip.regions)
+					region.id = m_to.newId();
+				m_clips[id] = clip.id;
+				m_to.clips[clip.id] = std::move(clip);
+				return m_clips.at(id);
+			}
+
 		private:
 			ObjectId copyChannel(ObjectId source, ObjectId track)
 			{
@@ -225,6 +244,9 @@ namespace gnubase::engine
 				channel.id = m_to.newId();
 				channel.track = track;
 				channel.sample = clip(original.sample); // a sampler's (#180), with the instrument
+				channel.pads = original.pads;           // a drum machine's (#182)
+				for (auto& [pad, drum] : channel.pads)
+					drum.sample = clip(drum.sample);
 				// The fader top may be lower here (as project.set brings volumes down to it).
 				channel.volume = std::min(channel.volume, m_to.maxVolume);
 				for (Send& send : channel.sends)
@@ -357,25 +379,6 @@ namespace gnubase::engine
 				const auto pattern = m_patterns.find(part.pattern);
 				part.pattern = pattern == m_patterns.end() ? 0 : pattern->second;
 				renumber(m_to, part);
-			}
-
-			// The copy of a clip, with its media file: a file the project has already is used as it is.
-			ObjectId clip(ObjectId id)
-			{
-				if (const auto found = m_clips.find(id); found != m_clips.end())
-					return found->second;
-				const auto original = m_from.clips.find(id);
-				if (original == m_from.clips.end())
-					return 0;
-				Clip clip = original->second;
-				clip.id = m_to.newId();
-				clip.folder = 0;
-				clip.media = media(clip.media);
-				for (ClipRegion& region : clip.regions)
-					region.id = m_to.newId();
-				m_clips[id] = clip.id;
-				m_to.clips[clip.id] = std::move(clip);
-				return m_clips.at(id);
 			}
 
 			ObjectId media(ObjectId id)
@@ -919,7 +922,7 @@ namespace gnubase::engine
 		// and pan, inserts, MIDI settings and instrument, and for MIDI and instrument tracks its color. Not its name,
 		// routing, sends, buttons or notes.
 		void applyPreset(const ProjectModel& model, Project& project, ObjectId id, const Project& preset,
-			ObjectId source, CommandContext& context)
+			ObjectId source, TrackCopier& copier, CommandContext& context)
 		{
 			Track& track = project.trackById.at(id);
 			const Track& original = preset.trackById.at(source);
@@ -951,9 +954,18 @@ namespace gnubase::engine
 			for (midi::EffectSlot& slot : channel.midiSends.slots)
 				slot.output = 0; // the preset's tracks aren't this project's
 			if (channel.instrument != sound.instrument)
+			{
 				channel.sample = 0; // only the sampler plays one (#180), as with channel.set
+				channel.pads.clear();
+			}
 			channel.instrument = sound.instrument;
 			channel.instrumentParameters = sound.instrumentParameters;
+			if (sound.instrument == "drumMachine") // the pads with their names and samples, as copies take them (#1361)
+			{
+				channel.pads = sound.pads;
+				for (auto& [pad, drum] : channel.pads)
+					drum.sample = copier.clip(drum.sample);
+			}
 			if (channel.format != ChannelFormat::None)
 			{
 				std::vector<Slot> slots;
@@ -989,8 +1001,10 @@ namespace gnubase::engine
 				"replacing a preset of that name: of one track, or of several as a multi-track preset (p. 241), "
 				"which keeps them in the order of the track list, whatever the order of tracks. "
 				"Audio, instrument, MIDI, group and effect tracks have one: their channel's pre section, equalizer, "
-				"strip, fader, pan and inserts, their MIDI modifiers, inserts, sends, volume, pan, program and device, "
-				"the instrument with its parameters, and the color. Presets are DAWproject files in the folder Track "
+				"strip, fader, pan and inserts, their MIDI modifiers, inserts, sends, volume, pan, program, bank and "
+				"device, the MIDI channel (channel.set midiChannel; a MIDI track's preset keeps both its channel and "
+				"its patch, of which the reference manual's keeps one, p. 238), the instrument with its parameters "
+				"and a drum machine's pads, and the color. Presets are DAWproject files in the folder Track "
 				"Presets in the user settings' folder. Changes nothing in the project. Returns the preset's file.",
 				objectSchema({{"tracks", idsSchema}, {"name", stringSchema}}, {"tracks", "name"}), fileResult, false},
 			[&model, &engine](CommandContext& context)
@@ -1062,8 +1076,8 @@ namespace gnubase::engine
 				"replaced by copies of the preset's, the automation of the plugins they had goes with them. The "
 				"tracks must be as many as the preset's, and of the same types in the same order: the first of tracks "
 				"gets the sound of the preset's top track, and so on. Faders above the project's fader top come down "
-				"to it. Emits "
-				"track.changed, channel.changed, plugin.removed and plugin.added.",
+				"to it. A drum machine's pads come with their names and samples, whose clips come into the pool. "
+				"Emits track.changed, channel.changed, plugin.removed, plugin.added, media.added and clip.added.",
 				objectSchema({{"tracks", idsSchema}, {"name", stringSchema}}, {"tracks", "name"}), tracksResult, false},
 			"Load track preset",
 			[&model, &engine](Project& project, CommandContext& context)
@@ -1085,8 +1099,16 @@ namespace gnubase::engine
 						"track " + std::to_string(tracks[i]) + " is not of the type " + trackTypeName(type) +
 							" that the preset has there: presets go to tracks of their types, in their order");
 				}
+				// The clips the preset's drum pads play come into the pool, their media files unless the project has
+				// them.
+				const ObjectId firstNew = project.nextId;
+				TrackCopier copier(preset, project, {}, 0, nullptr);
 				for (size_t i = 0; i < tracks.size(); ++i)
-					applyPreset(model, project, tracks[i], preset, sources[i], context);
+					applyPreset(model, project, tracks[i], preset, sources[i], copier, context);
+				for (const ObjectId media : copier.addedMedia())
+					context.emit("media.added", {{"media", toJson(project.media.at(media))}});
+				for (auto clip = project.clips.lower_bound(firstNew); clip != project.clips.end(); ++clip)
+					context.emit("clip.added", {{"clip", toJson(clip->second)}});
 				return Json{{"tracks", tracks}};
 			});
 		model.addEdit(engine,

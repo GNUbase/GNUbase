@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/audiofile/audiofile.h"
+#include "engine/dawproject/dawproject.h"
 #include "engine/document/document.h"
+#include "engine/document/serialize.h"
 #include "engine/engine.h"
 #include "engine/time/tempomap.h"
 #include "testutils/testutils.h"
@@ -18,6 +20,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -390,6 +393,43 @@ TEST_CASE("a GNUbase project comes back exactly from its DAWproject file", "[int
 		// Ids continue where they would have without saving and loading.
 		const ObjectId next = idOf(run(client, "track.add", {{"type", "audio"}}), "track");
 		CHECK(next == highestId(before) + 1);
+	}
+}
+
+TEST_CASE("projects saved on two threads at the same time both load", "[integration]")
+{
+	// Backup jobs save beside each other and beside a save. Unless built with MINIZ_NO_TIME, miniz stamps ZIP entries
+	// through localtime(), whose result is one static struct outside Windows: the tsan job fails this test then
+	// (#1425).
+	const test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	run(client, "track.add", {{"type", "audio"}});
+	const Project project = projectFromJson(run(client, "project.get"));
+	const std::vector<std::string> files{utf8(dir.path() / "one.dawproject"), utf8(dir.path() / "two.dawproject")};
+	std::vector<std::string> errors(files.size());
+	std::vector<std::thread> threads;
+	threads.reserve(files.size());
+	for (size_t i = 0; i < files.size(); ++i)
+		threads.emplace_back(
+			[&project, &file = files[i], &error = errors[i]]
+			{
+				try
+				{
+					for (int save = 0; save < 10; ++save)
+						saveDawProject(project, file, DawProjectSaveOptions());
+				}
+				catch (const std::exception& e)
+				{
+					error = e.what();
+				}
+			});
+	for (std::thread& thread : threads)
+		thread.join();
+	for (size_t i = 0; i < files.size(); ++i)
+	{
+		CHECK(errors[i].empty());
+		CHECK(loadDawProject(files[i], utf8(dir.path() / "media")).tracks == project.tracks);
 	}
 }
 

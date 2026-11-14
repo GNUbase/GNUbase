@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Changing the notes and controllers of a MIDI part (#27): note.set and controller.set.
+// Changing the notes and controllers of a MIDI part (#27): note.set, note.move and controller.set.
 #include "engine/engine.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <string>
 #include <variant>
+#include <vector>
 
 using Catch::Matchers::ContainsSubstring;
 using Catch::Matchers::WithinAbs;
@@ -125,6 +128,287 @@ TEST_CASE("note.set checks every change before it changes anything", "[unit]")
 	CHECK_THAT(client.call("note.set", {{"part", 999}, {"notes", Json::array()}}).error,
 		ContainsSubstring("no MIDI part 999"));
 	CHECK(storedNotes(client) == before); // the valid first change didn't happen either
+}
+
+namespace
+{
+	// The notes of one part as project.get lists them.
+	Json notesOf(Client& client, int64_t part)
+	{
+		const Json project = call(client, "project.get"); // the answer must outlive the loop over its parts
+		for (const Json& each : project.at("midiParts"))
+			if (each.at("id") == part)
+				return each.at("notes");
+		return Json::array();
+	}
+
+	// The data of the first event of each of the names that arrived, by name.
+	std::map<std::string, Json> takeEvents(Client& client, const std::vector<std::string>& names)
+	{
+		std::map<std::string, Json> found;
+		while (const std::optional<gnubase::engine::Message> message = client.poll())
+		{
+			const auto* event = std::get_if<gnubase::engine::Event>(&*message);
+			if (event != nullptr && std::find(names.begin(), names.end(), event->name) != names.end() &&
+				found.count(event->name) == 0)
+				found[event->name] = event->data;
+		}
+		return found;
+	}
+
+	constexpr int64_t g_sixteenth = 1720320 / 4;
+}
+
+TEST_CASE("note.move moves notes to another part as one undo step, keeping every field and their ids", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const int64_t track = call(client, "track.add", {{"type", "midi"}}).at("track").at("id").get<int64_t>();
+	const int64_t other = call(client, "track.add", {{"type", "instrument"}}).at("track").at("id").get<int64_t>();
+	const int64_t source =
+		call(client, "midiPart.add", {{"track", track}, {"position", 0}, {"length", 8 * g_sixteenth}})
+			.at("part")
+			.at("id")
+			.get<int64_t>();
+	const int64_t target =
+		call(client, "midiPart.add", {{"track", other}, {"position", 0}, {"length", 8 * g_sixteenth}})
+			.at("part")
+			.at("id")
+			.get<int64_t>();
+	// The first note has every field a note has; the second is plain.
+	const Json added = call(client, "note.add",
+		{{"part", source},
+			{"notes",
+				{{{"position", 100000}, {"length", g_sixteenth}, {"pitch", 60}, {"velocity", 0.75},
+					 {"releaseVelocity", 0.25}, {"channel", 9}, {"probability", 0.5}, {"velocityVariance", -0.25},
+					 {"articulations", Json::array({"Pizzicato"})},
+					 {"expressions", Json::array({{{"type", "volume"}, {"position", 120}, {"value", 0.5}}})}},
+					{{"position", g_sixteenth}, {"length", g_sixteenth / 2}, {"pitch", 64}, {"velocity", 0.5}}}}})
+						   .at("notes");
+	const int64_t first = added.at(0).at("id").get<int64_t>();
+	const int64_t second = added.at(1).at("id").get<int64_t>();
+	// Quantizing gives the first note, which the grid moves, its origin, one more field the move must keep.
+	call(client, "quantize.apply", {{"part", source}, {"settings", {{"grid", "1/16"}}}});
+	const Json before = notesOf(client, source);
+	REQUIRE(before.size() == 2);
+	REQUIRE(before.at(0).contains("origin"));
+	takeEvent(client, "");
+
+	const Json moved = call(client, "note.move",
+		{{"part", source}, {"notes", {first, second}}, {"target", target}, {"ticks", g_sixteenth}, {"semitones", 5}})
+						   .at("notes");
+	// Every note as it was, at the drop's time and pitch, with its id.
+	Json expected = before;
+	for (Json& note : expected)
+	{
+		note["position"] = note.at("position").get<int64_t>() + g_sixteenth;
+		note["pitch"] = note.at("pitch").get<int>() + 5;
+	}
+	CHECK(moved == expected);
+	CHECK(moved.at(0).at("id") == first);
+	CHECK(moved.at(1).at("id") == second);
+	// The notes kept their distance to one another.
+	CHECK(expected.at(1).at("position").get<int64_t>() - expected.at(0).at("position").get<int64_t>() ==
+		before.at(1).at("position").get<int64_t>() - before.at(0).at("position").get<int64_t>());
+	REQUIRE(notesOf(client, target) == expected);
+	CHECK(notesOf(client, source).empty());
+	const std::map<std::string, Json> events = takeEvents(client, {"note.removed", "note.added"});
+	CHECK(events.at("note.removed") == Json{{"part", source}, {"notes", {first, second}}});
+	CHECK(events.at("note.added") == Json{{"part", target}, {"notes", expected}});
+
+	const Json history = call(client, "history.get");
+	CHECK(history.at("steps").back().at("action") == "Move notes");
+	call(client, "history.undo");
+	CHECK(notesOf(client, source) == before);
+	CHECK(notesOf(client, target).empty());
+	call(client, "history.redo");
+	CHECK(notesOf(client, source).empty());
+	CHECK(notesOf(client, target) == expected);
+}
+
+TEST_CASE("note.move refuses what doesn't fit and changes nothing then", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const int64_t track = call(client, "track.add", {{"type", "midi"}}).at("track").at("id").get<int64_t>();
+	const int64_t other = call(client, "track.add", {{"type", "instrument"}}).at("track").at("id").get<int64_t>();
+	const int64_t source =
+		call(client, "midiPart.add", {{"track", track}, {"position", 0}, {"length", 8 * g_sixteenth}})
+			.at("part")
+			.at("id")
+			.get<int64_t>();
+	const int64_t target =
+		call(client, "midiPart.add", {{"track", other}, {"position", 0}, {"length", 8 * g_sixteenth}})
+			.at("part")
+			.at("id")
+			.get<int64_t>();
+	const Json added = call(client, "note.add",
+		{{"part", source},
+			{"notes",
+				{{{"position", 0}, {"length", g_sixteenth}, {"pitch", 60}, {"velocity", 1.0}},
+					{{"position", g_sixteenth}, {"length", g_sixteenth}, {"pitch", 64}, {"velocity", 0.5}}}}})
+						   .at("notes");
+	const int64_t first = added.at(0).at("id").get<int64_t>();
+	const int64_t second = added.at(1).at("id").get<int64_t>();
+	const Json before = notesOf(client, source);
+	const auto move = [&](const Json& parameters) { return client.call("note.move", parameters).error; };
+
+	CHECK_THAT(move({{"part", source}, {"notes", {first}}, {"target", 999}}), ContainsSubstring("no MIDI part 999"));
+	CHECK_THAT(move({{"part", 999}, {"notes", {first}}, {"target", target}}), ContainsSubstring("no MIDI part 999"));
+	CHECK_THAT(move({{"part", source}, {"notes", {999}}, {"target", target}}),
+		ContainsSubstring("notes[0]: the part has no note 999"));
+	CHECK_THAT(move({{"part", source}, {"notes", {first}}, {"target", target}, {"ticks", -1}}),
+		ContainsSubstring("notes[0] would land before the target part's start"));
+	CHECK_THAT(move({{"part", source}, {"notes", {first}}, {"target", target}, {"semitones", 68}}),
+		ContainsSubstring("notes[0] would land outside the pitches"));
+	CHECK_THAT(move({{"part", source}, {"notes", {first}}, {"target", target}, {"semitones", -61}}),
+		ContainsSubstring("notes[0] would land outside the pitches"));
+	// A valid note with an invalid one moves nothing.
+	CHECK_THAT(move({{"part", source}, {"notes", {first, 999}}, {"target", target}}),
+		ContainsSubstring("notes[1]: the part has no note 999"));
+	CHECK(notesOf(client, source) == before);
+	CHECK(notesOf(client, target).empty());
+	// The shared copies of the source and the target must stay equal, so a move between them is refused.
+	const int64_t copy =
+		call(client, "event.copy", {{"events", {source}}, {"ticks", 8 * g_sixteenth}, {"shared", true}})
+			.at("events")
+			.at(0)
+			.get<int64_t>();
+	REQUIRE(notesOf(client, copy) == before);
+	CHECK_THAT(move({{"part", source}, {"notes", {first}}, {"target", copy}}),
+		ContainsSubstring("shared copies of one group"));
+	CHECK(notesOf(client, source) == before);
+	CHECK(notesOf(client, copy) == before);
+
+	// A note may reach past the target part's end, as note.add and note.set allow, and a move within the source
+	// part itself just offsets the notes, keeping their ids.
+	CHECK(call(client, "note.move",
+			  {{"part", source}, {"notes", {second}}, {"target", target}, {"ticks", 8 * g_sixteenth}})
+			  .at("notes")
+			  .at(0)
+			  .at("position") == (8 * g_sixteenth) + g_sixteenth);
+	CHECK(call(client, "note.move", {{"part", source}, {"notes", {first}}, {"target", source}, {"ticks", 120}})
+			  .at("notes")
+			  .at(0)
+			  .at("id") == first);
+	CHECK(notesOf(client, source).at(0).at("position") == 120);
+}
+
+TEST_CASE("note.move counts ticks on the project's timeline, whatever the parts' starts", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const int64_t track = call(client, "track.add", {{"type", "midi"}}).at("track").at("id").get<int64_t>();
+	const int64_t other = call(client, "track.add", {{"type", "instrument"}}).at("track").at("id").get<int64_t>();
+	const int64_t source =
+		call(client, "midiPart.add", {{"track", track}, {"position", 2 * g_sixteenth}, {"length", 8 * g_sixteenth}})
+			.at("part")
+			.at("id")
+			.get<int64_t>();
+	const int64_t target =
+		call(client, "midiPart.add", {{"track", other}, {"position", 8 * g_sixteenth}, {"length", 8 * g_sixteenth}})
+			.at("part")
+			.at("id")
+			.get<int64_t>();
+	const int64_t note = call(client, "note.add",
+		{{"part", source},
+			{"notes",
+				Json::array({{{"position", g_sixteenth}, {"length", g_sixteenth}, {"pitch", 60}, {"velocity", 1.0}}})}})
+							 .at("notes")
+							 .at(0)
+							 .at("id")
+							 .get<int64_t>();
+
+	// The note lies on the timeline at 3 sixteenths; 6 more put it at 9, one sixteenth into the target, which
+	// starts at 8.
+	const Json moved =
+		call(client, "note.move", {{"part", source}, {"notes", {note}}, {"target", target}, {"ticks", 6 * g_sixteenth}})
+			.at("notes");
+	CHECK(moved.at(0).at("position") == g_sixteenth);
+	CHECK(moved.at(0).at("id") == note);
+	CHECK(notesOf(client, source).empty());
+	call(client, "history.undo");
+	REQUIRE(notesOf(client, source).size() == 1);
+	CHECK(notesOf(client, target).empty());
+
+	// 4 sixteenths put it at 7, before the target's start on the timeline: refused, although its position in the
+	// target would be positive.
+	CHECK_THAT(
+		client.call("note.move", {{"part", source}, {"notes", {note}}, {"target", target}, {"ticks", 4 * g_sixteenth}})
+			.error,
+		ContainsSubstring("would land before the target part's start"));
+	CHECK(notesOf(client, source).size() == 1);
+	CHECK(notesOf(client, target).empty());
+
+	// Within the source part itself the move shifts the note on the timeline, as before.
+	CHECK(call(client, "note.move", {{"part", source}, {"notes", {note}}, {"target", source}, {"ticks", g_sixteenth}})
+			  .at("notes")
+			  .at(0)
+			  .at("position") == 2 * g_sixteenth);
+	call(client, "history.undo");
+
+	// A target part on a linear track: its position counts samples, which the tempo map converts. At 120 BPM and
+	// 48 kHz, 48000 samples are 8 sixteenths; the note at 3, moved by 7, lands 2 into it.
+	const int64_t linear =
+		call(client, "track.add", {{"type", "midi"}, {"timeBase", "linear"}}).at("track").at("id").get<int64_t>();
+	const int64_t linearPart = call(client, "midiPart.add", {{"track", linear}, {"position", 48000}, {"length", 48000}})
+								   .at("part")
+								   .at("id")
+								   .get<int64_t>();
+	const Json toLinear = call(
+		client, "note.move", {{"part", source}, {"notes", {note}}, {"target", linearPart}, {"ticks", 7 * g_sixteenth}})
+							  .at("notes");
+	CHECK(toLinear.at(0).at("position") == 2 * g_sixteenth);
+	CHECK(toLinear.at(0).at("id") == note);
+	call(client, "history.undo");
+	CHECK(notesOf(client, linearPart).empty());
+	REQUIRE(notesOf(client, source).size() == 1);
+	CHECK(notesOf(client, source).at(0).at("position") == g_sixteenth);
+}
+
+TEST_CASE("note.move keeps the shared copies of the source and of the target consistent", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const int64_t track = call(client, "track.add", {{"type", "midi"}}).at("track").at("id").get<int64_t>();
+	const int64_t other = call(client, "track.add", {{"type", "instrument"}}).at("track").at("id").get<int64_t>();
+	const int64_t source =
+		call(client, "midiPart.add", {{"track", track}, {"position", 0}, {"length", 8 * g_sixteenth}})
+			.at("part")
+			.at("id")
+			.get<int64_t>();
+	const int64_t target =
+		call(client, "midiPart.add", {{"track", other}, {"position", 0}, {"length", 8 * g_sixteenth}})
+			.at("part")
+			.at("id")
+			.get<int64_t>();
+	const Json added = call(client, "note.add",
+		{{"part", source},
+			{"notes", Json::array({{{"position", 0}, {"length", g_sixteenth}, {"pitch", 60}, {"velocity", 1.0}}})}})
+						   .at("notes");
+	const int64_t note = added.at(0).at("id").get<int64_t>();
+	const int64_t sourceCopy =
+		call(client, "event.copy", {{"events", {source}}, {"ticks", 8 * g_sixteenth}, {"shared", true}})
+			.at("events")
+			.at(0)
+			.get<int64_t>();
+	const int64_t targetCopy =
+		call(client, "event.copy", {{"events", {target}}, {"ticks", 8 * g_sixteenth}, {"shared", true}})
+			.at("events")
+			.at(0)
+			.get<int64_t>();
+	REQUIRE(notesOf(client, sourceCopy).size() == 1);
+	REQUIRE(notesOf(client, targetCopy).empty());
+
+	const Json moved = call(client, "note.move", {{"part", source}, {"notes", {note}}, {"target", target}}).at("notes");
+	// The copy of the source loses the note with it, and the copy of the target get it with its id.
+	CHECK(notesOf(client, sourceCopy).empty());
+	REQUIRE(notesOf(client, targetCopy) == moved);
+	CHECK(moved.at(0).at("id") == note);
+
+	call(client, "history.undo");
+	CHECK(notesOf(client, sourceCopy).size() == 1);
+	CHECK(notesOf(client, targetCopy).empty());
 }
 
 TEST_CASE("controller.set changes controllers of a MIDI part as one undo step", "[unit]")

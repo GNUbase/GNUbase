@@ -92,7 +92,7 @@ namespace
 			app.keys().run("window.sampler", Json::object(), app.main(), nullptr);
 			REQUIRE(
 				app.waitUntil([&] { return !elements("#sampler-panel").empty() && !has("#sampler-panel", "empty"); }));
-			REQUIRE(app.waitUntil([&] { return !elements("[parameter]").empty(); }));
+			REQUIRE(app.waitUntil([&] { return !elements("#sampler-panel [parameter]").empty(); }));
 		}
 
 		Json samplerChannel()
@@ -161,7 +161,7 @@ TEST_CASE("the sampler panel shows the selected sampler track and sets its param
 	f.open();
 	CHECK(f.elements("#sampler-file").at(0).value("text", "") == "sine");
 	// Every parameter has a control, in its section.
-	CHECK(f.elements("[parameter]").size() == 32);
+	CHECK(f.elements("#sampler-panel [parameter]").size() == 32);
 	CHECK(!f.elements(".sampler-section[section=keyboard] " + f.control("Root key")).empty());
 	CHECK(f.has(".sampler-key[key=\"60\"]", "root"));
 	CHECK(f.has(".sampler-loop", "off"));

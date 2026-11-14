@@ -25,7 +25,12 @@ with them clamped, as the notes' other values, and without points of expressions
 points before the cut, and the rest gets the points from the cut on, moved back by the cut, with each expression's
 value at the cut as its initial point. A note whose start `note.set` moves while its end stays (its start resized) keeps
 its expression where it is the same way: moved later, the values at the new start become its initial points; moved
-earlier, its initial values start at the new start and its other points stay where they were.
+earlier, its initial values start at the new start and its other points stay where they were. The key editor's split
+tool cuts notes the same way through `note.split` (#1419). Its glue tool joins a note to the next one of its pitch
+through `note.glue`: the glued note keeps its own points up to where the next one started, then has the next one's,
+so that it plays what the two played; glued again after a split, it has an extra point at the cut, with the value it
+had there. The reference manual's glue keeps the first note's properties (p. 1215), and expression is no property
+but what the note plays over time.
 
 **Recording MPE** (pp. 1295-1298). With the user setting `midi.mpeInput` on, MIDI recording and retrospective
 recording take their input as MPE's lower zone: channel 1 is the master channel, whose messages record as before, and
@@ -41,14 +46,16 @@ the same sample. Plugin slots pass them on as the plugin API's `NoteExpression` 
 as VST3 note expressions. As MIDI 1.0, what `midi.capture` shows, they are MPE on the note's channel: tuning as pitch
 bend with MPE's pitch range of 48 semitones, pressure as channel pressure and brightness as CC 74; the other types have
 no MIDI 1.0 message. As MPE senders do, a note's initial pitch bend, pressure and CC 74, its points at its start, come
-before its note-on, and a note on a channel whose notes express any of the three starts at MPE's initial value of
+before its note-on, and of the three that the notes of its channel express, a note starts at MPE's initial value of
 each it has no point of at its start (a centered bend, no pressure, CC 74 at 64), so that it doesn't start at what
-the channel's previous note left; plugins get these initial values too. So a recording of an MPE controller plays
+the channel's previous note left; plugins get these initial values too. What the channel's notes don't express it
+doesn't get: a channel whose notes bend and brighten but never press sends no channel pressure. The sequencer's
+snapshot marks which of the three each note has a point of at its start, so this costs no lookup per point. So a recording of an MPE controller plays
 back to an MPE instrument as it was played. MIDI sends before the modifiers get the notes' expression too.
 
 The acceptance test records MPE through `midi.inject` and plays it back to the note probe, comparing what the
 instrument gets with what was played (`tests/noteexpression_tests.cpp`); retrospective recording takes MPE input with
-`midi.mpePitchRange` as recording does.
+`midi.mpePitchRange` as recording does, and both are tested with a range of 24.
 
 ## Not yet
 

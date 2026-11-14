@@ -3,6 +3,7 @@
 
 #include "engine/graph/graph.h"
 #include "engine/midi/midivalues.h"
+#include "engine/plugins/pluginslot.h"
 
 #include <algorithm>
 #include <array>
@@ -272,6 +273,47 @@ namespace gnubase::engine
 		std::iota(m_inputTo.begin(), m_inputTo.end(), uint16_t{0});
 	}
 
+	namespace
+	{
+		constexpr size_t g_effectTransportSegments = 16;
+		constexpr size_t g_effectSysexBytes = 65536;
+
+		// Command thread: an instance of a built-in MIDI effect through the plugin API, initialized, with the slot's
+		// parameter values.
+		std::shared_ptr<plugin::Plugin> makeEffect(
+			const std::string& id, const std::vector<double>& parameters, plugin::Host& host)
+		{
+			std::shared_ptr<plugin::Plugin> effect = processors::BuiltinFactory().create("builtin:" + id, host);
+			if (!effect || !effect->init())
+				return nullptr;
+			plugin::EventList values(parameters.size(), 0, 0);
+			plugin::EventList ignored;
+			for (size_t parameter = 0; parameter < parameters.size(); ++parameter)
+			{
+				plugin::Event value;
+				value.type = plugin::EventType::ParamValue;
+				value.param = static_cast<uint32_t>(parameter);
+				value.value = parameters[parameter];
+				values.push(value);
+			}
+			if (auto* params = plugin::extension<plugin::Params>(*effect))
+				params->flushParams(values, ignored);
+			return effect;
+		}
+
+		// Command thread: activates an effect for blocks of up to maxFrames, or again after it was active.
+		void activateEffect(plugin::Plugin& effect, bool active, double sampleRate, uint32_t maxFrames)
+		{
+			if (active)
+			{
+				effect.stopProcessing();
+				effect.deactivate();
+			}
+			if (effect.activate(sampleRate, 1, maxFrames))
+				effect.startProcessing();
+		}
+	}
+
 	void MidiSequencer::setSequence(std::unique_ptr<MidiSequence> sequence)
 	{
 		// Notes of no length don't play, so they don't take the place of an earlier note of their pitch either.
@@ -315,22 +357,26 @@ namespace gnubase::engine
 			if (!kept.effect || kept.id != slot.effect || kept.output != output || kept.input != input ||
 				kept.source != source || before)
 			{
-				kept.effect = processors::createMidiEffect(slot.effect);
+				// The slot's values, not on the audio thread yet. Later the lanes of its automation carry them, which
+				// they send again only when they change (#992); the audio thread gives it the last ones they sent.
+				kept.effect = makeEffect(slot.effect, slot.parameters, m_host);
+				if (!kept.effect)
+				{
+					kept = SlotEffect();
+					continue;
+				}
+				kept.params = plugin::extension<plugin::Params>(*kept.effect);
 				kept.id = slot.effect;
 				kept.serial = ++m_effectSerial;
 				kept.output = output;
 				kept.input = input;
 				kept.source = source;
 				if (m_sampleRate > 0.0)
-					kept.effect->prepareFor(m_sampleRate, m_maxFrames);
-				// Not on the audio thread yet. Later the lanes of its automation carry the slot's values, which they
-				// send again only when they change (#992); the audio thread gives it the last ones they sent.
-				for (size_t id = 0; id < slot.parameters.size(); ++id)
-					kept.effect->setParameter(static_cast<uint32_t>(id), slot.parameters[id]);
+					activateEffect(*kept.effect, false, m_sampleRate, m_maxFrames);
 				insertsNew = insertsNew || !sends;
 				inputNew = inputNew || input || wasInput;
 			}
-			sequence->effects.push_back({kept.effect, info, kept.serial, number, output != 0, sends});
+			sequence->effects.push_back({kept.effect, kept.params, info, kept.serial, number, output != 0, sends});
 			sequence->insertCount += sends ? 0 : 1;
 			sequence->inputCount += input ? 1 : 0;
 		}
@@ -341,6 +387,12 @@ namespace gnubase::engine
 			m_chainB = graph::EventBuffer(graph::g_maxEventsPerBlock);
 			m_effectEvents = graph::EventBuffer(graph::g_maxEventsPerBlock);
 			m_effectIn = graph::EventBuffer(graph::g_maxEventsPerBlock);
+			// No places kept for ends: the effects give note-offs room themselves, as the graph's buffers do.
+			m_pluginIn = plugin::EventList(graph::g_maxEventsPerBlock, g_effectSysexBytes, 0);
+			for (plugin::EventList& out : m_pluginOut)
+				out = plugin::EventList(graph::g_maxEventsPerBlock, g_effectSysexBytes, 0);
+			m_pluginTransport.resize(g_effectTransportSegments);
+			m_automatedIn = plugin::EventList(g_automated, 0, 0);
 		}
 		// The buffers stay once they are there: the audio thread may use them as long as it has a sequence that
 		// says so. A MidiSendTap reads them for every send with an output, also one that doesn't play.
@@ -373,6 +425,7 @@ namespace gnubase::engine
 			unmodified->expressions = sequence->preExpressions;
 			unmodified->controllers = sequence->controllers;
 			unmodified->chase = sequence->chase;
+			unmodified->inputChannel = sequence->inputChannel; // the input on the track's MIDI channel, as the parts'
 			m_pre->setSequence(std::move(unmodified));
 			sequence->pre = m_pre;
 		}
@@ -395,11 +448,12 @@ namespace gnubase::engine
 
 	void MidiSequencer::prepare(double sampleRate, uint32_t maxFrames)
 	{
+		const bool active = m_sampleRate > 0.0;
 		m_sampleRate = sampleRate;
 		m_maxFrames = maxFrames;
 		for (const SlotEffect& slot : m_slots)
 			if (slot.effect)
-				slot.effect->prepareFor(sampleRate, maxFrames);
+				activateEffect(*slot.effect, active, sampleRate, maxFrames);
 		if (m_pre)
 			m_pre->prepareFor(sampleRate, maxFrames);
 	}
@@ -520,7 +574,21 @@ namespace gnubase::engine
 			m_effectIn.add(parameter);
 		}
 		to.clear();
-		running.effect->process({nullptr, 0, frames, *input, to, transport});
+		m_pluginIn.clear();
+		for (const graph::ProcessEvent& event : *input)
+			plugins::convertEvent(event, frames, m_pluginIn, true);
+		plugin::EventList& out =
+			m_pluginOut[((running.send ? midi::g_effectSlots : 0) + running.slot) % m_pluginOut.size()];
+		out.clear();
+		m_host.setTempoMap(transport.tempoMap);
+		const plugin::Process process{frames, -1, plugin::ProcessMode::Realtime, nullptr, 0, nullptr, 0, m_pluginIn,
+			out, m_pluginTransport.data(), plugins::convertTransport(transport, m_pluginTransport)};
+		if (frames == 0 || running.effect->process(process) == plugin::ProcessStatus::Error)
+			return;
+		graph::ProcessEvent played;
+		for (const plugin::Event& event : out)
+			if (plugins::toGraphEvent(event, out, played))
+				to.add(played);
 	}
 
 	void MidiSequencer::takeEffects(const MidiSequence& sequence, graph::EventBuffer& out) noexcept
@@ -543,10 +611,22 @@ namespace gnubase::engine
 			}
 			// A new instance plays the values the automation sent its slot last, which it doesn't send again.
 			const size_t slot = ((running.send ? midi::g_effectSlots : 0) + running.slot) % m_automated.size();
-			if (running.serial > m_newest && m_automatedEffect[slot] == running.info)
+			if (running.serial > m_newest && m_automatedEffect[slot] == running.info && running.params != nullptr)
+			{
+				m_automatedIn.clear();
 				for (size_t id = 0; id < g_automated; ++id)
-					if (!std::isnan(m_automated[slot][id]))
-						running.effect->setParameter(static_cast<uint32_t>(id), m_automated[slot][id]);
+				{
+					if (std::isnan(m_automated[slot][id]))
+						continue;
+					plugin::Event value;
+					value.type = plugin::EventType::ParamValue;
+					value.param = static_cast<uint32_t>(id);
+					value.value = m_automated[slot][id];
+					m_automatedIn.push(value);
+				}
+				m_automatedOut.clear();
+				running.params->flushParams(m_automatedIn, m_automatedOut);
+			}
 		}
 		for (const RunningEffect& running : sequence.effects)
 			m_newest = std::max(m_newest, running.serial);
@@ -696,6 +776,21 @@ namespace gnubase::engine
 			m_inputSlotsSerial = sequence.slotsSerial;
 			m_inputSlot = -1;
 			m_inputSlotHeld = -1;
+		}
+		// The track set to another MIDI channel: the selected slot's off events on the channel its on events went to,
+		// and its on events on the new one, as the track's patch goes out again there.
+		if (sequence.inputChannel != m_inputSlotTrack)
+		{
+			m_inputSlotTrack = sequence.inputChannel;
+			const std::vector<SoundSlot>& slots = sequence.articulations.slots;
+			if (m_inputSlot >= 0 && static_cast<size_t>(m_inputSlot) < slots.size())
+			{
+				const SoundSlot& selected = slots[static_cast<size_t>(m_inputSlot)];
+				const auto to =
+					static_cast<uint8_t>(sequence.inputChannel >= 0 ? sequence.inputChannel : m_inputSlotTrigger);
+				if (selected.channel < 0 && to != m_inputSlotChannel)
+					selectSlot(sequence.articulations, m_inputSlot, to, 0, out, true);
+			}
 		}
 		for (graph::ProcessEvent event : m_input)
 		{
@@ -1023,9 +1118,10 @@ namespace gnubase::engine
 			int channel = sequence.inputChannel >= 0 ? sequence.inputChannel : event.channel % 16;
 			bool plays = true;
 			uint8_t pitch = 0;
-			if (sequence.drumInput.size() == static_cast<size_t>(g_drumSounds))
+			if (sequence.drumInput.size() == 2 * static_cast<size_t>(g_drumSounds))
 			{
-				const LiveDrumNote& drum = sequence.drumInput[event.key % 128];
+				// The I-notes' sounds, or with drumSounds the sounds themselves (the second 128).
+				const LiveDrumNote& drum = sequence.drumInput[(event.drumSound ? g_drumSounds : 0) + (event.key % 128)];
 				pitch = drum.key;
 				channel = drum.channel >= 0 ? drum.channel : channel;
 				plays = !drum.mute;
@@ -1101,19 +1197,23 @@ namespace gnubase::engine
 			if (slot == m_inputSlotHeld)
 			{
 				m_inputSlotHeld = -1;
+				if (m_inputSlot != 0)
+					m_inputSlotTrigger = event.channel % 16;
 				selectSlot(map, 0, channel, event.offset, out);
 			}
 			return true;
 		}
 		m_inputSlotHeld = event.type == Type::NoteOn && !map.latch ? slot : -1;
+		if (slot != m_inputSlot)
+			m_inputSlotTrigger = event.channel % 16;
 		selectSlot(map, slot, channel, event.offset, out);
 		return true;
 	}
 
-	void MidiSequencer::selectSlot(
-		const ArticulationMap& map, int slot, uint8_t channel, uint32_t offset, graph::EventBuffer& out) noexcept
+	void MidiSequencer::selectSlot(const ArticulationMap& map, int slot, uint8_t channel, uint32_t offset,
+		graph::EventBuffer& out, bool again) noexcept
 	{
-		if (slot == m_inputSlot)
+		if (slot == m_inputSlot && !again)
 			return;
 		// As in playback (rendersnapshot.cpp): the off events on the channel the slot's on events went to, the on
 		// events on the slot's channel or else the given one (the track's or the trigger's). A key switch is a note-on

@@ -131,8 +131,9 @@ sends engine commands, so whatever another client changes shows at once.
   (every automation lane of the track reads, or with a click none does; disabled without lanes), `timeBase`
   (musical or linear, `.checked` when linear) and on MIDI tracks `midiChannel` (MIDI Channel, p. 349), a drop-down list
   of Any and 1 to 16 that sends `channel.set` `midiChannel` as the inspector's does ([mixer.md](mixer.md)). A click
-  sends `channel.set`, `automationLane.set` in one transaction, or `track.set`. Folders without a group channel and signature tracks show none. The tempo track's controls are
-  `tempoTrack`, Activate Tempo Track (`project.set` `tempoTrackActive`), `currentTempo`, Current Tempo, a text field
+  sends `channel.set`, `automationLane.set` in one transaction, or `track.set`. Folders without a group channel and
+  signature tracks show none. The tempo track's controls are `tempoTrack`, Activate Tempo Track (`project.set`
+  `tempoTrackActive`), `currentTempo`, Current Tempo, a text field
   with the tempo at the project cursor, following it during playback, that takes a tempo typed with Enter, and
   `tempoType`, Type of New Tempo Points, a drop-down list for `editing.tempoType`
   ([tempo-track.md](tempo-track.md)); ruler tracks have `timeFormat`, `timeOffsetOn`, `timeOffset` and `setTimeOffset`
@@ -276,8 +277,9 @@ data blocks and Move Selected Tracks to New Folder are in [folder-tracks.md](fol
   again" and `ui.removeTracksWarning` from another client; renaming with Enter and Escape; moving by a drag and undoing it; heights by a
   drag, with Ctrl for all; the wheel; folding from the toggle and the commands, in the event display too; duplicating,
   disabling, enabling and removing from the context menu and the commands; the settings dialog's Add, Remove,
-  Move Up and Reset, saved in the user setting and shown in the rows; the divider dragged both ways and to both
-  limits, with the rows, the event display and its lanes following, its double click, the width in `ui.layout`, from
+  Move Up and Reset, saved in the user setting and shown in the rows, and MIDI Channel offered for MIDI tracks alone;
+  the divider dragged both ways and to both limits, with the rows, the event display and its lanes following, its double
+  click, the width in `ui.layout`, from
   another client and `Docking::setSize`, a size too large for the window, a narrow window, a side zone squeezing the
   main zone, a larger UI scale and the dragged width after a restart; and the track name and each type's controls area
   width from the dialog, its limits, Ctrl-click to the default and Reset, from another client and with defaults for

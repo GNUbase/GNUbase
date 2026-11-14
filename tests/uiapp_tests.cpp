@@ -165,6 +165,26 @@ TEST_CASE("UI tests click through GNUbase's UI and read it back, as MCP's UI too
 	CHECK(field.width == static_cast<int>(200.0F * app.main().dpRatio()));
 }
 
+TEST_CASE("waitUntil waits on while what it reads isn't there yet, and fails with its error past the deadline", "[ui]")
+{
+	test::UiApp app;
+	// A project the UI hasn't received yet is null JSON: reading it throws until it arrives (#1499).
+	engine::Json project;
+	int tries = 0;
+	CHECK(app.waitUntil(
+		[&]
+		{
+			if (++tries == 3)
+				project = {{"tracks", engine::Json::array({1, 2})}};
+			return project.at("tracks").size() == 2;
+		}));
+	CHECK(tries == 3);
+
+	const engine::Json missing;
+	CHECK_THROWS_AS(app.waitUntil([&] { return missing.at("tracks").empty(); }, std::chrono::milliseconds(50)),
+		engine::Json::exception);
+}
+
 TEST_CASE("UI tests run the UI from another resources folder, which a restart keeps", "[ui]")
 {
 	const test::TempDir folder;

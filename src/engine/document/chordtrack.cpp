@@ -525,7 +525,8 @@ namespace gnubase::engine
 					channel.liveInput.push_back(
 						{samplesOf(position), classesOf(harmony, follow->second.liveInput == "scales")});
 			// Acoustic Feedback: the chord events' voicings on the audition track, from each event to the next, the
-			// last a bar long.
+			// last a bar long, on the MIDI channel of a MIDI track set to one, where chord.audition plays too.
+			const auto on = static_cast<uint8_t>(std::max<int>(channel.inputChannel, 0));
 			if (chords.acousticFeedback && chords.audition != 0 && channel.track == chords.audition)
 				for (size_t i = 0; i < progression.size(); ++i)
 				{
@@ -536,7 +537,7 @@ namespace gnubase::engine
 						: start + project.signatures.barStart(bar + 1) - project.signatures.barStart(bar);
 					for (const int pitch : progression[i].second.voicing)
 						channel.notes.push_back({samplesOf(start), samplesOf(end), static_cast<uint8_t>(pitch),
-							static_cast<uint16_t>(49151), uint8_t{0}});
+							static_cast<uint16_t>(49151), on});
 				}
 		}
 	}
@@ -1245,7 +1246,8 @@ namespace gnubase::engine
 				"Auditions a chord event's voicing or a scale event's notes (from its root up an octave), or a chord "
 				"given as chord.add takes it, on the chord track's audition track (chord.setTrack audition, "
 				"reference manual p. 1329), as if from its MIDI input (midi.inject): on (the default) plays it, off "
-				"ends what played. Refused without an audition track or with the chord track muted. Returns the "
+				"ends what played. Refused without an audition track, with the audition track frozen (it takes no "
+				"MIDI) or with the chord track muted. Returns the "
 				"pitches.",
 				objectSchema({{"event", idSchema}, {"chord", stringSchema}, {"on", booleanSchema}}),
 				objectSchema({{"pitches", {{"type", "array"}}}}, {"pitches"}), false},
@@ -1259,6 +1261,8 @@ namespace gnubase::engine
 				{
 					require(project.chords.audition != 0 && project.trackById.count(project.chords.audition) != 0,
 						"the chord track has no track for auditioning");
+					require(!project.trackById.at(project.chords.audition).frozen,
+						"the chord track's audition track is frozen, so it takes no MIDI");
 					require(!project.chords.mute, "the chord track is muted");
 					require(parameters.contains("event") != parameters.contains("chord"), "give an event or a chord");
 					if (parameters.contains("chord"))

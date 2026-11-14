@@ -8,6 +8,7 @@
 #include "engine/plugins/pluginslot.h"
 #include "engine/processors/builtin.h"
 #include "engine/processors/builtinplugin.h"
+#include "engine/processors/drummachine.h"
 #include "engine/processors/midieffects.h"
 #include "engine/processors/sampler.h"
 #include "ipc/connection.h"
@@ -35,6 +36,7 @@
 #include <cstdlib>
 #include <initializer_list>
 #include <memory>
+#include <set>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -475,6 +477,65 @@ TEST_CASE("the sampler plays notes, loops, slices and its filter without allocat
 		}
 		const ScopedRealtimeContext realtime;
 		sampler.process({channels, 2, frames, eventsIn, eventsOut, TransportBlock{}});
+	}
+	CHECK(g_violations == 0);
+}
+
+TEST_CASE("the drum machine plays samples, every synth, groups and its effects without allocating", "[unit]")
+{
+	using namespace gnubase::engine::graph;
+	using namespace gnubase::engine::processors;
+	constexpr uint32_t frames = 256;
+	std::vector<float> samples(size_t{2} * frames);
+	float* const channels[] = {samples.data(), samples.data() + frames};
+	EventBuffer eventsIn(256);
+	EventBuffer eventsOut(64);
+	auto sample = std::make_shared<Sample>();
+	sample->left.assign(4800, 0.5f);
+	sample->right.assign(4800, -0.5f);
+	DrumMachine drums;
+	drums.setSample(40, std::move(sample));
+	// The pad parameters the events below set are automated: the others' events don't count.
+	std::set<uint32_t> automated = {DrumMachine::padParameter(40, DrumMachine::Reverse)};
+	for (uint32_t id = DrumMachine::padParameter(41, DrumMachine::Instrument);
+		id < DrumMachine::padParameter(49, DrumMachine::Instrument); ++id)
+		automated.insert(id);
+	drums.setPadValues({{DrumMachine::padParameter(40, DrumMachine::Instrument), 1.0}}, automated);
+	drums.prepareFor(48000.0, frames);
+
+	const RecordViolations record;
+	for (int block = 0; block < 12; ++block)
+	{
+		eventsIn.clear();
+		const auto set = [&eventsIn](uint32_t id, double value)
+		{
+			ProcessEvent event;
+			event.type = ProcessEvent::Type::Parameter;
+			event.parameter = id;
+			event.parameterValue = value;
+			eventsIn.add(event);
+		};
+		for (int pad = 41; pad < 49; ++pad)
+		{
+			set(DrumMachine::padParameter(pad, DrumMachine::Instrument), static_cast<double>(pad - 39));
+			set(DrumMachine::padParameter(pad, DrumMachine::ExclusiveGroup), static_cast<double>(pad % 2));
+			set(DrumMachine::padParameter(pad, DrumMachine::Gate), static_cast<double>(block % 2));
+			set(DrumMachine::padParameter(pad, DrumMachine::DelaySend), 50.0);
+			set(DrumMachine::padParameter(pad, DrumMachine::ReverbSend), 50.0);
+		}
+		set(DrumMachine::padParameter(40, DrumMachine::Reverse), static_cast<double>(block % 2));
+		set(DrumMachine::DelaySync, static_cast<double>(block % 2));
+		for (uint8_t key = 40; key < 49; ++key)
+		{
+			ProcessEvent note;
+			note.type = block % 3 == 2 ? ProcessEvent::Type::NoteOff : ProcessEvent::Type::NoteOn;
+			note.offset = 20 + key;
+			note.key = key;
+			note.velocity = 0x8000;
+			eventsIn.add(note);
+		}
+		const ScopedRealtimeContext realtime;
+		drums.process({channels, 2, frames, eventsIn, eventsOut, TransportBlock{}});
 	}
 	CHECK(g_violations == 0);
 }

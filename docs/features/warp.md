@@ -51,7 +51,9 @@ map bends, each the second of the file (`contentTime`, `contentTimeUnit="seconds
 event's start (`time`). In musical mode the times are in beats (`timeUnit="beats"`, the clip's `contentTimeUnit` too),
 so they follow the tempo in another application as they do here, else in seconds; the clip's `playStart` is 0 and its
 `duration` where the event ends through the warp. `gnubase.json` still has the clip's warp, which wins when GNUbase
-opens its own file.
+opens its own file. A clip in musical mode without a tempo there, which only a file edited elsewhere holds, takes the
+project's tempo at its first event when the project loads, as `clip.setWarp` gives it one, so that its length in beats
+stays when the tempo changes later, as a MIDI file import may change it ([file-import.md](file-import.md)).
 
 A project from another application, or without `gnubase.json`, gets the points of a `Warps` element in a clip of the
 event's own (`readWarps` in `dawproject.cpp`): in beats musical mode, with beat 0 of the definition at the content's
@@ -156,24 +158,24 @@ import keeps the whole beats, so the markers are lost); more disk threads for ma
 
 ## Checks
 
-`tests/warp_tests.cpp`: the warp reader placing clicks where a map with a ratio change puts them, also after a seek;
-the render test of musical mode following a fixed tempo and a tempo track change, with undo, and off again; bars and
-beats, Auto Adjust from hitpoints moving the snap point and every Manual Adjust mode with their errors; an edited
-beat playing on the project's beat; free warp markers moving clicks, moved, refused (also beyond the real-time range,
-1:8 both ways), removed and reset; warp quantizing keeping a marker within the range, and leaving the markers after
-it room for their targets; a clip loaded with a section beyond the range still taking warp quantizing, pasted markers
-and inserted ones elsewhere, and a marker rounded onto it; a marker next to a section at the limit of the range refused a
-frame off the map and taken when only rounded; Crossfade closing a gap and
-going into the next event through the warp; clip fades of a warped event that starts and ends inside them; unstretching, and
-flattening playing exactly as before (also with event and clip fades) and no longer following the tempo, with undo,
-and leaving no files when it fails; fades to the range, drawn volume curves and hitpoint cuts through the warp;
-sizing with the contents keeping the other edge; zero crossings, the snap point and Detect Silence's splits through
-the warp; the sample editor's Select Locators; fades that stop fitting after a tempo change still changing; the warped events' entries refused as media files; the warp saved
-and loaded; a quarter in musical mode at 8 times its length leaving the clicks after it where the map puts them; a
-warped event's `playedLength` and `fadeRoom` in `project.get` and announced after a tempo change, an undo and an edit
-of the event, and gone out of musical mode; musical mode and warp markers through `project.xml`'s `Warps` alone,
-playing as before and musical mode still following the tempo, `Warps` whose audio isn't within the file, and two
-events of a file sharing its clip with a fade longer than the clip; 4 warped events on the quality preset playing in real
-time without dropouts (`[realtime]`).
+`tests/warp_tests.cpp`: the warp reader placing clicks where a map with a ratio change puts them, also after a seek; the
+render test of musical mode following a fixed tempo and a tempo track change, with undo, and off again; bars and beats,
+Auto Adjust from hitpoints moving the snap point and every Manual Adjust mode with their errors; an edited beat playing
+on the project's beat; free warp markers moving clicks, moved, refused (also beyond the real-time range, 1:8 both ways),
+removed and reset; warp quantizing keeping a marker within the range, and leaving the markers after it room for their
+targets; a clip loaded with a section beyond the range still taking warp quantizing, pasted markers and inserted ones
+elsewhere, and a marker rounded onto it; a marker next to a section at the limit of the range refused a frame off the
+map and taken when only rounded; Crossfade closing a gap and going into the next event through the warp; clip fades of a
+warped event that starts and ends inside them; unstretching, and flattening playing exactly as before (also with event
+and clip fades) and no longer following the tempo, with undo, and leaving no files when it fails; fades to the range,
+drawn volume curves and hitpoint cuts through the warp; sizing with the contents keeping the other edge; zero crossings,
+the snap point and Detect Silence's splits through the warp; the sample editor's Select Locators; fades that stop
+fitting after a tempo change still changing; the warped events' entries refused as media files; the warp saved and
+loaded; a clip in musical mode loaded without a tempo taking the project's at its first event; a quarter in musical mode
+at 8 times its length leaving the clicks after it where the map puts them; a warped event's `playedLength` and
+`fadeRoom` in `project.get` and announced after a tempo change, an undo and an edit of the event, and gone out of
+musical mode; musical mode and warp markers through `project.xml`'s `Warps` alone, playing as before and musical mode
+still following the tempo, `Warps` whose audio isn't within the file, and two events of a file sharing its clip with a
+fade longer than the clip; 4 warped events on the quality preset playing in real time without dropouts (`[realtime]`).
 `tests/sampleeditor_ui_tests.cpp`: Musical Mode, the Audio Tempo field, Auto Adjust, Free Warp's drags and removal, Reset, Unstretch Audio
 from the Audio menu and Flatten.

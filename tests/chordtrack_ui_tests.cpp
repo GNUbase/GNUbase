@@ -99,10 +99,10 @@ TEST_CASE("Add Track adds the chord track once", "[ui]")
 	};
 	click("#add-track");
 	REQUIRE(app.waitUntil([&] { return !elements("#add-track-dialog").empty(); }));
-	// The list scrolls: Chord is below Arranger and Transpose.
-	click("#type-arranger");
-	app.ui().key(std::nullopt, "Down");
-	app.ui().key(std::nullopt, "Down");
+	// The list scrolls: Chord is below Signature, Arranger and Transpose.
+	click("#type-signature");
+	for (int i = 0; i < 3; ++i)
+		app.ui().key(std::nullopt, "Down");
 	app.shell().step(std::chrono::milliseconds(0));
 	REQUIRE(elements("#track-types").at(0).at("attributes").at("value") == "chord");
 	CHECK(elements("#track-name").empty());
@@ -121,9 +121,9 @@ TEST_CASE("Add Track adds the chord track once", "[ui]")
 		click("#add-track");
 		REQUIRE(app.waitUntil([&] { return !elements("#add-track-dialog").empty(); }));
 	}
-	click("#type-arranger");
-	app.ui().key(std::nullopt, "Down");
-	app.ui().key(std::nullopt, "Down");
+	click("#type-signature");
+	for (int i = 0; i < 3; ++i)
+		app.ui().key(std::nullopt, "Down");
 	app.shell().step(std::chrono::milliseconds(0));
 	REQUIRE(elements("#track-types").at(0).at("attributes").at("value") == "chord");
 	click("#add-track-confirm");
@@ -374,6 +374,14 @@ TEST_CASE(
 	// A selected audio part is a selection too, of nothing to make chord events from: not the track's loose events.
 	window.display.select({audioPart});
 	run("track.createChordEventsSelected");
+	// Nor with the MIDI track selected: the three functions open no dialog and send no command.
+	window.click(row(midi));
+	window.display.select({audioPart});
+	run("track.createChordEventsSelected");
+	CHECK(window.elements("#create-chord-events-dialog").empty());
+	run("track.mapToChordTrackSelected");
+	CHECK(window.elements("#map-to-chord-track-dialog").empty());
+	run("track.assignVoicesSelected");
 
 	// The selected MIDI track: all its parts; with a part selected, only that one.
 	window.click(row(midi));
@@ -395,6 +403,11 @@ TEST_CASE(
 	window.click("#map-to-chord-track");
 	REQUIRE(window.app.waitUntil([&] { return window.ran("chord.map").size() == 2; }));
 	CHECK(window.ran("chord.map")[1].at("parts") == Json{second});
+	// Assign Voices to Notes: the first it sent is this one, none with the audio part.
+	run("track.assignVoicesSelected");
+	REQUIRE(window.app.waitUntil([&] { return !window.ran("chord.assignVoices").empty(); }));
+	CHECK(window.ran("chord.assignVoices").size() == 1);
+	CHECK(window.ran("chord.assignVoices")[0].at("parts") == Json{second});
 }
 
 TEST_CASE("with Acoustic Feedback, pressing a chord or scale event auditions it until the button is let go", "[ui]")

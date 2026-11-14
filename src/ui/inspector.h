@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <set>
 #include <string>
@@ -81,6 +82,14 @@ namespace gnubase::ui
 		void sendChannel(engine::Json parameters);
 		// What a command does when it is done: if it was refused, the next update shows the channel again.
 		std::function<void(const engine::Result&)> whenRefused();
+		// Sends a value field's change as a step of its gesture (EngineBinding::sendStep) under key, and keeps the
+		// value that the field shows with it (shown).
+		void sendFieldStep(
+			int gesture, const std::string& key, float shown, std::string description, engine::Json commands);
+		// What a value field shows for the project's value: while the project is older than the field's own steps for
+		// that channel (#716), the value that the field sent last for it instead, also after another track showed in
+		// the same field meanwhile (#1421).
+		std::string fieldValue(const std::string& key, std::string value) const;
 		// Ends what is being edited without taking it, such as notes being typed.
 		void dropEdits();
 		// Reads the open in-place editors into m_inPlace (editor.inPlace).
@@ -96,6 +105,9 @@ namespace gnubase::ui
 		std::vector<uint64_t> m_selected; // the tracks the inspector shows, the first one's details
 		uint64_t m_loads = 0;
 		uint64_t m_read = 0;
+		// sendFieldStep's values, by key. ponytail: never pruned, one short entry per field and channel the user
+		// changed.
+		std::map<std::string, std::string> m_sent;
 		const engine::Json* m_project = nullptr;            // update's
 		engine::Json m_devices = engine::Json::object();    // the user setting midi.devices
 		engine::Json m_channel;                             // the track's, null without one

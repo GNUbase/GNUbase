@@ -539,6 +539,13 @@ valuefield.editing .valuefield-text
 	margin-right: 2dp;
 }
 
+/* The locator buttons' one to three letters take their text's width rather than a text button's 64 dp, so that all
+   sections fit 1280 dp, a 1920-pixel display at 150 % (#1450). */
+.transport-section button
+{
+	min-width: 24dp;
+}
+
 .transport textdisplay
 {
 	min-width: 72dp;
@@ -546,9 +553,10 @@ valuefield.editing .valuefield-text
 
 /* The project cursor's displays keep their width while the transport runs, locates or scrubs (#1335): the width of
    their format's widest text, which the format's state class picks, in em, so that it follows the font size. The
-   themes show displays in a font whose digits are all 0.6 em wide, but FreeType rounds the face's size and its
-   advances to whole pixels, so a character takes up to 0.64 em: 8 px at 13 px, 7 px of an 11.05 px font cut to an
-   11 px face (tests/transportbar_tests.cpp checks the widths in every theme at dp ratios of 1 and 0.85).
+   themes show displays in a font whose digits are all 0.6 em wide, but RmlUi cuts the font size to whole pixels
+   before it asks for the face, and FreeType rounds the hinted advances, so a character takes up to 0.64 em: 8 px at
+   13 px, 7 px of an 11.05 px font cut to an 11 px face (tests/transportbar_tests.cpp checks the widths in every theme
+   at dp ratios of 1 and 0.85).
    14 characters for bars and beats, every position from bar -999 to 9999 in any signature (-999.99.16.119); 12 for
    seconds and 11 for timecode and user frames, every position under 100 hours (99:59:59.999, 99:59:59:29); 11 for
    samples, every position under 48 hours at 384 kHz. That holds the longest project (24 hours) from the latest start
