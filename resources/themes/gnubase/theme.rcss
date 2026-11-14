@@ -1420,6 +1420,229 @@
 	{
 		decorator: svg(dropdown-arrow.svg);
 	}
+	menubar
+	{
+		background-color: #0c0f1e;
+	}
+	.toolbar
+	{
+		decorator: none;
+		background-color: #0c0f1e;
+	}
+	.toolbar button:not(.toggle):not(.primary), .transport button:not(.toggle):not(.primary)
+	{
+		decorator: none;
+		background-color: transparent;
+		border-radius: 5dp;
+		color: #aeb7d0;
+	}
+	.toolbar button:not(.toggle):not(.primary) svg.icon, .transport button:not(.toggle):not(.primary) svg.icon
+	{
+		image-color: #aeb7d0;
+	}
+	.toolbar button[menu]:not(.toggle):not(.primary), .transport button[menu]:not(.toggle):not(.primary)
+	{
+		decorator: svg-ninepatch(dropdown-button-normal.svg, 6 20 6 6);
+		color: #f1f4ff;
+		text-align: left;
+		padding-right: 22dp;
+	}
+	.toolbar button.icon-only[menu]:not(.toggle):not(.primary), .transport button.icon-only[menu]:not(.toggle):not(.primary)
+	{
+		decorator: none;
+		padding-right: 0;
+		text-align: center;
+	}
+	.toolbar button:not(.toggle):not(.primary):hover, .transport button:not(.toggle):not(.primary):hover
+	{
+		decorator: none;
+		background-color: #16374d;
+		color: #f1f4ff;
+	}
+	.toolbar button:not(.toggle):not(.primary):hover svg.icon, .transport button:not(.toggle):not(.primary):hover svg.icon
+	{
+		image-color: #f1f4ff;
+	}
+	.toolbar button[menu]:not(.toggle):not(.primary):hover, .transport button[menu]:not(.toggle):not(.primary):hover
+	{
+		decorator: svg-ninepatch(dropdown-button-hover.svg, 6 20 6 6);
+	}
+	.toolbar button.icon-only[menu]:not(.toggle):not(.primary):hover, .transport button.icon-only[menu]:not(.toggle):not(.primary):hover
+	{
+		decorator: none;
+	}
+	.toolbar button:not(.toggle):not(.primary):active, .transport button:not(.toggle):not(.primary):active
+	{
+		decorator: none;
+		background-color: #0b3e4c;
+	}
+	.toolbar button[menu]:not(.toggle):not(.primary):active, .transport button[menu]:not(.toggle):not(.primary):active
+	{
+	}
+	.toolbar button.checked[menu]:not(.toggle):not(.primary), .transport button.checked[menu]:not(.toggle):not(.primary)
+	{
+	}
+	.toolbar button.checked:not(.toggle):not(.primary), .transport button.checked:not(.toggle):not(.primary)
+	{
+		decorator: none;
+		background-color: #10dff22e;
+		color: #10dff2;
+	}
+	.toolbar button.checked:not(.toggle):not(.primary) svg.icon, .transport button.checked:not(.toggle):not(.primary) svg.icon
+	{
+		image-color: #10dff2;
+	}
+	.toolbar button.suspended:not(.toggle):not(.primary), .transport button.suspended:not(.toggle):not(.primary)
+	{
+		decorator: none;
+		background-color: transparent;
+		color: #ffc44d;
+	}
+	.toolbar button.tapping:not(.toggle):not(.primary), .transport button.tapping:not(.toggle):not(.primary)
+	{
+		decorator: none;
+		background-color: #0b3e4c;
+	}
+	.toolbar button:not(.toggle):not(.primary):disabled, .transport button:not(.toggle):not(.primary):disabled
+	{
+		decorator: none;
+		background-color: transparent;
+		color: #676e84;
+	}
+	.toolbar button:not(.toggle):not(.primary):disabled svg.icon, .transport button:not(.toggle):not(.primary):disabled svg.icon
+	{
+		image-color: #676e84;
+	}
+	.toolbar button:not(.toggle):not(.primary):focus-visible, .transport button:not(.toggle):not(.primary):focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6);
+	}
+	.toolbar button.checked:not(.toggle):not(.primary):focus-visible, .transport button.checked:not(.toggle):not(.primary):focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6);
+	}
+	.transport #start svg.icon
+	{
+		image-color: #10dff2;
+	}
+	.transport #start.checked
+	{
+		decorator: none;
+		background-color: #10dff2;
+	}
+	.transport #start.checked svg.icon
+	{
+		image-color: #090b18;
+	}
+	.transport #record svg.icon
+	{
+		image-color: #ff5270;
+	}
+	.transport #record.checked
+	{
+		decorator: none;
+		background-color: #ff5270;
+	}
+	.transport #record.checked svg.icon
+	{
+		image-color: #ffffff;
+	}
+	.transport .primary-time
+	{
+		color: #f1f4ff;
+		font-weight: 600;
+	}
+	tabset tabs
+	{
+		decorator: none;
+		background-color: #101426;
+	}
+	tabset tab
+	{
+		decorator: none;
+		color: #aeb7d0;
+		border-bottom-width: 2dp;
+		border-bottom-color: transparent;
+	}
+	tabset tab:hover
+	{
+		decorator: none;
+		color: #f1f4ff;
+	}
+	tabset tab:selected
+	{
+		decorator: none;
+		color: #f1f4ff;
+		border-bottom-color: #10dff2;
+	}
+	.docking [zone]
+	{
+		background-color: #101426;
+		border-radius: 6dp;
+	}
+	.docking .zone-frame
+	{
+		border-width: 1dp;
+		border-color: #10dff28c;
+		border-radius: 6dp;
+	}
+	.event-display
+	{
+		background-color: #101426;
+	}
+	.track-list
+	{
+		background-color: #14182c;
+	}
+	.track-list listitem
+	{
+		background-color: #171c32;
+		border-bottom-color: #090b18;
+	}
+	.track-list listitem:hover
+	{
+		decorator: none;
+		background-color: #20253a;
+	}
+	.track-list listitem.selected
+	{
+		decorator: svg-ninepatch(list-item-selected.svg, 6 6 6 6);
+	}
+	.inspector-section button.section-header
+	{
+		decorator: svg-ninepatch(disclosure-open.svg, 6 6 6 20);
+		background-color: #161a30;
+		border-radius: 5dp;
+		color: #f1f4ff;
+		font-weight: 600;
+		padding-left: 22dp;
+	}
+	.inspector-section.collapsed button.section-header
+	{
+		decorator: svg-ninepatch(disclosure-closed.svg, 6 6 6 20);
+	}
+	.inspector-section button.section-header:hover
+	{
+		background-color: #163045;
+	}
+	.inspector-section button.section-header:active
+	{
+		background-color: #0b3e4c;
+	}
+	.mixer-channel
+	{
+		background-color: #171c32;
+		border-radius: 6dp;
+		border-right-color: #090b18;
+	}
+	.mixer-channel-name
+	{
+		font-weight: 600;
+	}
+	.transport .display
+	{
+		decorator: none;
+	}
 	.time-display.size-0
 	{
 		font-size: 32dp;
@@ -1524,5 +1747,13 @@
 	menubar button:focus-visible
 	{
 		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6);
+	}
+	.inspector-section button.section-header:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(disclosure-open.svg, 6 6 6 20);
+	}
+	.inspector-section.collapsed button.section-header:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(disclosure-closed.svg, 6 6 6 20);
 	}
 }
