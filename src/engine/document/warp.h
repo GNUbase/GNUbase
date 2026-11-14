@@ -19,9 +19,9 @@ namespace gnubase::engine
 	// Sorts a clip's free warp markers and throws a CommandError unless each is within the clip, none passes another
 	// and no section between two of them, or one and the clip's ends, plays more than 4 times or less than a quarter
 	// as long, the real-time stretcher's range (dsp::WarpReader). length is the clip's in sample frames. A section
-	// that plays as it did with the markers before the edit, unchanged, give or take a frame, is left as it is even
-	// beyond the range: a project saved before the range was checked may have such sections, and an edit elsewhere
-	// in the clip doesn't make them its problem (#1129).
+	// that plays as it did with the markers before the edit, unchanged, give or take half a frame (the rounding of a
+	// marker inserted on their map, #1266), is left as it is even beyond the range: a project saved before the range
+	// was checked may have such sections, and an edit elsewhere in the clip doesn't make them its problem (#1129).
 	void checkMarkers(ClipWarp& warp, time::Samples length, const std::vector<WarpMarker>& unchanged);
 
 	// The clip's tempo in musical mode: its own, or without one the project's at the start of the first event that
@@ -62,6 +62,8 @@ namespace gnubase::engine
 
 	// Announces audioEvent.changed with audioEventJson for the events of after whose playedLength or fadeRoom differs
 	// from before, as after a tempo change or a warp edit, and for warped events that changed, whose announcements
-	// toJson made. ProjectModel calls it after every edit, undo and redo.
+	// toJson made. ProjectModel calls it after every edit, undo and redo. It reads only before's sample rate, tempo,
+	// media, clips and audio events: undo and redo pass a before that holds only those (#1266), so a read of another
+	// field would see it empty there, and only there.
 	void announceWarpedEvents(const Project& before, const Project& after, CommandContext& context);
 }

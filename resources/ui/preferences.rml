@@ -2,9 +2,10 @@
 <!-- The preferences dialog (#162, docs/features/preferences.md, reference manual pp. 1593-1625): the user settings that
      are preferences, on the reference's pages, which the list on the left selects, and the preference presets.
      app::AppUi opens it (the UI command window.preferences). Its Lua reads the settings with settings.list when the
-     dialog loads and changes them only through engine commands: Apply and OK send what changed with one settings.set,
-     Cancel drops it, Defaults puts the page's preferences back to their defaults in the dialog. A preset holds what
-     the dialog shows (preferences.savePreset); choosing one puts its values into the dialog. -->
+     dialog loads, follows settings.changed while it is open, and changes them only through engine commands: Apply and
+     OK send what changed with one settings.set, Cancel drops it, Defaults puts the page's preferences back to their
+     defaults in the dialog. A preset holds what the dialog shows (preferences.savePreset); choosing one puts its
+     values into the dialog. -->
 <rml>
 <head>
 	<title>Preferences</title>
@@ -150,8 +151,9 @@
 		}
 	</style>
 	<script>
-		-- The dialog's state, in the UI's Lua: the settings as the engine had them when the dialog loaded, and what the
-		-- pages show.
+		-- The dialog's state, in the UI's Lua: the settings as the engine has them, and what the pages show. While
+		-- the dialog is open it follows settings.changed, so a script or an MCP client that changes a setting shows
+		-- up in it.
 		Preferences = {}
 		local prefs = Preferences
 
@@ -163,8 +165,12 @@
 			return math.tointeger(value) and tostring(math.tointeger(value)) or tostring(value)
 		end
 
-		-- Whether two values from the engine are the same, also objects and lists.
+		-- Whether two values from the engine are the same, also objects and lists. Numbers count as the same when
+		-- their fields show the same text, so one the dialog can't show exactly doesn't look changed.
 		local function same(a, b)
+			if type(a) == "number" or type(b) == "number" then
+				return numberText(a) == numberText(b)
+			end
 			if type(a) ~= "table" or type(b) ~= "table" then
 				return a == b
 			end
@@ -179,6 +185,34 @@
 				end
 			end
 			return true
+		end
+
+		local function sorted(list)
+			local result = {}
+			for _, item in ipairs(list) do
+				result[#result + 1] = item
+			end
+			table.sort(result)
+			return result
+		end
+
+		-- A setting's value in the form the dialog compares it in. The MIDI filter's lists are sets that the dialog
+		-- fills in its own order, so the engine's order doesn't make them look changed; what the dialog doesn't know
+		-- stays as it is.
+		local function normalize(key, setting)
+			if key ~= "midi.recordFilter" or type(setting) ~= "table" then
+				return setting
+			end
+			local filter = {}
+			for name, list in pairs(setting) do
+				filter[name] = type(list) == "table" and sorted(list) or list
+			end
+			return filter
+		end
+
+		-- Whether what a page shows for a setting differs from what the engine has.
+		local function differs(key, shown, saved)
+			return not same(normalize(key, shown), normalize(key, saved))
 		end
 
 		-- The control of a setting: its id, from the key, such as pref-ui-scale.
@@ -205,7 +239,6 @@
 		-- The MIDI filter's Record section (p. 1613): the message types of midi.recordFilter.
 		local filterTypes = {{"notes", "Note"}, {"polyPressure", "Poly Pressure"}, {"controllers", "Controller"},
 			{"programs", "Program Change"}, {"channelPressure", "Aftertouch"}, {"pitchBend", "Pitchbend"}}
-		local themeNames = {gnubase = "GNUbase", dark = "Dark", light = "Light", ["high-contrast"] = "High Contrast"}
 
 		-- The pages, in the reference's order, with the preferences that GNUbase has (pp. 1595-1625). An item is a
 		-- setting with its label, choices for a drop-down list (otherwise a check box for booleans, a number field
@@ -360,8 +393,8 @@
 				local choices = item.choices
 				if choices == "themes" then
 					choices = {}
-					for _, name in ipairs(prefs.themes) do
-						choices[#choices + 1] = {name, themeNames[name] or name}
+					for _, theme in ipairs(prefs.themes) do
+						choices[#choices + 1] = {theme.id, theme.name}
 					end
 				end
 				if item.number then
@@ -500,11 +533,13 @@
 				prefs.shown[action] = keys
 				return
 			end
-			local previous = prefs.shown[action] or ""
 			askReplace(document, action, keys, others, function()
-				local controls = modifierControls(document) -- Cancel: put the list back to what it showed
-				if controls[action] ~= nil then
-					controls[action]:SetAttribute("value", previous)
+				-- Cancel: the list goes back to what the page has, which a settings.changed that rendered the page
+				-- again meanwhile has brought up to date (every render fills prefs.shown).
+				local controls = modifierControls(document)
+				local shown = prefs.shown[action] or ""
+				if controls[action] ~= nil and controlKeys(controls[action]) ~= shown then
+					controls[action]:SetAttribute("value", shown)
 				end
 			end)
 		end
@@ -688,11 +723,18 @@
 		-- What a page's controls show, into values; what can't be read goes into errors.
 		local function readPage(document, page, values, errors)
 			if page.custom == "toolModifiers" then
+				-- What the page doesn't list stays as it is: an action a newer GNUbase added, or one set through
+				-- MCP or Lua.
 				local set = {}
+				for action, keys in pairs(prefs.values["ui.toolModifiers"] or {}) do
+					set[action] = keys
+				end
 				for _, control in ipairs(document:QuerySelectorAll("#page-" .. page.id .. " select.preference")) do
 					local action = tostring(control:GetAttribute("action"))
 					local keys = value(control)
-					if keys ~= prefs.toolDefaults[action] then
+					if keys == (prefs.toolDefaults[action] or "") then
+						set[action] = nil
+					else
 						set[action] = keys
 					end
 				end
@@ -758,7 +800,7 @@
 			end
 			local changed = {}
 			for key, shown in pairs(values) do
-				if not same(shown, prefs.saved[key]) then
+				if differs(key, shown, prefs.saved[key]) then
 					changed[key] = shown
 				end
 			end
@@ -867,7 +909,7 @@
 			end
 		end
 
-		-- Runs a preset command; shows the presets with chosen selected, or the error.
+		-- Runs a preset command; shows the presets with chosen selected, or the error. Whether it ran.
 		local function presetCommand(document, command, parameters, chosen)
 			local ok, problem = pcall(command, parameters)
 			if ok then
@@ -876,6 +918,7 @@
 			else
 				report(document, {tostring(problem)})
 			end
+			return ok
 		end
 
 		local function presetName(document)
@@ -913,18 +956,68 @@
 
 		function prefs.deletePreset(document)
 			local name = value(document:GetElementById("preferences-preset"))
-			presetCommand(document, gnubase.preferences.removePreset, {name = name}, "")
-			document:GetElementById("preferences-preset-name"):SetAttribute("value", "")
+			if presetCommand(document, gnubase.preferences.removePreset, {name = name}, "") then
+				document:GetElementById("preferences-preset-name"):SetAttribute("value", "")
+			end
+		end
+
+		-- A script or an MCP client changed settings while the dialog was open: the pages show what the engine has
+		-- now, and what the user changed in them and hasn't applied stays.
+		function prefs.follow(event)
+			local document = prefs.document
+			if document == nil then
+				return
+			end
+			local changed = {}
+			for key, now in pairs((event.data or {}).values or {}) do
+				if prefs.schemas[key] then
+					changed[key] = now
+				end
+			end
+			if next(changed) == nil then
+				return
+			end
+			for key, shown in pairs(read(document)) do
+				prefs.values[key] = shown
+			end
+			for key, now in pairs(changed) do
+				prefs.saved[key] = now
+				prefs.values[key] = now
+			end
+			for _, page in ipairs(pages) do
+				local shows = false
+				for _, key in ipairs(keysOf(page)) do
+					shows = shows or changed[key] ~= nil
+				end
+				if shows then
+					renderPage(document, page)
+				end
+			end
+			if changed["preferences.presets"] ~= nil then
+				showPresets(document, value(document:GetElementById("preferences-preset")))
+			end
 		end
 
 		function prefs.open(document)
+			prefs.document = document
 			prefs.built = false
 			prefs.load(document)
 			showPresets(document, "")
+			if not prefs.subscribed then
+				prefs.subscribed = true
+				gnubase.on("settings.changed", prefs.follow)
+			end
+		end
+
+		-- The handler goes with the document: the next one that opens loads this script again.
+		function prefs.closed()
+			prefs.document = nil
+			gnubase.off("settings.changed", prefs.follow)
+			prefs.subscribed = false
 		end
 	</script>
 </head>
-<body onload="Preferences.open(document)">
+<body onload="Preferences.open(document)" onunload="Preferences.closed()">
 	<dialog id="preferences">
 		<div class="dialog-titlebar">Preferences</div>
 		<div class="content">

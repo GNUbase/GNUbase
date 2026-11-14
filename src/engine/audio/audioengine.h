@@ -327,8 +327,8 @@ namespace gnubase::engine
 		// returns the files that samplers still wait for.
 		std::set<std::string> updateSamples();
 		// Waits until the sample loader has read every file the samplers wait for, at most timeout, and hands them
-		// over (updateSamples); false if one wasn't read in time.
-		bool waitForSamples(std::chrono::milliseconds timeout);
+		// over (updateSamples); returns the files not read in time.
+		std::set<std::string> waitForSamples(std::chrono::milliseconds timeout);
 		// Sample loader thread: has the command thread run updateSamples.
 		void postSampleUpdate();
 		// The releases for a new program: those pending that the audio thread hasn't done yet.
@@ -553,9 +553,11 @@ namespace gnubase::engine
 		graph::EventBuffer m_generatorEvents;
 		graph::EventBuffer m_generatorOut;
 
+		// A round of an offline render's wait for the samplers' samples (setOfflineSampleWait).
+		std::atomic<std::chrono::milliseconds> m_offlineSampleWait{std::chrono::seconds(30)};
+
 		// Reads the samplers' samples (#1122). Last, so that it stops first: it posts audio.updateSamples.
 		std::atomic<bool> m_updatingSamples{false}; // an audio.updateSamples it posted hasn't started yet
 		SampleLoader m_sampleLoader{[this] { postSampleUpdate(); }};
-		std::atomic<std::chrono::milliseconds> m_offlineSampleWait{std::chrono::seconds(30)};
 	};
 }
