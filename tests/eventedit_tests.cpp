@@ -100,19 +100,20 @@ namespace
 
 		size_t count(const char* kind) { return call("project.get").at(kind).size(); }
 
-		// The first (direction -1) or last (1) tick that lies in the sample a tick lies in, on a musical track: where a
-		// part at that tick starts in samples.
+		// The sample a tick lies in on a musical track: where a part at that tick starts in samples.
+		int64_t sampleOf(int64_t track, int64_t tick)
+		{
+			const Json id =
+				call("midiPart.add", {{"track", track}, {"position", tick}, {"length", g_quarter}}).at("part").at("id");
+			const auto start = call("event.get", {{"events", {id}}}).at("events").at(0).at("start").get<int64_t>();
+			call("event.remove", {{"events", {id}}});
+			return start;
+		}
+
+		// The first (direction -1) or last (1) tick that lies in the sample a tick lies in, on a musical track.
 		int64_t sampleEdge(int64_t track, int64_t tick, int64_t direction)
 		{
-			const auto startAt = [this, track](int64_t at)
-			{
-				const Json id = call("midiPart.add", {{"track", track}, {"position", at}, {"length", g_quarter}})
-									.at("part")
-									.at("id");
-				const auto start = call("event.get", {{"events", {id}}}).at("events").at(0).at("start").get<int64_t>();
-				call("event.remove", {{"events", {id}}});
-				return start;
-			};
+			const auto startAt = [this, track](int64_t at) { return sampleOf(track, at); };
 			const int64_t sample = startAt(tick);
 			// Out of the sample by doubling the step, then back to its edge by halving it.
 			int64_t inside = 0;
@@ -128,6 +129,37 @@ namespace
 				(startAt(tick + (direction * middle)) == sample ? inside : outside) = middle;
 			}
 			return tick + (direction * inside);
+		}
+
+		// The tick nearest to a sample, as a range edge there lies in ticks: where range.split cuts a part there, on
+		// an empty musical track.
+		int64_t tickAt(int64_t track, int64_t sample)
+		{
+			const Json id =
+				call("midiPart.add", {{"track", track}, {"position", 0}, {"length", 1000 * g_bar}}).at("part").at("id");
+			call("range.split", {{"start", sample}, {"end", sample}, {"tracks", {track}}});
+			int64_t tick = -1;
+			const Json parts = call("project.get").at("midiParts");
+			for (const Json& part : parts)
+				if (part.at("track") == track && part.at("id") != id)
+					tick = part.at("position").get<int64_t>();
+			call("history.undo");
+			call("event.remove", {{"events", {id}}});
+			REQUIRE(tick > 0);
+			return tick;
+		}
+
+		// An automation lane's points in the order it lists them: position, value and whether it is a terminator.
+		std::vector<std::tuple<int64_t, double, bool>> points(int64_t lane)
+		{
+			std::vector<std::tuple<int64_t, double, bool>> list;
+			const Json lanes = call("automationLane.list").at("lanes");
+			for (const Json& each : lanes)
+				if (each.at("id") == lane)
+					for (const Json& point : each.at("points"))
+						list.emplace_back(point.at("position").get<int64_t>(), point.at("value").get<double>(),
+							point.value("terminator", false));
+			return list;
 		}
 
 		// Whether an automation lane has a point at a position with a value.
@@ -1993,5 +2025,229 @@ TEST_CASE("range.delete from the sample a terminator lies in, before the tick ne
 		f.call("range.delete", {{"start", from}, {"end", from + 1000}, {"tracks", {midi}}});
 		CHECK(f.call("automationLane.list", {{"track", midi}}) == before);
 		f.call("automationLane.remove", {{"lane", lane}});
+	}
+}
+
+TEST_CASE("range.move, its copy and range.paste to position 0 land the first in ticks of what starts in the range's "
+		  "start sample on tick 0",
+	"[unit]")
+{
+	// A part on a bar can lie before the tick nearest to its sample. The gap from the range's start tick to position 0
+	// would put it before tick 0, in the sample 0 it rounds to, and the edit would be refused (#1331). A modulation
+	// point in the start sample before the part's tick is what starts there first: it lands on tick 0, and the part as
+	// many ticks after it as before.
+	for (const double bpm : {97.3, 133.7})
+	{
+		Fixture f;
+		f.call("project.set", {{"tempoTrackActive", true}});
+		f.call("tempo.add", {{"position", 0}, {"bpm", bpm}, {"ramp", false}});
+		const int64_t midi = f.track("midi");
+		const int64_t probe = f.track("midi");
+		for (int64_t bar = 1; bar < 40; ++bar)
+		{
+			INFO(bpm << " BPM, bar " << bar);
+			const int64_t downbeat = bar * g_bar;
+			const int64_t part = f.call("midiPart.add", {{"track", midi}, {"position", downbeat}, {"length", g_bar}})
+									 .at("part")
+									 .at("id")
+									 .get<int64_t>();
+			const int64_t from = f.sampleOf(probe, downbeat);
+			const Json range = {{"start", from}, {"end", from + 40000}, {"tracks", {midi}}};
+			Json move = range;
+			move["position"] = 0;
+			Json copy = move;
+			copy["copy"] = true;
+			// Moves, copies and pastes the range to position 0 and checks where the part lands, and with a lane the
+			// point with a value on tick 0 and none before it.
+			const auto check = [&](int64_t tick, int64_t lane, double value)
+			{
+				const auto landed = [&](const Json& events)
+				{
+					REQUIRE(events.size() == 1);
+					CHECK(f.midi(events.at(0)).at("position") == tick);
+					if (lane != 0)
+					{
+						CHECK(f.hasPoint(lane, 0, value));
+						for (const auto& point : f.points(lane))
+							CHECK(std::get<0>(point) >= 0);
+					}
+				};
+				landed(f.call("range.move", move).at("events"));
+				f.call("history.undo");
+				landed(f.call("range.move", copy).at("events"));
+				f.call("history.undo");
+				f.call("range.copy", range);
+				landed(f.call("range.paste", {{"position", 0}}).at("events"));
+				f.call("history.undo");
+			};
+			check(0, 0, 0.0);
+			const int64_t lowest = f.sampleEdge(probe, downbeat, -1);
+			if (lowest < downbeat)
+			{
+				const auto lane =
+					f.call("automationLane.add", {{"track", midi}, {"target", {{"type", "controller"}, {"number", 1}}}})
+						.at("lane")
+						.at("id")
+						.get<int64_t>();
+				f.call("automationPoint.add",
+					{{"lane", lane},
+						{"points",
+							{{{"position", lowest}, {"value", 1.0}},
+								{{"position", downbeat + g_quarter}, {"value", 0.0}}}}});
+				check(downbeat - lowest, lane, 1.0);
+				f.call("automationLane.remove", {{"lane", lane}});
+			}
+			// A lane without a point in the start sample: the copy starts with a point at the range's start tick, which
+			// can lie before the part's. That point lands on tick 0 then.
+			const int64_t edge = f.tickAt(probe, from);
+			if (edge < downbeat)
+			{
+				const auto lane =
+					f.call("automationLane.add", {{"track", midi}, {"target", {{"type", "controller"}, {"number", 1}}}})
+						.at("lane")
+						.at("id")
+						.get<int64_t>();
+				f.call("automationPoint.add",
+					{{"lane", lane}, {"points", {{{"position", downbeat + g_quarter}, {"value", 0.5}}}}});
+				check(downbeat - edge, lane, 0.5);
+				f.call("automationLane.remove", {{"lane", lane}});
+			}
+			f.call("event.remove", {{"events", {part}}});
+		}
+	}
+}
+
+TEST_CASE("Delete Time joins the curve after the range after the points that stay before it", "[unit]")
+{
+	// With the range's end edge on a point in the end sample before the end tick, the range's length in ticks would
+	// move that point to before the range's start tick (#1331): before a terminator that stays there, whose gap would
+	// swallow it, before tick 0, or with a faster tempo at the end past points before the range's start sample. The
+	// joint is then at the point that stays, or at 0.
+	using Point = std::tuple<int64_t, double, bool>;
+	SECTION("a terminator a tick before the range's start tick")
+	{
+		Fixture f;
+		f.call("project.set", {{"tempoTrackActive", true}});
+		f.call("tempo.add", {{"position", 0}, {"bpm", 97.3}, {"ramp", false}});
+		const int64_t midi = f.track("midi");
+		const int64_t probe = f.track("midi");
+		int hits = 0;
+		for (int64_t bar = 1; bar < 40; ++bar)
+		{
+			INFO("bar " << bar);
+			const int64_t from = f.sampleOf(probe, bar * g_bar);
+			const int64_t start = f.tickAt(probe, from);
+			const int64_t downbeat = (bar + 1) * g_bar;
+			const int64_t until = f.sampleOf(probe, downbeat);
+			// The part's downbeat point lies more ticks before the end tick than the terminator before the start tick.
+			if (f.tickAt(probe, until) - downbeat <= 1)
+				continue;
+			++hits;
+			const Json part = f.call("midiPart.add", {{"track", midi}, {"position", downbeat}, {"length", g_bar}})
+								  .at("part")
+								  .at("id");
+			const auto lane =
+				f.call("automationLane.add", {{"track", midi}, {"target", {{"type", "controller"}, {"number", 1}}}})
+					.at("lane")
+					.at("id")
+					.get<int64_t>();
+			f.call("automationPoint.add",
+				{{"lane", lane},
+					{"points",
+						{{{"position", 0}, {"value", 0.5}},
+							{{"position", start - 1}, {"value", 0.25}, {"terminator", true}},
+							{{"position", downbeat}, {"value", 1.0}},
+							{{"position", downbeat + g_quarter}, {"value", 0.0}}}}});
+			f.call("range.delete", {{"start", from}, {"end", until}, {"tracks", {midi}}, {"time", true}});
+			const std::vector<Point> expected = {
+				{0, 0.5, false}, {start - 1, 0.25, true}, {start - 1, 1.0, false}, {start - 1 + g_quarter, 0.0, false}};
+			CHECK(f.points(lane) == expected);
+			f.call("history.undo");
+			f.call("automationLane.remove", {{"lane", lane}});
+			f.call("event.remove", {{"events", {part}}});
+		}
+		CHECK(hits > 0);
+	}
+	SECTION("from sample 0")
+	{
+		Fixture f;
+		f.call("project.set", {{"tempoTrackActive", true}});
+		f.call("tempo.add", {{"position", 0}, {"bpm", 97.3}, {"ramp", false}});
+		const int64_t midi = f.track("midi");
+		const int64_t probe = f.track("midi");
+		int hits = 0;
+		for (int64_t bar = 1; bar < 40; ++bar)
+		{
+			INFO("bar " << bar);
+			const int64_t downbeat = bar * g_bar;
+			const int64_t until = f.sampleOf(probe, downbeat);
+			if (f.tickAt(probe, until) <= downbeat)
+				continue;
+			++hits;
+			const auto lane =
+				f.call("automationLane.add", {{"track", midi}, {"target", {{"type", "controller"}, {"number", 1}}}})
+					.at("lane")
+					.at("id")
+					.get<int64_t>();
+			f.call("automationPoint.add",
+				{{"lane", lane},
+					{"points",
+						{{{"position", downbeat}, {"value", 1.0}},
+							{{"position", downbeat + g_quarter}, {"value", 0.0}}}}});
+			f.call("range.delete", {{"start", 0}, {"end", until}, {"tracks", {midi}}, {"time", true}});
+			const std::vector<Point> expected = {{0, 1.0, false}, {0, 1.0, false}, {g_quarter, 0.0, false}};
+			CHECK(f.points(lane) == expected);
+			f.call("history.undo");
+			f.call("automationLane.remove", {{"lane", lane}});
+		}
+		CHECK(hits > 0);
+	}
+	SECTION("a faster tempo at the end")
+	{
+		Fixture f;
+		f.call("project.set", {{"tempoTrackActive", true}});
+		f.call("tempo.add", {{"position", 0}, {"bpm", 97.3}, {"ramp", false}});
+		f.call("tempo.add", {{"position", 20 * g_bar}, {"bpm", 180.0}, {"ramp", false}});
+		const int64_t midi = f.track("midi");
+		const int64_t probe = f.track("midi");
+		int hits = 0;
+		for (int64_t bar = 1; bar < 20; ++bar)
+		{
+			INFO("bar " << bar);
+			const int64_t from = f.sampleOf(probe, bar * g_bar);
+			const int64_t start = f.tickAt(probe, from);
+			// The last tick of the sample before the range's.
+			const int64_t before = f.sampleEdge(probe, bar * g_bar, -1) - 1;
+			const int64_t end = (bar + 20) * g_bar;
+			const int64_t until = f.sampleOf(probe, end);
+			// The first tick of the end sample, more ticks before the end tick than the point before the range lies
+			// before the start tick.
+			const int64_t first = f.sampleEdge(probe, end, -1);
+			if (f.tickAt(probe, until) - first <= start - before)
+				continue;
+			++hits;
+			const auto lane =
+				f.call("automationLane.add", {{"track", midi}, {"target", {{"type", "controller"}, {"number", 1}}}})
+					.at("lane")
+					.at("id")
+					.get<int64_t>();
+			f.call("automationPoint.add",
+				{{"lane", lane},
+					{"points",
+						{{{"position", before}, {"value", 0.25}}, {{"position", first}, {"value", 1.0}},
+							{{"position", first + g_quarter}, {"value", 0.0}}}}});
+			f.call("range.delete", {{"start", from}, {"end", until}, {"tracks", {midi}}, {"time", true}});
+			// The point before the range stays first, then the value the curve arrived at the start with and the
+			// point after the range at the joint, on it, and the curve goes on from there.
+			const std::vector<Point> points = f.points(lane);
+			REQUIRE(points.size() == 4);
+			CHECK(points[0] == Point{before, 0.25, false});
+			CHECK(std::get<0>(points[1]) == before);
+			CHECK(points[2] == Point{before, 1.0, false});
+			CHECK(points[3] == Point{before + g_quarter, 0.0, false});
+			f.call("history.undo");
+			f.call("automationLane.remove", {{"lane", lane}});
+		}
+		CHECK(hits > 0);
 	}
 }
