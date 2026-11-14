@@ -1257,6 +1257,10 @@ namespace gnubase::engine
 				followed.assign(followed.size(), 0);
 				if (which == 1)
 					added.clear();
+			}
+			// Only the voicings control takes adaptive voicing away, so only its rest gives it back.
+			if (step == 0 && which == 0)
+			{
 				Json restore = Json::array();
 				for (const auto& [index, voicing] : where.adaptive)
 				{

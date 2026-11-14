@@ -1761,6 +1761,33 @@ TEST_CASE("a pad that follows a control only partly is as before once the contro
 	CHECK(sounds() == before);
 }
 
+TEST_CASE("only the voicings control at rest gives the pads their adaptive voicing back", "[integration]")
+{
+	// #1571: the tensions control back at rest leaves the pads the voicings control took adaptive voicing from as
+	// that control has them.
+	RemoteRig remote;
+	Client& client = remote.rig.client;
+	run(client, "chordPads.set",
+		{{"controlSources", {"controller", "controller", "none"}}, {"controlNumbers", {20, 21, 1}}});
+	run(client, "chordPads.setPad", {{"pad", 0}, {"reference", true}});
+	run(client, "audio.render", {{"frames", 64}});
+	const Json before = pad(client, 5);
+	REQUIRE(before.at("adaptive") == true);
+	sendBytes(remote, {0xB0, 20, 127});
+	CHECK(remote.until([&] { return pad(client, 5).at("adaptive") == false; }));
+	const Json voiced = pad(client, 5);
+	sendBytes(remote, {0xB0, 21, 127});
+	CHECK(remote.until([&] { return pad(client, 5).at("chord") != voiced.at("chord"); }));
+	sendBytes(remote, {0xB0, 21, 0});
+	CHECK(remote.until([&] { return pad(client, 5).at("chord") == voiced.at("chord"); }));
+	CHECK(pad(client, 5).at("adaptive") == false);
+	CHECK(pad(client, 5).at("voicing") == voiced.at("voicing"));
+	sendBytes(remote, {0xB0, 20, 0});
+	CHECK(remote.until([&] { return pad(client, 5).at("adaptive") == true; }));
+	CHECK(pad(client, 5).at("voicing") == before.at("voicing"));
+	CHECK(pad(client, 5).at("pitches") == before.at("pitches"));
+}
+
 TEST_CASE("another project ends Assign from MIDI Input, so the remote keys trigger the pads again", "[integration]")
 {
 	// #1236: what chordPads.listen listens for belongs to the project it was asked in.
