@@ -729,10 +729,13 @@ namespace gnubase::ui
 				if (Rml::Element* menu = m_menus[3].get();
 					menu != nullptr && menu->IsClassSet("articulations") != articulations)
 					menu->SetClass("articulations", articulations);
+				// Only a direction of an editable part: the others have no event pop-up menu.
 				m_menuDirection.reset();
 				if (const Rml::Element* direction = withAttribute(target, "controller", m_root.get());
 					direction != nullptr && articulations)
-					m_menuDirection.emplace(idAttribute(*direction, "part"), idAttribute(*direction, "controller"));
+					if (const auto found = m_partIndex.find(idAttribute(*direction, "part"));
+						found != m_partIndex.end() && m_parts[found->second].editable)
+						m_menuDirection.emplace(idAttribute(*direction, "part"), idAttribute(*direction, "controller"));
 			}
 			else if (event.GetParameter("button", 0) == 0)
 			{
@@ -1310,7 +1313,7 @@ namespace gnubase::ui
 			return std::string(R"(<div class=")") + classes + (item.selected ? " selected" : "") +
 				(item.editable ? "" : " inactive") + R"(" part=")" + std::to_string(item.part) + R"(" )" + key +
 				R"(=")" + std::to_string(item.id) + R"(" articulation-row=")" + std::to_string(row) + R"(")" +
-				(std::string(key) == "controller"
+				(std::string(key) == "controller" && item.editable
 						? R"( contextmenu="controller-articulation-menu)" + m_menuSuffix + R"(")"
 						: std::string());
 		};

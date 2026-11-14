@@ -456,6 +456,21 @@ namespace
 
 		Json box(const std::string& selector) { return elements(selector).at(0).at("box"); }
 
+		// Whether the first element's border box lies inside the editor's window.
+		bool inside(const std::string& selector)
+		{
+			const Json shown = box(selector);
+			const Json windows = app.ui().windows();
+			for (const Json& each : windows.at("windows"))
+				if (each.at("id") == window)
+					return shown.at("x").get<double>() >= 0.0 && shown.at("y").get<double>() >= 0.0 &&
+						shown.at("x").get<double>() + shown.at("width").get<double>() <=
+						each.at("width").get<double>() &&
+						shown.at("y").get<double>() + shown.at("height").get<double>() <=
+						each.at("height").get<double>();
+			return false;
+		}
+
 		std::string value(const std::string& selector)
 		{
 			const Json found = elements(selector);
@@ -895,6 +910,10 @@ TEST_CASE("the Articulations lane collapses and expands its groups and hides its
 		f.app.shell().step(std::chrono::milliseconds(0));
 		const std::string item = "#controller-lane-context-menu menuitem[lane-action=" + action + "]";
 		REQUIRE(f.app.waitUntil([&] { return visible(item); }));
+		// The lane's own items come after the menu opened, and it moves inside the window for them.
+		f.app.shell().step(std::chrono::milliseconds(0));
+		for (const char* each : {"collapseGroups", "expandGroups", "soundSlots"})
+			CHECK(f.inside("#controller-lane-context-menu menuitem[lane-action=" + std::string(each) + "]"));
 		f.click(of(item));
 	};
 
@@ -1117,4 +1136,71 @@ TEST_CASE("the info line's and the list editor's pop-up menus choose the map's a
 		"#list-articulations-menu menuitem[articulation=Arco]");
 	REQUIRE(f.app.waitUntil([&f] { return f.midiPart().at("controllers").at(0).at("articulation") == "Arco"; }));
 	CHECK(f.elements("#list-articulations-menu menuitem[articulation]").size() == 2);
+}
+
+TEST_CASE("the list editor's pop-up menu of a row at the window's bottom lies inside the window", "[ui]")
+{
+	// #1580: the menu gets its items after it opened, and moves inside the window for them.
+	Editor f("list");
+	Json items = Json::array();
+	for (int at = 0; at < 64; ++at)
+		items.push_back(
+			{{"position", at * g_sixteenth / 4}, {"length", g_sixteenth / 4}, {"pitch", 62}, {"velocity", 0.5}});
+	f.app.call("note.add", {{"part", f.part}, {"notes", items}});
+	const std::string rows = ".list-editor-rows .list-row[note]";
+	REQUIRE(f.app.waitUntil([&] { return f.elements(rows).size() == 67; }));
+	// The lowest row that the scrolled area shows whole.
+	const Json area = f.box(".list-editor-body");
+	const double bottom = area.at("y").get<double>() + area.at("height").get<double>();
+	std::string lowest;
+	double lowestY = -1.0;
+	for (const Json& row : f.elements(rows))
+	{
+		const Json shown = row.at("box");
+		const double y = shown.at("y").get<double>();
+		if (y > lowestY && y + shown.at("height").get<double>() <= bottom)
+		{
+			lowestY = y;
+			lowest = row.at("attributes").at("note").get<std::string>();
+		}
+	}
+	REQUIRE_FALSE(lowest.empty());
+	f.app.ui().click(f.window, of(".list-editor-rows .list-row[note=\"" + lowest + "\"] textdisplay[field=attributes]"),
+		ui::MouseButton::Right, 1, {});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const std::string item = "#list-articulations-menu menuitem[articulation=Staccato]";
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const Json found = f.elements(item);
+			return !found.empty() && found.at(0).at("visible") == true;
+		}));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.inside(item));
+}
+
+TEST_CASE("the Articulations lane has no event pop-up menu on a direction of a part that isn't editable", "[ui]")
+{
+	// #1580, reference manual p. 1290: with Edit Active Part Only, Reset doesn't change the other parts.
+	Editor f;
+	const uint64_t second = f.app.call("midiPart.add", {{"track", f.track}, {"position", g_bar}, {"length", g_bar}})
+								.at("part")
+								.at("id")
+								.get<uint64_t>();
+	f.app.call("controller.add",
+		{{"part", f.part},
+			{"controllers",
+				{{{"position", 4 * g_sixteenth}, {"type", "articulation"}, {"articulation", "Pizzicato"}}}}});
+	f.app.call("editor.open", {{"editor", "window"}, {"parts", Json::array({f.part, second})}});
+	f.app.call("editor.set",
+		{{"editor", "window"}, {"activePart", second}, {"editingMode", "activePart"},
+			{"lanes", {{{"type", "articulations"}}}}});
+	const std::string direction = inLane(" .articulation-item.direction.inactive");
+	REQUIRE(f.app.waitUntil([&] { return f.elements(direction).size() == 1; }));
+	f.app.ui().click(f.window, of(direction), ui::MouseButton::Right, 1, {});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const Json reset = f.elements("#controller-articulation-menu menuitem[lane-action=reset]");
+	CHECK((reset.empty() || reset.at(0).at("visible") == false));
+	CHECK_FALSE(f.midiPart().at("controllers").at(0).value("reset", false));
 }

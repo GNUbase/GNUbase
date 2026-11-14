@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <array>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -109,11 +110,13 @@ namespace gnubase::ui
 		public:
 			using Rml::Element::Element;
 
-			// Opens the menu at a point in the window's pixels, inside the window.
+			// Opens the menu at a point in the window's pixels, inside the window. Items that come or go while it is
+			// open keep it inside the window (OnResize).
 			void open(Rml::Vector2f at)
 			{
 				addArrows(*this);
 				SetClass("open", true);
+				m_at = at;
 				moveTo(*this, at);
 				GetOwnerDocument()->UpdateDocument(); // for the menu's size
 				moveTo(*this, inside(*this, at));
@@ -132,6 +135,7 @@ namespace gnubase::ui
 			void close()
 			{
 				SetClass("open", false);
+				m_at.reset();
 				Rml::ElementList open;
 				QuerySelectorAll(open, "menu.open");
 				for (Rml::Element* submenu : open)
@@ -184,6 +188,16 @@ namespace gnubase::ui
 						return;
 					event.StopPropagation(); // the keys stay in the open menu
 				}
+			}
+
+		protected:
+			// An open menu whose size changed, as when its items are filled in after it opened, moves inside the
+			// window again.
+			void OnResize() override
+			{
+				Rml::Element::OnResize();
+				if (m_at && IsClassSet("open") && GetContext() != nullptr)
+					moveTo(*this, inside(*this, *m_at));
 			}
 
 		private:
@@ -340,6 +354,8 @@ namespace gnubase::ui
 				items[static_cast<size_t>(index)]->Focus(true);
 				return true;
 			}
+
+			std::optional<Rml::Vector2f> m_at; // where open() opened the menu, until it closes
 		};
 
 		Menu* menuOf(const Rml::Element& button)

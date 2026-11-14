@@ -924,7 +924,8 @@ namespace gnubase::ui
 		case Rml::EventId::Mousedown:
 			if (event.GetParameter("button", 0) == 1 && event.GetCurrentElement() == m_root.get())
 			{
-				// Before the document's popup behavior opens the menu; the press can be on the cell's text.
+				// After the document's popup behavior opened the menu (capture phase): the open menu moves inside the
+				// window again for the items filled in here. The press can be on the cell's text.
 				const Rml::Element* cell = target->HasAttribute("contextmenu") ? target : target->GetParentNode();
 				if (const Row* row = rowOf(target);
 					row != nullptr && cell != nullptr && cell->HasAttribute("contextmenu"))
