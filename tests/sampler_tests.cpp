@@ -1588,9 +1588,13 @@ TEST_CASE(
 			std::this_thread::sleep_for(std::chrono::milliseconds(100));
 			held.release();
 		});
-	run(client, "transport.play");
-	CHECK(std::chrono::steady_clock::now() - releaseStart >= std::chrono::milliseconds(100));
+	// Not run: a failed REQUIRE would throw past the joinable thread.
+	const Result played = client.call("transport.play");
+	const auto answered = std::chrono::steady_clock::now();
 	releasing.join();
+	INFO(played.error);
+	REQUIRE(played.ok());
+	CHECK(answered - releaseStart >= std::chrono::milliseconds(100));
 	CHECK(held.reads() == std::vector<fs::path>{"sine.wav"});
 	run(client, "transport.stop");
 
@@ -1627,9 +1631,13 @@ TEST_CASE("recording from stop waits for the samples like starting playback, a c
 			std::this_thread::sleep_for(std::chrono::milliseconds(100));
 			held.release();
 		});
-	run(client, "transport.record");
-	CHECK(std::chrono::steady_clock::now() - releaseStart >= std::chrono::milliseconds(100));
+	// Not run: a failed REQUIRE would throw past the joinable thread.
+	const Result recorded = client.call("transport.record");
+	const auto answered = std::chrono::steady_clock::now();
 	releasing.join();
+	INFO(recorded.error);
+	REQUIRE(recorded.ok());
+	CHECK(answered - releaseStart >= std::chrono::milliseconds(100));
 	CHECK(held.reads() == std::vector<fs::path>{"sine.wav"});
 	run(client, "transport.stop");
 }
@@ -1703,10 +1711,12 @@ TEST_CASE("an offline render gives up with an error after its last round of wait
 	CHECK(held.reads() == std::vector<fs::path>{"sine.wav"});
 }
 
-TEST_CASE("an export that gives up waiting for a sample leaves no files and puts the transport back", "[integration]")
+TEST_CASE(
+	"an export that gives up waiting for a sample leaves no files and puts the transport back", "[integration][slow]")
 {
 	// The render's limit fails mixdown.export inside the render, where the error leaves through what puts the
-	// transport and the device back and removes the part files (#1414).
+	// transport, its settings and the device back and removes the part files (#1414). It takes about 2.5 seconds:
+	// before its render the export starts playback, which waits the 2 seconds transport.play gives the samples.
 	Session session;
 	Client& client = session.client;
 	const auto track = run(client, "sampler.create").at("track").at("id").get<ObjectId>();
@@ -1716,6 +1726,7 @@ TEST_CASE("an export that gives up waiting for a sample leaves no files and puts
 	run(client, "sampler.load", {{"track", track}, {"clip", session.clip}});
 	REQUIRE(held.reading());
 	run(client, "transport.locate", {{"position", 777}});
+	run(client, "transport.set", {{"left", 1000}, {"right", 5000}, {"cycle", true}, {"preRoll", true}});
 	run(client, "audio.start");
 	const gnubase::test::TempDir out;
 	const std::string error = reject(
@@ -1726,6 +1737,9 @@ TEST_CASE("an export that gives up waiting for a sample leaves no files and puts
 	const Json transport = run(client, "transport.get");
 	CHECK(transport.at("position") == 777);
 	CHECK(transport.at("playing") == false);
+	// The export renders without cycle and pre-roll; the settings come back with the rest.
+	CHECK(transport.at("cycle") == true);
+	CHECK(transport.at("preRoll") == true);
 	// The device that ran runs again.
 	CHECK(run(client, "audio.get").at("running") == true);
 	const int64_t start = captured(client);
@@ -1748,9 +1762,12 @@ TEST_CASE("an offline render waits for a sample whose file takes long to read", 
 			std::this_thread::sleep_for(std::chrono::milliseconds(200));
 			held.release();
 		});
-	run(client, "audio.render", {{"frames", 64}});
-	CHECK(held.reads() == std::vector<fs::path>{"sine.wav"});
+	// Not run: a failed REQUIRE would throw past the joinable thread.
+	const Result rendered = client.call("audio.render", {{"frames", 64}});
 	releasing.join();
+	INFO(rendered.error);
+	REQUIRE(rendered.ok());
+	CHECK(held.reads() == std::vector<fs::path>{"sine.wav"});
 	// The update the loader posts runs on its own and stays out of the command log.
 	run(client, "transport.get");
 	const Json log = run(client, "engine.commandLog").at("commands");
