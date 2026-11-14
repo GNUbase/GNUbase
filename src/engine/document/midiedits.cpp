@@ -141,12 +141,12 @@ namespace gnubase::engine
 				added.push_back(toJson(rest));
 			}
 			if (added.empty())
-				context.markUnchanged(); // no change, so no modified project without an undo step (#1496)
-			else
 			{
-				context.emit("note.changed", {{"part", part.id}, {"notes", changed}});
-				context.emit("note.added", {{"part", part.id}, {"notes", added}});
+				context.markUnchanged(); // no change, so no modified project without an undo step (#1496)
+				return {{"notes", added}};
 			}
+			context.emit("note.changed", {{"part", part.id}, {"notes", changed}});
+			context.emit("note.added", {{"part", part.id}, {"notes", added}});
 			return {{"notes", added}};
 		}
 
