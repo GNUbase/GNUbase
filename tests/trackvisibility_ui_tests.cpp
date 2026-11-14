@@ -251,6 +251,24 @@ TEST_CASE("the Track page keeps working after a hidden track is removed", "[ui]"
 	REQUIRE(app.waitUntil([&] { return elements(app, std::nullopt, ".track-visibility-item").size() == 1; }));
 	click(app, std::nullopt, item(guitar.track));
 	REQUIRE(app.waitUntil([&] { return hidden(app) == Json{guitar.track}; }));
+
+	// A frame can take project.get's answer after the undo before trackVisibility.get's, with the visibility from
+	// before it still in hand (#907, #1366): an event with that visibility stands in for it here. The click sends only
+	// the tracks that are there.
+	app.engine().registerCommand({"test.staleVisibility", 1, "Announces the track visibility from before the undo.",
+									 engine::CommandInfo{}.parameters, Json::object(), false},
+		[gone = bass.track](engine::CommandContext& context)
+		{
+			context.emit("trackVisibility.changed",
+				{{"hidden", {gone}}, {"sync", ""}, {"configurations", Json::array()}, {"configuration", ""},
+					{"modified", false}});
+			return Json::object();
+		});
+	app.call("trackVisibility.set", {{"hidden", Json::array()}});
+	app.call("test.staleVisibility");
+	app.shell().step(std::chrono::milliseconds(0));
+	click(app, std::nullopt, item(guitar.track));
+	REQUIRE(app.waitUntil([&] { return hidden(app) == Json{guitar.track}; }));
 }
 
 // #906: a name that trackVisibility.set would refuse keeps the dialog open with the reason.
