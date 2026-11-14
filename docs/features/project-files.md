@@ -108,8 +108,9 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
   start screens that wait for it go too, so that the quit question is next instead of one of them; an error that waits
   stays, as what it says may bear on the answer (#985). One question answers every quit request that comes while it is
   coming or open: SDL follows the close request of the last visible window with its own quit request in the same step,
-  and the user may close the window again while the question waits. After Cancel the next request asks again, and so it
-  does when the question went unanswered with its window, such as a panel's own window where File > Quit's key asked.
+  and the user may close the window again while the question waits. After Cancel the next request asks again, even when
+  the Cancel came before the engine answered the question's second look at `project.revision` (#1454), and so it does
+  when the question went unanswered with its window, such as a panel's own window where File > Quit's key asked.
 - **Start screen.** `start-screen.rml`, the minimal version of the reference's hub: the templates with Create, Create
   Empty Project, the recent projects that are still there with Open, and Open Other..., which asks for a file. A double
   click on a row does what its button does. File > New Project opens it, and the app at its start when no project was
@@ -186,8 +187,9 @@ order they came, an open dialog that goes with its window letting the next one o
 once the project was saved meanwhile, an error whose window closed while it waited showing in the main window, a quit
 request dropping the questions and start screens that wait so that its own question is next, a quit question that waits
 behind an error and goes with its window leaving the next quit request to ask again, a quit question that opens after
-a newer question came still answering, so that Cancel there leaves quitting working, and with the quit question: the
-error makes way for it, an auto save failing while it is open leaves it open, and the error shows at the
-next failure after Cancel. `tests/uitools_tests.cpp` checks `ui_file_dialog` and `ui_close`, `tests/lua/ui/dialog.lua`
-the unsaved changes question through `gnubase.ui.close`, and `tests/widgets_tests.cpp` `ui::closeDialog`.
-`tests/clock_tests.cpp` checks the clock's ticks and `advance` on their own.
+a newer question came still answering, so that Cancel there leaves quitting working, a quit question cancelled before
+the engine answered its second look letting the next quit request ask (the engine held by a test command), and with the
+quit question: the error makes way for it, an auto save failing while it is open leaves it open, and the error shows at
+the next failure after Cancel. `tests/uitools_tests.cpp` checks `ui_file_dialog` and `ui_close`,
+`tests/lua/ui/dialog.lua` the unsaved changes question through `gnubase.ui.close`, and `tests/widgets_tests.cpp`
+`ui::closeDialog`. `tests/clock_tests.cpp` checks the clock's ticks and `advance` on their own.
