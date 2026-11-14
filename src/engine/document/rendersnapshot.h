@@ -238,7 +238,8 @@ namespace gnubase::engine
 		// slot of the notes played into the track; without slots for none.
 		ArticulationMap articulations;
 		// MIDI and instrument channels with a drum map: what each note played into the track plays, by its pitch (128
-		// of them); empty without one.
+		// of them), then what each sound plays, by the sound's pitch (128 more, for midi.inject drumSounds); empty
+		// without one.
 		std::vector<LiveDrumNote> drumInput;
 		bool monitor = false; // the monitor and record enable buttons
 		bool recordEnable = false;

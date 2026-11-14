@@ -1118,9 +1118,10 @@ namespace gnubase::engine
 			int channel = sequence.inputChannel >= 0 ? sequence.inputChannel : event.channel % 16;
 			bool plays = true;
 			uint8_t pitch = 0;
-			if (sequence.drumInput.size() == static_cast<size_t>(g_drumSounds))
+			if (sequence.drumInput.size() == 2 * static_cast<size_t>(g_drumSounds))
 			{
-				const LiveDrumNote& drum = sequence.drumInput[event.key % 128];
+				// The I-notes' sounds, or with drumSounds the sounds themselves (the second 128).
+				const LiveDrumNote& drum = sequence.drumInput[(event.drumSound ? g_drumSounds : 0) + (event.key % 128)];
 				pitch = drum.key;
 				channel = drum.channel >= 0 ? drum.channel : channel;
 				plays = !drum.mute;

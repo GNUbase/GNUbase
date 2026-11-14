@@ -455,6 +455,40 @@ TEST_CASE("retrospective recording inserts what a track's input played while it 
 	CHECK_THAT(reject(client, "midi.insertRetrospective", {{"track", setup.track}}), ContainsSubstring("nothing"));
 }
 
+TEST_CASE("drum sounds auditioned with midi.inject drumSounds are neither recorded nor kept", "[integration]")
+{
+	// The drum editor auditions a sound (reference manual p. 1236), which is no MIDI input. With the I-notes of the
+	// bass drum (36) and the low tom (45) swapped, an auditioned 36 recorded through the I-notes would become 45.
+	const bool recording = GENERATE(false, true);
+	Setup setup;
+	Client& client = setup.client;
+	run(client, "settings.set", {{"key", "midi.snapPartsToBars"}, {"value", false}});
+	run(client, "channel.set", {{"channel", setup.channel}, {"recordEnable", recording}});
+	const Json gm = run(client, "project.get").at("drumMaps").at(0).at("id");
+	const Json map = run(client, "drumMap.add", {{"copy", gm}, {"track", setup.track}}).at("map").at("id");
+	run(client, "drumMap.set",
+		{{"map", map}, {"sounds", {{{"pitch", 36}, {"iNote", 45}}, {{"pitch", 45}, {"iNote", 36}}}}});
+	run(client, "audio.render", {{"frames", 64}}); // the new graph
+	if (recording)
+		run(client, "transport.record");
+	run(client, "midi.inject",
+		{{"channel", setup.channel}, {"drumSounds", true},
+			{"messages", {message(1000, {0x90, 36, 100}), message(1000 + g_beat, {0x80, 36, 0})}}});
+	// Played in, the I-note 45 is the bass drum.
+	setup.inject({message(1000 + (2 * g_beat), {0x90, 45, 100}), message(1000 + (3 * g_beat), {0x80, 45, 0})});
+	run(client, "audio.render", {{"frames", 1000 + (4 * g_beat)}});
+	if (recording)
+		REQUIRE(setup.stop().is_object());
+	else
+		run(client, "midi.insertRetrospective", {{"track", setup.track}});
+	const std::vector<Json> parts = setup.parts();
+	REQUIRE(parts.size() == 1);
+	const std::vector<std::vector<int64_t>> notes = notesOf(parts[0]);
+	REQUIRE(notes.size() == 1);
+	CHECK(notes[0][1] == g_beatTicks);
+	CHECK(notes[0][2] == 36);
+}
+
 TEST_CASE("the retrospective buffer keeps the last midi.retrospectiveEvents events, none with 0", "[integration]")
 {
 	const int64_t size = GENERATE(0, 2);

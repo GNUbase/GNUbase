@@ -103,7 +103,7 @@ namespace gnubase::engine
 		std::vector<ChaseLane> noteLanes; // filled in by setSequence: runs of noteOrder, by channel and pitch
 		midi::Modifiers modifiers;        // for the notes played into the track (input); notes has them applied
 		std::vector<LiveHarmony> liveInput;  // Live Input: what the notes played into the track move to, by position
-		std::vector<LiveDrumNote> drumInput; // the drum map's: what the notes played into the track play, or empty
+		std::vector<LiveDrumNote> drumInput; // RenderChannel::drumInput: by I-note, then by sound; or empty
 		int8_t inputChannel = -1; // the MIDI channel the events played into the track go out on, or -1 for theirs
 		// The track's articulation map (#175): its remote triggers select the sound slot of the notes played into the
 		// track; without slots for none.
