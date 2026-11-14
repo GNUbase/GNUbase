@@ -147,23 +147,44 @@ removed).
   sound there and started last, in place of their attribute of the same group (`note.set`); a click on a direction
   or attribute removes it, as the erase tool's does. The lane menu's Select All Events on Lane selects the lane's
   directions.
+- **Groups and the sound slots lane** (#1580, pp. 1287-1288; the view's `collapsedGroups` and `soundSlotsLane`,
+  `editor.set`). A collapsed group is one row (`.articulation-row.collapsed[articulation-group]`) where its first
+  articulation's row would be, the group's name beside it (`.articulation-name.collapsed`), with the directions and
+  attributes of all its articulations, each with its name. A click on an articulation's name collapses its group, on a
+  collapsed group's name expands it. The lane's context menu (a right click below its name) adds Collapse All Groups,
+  Expand All Groups and Show/Hide Sound Slots Lane on that lane only (the menu's state class `.articulations`).
+  Hidden, the sound slots lane's row stays empty beside the lane's name, so the articulations' names stay beside their
+  rows. The draw tool adds nothing in a collapsed row, which has no articulation of its own; it and the erase tool
+  remove the directions and attributes there.
+- **Selecting and deleting** (#1580, pp. 1289-1290). With the object selection tool a click selects the direction
+  (`controllerSelection`) or the note of the attribute (`selection`) pressed, and nothing else; Shift or Ctrl (Cmd)
+  adds or removes it, a click beside them deselects. A press on the lane gives it the keyboard focus (on the lanes'
+  root, as the lane's elements can go with the next render): Delete or Backspace then removes its selected directions
+  and the map's attributes of the selected notes (`controller.remove`, `note.set`, one undo step), not the notes. A
+  right click on a direction opens its event pop-up menu (`#controller-articulation-menu`), whose Reset makes it a
+  reset or a direction again (`controller.set` `reset`).
 - **Articulations field** (p. 1290): the key and drum editors' info line shows the first selected note's attributes,
-  names separated by commas; typed, they replace every selected note's, and typed empty, they go. The info line and
+  names separated by commas; typed, they replace every selected note's, and typed empty, they go. A warning sign
+  (`svg.articulation-warning`, the field's state class `.unknown`) shows where one of them isn't an attribute of the
+  note's track's map (#1580, p. 1291), as `ui::unknownArticulations` finds. The button beside the field
+  (`button.articulation-menu`) opens its pop-up menu of the map's attributes (`#key-articulations-menu`, the first
+  selected note's checked, p. 1290): one chosen goes to every selected note in place of its group's attribute, or, if
+  the first selected note has it, goes from them (`ui::toggleAttribute`). The info line and
   the list editor join and split the names with `ui::joinNames` and `ui::splitNames` (`ui/articulationnames.h`).
 - **List editor** (p. 1291, [list-editor.md](list-editor.md)): directions are events of the type Articulation with the
   direction's name in the Attributes column, without a channel; a note's Attributes column has its attributes. Both
-  can be typed there.
+  can be typed there. A warning sign follows the column where a direction or one of a note's attributes isn't the
+  track's map's (#1580, p. 1291). A right click on the column opens its pop-up menu (`#list-articulations-menu`):
+  for a note the map's attributes, one chosen toggling on the note in place of its group's, for a direction the map's
+  directions, one chosen renaming it.
 - **Empty lists from Lua.** Lua has no empty list apart from an empty table, which becomes a JSON object: where a
   command's parameters take a list, the Lua functions make it an empty list (`src/scripting/runtime.cpp`), so that the
   setup can take the last articulation of a slot away.
 
 ## Not yet
 
-The Articulations lane's Collapse All Groups, Expand All Groups and Show/Hide Sound Slots Lane, its object
-selection tool, the event pop-up menu's Reset, keyboard focus to delete an attribute and the mute tool's muted
-articulations (pp. 1287-1290); the info line's and the list editor's pop-up menus of the attributes, which are typed
-as names for now, and the warning sign for attributes the map doesn't have (p. 1291); the project window's info line
-for the in-place editor's notes; add-on slots, the MIDI modifiers Attack Compensation, Separation and the pitch and
+The mute tool's muted articulations (p. 1289), as the key editor has no mute tool and notes and controller events no
+mute yet; the project window's info line for the in-place editor's notes; add-on slots, the MIDI modifiers Attack Compensation, Separation and the pitch and
 velocity ranges; playback techniques, aliases and fallbacks, symbols, articulation combinations beyond one per group;
 a slot's length for the notes played into a track, which aren't known to end yet; Sound Slot event colors; Transpose
 All and Reassign All Remote Triggers; the articulation combinations dialog, and the maps list's search and "used in
@@ -190,7 +211,11 @@ applications' maps.
   fourteenth (#1498): a slot color's light or dark class, a cleared color and a width a kept element no longer has,
   and the articulations' names beside their rows; no second direction where the row's starts, and Select All Events
   on Lane selecting the directions; only the parts whose track has the lane's map shown and edited; the lane in the
-  in-place editor.
+  in-place editor. Its last four (#1580): groups collapsed and expanded from the context menu and their names, an
+  attribute erased in a collapsed row, the sound slots lane hidden and shown, and the items only on that lane's menu;
+  directions and attributes' notes selected with the object selection tool and Shift, Delete and Backspace removing
+  the selected directions and attributes but not the notes, and Reset from a direction's pop-up menu; the warning sign
+  in the info line and the list editor; the info line's and the list editor's pop-up menus.
   `tests/scripting_tests.cpp` checks empty Lua tables as lists and `gnubase.off`.
 - `tests/articulationmaps_tests.cpp`: maps added, copied, changed and removed with their errors and undo, a track's map;
   directions and attributes; playback through the slots' output events and MIDI modifiers, the closest slot and resets;
@@ -205,7 +230,8 @@ applications' maps.
   resets only where a direction of their group is in effect, on one track and in the lane two tracks share (a reset
   where the second track's part starts while the first's direction is in effect, none once that direction was reset);
   the slots a map and a part as `project.get` lists them choose (the sound slots lane's) and
-  `articulationMap.soundSlots`, names joined and split at commas, and the `articulations` lane type, which
+  `articulationMap.soundSlots`, names joined and split at commas, a track's map and the names it doesn't have, the
+  pop-up menus' items and an attribute toggled in place of its group's, and the `articulations` lane type, which
   `controller.line` refuses; track presets and track import with the map; remote triggers played into a track
   (`midi.inject`, `midi.capture`), the default slot after another map or other slots but not after a slot's new name or
   color, and a held key's note-off once it is a trigger. `tests/midipatches_tests.cpp` plays them into a MIDI track set

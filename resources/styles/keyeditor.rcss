@@ -46,6 +46,25 @@
 	text-align: left;
 }
 
+/* Its button that opens the pop-up menu of the track's map's attributes (p. 1290). */
+.key-editor-info button.articulation-menu
+{
+	padding: 0 2dp;
+	margin-left: 2dp;
+}
+
+/* Its warning sign, for attributes the track's articulation map doesn't have (.unknown, p. 1291). */
+.key-editor-info svg.articulation-warning
+{
+	display: none;
+	margin-left: 2dp;
+}
+
+.key-editor-info .info-field.unknown svg.articulation-warning
+{
+	display: block;
+}
+
 .key-editor .editor-parts
 {
 	flex-shrink: 0;

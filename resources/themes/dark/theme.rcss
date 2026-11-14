@@ -1038,6 +1038,10 @@
 	{
 		background-color: #4c4e51;
 	}
+	svg.articulation-warning
+	{
+		image-color: #cda85f;
+	}
 	.ape-display
 	{
 		background-color: #1e2022;

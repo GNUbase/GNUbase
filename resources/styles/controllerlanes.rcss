@@ -118,6 +118,25 @@
 	width: 4dp;
 }
 
+/* A collapsed group's row (#1580, p. 1287): its articulations with their names. */
+.articulation-row.collapsed .articulation-item
+{
+	font-size: 8dp;
+	line-height: 12dp;
+	white-space: nowrap;
+}
+
+/* The lane's context menu has the Articulations lane's items only on that lane (.articulations). */
+menu menuitem.articulations-only, menu menuseparator.articulations-only
+{
+	display: none;
+}
+
+menu.articulations menuitem.articulations-only, menu.articulations menuseparator.articulations-only
+{
+	display: block;
+}
+
 .controller-lanes-footer
 {
 	flex-shrink: 0;

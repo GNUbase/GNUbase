@@ -47,6 +47,7 @@ namespace gnubase::ui
 		struct Row
 		{
 			uint64_t part = 0;
+			uint64_t track = 0; // the part's
 			uint64_t id = 0;
 			std::string type;      // note, or controller.add's type
 			int64_t partStart = 0; // project ticks
@@ -60,6 +61,7 @@ namespace gnubase::ui
 			std::string articulation;               // a direction's name (#1112)
 			bool reset = false;                     // a direction that is a reset
 			std::vector<std::string> articulations; // a note's attributes
+			bool unknown = false; // attributes or a direction that the track's articulation map doesn't have (#1580)
 			bool editable = false;
 
 			bool isNote() const { return type == "note"; }
@@ -106,6 +108,11 @@ namespace gnubase::ui
 		static std::optional<double> bar(const Row& row);
 
 		const Row* rowOf(Rml::Element* element) const;
+		// The Attributes column's pop-up menu (#1580, p. 1291), which a right click on a note's or a direction's
+		// Attributes opens: the map's attributes, one chosen toggling on the note in place of its group's, or the
+		// map's directions, one chosen renaming the direction.
+		void openArticulationMenu(const Row& row);
+		void chooseArticulation(const std::string& name);
 		bool selected(const Row& row) const;
 		std::vector<const Row*> selectedRows() const;
 		double ticksAt(const Rml::Event& event, Rml::Element& lane) const;
@@ -151,5 +158,7 @@ namespace gnubase::ui
 		// The document that a gesture hears the mouseup in, wherever in it the mouse goes up.
 		Rml::ObserverPtr<Rml::Element> m_document;
 		std::vector<Rml::ObserverPtr<Rml::Element>> m_menus;
+		std::optional<std::pair<uint64_t, uint64_t>> m_menuRow; // the part and note or direction of the menu
+		bool m_menuNote = false;
 	};
 }

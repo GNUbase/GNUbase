@@ -60,6 +60,7 @@ Documents show an icon with `<svg src="…/icons/transport-play.svg"/>`. It is r
 - `general-more.svg` — Show more actions.
 - `general-arrow-down.svg` — Open a pop-up menu of settings.
 - `general-undo.svg` — Undo the last action.
+- `general-warning.svg` — Something needs attention, such as an articulation that the track's map doesn't have.
 - `general-redo.svg` — Redo the last undone action.
 - `general-save.svg` — Save the project.
 - `general-open.svg` — Open a project or file.

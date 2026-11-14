@@ -257,7 +257,15 @@ namespace gnubase::ui
 				 {"end", "End"}, {"length", "Length"}, {"pitch", "Pitch"}, {"articulations", "Articulations"},
 				 {"velocity", "Velocity"}, {"releaseVelocity", "Off Velocity"}, {"channel", "Channel"}})
 			info += std::string(R"(<div class="info-field" info-field=")") + field + R"("><span class="info-label">)" +
-				label + R"(</span><textdisplay class="display" field=")" + field + R"("/></div>)";
+				label + R"(</span><textdisplay class="display" field=")" + field + R"("/>)" +
+				// The warning sign for attributes the track's map doesn't have (.unknown, #1580, p. 1291).
+				(field == std::string("articulations")
+						? R"(<button class="articulation-menu" menu="key-articulations-menu)" + m_menuSuffix +
+							R"(" title="Attributes"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>)"
+							R"(<svg class="icon articulation-warning" src="../icons/general-warning.svg" )"
+							R"(title="Not in the track's articulation map"/>)"
+						: std::string()) +
+				"</div>";
 		// The rows of the grid from the highest pitch down, and the piano keyboard beside them: the white keys, then
 		// the black keys over them. The C keys are labelled (p. 1204). The drum editor's rows are its drum sounds
 		// (render).
@@ -330,7 +338,9 @@ namespace gnubase::ui
 						m_menuSuffix +
 						R"("><menuitem type="toggle" grid-type="quantize">Use Quantize</menuitem>)"
 						R"(<menuitem type="toggle" grid-type="drumMap">Use Snap from Drum Map</menuitem></menu>)"
-				  : std::string()));
+				  : std::string()) +
+			// The info line's attributes (renderInfo), the last menu.
+			R"(<menu id="key-articulations-menu)" + m_menuSuffix + R"("/>)");
 		while (holder->HasChildNodes())
 		{
 			Rml::Element* menu = document->AppendChild(holder->RemoveChild(holder->GetFirstChild()));
@@ -695,7 +705,7 @@ namespace gnubase::ui
 						item->SetAttribute("checked", "");
 				}
 		}
-		if (Rml::Element* menu = m_menus.size() > 4 ? m_menus[4].get() : nullptr)
+		if (Rml::Element* menu = m_drum && m_menus.size() > 4 ? m_menus[4].get() : nullptr)
 		{
 			Rml::ElementList items;
 			menu->QuerySelectorAll(items, "menuitem[setting]");
@@ -711,7 +721,7 @@ namespace gnubase::ui
 		// The drum editor's grid type (p. 1227).
 		const std::string gridType = m_view.value("gridType", std::string("quantize"));
 		setInner(root->QuerySelector("#drum-grid-type"), gridType == "drumMap" ? "Drum Map Snap" : "Use Quantize");
-		if (Rml::Element* menu = m_menus.size() > 5 ? m_menus[5].get() : nullptr)
+		if (Rml::Element* menu = m_drum && m_menus.size() > 5 ? m_menus[5].get() : nullptr)
 		{
 			Rml::ElementList items;
 			menu->QuerySelectorAll(items, "menuitem");
@@ -815,6 +825,15 @@ namespace gnubase::ui
 			{"velocity", std::to_string(std::lround(first.velocity * g_maxVelocity))},
 			{"releaseVelocity", std::to_string(std::lround(first.releaseVelocity * g_maxVelocity))},
 			{"channel", std::to_string(first.channel + 1)}, {"articulations", joinNames(first.articulations)}};
+		const Json* map = articulationMap(first);
+		setClass(line->QuerySelector(".info-field[info-field=articulations]"), "unknown",
+			unknownArticulations(map, first.articulations, "attribute"));
+		const std::string items = articulationItems(map, "attribute", first.articulations);
+		if (Rml::Element* menu = m_menus.back().get(); menu != nullptr && items != m_articulationMenuRml)
+		{
+			menu->SetInnerRML(items);
+			m_articulationMenuRml = items;
+		}
 		for (const auto& [field, text] : texts)
 			if (Rml::Element* display = line->QuerySelector("textdisplay[field=" + field + "]");
 				display != nullptr && attribute(*display, "value") != text)
@@ -1125,6 +1144,10 @@ namespace gnubase::ui
 		else if (target.HasAttribute("drum-map") || target.HasAttribute("drum-map-action"))
 		{
 			drumMapMenu(target);
+		}
+		else if (target.HasAttribute("articulation") && target.GetTagName() == "menuitem")
+		{
+			chooseAttribute(attribute(target, "articulation"));
 		}
 		else if (target.IsClassSet("drum-sound-mute"))
 		{
@@ -1875,6 +1898,39 @@ namespace gnubase::ui
 		if (const Part* part = partAt(start))
 			addNotes(*part, {start}, lengthQuantize(pitch), pitch);
 	}
+	const Json* KeyEditor::articulationMap(const Note& note) const
+	{
+		for (const Part& part : m_parts)
+			if (part.id == note.part)
+				return trackArticulationMap(m_project, part.track);
+		return nullptr;
+	}
+
+	void KeyEditor::chooseAttribute(const std::string& name)
+	{
+		const std::vector<const Note*> notes = selectedNotes();
+		const Json* map = notes.empty() ? nullptr : articulationMap(*notes.front());
+		if (map == nullptr)
+			return;
+		const auto& first = notes.front()->articulations;
+		const bool remove = std::find(first.begin(), first.end(), name) != first.end();
+		std::map<uint64_t, Json> changes;
+		for (const Note* note : notes)
+		{
+			const bool has =
+				std::find(note->articulations.begin(), note->articulations.end(), name) != note->articulations.end();
+			if (has != remove)
+				continue; // it already has the attribute, or hasn't when it goes
+			Json change = noteChange(note->id);
+			change["articulations"] = toggleAttribute(*map, note->articulations, name);
+			changes[note->part].push_back(change);
+		}
+		Json commands = Json::array();
+		for (auto& [part, items] : changes)
+			commands.push_back({{"command", "note.set"}, {"parameters", {{"part", part}, {"notes", items}}}});
+		edit("Change Articulations", std::move(commands));
+	}
+
 	const Json* KeyEditor::activeMap() const
 	{
 		const Json activeTrack = m_view.value("activeTrack", Json(0));
@@ -1972,7 +2028,7 @@ namespace gnubase::ui
 			rml += R"(<menuitem drum-map-action="copy">New Copy</menuitem>)"
 				   R"(<menuitem drum-map-action="remove">Remove</menuitem>)";
 		rml += R"(<menuseparator/><menuitem drum-map-action="setup">Drum Map Setup...</menuitem>)";
-		if (Rml::Element* menu = m_menus.size() > 3 ? m_menus[3].get() : nullptr;
+		if (Rml::Element* menu = m_drum && m_menus.size() > 3 ? m_menus[3].get() : nullptr;
 			menu != nullptr && rml != m_mapMenuRml)
 		{
 			menu->SetInnerRML(rml);
