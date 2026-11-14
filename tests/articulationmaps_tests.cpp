@@ -4,6 +4,7 @@
 // output events and MIDI modifiers, and remote triggers in recordings.
 #include "engine/document/rendersnapshot.h"
 #include "engine/engine.h"
+#include "engine/midi/articulationmaps.h"
 #include "engine/midi/midivalues.h"
 #include "engine/time/tempomap.h"
 #include "platform/audio/device.h"
@@ -15,6 +16,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <map>
 #include <memory>
 #include <string>
 #include <tuple>
@@ -335,6 +337,44 @@ TEST_CASE("the closest sound slot plays notes whose articulations no slot has", 
 	CHECK(notePlaying(channel, 25).start == 0); // C#0
 	CHECK(notePlaying(channel, 61).channel == 0);
 	CHECK(notePlaying(channel, 24).start == notePlaying(channel, 61).start - 1); // C0
+}
+
+TEST_CASE(
+	"the sound slots lane shows the slot each note plays, from the map and part as project.get lists them", "[unit]")
+{
+	Fixture f;
+	f.strings();
+	// Pizzicato from the start, reset at the second beat; a staccato note at the third.
+	f.call("controller.add",
+		{{"part", f.part},
+			{"controllers",
+				{{{"position", 0}, {"type", "articulation"}, {"articulation", "Pizzicato"}},
+					{{"position", g_quarter}, {"type", "articulation"}, {"articulation", "Pizzicato"},
+						{"reset", true}}}}});
+	const Json added = f.call("note.add",
+		{{"part", f.part},
+			{"notes",
+				{{{"position", 0}, {"length", 60}, {"pitch", 60}, {"velocity", 0.5}},
+					{{"position", g_quarter}, {"length", 60}, {"pitch", 60}, {"velocity", 0.5}},
+					{{"position", 2 * g_quarter}, {"length", 60}, {"pitch", 60}, {"velocity", 0.5},
+						{"articulations", {"Staccato"}}}}}});
+	const std::map<uint64_t, size_t> slots = engine::midi::soundSlots(f.maps().at(0), f.partJson());
+	REQUIRE(slots.size() == 3);
+	CHECK(slots.at(added.at("notes").at(0).at("id").get<uint64_t>()) == 1); // Pizzicato
+	CHECK(slots.at(added.at("notes").at(1).at("id").get<uint64_t>()) == 0); // reset: the default slot
+	CHECK(slots.at(added.at("notes").at(2).at("id").get<uint64_t>()) == 2); // Staccato
+}
+
+TEST_CASE("an Articulations lane is a lane of the editor views, which controller.line doesn't draw on", "[unit]")
+{
+	Fixture f;
+	f.call("editor.open", {{"editor", "window"}, {"parts", Json::array({f.part})}});
+	const Json view = f.call("editor.set", {{"editor", "window"}, {"lanes", {{{"type", "articulations"}}}}});
+	CHECK(view.at("lanes") == Json::array({{{"type", "articulations"}, {"number", 0}}}));
+	CHECK_THAT(f.fails("controller.line",
+				   {{"part", f.part}, {"lane", {{"type", "articulations"}}}, {"mode", "line"},
+					   {"from", {{"position", 0}, {"value", 0}}}, {"to", {{"position", g_quarter}, {"value", 1}}}}),
+		ContainsSubstring("controller lane type"));
 }
 
 TEST_CASE("articulation maps export to a file and import from it unchanged", "[integration]")

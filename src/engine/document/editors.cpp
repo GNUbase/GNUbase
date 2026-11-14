@@ -549,7 +549,9 @@ namespace gnubase::engine
 			"1157-1188): lanes, from the top, each {type, number}: velocity, offVelocity, probability or "
 			"velocityVariance (the notes' play probability and velocity variance), or the controller events of a "
 			"type: controller (number is the controller), pitchBend, channelPressure, polyPressure (number is the "
-			"pitch) or program; showLanes, whether the controller display shows them; autoSelectControllers, "
+			"pitch) or program, or articulations (the directions and attributes of the track's articulation map, "
+			"articulationMap.add, pp. 1287-1289); showLanes, whether the controller display shows them; "
+			"autoSelectControllers, "
 			"whether selecting notes selects the controller events from their start to their end. View state: no "
 			"undo steps, not saved, and a new or loaded project closes the editors.";
 		const auto editorOnly = [&](Json properties = Json::object())
