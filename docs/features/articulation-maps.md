@@ -129,9 +129,10 @@ removed).
   `project.get` lists them (`articulationMap.soundSlots` gives MCP and Lua clients the same), in the slot's color
   where it has one (the only color code sets there, user data like the track colors), with the state class `.light`
   or `.dark` for a light or dark slot color, on which the themes write the slot's name in a dark or a light color.
-  The lane keeps its elements while their RML is the same, so code also takes away a color or width an element no
-  longer has. A row per articulation of the map follows
-  (`.articulation-row[articulation-row]`, its name beside it in the lane's header): directions
+  The lane keeps its elements while their RML is the same, so code also takes away a width an element no longer has;
+  a slot that loses its color loses its class `.light` or `.dark` with it, so its elements are new and have none.
+  A row per articulation of the map follows (`.articulation-row[articulation-row]`, its name beside it in the lane's
+  header): directions
   (`.articulation-item.direction[part][controller]`) last until the next direction of their group or the part's end,
   a reset (`.reset`) is as wide as the style makes it (p. 1290); attributes (`.articulation-item.attribute[part][note]`)
   are on their notes, as long as them. Directions and attributes whose names aren't the map's don't show (p. 1291).
@@ -141,7 +142,8 @@ removed).
   or attribute removes it, as the erase tool's does. The lane menu's Select All Events on Lane selects the lane's
   directions.
 - **Articulations field** (p. 1290): the key and drum editors' info line shows the first selected note's attributes,
-  names separated by commas; typed, they replace every selected note's, and typed empty, they go.
+  names separated by commas; typed, they replace every selected note's, and typed empty, they go. The info line and
+  the list editor join and split the names with `ui::joinNames` and `ui::splitNames` (`ui/articulationnames.h`).
 - **List editor** (p. 1291, [list-editor.md](list-editor.md)): directions are events of the type Articulation with the
   direction's name in the Attributes column, without a channel; a note's Attributes column has its attributes. Both
   can be typed there.
