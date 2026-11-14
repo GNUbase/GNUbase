@@ -72,8 +72,9 @@ namespace gnubase::test
 	// Starts a job with the command, through client, and holds it at its first job.progress while during runs with the
 	// job's id; then checks that the job still runs and was held all along, lets it go on and returns the job once it
 	// ended (#1154). So what during does comes before anything the job does after its first job.progress, however the
-	// threads are scheduled. Progress events go to progress, if given.
+	// threads are scheduled. Progress events go to progress, if given. The job is held for hold at most: a hold that
+	// lapses before during is done fails the test.
 	engine::Json whileHeld(engine::Engine& engine, engine::Client& client, const std::string& command,
 		engine::Json parameters, const std::function<void(uint64_t job)>& during,
-		std::vector<engine::Json>* progress = nullptr);
+		std::vector<engine::Json>* progress = nullptr, std::chrono::milliseconds hold = std::chrono::minutes(1));
 }

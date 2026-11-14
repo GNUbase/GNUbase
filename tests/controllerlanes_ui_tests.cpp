@@ -391,6 +391,47 @@ TEST_CASE("the lane menus change and remove lanes, select their events and apply
 	CHECK(f.lanes()[0].at("type") == "velocity");
 }
 
+TEST_CASE("a right click below a lane's name adds lanes and removes that one", "[ui]")
+{
+	// Reference manual p. 1261.
+	Fixture f;
+	REQUIRE(f.lanes().size() == 1);
+	// A right click in a lane's header, below its name button, opens the lane's context menu there.
+	const auto rightClickBelow = [&](size_t lane)
+	{
+		const Json header = f.elements(".controller-lane-header").at(lane).at("box");
+		const Json button = f.elements(".controller-lane-type").at(lane).at("box");
+		const int x = header.at("x").get<int>() + (header.at("width").get<int>() / 2);
+		const int below = button.at("y").get<int>() + button.at("height").get<int>();
+		const int bottom = header.at("y").get<int>() + header.at("height").get<int>();
+		REQUIRE(below < bottom);
+		f.app.ui().click(
+			f.window, {"", 0, ui::Point{x, below + ((bottom - below) / 2)}}, ui::MouseButton::Right, 1, {});
+		f.app.shell().step(std::chrono::milliseconds(0));
+	};
+
+	// The context menu adds a lane of a type...
+	rightClickBelow(0);
+	REQUIRE(f.app.waitUntil([&] { return f.visible("#controller-lane-context-menu menuitem[lane-action=remove]"); }));
+	f.click(of(R"(#controller-lane-context-menu menuitem[lane-type="controller"][lane-number="1"])"));
+	REQUIRE(f.app.waitUntil([&] { return f.lanes().size() == 2; }));
+	CHECK(f.lanes()[1] == Json{{"type", "controller"}, {"number", 1}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".controller-lane-area").size() == 2; }));
+
+	// ...and removes the lane it opened for: the new one, right-clicked below its name.
+	rightClickBelow(1);
+	REQUIRE(f.app.waitUntil([&] { return f.visible("#controller-lane-context-menu menuitem[lane-action=remove]"); }));
+	f.click(of("#controller-lane-context-menu menuitem[lane-action=remove]"));
+	REQUIRE(f.app.waitUntil([&] { return f.lanes().size() == 1; }));
+	CHECK(f.lanes()[0].at("type") == "velocity");
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".controller-lane-area").size() == 1; }));
+
+	// The left click on the name button still opens the lane's own menu, not the context menu.
+	f.click(of(".controller-lane-type[lane-menu=\"0\"]"));
+	REQUIRE(f.app.waitUntil([&] { return f.visible("#controller-lane-menu menuitem[lane-action=selectAll]"); }));
+	CHECK_FALSE(f.visible("#controller-lane-context-menu menuitem[lane-action=remove]"));
+}
+
 TEST_CASE("Auto Select Controllers selects the controllers of the notes selected, and they move with them", "[ui]")
 {
 	Fixture f;
