@@ -767,6 +767,41 @@ TEST_CASE("a key commands file error goes away when the next Export or Import st
 	REQUIRE(closed(app));
 }
 
+TEST_CASE("a key commands file command that worked takes another message away", "[ui]")
+{
+	test::UiApp app({1000, 760});
+	app.appUi().showProject();
+	app.shell().showOsFileDialogs(false);
+	const test::TempDir dir;
+	const auto answer = [&app](const std::filesystem::path& file)
+	{
+		REQUIRE(app.waitUntil([&app] { return !app.shell().fileDialogs().empty(); }));
+		app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, {file});
+	};
+	const auto message = [&app] { return text(app, "#keycommands-message"); };
+	// A message from something else, which the file commands, run without the dialog's buttons, don't clear at start.
+	const auto someMessage = [&]
+	{
+		click(app, "#keycommands-save-preset"); // without a name
+		REQUIRE(!message().empty());
+	};
+	const std::filesystem::path good = dir.path() / "good.json";
+
+	openDialog(app);
+	someMessage();
+	app.keys().run("keyCommands.exportFile", Json::object(), app.main(), nullptr);
+	answer(good);
+	CHECK(app.waitUntil([&] { return message().empty(); }));
+	REQUIRE(std::filesystem::exists(good));
+
+	someMessage();
+	app.keys().run("keyCommands.importFile", Json::object(), app.main(), nullptr);
+	answer(good);
+	CHECK(app.waitUntil([&] { return message().empty(); }));
+	click(app, "#keycommands-cancel");
+	REQUIRE(closed(app));
+}
+
 TEST_CASE("a long file path in the key commands message stays inside the dialog and off the buttons", "[ui]")
 {
 	test::UiApp app({1000, 760});
@@ -787,7 +822,7 @@ TEST_CASE("a long file path in the key commands message stays inside the dialog 
 	const Json dialog = box("#key-commands");
 	const Json apply = box("#keycommands-apply");
 	// The path is broken into lines inside the message (an unbroken one ran on as a two-line row, past the buttons).
-	CHECK(message.at("height").get<double>() > 45.0);
+	CHECK(message.at("height").get<double>() > 45.0); // more than two lines of the dialog's text
 	CHECK(message.at("x").get<double>() >= dialog.at("x").get<double>());
 	CHECK(right(message) <= apply.at("x").get<double>());
 	CHECK(right(apply) <= right(dialog));

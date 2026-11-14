@@ -356,7 +356,8 @@ namespace gnubase::app
 		// Shows why an articulation map's import or export failed in the setup's message, if the setup is open.
 		void showArticulationMapError(const engine::Result& result);
 		// Shows why a key commands file or the assignments list couldn't be exported or imported: in the key commands
-		// dialog's message if it is open, in an error dialog of that title over the window otherwise.
+		// dialog's message if it is open, in an error dialog of that title over the window otherwise. An empty error
+		// takes the message away, as a command that worked does.
 		void showKeyCommandsError(ui::WindowId window, const std::string& title, const std::string& error);
 		// openDialog for a dialog whose Lua keeps its state in a global table, so that there is only one: while open
 		// is open, brings it to the front instead, as it is, and the attributes go unused.
