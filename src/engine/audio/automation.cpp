@@ -448,7 +448,9 @@ namespace gnubase::engine
 				(lane.target.type == AutomationTargetType::Controller ||
 					lane.target.type == AutomationTargetType::PitchBend ||
 					lane.target.type == AutomationTargetType::ChannelPressure))
+			{
 				played = &lanes.emplace_back(PlayedLane{lane.target, Kind::Midi, 0, 0.0, 0.0, 1.0, {}});
+			}
 			// Anything else, e.g. a parameter of an instrument the channel no longer plays, waits.
 			if (played == nullptr)
 				continue;
