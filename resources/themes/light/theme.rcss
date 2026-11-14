@@ -841,6 +841,15 @@
 		border-right-width: 1dp;
 		border-right-color: #b9c1cc;
 	}
+	.mixer-channel-name.colored
+	{
+		color: #ffffff;
+		border-radius: 3dp;
+	}
+	.mixer-channel-name.colored.bright
+	{
+		color: #000000;
+	}
 	.midi-editor .editor-part, .in-place-editor .editor-part
 	{
 		color: #566273;
