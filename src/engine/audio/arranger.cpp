@@ -109,7 +109,9 @@ namespace gnubase::engine
 			result.repeat = keptRepeat(step, state.repeat);
 		}
 		else if (state.step < 0 && state.sectionEvent != 0)
+		{
 			result.section = sectionOfEvent(plan, state.sectionEvent);
+		}
 		if (state.pendingStep >= 0 && state.pendingEvent != 0)
 		{
 			const int32_t step = nthStepOf(plan, state.pendingEvent, state.pendingRank);
@@ -119,7 +121,9 @@ namespace gnubase::engine
 			result.pendingSectionEvent = 0;
 		}
 		else if (state.pendingStep < 0 && state.pendingSectionEvent != 0)
+		{
 			result.pendingSection = sectionOfEvent(plan, state.pendingSectionEvent);
+		}
 		return result;
 	}
 
