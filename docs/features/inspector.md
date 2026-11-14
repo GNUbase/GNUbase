@@ -125,7 +125,7 @@ one it has the class `empty` and says "No Track Selected".
 - **MIDI Inserts and MIDI Sends** (pp. 1104-1106, [midi-effects.md](midi-effects.md)): Bypass, the inserts' divider
   (the slots above it are recorded, marked at their side; a line between the slots that is dragged to another place,
   p. 1105, or chosen from a drop-down list; a drag ends without moving it when the inspector shows another track
-  before it ends, also one without MIDI inserts), switched-off slots dimmed, and the sends' Pre/Post MIDI Modifiers and
+  before it ends, also one without a channel), switched-off slots dimmed, and the sends' Pre/Post MIDI Modifiers and
   Inserts, and per slot Activate, Select
   Effect Type (No Effect and the effects `midiEffect.list` lists), the sends' output (Track Output or another
   instrument track) and the edit button, which opens and closes the effect's control panel below the slot: a
@@ -190,7 +190,7 @@ which is in the project window's document, doesn't open, waits for #517.
   section's bypass, values, a fraction's denominator, a generator's target with positions in ticks, a range the engine
   refuses, changes from another client with undo, and an audio track without it; the MIDI Inserts and MIDI Sends
   sections' effect, a parameter from a drop-down list and from a value field, on, bypass, the divider from the list
-  and dragged in one step, a drag dropped when the inspector shows another instrument track or an audio track, the
+  and dragged in one step, a drag dropped when the inspector shows another instrument track or a marker track, the
   control
   panel opened and closed, a send's output and Pre, changes from another client with undo, and an audio track without
   them. A drag of the

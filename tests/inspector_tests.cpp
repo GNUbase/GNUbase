@@ -1708,7 +1708,8 @@ TEST_CASE("the inspector's MIDI Inserts and MIDI Sends sections show and change 
 	const uint64_t keys = window.addTrack({{"type", "instrument"}, {"name", "Keys"}});
 	const uint64_t bass = window.addTrack({{"type", "instrument"}, {"name", "Bass"}});
 	const uint64_t vox = window.addTrack({{"type", "audio"}, {"name", "Vox"}});
-	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 3; }));
+	const uint64_t marker = window.addTrack({{"type", "marker"}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 4; }));
 	window.list.select({keys});
 	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Keys"));
 	CHECK_FALSE(hasClass(window.app, ".inspector [section=midiInserts]", "unavailable"));
@@ -1771,11 +1772,11 @@ TEST_CASE("the inspector's MIDI Inserts and MIDI Sends sections show and change 
 	CHECK(window.channel(bass).at("midiInserts").at("divider") == 0);
 	CHECK(inserts().at("divider") == 3);
 	CHECK(hasClass(window.app, ".inspector .midi-divider[gap=3]", "at"));
-	// Nor when it shows an audio track, which has no MIDI inserts, released where the mouse is.
+	// Nor when it shows a track without a channel, a marker track, released where the mouse is.
 	window.app.ui().press(std::nullopt, {".inspector .midi-divider[gap=3]", 0, std::nullopt}, ui::MouseButton::Left);
 	window.app.ui().move(std::nullopt, gap2);
-	window.list.select({vox});
-	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Vox"));
+	window.list.select({marker});
+	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, ".inspector [section=basics]", "unavailable"); }));
 	window.app.ui().release(std::nullopt, {}, ui::MouseButton::Left);
 	window.list.select({keys});
 	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Keys"));
