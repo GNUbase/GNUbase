@@ -38,8 +38,9 @@ namespace gnubase::ui
 	//
 	// Audio (#145, docs/features/audio-quantize.md): Warp Quantize On/Off (settings.warpQuantize) in both, and in the
 	// panel the section for several audio tracks: Range and Offset with Slice (quantize.slice), or with warp quantizing
-	// on Create (quantize.createWarpMarkers), and Crossfade Length with Crossfade (quantize.crossfade). Those send the
-	// engine command with the panel's values through audio, which adds the audio events to quantize.
+	// on Create (quantize.createWarpMarkers), Nudge Crossfade Left and Right (quantize.nudgeCrossfade, 1 ms), and
+	// Crossfade Length with Crossfade (quantize.crossfade). Those send the engine command with the panel's values
+	// through audio, which adds the audio events to quantize.
 	class QuantizePanel final : private Rml::EventListener
 	{
 	public:

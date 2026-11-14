@@ -498,6 +498,59 @@ namespace gnubase::engine
 			}
 			return {{"events", changed}};
 		}
+
+		// quantize.nudgeCrossfade (p. 379): moves the area of each crossfade into one of the events by amount ms, the
+		// end of the event it comes from and the start of this one alike, so that the crossfade stays as long.
+		Json nudgeCrossfade(Project& project, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			const std::vector<ObjectId> events = eventList(project, parameters.at("events"));
+			const double amountMs = parameters.value("amount", 1.0);
+			require(amountMs >= -100.0 && amountMs <= 100.0, "amount must be -100 to 100 ms");
+			const time::Samples samples = std::llround(amountMs * project.sampleRate / 1000.0);
+			std::vector<ObjectId> changed;
+			for (const ObjectId id : events)
+			{
+				AudioEvent& b = project.audioEvents.at(id);
+				const auto from = project.audioEvents.find(b.crossfade.from);
+				if (samples == 0 || from == project.audioEvents.end() || !crossfadeApplies(project, b) || b.lock ||
+					from->second.lock)
+					continue;
+				AudioEvent& a = from->second;
+				const AudioEvent oldA = a;
+				const AudioEvent oldB = b;
+				const EventSpan first = eventSpan(project, a);
+				const EventSpan second = eventSpan(project, b);
+				a.length =
+					std::llround(eventFrames(project, a, static_cast<double>(first.end + samples - first.start)));
+				const time::Samples frames = std::llround(eventFrames(project, b, static_cast<double>(samples)));
+				b.offset += frames;
+				b.length -= frames;
+				b.position = time::rebase(
+					{time::TimeBase::Linear,
+						second.start + std::llround(eventSamples(project, oldB, static_cast<double>(frames)))},
+					b.position.base, project.tempo, project.sampleRate);
+				// Only as far as both clips have audio and the crossfade still plays.
+				if (a.length <= 0 || a.offset + a.length > clipLength(project, project.clips.at(a.clip)) ||
+					b.offset < 0 || b.length <= 0 || !crossfadeApplies(project, b))
+				{
+					a = oldA;
+					b = oldB;
+					continue;
+				}
+				// Resetting puts back where they were before quantizing, as after the Crossfade step.
+				for (AudioEvent* event : {&a, &b})
+				{
+					const EventTiming was = timingOf(event == &a ? oldA : oldB);
+					event->quantizeOrigin = EventQuantizeOrigin{originalOf(*event, was), timingOf(*event)};
+					if (std::find(changed.begin(), changed.end(), event->id) == changed.end())
+						changed.push_back(event->id);
+				}
+			}
+			for (const ObjectId id : changed)
+				emitEvent(project.audioEvents.at(id), context);
+			return {{"events", changed}};
+		}
 	}
 
 	bool quantizeEventStart(const Project& project, AudioEvent& event, const midi::QuantizeGrid& grid)
@@ -644,5 +697,16 @@ namespace gnubase::engine
 				objectSchema({{"events", ids}}, {"events"}), false},
 			"Crossfade",
 			[&model](Project& project, CommandContext& context) { return crossfade(model, project, context); });
+		model.addEdit(engine,
+			{"quantize.nudgeCrossfade", 1,
+				"Moves the crossfades into audio events, such as those quantize.crossfade made, by amount ms (default "
+				"1, -100 to 100; negative moves them earlier): the end of the event each comes from and the start of "
+				"the event moves alike, so the crossfade keeps its length and the audio in it moves (Nudge Crossfade "
+				"Left/Right, reference manual p. 379), for example off an attack. A crossfade moves only as far as "
+				"both clips have audio and it still plays; locked events stay. quantize.reset puts the events back "
+				"to where they were before quantizing. Returns the events changed.",
+				objectSchema({{"events", ids}, {"amount", number}}, {"events"}),
+				objectSchema({{"events", ids}}, {"events"}), false},
+			"Nudge crossfade", nudgeCrossfade);
 	}
 }

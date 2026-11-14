@@ -239,7 +239,11 @@ namespace gnubase::ui
 				R"(<button id="quantize-create-markers" action="createWarpMarkers" title="Create">Create</button>)"
 				R"(</div>)" +
 				field("Crossfade Length", milliseconds("quantize-crossfade-length", 1, 500, 10, "Length")) +
-				R"(<div class="quantize-row"><div class="quantize-spacer"/>)"
+				R"(<div class="quantize-row">)"
+				R"(<button id="quantize-nudge-left" class="icon-only" action="nudgeLeft" )"
+				R"(title="Nudge Crossfade Left">&lt;</button>)"
+				R"(<button id="quantize-nudge-right" class="icon-only" action="nudgeRight" )"
+				R"(title="Nudge Crossfade Right">&gt;</button><div class="quantize-spacer"/>)"
 				R"(<button id="quantize-crossfade" action="crossfade" title="Crossfade">Crossfade</button>)"
 				R"(</div></div></div>)");
 			menus += R"(<menu id="quantize-grid-menu">)" + menuItems("grid", noteValues(false), "") +
@@ -367,6 +371,8 @@ namespace gnubase::ui
 				m_audio("quantize.createWarpMarkers", {{"range", fieldValue("quantize-range")}});
 			else if (m_audio && action == "crossfade")
 				m_audio("quantize.crossfade", {{"length", fieldValue("quantize-crossfade-length")}});
+			else if (m_audio && (action == "nudgeLeft" || action == "nudgeRight"))
+				m_audio("quantize.nudgeCrossfade", {{"amount", action == "nudgeLeft" ? -1.0 : 1.0}});
 			else if (action == "save" || action == "rename")
 				savePreset(action == "rename");
 			else if (action == "remove" && isUserPreset(currentPreset()))
