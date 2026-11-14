@@ -179,7 +179,9 @@ user settings ([settings.md](settings.md)), so MCP and Lua change them with `set
   with the OS's file dialog; an imported preset is named after the file. File > Export > Key Command Assignments (the UI
   command `keyCommands.exportAssignments`, p. 1560) writes an HTML table of every command and the keys that run it now
   (`KeyCommands::assignments`), which the user saves where they choose. Why an export or import failed shows in the
-  dialog's message, or, without the dialog, in an error dialog titled after the command.
+  dialog's message, or, without the dialog, in an error dialog titled after the command. Export and Import clear the
+  message when they start, so an error of an earlier try doesn't stay after a retry that worked; the message breaks a
+  long file path inside its box, off the buttons.
 - The app reads both settings when it starts and follows `settings.changed`.
 
 ## The dialog
@@ -203,9 +205,9 @@ own).
   loses it, and the message says which. Escape still closes the dialog. Remove Key Command removes the key selected in
   the keys list and Defaults resets every command, each only after a confirmation the dialog's Lua opens with
   `gnubase.ui.confirm` (confirm.rml); Cancel undoes either, as it drops the dialog's changes. The confirmation clears
-  its question (the global `ConfirmDialog`) however it closes, so a later one never answers to an earlier caller. Reset Key Command gives
-  the command its default keys back, taking them from any command that has them now. Clear All removes every
-  assignment, also those of commands the dialog doesn't list (its `kc.unlisted`).
+  its question (the global `ConfirmDialog`) however it closes, so a later one never answers to an earlier caller.
+  Reset Key Command gives the command its default keys back, taking them from any command that has them now. Clear All
+  removes every assignment, also those of commands the dialog doesn't list (its `kc.unlisted`).
 - **Macros.** Macros shows the macros section: New Macro, Duplicate Macro, Delete Macro, and Rename Macro with the
   name in the field; double-clicking a macro in the list focuses that field to rename it, as in the reference (p.
   1558), and Return there (the dialog's OK) or Rename Macro confirms the new name, which a name another macro has is

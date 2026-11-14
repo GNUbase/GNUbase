@@ -1270,14 +1270,15 @@ namespace gnubase::app
 
 	void AppUi::showKeyCommandsError(ui::WindowId window, const std::string& title, const std::string& error)
 	{
-		logging::warning("{}: {}", title, error);
+		if (!error.empty())
+			logging::warning("{}: {}", title, error);
 		Rml::Element* document = m_keyDialog.get();
 		Rml::Element* message = document != nullptr && document->GetParentNode() != nullptr
 			? document->GetElementById("keycommands-message")
 			: nullptr;
 		if (message != nullptr)
-			message->SetInnerRML(Rml::StringUtilities::EncodeRml(error));
-		else
+			message->SetInnerRML(error.empty() ? std::string() : Rml::StringUtilities::EncodeRml(error));
+		else if (!error.empty())
 			m_files.showNotice(window, title, error);
 	}
 
@@ -1311,8 +1312,8 @@ namespace gnubase::app
 							const std::filesystem::path& file = result.files.front();
 							const auto failed = [this, id, title](const engine::Result& done)
 							{
-								if (!done.ok())
-									showKeyCommandsError(id, title, done.error);
+								// A command that worked takes the message of an earlier failure away.
+								showKeyCommandsError(id, title, done.ok() ? std::string() : done.error);
 							};
 							if (exporting)
 								m_binding.send("keyCommands.export", {{"path", file.u8string()}}, failed);
@@ -1348,8 +1349,8 @@ namespace gnubase::app
 						}
 						catch (const std::exception& error)
 						{
-							showKeyCommandsError(id, title,
-								"Can't write the key command assignments " + file.u8string() + ": " + error.what());
+							showKeyCommandsError(
+								id, title, std::string("Can't write the key command assignments: ") + error.what());
 						}
 					});
 			}});
