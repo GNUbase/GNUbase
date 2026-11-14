@@ -1326,8 +1326,9 @@ TEST_CASE("a file being backed up can be replaced and deleted meanwhile, on Wind
 	constexpr size_t chunk = size_t{1} << 20; // the backup's copy chunk; progress follows each chunk
 
 	// Whether the copy in the backup folder got its first chunk, which the hook waits for. fs::file_size asks
-	// fresh, where a directory_entry's cached size stays 0 while the backup writes.
-	const auto copyStarted = [chunk](const fs::path& folder)
+	// fresh, where a directory_entry's cached size stays 0 while the backup writes. chunk needs no capture: a
+	// constexpr the lambda reads as the constant it is (clang warns on capturing one).
+	const auto copyStarted = [](const fs::path& folder)
 	{
 		std::error_code error;
 		const auto size = fs::file_size(folder / "Audio" / "take.wav", error);
