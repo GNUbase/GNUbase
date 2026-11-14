@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/keyeditor.h"
 
-#include "engine/midi/articulationmaps.h"
 #include "engine/midi/chords.h"
 #include "engine/midi/quantizesettings.h"
 #include "platform/log.h"
+#include "ui/articulationnames.h"
 #include "ui/controllerlanes.h"
 #include "ui/timeformat.h"
 
@@ -814,8 +814,7 @@ namespace gnubase::ui
 			{"pitch", engine::midi::pitchName(first.pitch)},
 			{"velocity", std::to_string(std::lround(first.velocity * g_maxVelocity))},
 			{"releaseVelocity", std::to_string(std::lround(first.releaseVelocity * g_maxVelocity))},
-			{"channel", std::to_string(first.channel + 1)},
-			{"articulations", engine::midi::joinNames(first.articulations)}};
+			{"channel", std::to_string(first.channel + 1)}, {"articulations", joinNames(first.articulations)}};
 		for (const auto& [field, text] : texts)
 			if (Rml::Element* display = line->QuerySelector("textdisplay[field=" + field + "]");
 				display != nullptr && attribute(*display, "value") != text)
@@ -987,7 +986,7 @@ namespace gnubase::ui
 		{
 			// The Articulations field (#1112, p. 1290): the attributes typed, names separated by commas, for every
 			// selected note; empty clears them.
-			const std::vector<std::string> names = engine::midi::splitNames(text);
+			const std::vector<std::string> names = splitNames(text);
 			std::map<uint64_t, Json> changes;
 			for (const Note* note : notes)
 			{

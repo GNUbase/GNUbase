@@ -10,6 +10,7 @@
 #include "platform/audio/device.h"
 #include "platform/midi/dummyport.h"
 #include "testutils/testutils.h"
+#include "ui/articulationnames.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
@@ -382,10 +383,10 @@ TEST_CASE(
 
 TEST_CASE("articulation names are joined and split at commas, as the info line and the list editor show them", "[unit]")
 {
-	CHECK(engine::midi::joinNames({}).empty());
-	CHECK(engine::midi::joinNames({"Staccato", "Pizzicato"}) == "Staccato, Pizzicato");
-	CHECK(engine::midi::splitNames(" Staccato ,Pizzicato,, ") == std::vector<std::string>{"Staccato", "Pizzicato"});
-	CHECK(engine::midi::splitNames("").empty());
+	CHECK(ui::joinNames({}).empty());
+	CHECK(ui::joinNames({"Staccato", "Pizzicato"}) == "Staccato, Pizzicato");
+	CHECK(ui::splitNames(" Staccato ,Pizzicato,, ") == std::vector<std::string>{"Staccato", "Pizzicato"});
+	CHECK(ui::splitNames("").empty());
 }
 
 TEST_CASE("an Articulations lane is a lane of the editor views, which controller.line doesn't draw on", "[unit]")
