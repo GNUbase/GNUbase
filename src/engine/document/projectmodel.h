@@ -116,6 +116,7 @@ namespace gnubase::engine
 	// command thread, the only thread that touches the document; every command that changes it records an undo step
 	// and publishes a new render snapshot for the audio thread.
 	class Jobs;
+	struct ChordPadRemote; // chordpads.cpp: what the remote's input and chordPads.listen keep
 
 	class ProjectModel
 	{
@@ -209,6 +210,11 @@ namespace gnubase::engine
 		void registerRangeEditCommands(Engine& engine); // eventedits.cpp: range.*, range editing (#88)
 		// projectfiles.cpp (#77): save new version, revert, auto save, recent projects and templates.
 		void registerProjectFileCommands(Engine& engine);
+		// chordpads.cpp, the rest of chordPads.* by topic (#1585): the pads' chords, patterns and presets; step input
+		// and pads dragged onto tracks; and what plays the pads: the mouse, the remote's input and chordPads.listen.
+		void registerChordPadEditCommands(Engine& engine);
+		void registerChordPadStepCommands(Engine& engine);
+		void registerChordPadPlayCommands(Engine& engine, const std::shared_ptr<ChordPadRemote>& remote);
 		// After the project was replaced by a new or loaded one (from file, or none): clears the undo history,
 		// announces project.reset, counts as saved and adds the file to the recent projects. An auto save (a .bak in
 		// an Auto Saves folder) opens without a file instead, as unsaved and not a recent project.
