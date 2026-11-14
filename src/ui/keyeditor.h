@@ -170,9 +170,11 @@ namespace gnubase::ui
 
 		// The note display's point under the mouse: project ticks and pitch.
 		std::pair<double, int> at(const Rml::Event& event) const;
-		int64_t snap(double ticks, bool off) const;
+		// With a pitch, the drum editor snaps it to its sound's snap while the grid type is drumMap.
+		int64_t snap(double ticks, bool off, int pitch = -1) const;
 		int64_t delta(Gesture gesture, double ticks) const;
-		int64_t grid() const;
+		int64_t grid(int pitch = -1) const;
+		static int64_t soundSnap(const engine::Json& map, int pitch); // a drum sound's snap, in ticks
 		// The length of new notes of the pitch: with Drum-Map Link its sound's snap.
 		int64_t lengthQuantize(int pitch) const;
 		// The pitch rows away from pitch in the display's order, or -1 beyond its ends.
@@ -232,7 +234,8 @@ namespace gnubase::ui
 		double m_drawnFrom = 0.0;               // the mouse's ticks at the press that started it
 		std::optional<std::pair<uint64_t, int>> m_sounding; // the channel and pitch of the key pressed
 		Rml::ObserverPtr<Rml::Element> m_document;          // ends the key's pitch on a release anywhere in it
-		// the length quantize menu, the line tool's menu, the toolbox, then the drum editor's Map menu
+		// the length quantize menu, the line tool's menu, the toolbox, then the drum editor's Map, Pitch Visibility
+		// Options and Grid Type menus
 		std::vector<Rml::ObserverPtr<Rml::Element>> m_menus;
 		std::string m_lineMode = "line"; // the line tool's (#128)
 		std::unique_ptr<ControllerLanes> m_lanes;

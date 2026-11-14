@@ -58,7 +58,8 @@ They emit `drumMap.added`, `drumMap.changed` and `drumMap.removed` with the map 
   editor opens the parts of a track with a drum map in the drum editor while the user setting `editing.useDrumEditor`
   is on, as by default (Use Drum Editor when Drum Map is assigned, pp. 1221, 1603; the preferences' Editors page).
   The drum editor's view also has `pitchVisibility` (Pitch Visibility On/Off) with its option `reverseSounds`
-  (Reverse Drum Sound List), and `showNoteLength` (Show Note Length On/Off, p. 1227).
+  (Reverse Drum Sound List), `showNoteLength` (Show Note Length On/Off, p. 1227) and `gridType` (Grid Type, p. 1227):
+  `quantize` (Use Quantize), or `drumMap` (Use Snap from Drum Map), each note snapping to its sound's snap.
 
 ## In the UI
 
@@ -72,7 +73,8 @@ content is `drum`. It is the key editor ([key-editor.md](key-editor.md)) with th
     #key-length-quantize            Insert Length, menu #key-length-menu with Drum-Map Link (length drumMap)
     #drum-map                       the active track's map's name, or No Drum Map; menu #drum-map-menu
     .key-input[setting=pitchVisibility], #drum-pitch-options (menu #drum-pitch-menu with
-                                    menuitem[setting=reverseSounds]), .key-input[setting=showNoteLength]
+                                    menuitem[setting=reverseSounds]), .key-input[setting=showNoteLength],
+                                    #drum-grid-type (menu #drum-grid-menu with menuitem[grid-type])
   .key-editor-body
     .key-editor-keys                the drum sound list: a .key-editor-key.drum-sound[pitch] per sound in the map's
                                     order (.selected for selected notes) with .drum-sound-pitch; with a map also
@@ -104,6 +106,8 @@ content is `drum`. It is the key editor ([key-editor.md](key-editor.md)) with th
 - **Map menu** (pp. 1234, 1236, 1239). Choosing a map, or No Drum Map, sends `track.set` for the active track. New Map
   and New Copy add a map that becomes the track's, in one undo step (`drumMap.add track`); Remove removes the track's
   map; Drum Map Setup... opens the setup.
+- **Grid Type** (p. 1227): Use Quantize snaps to the quantize grid; Use Snap from Drum Map snaps what the drumstick
+  inserts, repeats and moves along, and the notes moved or resized, to the snap of the note's sound.
 - **Show Note Length** (p. 1227) shows the notes as boxes of their length, which the object selection tool and the
   drumstick resize at their ends as in the key editor (p. 1242); in its middle the drumstick still deletes the note.
 - **Commands** (Edit menu, `app::AppUi`): `editor.openDrum` (Open Drum Editor, p. 1221) opens the selected MIDI parts
@@ -123,11 +127,11 @@ content is `drum`. It is the key editor ([key-editor.md](key-editor.md)) with th
 
 ## Not yet
 
-Outputs per sound in playback and MIDI thru (the sounds play on the track's output), so also the setup's Output
-pop-up and auditioning there; name lists without a drum map and drum sound names in the key editor (p. 1239); Pitch
-Visibility's Show Drum Sounds with Events and Show Drum Sounds in Use by Instrument; the grid type Use Snap from Drum
-Map and snapping to the sound's snap; Solo Instrument; showing drum notes in the project window's parts; Create Drum Map from Instrument (p. 1238); reordering
-the list by dragging; the score settings (Display Note, Noteheads, Voice, Instrument Type, Technique); importing the
+Outputs per sound in playback and MIDI thru (the sounds play on the track's output), so also the setup's Output pop-up
+and auditioning there; name lists without a drum map and drum sound names in the key editor (p. 1239); Pitch
+Visibility's Show Drum Sounds with Events and Show Drum Sounds in Use by Instrument; the grid type Adapt to Zoom; Solo
+Instrument; showing drum notes in the project window's parts; Create Drum Map from Instrument (p. 1238); reordering the
+list by dragging; the score settings (Display Note, Noteheads, Voice, Instrument Type, Technique); importing the
 reference's own drum map files.
 
 ## Checks
@@ -148,7 +152,7 @@ reference's own drum map files.
   Note Length's boxes, which the object selection tool and the drumstick resize; the drumstick's click deleting only
   the note clicked, a drag deleting when released outside the editor, and a drag to the left not deleting the
   clicked note's doubles; a drag changing the velocity, with Alt the pitch, with Shift the position and with Snap off
-  and Show Note Length the length; the object selection tool's double click and drag inserting and deleting several
+  and Show Note Length the length; Use Snap from Drum Map snapping new notes to their sound's snap; the object selection tool's double click and drag inserting and deleting several
   notes; the Drum Map Setup renaming a map, changing each setting of a sound, refusing a wrong snap, adding and
   removing maps, following a map added elsewhere, and Save... and Load... through the file dialogs; the MIDI menu's
   Drum Map Setup and O-Note Conversion.

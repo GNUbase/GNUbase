@@ -323,6 +323,10 @@ TEST_CASE("the drum editor is an editor content, and parts of a track with a dru
 	CHECK(view.at("pitchVisibility") == true);
 	CHECK(view.at("reverseSounds") == true);
 	CHECK(view.at("showNoteLength") == true);
+	// The grid type (p. 1227): Use Quantize, or Use Snap from Drum Map.
+	CHECK(view.at("gridType") == "quantize");
+	CHECK(f.call("editor.set", {{"editor", "window"}, {"gridType", "drumMap"}}).at("gridType") == "drumMap");
+	CHECK_FALSE(f.client.call("editor.set", {{"editor", "window"}, {"gridType", "zoom"}}).ok());
 	// Not with the preference off; content still opens the drum editor.
 	f.call("editor.close", {{"editor", "window"}});
 	f.call("settings.set", {{"key", "editing.useDrumEditor"}, {"value", false}});

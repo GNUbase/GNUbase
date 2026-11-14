@@ -288,7 +288,8 @@ namespace gnubase::ui
 						m_menuSuffix +
 						R"(" title="Select Pitch Visibility Options">Options</button>)"
 						R"(<button class="key-input" setting="showNoteLength" title="Show Note Length On/Off">)"
-						R"(Note Length</button>)"
+						R"(Note Length</button><button id="drum-grid-type" menu="drum-grid-menu)" +
+						m_menuSuffix + R"(" title="Grid Type"/>)"
 				  : "") +
 			R"(</div>)"
 			R"(<div class="info-line key-editor-info empty"><span class="info-empty">No Object Selected</span>)" +
@@ -323,6 +324,10 @@ namespace gnubase::ui
 			R"(</menu><menu id="key-editor-toolbox)" + m_menuSuffix + R"(" class="toolbox">)" + toolbox + "</menu>" +
 			(drum ? R"(<menu id="drum-map-menu)" + m_menuSuffix + R"("/><menu id="drum-pitch-menu)" + m_menuSuffix +
 						R"("><menuitem type="toggle" setting="reverseSounds">Reverse Drum Sound List</menuitem></menu>)"
+						R"(<menu id="drum-grid-menu)" +
+						m_menuSuffix +
+						R"("><menuitem type="toggle" grid-type="quantize">Use Quantize</menuitem>)"
+						R"(<menuitem type="toggle" grid-type="drumMap">Use Snap from Drum Map</menuitem></menu>)"
 				  : std::string()));
 		while (holder->HasChildNodes())
 		{
@@ -702,6 +707,22 @@ namespace gnubase::ui
 						item->SetAttribute("checked", "");
 				}
 		}
+		// The drum editor's grid type (p. 1227).
+		const std::string gridType = m_view.value("gridType", std::string("quantize"));
+		setInner(root->QuerySelector("#drum-grid-type"), gridType == "drumMap" ? "Drum Map Snap" : "Use Quantize");
+		if (Rml::Element* menu = m_menus.size() > 5 ? m_menus[5].get() : nullptr)
+		{
+			Rml::ElementList items;
+			menu->QuerySelectorAll(items, "menuitem");
+			for (Rml::Element* item : items)
+				if ((attribute(*item, "grid-type") == gridType) != item->HasAttribute("checked"))
+				{
+					if (item->HasAttribute("checked"))
+						item->RemoveAttribute("checked");
+					else
+						item->SetAttribute("checked", "");
+				}
+		}
 		if (Rml::Element* velocity = root->QuerySelector("#key-insert-velocity"))
 		{
 			const std::string value =
@@ -856,17 +877,26 @@ namespace gnubase::ui
 	}
 
 	// The quantize grid (quantize.set, p. 1196) from the project start; Ctrl (Cmd) turns snap off (p. 1213).
-	int64_t KeyEditor::grid() const
+	int64_t KeyEditor::grid(int pitch) const
 	{
+		// The drum editor's Use Snap from Drum Map (p. 1227): the sound's snap.
+		if (const Json* map = m_drum && pitch >= 0 && m_view.value("gridType", "") == "drumMap" ? activeMap() : nullptr)
+			return soundSnap(*map, pitch);
 		const std::string grid = m_project.value("quantize", Json::object()).value("grid", std::string("1/16"));
 		return engine::midi::noteValueFromString(grid).value_or(engine::midi::NoteValue{}).ticks();
 	}
 
-	int64_t KeyEditor::snap(double ticks, bool off) const
+	int64_t KeyEditor::soundSnap(const Json& map, int pitch)
+	{
+		const std::string snap = map.at("sounds").at(static_cast<size_t>(pitch)).at("snap").get<std::string>();
+		return engine::midi::noteValueFromString(snap).value_or(engine::midi::NoteValue{}).ticks();
+	}
+
+	int64_t KeyEditor::snap(double ticks, bool off, int pitch) const
 	{
 		if (off)
 			return std::llround(ticks);
-		const auto step = static_cast<double>(grid());
+		const auto step = static_cast<double>(grid(pitch));
 		return std::llround(std::round(ticks / step) * step);
 	}
 
@@ -876,10 +906,7 @@ namespace gnubase::ui
 		if (length == "drumMap")
 		{
 			const Json* map = activeMap();
-			if (map == nullptr)
-				return grid();
-			const std::string snap = map->at("sounds").at(static_cast<size_t>(pitch)).at("snap").get<std::string>();
-			return engine::midi::noteValueFromString(snap).value_or(engine::midi::NoteValue{}).ticks();
+			return map != nullptr ? soundSnap(*map, pitch) : grid();
 		}
 		if (length == "link")
 			return grid();
@@ -1066,6 +1093,10 @@ namespace gnubase::ui
 		else if (target.HasAttribute("length"))
 		{
 			setView({{"lengthQuantize", attribute(target, "length")}});
+		}
+		else if (target.HasAttribute("grid-type"))
+		{
+			setView({{"gridType", attribute(target, "grid-type")}});
 		}
 		else if (target.HasAttribute("line-mode"))
 		{
@@ -1365,7 +1396,9 @@ namespace gnubase::ui
 	void KeyEditor::startDraw(double ticks)
 	{
 		Rml::Element* root = m_root.get();
-		const int64_t start = snap(ticks - (m_snapOff ? 0.0 : static_cast<double>(grid()) / 2.0), m_snapOff);
+		const int pitch = m_pressedAt.second;
+		const int64_t start =
+			snap(ticks - (m_snapOff ? 0.0 : static_cast<double>(grid(pitch)) / 2.0), m_snapOff, pitch);
 		if (partAt(start) == nullptr)
 			return;
 		m_pressedAt.first = static_cast<double>(start);
@@ -1401,12 +1434,13 @@ namespace gnubase::ui
 		// repeats at every step of the grid it was dragged over.
 		const double moved = ticks - m_drawnFrom;
 		if (event.GetParameter("shift_key", 0) != 0)
-			draw.start += snap(moved, m_snapOff);
+			draw.start += snap(moved, m_snapOff, m_pressedAt.second);
 		else if (m_snapOff && !diamonds())
 			draw.length = std::max<int64_t>(draw.length + std::llround(moved), 1);
 		else
-			draw.repeats = std::max<int64_t>(
-				1, static_cast<int64_t>(std::ceil((ticks - m_pressedAt.first) / static_cast<double>(grid()))));
+			draw.repeats = std::max<int64_t>(1,
+				static_cast<int64_t>(
+					std::ceil((ticks - m_pressedAt.first) / static_cast<double>(grid(m_pressedAt.second)))));
 		return draw;
 	}
 
@@ -1416,7 +1450,7 @@ namespace gnubase::ui
 		if (!m_pressed)
 			return 0;
 		const int64_t edge = gesture == Gesture::ResizeEnd ? m_pressed->start + m_pressed->length : m_pressed->start;
-		return snap(static_cast<double>(edge) + ticks - m_pressedAt.first, m_snapOff) - edge;
+		return snap(static_cast<double>(edge) + ticks - m_pressedAt.first, m_snapOff, m_pressed->pitch) - edge;
 	}
 
 	void KeyEditor::drag(Rml::Event& event)
@@ -1538,7 +1572,7 @@ namespace gnubase::ui
 			{
 				// The drumstick repeats notes at every step of the grid it was dragged over (p. 1241).
 				const DrumDraw draw = drumDraw(event);
-				const int64_t step = grid();
+				const int64_t step = grid(m_pressedAt.second);
 				const Part* part = partAt(draw.start);
 				std::vector<int64_t> starts;
 				for (int64_t i = 0; part != nullptr && i < draw.repeats && draw.start + (i * step) < part->end; ++i)

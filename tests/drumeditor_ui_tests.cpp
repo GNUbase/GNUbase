@@ -599,6 +599,32 @@ TEST_CASE("the drumstick's drag changes the velocity, with Alt the pitch, with S
 	CHECK(f.partNotes()[3].at("length").get<int64_t>() > 2 * g_sixteenth);
 }
 
+TEST_CASE("with the grid type Use Snap from Drum Map the drumstick snaps to the sound's snap", "[ui]")
+{
+	// p. 1227: the bass drum's snap is 1/8, the snare's stays 1/16.
+	Fixture f;
+	f.app.call("drumMap.set", {{"map", f.map}, {"sounds", Json::array({{{"pitch", 36}, {"snap", "1/8"}}})}});
+	f.scroll(36);
+	f.click(of("#drum-grid-type"));
+	f.click(of("#drum-grid-menu menuitem[grid-type=drumMap]"));
+	REQUIRE(
+		f.app.waitUntil([&] { return f.app.call("editor.get", {{"editor", "window"}}).at("gridType") == "drumMap"; }));
+	f.click(of(".key-tool[key-tool=draw]"));
+	// A drag over 3.5 sixteenths: a note at every eighth, the first where the click falls in its eighth.
+	f.app.ui().drag(f.window, f.at(0.3, 36), f.at(3.5, 36));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 2; }));
+	CHECK(f.partNotes()[0].at("position") == 0);
+	CHECK(f.partNotes()[1].at("position") == 2 * g_sixteenth);
+	f.click(f.at(7.5, 36));
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 3; }));
+	CHECK(f.partNotes()[2].at("position") == 6 * g_sixteenth);
+	f.click(f.at(7.5, 38)); // the snare's sixteenths
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 4; }));
+	CHECK(f.partNotes()[3].at("position") == 7 * g_sixteenth);
+	CHECK(f.partNotes()[3].at("pitch") == 38);
+}
+
 TEST_CASE("the object selection tool's double click and drag inserts and deletes several notes of a sound", "[ui]")
 {
 	Fixture f;
