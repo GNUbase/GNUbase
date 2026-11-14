@@ -483,25 +483,28 @@ namespace gnubase::engine::peaks
 		return found && found->size == stamp.size && found->modified == stamp.modified;
 	}
 
-	// The replacement no reader may see half of, and that works while another thread reads the old file: on Windows,
-	// where the classic and the POSIX-semantic rename may both refuse an open target, the old file moves aside under
-	// a temporary name first (#963, #1387); should the aside outlive the replacement, the worker cleans it up like a
-	// temporary a crash left behind. Anything that isn't a regular file, such as a directory in the way, keeps
-	// failing the write.
-	static bool replacePeakFile(const std::filesystem::path& temporary, const std::filesystem::path& file)
+	namespace
 	{
+		// The replacement no reader may see half of, and that works while another thread reads the old file: on
+		// Windows, where the classic and the POSIX-semantic rename may both refuse an open target, the old file moves
+		// aside under a temporary name first (#963, #1387); should the aside outlive the replacement, the worker
+		// cleans it up like a temporary a crash left behind. Anything that isn't a regular file, such as a directory
+		// in the way, keeps failing the write.
+		bool replacePeakFile(const std::filesystem::path& temporary, const std::filesystem::path& file)
+		{
 #ifdef _WIN32
-		if (detail::replaceFile(temporary.u8string(), file.u8string()))
-			return true;
-		std::error_code status;
-		if (!std::filesystem::is_regular_file(file, status))
-			return false;
-		std::filesystem::path aside = file;
-		aside += "." + hex(std::random_device()()) + ".tmp";
-		return detail::replaceFileMovingAside(temporary.u8string(), file.u8string(), aside.u8string());
+			if (detail::replaceFile(temporary.u8string(), file.u8string()))
+				return true;
+			std::error_code status;
+			if (!std::filesystem::is_regular_file(file, status))
+				return false;
+			std::filesystem::path aside = file;
+			aside += "." + hex(std::random_device()()) + ".tmp";
+			return detail::replaceFileMovingAside(temporary.u8string(), file.u8string(), aside.u8string());
 #else
-		return detail::replaceFile(temporary.u8string(), file.u8string());
+			return detail::replaceFile(temporary.u8string(), file.u8string());
 #endif
+		}
 	}
 
 	void writePeakFile(
