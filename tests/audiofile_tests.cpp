@@ -5,6 +5,7 @@
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include <dr_flac.h>
 #include <dr_mp3.h>
@@ -335,8 +336,10 @@ TEST_CASE("a file being read can be deleted, and reads on", "[integration]")
 TEST_CASE("replaceFile moves one file over another", "[integration]")
 {
 	const test::TempDir dir;
-	const std::filesystem::path from = dir.path() / "from.bin";
-	const std::filesystem::path to = dir.path() / "to.bin";
+	const std::string name = GENERATE("file", u8"\u00e9-\u97f3");
+	CAPTURE(name);
+	const std::filesystem::path from = dir.path() / std::filesystem::u8path("from-" + name + ".bin");
+	const std::filesystem::path to = dir.path() / std::filesystem::u8path("to-" + name + ".bin");
 	const auto writeText = [](const std::filesystem::path& file, const std::string& text)
 	{
 		std::ofstream out(file, std::ios::binary);
@@ -391,9 +394,11 @@ TEST_CASE("the aside replacement leaves the old file when the new one can't take
 	// file in its place and end the aside (#963). When the new file can't take the place, the old one has to come
 	// back (#1387).
 	const test::TempDir dir;
-	const std::filesystem::path oldPath = dir.path() / "file.bin";
-	const std::filesystem::path asidePath = dir.path() / "file.bin.aside";
-	const std::filesystem::path newPath = dir.path() / "new.bin";
+	const std::string name = GENERATE("file", u8"\u00e9-\u97f3");
+	CAPTURE(name);
+	const std::filesystem::path oldPath = dir.path() / std::filesystem::u8path(name + ".bin");
+	const std::filesystem::path asidePath = dir.path() / std::filesystem::u8path(name + ".bin.aside");
+	const std::filesystem::path newPath = dir.path() / std::filesystem::u8path("new-" + name + ".bin");
 	{
 		std::ofstream out(oldPath, std::ios::binary);
 		out << "old";
