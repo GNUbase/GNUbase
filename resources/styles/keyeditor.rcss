@@ -69,24 +69,28 @@
 	overflow: hidden;
 }
 
+/* A line that may wrap is as high as its highest item, the grid, where a single line would be as high as the view: the
+   keyboard stretches to it. */
 .key-editor-body
 {
 	flex: 1 1 0;
 	display: flex;
 	flex-direction: row;
+	flex-wrap: wrap;
+	align-content: flex-start;
 	align-items: flex-start;
 	overflow-y: auto;
 	min-height: 0;
 }
 
-/* The piano keyboard as high as the grid's 128 rows of 10dp. Code places each key's top and height: a black key on
-   its pitch's row, the white keys in equal shares of their octave. */
+/* The piano keyboard, as high as the grid's rows. Code places each key's top and height: a black key on its pitch's
+   row, the white keys in equal shares of their octave. */
 .key-editor-keys
 {
 	position: relative;
 	flex-shrink: 0;
 	width: 48dp;
-	height: 1280dp;
+	align-self: stretch;
 }
 
 .key-editor-grid
@@ -95,7 +99,7 @@
 	flex: 1 1 0;
 }
 
-/* The row height: .key-editor-keys is 128 of them high. */
+/* The row height, the only one: the keyboard is as high as the rows, and the pitch zoom scales it. */
 .key-editor-row
 {
 	display: block;
@@ -189,11 +193,16 @@
 	margin-left: 360dp;
 }
 
-/* The drum sounds stack in the list's flow, unlike the piano keys code places. */
+/* The drum sounds stack in the list's flow, unlike the piano keys code places, beside the grid however narrow. */
+.drum-editor .key-editor-body
+{
+	flex-wrap: nowrap;
+}
+
 .drum-editor .key-editor-keys
 {
 	width: 360dp;
-	height: auto;
+	align-self: flex-start;
 }
 
 .drum-editor .key-editor-row, .key-editor-key.drum-sound

@@ -91,14 +91,17 @@ keyboard's left part the pointer is the four-point arrow (`.key-editor-keys-zoom
 pitches vertically in and to the left out, doubling or halving the rows' height every 100 dp dragged, between a quarter
 and four times the height the style sheet gives them, and a drag up or down scrolls the note display by as much as the
 mouse went (p. 1261). The pitch row at the top of the view when the drag started stays there. The zoom is the editor's
-own state, like its scroll, and the keyboard's height follows the rows'. A press there plays the pitch under it as the
-rest of the keyboard does, and a drag of a few dp turns the press into the gesture. Pressing a key plays its pitch on
-the active part's track until the mouse is released, wherever that is: `midi.inject` sends a note on (velocity 100) into
-the track's channel as if from its MIDI input, so its instrument plays it, and then the note off, also whenever the key
-editor goes while the key is held: the editor window closing or being closed, the editor showing the list, pattern or
-audio part editor instead, the lower zone's Editor panel going (its tab hidden, the panel opened in a window of its own,
-or that window closed or docked again), an in-place editor closing, or the switch to the drum editor, which builds a key
-editor of its own. A press on a key selects and deselects no notes.
+own state, like its scroll. Only the style sheet gives the rows' height, and the keyboard stretches to the rows; the
+zoom scales that height as the style sheet gives it at each press there, so a theme or style change reaches an editor at
+zoom 1 at once and a zoomed one at its next press there, and a height that is no length (a percentage or auto) has
+nothing to scale. A press there plays the pitch under it as the rest of the keyboard does, and a drag of a few dp turns
+the press into the gesture. Pressing a key plays its pitch on the active part's track until the mouse is released,
+wherever that is: `midi.inject` sends a note on (velocity 100) into the track's channel as if from its MIDI input, so
+its instrument plays it, and then the note off, also whenever the key editor goes while the key is held: the editor
+window closing or being closed, the editor showing the list, pattern or audio part editor instead, the lower zone's
+Editor panel going (its tab hidden, the panel opened in a window of its own, or that window closed or docked again), an
+in-place editor closing, or the switch to the drum editor, which builds a key editor of its own. A press on a key
+selects and deselects no notes.
 
 | Tool | Gesture | Reference |
 |---|---|---|
@@ -158,5 +161,7 @@ menu.
   transpose palette and typing a pitch on the info line; step input with its cursor, a click moving it, and MIDI input
   selecting the next note; the Chord Editing section naming and changing a chord; the toolbox with the setting on and
   off, with and without a modifier key, choosing tools; drags on the keyboard's left part zooming the rows in and out
-  between the limits, from the height a style sheet gives them, and scrolling the note display, while a click there
-  zooms nothing, and a click and a drag there leaving a note an earlier press selected and the history alone.
+  between the limits, from the height a style sheet gives them, also after a style change at a zoom and back at 1, the
+  keyboard as high as the rows of any height, nothing zoomed without a row height to scale, and scrolling the note
+  display, while a click there zooms nothing, and a click and a drag there leaving a note an earlier press selected and
+  the history alone.
