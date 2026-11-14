@@ -4,7 +4,7 @@
 # the changed and new .cpp files under src/ and tests/, and the .cpp file next to each changed header. It reports only
 # findings on the lines the branch changed and a few around them (below), since the rest passed CI already (and
 # Windows' headers bring a few findings that CI's don't). It needs a compile database, not a build: it configures one
-# in build/tidy, again when a changed file isn't in it yet. CI checks more (every line of every file that includes a
+# in build/tidy, again when a CMake file is newer than it. CI checks more (every line of every file that includes a
 # changed header), so CI has the last word. On Linux, and so in WSL, it also compiles those files whole, with Clang
 # and -Werror from the same compile database, as CI's asan-ubsan, tsan and clang-tidy jobs build them, and with GCC in
 # Release as CI's linux-x64-gcc job does (build/tidy-gcc).
@@ -100,6 +100,8 @@ reconfigure()
 {
 	echo "Configuring $build for its compile database"
 	mkdir -p "$build" && configure > "$build/configure.log" 2>&1 || { echo "Configuring failed, see $build/configure.log"; exit 2; }
+	# CMake leaves a database whose content is the same as it was, older than the CMake file that was changed.
+	touch "$build/compile_commands.json"
 }
 [ -f "$build/compile_commands.json" ] || reconfigure
 
@@ -112,16 +114,15 @@ mapfile -t candidates < <(
 	} | sed -n -e 's/\.h$/.cpp/p' -e '/\.cpp$/p' | sort -u | while IFS= read -r file; do [ -f "$file" ] && echo "$file"; done
 )
 inDatabase() { grep -qF "/$1\"" "$build/compile_commands.json"; }
-# A file new to CMake since the last configure. A file that no target of this platform builds stays missing, so only
-# a CMake file newer than the database reconfigures.
+# A CMake file newer than the database: a file new to CMake, or a target with a new definition, include folder or
+# option, whose files the database would otherwise give the flags from before. A file that no target of this platform
+# builds stays missing from it.
 cmakeChanged()
 {
 	[ -n "$(find . \( -path ./build -o -path ./ext \) -prune -o \( -name CMakeLists.txt -o -name '*.cmake' \) \
 		-newer "${1:-$build/compile_commands.json}" -print -quit)" ]
 }
-for file in "${candidates[@]}"; do
-	inDatabase "$file" || { cmakeChanged && reconfigure; break; }
-done
+cmakeChanged && reconfigure
 files=() skipped=()
 for file in "${candidates[@]}"; do
 	if inDatabase "$file"; then files+=("$file"); else skipped+=("$file"); fi
@@ -132,8 +133,8 @@ done
 # without "lines" counts with all of them. Each range takes 5 lines more on both sides, and a deletion the 5 lines on
 # both sides of it: some checks report a finding a change causes on an unchanged line next to it, such as
 # readability-inconsistent-ifelse-braces on the unbraced first "if" of a chain that gained a braced "else if", or on
-# the unchanged "if" or "else" line of a branch that lost its braces, directly above the deleted "{" (#1400). A "+++ " line is the
-# file's name only in the header after "diff --git": in a hunk it is an added line that starts with "++ ".
+# the unchanged "if" or "else" line of a branch that lost its braces, directly above the deleted "{" (#1400). A "+++ "
+# line is the file's name only in the header after "diff --git": in a hunk it is an added line that starts with "++ ".
 filter=$(
 	{
 		changes -U0 | awk -v margin=5 '
@@ -186,6 +187,7 @@ if [ "$(uname -s)" = Linux ]; then
 		mkdir -p "$gcc" && cmake --preset linux-gcc -B "$gcc" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
 			-DCMAKE_CONFIGURATION_TYPES=Release -DGNUBASE_LTO=OFF > "$gcc/configure.log" 2>&1 ||
 			{ echo "Configuring failed, see $gcc/configure.log"; exit 2; }
+		touch "$gcc/compile_commands.json"
 	fi
 	# GCC at -O3 takes up to about 2 GB for one of the larger files: no more compiles at once than WSL's free memory
 	# holds, so that many changed files don't run it out of memory.

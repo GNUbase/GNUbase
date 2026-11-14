@@ -5,6 +5,7 @@
 #include "engine/audio/meters.h"
 #include "engine/document/document.h"
 #include "engine/engine.h"
+#include "testutils/stopandjoin.h"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -37,6 +38,7 @@ using gnubase::engine::LoudnessReading;
 using gnubase::engine::MeterFrame;
 using gnubase::engine::ObjectId;
 using gnubase::engine::Result;
+using gnubase::test::StopAndJoin;
 
 namespace
 {
@@ -160,25 +162,6 @@ namespace
 		run(client, "transport.play");
 		return channel;
 	}
-
-	// Ends a thread that runs until done, also when a test leaves with a failed REQUIRE.
-	class StopAndJoin
-	{
-	public:
-		StopAndJoin(std::atomic<bool>& done, std::thread& thread) : m_done(done), m_thread(thread) {}
-		~StopAndJoin()
-		{
-			m_done = true;
-			if (m_thread.joinable())
-				m_thread.join();
-		}
-		StopAndJoin(const StopAndJoin&) = delete;
-		StopAndJoin& operator=(const StopAndJoin&) = delete;
-
-	private:
-		std::atomic<bool>& m_done;
-		std::thread& m_thread;
-	};
 
 	// How long the race tests play their rounds at most, on the wall clock. Each round waits for the other thread, and
 	// when more threads run than there are cores (CI runs four tests at a time), each wait can cost a time slice: the

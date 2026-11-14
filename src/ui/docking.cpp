@@ -1042,6 +1042,25 @@ namespace gnubase::ui
 		}
 	}
 
+	std::optional<int> Docking::fittedWidth(const std::string& name) const
+	{
+		const Json* width = find(m_layout, {"windows", name, "fittedWidth"});
+		if (width == nullptr || !width->is_number_integer())
+			return std::nullopt;
+		return width->get<int>();
+	}
+
+	void Docking::setFittedWidth(const std::string& name, int width)
+	{
+		Json& entry = m_layout["windows"][name];
+		if (!entry.is_object())
+			entry = Json::object();
+		if (entry.value("fittedWidth", Json()) == width)
+			return;
+		entry["fittedWidth"] = width;
+		save();
+	}
+
 	bool Docking::savedMaximized(const std::string& name) const
 	{
 		const Json* maximized = find(m_layout, {"windows", name, "maximized"});

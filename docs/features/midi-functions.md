@@ -27,7 +27,9 @@ Functions that edit MIDI parts as a whole (#133, #838).
   follow (#954). Each note is written as it played, with its own part's global transpose at its position, which playback
   adds before the track's MIDI modifiers, so that `includeInserts` applies their Note Limit and Note Filter ranges to
   the pitch that plays; the new part's global transpose where the note lands then comes off it, so that it plays as
-  before under the project root key and the transpose track. Without `includeInserts` the track's modifiers stay on the
+  before under the project root key and the transpose track. A part's global transpose there is what playback plays its
+  notes with (`globalTranspose`), its transpose included, which Keep Transpose in Octave Range folds with the root key's
+  step and the transpose event as one sum (#896, #1453). Without `includeInserts` the track's modifiers stay on the
   track and play after the stored pitch, so nothing lies between the two global transposes: only their difference goes
   into the note, with the part's transpose and velocity. What the notes can't hold stays on a new part of its own, for
   each source part on its own, as bounce does (#1240, #1253). A pitch that plays and that this takes beyond 0-127: with
@@ -58,7 +60,8 @@ Functions that edit MIDI parts as a whole (#133, #838).
   writes the parts' transpose and velocity into the notes (p. 1123), as playback applies them. The new part gets the
   root key and Global Transpose setting the parts with notes share, or, when they differ, the project root key and
   follow, as merge does (#954, #1240), and each part's difference in global transpose goes into its notes with its
-  transpose, so that it keeps the pitch it played with. Playback checks the range after the track's MIDI modifiers'
+  transpose, as Keep Transpose in Octave Range folds the two (#1453), so that it keeps the pitch it played with. Playback
+  checks the range after the track's MIDI modifiers'
   transpose and random pitch, so a pitch that the part's transpose takes beyond 0-127 and the track's brings back plays;
   a note that plays nowhere, also so, stays, transposed, where the track's drum map or chord track following make of
   that what they make of the note, so that it comes back alike when the modifiers change; where they don't, its part
@@ -96,7 +99,8 @@ are Independent under a transpose event or that differ from one another, includi
 makes where a drum map or the chord track keeps them out of the notes; bounce a pitch the global transpose brings back
 or takes out of 0-127, merge with Include Inserts' Note Filter and Note Limit on the pitch that plays, a note the new
 part's global transpose can't hold, notes above 127 and below 0 with the global transpose that the track's modifiers
-bring back, merged without Include Inserts onto the track itself, and a transpose event within a part; merge keeping on
+bring back, merged without Include Inserts onto the track itself, a transpose event within a part, and, with dissolve,
+a part's own transpose that Keep Transpose in Octave Range folds with the transpose event; merge keeping on
 a part of its own a pitch that plays and that the new part's global transpose or the part's transpose takes beyond
 0-127, with and without Include Inserts, the part's velocity with a note's velocity variance, and without Include
 Inserts onto the track itself a pitch the part's transpose takes beyond 127 that the track's modifiers bring back and

@@ -234,8 +234,9 @@ namespace gnubase::engine
 		void addInitialExpressions(const std::vector<RenderNote>& notes, std::vector<RenderExpression>& expressions)
 		{
 			using plugin::NoteExpression;
-			constexpr std::array<std::pair<NoteExpression, double>, 3> initial = {
-				{{NoteExpression::Tuning, 0.0}, {NoteExpression::Pressure, 0.0}, {NoteExpression::Brightness, 0.5}}};
+			// By their bits in RenderNote::startsWith, with their values from defaultExpression.
+			constexpr std::array<NoteExpression, 3> initial = {
+				NoteExpression::Tuning, NoteExpression::Pressure, NoteExpression::Brightness};
 			std::array<uint8_t, 16> expressed{}; // by MIDI channel, as RenderNote::startsWith
 			for (const RenderExpression& point : expressions)
 				expressed.at(point.channel % 16) |= initialBit(point.type);
@@ -243,8 +244,8 @@ namespace gnubase::engine
 				for (size_t i = 0; i < initial.size(); ++i)
 					if (!note.keySwitch && note.end > note.start &&
 						(expressed.at(note.channel % 16) & ~note.startsWith & (1U << i)) != 0)
-						expressions.push_back(
-							{note.start, note.pitch, note.channel, initial.at(i).first, initial.at(i).second});
+						expressions.push_back({note.start, note.pitch, note.channel, initial.at(i),
+							defaultExpression(initial.at(i)).value_or(0.0)});
 		}
 
 		// An audio part's event plays only within the part (#471): cut at its edges, where its fades are cut short. A

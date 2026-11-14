@@ -461,7 +461,7 @@
 	.event-display .waveforms waveform
 	{
 		own-color-tint: none;
-		padding: 2dp 0;
+		event-inset: 0dp;
 	}
 	.event-display .overview
 	{

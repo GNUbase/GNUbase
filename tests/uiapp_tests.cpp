@@ -272,6 +272,73 @@ TEST_CASE("the project window shows events and the project cursor where the engi
 	CHECK(element(".project-cursor").at("box").at("x").get<int>() - lanes.at("box").at("x").get<int>() == 150);
 }
 
+TEST_CASE(
+	"the project window shows events in their colors, and colored ones selected and muted, as the theme says", "[ui]")
+{
+	// #1332: the default theme fills colored events at own-fill-opacity, tints their outline and their waveform, and
+	// keeps the selected and muted looks for colored events too.
+	test::UiApp app({800, 300});
+	ui::EventDisplay& display = app.appUi().showProject();
+	app.setDpRatio(1.0F);
+	app.call("project.set", {{"length", 60.0}});
+	const test::TempDir dir;
+	test::Audio take; // a 220 Hz tone fading out over two seconds
+	take.channels = 1;
+	take.sampleRate = 48000;
+	take.samples.resize(96000);
+	for (size_t i = 0; i < take.samples.size(); ++i)
+	{
+		const double t = static_cast<double>(i) / 48000.0;
+		take.samples[i] = static_cast<float>(0.9 * (1.0 - (t / 2.0)) * std::sin(2.0 * 3.14159265358979 * 220.0 * t));
+	}
+	const std::filesystem::path file = dir.path() / "tone.wav";
+	test::writeWav(file, take);
+	const Json audio =
+		app.call("track.add", {{"type", "audio"}, {"timeBase", "linear"}, {"color", "#e0505a"}}).at("track");
+	const Json media = app.call("media.add", {{"path", file.u8string()}}).at("media");
+	const Json clip = app.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	app.call(
+		"audioEvent.add", {{"track", audio.at("id")}, {"clip", clip.at("id")}, {"position", 24000}, {"length", 96000}});
+	const Json midi = app.call("track.add", {{"type", "midi"}, {"color", "#50c878"}}).at("track");
+	const auto part = [&app, &midi](int64_t quarter)
+	{
+		return app
+			.call("midiPart.add",
+				{{"track", midi.at("id")}, {"position", quarter * time::g_ticksPerQuarter},
+					{"length", 2 * time::g_ticksPerQuarter}})
+			.at("part")
+			.at("id")
+			.get<uint64_t>();
+	};
+	part(0); // all three in view
+	const uint64_t selected = part(3);
+	const uint64_t muted = part(6);
+	app.call("event.set", {{"events", {muted}}, {"mute", true}});
+	const Json themed = app.call("track.add", {{"type", "midi"}}).at("track"); // no color: the theme's look
+	app.call("midiPart.add",
+		{{"track", themed.at("id")}, {"position", 3 * time::g_ticksPerQuarter},
+			{"length", 4 * time::g_ticksPerQuarter}});
+	Rml::ElementDocument& document = *app.main().context().GetDocument(0);
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			display.select({selected});
+			auto* lanes = dynamic_cast<ui::EventLanes*>(document.QuerySelector("event-lanes.events"));
+			auto* mutes = dynamic_cast<ui::EventLanes*>(document.QuerySelector("event-lanes.muted-events"));
+			auto* wave = dynamic_cast<ui::Waveform*>(document.QuerySelector(".waveforms waveform"));
+			const auto shown = [](const ui::EventLanes* canvas)
+			{
+				return canvas != nullptr &&
+					std::any_of(canvas->lanes().begin(), canvas->lanes().end(),
+						[](const ui::EventLanes::Lane& lane) { return !lane.events.empty(); });
+			};
+			return shown(lanes) && lanes->lanes().size() == 3 && shown(mutes) && wave != nullptr &&
+				!wave->channels().empty() && display.selection() == std::vector<uint64_t>{selected};
+		}));
+	app.shell().step(std::chrono::milliseconds(0));
+	test::UiApp::checkGolden("event-colors", app.screenshot("event-colors", {800, 300}));
+}
+
 TEST_CASE("the project cursor and the cross-hair cursor are drawn only inside the event display's time area", "[ui]")
 {
 	// CI's window size, with the left zone and the track list left of the event display and the right zone right of it

@@ -131,6 +131,9 @@
 		#keycommands-message
 		{
 			flex: 1;
+			/* An error carries whole file paths, which have no space to wrap at: break them inside the box. */
+			word-break: break-all;
+			overflow: hidden;
 		}
 	</style>
 	<script>
@@ -717,16 +720,17 @@
 		end
 
 		-- Export writes the applied key commands and macros; Import makes a preset of a file.
+		-- Both clear the message first, so that an error of an earlier try doesn't stay after a retry that worked.
 		function kc.exportFile(document)
 			local problem = apply(document)
-			if problem then
-				report(document, problem)
-			else
+			report(document, problem)
+			if not problem then
 				gnubase.ui.command{command = "keyCommands.exportFile"}
 			end
 		end
 
-		function kc.importFile()
+		function kc.importFile(document)
+			report(document, nil)
 			gnubase.ui.command{command = "keyCommands.importFile"}
 		end
 
@@ -910,7 +914,7 @@
 			<input type="text" id="keycommands-preset-name" value=""/>
 			<button id="keycommands-save-preset" onclick="KeyCommands.savePreset(document)">Save</button>
 			<button id="keycommands-delete-preset" onclick="KeyCommands.deletePreset(document)">Delete</button>
-			<button id="keycommands-import" onclick="KeyCommands.importFile()">Import...</button>
+			<button id="keycommands-import" onclick="KeyCommands.importFile(document)">Import...</button>
 			<button id="keycommands-export" onclick="KeyCommands.exportFile(document)">Export...</button>
 		</div>
 		<div class="content">

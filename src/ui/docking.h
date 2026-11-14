@@ -162,6 +162,11 @@ namespace gnubase::ui
 		// Puts into ui.layout now, rather than at the next check twice a second, which windows are open and where they
 		// and the panels in windows of their own are, e.g. right after a window opened or closed.
 		void saveWindows();
+		// The width the app fitted the window to, kept in its ui.layout entry as fittedWidth: a window whose bounds
+		// still have that width wasn't sized by the user since, e.g. a transport panel that follows its sections
+		// (#1527). None if ui.layout has none.
+		std::optional<int> fittedWidth(const std::string& name) const;
+		void setFittedWidth(const std::string& name, int width);
 
 		// Whether a panel shows: in a window of its own, or as its zone's active tab while the zone shows. What create
 		// returned stays while the panel's tab is hidden behind another one or its zone is, e.g. to refresh it only

@@ -463,7 +463,7 @@
 	.event-display .waveforms waveform
 	{
 		own-color-tint: #ffffff59;
-		padding: 4dp 0;
+		event-inset: 2dp;
 	}
 	.event-display .overview
 	{

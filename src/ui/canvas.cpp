@@ -142,32 +142,43 @@ namespace gnubase::ui
 								 : colour->Get<Rml::Colourb>().ToPremultiplied(GetComputedValues().opacity());
 	}
 
-	Colour Canvas::ownFill(uint32_t rgba)
+	Canvas::OwnColors Canvas::ownColors()
 	{
-		const Rml::Property* property = GetProperty("own-fill-opacity");
-		float opacity = property == nullptr ? 1.0F : property->Get<float>();
-		opacity = std::isfinite(opacity) ? std::clamp(opacity, 0.0F, 1.0F) : 1.0F;
-		const auto alpha = static_cast<uint8_t>(std::lround(static_cast<float>(rgba & 0xffU) * opacity));
-		return Rml::Colourb(static_cast<uint8_t>(rgba >> 24U), static_cast<uint8_t>(rgba >> 16U),
-			static_cast<uint8_t>(rgba >> 8U), alpha)
-			.ToPremultiplied(GetComputedValues().opacity());
+		OwnColors own;
+		if (const Rml::Property* property = GetProperty("own-fill-opacity"))
+		{
+			const auto opacity = property->Get<float>();
+			own.fillOpacity = std::isfinite(opacity) ? std::clamp(opacity, 0.0F, 1.0F) : 1.0F;
+		}
+		const Rml::Property* tint = GetProperty("own-color-tint");
+		if (tint != nullptr && tint->unit == Rml::Unit::COLOUR)
+			own.tint = tint->Get<Rml::Colourb>();
+		own.opacity = GetComputedValues().opacity();
+		return own;
 	}
 
-	std::optional<Colour> Canvas::ownLine(uint32_t rgba)
+	Colour Canvas::OwnColors::fill(uint32_t rgba) const
 	{
-		const Rml::Property* property = GetProperty("own-color-tint");
-		if (property == nullptr || property->unit != Rml::Unit::COLOUR)
+		const auto alpha = static_cast<uint8_t>(std::lround(static_cast<float>(rgba & 0xffU) * fillOpacity));
+		return Rml::Colourb(static_cast<uint8_t>(rgba >> 24U), static_cast<uint8_t>(rgba >> 16U),
+			static_cast<uint8_t>(rgba >> 8U), alpha)
+			.ToPremultiplied(opacity);
+	}
+
+	std::optional<Colour> Canvas::OwnColors::line(uint32_t rgba) const
+	{
+		if (!tint)
 			return std::nullopt;
 		// The tint laid over the own color by the tint's alpha.
-		const auto tint = property->Get<Rml::Colourb>();
-		const auto over = [&tint](uint32_t own, uint8_t with)
+		const Rml::Colourb with = *tint;
+		const auto over = [&with](uint32_t own, uint8_t to)
 		{
 			return static_cast<uint8_t>(std::lround(static_cast<float>(own) +
-				((static_cast<float>(with) - static_cast<float>(own)) * static_cast<float>(tint.alpha) / 255.0F)));
+				((static_cast<float>(to) - static_cast<float>(own)) * static_cast<float>(with.alpha) / 255.0F)));
 		};
-		return Rml::Colourb(over((rgba >> 24U) & 0xffU, tint.red), over((rgba >> 16U) & 0xffU, tint.green),
-			over((rgba >> 8U) & 0xffU, tint.blue), static_cast<uint8_t>(rgba & 0xffU))
-			.ToPremultiplied(GetComputedValues().opacity());
+		return Rml::Colourb(over((rgba >> 24U) & 0xffU, with.red), over((rgba >> 16U) & 0xffU, with.green),
+			over((rgba >> 8U) & 0xffU, with.blue), static_cast<uint8_t>(rgba & 0xffU))
+			.ToPremultiplied(opacity);
 	}
 
 	float Canvas::eventInset()
@@ -272,11 +283,17 @@ namespace gnubase::ui
 			return;
 		const Colour body = fill();
 		const Colour outline = stroke();
-		const float width = outline.alpha == 0 ? 0.0F : strokeWidth();
+		// Read once per build, not per event.
+		const OwnColors own = ownColors();
+		const float stroked = strokeWidth();
+		const float width = outline.alpha == 0 ? 0.0F : stroked;
+		// An own-color-tint outlines events with a color in stroke-width, also without a stroke-color.
+		const float tinted = own.tint ? stroked : width;
 		const float inset = eventInset();
-		// Events reaching beyond the frame end just outside it, so their outline there stays out of view.
-		const float first = -(width + 1.0F);
-		const float last = static_cast<float>(frame.right - frame.left) + width + 1.0F;
+		// Events reaching beyond the frame end just outside it, so their outline there stays out of view, whichever
+		// width it has: the tinted one is never narrower.
+		const float first = -(tinted + 1.0F);
+		const float last = static_cast<float>(frame.right - frame.left) + tinted + 1.0F;
 		const double from = frame.from();
 		const double to = frame.to();
 		Rml::Mesh mesh;
@@ -311,9 +328,8 @@ namespace gnubase::ui
 					outlined(mesh, x0, y0, x1, y1, body, outline, width);
 					continue;
 				}
-				const std::optional<Colour> line = ownLine(event->color);
-				outlined(mesh, x0, y0, x1, y1, ownFill(event->color), line ? *line : outline,
-					line ? std::max(width, strokeWidth()) : width);
+				const std::optional<Colour> line = own.line(event->color);
+				outlined(mesh, x0, y0, x1, y1, own.fill(event->color), line ? *line : outline, line ? tinted : width);
 			}
 		}
 		meshes.push_back({std::move(mesh), {}});
@@ -338,9 +354,20 @@ namespace gnubase::ui
 	{
 		if (m_channels.empty() || !(m_span.length > 0.0))
 			return;
-		const std::optional<Colour> own = m_span.color == 0 ? std::nullopt : ownLine(m_span.color);
+		const std::optional<Colour> own = m_span.color == 0 ? std::nullopt : ownColors().line(m_span.color);
 		const Colour colour = own ? *own : fill();
-		const float height = frame.size.y / static_cast<float>(m_channels.size());
+		// event-inset off the lane's edges, inside the padding, as <event-lanes> keeps events, unless that would leave
+		// the waveform no pixel. That includes the lanes no higher than twice the inset, where events drop it, as the
+		// content box is no higher than the lane.
+		const float inset = eventInset();
+		float area = frame.size.y;
+		float offset = 0.0F;
+		if (frame.size.y - (2.0F * inset) >= 1.0F)
+		{
+			offset = inset;
+			area = frame.size.y - (2.0F * inset);
+		}
+		const float height = area / static_cast<float>(m_channels.size());
 		const double first = std::max(frame.left, std::round(m_span.start / frame.unitsPerPixel));
 		const double last = std::min(frame.right, std::round(m_span.end() / frame.unitsPerPixel));
 		Rml::Mesh mesh;
@@ -351,7 +378,7 @@ namespace gnubase::ui
 			if (columns == 0)
 				continue;
 			const double perColumn = m_span.length / static_cast<double>(columns);
-			const double middle = frame.y(0.0) + (height * (static_cast<float>(channel) + 0.5F));
+			const double middle = frame.y(0.0) + offset + (height * (static_cast<float>(channel) + 0.5F));
 			const double half = height / 2.0;
 			const auto y = [&](int16_t sample)
 			{ return static_cast<float>(std::round(middle - (sample / 32767.0 * half))); };
