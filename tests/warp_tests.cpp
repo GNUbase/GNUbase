@@ -824,6 +824,34 @@ TEST_CASE("a clip loaded with a section beyond the real-time range still takes e
 	CHECK(warpOf(client, loop.clip).at("markers").size() == 6);
 }
 
+// Follow-ups of #1273 (#1288).
+TEST_CASE("a clip in musical mode loaded without a tempo takes the project's at its first event", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	run(client, "project.set", {{"tempoTrackActive", true}});
+	run(client, "tempo.add", {{"position", 0}, {"bpm", 100.0}, {"ramp", false}});
+	run(client, "tempo.add", {{"position", 4 * g_ticksPerQuarter}, {"bpm", 140.0}, {"ramp", false}});
+	const Loop loop = addLoop(client, dir, clicks({1000, 25000}, 48000));
+	run(client, "audioEvent.set", {{"event", loop.event}, {"position", 8 * g_ticksPerQuarter}});
+	run(client, "clip.setWarp", {{"clip", loop.clip}, {"musical", true}, {"tempo", 120.0}});
+
+	// As in a file edited elsewhere: musical mode without a tempo, which commands and the DAWproject reader never
+	// write. Without one its length in beats would change with the project's tempo, as a MIDI file import does.
+	const std::string file = (dir.path() / "edited.dawproject").u8string();
+	run(client, "project.save", {{"path", file}, {"embedMedia", false}});
+	std::map<std::string, std::string> entries = test::readZip(file);
+	Json extension = Json::parse(entries.at("gnubase.json"));
+	for (Json& clip : extension.at("project").at("clips"))
+		if (clip.at("id") == loop.clip)
+			clip.at("warp")["tempo"] = 0.0;
+	entries["gnubase.json"] = extension.dump();
+	test::writeZip(file, entries);
+	run(client, "project.load", {{"path", file}});
+	CHECK(warpOf(client, loop.clip).at("tempo") == 140.0);
+}
+
 // Follow-ups of #1129 (#1266).
 TEST_CASE("a marker inserted next to a section at the limit of the real-time range may be off by its rounding only",
 	"[integration]")

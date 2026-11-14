@@ -1429,6 +1429,10 @@ namespace gnubase::engine
 		std::string timeFormat = "barsBeats"; // the primary time format: one of g_rulerTimeFormats
 	};
 
+	// The longest a project can be, in seconds: 24 hours, which its start time stays under too (reference manual
+	// p. 128).
+	inline constexpr double g_maxProjectLength = 86400.0;
+
 	// The sample rates a project can have, in Hz: from the lowest common one to the highest that export writes. Far
 	// outside them the conversions between ticks and samples leave a time::Ticks or a time::Samples.
 	inline constexpr double g_lowestSampleRate = 8000.0;

@@ -24,6 +24,9 @@ namespace gnubase::engine::settings
 		std::string description;
 		Json schema;       // JSON schema of the value, e.g. {"type": "number", "minimum": 0.5, "maximum": 4}
 		Json defaultValue; // must fit the schema
+		// A preference: one of the settings the preferences dialog shows and preference presets can set
+		// (docs/features/preferences.md). The others have a place of their own in the UI, or the UI keeps them.
+		bool preference = false;
 	};
 
 	// Turns the values of a file at version from into those of version from + 1: renames keys, converts values.

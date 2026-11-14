@@ -400,6 +400,26 @@ TEST_CASE("midiFile.import keeps a constant project tempo and signature for any 
 		slow = true;
 		addAudioEvent(startSamples - 28800, "linear", 144000, true);
 	}
+	// By its end in ticks in the project's tempo before the import, as on a musical track, these two would count the
+	// other way (#1288).
+	SECTION("An audio event on a linear track in musical mode that ends before the end of a slower file only by its "
+			"start in the file's tempo")
+	{
+		// It starts 2 quarter notes after the file's start at the file's 60 BPM and is half a quarter note long, so it
+		// ends 2.5 quarter notes after the start. In ticks in the project's 100 BPM it would end 3.83 quarter notes
+		// after the start, after the file's 3.
+		slow = true;
+		after = false;
+		addAudioEvent(startSamples + 96000, "linear", 14400, true);
+	}
+	SECTION("An audio event on a linear track in musical mode that ends after the end of a faster file only by its "
+			"start in the file's tempo")
+	{
+		// It starts 2.5 quarter notes after the file's start at the file's 120 BPM and is 0.7 quarter notes long, so it
+		// ends 3.2 quarter notes after the start. In ticks in the project's 100 BPM it would end 2.78 quarter notes
+		// after the start, before the file's 3.
+		addAudioEvent(startSamples + 60000, "linear", 20160, true);
+	}
 	SECTION("A MIDI part on another version of its track")
 	{
 		const ObjectId keys = addTrack("midi", "musical");

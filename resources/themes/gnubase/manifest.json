@@ -1,5 +1,6 @@
 {
   "theme": "gnubase",
+  "displayName": "GNUbase",
   "units": "dp",
   "assets": {
     "dialog": {

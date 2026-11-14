@@ -80,13 +80,12 @@ are its parameters:
   [mixer.md](mixer.md)) is the channel of the file track's notes and channel events if they all have the same, else
   Any (a track of several channels, or a single part of several). A MIDI track of the project that `track` names
   keeps its own.
-- **extractPatch** and **extractVolumePan** (Extract First Patch, Extract First Volume/Pan) make each MIDI track's
-  first program change, with its bank, and its first MIDI volume (CC 7) and pan (CC 10) the track's `program`,
-  `bank`, `midiVolume` and `midiPan` (`channel.set`) instead of events in its part. Only those on the MIDI channel
-  the track's settings go out on (channel 1 for Any), so an event of another channel stays in the part, where it
-  plays on its own channel on a track set to Any and on the track's channel otherwise ([mixer.md](mixer.md)). Instrument
-  tracks have no such settings, so their events stay. A track that has nothing left after that keeps its settings but
-  gets no part.
+- **extractPatch** and **extractVolumePan** (Extract First Patch, Extract First Volume/Pan) make each MIDI track's first
+  program change, with its bank, and its first MIDI volume (CC 7) and pan (CC 10) the track's `program`, `bank`,
+  `midiVolume` and `midiPan` (`channel.set`) instead of events in its part. Only those on the MIDI channel the track's
+  settings go out on (channel 1 for Any), so an event of another channel stays in the part, where it plays on its own
+  channel on a track set to Any and on the track's channel otherwise ([mixer.md](mixer.md)). Instrument tracks have no
+  such settings, so their events stay. A track that has nothing left after that keeps its settings but gets no part.
 - **automation** (Import Controller as Automation Tracks) moves the continuous controllers into automation lanes of
   their tracks with `midi.extractAutomation` ([midi-functions.md](midi-functions.md)), after the extraction above.
 - `trackType` (Destination: MIDI or instrument tracks) and `markers` (Import Markers) were there before.
@@ -117,17 +116,16 @@ All of it is the one undo step of the import.
     selected; mono files still go onto the selected track.
   - New tracks go to the end of the project: imports keep adding their tracks at the end, unlike Add Track, whose
     tracks go below the selection ([add-track.md](add-track.md)).
-- **Drag and drop**: files dropped on the event display (the shell's `filedrop` event) go to the track of the lane
-  under the mouse if it is an audio track, on a take lane of a track whose lanes show on that lane
-  ([comping.md](comping.md)), else to new tracks, at the time under the mouse. Dropped outside the lanes, such as on
-  the track list, they go to the project cursor, and MIDI files there are a drop too (the manual's drop "into the
-  Project window", p. 365): they take the drop's settings below, at the project cursor, not File > Import's project
-  start or left locator. On a track's row in the track list they go on that track as on its lane, beside the lanes
-  of a track whose lanes show on the lane at the mouse's height; elsewhere, such as below the rows, on a folder's
-  row, on an automation track's row or on the row of a track that doesn't take them (an audio file on a MIDI track's
-  row, a MIDI file on an audio track's row or, without Import Dropped File as Single Part, on a MIDI track's row),
-  onto new tracks. Agents and UI
-  tests drop files with `ui_drop` (`ui::Automation::drop`).
+- **Drag and drop**: files dropped on the event display (the shell's `filedrop` event) go to the track of the lane under
+  the mouse if it is an audio track, on a take lane of a track whose lanes show on that lane ([comping.md](comping.md)),
+  else to new tracks, at the time under the mouse. Dropped outside the lanes, such as on the track list, they go to the
+  project cursor, and MIDI files there are a drop too (the manual's drop "into the Project window", p. 365): they take
+  the drop's settings below, at the project cursor, not File > Import's project start or left locator. On a track's row
+  in the track list they go on that track as on its lane, beside the lanes of a track whose lanes show on the lane at
+  the mouse's height; elsewhere, such as below the rows, on a folder's row, on an automation track's row or on the row
+  of a track that doesn't take them (an audio file on a MIDI track's row, a MIDI file on an audio track's row or,
+  without Import Dropped File as Single Part, on a MIDI track's row), onto new tracks. Agents and UI tests drop files
+  with `ui_drop` (`ui::Automation::drop`).
 - MIDI files (`.mid`, `.midi`, `.smf`) are imported at once, with the MIDI import preferences below, where they are
   dropped; with Import Dropped File as Single Part into one part, on the MIDI or instrument track of the lane under
   the mouse or of the track list row, or on a new track elsewhere. Audio files open the
@@ -224,31 +222,32 @@ audio event that ends after it only in the file's tempo, audio events and parts 
 audio event on a musical track after a file slower than the project, audio events on musical tracks that end after the
 file's end only in the file's tempo (one that starts in the file, one that starts before it) and audio events in musical
 mode on linear tracks that end after it only in the file's tempo (one that starts in the file, one that starts before
-it), but not for content before the file's end, such as an audio event on a musical track that ends there in the file's
-tempo, also one that ends after it only in the project's, one in musical mode on a linear track, and one on a musical
+it, one that ends before it in ticks in the project's tempo), but not for content before the file's end, such as an
+audio event on a musical track that ends there in the file's tempo, also one that ends after it only in the project's,
+one in musical mode on a linear track, also one that ends after it in ticks in the project's tempo, and one on a musical
 track whose clip plays in musical mode that ends after it only by its start in the file's tempo plus its length), undo
 and redo of such an import with the project's tempo, signatures and tempo mode, a type 0 file kept in one track, the
 whole file in one part on a new track and on an instrument track at a position and on a linear MIDI track in samples,
 refusing an audio track or `track` without `singlePart`, the file tracks' MIDI channels on new MIDI tracks (Any for one
 of several channels, also without extraction, and for a single part on a new track from several channels), the first
 patch and volume and pan of that channel (channel 1 for Any, the `track`'s own channel for a single part) in a MIDI
-track's settings while other channels' and later events stay,
-none on instrument tracks, a track of nothing but those kept without a part, and controllers in automation lanes with
-the sustain pedal left in the part, in one undo step. `tests/fileimport_tests.cpp` runs File > Import > MIDI File:
-Cancel, No at the left locator keeping the project's tempo with Ignore Master Track Events on Merge, and Yes into a new
-project after the unsaved changes question, with the file's tempo; and drops MIDI files with the default settings (the
-part at the drop's bar, the first patch extracted), as a single part on the MIDI track dropped on, and on the track list
-at the project cursor, on the MIDI track of the row and below the rows on a new track. `tests/preferences_tests.cpp`
-checks every preference of the MIDI File page with the others. For the import preferences: Use Settings imports without
-the dialog with the stored options (on one track in an unsaved project; split with a name format and copied in a saved
-one; with Copy and Convert off a 44.1 kHz file keeps its path and no copy job starts; with Convert alone it is converted
-into the project's `Audio` folder at the project's sample rate with no copy job; the pool's Import Medium imports
-without the dialog and keeps a file from outside the project where it is, with no copy job, as Copy off says; the
-selected track imports without the dialog with the stored options; and files dropped on an audio track's lane import
-without the dialog, keeping a file from outside the project where it is with Copy and Convert off and splitting a stereo
-file as the name format says), the dialog starts from the settings and keeps its choices in them, Do not ask again skips
-the dialog next time and after a restart until the setting is reset, and each Name Format chosen in the dialog names the
-split files. The preferences' Editing > Audio page shows the settings, Use Settings imports with what it sets (a stereo
-file split as its Name Format says, with Copy off as the page set it: Split Channels writes into `Audio` whatever Copy
-says, as the Use Settings test shows with Copy on; and with Copy off a mono file that isn't split keeping its original
-path with no copy job), and its Open Options Dialog brings the dialog back, starting from the same settings.
+track's settings while other channels' and later events stay, none on instrument tracks, a track of nothing but those
+kept without a part, and controllers in automation lanes with the sustain pedal left in the part, in one undo step.
+`tests/fileimport_tests.cpp` runs File > Import > MIDI File: Cancel, No at the left locator keeping the project's tempo
+with Ignore Master Track Events on Merge, and Yes into a new project after the unsaved changes question, with the file's
+tempo; and drops MIDI files with the default settings (the part at the drop's bar, the first patch extracted), as a
+single part on the MIDI track dropped on, and on the track list at the project cursor, on the MIDI track of the row and
+below the rows on a new track. `tests/preferences_tests.cpp` checks every preference of the MIDI File page with the
+others. For the import preferences: Use Settings imports without the dialog with the stored options (on one track in an
+unsaved project; split with a name format and copied in a saved one; with Copy and Convert off a 44.1 kHz file keeps its
+path and no copy job starts; with Convert alone it is converted into the project's `Audio` folder at the project's
+sample rate with no copy job; the pool's Import Medium imports without the dialog and keeps a file from outside the
+project where it is, with no copy job, as Copy off says; the selected track imports without the dialog with the stored
+options; and files dropped on an audio track's lane import without the dialog, keeping a file from outside the project
+where it is with Copy and Convert off and splitting a stereo file as the name format says), the dialog starts from the
+settings and keeps its choices in them, Do not ask again skips the dialog next time and after a restart until the
+setting is reset, and each Name Format chosen in the dialog names the split files. The preferences' Editing > Audio page
+shows the settings, Use Settings imports with what it sets (a stereo file split as its Name Format says, with Copy off
+as the page set it: Split Channels writes into `Audio` whatever Copy says, as the Use Settings test shows with Copy on;
+and with Copy off a mono file that isn't split keeping its original path with no copy job), and its Open Options Dialog
+brings the dialog back, starting from the same settings.

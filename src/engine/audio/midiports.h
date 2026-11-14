@@ -77,7 +77,7 @@ namespace gnubase::engine
 
 		// What the chord pads' remote keys did on the audio thread (#1089), for the command thread to apply
 		// (chordPads.remoteInput): a key that triggered or released its pad, a chord modifier's key, and while
-		// listenForPads is on, every port's note.
+		// listenForPads is on, every port's note and control.
 		struct PadEvent
 		{
 			enum class Kind : uint8_t
@@ -88,6 +88,9 @@ namespace gnubase::engine
 				Note,
 				Player,  // a key of Select/Mute Player
 				Control, // what moves all pads (key: 0 voicings, 1 tensions, 2 transposition; velocity: 0 to 127)
+				// While listening, a port's control (key: 1 aftertouch, 2 pitch bend, 3 a controller, whose number
+				// is velocity), for MIDI Learn of what moves all pads.
+				ControlInput,
 			};
 			Kind kind = Kind::Note;
 			uint8_t key = 0;
@@ -95,8 +98,8 @@ namespace gnubase::engine
 		};
 		// One thread, the audio engine's cue thread: the next event the audio thread found. False if there is none.
 		bool takePadEvent(PadEvent& event) { return m_padEvents.tryPop(event); }
-		// Command thread: while on, every port's note goes to takePadEvent as it plays on, and no remote key triggers
-		// a pad (Assign from MIDI Input, MIDI Learn: chordPads.listen).
+		// Command thread: while on, every port's note and control goes to takePadEvent as it plays on, and no remote
+		// key triggers a pad (Assign from MIDI Input, MIDI Learn: chordPads.listen).
 		void listenForPads(bool on) { m_padListen.store(on, std::memory_order_relaxed); }
 
 		// Drops the input that waits for the audio thread. Only while no audio thread takes.
@@ -151,10 +154,11 @@ namespace gnubase::engine
 		rt::SpscQueue<Received> m_monitor;
 		// Audio thread: the pitches each remote key's note-on played, until its note-off.
 		std::array<midi::PadVoices, ChordPadKeys::g_maxPlayers> m_padVoices; // per player
-		// The sections player mode: the pad key that is down or was last, whether it is down, and the section keys
-		// that play.
+		// The sections player mode: the pad key that is down or was last, whether it is down, and the velocity of
+		// each section or subsection key that is down (0: up), which in combination starts when a pad key comes.
 		int m_sectionPad = -1;
 		bool m_sectionPadDown = false;
+		std::array<uint8_t, 128> m_sectionHeld{};
 		// The sections player mode's keys: a section or subsection key's notes for the pad that plays them.
 		bool playSection(const audio::MidiMessage& message, const ChordPadKeys& keys, PadBuffers& pads) noexcept;
 		rt::SpscQueue<PadEvent> m_padEvents{512};
