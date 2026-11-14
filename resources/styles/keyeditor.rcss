@@ -189,6 +189,7 @@
 {
 	position: absolute;
 	height: 0;
+	pointer-events: none; /* the note or the expression editor's area takes the mouse */
 }
 
 .key-expression-editor

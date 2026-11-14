@@ -1043,17 +1043,24 @@ TEST_CASE(
 	CHECK(std::abs(points().at(0).at("value").get<double>() - 0.75) <= 0.05);
 	// The editor shows it once the note has it.
 	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-expression-area .key-expression-step").size() == 1; }));
+	// A click a few pixels to the right, on the line drawn from that point, draws one there too.
+	f.app.shell().step(std::chrono::milliseconds(0)); // the line under the mouse, as the hover element
+	const ui::Point first = area(0.25, 0.25).point.value_or(ui::Point{});
+	f.click(ui::Target{"", 0, ui::Point{first.x + 6, first.y}});
+	REQUIRE(f.app.waitUntil([&] { return points().size() == 2; }));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-expression-area .key-expression-step").size() == 2; }));
 	// A drag draws the points along the way, replacing those there, and stays with the expression editor.
 	f.drag(area(0.5, 0.9), area(0.75, 0.1));
-	REQUIRE(f.app.waitUntil([&] { return points().size() >= 3; }));
-	CHECK(std::abs(points().at(1).at("value").get<double>() - 0.1) <= 0.05);
+	REQUIRE(f.app.waitUntil([&] { return points().size() >= 4; }));
+	CHECK(std::abs(points().at(2).at("value").get<double>() - 0.1) <= 0.05);
 	CHECK(std::abs(points().back().at("value").get<double>() - 0.9) <= 0.05);
 	CHECK(!f.has(".key-expression-editor", "off"));
 	// One undo step brings back the points before the drag.
 	f.app.call("history.undo");
-	REQUIRE(f.app.waitUntil([&] { return points().size() == 1; }));
+	REQUIRE(f.app.waitUntil([&] { return points().size() == 2; }));
 	f.app.call("history.redo");
-	REQUIRE(f.app.waitUntil([&] { return points().size() >= 3; }));
+	REQUIRE(f.app.waitUntil([&] { return points().size() >= 4; }));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-expression-area .key-expression-step").size() >= 4; }));
 	// The erase tool deletes the points it is dragged over, of the chosen expression only.
 	f.app.call("note.set",
 		{{"part", f.part},

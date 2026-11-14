@@ -246,7 +246,8 @@ namespace gnubase::ui
 		int64_t m_to = 1;
 		std::optional<std::pair<int64_t, int64_t>> m_range; // setTimeRange's
 		bool m_scrolled = false;
-		std::string m_notesRml; // the notes' elements as last set
+		std::string m_notesRml;      // the notes' elements as last set
+		std::string m_expressionRml; // the expression editor's lines as last set
 
 		Gesture m_gesture = Gesture::None;
 		std::pair<double, int> m_pressedAt;

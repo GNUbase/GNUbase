@@ -918,7 +918,14 @@ namespace gnubase::ui
 		for (const Note* note : notes)
 			rml += stepsRml(m_gesture == Gesture::Expression ? edited(*note) : note->expressions, type,
 				note->start - from, to - from, note->length);
-		setInner(editor->QuerySelector(".key-expression-area"), rml);
+		// Compared with what was set last, as the notes are: the element's own RML never equals it, and rebuilding the
+		// lines would free one that a mouse event still goes through.
+		if (Rml::Element* area = editor->QuerySelector(".key-expression-area");
+			area != nullptr && rml != m_expressionRml)
+		{
+			area->SetInnerRML(rml);
+			m_expressionRml = rml;
+		}
 		placeItems();
 	}
 
