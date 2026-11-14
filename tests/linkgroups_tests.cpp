@@ -337,8 +337,9 @@ TEST_CASE("channel.set and parameter.set pass a fader and pan move on alike", "[
 		CHECK(channelJson(client, midi).at("pan") == 0.0);
 	}
 
-	// The fader stops at its bottom too.
+	// The fader stops at its bottom too, and at the project's top.
 	Project project;
+	project.maxVolume = 12.0;
 	Channel to;
 	to.volume = -140.0;
 	to.pan = 0.5;
@@ -346,6 +347,8 @@ TEST_CASE("channel.set and parameter.set pass a fader and pan move on alike", "[
 	followLinkedMove(project, to, "pan", 0.25);
 	CHECK(to.volume == g_minChannelVolume);
 	CHECK(to.pan == 0.75);
+	followLinkedMove(project, to, "volume", 200.0);
+	CHECK(to.volume == 12.0);
 }
 
 TEST_CASE("VCA faders control one link group each, pass their buttons on and never control themselves", "[unit]")
