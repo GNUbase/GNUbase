@@ -505,10 +505,8 @@ TEST_CASE("an audio event that nothing shifts plays its file as it is", "[integr
 	const auto ownMedia = [&song]
 	{
 		const auto snapshot = song.engine.renderSnapshots().acquire();
-		for (const RenderMedia& media : snapshot.media)
-			if (media.id == song.event)
-				return true;
-		return false;
+		return std::any_of(snapshot.media.begin(), snapshot.media.end(),
+			[&song](const RenderMedia& media) { return media.id == song.event; });
 	};
 	CHECK(!ownMedia());
 	run(song.client, "audioEvent.set", {{"event", song.event}, {"rootKey", "D"}});

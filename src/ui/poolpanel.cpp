@@ -504,14 +504,14 @@ namespace gnubase::ui
 				return items;
 			};
 			std::vector<Row> result;
-			result.push_back({"f0", 0, "Audio", "", "", "", "", false});
+			result.push_back({"f0", 0, "Audio", "", "", "", "", false, ""});
 			const std::function<void(uint64_t, int)> add = [&](uint64_t parent, int level)
 			{
 				for (const Json* folder : sorted(folders, parent))
 				{
 					const auto id = folder->at("id").get<uint64_t>();
 					result.push_back({"f" + std::to_string(id), level, folder->at("name").get<std::string>(), "", "",
-						"", "", false});
+						"", "", false, ""});
 					add(id, level + 1);
 				}
 				for (const Json* clip : sorted(clips, parent))

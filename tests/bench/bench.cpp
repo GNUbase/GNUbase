@@ -11,7 +11,7 @@
 #include "engine/engine.h"
 #include "platform/rt/workerpool.h"
 
-#if defined(_WIN32)
+#ifdef _WIN32
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -185,7 +185,7 @@ namespace
 	// The memory the process holds now, in bytes: its working set or resident set; 0 where it can't tell.
 	size_t residentBytes()
 	{
-#if defined(_WIN32)
+#ifdef _WIN32
 		PROCESS_MEMORY_COUNTERS counters{};
 		return GetProcessMemoryInfo(GetCurrentProcess(), &counters, sizeof(counters)) != 0 ? counters.WorkingSetSize
 																						   : 0;
