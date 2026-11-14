@@ -165,7 +165,6 @@ namespace gnubase::ui
 
 	DrumMachinePanel::~DrumMachinePanel()
 	{
-		sound(-1);
 		if (Rml::Element* root = m_root.get())
 		{
 			for (const Rml::EventId id : g_events)
@@ -527,7 +526,7 @@ namespace gnubase::ui
 			return;
 		}
 		case Rml::EventId::Mouseup:
-			// ponytail: a button released outside the panel ends the note with the next press or the panel's end.
+			// ponytail: a button released outside the panel ends the note with the next press there.
 			sound(-1);
 			return;
 		case Rml::EventId::Click:
