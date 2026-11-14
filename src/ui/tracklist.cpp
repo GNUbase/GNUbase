@@ -371,7 +371,8 @@ namespace gnubase::ui
 		};
 		// The chord track (docs/features/chord-track.md, reference manual pp. 1336, 1341-1344): Chords to MIDI onto the
 		// first selected MIDI or instrument track; the other functions take the selected MIDI parts and audio events,
-		// else those of the selected tracks, and audio events only outside audio parts (p. 1344).
+		// else those of the selected tracks, and audio events only outside audio parts (p. 1344). Selected audio parts
+		// count as a selection, of nothing: they don't fall back to the tracks' loose audio events.
 		const auto noteTracks = [this]
 		{
 			std::vector<uint64_t> tracks;
@@ -390,7 +391,7 @@ namespace gnubase::ui
 			const auto selected = [&events](const Json& item)
 			{ return std::binary_search(events.begin(), events.end(), item.at("id").get<uint64_t>()); };
 			bool fromEvents = false;
-			for (const char* each : {"midiParts", "audioEvents"})
+			for (const char* each : {"midiParts", "audioParts", "audioEvents"})
 				for (const Json& item : project.at(each))
 					fromEvents = fromEvents || selected(item);
 			const std::vector<uint64_t> tracks = selection();

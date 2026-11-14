@@ -883,4 +883,43 @@ TEST_CASE("recording chord events from an instrument track that only monitors", 
 	REQUIRE(added);
 	CHECK(chordNames(client) == std::vector<std::string>{"F"});
 	CHECK(run(client, "project.get").at("midiParts").empty()); // the track didn't record
+	// Its retrospective buffer kept what it played.
+	run(client, "midi.insertRetrospective", {{"track", rig.track}});
+	const Json parts = run(client, "project.get").at("midiParts");
+	REQUIRE(parts.size() == 1);
+	std::vector<int> pitches;
+	for (const Json& note : parts[0].at("notes"))
+		pitches.push_back(note.at("pitch").get<int>());
+	std::sort(pitches.begin(), pitches.end());
+	CHECK(pitches == std::vector<int>{65, 69, 72});
+}
+
+TEST_CASE("a chord held on an audition track that is frozen doesn't block auditioning", "[integration]")
+{
+	const gnubase::test::TempDir folder; // outlives the engine, which plays the freeze file
+	Rig rig;
+	Client& client = rig.client;
+	run(client, "project.save", {{"path", (folder.path() / "project.dawproject").u8string()}});
+	const Json part = run(client, "midiPart.add", {{"track", rig.track}, {"position", 0}, {"length", g_bar}});
+	run(client, "note.add",
+		{{"part", part.at("part").at("id")},
+			{"notes", {{{"position", 0}, {"length", g_beatTicks}, {"pitch", 60}, {"velocity", 0.75}}}}});
+	run(client, "chord.setTrack", {{"audition", rig.track}});
+	run(client, "chord.audition", {{"chord", "C"}});
+	run(client, "audio.render", {{"frames", 64}});
+	run(client, "track.freeze", {{"tracks", {rig.track}}, {"tail", 0}});
+	run(client, "audio.render", {{"frames", 64}}); // the new graph, without the track's sequencer
+	run(client, "chord.audition", {{"on", false}});
+
+	// Another audition track auditions.
+	const Json added = run(client, "track.add", {{"type", "instrument"}});
+	const auto channel = added.at("channel").at("id").get<ObjectId>();
+	run(client, "channel.set", {{"channel", channel}, {"instrument", "noteProbe"}, {"monitor", true}});
+	run(client, "chord.setTrack", {{"audition", added.at("track").at("id")}});
+	run(client, "audio.render", {{"frames", 64}}); // the new graph
+	run(client, "midi.capture");                   // drops what was captured so far
+	CHECK(run(client, "chord.audition", {{"chord", "C"}}).at("pitches") == Json{48, 60, 64, 67});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(notesPlayed(run(client, "midi.capture")) ==
+		std::vector<std::vector<int>>{{0x90, 48}, {0x90, 60}, {0x90, 64}, {0x90, 67}});
 }
