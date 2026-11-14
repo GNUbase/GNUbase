@@ -159,10 +159,16 @@ namespace gnubase::ui
 			for (const Json& version : track.at("versions"))
 			{
 				const std::string id = std::to_string(version.at("id").get<int>());
-				rml += R"(<menuitem class="track-version)" +
-					std::string(version.at("id") == track.at("activeVersion") ? " checked" : "") + R"(" version=")" +
-					id + R"(">)" + Rml::StringUtilities::EncodeRml(version.at("name").get<std::string>()) +
-					R"(<span class="track-version-id">)" + id + "</span></menuitem>";
+				rml += R"(<menuitem class="track-version)";
+				rml += version.at("id") == track.at("activeVersion") ? " checked" : "";
+				rml += R"(" version=")";
+				rml += id;
+				rml += R"(">)";
+				rml += Rml::StringUtilities::EncodeRml(version.at("name").get<std::string>());
+				// The ID after the name, as the inspector's list shows it (reference manual p. 232).
+				rml += R"(<span class="track-version-id">)";
+				rml += id;
+				rml += "</span></menuitem>";
 			}
 			return rml;
 		}
