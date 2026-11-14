@@ -153,6 +153,7 @@ add_executable(gnubase-tests
 	profiles_tests.cpp
 	profiles_ui_tests.cpp
 	processor_tests.cpp
+	projectdialogs_ui_tests.cpp
 	projectfiles_tests.cpp
 	projectrules_tests.cpp
 	projectrules_ui_tests.cpp

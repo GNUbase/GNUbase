@@ -76,6 +76,8 @@ How it plays:
   automation without it, and the lane's last events would otherwise keep their value (#1361).
 - A synth voice takes its pad's tuning, tone and noise at its note on; level, pan, envelope and sends follow the
   pad's values while it sounds.
+- The delay and the reverb are cleared when they are switched off or Bypass All Effects goes on: switched on again,
+  they start empty instead of playing what they held from before (#1485).
 
 ## In the UI
 
@@ -127,17 +129,17 @@ sampler plays a section of; `project.backup`'s `minimize` cuts such files down f
 
 `tests/drummachine_tests.cpp`: the drum machine on its own (a pad's sample at its note, start, end, tuning and reverse;
 level, pan, velocity, mute and solo; exclusive groups and the gate; every synth sounding, decaying, held and the same in
-any block size; the delay and reverb sends and Bypass All Effects; its parameters in `processor.list`), a pad parameter
-ignoring the events of its removed lane, the commands (a file's clip in the pool folder Drum Machine), the default kit
-and the names it goes by (`processor.list`'s `padNames`), a copy going by the sound a synth pad went by until a sample
-names it, a synth voice keeping its tuning, tone and noise from its note on, pattern lanes that follow the pads, track
-presets and drum tracks imported onto the track, saving and loading, another instrument dropping the pads, the pads'
-clips in the pool (`pool.removeUnused`, `media.removeMissing`), track presets loaded onto a drum track and onto another
-instrument's, tracks added from a preset or imported from another project with their pads' clips, automation of a pad's
-parameter and the values set without it, and offline renders of a drum track against the sample itself and the golden
-file `drum-track-beat` (a pattern event playing the kit with its sends); `tests/rtcheck_tests.cpp` plays samples, every
-synth, groups and the effects without allocating; `tests/drummachine_ui_tests.cpp` drives the panel (following the
-selection, the names of pads without their own, groups, pages, controls, playing a pad with a click, saving and loading
-track presets, renaming, coloring, copying (a synth pad's copy shown by the sound it was copied from), cutting, pasting,
-resetting and dropping a file on a pad) and the Add Track dialog's Drum page, from the Project menu's command and from
-the empty panel.
+any block size; the delay and reverb sends and Bypass All Effects, and the effects starting empty after they were off;
+its parameters in `processor.list`), a pad parameter ignoring the events of its removed lane, the commands (a file's
+clip in the pool folder Drum Machine), the default kit and the names it goes by (`processor.list`'s `padNames`), a copy
+going by the sound a synth pad went by until a sample names it, a synth voice keeping its tuning, tone and noise from
+its note on, pattern lanes that follow the pads, track presets and drum tracks imported onto the track, saving and
+loading, another instrument dropping the pads, the pads' clips in the pool (`pool.removeUnused`, `media.removeMissing`),
+track presets loaded onto a drum track and onto another instrument's, tracks added from a preset or imported from
+another project with their pads' clips, automation of a pad's parameter and the values set without it, and offline
+renders of a drum track against the sample itself and the golden file `drum-track-beat` (a pattern event playing the
+kit with its sends); `tests/rtcheck_tests.cpp` plays samples, every synth, groups and the effects without allocating;
+`tests/drummachine_ui_tests.cpp` drives the panel (following the selection, the names of pads without their own,
+groups, pages, controls, playing a pad with a click, saving and loading track presets, renaming, coloring, copying (a
+synth pad's copy shown by the sound it was copied from), cutting, pasting, resetting and dropping a file on a pad) and
+the Add Track dialog's Drum page, from the Project menu's command and from the empty panel.

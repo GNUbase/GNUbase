@@ -404,6 +404,15 @@ namespace gnubase::app
 				  m_canUndo = position > 0;
 				  m_canRedo = position < event.data.at("steps").get<size_t>();
 			  })),
+		  m_projectReset(m_binding.on("project.reset",
+			  [this](const engine::Event&)
+			  {
+				  for (const Rml::ObserverPtr<Rml::Element>& open : m_projectDialogs)
+					  if (auto* document = dynamic_cast<Rml::ElementDocument*>(open.get());
+						  document != nullptr && document->GetParentNode() != nullptr)
+						  document->Close();
+				  m_projectDialogs.clear();
+			  })),
 		  m_files(m_keys, m_binding, m_shell, resources / "ui")
 	{
 		ui::registerWidgets(m_rmlui);
@@ -2635,8 +2644,25 @@ namespace gnubase::app
 		Rml::ElementDocument* document = window.context().LoadDocument(file.generic_u8string());
 		if (document == nullptr)
 			throw std::runtime_error("cannot load the dialog " + file.u8string());
+		// The attributes with ids of the project's objects. The articulation map setup follows project.reset itself,
+		// dropping its track.
+		constexpr std::array<std::string_view, 7> ids = {
+			"below", "destination", "notes", "parts", "send", "track", "tracks"};
+		bool forObjects = false;
 		for (const auto& [attribute, value] : attributes)
+		{
 			document->SetAttribute(attribute, value);
+			forObjects = forObjects ||
+				(!value.empty() && std::find(ids.begin(), ids.end(), attribute) != ids.end() &&
+					std::string_view(name) != "articulation-maps.rml");
+		}
+		if (forObjects)
+		{
+			m_projectDialogs.erase(std::remove_if(m_projectDialogs.begin(), m_projectDialogs.end(),
+									   [](const Rml::ObserverPtr<Rml::Element>& open) { return !open; }),
+				m_projectDialogs.end());
+			m_projectDialogs.push_back(document->GetObserverPtr());
+		}
 		document->Show(Rml::ModalFlag::Modal);
 		return *document;
 	}

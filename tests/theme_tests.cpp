@@ -264,6 +264,50 @@ TEST_CASE("every theme's piano keyboard has light white keys and dark black keys
 	}
 }
 
+TEST_CASE("every theme's mixer strip names are legible on any track color", "[unit]")
+{
+	// A strip's name on its track's color (docs/features/mixer-window.md), which can be any color: light text, or
+	// dark text where the mixer marks the color .bright, by the same luminance as ui::Mixer.
+	const double brightFrom = 0.179; // where black and white text have the same contrast
+	std::vector<std::string> colors;
+	const char* digits = "0123456789abcdef";
+	for (int r = 0; r < 256; r += 17)
+		for (int g = 0; g < 256; g += 17)
+			for (int b = 0; b < 256; b += 17)
+				colors.push_back(std::string("#") + digits[r / 16] + digits[r % 16] + digits[g / 16] + digits[g % 16] +
+					digits[b / 16] + digits[b % 16]);
+	for (const char* theme : g_themes)
+	{
+		INFO("theme " << theme);
+		std::string light;
+		std::string dark;
+		for (const auto& [selector, declarations] : rules(gnubase::test::readText(themesDir() / theme / "theme.rcss")))
+		{
+			const size_t first = selector.find_first_not_of(" \t");
+			const std::string name = selector.substr(first, selector.find_last_not_of(" \t\r") + 1 - first);
+			const size_t at = declarations.find("\tcolor: #"); // not background-color
+			if (at == std::string::npos)
+				continue;
+			const std::string color = declarations.substr(at + std::string_view("\tcolor: ").size(), 7);
+			if (name == ".mixer-channel-name.colored")
+				light = color;
+			else if (name == ".mixer-channel-name.colored.bright")
+				dark = color;
+		}
+		REQUIRE(light.size() == 7);
+		REQUIRE(dark.size() == 7);
+		CHECK(luminance(light) > luminance(dark));
+		const nlohmann::json tokens = readJson(themesDir() / theme / "tokens.json");
+		std::vector<std::string> all = colors;
+		for (const nlohmann::json& item : tokens.at("trackPalette"))
+			all.push_back(item.get<std::string>());
+		double least = 21.0;
+		for (const std::string& color : all)
+			least = std::min(least, contrast(color, luminance(color) > brightFrom ? dark : light));
+		CHECK(least >= 4.5); // WCAG 2's contrast for text (1.4.3)
+	}
+}
+
 TEST_CASE("every theme shows the chord pads' black section and modifier keys as such inside the remote range", "[unit]")
 {
 	// #1447: what the engine takes a key as wins over the remote range, on black keys too. The rules live in the

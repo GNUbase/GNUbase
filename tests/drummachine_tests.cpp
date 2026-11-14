@@ -351,6 +351,49 @@ TEST_CASE("the drum machine's delay and reverb play what the pads send them", "[
 	CHECK(peak(bench.left(64), 2000) > 0.0);
 }
 
+TEST_CASE("the drum machine's delay and reverb forget what they held while they were off", "[unit]")
+{
+	// The pad sounds for 10 frames; its echo comes 480 frames later, and the reverb rings on for longer. The effect
+	// goes off at frame 128 and on again at frame 256: what it held before is gone, nothing comes back.
+	struct Case
+	{
+		uint32_t id;
+		double off;
+		double on;
+		bool delay;
+		bool reverb;
+	};
+	for (const Case& test : {Case{DrumMachine::BypassEffects, 1.0, 0.0, true, true},
+			 Case{DrumMachine::DelayOn, 0.0, 1.0, true, false}, Case{DrumMachine::ReverbOn, 0.0, 1.0, false, true}})
+	{
+		CAPTURE(test.id);
+		for (const bool toggle : {false, true})
+		{
+			DrumMachine drums;
+			drums.setSample(36, ramp(10));
+			Bench bench(drums);
+			bench.set(36, DrumMachine::Instrument, static_cast<double>(Layer::Sample));
+			bench.set(36, DrumMachine::DelaySend, test.delay ? 100.0 : 0.0);
+			bench.set(36, DrumMachine::ReverbSend, test.reverb ? 100.0 : 0.0);
+			bench.add(parameter(0, DrumMachine::DelayTime, 10.0));
+			bench.add(parameter(0, DrumMachine::DelayFeedback, 0.0));
+			bench.add(parameter(0, DrumMachine::ReverbOn, test.reverb ? 1.0 : 0.0));
+			bench.add(note(0, true, 36));
+			bench.left(2);
+			if (toggle)
+				bench.add(parameter(0, test.id, test.off));
+			bench.left(2);
+			if (toggle)
+				bench.add(parameter(0, test.id, test.on));
+			const double after = peak(bench.left(64));
+			if (toggle)
+				CHECK(after == 0.0);
+			else
+				CHECK(after > 1e-4);
+		}
+	}
+}
+
 TEST_CASE("processor.list has the drum machine, an instrument with every pad's parameters", "[unit]")
 {
 	const processors::BuiltinInfo* info = processors::findBuiltin("drumMachine");

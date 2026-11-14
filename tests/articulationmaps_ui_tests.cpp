@@ -38,12 +38,7 @@ namespace
 						.at("track")
 						.at("id")
 						.get<uint64_t>();
-			REQUIRE(app.waitUntil(
-				[this]
-				{
-					return display.project().is_object() &&
-						display.project().value("tracks", Json::array()).size() == 1;
-				}));
+			REQUIRE(app.waitUntil([this] { return display.project().value("tracks", Json::array()).size() == 1; }));
 			app.appUi().trackList()->select({track});
 			app.shell().step(std::chrono::milliseconds(0));
 		}
@@ -730,7 +725,8 @@ TEST_CASE("the Articulations lane adds no second direction where one starts, and
 	// Left of the bar, the click snaps to where it starts: nothing is added there. A click in the Arco row is.
 	f.click(f.at(2, 3.8));
 	f.click(f.at(1, 8.0));
-	REQUIRE(f.app.waitUntil([&f] { return f.elements(inLane(" .articulation-item.direction")).size() == 2; }));
+	const std::string arco = inLane(" .articulation-row[articulation-row=\"0\"] .articulation-item.direction");
+	REQUIRE(f.app.waitUntil([&] { return f.elements(arco).size() == 1; }));
 	CHECK(f.midiPart().at("controllers").size() == 2);
 
 	// Select All Events on Lane selects the lane's directions.
@@ -856,4 +852,18 @@ TEST_CASE("the in-place editor has the Articulations lane", "[ui]")
 	const Json direction = app.call("project.get").at("midiParts").at(0).at("controllers").at(0);
 	CHECK(direction.at("articulation") == "Pizzicato");
 	CHECK(direction.at("position") == 8 * g_sixteenth);
+}
+
+TEST_CASE("the articulation map setup opened right after a new project has no track", "[ui]")
+{
+	Fixture f;
+	// project.new through MCP or Lua, then the setup before the UI's next step: the track list still has the old
+	// project's track selected, so the setup opens for it, and the project.reset reaches the setup's Lua while it reads
+	// the project (#1464).
+	f.app.call("project.new");
+	f.app.keys().run("midi.articulationMapSetup", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil([&f] { return f.shown("#articulation-maps-dialog"); }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.elements("body[track]").empty());
+	CHECK(f.elements("#articulation-map-assign.unavailable").size() == 1);
 }

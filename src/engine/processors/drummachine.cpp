@@ -438,6 +438,17 @@ namespace gnubase::engine::processors
 				state.flush();
 		}
 
+		// An effect that goes off, or is bypassed, forgets what it held: switched on again, it doesn't play echoes and
+		// reverb from before (#1485).
+		const bool delayOn = effects && m_values[DelayOn] >= 0.5;
+		const bool reverbOn = effects && m_values[ReverbOn] >= 0.5;
+		if (m_delayOn && !delayOn)
+			m_delay.reset();
+		if (m_reverbOn && !reverbOn)
+			m_reverb.reset();
+		m_delayOn = delayOn;
+		m_reverbOn = reverbOn;
+
 		// The global delay and reverb (pp. 975-978), on the sends, into the pads' sum; the delay sends some of its
 		// echoes on to the reverb.
 		if (effects)

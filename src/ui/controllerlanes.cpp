@@ -518,15 +518,14 @@ namespace gnubase::ui
 						const double left = static_cast<double>(item.start - m_from) / range * 100.0;
 						const double width = static_cast<double>(item.end - item.start) / range * 100.0;
 						element->SetProperty(Rml::PropertyId::Left, percent(left));
-						// Kept elements (render) lose what they no longer have: a width, a slot's color (#1498).
+						// Kept elements (render) lose a width they no longer have (#1498). A slot that loses its color
+						// loses its class .light or .dark too: the RML changes and its elements are new.
 						if (item.end > item.start)
 							element->SetProperty(Rml::PropertyId::Width, percent(width));
 						else
 							element->RemoveProperty(Rml::PropertyId::Width);
 						if (!item.color.empty())
 							element->SetProperty("background-color", item.color); // the slot's color, user data
-						else
-							element->RemoveProperty("background-color");
 					}
 				continue;
 			}

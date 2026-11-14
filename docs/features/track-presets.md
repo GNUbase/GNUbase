@@ -99,7 +99,8 @@ they are.
   and drum and articulation maps, the track's plugins going with their automation; with `automation` its automation in
   place of the track's, and without it, once events or settings are imported onto the track, the track loses its
   automation (the note on Automation, p. 204). The IDs of the file's versions become new ones, one for each ID of the
-  file, on the new tracks too, so that none of them falls into a version group the project has of its own; the new
+  file, on the new tracks too, including the implicit first version of a track without a version list, so that none
+  of them falls into a version group the project has of its own; the new
   version of a track imported onto gets the ID its source's active version has, so that the tracks imported onto get
   one ID when the versions their sources played shared one in the file, and the versions that shared one there keep
   playing together here when they didn't (p. 233). What played or sent into the copy's channel, such as another

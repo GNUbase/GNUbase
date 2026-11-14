@@ -825,8 +825,12 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".event-display .automation-editor", {"border-width": f"{widths['hairline']}dp",
                                                "border-color": c["accent2"],
                                                "background-color": c["accent2"] + "1a"}),
-        # The mixer (docs/features/mixer-window.md): a line between the channel strips
+        # The mixer (docs/features/mixer-window.md): a line between the channel strips, and a channel's name on its
+        # track's color, which code sets as user data and can be any color: white text over it, or black text over a
+        # bright one, which gives every color at least WCAG's 4.5:1
         (".mixer-channel", {"border-right-width": f"{widths['hairline']}dp", "border-right-color": c["border"]}),
+        (".mixer-channel-name.colored", {"color": "#ffffff", "border-radius": f"{theme['radii']['small']}dp"}),
+        (".mixer-channel-name.colored.bright", {"color": "#000000"}),
         # The MIDI editors (docs/features/midi-editors.md): parts outside the part editing mode dimmed, the active part
         # and track lit, and the Visibility tab's checks: a check mark, or a rectangle while some parts show
         (".midi-editor .editor-part, .in-place-editor .editor-part",

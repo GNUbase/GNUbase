@@ -147,8 +147,9 @@ namespace gnubase::engine
 				else
 				{
 					copyPatterns(id, track.id);
-					if (m_versionIds != nullptr && !track.versions.empty())
+					if (m_versionIds != nullptr && hasVersions(track.type))
 					{
+						track.versions = versionsOf(track);
 						for (TrackVersion& version : track.versions)
 							version.id = m_versionIds->of(version.id);
 						track.activeVersion = m_versionIds->of(track.activeVersion);

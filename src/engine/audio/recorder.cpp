@@ -12,6 +12,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <ctime>
 #include <exception>
 #include <set>
@@ -302,6 +303,9 @@ namespace gnubase::engine
 		m_filled.reset();
 		m_history.assign(static_cast<size_t>(m_next.preRecordFrames) * static_cast<size_t>(m_channels), 0.0f);
 		m_historyFrames = 0;
+		// The next device counts its frames from 0 again: what was kept so far is no input just before its recordings.
+		for (auto& entry : m_retrospective)
+			entry.second.recorded = entry.second.events.size();
 		if (maxFrames == 0)
 			return;
 		const uint32_t count = std::max(g_minChunks, g_queuedFrames / maxFrames);
@@ -773,7 +777,7 @@ namespace gnubase::engine
 				keepRetrospective(input, chunk.deviceFrame);
 			if (chordsOnly)
 				if (const auto kept = m_retrospective.find(input.channel); kept != m_retrospective.end())
-					kept->second.recordedUntil = chunk.deviceFrame + input.offset + 1;
+					kept->second.recorded = kept->second.events.size();
 			if (builder != m_midiBuilders.end() && m_midiCurrent.midiFilter.records(input.event))
 				builder->second.add(chunk.position + input.offset, input.event);
 		}
@@ -788,22 +792,21 @@ namespace gnubase::engine
 		for (const MidiRecordTrack& track : m_midiCurrent.midiTracks)
 			m_midiBuilders[track.channel].setMpe(m_midiCurrent.mpePitchRange);
 		// The catch range: input that came just before recording started belongs to its start, unless a recording
-		// took it already.
-		if (m_midiCurrent.catchFrames <= 0)
-			return;
+		// took it already. All that was kept so far is before this recording: the next one doesn't take it again.
 		for (const MidiRecordTrack& track : m_midiCurrent.midiTracks)
 		{
 			const auto found = m_retrospective.find(track.channel);
 			if (found == m_retrospective.end())
 				continue;
 			Retrospective& buffer = found->second;
-			for (const RetrospectiveEvent& kept : buffer.events)
-				if (kept.deviceFrame >= buffer.recordedUntil && kept.deviceFrame < chunk.deviceFrame &&
-					kept.deviceFrame + static_cast<uint64_t>(m_midiCurrent.catchFrames) >= chunk.deviceFrame &&
-					m_midiCurrent.midiFilter.records(kept.event))
-					m_midiBuilders[track.channel].add(chunk.position, kept.event);
-			if (track.chordsOnly)
-				buffer.recordedUntil = std::max(buffer.recordedUntil, chunk.deviceFrame);
+			if (m_midiCurrent.catchFrames > 0)
+				for (auto kept = buffer.events.begin() + static_cast<std::ptrdiff_t>(buffer.recorded);
+					kept != buffer.events.end(); ++kept)
+					if (kept->deviceFrame < chunk.deviceFrame &&
+						kept->deviceFrame + static_cast<uint64_t>(m_midiCurrent.catchFrames) >= chunk.deviceFrame &&
+						m_midiCurrent.midiFilter.records(kept->event))
+						m_midiBuilders[track.channel].add(chunk.position, kept->event);
+			buffer.recorded = buffer.events.size();
 		}
 	}
 
@@ -856,11 +859,18 @@ namespace gnubase::engine
 		if (buffer.taken ||
 			(input.played < 0 && !buffer.events.empty() && buffer.events.back().position < 0 &&
 				frame > buffer.events.back().deviceFrame + static_cast<uint64_t>(m_next.pauseFrames)))
+		{
 			buffer.events.clear();
+			buffer.recorded = 0;
+		}
 		buffer.taken = false;
 		buffer.events.push_back({frame, input.played, input.event});
 		while (buffer.events.size() > m_next.retrospective)
+		{
 			buffer.events.pop_front();
+			if (buffer.recorded > 0)
+				--buffer.recorded;
+		}
 	}
 
 	void Recorder::keepHistory(const Chunk& chunk)

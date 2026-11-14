@@ -169,6 +169,9 @@ namespace gnubase::engine::processors
 		std::array<Voice, g_drumVoices> m_voices{};
 		dsp::Delay m_delay;
 		dsp::Reverb m_reverb;
+		// Whether the delay and the reverb ran in the last block: one that goes off is cleared, so it starts empty.
+		bool m_delayOn = false;
+		bool m_reverbOn = false;
 		std::array<std::vector<float>, 2> m_delayBus;
 		std::array<std::vector<float>, 2> m_reverbBus;
 	};
