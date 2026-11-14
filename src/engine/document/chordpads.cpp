@@ -72,6 +72,15 @@ namespace gnubase::engine
 			return keys;
 		}
 
+		// Where the controls that move all pads left them (reference manual p. 1387): per control (voicings,
+		// tensions, transposition) its step from its rest, and per pad how far it followed, which is less for a pad
+		// that has tensions already or reaches the limit of 12 inversions (#1448).
+		struct ControlSteps
+		{
+			std::array<int, 3> steps{};
+			std::array<std::vector<int>, 3> followed;
+		};
+
 		// What chordPads.listen listens for, and what chordPads.remoteInput saw of the remote keys (#1089).
 		struct RemoteState
 		{
@@ -80,7 +89,7 @@ namespace gnubase::engine
 			int auditioned = -1; // the pad a chord modifier's key plays while it is down, or -1
 			// How far the controls moved all pads' voicings, tensions and transposition, after each history step a
 			// control made: the latest of them that is done says where the pads are, also after undo and redo.
-			std::map<uint64_t, std::array<int, 3>> controlSteps;
+			std::map<uint64_t, ControlSteps> controlSteps;
 			// Each control's gesture for its undo step's merge key, a new one after a second without its messages.
 			std::array<int, 3> gestures{};
 			std::array<Clock::TimePoint, 3> lastControl{};
@@ -1267,11 +1276,12 @@ namespace gnubase::engine
 				"select the previous and the next player and mute or unmute the selected one, -1 for none. "
 				"controlSources (Modify All Pad Voicings, Modify All Pad Tensions, Transpose All Pads, p. 1387): what "
 				"moves them from the remote's input, none, aftertouch, pitchBend or controller (of controlNumbers): "
-				"a control at rest changes nothing: aftertouch and controllers rest at 0 and go up to 3 inversions up, "
-				"3 "
-				"more tensions and 6 semitones up; pitch bend rests in its middle and goes from 3 inversions and 6 "
-				"semitones down to 3 and 6 up, and from none to 3 more tensions above its middle. Each gesture of a "
-				"control is one undo step; a second without a move ends the gesture.",
+				"a control at rest changes nothing: aftertouch and controllers rest at 0 and go up to 3 inversions "
+				"up, 3 more tensions and 6 semitones up; pitch bend rests in its middle and goes from 3 inversions "
+				"and 6 semitones down to 3 and 6 up, and from none to 3 more tensions above its middle. A pad that "
+				"follows a move only partly, such as one with tensions or at the limit of 12 inversions, goes back "
+				"as far as it went. Each gesture of a control is one undo step; a second without a move ends the "
+				"gesture.",
 				objectSchema({{"rootKey", integerSchema}, {"transposePads", booleanSchema}, {"padCount", integerSchema},
 					{"octaveOffset", integerSchema}, {"player", integerSchema}, {"velocity", integerSchema},
 					{"remote", booleanSchema}, {"remoteStart", integerSchema}, {"remoteEnd", integerSchema},
@@ -2273,41 +2283,83 @@ namespace gnubase::engine
 							static_cast<int>(std::lround(std::max(velocity - rest, 0) /
 								static_cast<double>(127 - rest) * (highest.at(which) - low)));
 						// Where the controls left the pads, as the latest done step of theirs says.
-						std::array<int, 3> steps{};
+						ControlSteps where;
 						for (size_t i = m_history.position(); i-- > 0;)
 							if (const auto found = state.controlSteps.find(m_history.steps().at(i).id);
 								found != state.controlSteps.end())
 							{
-								steps = found->second;
+								where = found->second;
 								break;
 							}
 						const Clock::TimePoint now = m_clock->now();
 						if (now - state.lastControl.at(which) > std::chrono::seconds(1))
 							++state.gestures.at(which);
 						state.lastControl.at(which) = now;
-						const int delta = step - steps.at(which);
-						std::vector<int> all(pads.pads.size());
-						std::iota(all.begin(), all.end(), 0);
-						if (delta != 0)
+						const int from = where.steps.at(which);
+						if (step == from)
+							continue;
+						// Each pad as far as the control goes, but on the way back no further than it followed on
+						// the way out, so that a control back at rest leaves the pads as they were (#1448).
+						std::vector<int>& followed = where.followed.at(which);
+						followed.resize(pads.pads.size(), 0);
+						std::map<int, std::vector<int>> moves; // by how much, which pads
+						for (size_t i = 0; i < followed.size(); ++i)
 						{
-							steps.at(which) = step;
-							context.call("history.transaction",
-								{{"description", "Modify chord pads"},
-									{"merge",
-										std::string("chordPads.control ") + changes.at(which) + " " +
-											std::to_string(state.gestures.at(which))},
-									{"commands",
-										{{{"command", "chordPads.modify"},
-											{"parameters", {{"pads", all}, {changes.at(which), delta}}}}}}});
-							// The steps after the history's last done step; those of steps gone from it go too.
-							if (m_history.position() > 0)
-								state.controlSteps[m_history.steps().at(m_history.position() - 1).id] = steps;
-							for (auto it = state.controlSteps.begin(); it != state.controlSteps.end();)
-								it = std::any_of(m_history.steps().begin(), m_history.steps().end(),
-										 [&it](const HistoryStep& done) { return done.id == it->first; })
-									? std::next(it)
-									: state.controlSteps.erase(it);
+							int to = step;
+							if (from > 0 && followed.at(i) < from)
+								to = std::min(step, followed.at(i));
+							else if (from < 0 && followed.at(i) > from)
+								to = std::max(step, followed.at(i));
+							if (to != followed.at(i))
+								moves[to - followed.at(i)].push_back(static_cast<int>(i));
 						}
+						// What a pad has of the control's change: its voicing's inversion or its tensions.
+						const auto measure = [this, which](const std::vector<std::vector<int>>& voicings, size_t i)
+						{
+							const ChordPads& current = m_project.chordPads;
+							const ChordPad& pad = current.pads.at(i);
+							if (pad.chord.empty() || which == 2)
+								return 0;
+							if (which == 1)
+								return static_cast<int>(chordOf(pad.chord).tensions.size());
+							return pad.adaptive ? inversionOf(current, chordOf(pad.chord), voicings.at(i))
+												: voicingOf(pad, current.player);
+						};
+						const std::vector<std::vector<int>> voicings = chordPadVoicings(pads);
+						std::vector<int> before(followed.size());
+						for (size_t i = 0; i < followed.size(); ++i)
+							before.at(i) = measure(voicings, i);
+						Json commands = Json::array();
+						for (const auto& [by, targets] : moves)
+							commands.push_back({{"command", "chordPads.modify"},
+								{"parameters", {{"pads", targets}, {changes.at(which), by}}}});
+						if (commands.empty())
+							continue;
+						context.call("history.transaction",
+							{{"description", "Modify chord pads"},
+								{"merge",
+									std::string("chordPads.control ") + changes.at(which) + " " +
+										std::to_string(state.gestures.at(which))},
+								{"commands", commands}});
+						for (const auto& [by, targets] : moves)
+							for (const int target : targets)
+							{
+								const auto i = static_cast<size_t>(target);
+								const ChordPad& moved = pads.pads.at(i);
+								if (which != 2)
+									followed.at(i) += measure(voicings, i) - before.at(i);
+								else if (!moved.chord.empty() && !moved.locked)
+									followed.at(i) += by;
+							}
+						where.steps.at(which) = step;
+						// The steps after the history's last done step; those of steps gone from it go too.
+						if (m_history.position() > 0)
+							state.controlSteps[m_history.steps().at(m_history.position() - 1).id] = where;
+						for (auto it = state.controlSteps.begin(); it != state.controlSteps.end();)
+							it = std::any_of(m_history.steps().begin(), m_history.steps().end(),
+									 [&it](const HistoryStep& done) { return done.id == it->first; })
+								? std::next(it)
+								: state.controlSteps.erase(it);
 					}
 					else if (kind == "player")
 					{

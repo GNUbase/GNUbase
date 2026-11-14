@@ -673,6 +673,8 @@ namespace
 	{
 		RemoteRig() : rig(backends())
 		{
+			// A control's gesture ends after a second on the engine's clock: only the tests move it on (#1447).
+			rig.engine.holdClock();
 			run(rig.client, "midi.ports"); // opens the inputs
 			keys = backend->openOutput("Keys");
 			other = backend->openOutput("Other");
@@ -1683,6 +1685,14 @@ TEST_CASE(
 	CHECK(remote.until([&] { return pad(client, 1).at("pitches") != chord; }));
 	sendBytes(remote, {0xE0, 0, 64});
 	CHECK(remote.until([&] { return pad(client, 1).at("pitches") == chord; }));
+	// Below its middle too (#1448): aftertouch's move afterwards says that the bend arrived.
+	sendBytes(remote, {0xE0, 0, 0});
+	sendBytes(remote, {0xD0, 42});
+	CHECK(remote.until([&] { return pad(client, 1).at("voicing") == 1; }));
+	CHECK(pad(client, 1).at("chord") == "Dm");
+	sendBytes(remote, {0xD0, 0});
+	CHECK(remote.until([&] { return pad(client, 1).at("pitches") == chord; }));
+	sendBytes(remote, {0xE0, 0, 64});
 
 	// A controller's gesture is one undo step; after a second without it, the next is another.
 	const auto steps = run(client, "history.get").at("position").get<int64_t>();
@@ -1706,6 +1716,38 @@ TEST_CASE(
 	sendBytes(remote, {0xB0, 74, 0});
 	sendBytes(remote, {0xB0, 74, 21});
 	CHECK(remote.until([&] { return pad(client, 1).at("chord") == "D#m"; }));
+}
+
+TEST_CASE("a pad that follows a control only partly is as before once the control rests again", "[integration]")
+{
+	// #1448: Dm7 takes two of three more tensions, a voicing of 11 inversions one of three more.
+	RemoteRig remote;
+	Client& client = remote.rig.client;
+	run(client, "chordPads.set",
+		{{"controlSources", {"controller", "controller", "none"}}, {"controlNumbers", {20, 21, 1}}});
+	run(client, "chordPads.assign", {{"assignments", {{{"pad", 1}, {"chord", "Dm7"}}}}});
+	run(client, "chordPads.modify", {{"pads", Json::array({2})}, {"voicing", 11}});
+	run(client, "audio.render", {{"frames", 64}});
+	const auto sounds = [&]
+	{
+		std::vector<Json> result;
+		const Json pads = run(client, "chordPads.get").at("pads");
+		for (const Json& each : pads)
+			result.push_back(Json::array({each.at("chord"), each.at("pitches")}));
+		return result;
+	};
+	const std::vector<Json> before = sounds();
+	REQUIRE(pad(client, 2).at("voicing") == 11);
+	sendBytes(remote, {0xB0, 21, 127});
+	CHECK(remote.until([&] { return pad(client, 0).at("chord") != before.at(0).at(0); }));
+	CHECK(pad(client, 1).at("chord") != "Dm7");
+	sendBytes(remote, {0xB0, 21, 0});
+	CHECK(remote.until([&] { return sounds() == before; }));
+	sendBytes(remote, {0xB0, 20, 127});
+	CHECK(remote.until([&] { return pad(client, 2).at("voicing") == 12; }));
+	sendBytes(remote, {0xB0, 20, 0});
+	CHECK(remote.until([&] { return pad(client, 2).at("voicing") == 11; }));
+	CHECK(sounds() == before);
 }
 
 TEST_CASE("another project ends Assign from MIDI Input, so the remote keys trigger the pads again", "[integration]")
@@ -1741,15 +1783,86 @@ TEST_CASE("the sections player mode's combination waits for the pad key, and sec
 	CHECK(remote.send(0x80, 55, 0) == std::vector<std::vector<int>>{{0x80, bass, 0}});
 	remote.send(0x80, 37, 0);
 
-	// Stop First: the next section ends the one before.
+	// Combination: the section keys down before the pad key all start with it, the sections of one chord (p. 1383).
+	run(client, "chordPads.set", {{"overlaps", "legato"}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(remote.send(0x90, 55, 80).empty());
+	CHECK(remote.send(0x90, 56, 80).empty());
+	std::vector<std::vector<int>> both = remote.send(0x90, 36, 90);
+	std::sort(both.begin(), both.end());
+	CHECK(both == std::vector<std::vector<int>>{{0x90, 48, 80}, {0x90, 60, 80}});
+	remote.send(0x80, 36, 0);
+	remote.send(0x80, 55, 0);
+	remote.send(0x80, 56, 0);
+
+	// Stop First: a section of the same chord plays with the others (p. 1383); another pad's ends them (p. 1382).
 	run(client, "chordPads.set", {{"sectionPlay", "sections"}, {"overlaps", "stopFirst"}});
 	run(client, "audio.render", {{"frames", 64}});
 	remote.send(0x90, 36, 90);
 	CHECK(remote.send(0x90, 55, 80) == std::vector<std::vector<int>>{{0x90, 48, 80}});
-	std::vector<std::vector<int>> next = remote.send(0x90, 56, 80);
+	CHECK(remote.send(0x90, 56, 80) == std::vector<std::vector<int>>{{0x90, 60, 80}});
+	remote.send(0x90, 37, 90);
+	const int third = pad(client, 1).at("pitches")[2].get<int>();
+	std::vector<std::vector<int>> next = remote.send(0x90, 57, 80);
 	std::sort(next.begin(), next.end());
-	CHECK(next == std::vector<std::vector<int>>{{0x80, 48, 0}, {0x90, 60, 80}});
+	CHECK(next == std::vector<std::vector<int>>{{0x80, 48, 0}, {0x80, 60, 0}, {0x90, third, 80}});
+	remote.send(0x80, 37, 0);
 	remote.send(0x80, 36, 0);
+}
+
+TEST_CASE(
+	"a section key released while chordPads.listen listens, or on the remote's input before, is up", "[integration]")
+{
+	// #1447: the combination mode starts the section keys that are down when the pad key comes, and only those.
+	RemoteRig remote;
+	Client& client = remote.rig.client;
+	run(client, "chordPads.set", {{"mode", "sections"}, {"sectionPlay", "combination"}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(remote.send(0x90, 55, 80).empty());
+	run(client, "chordPads.listen", {{"learn", "range"}});
+	remote.send(0x80, 55, 0);
+	run(client, "chordPads.listen");
+	CHECK(remote.send(0x90, 36, 90).empty());
+	remote.send(0x80, 36, 0);
+
+	// Released on the input that was the remote's before another became it.
+	run(client, "chordPads.set", {{"remotePort", "dummy/in/Keys"}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(remote.send(0x90, 55, 80).empty());
+	run(client, "chordPads.set", {{"remotePort", "dummy/in/Other"}});
+	run(client, "audio.render", {{"frames", 64}});
+	remote.send(0x80, 55, 0);
+	CHECK(remote.send(0x90, 36, 90, true).empty());
+}
+
+TEST_CASE("with Snap Playback the notes after a cycle's jump inside a block snap after the cycle's start", "[unit]")
+{
+	// #1447: the block plays 1000 to 1031 and then from the cycle's start at 100 on; the grid is every 50 samples.
+	midi::PadSnap snap;
+	gnubase::audio::MidiBuffer pads(16);
+	gnubase::audio::MidiMessage note;
+	note.size = 3;
+	note.bytes = {0x90, 61, 90};
+	note.offset = 5; // snaps to 1050, which the cycle never reaches: it plays at the jump
+	pads.add(note);
+	note.bytes = {0x90, 60, 90};
+	note.offset = 40; // 108 snaps to 150, in the next block
+	pads.add(note);
+	const auto grid = [](int64_t sample) { return (sample + 49) / 50 * 50; };
+	const std::array<graph::TransportSegment, 2> segments = {
+		graph::TransportSegment{0, 32, 1000, false}, graph::TransportSegment{32, 32, 100, false}};
+	snap.process(pads, true, true, segments.data(), segments.size(), 64, grid);
+	const auto out = [&pads]
+	{
+		std::vector<std::pair<int, uint32_t>> result;
+		for (const gnubase::audio::MidiMessage& message : pads)
+			result.emplace_back(message.bytes[1], message.offset);
+		return result;
+	};
+	CHECK(out() == std::vector<std::pair<int, uint32_t>>{{61, 32}});
+	pads.clear();
+	snap.process(pads, true, true, 132, 64, grid);
+	CHECK(out() == std::vector<std::pair<int, uint32_t>>{{60, 18}});
 }
 
 TEST_CASE("with Snap Playback what waits plays when the transport jumps back", "[unit]")

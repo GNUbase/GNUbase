@@ -646,7 +646,7 @@ namespace gnubase::app
 											  : std::optional<std::pair<uint64_t, int64_t>>();
 					},
 					[this] { return m_eventDisplay ? m_eventDisplay->selection() : std::vector<uint64_t>(); },
-					[this]
+					[this](std::function<void(const std::string&)> import)
 					{
 						// Import from MIDI Loop (p. 1379): the loop chosen in the window the pads show in.
 						const ui::Window* window = m_docking.windowOf("chordPads");
@@ -655,12 +655,12 @@ namespace gnubase::app
 						dialog.filters = {{"MIDI files", "mid;midi;smf"}, {"All files", "*"}};
 						dialog.parent = (window != nullptr ? *window : m_main).id();
 						m_shell.showFileDialog(dialog,
-							[this](const ui::FileDialogResult& result)
+							[import = std::move(import)](const ui::FileDialogResult& result)
 							{
 								if (!result.error.empty())
 									logging::warning("The file dialog failed: {}", result.error);
 								if (!result.files.empty())
-									m_binding.send("chordPads.setPattern", {{"file", result.files.front().u8string()}});
+									import(result.files.front().u8string());
 							});
 					});
 			}});

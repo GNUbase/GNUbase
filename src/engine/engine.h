@@ -259,6 +259,8 @@ namespace gnubase::engine
 		// For tests: moves the engine's clock forward and returns once its tick ran (Clock::advance), so that whatever
 		// the tick queued, such as a due auto save, is queued before what the test does next.
 		void advanceClock(Clock::Duration by) { m_clock.advance(by); }
+		// For tests: stops the engine's clock where it is, so that only advanceClock moves it on (Clock::hold).
+		void holdClock() { m_clock.hold(); }
 		// For tests: reads the samplers' samples asked for from now on with read instead of processors::sharedSample,
 		// e.g. to hold a read back (AudioEngine::setSampleReader). Any thread.
 		void setSampleReader(std::function<std::shared_ptr<const processors::Sample>(const std::string& path)> read);
