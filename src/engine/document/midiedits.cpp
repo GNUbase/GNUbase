@@ -7,8 +7,10 @@
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
 #include "engine/midi/chords.h"
+#include "plugin/events.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <optional>
@@ -148,6 +150,53 @@ namespace gnubase::engine
 			return {{"notes", added}};
 		}
 
+		// What a note plays of an expression that it has no point of at its start: MPE's initial values for tuning,
+		// pressure and brightness (see addInitialExpressions), unity gain and the center. Vibrato and expression have
+		// none: the plugin decides.
+		std::optional<double> defaultOf(plugin::NoteExpression type)
+		{
+			switch (type)
+			{
+			case plugin::NoteExpression::Volume:
+				return 1.0;
+			case plugin::NoteExpression::Pan:
+			case plugin::NoteExpression::Brightness:
+				return 0.5;
+			case plugin::NoteExpression::Tuning:
+			case plugin::NoteExpression::Pressure:
+				return 0.0;
+			default:
+				return std::nullopt;
+			}
+		}
+
+		// points before cut, then from's moved to at. Of what points express and from has no point of at its start,
+		// the join gets the default, as the note that from belonged to started with it.
+		std::vector<ExpressionPoint> joined(const std::vector<ExpressionPoint>& points, time::Ticks cut,
+			const std::vector<ExpressionPoint>& from, time::Ticks at)
+		{
+			std::vector<ExpressionPoint> result;
+			std::array<bool, g_expressionNames.size()> open{};
+			for (const ExpressionPoint& point : points)
+				if (point.position < cut)
+				{
+					result.push_back(point);
+					open.at(static_cast<size_t>(point.type)) = true;
+				}
+			for (const ExpressionPoint& point : from)
+				if (point.position == 0)
+					open.at(static_cast<size_t>(point.type)) = false;
+			for (size_t type = 0; type < open.size(); ++type)
+			{
+				const auto expression = static_cast<plugin::NoteExpression>(type);
+				if (const std::optional<double> value = defaultOf(expression); open.at(type) && value.has_value())
+					result.push_back({expression, at, *value});
+			}
+			for (const ExpressionPoint& point : from)
+				result.push_back({point.type, point.position + at, point.value});
+			return result;
+		}
+
 		// The key editor's glue tool (#1419, p. 1215): the note lasts to the next one's end, which it replaces.
 		Json glueNotes(Project& project, CommandContext& context)
 		{
@@ -163,14 +212,14 @@ namespace gnubase::engine
 			const Note& next = noteNamed("next");
 			require(next.position > note.position, "next must start after note");
 			// What played goes on playing: the note's points up to where the next one starts, or to its own end, then
-			// the next one's.
+			// the next one's, and after a next one that ends inside the note the note's own again.
 			const time::Ticks offset = next.position - note.position;
-			const time::Ticks keep = std::min(offset, note.length);
-			note.expressions.erase(std::remove_if(note.expressions.begin(), note.expressions.end(),
-									   [keep](const ExpressionPoint& point) { return point.position >= keep; }),
-				note.expressions.end());
-			for (const ExpressionPoint& point : next.expressions)
-				note.expressions.push_back({point.type, point.position + offset, point.value});
+			const time::Ticks nextEnd = offset + next.length;
+			std::vector<ExpressionPoint> points =
+				joined(note.expressions, std::min(offset, note.length), next.expressions, offset);
+			if (nextEnd < note.length)
+				points = joined(points, nextEnd, expressionsFrom(note.expressions, nextEnd), nextEnd);
+			note.expressions = std::move(points);
 			note.length = std::max(next.position + next.length, note.position + note.length) - note.position;
 			const ObjectId removed = next.id;
 			part.notes.erase(removed); // next dangles from here on
@@ -436,17 +485,17 @@ namespace gnubase::engine
 				resultSchema("controllers"), false},
 			setControllers);
 
-		const Json idOf = {{"type", "integer"}};
 		add(engine,
 			{"note.split", 1,
 				"Splits notes of a MIDI part at a position in ticks from the part's start, as the key editor's split "
 				"tool does: each named note that the position cuts ends there, and its rest, a new note with the same "
 				"values, starts there; the others stay as they are. The expression points before the cut stay with "
 				"the note, the rest starts with the values at the cut and goes on with the later points (see "
-				"note.set). Returns the rests.",
+				"note.set). Both pieces lose their quantize origin, as with event.split: quantize.reset no longer "
+				"moves them. Returns the rests.",
 				{{"type", "object"}, {"additionalProperties", false}, {"required", {"part", "notes", "position"}},
 					{"properties",
-						{{"part", idOf}, {"notes", {{"type", "array"}, {"items", idOf}}},
+						{{"part", integer}, {"notes", {{"type", "array"}, {"items", integer}}},
 							{"position", {{"type", "integer"}, {"minimum", 0}}}}}},
 				resultSchema("notes"), false},
 			splitNotes);
@@ -454,9 +503,13 @@ namespace gnubase::engine
 			{"note.glue", 1,
 				"Glues a note of a MIDI part to a later one, as the key editor's glue tool does: note then lasts to "
 				"the later of their ends and keeps its values, and next is removed. Its expression points go on "
-				"playing: note keeps its own up to next's start, then has next's.",
+				"playing: note keeps its own up to next's start, then has next's, and after a next that ends inside "
+				"note its own again. Where one note's points give way to the other's, an expression that the first "
+				"one has and the other has no point of at its start goes back to its default, as the other note "
+				"started with it: no tuning, no pressure, brightness 0.5, volume 1 and pan 0.5; vibrato and "
+				"expression keep their value.",
 				{{"type", "object"}, {"additionalProperties", false}, {"required", {"part", "note", "next"}},
-					{"properties", {{"part", idOf}, {"note", idOf}, {"next", idOf}}}},
+					{"properties", {{"part", integer}, {"note", integer}, {"next", integer}}}},
 				{{"type", "object"}, {"required", {"note"}}, {"properties", {{"note", {{"type", "object"}}}}}}, false},
 			glueNotes);
 
