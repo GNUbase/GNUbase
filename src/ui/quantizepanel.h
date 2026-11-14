@@ -8,6 +8,7 @@
 #include <RmlUi/Core/ObserverPtr.h>
 
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -38,8 +39,11 @@ namespace gnubase::ui
 	//
 	// Audio (#145, docs/features/audio-quantize.md): Warp Quantize On/Off (settings.warpQuantize) in both, and in the
 	// panel the section for several audio tracks: Range and Offset with Slice (quantize.slice), or with warp quantizing
-	// on Create (quantize.createWarpMarkers), and Crossfade Length with Crossfade (quantize.crossfade). Those send the
-	// engine command with the panel's values through audio, which adds the audio events to quantize.
+	// on Create (quantize.createWarpMarkers), Nudge Crossfade Left and Right (quantize.nudgeCrossfade, 1 ms), and
+	// Crossfade Length with Crossfade (quantize.crossfade). Those send the engine command with the panel's values
+	// through audio, which adds the audio events to quantize. Open Crossfade Editor runs the UI command
+	// audio.crossfadeEditor through run. Above them the Hitpoint Tracks (pp. 378, 380): each track
+	// showHitpointTracks lists with its priority, 0 to 5 (default 1), which Slice and Create send.
 	class QuantizePanel final : private Rml::EventListener
 	{
 	public:
@@ -53,6 +57,10 @@ namespace gnubase::ui
 			std::function<void(const std::string&)> run,
 			std::function<void(const std::string&, engine::Json)> audio = {});
 		~QuantizePanel() override;
+
+		// The panel's Hitpoint Tracks: [{track, name}], such as the tracks of the audio events it would slice that have
+		// hitpoints. A track keeps the priority it was given while the panel lives.
+		void showHitpointTracks(const engine::Json& tracks);
 		QuantizePanel(const QuantizePanel&) = delete;
 		QuantizePanel& operator=(const QuantizePanel&) = delete;
 		QuantizePanel(QuantizePanel&&) = delete;
@@ -74,6 +82,8 @@ namespace gnubase::ui
 		std::string presetName() const;
 		// The value of one of the panel's own value fields.
 		double fieldValue(const std::string& id) const;
+		// The Hitpoint Tracks' priorities as quantize.slice and quantize.createWarpMarkers take them.
+		engine::Json priorities() const;
 		Rml::Element* find(const std::string& id) const;
 
 		EngineBinding& m_binding;
@@ -86,6 +96,8 @@ namespace gnubase::ui
 		std::function<void(const std::string&, engine::Json)> m_audio;
 		engine::Json m_settings = engine::Json::object();
 		engine::Json m_presets = engine::Json::array();
+		engine::Json m_hitpointTracks = engine::Json::array(); // showHitpointTracks
+		std::map<uint64_t, int> m_priorities;                  // by track, those changed from 1
 		std::string m_preset; // the preset the settings are (quantize.get), the same in every client
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it went
 		std::vector<Subscription> m_subscriptions;

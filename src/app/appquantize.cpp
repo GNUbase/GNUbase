@@ -10,6 +10,7 @@
 #include <array>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -52,7 +53,7 @@ namespace gnubase::app
 		// The quantize panel (pp. 372-378), a window of its own there: the right zone, or a window of its own here.
 		m_docking.add({"quantize", "Quantize", "project", "right", [this](Rml::Element& element)
 			{
-				return std::make_shared<ui::QuantizePanel>(
+				auto panel = std::make_shared<ui::QuantizePanel>(
 					m_binding, element, ui::QuantizePanel::Layout::Panel,
 					[this](const std::string& command)
 					{
@@ -61,6 +62,9 @@ namespace gnubase::app
 					},
 					[this](const std::string& command, Json parameters)
 					{ quantizeAudioTracks(command, std::move(parameters)); });
+				panel->showHitpointTracks(hitpointTracks());
+				m_quantizePanel = panel;
+				return panel;
 			}});
 		m_keys.add({"window.quantizePanel", "Opens the quantize panel.",
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_docking.open("quantize"); }});
@@ -83,16 +87,19 @@ namespace gnubase::app
 				m_keys.bind({each.keys, each.id});
 		}
 
-		// Create Groove Quantize Preset (pp. 373, 376): a groove of the first part it would quantize, which then is the
-		// project's quantize settings.
+		// Create Groove Quantize Preset (pp. 367, 373, 376): a groove of the first part it would quantize, or of the
+		// first selected audio event's hitpoints, which then is the project's quantize settings.
 		m_keys.add({"edit.createGrooveQuantize",
-			"Makes a groove quantize preset of the selected MIDI part's rhythm and quantizes to it.",
+			"Makes a groove quantize preset of the selected MIDI part's rhythm, or of the selected audio event's "
+			"hitpoints, and quantizes to it.",
 			[this](ui::Window& window, Rml::Element* zone)
 			{
 				const QuantizeTarget target = quantizeTarget(window, zone);
-				if (target.parts.empty())
+				if (target.parts.empty() && target.events.empty())
 					return;
-				m_binding.send("quantize.extractGroove", {{"part", target.parts.front().first}},
+				m_binding.send("quantize.extractGroove",
+					target.parts.empty() ? Json{{"event", target.events.front()}}
+										 : Json{{"part", target.parts.front().first}},
 					[this](const engine::Result& result)
 					{
 						if (result.ok())
@@ -101,7 +108,11 @@ namespace gnubase::app
 					});
 			}});
 		m_keys.enableWhen("edit.createGrooveQuantize",
-			[this](ui::Window& window, Rml::Element* zone) { return !quantizeTarget(window, zone).parts.empty(); });
+			[this](ui::Window& window, Rml::Element* zone)
+			{
+				const QuantizeTarget target = quantizeTarget(window, zone);
+				return !target.parts.empty() || !target.events.empty();
+			});
 	}
 
 	AppUi::QuantizeTarget AppUi::quantizeTarget(ui::Window& window, Rml::Element* zone) const
@@ -133,6 +144,14 @@ namespace gnubase::app
 				m_inPlace ? m_inPlace->view(std::stoull(zone->GetAttribute<Rml::String>("track", "0"))) : nullptr;
 			return view != nullptr ? ofView(*view, false) : QuantizeTarget{};
 		}
+		// From the sample editor's window (its toolbar, p. 367): the event it edits.
+		if (m_sampleEditor.window != 0 && window.id() == m_sampleEditor.window)
+		{
+			QuantizeTarget target;
+			if (m_sampleEditor.editor && m_sampleEditor.editor->event() != 0)
+				target.events.push_back(m_sampleEditor.editor->event());
+			return target;
+		}
 		// From an editor: its window, or the lower zone while the zone shows the Editor tab.
 		if (m_editor.window != 0 && window.id() == m_editor.window)
 			return ofEditor("window", false);
@@ -152,7 +171,7 @@ namespace gnubase::app
 		return target;
 	}
 
-	void AppUi::quantizeAudioTracks(const std::string& command, Json parameters)
+	std::vector<uint64_t> AppUi::selectedAudioEvents() const
 	{
 		std::vector<uint64_t> events = selected("audioEvents");
 		const std::vector<uint64_t> parts = selected("audioParts");
@@ -160,6 +179,35 @@ namespace gnubase::app
 			for (const Json& event : m_eventDisplay->project().value("audioEvents", Json::array()))
 				if (std::find(parts.begin(), parts.end(), event.value("part", uint64_t{0})) != parts.end())
 					events.push_back(event.at("id").get<uint64_t>());
+		return events;
+	}
+
+	Json AppUi::hitpointTracks() const
+	{
+		Json tracks = Json::array();
+		const std::vector<uint64_t> events = selectedAudioEvents();
+		if (!m_eventDisplay || events.empty())
+			return tracks;
+		const Json& project = m_eventDisplay->project();
+		std::set<uint64_t> withHitpoints; // clips
+		for (const Json& clip : project.value("clips", Json::array()))
+			if (!clip.value("hitpoints", Json::array()).empty())
+				withHitpoints.insert(clip.at("id").get<uint64_t>());
+		std::set<uint64_t> found; // tracks
+		for (const Json& event : project.value("audioEvents", Json::array()))
+			if (std::find(events.begin(), events.end(), event.at("id").get<uint64_t>()) != events.end() &&
+				withHitpoints.count(event.at("clip").get<uint64_t>()) != 0)
+				found.insert(event.at("track").get<uint64_t>());
+		for (const Json& track : project.value("tracks", Json::array()))
+			if (found.count(track.at("id").get<uint64_t>()) != 0)
+				tracks.push_back({{"track", track.at("id")}, {"name", track.value("name", std::string())}});
+		return tracks;
+	}
+
+	void AppUi::quantizeAudioTracks(const std::string& command, Json parameters)
+	{
+		const std::vector<uint64_t> parts = selected("audioParts");
+		const std::vector<uint64_t> events = selectedAudioEvents();
 		if (events.empty())
 			return;
 		parameters["events"] = events;

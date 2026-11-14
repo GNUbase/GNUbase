@@ -220,6 +220,19 @@ namespace gnubase::ui
 		m_fadeLines->setLanes(std::move(lanes));
 	}
 
+	bool EventDisplay::openSelectedCrossfade()
+	{
+		for (const uint64_t id : selectedAudio())
+			for (const auto& [to, fades] : m_fades)
+				if ((to == id && fades.crossfade.from != 0) || (fades.crossfade.from == id))
+				{
+					openFadeDialog(
+						"crossfade.rml", {{"from", std::to_string(fades.crossfade.from)}, {"to", std::to_string(to)}});
+					return true;
+				}
+		return false;
+	}
+
 	bool EventDisplay::openCrossfadeAt(const Shown& shown, double seconds)
 	{
 		// The crossfades into and out of the event, where the two events overlap (reference manual p. 389).
@@ -331,19 +344,14 @@ namespace gnubase::ui
 				}},
 			// Crossfade (reference manual pp. 388-389): crossfades the selected events, or opens the crossfade editor
 			// for the crossfade that one of them has.
-			{"audio.crossfade", [this]
+			{"audio.crossfade",
+				[this]
 				{
 					const std::vector<uint64_t> events = selectedAudio();
-					for (const uint64_t id : events)
-						for (const auto& [to, fades] : m_fades)
-							if ((to == id && fades.crossfade.from != 0) || (fades.crossfade.from == id))
-							{
-								openFadeDialog("crossfade.rml",
-									{{"from", std::to_string(fades.crossfade.from)}, {"to", std::to_string(to)}});
-								return;
-							}
-					if (!events.empty())
+					if (!openSelectedCrossfade() && !events.empty())
 						edit("event.crossfade", {{"events", events}});
-				}}});
+				}},
+			// The quantize panel's Open Crossfade Editor (p. 379): only the editor.
+			{"audio.crossfadeEditor", [this] { openSelectedCrossfade(); }}});
 	}
 }
