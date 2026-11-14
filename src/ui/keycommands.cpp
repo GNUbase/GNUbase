@@ -401,18 +401,8 @@ namespace gnubase::ui
 					break;
 				}
 			if (index == found.size())
-			{
-				std::string about;
-				if (const auto engineCommand = m_engineCommands.find(bound.command);
-					engineCommand != m_engineCommands.end())
-					about = engineCommand->second.description;
-				else if (const auto ui = m_uiCommands.find(bound.command); ui != m_uiCommands.end())
-					about = ui->second.description;
-				else if (isMacro(bound.command))
-					about = "Runs the macro " + bound.command.substr(sizeof("macro.") - 1) + ".";
-				found.push_back({{"command", bound.command}, {"parameters", bound.parameters}, {"description", about},
-					{"zone", bound.zone}, {"keys", Json::array()}});
-			}
+				found.push_back(
+					{{"command", bound.command}, {"parameters", bound.parameters}, {"keys", Json::array()}});
 			found[index]["keys"].push_back(keyName(bound.keys, m_platform));
 		}
 		std::stable_sort(found.begin(), found.end(), [](const Json& a, const Json& b)

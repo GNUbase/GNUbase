@@ -271,6 +271,84 @@ TEST_CASE("the Track page keeps working after a hidden track is removed", "[ui]"
 	REQUIRE(app.waitUntil([&] { return hidden(app) == Json{guitar.track}; }));
 }
 
+// #1475: what Update, Delete, Add and Rename Configuration send leaves out the tracks that are gone too, with a
+// visibility from before the undo still in hand, which an event stands in for as above.
+TEST_CASE("the configuration commands send only the tracks that are there", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.setDpRatio(0.8F);
+	app.appUi().showProject();
+	const Added guitar = addTrack(app, "audio", "Guitar");
+	const Added bass = addTrack(app, "audio", "Bass");
+	app.appUi().docking().open("visibility");
+	REQUIRE(app.waitUntil([&] { return elements(app, std::nullopt, ".track-visibility-item").size() == 2; }));
+	app.call("history.undo"); // removes Bass
+	REQUIRE(app.waitUntil([&] { return elements(app, std::nullopt, ".track-visibility-item").size() == 1; }));
+	const auto configurations = [&app] { return app.call("trackVisibility.get").at("configurations"); };
+	const auto choose = [&app](const std::string& selector)
+	{
+		click(app, std::nullopt, "#track-visibility-configurations");
+		click(app, std::nullopt, "#track-visibility-configurations-menu " + selector);
+	};
+	const auto name = [&app](const std::string& text)
+	{
+		REQUIRE(
+			app.waitUntil([&] { return elements(app, std::nullopt, "#visibility-configuration-name").size() == 1; }));
+		app.ui().key(std::nullopt, "Mod+A");
+		app.ui().text(std::nullopt, text);
+		app.ui().key(std::nullopt, "Enter");
+	};
+	// Each configuration and the tracks hidden with the gone track, after what the engine announced.
+	Json stale;
+	app.engine().registerCommand({"test.staleVisibility", 1, "Announces the track visibility from before the undo.",
+									 engine::CommandInfo{}.parameters, Json::object(), false},
+		[&stale](engine::CommandContext& context)
+		{
+			context.emit("trackVisibility.changed", stale);
+			return Json::object();
+		});
+	const auto announceStale = [&]
+	{
+		const Json visibility = app.call("trackVisibility.get");
+		stale = visibility;
+		stale["hidden"] = {guitar.track, bass.track};
+		for (Json& configuration : stale.at("configurations"))
+			configuration["hidden"] = {guitar.track, bass.track};
+		stale["modified"] = true;
+		app.call("test.staleVisibility");
+		app.shell().step(std::chrono::milliseconds(0));
+	};
+	app.call("trackVisibility.set",
+		{{"configurations",
+			 {{{"name", "One"}, {"hidden", Json::array()}}, {{"name", "Two"}, {"hidden", Json::array()}}}},
+			{"configuration", "One"}});
+
+	// Update Configuration.
+	announceStale();
+	choose("menuitem[visibility-configuration=update]");
+	CHECK(app.waitUntil([&] { return configurations().at(0).at("hidden") == Json{guitar.track}; }));
+	CHECK(configurations().at(1).at("hidden") == Json{guitar.track});
+
+	// Add Configuration.
+	announceStale();
+	choose("menuitem[visibility-configuration=add]");
+	name("Three");
+	CHECK(app.waitUntil([&] { return configurations().size() == 3; }));
+	CHECK(app.call("trackVisibility.get").at("configuration") == "Three");
+	CHECK(hidden(app) == Json{guitar.track});
+
+	// Rename Configuration.
+	announceStale();
+	choose("menuitem[visibility-configuration=rename]");
+	name("Four");
+	CHECK(app.waitUntil([&] { return configurations().back().at("name") == "Four"; }));
+
+	// Delete Configuration.
+	announceStale();
+	choose("menuitem[visibility-configuration=delete]");
+	CHECK(app.waitUntil([&] { return configurations().size() == 2; }));
+}
+
 // #906: a name that trackVisibility.set would refuse keeps the dialog open with the reason.
 TEST_CASE("the configuration name dialog stays open for a name that is taken or empty", "[ui]")
 {

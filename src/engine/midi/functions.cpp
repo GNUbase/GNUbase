@@ -8,6 +8,7 @@
 #include "engine/midi/drummaps.h"
 #include "engine/midi/midivalues.h"
 #include "engine/midi/patterns.h"
+#include "engine/midi/trackchannel.h"
 
 #include <algorithm>
 #include <array>
@@ -782,6 +783,19 @@ namespace gnubase::engine::midi
 				return target;
 			}
 
+			// The channel to store for the track to play an event on onChannel, a note of the pitch stored or, with -1,
+			// a controller: own where the track plays it the same, so that a track merged onto itself keeps its events'
+			// channels, else onChannel. A track set to a channel plays every channel on it.
+			uint8_t storedChannel(uint8_t onChannel, uint8_t own, int pitch = -1) const
+			{
+				const auto playedOn = [&](uint8_t stored)
+				{
+					const auto on = static_cast<uint8_t>(m_trackChannel.value_or(stored));
+					return pitch < 0 ? on : channel(pitch, on);
+				};
+				return playedOn(own) == playedOn(onChannel) ? own : onChannel;
+			}
+
 		private:
 			const DrumSound& sound(int pitch) const { return m_map->sounds.at(static_cast<size_t>(pitch)); }
 
@@ -1096,8 +1110,9 @@ namespace gnubase::engine::midi
 			uint64_t seed;       // its part's and its own id, as playback draws them
 			Modifiers modifiers; // its track's and part's, without the global transposition
 			const MidiPart* source;
-			Ticks sourceAt;   // where it is stored in its part, as playback sees the global transposition there
-			uint8_t ownPitch; // the pitch it is stored with, which a destination's map prefers
+			Ticks sourceAt;     // where it is stored in its part, as playback sees the global transposition there
+			uint8_t ownPitch;   // the pitch it is stored with, which a destination's map prefers
+			uint8_t ownChannel; // the channel it is stored with, which a destination set to a channel keeps
 		};
 		std::vector<Candidate> candidates;
 		std::vector<Controller> controllers;
@@ -1170,7 +1185,8 @@ namespace gnubase::engine::midi
 				const Ticks length = note.length > 0 ? modifyLength(modifiers, seed, note.length) : 0;
 				copy.position = at;
 				copy.length = std::min(at + length, partTo) - at;
-				candidates.push_back({copy, seed, modifiers, &part, partFrom + note.position, note.pitch});
+				candidates.push_back(
+					{copy, seed, modifiers, &part, partFrom + note.position, note.pitch, note.channel});
 			}
 			for (const auto& [controllerId, controller] : part.controllers)
 			{
@@ -1181,6 +1197,9 @@ namespace gnubase::engine::midi
 				copy.position = at;
 				if (controller.type != ControllerType::Articulation)
 					copy.channel = static_cast<uint8_t>(sourcePitches.trackChannel().value_or(controller.channel));
+				// As the destination stores it; chased by the channel it played on.
+				Controller written = copy;
+				written.channel = destinationPitches.storedChannel(copy.channel, controller.channel);
 				// Of each group of the track's articulation map, the direction in effect where the range starts, so
 				// that the notes play the same sound slot (#175), also without includeChase. Playback resolves
 				// directions per part, so only from a part that still plays there.
@@ -1192,9 +1211,9 @@ namespace gnubase::engine::midi
 							group = each.group;
 				if (inRange(at))
 				{
-					controllers.push_back(copy);
+					controllers.push_back(written);
 					if (group >= 0)
-						groupEvents.push_back({at, true, static_cast<size_t>(group), copy});
+						groupEvents.push_back({at, true, static_cast<size_t>(group), written});
 				}
 				else if (sampleOf(at) < settings.start &&
 					(controller.type == ControllerType::Articulation
@@ -1210,7 +1229,7 @@ namespace gnubase::engine::midi
 					if (previous == chasedAt.end() || previous->second <= at)
 					{
 						chasedAt[key] = at;
-						chased[key] = copy;
+						chased[key] = written;
 					}
 				}
 			}
@@ -1303,6 +1322,7 @@ namespace gnubase::engine::midi
 			}
 			copy.pitch = static_cast<uint8_t>(
 				destinationPitches.stored(copy.pitch, copy.channel, copy.position, candidate.ownPitch));
+			copy.channel = destinationPitches.storedChannel(copy.channel, candidate.ownChannel, copy.pitch);
 			into.push_back(copy);
 			return true;
 		};

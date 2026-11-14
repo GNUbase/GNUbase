@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -422,6 +423,11 @@ TEST_CASE("a MIDI track's channel plays its sound slots' output events, and a sl
 		// slot's own channel.
 		CHECK(play({{0x91, 37, 100}, {0x81, 37, 0}, {0x91, 60, 100}, {0x81, 60, 0}}) ==
 			Bytes{{0xB4, 32}, {0x96, 25}, {0x86, 25}, {0x96, 60}, {0x86, 60}});
+		// A slot with a channel of its own stays there: another channel of the track sends nothing.
+		track.set({{"midiChannel", 3}});
+		CHECK(track.played().empty());
+		track.set({{"midiChannel", 4}});
+		CHECK(track.played().empty());
 		// C1 selects Arco: its key switch C0 on the track's channel.
 		CHECK(play({{0x91, 36, 100}, {0x81, 36, 0}}) == Bytes{{0x94, 24}, {0x84, 24}});
 
@@ -432,6 +438,11 @@ TEST_CASE("a MIDI track's channel plays its sound slots' output events, and a sl
 		track.set({{"midiChannel", 2}});
 		const Bytes moved = track.played();
 		CHECK(moved == Bytes{{0xB4, 32, 0}, {0xB2, 32, 64}});
+		// Back to Any: its off event on channel 3, its on event on the channel of the trigger that selected it, 2.
+		track.set({{"midiChannel", nullptr}});
+		CHECK(track.played() == Bytes{{0xB2, 32, 0}, {0xB1, 32, 64}});
+		track.set({{"midiChannel", 2}});
+		CHECK(track.played() == Bytes{{0xB1, 32, 0}, {0xB2, 32, 64}});
 		CHECK(play({{0x91, 38, 100}, {0x81, 38, 0}, {0x91, 60, 100}, {0x81, 60, 0}}) == Bytes{{0x92, 60}, {0x82, 60}});
 
 		// Without latch the default slot comes back on the track's channel where the trigger key is released, not on
@@ -462,6 +473,21 @@ TEST_CASE("a send before the MIDI modifiers gets the notes played into the track
 	Bytes played = track.played();
 	std::sort(played.begin(), played.end());
 	CHECK(played == Bytes{{0x92, 65, 100}, {0x92, 76, 100}});
+
+	// Through the drum map's input mapping, as the parts' notes there: E3 (64) plays its sound's O-note D2 (50).
+	const Json trackId = run(track.client, "project.get").at("channels")[1].at("track");
+	const Json gm = run(track.client, "project.get").at("drumMaps").at(0).at("id");
+	const Json map = run(track.client, "drumMap.add", {{"copy", gm}, {"track", trackId}}).at("map").at("id");
+	run(track.client, "drumMap.set",
+		{{"map", map}, {"sounds", {{{"pitch", 64}, {"oNote", 50}, {"channel", nullptr}}}}});
+	run(track.client, "midi.inject",
+		{{"channel", track.channel}, {"messages", {{{"position", 0}, {"bytes", {0x84, 64, 0}}}}}});
+	track.played();
+	run(track.client, "midi.inject",
+		{{"channel", track.channel}, {"messages", {{{"position", 0}, {"bytes", {0x94, 64, 100}}}}}});
+	played = track.played();
+	std::sort(played.begin(), played.end());
+	CHECK(played == Bytes{{0x92, 51, 100}, {0x92, 62, 100}});
 }
 
 TEST_CASE("automation lanes of one controller on several channels all play on a MIDI track's channel", "[integration]")
@@ -469,16 +495,18 @@ TEST_CASE("automation lanes of one controller on several channels all play on a 
 	PatchTrack track;
 	const Json trackId = run(track.client, "project.get").at("channels")[1].at("track");
 	// CC 11 at 127 on channel 1 and at 0 on channel 2, as midi.extractAutomation makes them from a part of both.
+	std::vector<Json> lanes;
 	for (const auto& [channel, value] : {std::pair{0, 1.0}, std::pair{1, 0.0}})
 	{
 		const Json lane = run(track.client, "automationLane.add",
 			{{"track", trackId}, {"target", {{"type", "controller"}, {"number", 11}, {"channel", channel}}}});
+		lanes.push_back(lane.at("lane").at("id"));
 		run(track.client, "automationPoint.add",
-			{{"lane", lane.at("lane").at("id")}, {"points", {{{"position", 0}, {"value", value}}}}});
+			{{"lane", lanes.back()}, {"points", {{{"position", 0}, {"value", value}}}}});
 	}
-	const auto played = [&track]
+	const auto played = [&track](int64_t from)
 	{
-		run(track.client, "transport.locate", {{"position", 0}});
+		run(track.client, "transport.locate", {{"position", from}});
 		track.played();
 		run(track.client, "transport.play");
 		Bytes bytes = track.played();
@@ -487,8 +515,37 @@ TEST_CASE("automation lanes of one controller on several channels all play on a 
 		std::sort(bytes.begin(), bytes.end());
 		return bytes;
 	};
-	CHECK(played() == Bytes{{0xB0, 11, 127}, {0xB1, 11, 0}});
-	// On channel 3 both lanes play there, each its own points.
+	CHECK(played(0) == Bytes{{0xB0, 11, 127}, {0xB1, 11, 0}});
+	// On channel 3 both lanes play there, each its own points. Where playback starts only the lane whose latest point
+	// lies latest sends its value, as the part's events were chased by position; on a tie the last one.
 	track.set({{"midiChannel", 2}});
-	CHECK(played() == Bytes{{0xB2, 11, 0}, {0xB2, 11, 127}});
+	CHECK(played(0) == Bytes{{0xB2, 11, 0}});
+	run(track.client, "automationPoint.add",
+		{{"lane", lanes[0]}, {"points", {{{"position", 1720320}, {"shape", "step"}, {"value", 1.0}}}}});
+	CHECK(played(48000) == Bytes{{0xB2, 11, 127}});
+}
+
+TEST_CASE("of two lanes of the MIDI volume, the first plays it in its gaps, the second nothing", "[integration]")
+{
+	PatchTrack track;
+	constexpr int64_t frame = 72; // ticks, about one at 48 kHz
+	const Json trackId = run(track.client, "project.get").at("channels")[1].at("track");
+	track.set({{"midiChannel", 2}, {"midiVolume", 90}});
+	// CC 7 at 127 on channel 1 and from frame 1000 at 0 on channel 2, both ending in a gap at frame 2000.
+	for (const auto& [channel, from, value] : {std::tuple{0, int64_t{0}, 1.0}, std::tuple{1, 1000 * frame, 0.0}})
+	{
+		const Json lane = run(track.client, "automationLane.add",
+			{{"track", trackId}, {"target", {{"type", "controller"}, {"number", 7}, {"channel", channel}}}});
+		run(track.client, "automationPoint.add",
+			{{"lane", lane.at("lane").at("id")},
+				{"points",
+					{{{"position", from}, {"shape", "step"}, {"value", value}},
+						{{"position", 2000 * frame}, {"shape", "step"}, {"value", value}, {"terminator", true}}}}});
+	}
+	run(track.client, "transport.locate", {{"position", 0}});
+	track.played();
+	run(track.client, "transport.play");
+	const Bytes played = track.played(4096);
+	run(track.client, "transport.stop");
+	CHECK(played == Bytes{{0xB2, 7, 127}, {0xB2, 7, 0}, {0xB2, 7, 90}});
 }

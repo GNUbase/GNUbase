@@ -3589,6 +3589,7 @@ namespace gnubase::engine
 						return result;
 					syncSharedParts(before.midiParts, m_project, context);
 					midi::adoptPatterns(m_project, context);
+					followTrackFolders(m_project, context);
 				}
 				catch (...)
 				{
@@ -3713,6 +3714,7 @@ namespace gnubase::engine
 		before.clips = m_project.clips;
 		before.audioEvents = m_project.audioEvents;
 		const Json layout = trackLayoutJson(m_project);
+		const Json visibility = trackVisibilityJson(m_project);
 		for (int64_t i = 0; i < steps; ++i)
 		{
 			const HistoryStep& step = undo ? m_history.undo() : m_history.redo();
@@ -3721,6 +3723,7 @@ namespace gnubase::engine
 		}
 		announceWarpedEvents(before, m_project, context);
 		followTimeFormat(m_project, timeFormat, context);
+		followTrackFolders(m_project, context, visibility);
 		// The project keeps the heights and fold states of removed tracks for undo: a track that comes back or goes
 		// brings its own back or takes them away (#1131).
 		if (Json now = trackLayoutJson(m_project); now != layout)

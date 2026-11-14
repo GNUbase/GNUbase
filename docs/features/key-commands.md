@@ -145,8 +145,9 @@ a modal dialog keep their keys, while Space after a click on a toolbar or transp
 `tests/keycommandsdialog_tests.cpp` checks the user's key commands and macros, their presets and files (including an
 import whose `format` or `version` has the wrong type), and the dialog below: its confirmations before Remove Key
 Command and Defaults, Clear All also clearing the assignments of commands the dialog doesn't list, renaming a macro by
-double-clicking it and pressing Return, File > Export > Key Command Assignments, and the tool modifiers asking before
-one action takes another's keys, from Assign and from the list.
+double-clicking it and pressing Return, File > Export > Key Command Assignments, the messages of an export or import
+that fails, a confirmation's Cancel and Escape leaving no question behind for the next one, and the tool modifiers
+asking before one action takes another's keys, from Assign and from the list.
 
 ## The user's key commands and macros
 
@@ -177,7 +178,8 @@ user settings ([settings.md](settings.md)), so MCP and Lua change them with `set
   the JSON library's type error. The UI commands `keyCommands.exportFile` and `keyCommands.importFile` ask for the file
   with the OS's file dialog; an imported preset is named after the file. File > Export > Key Command Assignments (the UI
   command `keyCommands.exportAssignments`, p. 1560) writes an HTML table of every command and the keys that run it now
-  (`KeyCommands::assignments`), which the user saves where they choose.
+  (`KeyCommands::assignments`), which the user saves where they choose. Why an export or import failed shows in the
+  dialog's message, or, without the dialog, in an error dialog titled after the command.
 - The app reads both settings when it starts and follows `settings.changed`.
 
 ## The dialog
@@ -200,7 +202,8 @@ own).
   key") is added to them, as Assign Additional Key does; if another command has it in the same zone, that command
   loses it, and the message says which. Escape still closes the dialog. Remove Key Command removes the key selected in
   the keys list and Defaults resets every command, each only after a confirmation the dialog's Lua opens with
-  `gnubase.ui.confirm` (confirm.rml); Cancel undoes either, as it drops the dialog's changes. Reset Key Command gives
+  `gnubase.ui.confirm` (confirm.rml); Cancel undoes either, as it drops the dialog's changes. The confirmation clears
+  its question (the global `ConfirmDialog`) however it closes, so a later one never answers to an earlier caller. Reset Key Command gives
   the command its default keys back, taking them from any command that has them now. Clear All removes every
   assignment, also those of commands the dialog doesn't list (its `kc.unlisted`).
 - **Macros.** Macros shows the macros section: New Macro, Duplicate Macro, Delete Macro, and Rename Macro with the

@@ -891,6 +891,7 @@ TEST_CASE("merge writes the events of a MIDI track set to a MIDI channel on that
 			.note(3, 2 * g_quarter, g_quarter, 38, 1)
 			.cc(4, 2 * g_quarter, 7, 90, 1)
 			.controller(5, 2 * g_quarter, ControllerType::Program, 9, g_noBank)
+			.controller(6, 0, ControllerType::Program, 4, g_noBank, 1)
 			.part);
 	DrumMap map;
 	map.id = project.newId();
@@ -913,13 +914,14 @@ TEST_CASE("merge writes the events of a MIDI track set to a MIDI channel on that
 		return events;
 	};
 
-	// On the track's channel 4: the notes, the controllers and the chased CC 1.
+	// On the track's channel 4: the notes, the controllers, the chased CC 1 and the chased program change.
 	const int64_t control = -static_cast<int64_t>(ControllerType::Control) - 1;
 	const int64_t program = -static_cast<int64_t>(ControllerType::Program) - 1;
 	const auto expected = [&](int64_t drumChannel)
 	{
 		std::vector<std::vector<int64_t>> events = {{g_quarter, 38, g_quarter, drumChannel},
-			{g_quarter, 60, g_quarter, 3}, {0, control, 1, 3}, {g_quarter, control, 7, 3}, {g_quarter, program, 9, 3}};
+			{g_quarter, 60, g_quarter, 3}, {0, control, 1, 3}, {g_quarter, control, 7, 3}, {g_quarter, program, 9, 3},
+			{0, program, 4, 3}};
 		std::sort(events.begin(), events.end());
 		return events;
 	};
@@ -929,6 +931,67 @@ TEST_CASE("merge writes the events of a MIDI track set to a MIDI channel on that
 	project.trackById.at(strings).drumMap = map.id;
 	settings.tracks = {strings};
 	CHECK(channels(merge(project, settings)) == expected(9));
+}
+
+TEST_CASE("merge keeps the events' own channels on a destination set to a MIDI channel", "[unit]")
+{
+	Project project = newProject();
+	const ObjectId piano = addTrack(project, TrackType::Instrument, "Piano");
+	const ObjectId strings = addTrack(project, TrackType::Midi, "Strings");
+	const ObjectId horns = addTrack(project, TrackType::Midi, "Horns");
+	for (const ObjectId track : {strings, horns})
+		project.channels.at(project.trackById.at(track).channel).output = project.trackById.at(piano).channel;
+	const auto midiChannel = [&project](ObjectId track) -> std::optional<int>&
+	{ return project.channels.at(project.trackById.at(track).channel).midiChannel; };
+	midiChannel(strings) = 3;
+	// Notes on channels 1 and 2, a controller on channel 6.
+	addPart(project, strings, 0, 4 * g_quarter,
+		PartBuilder()
+			.note(1, g_quarter, g_quarter, 60)
+			.note(2, g_quarter, g_quarter, 62, 1)
+			.cc(3, g_quarter, 1, 50, 5)
+			.part);
+	MergeSettings settings;
+	settings.start = 0;
+	settings.end = project.tempo.toSamples(4 * g_quarter, project.sampleRate);
+	settings.tracks = {strings};
+	settings.includeChase = false;
+	// The channel of each merged event, by position and pitch or controller number.
+	const auto channels = [&project](const PartChanges& changes)
+	{
+		REQUIRE(changes.addedParts.size() == 1);
+		const MidiPart& part = project.midiParts.at(changes.addedParts[0]);
+		std::vector<std::vector<int64_t>> events;
+		events.reserve(part.notes.size() + part.controllers.size());
+		for (const auto& [id, note] : part.notes)
+			events.push_back({note.pitch, note.channel});
+		for (const auto& [id, controller] : part.controllers)
+			events.push_back({-controller.number, controller.channel});
+		std::sort(events.begin(), events.end());
+		return events;
+	};
+	const std::vector<std::vector<int64_t>> own = {{-1, 5}, {60, 0}, {62, 1}};
+	const std::vector<std::vector<int64_t>> onFour = {{-1, 3}, {60, 3}, {62, 3}};
+
+	SECTION("a track merged onto itself keeps the channels its events were recorded with (pp. 1120-1121)")
+	{
+		settings.destination = strings;
+		settings.eraseDestination = true;
+		CHECK(channels(merge(project, settings)) == own);
+	}
+	SECTION("a track set to another channel plays every channel on its own")
+	{
+		midiChannel(horns) = 7;
+		settings.destination = horns;
+		CHECK(channels(merge(project, settings)) == own);
+	}
+	SECTION("a track set to Any plays them on theirs: the channel they played on")
+	{
+		settings.destination = horns;
+		CHECK(channels(merge(project, settings)) == onFour);
+		settings.destination = 0;
+		CHECK(channels(merge(project, settings)) == onFour);
+	}
 }
 
 TEST_CASE("dissolve sets the new tracks to the MIDI channel they hold, or by pitch to the track's", "[unit]")
