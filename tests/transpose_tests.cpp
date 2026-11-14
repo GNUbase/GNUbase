@@ -324,9 +324,35 @@ TEST_CASE("Delete Time and Insert Silence move the transpose events with the mus
 	run(song.client, "transpose.add", {{"position", 8 * g_beatTicks}, {"value", -1}});
 	CHECK(positions() == std::vector<int64_t>{0, 2 * g_beatTicks, 8 * g_beatTicks});
 
-	// Delete Time over beats 1 to 3: the event at 2 goes with the range, the one at 8 moves back by two beats.
+	const auto values = [&song]
+	{
+		std::vector<int> result;
+		const Json transpose = run(song.client, "transpose.get");
+		for (const Json& event : transpose.at("events"))
+			result.push_back(event.at("value").get<int>());
+		return result;
+	};
+	// Delete Time over beats 1 to 3: the event at 2 goes with the range, the one at 8 moves back by two beats. The
+	// transposition in force at the range's end, +5, goes on from the cut (#1367), so that the music after the range
+	// keeps its pitch, as Process Bars carries the signature in force.
 	run(song.client, "range.delete", {{"start", g_beat}, {"end", 3 * g_beat}, {"time", true}});
-	CHECK(positions() == std::vector<int64_t>{0, 6 * g_beatTicks});
+	CHECK(positions() == std::vector<int64_t>{0, g_beatTicks, 6 * g_beatTicks});
+	CHECK(values() == std::vector<int>{2, 5, -1});
+	CHECK(song.pitches() == std::vector<int>{62, 65});
+	run(song.client, "history.undo");
+	CHECK(values() == std::vector<int>{2, 5, -1});
+	// An event at the range's end moves to the cut and carries nothing more; a range without events in it neither.
+	run(song.client, "range.delete", {{"start", g_beat}, {"end", 2 * g_beat}, {"time", true}});
+	CHECK(positions() == std::vector<int64_t>{0, g_beatTicks, 7 * g_beatTicks});
+	run(song.client, "history.undo");
+	run(song.client, "range.delete", {{"start", 3 * g_beat}, {"end", 4 * g_beat}, {"time", true}});
+	CHECK(positions() == std::vector<int64_t>{0, 2 * g_beatTicks, 7 * g_beatTicks});
+	run(song.client, "history.undo");
+	// A range that drops events whose last one has the value in force before it carries nothing either.
+	run(song.client, "transpose.add", {{"position", 3 * g_beatTicks}, {"value", 2}});
+	run(song.client, "range.delete", {{"start", g_beat}, {"end", 4 * g_beat}, {"time", true}});
+	CHECK(positions() == std::vector<int64_t>{0, 5 * g_beatTicks});
+	run(song.client, "history.undo");
 	run(song.client, "history.undo");
 	CHECK(positions() == std::vector<int64_t>{0, 2 * g_beatTicks, 8 * g_beatTicks});
 

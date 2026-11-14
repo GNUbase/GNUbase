@@ -701,6 +701,9 @@ namespace gnubase::ui
 		void showContextMenus();
 		// The notification for a tool chosen with a key command.
 		void notify(const std::string& text);
+		// Why the engine refused an edit of events, such as a glue of parts that follow global transpose differently,
+		// in the notification #edit-refused for a moment (#1367); logged too.
+		void showRefusal(const std::string& error);
 		// Whether the pressed modifiers, or the keys, are the ones the user setting ui.toolModifiers gives the action.
 		bool modifiers(const char* action) const { return modifiers(action, m_pressed); }
 		bool modifiers(const char* action, const std::string& keys) const;
@@ -920,6 +923,7 @@ namespace gnubase::ui
 		Rml::Element* m_toolbox = nullptr;
 		Rml::Element* m_contextMenu = nullptr;
 		Rml::Element* m_notification = nullptr;
+		Rml::Element* m_refusal = nullptr;  // #edit-refused
 		bool m_toolboxOnRightClick = false; // ui.toolboxOnRightClick
 		bool m_toolboxKnown = false;        // changed since it was asked for
 		bool m_notifies = true;             // ui.toolSwitchNotification

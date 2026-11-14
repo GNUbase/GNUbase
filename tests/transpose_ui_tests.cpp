@@ -130,6 +130,34 @@ TEST_CASE("the toolbar sets the project root key, the info line a part's root ke
 	CHECK(window.app.waitUntil([&] { return globalTransposeLabel() == "Follow"; }));
 }
 
+TEST_CASE("the event display says why the engine refused a glue of parts that follow transpose differently", "[ui]")
+{
+	Window window;
+	const auto midi = window.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	const auto add = [&window, midi](int64_t at, const std::string& key)
+	{
+		const auto part = window.call("midiPart.add", {{"track", midi}, {"position", at}, {"length", 4 * g_quarter}})
+							  .at("part")
+							  .at("id")
+							  .get<uint64_t>();
+		window.call("midiPart.set", {{"part", part}, {"rootKey", key}});
+		return part;
+	};
+	// In a project in E, the part in C plays 4 semitones up and the one in D 2.
+	window.call("project.set", {{"rootKey", "E"}});
+	const uint64_t first = add(0, "C");
+	const uint64_t second = add(4 * g_quarter, "D");
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("midiParts").size() == 2; }));
+	CHECK(window.element("#edit-refused").at("visible") == false);
+	window.display.select({first, second});
+	window.display.actions().at("edit.glue")();
+	// The engine's reason shows for a moment over the lanes (#1367); the parts stay as they were.
+	REQUIRE(window.app.waitUntil([&] { return window.element("#edit-refused").at("visible") == true; }));
+	CHECK(window.element("#edit-refused").value("text", std::string()).find("follow global transpose differently") !=
+		std::string::npos);
+	CHECK(window.call("project.get").at("midiParts").size() == 2);
+}
+
 TEST_CASE("the transpose track's context menu sets the root key for unassigned events", "[ui]")
 {
 	Window window;

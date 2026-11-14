@@ -24,7 +24,9 @@ transpose events and controls, and MIDI parts that follow it or are excluded fro
   `transpose.set` (moves or changes events) and `transpose.remove` are undo steps; `transpose.changed` announces
   every change with what `transpose.get` returns, undo and redo included. Delete Time (`range.delete` `time`) and
   Insert Silence (`range.insertSilence`) move the events with the music, over the whole project or the tracks they
-  name, unless the transpose track is locked; Delete Time drops the events in its range.
+  name, unless the transpose track is locked; Delete Time drops the events in its range, and the transposition in
+  force at the range's end goes on from the cut with an event there (#1367), as Process Bars carries the signature in
+  force, so that the music after the range keeps its pitch.
 - **Controls** (`transpose.setTrack`, an undo step): `mute` (Mute Transpose Events: the events don't play),
   `keepInOctave` (Keep Transpose in Octave Range) and `lock` (the events can't be added, changed or removed).
 - **Recording** (p. 420): a recorded part follows global transpose with the project root key, or, if the project has
@@ -70,7 +72,7 @@ moving, the value range, lock, the track's removal), the octave-range option fol
 transpose included (7 staying 7 and 8 folding, a muted track, an Independent part left as it is), `transpose.changed` and
 `arranger.changed` announced by undo and redo, glue refusing parts that follow global transpose differently and keeping
 the sound of parts the option folds differently, Set Root Key for Unassigned Events (also in inactive track versions),
-Delete Time and Insert Silence moving the events, recorded parts with and without transpose events, and saving and
+Delete Time and Insert Silence moving the events (Delete Time carrying the transposition at the range's end to the cut), recorded parts with and without transpose events, and saving and
 loading. `tests/transpose_ui_tests.cpp`: the toolbar's root key, the info line's Root Key, Global Transpose (its button
 reading Follow or Independent) and the root key's step, the mark of Independent parts, drawing, typing, dragging,
 double-clicking and erasing transpose events on the lane, the track list's controls and its context menu's Set Root Key

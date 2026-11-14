@@ -143,6 +143,7 @@ namespace gnubase::ui
 		m_toolbox = m_document->GetElementById("toolbox");
 		m_contextMenu = m_document->GetElementById("event-display-menu");
 		m_notification = m_document->GetElementById("tool-notification");
+		m_refusal = m_document->GetElementById("edit-refused");
 		if (m_formatMenu != nullptr)
 			m_ruler->SetAttribute("contextmenu", m_formatMenu->GetId()); // a right click in the ruler opens it
 		showContextMenus();
