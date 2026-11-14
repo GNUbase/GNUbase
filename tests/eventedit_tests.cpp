@@ -100,6 +100,36 @@ namespace
 
 		size_t count(const char* kind) { return call("project.get").at(kind).size(); }
 
+		// The first (direction -1) or last (1) tick that lies in the sample a tick lies in, on a musical track: where a
+		// part at that tick starts in samples.
+		int64_t sampleEdge(int64_t track, int64_t tick, int64_t direction)
+		{
+			const auto startAt = [this, track](int64_t at)
+			{
+				const Json id = call("midiPart.add", {{"track", track}, {"position", at}, {"length", g_quarter}})
+									.at("part")
+									.at("id");
+				const auto start = call("event.get", {{"events", {id}}}).at("events").at(0).at("start").get<int64_t>();
+				call("event.remove", {{"events", {id}}});
+				return start;
+			};
+			const int64_t sample = startAt(tick);
+			// Out of the sample by doubling the step, then back to its edge by halving it.
+			int64_t inside = 0;
+			int64_t outside = 1;
+			while (startAt(tick + (direction * outside)) == sample)
+			{
+				inside = outside;
+				outside *= 2;
+			}
+			while (outside - inside > 1)
+			{
+				const int64_t middle = (inside + outside) / 2;
+				(startAt(tick + (direction * middle)) == sample ? inside : outside) = middle;
+			}
+			return tick + (direction * inside);
+		}
+
 		// Whether an automation lane has a point at a position with a value.
 		bool hasPoint(int64_t lane, int64_t position, double value)
 		{
@@ -1691,9 +1721,11 @@ TEST_CASE("range.move and range.paste land the first in ticks of what starts in 
 		  "and the others the same number of ticks after it",
 	"[unit]")
 {
-	// Two parts on two MIDI tracks start in one sample, less than a sample apart in ticks, and a part on a third track
-	// is cut there, its piece starting on the tick nearest to the sample: the first of the three in ticks lands at
-	// position, and the others keep their distances from it in ticks (#1331).
+	// Two parts on two MIDI tracks start in one sample, on its first and its last tick, and a part on a third track is
+	// cut there, its piece starting on the tick nearest to the sample: the first of the three in ticks lands at
+	// position, and the others keep their distances from it in ticks (#1331). The modulation points on the first and
+	// the last tick of the sample move with them: by the gap between the range's start and position the first would
+	// land a sample before position at some bars, and by the shift that lands the last one there, too.
 	for (const double bpm : {97.3, 133.7})
 	{
 		Fixture f;
@@ -1711,23 +1743,29 @@ TEST_CASE("range.move and range.paste land the first in ticks of what starts in 
 		};
 		const auto start = [&f](const Json& id)
 		{ return f.call("event.get", {{"events", {id}}}).at("events").at(0).at("start").get<int64_t>(); };
-		const auto ticksOf = [&f](const Json& id) { return f.midi(id).at("position").get<int64_t>(); };
 		for (int64_t bar = 1; bar < 40; ++bar)
 		{
 			INFO(bpm << " BPM, bar " << bar);
-			const int64_t downbeat = bar * g_bar;
-			const int64_t first = add(midi, downbeat, g_bar);
-			// A part 20 ticks after the first, or before it where that starts in another sample.
-			int64_t second = add(near, downbeat + 20, g_bar);
-			if (start(second) != start(first))
-			{
-				f.call("event.remove", {{"events", {second}}});
-				second = add(near, downbeat - 20, g_bar);
-			}
+			const int64_t lowest = f.sampleEdge(midi, bar * g_bar, -1);
+			const int64_t highest = f.sampleEdge(midi, bar * g_bar, 1);
+			REQUIRE(highest > lowest);
+			const int64_t first = add(midi, lowest, g_bar);
+			const int64_t second = add(near, highest, g_bar);
 			REQUIRE(start(second) == start(first));
+			const auto lane =
+				f.call("automationLane.add", {{"track", midi}, {"target", {{"type", "controller"}, {"number", 1}}}})
+					.at("lane")
+					.at("id")
+					.get<int64_t>();
+			f.call("automationPoint.add",
+				{{"lane", lane},
+					{"points",
+						{{{"position", 0}, {"value", 0.0}}, {{"position", lowest}, {"value", 1.0}},
+							{{"position", highest}, {"value", 0.5}},
+							{{"position", lowest + g_quarter}, {"value", 0.0}}}}});
 			// A part from the bar before, cut at the range's start: the tick it is cut at is that of its piece after
 			// range.split there.
-			const int64_t before = add(across, downbeat - g_bar, 2 * g_bar);
+			const int64_t before = add(across, (bar - 1) * g_bar, 2 * g_bar);
 			f.call("range.split", {{"start", start(first)}, {"end", start(first)}, {"tracks", {across}}});
 			int64_t cut = 0;
 			const Json split = f.call("project.get").at("midiParts");
@@ -1736,12 +1774,13 @@ TEST_CASE("range.move and range.paste land the first in ticks of what starts in 
 					cut = part.at("position").get<int64_t>();
 			REQUIRE(cut != 0);
 			f.call("history.undo");
-			const std::map<int64_t, int64_t> ticks = {{midi, downbeat}, {near, ticksOf(second)}, {across, cut}};
+			const std::map<int64_t, int64_t> ticks = {{midi, lowest}, {near, highest}, {across, cut}};
 			// A position further on, off the bars.
 			const int64_t target = add(midi, ((bar + 50 + ((bar * 7) % 13)) * g_bar) + (bar * 12345), g_bar);
 			const int64_t at = start(target);
 			f.call("event.remove", {{"events", {target}}});
-			// What landed: the first in ticks at position, the others as many ticks after it as before.
+			// What landed: the first in ticks at position, the others as many ticks after it as before, and the points
+			// with them.
 			const auto check = [&](const Json& events)
 			{
 				std::map<int64_t, int64_t> landed;
@@ -1761,10 +1800,13 @@ TEST_CASE("range.move and range.paste land the first in ticks of what starts in 
 				REQUIRE(landed.size() == 3);
 				CHECK(start(earliest) == at);
 				for (const auto& [track, position] : landed)
-					CHECK(position - landed.at(midi) == ticks.at(track) - downbeat);
+					CHECK(position - landed.at(midi) == ticks.at(track) - lowest);
+				CHECK(f.hasPoint(lane, landed.at(midi), 1.0));
+				CHECK(f.hasPoint(lane, landed.at(midi) + highest - lowest, 0.5));
+				CHECK(f.hasPoint(lane, landed.at(midi) + g_quarter, 0.0));
 			};
 			const Json range = {
-				{"start", start(first)}, {"end", start(first) + 1000}, {"tracks", {midi, near, across}}};
+				{"start", start(first)}, {"end", start(first) + 40000}, {"tracks", {midi, near, across}}};
 			Json move = range;
 			move["position"] = at;
 			check(f.call("range.move", move).at("events"));
@@ -1777,6 +1819,7 @@ TEST_CASE("range.move and range.paste land the first in ticks of what starts in 
 			check(f.call("range.paste", {{"position", at}}).at("events"));
 			f.call("history.undo");
 			f.call("event.remove", {{"events", {first, second, before}}});
+			f.call("automationLane.remove", {{"lane", lane}});
 			REQUIRE(f.count("midiParts") == 0);
 		}
 	}
@@ -1833,7 +1876,9 @@ TEST_CASE("range.paste where the range was copied and range.move to the range's 
 	}
 }
 
-TEST_CASE("range.delete and range.crop don't cut a part in the sample it starts in", "[unit]")
+TEST_CASE("range.delete, range.insertSilence and range.crop don't cut a part in the sample it starts in, and the "
+		  "point on its downbeat stays with it",
+	"[unit]")
 {
 	// An edge in the sample a part on a musical track starts in, up to half a sample from its tick, leaves the part
 	// whole with the note on its downbeat (#1331): cut there in ticks, it would lose a piece shorter than a sample
@@ -1896,6 +1941,15 @@ TEST_CASE("range.delete and range.crop don't cut a part in the sample it starts 
 			CHECK(f.midi(next).at("notes") == whole.at("notes"));
 			CHECK(onDownbeat());
 			f.call("history.undo");
+			// Inserting silence from the sample the next part starts in moves it later, with the point on its
+			// downbeat.
+			f.call("range.insertSilence",
+				{{"start", info(next).at("start")}, {"end", info(next).at("start").get<int64_t>() + 10000},
+					{"tracks", {midi}}});
+			CHECK(f.midi(next).at("position") != whole.at("position"));
+			CHECK(f.midi(next).at("notes") == whole.at("notes"));
+			CHECK(onDownbeat());
+			f.call("history.undo");
 			// Cropping to the next part's own samples leaves it as it is.
 			f.call(
 				"range.crop", {{"start", info(next).at("start")}, {"end", info(next).at("end")}, {"tracks", {midi}}});
@@ -1905,5 +1959,39 @@ TEST_CASE("range.delete and range.crop don't cut a part in the sample it starts 
 			f.call("event.remove", {{"events", {before, next}}});
 			f.call("automationLane.remove", {{"lane", lane}});
 		}
+	}
+}
+
+TEST_CASE("range.delete from the sample a terminator lies in, before the tick nearest to it, leaves the gap after it",
+	"[unit]")
+{
+	// A point in a range's edge sample is in the range where it shows (#1331), but not a terminator: with the edge on
+	// it, the cut would fill the gap that starts there with the value the curve arrives with.
+	Fixture f;
+	f.call("project.set", {{"tempoTrackActive", true}});
+	f.call("tempo.add", {{"position", 0}, {"bpm", 97.3}, {"ramp", false}});
+	const int64_t midi = f.track("midi");
+	for (int64_t bar = 1; bar < 10; ++bar)
+	{
+		INFO("bar " << bar);
+		const int64_t lowest = f.sampleEdge(midi, bar * g_bar, -1);
+		const auto lane =
+			f.call("automationLane.add", {{"track", midi}, {"target", {{"type", "controller"}, {"number", 1}}}})
+				.at("lane")
+				.at("id")
+				.get<int64_t>();
+		f.call("automationPoint.add",
+			{{"lane", lane},
+				{"points",
+					{{{"position", 0}, {"value", 0.5}}, {{"position", lowest}, {"value", 0.25}, {"terminator", true}},
+						{{"position", (bar + 1) * g_bar}, {"value", 1.0}}}}});
+		const Json before = f.call("automationLane.list", {{"track", midi}});
+		const Json probe =
+			f.call("midiPart.add", {{"track", midi}, {"position", lowest}, {"length", g_quarter}}).at("part").at("id");
+		const auto from = f.call("event.get", {{"events", {probe}}}).at("events").at(0).at("start").get<int64_t>();
+		f.call("event.remove", {{"events", {probe}}});
+		f.call("range.delete", {{"start", from}, {"end", from + 1000}, {"tracks", {midi}}});
+		CHECK(f.call("automationLane.list", {{"track", midi}}) == before);
+		f.call("automationLane.remove", {{"lane", lane}});
 	}
 }

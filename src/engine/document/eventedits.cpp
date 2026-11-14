@@ -1911,14 +1911,15 @@ namespace gnubase::engine
 		// Where an edge of a range at a position in samples lies in a lane: on the tick nearest to it on a musical
 		// track, or at the first point in its sample before that tick. A point is in a range where it shows, in
 		// samples, as events and parts are (#1261): a point on the downbeat of a part that starts in the range's start
-		// sample goes with the part, and one on the downbeat of a part in the end sample stays with it (#1331).
+		// sample goes with the part, and one on the downbeat of a part in the end sample stays with it (#1331). Not a
+		// terminator: an edge on it would fill the gap it starts with the value the curve arrives there with.
 		int64_t automationEdge(const Project& project, const AutomationLane& lane, time::Samples at)
 		{
 			const time::TimeBase base = project.trackById.at(lane.track).timeBase;
 			int64_t edge = inBase(project, at, base);
 			if (base == time::TimeBase::Musical)
 				for (const auto& [id, point] : lane.points)
-					if (point.position.value < edge && samples(project, point.position) == at)
+					if (!point.terminator && point.position.value < edge && samples(project, point.position) == at)
 						edge = point.position.value;
 			return edge;
 		}
@@ -2109,7 +2110,7 @@ namespace gnubase::engine
 				if (contains(tracks, lane.track))
 				{
 					const time::TimeBase base = project.trackById.at(lane.track).timeBase;
-					openAutomation(project, lane, inBase(project, at, base), gap.in(base), context);
+					openAutomation(project, lane, automationEdge(project, lane, at), gap.in(base), context);
 				}
 		}
 

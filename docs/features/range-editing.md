@@ -39,7 +39,9 @@ Each command is one undo step and changes nothing if it fails; `range.copy` chan
   points are in the range where they show, in samples: on a musical track a point in the sample an edge lies in, before
   the edge's tick, is where the edge is, so that a point on the downbeat of a part that starts in the range's start
   sample goes with the part, and one on the downbeat of a part that starts in the end sample stays with that part, also
-  when Delete Time moves it back.
+  when Delete Time moves it back; inserting silence there moves it later with the part. A terminator stays where its
+  tick is: an edge on it would fill the gap it starts. Delete Time closes the gap by the range's length in ticks, as
+  the events after it move.
 - **The clipboard** is the engine's, so MCP, Lua and the UI share it; it isn't part of the project or of undo. It keeps
   copies of the events, parts and points, so cutting and deleting the originals doesn't change it. A new or opened
   project empties it, since it holds the old project's track and clip ids. `range.paste` goes
@@ -118,11 +120,13 @@ line's range fields, the range in the editors (they come with their tickets), an
   and an audio part on musical tracks moved, copied and pasted by a range from the first part's start sample: the
   first part, the audio event and the audio part with its event landing on the position's sample with the part's first
   note and the modulation point on its downbeat, the second part a bar after the first in ticks, the other track's part
-  on the second part's tick, and no piece left behind; at such tempos two parts on two tracks less than a sample apart
-  in ticks in the range's start sample and the piece of a third track's part cut there, the first of them in ticks
-  landing at the position and the others as many ticks after it as before, moved, copied and pasted; parts on two
-  bars cut and pasted where they were and moved to the range's own start, keeping their bars' ticks; and
-  `range.delete` up to the sample the next part starts in, with and without Delete Time, and `range.crop` to that
-  part's own samples leaving it whole with the note and the modulation point on its downbeat.
+  on the second part's tick, and no piece left behind; at such tempos two parts on two tracks on the first and the last
+  tick of the range's start sample, with modulation points on both ticks, and the piece of a third track's part cut
+  there, the first of them in ticks landing at the position and the others and the points as many ticks after it as
+  before, moved, copied and pasted; parts on two bars cut and pasted where they were and moved to the range's own
+  start, keeping their bars' ticks; `range.delete` up to the sample the next part starts in, with and without Delete
+  Time, `range.insertSilence` from that sample and `range.crop` to that part's own samples, leaving it whole with the
+  note and the modulation point on its downbeat; and `range.delete` from the sample a terminator lies in, before the
+  tick nearest to it, leaving the lane as it was.
 - `tests/eventediting_tests.cpp` (fake window system, real engine): the commands exist; split, Delete Time, cut and
   paste on a selection range, which stays; paste at the cursor without a range, selecting what it pasted.
