@@ -458,35 +458,101 @@ TEST_CASE("dragging the keyboard's left part zooms the pitches and scrolls the n
 	CHECK(std::abs(f.box(".key-editor-row").at("height").get<double>() - 40.0) <= 0.5);
 }
 
+namespace
+{
+	// Adds the style sheet to the key editor's document, as a theme or another style change would.
+	void restyle(Fixture& f, const std::string& rcss)
+	{
+		ui::Window* window = f.app.shell().find(f.app.appUi().editorWindowId());
+		REQUIRE(window != nullptr);
+		Rml::Context& context = window->context();
+		Rml::ElementDocument* document = nullptr;
+		for (int i = 0; i < context.GetNumDocuments(); ++i)
+			if (context.GetDocument(i)->QuerySelector(".key-editor-rows") != nullptr)
+				document = context.GetDocument(i);
+		REQUIRE(document != nullptr);
+		auto style = Rml::MakeShared<Rml::StyleSheetContainer>();
+		style->MergeStyleSheetContainer(*document->GetStyleSheetContainer());
+		style->MergeStyleSheetContainer(*Rml::Factory::InstanceStyleSheetString(rcss));
+		document->SetStyleSheetContainer(std::move(style));
+		f.app.shell().step(std::chrono::milliseconds(0));
+	}
+
+	double rowHeight(Fixture& f)
+	{
+		return f.box(".key-editor-row").at("height").get<double>();
+	}
+
+	double keyboardHeight(Fixture& f)
+	{
+		return f.box(".key-editor-keys").at("height").get<double>();
+	}
+
+	// A drag on the keyboard's left part, dx px to the right.
+	void zoomDrag(Fixture& f, int dx)
+	{
+		const int left = f.box(".key-editor-keys").at("x").get<int>() + 4;
+		const int high = f.box(".key-editor-body").at("y").get<int>() + 150;
+		f.drag({"", 0, ui::Point{left, high}}, {"", 0, ui::Point{left + dx, high}});
+	}
+}
+
 TEST_CASE("the keyboard's zoom scales the rows' height that the style sheet gives them", "[ui]")
 {
-	// A theme or style change that gives the rows another height is what the zoom scales (#1369).
+	// A theme or style change that gives the rows another height is what the zoom scales (#1369), and the keyboard
+	// is as high as the rows without a height of its own (#1547).
 	Fixture f({1024, 600});
 	f.app.setDpRatio(1.0F);
 	f.add({{0, 60, g_quarter}});
-	ui::Window* window = f.app.shell().find(f.app.appUi().editorWindowId());
-	REQUIRE(window != nullptr);
-	Rml::Context& context = window->context();
-	Rml::ElementDocument* document = nullptr;
-	for (int i = 0; i < context.GetNumDocuments(); ++i)
-		if (context.GetDocument(i)->QuerySelector(".key-editor-rows") != nullptr)
-			document = context.GetDocument(i);
-	REQUIRE(document != nullptr);
-	auto style = Rml::MakeShared<Rml::StyleSheetContainer>();
-	style->MergeStyleSheetContainer(*document->GetStyleSheetContainer());
-	style->MergeStyleSheetContainer(*Rml::Factory::InstanceStyleSheetString(
-		".key-editor-rows .key-editor-row { height: 14dp; } .key-editor-body .key-editor-keys { height: 1792dp; }"));
-	document->SetStyleSheetContainer(std::move(style));
+	restyle(f, ".key-editor-rows .key-editor-row { height: 14dp; }");
 	f.scroll(127);
-	CHECK(std::abs(f.box(".key-editor-row").at("height").get<double>() - 14.0) <= 0.5);
+	CHECK(std::abs(rowHeight(f) - 14.0) <= 0.5);
+	CHECK(std::abs(keyboardHeight(f) - (128 * 14.0)) <= 1);
 
 	// A drag 100 px to the right doubles the rows' height.
-	const Json keyboard = f.box(".key-editor-keys");
-	const int left = keyboard.at("x").get<int>() + 4;
-	const int high = f.box(".key-editor-body").at("y").get<int>() + 150;
-	f.drag({"", 0, ui::Point{left, high}}, {"", 0, ui::Point{left + 100, high}});
-	CHECK(std::abs(f.box(".key-editor-row").at("height").get<double>() - 28.0) <= 0.5);
-	CHECK(std::abs(f.box(".key-editor-keys").at("height").get<double>() - (128 * 28.0)) <= 1);
+	zoomDrag(f, 100);
+	CHECK(std::abs(rowHeight(f) - 28.0) <= 0.5);
+	CHECK(std::abs(keyboardHeight(f) - (128 * 28.0)) <= 1);
+}
+
+TEST_CASE("a zoomed key editor follows a style change to the rows' height", "[ui]")
+{
+	// The zoom scales the height the style sheet gives the rows, not the one it gave them itself (#1547).
+	Fixture f({1024, 600});
+	f.app.setDpRatio(1.0F);
+	f.add({{0, 60, g_quarter}});
+	f.scroll(127);
+	zoomDrag(f, 100);
+	CHECK(std::abs(rowHeight(f) - 20.0) <= 0.5);
+
+	// At that zoom the next press on the keyboard's left part scales the new height, a click or a drag.
+	restyle(f, ".key-editor-rows .key-editor-row { height: 14dp; }");
+	const int left = f.box(".key-editor-keys").at("x").get<int>() + 4;
+	f.click({"", 0, ui::Point{left, f.box(".key-editor-body").at("y").get<int>() + 150}});
+	CHECK(std::abs(rowHeight(f) - 28.0) <= 0.5);
+	CHECK(std::abs(keyboardHeight(f) - (128 * 28.0)) <= 1);
+
+	// Back at zoom 1 the rows have the style sheet's height and follow its next change at once.
+	zoomDrag(f, -100);
+	CHECK(std::abs(rowHeight(f) - 14.0) <= 0.5);
+	restyle(f, ".key-editor-body .key-editor-rows .key-editor-row { height: 12dp; }");
+	CHECK(std::abs(rowHeight(f) - 12.0) <= 0.5);
+	CHECK(std::abs(keyboardHeight(f) - (128 * 12.0)) <= 1);
+}
+
+TEST_CASE("the keyboard's zoom zooms nothing when the style sheet gives the rows no length", "[ui]")
+{
+	// Rows sized by their content or a minimum, not a height, have nothing to scale: the zoom leaves them and the
+	// keyboard as they are (#1547).
+	Fixture f({1024, 600});
+	f.app.setDpRatio(1.0F);
+	f.add({{0, 60, g_quarter}});
+	restyle(f, ".key-editor-rows .key-editor-row { height: auto; min-height: 10dp; }");
+	f.scroll(127);
+	CHECK(std::abs(rowHeight(f) - 10.0) <= 0.5);
+	zoomDrag(f, 100);
+	CHECK(std::abs(rowHeight(f) - 10.0) <= 0.5);
+	CHECK(std::abs(keyboardHeight(f) - 1280.0) <= 1);
 }
 
 TEST_CASE("a click and a drag on the keyboard's left part leave the selected notes and the history alone", "[ui]")
