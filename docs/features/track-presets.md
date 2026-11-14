@@ -38,18 +38,19 @@ they are.
   DAWproject file rather than the reference's XML, as the project format is DAWproject. Routing to tracks that weren't
   exported doesn't go along. Tracks inside an exported folder that can't be exported yet (VCA tracks) stay behind,
   and the result lists them as `skipped`; listed themselves, they are refused.
-- **The tracks of a file.** `track.importSources` `{path, range}` lists the tracks of an archive or a project file, with
-  their ids in the file, names, types, folders, whether they can be imported (`importable`), and the sample rates of the
-  media files their events play (`mediaSampleRates`, each once, from the lowest, the events of the versions that aren't
-  active too, and a sampler's sample and a drum machine's pads' samples, which come with the instrument), for choosing
-  what to import and telling whether Convert Sample Rate has anything to convert for the tracks chosen; a media file
-  nothing plays is nobody's. With `range`, as `track.import` takes it, only the events that the import brings with it
-  count: the engine brings the file to the project's sample rate and leaves out what starts outside the range, as the
-  import does, so that the two never disagree; a sampler's samples count wherever the range is. And the file's name, sample rate, frame rate and start time, for
-  comparing them with the project's (Project Settings, p. 205). Listing extracts no media files, nor does
-  `track.presets`: the engine reads the file without them, and doesn't read a file in their place either, as the path
-  of an embedded file that isn't extracted is its entry's name in the file, which would resolve against the working
-  folder.
+- **The tracks of a file.** `track.importSources` `{path, range, events}` lists the tracks of an archive or a project
+  file, with their ids in the file, names, types, folders, whether they can be imported (`importable`), and the sample
+  rates of the media files their events play (`mediaSampleRates`, each once, from the lowest, the events of the versions
+  that aren't active too, and a sampler's sample and a drum machine's pads' samples, which come with the instrument),
+  for choosing what to import and telling whether Convert Sample Rate has anything to convert for the tracks chosen; a
+  media file nothing plays is nobody's. With `range`, as `track.import` takes it, only the events that the import brings
+  with it count: the engine brings the file to the project's sample rate and leaves out what starts outside the range,
+  as the import does, so that the two never disagree; a sampler's samples count wherever the range is. With `events`
+  false, as `track.import` without events (default true), no events or track versions count, only the samplers' and drum
+  machines' samples, which come with the instrument either way. And the file's name, sample rate, frame rate and start
+  time, for comparing them with the project's (Project Settings, p. 205). Listing extracts no media files, nor does
+  `track.presets`: the engine reads the file without them, and doesn't read a file in their place either, as the path of
+  an embedded file that isn't extracted is its entry's name in the file, which would resolve against the working folder.
 - **Importing tracks** (pp. 200-205). `track.import` `{path, tracks, track, events, settings, automation, destinations,
   existing, position, range}` copies tracks of an archive or project file into the project, in one undo step: `tracks`
   (default: every top-level track it can import), a listed folder with the tracks inside it, in the file's order, below
@@ -140,8 +141,10 @@ start. Copy to Active Project Folder (disabled while the project has no file) se
 files the import added, and Convert Sample Rate (only with it, and only while one of the tracks imported, checked or
 going along with a checked folder, has a media file at another sample rate than the project's in what the import
 brings, whatever the file's own rate: the dialog unions those tracks' `mediaSampleRates`, p. 205, listed again for the
-range while Range is on and its fields are two timecodes, once for each range) `media.conform` for those at another sample rate, through `gnubase.ui.command` so that the
-pool shows how they go. The engine's refusal shows in the dialog, which stays open.
+range while Range is on and its fields are two timecodes and without events while Events and Parts is off, once for
+each range and choice of events) `media.conform` for those at another sample rate, through `gnubase.ui.command` so that
+the pool shows how they go. A range field counts once it is left (Enter is OK), not for each key typed into it,
+as each new range has the engine read the file again. The engine's refusal shows in the dialog, which stays open.
 
 ```
 #track-import-dialog
@@ -210,9 +213,11 @@ drum maps and Input Transformer settings in presets, sampler track presets, patt
   Range, in samples at the project's rate, place the parts, and events before the project start are refused; the
   project's end moves after what is imported, also after an audio event's end at the project's rate, an empty audio
   part and an automation point, up to 24 hours; `track.importSources` lists, for each track, the sample rates of the
-  media files its events play, each once from the lowest, also those of the versions that aren't active and of a
-  sampler's sample, and not one of a media file nothing plays, and with a range only those of the events that start in
-  it, at the project's rate, while the sampler's stays; it refuses a range that doesn't end after its start. `tests/backup_tests.cpp`: `media.prepareArchive` with `media` copies only those.
+  media files its events play, each once from the lowest, also those of the versions that aren't active, of a
+  sampler's sample and of a drum machine's pads' samples, and not one of a media file nothing plays, with a range only
+  those of the events that start in it, at the project's rate, while the instruments' samples stay, and without events
+  only the instruments' samples, with a range or without; it refuses a range that doesn't end after its start.
+  `tests/backup_tests.cpp`: `media.prepareArchive` with `media` copies only those.
   `tests/mixer_tests.cpp`: a lower fader top brings volume automation down, and the project saved then opens with
   GNUbase's own data. In the app: File > Export > Selected Tracks and File > Import > Tracks through the file dialogs
   and the Import Options dialog, which imports below the selected track, imports onto the track of the same name with
@@ -221,8 +226,8 @@ drum maps and Input Transformer settings in presets, sampler track presets, patt
   file tracks of one name on the project's track and leaves a track that goes along with its folder at New Track,
   resets the destinations, offers Convert Sample Rate for a checked track's media files at another rate, and takes it
   back when that track goes and when no media file of the file is at another rate than the project's, counts a track
-  that goes along with a checked folder though its own box isn't checked, takes it back for a range that leaves the
-  media file out and offers it again with Use Locators, and imports a
-  range from the locators' timecodes at Relative Position; the engine's refusals of an
-  export in the project error dialog and the tracks it left out in the dialog titled Export Selected Tracks; and the
-  track preset dialog's Save, Load (with only matching presets listed) and Add.
+  that goes along with a checked folder though its own box isn't checked, takes it back without Events and Parts and
+  for a range that leaves the media file out, once the range field is left rather than while it is typed, and offers it
+  again with Use Locators, and imports a range from the locators' timecodes at Relative Position; the engine's refusals
+  of an export in the project error dialog and the tracks it left out in the dialog titled Export Selected Tracks; and
+  the track preset dialog's Save, Load (with only matching presets listed) and Add.

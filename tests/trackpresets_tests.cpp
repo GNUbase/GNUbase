@@ -1326,6 +1326,77 @@ TEST_CASE("track.importSources counts a sampler's sample and, for a range, only 
 		ContainsSubstring("range must end after its start"));
 }
 
+TEST_CASE("track.importSources counts a drum machine's pads' samples, and without events only the instruments'",
+	"[integration]")
+{
+	const test::TempDir dir;
+	const fs::path song = dir.path() / "Song.dawproject";
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	run(client, "project.set", {{"sampleRate", 44100.0}}); // the file's rate: the range is at the project's
+	const auto wavOf = [&](int rate, const std::string& name)
+	{
+		const fs::path wav = dir.path() / name;
+		test::writeWav(wav, {std::vector<float>(100, 0.25f), 1, rate});
+		return wav;
+	};
+	const auto clipOf = [&](int rate, const std::string& name)
+	{
+		const ObjectId media =
+			run(client, "media.add", {{"path", wavOf(rate, name).u8string()}}).at("media").at("id").get<ObjectId>();
+		return run(client, "clip.add", {{"media", media}}).at("clip").at("id").get<ObjectId>();
+	};
+	const Added takes = add(client, {{"type", "audio"}, {"name", "Takes"}, {"timeBase", "linear"}}); // in samples
+	run(client, "audioEvent.add",
+		{{"track", takes.track}, {"clip", clipOf(48000, "event.wav")}, {"position", 44100}, {"offset", 0},
+			{"length", 100}}); // at 1 second
+	run(client, "trackVersion.add", {{"tracks", {takes.track}}});
+	run(client, "audioEvent.add",
+		{{"track", takes.track}, {"clip", clipOf(96000, "version.wav")}, {"position", 44100}, {"offset", 0},
+			{"length", 100}}); // in a version that becomes inactive
+	run(client, "trackVersion.activate", {{"tracks", {takes.track}}, {"version", 1}});
+	// A drum machine plays its pads' samples wherever the range is, and with or without events: one pad from a pool
+	// clip, one from a file, and the same rate twice.
+	const ObjectId drums =
+		run(client, "drum.create", {{"name", "Drums"}, {"kit", false}}).at("track").at("id").get<ObjectId>();
+	run(client, "drum.loadPad", {{"track", drums}, {"pad", 36}, {"clip", clipOf(32000, "kick.wav")}});
+	run(client, "drum.loadPad", {{"track", drums}, {"pad", 38}, {"path", wavOf(11025, "snare.wav").u8string()}});
+	run(client, "drum.loadPad", {{"track", drums}, {"pad", 42}, {"path", wavOf(32000, "hat.wav").u8string()}});
+	// A sampler's sample comes with its instrument too.
+	run(client, "sampler.create", {{"clip", clipOf(16000, "sample.wav")}, {"name", "Sampler"}});
+	run(client, "project.save", {{"path", song.u8string()}, {"embedMedia", false}});
+
+	run(client, "project.new"); // at 48 kHz: from 1 to 2 seconds
+	const auto rates = [&](const Json& parameters)
+	{
+		Json all = parameters;
+		all["path"] = song.u8string();
+		const Json tracks = run(client, "track.importSources", all).at("tracks");
+		std::map<std::string, Json> byName;
+		for (const Json& track : tracks)
+			byName[track.at("name").get<std::string>()] = track.at("mediaSampleRates");
+		return byName;
+	};
+	const Json range = {{"start", 48000}, {"end", 96000}};
+	const std::map<std::string, Json> whole = rates(Json::object());
+	CHECK(whole.at("Takes") == Json{48000.0, 96000.0});
+	CHECK(whole.at("Drums") == Json{11025.0, 32000.0});
+	CHECK(whole.at("Sampler") == Json{16000.0});
+	CHECK(rates({{"events", true}}) == whole);
+	const std::map<std::string, Json> ranged = rates({{"range", range}});
+	CHECK(ranged.at("Takes") == Json{48000.0, 96000.0});
+	CHECK(ranged.at("Drums") == Json{11025.0, 32000.0});
+	// Without events track.import brings neither events nor versions: only the instruments' samples count.
+	for (const Json& parameters : {Json{{"events", false}}, Json{{"events", false}, {"range", range}}})
+	{
+		INFO(parameters.dump());
+		const std::map<std::string, Json> without = rates(parameters);
+		CHECK(without.at("Takes") == Json::array());
+		CHECK(without.at("Drums") == Json{11025.0, 32000.0});
+		CHECK(without.at("Sampler") == Json{16000.0});
+	}
+}
+
 TEST_CASE("listing the tracks of a file reads no media file in its place", "[integration]")
 {
 	const test::TempDir dir;
@@ -1675,6 +1746,11 @@ TEST_CASE(
 	REQUIRE(app.waitUntil([&disabled] { return disabled("#import-convert"); }));
 	click(app, "#import-source-" + source("Band"));
 	REQUIRE(app.waitUntil([&disabled] { return !disabled("#import-convert"); }));
+	// Without Events and Parts the import brings none of Bass's events, so there is nothing to convert.
+	click(app, "#import-events");
+	REQUIRE(app.waitUntil([&disabled] { return disabled("#import-convert"); }));
+	click(app, "#import-events");
+	REQUIRE(app.waitUntil([&disabled] { return !disabled("#import-convert"); }));
 	click(app, "#import-copy");
 	CHECK(disabled("#import-convert"));
 
@@ -1692,12 +1768,20 @@ TEST_CASE(
 	click(app, "#import-locators");
 	CHECK(element("#import-range-end").at("value") == "00:00:12:00");
 	// Convert Sample Rate follows the range: Bass's media file starts at 10 seconds, so a range from 11 seconds
-	// has nothing to convert.
+	// has nothing to convert. The dialog asks the engine for a range field once it is left, not for each key typed
+	// into it (Enter is OK).
 	click(app, "#import-copy");
 	REQUIRE(app.waitUntil([&disabled] { return !disabled("#import-convert"); }));
-	click(app, "#import-range-start");
-	app.ui().key(std::nullopt, "Mod+A");
-	app.ui().text(std::nullopt, "00:00:11:00");
+	const auto typeStart = [&app, &element](const std::string& text)
+	{
+		click(app, "#import-range-start");
+		app.ui().key(std::nullopt, "Mod+A");
+		app.ui().text(std::nullopt, text);
+		REQUIRE(app.waitUntil([&element, &text] { return element("#import-range-start").at("value") == text; }));
+	};
+	typeStart("00:00:11:00");
+	CHECK(!disabled("#import-convert"));
+	click(app, "#import-range-end"); // leaves the start field
 	REQUIRE(app.waitUntil([&disabled] { return disabled("#import-convert"); }));
 	click(app, "#import-locators");
 	REQUIRE(app.waitUntil([&disabled] { return !disabled("#import-convert"); }));

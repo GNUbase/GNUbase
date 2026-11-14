@@ -1179,12 +1179,14 @@ namespace gnubase::engine
 				"media.conform converts those at another rate than the project's (Convert Sample Rate); from top to "
 				"bottom. With range {start, end} only the events that track.import brings with that range: what "
 				"starts from start up to end, in samples at the project's sample rate from the file's start (Range, "
-				"reference manual p. 204). And the file's project settings as project.get has them, to compare them "
-				"with the project's (Project Settings, p. 205): name, sampleRate, frameRate and startTime. Extracts no "
-				"media files.",
+				"reference manual p. 204). With events false, as track.import without events (default true), none of "
+				"the events and track versions: only the samplers' and drum machines' samples. And the file's project "
+				"settings as project.get has them, to compare them with the project's (Project Settings, p. 205): "
+				"name, sampleRate, frameRate and startTime. Extracts no media files.",
 				objectSchema(
 					{{"path", stringSchema},
-						{"range", objectSchema({{"start", samplesSchema}, {"end", samplesSchema}}, {"start", "end"})}},
+						{"range", objectSchema({{"start", samplesSchema}, {"end", samplesSchema}}, {"start", "end"})},
+						{"events", booleanSchema}},
 					{"path"}),
 				objectSchema(
 					{{"tracks",
@@ -1204,21 +1206,24 @@ namespace gnubase::engine
 			{
 				const Json& parameters = context.parameters();
 				const auto range = rangeOf(parameters);
+				CopyOptions options;
+				options.events = parameters.value("events", true);
 				const Project file = load(fs::u8path(parameters.at("path").get<std::string>()), false);
 				std::map<ObjectId, std::set<double>> rates;
-				if (range)
+				if (range || !options.events)
 				{
-					// What track.import brings with the range: the file at the project's rate, as it imports it.
+					// What track.import brings with the range and options: with a range the file at the project's
+					// rate, as it imports it; the media files' rates stay.
 					const Project& project = model.project();
 					Project placed = file;
 					const Json none = Json::object();
 					CommandContext inner(none);
-					if (placed.sampleRate != project.sampleRate)
+					if (range && placed.sampleRate != project.sampleRate)
 						changeSampleRate(placed, project.sampleRate, inner);
 					std::set<ObjectId> every;
 					for (const auto& [id, track] : placed.trackById)
 						every.insert(id);
-					place(placed, project, 0, range, every, {});
+					place(placed, project, 0, range, every, options);
 					rates = mediaSampleRatesByTrack(placed);
 				}
 				else
