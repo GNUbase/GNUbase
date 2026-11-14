@@ -730,7 +730,8 @@ TEST_CASE("the Articulations lane adds no second direction where one starts, and
 	// Left of the bar, the click snaps to where it starts: nothing is added there. A click in the Arco row is.
 	f.click(f.at(2, 3.8));
 	f.click(f.at(1, 8.0));
-	REQUIRE(f.app.waitUntil([&f] { return f.elements(inLane(" .articulation-item.direction")).size() == 2; }));
+	const std::string arco = inLane(" .articulation-row[articulation-row=\"0\"] .articulation-item.direction");
+	REQUIRE(f.app.waitUntil([&] { return f.elements(arco).size() == 1; }));
 	CHECK(f.midiPart().at("controllers").size() == 2);
 
 	// Select All Events on Lane selects the lane's directions.
