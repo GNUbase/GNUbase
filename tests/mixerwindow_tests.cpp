@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The mixer windows and the lower zone's mixer (#106, docs/features/mixer-window.md) in the app, driven with
 // ui::Automation as MCP's UI tools drive them. tests/mixerviews_tests.cpp checks what the engine keeps.
+#include "testutils/commandholds.h"
 #include "ui/automation.h"
 #include "ui/docking.h"
 #include "ui/keycommands.h"
@@ -879,7 +880,7 @@ TEST_CASE("the other views of a channel follow a control dragged while the engin
 
 	// Only the control that sends waits for the engine. Moved faster than the engine answers, it always has a step on
 	// its way, and the other views still show the steps the engine took during the drag (#716).
-	const auto drag = [&](const View& dragged, const std::vector<View>& others)
+	const auto checkDrag = [&](const View& dragged, const std::vector<View>& others, const char* parameter = "volume")
 	{
 		const double before = valueOf(app, dragged.first, dragged.second);
 		test::LateDrag drag(app, dragged.first, dragged.second);
@@ -892,18 +893,23 @@ TEST_CASE("the other views of a channel follow a control dragged while the engin
 		}
 		drag.release();
 		REQUIRE(app.waitUntil(
-			[&] { return channelJson(app, guitar.channel).at("volume") == Catch::Approx(moved).margin(1e-4); }));
+			[&] { return channelJson(app, guitar.channel).at(parameter) == Catch::Approx(moved).margin(1e-4); }));
 		for (const View& other : others)
 			CHECK(app.waitUntil(
 				[&] { return valueOf(app, other.first, other.second) == Catch::Approx(moved).margin(1e-4); }));
 	};
 	SECTION("the inspector's volume")
 	{
-		drag({main, field}, {{first, fader}, {second, fader}});
+		checkDrag({main, field}, {{first, fader}, {second, fader}});
 	}
 	SECTION("a mixer's fader")
 	{
-		drag({first, fader}, {{second, fader}, {main, field}});
+		checkDrag({first, fader}, {{second, fader}, {main, field}});
+	}
+	SECTION("a mixer's panner")
+	{
+		const std::string pan = strip(guitar.channel) + " [param=pan]";
+		checkDrag({first, pan}, {{second, pan}}, "pan");
 	}
 }
 
@@ -1032,4 +1038,53 @@ TEST_CASE("a strip made again while its fader's step is in flight shows the engi
 	REQUIRE(app.waitUntil([&] { return valueOf(app, window, fader) == Catch::Approx(-12.2).margin(1e-4); }));
 	CHECK(channelJson(app, guitar.channel).at("volume").get<double>() == Catch::Approx(-12.2).margin(1e-4));
 	CHECK(historyPosition(app) == position + 1); // the gesture's one undo step; visibility isn't one
+}
+
+TEST_CASE("an inspector wheel turn follows a released mixer's waiting fader step", "[ui]")
+{
+	test::CommandHolds holds;
+	test::UiApp app({1024, 600});
+	const test::ReleaseHolds releaseHolds{holds};
+	app.appUi().showProject();
+	const Added guitar = addTrack(app, "audio", "Guitar");
+	app.appUi().docking().open("inspector");
+	app.appUi().trackList()->select({guitar.track});
+	const Window window = openMixer(app, 1);
+	const std::string fader = strip(guitar.channel) + " fader";
+	const std::string field = ".inspector valuefield[control=volume]";
+	app.call("channel.set", {{"channel", guitar.channel}, {"volume", -12.0}});
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			return elements(app, window, fader).size() == 1 && elements(app, std::nullopt, field).size() == 1 &&
+				valueOf(app, window, fader) == -12.0 && valueOf(app, std::nullopt, field) == -12.0;
+		}));
+	const int64_t position = historyPosition(app);
+	app.engine().registerCommand(
+		{"test.hold", 1, "Waits for the test.", engine::CommandInfo{}.parameters, Json::object(), true},
+		[&](engine::CommandContext&) { return holds.hold(); });
+	engine::Client holder(app.engine());
+	holder.send("test.hold");
+	REQUIRE(holds.waitEntered(1));
+	test::LateDrag drag(app, window, fader);
+	drag.nudge(1);
+	drag.nudge(1);
+	const double dragged = drag.value();
+	CHECK(app.appUi().binding().waiting("history.transaction") == 1);
+	drag.release(false);
+	app.ui().wheel(std::nullopt, {field, 0, std::nullopt}, 0.0F, 1.0F);
+	const double wanted = valueOf(app, std::nullopt, field);
+	CHECK(wanted != dragged);
+	holds.release(1);
+	REQUIRE(app.appUi().binding().settle(std::chrono::seconds(5)));
+	REQUIRE(channelJson(app, guitar.channel).at("volume") == Catch::Approx(wanted).margin(1e-4));
+	CHECK(historyPosition(app) == position + 2);
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			return valueOf(app, window, fader) == Catch::Approx(wanted).margin(1e-4) &&
+				valueOf(app, std::nullopt, field) == Catch::Approx(wanted).margin(1e-4);
+		}));
+	app.call("history.undo");
+	CHECK(channelJson(app, guitar.channel).at("volume") == Catch::Approx(dragged).margin(1e-4));
 }

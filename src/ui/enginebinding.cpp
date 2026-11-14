@@ -106,14 +106,15 @@ namespace gnubase::ui
 		return ran;
 	}
 
-	void EngineBinding::sendWaitingSteps(const std::string& before)
+	void EngineBinding::sendWaitingSteps(const std::string& before, const std::string* except)
 	{
 		// A command that may change something goes after the steps the user made before it, e.g. an undo right after a
 		// drag undoes all of the drag.
 		if (m_queries.count(before) == 0)
 			for (auto& [what, steps] : m_steps)
-				while (!steps.waiting.empty())
-					sendNextStep(what);
+				if (except == nullptr || what != *except)
+					while (!steps.waiting.empty())
+						sendNextStep(what);
 	}
 
 	engine::RequestId EngineBinding::transmit(std::string command, engine::Json parameters,
@@ -133,6 +134,9 @@ namespace gnubase::ui
 		Step step{gesture != 0 ? (merge.empty() ? what : merge) + " " + std::to_string(gesture) : std::string(),
 			std::move(description), std::move(commands), std::move(done)};
 		Steps& steps = m_steps[what];
+		// Other keys' older steps go first, even when returning to a control with an earlier step still in flight.
+		// Leave this key's own queue alone so an ongoing gesture keeps coalescing its waiting value.
+		sendWaitingSteps({}, &what);
 		if (!shown.is_null())
 			steps.shown.merge_patch(shown);
 		if (!step.merge.empty() && !steps.waiting.empty() && steps.waiting.back().merge == step.merge)
