@@ -771,6 +771,9 @@ namespace gnubase::engine
 				[&input](const MidiRecordTrack& track) { return track.channel == input.channel && track.chordsOnly; });
 			if (builder == m_midiBuilders.end() || chordsOnly)
 				keepRetrospective(input, chunk.deviceFrame);
+			if (chordsOnly)
+				if (const auto kept = m_retrospective.find(input.channel); kept != m_retrospective.end())
+					kept->second.recordedUntil = chunk.deviceFrame + input.offset + 1;
 			if (builder != m_midiBuilders.end() && m_midiCurrent.midiFilter.records(input.event))
 				builder->second.add(chunk.position + input.offset, input.event);
 		}
@@ -784,19 +787,23 @@ namespace gnubase::engine
 		m_midiBuilders.clear();
 		for (const MidiRecordTrack& track : m_midiCurrent.midiTracks)
 			m_midiBuilders[track.channel].setMpe(m_midiCurrent.mpePitchRange);
-		// The catch range: input that came just before recording started belongs to its start.
+		// The catch range: input that came just before recording started belongs to its start, unless a recording
+		// took it already.
 		if (m_midiCurrent.catchFrames <= 0)
 			return;
-		for (auto& [channel, builder] : m_midiBuilders)
+		for (const MidiRecordTrack& track : m_midiCurrent.midiTracks)
 		{
-			const auto found = m_retrospective.find(channel);
+			const auto found = m_retrospective.find(track.channel);
 			if (found == m_retrospective.end())
 				continue;
-			for (const RetrospectiveEvent& kept : found->second.events)
-				if (kept.deviceFrame < chunk.deviceFrame &&
+			Retrospective& buffer = found->second;
+			for (const RetrospectiveEvent& kept : buffer.events)
+				if (kept.deviceFrame >= buffer.recordedUntil && kept.deviceFrame < chunk.deviceFrame &&
 					kept.deviceFrame + static_cast<uint64_t>(m_midiCurrent.catchFrames) >= chunk.deviceFrame &&
 					m_midiCurrent.midiFilter.records(kept.event))
-					builder.add(chunk.position, kept.event);
+					m_midiBuilders[track.channel].add(chunk.position, kept.event);
+			if (track.chordsOnly)
+				buffer.recordedUntil = std::max(buffer.recordedUntil, chunk.deviceFrame);
 		}
 	}
 
