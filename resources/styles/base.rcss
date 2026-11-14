@@ -1625,6 +1625,15 @@ meter .meter-peak
 	padding: 0 2dp;
 }
 
+/* A MIDI track's MIDI channel (docs/features/mixer.md): Any, 1 to 16. */
+.track-list .track-controls select.midi-channel
+{
+	width: 44dp;
+	height: 18dp;
+	margin-left: 2dp;
+	padding: 0 2dp;
+}
+
 /* The chord track's Select Track for Auditioning (docs/features/chord-track.md). */
 .track-list .track-controls select.chord-audition
 {
