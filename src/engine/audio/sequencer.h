@@ -354,6 +354,10 @@ namespace gnubase::engine
 		// one before, then its own on events.
 		bool triggerSlot(
 			const MidiSequence& sequence, const graph::ProcessEvent& event, graph::EventBuffer& out) noexcept;
+		// Audio thread, of the sequencer for sends before the modifiers once it plays (MidiSequence::pre): takes the
+		// sound slot that the track's sequencer's remote triggers selected, which its own triggers select from then on.
+		// It is made anew whenever such sends start to play, after triggers that it didn't get.
+		void takeSlot(const MidiSequencer& track) noexcept;
 		// again sends the off and on events of the slot that is selected, as for a new one.
 		void selectSlot(const ArticulationMap& map, int slot, uint8_t channel, uint32_t offset, graph::EventBuffer& out,
 			bool again = false) noexcept;
@@ -427,6 +431,7 @@ namespace gnubase::engine
 		uint64_t m_inputSlotsSerial = 0; // the MidiSequence::slotsSerial they belong to
 		int8_t m_inputSlotTrack = -1;    // the MidiSequence::inputChannel they belong to
 		uint8_t m_inputSlotTrigger = 0;  // the channel of the trigger that selected the slot
+		bool m_tookSlot = false;         // a sequencer for sends before the modifiers: takeSlot ran
 		uint64_t m_instrument = 0;       // playOn: where its notes went in the graph that runs
 
 		// Command thread: the effect in each slot, the inserts' then the sends', while it plays.

@@ -52,8 +52,9 @@ Functions that edit MIDI parts as a whole (#133, #838).
   MIDI tracks routed to the same instrument, `to: lanes` on new lanes of the track below the lanes its parts are on
   (`optimize` only works with tracks). Events of no channel or pitch go with the first new part of their part, so none
   is lost; new parts keep their part's mute, transpose, velocity, root key and Global Transpose setting, and new tracks
-  get the track's MIDI modifiers and are set to the MIDI channel they hold by channel (p. 1122), or to the track's
-  (`channel.set` `midiChannel`) by pitch, so that they play as the part did. The copied events get new ids, so play
+  get the track's MIDI modifiers, so that they play as the part did, and are set to the MIDI channel they hold by
+  channel (p. 1122), on which they play even where the track was set to one channel and played them all on it, or to
+  the track's (`channel.set` `midiChannel`) by pitch. The copied events get new ids, so play
   probability and velocity variance, drawn from part and note ids, draw anew. `midi.bounce` combines a track's parts
   into one on the lowest of their lanes, removes muted parts and writes the parts' transpose and velocity into the notes
   (p. 1123), as playback applies them. The new part gets the root key and Global Transpose setting the parts with notes
@@ -82,7 +83,8 @@ Functions that edit MIDI parts as a whole (#133, #838).
 
 `tests/midifunctions_tests.cpp` has a test for each function, including `playingTracks` with solo, mute, a muted group
 channel and a disabled track, merge with and without `includeInserts`, merge writing the channels a MIDI track set to a
-channel plays on (a drum sound's own one winning), dissolve's new tracks with the track's MIDI modifiers and set to
+channel plays on (a drum sound's own one winning) and keeping the events' own channels on a destination set to a MIDI
+channel, dissolve's new tracks with the track's MIDI modifiers and set to
 their channel or the track's, Extract MIDI Automation on a shared copy, Bounce MIDI of shared copies, Merge with Erase
 Destination on a
 shared copy, and the pitches that play before and after a bounce or a merge on tracks with a drum map or following the

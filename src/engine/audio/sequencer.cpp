@@ -441,6 +441,10 @@ namespace gnubase::engine
 			{
 				m_pre = std::make_shared<MidiSequencer>(m_factory);
 				m_pre->setChase(m_chaseSetting);
+				// Its sequences' slotsSerial is this one's, so that it keeps the sound slot it takes (takeSlot).
+				m_pre->m_mapId = m_mapId;
+				m_pre->m_mapSlots = m_mapSlots;
+				m_pre->m_slotsSerial = m_slotsSerial;
 				if (m_sampleRate > 0.0)
 					m_pre->prepareFor(m_sampleRate, m_maxFrames);
 			}
@@ -566,9 +570,13 @@ namespace gnubase::engine
 			for (const graph::ProcessEvent& event : *played)
 				m_input.add(event);
 		}
-		// The sends before the modifiers get what the track plays without them, its input as it came in.
+		// The sends before the modifiers get what the track plays without them: its input, which that sequencer plays
+		// through the drum map's input mapping or Live Input and the remote triggers, from the sound slot this one's
+		// triggers selected before it played.
 		if (sequence.pre)
 		{
+			if (!sequence.pre->m_tookSlot)
+				sequence.pre->takeSlot(*this);
 			graph::EventBuffer& input = sequence.pre->input();
 			input.clear();
 			for (const graph::ProcessEvent& event : m_input)
@@ -1261,6 +1269,17 @@ namespace gnubase::engine
 			m_inputSlotTrigger = event.channel % 16;
 		selectSlot(map, slot, channel, event.offset, out);
 		return true;
+	}
+
+	void MidiSequencer::takeSlot(const MidiSequencer& track) noexcept
+	{
+		m_tookSlot = true;
+		m_inputSlot = track.m_inputSlot;
+		m_inputSlotChannel = track.m_inputSlotChannel;
+		m_inputSlotHeld = track.m_inputSlotHeld;
+		m_inputSlotsSerial = track.m_inputSlotsSerial;
+		m_inputSlotTrack = track.m_inputSlotTrack;
+		m_inputSlotTrigger = track.m_inputSlotTrigger;
 	}
 
 	void MidiSequencer::selectSlot(const ArticulationMap& map, int slot, uint8_t channel, uint32_t offset,

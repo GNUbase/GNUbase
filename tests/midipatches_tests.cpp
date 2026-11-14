@@ -490,6 +490,75 @@ TEST_CASE("a send before the MIDI modifiers gets the notes played into the track
 	CHECK(played == Bytes{{0x92, 51, 100}, {0x92, 62, 100}});
 }
 
+TEST_CASE("a send before the MIDI modifiers plays the input through the remote triggers' slot, Live Input and a "
+		  "drum sound's own channel",
+	"[integration]")
+{
+	PatchTrack track;
+	const Json trackId = run(track.client, "project.get").at("channels")[1].at("track");
+	// The modifiers transpose by an octave, the send's transformer by a semitone.
+	const auto sends = [&track](bool pre)
+	{
+		track.set(
+			{{"midiSends", {{"pre", pre}, {"slots", {{{"effect", "transformer"}, {"parameters", {{"value", 1}}}}}}}}});
+	};
+	track.set({{"midiChannel", 2}, {"monitor", true}, {"modifiers", {{"transpose", 12}}}});
+	sends(true);
+	track.played();
+	const auto play = [&track](const Bytes& messages)
+	{
+		Json injected = Json::array();
+		for (const std::vector<int>& bytes : messages)
+			injected.push_back({{"position", 0}, {"bytes", bytes}});
+		run(track.client, "midi.inject", {{"channel", track.channel}, {"messages", injected}});
+		Bytes played = track.played();
+		std::sort(played.begin(), played.end());
+		return played;
+	};
+
+	SECTION("the slot the remote triggers selected")
+	{
+		// Arco, the default slot, with the key C1 (36); Up with D1 (38), two semitones up at half the velocity on
+		// channel 7.
+		const Json map = run(track.client, "articulationMap.add",
+			{{"name", "Strings"},
+				{"slots",
+					{{{"name", "Arco"}, {"trigger", 36}},
+						{{"name", "Up"}, {"trigger", 38}, {"transpose", 2}, {"velocity", 50}, {"channel", 6}}}}})
+							 .at("map")
+							 .at("id");
+		run(track.client, "track.set", {{"track", trackId}, {"articulationMap", map}});
+		track.played();
+		// The trigger reaches neither the track nor the send as a note; the note after it plays Up's transpose,
+		// velocity and channel in both.
+		CHECK(play({{0x91, 38, 100}, {0x81, 38, 0}, {0x91, 64, 100}}) == Bytes{{0x96, 67, 50}, {0x96, 78, 50}});
+		CHECK(play({{0x81, 64, 0}}) == Bytes{{0x86, 67, 0}, {0x86, 78, 0}});
+		// Sends before the modifiers that start to play again take the slot selected before.
+		sends(false);
+		sends(true);
+		track.played();
+		CHECK(play({{0x91, 64, 100}, {0x81, 64, 0}}) ==
+			Bytes{{0x86, 67, 0}, {0x86, 78, 0}, {0x96, 67, 50}, {0x96, 78, 50}});
+	}
+	SECTION("Live Input")
+	{
+		// Following the chord track's chords, D#3 (63) plays E3 (64).
+		run(track.client, "chord.add", {{"position", 0}, {"chord", "C"}});
+		run(track.client, "chord.follow", {{"track", trackId}, {"liveInput", "chords"}});
+		track.played();
+		CHECK(play({{0x91, 63, 100}}) == Bytes{{0x92, 65, 100}, {0x92, 76, 100}});
+	}
+	SECTION("a drum sound's own channel")
+	{
+		// E3 (64) plays its sound's O-note D2 (50) on the sound's channel 10.
+		const Json gm = run(track.client, "project.get").at("drumMaps").at(0).at("id");
+		const Json map = run(track.client, "drumMap.add", {{"copy", gm}, {"track", trackId}}).at("map").at("id");
+		run(track.client, "drumMap.set", {{"map", map}, {"sounds", {{{"pitch", 64}, {"oNote", 50}, {"channel", 9}}}}});
+		track.played();
+		CHECK(play({{0x91, 64, 100}}) == Bytes{{0x99, 51, 100}, {0x99, 62, 100}});
+	}
+}
+
 TEST_CASE("automation lanes of one controller on several channels all play on a MIDI track's channel", "[integration]")
 {
 	PatchTrack track;
@@ -525,14 +594,17 @@ TEST_CASE("automation lanes of one controller on several channels all play on a 
 	CHECK(played(48000) == Bytes{{0xB2, 11, 127}});
 }
 
-TEST_CASE("of two lanes of the MIDI volume, the first plays it in its gaps, the second nothing", "[integration]")
+TEST_CASE("of two lanes of the MIDI volume, the first plays it before its first point and in its gaps, the second "
+		  "nothing",
+	"[integration]")
 {
 	PatchTrack track;
 	constexpr int64_t frame = 72; // ticks, about one at 48 kHz
 	const Json trackId = run(track.client, "project.get").at("channels")[1].at("track");
 	track.set({{"midiChannel", 2}, {"midiVolume", 90}});
-	// CC 7 at 127 on channel 1 and from frame 1000 at 0 on channel 2, both ending in a gap at frame 2000.
-	for (const auto& [channel, from, value] : {std::tuple{0, int64_t{0}, 1.0}, std::tuple{1, 1000 * frame, 0.0}})
+	// CC 7 from frame 500 at 127 on channel 1 and from frame 1000 at 0 on channel 2, both ending in a gap at frame
+	// 2000.
+	for (const auto& [channel, from, value] : {std::tuple{0, 500 * frame, 1.0}, std::tuple{1, 1000 * frame, 0.0}})
 	{
 		const Json lane = run(track.client, "automationLane.add",
 			{{"track", trackId}, {"target", {{"type", "controller"}, {"number", 7}, {"channel", channel}}}});
@@ -547,5 +619,42 @@ TEST_CASE("of two lanes of the MIDI volume, the first plays it in its gaps, the 
 	run(track.client, "transport.play");
 	const Bytes played = track.played(4096);
 	run(track.client, "transport.stop");
-	CHECK(played == Bytes{{0xB2, 7, 127}, {0xB2, 7, 0}, {0xB2, 7, 90}});
+	CHECK(played == Bytes{{0xB2, 7, 90}, {0xB2, 7, 127}, {0xB2, 7, 0}, {0xB2, 7, 90}});
+}
+
+TEST_CASE("lanes of one controller side by side send every point and keep their last value past a gap", "[integration]")
+{
+	PatchTrack track;
+	constexpr int64_t frame = 72; // ticks, about one at 48 kHz
+	const Json trackId = run(track.client, "project.get").at("channels")[1].at("track");
+	track.set({{"midiChannel", 2}});
+	// CC 11 at 100 on channel 1 at frames 0 and 2000, as a part's events that another channel's changed in between;
+	// on channel 2 at 20 at frame 1000 and at 40 at frame 3000, which ends in a gap.
+	const auto lane = [&](int channel, const Json& points)
+	{
+		const Json added = run(track.client, "automationLane.add",
+			{{"track", trackId}, {"target", {{"type", "controller"}, {"number", 11}, {"channel", channel}}}});
+		run(track.client, "automationPoint.add", {{"lane", added.at("lane").at("id")}, {"points", points}});
+	};
+	const auto point = [](int64_t at, int value, bool terminator = false)
+	{ return Json{{"position", at * frame}, {"shape", "step"}, {"value", value / 127.0}, {"terminator", terminator}}; };
+	lane(0, {point(0, 100), point(2000, 100)});
+	lane(1, {point(1000, 20), point(3000, 40, true)});
+	const auto played = [&track](int64_t from, int frames)
+	{
+		run(track.client, "transport.locate", {{"position", from}});
+		track.played();
+		run(track.client, "transport.play");
+		const Bytes bytes = track.played(frames);
+		run(track.client, "transport.stop");
+		track.played();
+		return bytes;
+	};
+	// Channel 1's second point plays 100 again after channel 2's 20.
+	CHECK(played(0, 4096) == Bytes{{0xB2, 11, 100}, {0xB2, 11, 20}, {0xB2, 11, 100}, {0xB2, 11, 40}});
+	// Past the gap channel 2's 40 still stands: a locate there sends it, not channel 1's earlier 100.
+	CHECK(played(3500, 64) == Bytes{{0xB2, 11, 40}});
+	// A cycle jump back to frame 1500 sends channel 2's 20, whose point lies latest there.
+	run(track.client, "transport.set", {{"left", 1500}, {"right", 2500}, {"cycle", true}});
+	CHECK(played(2400, 256) == Bytes{{0xB2, 11, 100}, {0xB2, 11, 20}});
 }

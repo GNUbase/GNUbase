@@ -1560,7 +1560,8 @@ namespace gnubase::engine::midi
 					trackFor[key] = addMidiTrack(project, source.name + " " + suffixOf(key), source.parent, ++index,
 						instrument, source.timeBase);
 					// The track's MIDI modifiers, so that the new parts play as the part did; by channel each new
-					// track set to its channel (reference manual p. 1122), by pitch to the track's.
+					// track set to the channel it holds (reference manual p. 1122), which it plays on also where the
+					// track played every channel on its own, by pitch to the track's.
 					Channel& added = project.channels.at(project.trackById.at(trackFor[key]).channel);
 					added.modifiers = project.channels.at(source.channel).modifiers;
 					added.midiChannel = by == DissolveBy::Channel ? std::optional<int>(key) : trackChannel;
