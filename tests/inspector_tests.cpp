@@ -1028,10 +1028,17 @@ TEST_CASE("Warp Quantize On/Off goes from the toolbar before any section does", 
 	const std::vector<std::string> defaults = docking.sections("project", "toolbar");
 	const auto noRoom = [&window](const std::string& selector) { return hasClass(window.app, selector, "no-room"); };
 	const std::string warp = "#toolbar-quantize-warp";
-	// Narrower in dp step by step, from about 1463 dp, until the quantize section goes.
+	// Narrower in dp step by step, from about 1463 dp, until the quantize section goes, and on until the section
+	// before it goes too: the steps, about 10 to 20 dp, are narrower than the toggle, so they pass through the room the
+	// toggle frees, which only the quantize section may take (#1382).
+	const auto quantize = std::find(defaults.begin(), defaults.end(), "quantize");
+	REQUIRE(quantize != defaults.end());
+	REQUIRE(quantize != defaults.begin());
+	const std::string before = "#toolbar [section=" + *(quantize - 1) + "]";
 	bool warpGone = false;
+	bool quantizeGone = false;
 	bool alone = false; // gone while every section showed
-	for (int step = 0;; ++step)
+	for (int step = 0; !noRoom(before); ++step)
 	{
 		const float ratio = 0.7F + (0.01F * static_cast<float>(step));
 		REQUIRE(ratio < 2.0F);
@@ -1041,15 +1048,20 @@ TEST_CASE("Warp Quantize On/Off goes from the toolbar before any section does", 
 		if (noRoom("#toolbar [section=quantize]"))
 		{
 			CHECK(!noRoom(warp)); // the section's parts show with it again
-			break;
+			quantizeGone = true;
 		}
-		if (warpGone)
-			CHECK(noRoom(warp)); // once gone, it stays gone in narrower windows
-		warpGone = noRoom(warp);
+		else
+		{
+			CHECK(!quantizeGone); // once gone, it stays gone in narrower windows
+			if (warpGone)
+				CHECK(noRoom(warp)); // so does the toggle while the section shows
+			warpGone = noRoom(warp);
+		}
 		const ToolbarGaps reference = toolbarGaps(window, defaults, false); // the gaps at this dp ratio
 		const std::vector<std::string> shown = checkToolbarRoom(window, defaults, reference, false);
 		alone = alone || (warpGone && shown.size() == defaults.size());
 	}
+	CHECK(quantizeGone);
 	CHECK(alone);
 
 	// Wider again: the section and its toggle show.
