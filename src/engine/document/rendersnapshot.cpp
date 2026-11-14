@@ -499,7 +499,9 @@ namespace gnubase::engine
 		snapshot->signatures = project.signatures;
 		ArrangerPlan plan = arrangerPlan(project);
 		if (previous != nullptr && *previous->arranger == plan)
+		{
 			snapshot->arranger = previous->arranger;
+		}
 		else
 		{
 			// A new plan gets the next generation, so the transport can publish which one its state walks (#885).
