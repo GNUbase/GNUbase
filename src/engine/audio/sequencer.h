@@ -105,8 +105,10 @@ namespace gnubase::engine
 		// Per send slot, the instrument track's channel its effect plays to (a MidiSendTap takes it there), or 0
 		// for the track's own output.
 		std::array<uint64_t, midi::g_effectSlots> sendOutputs{};
-		// Sends before modifiers that change notes: the notes of the parts without the modifiers (RenderChannel).
+		// Sends before modifiers that change notes: the notes of the parts without the modifiers and their expression
+		// points (RenderChannel).
 		std::vector<RenderNote> preNotes;
+		std::vector<RenderExpression> preExpressions;
 		// Filled in by setSequence: the inserts that play, in order, then the sends that play. The first inputCount
 		// inserts are above the divider: they play the track's input alone, before the rest (MidiSequencer::process).
 		std::vector<RunningEffect> effects;

@@ -370,6 +370,7 @@ namespace gnubase::engine
 				m_preOut = graph::EventBuffer(graph::g_maxEventsPerBlock);
 			auto unmodified = std::make_unique<MidiSequence>();
 			unmodified->notes = sequence->preNotes;
+			unmodified->expressions = sequence->preExpressions;
 			unmodified->controllers = sequence->controllers;
 			unmodified->chase = sequence->chase;
 			m_pre->setSequence(std::move(unmodified));

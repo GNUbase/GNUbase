@@ -394,4 +394,24 @@ namespace gnubase::engine
 		}
 		return false;
 	}
+
+	std::vector<ExpressionPoint> expressionsFrom(const std::vector<ExpressionPoint>& points, time::Ticks from)
+	{
+		const time::Ticks at = std::max<time::Ticks>(from, 0);
+		std::vector<ExpressionPoint> moved;
+		for (size_t type = 0; type < g_expressionNames.size(); ++type)
+		{
+			// The last of the type's points up to at: they are sorted by position.
+			const auto last = std::find_if(points.rbegin(), points.rend(), [&](const ExpressionPoint& point)
+				{ return static_cast<size_t>(point.type) == type && point.position <= at; });
+			if (last != points.rend())
+				moved.push_back({last->type, 0, last->value});
+		}
+		for (const ExpressionPoint& point : points)
+			if (point.position > at)
+				moved.push_back({point.type, point.position - from, point.value});
+		std::stable_sort(moved.begin(), moved.end(),
+			[](const ExpressionPoint& a, const ExpressionPoint& b) { return a.position < b.position; });
+		return moved;
+	}
 }

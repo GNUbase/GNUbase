@@ -218,8 +218,10 @@ namespace gnubase::engine
 		// the track's own output.
 		std::array<int, midi::g_effectSlots> midiSendOutputs{-1, -1, -1, -1};
 		// MIDI and instrument channels whose MIDI sends play before modifiers that change notes: the notes of their
-		// parts without the track's MIDI modifiers, sorted as notes; empty otherwise.
+		// parts without the track's MIDI modifiers, sorted as notes, and their expression points, sorted as
+		// expressions; empty otherwise.
 		std::vector<RenderNote> preNotes;
+		std::vector<RenderExpression> preExpressions;
 		// MIDI and instrument channels: the rules of their input transformer's modules that are on, the track's or
 		// the project's, in order; empty for none.
 		std::vector<midi::LogicalRules> inputTransformer;
