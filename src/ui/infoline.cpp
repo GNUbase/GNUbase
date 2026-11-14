@@ -933,14 +933,20 @@ namespace gnubase::ui
 			{"rootKey", "Root Key"}, {"globalTranspose", "Global Transpose"}};
 		std::string label = labels.count(field) != 0 ? labels.at(field) : field;
 		label.front() = static_cast<char>(std::toupper(static_cast<unsigned char>(label.front())));
-		// A drag, wheel turns or a held arrow key on the volume: one undo step.
+		// A drag, wheel turns or a held arrow key on the volume: one undo step, for each selection of its own, also
+		// when another one shows during the gesture: the merge key names the selection by its size and a hash of its
+		// ids.
+		std::string selection;
+		for (const uint64_t id : ids)
+			selection += std::to_string(id) + " ";
+		const std::string key = stepKey(m_stepOwner, "events", field);
 		m_binding.sendStep(
-			gesture, stepKey(m_stepOwner, "events", field), "Change " + label, std::move(commands),
+			gesture, key, "Change " + label, std::move(commands),
 			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
 				if (!alive.expired() && !result.ok())
 					m_loads = 0; // refused: the next update shows the events as they are again
 			},
-			shown);
+			shown, key + " " + std::to_string(ids.size()) + " " + std::to_string(std::hash<std::string>{}(selection)));
 	}
 }

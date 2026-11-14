@@ -1435,6 +1435,50 @@ TEST_CASE("the info line's volume turned or dragged while the engine answers lat
 	CHECK(window.historyPosition() == position + 1);
 }
 
+TEST_CASE(
+	"the info line's volume turned on one event, then on the next with the mouse still over it: two undo steps", "[ui]")
+{
+	Window window;
+	const uint64_t audio = window.addTrack({{"type", "audio"}, {"timeBase", "linear"}});
+	const Json media =
+		window.call("media.add", {{"path", "take.wav"}, {"sampleRate", 48000}, {"channels", 1}, {"length", 480000}})
+			.at("media");
+	const Json clip = window.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	const auto add = [&](int64_t position)
+	{
+		return window
+			.call("audioEvent.add",
+				{{"track", audio}, {"clip", clip.at("id")}, {"position", position}, {"length", 24000}})
+			.at("event")
+			.at("id")
+			.get<uint64_t>();
+	};
+	const uint64_t first = add(96000);
+	const uint64_t second = add(192000);
+	const auto volume = [&window](uint64_t id) { return window.find("audioEvents", id).at("volume").get<double>(); };
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("audioEvents").size() == 2; }));
+	const std::string field = "#info-line valuefield[field=volume]";
+	const auto wheel = [&] { window.app.ui().wheel(std::nullopt, {field, 0, std::nullopt}, 0.0F, 1.0F); };
+	window.display.select({first});
+	REQUIRE(window.shows(field, "0"));
+	const int64_t position = window.historyPosition();
+
+	// One wheel gesture: the mouse stays over the field while the next event is selected.
+	wheel();
+	REQUIRE(window.app.waitUntil([&] { return volume(first) != 0.0; }));
+	const double turned = volume(first);
+	window.display.select({second});
+	REQUIRE(window.shows(field, "0")); // the second one's, not the turned first one's
+	wheel();
+	REQUIRE(window.app.waitUntil([&] { return volume(second) != 0.0; }));
+
+	// Each event's change is an undo step of its own.
+	CHECK(window.historyPosition() == position + 2);
+	window.call("history.undo");
+	REQUIRE(window.app.waitUntil([&] { return volume(second) == 0.0; }));
+	CHECK(volume(first) == turned);
+}
+
 TEST_CASE("the info line shows another event's own volume while a dragged one's last step is out, and back on the "
 		  "dragged one the drag's",
 	"[ui]")

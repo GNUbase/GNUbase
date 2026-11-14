@@ -47,10 +47,13 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   inspector's, the sampler panel's and the drum machine panel's step keys name the channel. The info line's step key
   names only the field, and a step keeps the value of each event it changes, by id, merged into what the record keeps (a
   JSON merge patch): another event selected meanwhile shows its own value, and each dragged event the drag's, also alone
-  after the drag changed it with others. A view showing what that update handed on still asks `sending` and `ahead`
-  about it, and a later gesture makes the record again. The records go only while some view reads the project, as the
-  event display does: a binding without one keeps them all for the session, and a view that asks `ahead` about another
-  query's answer than `project.get`'s may find the record gone before that query answers again.
+  after the drag changed it with others. Its undo steps still name the selection: `sendStep`'s `merge` names the merge
+  key instead of the step key, here by the selection's size and a hash of its ids, so a wheel gesture that goes on over
+  the field while another event is selected is an undo step for each event. A view showing what that update handed on
+  still asks `sending` and `ahead` about it, and a later gesture makes the record again. The records go only while
+  some view reads the project, as the event display does: a binding without one keeps them all for the session, and a
+  view that asks `ahead` about another query's answer than `project.get`'s may find the record gone before that query
+  answers again.
 - **Events.** `on(name, handler)` calls `handler` with every event of that name, from whichever client caused it: a
   change made through MCP, Lua or another window reaches the UI the same way as the UI's own. The returned
   `Subscription` ends the handler when it goes, so a view that closes stops listening; subscriptions must not outlive

@@ -128,10 +128,10 @@ namespace gnubase::ui
 	}
 
 	void EngineBinding::sendStep(int gesture, const std::string& what, std::string description, engine::Json commands,
-		std::function<void(const engine::Result&)> done, const engine::Json& shown)
+		std::function<void(const engine::Result&)> done, const engine::Json& shown, const std::string& merge)
 	{
-		Step step{gesture != 0 ? what + " " + std::to_string(gesture) : std::string(), std::move(description),
-			std::move(commands), std::move(done)};
+		Step step{gesture != 0 ? (merge.empty() ? what : merge) + " " + std::to_string(gesture) : std::string(),
+			std::move(description), std::move(commands), std::move(done)};
 		Steps& steps = m_steps[what];
 		if (!shown.is_null())
 			steps.shown.merge_patch(shown);
