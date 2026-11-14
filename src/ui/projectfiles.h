@@ -35,10 +35,10 @@ namespace gnubase::ui
 	// project-error.rml in folder), and do everything with engine commands. Opening another project, reverting and
 	// quitting ask first if the project has unsaved changes, and a command that fails shows its error, as does an auto
 	// save that fails. A dialog that comes while another is open, such as the unsaved changes question or an error,
-	// waits for it instead of being dropped. A backup shows its progress, which Cancel stops, and whether it couldn't
-	// read files or open the backup. Quitting asks however it is asked for: File > Quit, the main window's close button
-	// or the OS (Shell::onQuitRequest). Use it on the UI thread; the key commands, the binding and the shell must
-	// outlive it.
+	// waits for it instead of being dropped; an error whose window went while it waited shows in the main window. A
+	// backup shows its progress, which Cancel stops, and whether it couldn't read files or open the backup. Quitting
+	// asks however it is asked for: File > Quit, the main window's close button or the OS (Shell::onQuitRequest). Use
+	// it on the UI thread; the key commands, the binding and the shell must outlive it.
 	class ProjectFiles final : private Rml::EventListener
 	{
 	public:
@@ -74,6 +74,8 @@ namespace gnubase::ui
 		{
 			WindowId window = 0;
 			const char* file = nullptr;
+			bool error = false; // an error or notice, which shows in the main window if its window went, and stays
+								// queued while quitting, as what it says may bear on the quit question's answer
 			Shown shown;
 			Closed closed;
 		};
@@ -93,8 +95,11 @@ namespace gnubase::ui
 		// Loads one of the dialogs into the window and shows it, modal, with ProcessEvent hearing it close; null, with
 		// a warning if the window is there, if it can't.
 		Rml::ElementDocument* loadDialog(WindowId window, const char* file);
-		// Opens the dialogs that wait, in order, once no dialog is open; those whose window is gone don't open.
+		// Opens the dialogs that wait, in order, once no dialog is open; those whose window is gone don't open,
+		// unless they are an error or notice, which shows in the main window instead.
 		void openWaiting();
+		// The main window, or null once it is gone.
+		Window* mainWindow();
 		// Closes the open dialog, if any, with the result.
 		void closeDialog(const std::string& result);
 		// Asks the engine for the project's file (project.location).
@@ -123,14 +128,17 @@ namespace gnubase::ui
 		// at every interval, until it fails for another reason or after an auto save succeeded or the project was
 		// saved or opened, as the engine says with repeated.
 		void autoSaveFailed(const engine::Json& failure);
-		// Runs action now if the project has no unsaved changes, or else once the user agreed to discard them. asked,
-		// if given, runs once the engine said whether to ask: with the question's document when it opened, else null.
+		// Runs action now if the project has no unsaved changes, or else once the user agreed to discard them. A
+		// question that waited asks the engine again once it opens: if the project was saved meanwhile, it closes
+		// unanswered and action runs at once. asked, if given, runs once the engine said whether to ask: with the
+		// question's document when it opened, else null.
 		void unlessUnsaved(Window& window, std::function<void()> action,
 			std::function<void(Rml::ElementDocument* question)> asked = {});
 		// Quits GNUbase unless the user wants to keep unsaved changes, asking in the window. A dialog that is open
 		// closes as cancelled first (closeDialog), but not a backup's progress: the backup runs on unless GNUbase
-		// quits. Further quit requests while the question is coming or open do nothing, so that one question answers
-		// them; once it is answered or gone, the next one asks again.
+		// quits, and not the dialogs that wait, unless they are errors: the questions and start screens that wait go,
+		// so that the quit question is next. Further quit requests while the question is coming or open do nothing,
+		// so that one question answers them; once it is answered or gone, the next one asks again.
 		void quit(Window& window);
 		void open(Window& window);
 		void saveAs(Window& window);
@@ -168,8 +176,9 @@ namespace gnubase::ui
 		std::map<uint64_t, Backup> m_backups;    // the running backups it started, by job
 		Rml::ObserverPtr<Rml::Element> m_dialog; // the open dialog's document
 		Closed m_closed;
-		std::deque<WaitingDialog> m_waitingDialogs;    // the dialogs that wait for it, oldest first
-		bool m_quitting = false;                       // a quit request waits for the engine to say whether to ask
+		std::deque<WaitingDialog> m_waitingDialogs; // the dialogs that wait for it, oldest first
+		uint64_t m_questions = 0; // how often unlessUnsaved asked the engine, so that a question knows a newer one came
+		bool m_quitting = false;  // a quit request waits for the engine to say whether to ask
 		Rml::ObserverPtr<Rml::Element> m_quitQuestion; // and then for the question, while it is m_dialog
 		std::vector<std::string> m_templates;          // the start screen's templates, by name
 		std::vector<std::string> m_recent;             // and its recent projects, by file

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Track visibility in the engine (#166, docs/features/track-visibility.md): the tracks the project window hides
 // (trackVisibility.get, trackVisibility.set), the visibility configurations, and the mixers that follow it.
+#include "engine/document/serialize.h"
 #include "engine/engine.h"
 #include "testutils/testutils.h"
 
@@ -8,6 +9,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <map>
 #include <mutex>
 #include <string>
 #include <utility>
@@ -211,4 +213,111 @@ TEST_CASE("visibility configurations keep sets of hidden tracks to switch betwee
 	f.call("track.remove", {{"track", b}});
 	CHECK(f.visibility().at("configurations").at(1).at("hidden").empty());
 	CHECK(f.visibility().at("modified") == false);
+}
+
+// #906: a hidden folder hides the tracks inside it everywhere: trackVisibility.set takes them into hidden, the mixers
+// that follow hide their channels, and hiding the folder's group channel in a mixer that follows hides them too.
+TEST_CASE("a hidden folder hides the tracks inside it in the mixers that follow, both ways", "[unit]")
+{
+	Fixture f;
+	// A track and a folder in a folder with a group channel, and a track in the nested one.
+	const Json band = f.call("track.add", {{"type", "folder"}, {"groupChannel", true}, {"name", "Band"}});
+	const uint64_t folder = band.at("track").at("id").get<uint64_t>();
+	const uint64_t group = band.at("channel").at("id").get<uint64_t>();
+	const auto [guitar, guitarChannel] = f.track("audio");
+	f.call("track.move", {{"track", guitar}, {"parent", folder}, {"index", 0}});
+	const uint64_t nested = f.call("track.add", {{"type", "folder"}, {"parent", folder}, {"index", 1}})
+								.at("track")
+								.at("id")
+								.get<uint64_t>();
+	const auto [keys, keysChannel] = f.track("instrument");
+	f.call("track.move", {{"track", keys}, {"parent", nested}, {"index", 0}});
+
+	// trackVisibility.set with the folder alone takes the tracks inside it into hidden, nested ones too, and the
+	// lower zone's mixer hides their channels.
+	f.call("trackVisibility.set", {{"hidden", {folder}}});
+	CHECK(f.hidden() == sorted({folder, nested, guitar, keys}));
+	CHECK(f.mixerHidden("lower") == sorted({group, guitarChannel, keysChannel}));
+
+	// A synced window follows the same way.
+	f.call("trackVisibility.set", {{"sync", "window1"}, {"hidden", Json::array()}});
+	REQUIRE(f.hidden().empty());
+	REQUIRE(f.mixerHidden("lower").empty());
+	REQUIRE(f.mixerHidden("window1").empty());
+	f.call("trackVisibility.set", {{"hidden", {folder}}});
+	CHECK(f.mixerHidden("window1") == sorted({group, guitarChannel, keysChannel}));
+
+	// Hiding the folder's group channel in a mixer that follows hides the tracks inside it too, and the mixers that
+	// follow hide their channels.
+	f.call("trackVisibility.set", {{"hidden", Json::array()}});
+	REQUIRE(f.mixerHidden("window1").empty());
+	f.call("mixer.set", {{"mixer", "window1"}, {"hidden", {group}}});
+	CHECK(f.hidden() == sorted({folder, nested, guitar, keys}));
+	CHECK(f.mixerHidden("window1") == sorted({group, guitarChannel, keysChannel}));
+	CHECK(f.mixerHidden("lower") == sorted({group, guitarChannel, keysChannel}));
+
+	// Showing an inside track's channel while its folder stays hidden shows it not: the folder hides it again.
+	f.call("mixer.set", {{"mixer", "lower"}, {"hidden", sorted({group, keysChannel})}});
+	CHECK(f.hidden() == sorted({folder, nested, guitar, keys}));
+	CHECK(f.mixerHidden("lower") == sorted({group, guitarChannel, keysChannel}));
+
+	// A configuration with the folder keeps the tracks inside it with it, and applying it hides them.
+	f.call("trackVisibility.set", {{"sync", ""}, {"hidden", Json::array()}});
+	f.call("trackVisibility.set",
+		{{"configurations", {{{"name", "Without Band"}, {"hidden", {folder}}}}}, {"configuration", "Without Band"}});
+	CHECK(f.hidden() == sorted({folder, nested, guitar, keys}));
+	CHECK(f.visibility().at("configurations") ==
+		Json{{{"name", "Without Band"}, {"hidden", sorted({folder, nested, guitar, keys})}}});
+}
+
+// #906: what a file has for the track visibility is checked on load as trackVisibility.set checks it: an unknown sync,
+// names that are empty or there twice, an active name that isn't there and ids that aren't tracks don't come in, and
+// a hidden folder comes in with the tracks inside it.
+TEST_CASE("the track visibility from a file is checked like trackVisibility.set checks it", "[unit]")
+{
+	Fixture f;
+	const Json band = f.call("track.add", {{"type", "folder"}, {"groupChannel", true}});
+	const uint64_t folder = band.at("track").at("id").get<uint64_t>();
+	const uint64_t group = band.at("channel").at("id").get<uint64_t>();
+	const auto [guitar, guitarChannel] = f.track("audio");
+	f.call("track.move", {{"track", guitar}, {"parent", folder}, {"index", 0}});
+	const test::TempDir dir;
+	const std::string file = (dir.path() / "visibility.dawproject").u8string();
+	f.call("project.save", {{"path", file}});
+
+	// A hand-edited file: a sync that isn't a mixer window, configurations without a name and with a name twice, an
+	// active one that isn't there, ids that aren't tracks and that aren't ids, and a folder without its inside.
+	std::map<std::string, std::string> entries = test::readZip(file);
+	Json extension = Json::parse(entries.at("gnubase.json"));
+	Json& visibility = extension.at("project").at("trackVisibility");
+	visibility["hidden"] = {folder, 9999, "x"};
+	visibility["sync"] = "bogus";
+	visibility["configurations"] = {{{"name", ""}, {"hidden", Json::array()}}, {{"name", "One"}, {"hidden", {folder}}},
+		{{"name", "One"}, {"hidden", Json::array()}}, {{"name", "Two"}, {"hidden", {9999, guitar}}}};
+	visibility["configuration"] = "Nope";
+	entries["gnubase.json"] = extension.dump();
+	test::writeZip(file, entries);
+
+	f.call("project.load", {{"path", file}});
+	CHECK(f.visibility().at("sync") == "");
+	CHECK(f.hidden() == sorted({folder, guitar}));
+	CHECK(f.visibility().at("configurations") ==
+		Json{{{"name", "One"}, {"hidden", sorted({folder, guitar})}}, {{"name", "Two"}, {"hidden", Json{guitar}}}});
+	CHECK(f.visibility().at("configuration") == "");
+	// The unknown sync didn't make a mixer view of its own, which the project would save.
+	CHECK(!f.call("project.get").at("mixers").contains("bogus"));
+	// The lower zone's mixer follows the loaded visibility.
+	f.call("trackVisibility.set", {{"hidden", {folder}}});
+	CHECK(f.mixerHidden("lower") == sorted({group, guitarChannel}));
+
+	// Values of the wrong JSON types are left out, not refused.
+	CHECK_NOTHROW(engine::trackVisibilityFromJson(
+		Json{{"hidden", 5}, {"sync", 3}, {"configurations", "x"}, {"configuration", 7}}));
+	const engine::TrackVisibility none = engine::trackVisibilityFromJson(
+		Json{{"hidden", "x"}, {"sync", 3}, {"configurations", {7, {{"name", 1}}}}, {"configuration", 7}});
+	CHECK(none.hidden.empty());
+	CHECK(none.sync.empty());
+	CHECK(none.configurations.size() == 2);
+	CHECK(none.configurations.at(0).name.empty());
+	CHECK(none.configuration.empty());
 }
