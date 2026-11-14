@@ -1134,8 +1134,9 @@ namespace gnubase::engine
 		engine.registerCommand(
 			{"track.export", 1,
 				"Exports tracks as a track archive (Export Selected Tracks, reference manual pp. 205-206): a "
-				"DAWproject file with the tracks, a folder with the tracks inside it, their channels, events and "
-				"automation, which track.import imports into other projects and other applications open as a project. "
+				"DAWproject file with the tracks, a folder with the tracks inside it, their channels, events, patterns "
+				"and automation, which track.import imports into other projects and other applications open as a "
+				"project. "
 				"The project's sample rate, tempo, time signatures, fader top and busses come along so that positions, "
 				"volumes and routing mean the same. copyMedia (default true) copies the media files into the archive, "
 				"otherwise it refers to them where they are. Marker and ruler tracks can be exported; tempo, "
@@ -1218,7 +1219,8 @@ namespace gnubase::engine
 				"one there, on new tracks too; the new version of a track imported onto gets the ID its source's "
 				"active version has, so that the tracks imported onto get one ID when their sources played versions "
 				"that shared one, and a version with the name of one of the track's gets a name of its own. events "
-				"(default true) brings their events, parts, markers and track versions, settings (default true) "
+				"(default true) brings their events, parts, patterns, markers and track versions, settings (default "
+				"true) "
 				"their channel settings and inserts, automation (default true) their automation, replacing the "
 				"track's; without automation, a track that events or settings are imported onto loses its automation "
 				"(p. 204). position (Import Position) puts the events where they were in the file's timecode "

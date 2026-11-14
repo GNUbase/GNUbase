@@ -60,8 +60,9 @@ They emit `pattern.added`, `pattern.changed` and `pattern.removed` with the patt
   part with the copy. Duplicate Track copies all of the track's patterns, those no event plays too, and the pattern
   events of all its versions play the copies (#1202). Removing a track removes its patterns. Moved back to the track it
   came from, a pattern event plays the pattern its copy was made from again, as long as neither changed since (#1347).
-  Track export, import and presets bring the tracks' patterns with new ids, which the pattern events of all their
-  versions play; imported onto a track, the patterns become that track's (#1347).
+  Track export and import bring the tracks' patterns with their events, with new ids, which the pattern events of all
+  their versions play; imported onto a track, the patterns become that track's (#1347). Track presets keep the sound
+  only and bring none (pp. 238-240).
 - **MIDI functions** read what a pattern event plays (`midi::playedNotes`): Merge, Dissolve Part and Bounce make notes
   of its steps. The functions that change notes (`midi.transpose` and the others) leave pattern events, whose steps
   the pattern editor edits, as they are; the controller functions (`midi.deleteControllers`,
@@ -129,8 +130,12 @@ part's pattern.
   the engine refuses its `pattern.set`, the engine's pattern shows again. A project read before the last `pattern.set`
   was answered (a `project.get` answered before it, or the project the editor has with a newer view) doesn't have its
   lanes yet: the editor shows, and the next gesture sends, the lanes it sent instead of that project's (#1202). Double
-  Length and Double Resolution send theirs the same way, an undo step each (#1347). `ui::MidiEditor` tells it when it
-  read the project (`EngineBinding::handed`).
+  Length and Double Resolution send theirs the same way, an undo step each (#1347), and a gesture right after them keeps
+  the length and resolution they sent while that project shows (#1410). The mode buttons and the toolbar's menus send a
+  `pattern.set` without lanes. A mode switch changes the lanes in the engine (between drum and melodic mode it clears
+  them, to mono mode it keeps one step at each position), and so does a shorter Number of Steps, which drops steps:
+  after those the editor takes no edit of the steps until the answer, and shows the pattern it returns until a project
+  read after it comes (#1410). `ui::MidiEditor` tells it when it read the project (`EngineBinding::handed`).
 - **Commands** (Edit menu, `app::AppUi`): `editor.openPattern` (Open Pattern Editor) opens the selected MIDI parts in
   the editor window's pattern editor; `pattern.loadPreset` and `pattern.savePreset` (Load and Save Pattern Preset...)
   load a preset into, and save the patterns of, the editor's active track through the OS's file dialogs.
@@ -167,7 +172,8 @@ content that other applications read, which have the parts' own notes.
 - `tests/patterneditor_ui_tests.cpp` drives the app with `ui::Automation`: the lanes of a drum pattern, the draw tool's
   click and drag with undo, a drag that the project changes under, on its lane and another, and one that is refused, a
   project read before the last `pattern.set` shown with and without a gesture going on, mono mode over a tie, Double
-  Resolution and Double Length with lanes of their own length and resolution, a gesture right after Double Length,
-  selecting, deleting and double-clicking steps, Tie and Split, mute, the parameter lane's velocity and probability, the
-  toolbar's menus and Double Length, Add Lane and melodic mode; New Melodic Pattern for a plain part, the pattern menu
-  choosing, duplicating and converting; Open Pattern Editor and the Edit menu's entries.
+  Resolution and Double Length with lanes of their own length and resolution, a gesture right after Double Length and a
+  mode switch with a project read before them, selecting, deleting and double-clicking steps, Tie and Split, mute, the
+  parameter lane's velocity and probability, the toolbar's menus and Double Length, Add Lane and melodic mode; New
+  Melodic Pattern for a plain part, the pattern menu choosing, duplicating and converting; Open Pattern Editor and the
+  Edit menu's entries.
