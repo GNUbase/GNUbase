@@ -5,8 +5,9 @@
 # findings on the lines the branch changed and a few around them (below), since the rest passed CI already (and
 # Windows' headers bring a few findings that CI's don't). It needs a compile database, not a build: it configures one
 # in build/tidy, again when a changed file isn't in it yet. CI checks more (every line of every file that includes a
-# changed header), so CI has the last word. On Linux, and so in WSL, it also compiles those files with GCC as CI's
-# linux-x64-gcc job does (build/tidy-gcc).
+# changed header), so CI has the last word. On Linux, and so in WSL, it also compiles those files whole, with Clang
+# and -Werror from the same compile database, as CI's asan-ubsan, tsan and clang-tidy jobs build them, and with GCC in
+# Release as CI's linux-x64-gcc job does (build/tidy-gcc).
 # Usage: tools/tidy-changed.sh [base]    base: where the branch starts from (default origin/main)
 # Linux uses a clang-tidy 22 on the PATH (CONTRIBUTING.md). CI's clang-tidy runs on Linux, where libstdc++ and the
 # non-Windows #ifdef branches bring findings that Windows doesn't see (bugprone-unchecked-optional-access never fires
@@ -131,11 +132,13 @@ done
 # without "lines" counts with all of them. Each range takes 5 lines more on both sides, and a deletion the 5 lines on
 # both sides of it: some checks report a finding a change causes on an unchanged line next to it, such as
 # readability-inconsistent-ifelse-braces on the unbraced first "if" of a chain that gained a braced "else if", or on
-# the braced branches of a chain that one branch lost its braces in (#1400).
+# the unchanged "if" or "else" line of a branch that lost its braces, directly above the deleted "{" (#1400). A "+++ " line is the
+# file's name only in the header after "diff --git": in a hunk it is an added line that starts with "++ ".
 filter=$(
 	{
 		changes -U0 | awk -v margin=5 '
-			/^\+\+\+ / { file = /^\+\+\+ b\// ? substr($0, 7) : "" } # "+++ /dev/null" for a deleted file
+			/^diff --git / { header = 1; file = "" }
+			header && /^\+\+\+ / { header = 0; file = /^\+\+\+ b\// ? substr($0, 7) : "" } # "+++ /dev/null": deleted
 			/^@@ / && file != "" {
 				split(substr($3, 2), range, ",")
 				count = range[2] == "" ? 1 : range[2]
@@ -169,10 +172,12 @@ status=$?
 [ $status -ne 0 ] && [ $status -ne 123 ] && exit 2
 result=$((status == 0 ? 0 : 1))
 
-# CI also builds with GCC 13 in Release, whose optimizer warns where Clang doesn't (-Werror=array-bounds, say), and
-# clang-tidy already reports what Clang can't compile. So on Linux (CLANG_TIDY or not) the same files are compiled with
-# GCC as CI builds them, whole files rather than changed lines, from a second compile database in build/tidy-gcc.
-# Without LTO, as CI builds: with it, GCC's compile step stops before the optimizer and its warnings come at link time.
+# CI also builds with Clang and -Werror in its sanitizer and clang-tidy jobs, which reports warnings that neither
+# clang-tidy's line filter nor MSVC shows (an unused lambda capture, #1455), and with GCC 13 in Release, whose
+# optimizer warns where Clang doesn't (-Werror=array-bounds, say). So on Linux (CLANG_TIDY or not) the same files are
+# compiled whole, as CI builds them: with Clang from the compile database in build/tidy (Debug, as the sanitizer jobs
+# build), and with GCC from a second one in build/tidy-gcc, without LTO as CI builds: with it, GCC's compile step stops
+# before the optimizer and its warnings come at link time.
 if [ "$(uname -s)" = Linux ]; then
 	gcc=build/tidy-gcc
 	if [ ! -f "$gcc/compile_commands.json" ] || cmakeChanged "$gcc/compile_commands.json" ||
@@ -182,14 +187,21 @@ if [ "$(uname -s)" = Linux ]; then
 			-DCMAKE_CONFIGURATION_TYPES=Release -DGNUBASE_LTO=OFF > "$gcc/configure.log" 2>&1 ||
 			{ echo "Configuring failed, see $gcc/configure.log"; exit 2; }
 	fi
-	echo "GCC on the same file(s)"
-	# Each file's compile command, to run in its folder with the object going nowhere.
-	commands=$gcc/commands
-	python3 - "$gcc/compile_commands.json" "${files[@]}" > "$commands" <<'EOF' || { echo "Reading $gcc's compile commands failed."; exit 2; }
+	# GCC at -O3 takes up to about 2 GB for one of the larger files: no more compiles at once than WSL's free memory
+	# holds, so that many changed files don't run it out of memory.
+	jobs=$(awk -v cores="$(nproc)" '/^MemAvailable:/ { n = int($2 / 2097152); print (n < 1 ? 1 : n > cores ? cores : n) }' \
+		/proc/meminfo)
+	# compile <compiler> <build folder>: compiles the files with the folder's compile commands; 1 on an error.
+	compile()
+	{
+		echo "$1 on the same file(s)"
+		# Each file's compile command, to run in its folder with the object going nowhere.
+		local commands=$2/commands compiled them
+		python3 - "$1" "$2/compile_commands.json" "${files[@]}" > "$commands" <<'EOF' || { echo "Reading $2's compile commands failed."; exit 2; }
 import json, shlex, sys
-entries = json.load(open(sys.argv[1]))
+entries = json.load(open(sys.argv[2]))
 missing = []
-for name in sys.argv[2:]:
+for name in sys.argv[3:]:
 	entry = next((e for e in entries if e["file"].endswith("/" + name)), None)
 	if entry is None:
 		missing.append(name)
@@ -198,18 +210,16 @@ for name in sys.argv[2:]:
 	args[args.index("-o") + 1] = "/dev/null"
 	sys.stdout.write("cd " + shlex.quote(entry["directory"]) + " && " + shlex.join(args) + "\0")
 if missing:
-	print("Not compiled with GCC, in no target of its build: " + " ".join(missing), file=sys.stderr)
+	print("Not compiled with " + sys.argv[1] + ", in no target of its build: " + " ".join(missing), file=sys.stderr)
 EOF
-	# GCC at -O3 takes up to about 2 GB for one of the larger files: no more compiles at once than WSL's free memory
-	# holds, so that many changed files don't run it out of memory.
-	jobs=$(awk -v cores="$(nproc)" '/^MemAvailable:/ { n = int($2 / 2097152); print (n < 1 ? 1 : n > cores ? cores : n) }' \
-		/proc/meminfo)
-	compiled=$(tr -cd '\0' < "$commands" | wc -c)
-	[ "$compiled" -lt ${#files[@]} ] && them="the others" || them="them"
-	if [ "$compiled" -gt 0 ]; then
+		compiled=$(tr -cd '\0' < "$commands" | wc -c)
+		[ "$compiled" -lt ${#files[@]} ] && them="the others" || them="them"
+		[ "$compiled" -gt 0 ] || return 0
 		xargs -0 -P "${jobs:-1}" -n 1 bash -c \
 			'out=$(eval "$0" 2>&1); s=$?; [ $s -ne 0 ] && printf "%s\n" "$out"; exit $s' < "$commands" &&
-			echo "GCC compiles $them." || { echo "GCC failed (above)."; result=1; }
-	fi
+			echo "$1 compiles $them." || { echo "$1 failed (above)."; return 1; }
+	}
+	compile Clang "$build" || result=1
+	compile GCC "$gcc" || result=1
 fi
 exit $result
