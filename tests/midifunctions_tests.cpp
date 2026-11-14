@@ -1990,6 +1990,18 @@ namespace
 		return found;
 	}
 
+	// The one note of a part.
+	Json onlyNoteOf(Client& client, ObjectId part)
+	{
+		Json found;
+		const Json project = run(client, "project.get");
+		for (const Json& each : project.at("midiParts"))
+			if (each.at("id") == part && each.at("notes").size() == 1)
+				found = each.at("notes").at(0);
+		REQUIRE(!found.is_null());
+		return found;
+	}
+
 	std::vector<int> storedPitches(const Json& part)
 	{
 		std::vector<int> pitches;
@@ -3449,6 +3461,50 @@ TEST_CASE("merge keeps on a part of its own the transpose and velocity the notes
 		REQUIRE(parts.size() == 1);
 		CHECK(parts[0].at("velocity") == 0);
 		CHECK(storedPitches(parts[0]) == std::vector<int>{60, 64, 64});
+	}
+
+	SECTION("with includeInserts, a part of its own whose notes a Note Filter all leaves out is left out")
+	{
+		// The later part keeps its velocity for its note's variance, but the track's Note Filter leaves the note out.
+		const ObjectId low = addPartWith(client, track, 8 * g_quarter, 4 * g_quarter, {{0, 50}});
+		run(client, "midiPart.set", {{"part", low}, {"velocity", 20}});
+		const Json note = onlyNoteOf(client, low);
+		run(client, "note.set", {{"part", low}, {"notes", {{{"id", note.at("id")}, {"velocityVariance", -1.0}}}}});
+		setModifiers(client, track, Json{{"range", {{{"target", "noteFilter"}, {"minimum", 60}, {"maximum", 127}}}}});
+		const Json merged = run(client, "midi.merge",
+			{{"start", 0}, {"end", 2 * g_eightQuarters}, {"tracks", {track}}, {"includeInserts", true}});
+		const std::vector<Json> parts = partsOn(client, merged.at("tracks").at(0).get<ObjectId>());
+		REQUIRE(parts.size() == 1);
+		CHECK(parts[0].at("velocity") == 0);
+		CHECK(storedPitches(parts[0]) == std::vector<int>{60, 64, 64});
+	}
+
+	SECTION("a part of its own left out that would have come first leaves the first lane and the controllers to the "
+			"next")
+	{
+		// No part has the shared setting: each keeps its velocity for its note's variance. The earliest part, whose
+		// new part would come first with the controllers, has only a note the Note Filter leaves out.
+		const ObjectId other = addInstrumentTrack(client);
+		const ObjectId earliest = addPartWith(client, other, 0, 4 * g_quarter, {{0, 50}});
+		const ObjectId later = addPartWith(client, other, 4 * g_quarter, 4 * g_quarter, {{0, 70}});
+		for (const auto& [part, velocity] : {std::pair{earliest, 30}, std::pair{later, 20}})
+		{
+			run(client, "midiPart.set", {{"part", part}, {"velocity", velocity}});
+			const Json note = onlyNoteOf(client, part);
+			run(client, "note.set", {{"part", part}, {"notes", {{{"id", note.at("id")}, {"velocityVariance", -1.0}}}}});
+		}
+		run(client, "controller.add",
+			{{"part", earliest}, {"controllers", {{{"position", 10}, {"number", 7}, {"value", 0.5}}}}});
+		setModifiers(client, other, Json{{"range", {{{"target", "noteFilter"}, {"minimum", 60}, {"maximum", 127}}}}});
+		const Json merged = run(client, "midi.merge",
+			{{"start", 0}, {"end", 2 * g_eightQuarters}, {"tracks", {other}}, {"includeInserts", true}});
+		const std::vector<Json> parts = partsOn(client, merged.at("tracks").at(0).get<ObjectId>());
+		REQUIRE(parts.size() == 1);
+		CHECK(parts[0].at("lane") == 0);
+		CHECK(parts[0].at("velocity") == 20);
+		CHECK(storedPitches(parts[0]) == std::vector<int>{70});
+		REQUIRE(parts[0].at("controllers").size() == 1);
+		CHECK(parts[0].at("controllers").at(0).at("number") == 7);
 	}
 
 	SECTION("without includeInserts, a pitch only the source track's modifiers bring back plays nowhere on a new track")
