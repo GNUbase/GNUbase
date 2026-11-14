@@ -939,8 +939,7 @@ TEST_CASE(
 	REQUIRE(f.app.waitUntil([&] { return f.display.project().at("midiParts").size() == 2; }));
 	f.app.keys().run("editor.openInPlace", Json::object(), f.app.main(), nullptr);
 	REQUIRE(f.app.waitUntil([&] { return f.elements(f.editor() + " .key-note").size() == 2; }));
-	f.display.zoomIn();
-	f.display.zoomIn();
+	f.display.zoomIn(); // once: after a second step the note lies outside the 1024 pixels wide window of Linux CI
 	f.settle(2);
 	f.display.select({otherPart});
 	f.click(f.editor() + " .in-place-toolbar-toggle");
