@@ -1844,6 +1844,13 @@ menuitem .menu-keys
 	padding-left: 24dp;
 }
 
+/* The version's ID after its name in a Track Versions menu (reference manual p. 232). */
+menuitem .track-version-id
+{
+	float: right;
+	padding-left: 24dp;
+}
+
 /* A color of the project's color set before its name (docs/features/colors.md); code gives it the color. */
 .color-swatch
 {

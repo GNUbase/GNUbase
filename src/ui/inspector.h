@@ -49,8 +49,8 @@ namespace gnubase::ui
 
 		// Shows the first of the tracks (none when it is empty) of the project as project.get returned it, the loads-th
 		// answer, which the binding handed on as EngineBinding::handed() returned read; call it once per step, it does
-		// nothing while neither changed. The Track Versions section works on every one of the tracks. The project must
-		// stay until the next call.
+		// nothing while neither changed. The Track Versions section works on every one of the tracks that has versions.
+		// The project must stay until the next call.
 		void update(const std::vector<uint64_t>& tracks, const engine::Json& project, uint64_t loads, uint64_t read);
 
 	private:
@@ -67,7 +67,10 @@ namespace gnubase::ui
 		void changeMidiEffect(const std::string& control, const Rml::Event& event);
 		// The Track Versions section (pp. 231-232): the active version's name and ID, and the list of them all.
 		void showVersions(const engine::Json& track);
-		// A version command on every selected track, one undo step.
+		// The selected tracks that have versions: a version command lists only those, since the engine refuses one
+		// that names a track without any.
+		std::vector<uint64_t> versioned() const;
+		// A version command on every selected track that has versions, one undo step.
 		void versionCommand(const char* command);
 		// Shows the MIDI inserts' divider at a place, 0 above the first slot to 4 below the last.
 		void showDivider(int gap);

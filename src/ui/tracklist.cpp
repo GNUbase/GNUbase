@@ -151,16 +151,19 @@ namespace gnubase::ui
 			return type == "audio" || type == "instrument" || type == "midi";
 		}
 
-		// A menu's items for a track's versions (reference manual p. 231): the active one checked, each with the ID a
-		// click activates on the selected tracks.
+		// A menu's items for a track's versions (reference manual pp. 231-232): the active one checked, each with its
+		// name and its ID, which a click activates on the selected tracks.
 		std::string versionItems(const Json& track)
 		{
 			std::string rml;
 			for (const Json& version : track.at("versions"))
+			{
+				const std::string id = std::to_string(version.at("id").get<int>());
 				rml += R"(<menuitem class="track-version)" +
 					std::string(version.at("id") == track.at("activeVersion") ? " checked" : "") + R"(" version=")" +
-					std::to_string(version.at("id").get<int>()) + R"(">)" +
-					Rml::StringUtilities::EncodeRml(version.at("name").get<std::string>()) + "</menuitem>";
+					id + R"(">)" + Rml::StringUtilities::EncodeRml(version.at("name").get<std::string>()) +
+					R"(<span class="track-version-id">)" + id + "</span></menuitem>";
+			}
 			return rml;
 		}
 

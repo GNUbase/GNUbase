@@ -380,6 +380,12 @@ namespace gnubase::ui
 			return nullptr;
 		}
 
+		// Whether tracks of a type have versions (docs/features/track-versions.md).
+		bool hasVersions(const std::string& type)
+		{
+			return type == "audio" || type == "instrument" || type == "midi";
+		}
+
 		// Where the channel of a track of the type can play: output busses, group and effect channels, or for MIDI
 		// tracks the instrument channels, as in the add track dialog; and where an audio track records from.
 		Options outputs(const Json& project, const std::string& type, uint64_t channel)
@@ -911,11 +917,20 @@ namespace gnubase::ui
 			setClass(*button, "unavailable", versions.size() < 2);
 	}
 
+	std::vector<uint64_t> Inspector::versioned() const
+	{
+		std::vector<uint64_t> tracks;
+		for (const uint64_t id : m_selected)
+			if (const Json* track = findIn(m_project, "tracks", id);
+				track != nullptr && hasVersions(track->at("type").get<std::string>()))
+				tracks.push_back(id);
+		return tracks;
+	}
+
 	void Inspector::versionCommand(const char* command)
 	{
-		if (m_selected.empty())
-			return;
-		m_binding.send(command, {{"tracks", m_selected}}, whenRefused());
+		if (const std::vector<uint64_t> tracks = versioned(); !tracks.empty())
+			m_binding.send(command, {{"tracks", tracks}}, whenRefused());
 	}
 
 	void Inspector::showModifiers(const Json& modifiers)
@@ -1181,9 +1196,9 @@ namespace gnubase::ui
 			for (const Rml::Element* up = target; up != nullptr && up != m_root.get(); up = up->GetParentNode())
 				if (up->IsClassSet("inspector-version") && up->HasAttribute("version"))
 				{
-					if (!m_selected.empty())
+					if (const std::vector<uint64_t> tracks = versioned(); !tracks.empty())
 						m_binding.send("trackVersion.activate",
-							{{"tracks", m_selected}, {"version", up->GetAttribute<int>("version", 1)}}, whenRefused());
+							{{"tracks", tracks}, {"version", up->GetAttribute<int>("version", 1)}}, whenRefused());
 					break;
 				}
 			// A MIDI effect's edit button opens and closes its control panel.
@@ -1286,8 +1301,8 @@ namespace gnubase::ui
 			const auto value = event.GetParameter<Rml::String>("value", "");
 			if (value.empty())
 				m_stale = true; // the engine refuses an empty name: show the version's own again
-			else if (!m_selected.empty())
-				m_binding.send("trackVersion.set", {{"tracks", m_selected}, {"name", value}}, whenRefused());
+			else if (const std::vector<uint64_t> tracks = versioned(); !tracks.empty())
+				m_binding.send("trackVersion.set", {{"tracks", tracks}, {"name", value}}, whenRefused());
 			return;
 		}
 		if (name == "editInPlace")

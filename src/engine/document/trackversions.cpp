@@ -270,6 +270,30 @@ namespace gnubase::engine
 			}
 			return versionsResult(project, tracks);
 		}
+
+		// The part's notes and controllers with new ids, the same new id for the same old one, so that the shared
+		// copies of a group keep sharing them; renumber gives a part ids no other part has.
+		void renumberShared(Project& project, MidiPart& part, std::map<ObjectId, ObjectId>& noteIds,
+			std::map<ObjectId, ObjectId>& controllerIds)
+		{
+			std::map<ObjectId, Note> notes;
+			for (auto& [id, note] : part.notes)
+			{
+				const auto found = noteIds.find(id);
+				note.id = found != noteIds.end() ? found->second : noteIds.emplace(id, project.newId()).first->second;
+				notes[note.id] = note;
+			}
+			part.notes = std::move(notes);
+			std::map<ObjectId, Controller> controllers;
+			for (auto& [id, controller] : part.controllers)
+			{
+				const auto found = controllerIds.find(id);
+				controller.id = found != controllerIds.end() ? found->second
+															 : controllerIds.emplace(id, project.newId()).first->second;
+				controllers[controller.id] = std::move(controller);
+			}
+			part.controllers = std::move(controllers);
+		}
 	}
 
 	int newVersionId(const Project& project)
@@ -325,6 +349,12 @@ namespace gnubase::engine
 			event.part = part == parts.end() ? 0 : part->second;
 		}
 		copy.audioEvents = std::move(events);
+		// A version's shared copies get a group of their own: two versions never play together, so a group across
+		// them is none, and the first switch would take the copies apart anyway. The copies of a group keep sharing
+		// their notes and controllers, with each other and with nothing else.
+		std::map<ObjectId, ObjectId> groups;                    // a copied group -> the copy's own
+		std::map<ObjectId, std::map<ObjectId, ObjectId>> notes; // per new group: the ids its copies share
+		std::map<ObjectId, std::map<ObjectId, ObjectId>> controllers;
 		for (MidiPart part : version.midiParts)
 		{
 			part.id = project.newId();
@@ -332,7 +362,16 @@ namespace gnubase::engine
 			if (const auto pattern = patterns.find(part.pattern); pattern != patterns.end())
 				part.pattern = pattern->second;
 			if (part.shared == 0)
+			{
 				renumber(project, part);
+			}
+			else
+			{
+				if (groups.find(part.shared) == groups.end())
+					groups[part.shared] = project.newId();
+				part.shared = groups.at(part.shared);
+				renumberShared(project, part, notes[part.shared], controllers[part.shared]);
+			}
 			copy.midiParts.push_back(std::move(part));
 		}
 		return copy;

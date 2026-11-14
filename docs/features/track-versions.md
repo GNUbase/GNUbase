@@ -21,29 +21,34 @@ and activating versions across tracks.
   tracks; other types fail): `trackVersion.add` (New Version, an empty version, active), `trackVersion.duplicate`
   (Duplicate Version: a copy of the active one's events and parts with new ids, audio events in the copies of their
   parts, joined by copied crossfades, in the same stack order), `trackVersion.set` (Rename Version, of the active
-  versions), `trackVersion.remove` (Delete Version: the active version goes with its events and parts and the one
-  before it becomes active, the next one for the first; tracks with only one version keep it), `trackVersion.activate`
-  and `trackVersion.assignCommonId`. New versions are named vN, N one more than the track's number of versions, or the
-  next number no version of the track is named (p. 236). Switching emits the removal and addition of the events and
-  parts that go and come, and `track.changed`. A track a command leaves alone keeps storing no version of its own:
-  `trackVersion.activate` on a track without that ID and `trackVersion.remove` on a track with a single version skip
-  it, so it stays out of the undo step, out of the `hasTrackVersion` rule property
-  ([project-rules.md](project-rules.md)) and out of what the commands return; a track whose only version is named v1
-  again stores none either.
+  versions), `trackVersion.remove` (Delete Version: the active version goes with its events and parts and the one before
+  it becomes active, the next one for the first; tracks with only one version keep it), `trackVersion.activate` and
+  `trackVersion.assignCommonId`. New versions are named vN, N one more than the track's number of versions, or the next
+  number no version of the track is named (p. 236). Switching emits the removal and addition of the events and parts
+  that go and come, and `track.changed`. A track a command leaves alone keeps storing no version of its own:
+  `trackVersion.activate` on a track without that ID and `trackVersion.remove` on a track with a single version skip it,
+  so it stays out of the undo step, out of the `hasTrackVersion` rule property ([project-rules.md](project-rules.md))
+  and out of what the commands return; a track whose only version is named v1 again stores none either. A duplicated
+  version's shared copies are a group of their own, with note and controller ids of their own that they share with each
+  other and with nothing else: two versions never play together, so a group across them is none, and the first switch
+  would take it apart.
 - **`project.get` and the project file.** Each such track has `versions` (`[{id, name}]`) and `activeVersion`;
   `versionContents` lists what the inactive versions hold (`[{track, version, audioEvents, audioParts, midiParts}]`),
   which GNUbase's entry of the DAWproject file keeps. Other applications see the active versions only. Ids loaded go
   on after the highest one, inactive versions' too.
 - **What else knows about inactive versions.** Their audio events use their clips: the pool counts them
-  (`pool.removeUnused`, a clip's uses, `clip.remove` refuses), `media.removeMissing` removes them with their clips,
-  and backups keep and minimize their media (`forEveryAudioEvent`). `media.relinkResampled`, including when called by
-  `media.conform`, rescales their audio events and crossfades. `track.duplicate` copies every version with ids of
-  its own, `track.removeEmpty` keeps a track with more than one version, and the track list's warning before Remove
-  Selected Tracks counts them too. A new time base or sample rate moves inactive versions' events and parts as it
-  moves the active ones. A tempo change retimes notes and controllers in their linear MIDI parts. A MIDI part that
-  goes into an inactive version stops being a shared copy of the parts that play, since only the active parts are
-  edited together ([parts-and-events.md](parts-and-events.md)); a group every copy of which goes into the version
-  stays one, with its group and its note and controller ids, and edits reach all of them again once it is active.
+  (`pool.removeUnused`, a clip's uses, `clip.remove` refuses), `media.removeMissing` removes them with their clips, and
+  backups keep and minimize their media (`forEveryAudioEvent`). `media.relinkResampled`, including when called by
+  `media.conform`, rescales their audio events and crossfades. `track.duplicate` copies every version with ids of its
+  own, and the copies of a version's shared MIDI parts get a group of their own as `trackVersion.duplicate` gives them
+  (its copies of the parts that play stay in their group, as those play together), `track.removeEmpty` keeps a track
+  with more than one version, and the track list's warning before Remove Selected Tracks counts them too. A new time
+  base or sample rate moves inactive versions' events and parts as it moves the active ones. A tempo change retimes
+  notes and controllers in their linear MIDI parts. A MIDI part that goes into an inactive version stops being a shared
+  copy of the parts that play, since only the active parts are edited together
+  ([parts-and-events.md](parts-and-events.md)); a group every copy of which goes into the version stays one, with its
+  group and its note and controller ids, and edits reach all of them again once it is active. A group is never spread
+  over two versions, since two versions never play together.
 - **One visitor for the rewrites that reach every event and part.** `forEveryEventAndPart` (`document.h`) calls three
   visitors with every audio event, audio part and MIDI part of the project, those that inactive versions hold too,
   and tells each visitor whether its item plays, so that a rewrite announces only what there is to see;
@@ -51,10 +56,10 @@ and activating versions across tracks.
   (`changeSampleRate`), a tempo change (`tempoChanged`) and resampled media (`rescaleUses`) go through them, so none
   of them can miss an inactive version.
 
-Tests: `tests/trackversions_tests.cpp` renders a track whose new version is empty and whose first one plays again
-once activated, across two tracks with one ID, and checks duplicating, names, deleting, common IDs, undo, the project
-file, `track.duplicate`, a new time base, the pool, resampled media relinking, tempo changes, the shared copies a
-version keeps and the tracks a command skips.
+Tests: `tests/trackversions_tests.cpp` renders a track whose new version is empty and whose first one plays again once
+activated, across two tracks with one ID, and checks duplicating, names, deleting, common IDs, undo, the project file,
+`track.duplicate`, a new time base, the pool, resampled media relinking, tempo changes, the shared copies a version
+keeps, the group of its own that a duplicated version's shared copies get, and the tracks a command skips.
 
 ## UI
 
@@ -64,30 +69,32 @@ version keeps and the tracks a command skips.
   `ui::TrackList` fills with the first selected track's versions, the active one checked; a click activates that
   version's ID on them all. Rename Version opens `resources/ui/rename-version.rml` (p. 236), which shows the first
   selected track's active version's name ready to be typed over, and OK sends `trackVersion.set` for every selected
-  track. The UI commands are `trackVersions.new`, `trackVersions.duplicate`, `trackVersions.rename`,
+  track that has versions. The UI commands are `trackVersions.new`, `trackVersions.duplicate`, `trackVersions.rename`,
   `trackVersions.remove`, `trackVersions.selectSameId` and `trackVersions.assignCommonId`: their own category in the
   key commands dialog (p. 231, [key-commands.md](key-commands.md)), enabled while an audio, instrument or MIDI track
   is selected.
-- **The Track Versions pop-up menu** (p. 231) opens from the arrow `.track-versions-toggle` to the right of the name
-  of every track that has versions; the arrow leaves the selection alone, so that the menu's functions work on every
-  selected track (p. 234), and selects the track it is on when the selection doesn't have it. `ui::TrackList` fills
-  `#track-versions-menu` with that track's versions, the active one checked and a click activating it on them all,
-  and below them New Version, Duplicate Version, Rename Version, Delete Version (disabled with only one version),
-  Select Tracks with Same Version ID and Show Version Name in Track List.
+- **The Track Versions pop-up menu** (pp. 231-232) opens from the arrow `.track-versions-toggle` to the right of the
+  name of every track that has versions; the arrow leaves the selection alone, so that the menu's functions work on
+  every selected track (p. 234), and selects the track it is on when the selection doesn't have it. `ui::TrackList`
+  fills `#track-versions-menu` with that track's versions, each with its name and its ID (`.track-version-id`), the
+  active one checked and a click activating it on them all, and below them New Version, Duplicate Version, Rename
+  Version, Delete Version (disabled with only one version), Select Tracks with Same Version ID and Show Version Name in
+  Track List.
 - **Show Version Name in Track List** is the user setting `ui.showVersionName`, on by default: while it is on, the
   track list shows the active version's name after the track's name (`.track-version`) as long as the track has more
   than one version (p. 236).
 - **The inspector's Track Versions section** (pp. 231-232, [inspector.md](inspector.md)) shows the first selected
-  track's active version: its name (`textdisplay[control=versionName]`), which a double click edits for every
-  selected track, and its ID, an indicator while the track has more than one version, the list of them all, in which
-  a click activates one on every selected track, and New, Duplicate and Delete, which work on them all. Tracks
-  without versions get the section as unavailable.
+  track's active version: its name (`textdisplay[control=versionName]`), which a double click edits, and its ID, an
+  indicator while the track has more than one version, the list of them all, in which a click activates one, and New,
+  Duplicate and Delete. Each of them works on every selected track that has versions, leaving the others out, since the
+  engine refuses a command that names a track without any. A track without versions gets the section as unavailable.
 
-Tests: `tests/trackversions_ui_tests.cpp` makes a version on two selected tracks through the menu, sees its name in
-the list, activates the first version on both through Activate Version, selects by version ID and deletes versions;
-opens the pop-up menu at a track's name, makes a version from it, activates one from its list and switches the version
-name in the track list off and on again; renames versions through the dialog and through the inspector's section, and
-activates, adds, duplicates and deletes them there; and finds the commands as a key command category of their own.
+Tests: `tests/trackversions_ui_tests.cpp` makes a version on two selected tracks through the menu, sees its name in the
+list, activates the first version on both through Activate Version, selects by version ID and deletes versions; opens
+the pop-up menu at a track's name, sees its versions with their IDs, makes a version from it, activates one from its
+list and switches the version name in the track list off and on again; renames versions through the dialog and through
+the inspector's section, activates, adds, duplicates and deletes them there, also with a folder track in the selection,
+which the section leaves out of its commands; and finds the commands as a key command category of their own.
 
 ## Not yet
 

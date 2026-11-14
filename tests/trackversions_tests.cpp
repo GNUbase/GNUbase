@@ -474,6 +474,52 @@ TEST_CASE("a version keeps the shared copies that all go into it", "[integration
 	CHECK(f.part(elsewhere).at("notes").at(0).at("id") != f.part(split).at("notes").at(0).at("id"));
 }
 
+TEST_CASE("Duplicate Version gives the duplicate's shared copies a group of their own", "[integration]")
+{
+	Fixture f;
+	const int64_t track = f.track("midi", "musical");
+	const int64_t first = f.midiPart(track, 0);
+	const int64_t second = f.call("event.copy", {{"events", {first}}, {"ticks", 4 * g_quarter}, {"shared", true}})
+							   .at("events")
+							   .at(0)
+							   .get<int64_t>();
+	const auto group = [&f](int64_t id) { return f.part(id).at("shared").get<int64_t>(); };
+	const auto note = [&f](int64_t id) { return f.part(id).at("notes").at(0).at("id").get<int64_t>(); };
+	REQUIRE(group(first) != 0);
+	CHECK(group(second) == group(first));
+	const int64_t original = group(first);
+	const int64_t originalNote = note(first);
+
+	f.call("trackVersion.duplicate", {{"tracks", {track}}});
+	const int duplicated = f.active(track);
+	REQUIRE(duplicated > 1);
+	// The duplicate's copies are copies of each other and of nothing else: a group of their own, with note ids of
+	// their own that they share.
+	const std::vector<int64_t> copies = f.on("midiParts", track);
+	REQUIRE(copies.size() == 2);
+	CHECK(group(copies.at(0)) != 0);
+	CHECK(group(copies.at(0)) != original);
+	CHECK(group(copies.at(1)) == group(copies.at(0)));
+	CHECK(note(copies.at(0)) != originalNote);
+	CHECK(note(copies.at(1)) == note(copies.at(0)));
+
+	// Switching away and back keeps both versions' groups whole: neither is "elsewhere" for the other.
+	f.call("trackVersion.activate", {{"tracks", {track}}, {"version", 1}});
+	CHECK(f.on("midiParts", track) == std::vector<int64_t>{first, second});
+	CHECK(group(first) == original);
+	CHECK(group(second) == original);
+	CHECK(note(first) == originalNote);
+	f.call("trackVersion.activate", {{"tracks", {track}}, {"version", duplicated}});
+	REQUIRE(f.on("midiParts", track) == copies);
+	CHECK(group(copies.at(0)) != 0);
+	CHECK(group(copies.at(1)) == group(copies.at(0)));
+	CHECK(note(copies.at(1)) == note(copies.at(0)));
+	// And an edit of one still reaches the other.
+	const int64_t copied = note(copies.at(0));
+	f.call("note.set", {{"part", copies.at(0)}, {"notes", {{{"id", copied}, {"pitch", 72}}}}});
+	CHECK(f.part(copies.at(1)).at("notes").at(0).at("pitch") == 72);
+}
+
 TEST_CASE("a version command that skips a track leaves it without a version of its own", "[integration]")
 {
 	Fixture f;

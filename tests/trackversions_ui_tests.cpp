@@ -206,7 +206,11 @@ TEST_CASE("the Track Versions pop-up menu at a track's name", "[ui]")
 	openPopup(app, second);
 	REQUIRE(elements(app, "#track-versions-menu menuitem[version]").size() == 2);
 	CHECK(hasClass(app, "#track-versions-menu menuitem[version=\"" + std::to_string(id) + "\"]", "checked"));
-	CHECK_FALSE(element(app, "#track-versions-menu menuitem[versions-action=\"trackVersions.remove\"]")
+	// Each item shows its version's ID too (p. 232: the pop-up menu is where the track list shows them).
+	CHECK(text(app, "#track-versions-menu menuitem[version=\"1\"] .track-version-id") == "1");
+	CHECK(text(app, "#track-versions-menu menuitem[version=\"" + std::to_string(id) + "\"] .track-version-id") ==
+		std::to_string(id));
+	CHECK(!element(app, "#track-versions-menu menuitem[versions-action=\"trackVersions.remove\"]")
 			.value("attributes", Json::object())
 			.contains("disabled"));
 	click(app, "#track-versions-menu menuitem[version=\"1\"]");
@@ -227,7 +231,7 @@ TEST_CASE("the Track Versions pop-up menu at a track's name", "[ui]")
 	CHECK(elements(app, row(second) + " .track-version").empty());
 	CHECK(app.call("settings.get", {{"key", "ui.showVersionName"}}).at("value") == false);
 	openPopup(app, first);
-	CHECK_FALSE(hasClass(app, "#track-versions-menu menuitem[versions-action=showVersionName]", "checked"));
+	CHECK(!hasClass(app, "#track-versions-menu menuitem[versions-action=showVersionName]", "checked"));
 	click(app, "#track-versions-menu menuitem[versions-action=showVersionName]");
 	REQUIRE(app.waitUntil(shown));
 	CHECK(app.call("settings.get", {{"key", "ui.showVersionName"}}).at("value") == true);
@@ -249,7 +253,7 @@ TEST_CASE("Rename Version and the inspector's Track Versions section", "[ui]")
 
 	// With one version: no indicator, one item in the list, and nothing to delete.
 	REQUIRE(app.waitUntil([&] { return !hasClass(app, ".inspector [section=trackVersions]", "unavailable"); }));
-	CHECK_FALSE(hasClass(app, ".inspector [section=trackVersions]", "multiple"));
+	CHECK(!hasClass(app, ".inspector [section=trackVersions]", "multiple"));
 	REQUIRE(elements(app, ".inspector .inspector-version").size() == 1);
 	CHECK(text(app, ".inspector .inspector-version-id") == "1");
 	CHECK(attribute(app, ".inspector textdisplay[control=versionName]", "value") == "v1");
@@ -284,7 +288,7 @@ TEST_CASE("Rename Version and the inspector's Track Versions section", "[ui]")
 	REQUIRE(app.waitUntil([&] { return elements(app, ".inspector .inspector-version").size() == 2; }));
 	CHECK(hasClass(app, ".inspector [section=trackVersions]", "multiple"));
 	CHECK(text(app, ".inspector .inspector-version-id") == std::to_string(id));
-	CHECK_FALSE(hasClass(app, ".inspector .inspector-version-remove", "unavailable"));
+	CHECK(!hasClass(app, ".inspector .inspector-version-remove", "unavailable"));
 	// The name typed into the section renames the active version of every selected track.
 	type(app, ".inspector textdisplay[control=versionName]", "Bridge");
 	REQUIRE(app.waitUntil([&] { return activeName(app, first) == "Bridge"; }));
@@ -301,6 +305,39 @@ TEST_CASE("Rename Version and the inspector's Track Versions section", "[ui]")
 	click(app, ".inspector .inspector-version-remove");
 	REQUIRE(app.waitUntil([&] { return track(app, first).at("versions").size() == 2; }));
 	CHECK(track(app, second).at("versions").size() == 2);
+}
+
+TEST_CASE("the inspector's Track Versions section leaves the selected tracks without versions out", "[ui]")
+{
+	test::UiApp app({1200, 600});
+	app.appUi().showProject();
+	app.setDpRatio(1.0F);
+	app.appUi().docking().open("inspector");
+	app.shell().step(std::chrono::milliseconds(0));
+	const uint64_t audio = add(app, "Vox");
+	const uint64_t folder =
+		app.call("track.add", {{"type", "folder"}, {"name", "Band"}}).at("track").at("id").get<uint64_t>();
+	REQUIRE(app.waitUntil([&] { return elements(app, "#track-list listitem").size() == 2; }));
+	// The section shows the first selected track's versions and works on every selected track that has any: the
+	// engine refuses a command that lists the folder, so the section leaves it out.
+	click(app, row(audio) + " .track-name");
+	click(app, row(folder) + " .track-name", {"ctrl"});
+	REQUIRE(app.appUi().trackList()->selection() == std::vector<uint64_t>{audio, folder});
+	REQUIRE(app.waitUntil([&] { return !hasClass(app, ".inspector [section=trackVersions]", "unavailable"); }));
+	REQUIRE(elements(app, ".inspector .inspector-version").size() == 1);
+
+	click(app, ".inspector .inspector-version-add");
+	REQUIRE(app.waitUntil([&] { return track(app, audio).at("versions").size() == 2; }));
+	CHECK(!track(app, folder).contains("versions")); // a folder has none
+	REQUIRE(app.waitUntil([&] { return elements(app, ".inspector .inspector-version").size() == 2; }));
+	// The name and the list work on the audio track alone too.
+	type(app, ".inspector textdisplay[control=versionName]", "Take");
+	REQUIRE(app.waitUntil([&] { return activeName(app, audio) == "Take"; }));
+	click(app, ".inspector .inspector-version[version=\"1\"]");
+	REQUIRE(app.waitUntil([&] { return track(app, audio).at("activeVersion") == 1; }));
+	click(app, ".inspector .inspector-version-remove");
+	REQUIRE(app.waitUntil([&] { return track(app, audio).at("versions").size() == 1; }));
+	CHECK(activeName(app, audio) == "Take");
 }
 
 TEST_CASE("the track version commands are a key command category of their own", "[ui]")

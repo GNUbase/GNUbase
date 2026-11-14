@@ -144,10 +144,11 @@ one it has the class `empty` and says "No Track Selected".
 - **Articulation Map** (pp. 1263, 1286, [articulation-maps.md](articulation-maps.md)): MIDI and instrument tracks'
   map, or No Map (`track.set` `articulationMap`), and Setup..., which opens the articulation map setup for the track.
 - **Track Versions** (pp. 231-232, [track-versions.md](track-versions.md)): the first selected track's active
-  version, its name, which a double click changes for every selected track (`trackVersion.set`), and its ID, an
-  indicator while the track has more than one version, the list of them all, in which a click activates one on every
-  selected track (`trackVersion.activate`), and New, Duplicate and Delete (`trackVersion.add`, `.duplicate` and
-  `.remove`), which work on them all; Delete only while there is a version to delete.
+  version, its name, which a double click changes for every selected track that has versions (`trackVersion.set`), and
+  its ID, an indicator while the track has more than one version, the list of them all, in which a click activates one
+  on those tracks (`trackVersion.activate`), and New, Duplicate and Delete (`trackVersion.add`, `.duplicate` and
+  `.remove`), which work on them too; the engine refuses a command that names a track without versions, so the others
+  in the selection are left out. Delete only while there is a version to delete.
 - **Inserts**: an overview of the channel's plugin slots by name, top to bottom (`plugin.*` changes them).
 - **Notepad** (p. 168): the channel's notes. What is typed goes to the engine when the field loses the focus, also
   with Escape (`channel.set` `notes`, one undo step). When another track shows while the notepad or the name is being
