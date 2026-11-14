@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/keyeditor.h"
 
+#include "engine/midi/articulationmaps.h"
 #include "engine/midi/chords.h"
 #include "engine/midi/quantizesettings.h"
 #include "platform/log.h"
@@ -18,7 +19,6 @@
 #include <cmath>
 #include <exception>
 #include <map>
-#include <sstream>
 #include <tuple>
 #include <utility>
 
@@ -187,15 +187,6 @@ namespace gnubase::ui
 		Json noteChange(uint64_t id)
 		{
 			return {{"id", id}};
-		}
-
-		// Names separated by commas, as the Articulations field shows a note's attributes.
-		std::string joined(const std::vector<std::string>& names)
-		{
-			std::string text;
-			for (const std::string& name : names)
-				text += (text.empty() ? "" : ", ") + name;
-			return text;
 		}
 
 		// A pitch typed: a number 0-127 or a name such as C1.
@@ -824,7 +815,8 @@ namespace gnubase::ui
 			{"pitch", engine::midi::pitchName(first.pitch)},
 			{"velocity", std::to_string(std::lround(first.velocity * g_maxVelocity))},
 			{"releaseVelocity", std::to_string(std::lround(first.releaseVelocity * g_maxVelocity))},
-			{"channel", std::to_string(first.channel + 1)}, {"articulations", joined(first.articulations)}};
+			{"channel", std::to_string(first.channel + 1)},
+			{"articulations", engine::midi::joinNames(first.articulations)}};
 		for (const auto& [field, text] : texts)
 			if (Rml::Element* display = line->QuerySelector("textdisplay[field=" + field + "]");
 				display != nullptr && attribute(*display, "value") != text)
@@ -996,15 +988,7 @@ namespace gnubase::ui
 		{
 			// The Articulations field (#1112, p. 1290): the attributes typed, names separated by commas, for every
 			// selected note; empty clears them.
-			std::vector<std::string> names;
-			std::string name;
-			for (std::istringstream stream(text); std::getline(stream, name, ',');)
-			{
-				name.erase(0, name.find_first_not_of(' '));
-				name.erase(name.find_last_not_of(' ') + 1);
-				if (!name.empty())
-					names.push_back(name);
-			}
+			const std::vector<std::string> names = engine::midi::splitNames(text);
 			std::map<uint64_t, Json> changes;
 			for (const Note* note : notes)
 			{

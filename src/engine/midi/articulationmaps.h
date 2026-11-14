@@ -6,6 +6,7 @@
 
 #include <map>
 #include <string>
+#include <vector>
 
 namespace gnubase::engine
 {
@@ -29,6 +30,11 @@ namespace gnubase::engine::midi
 	// The same for a map and a part as project.get lists them, which the sound slots lane shows (#1112, p. 1287).
 	std::map<ObjectId, size_t> soundSlots(const Json& map, const Json& part);
 
+	// Articulation names separated by commas, as the info line's Articulations field and the list editor's Attributes
+	// column show them ("Staccato, Pizzicato"), and the names typed there, without the spaces around them.
+	std::string joinNames(const std::vector<std::string>& names);
+	std::vector<std::string> splitNames(const std::string& text);
+
 	// Remote triggers (pp. 1263, 1268) in what a recording brings to a track with the map, as recording.add takes
 	// it: notes and controllers with positions in samples. Takes the notes (key switches) or program changes that
 	// trigger slots out and adds directions (articulation controller events) where they select a slot, and the
@@ -41,7 +47,7 @@ namespace gnubase::engine::midi
 	// A new map (Add Map, p. 1280): one group and neither articulations nor sound slots.
 	ArticulationMap newArticulationMap();
 
-	// Registers articulationMap.add, articulationMap.set, articulationMap.remove, articulationMap.export and
-	// articulationMap.import.
+	// Registers articulationMap.add, articulationMap.set, articulationMap.remove, articulationMap.export,
+	// articulationMap.import and articulationMap.soundSlots.
 	void registerArticulationMapCommands(ProjectModel& model, Engine& engine);
 }
