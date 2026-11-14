@@ -183,14 +183,14 @@ namespace gnubase::engine::settings
 				{"preferences.savePreset", 1,
 					"Saves a preferences preset (the user setting preferences.presets, reference manual p. 1594): "
 					"values, by setting, of all the preferences or only some, as the preferences dialog shows them. "
-					"Replaces a preset of the same name. Changes no preference; settings.set with its values applies "
-					"it.",
+					"Each must be a preference (settings.list preference) and fit its setting. Replaces a preset of "
+					"the same name. Changes no preference; settings.set with its values applies it.",
 					{{"type", "object"},
 						{"properties",
 							{{"name", name},
 								{"values",
 									{{"type", "object"},
-										{"description", "The values by setting; each must fit its setting."}}}}},
+										{"description", "The values by setting; each must be a preference."}}}}},
 						{"required", Json::array({"name", "values"})}, {"additionalProperties", false}},
 					noResult, false},
 				[&store, changed](CommandContext& context)
@@ -205,8 +205,7 @@ namespace gnubase::engine::settings
 						const Json& value = item.value();
 						const auto found = std::find_if(definitions.begin(), definitions.end(),
 							[&setting](const Definition& definition) { return definition.key == setting; });
-						require(found != definitions.end() && setting != "preferences.presets",
-							setting + " is no preference");
+						require(found != definitions.end() && found->preference, setting + " is no preference");
 						if (const std::string problem = validate(value, found->schema, setting); !problem.empty())
 							throw CommandError(problem);
 					}
@@ -366,7 +365,7 @@ namespace gnubase::engine::settings
 					"stands or records.",
 					Json{{"type", "string"},
 						{"enum", {"manual", "whileRecordEnabled", "whileRecording", "tapeMachine"}}},
-					"tapeMachine"},
+					"tapeMachine", true},
 				{"audio.backend",
 					"The backend of the audio device that the windowed app opens when it starts, such as asio, wasapi "
 					"or "
@@ -383,7 +382,7 @@ namespace gnubase::engine::settings
 				{"audio.defaultSendLevel",
 					"The level of the sends that track.add sends to a new effect channel, and the one Ctrl-click "
 					"gives a send in the mixer, in dB from -144 to 12 (reference manual p. 1623).",
-					Json{{"type", "number"}, {"minimum", -144}, {"maximum", 12}}, 0.0},
+					Json{{"type", "number"}, {"minimum", -144}, {"maximum", 12}}, 0.0, true},
 				{"audio.device",
 					"The id of the audio device that the windowed app opens when it starts (see audio.backend), or "
 					"empty "
@@ -400,7 +399,7 @@ namespace gnubase::engine::settings
 				{"audio.mutePreSends",
 					"Mute Pre-Send when Mute: a channel's mute button also mutes its pre-fader sends (reference "
 					"manual p. 1623); off, they play on while it is muted.",
-					Json{{"type", "boolean"}}, false},
+					Json{{"type", "boolean"}}, false, true},
 				{"audio.portSettings",
 					"How the audio devices' ports are shown (audio.setPort), by backend/device id/in or out/system "
 					"name, also for devices that aren't connected: the name shown (showAs) and whether it is "
@@ -422,11 +421,11 @@ namespace gnubase::engine::settings
 					"Audio pre-record: how many seconds of input from before recording starts go into the files of "
 					"record-enabled audio tracks, 0 to 60 (0: none). The events start where recording started; "
 					"resizing an event's start to the left brings out what was played before.",
-					Json{{"type", "number"}, {"minimum", 0}, {"maximum", 60}}, 0.0},
+					Json{{"type", "number"}, {"minimum", 0}, {"maximum", 60}}, 0.0, true},
 				{"audio.stopAfterPunchOut",
 					"Stop after automatic punch out: playback stops when recording punches out at the right locator, "
 					"after the post-roll if it's on (see transport.set), unless it cycles.",
-					Json{{"type", "boolean"}}, false},
+					Json{{"type", "boolean"}}, false, true},
 				{"audio.sampleRate", "The audio device's sample rate in Hz.",
 					Json{{"type", "number"}, {"minimum", 8000}, {"maximum", 768000}}, 48000.0},
 				{"chordPads.presets",
@@ -436,7 +435,7 @@ namespace gnubase::engine::settings
 				{"editing.applyFolderColor",
 					"Folder tracks give their color to the tracks inside them: when the folder's color changes and "
 					"when tracks are added or moved into it.",
-					Json{{"type", "boolean"}}, false},
+					Json{{"type", "boolean"}}, false, true},
 				{"editing.autoTrackColor",
 					"The color new tracks get when none is given (reference manual p. 1621): default (the default "
 					"color), previous (the color of the track above), previousPlusOne (the color after that one in "
@@ -445,46 +444,47 @@ namespace gnubase::engine::settings
 					"inside it.",
 					Json{{"type", "string"},
 						{"enum", {"default", "previous", "previousPlusOne", "lastApplied", "random"}}},
-					"default"},
+					"default", true},
 				{"editing.defaultTimeBase",
 					"The time base of new tracks when track.add gives none (Default Track Time Type, reference manual "
 					"pp. 230, 1595): musical (bars and beats, so their events follow tempo changes), linear (time, so "
 					"they stay), or followTimeFormat: musical while the project's primary time format (project.set "
 					"timeFormat) is barsBeats, linear with any other. Folder, ruler, tempo and signature tracks, "
 					"which hold no events of their own, are musical.",
-					Json{{"type", "string"}, {"enum", {"musical", "linear", "followTimeFormat"}}}, "musical"},
+					Json{{"type", "string"}, {"enum", {"musical", "linear", "followTimeFormat"}}}, "musical", true},
 				{"editing.importAudioConvert",
 					"Use Settings imports audio files with Convert to Project Sample Rate (audioFile.import convert; "
 					"see editing.onImportAudio).",
-					Json{{"type", "boolean"}}, true},
+					Json{{"type", "boolean"}}, true, true},
 				{"editing.importAudioCopy",
 					"Use Settings imports audio files with Copy Files to Project Folder (audioFile.import copy).",
-					Json{{"type", "boolean"}}, true},
+					Json{{"type", "boolean"}}, true, true},
 				{"editing.importAudioNameFormat",
 					"The names of the files Split Channels writes (audioFile.import nameFormat): dash (take-L.wav), "
 					"underscore (take_L.wav), dot (take.L.wav) or space (take L.wav).",
-					Json{{"type", "string"}, {"enum", {"dash", "underscore", "dot", "space"}}}, "dash"},
+					Json{{"type", "string"}, {"enum", {"dash", "underscore", "dot", "space"}}}, "dash", true},
 				{"editing.importAudioOneTrack",
 					"Use Settings imports several audio files one after another on one track (audioFile.import "
 					"oneTrack).",
 					Json{{"type", "boolean"}}, false},
 				{"editing.importAudioSplitChannels",
 					"Use Settings imports audio files with Split Channels (audioFile.import splitChannels).",
-					Json{{"type", "boolean"}}, false},
+					Json{{"type", "boolean"}}, false, true},
 				{"editing.legatoBetweenSelected",
 					"Legato Mode: Between Selected Notes Only (reference manual p. 1599): MIDI > Functions > Legato "
 					"extends the selected notes to the next selected note, not to the next note.",
-					Json{{"type", "boolean"}}, false},
+					Json{{"type", "boolean"}}, false, true},
 				{"editing.legatoOverlap",
 					"Legato Overlap (reference manual p. 1599): how far MIDI > Functions > Legato extends notes past "
 					"the start of the next note, in ticks of 480 per quarter note, -1920 to 1920; negative values "
 					"leave a gap.",
-					Json{{"type", "integer"}, {"minimum", -1920}, {"maximum", 1920}}, 0},
+					Json{{"type", "integer"}, {"minimum", -1920}, {"maximum", 1920}}, 0, true},
 				{"editing.onImportAudio",
 					"What importing audio files in the project window does (reference manual p. 357): "
 					"openOptionsDialog opens the Import Options dialog, useSettings imports at once with the "
 					"editing.importAudio* settings. The dialog's Do not ask again switches to useSettings.",
-					Json{{"type", "string"}, {"enum", {"openOptionsDialog", "useSettings"}}}, "openOptionsDialog"},
+					Json{{"type", "string"}, {"enum", {"openOptionsDialog", "useSettings"}}}, "openOptionsDialog",
+					true},
 				{"editing.tempoType",
 					"The type of new tempo events (reference manual p. 1448): ramp changes the tempo gradually from "
 					"the event before, step jumps, auto takes the type of the event before (tempo.add, tempo.tap).",
@@ -494,11 +494,11 @@ namespace gnubase::engine::settings
 					"nothing and hides nothing, so where it lies in front of another, that one plays. Off, a muted "
 					"event keeps its place in the stack and silences what lies behind it, which p. 228 advises when "
 					"assembling stacked takes.",
-					Json{{"type", "boolean"}}, true},
+					Json{{"type", "boolean"}}, true, true},
 				{"editing.useDrumEditor",
 					"Use Drum Editor when Drum Map is assigned (reference manual p. 1603): a closed editor opens the "
 					"parts of a track with a drum map in the drum editor (editor.open).",
-					Json{{"type", "boolean"}}, true},
+					Json{{"type", "boolean"}}, true, true},
 				{"meter.resetOnStart",
 					"Reset on Start: the loudness meter, and the main mix's peak and RMS maxima, start over when "
 					"playback starts (see meter.get).",
@@ -514,25 +514,25 @@ namespace gnubase::engine::settings
 				{"midi.chaseBeyondParts",
 					"Chases controller events from the whole track; off, only from the MIDI parts under the "
 					"position, so none outside parts.",
-					Json{{"type", "boolean"}}, true},
+					Json{{"type", "boolean"}}, true, true},
 				{"midi.chaseControllers",
 					"Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each control "
 					"change's last value before that position.",
-					Json{{"type", "boolean"}}, true},
+					Json{{"type", "boolean"}}, true, true},
 				{"midi.chaseNotes",
 					"Where playback starts or jumps, MIDI tracks start the notes that sound at that position, after "
 					"the "
 					"last key switch of each pitch before it that an articulation map's sound slots played, for a "
 					"sample, so that the instrument plays the articulation it had there.",
-					Json{{"type", "boolean"}}, true},
+					Json{{"type", "boolean"}}, true, true},
 				{"midi.chasePitchBend",
 					"Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each "
 					"channel's last pitch bend before that position.",
-					Json{{"type", "boolean"}}, true},
+					Json{{"type", "boolean"}}, true, true},
 				{"midi.chasePrograms",
 					"Where playback starts or jumps, or the cursor moves while stopped, MIDI tracks send each "
 					"channel's last program change before that position.",
-					Json{{"type", "boolean"}}, true},
+					Json{{"type", "boolean"}}, true, true},
 				{"midi.devices",
 					"The installed MIDI devices (midiDevice.install), by name: each has banks, each bank a name and "
 					"patches, each patch a name, a program (0 to 127), an optional bank (0 to 16383, sent as bank "
@@ -543,43 +543,43 @@ namespace gnubase::engine::settings
 					"Import Controller as Automation Tracks (reference manual p. 365): importing a MIDI file in the "
 					"project window moves its continuous controllers into automation lanes (midiFile.import "
 					"automation).",
-					Json{{"type", "boolean"}}, false},
+					Json{{"type", "boolean"}}, false, true},
 				{"midi.importDestination",
 					"Destination (reference manual p. 365): importing a MIDI file in the project window makes midi "
 					"or instrument tracks (midiFile.import trackType).",
-					Json{{"type", "string"}, {"enum", {"midi", "instrument"}}}, "midi"},
+					Json{{"type", "string"}, {"enum", {"midi", "instrument"}}}, "midi", true},
 				{"midi.importDissolveFormat0",
 					"Auto Dissolve Format 0 (reference manual p. 365): a type 0 MIDI file imported in the project "
 					"window gets a track per MIDI channel; off, one track (midiFile.import dissolve).",
-					Json{{"type", "boolean"}}, true},
+					Json{{"type", "boolean"}}, true, true},
 				{"midi.importExtractPatch",
 					"Extract First Patch (reference manual p. 364): a MIDI file imported in the project window gives "
 					"each MIDI track's first program change and bank select to the track's program and bank "
 					"(midiFile.import extractPatch).",
-					Json{{"type", "boolean"}}, true},
+					Json{{"type", "boolean"}}, true, true},
 				{"midi.importExtractVolumePan",
 					"Extract First Volume/Pan (reference manual p. 364): a MIDI file imported in the project window "
 					"gives each MIDI track's first MIDI volume and pan to the track's (midiFile.import "
 					"extractVolumePan).",
-					Json{{"type", "boolean"}}, true},
+					Json{{"type", "boolean"}}, true, true},
 				{"midi.importIgnoreTempo",
 					"Ignore Master Track Events on Merge (reference manual p. 365): a MIDI file imported into the "
 					"open project leaves its tempo and time signatures as they are (midiFile.import tempo false); a "
 					"MIDI file imported into a new project always brings its own.",
-					Json{{"type", "boolean"}}, false},
+					Json{{"type", "boolean"}}, false, true},
 				{"midi.importMarkers",
 					"Import Markers (reference manual p. 365): importing a MIDI file in the project window adds its "
 					"markers (midiFile.import markers).",
-					Json{{"type", "boolean"}}, true},
+					Json{{"type", "boolean"}}, true, true},
 				{"midi.importSinglePart",
 					"Import Dropped File as Single Part (reference manual p. 365): a MIDI file dropped on the project "
 					"window goes into one part, on the MIDI or instrument track it is dropped on or a new one "
 					"(midiFile.import singlePart).",
-					Json{{"type", "boolean"}}, false},
+					Json{{"type", "boolean"}}, false, true},
 				{"midi.importToLeftLocator",
 					"Import to Left Locator (reference manual p. 365): File > Import > MIDI File places the file at "
 					"the left locator instead of the project start (midiFile.import position).",
-					Json{{"type", "boolean"}}, false},
+					Json{{"type", "boolean"}}, false, true},
 				{"midi.mpeInput",
 					"MPE input (reference manual pp. 1295-1298): MIDI recording takes its input as MPE's lower zone, "
 					"channel 1 the master channel and channels 2 to 16 the notes' own, whose pitch bend, channel "
@@ -605,7 +605,7 @@ namespace gnubase::engine::settings
 				{"midi.recordCatchRange",
 					"MIDI record catch range in ms, 0 to 1000: MIDI input that comes this long before a recording "
 					"starts is recorded at its start, so that the very start isn't lost.",
-					Json{{"type", "number"}, {"minimum", 0}, {"maximum", 1000}}, 0.0},
+					Json{{"type", "number"}, {"minimum", 0}, {"maximum", 1000}}, 0.0, true},
 				{"midi.recordFilter",
 					"What MIDI recording leaves out (it still plays): types, of notes, controllers, pitchBend, "
 					"channelPressure, polyPressure and programs; channels, MIDI channels 1 to 16; controllers, "
@@ -625,13 +625,13 @@ namespace gnubase::engine::settings
 								{"controllers",
 									{{"type", "array"},
 										{"items", {{"type", "integer"}, {"minimum", 0}, {"maximum", 127}}}}}}}},
-					Json::object()},
+					Json::object(), true},
 				{"midi.retrospectiveEvents",
 					"How many MIDI events each MIDI or instrument track's retrospective buffer keeps of what came "
 					"from its MIDI input while it didn't record (midi.insertRetrospective); 0 keeps none.",
-					Json{{"type", "integer"}, {"minimum", 0}, {"maximum", 100000}}, 10000},
+					Json{{"type", "integer"}, {"minimum", 0}, {"maximum", 100000}}, 10000, true},
 				{"midi.snapPartsToBars", "Recorded MIDI parts start and end at whole bars.", Json{{"type", "boolean"}},
-					true},
+					true, true},
 				{"preferences.presets",
 					"The preferences dialog's presets (reference manual pp. 1593-1595), by name: each the values of "
 					"the user settings it sets, all of them or only some (preferences.savePreset). Applying one is "
@@ -640,11 +640,11 @@ namespace gnubase::engine::settings
 				{"project.autoSave",
 					"Saves a copy of a project with unsaved changes every project.autoSaveInterval minutes into the "
 					"folder Auto Saves of its project folder (see project.autoSave).",
-					Json{{"type", "boolean"}}, true},
+					Json{{"type", "boolean"}}, true, true},
 				{"project.autoSaveFiles", "How many auto saves a project keeps; the next one overwrites the oldest.",
-					Json{{"type", "integer"}, {"minimum", 1}, {"maximum", 100}}, 5},
+					Json{{"type", "integer"}, {"minimum", 1}, {"maximum", 100}}, 5, true},
 				{"project.autoSaveInterval", "Minutes between auto saves.",
-					Json{{"type", "integer"}, {"minimum", 1}, {"maximum", 120}}, 15},
+					Json{{"type", "integer"}, {"minimum", 1}, {"maximum", 120}}, 15, true},
 				{"transport.cycleFollowsMarkers",
 					"Locating to a marker sets the left and right locators to it (marker.locate, marker.locateNext, "
 					"marker.locatePrevious): a cycle marker's range, or from a position marker to the next marker.",
@@ -658,7 +658,7 @@ namespace gnubase::engine::settings
 				{"ui.folderData",
 					"When folder tracks show the events and parts of the tracks inside them as data blocks in the "
 					"event display: always, never, or hideWhenExpanded (only while the folder is folded).",
-					Json{{"type", "string"}, {"enum", {"always", "never", "hideWhenExpanded"}}}, "always"},
+					Json{{"type", "string"}, {"enum", {"always", "never", "hideWhenExpanded"}}}, "always", true},
 				{"ui.keyCommandPresets",
 					"The key commands presets (reference manual p. 1559), by name: each the key commands and macros "
 					"as ui.keyCommands and ui.macros take them (keyCommands.savePreset). Loading one is settings.set "
@@ -694,7 +694,7 @@ namespace gnubase::engine::settings
 				{"ui.markerLines",
 					"Which markers the event display shows as lines across every track: the active marker track's "
 					"(active), every marker track's (all), or none (off).",
-					Json{{"type", "string"}, {"enum", Json::array({"active", "all", "off"})}}, "active"},
+					Json{{"type", "string"}, {"enum", Json::array({"active", "all", "off"})}}, "active", true},
 				{"ui.markerColumns",
 					"The markers window's columns: order, the columns after the locate column in order (number, "
 					"type, position, end, length, description); widths, each one's width in dp; sort, the column the "
@@ -718,9 +718,9 @@ namespace gnubase::engine::settings
 				{"ui.removeTracksWarning",
 					"Whether Remove Selected Tracks asks before it removes tracks that aren't empty: that hold events, "
 					"parts, markers or automation, or are folders with such tracks inside (reference manual p. 213).",
-					Json{{"type", "boolean"}}, true},
+					Json{{"type", "boolean"}}, true, true},
 				{"ui.scale", "The UI scale, applied on top of each monitor's own scale.",
-					Json{{"type", "number"}, {"minimum", 0.5}, {"maximum", 4}}, 1.0},
+					Json{{"type", "number"}, {"minimum", 0.5}, {"maximum", 4}}, 1.0, true},
 				{"ui.chordPads",
 					"The chord pads zone's display settings (reference manual pp. 1390-1391): primary and secondary, "
 					"the chord symbols' types (noteName, roman, nashville; the secondary also none), layout keyboard "
@@ -739,7 +739,7 @@ namespace gnubase::engine::settings
 								{"listColors", {{"type", "boolean"}}}, {"voicingIndicators", {{"type", "boolean"}}},
 								{"patternProgress", {{"type", "boolean"}}}}}},
 					Json::object()},
-				{"ui.theme", "The theme's folder name in resources/themes.", Json{{"type", "string"}}, "gnubase"},
+				{"ui.theme", "The theme's folder name in resources/themes.", Json{{"type", "string"}}, "gnubase", true},
 				{"ui.timeDisplay",
 					"The time display window's options: beatCountOnly shows only the beat in its bar, size is the "
 					"window's and its digits' size from 0 (smallest) to 4.",
@@ -764,16 +764,16 @@ namespace gnubase::engine::settings
 					"range.selectFullVertical (alt+shift), select.setCursorPosition (alt+shift), select.splitEvent "
 					"(alt), sizeObjects.disableSnapping (ctrl) and split.splitRepeated (alt). What it leaves out has "
 					"its default.",
-					toolModifiersSchema(), Json::object()},
+					toolModifiersSchema(), Json::object(), true},
 				{"ui.toolSwitchNotification",
 					"Whether choosing a project window tool with a key command shows the tool's name for a moment in "
 					"the event display (docs/features/tools.md).",
-					Json{{"type", "boolean"}}, true},
+					Json{{"type", "boolean"}}, true, true},
 				{"ui.toolboxOnRightClick",
 					"Whether a right click in the event display opens the toolbox, the toolbar's tools at the mouse, "
 					"and a right click with a modifier key the context menu; when off, the other way round "
 					"(docs/features/tools.md).",
-					Json{{"type", "boolean"}}, false},
+					Json{{"type", "boolean"}}, false, true},
 				{"ui.trackControls",
 					"The controls the track list shows, by track type (audio, instrument, midi, group, effect, "
 					"folder, marker, ruler, tempo, transpose, chord), in order: mute, solo, record, monitor (audio, "
@@ -836,7 +836,7 @@ namespace gnubase::engine::settings
 					"Whether Up and Down (track.selectPrevious, track.selectNext) only select tracks; when off, while "
 					"an event or part is selected they also select the first one on the newly selected track "
 					"(reference manual p. 218).",
-					Json{{"type", "boolean"}}, false},
+					Json{{"type", "boolean"}}, false, true},
 				{"ui.controllerLanePresets",
 					"The controller lane presets of the MIDI editors (#128, reference manual p. 1166): each a name and "
 					"the lanes it shows, as editor.set takes them.",
@@ -911,7 +911,7 @@ namespace gnubase::engine::settings
 				{"ui.zoomToolHorizontalOnly",
 					"Zoom Tool Standard Mode: Horizontal Zooming Only: whether the zoom tool's rectangle zooms the "
 					"event display across only; when off, it zooms the track heights too (docs/features/tools.md).",
-					Json{{"type", "boolean"}}, true},
+					Json{{"type", "boolean"}}, true, true},
 			};
 			return result;
 		}();
@@ -1046,12 +1046,13 @@ namespace gnubase::engine::settings
 
 		engine.registerCommand(
 			{"settings.list", 1,
-				"Every user setting with its key, description, JSON schema, default and value; the settings file, "
-				"null when settings are kept in memory only; its version; and what happened when it was loaded: the "
-				"status (inMemory, missing, loaded, migrated, reset or newer), the version the file had, the "
-				"problems found, where the original file was kept, and whether the file is read-only for this "
-				"session, so that changes apply but aren't saved (a newer GNUbase's file, or one that couldn't be "
-				"backed up or locked).",
+				"Every user setting with its key, description, JSON schema, default, value, and whether it is a "
+				"preference: one of the settings the preferences dialog shows and preference presets can set. Also "
+				"the settings file, null when settings are kept in memory only; its version; and what happened when "
+				"it was loaded: the status (inMemory, missing, loaded, migrated, reset or newer), the version the "
+				"file had, the problems found, where the original file was kept, and whether the file is read-only "
+				"for this session, so that changes apply but aren't saved (a newer GNUbase's file, or one that "
+				"couldn't be backed up or locked).",
 				CommandInfo{}.parameters,
 				{{"type", "object"},
 					{"properties",
@@ -1065,7 +1066,7 @@ namespace gnubase::engine::settings
 				for (const Definition& definition : store.format().definitions)
 					settings.push_back({{"key", definition.key}, {"description", definition.description},
 						{"schema", definition.schema}, {"default", definition.defaultValue},
-						{"value", store.value(definition.key)}});
+						{"value", store.value(definition.key)}, {"preference", definition.preference}});
 				const LoadReport& report = store.loadReport();
 				return Json{{"file", pathOrNull(store.file())}, {"version", store.format().version},
 					{"load",
