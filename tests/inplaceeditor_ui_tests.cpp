@@ -639,6 +639,75 @@ TEST_CASE("a note dragged from one in-place editor to another moves to that trac
 	REQUIRE(f.app.waitUntil([&] { return f.elements(f.editor() + " .key-note").size() == 2; }));
 }
 
+TEST_CASE("selected controller events go along with notes dragged from one in-place editor to another", "[ui]")
+{
+	// The key editor moves the selected controller events with the selected notes (reference manual p. 1188), so a
+	// drag into another in-place editor (p. 1261) takes them to that track's part too.
+	Fixture f;
+	const uint64_t other = f.app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	const uint64_t otherPart =
+		f.app.call("midiPart.add", {{"track", other}, {"position", 2 * g_bar}, {"length", 2 * g_bar}})
+			.at("part")
+			.at("id")
+			.get<uint64_t>();
+	const uint64_t controller =
+		f.app
+			.call("controller.add",
+				{{"part", f.part}, {"controllers", {{{"position", g_quarter / 2}, {"number", 1}, {"value", 0.5}}}}})
+			.at("controllers")
+			.at(0)
+			.at("id")
+			.get<uint64_t>();
+	REQUIRE(f.app.waitUntil([&] { return f.display.project().at("midiParts").size() == 2; }));
+	f.app.call("editor.inPlace", {{"tracks", {f.track, other}}, {"open", true}});
+	const std::string lane = ".in-place-editor[track=\"" + std::to_string(other) + "\"]";
+	REQUIRE(f.app.waitUntil([&] { return !f.elements(lane + " .key-editor-grid").empty(); }));
+	f.settle(2);
+	f.app.call("editor.set",
+		{{"editor", "inPlace:" + std::to_string(f.track)}, {"selection", {{{"part", f.part}, {"note", f.notes[0]}}}},
+			{"controllerSelection", {{{"part", f.part}, {"controller", controller}}}}});
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			return f.elements(f.note(f.notes[0]) + ".selected").size() == 1 &&
+				f.view().at("controllerSelection").size() == 1;
+		}));
+	const auto partOf = [&](uint64_t part)
+	{
+		const Json project = f.app.call("project.get");
+		for (const Json& each : project.at("midiParts"))
+			if (each.at("id") == part)
+				return each;
+		return Json::object();
+	};
+	const auto steps = f.app.call("history.get").at("steps").size();
+
+	// The note dragged a bar later into the other editor: the controller event half a beat after its start lands
+	// half a beat into the other part, which starts there, with its id.
+	const Json grid = f.box(lane + " .key-editor-grid");
+	const double y = grid.at("y").get<double>() + ((127.5 - 64) / 128.0 * grid.at("height").get<double>());
+	f.app.ui().drag(std::nullopt, f.at(g_bar + (g_quarter / 2), 60),
+		ui::Target{"", 0,
+			ui::Point{static_cast<int>(std::lround(f.timelineX((2 * g_bar) + (g_quarter / 2)))),
+				static_cast<int>(std::lround(y))}});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return partOf(otherPart).at("controllers").size() == 1; }));
+	const Json moved = partOf(otherPart).at("controllers").at(0);
+	CHECK(moved.at("id") == controller);
+	CHECK(moved.at("position") == g_quarter / 2);
+	CHECK(moved.at("number") == 1);
+	CHECK(partOf(f.part).at("controllers").empty());
+	CHECK(partOf(otherPart).at("notes").size() == 1);
+	CHECK(f.app.call("history.get").at("steps").size() == steps + 1);
+
+	// One undo brings the note and the controller event back.
+	f.app.call("history.undo");
+	REQUIRE(f.app.waitUntil([&] { return partOf(f.part).at("controllers").size() == 1; }));
+	CHECK(partOf(f.part).at("controllers").at(0).at("position") == g_quarter / 2);
+	CHECK(partOf(f.part).at("notes").size() == 2);
+	CHECK(partOf(otherPart).at("controllers").empty());
+}
+
 TEST_CASE("a key held in an in-place editor that closes ends its pitch", "[ui]")
 {
 	// A key of the keyboard plays its pitch until the mouse is released (p. 1204); the in-place editor closing ends it
