@@ -1242,7 +1242,7 @@ TEST_CASE("track.importSources lists the sample rates of the media files each tr
 	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
 	Client client(engine);
 	const Added takes = add(client, {{"type", "audio"}, {"name", "Takes"}});
-	const Added silent = add(client, {{"type", "audio"}, {"name", "Silent"}});
+	add(client, {{"type", "audio"}, {"name", "Silent"}}); // a track whose events play no media file
 	int64_t position = 0;
 	const auto event = [&](int rate, const std::string& name)
 	{
