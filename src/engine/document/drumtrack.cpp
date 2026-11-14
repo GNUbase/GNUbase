@@ -124,6 +124,8 @@ namespace gnubase::engine
 				return found->second.name;
 			if (const auto clip = project.clips.find(found->second.sample); clip != project.clips.end())
 				return clip->second.name;
+			if (found->second.sound >= 0)
+				pad = found->second.sound;
 		}
 		return midi::gmDrumMap().sounds.at(static_cast<size_t>(pad)).name;
 	}
@@ -237,26 +239,39 @@ namespace gnubase::engine
 				if (section.end < section.length)
 					channel.instrumentParameters[id(DrumMachine::End)] = static_cast<double>(section.end) / length;
 				channel.pads[note].sample = section.clip;
+				channel.pads[note].sound = -1; // the sample names the pad now
 				syncDrumLanes(project, channel, context, note);
 				return result(project, channel, context);
 			});
 
 		model.addEdit(engine,
 			{"drum.setPad", 1,
-				"Renames a pad of a drum track (Rename Pad, reference manual p. 943); an empty name goes back to its "
-				"sample's clip's name, or the General MIDI sound's of its note. Lanes of the track's drum patterns "
+				"Renames a pad of a drum track (Rename Pad, reference manual p. 943) or gives it a color (Set Color, "
+				"pp. 942-943), at least one of the two. An empty name goes back to its sample's clip's name, or the "
+				"General MIDI sound's it goes by (its note's, or for a copy its sound's); color is \"#rrggbb\", "
+				"usually one of the project's color set, or empty or null for none. Lanes of the track's drum patterns "
 				"that play the pad take the name (pattern.changed). Emits channel.changed. Returns the track and its "
 				"channel.",
-				objectSchema(
-					{{"track", integer}, {"pad", pad}, {"name", {{"type", "string"}}}}, {"track", "pad", "name"}),
+				objectSchema({{"track", integer}, {"pad", pad}, {"name", {{"type", "string"}}},
+								 {"color", {{"type", {"string", "null"}}}}},
+					{"track", "pad"}),
 				resultSchema, false},
-			"Rename drum pad",
+			"Change drum pad",
 			[](Project& project, CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
+				require(parameters.contains("name") || parameters.contains("color"), "name or color is required");
 				Channel& channel = drumChannel(project, parameters.at("track").get<ObjectId>());
 				const int note = padOf(parameters, "pad");
-				channel.pads[note].name = parameters.at("name").get<std::string>();
+				if (parameters.contains("name"))
+					channel.pads[note].name = parameters.at("name").get<std::string>();
+				if (parameters.contains("color"))
+				{
+					const Json& color = parameters.at("color");
+					const std::string value = color.is_string() ? color.get<std::string>() : std::string();
+					require(value.empty() || isColor(value), "color must be \"#rrggbb\"");
+					channel.pads[note].color = value;
+				}
 				if (channel.pads[note] == DrumPad())
 					channel.pads.erase(note);
 				syncDrumLanes(project, channel, context, note);
@@ -267,9 +282,9 @@ namespace gnubase::engine
 			{"drum.copyPad", 1,
 				"Copies a pad of a drum track onto another, to (Copy Pad and Paste Pad, reference manual p. 943): its "
 				"name, its sample and all its settings, in place of the other's; a pad that plays something without a "
-				"name of its own or a sample's gets the General MIDI sound's name it went by. With move the pad is "
-				"reset "
-				"afterwards (Cut Pad). Lanes of the track's drum patterns that play either pad take its name. Emits "
+				"name of its own or a sample's goes by the General MIDI sound it went by (the pad's sound) until it "
+				"gets a name or a sample. With move the pad is reset afterwards (Cut Pad). Lanes of the track's drum "
+				"patterns that play either pad take its name. Emits "
 				"channel.changed. Returns the track and its channel.",
 				objectSchema({{"track", integer}, {"pad", pad}, {"to", pad}, {"move", {{"type", "boolean"}}}},
 					{"track", "pad", "to"}),
@@ -298,9 +313,10 @@ namespace gnubase::engine
 					channel.pads[to] = source->second;
 				else
 					channel.pads.erase(to);
-				// A pad that went by the General MIDI sound of its note keeps that name on the other note.
+				// A pad that went by the General MIDI sound of its note goes by that sound on the other note too,
+				// without a name of its own, so that a sample loaded onto it names it as it does the others (#1567).
 				if (plays && drumPadName(project, channel, to) != name)
-					channel.pads[to].name = name;
+					channel.pads[to].sound = from;
 				if (parameters.value("move", false))
 				{
 					clearParameters(channel, from);

@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -1234,6 +1235,47 @@ TEST_CASE("track.import returns the media files it added, not the ones it shares
 	CHECK(project.at("media").size() == 2);
 	CHECK(fs::equivalent(
 		fs::u8path(find(project.at("media"), media[0].get<ObjectId>()).at("path").get<std::string>()), added));
+}
+
+TEST_CASE("track.import shares the project's clips that are the same, also those of an import before", "[integration]")
+{
+	const test::TempDir dir;
+	const fs::path wav = dir.path() / "loop.wav";
+	test::writeWav(wav, {std::vector<float>(4800, 0.25f), 1, 48000});
+	const fs::path archive = dir.path() / "Loops.dawproject";
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	const Added take = add(client, {{"type", "audio"}, {"name", "Take"}});
+	const ObjectId media = run(client, "media.add", {{"path", wav.u8string()}}).at("media").at("id").get<ObjectId>();
+	// Two clips of the file that differ only in their ids: the import makes them one.
+	for (int i = 0; i < 2; ++i)
+	{
+		const ObjectId clip = run(client, "clip.add", {{"media", media}}).at("clip").at("id").get<ObjectId>();
+		run(client, "audioEvent.add",
+			{{"track", take.track}, {"clip", clip}, {"position", i * 4800}, {"offset", 0}, {"length", 4800}});
+	}
+	run(client, "track.export", {{"tracks", {take.track}}, {"path", archive.u8string()}});
+
+	run(client, "project.new");
+	const auto clipsOfEvents = [&client]
+	{
+		std::set<ObjectId> clips;
+		const Json project = run(client, "project.get");
+		for (const Json& event : project.at("audioEvents"))
+			clips.insert(event.at("clip").get<ObjectId>());
+		return clips;
+	};
+	run(client, "track.import", {{"path", archive.u8string()}});
+	CHECK(run(client, "project.get").at("clips").size() == 1);
+	CHECK(clipsOfEvents().size() == 1);
+	// The archive imported again shares the clip and the media file of the first import.
+	run(client, "track.import", {{"path", archive.u8string()}});
+	const Json project = run(client, "project.get");
+	CHECK(project.at("tracks").size() == 2);
+	CHECK(project.at("audioEvents").size() == 4);
+	CHECK(project.at("clips").size() == 1);
+	CHECK(project.at("media").size() == 1);
+	CHECK(clipsOfEvents().size() == 1);
 }
 
 TEST_CASE("track.importSources lists the sample rates of the media files each track of a file plays", "[integration]")

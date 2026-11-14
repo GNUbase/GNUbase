@@ -3978,7 +3978,8 @@ namespace gnubase::engine
 				"Saves the project as a DAWproject file: as path, which is then the project's file (save as), or "
 				"without path to the project's file (save). Media files and frozen tracks' freeze files are copied "
 				"into it unless embedMedia is false; then the file refers to them where they are, relative to itself "
-				"if they are in its folder. The file becomes the first of the recent "
+				"if they are in its folder. One that is missing is referred to by its absolute path. The file becomes "
+				"the first of the recent "
 				"projects (project.recent).",
 				objectSchema({{"path", stringSchema}, {"embedMedia", booleanSchema}}), noResult, false},
 			[this](CommandContext& context)

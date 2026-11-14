@@ -5,6 +5,7 @@
 // project file, into the project.
 #include "engine/document/trackpresets.h"
 
+#include "engine/audiofile/file.h"
 #include "engine/dawproject/dawproject.h"
 #include "engine/document/channelsettings.h"
 #include "engine/document/document.h"
@@ -22,6 +23,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <exception>
 #include <filesystem>
 #include <iterator>
@@ -231,15 +233,42 @@ namespace gnubase::engine
 			}
 
 		private:
-			static bool sameClip(Clip a, Clip b)
+			// Compares the media file and name first, which rules out most clips without copying them (#1567).
+			static bool sameClip(const Clip& a, const Clip& b)
 			{
-				a.id = b.id;
-				a.folder = b.folder;
-				if (a.regions.size() != b.regions.size())
+				if (a.media != b.media || a.name != b.name || a.regions.size() != b.regions.size())
 					return false;
-				for (size_t i = 0; i < a.regions.size(); ++i)
-					a.regions[i].id = b.regions[i].id;
-				return a == b;
+				Clip copy = a;
+				copy.id = b.id;
+				copy.folder = b.folder;
+				for (size_t i = 0; i < copy.regions.size(); ++i)
+					copy.regions[i].id = b.regions[i].id;
+				return copy == b;
+			}
+
+			// Whether two files have the same bytes; false if either can't be read. Opened as the readers open files,
+			// so that the comparison doesn't lock a file the project plays (#963).
+			static bool sameBytes(const std::string& a, const std::string& b)
+			{
+				std::error_code error;
+				const auto size = fs::file_size(fs::u8path(a), error);
+				if (error || fs::file_size(fs::u8path(b), error) != size || error)
+					return false;
+				const detail::File first = detail::openFile(a, "rb");
+				const detail::File second = detail::openFile(b, "rb");
+				if (!first || !second)
+					return false;
+				std::vector<char> one(size_t{1} << 16);
+				std::vector<char> other(one.size());
+				for (;;)
+				{
+					const size_t read = std::fread(one.data(), 1, one.size(), first.get());
+					if (std::fread(other.data(), 1, other.size(), second.get()) != read ||
+						!std::equal(one.begin(), one.begin() + static_cast<std::ptrdiff_t>(read), other.begin()))
+						return false;
+					if (read < one.size())
+						return std::ferror(first.get()) == 0 && std::ferror(second.get()) == 0;
+				}
 			}
 
 			ObjectId copyChannel(ObjectId source, ObjectId track)
@@ -405,6 +434,12 @@ namespace gnubase::engine
 				MediaFile file = m_from.media.at(id);
 				for (const auto& [mine, other] : m_to.media)
 					if (other.path == file.path)
+						return m_media[id] = mine;
+				// The same audio at another path, such as the copy a preset extracted of a file of the project it was
+				// saved in, also shares the project's file, which leaves the pool as it was (#1567).
+				for (const auto& [mine, other] : m_to.media)
+					if (other.length == file.length && other.channels == file.channels &&
+						other.sampleRate == file.sampleRate && sameBytes(other.path, file.path))
 						return m_media[id] = mine;
 				file.id = m_to.newId();
 				m_media[id] = file.id;
@@ -947,6 +982,9 @@ namespace gnubase::engine
 						lane.track = id;
 			if (source.channel != 0 && track.channel != 0)
 				reroute(project, source.channel, track.channel);
+			// The lanes of a drum track's patterns take the names of its pads, which may be the copy's now (#1567).
+			if (const Channel* drums = drumChannelOf(project, id))
+				syncDrumLanes(project, *drums, inner);
 			model.runEdit("track.remove", project, {{"track", copy}}, inner);
 		}
 
@@ -1041,7 +1079,8 @@ namespace gnubase::engine
 				"its patch, of which the reference manual's keeps one, p. 238), the instrument with its parameters "
 				"and a drum machine's pads, and the color. Presets are DAWproject files in the folder Track "
 				"Presets in the user settings' folder, with the media files of a sampler's and drum pads' samples in "
-				"them. Changes nothing in the project. Returns the preset's file.",
+				"them; a file that is missing is referred to where it was. Changes nothing in the project. Returns the "
+				"preset's file.",
 				objectSchema({{"tracks", idsSchema}, {"name", stringSchema}}, {"tracks", "name"}), fileResult, false},
 			[&model, &engine](CommandContext& context)
 			{
@@ -1113,7 +1152,8 @@ namespace gnubase::engine
 				"tracks must be as many as the preset's, and of the same types in the same order: the first of tracks "
 				"gets the sound of the preset's top track, and so on. Faders above the project's fader top come down "
 				"to it. A sampler's sample and a drum machine's pads with their names and samples come along, their "
-				"clips into the pool unless it has the same ones, and the lanes of a drum track's patterns take the "
+				"clips into the pool unless it has the same ones, their files shared with the project's that have the "
+				"same audio, and the lanes of a drum track's patterns take the "
 				"pads' names. Emits track.changed, channel.changed, plugin.removed, plugin.added, media.added, "
 				"clip.added and pattern.changed.",
 				objectSchema({{"tracks", idsSchema}, {"name", stringSchema}}, {"tracks", "name"}), tracksResult, false},
@@ -1298,7 +1338,10 @@ namespace gnubase::engine
 				"other channels go to the tracks the project had with the same name and type, outputs to busses to its "
 				"busses with the same name or else the main output. Linear positions from a file at another sample "
 				"rate are rescaled to keep their time, as project.set does; faders, send levels and volume automation "
-				"above the project's fader top come down to it. Media files embedded in the file are extracted next to "
+				"above the project's fader top come down to it. Clips come into the pool's top folder unless the "
+				"project has the same clip already, as after importing the file before: then the tracks share it, and "
+				"clips of the file that are the same become one; media files the project has, at the same path or "
+				"with the same audio, are shared too. Media files embedded in the file are extracted next to "
 				"it, as project.load does; media.prepareArchive and media.conform with the media it returns copy and "
 				"convert them into the project folder (Media Files, p. 205). Tempo, signature, arranger, transpose, "
 				"chord and VCA tracks can't be imported yet: listed, also inside a listed folder, they are refused, "

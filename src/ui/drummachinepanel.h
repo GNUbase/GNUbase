@@ -14,6 +14,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace Rml
@@ -92,7 +93,10 @@ namespace gnubase::ui
 		std::vector<Parameter> m_globalParameters; // the drum machine's own
 		std::map<uint32_t, double> m_values;       // the channel's
 		std::map<int, std::string> m_names;        // the pads' names (drum.setPad), else their clips'
-		std::vector<std::string> m_padNames;       // without these: the General MIDI sounds', from processor.list
+		std::map<int, int> m_sounds;               // the notes whose General MIDI sounds copies go by (DrumPad::sound)
+		std::map<int, std::string> m_colors;       // the pads' colors, "#rrggbb"
+		std::vector<std::pair<std::string, std::string>> m_colorSet; // No Color and the project's color set (Set Color)
+		std::vector<std::string> m_padNames; // without these: the General MIDI sounds', from processor.list
 		uint64_t m_track = 0;
 		uint64_t m_selected = 0; // the track update showed last, a drum track or not
 		uint64_t m_loads = 0;
