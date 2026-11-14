@@ -36,8 +36,10 @@ namespace gnubase::engine
 		constexpr time::Samples g_maxRollAmount = time::Samples{3600} * 768000;
 		constexpr auto g_startWait = std::chrono::seconds(2);    // for the streams before playback starts or locates
 		constexpr auto g_offlineWait = std::chrono::seconds(30); // for the streams before an offline block
-		constexpr size_t g_offlineMidi = 1024;                   // MIDI messages per block another device renders
-		constexpr int64_t g_maxCaptureRead = int64_t{1} << 20;   // frames one audio.capture returns at most
+		// Rounds of the offline wait for the samplers' samples (10 minutes of 30 s) before a render gives up (#1343).
+		constexpr int g_offlineSampleRounds = 20;
+		constexpr size_t g_offlineMidi = 1024;                 // MIDI messages per block another device renders
+		constexpr int64_t g_maxCaptureRead = int64_t{1} << 20; // frames one audio.capture returns at most
 		constexpr int64_t g_maxThreads = 64;
 		constexpr int64_t g_maxLatency = 65536; // frames: the dummy device's latencies and the record shift
 		// Frames: the largest record offset, the latency each way and the record shift at their limits. The audio
@@ -390,9 +392,14 @@ namespace gnubase::engine
 		const audio::MidiBuffer midiIn;
 		audio::MidiBuffer midiOut(g_offlineMidi);
 		uint64_t position = m_device->position();
-		// Every sampler plays its sample from the first block, however long its file takes to read (#1180).
-		while (!waitForSamples(g_offlineWait))
+		// Every sampler plays its sample from the first block (#1180). A file whose read stalls fails the render
+		// after the last round instead of holding it for good (#1343).
+		for (int round = 1; !waitForSamples(m_offlineSampleWait); ++round)
+		{
+			if (round == g_offlineSampleRounds)
+				throw CommandError("the render gave up waiting for the samplers' samples to be read");
 			logging::warning("The render still waits for the samplers' samples to be read");
+		}
 		for (uint64_t done = 0; done < frames;)
 		{
 			const auto block = static_cast<uint32_t>(std::min<uint64_t>(format.blockSize, frames - done));
@@ -746,6 +753,7 @@ namespace gnubase::engine
 			sequence->inserts = channel.midiInserts;
 			sequence->sends = channel.midiSends;
 			sequence->preNotes = channel.preNotes;
+			sequence->preExpressions = channel.preExpressions;
 			for (size_t s = 0; s < channel.midiSendOutputs.size(); ++s)
 				if (const int output = channel.midiSendOutputs[s]; output >= 0)
 					sequence->sendOutputs[s] = snapshot.channels[static_cast<size_t>(output)].id;
@@ -2690,18 +2698,44 @@ namespace gnubase::engine
 
 	void AudioEngine::play()
 	{
-		// In arranger mode playback outside the chain's events starts at the chain's start.
 		const ArrangerPlan& plan = *m_snapshots.latest().arranger;
+		// While playing, Play ends a Repeat Forever loop (reference manual p. 407): playback goes on with the next
+		// step, or past the chain if the looping step is the last one.
+		if (plan.plays() && m_transport.playing())
+		{
+			const ArrangerState state = m_transport.arranger();
+			const auto step = static_cast<size_t>(state.step);
+			if (state.step >= 0 && step < plan.steps.size() && plan.steps[step].mode == ArrangerRepeat::Forever)
+			{
+				if (step + 1 < plan.steps.size())
+				{
+					ArrangerState next;
+					next.step = state.step + 1;
+					arrange(next); // at the next jump point, or at once with the jump mode none
+				}
+				else
+				{
+					sent(m_transport.arrange(ArrangerState(), false)); // past the chain: on linearly from here
+				}
+				return;
+			}
+		}
+		// In arranger mode playback outside the chain's events starts at the chain's start. A triggered event that
+		// loops where playback starts counts as inside too, so Play keeps it instead of the chain's first step (#880).
 		if (plan.plays() && !m_transport.playing())
 		{
 			const time::Samples at = m_transport.position();
-			const bool inside = std::any_of(plan.steps.begin(), plan.steps.end(),
+			const ArrangerState state = m_transport.arranger();
+			const auto section = static_cast<size_t>(state.section);
+			const bool inLoop = state.step < 0 && state.section >= 0 && section < plan.sections.size() &&
+				plan.sections[section].start <= at && at < plan.sections[section].end;
+			const bool inStep = std::any_of(plan.steps.begin(), plan.steps.end(),
 				[&](const ArrangerPlanStep& step)
 				{
-					const ArrangerSection& section = plan.sections.at(static_cast<size_t>(step.section));
-					return section.start <= at && at < section.end;
+					const ArrangerSection& stepSection = plan.sections.at(static_cast<size_t>(step.section));
+					return stepSection.start <= at && at < stepSection.end;
 				});
-			if (!inside)
+			if (!inLoop && !inStep)
 			{
 				ArrangerState first;
 				first.step = 0;
@@ -2810,6 +2844,10 @@ namespace gnubase::engine
 	{
 		const ArrangerPlan& plan = *m_snapshots.latest().arranger;
 		const ArrangerState state = m_transport.arranger();
+		// While the plan doesn't play (arranger mode off, or an empty chain) nothing is in the chain: report no step,
+		// so the editor doesn't mark a stale row as the one playing.
+		if (!plan.plays())
+			return {{"step", -1}, {"repeat", 0}, {"event", uint64_t{0}}};
 		const auto step = static_cast<size_t>(state.step);
 		const int32_t section = state.step >= 0 && step < plan.steps.size() ? plan.steps[step].section : state.section;
 		const auto event = section >= 0 && static_cast<size_t>(section) < plan.sections.size()
@@ -3078,7 +3116,9 @@ namespace gnubase::engine
 		};
 		command("transport.play",
 			"Starts playback from the project cursor, or from the left locator if startMode is cycleStart, less the "
-			"pre-roll if preRoll is on (not before the project start). Does nothing while playing.",
+			"pre-roll if preRoll is on (not before the project start). While playing it does nothing, except that it "
+			"ends a Repeat Forever loop: playback then goes on with the next chain step, or past the chain if the "
+			"looping step is the last one.",
 			nullptr, [this](const Json&) { play(); });
 		// Lock Record: a recording doesn't stop or punch out by these commands, only by a confirmed stop.
 		const auto unlocked = [this]

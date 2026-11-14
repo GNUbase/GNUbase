@@ -165,9 +165,10 @@ namespace gnubase::test
 	}
 
 	engine::Json whileHeld(engine::Engine& engine, engine::Client& client, const std::string& command,
-		engine::Json parameters, const std::function<void(uint64_t job)>& during, std::vector<engine::Json>* progress)
+		engine::Json parameters, const std::function<void(uint64_t job)>& during, std::vector<engine::Json>* progress,
+		std::chrono::milliseconds hold)
 	{
-		HeldJob held(engine, command);
+		HeldJob held(engine, command, hold);
 		const engine::Json started = run(client, command, std::move(parameters)).at("job");
 		CHECK(started.at("kind") == command);
 		const auto job = started.at("id").get<uint64_t>();

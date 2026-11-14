@@ -641,6 +641,11 @@ namespace gnubase::engine
 		std::vector<ExpressionPoint> expressions; // its per-note expression (#176), sorted by position
 	};
 
+	// A note's expression points measured from from instead of its start, for a note whose start moves there and
+	// whose expression stays where it is: the value each expression has at from, or at the start for a from before
+	// it, becomes a point at 0, and the later points move back by from.
+	std::vector<ExpressionPoint> expressionsFrom(const std::vector<ExpressionPoint>& points, time::Ticks from);
+
 	// The MIDI events besides notes, all held as controller events.
 	enum class ControllerType : uint8_t
 	{

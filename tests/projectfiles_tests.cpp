@@ -2044,7 +2044,10 @@ TEST_CASE("a backup started in another window while one's progress shows shows i
 	REQUIRE(app.waitUntil([&app] { return ran(app, "job.cancel"); }));
 	CHECK(!shownInPanel("#backup-progress-dialog"));
 	CHECK(shown(app, "#backup-progress-dialog"));
-	held.release();
+	{
+		INFO("a backup's hold lapsed before the second backup was cancelled"); // #1339
+		REQUIRE(held.release());
+	}
 	// The first backup's whole run, as long as lastJob waits on a busy machine.
 	REQUIRE(app.waitUntil([&app] { return !shown(app, "#backup-progress-dialog"); }, std::chrono::seconds(60)));
 	lastJob(app); // once none runs

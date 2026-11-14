@@ -1,8 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 add_library(gnubase-testutils STATIC
+	testutils/commandholds.h
 	testutils/fakeui.cpp testutils/fakeui.h
 	testutils/goldenimage.cpp testutils/goldenimage.h
 	testutils/heldjob.cpp testutils/heldjob.h
+	testutils/library.h
+	testutils/slowframe.h
 	testutils/testutils.cpp testutils/testutils.h)
 target_include_directories(gnubase-testutils PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(gnubase-testutils PUBLIC gnubase-ui)

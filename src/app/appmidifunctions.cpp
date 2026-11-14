@@ -103,10 +103,15 @@ namespace gnubase::app
 			attributes.emplace_back("track", std::to_string(track));
 		const bool reused = m_articulationMaps.get() != nullptr && m_articulationMaps->GetParentNode() != nullptr;
 		Rml::ElementDocument& document = openOnce(window, "articulation-maps.rml", m_articulationMaps, attributes);
-		// Open already: now the setup of this track, whose map its Lua selects (#1265).
-		if (reused && track != 0)
+		// Open already: now the setup of this track, whose map its Lua selects (#1265), or of none, which hides Assign
+		// to Track as a fresh one does (#1354). For the same track it keeps the map shown.
+		const std::string attribute = track != 0 ? std::to_string(track) : std::string();
+		if (reused && document.GetAttribute<Rml::String>("track", "") != attribute)
 		{
-			document.SetAttribute("track", std::to_string(track));
+			if (track != 0)
+				document.SetAttribute("track", attribute);
+			else
+				document.RemoveAttribute("track");
 			document.DispatchEvent("trackchange", Rml::Dictionary());
 		}
 	}

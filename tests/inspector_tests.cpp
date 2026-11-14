@@ -3,6 +3,7 @@
 // ui::Automation as MCP's UI tools drive them: the info line shows the first selected event or part and its edits
 // change every selected one, as one undo step; the inspector shows the selected track's basics, routing, inserts and
 // notepad, and its controls change the track's channel.
+#include "testutils/commandholds.h"
 #include "testutils/testutils.h"
 #include "uiapp.h"
 
@@ -10,6 +11,7 @@
 #include "engine/time/tempomap.h"
 #include "ui/automation.h"
 #include "ui/docking.h"
+#include "ui/enginebinding.h"
 #include "ui/eventdisplay.h"
 #include "ui/markers.h"
 #include "ui/tracklist.h"
@@ -802,11 +804,12 @@ namespace
 
 	// Every gap between sections is the same and wider than one inside a section, and the first button stands as far
 	// from the toolbar's edge as in the order `expected` measured, whichever sections stand where.
-	void checkToolbarGaps(const ToolbarGaps& now, const ToolbarGaps& expected)
+	void checkToolbarGaps(const ToolbarGaps& now, const ToolbarGaps& expected, double ratio)
 	{
 		REQUIRE(!now.between.empty());
-		// 4 dp wider, which pixels round to less at small dp ratios: 3 against 2 pixels at 0.7.
-		CHECK(now.between.front() > now.within);
+		// 4 dp wider, which pixels round to less at small dp ratios: 3 against 2 pixels at 0.7, so wider by more than a
+		// dp (#1239).
+		CHECK(now.between.front() > now.within + ratio);
 		for (const double gap : now.between)
 			CHECK(std::abs(gap - now.between.front()) <= 1.0);
 		CHECK(std::abs(now.inset - expected.inset) <= 1.0);
@@ -845,7 +848,7 @@ TEST_CASE("the toolbar's setup pane shows, hides and orders its sections, with p
 		// Every place between sections has the same gap, whichever sections are in it, and the first button the same
 		// distance from the toolbar's left edge, as the user sees them (#1050).
 		const ToolbarGaps now = toolbarGaps(window, order);
-		checkToolbarGaps(now, reference);
+		checkToolbarGaps(now, reference, window.app.main().dpRatio());
 		CHECK(now.tightest >= 0.0);
 		CHECK(now.spacer >= 1.0);
 		CHECK(std::abs(rightInset(order) - rightEdge) <= 1.0);
@@ -922,15 +925,16 @@ namespace
 		Window& window, const std::vector<std::string>& order, const ToolbarGaps& expected, bool step = true)
 	{
 		const ToolbarGaps gaps = toolbarGaps(window, order, step);
+		const double ratio = window.app.main().dpRatio();
 		if (gaps.between.empty())
 			CHECK(std::abs(gaps.inset - expected.inset) <= 1.0); // no gap between sections before the last place
 		else
-			checkToolbarGaps(gaps, expected);
+			checkToolbarGaps(gaps, expected, ratio);
 		CHECK(gaps.tightest >= 0.0);
 		CHECK(gaps.spacer >= 0.0);
-		const double ratio = window.app.main().dpRatio();
 		std::vector<std::string> shown;
 		bool roomLeft = true;
+		const bool warpGone = hasClass(window.app, "#toolbar-quantize-warp", "no-room");
 		for (size_t i = 0; i + 1 < order.size(); ++i)
 		{
 			INFO("section " << order[i]);
@@ -950,11 +954,26 @@ namespace
 		}
 		CHECK(!hasClass(window.app, "#toolbar [section=" + order.back() + "]", "no-room")); // after the spacer
 		shown.push_back(order.back());
+		// Warp Quantize On/Off goes before any section, and only while the shown sections fit without it (#1234).
+		if (warpGone)
+		{
+			CHECK(!element(window.app, "#toolbar-quantize-warp").at("visible").get<bool>());
+			if (shown.size() == order.size()) // with its 2 dp margin it needs more than the spacer's width
+				CHECK(
+					element(window.app, "#toolbar-quantize-warp").at("box").at("width").get<double>() + (2.0 * ratio) >
+					gaps.spacer);
+		}
+		else if (order.back() != "quantize" && std::find(shown.begin(), shown.end(), "quantize") != shown.end())
+		{
+			CHECK(shown.size() == order.size());
+		}
+		// The shown sections fit inside the toolbar. x and width are rounded separately at fractional dp ratios, so
+		// the inset may differ by up to 2 px.
 		const Json bar = element(window.app, "#toolbar").at("box");
 		const Json last = element(window.app, "#toolbar [section=" + order.back() + "]").at("box");
 		const double rightInset = bar.at("x").get<double>() + bar.at("width").get<double>() -
 			last.at("x").get<double>() - last.at("width").get<double>();
-		CHECK(std::abs(rightInset - gaps.inset) <= 1.0);
+		CHECK(std::abs(rightInset - gaps.inset) <= 2.0);
 		return shown;
 	}
 }
@@ -999,6 +1018,45 @@ TEST_CASE("the toolbar shows the sections it has room for, the last before the s
 			checkToolbarRoom(window, inside, reference);
 		}
 	}
+}
+
+TEST_CASE("Warp Quantize On/Off goes from the toolbar before any section does", "[ui]")
+{
+	// The reference's toolbar hides its items one after another as the window narrows (the reference manual, p. 65).
+	Window window(1024);
+	const ui::Docking& docking = window.app.appUi().docking();
+	const std::vector<std::string> defaults = docking.sections("project", "toolbar");
+	const auto noRoom = [&window](const std::string& selector) { return hasClass(window.app, selector, "no-room"); };
+	const std::string warp = "#toolbar-quantize-warp";
+	// Narrower in dp step by step, from about 1463 dp, until the quantize section goes.
+	bool warpGone = false;
+	bool alone = false; // gone while every section showed
+	for (int step = 0;; ++step)
+	{
+		const float ratio = 0.7F + (0.01F * static_cast<float>(step));
+		REQUIRE(ratio < 2.0F);
+		INFO("dp ratio " << ratio);
+		window.app.setDpRatio(ratio);
+		window.app.shell().step(std::chrono::milliseconds(0));
+		if (noRoom("#toolbar [section=quantize]"))
+		{
+			CHECK(!noRoom(warp)); // the section's parts show with it again
+			break;
+		}
+		if (warpGone)
+			CHECK(noRoom(warp)); // once gone, it stays gone in narrower windows
+		warpGone = noRoom(warp);
+		const ToolbarGaps reference = toolbarGaps(window, defaults, false); // the gaps at this dp ratio
+		const std::vector<std::string> shown = checkToolbarRoom(window, defaults, reference, false);
+		alone = alone || (warpGone && shown.size() == defaults.size());
+	}
+	CHECK(alone);
+
+	// Wider again: the section and its toggle show.
+	window.app.setDpRatio(0.7F);
+	window.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(element(window.app, warp).at("visible").get<bool>());
+	CHECK(!noRoom(warp));
 }
 
 TEST_CASE("the toolbar makes room for its sections with the widest labels, and for those the user hides", "[ui]")
@@ -1159,6 +1217,66 @@ TEST_CASE("the inspector's volume and pan fields dragged while the engine answer
 	window.call("channel.set", {{"channel", window.channel(audio).at("id")}, {"volume", -12.0}, {"pan", 0.25}});
 	CHECK(window.shows(".inspector valuefield[control=volume]", "-12"));
 	CHECK(window.shows(".inspector valuefield[control=pan]", "25"));
+}
+
+TEST_CASE("the inspector's dragged volume stays while it shows a project read from before the drag again", "[ui]")
+{
+	test::CommandHolds holds; // declared before the window: its engine's command thread waits in hold()
+	Window window;
+	const test::ReleaseHolds releaseHolds{holds};
+	window.app.engine().registerCommand(
+		{"test.hold", 1, "Waits for the test to release it.", engine::CommandInfo{}.parameters, Json::object(), false},
+		[&holds](engine::CommandContext&) { return holds.hold(); });
+	engine::Client holder(window.app.engine(), "holder");
+	const uint64_t audio = window.addTrack({{"type", "audio"}, {"name", "Vox"}});
+	const uint64_t other = window.addTrack({{"type", "midi"}, {"name", "Keys"}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 2; }));
+	window.list.select({audio});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Vox"));
+	const Json channel = window.channel(audio).at("id");
+	// The volume in the project that the event display, and with it the inspector, shows.
+	const auto shown = [&]
+	{
+		const Json& channels = window.display.project().at("channels");
+		const auto found = std::find_if(
+			channels.begin(), channels.end(), [&channel](const Json& each) { return each.at("id") == channel; });
+		REQUIRE(found != channels.end());
+		return found->at("volume").get<double>();
+	};
+
+	// A drag while the engine answers late. Once no step of it is out, its last one goes at once, and the engine
+	// takes it before the shell hands anything on: its answer and history.changed wait in the binding's mailbox.
+	const std::string field = ".inspector valuefield[control=volume]";
+	ui::EngineBinding& binding = window.app.appUi().binding();
+	test::LateDrag drag(window.app, std::nullopt, field);
+	drag.move(15, 1);
+	REQUIRE(window.app.waitUntil([&] { return binding.waiting("history.transaction") == 0; }));
+	drag.nudge(1);
+	const double dragged = drag.value();
+	drag.release(false);
+	REQUIRE(window.channel(audio).at("volume").get<double>() == Catch::Approx(dragged).margin(1e-5));
+	// The project read that the display sends for that history.changed queues behind a hold: the display shows a read
+	// from before the last step until the test lets the engine go on (#1305).
+	holder.send("test.hold");
+	REQUIRE(holds.waitEntered(1));
+	window.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(binding.waiting("history.transaction") == 0);
+	REQUIRE(binding.waiting("project.get") != 0); // the display's, and other views'
+	REQUIRE(shown() != Catch::Approx(dragged).margin(1e-5));
+	CHECK(drag.value() == Catch::Approx(dragged).margin(1e-5));
+
+	// Another track and back shows that older read again: the field stays where the drag left it. The other is a
+	// MIDI track, whose inspector shows no volume, so the field shows only the dragged track's.
+	window.list.select({other});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Keys"));
+	window.list.select({audio});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Vox"));
+	CHECK(drag.value() == Catch::Approx(dragged).margin(1e-5));
+
+	// The read after the last step agrees with it.
+	holds.release(1);
+	REQUIRE(window.app.waitUntil([&] { return shown() == Catch::Approx(dragged).margin(1e-5); }));
+	CHECK(drag.value() == Catch::Approx(dragged).margin(1e-5));
 }
 
 TEST_CASE("the info line's volume turned or dragged while the engine answers late follows the mouse", "[ui]")
@@ -1626,6 +1744,21 @@ TEST_CASE("the inspector's MIDI Inserts and MIDI Sends sections show and change 
 	CHECK_FALSE(hasClass(window.app, ".inspector .midi-divider[gap=1]", "at"));
 	REQUIRE(window.app.waitUntil([&]
 		{ return hasClass(window.app, ".inspector [section=midiInserts] .midi-effect-slot[slot=2]", "recorded"); }));
+	// When the inspector shows another track during a drag, the drag ends without moving a divider, neither the
+	// dragged track's nor the one shown at its end.
+	const ui::Target gap2 = {".inspector .midi-divider[gap=2]", 0, std::nullopt};
+	window.app.ui().press(std::nullopt, {".inspector .midi-divider[gap=3]", 0, std::nullopt}, ui::MouseButton::Left);
+	window.app.ui().move(std::nullopt, gap2);
+	window.list.select({bass});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Bass"));
+	window.app.ui().release(std::nullopt, gap2, ui::MouseButton::Left);
+	CHECK(hasClass(window.app, ".inspector .midi-divider[gap=0]", "at"));
+	window.list.select({keys});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Keys"));
+	CHECK(window.historyPosition() == beforeDrag + 1);
+	CHECK(window.channel(bass).at("midiInserts").at("divider") == 0);
+	CHECK(inserts().at("divider") == 3);
+	CHECK(hasClass(window.app, ".inspector .midi-divider[gap=3]", "at"));
 	// The edit button closes the control panel.
 	window.click(first + " .midi-effect-edit");
 	CHECK_FALSE(hasClass(window.app, first, "open"));
