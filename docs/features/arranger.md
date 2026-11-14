@@ -78,6 +78,14 @@ Range copies keep the order in which audio events stack, so overlapping events p
 ## UI
 
 - **Add Track** has Arranger, once per project.
+- **The arranger track's lane** (`ui::GlobalEventLane` with `LaneKind::Arranger`, `src/ui/transposetrack.h`, shared
+  with the transpose and chord tracks' lanes, #1393, pp. 404-405): an `.arranger-lane-event` per arranger event in an
+  `.arranger-lane-row` over the lane, as wide as its section, with its name. The draw tool draws an event from the press to
+  the release (`arranger.add`, named in alphabetical order); a click without a drag draws one up to the next bar line.
+  With the other tools a drag moves an event, keeping its length (`arranger.set`), and a double click opens its name in
+  the `.arranger-lane-field` over it, where Enter renames it; the erase tool removes the event clicked (`arranger.remove`).
+  Drawing and moving snap as the event display's drags do ([snap.md](snap.md), `EventDisplay::snapped`), so with
+  Snap on and the snap type Events, as p. 404 asks, new events start and end at other events' edges.
 - **The arranger editor** (`resources/ui/arranger-editor.rml`, the UI command `window.arranger`, in a window of its own)
   is driven by its own Lua script through the engine API: the toolbar switches arranger mode and picks the active chain
   and the jump mode, with Create New Chain, Duplicate Current Chain, Remove Current Chain and Flatten Chain, and the
@@ -104,9 +112,11 @@ for the published generation, including when neither kept plan is it; a cue that
 start mode cycleStart, and `transport.get` reporting no step while the plan doesn't play; flattening, played back
 linearly against the chain's audio, with undo.
 `tests/lua/ui/arranger.lua` opens the arranger editor and drives it, with its step buttons disabled outside arranger
-mode and a locate arrow on every row.
+mode and a locate arrow on every row. `tests/arranger_ui_tests.cpp`: the arranger track's lane showing an event as wide
+as its section with its name, the draw tool drawing one over the stretch dragged and, with a click, up to the next bar
+line, both snapped to bars; a drag moving an event by bars, a double click renaming it and the erase tool removing it.
 
-Not yet: arranger events on the arranger track's lane in the event display and drawing them with the draw tool,
-the track list's arranger controls and the inspector's arranger section, renaming chains in the editor, drag and drop
+Not yet: resizing arranger events by their edges and selecting them, renaming them on the info line, the track
+list's arranger controls and the inspector's arranger section, renaming chains in the editor, drag and drop
 in the chain list, the other flatten options (Checked and All Chains, New Project, Make Real Event Copies, Don't Split
 Events, Rename Arranger Events), key commands for triggering events, and arranging to an external timecode.
