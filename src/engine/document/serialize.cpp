@@ -2857,7 +2857,13 @@ namespace gnubase::engine
 		for (const std::vector<ChordEvent>* events : {&project.chords.events, &project.chords.scales})
 			for (const ChordEvent& event : *events)
 				see(event.id);
-		project.nextId = std::max(json.value("nextId", ObjectId{0}), highest + 1);
+		// Lua's integers are signed. Reject files whose ids (or next allocation) would silently become negative in
+		// scripts, and check before highest + 1 can overflow. Reserve the last signed integer for the counter.
+		const auto luaLimit = static_cast<ObjectId>(std::numeric_limits<int64_t>::max());
+		const ObjectId nextId = json.value("nextId", ObjectId{0});
+		if (highest >= luaLimit || nextId > luaLimit)
+			throw std::overflow_error("project object ids exceed Lua's integer range");
+		project.nextId = std::max(nextId, highest + 1);
 		for (ArrangerChain& chain : project.arranger.chains)
 			if (chain.id == 0)
 				chain.id = project.newId();

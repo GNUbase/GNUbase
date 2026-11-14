@@ -45,7 +45,6 @@ namespace gnubase::engine
 				if (std::find(tracks.begin(), tracks.end(), id) == tracks.end())
 					tracks.push_back(id);
 			}
-			require(!tracks.empty(), "tracks must not be empty");
 			return tracks;
 		}
 
@@ -179,7 +178,6 @@ namespace gnubase::engine
 				TrackVersion version;
 				version.id = id;
 				version.name = context.parameters().value("name", newVersionName(track));
-				require(!version.name.empty(), "name must not be empty");
 				stash(project, track, context);
 				if (duplicate)
 				{
@@ -198,7 +196,6 @@ namespace gnubase::engine
 		Json renameVersions(Project& project, CommandContext& context)
 		{
 			const std::string name = context.parameters().at("name").get<std::string>();
-			require(!name.empty(), "name must not be empty");
 			const std::vector<ObjectId> tracks = tracksOf(project, context.parameters());
 			for (const ObjectId id : tracks)
 			{

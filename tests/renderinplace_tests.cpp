@@ -872,6 +872,8 @@ TEST_CASE("render in place refuses what it can't render", "[integration]")
 {
 	Session project;
 	const Session::Track audio = project.addTrack("Ramp");
+	CHECK_THAT(reject(project.client, "track.renderInPlace", {{"tracks", {audio.track}}, {"name", ""}}),
+		ContainsSubstring("parameters.name must be at least 1 character"));
 	const auto empty = run(project.client, "track.add", {{"type", "audio"}}).at("track").at("id").get<ObjectId>();
 	CHECK_THAT(reject(project.client, "track.renderInPlace", {{"tracks", {audio.track}}, {"start", 0}}),
 		ContainsSubstring("both"));

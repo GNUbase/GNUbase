@@ -5,6 +5,7 @@ add_library(gnubase-testutils STATIC
 	testutils/goldenimage.cpp testutils/goldenimage.h
 	testutils/heldjob.cpp testutils/heldjob.h
 	testutils/library.h
+	testutils/schemaguards.h
 	testutils/slowframe.h
 	testutils/testutils.cpp testutils/testutils.h)
 target_include_directories(gnubase-testutils PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

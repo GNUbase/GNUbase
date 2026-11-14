@@ -208,3 +208,5 @@ quit question: the error makes way for it, an auto save failing while it is open
 the next failure after Cancel. `tests/uitools_tests.cpp` checks `ui_file_dialog` and `ui_close`,
 `tests/lua/ui/dialog.lua` the unsaved changes question through `gnubase.ui.close`, and `tests/widgets_tests.cpp`
 `ui::closeDialog`. `tests/clock_tests.cpp` checks the clock's ticks and `advance` on their own.
+
+Project object ids stay within Lua's positive integer range. A load refuses ids at or above 9223372036854775807, or a next-id counter above it, with a clear error; the last signed integer is reserved for that counter. Allocation also refuses to pass that limit, so a project cannot create ids that scripts would receive as negative values.

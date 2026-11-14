@@ -2,6 +2,7 @@
 #include "engine/schema.h"
 
 #include <algorithm>
+#include <cmath>
 #include <regex>
 
 namespace gnubase::engine
@@ -83,9 +84,18 @@ namespace gnubase::engine
 				minLength != schema.end() && characters(text) < minLength->get<size_t>())
 				return name + " must be at least " + count(*minLength, "character");
 			// ponytail: compiles the pattern on every check; cache them if a pattern ever sits on a hot path.
-			if (const auto pattern = schema.find("pattern");
-				pattern != schema.end() && !std::regex_search(text, std::regex(pattern->get<std::string>())))
-				return name + " must match " + pattern->get<std::string>();
+			if (const auto pattern = schema.find("pattern"); pattern != schema.end())
+			{
+				try
+				{
+					if (!std::regex_search(text, std::regex(pattern->get<std::string>())))
+						return name + " must match " + pattern->get<std::string>();
+				}
+				catch (const std::regex_error&)
+				{
+					return name + " has an invalid schema pattern";
+				}
+			}
 		}
 		if (value.is_number())
 		{
@@ -93,16 +103,16 @@ namespace gnubase::engine
 			// Written so that a NaN, which an in-process client such as Lua can send, is outside the range: every
 			// comparison with it is false (#1131).
 			if (const auto minimum = schema.find("minimum");
-				minimum != schema.end() && !(number >= minimum->get<double>()))
+				minimum != schema.end() && (!std::isfinite(number) || number < minimum->get<double>()))
 				return name + " must be at least " + minimum->dump();
 			if (const auto maximum = schema.find("maximum");
-				maximum != schema.end() && !(number <= maximum->get<double>()))
+				maximum != schema.end() && (!std::isfinite(number) || number > maximum->get<double>()))
 				return name + " must be at most " + maximum->dump();
 			if (const auto minimum = schema.find("exclusiveMinimum");
-				minimum != schema.end() && number <= minimum->get<double>())
+				minimum != schema.end() && (!std::isfinite(number) || number <= minimum->get<double>()))
 				return name + " must be more than " + minimum->dump();
 			if (const auto maximum = schema.find("exclusiveMaximum");
-				maximum != schema.end() && number >= maximum->get<double>())
+				maximum != schema.end() && (!std::isfinite(number) || number >= maximum->get<double>()))
 				return name + " must be less than " + maximum->dump();
 		}
 		if (value.is_array())

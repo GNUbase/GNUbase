@@ -94,6 +94,8 @@ TEST_CASE(
 	run(client, "plugin.insert", {{"channel", source}, {"plugin", "builtin:gainPan"}});
 	run(client, "plugin.insert", {{"channel", target}, {"plugin", "builtin:limiter"}});
 	run(client, "channel.copySettings", {{"channel", source}});
+	CHECK_THAT(reject(client, "channel.pasteSettings", {{"channels", Json::array()}}),
+		ContainsSubstring("parameters.channels must have at least 1 item"));
 	// What is pasted is what was copied: later changes of the source don't count.
 	run(client, "channel.set", {{"channel", source}, {"pre", {{"gain", -6.0}}}});
 

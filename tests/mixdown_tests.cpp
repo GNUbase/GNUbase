@@ -332,6 +332,9 @@ TEST_CASE("a mixdown refuses what it can't export and leaves no files", "[integr
 {
 	Session project;
 	const ObjectId channel = project.addTrack("Ramp", 0);
+	CHECK_THAT(reject(project.client, "mixdown.export",
+				   {{"folder", project.folder.path().u8string()}, {"name", ""}, {"start", 0}, {"end", 1000}}),
+		ContainsSubstring("parameters.name must be at least 1 character"));
 	const auto midi = run(project.client, "track.add", {{"type", "midi"}}).at("channel").at("id").get<ObjectId>();
 	const auto refuse = [&project](Json parameters)
 	{
