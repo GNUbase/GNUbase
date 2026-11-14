@@ -15,6 +15,7 @@ project closes it.
 | Command | What it does | Reference |
 |---|---|---|
 | `editor.inPlace` | Opens (`open` true), closes (false) or toggles (without `open`) the in-place editors of `tracks`; returns `tracks`, those whose in-place editors are open, in the track list's order. Without `tracks` it only lists them | pp. 1259, 1261 |
+| `note.move` | Moves a MIDI `part`'s named `notes` to a `target` part, by `ticks` and by `semitones`, as the drag between in-place editors sends it: each note keeps its id and every other field, the move is one undo step and the shared copies of both parts follow it. A note may reach past the target part's end, as `note.add` and `note.set` allow. It refuses a part or a note that doesn't exist, a note that would land before the target part's start or outside the pitches 0-127, and a move between shared copies of one group, which must stay equal; nothing changes then. Emits `note.removed` for the source part and `note.added` for the target, and returns the moved notes | p. 1261 |
 
 - Reading `editor.inPlace` without `tracks` leaves `engine.commandLog` unchanged; calls with `tracks` remain logged.
 - **Parts.** An open in-place editor shows every MIDI part of its track, in order, and parts added later; its parts
@@ -60,12 +61,12 @@ menu#in-place-editing-mode-menu-inPlace-<track>, menu#in-place-active-part-menu-
   clicks and double clicks in an in-place editor stay there: the event display doesn't select, move or add parts under
   it. A drag on its keyboard's left part zooms and scrolls the pitches, and a right click below a lane's name adds and
   removes controller lanes (p. 1261, [key-editor.md](key-editor.md), [controller-lanes.md](controller-lanes.md)).
-  Dragging the selected notes onto another in-place editor's grid moves them to that track's part at the drop, keeping
-  their distances to the pressed one, their lengths and their values, as one undo step; nothing moves when the drop lies
-  where the target track has no part, or a note would land before that part's start or outside the pitches (p. 1261). A
-  click on a part in the row of parts activates it (p. 1152). The editors' menus have ids of their own, ending in
-  `-inPlace-<track>` (`ui::menuIdSuffix`), since they share the project window's document with each other and with the
-  lower zone's editor.
+  Dragging the selected notes onto another in-place editor's grid sends one `note.move` per source part, which moves
+  them to that track's part at the drop, keeping their ids, their distances to the pressed one and every other field
+  they have, as one undo step; nothing moves when the drop lies where the target track has no part, or a note would land
+  before that part's start or outside the pitches (p. 1261). A click on a part in the row of parts activates it (p.
+  1152). The editors' menus have ids of their own, ending in `-inPlace-<track>` (`ui::menuIdSuffix`), since they share
+  the project window's document with each other and with the lower zone's editor.
 - **Multiple part controls** (p. 1260), first in the toolbar: Part Editing Mode, a menu of All Parts and Active Part
   (`editingMode` allParts or activePart), and Activate Part for Editing, a menu of the track's parts with the active
   one's name on the button (`activePart`).
@@ -112,7 +113,13 @@ yet).
   timeline; a key of the keyboard held while the editor closes ending its pitch (key-editor.md); Q in the editor
   quantizing its selected note and not the selected part; a drag on the keyboard's left part zooming the pitches and
   scrolling them; a double click on the lanes' footer strip closing it, and one on the strip's buttons not; a note
-  dragged into another in-place editor moving to that track's part as one undo step, with the other selected note, back
-  with an undo into its selection, and dropped where the other track has no part or where a note wouldn't fit staying
-  where it is; the menu commands waiting for a MIDI or instrument track; a note being drawn moving with the notes while
-  the project window zooms.
+  dragged into another in-place editor moving to that track's part with its id, as one undo step, with the other
+  selected note, back with an undo into its selection, and dropped where the other track has no part or where a note
+  wouldn't fit staying where it is; the menu commands waiting for a MIDI or instrument track; a note being drawn moving
+  with the notes while the project window zooms.
+- `tests/midiedit_tests.cpp`: `note.move` moving notes to another part as one undo step, keeping every field, a quantize
+  origin included, and their ids, two notes keeping their distance, with its `note.removed` and `note.added` events,
+  undo and redo; refusing a part or a note that doesn't exist, a note that would land before the target part's start or
+  outside the pitches and a move between shared copies of one group, changing nothing then; a note reaching past the
+  target part's end, a move within the source part itself, and the shared copies of the source and of the target staying
+  consistent.

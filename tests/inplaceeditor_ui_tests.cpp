@@ -566,6 +566,7 @@ TEST_CASE("a note dragged from one in-place editor to another moves to that trac
 	REQUIRE(f.app.waitUntil([&] { return f.elements(lane + " .key-note").size() == 1; }));
 	CHECK(partNotes(f.part).size() == 1);
 	const Json moved = partNotes(otherPart).at(0);
+	CHECK(moved.at("id") == f.notes[0]); // note.move keeps the ids
 	CHECK(moved.at("position") == g_bar);
 	CHECK(moved.at("pitch") == 64);
 	CHECK(moved.at("length") == g_quarter);

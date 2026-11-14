@@ -26,6 +26,7 @@ saved, and a new project closes the editors.
 | `editor.input` | Notes played, such as a chord from a MIDI keyboard: with step input they go into the active part at the step input cursor as notes of the length quantize's length, and the cursor moves on by a step of the quantize grid; with MIDI input the first selected note takes the played pitch and velocities, and the next note is selected | pp. 1219-1220 |
 | `note.chord` | The chord notes of a part make (query) | p. 1216 |
 | `note.voicing` | Fits notes to a chord type, or inverts them or drops notes | pp. 1215-1217 |
+| `note.move` | Moves notes by `ticks` and `semitones` into another MIDI part, keeping their ids and every other field: what a drag between in-place editors sends ([in-place-editor.md](in-place-editor.md)) | p. 1261 |
 
 - **Step input.** Move Insert Mode first moves the part's notes from the cursor on by a step; without Keep Existing
   Notes the notes that start within the step are replaced. The cursor must be within the active part. The inserted
