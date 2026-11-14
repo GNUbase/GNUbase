@@ -1328,7 +1328,8 @@ TEST_CASE("the inspector's volume and pan fields dragged while the engine answer
 	CHECK(window.shows(".inspector valuefield[control=pan]", "25"));
 }
 
-TEST_CASE("the inspector's dragged volume stays while it shows a project read from before the drag again", "[ui]")
+TEST_CASE(
+	"the inspector's dragged volume stays while it shows a project read from before the drag's last step again", "[ui]")
 {
 	test::CommandHolds holds; // declared before the window: its engine's command thread waits in hold()
 	Window window;
@@ -1338,7 +1339,8 @@ TEST_CASE("the inspector's dragged volume stays while it shows a project read fr
 		[&holds](engine::CommandContext&) { return holds.hold(); });
 	engine::Client holder(window.app.engine(), "holder");
 	const uint64_t audio = window.addTrack({{"type", "audio"}, {"name", "Vox"}});
-	const uint64_t other = window.addTrack({{"type", "midi"}, {"name", "Keys"}});
+	const uint64_t other = window.addTrack({{"type", "audio"}, {"name", "Bass"}});
+	window.call("channel.set", {{"channel", window.channel(other).at("id")}, {"volume", 4.0}});
 	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 2; }));
 	window.list.select({audio});
 	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Vox"));
@@ -1374,10 +1376,11 @@ TEST_CASE("the inspector's dragged volume stays while it shows a project read fr
 	REQUIRE(shown() != Catch::Approx(dragged).margin(1e-5));
 	CHECK(drag.value() == Catch::Approx(dragged).margin(1e-5));
 
-	// Another track and back shows that older read again: the field stays where the drag left it. The other is a
-	// MIDI track, whose inspector shows no volume, so the field shows only the dragged track's.
+	// Another audio track shows its own volume in the same field, and back on the dragged one that older read shows
+	// again: the field shows where the drag left it, not the other track's volume (#1421).
 	window.list.select({other});
-	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Keys"));
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Bass"));
+	CHECK(window.shows(field, "4"));
 	window.list.select({audio});
 	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Vox"));
 	CHECK(drag.value() == Catch::Approx(dragged).margin(1e-5));
@@ -1430,6 +1433,101 @@ TEST_CASE("the info line's volume turned or dragged while the engine answers lat
 	window.app.shell().step(std::chrono::milliseconds(0));
 	CHECK(drag.value() == Catch::Approx(dragged).margin(1e-5));
 	CHECK(window.historyPosition() == position + 1);
+}
+
+TEST_CASE("the info line shows another event's own volume while a dragged one's last step is out", "[ui]")
+{
+	test::CommandHolds holds; // declared before the window: its engine's command thread waits in hold()
+	Window window;
+	const test::ReleaseHolds releaseHolds{holds};
+	// Without the inspector: it reads the in-place editors (editor.inPlace, not a query) for each history.changed,
+	// which sends a waiting step at once, before the display's read for the step before.
+	window.app.appUi().docking().setTabHidden("inspector", true);
+	window.app.engine().registerCommand(
+		{"test.hold", 1, "Waits for the test to release it.", engine::CommandInfo{}.parameters, Json::object(), false},
+		[&holds](engine::CommandContext&) { return holds.hold(); });
+	engine::Client holder(window.app.engine(), "holder");
+	const uint64_t audio = window.addTrack({{"type", "audio"}, {"timeBase", "linear"}});
+	const Json media =
+		window.call("media.add", {{"path", "take.wav"}, {"sampleRate", 48000}, {"channels", 1}, {"length", 480000}})
+			.at("media");
+	const Json clip = window.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	const auto addEvent = [&](int64_t at)
+	{
+		return window
+			.call("audioEvent.add", {{"track", audio}, {"clip", clip.at("id")}, {"position", at}, {"length", 24000}})
+			.at("event")
+			.at("id")
+			.get<uint64_t>();
+	};
+	const uint64_t dragged = addEvent(96000);
+	const uint64_t other = addEvent(192000);
+	window.call("audioEvent.set", {{"event", other}, {"volume", 3.0}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("audioEvents").size() == 2; }));
+	window.display.select({dragged});
+	const std::string field = "#info-line valuefield[field=volume]";
+	REQUIRE(window.shows(field, "0"));
+	ui::EngineBinding& binding = window.app.appUi().binding();
+	// The dragged event's volume in the project that the event display, and with it the info line, shows.
+	const auto shown = [&]
+	{
+		const Json& events = window.display.project().at("audioEvents");
+		const auto found = std::find_if(
+			events.begin(), events.end(), [dragged](const Json& each) { return each.at("id") == dragged; });
+		REQUIRE(found != events.end());
+		return found->at("volume").get<double>();
+	};
+
+	// A drag while the engine answers late, and two steps while the test holds the engine: the first goes behind the
+	// hold, the last waits in the binding.
+	test::LateDrag drag(window.app, std::nullopt, field);
+	drag.move(15, 1);
+	// Once the reads after it, and what they send, are answered: no other command goes out while the steps wait.
+	REQUIRE(window.app.waitUntil(
+		[&]
+		{
+			return binding.waiting("history.transaction") == 0 && binding.waiting("project.get") == 0 &&
+				binding.waiting("editor.inPlace") == 0;
+		}));
+	holder.send("test.hold");
+	REQUIRE(holds.waitEntered(1));
+	drag.nudge(1);
+	drag.nudge(1);
+	const double value = drag.value();
+	drag.release(false);
+	REQUIRE(binding.waiting("history.transaction") == 1);
+	// The other event, asked for (event.get), a query, so before the last step. A second hold after that question
+	// keeps the project read that the display sends for the first step's history.changed out, and the last step
+	// goes behind it.
+	window.display.select({other});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(binding.waiting("event.get") != 0);
+	holder.send("test.hold");
+	holds.release(1);
+	REQUIRE(holds.waitEntered(2));
+	CHECK(window.shows(field, "3")); // its own, not the dragged event's
+	REQUIRE(binding.waiting("project.get") != 0);
+
+	// Back on the dragged event, asked for after the last step. A third hold keeps the project read after the last
+	// step out: the display shows the read after the first one, and the field where the drag left it, not the other
+	// event's volume (#1421).
+	window.display.select({dragged});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(binding.waiting("event.get") != 0);
+	holder.send("test.hold");
+	holds.release(2);
+	REQUIRE(holds.waitEntered(3));
+	CHECK(window.app.waitUntil([&] { return drag.value() == Catch::Approx(value).margin(1e-5); }));
+	REQUIRE(binding.waiting("history.transaction") == 0);
+	REQUIRE(binding.waiting("project.get") != 0);
+	REQUIRE(shown() != Catch::Approx(value).margin(1e-5));
+
+	// The read after the last step agrees with it, and so does the engine.
+	holds.release(3);
+	REQUIRE(window.app.waitUntil([&] { return shown() == Catch::Approx(value).margin(1e-5); }));
+	CHECK(drag.value() == Catch::Approx(value).margin(1e-5));
+	CHECK(window.find("audioEvents", dragged).at("volume") == Catch::Approx(value).margin(1e-5));
+	CHECK(window.find("audioEvents", other).at("volume") == 3.0);
 }
 
 TEST_CASE("the info line's refused volume step shows the engine's value again", "[ui]")
@@ -1805,7 +1903,8 @@ TEST_CASE("the inspector's MIDI Inserts and MIDI Sends sections show and change 
 	const uint64_t keys = window.addTrack({{"type", "instrument"}, {"name", "Keys"}});
 	const uint64_t bass = window.addTrack({{"type", "instrument"}, {"name", "Bass"}});
 	const uint64_t vox = window.addTrack({{"type", "audio"}, {"name", "Vox"}});
-	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 3; }));
+	const uint64_t marker = window.addTrack({{"type", "marker"}});
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("tracks").size() == 4; }));
 	window.list.select({keys});
 	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Keys"));
 	CHECK_FALSE(hasClass(window.app, ".inspector [section=midiInserts]", "unavailable"));
@@ -1866,6 +1965,17 @@ TEST_CASE("the inspector's MIDI Inserts and MIDI Sends sections show and change 
 	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Keys"));
 	CHECK(window.historyPosition() == beforeDrag + 1);
 	CHECK(window.channel(bass).at("midiInserts").at("divider") == 0);
+	CHECK(inserts().at("divider") == 3);
+	CHECK(hasClass(window.app, ".inspector .midi-divider[gap=3]", "at"));
+	// Nor when it shows a track without a channel, a marker track, released where the mouse is.
+	window.app.ui().press(std::nullopt, {".inspector .midi-divider[gap=3]", 0, std::nullopt}, ui::MouseButton::Left);
+	window.app.ui().move(std::nullopt, gap2);
+	window.list.select({marker});
+	REQUIRE(window.app.waitUntil([&] { return hasClass(window.app, ".inspector [section=basics]", "unavailable"); }));
+	window.app.ui().release(std::nullopt, {}, ui::MouseButton::Left);
+	window.list.select({keys});
+	REQUIRE(window.shows(".inspector textdisplay.inspector-name", "Keys"));
+	CHECK(window.historyPosition() == beforeDrag + 1);
 	CHECK(inserts().at("divider") == 3);
 	CHECK(hasClass(window.app, ".inspector .midi-divider[gap=3]", "at"));
 	// The edit button closes the control panel.

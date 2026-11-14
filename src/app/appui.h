@@ -270,6 +270,8 @@ namespace gnubase::app
 		std::unique_ptr<ui::TransportControls> transportControls(Rml::Element& root, ui::Window& window, bool fill);
 		// name is its window's in ui.layout (ui::Docking::addWindow).
 		void toggle(TransportWindow& shown, const char* name, const char* file, const char* title, ui::Size size);
+		// Gives a new transport panel the width of its shown sections, as far as the primary monitor has room (#1424).
+		void fitSections(ui::Window& window, Rml::Element& controls);
 		// Edits a display of the transport bar, or of the transport panel, which opens if the bar doesn't show.
 		void enter(const std::string& field);
 		// File > Import: the OS's file dialog for the window, then the event display imports what the user chose;

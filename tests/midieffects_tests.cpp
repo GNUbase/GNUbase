@@ -970,10 +970,19 @@ TEST_CASE(
 	Json sent = slot("transformer");
 	sent["output"] = other;
 	track.set("midiSends", {{"slots", {sent}}});
-	CHECK(track.set("midiSends", {{"slots", {slot("")}}}).at("slots")[0].at("output") == 0);
-	// Nor does an empty slot take an output, with or without the effect given.
 	const auto refused = [&](const Json& slot)
 	{ return reject(track.client, "channel.set", {{"channel", track.channel}, {"midiSends", {{"slots", {slot}}}}}); };
+	// Removing the effect with an output given is refused too, and the slot keeps its effect and its output.
+	CHECK_THAT(refused({{"effect", ""}, {"output", other}}), ContainsSubstring("without an effect has no output"));
+	Json kept;
+	const Json project = run(track.client, "project.get");
+	for (const Json& channel : project.at("channels"))
+		if (channel.at("id") == track.channel)
+			kept = channel.at("midiSends").at("slots")[0];
+	CHECK(kept.at("effect") == "transformer");
+	CHECK(kept.at("output") == other);
+	CHECK(track.set("midiSends", {{"slots", {slot("")}}}).at("slots")[0].at("output") == 0);
+	// Nor does an empty slot take an output, with or without the effect given.
 	CHECK_THAT(refused({{"output", other}}), ContainsSubstring("without an effect has no output"));
 	CHECK_THAT(refused({{"effect", ""}, {"output", other}}), ContainsSubstring("without an effect has no output"));
 	// A project saved with an output on an empty slot loads without it.

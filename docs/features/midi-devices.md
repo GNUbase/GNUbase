@@ -53,7 +53,13 @@ program and bank it sends to its instrument (#136, reference manual pp. 1108–1
   patches edited and a broken one refused with `settings.set`; a MIDI track's program, bank and device set, refused on
   an instrument track and out of range, saved and loaded, undone; and a patch selected reaching the instrument
   (`midi.capture`) as bank select MSB and LSB and program change, at once while stopped, again when playback starts,
-  the program change alone without a bank, nothing without a program, and a device's patch.
+  the program change alone without a bank, nothing without a program, and a device's patch. On a MIDI track's channel
+  ([mixer.md](mixer.md)): the patch, MIDI volume and pan going out on it and again on another; its parts', automation's
+  (a controller, pitch bend and channel pressure) and input's events (notes, controllers, pitch bend, pressure and
+  program changes) on it, a held key's note-off on the channel its note-on went to, and Any keeping theirs; a drum
+  sound's own channel; sound slots' output events in playback and from remote triggers (key switches with and without
+  latch, program changes), a selected slot going out again on a new channel; a send before the MIDI modifiers getting
+  the input there; and two automation lanes of one controller both playing there.
 - `tests/mididevices_ui_tests.cpp` drives the app with `ui::Automation`: the inspector choosing a program and typing a
   bank, then with an installed device its patches by name, the bank row gone, the track's own patch listed, a patch
   chosen and a removed device shown as not installed; the MIDI device manager installing a GM device with its bank,

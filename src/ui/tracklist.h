@@ -234,8 +234,11 @@ namespace gnubase::ui
 		engine::Json m_widths = engine::Json::object();        // ui.trackWidths
 		engine::Json m_defaultWidths = engine::Json::object(); // ui.trackWidths defaults by type
 		std::string m_tempoType = "auto";                      // editing.tempoType
-		bool m_showingTempo = false;                           // the tempo controls' change events aren't the user's
-		uint64_t m_loads = 0;                                  // the display's, when the rows were last built
+		// The rows' Current Tempo and Type of New Tempo Points, kept by showState so that a frame doesn't search for
+		// them (#1406); one whose row went is null.
+		std::vector<Rml::ObserverPtr<Rml::Element>> m_tempoFields;
+		bool m_showingTempo = false; // the tempo controls' change events aren't the user's
+		uint64_t m_loads = 0;        // the display's, when the rows were last built
 		bool m_layingOut = false;
 		uint64_t m_renaming = 0;
 		std::string m_renamed;                         // the name before renaming

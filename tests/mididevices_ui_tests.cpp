@@ -217,12 +217,15 @@ TEST_CASE("the track list's MIDI channel control chooses the MIDI channel of a M
 	ui::EventDisplay& display = app.appUi().showProject();
 	app.setDpRatio(1.0F);
 	app.call("settings.set",
-		{{"key", "ui.trackControls"}, {"value", {{"midi", {"mute", "solo", "midiChannel"}}, {"audio", {"mute"}}}}});
+		{{"key", "ui.trackControls"},
+			{"value", {{"midi", {"mute", "solo", "midiChannel"}}, {"audio", {"mute", "midiChannel"}}}}});
 	app.call("track.add", {{"type", "midi"}});
 	app.call("track.add", {{"type", "audio"}});
-	REQUIRE(app.waitUntil([&] { return display.project().at("tracks").size() == 2; }));
+	REQUIRE(app.waitUntil([&] { return display.project().is_object() && display.project().at("tracks").size() == 2; }));
 	const std::string list = ".track-list select[control=midiChannel]";
-	REQUIRE(app.waitUntil([&] { return elements(app, list).size() == 1; })); // MIDI tracks only
+	// MIDI tracks only: the audio track's row doesn't show it, although its controls name it.
+	REQUIRE(app.waitUntil([&] { return elements(app, ".track-list [control=mute]").size() == 2; }));
+	REQUIRE(app.waitUntil([&] { return elements(app, list).size() == 1; }));
 	REQUIRE(app.waitUntil([&] { return attribute(app, list, "value") == "any"; }));
 	CHECK(selected(app, list) == "Any");
 
