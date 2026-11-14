@@ -529,34 +529,29 @@ namespace gnubase::engine::peaks
 				throw PeakFileError("can't write " + file.u8string());
 			}
 		}
-		std::error_code error;
-		std::filesystem::rename(temporary, file, error);
+		// The replacement no reader may see half of, and that works while another thread reads the old file: on
+		// Windows, where the classic and the POSIX-semantic rename may both refuse an open target, the old file
+		// moves aside under a temporary name first (#963, #1387); should the aside outlive the replacement, the
+		// cache's worker cleans it up like a temporary a crash left behind. Anything that isn't a regular file,
+		// such as a directory in the way, keeps failing the write.
+		bool replaced = detail::replaceFile(temporary.u8string(), file.u8string());
 #ifdef _WIN32
-		std::error_code status;
-		if (error && std::filesystem::is_regular_file(file, status))
+		if (!replaced)
 		{
-			// Windows doesn't replace a file that another handle has open, not even one that shares deletion; moving
-			// an open file aside does work. So take the old file out of the way under a temporary name and try again:
-			// a reader in it reads on, the remove below ends the aside, and should that fail, the cache's worker
-			// cleans it up like a temporary a crash left behind (#963). Anything that isn't a regular file, such as
-			// a directory in the way, keeps failing the write.
-			std::filesystem::path aside = file;
-			aside += "." + hex(std::random_device()()) + ".tmp";
-			std::error_code moved;
-			std::filesystem::rename(file, aside, moved);
-			if (!moved)
+			std::error_code status;
+			if (std::filesystem::is_regular_file(file, status))
 			{
-				std::filesystem::rename(temporary, file, error);
-				std::error_code ignored;
-				std::filesystem::remove(aside, ignored);
+				std::filesystem::path aside = file;
+				aside += "." + hex(std::random_device()()) + ".tmp";
+				replaced = detail::replaceFileMovingAside(temporary.u8string(), file.u8string(), aside.u8string());
 			}
 		}
 #endif
-		if (error)
+		if (!replaced)
 		{
 			std::error_code ignored;
 			std::filesystem::remove(temporary, ignored);
-			throw PeakFileError("can't write " + file.u8string() + ": " + error.message());
+			throw PeakFileError("can't write " + file.u8string() + ": " + detail::lastError());
 		}
 	}
 

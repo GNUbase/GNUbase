@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Waveform overviews (#83): peak levels, peak files, the background cache and media.peaks.
 #include "engine/audiofile/audiofile.h"
+#include "engine/audiofile/file.h"
 #include "engine/engine.h"
 #include "engine/peaks/peakcache.h"
 #include "engine/peaks/peaks.h"
@@ -10,12 +11,12 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
-#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -24,7 +25,6 @@
 #include <optional>
 #include <random>
 #include <string>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -523,61 +523,32 @@ TEST_CASE("peak files round trip, and damaged ones are rejected", "[unit]")
 	CHECK_THROWS_AS(peaks::readPeakFile(dir.path() / "missing.gbpeaks"), peaks::PeakFileError);
 }
 
-TEST_CASE("a peak file being read can be renamed over, on Windows too", "[integration]")
+TEST_CASE("a peak file being read can be replaced, on Windows too", "[integration]")
 {
-	// writePeakFile renames over a peak file another thread may be reading, such as when the cache rebuilds the peaks
-	// while the old ones are still read: the read has to share deletion, which std::ifstream doesn't do on Windows,
-	// and there the rename takes the file being read out of the way first (#963). One level of one peak per frame, so
-	// a read takes long enough to overlap the renames.
+	// The cache rebuilds a peak file while another thread still reads the old peaks, and writePeakFile then renames
+	// the new file over one that a reader has open: on Windows a classic rename can't do that, so the replacement
+	// goes through a POSIX-semantic rename or moves the file being read aside (#963, #1387). Holding a reader open
+	// across the replacement proves that the case is tested.
 	const test::TempDir dir;
 	const std::filesystem::path file = dir.path() / "take.gbpeaks";
-	const peaks::PeakData data = build(testSignal(1, 200000, 5), 1, {1});
-	peaks::writePeakFile(file, "take.wav", {1, 2, 3}, data);
+	const peaks::PeakData oldData = build(testSignal(1, 1000, 5), 1, {16});
+	peaks::writePeakFile(file, "take.wav", {1, 2, 3}, oldData);
+	const std::string oldBytes = test::readText(file);
 
-	std::atomic<bool> done{false};
-	std::string readerError;
-	std::thread reader(
-		[&]
-		{
-			try
-			{
-				while (!done)
-				{
-					try
-					{
-						if (peaks::readPeakFile(file).data != data)
-							readerError = "the peaks read back aren't the ones written";
-					}
-					catch (const peaks::PeakFileError& e)
-					{
-						// On Windows the replacement moves the old file aside and puts the new one in its place, so
-						// an open between the two renames finds no file; reading either file has to work.
-						if (std::string(e.what()).find("can't open") == std::string::npos)
-							readerError = e.what();
-					}
-				}
-			}
-			catch (const std::exception& e)
-			{
-				readerError = e.what();
-			}
-		});
-	std::string writerError;
-	try
-	{
-		for (int i = 0; i < 100; ++i)
-			peaks::writePeakFile(file, "take.wav", {1, 2, 3}, data);
-	}
-	catch (const std::exception& e)
-	{
-		writerError = e.what();
-	}
-	done = true;
-	reader.join();
-	CHECK(writerError == std::string());
-	CHECK(readerError == std::string());
-	CHECK(peaks::readPeakFile(file).data == data);
-	// Only the peak file itself: the replacements left no temporary file behind.
+	const detail::File reader = detail::openFile(file.u8string(), "rb");
+	REQUIRE(reader);
+	const peaks::PeakData newData = build(testSignal(1, 2000, 6), 1, {16});
+	peaks::writePeakFile(file, "take.wav", {4, 5, 6}, newData); // mustn't throw while the reader is in the old file
+
+	// The held reader reads the old file on, and the name has the new peaks.
+	std::string held(oldBytes.size(), '\0');
+	CHECK(std::fread(held.data(), 1, held.size(), reader.get()) == held.size());
+	CHECK(held == oldBytes);
+	const peaks::PeakFile replaced = peaks::readPeakFile(file);
+	CHECK(replaced.data == newData);
+	CHECK(replaced.source == "take.wav");
+	CHECK(replaced.stamp == (peaks::SourceStamp{4, 5, 6}));
+	// The replacement left nothing behind.
 	CHECK(std::distance(std::filesystem::directory_iterator(dir.path()), std::filesystem::directory_iterator()) == 1);
 }
 
