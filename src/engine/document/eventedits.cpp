@@ -2807,7 +2807,8 @@ namespace gnubase::engine
 				"events split at the nearest point within 50 ms "
 				"and inside the event where their audio crosses zero. The pieces of a pattern event continue its "
 				"pattern (patternOffset). The piece of a quantized audio event after the split keeps where it "
-				"was before quantizing, shifted by the split, so that quantize.reset puts both pieces back. "
+				"was before quantizing, shifted by the split, so that quantize.reset puts both pieces back, or "
+				"removes the piece after a split past the original's length, which has nothing of it. "
 				"Returns the new events after the splits.",
 				schema({{"events", events()}, {"positions", {{"type", "array"}, {"items", integer()}}},
 						   {"splitNotes", boolean()}, {"zeroCrossing", boolean()}},
