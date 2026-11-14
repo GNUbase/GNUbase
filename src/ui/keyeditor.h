@@ -169,6 +169,10 @@ namespace gnubase::ui
 		void scrollToNotes(); // the first scroll, to the middle of the notes, until one succeeds (m_scrolled)
 		// The drum editor's: the active track's drum map, the rows' order from it, and the sound list and Map menu.
 		const engine::Json* activeMap() const;
+		engine::Json activeTrack() const; // as project.get lists it, or an empty object
+		// The names of the active track's drum sounds, by pitch: its drum map's, else with the GM Default name list
+		// (#1493, p. 1239) General MIDI's, else empty.
+		std::vector<std::string> soundNames() const;
 		// The drum editor shows its notes as diamonds, unless Show Note Length is on.
 		bool diamonds() const { return m_drum && !m_view.value("showNoteLength", false); }
 		void updateOrder();
@@ -250,7 +254,7 @@ namespace gnubase::ui
 		std::optional<std::pair<uint64_t, int>> m_sounding; // the channel and pitch of the key pressed
 		Rml::ObserverPtr<Rml::Element> m_document;          // ends the key's pitch on a release anywhere in it
 		// the length quantize menu, the line tool's menu, the toolbox, then the drum editor's Map, Pitch Visibility
-		// Options and Grid Type menus
+		// Options, Grid Type and Names menus
 		std::vector<Rml::ObserverPtr<Rml::Element>> m_menus;
 		std::string m_lineMode = "line"; // the line tool's (#128)
 		std::unique_ptr<ControllerLanes> m_lanes;

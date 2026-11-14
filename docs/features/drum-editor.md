@@ -31,6 +31,7 @@ saved before #129 get it when they load.
 | `drumMap.export` | Saves a map as a drum map file (`.drm`) | p. 1236 |
 | `drumMap.import` | Loads a drum map file into the project as a new map | p. 1236 |
 | `track.set drumMap` | The map a MIDI or instrument track's notes play through, 0 for none | p. 1239 |
+| `track.set gmNames` | The track's name list while it has no map: `true` for GM Default (General MIDI's percussion names), `false` for No Names; saved with the project and an undo step | p. 1239 |
 | `midi.oNoteConversion` | O-Note Conversion: the notes of tracks with a map (`parts`, `notes`) get their sound's O-note as their pitch | p. 1240 |
 
 They emit `drumMap.added`, `drumMap.changed` and `drumMap.removed` with the map (its id for removed).
@@ -51,6 +52,12 @@ They emit `drumMap.added`, `drumMap.changed` and `drumMap.removed` with the map 
   sequencer clears it once it has mapped a note. A third-party MIDI effect there plays events of its own that the
   format adapter makes without the flag: behind one, an auditioned sound goes through the I-notes. They are no MIDI input: the recorder leaves them out of recordings and the retrospective buffer
   (`Recorder::sendMidi`).
+- **Solo Instrument** (p. 1223): while a drum editor is open with `soloInstrument` on, of the tracks with a map that
+  its selected notes are on only the notes of the selected notes' sounds play; with no note selected every sound
+  plays. The editor views set `Project::soloNotes` (`ProjectModel::setSoloNotes`), the selected notes, which the render
+  snapshot turns into each track's soloed pitches, so a selected note moved to another sound solos that one. It
+  changes what plays, not the project: no undo step, not saved, and the project stays as saved. Playback only; what is
+  played live still plays every sound.
 - **Loading**: a note's pitch must be 0-127 and its channel 0-15 in the GNUbase entry of a project (as the DAWproject
   import clamps them), since the maps and the editors take the pitch as an index; an entry that has others is
   damaged, and the project loads from `project.xml`.
@@ -61,8 +68,9 @@ They emit `drumMap.added`, `drumMap.changed` and `drumMap.removed` with the map 
   `drumMap` (Drum-Map Link): new notes are as long as their sound's snap, or without a map the quantize grid. A closed
   editor opens the parts of a track with a drum map in the drum editor while the user setting `editing.useDrumEditor`
   is on, as by default (Use Drum Editor when Drum Map is assigned, pp. 1221, 1603; the preferences' Editors page).
-  The drum editor's view also has `pitchVisibility` (Pitch Visibility On/Off) with its option `reverseSounds`
-  (Reverse Drum Sound List), `showNoteLength` (Show Note Length On/Off, p. 1227) and `gridType` (Grid Type, p. 1227):
+  The drum editor's view also has `pitchVisibility` (Pitch Visibility On/Off) with its options `reverseSounds`
+  (Reverse Drum Sound List) and `visibleSounds` (`all`, or `withEvents` for Show Drum Sounds with Events, p. 1234),
+  `soloInstrument` (Solo Instrument, p. 1223), `showNoteLength` (Show Note Length On/Off, p. 1227) and `gridType` (Grid Type, p. 1227):
   `quantize` (Use Quantize), or `drumMap` (Use Snap from Drum Map), each note snapping to its sound's snap.
 
 ## In the UI
@@ -77,11 +85,14 @@ content is `drum`. It is the key editor ([key-editor.md](key-editor.md)) with th
     #key-length-quantize            Insert Length, menu #key-length-menu with Drum-Map Link (length drumMap)
     #drum-map                       the active track's map's name, or No Drum Map; menu #drum-map-menu
     .key-input[setting=pitchVisibility], #drum-pitch-options (menu #drum-pitch-menu with
-                                    menuitem[setting=reverseSounds]), .key-input[setting=showNoteLength],
+                                    menuitem[visible-sounds=withEvents] and menuitem[setting=reverseSounds]),
+                                    .key-input[setting=soloInstrument], #drum-names (menu #drum-names-menu with
+                                    menuitem[gm-names=false|true]), .key-input[setting=showNoteLength],
                                     #drum-grid-type (menu #drum-grid-menu with menuitem[grid-type])
   .key-editor-body
     .key-editor-keys                the drum sound list: a .key-editor-key.drum-sound[pitch] per sound in the map's
-                                    order (.selected for selected notes) with .drum-sound-pitch; with a map also
+                                    order (.selected for selected notes) with .drum-sound-pitch, without a map and
+                                    with GM Default span.drum-sound-name; with a map also
                                     button.drum-sound-mute (.checked while muted), textdisplay.drum-sound-name and
                                     textdisplay.drum-sound-field[sound-field=snap|iNote|oNote|channel|output]
     .key-editor-grid                a .key-editor-row per sound; the notes .key-note.drum-note, diamonds at their
@@ -96,7 +107,13 @@ content is `drum`. It is the key editor ([key-editor.md](key-editor.md)) with th
   mute button mutes the sound. A click on a sound's pitch auditions it (p. 1236): it goes into the track as if
   played (`midi.inject` with `drumSounds`), so the map plays it on the sound's O-note and channel while the mouse is
   down, also when an earlier sound has its I-note. With Pitch Visibility and Reverse Drum Sound List the list goes
-  from the bottom of the map's order.
+  from the bottom of the map's order; with Show Drum Sounds with Events it has only the sounds that the shown parts
+  have notes of, and the grid a row for each of them (all of them while the parts have none).
+- **Names** (p. 1239): the Names menu chooses the active track's name list, No Names or GM Default (`track.set
+  gmNames`). Without a map GM Default names the list's sounds; the key editor's keys show the active track's drum sound
+  names, its map's or GM Default's, as their text and title, and the keyboard is wider then (`.key-editor-keys.named`).
+- **Solo Instrument** (p. 1223) switches the view's `soloInstrument`: the sounds of the selected notes, which the list
+  marks, play alone.
 - **Drumstick** (pp. 1240-1242). A click inserts a note at the snapped position, as long as Insert Length says; a drag
   to the right inserts one at every step of the quantize grid, also when it is released outside the editor, where the
   drawn note and its velocity follow the mouse; when the mouse leaves the window, where no release arrives, the draw
@@ -140,9 +157,9 @@ content is `drum`. It is the key editor ([key-editor.md](key-editor.md)) with th
 ## Not yet
 
 Outputs per sound in playback and MIDI thru (the sounds play on the track's output), so also the setup's Output pop-up
-and auditioning there; name lists without a drum map and drum sound names in the key editor (p. 1239); Pitch
-Visibility's Show Drum Sounds with Events and Show Drum Sounds in Use by Instrument; the grid type Adapt to Zoom; Solo
-Instrument; showing drum notes in the project window's parts; Create Drum Map from Instrument (p. 1238); reordering the
+and auditioning there: MIDI tracks play only to instrument tracks yet, not to MIDI output ports; name lists other than
+GM Default, such as a MIDI device's; Pitch Visibility's Show Drum Sounds in Use by Instrument; Solo Instrument for
+what is played live; the grid type Adapt to Zoom; showing drum notes in the project window's parts; Create Drum Map from Instrument (p. 1238); reordering the
 list by dragging; the score settings (Display Note, Noteheads, Voice, Instrument Type, Technique); importing the
 reference's own drum map files.
 
@@ -156,7 +173,10 @@ reference's own drum map files.
   themselves but not recorded, also through a chord generator and an arpeggiator above the divider; `inputPitches`
   giving a shared I-note to the first sound by pitch as `inputPitch` does; step input and recording through the I-notes
   with Drum-Map Link; O-Note Conversion; the drum editor content, its view settings and parts of a track with a map
-  opening in it unless the preference is off.
+  opening in it unless the preference is off; Solo Instrument playing only the selected notes' sounds, following a
+  selected note to another sound, leaving the project as saved, and not for nothing selected, another content, a
+  closed editor, a track without a map or with it off; `visibleSounds` and refusing other values; `gmNames` saved and
+  loaded, undone and refused for audio tracks.
 - `tests/midieffects_tests.cpp`: the sequencer clearing `drumSound` on the notes it maps, so that the inserts below the
   divider and the instrument don't get it.
 - `tests/drumeditor_ui_tests.cpp` drives the app with `ui::Automation`: the sound list with the map's names, diamonds on
@@ -174,4 +194,6 @@ reference's own drum map files.
   one's, and the step input cursor to the quantize grid; the object selection tool's double click and drag inserting and
   deleting several notes; the Drum Map Setup renaming a map, changing each setting of a sound, refusing a wrong snap,
   adding and removing maps, following a map added elsewhere, and Save... and Load... through the file dialogs; the MIDI
-  menu's Drum Map Setup and O-Note Conversion.
+  menu's Drum Map Setup and O-Note Conversion; Show Drum Sounds with Events listing and gridding only the notes'
+  sounds, the notes on their rows and the drumstick inserting on one, Solo Instrument's button, and the Names menu's GM
+  Default naming the list's sounds without a map and the key editor's keys.

@@ -2,6 +2,7 @@
 #include "ui/keyeditor.h"
 
 #include "engine/midi/chords.h"
+#include "engine/midi/drummaps.h"
 #include "engine/midi/quantizesettings.h"
 #include "platform/log.h"
 #include "ui/articulationnames.h"
@@ -288,6 +289,10 @@ namespace gnubase::ui
 						R"(Pitch Visibility</button><button id="drum-pitch-options" menu="drum-pitch-menu)" +
 						m_menuSuffix +
 						R"(" title="Select Pitch Visibility Options">Options</button>)"
+						R"(<button class="key-input" setting="soloInstrument" title="Solo Instrument">Solo</button>)"
+						R"(<button id="drum-names" menu="drum-names-menu)" +
+						m_menuSuffix +
+						R"(" title="Names"/>)"
 						R"(<button class="key-input" setting="showNoteLength" title="Show Note Length On/Off">)"
 						R"(Note Length</button><button id="drum-grid-type" menu="drum-grid-menu)" +
 						m_menuSuffix + R"(" title="Grid Type"/>)"
@@ -325,11 +330,16 @@ namespace gnubase::ui
 			R"(</menu><menu id="key-line-menu)" + m_menuSuffix + R"(">)" + modes +
 			R"(</menu><menu id="key-editor-toolbox)" + m_menuSuffix + R"(" class="toolbox">)" + toolbox + "</menu>" +
 			(drum ? R"(<menu id="drum-map-menu)" + m_menuSuffix + R"("/><menu id="drum-pitch-menu)" + m_menuSuffix +
-						R"("><menuitem type="toggle" setting="reverseSounds">Reverse Drum Sound List</menuitem></menu>)"
+						R"("><menuitem type="toggle" visible-sounds="withEvents">Show Drum Sounds with Events</menuitem>)"
+						R"(<menuitem type="toggle" setting="reverseSounds">Reverse Drum Sound List</menuitem></menu>)"
 						R"(<menu id="drum-grid-menu)" +
 						m_menuSuffix +
 						R"("><menuitem type="toggle" grid-type="quantize">Use Quantize</menuitem>)"
 						R"(<menuitem type="toggle" grid-type="drumMap">Use Snap from Drum Map</menuitem></menu>)"
+						R"(<menu id="drum-names-menu)" +
+						m_menuSuffix +
+						R"("><menuitem type="toggle" gm-names="false">No Names</menuitem>)"
+						R"(<menuitem type="toggle" gm-names="true">GM Default</menuitem></menu>)"
 				  : std::string()));
 		while (holder->HasChildNodes())
 		{
@@ -549,7 +559,7 @@ namespace gnubase::ui
 			return false;
 		const float row =
 			(static_cast<float>(m_rowOf.at(static_cast<size_t>(std::clamp(pitch, 0, g_pitches - 1)))) + 0.5F) /
-			g_pitches * height;
+			static_cast<float>(m_order.size()) * height;
 		body->SetScrollTop(std::clamp(row - (client / 2.0F), 0.0F, std::max(height - client, 0.0F)));
 		m_scrolled = true; // a pitch scrolled to is where it stays
 		return true;
@@ -606,9 +616,10 @@ namespace gnubase::ui
 		if (pitch >= 0)
 		{
 			const double row = m_rowOf.at(static_cast<size_t>(pitch));
-			element.SetProperty(Rml::PropertyId::Top, percent(row * 100.0 / g_pitches));
+			const auto rows = static_cast<double>(m_order.size());
+			element.SetProperty(Rml::PropertyId::Top, percent(row * 100.0 / rows));
 			if (!element.IsClassSet("drum-note"))
-				element.SetProperty(Rml::PropertyId::Height, percent(100.0 / g_pitches));
+				element.SetProperty(Rml::PropertyId::Height, percent(100.0 / rows));
 		}
 	}
 
@@ -707,6 +718,45 @@ namespace gnubase::ui
 					else
 						item->SetAttribute("checked", "");
 				}
+		}
+		const bool withEvents = m_view.value("visibleSounds", std::string("all")) == "withEvents";
+		const bool gmNames = activeTrack().value("gmNames", false);
+		setInner(root->QuerySelector("#drum-names"), gmNames ? "GM Default" : "No Names");
+		for (const auto& [index, selector, on] : {std::make_tuple(size_t{4}, "menuitem[visible-sounds]", withEvents),
+				 std::make_tuple(size_t{6}, "menuitem[gm-names=true]", gmNames),
+				 std::make_tuple(size_t{6}, "menuitem[gm-names=false]", !gmNames)})
+			if (Rml::Element* menu = m_menus.size() > index ? m_menus[index].get() : nullptr)
+				if (Rml::Element* item = menu->QuerySelector(selector);
+					item != nullptr && on != item->HasAttribute("checked"))
+				{
+					if (on)
+						item->SetAttribute("checked", "");
+					else
+						item->RemoveAttribute("checked");
+				}
+		// The key editor names its keys as the active track's drum sounds (p. 1239).
+		if (!m_drum)
+		{
+			Rml::ElementList named;
+			root->QuerySelectorAll(named, ".key-editor-key");
+			bool any = false;
+			const std::vector<std::string> names = soundNames();
+			for (Rml::Element* key : named)
+			{
+				const int pitch = std::stoi(attribute(*key, "pitch"));
+				const std::string& name = names.at(static_cast<size_t>(pitch));
+				any = any || !name.empty();
+				std::string label = name; // without a name the C keys' (p. 1204)
+				if (label.empty() && pitch % 12 == 0)
+					label = engine::midi::pitchName(pitch);
+				if (attribute(*key, "title") != name)
+				{
+					key->SetAttribute("title", name);
+					key->SetInnerRML(Rml::StringUtilities::EncodeRml(label));
+				}
+			}
+			if (Rml::Element* keyboard = root->QuerySelector(".key-editor-keys"))
+				setClass(keyboard, "named", any);
 		}
 		// The drum editor's grid type (p. 1227).
 		const std::string gridType = m_view.value("gridType", std::string("quantize"));
@@ -872,7 +922,8 @@ namespace gnubase::ui
 		const Rml::Vector2f size = grid->GetBox().GetSize(Rml::BoxArea::Border);
 		const float x = (event.GetParameter("mouse_x", 0.0F) - origin.x) / std::max(size.x, 1.0F);
 		const float y = (event.GetParameter("mouse_y", 0.0F) - origin.y) / std::max(size.y, 1.0F);
-		const int row = std::clamp(static_cast<int>(std::floor(y * g_pitches)), 0, g_pitches - 1);
+		const int rows = static_cast<int>(m_order.size());
+		const int row = std::clamp(static_cast<int>(std::floor(y * static_cast<float>(rows))), 0, rows - 1);
 		return {static_cast<double>(m_from) + (x * static_cast<double>(m_to - m_from)),
 			m_order.at(static_cast<size_t>(row))};
 	}
@@ -954,7 +1005,7 @@ namespace gnubase::ui
 	int KeyEditor::shifted(int pitch, int rows) const
 	{
 		const int row = m_rowOf.at(static_cast<size_t>(pitch)) + rows;
-		return row >= 0 && row < g_pitches ? m_order.at(static_cast<size_t>(row)) : -1;
+		return row >= 0 && row < static_cast<int>(m_order.size()) ? m_order.at(static_cast<size_t>(row)) : -1;
 	}
 
 	void KeyEditor::transpose(int semitones)
@@ -1116,6 +1167,16 @@ namespace gnubase::ui
 		else if (target.HasAttribute("grid-type"))
 		{
 			setView({{"gridType", attribute(target, "grid-type")}});
+		}
+		else if (target.HasAttribute("visible-sounds"))
+		{
+			const std::string shown = attribute(target, "visible-sounds");
+			setView({{"visibleSounds", m_view.value("visibleSounds", std::string("all")) == shown ? "all" : shown}});
+		}
+		else if (target.HasAttribute("gm-names"))
+		{
+			if (const Json track = m_view.value("activeTrack", Json(0)); track != 0)
+				m_binding.send("track.set", {{"track", track}, {"gmNames", attribute(target, "gm-names") == "true"}});
 		}
 		else if (target.HasAttribute("line-mode"))
 		{
@@ -1889,6 +1950,32 @@ namespace gnubase::ui
 		return nullptr;
 	}
 
+	Json KeyEditor::activeTrack() const
+	{
+		const Json id = m_view.value("activeTrack", Json(0));
+		for (const Json& track : m_project.value("tracks", Json::array()))
+			if (track.at("id") == id)
+				return track;
+		return Json::object();
+	}
+
+	std::vector<std::string> KeyEditor::soundNames() const
+	{
+		std::vector<std::string> names(static_cast<size_t>(g_pitches));
+		if (const Json* map = activeMap())
+		{
+			for (size_t pitch = 0; pitch < names.size(); ++pitch)
+				names[pitch] = map->at("sounds").at(pitch).at("name").get<std::string>();
+		}
+		else if (activeTrack().value("gmNames", false))
+		{
+			const engine::DrumMap gm = engine::midi::gmDrumMap();
+			for (size_t pitch = 0; pitch < names.size(); ++pitch)
+				names[pitch] = gm.sounds.at(pitch).name;
+		}
+		return names;
+	}
+
 	// The key editor's rows go from the highest pitch down; the drum editor's follow the drum map's order, or without
 	// one go up from pitch 0.
 	void KeyEditor::updateOrder()
@@ -1902,8 +1989,21 @@ namespace gnubase::ui
 			for (int pitch = 0; pitch < g_pitches; ++pitch)
 				m_order.push_back(m_drum ? pitch : g_pitches - 1 - pitch);
 		}
-		if (m_drum && m_view.value("pitchVisibility", false) && m_view.value("reverseSounds", false))
+		const bool visibility = m_drum && m_view.value("pitchVisibility", false);
+		// Show Drum Sounds with Events (#1493, p. 1234): the sounds that the shown parts have notes of, or all of them
+		// while they have none.
+		if (visibility && m_view.value("visibleSounds", std::string("all")) == "withEvents" && !m_notes.empty())
+		{
+			std::vector<bool> used(static_cast<size_t>(g_pitches), false);
+			for (const Note& note : m_notes)
+				used.at(static_cast<size_t>(note.pitch)) = true;
+			m_order.erase(std::remove_if(m_order.begin(), m_order.end(),
+							  [&used](int pitch) { return !used.at(static_cast<size_t>(pitch)); }),
+				m_order.end());
+		}
+		if (visibility && m_view.value("reverseSounds", false))
 			std::reverse(m_order.begin(), m_order.end());
+		// A pitch the list doesn't show is on the first row.
 		m_rowOf.assign(static_cast<size_t>(g_pitches), 0);
 		for (size_t row = 0; row < m_order.size(); ++row)
 			m_rowOf.at(static_cast<size_t>(m_order[row])) = static_cast<int>(row);
@@ -1915,6 +2015,7 @@ namespace gnubase::ui
 	std::string KeyEditor::soundsRml() const
 	{
 		const Json* map = activeMap();
+		const std::vector<std::string> names = map != nullptr ? std::vector<std::string>() : soundNames();
 		std::string rml;
 		const auto field = [](const char* name, const char* title, const std::string& value)
 		{
@@ -1941,6 +2042,10 @@ namespace gnubase::ui
 						channel.is_null() ? std::string("Any") : std::to_string(channel.get<int>() + 1)) +
 					field("output", "Output", output.empty() ? std::string("Default") : output);
 			}
+			else if (const std::string& name = names.at(static_cast<size_t>(pitch)); !name.empty())
+			{
+				rml += R"(<span class="drum-sound-name">)" + Rml::StringUtilities::EncodeRml(name) + "</span>";
+			}
 			rml += "</div>";
 		}
 		return rml;
@@ -1950,6 +2055,15 @@ namespace gnubase::ui
 	{
 		Rml::Element* root = m_root.get();
 		const Json* map = activeMap();
+		// A grid row per sound the list shows (Show Drum Sounds with Events).
+		if (Rml::Element* rows = root->QuerySelector(".key-editor-rows");
+			rows != nullptr && static_cast<size_t>(rows->GetNumChildren()) != m_order.size())
+		{
+			std::string rml;
+			for (size_t row = 0; row < m_order.size(); ++row)
+				rml += R"(<div class="key-editor-row"/>)";
+			rows->SetInnerRML(rml);
+		}
 		if (Rml::Element* keys = root->QuerySelector(".key-editor-keys"))
 			if (std::string rml = soundsRml(); rml != m_soundsRml)
 			{

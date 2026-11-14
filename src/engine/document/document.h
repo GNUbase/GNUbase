@@ -822,6 +822,9 @@ namespace gnubase::engine
 		std::optional<Freeze> frozen = {};
 		ObjectId drumMap = 0;         // MIDI and instrument tracks: the drum map their notes play through, or 0 (#129)
 		ObjectId articulationMap = 0; // MIDI and instrument tracks: their articulation map, or 0 (#175)
+		// MIDI and instrument tracks: the name list that names their pitches as drum sounds without a drum map
+		// (reference manual p. 1239): false for No Names, true for GM Default, General MIDI's percussion names.
+		bool gmNames = false;
 		// Audio, instrument and MIDI tracks: their versions in the order they were made; none for a track that has
 		// only its first one, v1 with ID 1 (versionsOf). Initialized like picture.
 		// NOLINTNEXTLINE(readability-redundant-member-init): see above
@@ -1590,6 +1593,10 @@ namespace gnubase::engine
 		// The color last given to events or parts, for editing.autoTrackColor's lastApplied: not part of undo or the
 		// file.
 		std::string lastAppliedColor;
+		// Solo Instrument (reference manual p. 1223): the selected notes of the drum editors that have it on. Of the
+		// tracks with a drum map that these notes are on, only the notes with their pitches play. Set from the editor
+		// views (editors.cpp); not part of undo or the file.
+		std::vector<std::pair<ObjectId, ObjectId>> soloNotes; // each a part and a note of it
 		// What each mixer hides (#106), by mixer: lower, window1 to window4. Settings, not part of undo.
 		std::map<std::string, MixerView> mixers;
 		// What the track list hides (#166). A setting, not part of undo.
@@ -2029,10 +2036,10 @@ namespace gnubase::engine
 	{
 		return std::tie(a.id, a.type, a.name, a.color, a.timeBase, a.parent, a.channel, a.children, a.autoFades,
 				   a.timeFormat, a.enabled, a.picture, a.timeOffset, a.timeOffsetOn, a.frozen, a.drumMap,
-				   a.articulationMap, a.versions, a.activeVersion) ==
+				   a.articulationMap, a.gmNames, a.versions, a.activeVersion) ==
 			std::tie(b.id, b.type, b.name, b.color, b.timeBase, b.parent, b.channel, b.children, b.autoFades,
 				b.timeFormat, b.enabled, b.picture, b.timeOffset, b.timeOffsetOn, b.frozen, b.drumMap,
-				b.articulationMap, b.versions, b.activeVersion);
+				b.articulationMap, b.gmNames, b.versions, b.activeVersion);
 	}
 	// Where an audio event plays, in the project's samples (fadeedits.cpp).
 	struct EventSpan

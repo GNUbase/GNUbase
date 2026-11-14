@@ -529,3 +529,95 @@ TEST_CASE("the notes played in map to the first sound by pitch whose I-note they
 	CHECK(pitches.at(50) == 40);
 	CHECK(pitches.at(40) == 50);
 }
+
+TEST_CASE("Solo Instrument plays only the sounds of the drum editor's selected notes", "[unit]")
+{
+	Fixture f;
+	const Json added = f.call("note.add",
+		{{"part", f.part},
+			{"notes",
+				{{{"position", 0}, {"length", 60}, {"pitch", 36}, {"velocity", 0.5}},
+					{{"position", 120}, {"length", 60}, {"pitch", 38}, {"velocity", 0.5}},
+					{{"position", 240}, {"length", 60}, {"pitch", 42}, {"velocity", 0.5}},
+					{{"position", 360}, {"length", 60}, {"pitch", 38}, {"velocity", 0.5}}}}});
+	const auto noteId = [&](size_t index) { return added.at("notes").at(index).at("id").get<uint64_t>(); };
+	const auto pitches = [&]
+	{
+		std::vector<int> played;
+		for (const engine::RenderNote& note : f.rendered())
+			played.push_back(note.pitch);
+		return played;
+	};
+	const auto revision = [&] { return f.call("project.revision"); };
+	f.call("track.set", {{"track", f.track}, {"drumMap", f.gm()}});
+	f.call("editor.open", {{"editor", "window"}, {"parts", {f.part}}, {"content", "drum"}});
+	f.call("editor.set", {{"editor", "window"}, {"selection", {{{"part", f.part}, {"note", noteId(1)}}}}});
+	CHECK(pitches() == std::vector<int>{36, 38, 42, 38}); // Solo Instrument is off
+
+	const bool modified = revision().at("modified").get<bool>();
+	const Json view = f.call("editor.set", {{"editor", "window"}, {"soloInstrument", true}});
+	CHECK(view.at("soloInstrument") == true);
+	CHECK(pitches() == std::vector<int>{38, 38}); // every note of the selected note's sound
+	CHECK(revision().at("modified") == modified); // what plays changed, not the project
+
+	f.call("editor.set",
+		{{"editor", "window"},
+			{"selection", {{{"part", f.part}, {"note", noteId(0)}}, {{"part", f.part}, {"note", noteId(2)}}}}});
+	CHECK(pitches() == std::vector<int>{36, 42});
+	// A selected note moved to another sound solos that one.
+	f.call("note.set", {{"part", f.part}, {"notes", {{{"id", noteId(2)}, {"pitch", 38}}}}});
+	CHECK(pitches() == std::vector<int>{36, 38, 38, 38});
+
+	SECTION("nothing selected plays every sound")
+	{
+		f.call("editor.set", {{"editor", "window"}, {"selection", Json::array()}});
+		CHECK(pitches().size() == 4);
+	}
+	SECTION("only the drum editor solos")
+	{
+		f.call("editor.set", {{"editor", "window"}, {"content", "key"}});
+		CHECK(pitches().size() == 4);
+	}
+	SECTION("a closed editor solos nothing")
+	{
+		f.call("editor.close", {{"editor", "window"}});
+		CHECK(pitches().size() == 4);
+	}
+	SECTION("it needs a drum map")
+	{
+		f.call("track.set", {{"track", f.track}, {"drumMap", 0}});
+		CHECK(pitches().size() == 4);
+	}
+	SECTION("turned off")
+	{
+		f.call("editor.set", {{"editor", "window"}, {"soloInstrument", false}});
+		CHECK(pitches().size() == 4);
+	}
+}
+
+TEST_CASE("Pitch Visibility's Show Drum Sounds with Events and a track's GM name list", "[unit]")
+{
+	Fixture f;
+	f.call("editor.open", {{"editor", "window"}, {"parts", {f.part}}, {"content", "drum"}});
+	CHECK(f.call("editor.get", {{"editor", "window"}}).at("visibleSounds") == "all");
+	CHECK(f.call("editor.set", {{"editor", "window"}, {"visibleSounds", "withEvents"}}).at("visibleSounds") ==
+		"withEvents");
+	CHECK_FALSE(f.client.call("editor.set", {{"editor", "window"}, {"visibleSounds", "inUse"}}).ok());
+
+	// GM Default names the pitches without a drum map (p. 1239); saved with the project, undone like the map.
+	CHECK(f.trackJson().at("gmNames") == false);
+	f.call("track.set", {{"track", f.track}, {"gmNames", true}});
+	CHECK(f.trackJson().at("gmNames") == true);
+	const test::TempDir dir;
+	const std::string file = (dir.path() / "names.dawproject").u8string();
+	f.call("project.save", {{"path", file}});
+	f.call("project.new");
+	f.call("project.load", {{"path", file}});
+	f.track = f.call("project.get").at("tracks").at(0).at("id").get<uint64_t>();
+	CHECK(f.trackJson().at("gmNames") == true);
+	f.call("track.set", {{"track", f.track}, {"gmNames", false}});
+	f.call("history.undo");
+	CHECK(f.trackJson().at("gmNames") == true);
+	const auto audio = f.call("track.add", {{"type", "audio"}}).at("track").at("id").get<uint64_t>();
+	CHECK_THAT(f.fails("track.set", {{"track", audio}, {"gmNames", true}}), ContainsSubstring("name list"));
+}

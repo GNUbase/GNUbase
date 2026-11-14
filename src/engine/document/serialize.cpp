@@ -558,7 +558,7 @@ namespace gnubase::engine
 			{"color", colorJson(track.color)}, {"timeBase", timeBaseName(track.timeBase)}, {"parent", track.parent},
 			{"channel", track.channel}, {"autoFades", track.autoFades ? toJson(*track.autoFades) : Json(nullptr)},
 			{"enabled", track.enabled}, {"picture", track.picture}, {"frozen", nullptr}, {"drumMap", track.drumMap},
-			{"articulationMap", track.articulationMap}};
+			{"articulationMap", track.articulationMap}, {"gmNames", track.gmNames}};
 		if (track.frozen)
 			json["frozen"] = {{"path", track.frozen->path}, {"sampleRate", track.frozen->sampleRate},
 				{"channels", track.frozen->channels}, {"length", track.frozen->length}};
@@ -2204,6 +2204,7 @@ namespace gnubase::engine
 			track.picture = item.value("picture", std::string());                    // files from before #106 have none
 			track.drumMap = item.value("drumMap", ObjectId{0});                      // and before #129 none
 			track.articulationMap = item.value("articulationMap", ObjectId{0});      // and before #175 none
+			track.gmNames = item.value("gmNames", false);                            // and before #1493 No Names
 			if (const Json frozen = item.value("frozen", Json()); !frozen.is_null()) // and before #116 none
 			{
 				track.frozen = Freeze{frozen.at("path").get<std::string>(), frozen.at("sampleRate").get<double>(),

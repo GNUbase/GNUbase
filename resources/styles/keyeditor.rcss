@@ -89,6 +89,12 @@
 	height: 1280dp;
 }
 
+/* With drum sound names (a drum map's or a name list's, reference manual p. 1239) the keys name their sounds. */
+.key-editor-keys.named
+{
+	width: 128dp;
+}
+
 .key-editor-grid
 {
 	position: relative;
@@ -244,6 +250,15 @@
 	flex: 1 1 0;
 	margin-left: 4dp;
 	text-align: left;
+}
+
+/* A name list's names, without a drum map: not edited. */
+.drum-sound span.drum-sound-name
+{
+	flex: 1 1 0;
+	margin-left: 4dp;
+	overflow: hidden;
+	white-space: nowrap;
 }
 
 .drum-sound textdisplay.drum-sound-field

@@ -838,3 +838,64 @@ TEST_CASE("the Drum Map Setup saves a map to a file and loads it", "[ui]")
 	CHECK(loaded.at("sounds").at(36).at("oNote") == 24);
 	REQUIRE(f.app.waitUntil([&] { return f.elements("#drum-maps listitem").size() == 3; }));
 }
+
+TEST_CASE("Pitch Visibility shows the drum sounds with events, Solo Instrument and the Names menu", "[ui]")
+{
+	Fixture f;
+	f.app.call("note.add",
+		{{"part", f.part},
+			{"notes",
+				{{{"position", 0}, {"length", g_sixteenth}, {"pitch", 42}, {"velocity", 0.5}},
+					{{"position", g_quarter}, {"length", g_sixteenth}, {"pitch", 36}, {"velocity", 0.5}}}}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note").size() == 2; }));
+
+	// Show Drum Sounds with Events (pp. 1223-1224, 1234): only the sounds of the notes, with a grid row each.
+	f.click(of(".key-input[setting=pitchVisibility]"));
+	f.click(of("#drum-pitch-options"));
+	f.click(of("#drum-pitch-menu menuitem[visible-sounds=withEvents]"));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-sound").size() == 2; }));
+	CHECK(f.app.call("editor.get", {{"editor", "window"}}).at("visibleSounds") == "withEvents");
+	CHECK(f.elements(".drum-sound").at(0).at("attributes").at("pitch") == "36");
+	CHECK(f.elements(".key-editor-row").size() == 2);
+	const auto on = [&](const std::string& note, int pitch)
+	{
+		const Json box = f.box(".key-note" + note);
+		const double y = box.at("y").get<double>() + (box.at("height").get<double>() / 2.0);
+		const Json row = f.box(sound(pitch));
+		return y >= row.at("y").get<double>() && y < row.at("y").get<double>() + row.at("height").get<double>();
+	};
+	CHECK(f.app.waitUntil([&] { return on(f.noteSelector(0), 42) && on(f.noteSelector(1), 36); }));
+	// The drumstick inserts on the row under the mouse.
+	f.click(of("button.key-tool[key-tool=draw]"));
+	f.click(f.at(8, 42));
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 3; }));
+	CHECK(f.partNotes()[2].at("pitch") == 42);
+	CHECK(f.partNotes()[2].at("position") == 8 * g_sixteenth);
+	f.click(of("#drum-pitch-options"));
+	f.click(of("#drum-pitch-menu menuitem[visible-sounds=withEvents]"));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-sound").size() == 128; }));
+	CHECK(f.elements(".key-editor-row").size() == 128);
+
+	// Solo Instrument (p. 1223).
+	f.click(of(".key-input[setting=soloInstrument]"));
+	REQUIRE(
+		f.app.waitUntil([&] { return f.app.call("editor.get", {{"editor", "window"}}).at("soloInstrument") == true; }));
+	CHECK(f.app.waitUntil([&] { return f.has(".key-input[setting=soloInstrument]", "checked"); }));
+
+	// Without a drum map the Names menu's GM Default names the sounds (p. 1239), and the key editor's keys.
+	f.app.call("track.set", {{"track", f.track}, {"drumMap", 0}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-sound-name").empty(); }));
+	f.click(of("#drum-names"));
+	f.click(of("#drum-names-menu menuitem[gm-names=true]"));
+	REQUIRE(f.app.waitUntil([&] { return f.app.call("project.get").at("tracks").at(0).at("gmNames") == true; }));
+	REQUIRE(f.app.waitUntil([&] { return !f.elements(sound(36) + " .drum-sound-name").empty(); }));
+	CHECK(f.elements(sound(36) + " .drum-sound-name").at(0).at("text") == "Bass Drum 1");
+	CHECK(f.elements("#drum-names").at(0).at("text") == "GM Default");
+	f.app.call("editor.set", {{"editor", "window"}, {"content", "key"}});
+	REQUIRE(f.app.waitUntil([&] { return !f.elements(".key-editor-key.black").empty(); }));
+	REQUIRE(f.app.waitUntil([&] { return f.has(".key-editor-keys", "named"); }));
+	CHECK(f.elements(".key-editor-key[pitch=\"36\"]").at(0).at("attributes").at("title") == "Bass Drum 1");
+	f.app.call("track.set", {{"track", f.track}, {"gmNames", false}});
+	REQUIRE(f.app.waitUntil([&] { return !f.has(".key-editor-keys", "named"); }));
+	CHECK(f.elements(".key-editor-key[pitch=\"36\"]").at(0).at("attributes").value("title", "x").empty());
+}
