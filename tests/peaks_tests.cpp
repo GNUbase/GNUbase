@@ -539,6 +539,11 @@ TEST_CASE("a peak file being read can be replaced, on Windows too", "[integratio
 	REQUIRE(reader);
 	const peaks::PeakData newData = build(testSignal(1, 2000, 6), 1, {16});
 	peaks::writePeakFile(file, "take.wav", {4, 5, 6}, newData); // mustn't throw while the reader is in the old file
+#ifdef _WIN32
+	// The reader shares deletion, so the POSIX-semantic rename replaced the file atomically; the aside fallback is
+	// only for what that rename refuses, such as a reader that doesn't share deletion (#1387).
+	CHECK(detail::lastReplacePath() == detail::ReplacePath::PosixRename);
+#endif
 
 	// The held reader reads the old file on, and the name has the new peaks.
 	std::string held(oldBytes.size(), '\0');

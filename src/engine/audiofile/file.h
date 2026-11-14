@@ -33,6 +33,19 @@ namespace gnubase::engine::detail
 	// replacement leaves the old file. False on failure; lastError() says why.
 	bool replaceFileMovingAside(const std::string& from, const std::string& to, const std::string& aside);
 
+	// Which way the last successful replacement went: Rename for replaceFile's classic rename, PosixRename for its
+	// Windows rename with POSIX semantics, Aside for replaceFileMovingAside, None before the first. For tests that
+	// show the atomic path is taken where it can be.
+	enum class ReplacePath
+	{
+		None,
+		Rename,
+		PosixRename,
+		Aside
+	};
+
+	ReplacePath lastReplacePath();
+
 	// origin is SEEK_SET, SEEK_CUR or SEEK_END.
 	bool seekFile(std::FILE* file, int64_t offset, int origin);
 

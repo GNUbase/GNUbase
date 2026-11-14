@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/audiofile/file.h"
 
+#include <atomic>
 #include <cerrno>
 #include <cstring>
 #include <cwchar>
@@ -19,6 +20,11 @@
 
 namespace gnubase::engine::detail
 {
+	namespace
+	{
+		std::atomic<ReplacePath> g_lastReplacePath{ReplacePath::None};
+	}
+
 #ifdef _WIN32
 	namespace
 	{
@@ -57,11 +63,10 @@ namespace gnubase::engine::detail
 			return File(file);
 		}
 
-		// The rename with POSIX semantics (FileRenameInfoEx; NTFS, Windows 10 1607 and later): the one replacement
-		// that could take the place of a file readers have open atomically, which the classic rename refuses. On
-		// Windows 11 build 26200 it answers ERROR_ACCESS_DENIED (5) for every open target, whatever the access, the
-		// share mode or the process of its handles, although the POSIX deletion of the same file succeeds; other
-		// versions may take it, so replaceFile tries it before giving up (#1387).
+		// The rename with POSIX semantics (FileRenameInfoEx; NTFS, Windows 10 1607 and later): it replaces the
+		// destination atomically even while readers have it open, which the classic rename refuses, as long as every
+		// handle in the destination shares deletion (FILE_SHARE_DELETE), as the engine's readers' do; a handle that
+		// doesn't answers ERROR_SHARING_VIOLATION (32), and the caller falls back to replaceFileMovingAside (#1387).
 		bool posixReplace(const std::filesystem::path& from, const std::filesystem::path& to)
 		{
 			HANDLE handle =
@@ -79,8 +84,10 @@ namespace gnubase::engine::detail
 			info->FileNameLength = length;
 			std::memcpy(info->FileName, to.c_str(), length);
 			info->Flags = FILE_RENAME_FLAG_REPLACE_IF_EXISTS | FILE_RENAME_FLAG_POSIX_SEMANTICS;
+			// FileRenameInfoEx, not FileRenameInfo: only the Ex class reads the Flags member; the classic one takes
+			// its first byte as ReplaceIfExists and ignores the POSIX flag, which makes this the classic rename.
 			const BOOL replaced =
-				SetFileInformationByHandle(handle, FileRenameInfo, info, static_cast<DWORD>(buffer.size()));
+				SetFileInformationByHandle(handle, FileRenameInfoEx, info, static_cast<DWORD>(buffer.size()));
 			if (!replaced)
 				setErrno(GetLastError());
 			CloseHandle(handle);
@@ -109,15 +116,26 @@ namespace gnubase::engine::detail
 		std::error_code error;
 		std::filesystem::rename(from, to, error);
 		if (!error)
+		{
+			g_lastReplacePath = ReplacePath::Rename;
 			return true;
+		}
 #ifdef _WIN32
 		// The classic rename can't replace a file another handle has open; the POSIX-semantic one may (see
 		// posixReplace).
-		return posixReplace(std::filesystem::u8path(from), std::filesystem::u8path(to));
+		const bool replaced = posixReplace(std::filesystem::u8path(from), std::filesystem::u8path(to));
+		if (replaced)
+			g_lastReplacePath = ReplacePath::PosixRename;
+		return replaced;
 #else
 		errno = error.value();
 		return false;
 #endif
+	}
+
+	ReplacePath lastReplacePath()
+	{
+		return g_lastReplacePath;
 	}
 
 	bool replaceFileMovingAside(const std::string& from, const std::string& to, const std::string& aside)
@@ -139,6 +157,7 @@ namespace gnubase::engine::detail
 			return false;
 		}
 		std::filesystem::remove(aside, error); // if this fails, a cleanup of stale temporaries ends the aside
+		g_lastReplacePath = ReplacePath::Aside;
 		return true;
 	}
 

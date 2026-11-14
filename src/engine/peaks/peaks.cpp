@@ -486,10 +486,10 @@ namespace gnubase::engine::peaks
 	namespace
 	{
 		// The replacement no reader may see half of, and that works while another thread reads the old file: on
-		// Windows, where the classic and the POSIX-semantic rename may both refuse an open target, the old file moves
-		// aside under a temporary name first (#963, #1387); should the aside outlive the replacement, the worker
-		// cleans it up like a temporary a crash left behind. Anything that isn't a regular file, such as a directory
-		// in the way, keeps failing the write.
+		// Windows the classic rename refuses any open target and the POSIX-semantic one a target whose handles don't
+		// share deletion, so the old file then moves aside under a temporary name first (#963, #1387); should the
+		// aside outlive the replacement, the worker cleans it up like a temporary a crash left behind. Anything that
+		// isn't a regular file, such as a directory in the way, keeps failing the write.
 		bool replacePeakFile(const std::filesystem::path& temporary, const std::filesystem::path& file)
 		{
 #ifdef _WIN32
