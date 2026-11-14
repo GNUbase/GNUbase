@@ -23,6 +23,10 @@ namespace gnubase::engine
 	// joins the tracks hidden and the configurations with the folder, and the mixers that follow hide its channel
 	// (#1475). Emits trackVisibility.changed and mixer.changed for what changed.
 	void followTrackFolders(Project& project, CommandContext& context);
+	// After undo or redo steps, with what trackVisibility.get returned before them: a track that comes back with its id
+	// still in hidden or a configuration, or that goes, changes what it returns without a list changing. Emits
+	// trackVisibility.changed when it differs, and syncs the mixers that follow in any case (#1475).
+	void followTrackFolders(Project& project, CommandContext& context, const Json& before);
 
 	// What a loaded project keeps of its trackVisibility, once its tracks are there: the checks trackVisibility.set
 	// makes, so an unknown sync, configurations without a name or with a name twice, an active name that isn't there
@@ -33,6 +37,10 @@ namespace gnubase::engine
 	// As trackLayout.get returns it: the heights and folded folders of the tracks that are in the project. The project
 	// keeps those of removed tracks too, for undo.
 	Json trackLayoutJson(const Project& project);
+
+	// As trackVisibility.get returns it: without the tracks that are gone, and whether the tracks hidden differ from
+	// the active configuration's.
+	Json trackVisibilityJson(const Project& project);
 
 	// trackVisibility.get and trackVisibility.set.
 	void registerTrackVisibilityCommands(ProjectModel& model, Engine& engine);

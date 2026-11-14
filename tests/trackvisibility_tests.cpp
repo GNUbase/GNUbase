@@ -380,20 +380,66 @@ TEST_CASE("a track that joins a hidden folder later hides with it right away", "
 }
 
 // #1475: applying a configuration keeps the ids of removed tracks in it, so that undoing the removal brings the track
-// back into it, hidden.
+// back into it, hidden: announced, and with its channel hidden in the mixers that follow.
 TEST_CASE("applying a configuration keeps the tracks that are removed for undo", "[unit]")
 {
 	Fixture f;
-	const uint64_t b = f.track("audio").first;
+	std::mutex mutex;
+	std::vector<Json> changes;
+	const engine::Listener listener(f.engine,
+		[&](const engine::Event& event)
+		{
+			const std::scoped_lock lock(mutex);
+			if (event.name == "trackVisibility.changed")
+				changes.push_back(event.data);
+		});
+	const auto [b, bChannel] = f.track("audio");
 	f.call("trackVisibility.set", {{"configurations", {{{"name", "Without B"}, {"hidden", {b}}}}}});
 	f.call("track.remove", {{"track", b}});
 	const Json applied = f.call("trackVisibility.set", {{"configuration", "Without B"}});
 	CHECK(applied.at("hidden").empty());
 	CHECK(applied.at("modified") == false);
+	{
+		const std::scoped_lock lock(mutex);
+		changes.clear();
+	}
 
 	f.call("history.undo");
 	const Json visibility = f.visibility();
 	CHECK(visibility.at("configurations").at(0).at("hidden") == Json{b});
 	CHECK(visibility.at("hidden") == Json{b});
 	CHECK(visibility.at("modified") == false);
+	{
+		const std::scoped_lock lock(mutex);
+		REQUIRE(changes.size() == 1);
+		CHECK(changes[0].at("hidden") == Json{b});
+	}
+	CHECK(f.mixerHidden("lower") == Json{bChannel});
+
+	// The lower zone's mixer hides the channel, so a mixer.set that changes only its filter leaves the track hidden.
+	f.call("mixer.set", {{"mixer", "lower"}, {"hiddenTypes", {"effect"}}});
+	CHECK(f.hidden() == Json{b});
+	CHECK(f.visibility().at("modified") == false);
+}
+
+// #1475: an undo step that puts a track back into a folder hidden since hides it with the folder, with its channel.
+TEST_CASE("a track that an undo step puts into a hidden folder hides with it", "[unit]")
+{
+	Fixture f;
+	const Json band = f.call("track.add", {{"type", "folder"}, {"groupChannel", true}, {"name", "Band"}});
+	const uint64_t folder = band.at("track").at("id").get<uint64_t>();
+	const uint64_t group = band.at("channel").at("id").get<uint64_t>();
+	const Json added = f.call("track.add", {{"type", "audio"}, {"parent", folder}, {"index", 0}});
+	const uint64_t drums = added.at("track").at("id").get<uint64_t>();
+	const uint64_t drumsChannel = added.at("channel").at("id").get<uint64_t>();
+	f.call("track.move", {{"track", drums}, {"parent", 0}, {"index", 0}});
+	f.call("trackVisibility.set",
+		{{"configurations", {{{"name", "Without Band"}, {"hidden", {folder}}}}}, {"configuration", "Without Band"}});
+	REQUIRE(f.hidden() == Json{folder});
+
+	f.call("history.undo");
+	CHECK(f.hidden() == sorted({folder, drums}));
+	CHECK(f.visibility().at("configurations").at(0).at("hidden") == sorted({folder, drums}));
+	CHECK(f.visibility().at("modified") == false);
+	CHECK(f.mixerHidden("lower") == sorted({group, drumsChannel}));
 }

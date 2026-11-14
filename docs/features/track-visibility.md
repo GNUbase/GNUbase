@@ -21,7 +21,9 @@ mixers whose channel visibility follows the tracks'.
   active one's name; `modified` (read only) says whether the hidden tracks differ from it, which the toolbar shows with
   an asterisk. `configurations` replaces the list (Add, Update, Rename, Delete and reorder are all that);
   `configuration` makes one active and, without `hidden`, hides its tracks. A configuration keeps the ids of removed
-  tracks, applied too, so undoing the removal brings the track back into it (#1475).
+  tracks, applied too, so undoing the removal brings the track back into it, hidden: after undo and redo steps,
+  `trackVisibility.changed` goes out when what `trackVisibility.get` returns changed, and the mixers that follow sync
+  in any case (#1475).
 
 **Following the mixers.** In a mixer that follows, a track's channel is hidden while the track is (`syncMixers`), and
 `mixer.set` on such a mixer hides and shows the tracks of its track channels (`followMixer`, called from `mixer.set` in
@@ -95,7 +97,8 @@ dividing the track list, whose upper part the sync leaves alone.
   follow both ways, showing the folder's group channel again showing them, and configurations keeping them, with a track
   that joined the folder later, not modified then, a track that joins a hidden folder later by `track.add` or
   `track.move` hidden right away with its channel, also after a `mixer.set` and an undo, and an applied configuration
-  keeping a removed track for undo (#1475); the values from a file checked as the command checks them, the
+  keeping a removed track for undo, announced and with its channel hidden when the undo brings it back, and a track
+  that an undo step puts back into a folder hidden since hidden with it (#1475); the values from a file checked as the command checks them, the
   lower zone's mixer hiding the channels of the tracks that joined from their folders; the lower zone's mixer and the
   synced window following both ways, busses and tracks without a channel keeping their state, one window at a time;
   configurations added, applied, modified, updated, renamed and deleted, names checked, gone tracks left out.

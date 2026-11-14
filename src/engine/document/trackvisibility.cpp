@@ -73,20 +73,22 @@ namespace gnubase::engine
 			return nullptr;
 		}
 
-		// As trackVisibility.get returns it: without the tracks that are gone, and whether the tracks hidden differ
-		// from the active configuration's.
-		Json visibilityJson(const Project& project)
-		{
-			TrackVisibility visibility = project.trackVisibility;
-			visibility.hidden = existing(project, visibility.hidden);
-			for (VisibilityConfiguration& configuration : visibility.configurations)
-				configuration.hidden = existing(project, configuration.hidden);
-			const VisibilityConfiguration* configuration = active(visibility);
-			Json json = toJson(visibility);
-			json["modified"] = configuration != nullptr && configuration->hidden != visibility.hidden;
-			return json;
-		}
+	}
 
+	Json trackVisibilityJson(const Project& project)
+	{
+		TrackVisibility visibility = project.trackVisibility;
+		visibility.hidden = existing(project, visibility.hidden);
+		for (VisibilityConfiguration& configuration : visibility.configurations)
+			configuration.hidden = existing(project, configuration.hidden);
+		const VisibilityConfiguration* configuration = active(visibility);
+		Json json = toJson(visibility);
+		json["modified"] = configuration != nullptr && configuration->hidden != visibility.hidden;
+		return json;
+	}
+
+	namespace
+	{
 		// Gives the mixers that follow the track visibility their state: a track's channel is hidden there while
 		// the track is. Busses keep theirs. Returns the mixers whose view changed.
 		std::vector<std::string> syncMixerViews(Project& project)
@@ -165,31 +167,48 @@ namespace gnubase::engine
 		if (tracks != visibility.hidden)
 		{
 			visibility.hidden = std::move(tracks);
-			context.emit("trackVisibility.changed", visibilityJson(project));
+			context.emit("trackVisibility.changed", trackVisibilityJson(project));
 		}
 		// Also without a change of the tracks: a channel of a track inside a folder that is hidden still shows in
 		// the mixer the change came from, which the tracks hide again (#906). mixer.set emits the view itself.
 		syncMixers(project, context, mixer);
 	}
 
+	namespace
+	{
+		// Closes hidden and the configurations over their folders; returns whether a list changed.
+		bool closeOverFolders(Project& project)
+		{
+			TrackVisibility& visibility = project.trackVisibility;
+			bool changed = false;
+			const auto close = [&project, &changed](std::vector<ObjectId>& ids)
+			{
+				std::vector<ObjectId> all = withInside(project, ids);
+				if (all == ids)
+					return;
+				ids = std::move(all);
+				changed = true;
+			};
+			close(visibility.hidden);
+			for (VisibilityConfiguration& configuration : visibility.configurations)
+				close(configuration.hidden);
+			return changed;
+		}
+	}
+
 	void followTrackFolders(Project& project, CommandContext& context)
 	{
-		TrackVisibility& visibility = project.trackVisibility;
-		bool changed = false;
-		const auto close = [&project, &changed](std::vector<ObjectId>& ids)
-		{
-			std::vector<ObjectId> all = withInside(project, ids);
-			if (all == ids)
-				return;
-			ids = std::move(all);
-			changed = true;
-		};
-		close(visibility.hidden);
-		for (VisibilityConfiguration& configuration : visibility.configurations)
-			close(configuration.hidden);
-		if (!changed)
+		if (!closeOverFolders(project))
 			return;
-		context.emit("trackVisibility.changed", visibilityJson(project));
+		context.emit("trackVisibility.changed", trackVisibilityJson(project));
+		syncMixers(project, context);
+	}
+
+	void followTrackFolders(Project& project, CommandContext& context, const Json& before)
+	{
+		closeOverFolders(project);
+		if (Json now = trackVisibilityJson(project); now != before)
+			context.emit("trackVisibility.changed", std::move(now));
 		syncMixers(project, context);
 	}
 
@@ -244,7 +263,7 @@ namespace gnubase::engine
 		engine.registerCommand(
 			{"trackVisibility.get", 1, "What the project window hides (reference manual pp. 58, 80-82). " + text,
 				{{"type", "object"}, {"additionalProperties", false}}, resultSchema, true},
-			[&model](CommandContext&) { return visibilityJson(model.project()); });
+			[&model](CommandContext&) { return trackVisibilityJson(model.project()); });
 
 		model.addEdit(engine,
 			{"trackVisibility.set", 1,
@@ -296,7 +315,7 @@ namespace gnubase::engine
 				if (parameters.contains("sync"))
 					visibility.sync = parameters.at("sync").get<std::string>();
 				syncMixers(project, context);
-				Json result = visibilityJson(project);
+				Json result = trackVisibilityJson(project);
 				context.emit("trackVisibility.changed", result);
 				return result;
 			});
