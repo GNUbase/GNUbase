@@ -54,8 +54,7 @@ namespace
 					.at("event")
 					.at("id")
 					.get<uint64_t>();
-			REQUIRE(app.waitUntil(
-				[&] { return display.project().is_object() && display.project().at("audioEvents").size() == 1; }));
+			REQUIRE(app.waitUntil([&] { return display.project().at("audioEvents").size() == 1; }));
 			display.select({event});
 			app.keys().run("editor.openClose", Json::object(), app.main(), nullptr);
 			REQUIRE(app.waitUntil([&] { return app.appUi().sampleEditorWindow() != nullptr; }));

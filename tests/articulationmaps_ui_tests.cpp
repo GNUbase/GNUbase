@@ -38,12 +38,7 @@ namespace
 						.at("track")
 						.at("id")
 						.get<uint64_t>();
-			REQUIRE(app.waitUntil(
-				[this]
-				{
-					return display.project().is_object() &&
-						display.project().value("tracks", Json::array()).size() == 1;
-				}));
+			REQUIRE(app.waitUntil([this] { return display.project().value("tracks", Json::array()).size() == 1; }));
 			app.appUi().trackList()->select({track});
 			app.shell().step(std::chrono::milliseconds(0));
 		}

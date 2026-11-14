@@ -309,8 +309,7 @@ TEST_CASE("Open Drum Editor opens the selected MIDI parts in the drum editor win
 						  .at("part")
 						  .at("id")
 						  .get<uint64_t>();
-	REQUIRE(
-		app.waitUntil([&] { return display.project().is_object() && display.project().at("midiParts").size() == 1; }));
+	REQUIRE(app.waitUntil([&] { return display.project().at("midiParts").size() == 1; }));
 	display.select({part});
 	app.shell().step(std::chrono::milliseconds(0));
 	for (const char* command : {"editor.openDrum", "drumMap.load", "drumMap.save"})
