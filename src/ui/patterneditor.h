@@ -85,9 +85,14 @@ namespace gnubase::ui
 		// Whether the project shown was read before the answer to the last pattern.set of the pattern shown, or while
 		// it is on its way: it doesn't have the lanes sent (m_sent) yet (#1202).
 		bool behind() const;
+		// Whether a pattern.set of set() that changes the lanes in the engine, a mode switch or a shorter Number of
+		// Steps, is on its way: the editor takes no edit of the steps until its answer brings them (#1410).
+		bool waiting() const;
 		// Sends the lanes as they are now in one pattern.set, an undo step named description, with changes of the
 		// pattern's other fields, which the pattern shown gets too; if it is refused, the engine's pattern shows again.
 		void sendLanes(const std::string& description, engine::Json changes = engine::Json::object());
+		// Sends changes of the pattern's other fields (mode, Number of Steps, Step Resolution, Play Direction); its
+		// answer's pattern shows until the project does.
 		void set(engine::Json changes);
 		// Tie Adjacent Steps and Split Tied Steps (p. 910), of the selected steps or else of all.
 		void tie(bool split);
@@ -108,7 +113,7 @@ namespace gnubase::ui
 		bool m_stale = false;    // the project changed while it went on
 		std::set<int> m_edited;  // the pitches of the lanes it changed
 		uint64_t m_read = 0;     // when the project shown was read (EngineBinding::handed)
-		engine::Json m_sent;     // the last pattern.set's parameters, null if it was refused
+		engine::Json m_sent;     // the pattern as the last pattern.set left it, as far as known; null if it was refused
 		uint64_t m_answered = 0; // when its answer was handed on, 0 while it is on its way
 		Rml::ObserverPtr<Rml::Element> m_document;
 		std::vector<Rml::ObserverPtr<Rml::Element>> m_menus;

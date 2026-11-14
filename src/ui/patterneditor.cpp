@@ -393,19 +393,28 @@ namespace gnubase::ui
 		}
 	}
 
+	bool PatternEditor::waiting() const
+	{
+		return m_sent.is_object() && !m_sent.contains("lanes");
+	}
+
 	void PatternEditor::sendLanes(const std::string& description, Json changes)
 	{
-		if (!m_pattern.is_object())
-			return;
+		if (!m_pattern.is_object() || waiting())
+			return; // the answer's load() shows the engine's lanes again
 		for (const auto& [key, value] : changes.items())
 			m_pattern[key] = value;
 		changes["pattern"] = m_pattern.at("id");
 		changes["lanes"] = m_pattern.at("lanes");
-		m_sent = std::move(changes);
+		// What the project shown doesn't have yet of the last pattern.set stays, e.g. the length that Double Length
+		// sent just before (#1410).
+		Json sent = behind() ? m_sent : Json::object();
+		sent.update(changes);
+		m_sent = std::move(sent);
 		m_answered = 0;
 		m_binding.send("history.transaction",
 			{{"description", description},
-				{"commands", Json::array({{{"command", "pattern.set"}, {"parameters", m_sent}}})}},
+				{"commands", Json::array({{{"command", "pattern.set"}, {"parameters", changes}}})}},
 			[this, alive = std::weak_ptr<bool>(m_alive), sent = m_sent](const engine::Result& result)
 			{
 				if (alive.expired() || m_sent != sent)
@@ -424,8 +433,37 @@ namespace gnubase::ui
 	{
 		if (!m_pattern.is_object())
 			return;
+		// A mode switch or a shorter Number of Steps changes the lanes in the engine: until the answer brings them, the
+		// editor takes no edit of the steps (#1410). The other changes keep the lanes as they are.
+		const bool lanes = !waiting() && (!changes.contains("mode") || changes.at("mode") == m_pattern.at("mode")) &&
+			(!changes.contains("length") || changes.at("length") >= m_pattern.at("length"));
 		changes["pattern"] = m_pattern.at("id");
-		m_binding.send("pattern.set", changes);
+		Json sent = behind() ? m_sent : Json::object();
+		sent.update(changes);
+		if (lanes)
+			sent["lanes"] = m_pattern.at("lanes");
+		else
+			sent.erase("lanes");
+		m_sent = std::move(sent);
+		m_answered = 0;
+		m_binding.send("pattern.set", changes,
+			[this, alive = std::weak_ptr<bool>(m_alive), sent = m_sent](const engine::Result& result)
+			{
+				if (alive.expired() || m_sent != sent)
+					return; // another pattern.set went after it
+				m_answered = m_binding.handed();
+				// The pattern as the engine has it now shows: a mode switch may have cleared its lanes, a shorter
+				// Number of Steps dropped steps (#1410). Refused, the engine's pattern shows again.
+				m_sent = nullptr;
+				if (result.ok())
+				{
+					m_sent = result.value.at("pattern");
+					m_sent["pattern"] = m_sent.at("id");
+					m_sent.erase("id");
+				}
+				if (m_gesture == Gesture::None)
+					load();
+			});
 	}
 
 	void PatternEditor::tie(bool split)
@@ -586,7 +624,7 @@ namespace gnubase::ui
 		const Rml::Element* root = m_root.get();
 		const std::optional<int> index = numberOf(target, "index", root);
 		const std::optional<int> pitch = numberOf(target, "pitch", root);
-		if (!m_pattern.is_object() || !index)
+		if (!m_pattern.is_object() || !index || waiting())
 			return;
 		m_changed = false;
 		m_edited.clear();
