@@ -740,7 +740,8 @@ namespace gnubase::engine
 			{"lock", event.lock}, {"fadeIn", toJson(event.fadeIn)}, {"fadeOut", toJson(event.fadeOut)},
 			{"crossfade", toJson(event.crossfade)}, {"snapPoint", event.snapPoint ? Json(*event.snapPoint) : Json()},
 			{"color", colorJson(event.color)}, {"part", event.part}, {"lane", event.lane},
-			{"volumeCurve", toJson(event.volumeCurve)}, {"front", event.front}, {"rank", event.rank}};
+			{"volumeCurve", toJson(event.volumeCurve)}, {"front", event.front}, {"rank", event.rank},
+			{"rootKey", rootKeyName(event.rootKey)}, {"globalTranspose", event.independent ? "independent" : "follow"}};
 		// Only an origin in the event's time base still counts (#145): one from before the track's time base changed
 		// is gone, as the event isn't where quantizing put it.
 		if (const auto& origin = event.quantizeOrigin; origin &&
@@ -2490,6 +2491,9 @@ namespace gnubase::engine
 			event.lane = std::max(0, item.value("lane", 0)); // files from before #98 have no lanes
 			event.front = item.value("front", ObjectId{0});  // nor from before #99 a stack order
 			event.rank = item.value("rank", int64_t{0});     // nor from before #1281 ranks of a split's pieces
+			// nor from before #1368 a root key and Global Transpose
+			event.rootKey = rootKeyFromName(item.value("rootKey", std::string())).value_or(-1);
+			event.independent = item.value("globalTranspose", std::string("follow")) == "independent";
 			if (const auto origin = item.find("quantizeOrigin"); origin != item.end()) // files from before #145
 				event.quantizeOrigin = EventQuantizeOrigin{
 					eventTimingFrom(origin->at("original"), event), eventTimingFrom(origin->at("quantized"), event)};

@@ -185,8 +185,9 @@ namespace gnubase::engine
 			});
 		add(engine,
 			{"transpose.assignRootKey", 1,
-				"Set Root Key for Unassigned Events: every MIDI part without a root key gets the project root key "
-				"(project.set rootKey), so that it follows later changes of it. Refused without a project root key.",
+				"Set Root Key for Unassigned Events: every MIDI part and audio event without a root key gets the "
+				"project root key (project.set rootKey), so that it follows later changes of it. Refused without a "
+				"project root key.",
 				objectSchema({}), Json::object(), false},
 			[](Project& project, CommandContext& context)
 			{
@@ -197,18 +198,32 @@ namespace gnubase::engine
 						part.rootKey = project.rootKey;
 						context.emit("midiPart.changed", {{"part", toJson(part)}});
 					}
+				for (auto& [id, event] : project.audioEvents)
+					if (event.rootKey < 0)
+					{
+						event.rootKey = project.rootKey;
+						context.emit("audioEvent.changed", {{"event", toJson(event)}});
+					}
 				// The parts stashed in inactive track versions get it too, so that activating such a version shows
 				// them with it (#896). They lie inside their track, which is announced as changed.
 				for (auto& [id, track] : project.trackById)
 				{
 					bool changed = false;
 					for (TrackVersion& version : track.versions)
+					{
 						for (MidiPart& part : version.midiParts)
 							if (part.rootKey < 0)
 							{
 								part.rootKey = project.rootKey;
 								changed = true;
 							}
+						for (AudioEvent& event : version.audioEvents)
+							if (event.rootKey < 0)
+							{
+								event.rootKey = project.rootKey;
+								changed = true;
+							}
+					}
 					if (changed)
 						context.emit("track.changed", {{"track", toJson(track)}});
 				}

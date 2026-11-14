@@ -623,7 +623,7 @@ namespace gnubase::engine
 		{
 			paths[media.id] = media.path;
 			if (!media.warp.empty())
-				warps[media.id] = {media.warp, media.preset};
+				warps[media.id] = {media.warp, media.preset, media.pitch};
 		}
 		m_mediaPaths = paths;
 		m_auditionTracks.clear();

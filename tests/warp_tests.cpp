@@ -10,6 +10,7 @@
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <pugixml.hpp>
@@ -121,6 +122,16 @@ namespace
 		return std::sqrt(sum / 1200.0);
 	}
 
+	// The frequency from the zero crossings of 9600 frames (0.2 s at 48 kHz) from a frame.
+	double frequency(const std::vector<float>& samples, size_t from)
+	{
+		int crossings = 0;
+		for (size_t i = from + 1; i < from + 9600; ++i)
+			if ((samples[i - 1] < 0.0F) != (samples[i] < 0.0F))
+				++crossings;
+		return crossings / 2.0 / 0.2;
+	}
+
 	// The loop as a clip, and an event of it at the project start on a new audio track.
 	struct Loop
 	{
@@ -224,6 +235,80 @@ TEST_CASE("a warp reader plays clicks where its map puts them", "[unit]")
 	checkClicks(placed, {54000.0, 66000.0});
 	CHECK_THROWS(engine::dsp::WarpReader(
 		engine::AudioFileReader::open(file), {{0.0, 0.0}}, engine::dsp::StretchPreset::Quality));
+}
+
+TEST_CASE("a warp reader shifts the pitch where its pitch map says", "[unit]")
+{
+	const test::TempDir dir;
+	const std::string file = (dir.path() / "sine.wav").u8string();
+	test::writeWav(file, sine(96000));
+	// As long as the file, an octave up from frame 48000 (#1368).
+	const std::vector<engine::dsp::WarpPoint> map{{0.0, 0.0}, {96000.0, 96000.0}};
+	engine::dsp::WarpReader reader(
+		engine::AudioFileReader::open(file), map, engine::dsp::StretchPreset::Quality, {{0.0, 0.0}, {48000.0, 12.0}});
+	REQUIRE(reader.info().frames == 96000);
+	std::vector<float> output(96000);
+	REQUIRE(reader.read(output.data(), output.size()) == output.size());
+	CHECK(std::abs(frequency(output, 24000) - 750.0) < 15.0);
+	CHECK(std::abs(frequency(output, 72000) - 1500.0) < 15.0);
+	// After a seek into the shifted part, it plays shifted from there.
+	reader.seek(60000);
+	std::vector<float> after(36000);
+	REQUIRE(reader.read(after.data(), after.size()) == after.size());
+	CHECK(std::abs(frequency(after, 12000) - 1500.0) < 15.0);
+}
+
+TEST_CASE("a warp reader plays clicks after a pitch point where its map puts them", "[unit]")
+{
+	// The stretcher's latency depends on the pitch: the reader starts over at a pitch point, or the clicks after it
+	// would play early (up) or late (down) by the difference (#1368).
+	const double semitones = GENERATE(12.0, -12.0);
+	CAPTURE(semitones);
+	const test::TempDir dir;
+	const std::string file = (dir.path() / "clicks.wav").u8string();
+	test::writeWav(file, clicks({6000, 18000, 30000, 42000}, 48000));
+	const std::vector<engine::dsp::WarpPoint> map{{0.0, 0.0}, {48000.0, 48000.0}};
+	engine::dsp::WarpReader reader(
+		engine::AudioFileReader::open(file), map, engine::dsp::StretchPreset::Quality, {{24000.0, semitones}});
+	std::vector<float> output(48000);
+	size_t done = 0;
+	while (done < output.size())
+	{
+		const size_t got = reader.read(output.data() + done, std::min<size_t>(4096, output.size() - done));
+		REQUIRE(got > 0);
+		done += got;
+	}
+	checkClicks(output, {6000.0, 18000.0, 30000.0, 42000.0});
+
+	// After a seek before the point, the same.
+	reader.seek(12000);
+	std::vector<float> after(36000);
+	REQUIRE(reader.read(after.data(), after.size()) == after.size());
+	std::vector<float> placed(12000, 0.0F);
+	placed.insert(placed.end(), after.begin(), after.end());
+	checkClicks(placed, {18000.0, 30000.0, 42000.0});
+}
+
+TEST_CASE("an audio event that follows global transpose plays shifted in real time", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client{engine};
+	const Loop loop = addLoop(client, dir, sine(96000), "linear");
+	// An event in C in a project in E plays 4 semitones up (#1368), 945 Hz; from a second on a transpose event of an
+	// octave down puts it 8 semitones down, 472 Hz.
+	run(client, "project.set", {{"rootKey", "E"}});
+	run(client, "audioEvent.set", {{"event", loop.event}, {"rootKey", "C"}});
+	run(client, "transpose.add", {{"position", 2 * g_ticksPerQuarter}, {"value", -12}});
+	const double up = 750.0 * std::pow(2.0, 4.0 / 12.0);
+	const double down = 750.0 * std::pow(2.0, -8.0 / 12.0);
+	std::vector<float> played = render(client, 96000);
+	CHECK(std::abs(frequency(played, 12000) - up) < 15.0);
+	CHECK(std::abs(frequency(played, 72000) - down) < 15.0);
+	// Independent, it plays its file as it is.
+	run(client, "audioEvent.set", {{"event", loop.event}, {"globalTranspose", "independent"}});
+	played = render(client, 96000);
+	CHECK(std::abs(frequency(played, 48000) - 750.0) < 15.0);
 }
 
 TEST_CASE("audio in musical mode follows tempo changes", "[integration]")

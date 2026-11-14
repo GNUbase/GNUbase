@@ -24,15 +24,15 @@ know loads with what it knows; those are left out. Its `grids` entries with a ti
 doesn't know are kept, though (`SnapSettings::newerGrids`, #565): `snap.get` doesn't show them, but saving writes them
 back for the newer build, until another grid type is chosen here for that format. Loading reads a format's grid
 type from `grids`, and `grid` only when `grids` has none it can use (settings from before #413). Damaged values
-(`on` that isn't true or false, a number for a name) are left out, not the rest of the project's extension entry. The grid follows the project
-window's ruler, which the project keeps. Two things set `format`: the ruler's time format menu (`snap.set`), and a
-new time format in the project setup (`project.set {timeFormat}`, #78, p. 69), which the engine makes the snap
-format in the same command, and again on undo and redo of it, emitting `snap.changed`; the ruler follows. So the
-project setup's time format sets the ruler, the ruler can choose its own afterwards (pp. 69, 317), and the grid types
-are always the ruler's format's (pp. 105, 109); snapping is the same with and without a UI, and a `snap.set {format}`
-right after it stays. The transport's primary time display shows the project setup's time format (p. 317), so the
-ruler and the primary time display can differ; picking a format in the ruler's menu with Ctrl (Cmd on macOS) held
-sets both (`project.setTimeFormat`, p. 69).
+(`on` that isn't true or false, a number for a name) are left out, not the rest of the project's extension entry. The
+grid follows the project window's ruler, which the project keeps. Two things set `format`: the ruler's time format menu
+(`snap.set`), and a new time format in the project setup (`project.set {timeFormat}`, #78, p. 69), which the engine
+makes the snap format in the same command, and again on undo and redo of it, emitting `snap.changed`; the ruler follows.
+So the project setup's time format sets the ruler, the ruler can choose its own afterwards (pp. 69, 317), and the grid
+types are always the ruler's format's (pp. 105, 109); snapping is the same with and without a UI, and a
+`snap.set {format}` right after it stays. The transport's primary time display shows the project setup's time format
+(p. 317), so the ruler and the primary time display can differ; picking a format in the ruler's menu with Ctrl
+(Cmd on macOS) held sets both (`project.setTimeFormat`, p. 69).
 
 The frame grids have the project's frame rate (project setup, `project.set {frameRate}`, #78), with its pull-down;
 `userFrames` has the user's, 30 fps until that is a setting of its own (`time::g_userFramesPerSecond`), in the event
@@ -93,9 +93,10 @@ the project start. The sample grids count from the project start, as the samples
   which isn't muted, and where events overlap (takes on lanes, the stack of #99) the one in front; of two at the same
   place in the stack (pieces of a split from projects before #1189) the one with the higher id, as in playback. A
   muted event plays nothing; as in playback, it hides nothing with `editing.treatMutedAudioLikeDeleted` on (the
-  default), and with it off keeps its place in the stack, where nothing plays on its track ([comping.md](comping.md)). A position moves only to where that event plays (`zeroCrossingBetween`): strictly inside it and its part,
-  and not under an event in front of it, so that a range's edge never lands on audio that doesn't play there (#1086);
-  a frame of a file at another sample rate that rounds back onto such a bound goes a sample inside it (#1179).
+  default), and with it off keeps its place in the stack, where nothing plays on its track ([comping.md](comping.md)). A
+  position moves only to where that event plays (`zeroCrossingBetween`): strictly inside it and its part, and not under
+  an event in front of it, so that a range's edge never lands on audio that doesn't play there (#1086); a frame of a
+  file at another sample rate that rounds back onto such a bound goes a sample inside it (#1179).
 - **What is heard** (#1179). The crossing is always one of the file of the event that plays in front. In a warped or
   stretched event it is found in the file and mapped through the warp: the stretched audio is near zero there but
   needn't cross it exactly, as finding it there would mean running the stretcher on the command thread. Where a
@@ -155,10 +156,10 @@ shuffling forwards, backwards, to the end and to the front, its errors and a loc
   still splits it, and one just outside an event leaves it alone; `snap.zeroCrossings` inside an event, outside it and
   on tracks without audio, and following the event in front, not a muted one, nor one outside its part or in a muted
   part; with `editing.treatMutedAudioLikeDeleted` off, a muted event in front keeps the event behind it from moving a
-  position, which goes to the next track's event, and bounds where that event plays; a position moving only to where that event plays, not past its part's end, under an event in front of it, nor
-  between two such events; of the two overlapping pieces of a split event the one playback plays in front, in the
-  overlap and just before it; a position kept strictly inside a part whose start a file at another sample rate rounds a
-  crossing onto.
+  position, which goes to the next track's event, and bounds where that event plays; a position moving only to where
+  that event plays, not past its part's end, under an event in front of it, nor between two such events; of the two
+  overlapping pieces of a split event the one playback plays in front, in the overlap and just before it; a position
+  kept strictly inside a part whose start a file at another sample rate rounds a crossing onto.
 - `tests/eventediting_tests.cpp` (fake window system, real engine): with snap on, a drag, a resize and an Alt click land
   on bars, shuffle swaps two parts, events, a position marker and the cursor attract, a position marker and a cycle
   marker's end on a linear marker track that isn't active attract a drag where `snap.position` puts it, a snap point set

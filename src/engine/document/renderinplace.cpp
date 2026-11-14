@@ -346,10 +346,19 @@ namespace gnubase::engine
 							run("clip.add", {{"media", mediaFile.at("id")}}).at("clip").at("id").get<ObjectId>();
 						const time::Position at = time::rebase({time::TimeBase::Linear, *spans[i].start},
 							project.trackById.at(track).timeBase, project.tempo, project.sampleRate);
-						events.push_back(
+						const Json event =
 							run("audioEvent.add", {{"track", track}, {"clip", clip}, {"position", at.value}})
 								.at("event")
-								.at("id"));
+								.at("id");
+						// The render holds the global transposition: as recorded events (#1368, reference manual
+						// p. 420), it follows the project root key, or with transpose events is independent of it.
+						const bool transposed = !project.transpose.events.empty();
+						if (transposed || project.rootKey >= 0)
+							run("audioEvent.set",
+								{{"event", event},
+									{"rootKey", transposed ? std::string() : rootKeyName(project.rootKey)},
+									{"globalTranspose", transposed ? "independent" : "follow"}});
+						events.push_back(event);
 						added.push_back(track);
 						media.push_back(mediaFile.at("id"));
 

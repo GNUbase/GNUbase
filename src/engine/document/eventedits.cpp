@@ -1136,7 +1136,13 @@ namespace gnubase::engine
 							std::clamp(point.volume + each.volume - loudest, g_minEventVolume, g_maxEventVolume);
 					curve.insert(curve.end(), own.begin(), own.end());
 				}
-				// Events that continue each other in a clip become one event.
+				// Events that continue each other in a clip become one event, with the first one's root key and Global
+				// Transpose: refused for events that follow global transpose differently, as for MIDI parts (#1368).
+				for (size_t i = 1; i < items.size(); ++i)
+					require(items[i].audio->independent == first.audio->independent &&
+							rootKeyTranspose(project, *items[i].audio) == rootKeyTranspose(project, *first.audio),
+						"audio events that follow global transpose differently, by their root key or Global "
+						"Transpose, don't glue");
 				for (size_t i = 1; i < items.size(); ++i)
 				{
 					first.audio->length += items[i].audio->length;
@@ -1988,7 +1994,9 @@ namespace gnubase::engine
 		}
 
 		// Delete Time: the transpose events in the range go with it, and those after it move back by the gap, so that
-		// they keep their place in the music, which moves back too (#896).
+		// they keep their place in the music, which moves back too (#896). The transposition in force at the range's
+		// end goes on from the cut, so that the music after the range keeps its pitch (#1367), as Process Bars carries
+		// the signature in force.
 		void closeTransposeEvents(Project& project, const std::vector<ObjectId>& tracks, const Range& range,
 			const Gap& gap, CommandContext& context)
 		{
@@ -1996,21 +2004,37 @@ namespace gnubase::engine
 				return;
 			std::vector<TransposeEvent>& events = project.transpose.events;
 			bool changed = false;
+			int before = 0;             // the value in force at the range's start
+			std::optional<int> dropped; // the value in force at its end, if an event in the range set it
+			bool atEnd = false;         // an event at the range's end, which moves to the cut
 			for (auto it = events.begin(); it != events.end();)
 			{
 				const time::Samples at = samples(project, it->position);
+				if (at < range.start)
+					before = it->value;
 				if (at >= range.start && at < range.end)
 				{
+					dropped = it->value;
 					it = events.erase(it);
 					changed = true;
 					continue;
 				}
 				if (at >= range.end)
 				{
+					atEnd = atEnd || at == range.end;
 					it->position.value -= gap.in(it->position.base);
 					changed = true;
 				}
 				++it;
+			}
+			if (dropped && !atEnd && *dropped != before)
+			{
+				const time::TimeBase base = project.trackById.at(transposeTrackId(project)).timeBase;
+				TransposeEvent carried;
+				carried.id = project.newId();
+				carried.position = {base, inBase(project, range.start, base)};
+				carried.value = *dropped;
+				events.push_back(carried);
 			}
 			if (changed)
 			{
@@ -2807,7 +2831,8 @@ namespace gnubase::engine
 				"events split at the nearest point within 50 ms "
 				"and inside the event where their audio crosses zero. The pieces of a pattern event continue its "
 				"pattern (patternOffset). The piece of a quantized audio event after the split keeps where it "
-				"was before quantizing, shifted by the split, so that quantize.reset puts both pieces back. "
+				"was before quantizing, shifted by the split, so that quantize.reset puts both pieces back, or "
+				"removes the piece after a split past the original's length, which has nothing of it. "
 				"Returns the new events after the splits.",
 				schema({{"events", events()}, {"positions", {{"type", "array"}, {"items", integer()}}},
 						   {"splitNotes", boolean()}, {"zeroCrossing", boolean()}},
@@ -2966,7 +2991,8 @@ namespace gnubase::engine
 					"with virgin territory (automation.set) the range becomes a gap instead, the point at its start a "
 					"terminator. time (Delete Time) closes the gap: what comes after the range on its tracks moves "
 					"back by its length, in ticks on musical tracks, and the transpose events in the range go with it, "
-					"those after it moving back too, unless the transpose track is locked. Locked events stay. Without "
+					"those after it moving back too, and the transposition in force at its end goes on from its "
+					"start, unless the transpose track is locked. Locked events stay. Without "
 					"time it also takes the range out of the cycle markers that it lies in, on the marker tracks among "
 					"its tracks (reference manual p. 425): a cycle marker that starts or ends where the range does "
 					"gets shorter, and one that reaches past both of its edges is split in two, the part after the "

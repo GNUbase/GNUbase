@@ -464,14 +464,23 @@ namespace gnubase::engine::midi
 					context.emit("audioEvent.changed", {{"event", toJson(event)}});
 				}
 				Clip& clip = project.clips.at(event.clip);
-				if (resetWarpQuantize(clip))
+				if (!event.lock && resetWarpQuantize(clip))
 				{
 					clips.push_back(clip.id);
 					context.emit("clip.changed", {{"clip", toJson(clip)}});
 				}
 			}
 			if (!removed.empty())
+			{
+				// Removing a piece ends the crossfades from it. An event left out whose crossfade from the piece is
+				// still as the panel left it keeps its origin in step, so that resetting it later still puts back
+				// its crossfade from before quantizing rather than taking the ended one for a change by other means.
+				for (auto& [other, each] : project.audioEvents)
+					if (each.quantizeOrigin && each.crossfade == each.quantizeOrigin->quantized.crossfade &&
+						std::find(removed.begin(), removed.end(), Json(each.crossfade.from)) != removed.end())
+						each.quantizeOrigin->quantized.crossfade = Crossfade();
 				model.runEdit("event.remove", project, {{"events", removed}}, context);
+			}
 			result["events"] = std::move(moved);
 			result["removed"] = std::move(removed);
 			result["clips"] = std::move(clips);
@@ -675,8 +684,10 @@ namespace gnubase::engine::midi
 				"parts in audioParts) go back to their positions, offsets, lengths and crossfades before quantizing, "
 				"so the crossfades quantize.crossfade made go and the ones they had before come back, and their "
 				"clips go back to their warp markers before warp quantizing, unless they were changed by other means "
-				"since; returns those events and clips too. A piece of an event split past the end of its original, "
-				"made of length the quantize panel added, has nothing to go back to and is removed (removed).",
+				"since; returns those events and clips too. Locked events stay as they are, and their clips' warp "
+				"markers too. A piece of an event split "
+				"past its original's length, which the quantize panel added, has nothing of the original to go back "
+				"to and is removed (removed).",
 				objectSchema(audioProperties), resetResult, false},
 			"Reset quantize",
 			[&model](Project& project, CommandContext& context)
