@@ -38,6 +38,8 @@ its track's.
   are drawn over them by the style sheets as before. Audio events' waveforms are in the same color where the theme
   tints own colors. The default theme shows events tinted: a translucent body in the color, the outline and the
   waveform in a lighter shade of it, and selected events lit over it (#1312); the other themes fill events opaque.
+  The tint outlines colored events also where the theme gives uncolored ones no outline, and waveforms keep the
+  events' inset off their lanes' edges themselves (#1332, [canvas.md](canvas.md)).
 - **Select Color for Selected Tracks or Events** (pp. 112–115): the toolbar's `#select-color` opens `#color-menu`,
   which `ui::ColorMenu` (`src/ui/colormenu.h`) fills from the color set each time it opens, a swatch and the name per
   color. With events selected in the display, a color goes to them (`event.set`) and the first item, Set Event Color
@@ -67,6 +69,12 @@ color (p. 1621, with the mixer, #106, and the inspector, #89), and the MIDI edit
   `editing.applyFolderColor`. In the app's project window: the track list's strip and the event lanes' colors
   following track and event colors; the color menu on selected tracks and events, both reset items and the undo step;
   the setup dialog's remove, duplicate, recolor, insert, apply, reset to factory settings and cancel.
-- `tests/canvas_tests.cpp`: an event with a color of its own is filled with it, outlined by `stroke-color`.
+- `tests/canvas_tests.cpp`: an event with a color of its own is filled with it, outlined by `stroke-color`, or by
+  the tinted color in `stroke-width` with `own-color-tint`, also without a `stroke-color`; a waveform in the tinted
+  color, `event-inset` inside its padding.
+- `tests/theme_tests.cpp`: only the default theme tints own colors and insets events; the other themes leave events
+  as they were.
+- `tests/uiapp_tests.cpp`: the golden image `event-colors.png` shows a colored audio event with its waveform and
+  colored parts plain, selected and muted in the default theme.
 - `tests/dawproject_tests.cpp`: track, event and part colors and the color set come back from the file, and the
   colors from project.xml alone.

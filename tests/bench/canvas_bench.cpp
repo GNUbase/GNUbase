@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The canvas benchmark (#55): 10,000 events on 100 tracks under a ruler, in a window drawn through SDL_GPU with vsync
-// in the default theme, as the app draws. Three phases: scrolling a zoomed-in view across and down, scrolling with
+// in the default theme, as the app draws, half of them in colors of their own (#1332), which the theme fills and tints.
+// Three phases: scrolling a zoomed-in view across and down, scrolling with
 // all 10,000 events in view, and zooming with all of them in view, which builds their geometry every frame. For each
 // it prints the frames per second against the display's refresh rate and the frames that came later than one
 // refresh. It needs a display and a GPU; build a Release configuration for meaningful numbers. Exit code 1 if a phase
@@ -20,8 +21,10 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <exception>
 #include <filesystem>
@@ -39,6 +42,7 @@ namespace
 	constexpr double g_spacing = 1000.0; // units between events on a track
 	constexpr double g_length = 600.0;   // units an event lasts
 	constexpr double g_project = g_eventsPerTrack * g_spacing;
+	constexpr std::array<uint32_t, 4> g_colors{0xe0505affU, 0xf0a030ffU, 0x50c878ffU, 0x6080f0ffU};
 
 	struct Phase
 	{
@@ -127,7 +131,8 @@ int main(int argc, char** argv)
 			body { position: absolute; left: 0; top: 0; right: 0; bottom: 0; margin: 0; }
 			ruler { width: 100%; height: 24dp; }
 			event-lanes { width: 100%; height: 960dp; }
-		</style></head><body><ruler id="ruler"/><event-lanes id="lanes"/></body></rml>)");
+		</style></head><body><ruler id="ruler"/>
+		<div class="event-display"><event-lanes id="lanes" class="events"/></div></body></rml>)");
 		if (document == nullptr)
 			throw std::runtime_error("the benchmark document doesn't load");
 		document->Show();
@@ -137,7 +142,11 @@ int main(int argc, char** argv)
 		std::vector<ui::EventLanes::Lane> tracks(g_tracks);
 		for (int track = 0; track < g_tracks; ++track)
 			for (int i = 0; i < g_eventsPerTrack; ++i)
-				tracks[track].events.push_back({(i * g_spacing) + ((track * 37) % 400), g_length});
+			{
+				// Every other event in a color of its own, from a few hues.
+				const uint32_t color = i % 2 == 0 ? 0U : g_colors[(track + i) % g_colors.size()];
+				tracks[track].events.push_back({(i * g_spacing) + ((track * 37) % 400), g_length, color});
+			}
 		const auto heights = [&](float height)
 		{
 			for (ui::EventLanes::Lane& lane : tracks)

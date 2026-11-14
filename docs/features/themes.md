@@ -10,8 +10,10 @@ how each state looks (CLAUDE.md, "UI conventions"). The code is in `src/ui/theme
   `p` and the like blocks. They hold no colors, fonts, font sizes or skins (`tests/theme_tests.cpp` checks the sizes).
 - **Themes.** A theme is a folder in `resources/themes` with its skins (SVG), `manifest.json`, `tokens.json` and
   `theme.rcss`. `tools/skin/generate.py` makes all of them from one table of tokens per theme (colors, radii, border
-  widths, font sizes and families), so the skins and the style sheet always agree; change the generator and run it
-  again rather than editing its output (`resources/themes/README.md`); CI's format job runs it into a temporary folder
+  widths, font sizes and families, and the events' look: how opaque colored events' bodies are, the one shade that
+  tints their outline and waveform and how far, and how far events keep off their lanes' edges), so the skins and
+  the style sheet always agree; change the generator and run it again rather than editing its output
+  (`resources/themes/README.md`); CI's format job runs it into a temporary folder
   and fails when the output differs from `resources/themes`, naming the files that differ. `theme.rcss` gives each
   widget state its colors, fonts and skin, all inside `@media (theme: <name>)`. The manifest's `theme` is the theme's
   id, its folder's name, which `ui.theme` stores, and its `displayName` the name the UI shows for it, so a document
