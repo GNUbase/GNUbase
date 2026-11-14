@@ -330,6 +330,7 @@ namespace
 		const auto width = static_cast<float>(panel->pixelSize().width);
 		INFO("last control ends at " << last << " of " << width << " pixels; usable width " << usable);
 		CHECK(last > 0);
+		CHECK(app.shell().bounds(panel->id()).width <= usable); // never wider than the monitor has room for
 		if (inside)
 			CHECK(width - last <= (16.0F * dpRatio) + 1.0F);
 		else // the sections are wider than the monitor has room for
