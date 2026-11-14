@@ -86,7 +86,8 @@ namespace gnubase::ui
 		// it is on its way: it doesn't have the lanes sent (m_sent) yet (#1202).
 		bool behind() const;
 		// Whether a pattern.set of set() that changes the lanes in the engine, a mode switch or a shorter Number of
-		// Steps, is on its way: the editor takes no edit of the steps until its answer brings them (#1410).
+		// Steps, is on its way: the editor takes no edit of the lanes until its answer brings them (#1410), and shows a
+		// project read before it as it is (#1532).
 		bool waiting() const;
 		// Sends the lanes as they are now in one pattern.set, an undo step named description, with changes of the
 		// pattern's other fields, which the pattern shown gets too; if it is refused, the engine's pattern shows again.
