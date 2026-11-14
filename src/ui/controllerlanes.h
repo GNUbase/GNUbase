@@ -27,7 +27,9 @@ namespace gnubase::ui
 	// Fills the key editor's controller display: a lane per entry of the editor view's lanes, each showing the notes'
 	// velocities, off velocities, play probabilities or velocity variances as bars, or controller events of a type
 	// as steps, under the note display and on its time axis; a menu per lane to change its type, select its events,
-	// remove it and apply or reset play probability and velocity variance; and buttons for the Create Controller Lane
+	// remove it and apply or reset play probability and velocity variance; a context menu that a right click below a
+	// lane's name opens, to add lanes and remove that one (reference manual p. 1261); and buttons for the Create
+	// Controller Lane
 	// and Controller Lane Setup menus, with the lane presets of the user setting ui.controllerLanePresets. The key
 	// editor's tool edits the lanes: Object Selection selects controller events and drags values, Draw paints values
 	// and events, Erase removes events, Line draws in its mode with controller.line. Every edit goes to the engine.
@@ -150,7 +152,7 @@ namespace gnubase::ui
 		engine::Json m_presets = engine::Json::array();
 		bool m_presetsKnown = false;
 		std::vector<Subscription> m_subscriptions;
-		std::vector<Rml::ObserverPtr<Rml::Element>> m_menus; // lane, create and setup menus
+		std::vector<Rml::ObserverPtr<Rml::Element>> m_menus; // lane, create, setup and lane context menus
 		std::optional<size_t> m_menuLane;                    // the lane whose menu opened
 		Rml::ObserverPtr<Rml::Element> m_dialog;
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it's gone
