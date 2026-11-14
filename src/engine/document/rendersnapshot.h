@@ -114,6 +114,10 @@ namespace gnubase::engine
 		double value = 0.0;
 	};
 
+	// RenderController::part of a sound slot's output events (#175): they are the track's, whichever part's note sent
+	// them, so a chase limited to the parts under the position takes them too (#1521).
+	constexpr int32_t g_soundSlotPart = -2;
+
 	struct RenderController
 	{
 		time::Samples position = 0;
@@ -122,7 +126,7 @@ namespace gnubase::engine
 		uint32_t value = 0;
 		uint8_t channel = 0;
 		std::vector<uint8_t> data; // SysEx
-		int32_t part = -1;         // the index of its MIDI part in the channel's midiParts
+		int32_t part = -1;         // the index of its MIDI part in the channel's midiParts, or g_soundSlotPart
 	};
 
 	struct RenderPart

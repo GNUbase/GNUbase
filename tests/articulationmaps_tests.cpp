@@ -726,6 +726,55 @@ TEST_CASE(
 	CHECK(keySwitches == std::vector<int64_t>{96000 - 1});
 }
 
+TEST_CASE("key switches at one sample go out in the order the track sends them", "[unit]")
+{
+	Fixture f;
+	f.strings();
+	// Two parts over each other with a note each where bar 2 starts: the first part's plays Pizzicato, C#0 (25), the
+	// second's Arco, C0 (24), sent after it (#1521). The instrument ends in Arco, so the second part's next Arco note
+	// sends nothing.
+	f.call("controller.add",
+		{{"part", f.part},
+			{"controllers", {{{"position", 0}, {"type", "articulation"}, {"articulation", "Pizzicato"}}}}});
+	f.call("midiPart.set", {{"part", f.part}, {"length", 2 * g_bar}});
+	const Json other =
+		f.call("midiPart.add", {{"track", f.track}, {"position", 0}, {"length", 2 * g_bar}}).at("part").at("id");
+	const auto note = [&f](const Json& part, int64_t position, int pitch)
+	{
+		f.call("note.add",
+			{{"part", part},
+				{"notes", {{{"position", position}, {"length", 60}, {"pitch", pitch}, {"velocity", 0.5}}}}});
+	};
+	note(f.part, g_bar, 62);
+	note(other, g_bar, 60);
+	note(other, g_bar + g_quarter, 64);
+	std::vector<std::pair<int64_t, int>> keySwitches;
+	for (const engine::RenderNote& played : f.rendered().notes)
+		if (played.keySwitch)
+			keySwitches.emplace_back(played.start, played.pitch);
+	CHECK(keySwitches == std::vector<std::pair<int64_t, int>>{{96000 - 1, 25}, {96000 - 1, 24}});
+}
+
+TEST_CASE("sends before the modifiers get the sound slots' key switches", "[unit]")
+{
+	Fixture f;
+	f.strings();
+	f.call("note.add",
+		{{"part", f.part}, {"notes", {{{"position", g_quarter}, {"length", 60}, {"pitch", 60}, {"velocity", 0.5}}}}});
+	f.call("channel.set",
+		{{"channel", f.trackJson().at("channel")}, {"modifiers", {{"transpose", 12}}},
+			{"midiSends", {{"pre", true}, {"slots", {{{"effect", "transformer"}}}}}}});
+	// Arco's C0 (24) a sample before the note, which the sends get without the transpose.
+	const engine::RenderChannel channel = f.rendered();
+	CHECK(notePlaying(channel, 72).start == 24000);
+	REQUIRE(channel.preNotes.size() == 2);
+	CHECK(channel.preNotes[0].pitch == 24);
+	CHECK(channel.preNotes[0].keySwitch);
+	CHECK(channel.preNotes[0].start == 24000 - 1);
+	CHECK(channel.preNotes[1].pitch == 60);
+	CHECK_FALSE(channel.preNotes[1].keySwitch);
+}
+
 TEST_CASE("Merge MIDI in Loop takes the directions in effect where the range starts", "[unit]")
 {
 	Fixture f;
