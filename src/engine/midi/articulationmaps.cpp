@@ -17,6 +17,7 @@
 #include <limits>
 #include <optional>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <tuple>
@@ -362,6 +363,20 @@ namespace gnubase::engine::midi
 			return Json::object();
 		}
 
+		// The sound slot each note of a part plays (#1498), as the sound slots lane shows it.
+		Json listSoundSlots(Project& project, CommandContext& context)
+		{
+			const auto id = context.parameters().at("part").get<ObjectId>();
+			const auto part = project.midiParts.find(id);
+			require(part != project.midiParts.end(), "no MIDI part " + std::to_string(id));
+			const ArticulationMap* map = articulationMapOf(project, part->second.track);
+			Json notes = Json::array();
+			if (map != nullptr)
+				for (const auto& [note, slot] : soundSlots(*map, part->second))
+					notes.push_back({{"note", note}, {"slot", slot}, {"name", map->slots.at(slot).name}});
+			return {{"map", map != nullptr ? map->id : 0}, {"notes", notes}};
+		}
+
 		Json importMap(Project& project, CommandContext& context)
 		{
 			const std::string path = context.parameters().at("path").get<std::string>();
@@ -501,6 +516,28 @@ namespace gnubase::engine::midi
 				parsed.controllers[controller.id] = std::move(controller);
 			}
 		return soundSlots(articulationMapFromJson(map, ArticulationMap()), parsed);
+	}
+
+	std::string joinNames(const std::vector<std::string>& names)
+	{
+		std::string text;
+		for (const std::string& name : names)
+			text += (text.empty() ? "" : ", ") + name;
+		return text;
+	}
+
+	std::vector<std::string> splitNames(const std::string& text)
+	{
+		std::vector<std::string> names;
+		std::string name;
+		for (std::istringstream stream(text); std::getline(stream, name, ',');)
+		{
+			name.erase(0, name.find_first_not_of(' '));
+			name.erase(name.find_last_not_of(' ') + 1);
+			if (!name.empty())
+				names.push_back(name);
+		}
+		return names;
 	}
 
 	void applyRemoteTriggers(const ArticulationMap& map, Json& notes, Json& controllers)
@@ -713,6 +750,23 @@ namespace gnubase::engine::midi
 				"the project as a new map. Emits articulationMap.added and returns the map.",
 				object({{"path", stringSchema}}, {"path"}), mapResult, false},
 			"Import articulation map", importMap);
+		model.addEdit(engine,
+			{"articulationMap.soundSlots", 1,
+				"The sound slot each note of a MIDI part plays (reference manual p. 1287), as the Articulations lane's "
+				"sound slots lane shows it: of each group the note's attribute, else the direction in effect at its "
+				"start, and the slot with exactly those articulations, else the closest one, else the default slot. "
+				"Returns map, the part's track's articulation map (0 for none), and notes, each {note, slot (the "
+				"slot's index in the map's slots), name (the slot's)}, by note id; none without a map or slots.",
+				object({{"part", idSchema}}, {"part"}),
+				object({{"map", idSchema},
+						   {"notes",
+							   {{"type", "array"},
+								   {"items",
+									   object({{"note", idSchema}, {"slot", idSchema}, {"name", stringSchema}},
+										   {"note", "slot", "name"})}}}},
+					{"map", "notes"}),
+				true},
+			"", listSoundSlots);
 	}
 }
 
