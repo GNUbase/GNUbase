@@ -2773,7 +2773,7 @@ namespace gnubase::engine
 							 }),
 				folded.end());
 		}
-		// A file's track visibility is checked as trackVisibility.set checks it, and hidden folders come in with
+		// A file's track visibility is checked as trackVisibility.set checks it, and hidden folders hide
 		// the tracks inside them (#906).
 		sanitizeTrackVisibility(project);
 		// Files from before the metronome have none; values that aren't valid keep their defaults.
