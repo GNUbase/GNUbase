@@ -574,6 +574,22 @@ TEST_CASE("remote triggers in a recording select sound slots", "[unit]")
 				Placed{{0, "Con sordino", true}, {0, "Pizzicato", false}, {1000, "Con sordino", false},
 					{2000, "Con sordino", true}, {5000, "Arco", true}, {5000, "Con sordino", true}});
 		}
+		SECTION("without latch, the default slot coming back leaves the groups of one still held alone")
+		{
+			// Arco, the default slot, plays Senza sordino of Sordino's group Mute. Pizzicato held, Sordino pressed
+			// meanwhile and held past Pizzicato's release: Arco is back in the group Technique there, but Sordino
+			// keeps the group Mute until its own release, as the track keeps it on while it records (#1718).
+			settings["latch"] = false;
+			settings["articulations"].push_back({{"name", "Senza sordino"}, {"type", "direction"}, {"group", 2}});
+			settings["slots"][0]["articulations"] = {"Senza sordino"};
+			f.call("articulationMap.set", settings);
+			const Json part =
+				record(Json::array({key(0, 5000, 37), key(1000, 8000, 40), key(6000, 100, 60)}), Json::array());
+			REQUIRE(part.at("notes").size() == 1);
+			CHECK(placed(part, 6000) ==
+				Placed{{0, "Con sordino", true}, {0, "Pizzicato", false}, {1000, "Con sordino", false},
+					{5000, "Arco", true}, {9000, "Con sordino", true}});
+		}
 		SECTION("a slot with an articulation of their groups takes their place there")
 		{
 			// Senza sordino of the group Mute and Tenuto of the group Accent; the slot Open plays both with Pizzicato
@@ -1273,6 +1289,33 @@ TEST_CASE("remote triggers played into a track select sound slots", "[integratio
 		call("audio.render", {{"frames", 64}});
 		CHECK(play({{0x90, 40, 100}, {0x90, 60, 100}, {0x80, 60, 0}, {0x80, 40, 0}}) ==
 			Played{{0xB0, 33, 127}, {0x90, 60}, {0x80, 60}, {0xB0, 33, 0}});
+		// Pressed again on another channel while it is on: off on the channel it went to, on on the new one, where
+		// its release ends it (#1718).
+		CHECK(play({{0x90, 40, 100}, {0x91, 40, 100}, {0x81, 40, 0}}) ==
+			Played{{0xB0, 33, 127}, {0xB0, 33, 0}, {0xB1, 33, 127}, {0xB1, 33, 0}});
+	}
+	SECTION("add-on slots follow the notes to the channel of another slot, also the default slot coming back")
+	{
+		// Arco, the default slot, plays Senza sordino of the add-on Sordino's group Mute. Pizzicato held, Sordino
+		// pressed meanwhile on Pizzicato's channel 3, Pizzicato released: Arco is back, Sordino stays on, as in a
+		// recording, and goes with the notes to channel 1 (#1718).
+		Json settings = stringsSettings();
+		settings["map"] = map;
+		settings["latch"] = false;
+		settings["groups"].push_back("Mute");
+		settings["articulations"].push_back({{"name", "Con sordino"}, {"type", "direction"}, {"group", 2}});
+		settings["articulations"].push_back({{"name", "Senza sordino"}, {"type", "direction"}, {"group", 2}});
+		settings["slots"][0]["articulations"] = {"Senza sordino"};
+		settings["slots"].push_back(
+			{{"name", "Sordino"}, {"addOn", true}, {"articulations", {"Con sordino"}}, {"trigger", 40},
+				{"outputs",
+					{{{"status", "controller"}, {"data1", 33}, {"data2", 127}},
+						{{"status", "controller"}, {"data1", 33}, {"data2", 0}, {"off", true}}}}});
+		call("articulationMap.set", settings);
+		call("audio.render", {{"frames", 64}});
+		CHECK(play({{0x90, 37, 100}, {0x90, 40, 100}, {0x80, 37, 0}, {0x90, 60, 100}, {0x80, 60, 0}, {0x80, 40, 0}}) ==
+			Played{{0x92, 25}, {0x82, 25}, {0xB2, 33, 127}, {0x90, 24}, {0x80, 24}, {0xB2, 33, 0}, {0xB0, 33, 127},
+				{0x90, 60}, {0x80, 60}, {0xB0, 33, 0}});
 	}
 	SECTION("add-on slots with latch")
 	{
@@ -1525,6 +1568,59 @@ TEST_CASE("add-on slots go out on the channel of the notes and follow it to anot
 	CHECK(found ==
 		std::vector<std::tuple<int64_t, int, uint32_t>>{{first.start, first.channel, on},
 			{second.start, first.channel, 0}, {second.start, 2, on}, {notePlaying(channel, 62).start, 2, 0}});
+}
+
+TEST_CASE("sound slots follow the notes to their own channels, as add-on slots do", "[unit]")
+{
+	Fixture f;
+	// An instrument track has no MIDI channel: the notes keep their own. Arco, the default slot, switches with the
+	// key C0; the add-on Legato turns on with controller 68 at 127 and off with it at 0 (#1718).
+	const Json settings = {{"name", "Add-on"}, {"groups", {"Legato"}},
+		{"articulations", {{{"name", "Legato"}, {"type", "attribute"}, {"group", 0}}}},
+		{"slots",
+			{{{"name", "Arco"}, {"outputs", {{{"status", "note"}, {"data1", 24}}}}},
+				{{"name", "Legato"}, {"articulations", {"Legato"}}, {"addOn", true},
+					{"outputs",
+						{{{"status", "controller"}, {"data1", 68}, {"data2", 127}},
+							{{"status", "controller"}, {"data1", 68}, {"data2", 0}, {"off", true}}}}}}}};
+	const auto id = f.call("articulationMap.add", settings).at("map").at("id");
+	f.call("track.set", {{"track", f.track}, {"articulationMap", id}});
+	const auto note = [](int64_t position, int pitch, int channel, Json articulations)
+	{
+		return Json{{"position", position}, {"length", g_quarter / 2}, {"pitch", pitch}, {"velocity", 0.5},
+			{"channel", channel}, {"articulations", std::move(articulations)}};
+	};
+	f.call("note.add",
+		{{"part", f.part},
+			{"notes",
+				{note(0, 60, 0, {"Legato"}), note(g_quarter, 61, 1, {"Legato"}),
+					note(2 * g_quarter, 62, 1, Json::array())}}});
+	const engine::RenderChannel channel = f.rendered();
+	const engine::RenderNote& first = notePlaying(channel, 60);
+	const engine::RenderNote& second = notePlaying(channel, 61);
+	REQUIRE(second.channel == 1);
+	// Arco's key switch before the first note on its channel, and again before the second on channel 2.
+	std::vector<std::pair<int64_t, int>> switches;
+	for (const engine::RenderNote& each : channel.notes)
+		if (each.pitch == 24)
+			switches.emplace_back(each.start, each.channel);
+	std::sort(switches.begin(), switches.end());
+	REQUIRE(switches.size() == 2);
+	CHECK(switches[0].first <= first.start); // at the project's start a key switch can't come earlier
+	CHECK(switches[0].second == 0);
+	CHECK(switches[1].first < second.start);
+	CHECK(switches[1].first > first.start);
+	CHECK(switches[1].second == 1);
+	// Legato goes the same way: off on channel 1 and on again on channel 2 with the second note.
+	std::vector<std::tuple<int64_t, int, uint32_t>> found;
+	found.reserve(channel.controllers.size());
+	for (const engine::RenderController& controller : channel.controllers)
+		found.emplace_back(controller.position, controller.channel, controller.value);
+	std::sort(found.begin(), found.end());
+	const uint32_t on = engine::midi::controllerFromMidi1(127);
+	CHECK(found ==
+		std::vector<std::tuple<int64_t, int, uint32_t>>{
+			{first.start, 0, on}, {second.start, 0, 0}, {second.start, 1, on}, {notePlaying(channel, 62).start, 1, 0}});
 }
 
 TEST_CASE("articulationMap.remoteTriggers transposes, reassigns and removes the remote triggers", "[unit]")
