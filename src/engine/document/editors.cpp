@@ -23,6 +23,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <system_error>
 #include <tuple>
@@ -77,6 +78,10 @@ namespace gnubase::engine
 			// The controller lanes (#128): each a type (midi::g_laneTypes) and a controller number or pitch.
 			std::vector<std::pair<std::string, int>> lanes = {{"velocity", 0}};
 			bool showLanes = true;
+			// The Articulations lane's (#1580, pp. 1287-1288): Show/Hide Sound Slots Lane, and the groups of the lane's
+			// map collapsed into a row each, by index.
+			bool soundSlotsLane = true;
+			std::set<int> collapsedGroups;
 			bool autoSelectControllers = false;
 			std::vector<std::pair<ObjectId, ObjectId>> controllerSelection; // each a part and a controller event of it
 			// The audio part editor (#146): the selected audio events of its parts.
@@ -321,6 +326,7 @@ namespace gnubase::engine
 				{"visibleSounds", view.visibleSounds}, {"soundsInUse", soundsInUse(project, activeTrack)},
 				{"soloInstrument", view.soloInstrument}, {"showNoteLength", view.showNoteLength},
 				{"gridType", view.gridType}, {"lanes", lanes}, {"showLanes", view.showLanes},
+				{"soundSlotsLane", view.soundSlotsLane}, {"collapsedGroups", view.collapsedGroups},
 				{"autoSelectControllers", view.autoSelectControllers}, {"controllerSelection", controllerSelection},
 				{"eventSelection", view.eventSelection}};
 		}
@@ -537,6 +543,7 @@ namespace gnubase::engine
 			{"items",
 				{{"type", "object"}, {"additionalProperties", false}, {"required", {"part", "note"}},
 					{"properties", {{"part", idSchema}, {"note", idSchema}}}}}};
+		const Json groupsSchema = {{"type", "array"}, {"items", {{"type", "integer"}, {"minimum", 0}}}};
 		const Json lanesSchema = {{"type", "array"},
 			{"items",
 				{{"type", "object"}, {"additionalProperties", false}, {"required", {"type"}},
@@ -557,9 +564,10 @@ namespace gnubase::engine
 			{"midiInput", boolean}, {"stepPosition", idSchema}, {"moveInsert", boolean}, {"recordPitch", boolean},
 			{"recordVelocity", boolean}, {"recordReleaseVelocity", boolean}, {"keepNotes", boolean},
 			{"insertVelocity", {{"type", "number"}}}, {"lengthQuantize", {{"type", "string"}}}, {"lanes", lanesSchema},
-			{"showLanes", boolean}, {"autoSelectControllers", boolean}, {"pitchVisibility", boolean},
-			{"reverseSounds", boolean}, {"visibleSounds", visibleSoundsSchema}, {"soloInstrument", boolean},
-			{"showNoteLength", boolean}, {"gridType", gridTypeSchema}};
+			{"showLanes", boolean}, {"soundSlotsLane", boolean}, {"collapsedGroups", groupsSchema},
+			{"autoSelectControllers", boolean}, {"pitchVisibility", boolean}, {"reverseSounds", boolean},
+			{"visibleSounds", visibleSoundsSchema}, {"soloInstrument", boolean}, {"showNoteLength", boolean},
+			{"gridType", gridTypeSchema}};
 		Json viewSchema = {{"type", "object"},
 			{"properties",
 				{{"editor", editorSchema}, {"open", {{"type", "boolean"}}}, {"parts", idsSchema},
@@ -570,8 +578,8 @@ namespace gnubase::engine
 					"globalTracks", "selection", "stepInput", "midiInput", "stepPosition", "moveInsert", "recordPitch",
 					"recordVelocity", "recordReleaseVelocity", "keepNotes", "insertVelocity", "lengthQuantize",
 					"content", "pitchVisibility", "reverseSounds", "visibleSounds", "soundsInUse", "soloInstrument",
-					"showNoteLength", "gridType", "lanes", "showLanes", "autoSelectControllers", "controllerSelection",
-					"eventSelection"}}};
+					"showNoteLength", "gridType", "lanes", "showLanes", "soundSlotsLane", "collapsedGroups",
+					"autoSelectControllers", "controllerSelection", "eventSelection"}}};
 		viewSchema["properties"].update(keyEditorSchema);
 		viewSchema["properties"]["soundsInUse"] = {{"type", {"array", "null"}}, {"items", idSchema}};
 		const std::string viewText =
@@ -613,6 +621,8 @@ namespace gnubase::engine
 			"type: controller (number is the controller), pitchBend, channelPressure, polyPressure (number is the "
 			"pitch) or program, or articulations (the directions and attributes of the track's articulation map, "
 			"articulationMap.add, pp. 1287-1289); showLanes, whether the controller display shows them; "
+			"soundSlotsLane, whether the Articulations lane shows its sound slots lane, and collapsedGroups, the "
+			"groups of its map, by index, that it shows collapsed into one row each (pp. 1287-1288); "
 			"autoSelectControllers, "
 			"whether selecting notes selects the controller events from their start to their end. View state: no "
 			"undo steps, not saved, and a new or loaded project closes the editors.";
@@ -716,8 +726,8 @@ namespace gnubase::engine
 					{"content", contentSchema}, {"pitchVisibility", boolean}, {"reverseSounds", boolean},
 					{"visibleSounds", visibleSoundsSchema}, {"soloInstrument", boolean}, {"showNoteLength", boolean},
 					{"gridType", gridTypeSchema}, {"lanes", lanesSchema}, {"showLanes", boolean},
-					{"autoSelectControllers", boolean}, {"controllerSelection", controllerSelectionSchema},
-					{"eventSelection", idsSchema}}),
+					{"soundSlotsLane", boolean}, {"collapsedGroups", groupsSchema}, {"autoSelectControllers", boolean},
+					{"controllerSelection", controllerSelectionSchema}, {"eventSelection", idsSchema}}),
 				viewSchema, false},
 			[views, &model, store](CommandContext& context)
 			{
@@ -869,6 +879,9 @@ namespace gnubase::engine
 				}
 				if (parameters.contains("showLanes"))
 					view.showLanes = parameters.at("showLanes").get<bool>();
+				view.soundSlotsLane = parameters.value("soundSlotsLane", view.soundSlotsLane);
+				if (parameters.contains("collapsedGroups"))
+					view.collapsedGroups = parameters.at("collapsedGroups").get<std::set<int>>();
 				view.pitchVisibility = parameters.value("pitchVisibility", view.pitchVisibility);
 				view.reverseSounds = parameters.value("reverseSounds", view.reverseSounds);
 				view.visibleSounds = parameters.value("visibleSounds", view.visibleSounds);

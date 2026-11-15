@@ -81,8 +81,9 @@ TEST_CASE("a MIDI editor opens with several parts on several tracks, in the trac
 	Json shown = f.view("window");
 	for (const char* key : {"selection", "stepInput", "midiInput", "stepPosition", "moveInsert", "recordPitch",
 			 "recordVelocity", "recordReleaseVelocity", "keepNotes", "insertVelocity", "lengthQuantize", "content",
-			 "lanes", "showLanes", "autoSelectControllers", "controllerSelection", "eventSelection", "pitchVisibility",
-			 "reverseSounds", "visibleSounds", "soundsInUse", "soloInstrument", "showNoteLength", "gridType"})
+			 "lanes", "showLanes", "soundSlotsLane", "collapsedGroups", "autoSelectControllers", "controllerSelection",
+			 "eventSelection", "pitchVisibility", "reverseSounds", "visibleSounds", "soundsInUse", "soloInstrument",
+			 "showNoteLength", "gridType"})
 		shown.erase(key);
 	CHECK(shown == closed);
 

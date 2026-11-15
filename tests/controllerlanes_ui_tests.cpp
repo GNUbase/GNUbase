@@ -789,3 +789,24 @@ TEST_CASE("a paint on a controller lane goes into the part where it was pressed,
 	for (size_t i = 0; i < 5; ++i)
 		CHECK(f.controllers()[i].at("position") == static_cast<int64_t>(i) * g_sixteenth);
 }
+
+TEST_CASE("a controller step that another event now starts with loses its width", "[ui]")
+{
+	// #1580: the lanes keep their elements while their RML is the same, so a width the step no longer has must go.
+	Fixture f;
+	f.app.call("editor.set", {{"editor", "window"}, {"lanes", {{{"type", "controller"}, {"number", 1}}}}});
+	const Json added = f.app.call("controller.add",
+		{{"part", f.part},
+			{"controllers",
+				{{{"position", 2 * g_sixteenth}, {"number", 1}, {"value", 0.5}},
+					{{"position", 4 * g_sixteenth}, {"number", 1}, {"value", 0.25}}}}});
+	const std::string first = Fixture::area(0) + " .controller-step[controller=\"" +
+		std::to_string(added.at("controllers").at(0).at("id").get<uint64_t>()) + "\"]";
+	const double width = f.box(Fixture::area(0)).at("width").get<double>();
+	REQUIRE(f.app.waitUntil([&] { return f.shows(0); }));
+	REQUIRE(f.app.waitUntil([&] { return std::abs(f.box(first).at("width").get<double>() - (width / 8.0)) <= 2.0; }));
+	f.app.call("controller.set",
+		{{"part", f.part},
+			{"controllers", {{{"id", added.at("controllers").at(1).at("id")}, {"position", 2 * g_sixteenth}}}}});
+	REQUIRE(f.app.waitUntil([&] { return f.box(first).at("width").get<double>() < width / 16.0; }));
+}

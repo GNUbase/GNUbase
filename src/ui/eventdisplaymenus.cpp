@@ -20,6 +20,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -318,6 +319,8 @@ namespace gnubase::ui
 		dialog->AddEventListener(Rml::EventId::Click, this);
 		dialog->Show(Rml::ModalFlag::Modal);
 		m_dialog = dialog->GetObserverPtr();
+		// All but the zoom presets' are for the selected events or parts, or the files and tracks of an import.
+		m_dialogForObjects = std::string_view(file).rfind("zoom-preset", 0) != 0;
 	}
 
 	// A click in a dialog, before a button with a result closes it: OK, also when Enter clicks it, takes what the

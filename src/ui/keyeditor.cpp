@@ -10,7 +10,6 @@
 #include "ui/controllerlanes.h"
 #include "ui/timeformat.h"
 
-#include <RmlUi/Core/ComputedValues.h>
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
@@ -261,7 +260,15 @@ namespace gnubase::ui
 				 {"end", "End"}, {"length", "Length"}, {"pitch", "Pitch"}, {"articulations", "Articulations"},
 				 {"velocity", "Velocity"}, {"releaseVelocity", "Off Velocity"}, {"channel", "Channel"}})
 			info += std::string(R"(<div class="info-field" info-field=")") + field + R"("><span class="info-label">)" +
-				label + R"(</span><textdisplay class="display" field=")" + field + R"("/></div>)";
+				label + R"(</span><textdisplay class="display" field=")" + field + R"("/>)" +
+				// The warning sign for attributes the track's map doesn't have (.unknown, #1580, p. 1291).
+				(field == std::string("articulations")
+						? R"(<button class="articulation-menu" menu="key-articulations-menu)" + m_menuSuffix +
+							R"(" title="Attributes"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>)"
+							R"(<svg class="icon articulation-warning" src="../icons/general-warning.svg" )"
+							R"(title="Not in the track's articulation map"/>)"
+						: std::string()) +
+				"</div>";
 		// The rows of the grid from the highest pitch down, and the piano keyboard beside them: the white keys, then
 		// the black keys over them. The C keys are labelled (p. 1204). The drum editor's rows are its drum sounds
 		// (render).
@@ -345,7 +352,9 @@ namespace gnubase::ui
 						m_menuSuffix +
 						R"("><menuitem type="toggle" gm-names="false">No Names</menuitem>)"
 						R"(<menuitem type="toggle" gm-names="true">GM Default</menuitem></menu>)"
-				  : std::string()));
+				  : std::string()) +
+			// The info line's attributes (renderInfo), the last menu.
+			R"(<menu id="key-articulations-menu)" + m_menuSuffix + R"("/>)");
 		while (holder->HasChildNodes())
 		{
 			Rml::Element* menu = document->AppendChild(holder->RemoveChild(holder->GetFirstChild()));
@@ -587,7 +596,10 @@ namespace gnubase::ui
 		if (!m_zoomDrag && std::abs(dx) < g_dragThreshold * ratio && std::abs(dy) < g_dragThreshold * ratio)
 			return; // still a click on a key
 		m_zoomDrag = true;
-		setPitchZoom(m_zoomStart * std::exp2(dx / ratio / g_zoomDoubling));
+		if (const float zoom =
+				std::clamp(m_zoomStart * std::exp2(dx / ratio / g_zoomDoubling), g_minPitchZoom, g_maxPitchZoom);
+			zoom != m_pitchZoom)
+			setPitchZoom(zoom);
 		body->SetScrollTop((m_scrollStart * m_pitchZoom / m_zoomStart) - dy);
 		if (context != nullptr)
 			context->RequestNextUpdate(0);
@@ -595,21 +607,29 @@ namespace gnubase::ui
 
 	void KeyEditor::setPitchZoom(float zoom)
 	{
-		zoom = std::clamp(zoom, g_minPitchZoom, g_maxPitchZoom);
-		if (zoom == m_pitchZoom)
-			return;
-		m_pitchZoom = zoom;
 		Rml::Element* root = m_root.get();
 		if (root == nullptr || m_drum)
 			return;
-		// The keyboard and the rows follow the zoom; the keys, the notes and the cursor lie in percent of them, so
-		// they scale with them.
-		if (Rml::Element* keys = root->QuerySelector(".key-editor-keys"))
-			keys->SetProperty(Rml::PropertyId::Height, dp(static_cast<float>(g_pitches) * m_rowDp * zoom));
+		// The rows' height without a zoom is the style sheet's, read past the zoom's own each time, so that a theme
+		// or style change reaches a zoomed editor too (#1547). The keyboard is as high as the rows; the keys, the
+		// notes and the cursor lie in percent of them, so they scale with them.
 		Rml::ElementList rows;
 		root->QuerySelectorAll(rows, ".key-editor-row");
 		for (Rml::Element* row : rows)
-			row->SetProperty(Rml::PropertyId::Height, dp(m_rowDp * zoom));
+			row->RemoveProperty(Rml::PropertyId::Height);
+		const Rml::Property* height = rows.empty() ? nullptr : rows.front()->GetProperty(Rml::PropertyId::Height);
+		if (height == nullptr || !Rml::Any(height->unit & Rml::Unit::LENGTH))
+		{
+			m_pitchZoom = 1.0F; // a percentage or auto: no height to scale
+			return;
+		}
+		const Rml::Context* context = root->GetContext();
+		const float ratio = context != nullptr ? context->GetDensityIndependentPixelRatio() : 1.0F;
+		const float rowDp = rows.front()->ResolveLength(height->GetNumericValue()) / ratio;
+		m_pitchZoom = zoom;
+		if (zoom != 1.0F)
+			for (Rml::Element* row : rows)
+				row->SetProperty(Rml::PropertyId::Height, dp(rowDp * zoom));
 	}
 
 	void KeyEditor::place(Rml::Element& element, int64_t start, int64_t length, int pitch) const
@@ -713,7 +733,7 @@ namespace gnubase::ui
 						item->SetAttribute("checked", "");
 				}
 		}
-		if (Rml::Element* menu = m_menus.size() > 4 ? m_menus[4].get() : nullptr)
+		if (Rml::Element* menu = m_drum && m_menus.size() > 4 ? m_menus[4].get() : nullptr)
 		{
 			Rml::ElementList items;
 			menu->QuerySelectorAll(items, "menuitem[setting]");
@@ -728,7 +748,7 @@ namespace gnubase::ui
 		}
 		const std::string visibleSounds = m_view.value("visibleSounds", std::string("all"));
 		// Show Drum Sounds in Use by Instrument only for an instrument that can tell (p. 1234).
-		if (Rml::Element* menu = m_menus.size() > 4 ? m_menus[4].get() : nullptr)
+		if (Rml::Element* menu = m_drum && m_menus.size() > 4 ? m_menus[4].get() : nullptr)
 			if (Rml::Element* item = menu->QuerySelector("menuitem[visible-sounds=inUse]"))
 			{
 				const bool tells = m_view.contains("soundsInUse") && m_view.at("soundsInUse").is_array();
@@ -747,7 +767,7 @@ namespace gnubase::ui
 				std::make_tuple(size_t{4}, "menuitem[visible-sounds=inUse]", visibleSounds == "inUse"),
 				std::make_tuple(size_t{6}, "menuitem[gm-names=true]", gmNames),
 				std::make_tuple(size_t{6}, "menuitem[gm-names=false]", !gmNames)})
-			if (Rml::Element* menu = m_menus.size() > index ? m_menus[index].get() : nullptr)
+			if (Rml::Element* menu = m_drum && m_menus.size() > index ? m_menus[index].get() : nullptr)
 				if (Rml::Element* item = menu->QuerySelector(selector);
 					item != nullptr && on != item->HasAttribute("checked"))
 				{
@@ -789,7 +809,7 @@ namespace gnubase::ui
 		else if (gridType == "zoom")
 			gridLabel = "Adapt to Zoom";
 		setInner(root->QuerySelector("#drum-grid-type"), gridLabel);
-		if (Rml::Element* menu = m_menus.size() > 5 ? m_menus[5].get() : nullptr)
+		if (Rml::Element* menu = m_drum && m_menus.size() > 5 ? m_menus[5].get() : nullptr)
 		{
 			Rml::ElementList items;
 			menu->QuerySelectorAll(items, "menuitem");
@@ -898,6 +918,15 @@ namespace gnubase::ui
 			{"velocity", std::to_string(std::lround(first.velocity * g_maxVelocity))},
 			{"releaseVelocity", std::to_string(std::lround(first.releaseVelocity * g_maxVelocity))},
 			{"channel", std::to_string(first.channel + 1)}, {"articulations", joinNames(first.articulations)}};
+		const Json* map = articulationMap(first);
+		setClass(line->QuerySelector(".info-field[info-field=articulations]"), "unknown",
+			unknownArticulations(map, first.articulations, "attribute"));
+		const std::string items = articulationItems(map, "attribute", first.articulations);
+		if (Rml::Element* menu = m_menus.back().get(); menu != nullptr && items != m_articulationMenuRml)
+		{
+			menu->SetInnerRML(items);
+			m_articulationMenuRml = items;
+		}
 		for (const auto& [field, text] : texts)
 			if (Rml::Element* display = line->QuerySelector("textdisplay[field=" + field + "]");
 				display != nullptr && attribute(*display, "value") != text)
@@ -1241,6 +1270,10 @@ namespace gnubase::ui
 		{
 			drumMapMenu(target);
 		}
+		else if (target.HasAttribute("articulation") && target.GetTagName() == "menuitem")
+		{
+			chooseAttribute(attribute(target, "articulation"));
+		}
 		else if (target.IsClassSet("drum-sound-mute"))
 		{
 			const Json* map = activeMap();
@@ -1361,17 +1394,9 @@ namespace gnubase::ui
 			m_pressed.reset(); // a note an earlier press remembered must not resize on this gesture's release
 			m_pressedX = event.GetParameter("mouse_x", 0.0F);
 			m_pressedY = event.GetParameter("mouse_y", 0.0F);
+			setPitchZoom(m_pitchZoom); // the zoom scales the style sheet's row height as it is now (#1369, #1547)
 			m_zoomStart = m_pitchZoom;
 			m_scrollStart = body != nullptr ? body->GetScrollTop() : 0.0F;
-			// The rows' height unzoomed, as the style sheet gives it (#1369): the zoom scales it.
-			if (const Rml::Element* rowElement = root->QuerySelector(".key-editor-row"))
-				if (const Rml::Style::LengthPercentageAuto height = rowElement->GetComputedValues().height();
-					height.type == Rml::Style::LengthPercentageAuto::Length && height.value > 0.0F)
-				{
-					const Rml::Context* context = root->GetContext();
-					const float ratio = context != nullptr ? context->GetDensityIndependentPixelRatio() : 1.0F;
-					m_rowDp = height.value / ratio / m_pitchZoom;
-				}
 			return;
 		}
 		if (const Rml::Element* key = withAttribute(target, "pitch", root);
@@ -1990,6 +2015,39 @@ namespace gnubase::ui
 		if (const Part* part = partAt(start))
 			addNotes(*part, {start}, lengthQuantize(pitch), pitch);
 	}
+	const Json* KeyEditor::articulationMap(const Note& note) const
+	{
+		for (const Part& part : m_parts)
+			if (part.id == note.part)
+				return trackArticulationMap(m_project, part.track);
+		return nullptr;
+	}
+
+	void KeyEditor::chooseAttribute(const std::string& name)
+	{
+		const std::vector<const Note*> notes = selectedNotes();
+		const Json* map = notes.empty() ? nullptr : articulationMap(*notes.front());
+		if (map == nullptr)
+			return;
+		const auto& first = notes.front()->articulations;
+		const bool remove = std::find(first.begin(), first.end(), name) != first.end();
+		std::map<uint64_t, Json> changes;
+		for (const Note* note : notes)
+		{
+			const bool has =
+				std::find(note->articulations.begin(), note->articulations.end(), name) != note->articulations.end();
+			if (has != remove)
+				continue; // it already has the attribute, or hasn't when it goes
+			Json change = noteChange(note->id);
+			change["articulations"] = toggleAttribute(*map, note->articulations, name);
+			changes[note->part].push_back(change);
+		}
+		Json commands = Json::array();
+		for (auto& [part, items] : changes)
+			commands.push_back({{"command", "note.set"}, {"parameters", {{"part", part}, {"notes", items}}}});
+		edit("Change Articulations", std::move(commands));
+	}
+
 	const Json* KeyEditor::activeMap() const
 	{
 		const Json activeTrack = m_view.value("activeTrack", Json(0));
@@ -2154,7 +2212,7 @@ namespace gnubase::ui
 			rml += R"(<menuitem drum-map-action="copy">New Copy</menuitem>)"
 				   R"(<menuitem drum-map-action="remove">Remove</menuitem>)";
 		rml += R"(<menuseparator/><menuitem drum-map-action="setup">Drum Map Setup...</menuitem>)";
-		if (Rml::Element* menu = m_menus.size() > 3 ? m_menus[3].get() : nullptr;
+		if (Rml::Element* menu = m_drum && m_menus.size() > 3 ? m_menus[3].get() : nullptr;
 			menu != nullptr && rml != m_mapMenuRml)
 		{
 			menu->SetInnerRML(rml);
