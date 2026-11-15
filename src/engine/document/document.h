@@ -582,6 +582,9 @@ namespace gnubase::engine
 		// to 11 B) and Global Transpose Independent. Playback shifts its pitch in real time (dsp::WarpReader).
 		int rootKey = -1;
 		bool independent = false;
+		// Its own Transpose on the info line (#1555, p. 420), in semitones from -24 to 24, the stretcher's real-time
+		// range: it adds to global transposition as a MIDI part's transpose does, also while it is Independent.
+		int transpose = 0;
 	};
 
 	inline ObjectId frontOf(const AudioEvent& event)
@@ -1586,6 +1589,10 @@ namespace gnubase::engine
 		// first and after their last point too, where their parameters have their static values. A setting saved with
 		// the project, not part of undo.
 		bool virginTerritory = false;
+		// A track preset's (track.savePreset keep): which of their MIDI channel and patch (program and bank) its MIDI
+		// tracks keep, "channel" or "patch", the other left at its default, which loading the preset leaves as the
+		// track has it (reference manual p. 238); empty: both, and in projects.
+		std::string presetKeeps;
 
 		// The quantize settings that apply when none are given, and whether recording quantizes (#132). Settings,
 		// not part of undo.
@@ -1700,8 +1707,7 @@ namespace gnubase::engine
 	// the transpose event playing there unless the transpose track is muted — with Keep Transpose in Octave Range
 	// the whole sum kept within 7 semitones either way, 8 up playing 4 down (#896, reference manual pp. 419-421).
 	int globalTranspose(const Project& project, const MidiPart& part, time::Samples at);
-	// The same for an audio event, which has no transpose of its own yet: the semitones playback shifts its pitch by
-	// (#1368).
+	// The same for an audio event, with its own Transpose (#1555): the semitones playback shifts its pitch by (#1368).
 	int globalTranspose(const Project& project, const AudioEvent& event, time::Samples at);
 
 	// Whether folder is the pool's Audio folder (0) or a pool folder whose parents lead there without passing
@@ -1860,10 +1866,10 @@ namespace gnubase::engine
 	{
 		return std::tie(a.id, a.track, a.position, a.clip, a.offset, a.length, a.volume, a.mute, a.lock, a.fadeIn,
 				   a.fadeOut, a.crossfade, a.snapPoint, a.color, a.part, a.lane, a.volumeCurve, a.front, a.rank,
-				   a.quantizeOrigin, a.rootKey, a.independent) ==
+				   a.quantizeOrigin, a.rootKey, a.independent, a.transpose) ==
 			std::tie(b.id, b.track, b.position, b.clip, b.offset, b.length, b.volume, b.mute, b.lock, b.fadeIn,
 				b.fadeOut, b.crossfade, b.snapPoint, b.color, b.part, b.lane, b.volumeCurve, b.front, b.rank,
-				b.quantizeOrigin, b.rootKey, b.independent);
+				b.quantizeOrigin, b.rootKey, b.independent, b.transpose);
 	}
 
 	inline bool operator==(const AudioPart& a, const AudioPart& b)

@@ -315,6 +315,17 @@ namespace gnubase::engine
 			return event.length > 0;
 		}
 
+		// Whether anything can shift an audio event's pitch: its own Transpose, or, while it follows global
+		// transposition, a step from its root key or transpose events that play (#1555). Others get no pitch map, so
+		// that projects without global transposition pay nothing for it.
+		bool mayShift(const Project& project, const AudioEvent& event)
+		{
+			return event.transpose != 0 ||
+				(!event.independent &&
+					(rootKeyTranspose(project, event) != 0 ||
+						(!project.transpose.mute && !project.transpose.events.empty())));
+		}
+
 		// The pitch map of an audio event that global transposition shifts (#1368): the semitones it plays shifted by
 		// from its start, and from each transpose event within it, in its media file's frames from its start, where
 		// its warp map plays them. Empty when it plays as it is.
@@ -825,15 +836,18 @@ namespace gnubase::engine
 				event.fadeOut, clip.fadeIn, clip.fadeOut,
 				crossfadeApplies(project, event) ? event.crossfade : Crossfade(), gainPoints(event.volumeCurve),
 				frontOf(event), event.rank, 0, 0};
-			// An event that plays as it is maps its clip's frames from its offset onto its own.
-			const auto offset = static_cast<double>(event.offset);
-			const auto length = static_cast<double>(std::max<time::Samples>(event.length, 1));
-			std::vector<dsp::WarpPoint> map = warped(clip)
-				? warpMap(project, event)
-				: std::vector<dsp::WarpPoint>{{offset, 0.0}, {offset + length, length}};
-			std::vector<dsp::PitchPoint> pitch = pitchMap(project, event, render.start, map);
-			if (warped(clip) || !pitch.empty())
-				warpEvent(project, event, std::move(map), std::move(pitch), *snapshot, render);
+			if (warped(clip) || mayShift(project, event))
+			{
+				// An event that plays as it is maps its clip's frames from its offset onto its own.
+				const auto offset = static_cast<double>(event.offset);
+				const auto length = static_cast<double>(std::max<time::Samples>(event.length, 1));
+				std::vector<dsp::WarpPoint> map = warped(clip)
+					? warpMap(project, event)
+					: std::vector<dsp::WarpPoint>{{offset, 0.0}, {offset + length, length}};
+				std::vector<dsp::PitchPoint> pitch = pitchMap(project, event, render.start, map);
+				if (warped(clip) || !pitch.empty())
+					warpEvent(project, event, std::move(map), std::move(pitch), *snapshot, render);
+			}
 			if (const auto part = project.audioParts.find(event.part); part != project.audioParts.end() &&
 				!inPart(project, part->second, project.sampleRate / project.media.at(clip.media).sampleRate, render))
 				continue;

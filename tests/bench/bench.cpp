@@ -1,17 +1,34 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Engine benchmarks (#212, #24). Each case renders a project offline through the engine API and reports how many
-// times faster than real time it ran: workers (scaling with threads), tracks (scaling with track count) and
-// blockSizes (32 to 2048 frames). Build a Release configuration for meaningful numbers. CI runs it with --quick and
-// keeps the JSON as an artifact.
+// times faster than real time it ran: workers (scaling with threads), tracks (scaling with track count),
+// blockSizes (32 to 2048 frames) and transposedEvents (audio events that follow the project root key, each through a
+// real-time stretcher of its own on the disk threads, #1555). Build a Release configuration for meaningful numbers.
+// CI runs it with --quick and keeps the JSON as an artifact.
 //
 //   gnubase-bench [--quick] [--case <name>] [--json <file>]
+#include "engine/audiofile/audiofile.h"
 #include "engine/document/document.h"
 #include "engine/engine.h"
 #include "platform/rt/workerpool.h"
 
+#ifdef _WIN32
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+// windows.h first
+#include <psapi.h>
+#elif defined(__APPLE__)
+#include <mach/mach.h>
+#else
+#include <unistd.h>
+#endif
+
 #include <algorithm>
 #include <chrono>
+#include <cmath>
+#include <cstddef>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <iostream>
@@ -28,9 +45,11 @@ namespace
 {
 	constexpr int64_t g_ticksPerQuarter = 1720320;
 
-	Json call(Client& client, const std::string& command, const Json& parameters = Json::object())
+	// A render in a Debug build can take longer than the 10 s a call waits by default.
+	Json call(Client& client, const std::string& command, const Json& parameters = Json::object(),
+		std::chrono::milliseconds timeout = std::chrono::minutes(10))
 	{
-		gnubase::engine::Result result = client.call(command, parameters);
+		gnubase::engine::Result result = client.call(command, parameters, timeout);
 		if (!result.ok())
 			throw std::runtime_error(command + ": " + result.error);
 		return std::move(result.value);
@@ -163,6 +182,101 @@ namespace
 		return results;
 	}
 
+	// The memory the process holds now, in bytes: its working set or resident set; 0 where it can't tell.
+	size_t residentBytes()
+	{
+#ifdef _WIN32
+		PROCESS_MEMORY_COUNTERS counters{};
+		return GetProcessMemoryInfo(GetCurrentProcess(), &counters, sizeof(counters)) != 0 ? counters.WorkingSetSize
+																						   : 0;
+#elif defined(__APPLE__)
+		mach_task_basic_info_data_t info{};
+		mach_msg_type_number_t count = MACH_TASK_BASIC_INFO_COUNT;
+		// NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): task_info's C interface takes an int array.
+		return task_info(mach_task_self(), MACH_TASK_BASIC_INFO, reinterpret_cast<task_info_t>(&info), &count) ==
+				KERN_SUCCESS
+			? static_cast<size_t>(info.resident_size)
+			: 0;
+#else
+		std::ifstream statm("/proc/self/statm");
+		size_t pages = 0;
+		size_t resident = 0;
+		return statm >> pages >> resident ? resident * static_cast<size_t>(sysconf(_SC_PAGESIZE)) : 0;
+#endif
+	}
+
+	struct Transposed
+	{
+		double speed = 0.0;     // how many times faster than real time
+		double megabytes = 0.0; // what the process holds more while it plays than before
+	};
+
+	// Audio tracks that each play an event of a mono file, in C, for the whole render: in a project without a root key
+	// they play their file as it is; in one in D each follows the root key 2 semitones up, through a real-time
+	// stretcher of its own on the disk threads (#1368), which offline rendering waits for before each block.
+	Transposed renderTransposed(int tracks, double seconds, const std::string& file, bool follow)
+	{
+		Engine engine;
+		Client client(engine);
+		const auto frames = static_cast<int64_t>(seconds * 48000.0);
+		call(client, "audio.setDevice", {{"blockSize", 256}, {"inputChannels", 0}, {"captureSeconds", 1}});
+		call(client, "audio.setProcessing", {{"threads", static_cast<int>(gnubase::rt::hardwareThreads())}});
+		const Json media = call(client, "media.add", {{"path", file}}).at("media");
+		const Json clip = call(client, "clip.add", {{"media", media.at("id")}}).at("clip");
+		if (follow)
+			call(client, "project.set", {{"rootKey", "D"}});
+		for (int t = 0; t < tracks; ++t)
+		{
+			const Json track = call(client, "track.add", {{"type", "audio"}, {"channels", 1}}).at("track");
+			const Json event =
+				call(client, "audioEvent.add", {{"track", track.at("id")}, {"clip", clip.at("id")}, {"position", 0}})
+					.at("event");
+			call(client, "audioEvent.set", {{"event", event.at("id")}, {"rootKey", "C"}});
+		}
+		const size_t before = residentBytes();
+		call(client, "transport.play");
+		const auto start = std::chrono::steady_clock::now();
+		call(client, "audio.render", {{"frames", frames}});
+		const std::chrono::duration<double> took = std::chrono::steady_clock::now() - start;
+		const size_t after = residentBytes();
+		return {seconds / took.count(), (static_cast<double>(after) - static_cast<double>(before)) / (1024.0 * 1024.0)};
+	}
+
+	// What audio events that follow the root key cost against the same events played as they are: the speed of the
+	// render and the memory their stretchers take, per event.
+	Json transposedEvents(const Options& options)
+	{
+		const double seconds = options.quick ? 1.0 : 4.0;
+		const std::filesystem::path file = std::filesystem::temp_directory_path() / "gnubase-bench-transposed.wav";
+		{
+			gnubase::engine::WriteOptions format;
+			format.sampleFormat = gnubase::engine::SampleFormat::Float32;
+			format.channels = 1;
+			auto writer = gnubase::engine::AudioFileWriter::create(file.u8string(), format);
+			std::vector<float> samples(static_cast<size_t>((seconds + 1.0) * 48000.0));
+			for (size_t i = 0; i < samples.size(); ++i)
+				samples[i] = static_cast<float>(
+					0.25 * std::sin(2.0 * 3.14159265358979 * 220.0 * static_cast<double>(i) / 48000.0));
+			writer->write(samples.data(), samples.size());
+			writer->close();
+		}
+		Json results = Json::array();
+		for (const int count : {16, 64})
+		{
+			const Transposed plain = renderTransposed(count, seconds, file.u8string(), false);
+			const Transposed shifted = renderTransposed(count, seconds, file.u8string(), true);
+			const double perEvent = (shifted.megabytes - plain.megabytes) / count;
+			std::printf("transposedEvents  events %3d  as they are %8.2fx real time  following the root key %8.2fx "
+						"real time  %6.2f MB more per event\n",
+				count, plain.speed, shifted.speed, perEvent);
+			results.push_back({{"events", count}, {"realTimeFactor", plain.speed},
+				{"transposedRealTimeFactor", shifted.speed}, {"megabytesPerTransposedEvent", perEvent}});
+		}
+		std::error_code ignored;
+		std::filesystem::remove(file, ignored);
+		return results;
+	}
+
 	struct Case
 	{
 		const char* name;
@@ -173,6 +287,7 @@ namespace
 		{"workers", &workers},
 		{"tracks", &tracks},
 		{"blockSizes", &blockSizes},
+		{"transposedEvents", &transposedEvents},
 	};
 
 	int benchmark(int argc, char** argv)

@@ -394,17 +394,22 @@ namespace gnubase::engine
 	{
 		if (clip.warp.tempo > 0.0)
 			return clip.warp.tempo;
-		// Inactive track versions' events count too: they play the clip as soon as their version is active (#1461).
-		std::optional<time::Ticks> first;
-		forEveryAudioEvent(project,
-			[&](const AudioEvent& event)
+		// The events that play decide, so that they play as before. Without one, inactive track versions' events do:
+		// they play the clip as soon as their version is active (#1461, #1534).
+		std::optional<time::Ticks> playing;
+		std::optional<time::Ticks> inactive;
+		forEveryEventAndPart(
+			project,
+			[&](const AudioEvent& event, bool plays)
 			{
 				if (event.clip != clip.id)
 					return;
 				const time::Ticks at = time::toTicks(event.position, project.tempo, project.sampleRate);
+				std::optional<time::Ticks>& first = plays ? playing : inactive;
 				first = std::min(first.value_or(at), at);
-			});
-		return project.tempo.bpmAt(first.value_or(0));
+			},
+			[](const AudioPart&, bool) {}, [](const MidiPart&, bool) {});
+		return project.tempo.bpmAt(playing.value_or(inactive.value_or(0)));
 	}
 
 	double warpedOffset(const Project& project, const AudioEvent& event, double frame)
@@ -511,7 +516,8 @@ namespace gnubase::engine
 				"Changes a clip's musical mode and definition (the Definition and Warp sections of the sample "
 				"editor, the pool's Musical Mode column, reference manual pp. 616, 648-650): musical turns musical "
 				"mode on or off, which in a clip without a tempo takes the project's at the start of its first event "
-				"so that nothing changes until the tempo does; tempo (1-999 BPM); bars and beats, its length from the "
+				"on the active track versions, or without one there on an inactive version, so that nothing changes "
+				"until the tempo does; tempo (1-999 BPM); bars and beats, its length from the "
 				"grid start to its end in bars and quarters, which sets the tempo that makes it that long; "
 				"beatsPerBar (1-64); gridStart (a clip frame; the edited beats move with it); preset (the algorithm "
 				"preset of real-time warping). What isn't given stays. " +

@@ -2904,6 +2904,12 @@ namespace gnubase::engine
 			changed.volume = parameters.value("volume", event.volume);
 			changed.mute = parameters.value("mute", event.mute);
 			setGlobalTranspose(parameters, changed.rootKey, changed.independent);
+			if (parameters.contains("transpose"))
+			{
+				const auto semitones = parameters.at("transpose").get<int64_t>();
+				requireRange(semitones, -24, 24, "transpose");
+				changed.transpose = static_cast<int>(semitones);
+			}
 			require(changed.length > 0, "length must be positive");
 			checkAudioEvent(project, changed);
 			if (follow && changed.position != event.position)
@@ -3945,8 +3951,9 @@ namespace gnubase::engine
 		add(engine,
 			{"project.get", 1,
 				"The whole project: busses, tracks in order, channels, media, clips, events and parts. Each MIDI part "
-				"has rootKeyTranspose too, the semitones that the project root key transposes it by (-5 to 6; 0 for "
-				"an independent part and unless both have a root key). Each audio event of a warped clip has "
+				"and audio event has rootKeyTranspose too, the semitones that the project root key transposes it by "
+				"(-5 to 6; 0 for an independent one and unless both have a root key). Each audio event of a warped "
+				"clip has "
 				"playedLength, the project samples from its start to where it ends through the warp, and fadeRoom, "
 				"the frames its fades may take together; audioEvent.changed announces them when they change.",
 				objectSchema({}), {{"type", "object"}}, true},
@@ -3961,7 +3968,10 @@ namespace gnubase::engine
 				for (Json& event : json.at("audioEvents"))
 					if (const auto found = project.audioEvents.find(event.at("id").get<ObjectId>());
 						found != project.audioEvents.end())
+					{
+						event["rootKeyTranspose"] = rootKeyTranspose(project, found->second);
 						addWarpedLengths(event, project, found->second);
+					}
 				return json;
 			});
 		add(engine,
@@ -4618,11 +4628,14 @@ namespace gnubase::engine
 				"transposition shifts its pitch in real time (#1368), as midiPart.set's do a MIDI part's: rootKey is "
 				"its root key (\"\" for none, C, C# and so on to B), which the project root key transposes it to "
 				"(project.set rootKey); globalTranspose follow (the default) or independent says whether the project "
-				"root key and the transpose track transpose it (transpose.add). Its audio file stays as it is.",
-				objectSchema({{"event", idSchema}, {"clip", idSchema}, {"position", integerSchema},
-								 {"offset", integerSchema}, {"length", integerSchema}, {"volume", numberSchema},
-								 {"mute", booleanSchema}, {"rootKey", enumSchema(rootKeyNames())},
-								 {"globalTranspose", enumSchema({"follow", "independent"})}},
+				"root key and the transpose track transpose it (transpose.add). transpose is its own Transpose in "
+				"semitones, -24 to 24, which adds to global transposition as a MIDI part's does, also while it is "
+				"independent (#1555). Its audio file stays as it is.",
+				objectSchema(
+					{{"event", idSchema}, {"clip", idSchema}, {"position", integerSchema}, {"offset", integerSchema},
+						{"length", integerSchema}, {"volume", numberSchema}, {"mute", booleanSchema},
+						{"rootKey", enumSchema(rootKeyNames())},
+						{"globalTranspose", enumSchema({"follow", "independent"})}, {"transpose", integerSchema}},
 					{"event"}),
 				resultSchema({"event"}), false},
 			[this](Project& project, CommandContext& context)

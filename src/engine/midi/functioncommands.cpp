@@ -595,8 +595,9 @@ namespace gnubase::engine::midi
 				"separate stays as it is. New parts keep the part's mute, transpose, velocity, root key and Global "
 				"Transpose setting; their events get new "
 				"ids, so play probability and velocity variance draw anew. New tracks get the track's MIDI modifiers "
-				"(channel.set modifiers) and MIDI channel: by channel each its channel, by pitch the track's "
-				"(channel.set midiChannel), so that the new parts play as the part did. optimize (to tracks only) "
+				"(channel.set modifiers), so that the new parts play as the part did, and a MIDI channel: by "
+				"channel each the channel it holds, on which it plays even where the track was set to one channel, "
+				"by pitch the track's (channel.set midiChannel). optimize (to tracks only) "
 				"shortens the new "
 				"parts to the bars their events play in." +
 					returns,

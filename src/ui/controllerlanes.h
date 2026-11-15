@@ -112,9 +112,17 @@ namespace gnubase::ui
 		std::string articulationArea(std::vector<Item>& items) const;
 		// The map whose articulations the Articulations lane shows: the active part's track's, else the first one's.
 		const engine::Json* laneMap() const;
-		// A press on the Articulations lane: the draw tool adds the row's articulation where it is pressed or removes
-		// the one pressed, the erase tool removes it.
+		// A press on the Articulations lane: the object selection tool selects the direction or the attribute's note
+		// pressed, the draw tool adds the row's articulation where it is pressed or removes the one pressed, the erase
+		// tool removes it. The lane takes the keyboard focus.
 		void pressArticulation(Rml::Event& event);
+		void selectArticulation(const Rml::Element* item, bool add);
+		// Delete or Backspace while the Articulations lane has the keyboard focus: removes its selected directions and
+		// its map's attributes of the selected notes, not the notes (p. 1289).
+		void deleteArticulations();
+		// The groups of the lane's map collapsed into a row each (p. 1287), by index.
+		std::set<int> collapsedGroups() const;
+		void setCollapsedGroups(const std::set<int>& groups);
 		void placeItems(); // the bars and steps of m_items on the time axis
 		std::vector<Item> items(const Lane& lane) const;
 		// The lane under the event's target and the point in its area: project ticks and a value from 0 to 1.
@@ -166,6 +174,9 @@ namespace gnubase::ui
 		std::vector<Subscription> m_subscriptions;
 		std::vector<Rml::ObserverPtr<Rml::Element>> m_menus; // lane, create, setup and lane context menus
 		std::optional<size_t> m_menuLane;                    // the lane whose menu opened
+		// The direction whose event pop-up menu opened on the Articulations lane: its part and id.
+		std::optional<std::pair<uint64_t, uint64_t>> m_menuDirection;
+		std::optional<size_t> m_keyLane; // the Articulations lane that has the keyboard focus
 		Rml::ObserverPtr<Rml::Element> m_dialog;
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it's gone
 		// The document that a gesture hears the mouseup in, wherever in it the mouse goes up.

@@ -59,6 +59,8 @@ namespace gnubase::ui
 		void request();
 		void show(const engine::Json& pool);
 		void rename(Rml::Element& field);
+		// The Key column's change of a clip's row: clip.set rootKey, unless the clip has that key.
+		void setKey(const std::string& row, const std::string& key);
 		void drop(const std::string& folder);
 		void addFolder();
 		// Sends a command of the panel's own; a failure shows in the message line as the action's.
