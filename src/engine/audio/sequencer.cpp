@@ -1334,16 +1334,16 @@ namespace gnubase::engine
 		// where the key is released, on the channel its on events went to.
 		if (found->addOn)
 		{
-			const auto at = std::find_if(m_inputAddOns.begin(),
-				m_inputAddOns.begin() + static_cast<std::ptrdiff_t>(m_inputAddOnCount),
-				[slot](const InputAddOn& on) { return on.slot == slot; });
-			const bool on = at != m_inputAddOns.begin() + static_cast<std::ptrdiff_t>(m_inputAddOnCount);
+			size_t at = 0;
+			while (at < m_inputAddOnCount && m_inputAddOns[at].slot != slot)
+				++at;
+			const bool on = at < m_inputAddOnCount;
 			if (event.type == Type::NoteOff)
 			{
 				if (!map.latch && on)
 				{
-					sendSlotEvents(*found, true, at->channel, event.offset, out);
-					*at = m_inputAddOns[--m_inputAddOnCount];
+					sendSlotEvents(*found, true, m_inputAddOns[at].channel, event.offset, out);
+					m_inputAddOns[at] = m_inputAddOns[--m_inputAddOnCount];
 				}
 				return true;
 			}

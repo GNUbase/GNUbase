@@ -1560,6 +1560,7 @@ TEST_CASE("add-on slots go out on the channel of the notes and follow it to anot
 	// Legato on with the first note on its channel; where the notes go to channel 3 it goes off there and on again on
 	// channel 3, where it goes off with the third note.
 	std::vector<std::tuple<int64_t, int, uint32_t>> found;
+	found.reserve(channel.controllers.size());
 	for (const engine::RenderController& controller : channel.controllers)
 		found.emplace_back(controller.position, controller.channel, controller.value);
 	std::sort(found.begin(), found.end());

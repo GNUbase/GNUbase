@@ -957,7 +957,7 @@ TEST_CASE("the articulation map setup filters its maps, combines articulations a
 	CHECK(f.shown(".combination[name=Legato]"));
 
 	// The new MIDI modifiers of the picked slot, which an add-on slot doesn't have (#1667).
-	CHECK(f.shown("#articulation-modifiers .add-on-modifiers"));
+	CHECK(f.elements("#articulation-modifiers .add-on-modifiers").size() == 1);
 	CHECK(f.elements("#articulation-map input[kind=modifier]").empty());
 	f.click("input[name=articulation-pick-slot][index=\"2\"]");
 	f.write("#articulation-map input[kind=modifier][key=attack]", "15");

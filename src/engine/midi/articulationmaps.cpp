@@ -884,10 +884,11 @@ namespace gnubase::engine::midi
 			"of the other groups, for the notes that have all its articulations, on their channel; its MIDI modifiers "
 			"do nothing), attack (Attack Compensation: ms 0-1000 the notes start earlier), separation (ms 0-1000 the "
 			"output events go before the notes, but after the note before; 0: key switches one sample before, the "
-			"others with the note), minPitch and maxPitch, minVelocity and maxVelocity (the ranges the notes' pitch, 0-127, and "
-			"velocity, 1-127, are kept in)}; remoteTrigger, keySwitch (the default) or programChange, what selects "
-			"slots in recordings; latch, whether a key switch's slot stays after the key's release (the default) "
-			"instead of the default slot coming back. articulations and slots replace the map's whole lists. Tracks "
+			"others with the note), minPitch and maxPitch, minVelocity and maxVelocity (the ranges the notes' pitch, "
+			"0-127, and velocity, 1-127, are kept in)}; remoteTrigger, keySwitch (the default) or programChange, what "
+			"selects slots in recordings; latch, whether a key switch's slot stays after the key's release (the "
+			"default) instead of the default slot coming back. articulations and slots replace the map's whole "
+			"lists. Tracks "
 			"use one with track.set articulationMap; each note plays the slot whose articulations are its "
 			"attributes and the directions in effect at its start, else the closest one.";
 
