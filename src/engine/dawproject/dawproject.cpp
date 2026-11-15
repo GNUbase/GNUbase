@@ -180,6 +180,8 @@ namespace gnubase::engine
 			char buffer[65536];
 			while (const size_t got = std::fread(buffer, 1, sizeof buffer, file.get()))
 				bytes.insert(bytes.end(), buffer, buffer + got);
+			if (std::ferror(file.get()) != 0) // such as a folder, which opens outside Windows
+				throw DawProjectError("can't read " + path);
 			return bytes;
 		}
 
@@ -267,6 +269,26 @@ namespace gnubase::engine
 				std::string text(static_cast<const char*>(data), size);
 				mz_free(data);
 				return text;
+			}
+
+			// Whether target has the entry's content already: its size and CRC-32. Extracting over such a file would
+			// fail or cut it short under a reader that plays it, as when the same track preset loads again (#1503).
+			bool holds(const std::string& name, const std::string& target)
+			{
+				mz_zip_archive_file_stat stat{};
+				std::error_code error;
+				if (mz_zip_reader_file_stat(&m_zip, locate(name), &stat) == MZ_FALSE ||
+					std::filesystem::file_size(std::filesystem::u8path(target), error) != stat.m_uncomp_size || error)
+					return false;
+				const detail::File file = detail::openFile(target, "rb");
+				if (!file)
+					return false;
+				mz_ulong crc = MZ_CRC32_INIT;
+				std::vector<unsigned char> buffer(size_t{1} << 16);
+				size_t read = 0;
+				while ((read = std::fread(buffer.data(), 1, buffer.size(), file.get())) > 0)
+					crc = mz_crc32(crc, buffer.data(), read);
+				return std::ferror(file.get()) == 0 && crc == stat.m_crc32;
 			}
 
 			void extract(const std::string& name, const std::string& target)
@@ -466,10 +488,20 @@ namespace gnubase::engine
 			Exporter(const Project& project, bool embed, const std::filesystem::path& fileFolder)
 				: m_project(project), m_embed(embed)
 			{
-				// Embedded files keep their names, made unique where two would collide.
+				// Embedded files keep their names, made unique where two would collide. A file that isn't there to
+				// embed is referred to by its absolute path, as a freeze file is (saveDawProject), so that a project or
+				// a track preset with a missing file can still be saved (#1567).
 				std::set<std::string> taken;
 				for (const auto& [id, media] : project.media)
 				{
+					std::error_code error;
+					if (embed && !std::filesystem::exists(pathOf(media.path), error))
+					{
+						const std::filesystem::path absolute = std::filesystem::absolute(pathOf(media.path), error);
+						m_mediaPaths[id] = error ? media.path : absolute.lexically_normal().u8string();
+						m_referenced.insert(id);
+						continue;
+					}
 					if (!embed)
 					{
 						m_mediaPaths[id] = referencePath(media.path, fileFolder);
@@ -486,6 +518,9 @@ namespace gnubase::engine
 			}
 
 			const std::map<ObjectId, std::string>& mediaPaths() const { return m_mediaPaths; }
+
+			// Whether the file goes into the file, rather than being referred to where it is.
+			bool embedded(ObjectId media) const { return m_embed && m_referenced.count(media) == 0; }
 
 			std::string projectXml()
 			{
@@ -925,7 +960,7 @@ namespace gnubase::engine
 				audio.append_attribute("duration") = static_cast<double>(media.length) / media.sampleRate;
 				pugi::xml_node file = audio.append_child("File");
 				file.append_attribute("path") = m_mediaPaths.at(media.id).c_str();
-				if (!m_embed)
+				if (!embedded(media.id))
 					file.append_attribute("external") = true;
 				if (warp)
 					writeWarps(content, event, clip.warp.musical, media.sampleRate);
@@ -1093,6 +1128,7 @@ namespace gnubase::engine
 
 			const Project& m_project;
 			std::map<ObjectId, std::string> m_mediaPaths; // the path project.xml uses for each media file
+			std::set<ObjectId> m_referenced;              // the media files that aren't there to embed
 			bool m_embed;
 		};
 
@@ -1189,10 +1225,11 @@ namespace gnubase::engine
 						throw DawProjectError("unsafe media path in the file: " + xmlPath);
 					if (m_mediaFolder.empty()) // not extracted: the entry's name in the file
 						return m_resolved[xmlPath] = inside.u8string();
-					target = freeTarget(m_mediaFolder / inside);
+					target = freeTarget(m_mediaFolder / inside, xmlPath);
 					std::error_code error;
 					std::filesystem::create_directories(target.parent_path(), error);
-					m_zip.extract(xmlPath, target.u8string());
+					if (!std::filesystem::exists(target, error))
+						m_zip.extract(xmlPath, target.u8string());
 					if (const auto identity = files::fileIdentity(target))
 						m_extracted.insert(*identity);
 				}
@@ -1200,20 +1237,28 @@ namespace gnubase::engine
 			}
 
 		private:
-			// Where an entry goes: not onto a file another entry of this load was extracted to. Entries whose names
-			// differ only in the case of a non-ASCII letter are two entries in the file, but the file systems of
-			// Windows and macOS read them as one name, so the later one would extract over the earlier: it goes to a
-			// numbered name of its own there, as the save numbers entries of one name. The file system says which
+			// Where an entry goes: not onto a file another entry of this load was extracted to, nor onto a file that is
+			// there with other content, which a project may play, as when a track preset is saved again with another
+			// file of the same name (#1567); a file with the entry's content already is used as it is. Entries whose
+			// names differ only in the case of a non-ASCII letter are two entries in the file, but the file systems
+			// of Windows and macOS read them as one name, so the later one would extract over the earlier: it goes to
+			// a numbered name of its own there, as the save numbers entries of one name. The file system says which
 			// paths are one file, so this only renames where the names really clash.
-			std::filesystem::path freeTarget(const std::filesystem::path& target) const
+			std::filesystem::path freeTarget(const std::filesystem::path& target, const std::string& entry)
 			{
-				if (!extractedTo(target))
+				const auto free = [&](const std::filesystem::path& candidate)
+				{
+					std::error_code error;
+					return !extractedTo(candidate) &&
+						(!std::filesystem::exists(candidate, error) || m_zip.holds(entry, candidate.u8string()));
+				};
+				if (free(target))
 					return target;
 				for (int copy = 2;; ++copy)
 				{
 					const std::filesystem::path candidate =
 						target.parent_path() / pathOf(std::to_string(copy) + "-" + target.filename().u8string());
-					if (!extractedTo(candidate))
+					if (free(candidate))
 						return candidate;
 				}
 			}
@@ -2155,6 +2200,8 @@ namespace gnubase::engine
 			if (options.embedMedia)
 				for (const auto& [id, mediaPath] : exporter.mediaPaths())
 				{
+					if (!exporter.embedded(id))
+						continue;
 					const std::vector<char> bytes = readBytes(project.media.at(id).path);
 					zip.add(mediaPath, bytes.data(), bytes.size(), false);
 				}

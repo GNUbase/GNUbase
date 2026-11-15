@@ -49,7 +49,9 @@ last sample a 24-bit file doesn't hold as silence, or at the range's end.
   false, and then refers to them relative to itself if they are in its folder, so the project's folder can move.
   Each file goes in once, under a name no other one has in any case (`freeze/2-ramp.wav` next to
   `freeze/Ramp.wav`), since entries are looked up in any case and extracted into one folder; one that isn't there
-  when the project is saved is referred to by its absolute path. Names that differ only in the case of a non-ASCII
+  when the project is saved is referred to by its absolute path, and so is a media file (#1567). A load extracts over
+  no file that is there with other content: the entry goes beside it under a numbered name, and a file with the
+  entry's content already is used as it is. Names that differ only in the case of a non-ASCII
   letter (`Übung.wav` and `übung.wav`) are two entries in the file, which the case-insensitive lookup tells apart,
   but a file system that folds the case of such letters, as those of Windows and macOS do by default, reads as one
   name, so the later one would extract over the earlier. This holds for every embedded file, not only freeze files:
@@ -75,6 +77,10 @@ audio track below the track, named after it with "(Rendered)", in its folder, ti
   track gets the fader, pan and sends; `completeSignalPath` renders at `output`, so a mono track panned on a stereo
   bus gives a stereo track, with no settings of its own.
 - `sourceTracks` (p. 1473): `keep` (the default), `mute`, `disable` or `remove` the tracks it rendered.
+- The new event holds the global transposition it was rendered with (#1368, [transpose.md](transpose.md)), and gets
+  the root key and Global Transpose that a recorded event gets (p. 420): without transpose events the project root
+  key, if it has one, and Follow, so that changing the project root key afterwards shifts it by the step from the old
+  key; with transpose events no root key and Independent, since following them it would be transposed again (tested).
 - Refused for a disabled track; `dry` for a frozen track, whose freeze file is already through the slots that `dry`
   copies onto the new track (unfreeze it first); and `completeSignalPath` for a silent track, muted or silenced by
   another track's solo, since the complete signal path ends after the mute (unmute it, or solo it too). Before the

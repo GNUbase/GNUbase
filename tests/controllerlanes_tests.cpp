@@ -490,6 +490,24 @@ TEST_CASE("controller events drawn with controller.line play back", "[integratio
 	CHECK(velocity == 127);
 }
 
+TEST_CASE("the editor views hide the Articulations lane's sound slots lane and collapse its groups", "[unit]")
+{
+	// #1580, reference manual pp. 1287-1288: Show/Hide Sound Slots Lane, and Collapse and Expand All Groups.
+	Fixture f;
+	f.call("editor.open", {{"editor", "window"}, {"parts", {f.part}}});
+	Json view = f.call("editor.get", {{"editor", "window"}});
+	CHECK(view.at("soundSlotsLane") == true);
+	CHECK(view.at("collapsedGroups") == Json::array());
+	view = f.call("editor.set", {{"editor", "window"}, {"soundSlotsLane", false}, {"collapsedGroups", {2, 0, 2}}});
+	CHECK(view.at("soundSlotsLane") == false);
+	CHECK(view.at("collapsedGroups") == Json::array({0, 2}));
+	view = f.call("editor.set", {{"editor", "window"}, {"lanes", {{{"type", "articulations"}}}}});
+	CHECK(view.at("soundSlotsLane") == false);
+	CHECK(view.at("collapsedGroups") == Json::array({0, 2}));
+	CHECK_THAT(
+		f.fails("editor.set", {{"editor", "window"}, {"collapsedGroups", {-1}}}), ContainsSubstring("collapsedGroups"));
+}
+
 TEST_CASE("the editor views have controller lanes, a controller selection and Auto Select Controllers", "[unit]")
 {
 	Fixture f;

@@ -1003,11 +1003,11 @@ meter .meter-peak
 	width: 48dp;
 }
 
-/* The transpose track (docs/features/transpose.md) and the chord track (chord-track.md): their events over their
-   lanes and the field that edits one's value, chord or scale. Code places the row on its lane (the chord track's chord
-   and scale rows on its halves while Show Scales is on), the events at their positions and the field over the event
-   it edits. */
-.transpose-row, .chord-row, .scale-row
+/* The transpose track (docs/features/transpose.md), the chord track (chord-track.md) and the arranger track
+   (arranger.md): their events over their lanes and the field that edits one's value, chord, scale or name. Code places
+   the row on its lane (the chord track's chord and scale rows on its halves while Show Scales is on), the events at
+   their positions (arranger events also as wide as their sections) and the field over the event it edits. */
+.transpose-row, .chord-row, .scale-row, .arranger-lane-row
 {
 	position: absolute;
 	left: 0;
@@ -1017,12 +1017,13 @@ meter .meter-peak
 }
 
 .transpose-row.hidden, .transpose-row .transpose-field, .chord-row.hidden, .chord-row .chord-field, .scale-row.hidden,
-.scale-row .scale-field
+.scale-row .scale-field, .arranger-lane-row.hidden, .arranger-lane-row .arranger-lane-field
 {
 	display: none;
 }
 
-.transpose-row .transpose-events, .chord-row .chord-events, .scale-row .scale-events
+.transpose-row .transpose-events, .chord-row .chord-events, .scale-row .scale-events,
+.arranger-lane-row .arranger-lane-events
 {
 	position: absolute;
 	left: 0;
@@ -1039,12 +1040,32 @@ meter .meter-peak
 	white-space: nowrap;
 }
 
-.transpose-row .transpose-field.shown, .chord-row .chord-field.shown, .scale-row .scale-field.shown
+.transpose-row .transpose-field.shown, .chord-row .chord-field.shown, .scale-row .scale-field.shown,
+.arranger-lane-row .arranger-lane-field.shown
 {
 	display: block;
 	position: absolute;
 	top: 0;
 	width: 48dp;
+}
+
+/* The arranger lane's field is as wide as the event it renames (code sets its width), at least wide enough for a
+   name. */
+.arranger-lane-row .arranger-lane-field.shown
+{
+	box-sizing: border-box;
+	min-width: 96dp;
+}
+
+.arranger-lane-row .arranger-lane-event
+{
+	position: absolute;
+	top: 0;
+	height: 100%;
+	box-sizing: border-box;
+	padding: 2dp 3dp;
+	white-space: nowrap;
+	overflow: hidden;
 }
 
 /* The chord pads zone (docs/features/chord-pads.md): its toolbars above the pads, which wrap, and the chord
@@ -1310,6 +1331,26 @@ meter .meter-peak
 	pointer-events: none;
 }
 
+/* The quantize panel's cutting positions (docs/features/audio-quantize.md): code puts a .cutting-position line where
+   Slice would cut. */
+.event-display .cutting-positions
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	bottom: 0;
+	pointer-events: none;
+}
+
+.event-display .cutting-position
+{
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	width: 1px;
+}
+
 .event-display .part-mark
 {
 	position: absolute;
@@ -1410,6 +1451,13 @@ meter .meter-peak
 	width: 200dp;
 	margin-left: -100dp;
 	text-align: center;
+}
+
+/* Why the engine refused an edit of events (#1367), a little longer and wider than a tool's name. */
+.event-display .edit-refused
+{
+	width: 480dp;
+	margin-left: -240dp;
 }
 
 /* The track list (docs/features/track-list.md): the global track controls over a row per track, level with the
@@ -1566,6 +1614,38 @@ meter .meter-peak
 	display: block;
 	flex: 0 1 auto;
 	height: 18dp;
+}
+
+/* The Track Versions pop-up menu's arrow, at the right end of the name of a track with versions
+   (docs/features/track-versions.md). Its negative margin takes back the room it needs, which is the name's own right
+   padding, so the name keeps the width the user chose and the controls area keeps its place. */
+.track-list listitem.versions .track-name
+{
+	box-sizing: border-box;
+	padding-right: 16dp;
+}
+
+.track-list .track-versions-toggle
+{
+	flex: 0 0 auto;
+	min-width: 14dp;
+	width: 14dp;
+	height: 18dp;
+	margin-left: -14dp;
+	padding: 0;
+	text-align: center;
+}
+
+.track-list .track-versions-toggle svg.icon
+{
+	width: 10dp;
+	height: 10dp;
+	vertical-align: 0;
+}
+
+.track-list listitem.renaming .track-versions-toggle
+{
+	display: none;
 }
 
 .track-list .track-controls
@@ -1829,6 +1909,13 @@ menu.toolbox svg.icon
 }
 
 menuitem .menu-keys
+{
+	float: right;
+	padding-left: 24dp;
+}
+
+/* The version's ID after its name in a Track Versions menu (reference manual p. 232). */
+menuitem .track-version-id
 {
 	float: right;
 	padding-left: 24dp;
@@ -2247,7 +2334,7 @@ splitter.column .splitter-grip-horizontal
 	flex-shrink: 0;
 }
 
-.inspector-row select, .inspector-row valuefield
+.inspector-row select, .inspector-row valuefield, .inspector-row textdisplay
 {
 	flex: 1 1 0;
 	width: auto;
@@ -2256,6 +2343,45 @@ splitter.column .splitter-grip-horizontal
 .insert
 {
 	padding: 2dp 6dp;
+}
+
+/* The Track Versions section (docs/features/track-versions.md): the ID of the active version, the indicator that
+   shows while the track has more than one, and the list a click activates one of. */
+.inspector-version-id
+{
+	flex: 1 1 0;
+	padding: 0 6dp;
+}
+
+.inspector-version-indicator
+{
+	display: none;
+	width: 16dp;
+	text-align: center;
+}
+
+.inspector-section.multiple .inspector-version-indicator
+{
+	display: block;
+}
+
+.inspector-version
+{
+	display: flex;
+	padding: 2dp 6dp;
+}
+
+.inspector-version .name
+{
+	flex: 1 1 0;
+	overflow: hidden;
+	white-space: nowrap;
+}
+
+.inspector-version .id
+{
+	flex: 0 0 auto;
+	margin-left: 6dp;
 }
 
 /* The MIDI Inserts and MIDI Sends sections: a slot's control panel shows while its edit button opened it. */
@@ -2456,6 +2582,16 @@ listview.pool-list
 .pool-header span.status, .pool-list span.status
 {
 	width: 64dp;
+}
+
+.pool-header span.key, .pool-list span.key
+{
+	width: 56dp;
+}
+
+.pool-list span.key select
+{
+	width: 100%;
 }
 
 .pool-header span.info, .pool-list span.info

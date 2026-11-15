@@ -1099,3 +1099,38 @@ TEST_CASE("midiFile commands reject what they can't do", "[integration]")
 	CHECK_THAT(reject(client, "midiFile.import", {{"path", utf8(notMidi)}}), ContainsSubstring("not a MIDI file"));
 	CHECK(run(client, "project.get").at("tracks").size() == 1); // nothing imported
 }
+
+TEST_CASE("MIDI marker files preserve an empty active marker track on a round trip", "[integration]")
+{
+	const test::TempDir dir;
+	const auto path = dir.path() / "empty-active.mid";
+	Engine engine;
+	Client client(engine);
+	const Json empty = run(client, "track.add", {{"type", "marker"}, {"name", "Empty"}}).at("track").at("id");
+	const Json cues = run(client, "track.add", {{"type", "marker"}, {"name", "Cues"}}).at("track").at("id");
+	run(client, "marker.add", {{"track", cues}, {"position", g_quarter}, {"name", "Cue"}});
+	run(client, "marker.activateTrack", {{"track", empty}});
+	run(client, "midiFile.export", {{"path", path.u8string()}});
+	const auto original = readBytes(path);
+	run(client, "project.new");
+	SECTION("a new active marker track")
+	{
+	}
+	SECTION("an existing active marker track")
+	{
+		run(client, "track.add", {{"type", "marker"}, {"name", "Existing"}});
+	}
+	const Json before = run(client, "project.get");
+	run(client, "midiFile.import", {{"path", path.u8string()}});
+	const Json project = run(client, "project.get");
+	REQUIRE(project.at("tracks").size() == 2);
+	CHECK(run(client, "marker.list", {{"track", project.at("activeMarkerTrack")}}).at("markers").empty());
+	CHECK(project.at("markers").size() == 1);
+	const auto again = dir.path() / "again.mid";
+	run(client, "midiFile.export", {{"path", again.u8string()}});
+	CHECK(readBytes(again) == original);
+	run(client, "history.undo");
+	CHECK(run(client, "project.get") == before);
+	run(client, "history.redo");
+	CHECK(run(client, "marker.list").at("markers").empty());
+}

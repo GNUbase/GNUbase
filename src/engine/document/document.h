@@ -207,14 +207,21 @@ namespace gnubase::engine
 	// An audio channel has this many sends (reference manual p. 542).
 	inline constexpr size_t g_maxSends = 8;
 
-	// A pad of a drum track's drum machine (#182): its name, or empty for the General MIDI sound's of its note, and
-	// the pool clip it plays, or 0.
+	// A pad of a drum track's drum machine (#182): its name, or empty for its sample's or a General MIDI sound's, the
+	// pool clip it plays, or 0, and the note whose General MIDI sound names it without either: a copy's goes by the
+	// sound of the pad it was copied from (drum.copyPad, #1567), -1 by its own note's. And its color, "#rrggbb" or
+	// empty for none (Set Color, reference manual pp. 942-943).
 	struct DrumPad
 	{
 		std::string name;
 		ObjectId sample = 0;
+		int sound = -1;
+		std::string color;
 
-		bool operator==(const DrumPad& other) const { return name == other.name && sample == other.sample; }
+		bool operator==(const DrumPad& other) const
+		{
+			return name == other.name && sample == other.sample && sound == other.sound && color == other.color;
+		}
 		bool operator!=(const DrumPad& other) const { return !(*this == other); }
 	};
 
@@ -475,6 +482,9 @@ namespace gnubase::engine
 		std::vector<WarpMarker> markers; // by position, targets increasing
 		std::string preset = "quality";
 		std::optional<WarpQuantizeOrigin> quantizeOrigin;
+		// The positions of the markers that quantize.createWarpMarkers made (#1579), for the Reset of the Warp Marker
+		// Creation Rules to remove (reference manual p. 380).
+		std::vector<time::Samples> created;
 	};
 
 	// What audio events play: for now, a whole media file. Its fades apply to every event that plays it, at the
@@ -534,6 +544,15 @@ namespace gnubase::engine
 		EventTiming quantized;
 	};
 
+	// What an audio event was before quantize.slice first cut it (#1579): the Reset of the Slice Rules puts it back
+	// (reference manual p. 378).
+	struct SliceOrigin
+	{
+		EventTiming timing;
+		std::optional<time::Samples> snapPoint;
+		Fade fadeOut; // event.split gives it to the last slice
+	};
+
 	// Plays a section of a clip on an audio track.
 	struct AudioEvent
 	{
@@ -571,6 +590,17 @@ namespace gnubase::engine
 		// length changes (#910) left it. While it is there, quantizing starts from the original position and
 		// resetting puts it back; moved by other means, it is where it is.
 		std::optional<EventQuantizeOrigin> quantizeOrigin;
+		// An event that quantize.slice cut keeps what it was before (#1579), and its slices, also those split from
+		// them since, the event's id in slicedFrom, so that the Reset of the Slice Rules puts them back together.
+		std::optional<SliceOrigin> sliceOrigin;
+		ObjectId slicedFrom = 0;
+		// Global transposition (#1368, reference manual pp. 414-421), as a MIDI part's: its root key (-1 for none, 0 C
+		// to 11 B) and Global Transpose Independent. Playback shifts its pitch in real time (dsp::WarpReader).
+		int rootKey = -1;
+		bool independent = false;
+		// Its own Transpose on the info line (#1555, p. 420), in semitones from -24 to 24, the stretcher's real-time
+		// range: it adds to global transposition as a MIDI part's transpose does, also while it is Independent.
+		int transpose = 0;
 	};
 
 	inline ObjectId frontOf(const AudioEvent& event)
@@ -637,6 +667,26 @@ namespace gnubase::engine
 			return type == other.type && position == other.position && value == other.value;
 		}
 	};
+
+	// What a note plays of an expression that it has no point of at its start: unity gain, the center, no tuning and
+	// no pressure, and brightness at the center, MPE's initial values of the last three, which playback sends before
+	// a note that doesn't start with its own (#176). Vibrato and expression have none: the plugin decides.
+	constexpr std::optional<double> defaultExpression(plugin::NoteExpression type)
+	{
+		switch (type)
+		{
+		case plugin::NoteExpression::Volume:
+			return 1.0;
+		case plugin::NoteExpression::Pan:
+		case plugin::NoteExpression::Brightness:
+			return 0.5;
+		case plugin::NoteExpression::Tuning:
+		case plugin::NoteExpression::Pressure:
+			return 0.0;
+		default:
+			return std::nullopt;
+		}
+	}
 
 	// The expressions' names, by plugin::NoteExpression.
 	inline constexpr std::array<const char*, 7> g_expressionNames = {
@@ -791,11 +841,16 @@ namespace gnubase::engine
 		std::optional<Freeze> frozen = {};
 		ObjectId drumMap = 0;         // MIDI and instrument tracks: the drum map their notes play through, or 0 (#129)
 		ObjectId articulationMap = 0; // MIDI and instrument tracks: their articulation map, or 0 (#175)
+		// MIDI and instrument tracks: the name list that names their pitches as drum sounds without a drum map
+		// (reference manual p. 1239): false for No Names, true for GM Default, General MIDI's percussion names.
+		bool gmNames = false;
 		// Audio, instrument and MIDI tracks: their versions in the order they were made; none for a track that has
 		// only its first one, v1 with ID 1 (versionsOf). Initialized like picture.
 		// NOLINTNEXTLINE(readability-redundant-member-init): see above
 		std::vector<TrackVersion> versions = {};
 		int activeVersion = 1; // the ID of the active version
+		// Folders: Group Editing mode (reference manual p. 274, #1579). Last, so that Track{...} can leave it out.
+		bool groupEditing = false;
 	};
 
 	// Whether tracks of a type have versions: audio, instrument and MIDI tracks.
@@ -807,16 +862,37 @@ namespace gnubase::engine
 	// A track's versions, with its first one if it has none of its own yet.
 	std::vector<TrackVersion> versionsOf(const Track& track);
 
+	// Calls the three visitors with every audio event, audio part and MIDI part of the project: those that play, and
+	// those that inactive track versions hold. Each visitor gets its item and whether it plays, so that a rewrite
+	// across the whole project reaches the inactive versions too, and still announces only what is there to see.
+	// Project may be const.
+	template <typename P, typename AudioEvents, typename AudioParts, typename MidiParts>
+	void forEveryEventAndPart(P& project, AudioEvents audioEvents, AudioParts audioParts, MidiParts midiParts)
+	{
+		for (auto& entry : project.audioEvents)
+			audioEvents(entry.second, true);
+		for (auto& entry : project.audioParts)
+			audioParts(entry.second, true);
+		for (auto& entry : project.midiParts)
+			midiParts(entry.second, true);
+		for (auto& track : project.trackById)
+			for (auto& version : track.second.versions)
+			{
+				for (auto& event : version.audioEvents)
+					audioEvents(event, false);
+				for (auto& part : version.audioParts)
+					audioParts(part, false);
+				for (auto& part : version.midiParts)
+					midiParts(part, false);
+			}
+	}
+
 	// Calls visit with every audio event of the project, those that inactive track versions hold too: their clips are
 	// in use. Project may be const.
 	template <typename P, typename Visit> void forEveryAudioEvent(P& project, Visit visit)
 	{
-		for (auto& entry : project.audioEvents)
-			visit(entry.second);
-		for (auto& entry : project.trackById)
-			for (auto& version : entry.second.versions)
-				for (auto& event : version.audioEvents)
-					visit(event);
+		forEveryEventAndPart(
+			project, [&visit](auto& event, bool) { visit(event); }, [](const auto&, bool) {}, [](const auto&, bool) {});
 	}
 
 	// Calls visit with the pool clips a channel's instrument plays: a sampler's (#180), a drum machine's pads' (#182).
@@ -1266,14 +1342,24 @@ namespace gnubase::engine
 		int length = 100;   // percent of the notes' length
 		int velocity = 100; // percent of the notes' velocity
 		int transpose = 0;  // semitones
+		bool addOn = false; // its output events add to the slot of the other groups (pp. 1272, 1281)
+		int attack = 0;     // Attack Compensation: ms the notes start earlier (p. 1271)
+		int separation = 0; // ms its key switches go before the notes, 0 for one sample (p. 1271)
+		int minPitch = 0;   // the notes' pitch and velocity (MIDI 1) are kept in these ranges (pp. 1271-1272)
+		int maxPitch = 127;
+		int minVelocity = 1;
+		int maxVelocity = 127;
 	};
 
 	inline bool operator==(const SoundSlot& a, const SoundSlot& b)
 	{
-		return std::tie(a.name, a.color, a.articulations, a.trigger, a.outputs, a.channel, a.length, a.velocity,
-				   a.transpose) ==
-			std::tie(
-				b.name, b.color, b.articulations, b.trigger, b.outputs, b.channel, b.length, b.velocity, b.transpose);
+		const auto tie = [](const SoundSlot& slot)
+		{
+			return std::tie(slot.name, slot.color, slot.articulations, slot.trigger, slot.outputs, slot.channel,
+				slot.length, slot.velocity, slot.transpose, slot.addOn, slot.attack, slot.separation, slot.minPitch,
+				slot.maxPitch, slot.minVelocity, slot.maxVelocity);
+		};
+		return tie(a) == tie(b);
 	}
 
 	struct ArticulationMap
@@ -1404,13 +1490,15 @@ namespace gnubase::engine
 	struct VisibilityConfiguration
 	{
 		std::string name;
-		std::vector<ObjectId> hidden;
+		std::vector<ObjectId> hidden; // stored like TrackVisibility::hidden
 	};
 
 	// What the project window's track list hides (#166, docs/features/track-visibility.md, reference manual pp. 80-82).
 	struct TrackVisibility
 	{
-		std::vector<ObjectId> hidden; // tracks, sorted
+		// The hidden tracks, sorted, as stored: a hidden folder without the tracks inside it that it hides, unless
+		// they were hidden on their own (#1533). Read them with hiddenTracks or trackVisibility.get, which add them.
+		std::vector<ObjectId> hidden;
 		// The mixer window whose channel visibility follows the tracks' (window1 to window4), or empty; the lower
 		// zone's mixer always does.
 		std::string sync;
@@ -1524,6 +1612,10 @@ namespace gnubase::engine
 		// first and after their last point too, where their parameters have their static values. A setting saved with
 		// the project, not part of undo.
 		bool virginTerritory = false;
+		// A track preset's (track.savePreset keep): which of their MIDI channel and patch (program and bank) its MIDI
+		// tracks keep, "channel" or "patch", the other left at its default, which loading the preset leaves as the
+		// track has it (reference manual p. 238); empty: both, and in projects.
+		std::string presetKeeps;
 
 		// The quantize settings that apply when none are given, and whether recording quantizes (#132). Settings,
 		// not part of undo.
@@ -1538,6 +1630,10 @@ namespace gnubase::engine
 		// The color last given to events or parts, for editing.autoTrackColor's lastApplied: not part of undo or the
 		// file.
 		std::string lastAppliedColor;
+		// Solo Instrument (reference manual p. 1223): the selected notes of the drum editors that have it on. Of the
+		// tracks with a drum map that these notes are on, only the notes with their pitches play. Set from the editor
+		// views (editors.cpp); not part of undo or the file.
+		std::vector<std::pair<ObjectId, ObjectId>> soloNotes; // each a part and a note of it
 		// What each mixer hides (#106), by mixer: lower, window1 to window4. Settings, not part of undo.
 		std::map<std::string, MixerView> mixers;
 		// What the track list hides (#166). A setting, not part of undo.
@@ -1630,6 +1726,7 @@ namespace gnubase::engine
 	// The step from a part's root key to the project root key, the nearer way (-5 to 6 semitones): 0 for an
 	// Independent part and unless both have a root key. project.get gives it as each part's rootKeyTranspose.
 	int rootKeyTranspose(const Project& project, const MidiPart& part);
+	int rootKeyTranspose(const Project& project, const AudioEvent& event); // #1368
 
 	// The semitones a part's notes play transposed by at a position (project samples): an Independent part's own
 	// transpose as it is; a part that follows global transposition plays its own transpose plus the step from its
@@ -1637,6 +1734,8 @@ namespace gnubase::engine
 	// the transpose event playing there unless the transpose track is muted — with Keep Transpose in Octave Range
 	// the whole sum kept within 7 semitones either way, 8 up playing 4 down (#896, reference manual pp. 419-421).
 	int globalTranspose(const Project& project, const MidiPart& part, time::Samples at);
+	// The same for an audio event, with its own Transpose (#1555): the semitones playback shifts its pitch by (#1368).
+	int globalTranspose(const Project& project, const AudioEvent& event, time::Samples at);
 
 	// Whether folder is the pool's Audio folder (0) or a pool folder whose parents lead there without passing
 	// excluded: false for a folder that isn't there, one in a loop, and excluded or a folder inside it.
@@ -1756,9 +1855,10 @@ namespace gnubase::engine
 
 	inline bool operator==(const ClipWarp& a, const ClipWarp& b)
 	{
-		return std::tie(
-				   a.musical, a.tempo, a.beatsPerBar, a.gridStart, a.beats, a.markers, a.preset, a.quantizeOrigin) ==
-			std::tie(b.musical, b.tempo, b.beatsPerBar, b.gridStart, b.beats, b.markers, b.preset, b.quantizeOrigin);
+		return std::tie(a.musical, a.tempo, a.beatsPerBar, a.gridStart, a.beats, a.markers, a.preset, a.quantizeOrigin,
+				   a.created) ==
+			std::tie(b.musical, b.tempo, b.beatsPerBar, b.gridStart, b.beats, b.markers, b.preset, b.quantizeOrigin,
+				b.created);
 	}
 
 	inline bool operator==(const Clip& a, const Clip& b)
@@ -1790,14 +1890,19 @@ namespace gnubase::engine
 		return a.original == b.original && a.quantized == b.quantized;
 	}
 
+	inline bool operator==(const SliceOrigin& a, const SliceOrigin& b)
+	{
+		return a.timing == b.timing && a.snapPoint == b.snapPoint && a.fadeOut == b.fadeOut;
+	}
+
 	inline bool operator==(const AudioEvent& a, const AudioEvent& b)
 	{
 		return std::tie(a.id, a.track, a.position, a.clip, a.offset, a.length, a.volume, a.mute, a.lock, a.fadeIn,
 				   a.fadeOut, a.crossfade, a.snapPoint, a.color, a.part, a.lane, a.volumeCurve, a.front, a.rank,
-				   a.quantizeOrigin) ==
+				   a.quantizeOrigin, a.sliceOrigin, a.slicedFrom, a.rootKey, a.independent, a.transpose) ==
 			std::tie(b.id, b.track, b.position, b.clip, b.offset, b.length, b.volume, b.mute, b.lock, b.fadeIn,
 				b.fadeOut, b.crossfade, b.snapPoint, b.color, b.part, b.lane, b.volumeCurve, b.front, b.rank,
-				b.quantizeOrigin);
+				b.quantizeOrigin, b.sliceOrigin, b.slicedFrom, b.rootKey, b.independent, b.transpose);
 	}
 
 	inline bool operator==(const AudioPart& a, const AudioPart& b)
@@ -1971,12 +2076,12 @@ namespace gnubase::engine
 
 	inline bool operator==(const Track& a, const Track& b)
 	{
-		return std::tie(a.id, a.type, a.name, a.color, a.timeBase, a.parent, a.channel, a.children, a.autoFades,
-				   a.timeFormat, a.enabled, a.picture, a.timeOffset, a.timeOffsetOn, a.frozen, a.drumMap,
-				   a.articulationMap, a.versions, a.activeVersion) ==
-			std::tie(b.id, b.type, b.name, b.color, b.timeBase, b.parent, b.channel, b.children, b.autoFades,
-				b.timeFormat, b.enabled, b.picture, b.timeOffset, b.timeOffsetOn, b.frozen, b.drumMap,
-				b.articulationMap, b.versions, b.activeVersion);
+		return std::tie(a.id, a.type, a.name, a.color, a.timeBase, a.parent, a.channel, a.children, a.groupEditing,
+				   a.autoFades, a.timeFormat, a.enabled, a.picture, a.timeOffset, a.timeOffsetOn, a.frozen, a.drumMap,
+				   a.articulationMap, a.gmNames, a.versions, a.activeVersion) ==
+			std::tie(b.id, b.type, b.name, b.color, b.timeBase, b.parent, b.channel, b.children, b.groupEditing,
+				b.autoFades, b.timeFormat, b.enabled, b.picture, b.timeOffset, b.timeOffsetOn, b.frozen, b.drumMap,
+				b.articulationMap, b.gmNames, b.versions, b.activeVersion);
 	}
 	// Where an audio event plays, in the project's samples (fadeedits.cpp).
 	struct EventSpan

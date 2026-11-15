@@ -236,9 +236,11 @@ namespace gnubase::engine
 		std::vector<graph::TransportSegment> m_segments;
 		graph::TransportBlock m_block;
 		ArrangerState m_arranger; // with the events and ranks its indices mean, for the next plan to find them (#885)
-		const ArrangerPlan* m_plan = nullptr; // the plan advance last played, only compared
-		uint64_t m_stateGeneration = 0;       // the generation the m_arranger indices walk: the last plan played, or an
-											  // arrange request's tag until the next block grounds them again
+		// The generation of the plan advance last played, 0 for none (snapshots count from 1): a new plan is told by
+		// it, not by its address, which the allocator may give the next plan once the old one is freed (#1479).
+		uint64_t m_planGeneration = 0;
+		uint64_t m_stateGeneration = 0; // the generation the m_arranger indices walk: the last plan played, or an
+										// arrange request's tag until the next block grounds them again
 		ArrangerState m_publishedArranger;
 		uint64_t m_publishedGeneration = 0; // published with m_publishedArranger, in one pair
 

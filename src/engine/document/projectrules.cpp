@@ -2,6 +2,7 @@
 #include "engine/document/projectrules.h"
 
 #include "engine/document/projectmodel.h"
+#include "engine/document/trackvisibility.h"
 #include "engine/engine.h"
 #include "engine/rulepresets.h"
 #include "engine/settings/store.h"
@@ -365,6 +366,7 @@ namespace gnubase::engine
 				return std::any_of(
 					map.begin(), map.end(), [track](const auto& entry) { return entry.second.track == track; });
 			};
+			const std::vector<ObjectId> hidden = hiddenTracks(project);
 			const auto addTrack = [&](const auto& self, ObjectId id) -> void
 			{
 				const Track& track = project.trackById.at(id);
@@ -398,10 +400,11 @@ namespace gnubase::engine
 				}
 				if (empty)
 					p.insert("isEmpty");
-				const auto& hidden = project.trackVisibility.hidden;
-				if (std::find(hidden.begin(), hidden.end(), id) != hidden.end())
+				if (std::binary_search(hidden.begin(), hidden.end(), id))
 					p.insert("isHidden");
-				if (!track.versions.empty())
+				// More than one version: a track's only one is no track version, also when it stores it to keep an ID
+				// it shares, as imported tracks do (#1629).
+				if (track.versions.size() > 1)
 					p.insert("hasTrackVersion");
 				if (const auto follow = project.chords.follow.find(id);
 					follow != project.chords.follow.end() && follow->second.mode != "off")
@@ -1101,10 +1104,11 @@ namespace gnubase::engine
 			"name or colorName (a color name of the project's colors; condition equal, unequal, contains or "
 			"containsNot), position or length (in ticks of 480 to a quarter note from the project's start; condition "
 			"equal, unequal, bigger, biggerOrEqual, less, lessOrEqual, insideRange or outsideRange with parameter2; "
-			"tracks have neither) or property (isMuted, isSelected, isEmpty, isHidden, hasTrackVersion, "
-			"followsChordTrack, isDisabled or parentIsSelected; condition propertyIsSet or propertyIsNotSet); open and "
-			"close brackets 0 to 3, which must match and nest at most 3 deep; join and or or to the next line, and "
-			"binding more tightly than or. function delete, transform, select or deselect. actions, each {target, "
+			"tracks have neither) or property (isMuted, isSelected, isEmpty, isHidden, hasTrackVersion (more than one "
+			"version), followsChordTrack, isDisabled or parentIsSelected; condition propertyIsSet or "
+			"propertyIsNotSet); open and close brackets 0 to 3, which must match and nest at most 3 deep; join and or "
+			"or to the next line, and binding more tightly than or. function delete, transform, select or deselect. "
+			"actions, each {target, "
 			"operation, parameter1, parameter2} in order: position or length (add, subtract, multiplyBy, divideBy, "
 			"roundBy, setRandom, setRelativeRandom or setFixed), name (replace, append, prepend with parameter1; "
 			"generateName: parameter1 and a number from parameter2, one up for each element renamed; "

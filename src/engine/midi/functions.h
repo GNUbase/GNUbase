@@ -265,8 +265,9 @@ namespace gnubase::engine::midi
 	// 0-127, its velocity under a note's velocity variance or the destination's modifiers) stays on a new part of its
 	// own with the part's setting (#1240, #1253): the first new part, on the first lane, is the one with the shared
 	// setting, else the one of the earliest source part, and has the controllers; the others follow in the order of
-	// their earliest source parts on new lanes, with the articulation events only. A new destination track goes to
-	// the end of the track list, routed to the instrument of the first track merged.
+	// their earliest source parts on new lanes, with the articulation events only. A part of its own that no note goes
+	// into (all of them left out, or playing nowhere) is left out, and the next one takes its place (#1491). A new
+	// destination track goes to the end of the track list, routed to the instrument of the first track merged.
 	PartChanges merge(Project& project, const MergeSettings& settings);
 
 	enum class DissolveBy : uint8_t

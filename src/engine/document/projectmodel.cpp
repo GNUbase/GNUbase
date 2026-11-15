@@ -494,29 +494,39 @@ namespace gnubase::engine
 
 	void rebaseTrack(Project& project, Track& track, time::TimeBase base, CommandContext& context)
 	{
-		for (auto& [id, event] : project.audioEvents)
-			if (event.track == track.id)
+		// The inactive versions' events and parts are in the track's time base too, and change without an event, since
+		// nothing shows them.
+		forEveryEventAndPart(
+			project,
+			[&](AudioEvent& event, bool plays)
 			{
+				if (event.track != track.id)
+					return;
 				event.position = time::rebase(event.position, base, project.tempo, project.sampleRate);
-				context.emit("audioEvent.changed", {{"event", toJson(event)}});
-			}
-		for (auto& [id, part] : project.audioParts)
-			if (part.track == track.id)
+				if (plays)
+					context.emit("audioEvent.changed", {{"event", toJson(event)}});
+			},
+			[&](AudioPart& part, bool plays)
 			{
+				if (part.track != track.id)
+					return;
 				const time::Position end = time::rebase(
 					{part.position.base, part.position.value + part.length}, base, project.tempo, project.sampleRate);
 				part.position = time::rebase(part.position, base, project.tempo, project.sampleRate);
 				part.length = end.value - part.position.value;
-				context.emit("audioPart.changed", {{"part", toJson(part)}});
-			}
-		for (auto& [id, part] : project.midiParts)
-			if (part.track == track.id)
+				if (plays)
+					context.emit("audioPart.changed", {{"part", toJson(part)}});
+			},
+			[&](MidiPart& part, bool plays)
 			{
+				if (part.track != track.id)
+					return;
 				const time::Position end = time::rebase(partEnd(part), base, project.tempo, project.sampleRate);
 				part.position = time::rebase(part.position, base, project.tempo, project.sampleRate);
 				part.length = end.value - part.position.value;
-				context.emit("midiPart.changed", {{"part", toJson(part)}});
-			}
+				if (plays)
+					context.emit("midiPart.changed", {{"part", toJson(part)}});
+			});
 		for (auto& [id, marker] : project.markers)
 			if (marker.track == track.id)
 			{
@@ -557,70 +567,42 @@ namespace gnubase::engine
 			}
 		track.timeOffset =
 			time::rebase({track.timeBase, track.timeOffset}, base, project.tempo, project.sampleRate).value;
-		// The inactive versions' events and parts are in the track's time base too.
-		for (TrackVersion& version : track.versions)
-		{
-			for (AudioEvent& event : version.audioEvents)
-				event.position = time::rebase(event.position, base, project.tempo, project.sampleRate);
-			for (AudioPart& part : version.audioParts)
-			{
-				const time::Position end = time::rebase(
-					{part.position.base, part.position.value + part.length}, base, project.tempo, project.sampleRate);
-				part.position = time::rebase(part.position, base, project.tempo, project.sampleRate);
-				part.length = end.value - part.position.value;
-			}
-			for (MidiPart& part : version.midiParts)
-			{
-				const time::Position end = time::rebase(partEnd(part), base, project.tempo, project.sampleRate);
-				part.position = time::rebase(part.position, base, project.tempo, project.sampleRate);
-				part.length = end.value - part.position.value;
-			}
-		}
 		track.timeBase = base;
 	}
 
 	void changeSampleRate(Project& project, double sampleRate, CommandContext& context)
 	{
 		const double factor = sampleRate / project.sampleRate;
-		for (auto& [id, event] : project.audioEvents)
-			if (event.position.base == time::TimeBase::Linear)
+		// Only linear positions are in samples; the inactive versions' events and parts change without an event, since
+		// nothing shows them. An audio event's offset and length stay: they are frames of its file.
+		forEveryEventAndPart(
+			project,
+			[&](AudioEvent& event, bool plays)
 			{
+				if (event.position.base != time::TimeBase::Linear)
+					return;
 				event.position.value = rescale(event.position.value, factor);
-				context.emit("audioEvent.changed", {{"event", toJson(event)}});
-			}
-		for (auto& [id, part] : project.midiParts)
-			if (part.position.base == time::TimeBase::Linear)
+				if (plays)
+					context.emit("audioEvent.changed", {{"event", toJson(event)}});
+			},
+			[&](AudioPart& part, bool plays)
 			{
+				if (part.position.base != time::TimeBase::Linear)
+					return;
 				part.position.value = rescale(part.position.value, factor);
 				part.length = rescale(part.length, factor);
-				context.emit("midiPart.changed", {{"part", toJson(part)}});
-			}
-		for (auto& [id, part] : project.audioParts)
-			if (part.position.base == time::TimeBase::Linear)
+				if (plays)
+					context.emit("audioPart.changed", {{"part", toJson(part)}});
+			},
+			[&](MidiPart& part, bool plays)
 			{
+				if (part.position.base != time::TimeBase::Linear)
+					return;
 				part.position.value = rescale(part.position.value, factor);
 				part.length = rescale(part.length, factor);
-				context.emit("audioPart.changed", {{"part", toJson(part)}});
-			}
-		for (auto& [id, track] : project.trackById)
-			for (TrackVersion& version : track.versions)
-			{
-				for (AudioEvent& event : version.audioEvents)
-					if (event.position.base == time::TimeBase::Linear)
-						event.position.value = rescale(event.position.value, factor);
-				for (AudioPart& part : version.audioParts)
-					if (part.position.base == time::TimeBase::Linear)
-					{
-						part.position.value = rescale(part.position.value, factor);
-						part.length = rescale(part.length, factor);
-					}
-				for (MidiPart& part : version.midiParts)
-					if (part.position.base == time::TimeBase::Linear)
-					{
-						part.position.value = rescale(part.position.value, factor);
-						part.length = rescale(part.length, factor);
-					}
-			}
+				if (plays)
+					context.emit("midiPart.changed", {{"part", toJson(part)}});
+			});
 		for (auto& [id, lane] : project.automation)
 		{
 			bool changed = false;
@@ -1503,6 +1485,12 @@ namespace gnubase::engine
 				require(track.drumMap == 0 || project.drumMaps.count(track.drumMap) != 0,
 					"no drum map " + std::to_string(track.drumMap));
 			}
+			if (parameters.contains("gmNames"))
+			{
+				track.gmNames = parameters.at("gmNames").get<bool>();
+				require(!track.gmNames || track.type == TrackType::Midi || track.type == TrackType::Instrument,
+					"only MIDI and instrument tracks have a name list");
+			}
 			if (parameters.contains("articulationMap"))
 			{
 				track.articulationMap = parameters.at("articulationMap").get<ObjectId>();
@@ -1527,6 +1515,11 @@ namespace gnubase::engine
 			setTimeOffset(project, track, parameters, context); // in the new time base
 			if (parameters.contains("groupChannel"))
 				setGroupChannel(project, track, parameters.at("groupChannel").get<bool>(), context);
+			if (parameters.contains("groupEditing"))
+			{
+				require(track.type == TrackType::Folder, "only folder tracks have group editing");
+				track.groupEditing = parameters.at("groupEditing").get<bool>();
+			}
 			Json result = {{"track", toJson(track)}};
 			context.emit("track.changed", result);
 			if (track.type == TrackType::Folder && parameters.contains("color"))
@@ -2891,6 +2884,24 @@ namespace gnubase::engine
 			return result;
 		}
 
+		// A MIDI part's or an audio event's rootKey and globalTranspose, as midiPart.set and audioEvent.set take them.
+		void setGlobalTranspose(const Json& parameters, int& rootKey, bool& independent)
+		{
+			if (parameters.contains("rootKey"))
+			{
+				const std::string name = parameters.at("rootKey").get<std::string>();
+				const std::optional<int> key = rootKeyFromName(name);
+				require(key.has_value(), "unknown root key " + name);
+				rootKey = key.value_or(-1);
+			}
+			if (parameters.contains("globalTranspose"))
+			{
+				const std::string mode = parameters.at("globalTranspose").get<std::string>();
+				require(mode == "follow" || mode == "independent", "globalTranspose must be follow or independent");
+				independent = mode == "independent";
+			}
+		}
+
 		Json setAudioEvent(Project& project, CommandContext& context, bool follow)
 		{
 			const Json& parameters = context.parameters();
@@ -2903,6 +2914,13 @@ namespace gnubase::engine
 			changed.length = parameters.value("length", event.length);
 			changed.volume = parameters.value("volume", event.volume);
 			changed.mute = parameters.value("mute", event.mute);
+			setGlobalTranspose(parameters, changed.rootKey, changed.independent);
+			if (parameters.contains("transpose"))
+			{
+				const auto semitones = parameters.at("transpose").get<int64_t>();
+				requireRange(semitones, -24, 24, "transpose");
+				changed.transpose = static_cast<int>(semitones);
+			}
 			require(changed.length > 0, "length must be positive");
 			checkAudioEvent(project, changed);
 			if (follow && changed.position != event.position)
@@ -2993,19 +3011,7 @@ namespace gnubase::engine
 					requireRange(number, -127, 127, key);
 					*value = static_cast<int>(number);
 				}
-			if (parameters.contains("rootKey"))
-			{
-				const std::string name = parameters.at("rootKey").get<std::string>();
-				const std::optional<int> key = rootKeyFromName(name);
-				require(key.has_value(), "unknown root key " + name);
-				part.rootKey = key.value_or(-1);
-			}
-			if (parameters.contains("globalTranspose"))
-			{
-				const std::string mode = parameters.at("globalTranspose").get<std::string>();
-				require(mode == "follow" || mode == "independent", "globalTranspose must be follow or independent");
-				part.independent = mode == "independent";
-			}
+			setGlobalTranspose(parameters, part.rootKey, part.independent);
 			if (parameters.contains("pattern"))
 			{
 				const auto pattern = parameters.at("pattern").get<ObjectId>();
@@ -3403,7 +3409,7 @@ namespace gnubase::engine
 			{"chord.assignVoices", "Assign voices to notes"},
 			{"chordPads.set", "Change chord pads"},
 			{"chordPads.assign", "Assign chords to pads"},
-			{"chordPads.modify", "Modify chord pads"},
+			{"chordPads.modify", chordpads::g_modifyAction},
 			{"chordPads.setPad", "Change chord pad"},
 			{"chordPads.move", "Move chord pad"},
 			{"chordPads.fromChordTrack", "Assign pads from chord track"},
@@ -3607,6 +3613,7 @@ namespace gnubase::engine
 						return result;
 					syncSharedParts(before.midiParts, m_project, context);
 					midi::adoptPatterns(m_project, context);
+					followTrackFolders(m_project, context, before);
 				}
 				catch (...)
 				{
@@ -3707,6 +3714,20 @@ namespace gnubase::engine
 				{"redo", position < steps.size() ? Json(steps[position].action) : Json(nullptr)}});
 	}
 
+	void ProjectModel::setSoloNotes(std::vector<std::pair<ObjectId, ObjectId>> notes)
+	{
+		if (notes == m_project.soloNotes)
+			return;
+		m_project.soloNotes = std::move(notes);
+		const bool saved = m_savedRevision == m_revision;
+		const bool autoSaved = m_autoSavedRevision == m_revision;
+		publish();
+		if (saved)
+			m_savedRevision = m_revision;
+		if (autoSaved)
+			m_autoSavedRevision = m_revision;
+	}
+
 	void ProjectModel::publish()
 	{
 		m_snapshots.publish(compile(m_project, ++m_revision, &m_snapshots.latest(), m_openedRevision));
@@ -3731,6 +3752,7 @@ namespace gnubase::engine
 		before.clips = m_project.clips;
 		before.audioEvents = m_project.audioEvents;
 		const Json layout = trackLayoutJson(m_project);
+		const Json visibility = trackVisibilityJson(m_project);
 		for (int64_t i = 0; i < steps; ++i)
 		{
 			const HistoryStep& step = undo ? m_history.undo() : m_history.redo();
@@ -3739,6 +3761,7 @@ namespace gnubase::engine
 		}
 		announceWarpedEvents(before, m_project, context);
 		followTimeFormat(m_project, timeFormat, context);
+		followTrackFolders(m_project, context, visibility);
 		// The project keeps the heights and fold states of removed tracks for undo: a track that comes back or goes
 		// brings its own back or takes them away (#1131).
 		if (Json now = trackLayoutJson(m_project); now != layout)
@@ -3953,8 +3976,9 @@ namespace gnubase::engine
 		add(engine,
 			{"project.get", 1,
 				"The whole project: busses, tracks in order, channels, media, clips, events and parts. Each MIDI part "
-				"has rootKeyTranspose too, the semitones that the project root key transposes it by (-5 to 6; 0 for "
-				"an independent part and unless both have a root key). Each audio event of a warped clip has "
+				"and audio event has rootKeyTranspose too, the semitones that the project root key transposes it by "
+				"(-5 to 6; 0 for an independent one and unless both have a root key). Each audio event of a warped "
+				"clip has "
 				"playedLength, the project samples from its start to where it ends through the warp, and fadeRoom, "
 				"the frames its fades may take together; audioEvent.changed announces them when they change.",
 				objectSchema({}), {{"type", "object"}}, true},
@@ -3969,7 +3993,10 @@ namespace gnubase::engine
 				for (Json& event : json.at("audioEvents"))
 					if (const auto found = project.audioEvents.find(event.at("id").get<ObjectId>());
 						found != project.audioEvents.end())
+					{
+						event["rootKeyTranspose"] = rootKeyTranspose(project, found->second);
 						addWarpedLengths(event, project, found->second);
+					}
 				return json;
 			});
 		add(engine,
@@ -3986,7 +4013,8 @@ namespace gnubase::engine
 				"Saves the project as a DAWproject file: as path, which is then the project's file (save as), or "
 				"without path to the project's file (save). Media files and frozen tracks' freeze files are copied "
 				"into it unless embedMedia is false; then the file refers to them where they are, relative to itself "
-				"if they are in its folder. The file becomes the first of the recent "
+				"if they are in its folder. One that is missing is referred to by its absolute path. The file becomes "
+				"the first of the recent "
 				"projects (project.recent).",
 				objectSchema({{"path", stringSchema}, {"embedMedia", booleanSchema}}), noResult, false},
 			[this](CommandContext& context)
@@ -4330,17 +4358,24 @@ namespace gnubase::engine
 				"then plays through it, or without it through the next group channel up, or the main output, and "
 				"its automation and the routing of other channels to it go. Channels routed elsewhere by hand or "
 				"disconnected keep their routing. With the user setting editing.applyFolderColor, a folder's new "
-				"color goes to the tracks inside it. picture is an image file (PNG, JPEG or SVG) that the mixer shows "
+				"color goes to the tracks inside it. groupEditing turns a folder's Group Editing mode on or off "
+				"(reference manual p. 274): in the project window, selecting an event, a part or a range on a track "
+				"inside it then selects those of its other tracks with the same start and end too. picture is an image "
+				"file (PNG, JPEG or SVG) that the mixer shows "
 				"on the track's channel, or empty for none. drumMap is the drum map (drumMap.add) a MIDI or instrument "
 				"track's notes play through, or 0 for none; articulationMap its articulation map "
 				"(articulationMap.add), or 0 for none, whose remote triggers also select the sound slot of the notes "
 				"played into the track (midi.inject, its MIDI input): a trigger key or program doesn't play but sends "
-				"the slot's output events, and the notes after it get the slot's channel, transpose and velocity.",
+				"the slot's output events, and the notes after it get the slot's channel, transpose and velocity. "
+				"gmNames, for a MIDI or instrument track, is its name list (reference manual p. 1239): true for GM "
+				"Default, which names its pitches by General MIDI's percussion sounds in the editors while it has no "
+				"drum map, false for No Names.",
 				objectSchema(
 					{{"track", idSchema}, {"name", stringSchema}, {"color", color}, {"timeBase", timeBases},
 						{"timeFormat", timeFormats}, {"timeOffset", positionSchema}, {"timeOffsetOn", booleanSchema},
-						{"enabled", booleanSchema}, {"groupChannel", booleanSchema}, {"picture", stringSchema},
-						{"drumMap", idSchema}, {"articulationMap", idSchema}},
+						{"enabled", booleanSchema}, {"groupChannel", booleanSchema}, {"groupEditing", booleanSchema},
+						{"picture", stringSchema}, {"drumMap", idSchema}, {"articulationMap", idSchema},
+						{"gmNames", booleanSchema}},
 					{"track"}),
 				resultSchema({"track"}), false},
 			setTrack);
@@ -4620,10 +4655,19 @@ namespace gnubase::engine
 				resultSchema({"event"}), false},
 			addAudioEvent);
 		add(engine,
-			{"audioEvent.set", 1, "Changes an audio event's position, clip, offset, length, volume (dB) or mute.",
+			{"audioEvent.set", 1,
+				"Changes an audio event's position, clip, offset, length, volume (dB) or mute, or how global "
+				"transposition shifts its pitch in real time (#1368), as midiPart.set's do a MIDI part's: rootKey is "
+				"its root key (\"\" for none, C, C# and so on to B), which the project root key transposes it to "
+				"(project.set rootKey); globalTranspose follow (the default) or independent says whether the project "
+				"root key and the transpose track transpose it (transpose.add). transpose is its own Transpose in "
+				"semitones, -24 to 24, which adds to global transposition as a MIDI part's does, also while it is "
+				"independent (#1555). Its audio file stays as it is.",
 				objectSchema(
 					{{"event", idSchema}, {"clip", idSchema}, {"position", integerSchema}, {"offset", integerSchema},
-						{"length", integerSchema}, {"volume", numberSchema}, {"mute", booleanSchema}},
+						{"length", integerSchema}, {"volume", numberSchema}, {"mute", booleanSchema},
+						{"rootKey", enumSchema(rootKeyNames())},
+						{"globalTranspose", enumSchema({"follow", "independent"})}, {"transpose", integerSchema}},
 					{"event"}),
 				resultSchema({"event"}), false},
 			[this](Project& project, CommandContext& context)
@@ -4995,7 +5039,9 @@ namespace gnubase::engine
 				"A number that grows with every change of the project: every edit, undo and redo, and loading or "
 				"starting a project. quantize.savePreset, quantize.renamePreset, quantize.removePreset and "
 				"quantize.extractGroove also advance it when they change the quantize preset saved with the project, "
-				"without an undo step. project.load with revision loads only if it hasn't changed. modified says "
+				"without an undo step, and so does the drum editor's Solo Instrument (editor.set soloInstrument, and "
+				"the selection while it is on) when it changes what plays, without a change of the project: modified "
+				"stays as it was. project.load with revision loads only if it hasn't changed. modified says "
 				"whether the project changed since it was last saved, loaded or started; undoing back to the saved "
 				"state still counts as a change. project identifies the open project: the revision at which it was "
 				"loaded or started, so it changes only when another project is opened.",

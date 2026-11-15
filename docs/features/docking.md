@@ -89,7 +89,9 @@ opens; its items are toggle buttons, so it stays open while they are clicked. To
 show and hide zones and strips as elsewhere, and an element with `setup="channel"` gets a toggle button per section of
 the set `channel` (`setup-section="eq"`, with the section's label), in the user's order. A button with
 `setup-all="channel"` shows them all (Show All), one with `setup-reset="channel"` gives the set its default order
-and hidden sections (Reset All, p. 1576), and the presets (p. 1575) save and recall them.
+and hidden sections (Reset All, p. 1576), and the presets (p. 1575) save and recall them. `Docking::onReset` hears of
+every Reset All, also of a set that had its defaults, so the app can fit the window again, as the transport panel
+([transport-bar.md](transport-bar.md)).
 
 - **Presets.** A button with `setup-preset-save="channel"` opens the dialog Save Preset (`resources/ui/setup-preset.rml`,
   next to the panel window's document), and OK, disabled while the name is empty, saves the set's order and hidden

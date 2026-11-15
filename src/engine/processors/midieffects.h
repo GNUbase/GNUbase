@@ -86,6 +86,7 @@ namespace gnubase::engine::processors
 			uint8_t channel = 0;
 			uint8_t key = 0;
 			uint16_t velocity = 0;
+			bool drumSound = false; // graph::ProcessEvent::drumSound
 		};
 
 		// Both return false when the output is full and they must be called again; a step whose note-on doesn't fit
@@ -151,11 +152,12 @@ namespace gnubase::engine::processors
 	// Applies rules to events one at a time, as the transformer effect and each module of an input transformer do. A
 	// note-off goes where the note-on went, so a note changed by the rules ends where it sounds, and so does the poly
 	// pressure of a held note unless the rules find it; a note-on that became another type of event loses its note-off.
-	// Where two held notes play one note, it plays once and ends with the last of them. In a full output, note-offs
-	// take the places of other events, and a note-on that doesn't fit is left out with its note-off, so that notes
-	// hang only if more of them end in one block than it holds.
-	// Velocities stay from 1 to 127, and a controller turned into a note plays a note-on for values above 0 and a
-	// note-off for 0, once each while the note is held, counting as a held note. SysEx passes.
+	// A note's expression goes where its note-on went, also after its note-off (MPE's release, #1618), and nowhere for
+	// a note the rules filtered out; that of a key whose note-on the stage hasn't had passes. Where two held notes play
+	// one note, it plays once and ends with the last of them. In a full output, note-offs take the places of other
+	// events, and a note-on that doesn't fit is left out with its note-off, so that notes hang only if more of them end
+	// in one block than it holds. Velocities stay from 1 to 127, and a controller turned into a note plays a note-on
+	// for values above 0 and a note-off for 0, once each while the note is held, counting as a held note. SysEx passes.
 	class LogicalStage
 	{
 	public:
@@ -172,6 +174,7 @@ namespace gnubase::engine::processors
 			uint16_t to = g_none; // where the note-on went, as channel * 128 + pitch, besides itself if it passed
 			bool passed = false;  // the note-on itself passed
 			bool down = false;    // a note-on came and no note-off yet
+			bool played = false;  // a note-on came, also if its note-off did since: where its expression goes
 		};
 
 		// Whether held, a note-on of source, plays note; source's note-on itself counts if it passed.

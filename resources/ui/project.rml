@@ -12,11 +12,13 @@
      dialogs are zoom-preset.rml, zoom-presets.rml and repeat-events.rml, next to this
      file. ui::TrackList fills #track-list under its global track controls (docs/features/track-list.md): #add-track
      opens the add track dialog (add-track.rml), #track-controls-settings the track controls settings dialog
-     (track-controls.rml); #track-list-menu is its context menu.
+     (track-controls.rml); #track-list-menu is its context menu, and #track-versions-menu the Track Versions pop-up menu
+     the arrow at a versioned track's name opens (docs/features/track-versions.md).
      app::AppUi fills the transport bar with the transport controls (transport.rml), which show where Tap Tempo puts
      the tempo in #tap-tempo-message, over the event display.
      The toolbar also has button[tool] controls and #combine-selection-tools (docs/features/tools.md), which the
      display drives too, with the toolbox #toolbox, the context menu #event-display-menu and #tool-notification, and
+     #edit-refused, which says why the engine refused an edit of events (docs/features/event-display.md), and
      #select-color with #color-menu, which ui::ColorMenu fills with the project's colors (docs/features/colors.md).
      ui::StatusLine fills #record-format, #record-time and #lost-device (docs/features/status-line.md). ui::InfoLine fills
      #info-line; #inspector-setup is the inspector's Set up Sections pane (docs/features/inspector.md), #toolbar-setup
@@ -172,6 +174,7 @@
 					<button class="ruler-format icon-only" menu="ruler-format-menu" title="Ruler Time Format"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>
 					<notification id="tool-notification" class="tool-notification tooltip"/>
 					<notification id="tap-tempo-message" class="tap-tempo-message tool-notification tooltip" duration="2"/>
+					<notification id="edit-refused" class="edit-refused tool-notification tooltip" duration="4"/>
 				</div>
 			</div>
 			<splitter for="lower" resize="next"/>
@@ -403,12 +406,13 @@
 		     ui::TrackList fills the list with the first one's versions, which a click activates. -->
 		<menuitem id="track-versions-submenu">Track Versions
 			<menu>
-				<menuitem command="track.newVersion">New Version</menuitem>
-				<menuitem command="track.duplicateVersion">Duplicate Version</menuitem>
-				<menuitem command="track.deleteVersion">Delete Version</menuitem>
+				<menuitem command="trackVersions.new">New Version</menuitem>
+				<menuitem command="trackVersions.duplicate">Duplicate Version</menuitem>
+				<menuitem command="trackVersions.rename">Rename Version...</menuitem>
+				<menuitem command="trackVersions.remove">Delete Version</menuitem>
 				<menuseparator/>
-				<menuitem command="track.selectSameVersionId">Select Tracks with Same Version ID</menuitem>
-				<menuitem command="track.assignCommonVersionId">Assign Common Version ID</menuitem>
+				<menuitem command="trackVersions.selectSameId">Select Tracks with Same Version ID</menuitem>
+				<menuitem command="trackVersions.assignCommonId">Assign Common Version ID</menuitem>
 				<menuseparator/>
 				<menuitem id="track-versions-list-submenu">Activate Version
 					<menu id="track-versions-list"/>
@@ -583,6 +587,9 @@
 	</menu>
 	<!-- The parameter selector of an automation track, which ui::TrackList fills (reference manual p. 880) -->
 	<menu id="automation-parameter-menu"/>
+	<!-- The Track Versions pop-up menu (reference manual p. 231), which ui::TrackList fills with the versions of the
+	     track whose arrow opened it and with its functions, and runs the clicks on -->
+	<menu id="track-versions-menu"/>
 	<menu id="transport-menu">
 		<menuitem command="transport.play">Start</menuitem>
 		<menuitem command="transport.stop">Stop</menuitem>

@@ -231,6 +231,14 @@ TEST_CASE("the plugin API describes a built-in processor through its factory and
 	}
 }
 
+TEST_CASE("no built-in processor has a built-in MIDI effect's id, so a builtin: id names one of them", "[unit]")
+{
+	// The factory looks among the processors first: a MIDI effect with a processor's id would get the processor.
+	for (const engine::processors::BuiltinInfo& effect : engine::processors::midiEffects())
+		for (const engine::processors::BuiltinInfo& processor : engine::processors::builtins())
+			CHECK(effect.id != processor.id);
+}
+
 TEST_CASE("the built-in MIDI effects are builtin: plugins with note ports, parameters and state", "[unit]")
 {
 	using engine::processors::ChordGenerator;

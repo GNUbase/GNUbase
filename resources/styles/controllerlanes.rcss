@@ -33,6 +33,7 @@
 .controller-lane-header
 {
 	flex-shrink: 0;
+	box-sizing: border-box; /* the themes' frame of the lane with the keyboard focus (.keyboard-focus) is inside */
 	width: 48dp;
 	overflow: hidden;
 }
@@ -61,6 +62,111 @@
 .controller-bar
 {
 	width: 3dp;
+}
+
+/* The Articulations lane (docs/features/articulation-maps.md): as tall as its rows, the sound slots lane and a row
+   per articulation, with the lane's name and the articulations' names beside them. Code places the slots,
+   directions and attributes in percent of the area's width; a reset (.reset) is as wide as this gives it. */
+.controller-lane[lane-kind=articulations]
+{
+	height: auto;
+	min-height: 14dp;
+}
+
+.controller-lane[lane-kind=articulations] .controller-lane-type
+{
+	display: block; /* not on a line of the header's, which is taller than the row beside it */
+	height: 14dp;
+	padding: 0 2dp;
+	white-space: nowrap;
+}
+
+.articulation-name
+{
+	height: 14dp;
+	padding: 0 2dp;
+	font-size: 8dp;
+	line-height: 14dp;
+	white-space: nowrap;
+	overflow: hidden;
+}
+
+.articulation-row
+{
+	position: relative;
+	box-sizing: border-box; /* the sound slots lane's line is inside its height, so the names stay beside the rows */
+	height: 14dp;
+}
+
+.sound-slot, .articulation-item
+{
+	position: absolute;
+	top: 1dp;
+	bottom: 1dp;
+	box-sizing: border-box;
+	overflow: hidden;
+}
+
+.sound-slot
+{
+	font-size: 8dp;
+	line-height: 12dp;
+	white-space: nowrap;
+}
+
+.articulation-item.reset
+{
+	width: 4dp;
+}
+
+/* A collapsed group's row (#1580, p. 1287): its articulations with their names. */
+.articulation-row.collapsed .articulation-item
+{
+	font-size: 8dp;
+	line-height: 12dp;
+	white-space: nowrap;
+}
+
+/* Collapse All Groups, Expand All Groups and Show/Hide Sound Slots Lane under the articulations' names (#1658,
+   pp. 1287-1288). */
+.articulation-controls
+{
+	display: flex;
+	flex-direction: row;
+	height: 14dp;
+}
+
+.articulation-control
+{
+	min-width: 0;
+	width: 14dp;
+	height: 14dp;
+	padding: 0;
+}
+
+.articulation-control svg.icon
+{
+	width: 10dp;
+	height: 10dp;
+	vertical-align: 0;
+}
+
+/* The arrow in a direction's upper left corner that opens its event pop-up menu (p. 1290), shown while the mouse is
+   over the direction or it is selected. */
+.articulation-menu-arrow
+{
+	visibility: hidden;
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 8dp;
+	height: 8dp;
+}
+
+.articulation-item.direction:hover .articulation-menu-arrow,
+.articulation-item.direction.selected .articulation-menu-arrow
+{
+	visibility: visible;
 }
 
 .controller-lanes-footer

@@ -3,11 +3,13 @@
 // ui::Automation as MCP's UI tools drive it: the panel follows the selected sampler track, its controls, markers and
 // keyboard set the sampler's parameters, a dropped file loads into it, Normalize Sample sets its gain, and the add
 // track dialog's Sampler page adds sampler tracks. tests/sampler_tests.cpp checks the engine's side.
+#include "testutils/commandholds.h"
 #include "uiapp.h"
 
 #include "engine/engine.h"
 #include "ui/automation.h"
 #include "ui/docking.h"
+#include "ui/enginebinding.h"
 #include "ui/shell.h"
 #include "ui/tracklist.h"
 
@@ -257,6 +259,57 @@ TEST_CASE("a change in a value field and a drag of its marker are two undo steps
 				static_cast<int>(y)}});
 	REQUIRE(f.app.waitUntil([&] { return std::abs(f.parameter("Start") - 0.5) < 0.02; }));
 	CHECK(f.app.call("history.get").at("steps").size() == steps + 2);
+}
+
+TEST_CASE("the sampler panel shows another track's own value while a turned one's last step is out, and back on it the "
+		  "turn's",
+	"[ui]")
+{
+	test::CommandHolds holds; // declared before the app: its engine's command thread waits in hold()
+	Fixture f;
+	const test::ReleaseHolds releaseHolds{holds};
+	f.app.engine().registerCommand(
+		{"test.hold", 1, "Waits for the test to release it.", engine::CommandInfo{}.parameters, Json::object(), false},
+		[&holds](engine::CommandContext&) { return holds.hold(); });
+	engine::Client holder(f.app.engine(), "holder");
+	const Json created = f.app.call("sampler.create", {{"path", f.other.u8string()}});
+	const uint64_t other = created.at("track").at("id").get<uint64_t>();
+	f.app.call("parameter.set",
+		{{"channel", created.at("channel").at("id")},
+			{"target", {{"type", "instrument"}, {"parameter", f.id("Coarse")}}}, {"value", 5.0}});
+	f.open();
+	const std::string coarse = f.control("Coarse");
+	const auto shows = [&](double value)
+	{ return f.app.waitUntil([&] { return test::controlValue(f.app, std::nullopt, coarse) == value; }); };
+	REQUIRE(shows(0.0));
+	ui::EngineBinding& binding = f.app.appUi().binding();
+	REQUIRE(f.app.waitUntil(
+		[&] { return binding.waiting("history.transaction") == 0 && binding.waiting("project.get") == 0; }));
+
+	// A wheel turn that the engine takes before a hold: the project read after it waits behind the hold, so the panel
+	// has a read from before the turn (#1305).
+	f.app.ui().wheel(std::nullopt, of(coarse), 0.0F, -1.0F);
+	holder.send("test.hold");
+	REQUIRE(holds.waitEntered(1));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(binding.waiting("history.transaction") == 0);
+	REQUIRE(binding.waiting("project.get") != 0);
+	CHECK(test::controlValue(f.app, std::nullopt, coarse) == 1.0);
+
+	// The other sampler track shows its own value, and back on the turned one the turn's, not the other track's
+	// (#1471).
+	f.select(other);
+	CHECK(shows(5.0));
+	f.select(f.track);
+	REQUIRE(f.app.waitUntil([&] { return f.elements("#sampler-file").at(0).value("text", "") == "sine"; }));
+	CHECK(test::controlValue(f.app, std::nullopt, coarse) == 1.0);
+	REQUIRE(binding.waiting("project.get") != 0);
+
+	// The read after the turn agrees with it.
+	holds.release(1);
+	REQUIRE(f.app.waitUntil([&] { return binding.waiting("project.get") == 0; }));
+	CHECK(f.parameter("Coarse") == 1.0);
+	CHECK(shows(1.0));
 }
 
 TEST_CASE("the sampler panel shows why a sample didn't load or normalize", "[ui]")

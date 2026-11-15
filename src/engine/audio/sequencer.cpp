@@ -2,8 +2,11 @@
 #include "engine/audio/sequencer.h"
 
 #include "engine/graph/graph.h"
+#include "engine/midi/articulationmaps.h"
 #include "engine/midi/midivalues.h"
 #include "engine/plugins/pluginslot.h"
+#include "platform/log.h"
+#include "platform/rt/realtime.h"
 
 #include <algorithm>
 #include <array>
@@ -11,7 +14,7 @@
 #include <cstddef>
 #include <iterator>
 #include <limits>
-#include <numeric>
+#include <string_view>
 #include <tuple>
 #include <utility>
 
@@ -142,6 +145,22 @@ namespace gnubase::engine
 			return event;
 		}
 
+		// Follows the events' notes in held, by channel * 128 + pitch.
+		void holdNotes(const graph::EventBuffer& events, std::array<bool, MidiSequencer::g_notes>& held) noexcept
+		{
+			for (const graph::ProcessEvent& event : events)
+				if (event.type == graph::ProcessEvent::Type::NoteOn || event.type == graph::ProcessEvent::Type::NoteOff)
+					held[((event.channel % 16) * 128) + (event.key % 128)] =
+						event.type == graph::ProcessEvent::Type::NoteOn;
+		}
+
+		// The factory of the built-in MIDI effects, which every sequencer shares: it holds their descriptors only.
+		std::shared_ptr<plugin::Factory> builtinEffects()
+		{
+			static const std::shared_ptr<plugin::Factory> factory = std::make_shared<processors::BuiltinFactory>();
+			return factory;
+		}
+
 		graph::ProcessEvent controllerEvent(
 			ControllerType type, uint8_t channel, uint8_t number, uint32_t value, uint32_t offset)
 		{
@@ -207,8 +226,11 @@ namespace gnubase::engine
 			track.all.controllers.push_back(controller);
 			if (controller.part >= 0 && static_cast<size_t>(controller.part) < parts.size())
 				track.parts[static_cast<size_t>(controller.part)].index.controllers.push_back(controller);
+			else if (controller.part == g_soundSlotPart)
+				track.slots.controllers.push_back(controller);
 		}
 		index(track.all);
+		index(track.slots);
 		for (ChasePart& part : track.parts)
 			index(part.index);
 		return track;
@@ -266,24 +288,65 @@ namespace gnubase::engine
 		return event;
 	}
 
-	MidiSequencer::MidiSequencer()
-		: m_sequence(std::make_unique<const MidiSequence>()), m_input(graph::g_maxEventsPerBlock),
+	MidiEffectInstance::MidiEffectInstance(std::unique_ptr<plugin::Plugin> plugin)
+		: m_plugin(std::move(plugin)), m_params(plugin::extension<plugin::Params>(*m_plugin))
+	{
+	}
+
+	MidiEffectInstance::~MidiEffectInstance()
+	{
+		// No block processes it any more.
+		deactivate();
+	}
+
+	void MidiEffectInstance::deactivate()
+	{
+		rt::assertNotRealtime("MidiEffectInstance::deactivate");
+		if (m_started)
+			m_plugin->stopProcessing();
+		if (m_active)
+			m_plugin->deactivate();
+		m_started = false;
+		m_active = false;
+	}
+
+	void MidiEffectInstance::activate(double sampleRate, uint32_t maxFrames)
+	{
+		deactivate();
+		m_active = m_plugin->activate(sampleRate, 1, maxFrames);
+	}
+
+	plugin::ProcessStatus MidiEffectInstance::process(const plugin::Process& process) noexcept
+	{
+		if (m_active && !m_started)
+			m_started = m_plugin->startProcessing();
+		return m_started ? m_plugin->process(process) : plugin::ProcessStatus::Error;
+	}
+
+	void MidiEffectInstance::startAfresh() noexcept
+	{
+		if (m_started)
+			(*m_plugin).reset(); // the plugin's reset, not the pointer's
+	}
+
+	MidiSequencer::MidiSequencer(std::shared_ptr<plugin::Factory> effects)
+		: m_factory(effects ? std::move(effects) : builtinEffects()),
+		  m_sequence(std::make_unique<const MidiSequence>()), m_input(graph::g_maxEventsPerBlock),
 		  m_stripChase(std::make_shared<graph::EventBuffer>(graph::g_maxEventsPerBlock))
 	{
-		std::iota(m_inputTo.begin(), m_inputTo.end(), uint16_t{0});
+		m_inputTo.fill(static_cast<uint16_t>(g_notes));
 	}
 
 	namespace
 	{
-		constexpr size_t g_effectTransportSegments = 16;
 		constexpr size_t g_effectSysexBytes = 65536;
 
 		// Command thread: an instance of a built-in MIDI effect through the plugin API, initialized, with the slot's
 		// parameter values.
-		std::shared_ptr<plugin::Plugin> makeEffect(
-			const std::string& id, const std::vector<double>& parameters, plugin::Host& host)
+		std::shared_ptr<MidiEffectInstance> makeEffect(
+			plugin::Factory& factory, const std::string& id, const std::vector<double>& parameters, plugin::Host& host)
 		{
-			std::shared_ptr<plugin::Plugin> effect = processors::BuiltinFactory().create("builtin:" + id, host);
+			std::unique_ptr<plugin::Plugin> effect = factory.create("builtin:" + id, host);
 			if (!effect || !effect->init())
 				return nullptr;
 			plugin::EventList values(parameters.size(), 0, 0);
@@ -296,21 +359,10 @@ namespace gnubase::engine
 				value.value = parameters[parameter];
 				values.push(value);
 			}
-			if (auto* params = plugin::extension<plugin::Params>(*effect))
-				params->flushParams(values, ignored);
-			return effect;
-		}
-
-		// Command thread: activates an effect for blocks of up to maxFrames, or again after it was active.
-		void activateEffect(plugin::Plugin& effect, bool active, double sampleRate, uint32_t maxFrames)
-		{
-			if (active)
-			{
-				effect.stopProcessing();
-				effect.deactivate();
-			}
-			if (effect.activate(sampleRate, 1, maxFrames))
-				effect.startProcessing();
+			auto instance = std::make_shared<MidiEffectInstance>(std::move(effect));
+			if (instance->params() != nullptr)
+				instance->params()->flushParams(values, ignored);
+			return instance;
 		}
 	}
 
@@ -359,24 +411,23 @@ namespace gnubase::engine
 			{
 				// The slot's values, not on the audio thread yet. Later the lanes of its automation carry them, which
 				// they send again only when they change (#992); the audio thread gives it the last ones they sent.
-				kept.effect = makeEffect(slot.effect, slot.parameters, m_host);
+				kept.effect = makeEffect(*m_factory, slot.effect, slot.parameters, m_host);
 				if (!kept.effect)
 				{
 					kept = SlotEffect();
 					continue;
 				}
-				kept.params = plugin::extension<plugin::Params>(*kept.effect);
 				kept.id = slot.effect;
 				kept.serial = ++m_effectSerial;
 				kept.output = output;
 				kept.input = input;
 				kept.source = source;
 				if (m_sampleRate > 0.0)
-					activateEffect(*kept.effect, false, m_sampleRate, m_maxFrames);
+					kept.effect->activate(m_sampleRate, m_maxFrames);
 				insertsNew = insertsNew || !sends;
 				inputNew = inputNew || input || wasInput;
 			}
-			sequence->effects.push_back({kept.effect, kept.params, info, kept.serial, number, output != 0, sends});
+			sequence->effects.push_back({kept.effect, info, kept.serial, number, output != 0, sends});
 			sequence->insertCount += sends ? 0 : 1;
 			sequence->inputCount += input ? 1 : 0;
 		}
@@ -391,7 +442,7 @@ namespace gnubase::engine
 			m_pluginIn = plugin::EventList(graph::g_maxEventsPerBlock, g_effectSysexBytes, 0);
 			for (plugin::EventList& out : m_pluginOut)
 				out = plugin::EventList(graph::g_maxEventsPerBlock, g_effectSysexBytes, 0);
-			m_pluginTransport.resize(g_effectTransportSegments);
+			m_pluginTransport.resize(plugins::g_maxTransportSegments);
 			m_automatedIn = plugin::EventList(g_automated, 0, 0);
 		}
 		// The buffers stay once they are there: the audio thread may use them as long as it has a sequence that
@@ -413,8 +464,12 @@ namespace gnubase::engine
 		{
 			if (!m_pre)
 			{
-				m_pre = std::make_shared<MidiSequencer>();
+				m_pre = std::make_shared<MidiSequencer>(m_factory);
 				m_pre->setChase(m_chaseSetting);
+				// Its sequences' slotsSerial is this one's, so that it keeps the sound slot it takes (takeSlot).
+				m_pre->m_mapId = m_mapId;
+				m_pre->m_mapSlots = m_mapSlots;
+				m_pre->m_slotsSerial = m_slotsSerial;
 				if (m_sampleRate > 0.0)
 					m_pre->prepareFor(m_sampleRate, m_maxFrames);
 			}
@@ -425,13 +480,21 @@ namespace gnubase::engine
 			unmodified->expressions = sequence->preExpressions;
 			unmodified->controllers = sequence->controllers;
 			unmodified->chase = sequence->chase;
-			unmodified->inputChannel = sequence->inputChannel; // the input on the track's MIDI channel, as the parts'
+			// The input on the track's MIDI channel, through the drum map's input mapping or Live Input and the
+			// articulation map's remote triggers, as the parts' notes in preNotes go through both maps.
+			unmodified->inputChannel = sequence->inputChannel;
+			unmodified->liveInput = sequence->liveInput;
+			unmodified->drumInput = sequence->drumInput;
+			unmodified->articulations = sequence->articulations;
 			m_pre->setSequence(std::move(unmodified));
 			sequence->pre = m_pre;
 		}
 		// Only what plays from the input counts: a slot renamed or recolored in the setup stays selected.
 		const auto plays = [](const SoundSlot& slot)
-		{ return std::tie(slot.trigger, slot.outputs, slot.channel, slot.transpose, slot.velocity); };
+		{
+			return std::tie(slot.trigger, slot.outputs, slot.channel, slot.transpose, slot.velocity, slot.addOn,
+				slot.minPitch, slot.maxPitch, slot.minVelocity, slot.maxVelocity);
+		};
 		const std::vector<SoundSlot>& slots = sequence->articulations.slots;
 		if (sequence->articulations.id != m_mapId ||
 			!std::equal(slots.begin(), slots.end(), m_mapSlots.begin(), m_mapSlots.end(),
@@ -448,12 +511,11 @@ namespace gnubase::engine
 
 	void MidiSequencer::prepare(double sampleRate, uint32_t maxFrames)
 	{
-		const bool active = m_sampleRate > 0.0;
 		m_sampleRate = sampleRate;
 		m_maxFrames = maxFrames;
 		for (const SlotEffect& slot : m_slots)
 			if (slot.effect)
-				activateEffect(*slot.effect, active, sampleRate, maxFrames);
+				slot.effect->activate(sampleRate, maxFrames);
 		if (m_pre)
 			m_pre->prepareFor(sampleRate, maxFrames);
 	}
@@ -500,7 +562,6 @@ namespace gnubase::engine
 		// The parameter events of the effects' automation go to the effects, not on.
 		if (!sequence.effects.empty())
 			m_effectEvents.clear();
-		const uint32_t frames = context.frames;
 		for (const graph::ProcessEvent& event : context.eventsIn)
 		{
 			const bool effects = event.type == graph::ProcessEvent::Type::Parameter &&
@@ -522,23 +583,15 @@ namespace gnubase::engine
 			playOwn(sequence, context, context.eventsOut);
 			return;
 		}
-		// The inserts above the divider play the input as it comes, which the track then records and plays.
 		if (sequence.inputCount > 0)
-		{
-			const graph::EventBuffer* played = &m_input;
-			for (size_t i = 0; i < sequence.inputCount; ++i)
-			{
-				graph::EventBuffer& to = played == &m_chainA ? m_chainB : m_chainA;
-				runEffect(sequence.effects[i], *played, to, frames, context.transport);
-				played = &to;
-			}
-			m_input.clear();
-			for (const graph::ProcessEvent& event : *played)
-				m_input.add(event);
-		}
-		// The sends before the modifiers get what the track plays without them, its input as it came in.
+			runInputEffects(sequence, context);
+		// The sends before the modifiers get what the track plays without them: its input, which that sequencer plays
+		// through the drum map's input mapping or Live Input and the remote triggers, from the sound slot this one's
+		// triggers selected before it played.
 		if (sequence.pre)
 		{
+			if (!sequence.pre->m_tookSlot)
+				sequence.pre->takeSlot(*this);
 			graph::EventBuffer& input = sequence.pre->input();
 			input.clear();
 			for (const graph::ProcessEvent& event : m_input)
@@ -551,7 +604,29 @@ namespace gnubase::engine
 		runEffects(sequence, context, context.eventsOut);
 	}
 
-	void MidiSequencer::runEffect(const RunningEffect& running, const graph::EventBuffer& in, graph::EventBuffer& to,
+	void MidiSequencer::runInputEffects(const MidiSequence& sequence, const graph::ProcessContext& context) noexcept
+	{
+		// They play the input as it comes, which the track then records and plays.
+		const graph::EventBuffer* played = &m_input;
+		bool changes = false; // one started to fail or processes again
+		for (size_t i = 0; i < sequence.inputCount; ++i)
+		{
+			graph::EventBuffer& to = played == &m_chainA ? m_chainB : m_chainA;
+			if (changes)
+				sequence.effects[i].effect->startAfresh();
+			changes = runEffect(sequence.effects[i], *played, to, context.frames, context.transport) || changes;
+			played = &to;
+		}
+		// The notes they played end where the track records and plays, ahead of the parts' notes, which never
+		// passed them, and the inserts below the divider get the note-offs.
+		m_input.clear();
+		if (changes)
+			endHeld(m_inputPlayed, m_input, false);
+		m_input.merge(*played);
+		holdNotes(m_input, m_inputPlayed);
+	}
+
+	bool MidiSequencer::runEffect(const RunningEffect& running, const graph::EventBuffer& in, graph::EventBuffer& to,
 		uint32_t frames, const graph::TransportBlock& transport) noexcept
 	{
 		const uint32_t first =
@@ -577,18 +652,45 @@ namespace gnubase::engine
 		m_pluginIn.clear();
 		for (const graph::ProcessEvent& event : *input)
 			plugins::convertEvent(event, frames, m_pluginIn, true);
-		plugin::EventList& out =
-			m_pluginOut[((running.send ? midi::g_effectSlots : 0) + running.slot) % m_pluginOut.size()];
+		const size_t slot = ((running.send ? midi::g_effectSlots : 0) + running.slot) % m_pluginOut.size();
+		plugin::EventList& out = m_pluginOut[slot];
 		out.clear();
+		if (frames == 0)
+			return false;
 		m_host.setTempoMap(transport.tempoMap);
 		const plugin::Process process{frames, -1, plugin::ProcessMode::Realtime, nullptr, 0, nullptr, 0, m_pluginIn,
-			out, m_pluginTransport.data(), plugins::convertTransport(transport, m_pluginTransport)};
-		if (frames == 0 || running.effect->process(process) == plugin::ProcessStatus::Error)
-			return;
+			out, m_pluginTransport.data(), plugins::convertTransport(transport, m_sampleRate, m_pluginTransport)};
+		const bool failed = m_failing[slot] == running.serial;
+		if (failed)
+			running.effect->startAfresh();
+		const plugin::ProcessStatus status = running.effect->process(process);
+		const std::string_view id = running.info != nullptr ? std::string_view(running.info->id) : std::string_view();
+		const std::string_view section = running.send ? "send" : "insert";
+		// Logged once while it lasts, so that a steady overload doesn't fill the logger's queue.
+		const size_t dropped = m_pluginIn.dropped() + out.dropped();
+		if (dropped > 0 && m_dropping[slot] != running.serial)
+			logging::warning("The MIDI effect {} in MIDI {} {} dropped events that didn't fit its event lists: {} in a "
+							 "block; its drops aren't logged again until a block drops none",
+				id, section, running.slot + 1, dropped);
+		m_dropping[slot] = dropped > 0 ? running.serial : 0;
+		if (status == plugin::ProcessStatus::Error)
+		{
+			const bool starts = m_failing[slot] != running.serial;
+			if (starts)
+				logging::warning("The MIDI effect {} in MIDI {} {} failed a block: {} until it processes again", id,
+					section, running.slot + 1, running.send ? "it plays nothing" : "its events pass it as they come");
+			m_failing[slot] = running.serial;
+			if (!running.send)
+				for (const graph::ProcessEvent& event : in)
+					to.add(event);
+			return starts;
+		}
+		m_failing[slot] = 0;
 		graph::ProcessEvent played;
 		for (const plugin::Event& event : out)
 			if (plugins::toGraphEvent(event, out, played))
 				to.add(played);
+		return failed;
 	}
 
 	void MidiSequencer::takeEffects(const MidiSequence& sequence, graph::EventBuffer& out) noexcept
@@ -611,7 +713,8 @@ namespace gnubase::engine
 			}
 			// A new instance plays the values the automation sent its slot last, which it doesn't send again.
 			const size_t slot = ((running.send ? midi::g_effectSlots : 0) + running.slot) % m_automated.size();
-			if (running.serial > m_newest && m_automatedEffect[slot] == running.info && running.params != nullptr)
+			plugin::Params* const params = running.effect->params();
+			if (running.serial > m_newest && m_automatedEffect[slot] == running.info && params != nullptr)
 			{
 				m_automatedIn.clear();
 				for (size_t id = 0; id < g_automated; ++id)
@@ -625,7 +728,7 @@ namespace gnubase::engine
 					m_automatedIn.push(value);
 				}
 				m_automatedOut.clear();
-				running.params->flushParams(m_automatedIn, m_automatedOut);
+				params->flushParams(m_automatedIn, m_automatedOut);
 			}
 		}
 		for (const RunningEffect& running : sequence.effects)
@@ -669,6 +772,8 @@ namespace gnubase::engine
 		m_sends = sends;
 		m_sendElsewhere = elsewhere;
 		m_effects = !sequence.effects.empty();
+		if (sequence.inputCount == 0)
+			m_inputPlayed.fill(false);
 	}
 
 	void MidiSequencer::remember(const MidiSequence& sequence, const graph::EventBuffer& events) noexcept
@@ -708,26 +813,41 @@ namespace gnubase::engine
 				m_sendHeld[slot].fill(false);
 	}
 
+	void MidiSequencer::endHeld(std::array<bool, g_notes>& held, graph::EventBuffer& out, bool shared) noexcept
+	{
+		for (uint16_t index = 0; index < g_notes; ++index)
+		{
+			if (!held[index])
+				continue;
+			held[index] = false;
+			bool stays = shared && m_insertsHeld[index];
+			for (size_t slot = 0; slot < m_sendHeld.size() && shared && !stays; ++slot)
+				stays = !m_sendElsewhere[slot] && m_sendHeld[slot][index];
+			if (!stays)
+				out.addEnd(noteEvent(graph::ProcessEvent::Type::NoteOff, index, 0));
+		}
+		out.nextSource();
+	}
+
 	void MidiSequencer::runEffects(
 		const MidiSequence& sequence, const graph::ProcessContext& context, graph::EventBuffer& out) noexcept
 	{
-		const auto run = [this, &context](const RunningEffect& running, const graph::EventBuffer& in,
-							 graph::EventBuffer& to) { runEffect(running, in, to, context.frames, context.transport); };
-		const auto hold = [](const graph::EventBuffer& events, std::array<bool, g_notes>& held)
-		{
-			for (const graph::ProcessEvent& event : events)
-				if (event.type == graph::ProcessEvent::Type::NoteOn || event.type == graph::ProcessEvent::Type::NoteOff)
-					held[((event.channel % 16) * 128) + (event.key % 128)] =
-						event.type == graph::ProcessEvent::Type::NoteOn;
-		};
+		const auto run = [this, &context](
+							 const RunningEffect& running, const graph::EventBuffer& in, graph::EventBuffer& to)
+		{ return runEffect(running, in, to, context.frames, context.transport); };
 		graph::EventBuffer* played = &m_own;
+		bool changes = false; // an insert started to fail or processes again: those after it start afresh
 		for (size_t i = sequence.inputCount; i < sequence.insertCount; ++i)
 		{
 			graph::EventBuffer& to = played == &m_chainA ? m_chainB : m_chainA;
-			run(sequence.effects[i], *played, to);
+			if (changes)
+				sequence.effects[i].effect->startAfresh();
+			changes = run(sequence.effects[i], *played, to) || changes;
 			played = &to;
 		}
-		hold(*played, m_insertsHeld);
+		if (changes)
+			endHeld(m_insertsHeld, out, true);
+		holdNotes(*played, m_insertsHeld);
 		out.merge(*played);
 		if (sequence.insertCount == sequence.effects.size())
 			return;
@@ -735,15 +855,20 @@ namespace gnubase::engine
 		graph::EventBuffer* const unmodified = sequence.pre ? &m_preOut : &m_own;
 		graph::EventBuffer& source = sequence.sends.pre ? *unmodified : *played;
 		graph::EventBuffer& sent = played == &m_chainA ? m_chainB : m_chainA;
+		// The sends after the inserts start afresh with the effects after an insert that changed.
+		const bool afresh = changes && !sequence.sends.pre;
 		// Sends to other instrument tracks get every event: the controllers, pitch bend and sustain too.
 		for (size_t i = sequence.insertCount; i < sequence.effects.size(); ++i)
 		{
 			const RunningEffect& running = sequence.effects[i];
 			if (!running.elsewhere)
 				continue;
-			run(running, source, sent);
+			if (afresh)
+				running.effect->startAfresh();
+			if (run(running, source, sent) || afresh)
+				endHeld(m_sendHeld[running.slot], m_sendOut[running.slot], false);
 			m_sendOut[running.slot].merge(sent);
-			hold(sent, m_sendHeld[running.slot]);
+			holdNotes(sent, m_sendHeld[running.slot]);
 		}
 		// Those to the track's own output get the notes only, so the track's other events reach it once.
 		source.removeIf(
@@ -755,10 +880,14 @@ namespace gnubase::engine
 			});
 		for (size_t i = sequence.insertCount; i < sequence.effects.size(); ++i)
 		{
-			if (sequence.effects[i].elsewhere)
+			const RunningEffect& running = sequence.effects[i];
+			if (running.elsewhere)
 				continue;
-			run(sequence.effects[i], source, sent);
-			hold(sent, m_sendHeld[sequence.effects[i].slot]);
+			if (afresh)
+				running.effect->startAfresh();
+			if (run(running, source, sent) || afresh)
+				endHeld(m_sendHeld[running.slot], out, true);
+			holdNotes(sent, m_sendHeld[running.slot]);
 			out.merge(sent);
 		}
 	}
@@ -776,6 +905,7 @@ namespace gnubase::engine
 			m_inputSlotsSerial = sequence.slotsSerial;
 			m_inputSlot = -1;
 			m_inputSlotHeld = -1;
+			m_inputAddOnCount = 0;
 		}
 		// The track set to another MIDI channel: the selected slot's off events on the channel its on events went to,
 		// and its on events on the new one, as the track's patch goes out again there.
@@ -795,7 +925,12 @@ namespace gnubase::engine
 		for (graph::ProcessEvent event : m_input)
 		{
 			if (triggerSlot(sequence, event, out))
+			{
+				// The trigger's note-on gives its channel to a new note, which plays nothing: no expression.
+				if (event.type == graph::ProcessEvent::Type::NoteOn)
+					forgetReleased(event.channel);
 				continue;
+			}
 			auto ends = static_cast<uint16_t>(g_notes);
 			const bool plays = modifyInput(sequence, transport.position + event.offset, event, ends);
 			// Still held if the buffer was full: then a stop ends it.
@@ -976,6 +1111,9 @@ namespace gnubase::engine
 				if (part.range.end > position)
 					consider(part.index, index, position, chase, stopped);
 			}
+			// The sound slot the track sent last, wherever the part that sent it is (#1521); after the parts' events,
+			// as it plays after them at one position.
+			consider(track.slots, index, position, chase, stopped);
 		}
 
 		// The kinds found, in time order; at one position by track, then kind, so a bank select precedes its program.
@@ -1093,8 +1231,12 @@ namespace gnubase::engine
 	{
 		const midi::Modifiers& modifiers = sequence.modifiers;
 		using Type = graph::ProcessEvent::Type;
-		// The track's MIDI channel plays them on it (reference manual p. 351); the keys stay where they came in.
-		if (event.type != Type::NoteOn && event.type != Type::NoteOff && event.type != Type::PolyPressure)
+		// The track's MIDI channel plays them on it (reference manual p. 351); the keys stay where they came in. Poly
+		// pressure and a note's expression follow the note its key plays, as MPE input's does (#1514), and go nowhere
+		// for a key whose note-on didn't reach the track or didn't play (#1625). A note's expression still follows it
+		// after its note-off, while it fades, until the next note-on on its channel (MPE's release, #1618).
+		if (event.type != Type::NoteOn && event.type != Type::NoteOff && event.type != Type::PolyPressure &&
+			event.type != Type::NoteExpression)
 		{
 			if (sequence.inputChannel >= 0 &&
 				(event.type == Type::Controller || event.type == Type::PitchBend ||
@@ -1103,6 +1245,9 @@ namespace gnubase::engine
 			return true;
 		}
 		const size_t from = ((event.channel % 16) * 128) + (event.key % 128);
+		// Whether the key is a drum sound's pitch (midi.inject drumSounds): past here the note is what plays, so the
+		// flag means nothing downstream.
+		const bool drumSound = std::exchange(event.drumSound, false);
 		// The key no longer holds the note it played (a second note-on, or its note-off).
 		const auto letGo = [this, from]
 		{
@@ -1114,6 +1259,7 @@ namespace gnubase::engine
 		{
 			const uint16_t before = m_inputTo[from];
 			letGo();
+			forgetReleased(event.channel);
 			// A drum map plays the sound's O-note on its channel (MIDI thru, p. 1239), else Live Input moves it.
 			int channel = sequence.inputChannel >= 0 ? sequence.inputChannel : event.channel % 16;
 			bool plays = true;
@@ -1121,7 +1267,7 @@ namespace gnubase::engine
 			if (sequence.drumInput.size() == 2 * static_cast<size_t>(g_drumSounds))
 			{
 				// The I-notes' sounds, or with drumSounds the sounds themselves (the second 128).
-				const LiveDrumNote& drum = sequence.drumInput[(event.drumSound ? g_drumSounds : 0) + (event.key % 128)];
+				const LiveDrumNote& drum = sequence.drumInput[(drumSound ? g_drumSounds : 0) + (event.key % 128)];
 				pitch = drum.key;
 				channel = drum.channel >= 0 ? drum.channel : channel;
 				plays = !drum.mute;
@@ -1137,9 +1283,8 @@ namespace gnubase::engine
 			{
 				const SoundSlot& slot =
 					slots[m_inputSlot >= 0 && static_cast<size_t>(m_inputSlot) < slots.size() ? m_inputSlot : 0];
-				pitch = static_cast<uint8_t>(std::clamp(pitch + slot.transpose, 0, 127));
-				event.velocity = static_cast<uint16_t>(std::clamp<int64_t>(
-					(int64_t{event.velocity} * slot.velocity) / 100, 1, std::numeric_limits<uint16_t>::max()));
+				pitch = static_cast<uint8_t>(std::clamp(pitch + slot.transpose, slot.minPitch, slot.maxPitch));
+				event.velocity = midi::slotVelocity(slot, event.velocity);
 				if (slot.channel >= 0)
 					channel = slot.channel;
 			}
@@ -1155,21 +1300,47 @@ namespace gnubase::engine
 				++m_inputKeys[m_inputTo[from]];
 			m_inputDown[from] = true;
 		}
-		const uint16_t to = m_inputTo[from];
+		// A note-off of a key that isn't held, e.g. since before the track got the input, passes as it came.
+		const uint16_t to =
+			event.type == Type::NoteOff && !m_inputDown[from] ? static_cast<uint16_t>(from) : m_inputTo[from];
 		if (event.type == Type::NoteOff)
 		{
 			letGo();
-			m_inputTo[from] = static_cast<uint16_t>(from);
-			m_inputDown[from] = false;
+			m_inputDown[from] = false; // its m_inputTo stays, for its expression
 			// Two held keys play the same note (Live Input moved one onto the other's): it ends with the last.
 			if (to != g_notes && m_inputKeys[to] > 0)
 				return false;
+		}
+		else if (event.type == Type::PolyPressure && !m_inputDown[from])
+		{
+			return false;
 		}
 		if (to == g_notes)
 			return false;
 		event.key = static_cast<uint8_t>(to % 128);
 		event.channel = static_cast<uint8_t>(to / 128);
 		return true;
+	}
+
+	bool MidiSequencer::injectMpe(uint32_t setup, const graph::ProcessEvent& event) noexcept
+	{
+		if (m_input.size() + 4 > m_input.capacity())
+			return false;
+		if (setup != m_injectedMpeSetup)
+		{
+			m_injectedMpeSetup = setup;
+			m_injectedMpe.reset();
+		}
+		m_injectedMpe.process(midi::MpeSetup::unpack(setup), event, m_input);
+		return true;
+	}
+
+	void MidiSequencer::forgetReleased(uint8_t channel) noexcept
+	{
+		const size_t first = size_t{channel % 16U} * 128U;
+		for (size_t key = first; key < first + 128; ++key)
+			if (!m_inputDown[key])
+				m_inputTo[key] = static_cast<uint16_t>(g_notes);
 	}
 
 	bool MidiSequencer::triggerSlot(
@@ -1191,6 +1362,36 @@ namespace gnubase::engine
 		// A key whose note-on played, before the map came or the key became a trigger: its note-off ends that note.
 		if (event.type == Type::NoteOff && m_inputDown[((event.channel % 16) * 128) + (event.key % 128)])
 			return false;
+		// An add-on slot (#1113) sends its on events besides the selected slot, on the channel the notes play on, as
+		// the notes' add-ons go in playback, and ends the add-on slots on of its groups (#1667); without latch it ends
+		// where the key is released, on the channel its on events went to.
+		if (found->addOn)
+		{
+			size_t at = 0;
+			while (at < m_inputAddOnCount && m_inputAddOns[at].slot != slot)
+				++at;
+			const bool on = at < m_inputAddOnCount;
+			if (event.type == Type::NoteOff)
+			{
+				if (!map.latch && on)
+				{
+					sendSlotEvents(*found, true, m_inputAddOns[at].channel, event.offset, out);
+					m_inputAddOns[at] = m_inputAddOns[--m_inputAddOnCount];
+				}
+				return true;
+			}
+			endAddOns(map, *found, event.offset, out);
+			// The channel the notes play on: the selected slot's on events', else the default slot's own or the given.
+			uint8_t to = channel;
+			if (m_inputSlot >= 0)
+				to = m_inputSlotChannel;
+			else if (map.slots.front().channel >= 0)
+				to = static_cast<uint8_t>(map.slots.front().channel);
+			if (!on && m_inputAddOnCount < m_inputAddOns.size())
+				m_inputAddOns[m_inputAddOnCount++] = {slot, to};
+			sendSlotEvents(*found, false, to, event.offset, out);
+			return true;
+		}
 		if (event.type == Type::NoteOff)
 		{
 			// Without latch the default slot comes back where the key is released, unless another came since.
@@ -1206,8 +1407,39 @@ namespace gnubase::engine
 		m_inputSlotHeld = event.type == Type::NoteOn && !map.latch ? slot : -1;
 		if (slot != m_inputSlot)
 			m_inputSlotTrigger = event.channel % 16;
+		endAddOns(map, *found, event.offset, out);
 		selectSlot(map, slot, channel, event.offset, out);
 		return true;
+	}
+
+	void MidiSequencer::endAddOns(
+		const ArticulationMap& map, const SoundSlot& slot, uint32_t offset, graph::EventBuffer& out) noexcept
+	{
+		for (size_t i = 0; i < m_inputAddOnCount;)
+		{
+			const auto index = static_cast<size_t>(m_inputAddOns[i].slot);
+			if (index >= map.slots.size() || &map.slots[index] == &slot ||
+				!midi::shareGroup(map, map.slots[index], slot))
+			{
+				++i;
+				continue;
+			}
+			sendSlotEvents(map.slots[index], true, m_inputAddOns[i].channel, offset, out);
+			m_inputAddOns[i] = m_inputAddOns[--m_inputAddOnCount];
+		}
+	}
+
+	void MidiSequencer::takeSlot(const MidiSequencer& track) noexcept
+	{
+		m_tookSlot = true;
+		m_inputSlot = track.m_inputSlot;
+		m_inputSlotChannel = track.m_inputSlotChannel;
+		m_inputSlotHeld = track.m_inputSlotHeld;
+		m_inputSlotsSerial = track.m_inputSlotsSerial;
+		m_inputSlotTrack = track.m_inputSlotTrack;
+		m_inputSlotTrigger = track.m_inputSlotTrigger;
+		m_inputAddOns = track.m_inputAddOns;
+		m_inputAddOnCount = track.m_inputAddOnCount;
 	}
 
 	void MidiSequencer::selectSlot(const ArticulationMap& map, int slot, uint8_t channel, uint32_t offset,
@@ -1216,42 +1448,44 @@ namespace gnubase::engine
 		if (slot == m_inputSlot && !again)
 			return;
 		// As in playback (rendersnapshot.cpp): the off events on the channel the slot's on events went to, the on
-		// events on the slot's channel or else the given one (the track's or the trigger's). A key switch is a note-on
-		// and its note-off.
-		const auto send = [&](const SoundSlot& from, bool off, uint8_t on)
-		{
-			for (const OutputEvent& output : from.outputs)
-			{
-				if (output.off != off)
-					continue;
-				if (output.status == OutputStatus::Note)
-				{
-					graph::ProcessEvent note = noteEvent(graph::ProcessEvent::Type::NoteOn,
-						static_cast<uint16_t>((on * 128) + (output.data1 % 128)), offset);
-					note.velocity = midi::velocityFromMidi1(output.data2);
-					out.add(note);
-					note.type = graph::ProcessEvent::Type::NoteOff;
-					note.velocity = 0;
-					out.add(note);
-				}
-				else if (output.status == OutputStatus::Controller)
-				{
-					out.add(controllerEvent(
-						ControllerType::Control, on, output.data1, midi::controllerFromMidi1(output.data2), offset));
-				}
-				else
-				{
-					out.add(controllerEvent(ControllerType::Program, on, output.data1, g_noBank, offset));
-				}
-			}
-		};
+		// events on the slot's channel or else the given one (the track's or the trigger's).
 		if (m_inputSlot >= 0 && static_cast<size_t>(m_inputSlot) < map.slots.size())
-			send(map.slots[static_cast<size_t>(m_inputSlot)], true, m_inputSlotChannel);
+			sendSlotEvents(map.slots[static_cast<size_t>(m_inputSlot)], true, m_inputSlotChannel, offset, out);
 		const SoundSlot& next = map.slots[static_cast<size_t>(slot)];
 		m_inputSlot = slot;
 		m_inputSlotChannel =
 			next.channel >= 0 ? static_cast<uint8_t>(next.channel) : static_cast<uint8_t>(channel % 16);
-		send(next, false, m_inputSlotChannel);
+		sendSlotEvents(next, false, m_inputSlotChannel, offset, out);
+	}
+
+	void MidiSequencer::sendSlotEvents(
+		const SoundSlot& slot, bool off, uint8_t channel, uint32_t offset, graph::EventBuffer& out) noexcept
+	{
+		// A key switch is a note-on and its note-off.
+		for (const OutputEvent& output : slot.outputs)
+		{
+			if (output.off != off)
+				continue;
+			if (output.status == OutputStatus::Note)
+			{
+				graph::ProcessEvent note = noteEvent(graph::ProcessEvent::Type::NoteOn,
+					static_cast<uint16_t>((channel * 128) + (output.data1 % 128)), offset);
+				note.velocity = midi::velocityFromMidi1(output.data2);
+				out.add(note);
+				note.type = graph::ProcessEvent::Type::NoteOff;
+				note.velocity = 0;
+				out.add(note);
+			}
+			else if (output.status == OutputStatus::Controller)
+			{
+				out.add(controllerEvent(
+					ControllerType::Control, channel, output.data1, midi::controllerFromMidi1(output.data2), offset));
+			}
+			else
+			{
+				out.add(controllerEvent(ControllerType::Program, channel, output.data1, g_noBank, offset));
+			}
+		}
 	}
 
 	bool MidiSequencer::sounds(uint16_t index) const noexcept

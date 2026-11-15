@@ -218,6 +218,9 @@ TEST_CASE("ruler tracks show their rulers in each time format and have their con
 	CHECK(elements(app, "ruler.ruler-lane").at(7).at("attributes").at("format") == "timecode");
 	CHECK(elements(app, "[control=timeOffset]").at(1).at("attributes").at("value") == "0:00:02.000");
 	test::UiApp::checkGolden("ruler-tracks", app.screenshot("ruler-tracks", {900, 560}));
+	// The toolbar sections the image shows, which its tolerance could hide a button of (#1342).
+	CHECK(app.shownSections("toolbar") ==
+		std::vector<std::string>{"tools", "autoScroll", "zoomPresets", "snap", "gridType", "zones"});
 
 	const uint64_t first = tracks.at(0).at("id").get<uint64_t>();
 	const auto track = [&app] { return app.call("project.get").at("tracks").at(0); };

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "engine/graph/processor.h"
 #include "platform/audio/device.h"
 
 #include <algorithm>
@@ -50,13 +51,22 @@ namespace gnubase::engine::midi
 		template <typename Emit>
 		void on(size_t trigger, const uint8_t* pitches, size_t count, uint8_t velocity, PadOverlap overlap, Emit&& emit)
 		{
+			on(trigger, pitches, count, velocity, overlap, emit, [](size_t) { return false; });
+		}
+
+		// The same, but overlap leaves the other triggers alone for which keep(other) is true: those that play the
+		// same chord, such as the sections of one pad (#1447).
+		template <typename Emit, typename Keep> void on(size_t trigger, const uint8_t* pitches, size_t count,
+			uint8_t velocity, PadOverlap overlap, Emit&& emit, Keep&& keep)
+		{
 			if (trigger >= g_triggers)
 				return;
 			off(trigger, emit);
 			count = std::min(count, g_maxPitches);
 			if (overlap == PadOverlap::StopFirst)
 				for (size_t other = 0; other < g_triggers; ++other)
-					off(other, emit);
+					if (!keep(other))
+						off(other, emit);
 			for (size_t i = 0; i < count; ++i)
 			{
 				const uint8_t pitch = pitches[i] & 0x7F;
@@ -70,7 +80,7 @@ namespace gnubase::engine::midi
 			m_counts[trigger] = static_cast<uint8_t>(count);
 			if (overlap == PadOverlap::Legato)
 				for (size_t other = 0; other < g_triggers; ++other)
-					if (other != trigger)
+					if (other != trigger && !keep(other))
 						off(other, emit);
 		}
 
@@ -302,11 +312,25 @@ namespace gnubase::engine::midi
 		template <typename NextGrid> void process(audio::MidiBuffer& pads, bool snap, bool playing, int64_t position,
 			uint32_t frames, NextGrid&& nextGrid) noexcept
 		{
-			const int64_t end = position + frames;
-			const bool jumped = position != m_next;
-			m_next = end;
+			const graph::TransportSegment whole{0, frames, position, false};
+			process(pads, snap, playing, &whole, 1, frames, nextGrid);
+		}
+
+		// The same for a block that plays segments (TransportBlock::segments, at least one): a jump inside the block,
+		// where cycle playback goes back to the left locator, starts a new one. Each note is placed by the segment
+		// its frame is in (#1447), and what waits for a position the segment doesn't reach plays where the transport
+		// jumps.
+		template <typename NextGrid> void process(audio::MidiBuffer& pads, bool snap, bool playing,
+			const graph::TransportSegment* segments, size_t segmentCount, uint32_t frames, NextGrid&& nextGrid) noexcept
+		{
+			if (segmentCount == 0)
+				return;
+			const int64_t before = m_next;
+			const graph::TransportSegment& last = segments[segmentCount - 1];
+			m_next = last.position + last.frames;
 			if (pads.empty() && m_pending == 0)
 				return;
+			const bool snapping = snap && playing;
 			size_t count = 0;
 			const auto out = [this, &count](audio::MidiMessage message, int64_t offset)
 			{
@@ -315,47 +339,60 @@ namespace gnubase::engine::midi
 				message.offset = static_cast<uint32_t>(std::max<int64_t>(offset, 0));
 				m_out.at(count++) = message;
 			};
-			// What waited and is due.
-			size_t kept = 0;
-			for (size_t i = 0; i < m_pending; ++i)
+			size_t next = 0; // the first of pads not placed yet
+			for (size_t s = 0; s < segmentCount; ++s)
 			{
-				if (m_waiting.at(i).at < end)
-					out(m_waiting.at(i).message, m_waiting.at(i).at - position);
-				else if (!snap || !playing || jumped)
-					out(m_waiting.at(i).message, 0);
-				else
-					m_waiting.at(kept++) = m_waiting.at(i);
-			}
-			m_pending = kept;
-			for (const audio::MidiMessage& message : pads)
-			{
-				const int status = message.bytes[0] & 0xF0;
-				const bool on = status == 0x90 && message.bytes[2] > 0;
-				const bool off = status == 0x80 || (status == 0x90 && message.bytes[2] == 0);
-				int64_t at = position + message.offset;
-				if (snap && playing && on)
+				const graph::TransportSegment& segment = segments[s];
+				const int64_t start = segment.position;
+				const int64_t end = start + segment.frames;
+				const bool jumped = start != (s == 0 ? before : segments[s - 1].position + segments[s - 1].frames);
+				// What waited and is due.
+				size_t kept = 0;
+				for (size_t i = 0; i < m_pending; ++i)
 				{
-					at = std::max(nextGrid(at), at);
+					const int64_t at = m_waiting.at(i).at;
+					if (at >= start && at < end && !jumped)
+						out(m_waiting.at(i).message, segment.offset + at - start);
+					else if (!snapping || jumped)
+						out(m_waiting.at(i).message, segment.offset);
+					else
+						m_waiting.at(kept++) = m_waiting.at(i);
 				}
-				else if (snap && playing && off)
+				m_pending = kept;
+				const uint32_t until = s + 1 == segmentCount ? frames : segment.offset + segment.frames;
+				for (; next < pads.size() && (pads[next].offset < until || s + 1 == segmentCount); ++next)
 				{
-					// After its note-on, if that one waits or this block puts it later.
-					const auto sameNote = [&message](const audio::MidiMessage& other)
+					const audio::MidiMessage& message = pads[next];
+					const int status = message.bytes[0] & 0xF0;
+					const bool on = status == 0x90 && message.bytes[2] > 0;
+					const bool off = status == 0x80 || (status == 0x90 && message.bytes[2] == 0);
+					int64_t at = start + (static_cast<int64_t>(message.offset) - segment.offset);
+					int64_t frame = -1; // at least this frame of the block: an off after its note-on placed here
+					if (snapping && on)
 					{
-						return (other.bytes[0] & 0xF0) == 0x90 && other.bytes[2] > 0 &&
-							(other.bytes[0] & 0x0F) == (message.bytes[0] & 0x0F) && other.bytes[1] == message.bytes[1];
-					};
-					for (size_t i = 0; i < m_pending; ++i)
-						if (sameNote(m_waiting.at(i).message))
-							at = std::max(at, m_waiting.at(i).at);
-					for (size_t i = 0; i < count; ++i)
-						if (sameNote(m_out.at(i)))
-							at = std::max(at, position + m_out.at(i).offset);
+						at = std::max(nextGrid(at), at);
+					}
+					else if (snapping && off)
+					{
+						// After its note-on, if that one waits or this block puts it later.
+						const auto sameNote = [&message](const audio::MidiMessage& other)
+						{
+							return (other.bytes[0] & 0xF0) == 0x90 && other.bytes[2] > 0 &&
+								(other.bytes[0] & 0x0F) == (message.bytes[0] & 0x0F) &&
+								other.bytes[1] == message.bytes[1];
+						};
+						for (size_t i = 0; i < m_pending; ++i)
+							if (sameNote(m_waiting.at(i).message))
+								at = std::max(at, m_waiting.at(i).at);
+						for (size_t i = 0; i < count; ++i)
+							if (sameNote(m_out.at(i)))
+								frame = std::max<int64_t>(frame, m_out.at(i).offset);
+					}
+					if (!snapping || at < end || m_pending == m_waiting.size())
+						out(message, std::max(segment.offset + at - start, frame));
+					else
+						m_waiting.at(m_pending++) = {message, at};
 				}
-				if (at < end || m_pending == m_waiting.size())
-					out(message, at - position);
-				else
-					m_waiting.at(m_pending++) = {message, at};
 			}
 			sortInPlace(m_out.data(), m_out.data() + count,
 				[](const audio::MidiMessage& a, const audio::MidiMessage& b) { return a.offset < b.offset; });

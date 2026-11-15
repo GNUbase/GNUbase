@@ -51,9 +51,11 @@ namespace gnubase::ui
 		// becomes the pattern with From Selected Part.
 		using Selection = std::function<std::vector<uint64_t>()>;
 		// importLoop, if given, asks for a MIDI loop to import as the pattern (Import from MIDI Loop, reference
-		// manual p. 1379), such as with a file dialog, and imports it with chordPads.setPattern file.
+		// manual p. 1379), such as with a file dialog, and gives its path to import, which imports it with
+		// chordPads.setPattern file; why that failed shows in the pattern information field.
+		using ImportLoop = std::function<void(std::function<void(const std::string& file)> import)>;
 		ChordPadsPanel(EngineBinding& binding, Rml::Element& element, DropTarget dropOn = {},
-			Selection selectedEvents = {}, std::function<void()> importLoop = {});
+			Selection selectedEvents = {}, ImportLoop importLoop = {});
 		~ChordPadsPanel() override;
 		ChordPadsPanel(const ChordPadsPanel&) = delete;
 		ChordPadsPanel& operator=(const ChordPadsPanel&) = delete;
@@ -101,7 +103,8 @@ namespace gnubase::ui
 		EngineBinding& m_binding;
 		DropTarget m_dropOn;
 		Selection m_selectedEvents;
-		std::function<void()> m_importLoop;
+		ImportLoop m_importLoop;
+		std::string m_patternError; // why the last chordPads.setPattern failed, or empty
 		Rml::ObserverPtr<Rml::Element> m_root;
 		Rml::ObserverPtr<Rml::Element> m_document; // for the mouse button going up outside the panel
 		engine::Json m_pads = engine::Json::object();

@@ -8,6 +8,7 @@
 #include "engine/midi/drummaps.h"
 #include "engine/midi/midivalues.h"
 #include "engine/midi/patterns.h"
+#include "engine/midi/trackchannel.h"
 
 #include <algorithm>
 #include <array>
@@ -782,6 +783,19 @@ namespace gnubase::engine::midi
 				return target;
 			}
 
+			// The channel to store for the track to play an event on onChannel, a note of the pitch stored or, with -1,
+			// a controller: own where the track plays it the same, so that a track merged onto itself keeps its events'
+			// channels, else onChannel. A track set to a channel plays every channel on it.
+			uint8_t storedChannel(uint8_t onChannel, uint8_t own, int pitch = -1) const
+			{
+				const auto playedOn = [&](uint8_t stored)
+				{
+					const auto on = static_cast<uint8_t>(m_trackChannel.value_or(stored));
+					return pitch < 0 ? on : channel(pitch, on);
+				};
+				return playedOn(own) == playedOn(onChannel) ? own : onChannel;
+			}
+
 		private:
 			const DrumSound& sound(int pitch) const { return m_map->sounds.at(static_cast<size_t>(pitch)); }
 
@@ -908,21 +922,27 @@ namespace gnubase::engine::midi
 			return a.rootKey == b.rootKey && a.independent == b.independent;
 		}
 
-		// The global transpose a part with the setting plays at a position, as compilePart adds it.
+		// The transposition a part plays its notes with at a position, its own transpose included, as compilePart adds
+		// it: Keep Transpose in Octave Range folds the two as one sum (#896, #1453).
+		int playedAt(const Project& project, const MidiPart& part, Ticks at)
+		{
+			return globalTranspose(project, part, project.tempo.toSamples(at, project.sampleRate));
+		}
+
+		// The global transpose a part with the setting and no transpose of its own plays at a position.
 		int globalAt(const Project& project, const GlobalSetting& setting, Ticks at)
 		{
 			MidiPart probe;
 			probe.rootKey = setting.rootKey;
 			probe.independent = setting.independent;
-			return globalTranspose(project, probe, project.tempo.toSamples(at, project.sampleRate));
+			return playedAt(project, probe, at);
 		}
 
-		// The semitones a part transposes a note at a position by, against a part with another global setting: its
-		// transpose and the difference in global transpose.
+		// The semitones a part transposes a note at a position by, against a part with another global setting and no
+		// transpose of its own: the difference of what the two play their notes with.
 		int semitonesAgainst(const Project& project, const MidiPart& part, const GlobalSetting& other, Ticks at)
 		{
-			return part.transpose + globalAt(project, {part.rootKey, part.independent}, at) -
-				globalAt(project, other, at);
+			return playedAt(project, part, at) - globalAt(project, other, at);
 		}
 
 		// The root key and Global Transpose setting (#954) of a part made from source parts: the one they all share,
@@ -1094,10 +1114,11 @@ namespace gnubase::engine::midi
 		{
 			Note note;           // as its track plays it, at its place in the project
 			uint64_t seed;       // its part's and its own id, as playback draws them
-			Modifiers modifiers; // its track's and part's, without the global transposition
+			Modifiers modifiers; // its track's with Include Inserts, and its part's velocity only
 			const MidiPart* source;
-			Ticks sourceAt;   // where it is stored in its part, as playback sees the global transposition there
-			uint8_t ownPitch; // the pitch it is stored with, which a destination's map prefers
+			Ticks sourceAt;     // where it is stored in its part, as playback sees the global transposition there
+			uint8_t ownPitch;   // the pitch it is stored with, which a destination's map prefers
+			uint8_t ownChannel; // the channel it is stored with, which a destination set to a channel keeps
 		};
 		std::vector<Candidate> candidates;
 		std::vector<Controller> controllers;
@@ -1129,7 +1150,6 @@ namespace gnubase::engine::midi
 			const TrackPitches sourcePitches(project, part.track);
 			const ArticulationMap* articulations = articulationMapOf(project, part.track);
 			Modifiers modifiers = settings.includeInserts ? trackModifiers(project, part.track) : Modifiers();
-			modifiers.transpose += part.transpose;
 			modifiers.velocityShift += part.velocity;
 			// Playback resolves directions per part (#175): a reset of each group where a part starts in the range
 			// keeps the directions of the parts before it from its notes, if one is in effect there (below).
@@ -1170,7 +1190,8 @@ namespace gnubase::engine::midi
 				const Ticks length = note.length > 0 ? modifyLength(modifiers, seed, note.length) : 0;
 				copy.position = at;
 				copy.length = std::min(at + length, partTo) - at;
-				candidates.push_back({copy, seed, modifiers, &part, partFrom + note.position, note.pitch});
+				candidates.push_back(
+					{copy, seed, modifiers, &part, partFrom + note.position, note.pitch, note.channel});
 			}
 			for (const auto& [controllerId, controller] : part.controllers)
 			{
@@ -1181,6 +1202,9 @@ namespace gnubase::engine::midi
 				copy.position = at;
 				if (controller.type != ControllerType::Articulation)
 					copy.channel = static_cast<uint8_t>(sourcePitches.trackChannel().value_or(controller.channel));
+				// As the destination stores it; chased by the channel it played on.
+				Controller written = copy;
+				written.channel = destinationPitches.storedChannel(copy.channel, controller.channel);
 				// Of each group of the track's articulation map, the direction in effect where the range starts, so
 				// that the notes play the same sound slot (#175), also without includeChase. Playback resolves
 				// directions per part, so only from a part that still plays there.
@@ -1192,9 +1216,9 @@ namespace gnubase::engine::midi
 							group = each.group;
 				if (inRange(at))
 				{
-					controllers.push_back(copy);
+					controllers.push_back(written);
 					if (group >= 0)
-						groupEvents.push_back({at, true, static_cast<size_t>(group), copy});
+						groupEvents.push_back({at, true, static_cast<size_t>(group), written});
 				}
 				else if (sampleOf(at) < settings.start &&
 					(controller.type == ControllerType::Articulation
@@ -1210,7 +1234,7 @@ namespace gnubase::engine::midi
 					if (previous == chasedAt.end() || previous->second <= at)
 					{
 						chasedAt[key] = at;
-						chased[key] = copy;
+						chased[key] = written;
 					}
 				}
 			}
@@ -1271,13 +1295,10 @@ namespace gnubase::engine::midi
 			Modifiers transposed = candidate.modifiers;
 			transposed.velocityShift -= setting.velocity;
 			int newGlobal = 0;
-			if (pitchKept)
+			if (!pitchKept)
 			{
-				transposed.transpose -= source.transpose;
-			}
-			else
-			{
-				transposed.transpose += globalAt(project, {source.rootKey, source.independent}, candidate.sourceAt);
+				// What the source part plays the note with, its transpose folded in.
+				transposed.transpose += playedAt(project, source, candidate.sourceAt);
 				newGlobal = globalAt(project, setting.global, copy.position);
 			}
 			if (settings.includeInserts)
@@ -1303,6 +1324,7 @@ namespace gnubase::engine::midi
 			}
 			copy.pitch = static_cast<uint8_t>(
 				destinationPitches.stored(copy.pitch, copy.channel, copy.position, candidate.ownPitch));
+			copy.channel = destinationPitches.storedChannel(copy.channel, candidate.ownChannel, copy.pitch);
 			into.push_back(copy);
 			return true;
 		};
@@ -1313,7 +1335,9 @@ namespace gnubase::engine::midi
 		// lie between the part's transpose and the new part's global transpose, in an Independent part as it played;
 		// without, in a part with its part's transpose and Global Transpose setting.
 		std::map<BouncedSetting, std::vector<Note>> made;
-		std::map<BouncedSetting, Ticks> firstStart;     // of each new part's earliest source part
+		std::map<BouncedSetting, Ticks> firstStart;   // of each new part's earliest source part
+		const BouncedSetting plain{0, 0, newSetting}; // of the parts that need none of their own
+		const auto isPlain = [&](const BouncedSetting& setting) { return !(setting < plain) && !(plain < setting); };
 		std::map<std::pair<int, int>, bool> velocities; // velocityInNote by MIDI 1.0 velocity and part velocity
 		for (size_t i = 0; i < sources.size(); ++i)
 		{
@@ -1359,6 +1383,9 @@ namespace gnubase::engine::midi
 										   : GlobalSetting{newSetting.rootKey, true};
 				writeAll(pitchKept); // which holds every note
 			}
+			// A part of its own that no note goes into (all left out, or playing nowhere) isn't made (#1491).
+			if (notes.empty() && !isPlain(setting))
+				continue;
 			std::vector<Note>& into = made[setting];
 			into.insert(into.end(), notes.begin(), notes.end());
 			const Ticks from = partStart(project, *source);
@@ -1369,15 +1396,11 @@ namespace gnubase::engine::midi
 		// The new part with the setting of the parts that need none of their own first, the others in the order of
 		// their earliest source parts, as bounce orders its parts; where nothing is merged, the first is there without
 		// notes.
-		const BouncedSetting plain{0, 0, newSetting};
 		if (made.empty())
 			made[plain];
 		std::vector<std::pair<BouncedSetting, std::vector<Note>>> groups(made.begin(), made.end());
 		const auto order = [&](const BouncedSetting& setting)
-		{
-			const bool isPlain = !(setting < plain) && !(plain < setting);
-			return std::make_pair(!isPlain, isPlain ? Ticks{0} : firstStart.at(setting));
-		};
+		{ return std::make_pair(!isPlain(setting), isPlain(setting) ? Ticks{0} : firstStart.at(setting)); };
 		std::stable_sort(groups.begin(), groups.end(),
 			[&](const auto& a, const auto& b) { return order(a.first) < order(b.first); });
 
@@ -1539,7 +1562,8 @@ namespace gnubase::engine::midi
 					trackFor[key] = addMidiTrack(project, source.name + " " + suffixOf(key), source.parent, ++index,
 						instrument, source.timeBase);
 					// The track's MIDI modifiers, so that the new parts play as the part did; by channel each new
-					// track set to its channel (reference manual p. 1122), by pitch to the track's.
+					// track set to the channel it holds (reference manual p. 1122), which it plays on also where the
+					// track played every channel on its own, by pitch to the track's.
 					Channel& added = project.channels.at(project.trackById.at(trackFor[key]).channel);
 					added.modifiers = project.channels.at(source.channel).modifiers;
 					added.midiChannel = by == DissolveBy::Channel ? std::optional<int>(key) : trackChannel;

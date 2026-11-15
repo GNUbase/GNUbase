@@ -93,10 +93,19 @@ namespace gnubase::ui
 		Rml::ColourbPremultiplied fill();
 		Rml::ColourbPremultiplied stroke();
 		float strokeWidth();
-		// An own color (TimeSpan::color) as a body: at own-fill-opacity.
-		Rml::ColourbPremultiplied ownFill(uint32_t rgba);
-		// An own color as a line, with own-color-tint over it; nothing if the tint is none.
-		std::optional<Rml::ColourbPremultiplied> ownLine(uint32_t rgba);
+		// How own colors (TimeSpan::color) show, as the style sheets say: read once per build, not per event.
+		struct OwnColors
+		{
+			float fillOpacity = 1.0F;         // own-fill-opacity
+			std::optional<Rml::Colourb> tint; // own-color-tint, nothing if it is none
+			float opacity = 1.0F;             // the element's
+
+			// An own color as a body: at own-fill-opacity.
+			Rml::ColourbPremultiplied fill(uint32_t rgba) const;
+			// An own color as a line, with the tint over it; nothing if the tint is none.
+			std::optional<Rml::ColourbPremultiplied> line(uint32_t rgba) const;
+		};
+		OwnColors ownColors();
 		// event-inset in pixels.
 		float eventInset();
 
@@ -122,7 +131,8 @@ namespace gnubase::ui
 
 	// <event-lanes>: rows of rectangles, such as the events of tracks or the notes of a key editor (one lane per
 	// pitch). Fills them with color, or with their own color if they have one at own-fill-opacity, outlined by
-	// stroke-color, or an own color with own-color-tint over it, event-inset off their lane's edges.
+	// stroke-color, or an own color with own-color-tint over it, event-inset off their lane's edges. An own-color-tint
+	// outlines events with a color in stroke-width even if stroke-color is transparent.
 	class EventLanes final : public Canvas
 	{
 	public:
@@ -155,8 +165,9 @@ namespace gnubase::ui
 	};
 
 	// <waveform>: the peaks of one or more channels, one above the other, in color, or in the span's own color with
-	// own-color-tint over it if that isn't none. A pixel shows the columns it
-	// covers; columns wider than a pixel are repeated.
+	// own-color-tint over it if that isn't none. As high as its lane, it keeps event-inset off the lane's edges inside
+	// its padding, as <event-lanes> keeps events, unless that would leave it no pixel (as in lanes no higher than twice
+	// the inset, where events drop it). A pixel shows the columns it covers; columns wider than a pixel are repeated.
 	class Waveform final : public Canvas
 	{
 	public:

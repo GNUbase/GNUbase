@@ -137,8 +137,7 @@ namespace
 	ui::EventDisplay& showTones(test::UiApp& app, const Tones& tones, size_t selected)
 	{
 		ui::EventDisplay& display = app.appUi().showProject();
-		REQUIRE(app.waitUntil(
-			[&display] { return display.project().is_object() && display.project().at("audioEvents").size() == 2; }));
+		REQUIRE(app.waitUntil([&display] { return display.project().at("audioEvents").size() == 2; }));
 		display.select(std::vector<uint64_t>(tones.events.begin(), tones.events.begin() + static_cast<long>(selected)));
 		return display;
 	}
@@ -168,8 +167,7 @@ namespace
 	void showEvent(test::UiApp& app, uint64_t event)
 	{
 		ui::EventDisplay& display = app.appUi().showProject();
-		REQUIRE(app.waitUntil(
-			[&display] { return display.project().is_object() && display.project().at("audioEvents").size() == 1; }));
+		REQUIRE(app.waitUntil([&display] { return display.project().at("audioEvents").size() == 1; }));
 		display.select({event});
 	}
 

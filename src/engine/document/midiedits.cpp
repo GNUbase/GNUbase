@@ -7,10 +7,13 @@
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
 #include "engine/midi/chords.h"
+#include "plugin/events.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <utility>
@@ -140,12 +143,50 @@ namespace gnubase::engine
 				changed.push_back(toJson(*note));
 				added.push_back(toJson(rest));
 			}
-			if (!added.empty())
+			if (added.empty())
 			{
-				context.emit("note.changed", {{"part", part.id}, {"notes", changed}});
-				context.emit("note.added", {{"part", part.id}, {"notes", added}});
+				context.markUnchanged(); // no change, so no modified project without an undo step (#1496)
+				return {{"notes", added}};
 			}
+			context.emit("note.changed", {{"part", part.id}, {"notes", changed}});
+			context.emit("note.added", {{"part", part.id}, {"notes", added}});
 			return {{"notes", added}};
+		}
+
+		// points before cut, then from's moved to at. Of what points express and from doesn't start with (atStart
+		// tells its points at its start), the join gets the default (defaultExpression), as the note that from belonged
+		// to started with it. A point of the join whose value already plays there is left out: it changes nothing.
+		template <typename AtStart> std::vector<ExpressionPoint> joined(const std::vector<ExpressionPoint>& points,
+			time::Ticks cut, const std::vector<ExpressionPoint>& from, time::Ticks at, AtStart atStart)
+		{
+			std::vector<ExpressionPoint> result;
+			std::array<std::optional<double>, g_expressionNames.size()> playing{}; // by type, at the join
+			for (const ExpressionPoint& point : points)
+				if (point.position < cut)
+				{
+					result.push_back(point);
+					playing.at(static_cast<size_t>(point.type)) = point.value;
+				}
+			std::array<bool, g_expressionNames.size()> starts{};
+			for (const ExpressionPoint& point : from)
+				if (atStart(point.position))
+					starts.at(static_cast<size_t>(point.type)) = true;
+			for (size_t type = 0; type < playing.size(); ++type)
+			{
+				const auto expression = static_cast<plugin::NoteExpression>(type);
+				const std::optional<double> value = defaultExpression(expression);
+				if (playing.at(type).has_value() && !starts.at(type) && value.has_value() && value != playing.at(type))
+					result.push_back({expression, at, *value});
+			}
+			for (const ExpressionPoint& point : from)
+			{
+				std::optional<double>& value = playing.at(static_cast<size_t>(point.type));
+				if (atStart(point.position) && value == point.value)
+					continue;
+				result.push_back({point.type, point.position + at, point.value});
+				value = point.value;
+			}
+			return result;
 		}
 
 		// The key editor's glue tool (#1419, p. 1215): the note lasts to the next one's end, which it replaces.
@@ -163,14 +204,25 @@ namespace gnubase::engine
 			const Note& next = noteNamed("next");
 			require(next.position > note.position, "next must start after note");
 			// What played goes on playing: the note's points up to where the next one starts, or to its own end, then
-			// the next one's.
+			// the next one's up to its end, and after a next one that ends inside the note the note's own again. Points
+			// at or past a note's end, e.g. after a trim, never played (#1496).
 			const time::Ticks offset = next.position - note.position;
-			const time::Ticks keep = std::min(offset, note.length);
-			note.expressions.erase(std::remove_if(note.expressions.begin(), note.expressions.end(),
-									   [keep](const ExpressionPoint& point) { return point.position >= keep; }),
-				note.expressions.end());
-			for (const ExpressionPoint& point : next.expressions)
-				note.expressions.push_back({point.type, point.position + offset, point.value});
+			const time::Ticks nextEnd = offset + next.length;
+			std::vector<ExpressionPoint> played;
+			std::copy_if(next.expressions.begin(), next.expressions.end(), std::back_inserter(played),
+				[&next](const ExpressionPoint& point) { return point.position < next.length; });
+			// A point within the next note's first sample is one it starts with, as playback has it
+			// (RenderNote::startsWith).
+			const time::Ticks start = time::toTicks(part.position, project.tempo, project.sampleRate) + next.position;
+			const time::Samples startSample = project.tempo.toSamples(start, project.sampleRate);
+			const auto inFirstSample = [&project, start, startSample](time::Ticks position)
+			{ return project.tempo.toSamples(start + position, project.sampleRate) == startSample; };
+			std::vector<ExpressionPoint> points =
+				joined(note.expressions, std::min(offset, note.length), played, offset, inFirstSample);
+			if (nextEnd < note.length) // the first note's values there are points at 0
+				points = joined(points, nextEnd, expressionsFrom(note.expressions, nextEnd), nextEnd,
+					[](time::Ticks position) { return position == 0; });
+			note.expressions = std::move(points);
 			note.length = std::max(next.position + next.length, note.position + note.length) - note.position;
 			const ObjectId removed = next.id;
 			part.notes.erase(removed); // next dangles from here on
@@ -213,18 +265,43 @@ namespace gnubase::engine
 				note.pitch = static_cast<uint8_t>(pitch);
 				notes.push_back(std::move(note));
 			}
-			Json removed = Json::array();
+			// The selected controller events go along (p. 1188), shifted in time only. One that would land before the
+			// target part's start lands at its start, as the key editor's move within a part keeps one at its start.
+			const auto controllerIds = parameters.value("controllers", std::vector<ObjectId>{});
+			std::vector<Controller> controllers;
+			for (size_t i = 0; i < controllerIds.size(); ++i)
+			{
+				const auto found = source.controllers.find(controllerIds[i]);
+				require(found != source.controllers.end(),
+					"controllers[" + std::to_string(i) + "]: the part has no controller event " +
+						std::to_string(controllerIds[i]));
+				Controller controller = found->second;
+				controller.position = std::max<time::Ticks>(sourceStart + controller.position + ticks - targetStart, 0);
+				controllers.push_back(std::move(controller));
+			}
 			Json added = Json::array();
 			for (size_t i = 0; i < notes.size(); ++i)
 			{
 				source.notes.erase(ids[i]);
-				const Note& stored = target->second.notes[ids[i]] = std::move(notes[i]);
-				removed.push_back(ids[i]);
-				added.push_back(toJson(stored));
+				added.push_back(toJson(target->second.notes[ids[i]] = std::move(notes[i])));
 			}
-			context.emit("note.removed", {{"part", source.id}, {"notes", removed}});
-			context.emit("note.added", {{"part", target->second.id}, {"notes", added}});
-			return {{"notes", added}};
+			Json addedControllers = Json::array();
+			for (size_t i = 0; i < controllers.size(); ++i)
+			{
+				source.controllers.erase(controllerIds[i]);
+				addedControllers.push_back(toJson(target->second.controllers[controllerIds[i]] = controllers[i]));
+			}
+			if (!ids.empty())
+			{
+				context.emit("note.removed", {{"part", source.id}, {"notes", ids}});
+				context.emit("note.added", {{"part", target->second.id}, {"notes", added}});
+			}
+			if (!controllerIds.empty())
+			{
+				context.emit("controller.removed", {{"part", source.id}, {"controllers", controllerIds}});
+				context.emit("controller.added", {{"part", target->second.id}, {"controllers", addedControllers}});
+			}
+			return {{"notes", added}, {"controllers", addedControllers}};
 		}
 
 		// The part's notes that the parameters' notes name, in that order.
@@ -399,7 +476,10 @@ namespace gnubase::engine
 						{{"type", "integer"},
 							{"description", "how far the notes move on the project's timeline, in ticks"}}},
 					{"semitones",
-						{{"type", "integer"}, {"description", "how far the notes move in pitch, in semitones"}}}}}};
+						{{"type", "integer"}, {"description", "how far the notes move in pitch, in semitones"}}},
+					{"controllers",
+						{{"type", "array"}, {"items", integer},
+							{"description", "controller events of the part that move along, in time only"}}}}}};
 		add(engine,
 			{"note.move", 1,
 				"Moves notes of a MIDI part to another part, as dragging them from one in-place editor to another "
@@ -411,9 +491,17 @@ namespace gnubase::engine
 				"part's end, as note.add and note.set allow. Refuses, changing nothing, a part or a note that "
 				"doesn't exist, a note that would land on the timeline before the target part's start or outside the "
 				"pitches 0 to 127, and a move between shared copies of one group, which must stay equal. Emits "
-				"note.removed for the source part and note.added for the target part. Returns the moved notes, as "
-				"the target part has them.",
-				noteMove, resultSchema("notes"), false},
+				"note.removed for the source part and note.added for the target part. controllers names controller "
+				"events of the source part that go along, as the key editor moves the selected ones with the notes "
+				"(p. 1188): each keeps its id and every field, ticks shifts it and semitones doesn't, and one that "
+				"would land before the target part's start lands at its start; a controller event that doesn't exist "
+				"refuses the move. notes may then be empty; the undo step is \"Move notes\" also then. Emits "
+				"controller.removed and controller.added for them, and the note events only when notes names any. "
+				"Returns the moved notes and controller events, as the target part has them.",
+				noteMove,
+				{{"type", "object"}, {"required", {"notes", "controllers"}},
+					{"properties", {{"notes", {{"type", "array"}}}, {"controllers", {{"type", "array"}}}}}},
+				false},
 			moveNotes);
 		add(engine,
 			{"controller.set", 1,
@@ -436,17 +524,18 @@ namespace gnubase::engine
 				resultSchema("controllers"), false},
 			setControllers);
 
-		const Json idOf = {{"type", "integer"}};
 		add(engine,
 			{"note.split", 1,
 				"Splits notes of a MIDI part at a position in ticks from the part's start, as the key editor's split "
 				"tool does: each named note that the position cuts ends there, and its rest, a new note with the same "
 				"values, starts there; the others stay as they are. The expression points before the cut stay with "
 				"the note, the rest starts with the values at the cut and goes on with the later points (see "
-				"note.set). Returns the rests.",
+				"note.set). Both pieces lose their quantize origin, as the notes that event.split cuts with splitNotes "
+				"do: quantize.reset no longer moves them. A position that cuts none of them changes nothing, and the "
+				"project doesn't count as modified. Returns the rests.",
 				{{"type", "object"}, {"additionalProperties", false}, {"required", {"part", "notes", "position"}},
 					{"properties",
-						{{"part", idOf}, {"notes", {{"type", "array"}, {"items", idOf}}},
+						{{"part", integer}, {"notes", {{"type", "array"}, {"items", integer}}},
 							{"position", {{"type", "integer"}, {"minimum", 0}}}}}},
 				resultSchema("notes"), false},
 			splitNotes);
@@ -454,9 +543,14 @@ namespace gnubase::engine
 			{"note.glue", 1,
 				"Glues a note of a MIDI part to a later one, as the key editor's glue tool does: note then lasts to "
 				"the later of their ends and keeps its values, and next is removed. Its expression points go on "
-				"playing: note keeps its own up to next's start, then has next's.",
+				"playing: note keeps its own up to next's start, then has next's up to next's end, and after a next "
+				"that ends inside note its own again. Where one note's points give way to the other's, an expression "
+				"that the first one has and the other has no point of at its start (within its first sample, as "
+				"playback has it) goes back to its default, as the other note started with it: no tuning, no "
+				"pressure, brightness 0.5, volume 1 and pan 0.5; vibrato and expression keep their value. A point "
+				"there whose value already plays is left out.",
 				{{"type", "object"}, {"additionalProperties", false}, {"required", {"part", "note", "next"}},
-					{"properties", {{"part", idOf}, {"note", idOf}, {"next", idOf}}}},
+					{"properties", {{"part", integer}, {"note", integer}, {"next", integer}}}},
 				{{"type", "object"}, {"required", {"note"}}, {"properties", {{"note", {{"type", "object"}}}}}}, false},
 			glueNotes);
 

@@ -16,6 +16,7 @@
 #include <cstddef>
 #include <cstring>
 #include <iterator>
+#include <limits>
 #include <optional>
 #include <set>
 #include <tuple>
@@ -245,8 +246,10 @@ namespace gnubase::engine
 
 		// The value a lane sends where it arrives at points at a position (a step, the end of a ramp or a jump between
 		// points at one position), if there are points there and they send one: the value from there on, or a
-		// terminator's that a gap follows; nothing where a gap starts or where the value doesn't change.
-		std::optional<double> arriving(const Points& points, int64_t at, bool glides)
+		// terminator's that a gap follows; nothing where a gap starts or where the value doesn't change, unless every:
+		// a lane side by side with others (PlayedLane::shared), one of which may have changed the controller since, and
+		// whose chase counts that point also where a gap follows.
+		std::optional<double> arriving(const Points& points, int64_t at, bool glides, bool every)
 		{
 			const size_t next = after(points, at);
 			if (next == 0 || points[next - 1].position != at)
@@ -263,17 +266,73 @@ namespace gnubase::engine
 			// points[0].
 			const bool fromGap = points[first == 0 ? 0 : first - 1].gap;
 			const double approached = first == 0 || fromRamp ? points[first].value : points[first - 1].value;
-			if (last > first && (points[last - 1].value != approached || (fromRamp && !glides) || fromGap))
+			// Otherwise a terminator sends its value only if it changes: one that ends a lane doesn't play it again.
+			if (last > first && (every || points[last - 1].value != approached || (fromRamp && !glides) || fromGap))
 				return points[last - 1].value;
 			return std::nullopt;
 		}
 
+		// The value of a lane's latest point at or before position that isn't a gap's, or none before its first point:
+		// in a gap after its points the value that playback sent last, which still stands.
+		std::optional<double> lastValue(const Points& points, int64_t position)
+		{
+			size_t next = after(points, position);
+			while (next > 0 && points[next - 1].gap)
+				--next;
+			if (next == 0)
+				return std::nullopt;
+			return points[next - 1].value;
+		}
+
+		// The value a lane with points sets at a start, a locate or a jump to position, or while stopped there: its
+		// value there, nothing in a gap, but the value that stands there in a gap after the points of a lane side by
+		// side with others (PlayedLane::shared), which another lane's would otherwise replace.
+		std::optional<double> chasedValue(const PlayedLane& lane, int64_t position)
+		{
+			if (!inGap(lane.points, position))
+				return automationValue(lane.points, position);
+			return lane.shared ? lastValue(lane.points, position) : std::nullopt;
+		}
+
+		// The position of a lane's latest point at or before position, or the lowest position before its first point.
+		int64_t latestPoint(const Points& points, int64_t position) noexcept
+		{
+			const size_t next = after(points, position);
+			return next == 0 ? std::numeric_limits<int64_t>::min() : points[next - 1].position;
+		}
+
+		// Whether a lane sends its value at a start, a locate or a jump to position: of lanes of one target side by
+		// side (PlayedLane::shared) that send one there, not before their first points, only the one whose latest
+		// point lies latest, the last of them on a tie, as a part's events are chased by position. A lane in a gap
+		// after its points counts with its last point, whose value still stands there.
+		bool chases(const std::vector<PlayedLane>& lanes, const PlayedLane& lane, int64_t position) noexcept
+		{
+			if (!lane.shared)
+				return true;
+			const int64_t own = latestPoint(lane.points, position);
+			bool later = false; // the lane compared comes after lane
+			for (const PlayedLane& other : lanes)
+			{
+				if (&other == &lane)
+				{
+					later = true;
+					continue;
+				}
+				if (!other.shared || !(other.target == lane.target) || !chasedValue(other, position))
+					continue;
+				const int64_t theirs = latestPoint(other.points, position);
+				if (theirs > own || (theirs == own && later))
+					return false;
+			}
+			return true;
+		}
+
 		// Plays a lane's curve over one transport segment. With jump, playback didn't arrive here from the frame
-		// before, so the value at the segment's start is set first; a lane without points glides there over smoothing
-		// frames. That value is set again (AutomationPlayer::play's sentAgain) unless it is new there: renewed, a
-		// static value set in this block, or a point's that the lane arrives at there.
-		void playLane(const PlayedLane& lane, const graph::TransportSegment& segment, bool jump, const Outputs& out,
-			uint32_t smoothing, bool renewed) noexcept
+		// before, so the value at the segment's start is set first, if chased; a lane without points glides there
+		// over smoothing frames. That value is set again (AutomationPlayer::play's sentAgain) unless it is new there:
+		// renewed, a static value set in this block, or a point's that the lane arrives at there.
+		void playLane(const PlayedLane& lane, const graph::TransportSegment& segment, bool jump, bool chased,
+			const Outputs& out, uint32_t smoothing, bool renewed) noexcept
 		{
 			const Points& points = lane.points;
 			const int64_t begin = segment.position;
@@ -281,23 +340,24 @@ namespace gnubase::engine
 			const auto offset = [&](int64_t at) { return segment.offset + static_cast<uint32_t>(at - begin); };
 			if (points.empty())
 			{
-				if (jump)
+				if (jump && chased)
 					emit(lane, segment.offset, lane.staticValue, smoothing, out, !renewed);
 				return;
 			}
 			// The fader and the pre gain glide along ramps; the others get the value at each g_automationInterval
 			// frame.
 			const bool glides = lane.glides();
-			if (jump && !inGap(points, begin))
-				emit(lane, segment.offset, automationValue(points, begin), 0, out,
-					!renewed && !arriving(points, begin, glides));
+			if (jump && chased)
+				if (const std::optional<double> value = chasedValue(lane, begin))
+					emit(lane, segment.offset, *value, 0, out,
+						!renewed && !arriving(points, begin, glides, lane.shared));
 
 			int64_t at = begin;
 			for (;;)
 			{
 				const size_t next = after(points, at);
 				if (at < end && (at > begin || !jump))
-					if (const std::optional<double> value = arriving(points, at, glides))
+					if (const std::optional<double> value = arriving(points, at, glides, lane.shared))
 						emit(lane, offset(at), *value, 0, out);
 				if (at >= end || next == points.size())
 					break; // after the last point the value stays
@@ -484,6 +544,22 @@ namespace gnubase::engine
 						point.gap = false;
 					}
 		}
+		// Lanes side by side: each sends nothing before its first point, the first its static value there, so that a
+		// lane that didn't send where playback started sends its first point's value when it arrives there.
+		for (size_t i = 0; i < lanes.size(); ++i)
+		{
+			PlayedLane& lane = lanes[i];
+			lane.shared = lane.kind == Kind::Midi && !lane.points.empty() &&
+				std::count_if(lanes.begin(), lanes.end(),
+					[&lane](const PlayedLane& other) { return other.target == lane.target; }) > 1;
+			if (lane.shared && !lane.points.front().gap)
+			{
+				const bool hasStatic = i < statics;
+				lane.points.insert(lane.points.begin(),
+					RenderAutomationPoint{lane.points.front().position, hasStatic ? lane.staticValue : 0.0,
+						AutomationShape::Step, 0.0, !hasStatic});
+			}
+		}
 		// The program first, so the instrument has the patch before the controllers. No automation lane targets it.
 		if (channel.program)
 			lanes.insert(lanes.begin(),
@@ -636,13 +712,14 @@ namespace gnubase::engine
 			if (changed || moved)
 				for (const PlayedLane& lane : automation.lanes)
 				{
-					if ((silent && midi(lane)) || !(moved || again(lane)))
+					if ((silent && midi(lane)) || !(moved || again(lane)) ||
+						!chases(automation.lanes, lane, transport.position))
 						continue;
 					const std::optional<Outputs> out = outputs(lane);
-					if (out && (lane.points.empty() || !inGap(lane.points, transport.position)))
-						emit(lane, 0,
-							lane.points.empty() ? lane.staticValue : automationValue(lane.points, transport.position),
-							glide(lane), *out, !renewed(lane));
+					const std::optional<double> value =
+						lane.points.empty() ? lane.staticValue : chasedValue(lane, transport.position);
+					if (out && value)
+						emit(lane, 0, *value, glide(lane), *out, !renewed(lane));
 				}
 			hear(moved);
 			m_stoppedAt = transport.position;
@@ -657,7 +734,8 @@ namespace gnubase::engine
 			const bool moved = segment.position != m_next;
 			for (const PlayedLane& lane : automation.lanes)
 				if (const std::optional<Outputs> out = outputs(lane); out && !(silent && midi(lane)))
-					playLane(lane, segment, moved || (first && again(lane)), *out, first && changed ? glide(lane) : 0,
+					playLane(lane, segment, moved || (first && again(lane)),
+						chases(automation.lanes, lane, segment.position), *out, first && changed ? glide(lane) : 0,
 						first && renewed(lane));
 			first = false;
 			hear(moved);

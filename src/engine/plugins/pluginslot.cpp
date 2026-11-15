@@ -4,6 +4,9 @@
 #include "engine/document/document.h"
 #include "engine/graph/graph.h"
 #include "engine/midi/midivalues.h"
+#include "engine/processors/builtinplugin.h"
+#include "engine/time/tempomap.h"
+#include "platform/log.h"
 #include "platform/rt/realtime.h"
 
 #include <algorithm>
@@ -12,9 +15,10 @@
 
 namespace gnubase::engine::plugins
 {
+	static_assert(processors::BuiltinPlugin::g_maxTransportSegments == g_maxTransportSegments);
+
 	namespace
 	{
-		constexpr size_t g_maxTransportSegments = 64;
 		constexpr uint32_t g_maxBank = 16383; // MIDI's bank select: 14 bits
 		constexpr uint32_t g_bankSelect = 0;
 		constexpr uint32_t g_bankSelectLsb = 32;
@@ -275,6 +279,7 @@ namespace gnubase::engine::plugins
 		case Type::NoteOff:
 			converted.type = event.type == Type::NoteOn ? plugin::EventType::NoteOn : plugin::EventType::NoteOff;
 			converted.value = event.velocity / 65535.0;
+			converted.flags = event.drumSound ? plugin::Event::DrumSound : 0;
 			out.push(converted);
 			break;
 		case Type::Controller:
@@ -329,32 +334,61 @@ namespace gnubase::engine::plugins
 			convertEvent(event, context.frames, m_eventsIn);
 	}
 
-	uint32_t convertTransport(
-		const graph::TransportBlock& transport, std::vector<plugin::TransportSegment>& segments) noexcept
+	uint32_t convertTransport(const graph::TransportBlock& transport, double sampleRate,
+		std::vector<plugin::TransportSegment>& segments) noexcept
 	{
-		const auto segmentAt = [&transport](uint32_t offset, int64_t position, uint32_t flags)
+		const auto segmentAt = [](uint32_t offset, int64_t position, uint32_t flags, double tempo)
 		{
 			plugin::TransportSegment converted;
 			converted.offset = offset;
 			converted.transport.flags = flags | plugin::Transport::TempoValid;
-			converted.transport.tempo = transport.tempo;
+			converted.transport.tempo = tempo;
 			converted.transport.position = position;
 			return converted;
 		};
 		if (!transport.playing || transport.segmentCount == 0)
 		{
-			segments[0] = segmentAt(0, transport.position, 0);
+			segments[0] = segmentAt(0, transport.position, 0, transport.tempo);
 			return 1;
 		}
 		// After a count-in, playback starts within the block: until then it is stopped.
 		uint32_t count = 0;
 		if (transport.segments[0].offset > 0)
-			segments[count++] = segmentAt(0, transport.position, 0);
+			segments[count++] = segmentAt(0, transport.position, 0, transport.tempo);
+		const time::TempoMap* map = sampleRate > 0.0 ? transport.tempoMap : nullptr;
 		for (size_t i = 0; i < transport.segmentCount && count < segments.size(); ++i)
 		{
 			const graph::TransportSegment& segment = transport.segments[i];
-			segments[count++] = segmentAt(segment.offset, segment.position,
-				plugin::Transport::Playing | (segment.recording ? uint32_t{plugin::Transport::Recording} : 0U));
+			const uint32_t flags =
+				plugin::Transport::Playing | (segment.recording ? uint32_t{plugin::Transport::Recording} : 0U);
+			if (map == nullptr)
+			{
+				segments[count++] = segmentAt(segment.offset, segment.position, flags, transport.tempo);
+				continue;
+			}
+			const time::Ticks start = map->toTicks(segment.position, sampleRate);
+			const size_t first = count;
+			segments[count++] = segmentAt(segment.offset, segment.position, flags, map->bpmAt(start));
+			// The tempo map's points within the segment start new ones; one that rounds to its first frame sets its
+			// tempo.
+			const std::vector<time::TempoPoint>& points = map->points();
+			for (auto point = std::upper_bound(points.begin(), points.end(), start,
+					 [](time::Ticks tick, const time::TempoPoint& at) { return tick < at.position; });
+				point != points.end() && count < segments.size(); ++point)
+			{
+				const int64_t into = map->toSamples(point->position, sampleRate) - segment.position;
+				if (into >= segment.frames)
+					break;
+				// One on the first frame of the last segment, or on the same sample as the point before, sets its
+				// tempo: a segment has at least a frame.
+				if (into <= 0)
+					segments[first].transport.tempo = point->bpm;
+				else if (segments[count - 1].transport.position == segment.position + into)
+					segments[count - 1].transport.tempo = point->bpm;
+				else
+					segments[count++] = segmentAt(
+						segment.offset + static_cast<uint32_t>(into), segment.position + into, flags, point->bpm);
+			}
 		}
 		return count;
 	}
@@ -374,6 +408,7 @@ namespace gnubase::engine::plugins
 		case plugin::EventType::NoteOff:
 			out.type = event.type == plugin::EventType::NoteOn ? Type::NoteOn : Type::NoteOff;
 			out.velocity = static_cast<uint16_t>(std::lround(std::clamp(event.value, 0.0, 1.0) * 65535.0));
+			out.drumSound = (event.flags & plugin::Event::DrumSound) != 0;
 			return true;
 		case plugin::EventType::ParamValue:
 			out.type = Type::Parameter;
@@ -481,9 +516,16 @@ namespace gnubase::engine::plugins
 		const plugin::Process process{context.frames, m_steadyTime, m_mode.load(std::memory_order_relaxed),
 			m_inputs.data(), static_cast<uint32_t>(m_inputs.size()), m_outputs.data(),
 			static_cast<uint32_t>(m_outputs.size()), m_eventsIn, m_eventsOut, m_transport.data(),
-			convertTransport(context.transport, m_transport)};
+			convertTransport(context.transport, m_activeRate.load(std::memory_order_relaxed), m_transport)};
 		const plugin::ProcessStatus status = m_started ? m_plugin->process(process) : plugin::ProcessStatus::Error;
 		m_steadyTime += context.frames;
+		// Logged once while it lasts, so that a steady overload doesn't fill the logger's queue.
+		const size_t dropped = m_eventsIn.dropped() + m_eventsOut.dropped();
+		if (dropped > 0 && !m_dropping)
+			logging::warning("The plugin {} dropped events that didn't fit its event lists: {} in a block; its drops "
+							 "aren't logged again until a block drops none",
+				m_plugin->descriptor().id, dropped);
+		m_dropping = dropped > 0;
 
 		const bool failed = status == plugin::ProcessStatus::Error || m_outputs.empty();
 		m_failed.store(failed, std::memory_order_relaxed);

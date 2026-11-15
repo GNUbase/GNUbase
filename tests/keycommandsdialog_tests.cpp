@@ -672,6 +672,195 @@ TEST_CASE("File > Export > Key Command Assignments writes an HTML list of every 
 	CHECK_THAT(content, ContainsSubstring("F11"));
 	CHECK_THAT(content, ContainsSubstring("Space")); // transport.toggle's default key
 	CHECK_THAT(content, ContainsSubstring("</html>"));
+	// Each assignment carries what the list shows and nothing else.
+	for (const Json& entry : app.keys().assignments())
+		CHECK(entry.size() == 3);
+}
+
+TEST_CASE("a key commands file or assignments list that can't be written or read tells the user why", "[ui]")
+{
+	test::UiApp app({1000, 760});
+	app.appUi().showProject();
+	app.shell().showOsFileDialogs(false);
+	const test::TempDir dir;
+	// A file where the folder to write into would be, so that nothing can be written under it.
+	const std::filesystem::path blocker = dir.path() / "blocker";
+	std::ofstream(blocker) << "not a folder";
+	const std::filesystem::path other = dir.path() / "other.json";
+	std::ofstream(other) << "{}";
+	const auto answer = [&app](const std::filesystem::path& file)
+	{
+		REQUIRE(app.waitUntil([&app] { return !app.shell().fileDialogs().empty(); }));
+		app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, {file});
+	};
+	const auto message = [&app] { return text(app, "#keycommands-message"); };
+
+	// The key commands dialog's Export and Import show the engine's error in the dialog's message.
+	openDialog(app);
+	click(app, "#keycommands-export");
+	answer(blocker / "Studio.json");
+	REQUIRE(app.waitUntil([&] { return message().find("can't write the key commands file") != std::string::npos; }));
+	click(app, "#keycommands-import");
+	answer(other);
+	REQUIRE(app.waitUntil([&] { return message().find("is no key commands file") != std::string::npos; }));
+	click(app, "#keycommands-cancel");
+	REQUIRE(closed(app));
+
+	// File > Export > Key Command Assignments, which has no dialog of its own, shows the error in an error dialog.
+	app.keys().run("keyCommands.exportAssignments", Json::object(), app.main(), nullptr);
+	answer(blocker / "assignments");
+	REQUIRE(app.waitUntil([&app] { return !elements(app, "#project-error-dialog").empty(); }));
+	CHECK(text(app, "#project-error-title") == "Export Key Command Assignments");
+	const std::string error = text(app, "#project-error-message");
+	CHECK_THAT(error, ContainsSubstring("Can't write the key command assignments"));
+	// A path is in the error once, not twice (the error from the file system already carries it).
+	const std::string name = blocker.u8string();
+	const auto first = error.find(name);
+	CHECK(first != std::string::npos);
+	CHECK(error.find(name, first + 1) == std::string::npos);
+	click(app, "#project-error-dialog button[result=ok]");
+	CHECK(app.waitUntil([&app] { return elements(app, "#project-error-dialog").empty(); }));
+}
+
+TEST_CASE("a key commands file error goes away when the next Export or Import starts", "[ui]")
+{
+	test::UiApp app({1000, 760});
+	app.appUi().showProject();
+	app.shell().showOsFileDialogs(false);
+	const test::TempDir dir;
+	const std::filesystem::path blocker = dir.path() / "blocker";
+	std::ofstream(blocker) << "not a folder";
+	const auto answer = [&app](const std::filesystem::path& file)
+	{
+		REQUIRE(app.waitUntil([&app] { return !app.shell().fileDialogs().empty(); }));
+		app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, {file});
+	};
+	const auto message = [&app] { return text(app, "#keycommands-message"); };
+
+	openDialog(app);
+	click(app, "#keycommands-export");
+	answer(blocker / "Studio.json");
+	REQUIRE(app.waitUntil([&] { return !message().empty(); }));
+
+	// Exporting again, somewhere that works, takes the old error away.
+	const std::filesystem::path good = dir.path() / "good.json";
+	click(app, "#keycommands-export");
+	REQUIRE(message().empty());
+	answer(good);
+	REQUIRE(app.waitUntil([&good] { return std::filesystem::exists(good); }));
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(message().empty());
+
+	// The same for Import: a failure, then a retry that works.
+	const std::filesystem::path bad = dir.path() / "bad.json";
+	std::ofstream(bad) << "{}";
+	click(app, "#keycommands-import");
+	answer(bad);
+	REQUIRE(app.waitUntil([&] { return !message().empty(); }));
+	click(app, "#keycommands-import");
+	REQUIRE(message().empty());
+	answer(good);
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(app.waitUntil([&app] { return app.shell().fileDialogs().empty(); }));
+	CHECK(message().empty());
+	click(app, "#keycommands-cancel");
+	REQUIRE(closed(app));
+}
+
+TEST_CASE("a key commands file command that worked takes another message away", "[ui]")
+{
+	test::UiApp app({1000, 760});
+	app.appUi().showProject();
+	app.shell().showOsFileDialogs(false);
+	const test::TempDir dir;
+	const auto answer = [&app](const std::filesystem::path& file)
+	{
+		REQUIRE(app.waitUntil([&app] { return !app.shell().fileDialogs().empty(); }));
+		app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, {file});
+	};
+	const auto message = [&app] { return text(app, "#keycommands-message"); };
+	// A message from something else, which the file commands, run without the dialog's buttons, don't clear at start.
+	const auto someMessage = [&]
+	{
+		click(app, "#keycommands-save-preset"); // without a name
+		REQUIRE(!message().empty());
+	};
+	const std::filesystem::path good = dir.path() / "good.json";
+
+	openDialog(app);
+	someMessage();
+	app.keys().run("keyCommands.exportFile", Json::object(), app.main(), nullptr);
+	answer(good);
+	CHECK(app.waitUntil([&] { return message().empty(); }));
+	REQUIRE(std::filesystem::exists(good));
+
+	someMessage();
+	app.keys().run("keyCommands.importFile", Json::object(), app.main(), nullptr);
+	answer(good);
+	CHECK(app.waitUntil([&] { return message().empty(); }));
+	click(app, "#keycommands-cancel");
+	REQUIRE(closed(app));
+}
+
+TEST_CASE("a long file path in the key commands message stays inside the dialog and off the buttons", "[ui]")
+{
+	test::UiApp app({1000, 760});
+	app.appUi().showProject();
+	app.shell().showOsFileDialogs(false);
+	const test::TempDir dir;
+	// A name without a space, which can't wrap at a word, for the file that is in the way.
+	const std::filesystem::path blocker = dir.path() / std::string(120, 'k');
+	std::ofstream(blocker) << "not a folder";
+	openDialog(app);
+	click(app, "#keycommands-export");
+	REQUIRE(app.waitUntil([&app] { return !app.shell().fileDialogs().empty(); }));
+	app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, {blocker / "Studio.json"});
+	REQUIRE(app.waitUntil([&app] { return !text(app, "#keycommands-message").empty(); }));
+	const auto box = [&app](const std::string& selector) { return element(app, selector).at("box"); };
+	const auto right = [](const Json& b) { return b.at("x").get<double>() + b.at("width").get<double>(); };
+	const Json message = box("#keycommands-message");
+	const Json dialog = box("#key-commands");
+	const Json apply = box("#keycommands-apply");
+	// The path is broken into lines inside the message (an unbroken one ran on as a two-line row, past the buttons).
+	CHECK(message.at("height").get<double>() > 45.0); // more than two lines of the dialog's text
+	CHECK(message.at("x").get<double>() >= dialog.at("x").get<double>());
+	CHECK(right(message) <= apply.at("x").get<double>());
+	CHECK(right(apply) <= right(dialog));
+	CHECK(right(box("#keycommands-ok")) <= right(dialog));
+	click(app, "#keycommands-cancel");
+	REQUIRE(closed(app));
+}
+
+TEST_CASE("Cancel and Escape leave no question behind for the next confirmation", "[ui]")
+{
+	// confirm.rml clears the global ConfirmDialog however it closes, so that a later gnubase.ui.confirm{} without a
+	// question of its own asks nothing stale and its OK runs no earlier caller's onOk.
+	test::UiApp app({1000, 760});
+	openDialog(app);
+	select(app, "transport.stop");
+	click(app, "#keycommands-keys listitem:last-child");
+	for (const char* close : {"cancel", "escape"})
+	{
+		INFO(close);
+		click(app, "#keycommands-remove");
+		REQUIRE(app.waitUntil([&app] { return !elements(app, "#confirm-dialog").empty(); }));
+		CHECK(text(app, "#confirm-title") == "Remove Key Command");
+		if (std::string(close) == "cancel")
+			click(app, "#confirm-cancel");
+		else
+			press(app, "Escape");
+		REQUIRE(app.waitUntil([&app] { return elements(app, "#confirm-dialog").empty(); }));
+		const std::optional<std::string> error = app.lua().run("gnubase.ui.confirm{}", "confirm");
+		INFO(error.value_or(""));
+		REQUIRE(!error.has_value());
+		REQUIRE(app.waitUntil([&app] { return !elements(app, "#confirm-dialog").empty(); }));
+		CHECK(text(app, "#confirm-title") == "Confirm");
+		confirm(app);
+		REQUIRE(app.waitUntil([&app] { return elements(app, "#confirm-dialog").empty(); }));
+		CHECK(shownKeys(app) == Strings{"Num0"}); // the stale Remove didn't run
+	}
+	click(app, "#keycommands-cancel");
+	CHECK(closed(app));
 }
 
 TEST_CASE("tool modifiers ask before an action takes another's keys, from Assign and from the list", "[ui]")

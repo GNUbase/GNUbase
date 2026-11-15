@@ -79,8 +79,7 @@ namespace
 								{"data", {0xF0, 0x41, 0x10, 0xF7}}}})}});
 			for (const Json& each : controllers.at("controllers"))
 				events.push_back(each.at("id").get<uint64_t>());
-			REQUIRE(app.waitUntil(
-				[&] { return display.project().is_object() && display.project().at("midiParts").size() == 1; }));
+			REQUIRE(app.waitUntil([&] { return display.project().at("midiParts").size() == 1; }));
 			display.select({part});
 			app.shell().step(std::chrono::milliseconds(0));
 			app.keys().run("editor.openList", Json::object(), app.main(), nullptr);

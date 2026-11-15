@@ -79,6 +79,8 @@ namespace gnubase::test
 		Rml::ElementDocument& show(const std::string& name);
 
 		// Steps the shell until done() is true; false if it isn't within the timeout.
+		// A JSON error from done() means "not ready yet"; if it still throws past the timeout, the error is rethrown.
+		// Predicates may read UI state that hasn't arrived yet without a JSON type guard.
 		bool waitUntil(const std::function<bool()>& done, std::chrono::milliseconds timeout = std::chrono::seconds(5));
 
 		// Lays the windows out at this dp ratio, whatever the monitor's scale, so that screenshots have the same pixels
@@ -92,6 +94,11 @@ namespace gnubase::test
 		// Checks the image against tests/golden/ui/<name>.png, allowing what GPUs round differently: one pixel in 500
 		// may differ by more than 8 of 255.
 		static void checkGolden(const std::string& name, const ui::Image& image);
+
+		// The sections the main window shows in the container with this id, such as "toolbar", in their order: those
+		// neither hidden nor out of room (docs/features/docking.md). A golden image's tolerance can hide a whole
+		// toolbar button, so tests with goldens of the project window check these too (#1342).
+		std::vector<std::string> shownSections(const std::string& container);
 
 	private:
 		void start(std::vector<std::unique_ptr<midi::Backend>> midiBackends,

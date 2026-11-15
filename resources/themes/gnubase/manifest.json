@@ -311,6 +311,72 @@
         "bottom": 6
       }
     },
+    "dropdown-button-normal": {
+      "file": "dropdown-button-normal.svg",
+      "width": 40,
+      "height": 24,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 20,
+        "bottom": 6
+      }
+    },
+    "dropdown-button-hover": {
+      "file": "dropdown-button-hover.svg",
+      "width": 40,
+      "height": 24,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 20,
+        "bottom": 6
+      }
+    },
+    "dropdown-button-pressed": {
+      "file": "dropdown-button-pressed.svg",
+      "width": 40,
+      "height": 24,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 20,
+        "bottom": 6
+      }
+    },
+    "dropdown-button-disabled": {
+      "file": "dropdown-button-disabled.svg",
+      "width": 40,
+      "height": 24,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 20,
+        "bottom": 6
+      }
+    },
+    "disclosure-open": {
+      "file": "disclosure-open.svg",
+      "width": 40,
+      "height": 24,
+      "slice": {
+        "left": 20,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "disclosure-closed": {
+      "file": "disclosure-closed.svg",
+      "width": 40,
+      "height": 24,
+      "slice": {
+        "left": 20,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
     "menu": {
       "file": "menu.svg",
       "width": 24,
@@ -515,9 +581,9 @@
       "height": 32,
       "slice": {
         "left": 2,
-        "top": 2,
+        "top": 4,
         "right": 2,
-        "bottom": 2
+        "bottom": 4
       }
     },
     "meter-background": {

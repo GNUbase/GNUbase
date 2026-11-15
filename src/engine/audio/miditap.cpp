@@ -6,6 +6,7 @@
 #include "engine/audio/audioengine.h"
 #include "engine/engine.h"
 #include "engine/midi/midivalues.h"
+#include "engine/midi/mpeinput.h"
 #include "engine/settings/usersettings.h"
 #include "platform/midi/port.h"
 #include "plugin/events.h"
@@ -21,8 +22,6 @@ namespace gnubase::engine
 	namespace
 	{
 		using Type = graph::ProcessEvent::Type;
-
-		constexpr uint32_t g_noBank = 0xFFFFFFFFU;
 
 		void require(bool condition, const std::string& message)
 		{
@@ -46,51 +45,6 @@ namespace gnubase::engine
 			message.size = static_cast<uint8_t>(size);
 			std::copy(bytes.begin(), bytes.end(), message.bytes.begin());
 			return message;
-		}
-
-		// A MIDI 1.0 channel message as an event; a note-on of velocity 0 is a note-off of velocity 64.
-		graph::ProcessEvent toEvent(const audio::MidiMessage& message, uint32_t offset) noexcept
-		{
-			const uint8_t data1 = message.bytes[1];
-			const uint8_t data2 = message.bytes[2];
-			graph::ProcessEvent event;
-			event.offset = offset;
-			event.channel = static_cast<uint8_t>(message.bytes[0] & 0x0FU);
-			event.key = data1;
-			switch (message.bytes[0] & 0xF0U)
-			{
-			case 0x80U:
-				event.type = Type::NoteOff;
-				event.velocity = midi::velocityFromMidi1(data2);
-				break;
-			case 0x90U:
-				event.type = data2 == 0 ? Type::NoteOff : Type::NoteOn;
-				event.velocity = midi::velocityFromMidi1(data2 == 0 ? 64 : data2);
-				break;
-			case 0xA0U:
-				event.type = Type::PolyPressure;
-				event.value = midi::controllerFromMidi1(data2);
-				break;
-			case 0xB0U:
-				event.type = Type::Controller;
-				event.value = midi::controllerFromMidi1(data2);
-				break;
-			case 0xC0U:
-				event.type = Type::Program;
-				event.value = g_noBank;
-				break;
-			case 0xD0U:
-				event.type = Type::ChannelPressure;
-				event.key = 0;
-				event.value = midi::controllerFromMidi1(data1);
-				break;
-			default: // 0xE0
-				event.type = Type::PitchBend;
-				event.key = 0;
-				event.value = midi::pitchBendFromMidi1(static_cast<uint16_t>(data1 | (uint32_t{data2} << 7U)));
-				break;
-			}
-			return event;
 		}
 
 		// An event as MIDI 1.0 messages: none for SysEx and parameter changes, three for a program change with a bank
@@ -162,6 +116,50 @@ namespace gnubase::engine
 		}
 	}
 
+	graph::ProcessEvent MidiTap::toEvent(const audio::MidiMessage& message, uint32_t offset) noexcept
+	{
+		const uint8_t data1 = message.bytes[1];
+		const uint8_t data2 = message.bytes[2];
+		graph::ProcessEvent event;
+		event.offset = offset;
+		event.channel = static_cast<uint8_t>(message.bytes[0] & 0x0FU);
+		event.key = data1;
+		switch (message.bytes[0] & 0xF0U)
+		{
+		case 0x80U:
+			event.type = Type::NoteOff;
+			event.velocity = midi::velocityFromMidi1(data2);
+			break;
+		case 0x90U:
+			event.type = data2 == 0 ? Type::NoteOff : Type::NoteOn;
+			event.velocity = midi::velocityFromMidi1(data2 == 0 ? 64 : data2);
+			break;
+		case 0xA0U:
+			event.type = Type::PolyPressure;
+			event.value = midi::controllerFromMidi1(data2);
+			break;
+		case 0xB0U:
+			event.type = Type::Controller;
+			event.value = midi::controllerFromMidi1(data2);
+			break;
+		case 0xC0U:
+			event.type = Type::Program;
+			event.value = g_noBank;
+			break;
+		case 0xD0U:
+			event.type = Type::ChannelPressure;
+			event.key = 0;
+			event.value = midi::controllerFromMidi1(data1);
+			break;
+		default: // 0xE0
+			event.type = Type::PitchBend;
+			event.key = 0;
+			event.value = midi::pitchBendFromMidi1(static_cast<uint16_t>(data1 | (uint32_t{data2} << 7U)));
+			break;
+		}
+		return event;
+	}
+
 	MidiTap::MidiTap() : m_waiting(g_size)
 	{
 	}
@@ -215,8 +213,11 @@ namespace gnubase::engine
 					message.position > position ? static_cast<uint32_t>(message.position - position) : 0;
 				graph::ProcessEvent event = toEvent(message.message, offset);
 				event.drumSound = message.drumSound;
-				wait =
-					found != sequencers.end() && found->first == message.channel && !found->second->input().add(event);
+				if (found != sequencers.end() && found->first == message.channel)
+				{
+					MidiSequencer& sequencer = *found->second;
+					wait = message.mpe != 0 ? !sequencer.injectMpe(message.mpe, event) : !sequencer.input().add(event);
+				}
 			}
 			if (wait)
 				m_waiting[kept++] = message;
@@ -240,6 +241,16 @@ namespace gnubase::engine
 					message.bytes[0] < 0xF0)
 					events.add(toEvent(message, message.offset));
 		}
+	}
+
+	void MidiTap::thru(
+		const graph::EventBuffer& input, const Sequencers& sequencers, const std::vector<uint8_t>& thru) noexcept
+	{
+		if (input.empty())
+			return;
+		for (size_t i = 0; i < sequencers.size() && i < thru.size(); ++i)
+			if (thru[i] != 0)
+				sequencers[i].second->input().merge(input);
 	}
 
 	void MidiTap::capture(uint64_t position, const Instruments& instruments) noexcept
@@ -294,14 +305,24 @@ namespace gnubase::engine
 				"drumSounds: on a track with a drum map, the notes' keys are drum sounds' pitches, not I-notes: they "
 				"play their sounds as the track's notes do but are neither recorded nor kept for "
 				"midi.insertRetrospective (the "
-				"drum editor auditions sounds so; reference manual p. 1236). midi.capture returns what instruments "
+				"drum editor auditions sounds so; reference manual p. 1236). mpe: the messages play through this MPE "
+				"input setup (midi.setPort mpe; what it leaves out has its default), as a MIDI input port with it "
+				"plays them: on the notes' channels pitch bend, channel pressure and CC 74 reach the track as its "
+				"notes' per-note expression (docs/features/note-expression.md). The track keeps the state of those "
+				"channels from one call to the next while the setup stays. midi.capture returns what instruments "
 				"played.",
-				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["channel", "messages"],
-					"properties": {"channel": {"type": "integer"}, "drumSounds": {"type": "boolean"},
-					"messages": {"type": "array", "items": {
-						"type": "object", "additionalProperties": false, "required": ["position", "bytes"],
-						"properties": {"position": {"type": "integer", "minimum": 0}, "bytes": {"type": "array",
-							"items": {"type": "integer", "minimum": 0, "maximum": 255}}}}}}})"),
+				[]
+				{
+					Json schema = Json::parse(R"({"type": "object", "additionalProperties": false,
+						"required": ["channel", "messages"],
+						"properties": {"channel": {"type": "integer"}, "drumSounds": {"type": "boolean"},
+						"messages": {"type": "array", "items": {
+							"type": "object", "additionalProperties": false, "required": ["position", "bytes"],
+							"properties": {"position": {"type": "integer", "minimum": 0}, "bytes": {"type": "array",
+								"items": {"type": "integer", "minimum": 0, "maximum": 255}}}}}}})");
+					schema["properties"]["mpe"] = midi::mpeSchema();
+					return schema;
+				}(),
 				Json::object(), false},
 			[this](CommandContext& context)
 			{
@@ -313,12 +334,15 @@ namespace gnubase::engine
 				const Json& messages = parameters.at("messages");
 				require(messages.size() <= MidiTap::g_size, "at most 4096 messages at a time");
 				const bool drumSounds = parameters.value("drumSounds", false);
+				const uint32_t mpe =
+					parameters.contains("mpe") ? midi::MpeSetup::fromJson(parameters.at("mpe")).pack() : 0;
 				std::vector<MidiTap::Message> injected;
 				injected.reserve(messages.size());
 				for (size_t i = 0; i < messages.size(); ++i)
 				{
 					injected.push_back({channel, messages[i].at("position").get<uint64_t>(),
-						channelMessage(messages[i].at("bytes"), "messages[" + std::to_string(i) + "]: "), drumSounds});
+						channelMessage(messages[i].at("bytes"), "messages[" + std::to_string(i) + "]: "), drumSounds,
+						mpe});
 				}
 				require(m_tap.inject(injected),
 					"too many MIDI messages wait for the audio device; none were injected, try again later");
@@ -364,14 +388,13 @@ namespace gnubase::engine
 				"the track's parts, of the MIDI tracks routed to it and what midi.inject played into them, with "
 				"controller automation and the note-offs of a stop. A program change with a bank comes as bank "
 				"select MSB and LSB, then the program change; SysEx isn't captured. Per-note expression comes as MPE "
-				"on "
-				"the note's channel: tuning as pitch bend over 48 semitones, pressure as channel pressure, brightness "
-				"as CC 74, a note's initial ones before its note-on; a note on a channel whose notes express one of "
-				"them and that has no point of it at its start gets MPE's initial value (a centered bend, no "
-				"pressure, CC 74 at 64). dropped counts the messages that "
-				"didn't fit: while nobody reads, newer messages are dropped. start: true starts a fresh capture; it "
-				"drops what was captured so far and returns nothing. Each call empties what it returns, so a repeated "
-				"call doesn't return the same messages again.",
+				"on the note's channel: tuning as pitch bend over 48 semitones, pressure as channel pressure, "
+				"brightness as CC 74, a note's initial ones before its note-on; a note on a channel whose notes "
+				"express one of them and that has no point of it at its start gets MPE's initial value (a centered "
+				"bend, no pressure, CC 74 at 64). dropped counts the messages that didn't fit: while nobody reads, "
+				"newer messages are dropped. start: true starts a fresh capture; it drops what was captured so far "
+				"and returns nothing. Each call empties what it returns, so a repeated call doesn't return the same "
+				"messages again.",
 				Json::parse(R"({"type": "object", "additionalProperties": false,
 					"properties": {"start": {"type": "boolean"}}})"),
 				Json::parse(R"({"type": "object", "properties": {"captured": {"type": "array"},
@@ -428,7 +451,6 @@ namespace gnubase::engine
 				const double ratio = m_snapshots.latest().sampleRate / m_device->format().sampleRate;
 				const time::Samples cursor = m_transport.position();
 				MidiTakeBuilder builder;
-				builder.setMpe(mpePitchRange(m_settings));
 				time::Samples start = -1;
 				int64_t stopped = -1; // the device frame of the first input in stop mode
 				for (const RetrospectiveEvent& kept : events)

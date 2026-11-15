@@ -81,9 +81,9 @@ and auditioning chord events.
   instrument tracks that record and, while the chord track is record-enabled, from those that only monitor: the
   recorder records their input too (`MidiRecordTrack::chordsOnly`), and `recording.add` takes it (`chordsOnly`) for
   chord events only, without a part. That input also stays in the track's retrospective buffer, marked as recorded
-  (`recordedUntil`), so that a recording that starts within the MIDI record catch range of the one before doesn't
-  catch it again. Inserting the buffer (`midi.insertRetrospective`) is no recording of the chord track: it makes no
-  chord events (`recording.add` `chordEvents` false), so what was edited on the chord track in between stays.
+  (`Retrospective::recorded`), so that a recording that starts within the MIDI record catch range of the one before
+  doesn't catch it again. Inserting the buffer (`midi.insertRetrospective`) is no recording of the chord track: it
+  makes no chord events (`recording.add` `chordEvents` false), so what was edited on the chord track in between stays.
 - **Map to Chord Track** (`chord.map`, p. 1341): moves the notes of parts to the chord track's chords for good, by a
   follow mode: each part's own chords (C where none are found) map to the chord events playing at each note.
 - **Assign Voices to Notes** (`chord.assignVoices`, p. 1342): moves each note to the nearest pitch of the voicing of

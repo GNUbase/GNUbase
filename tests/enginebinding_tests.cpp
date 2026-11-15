@@ -203,6 +203,21 @@ TEST_CASE("the steps of one control go one at a time, the newest of a gesture re
 	CHECK(binding.waiting("history.transaction") == 1);
 	updateUntil(binding, [&binding] { return !binding.sending("volume"); });
 	CHECK(read("volume") == -2.0);
+
+	// A gesture's steps under two merge names, such as the info line's for two selections (#1556): the newest of a
+	// name replaces only a waiting step of that name, so the first name's last value still goes, as an undo step of
+	// its own.
+	const int64_t merged = position();
+	binding.sendStep(14, "field", "Change Volume", set("volume", -3.0), {}, nullptr, "one");
+	binding.sendStep(14, "field", "Change Volume", set("volume", -4.0), {}, nullptr, "one");
+	binding.sendStep(14, "field", "Change Pan", set("pan", -0.25), {}, nullptr, "two");
+	updateUntil(binding, [&binding] { return !binding.sending("field"); });
+	CHECK(read("volume") == -4.0);
+	CHECK(read("pan") == -0.25);
+	CHECK(position() == merged + 2);
+	REQUIRE(client.call("history.undo").ok());
+	CHECK(read("volume") == -4.0);
+	CHECK(read("pan") == 0.5);
 }
 
 TEST_CASE("a control's steps leave no record behind once a read after their last answer was handed on", "[unit]")
@@ -291,6 +306,66 @@ TEST_CASE("a control's steps leave no record behind once a read after their last
 	updateUntil(binding, [&binding] { return !binding.sending("volume"); });
 	CHECK(read("volume") == -4.0);
 	CHECK(binding.ahead("volume", 0));
+}
+
+TEST_CASE("a control's record keeps what the control shows while it is ahead, and lets it go with the record", "[unit]")
+{
+	engine::Engine engine;
+	ui::EngineBinding binding(engine);
+	engine::Client client(engine);
+	const Json channel = client.call("track.add", {{"type", "audio"}}).value.at("channel").at("id");
+	const auto set = [&channel](const char* key, double value)
+	{ return Json::array({Json{{"command", "channel.set"}, {"parameters", {{"channel", channel}, {key, value}}}}}); };
+	const auto readProject = [&binding]
+	{
+		uint64_t handed = 0;
+		binding.send(
+			"project.get", Json::object(), [&binding, &handed](const engine::Result&) { handed = binding.handed(); });
+		updateUntil(binding, [&handed] { return handed != 0; });
+		return handed;
+	};
+
+	// A drag of two events' values: each step's values are merged into what the record keeps, the newest of each.
+	binding.sendStep(7, "volume", "Change Volume", set("volume", -1.0), {}, Json{{"1", "-1"}, {"2", "-3"}});
+	binding.sendStep(7, "volume", "Change Volume", set("volume", -2.0), {}, Json{{"1", "-2"}});
+	const Json dragged = {{"1", "-2"}, {"2", "-3"}};
+	REQUIRE(binding.shown("volume", 0) != nullptr);
+	CHECK(*binding.shown("volume", 0) == dragged);
+	CHECK(binding.shown("pan", 0) == nullptr);
+	updateUntil(binding, [&binding] { return !binding.sending("volume"); });
+	binding.update();
+	REQUIRE(binding.shown("volume", 0) != nullptr); // still ahead of a read from before the drag
+	CHECK(*binding.shown("volume", 0) == dragged);
+	const uint64_t fresh = readProject();
+	CHECK(binding.shown("volume", fresh) == nullptr);
+	binding.update();
+	CHECK(binding.shown("volume", 0) == nullptr); // gone with the record (#1471)
+
+	// A later gesture keeps its own; a value that isn't an object replaces what is kept, and a step without one
+	// keeps nothing.
+	binding.sendStep(8, "volume", "Change Volume", set("volume", -4.0), {}, Json{{"1", "-4"}});
+	binding.sendStep(8, "volume", "Change Volume", set("volume", -5.0), {}, -5.0);
+	REQUIRE(binding.shown("volume", 0) != nullptr);
+	CHECK(*binding.shown("volume", 0) == -5.0);
+	binding.sendStep(0, "pan", "Change Pan", set("pan", 0.5));
+	CHECK(binding.ahead("pan", 0));
+	CHECK(binding.shown("pan", 0) == nullptr);
+	CHECK(binding.settle(std::chrono::seconds(10)));
+
+	// A step taken and no read since: the next step keeps what the record has, as the project may not have it yet.
+	binding.sendStep(9, "transpose", "Change Transpose", set("volume", -6.0), {}, Json{{"1", "-6"}});
+	updateUntil(binding, [&binding] { return !binding.sending("transpose"); });
+	binding.sendStep(10, "transpose", "Change Transpose", set("volume", -7.0), {}, Json{{"2", "-7"}});
+	REQUIRE(binding.shown("transpose", 0) != nullptr);
+	CHECK(*binding.shown("transpose", 0) == Json{{"1", "-6"}, {"2", "-7"}});
+	// Once a read after its last taken step is in, the project has what the record kept, and an undo since may have
+	// changed it: the next step starts the record's values afresh, also before the record goes (#1550).
+	updateUntil(binding, [&binding] { return !binding.sending("transpose"); });
+	readProject();
+	binding.sendStep(11, "transpose", "Change Transpose", set("volume", -8.0), {}, Json{{"2", "-8"}});
+	REQUIRE(binding.shown("transpose", 0) != nullptr);
+	CHECK(*binding.shown("transpose", 0) == Json{{"2", "-8"}});
+	CHECK(binding.settle(std::chrono::seconds(10)));
 }
 
 TEST_CASE(

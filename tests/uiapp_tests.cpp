@@ -262,6 +262,9 @@ TEST_CASE("the project window shows events and the project cursor where the engi
 	CHECK(lanes.at("attributes").at("scale") == "0.01");
 	CHECK(element(".project-cursor").at("box").at("x").get<int>() - lanes.at("box").at("x").get<int>() == 150);
 	test::UiApp::checkGolden("event-display", app.screenshot("event-display", {800, 300}));
+	// The toolbar sections the image shows, which its tolerance could hide a button of (#1342).
+	CHECK(app.shownSections("toolbar") ==
+		std::vector<std::string>{"tools", "autoScroll", "zoomPresets", "snap", "gridType", "zones"});
 
 	// Ctrl and the mouse wheel zoom in around the mouse, through the UI tools.
 	const ui::Target over{
@@ -270,6 +273,109 @@ TEST_CASE("the project window shows events and the project cursor where the engi
 	CHECK(display.view().scale < 0.01);
 	app.shell().step(std::chrono::milliseconds(0));
 	CHECK(element(".project-cursor").at("box").at("x").get<int>() - lanes.at("box").at("x").get<int>() == 150);
+}
+
+TEST_CASE(
+	"the project window shows events in their colors, and colored ones selected and muted, as the theme says", "[ui]")
+{
+	// #1332: the default theme fills colored events at own-fill-opacity, tints their outline and their waveform, and
+	// keeps the selected and muted looks for colored events too.
+	test::UiApp app({800, 300});
+	ui::EventDisplay& display = app.appUi().showProject();
+	app.setDpRatio(1.0F);
+	app.call("project.set", {{"length", 60.0}});
+	const test::TempDir dir;
+	test::Audio take; // a 220 Hz tone fading out over two seconds
+	take.channels = 1;
+	take.sampleRate = 48000;
+	take.samples.resize(96000);
+	for (size_t i = 0; i < take.samples.size(); ++i)
+	{
+		const double t = static_cast<double>(i) / 48000.0;
+		take.samples[i] = static_cast<float>(0.9 * (1.0 - (t / 2.0)) * std::sin(2.0 * 3.14159265358979 * 220.0 * t));
+	}
+	const std::filesystem::path file = dir.path() / "tone.wav";
+	test::writeWav(file, take);
+	const Json audio =
+		app.call("track.add", {{"type", "audio"}, {"timeBase", "linear"}, {"color", "#e0505a"}}).at("track");
+	const Json media = app.call("media.add", {{"path", file.u8string()}}).at("media");
+	const Json clip = app.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	app.call(
+		"audioEvent.add", {{"track", audio.at("id")}, {"clip", clip.at("id")}, {"position", 24000}, {"length", 96000}});
+	const Json midi = app.call("track.add", {{"type", "midi"}, {"color", "#50c878"}}).at("track");
+	const auto part = [&app, &midi](int64_t quarter)
+	{
+		return app
+			.call("midiPart.add",
+				{{"track", midi.at("id")}, {"position", quarter * time::g_ticksPerQuarter},
+					{"length", 2 * time::g_ticksPerQuarter}})
+			.at("part")
+			.at("id")
+			.get<uint64_t>();
+	};
+	part(0); // all three in view
+	const uint64_t selected = part(3);
+	const uint64_t muted = part(6);
+	app.call("event.set", {{"events", {muted}}, {"mute", true}});
+	const Json themed = app.call("track.add", {{"type", "midi"}}).at("track"); // no color: the theme's look
+	app.call("midiPart.add",
+		{{"track", themed.at("id")}, {"position", 3 * time::g_ticksPerQuarter},
+			{"length", 4 * time::g_ticksPerQuarter}});
+	Rml::ElementDocument& document = *app.main().context().GetDocument(0);
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			display.select({selected});
+			auto* lanes = dynamic_cast<ui::EventLanes*>(document.QuerySelector("event-lanes.events"));
+			auto* mutes = dynamic_cast<ui::EventLanes*>(document.QuerySelector("event-lanes.muted-events"));
+			auto* wave = dynamic_cast<ui::Waveform*>(document.QuerySelector(".waveforms waveform"));
+			const auto shown = [](const ui::EventLanes* canvas)
+			{
+				return canvas != nullptr &&
+					std::any_of(canvas->lanes().begin(), canvas->lanes().end(),
+						[](const ui::EventLanes::Lane& lane) { return !lane.events.empty(); });
+			};
+			return shown(lanes) && lanes->lanes().size() == 3 && shown(mutes) && wave != nullptr &&
+				!wave->channels().empty() && display.selection() == std::vector<uint64_t>{selected};
+		}));
+	app.shell().step(std::chrono::milliseconds(0));
+	test::UiApp::checkGolden("event-colors", app.screenshot("event-colors", {800, 300}));
+	CHECK(app.shownSections("toolbar") ==
+		std::vector<std::string>{"tools", "autoScroll", "zoomPresets", "snap", "gridType", "zones"});
+}
+
+TEST_CASE(
+	"the project window in the default theme shows its transport bar, inspector sections and zones as panels", "[ui]")
+{
+	// #1342: the default theme's flat bars, the transport bar's buttons and plain displays, the inspector's section
+	// headers, and the left zone beside the main zone as rounded panels with the window's background between them.
+	test::UiApp app({1000, 700}); // CI's screens are 1024 pixels wide
+	app.appUi().showProject();
+	app.setDpRatio(1.0F);
+	app.call("project.set", {{"length", 60.0}});
+	app.appUi().docking().setVisible("project", "transportBar", true);
+	app.ui().key(std::nullopt, "Mod+Alt+L");
+	const uint64_t guitar = app.call("track.add", {{"type", "audio"}, {"name", "Guitar"}, {"color", "#e12ad8"}})
+								.at("track")
+								.at("id")
+								.get<uint64_t>();
+	app.call("track.add", {{"type", "midi"}, {"name", "Keys"}});
+	ui::TrackList& list = *app.appUi().trackList();
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			list.select({guitar}); // until the list has the track
+			return visible(app, "#left-zone") && visible(app, "#transport-bar") &&
+				count(app, ".track-list listitem") == 2 && list.selection() == std::vector<uint64_t>{guitar} &&
+				visible(app, ".inspector-section[section=basics] button.section-header");
+		}));
+	app.shell().step(std::chrono::milliseconds(0));
+	test::UiApp::checkGolden("default-theme-window", app.screenshot("default-theme-window", {1000, 700}));
+	CHECK(app.shownSections("toolbar") ==
+		std::vector<std::string>{"tools", "autoScroll", "zoomPresets", "snap", "gridType", "quantize", "zones"});
+	CHECK(app.shownSections("transport-bar") ==
+		std::vector<std::string>{
+			"locators", "locatorRange", "punchPoints", "transportControls", "timeDisplays", "tempoSignature", "click"});
 }
 
 TEST_CASE("the project cursor and the cross-hair cursor are drawn only inside the event display's time area", "[ui]")

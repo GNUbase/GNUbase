@@ -260,11 +260,12 @@ namespace gnubase::engine
 		cue.playing = playing;
 		cue.settings = m_transport.settings();
 		cue.window = window;
-		CueState state;
+		// A copy made under the lock, not a default CueState assigned to, whose plan is allocated only to be dropped.
+		const CueState state = [this]
 		{
 			const std::scoped_lock lock(m_cueMutex);
-			state = m_cueState; // keeps the plan it returns alive while this cues
-		}
+			return m_cueState; // keeps the plan it returns alive while this cues
+		}();
 		// A consistent pair: the state and the plan of the generation its indices walk (#885).
 		const auto [plan, arrangerState] = cuePlan(state);
 		if (plan != nullptr)
@@ -308,14 +309,18 @@ namespace gnubase::engine
 					cue.window = static_cast<time::Samples>(g_cueSeconds * m_device->format().sampleRate);
 					{
 						// Held while it cues, and taken by cueStart before it announces a start, so that a cue made
-						// before a start doesn't come after its exact cue. The state is only read under m_cueMutex:
-						// transport commands and rebuilds don't wait while this opens streams.
+						// before a start doesn't come after its exact cue. The state is only read under m_cueMutex, so
+						// what only touches it doesn't wait while this opens streams: sent() for most transport
+						// commands, syncTransport() and a rebuild's new arranger plan. Playback's own mutex, held while
+						// this opens streams, still makes Playback::setTracks in a rebuild and the command thread's
+						// exact cues (transport.play, transport.locate, a recording from stop) wait for it, as
+						// m_cueOrderMutex makes cueStart wait.
 						const std::scoped_lock order(m_cueOrderMutex);
-						CueState state;
+						const CueState state = [this]
 						{
 							const std::scoped_lock lock(m_cueMutex);
-							state = m_cueState; // keeps the arranger plans alive while it cues
-						}
+							return m_cueState; // keeps the arranger plans alive while it cues
+						}();
 						cue.playing = state.playing;
 						cue.settings = state.settings;
 						// The plan of the generation the transport's published state walks, not the newest one: a
@@ -553,7 +558,6 @@ namespace gnubase::engine
 		setup.retrospective =
 			static_cast<size_t>(std::max<int64_t>(m_settings.get(settings::g_midiRetrospectiveEvents), 0));
 		setup.pauseFrames = std::llround(30.0 * deviceRate); // reference manual p. 354
-		setup.mpePitchRange = mpePitchRange(m_settings);
 		// Each channel of a track's file records the channel of its input bus with the same number; a bus with fewer
 		// channels gives the others its last one, so a mono input fills a stereo track.
 		const RenderSnapshot& snapshot = m_snapshots.latest();
@@ -623,7 +627,7 @@ namespace gnubase::engine
 		{
 			paths[media.id] = media.path;
 			if (!media.warp.empty())
-				warps[media.id] = {media.warp, media.preset};
+				warps[media.id] = {media.warp, media.preset, media.pitch};
 		}
 		m_mediaPaths = paths;
 		m_auditionTracks.clear();
@@ -1315,10 +1319,13 @@ namespace gnubase::engine
 		const double ticksPerFrame =
 			program.tempo.bpmAt(program.tempo.toTicks(transport.position, program.sampleRate)) / 60.0 *
 			static_cast<double>(time::g_ticksPerQuarter) / program.sampleRate;
+		// Placed by the block's segments, after a cycle's jump inside it too (#1447).
+		const bool rolling = transport.playing && transport.countInFrames == 0 && transport.segmentCount > 0;
+		const graph::TransportSegment whole{0, block.frames, transport.position, false};
 		for (size_t player = 0; player < m_padOutput.size(); ++player)
 		{
-			m_padSnap.at(player).process(m_padOutput.at(player), snap > 0,
-				transport.playing && transport.countInFrames == 0, transport.position, block.frames,
+			m_padSnap.at(player).process(m_padOutput.at(player), snap > 0, rolling,
+				rolling ? transport.segments : &whole, rolling ? transport.segmentCount : 1, block.frames,
 				[&program, snap](int64_t sample)
 				{
 					const time::Ticks ticks = program.tempo.toTicks(sample, program.sampleRate);

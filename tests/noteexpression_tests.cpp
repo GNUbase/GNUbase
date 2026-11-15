@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Per-note expression (#176, reference manual pp. 1293-1318): notes carry expression points that move with them, MPE
-// input records into them, and playback sends them to the instrument, to an MPE instrument as MPE.
+// input records into them (tests/mpeinput_tests.cpp), and playback sends them to the instrument, to an MPE instrument
+// as MPE.
 #include "engine/document/document.h"
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
-#include "engine/midi/midivalues.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -98,22 +98,6 @@ namespace
 		return points;
 	}
 
-	int64_t milli(double value)
-	{
-		return std::llround(value * 1000.0);
-	}
-
-	// What a MIDI 1.0 value records as: a controller's 0-1, and a pitch bend's semitones of MPE's 48.
-	int64_t unit(uint8_t value)
-	{
-		return milli(midi::controllerToUnit(midi::controllerFromMidi1(value)));
-	}
-
-	int64_t semitones(uint16_t bend, double range = 48.0)
-	{
-		return milli(midi::bendToSemitones(midi::pitchBendFromMidi1(bend), range));
-	}
-
 	// What the instruments played since capturing started, as [position from start, bytes].
 	std::vector<std::vector<int64_t>> capturedFrom(Client& client, int64_t start)
 	{
@@ -141,69 +125,6 @@ namespace
 	{
 		return {{"type", type}, {"position", position}, {"value", value}};
 	}
-}
-
-TEST_CASE("MPE input is recorded as per-note expression and played back to an MPE instrument", "[integration]")
-{
-	Setup setup;
-	Client& client = setup.client;
-	run(client, "settings.set", {{"key", "midi.snapPartsToBars"}, {"value", false}});
-	run(client, "settings.set", {{"key", "midi.mpeInput"}, {"value", true}});
-	CHECK(run(client, "transport.record").at("recording") == true);
-	// MPE's lower zone: channel 1 (0) is the master channel, the notes come on channels 2 to 16, each with its own
-	// pitch bend, channel pressure and CC 74, sent before its note-on for its initial state.
-	run(client, "midi.inject",
-		{{"channel", setup.channel},
-			{"messages",
-				{message(900, {0xE1, 0, 96}), message(900, {0xD1, 40}), message(900, {0xB1, 74, 64}),
-					message(1000, {0x91, 60, 100}), message(1500, {0x92, 64, 90}), message(2000, {0xE1, 0, 80}),
-					message(2200, {0xD2, 100}), message(2400, {0xB0, 1, 64}), message(2500, {0xB1, 74, 100}),
-					message(3000, {0x81, 60, 0}),
-					// No note sounds on channel 2: its state for the next note, nothing recorded.
-					message(3200, {0xE1, 0, 64}), message(3500, {0x82, 64, 0})}}});
-	run(client, "audio.render", {{"frames", 4000}});
-	run(client, "transport.stop");
-	run(client, "audio.render", {{"frames", 640}});
-	REQUIRE(waitFor(client, "recording.added").is_object());
-
-	const Json parts = run(client, "project.get").at("midiParts");
-	REQUIRE(parts.size() == 1);
-	const Json& part = parts[0];
-	const int64_t partStart = part.at("position").get<int64_t>();
-	REQUIRE(part.at("notes").size() == 2);
-	Json first = part.at("notes")[0];
-	Json second = part.at("notes")[1];
-	if (first.at("pitch") != 60)
-		std::swap(first, second);
-	CHECK(first.at("position").get<int64_t>() + partStart == ticksOf(1000));
-	CHECK(first.at("channel") == 1);
-	// Pitch bend is tuning in semitones, by the MPE pitch range of 48; channel pressure is pressure, CC 74 brightness.
-	CHECK(pointsOf(first) ==
-		Points{{"brightness", 0, unit(64)}, {"brightness", ticksOf(1500), unit(100)}, {"pressure", 0, unit(40)},
-			{"tuning", 0, semitones(96 << 7)}, {"tuning", ticksOf(1000), semitones(80 << 7)}});
-	CHECK(semitones(96 << 7) == 24003); // a quarter of 14 bits up, by MIDI 2.0's scaling
-	CHECK(unit(64) == 500);
-	CHECK(second.at("channel") == 2);
-	CHECK(pointsOf(second) == Points{{"pressure", ticksOf(700), unit(100)}});
-	// The master channel's messages stay controller events.
-	REQUIRE(part.at("controllers").size() == 1);
-	CHECK(part.at("controllers")[0].at("type") == "controller");
-	CHECK(part.at("controllers")[0].at("number") == 1);
-
-	// Played back, the instrument gets each note on its channel with its expression as that channel's pitch bend,
-	// channel pressure and CC 74, where it was played. The second note wasn't pressed before its note-on: it starts
-	// without pressure, MPE's initial value.
-	const auto start = run(client, "audio.get").at("position").get<int64_t>();
-	run(client, "midi.capture", {{"start", true}});
-	run(client, "transport.locate", {{"position", 0}});
-	run(client, "transport.play");
-	run(client, "audio.render", {{"frames", 4000}});
-	std::vector<std::vector<int64_t>> played = capturedFrom(client, start);
-	std::sort(played.begin(), played.end());
-	CHECK(played ==
-		std::vector<std::vector<int64_t>>{{1000, 0x91, 60, 100}, {1000, 0xB1, 74, 64}, {1000, 0xD1, 40},
-			{1000, 0xE1, 0, 96}, {1500, 0x92, 64, 90}, {1500, 0xD2, 0}, {2000, 0xE1, 0, 80}, {2200, 0xD2, 100},
-			{2400, 0xB0, 1, 64}, {2500, 0xB1, 74, 100}, {3000, 0x81, 60, 0}, {3500, 0x82, 64, 0}});
 }
 
 TEST_CASE("without MPE input, MIDI on every channel records as controller events", "[integration]")
@@ -419,19 +340,254 @@ TEST_CASE("note.split cuts notes with their expression where it was, note.glue j
 	CHECK(pointsOf(now[0]) == Points{{"pressure", 0, 500}, {"tuning", 0, 0}, {"tuning", g_beatTicks / 2, 2000}});
 	CHECK(now[2].at("length") == g_beatTicks);
 
-	// Glued, the note plays what the two played: its own points up to the rest's start, then the rest's.
+	// Glued, the note plays what the two played: its own points up to the rest's start, then the rest's, without the
+	// points of the rest that only repeat the value that plays there. That is the expression the note had before the
+	// cut, as it has no point that changes nothing.
 	const Json glued =
 		run(client, "note.glue", {{"part", part}, {"note", note.at("id")}, {"next", rest.at("id")}}).at("note");
 	CHECK(glued.at("length") == 2 * g_beatTicks);
 	CHECK(pointsOf(glued) ==
-		Points{{"brightness", g_beatTicks, 1000}, {"pressure", 0, 500}, {"pressure", g_beatTicks, 500},
-			{"tuning", 0, 0}, {"tuning", g_beatTicks / 2, 2000}, {"tuning", g_beatTicks, 2000},
-			{"tuning", 3 * g_beatTicks / 2, 4000}});
+		Points{{"brightness", g_beatTicks, 1000}, {"pressure", 0, 500}, {"tuning", 0, 0},
+			{"tuning", g_beatTicks / 2, 2000}, {"tuning", 3 * g_beatTicks / 2, 4000}});
 	now = notes();
 	REQUIRE(now.size() == 2);
 	CHECK(now[0] == glued);
 	CHECK_THAT(reject(client, "note.glue", {{"part", part}, {"note", other.at("id")}, {"next", note.at("id")}}),
 		ContainsSubstring("must start after"));
+}
+
+TEST_CASE("a note.split that cuts nothing leaves the project unmodified", "[integration]")
+{
+	// Review of #1480: no revision, so no modified project without an undo step to take it back.
+	Setup setup;
+	Client& client = setup.client;
+	const ObjectId part = addPart(client, setup.track);
+	const Json note = run(client, "note.add",
+		{{"part", part}, {"notes", {{{"position", 0}, {"length", g_beatTicks}, {"pitch", 60}, {"velocity", 0.5}}}}})
+						  .at("notes")
+						  .at(0);
+	const Json before = run(client, "project.revision");
+	for (const int64_t position : {int64_t{0}, g_beatTicks, 2 * g_beatTicks})
+		CHECK(run(client, "note.split", {{"part", part}, {"notes", {note.at("id")}}, {"position", position}})
+				.at("notes")
+				.empty());
+	CHECK(run(client, "project.revision") == before);
+}
+
+TEST_CASE("note.glue leaves out the next note's points from its end on: they didn't play", "[integration]")
+{
+	// Review of #1480: the next note ends after the first, and has points at and past its end, e.g. after a trim.
+	Setup setup;
+	Client& client = setup.client;
+	const ObjectId part = addPart(client, setup.track);
+	const Json added = run(client, "note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", 0}, {"length", g_beatTicks}, {"pitch", 60}, {"velocity", 0.5},
+					 {"expressions", {point("tuning", 0, 0.0)}}},
+					{{"position", g_beatTicks / 2}, {"length", g_beatTicks}, {"pitch", 60}, {"velocity", 0.5},
+						{"expressions",
+							{point("tuning", 0, 1.0), point("tuning", g_beatTicks / 2, 2.0),
+								point("tuning", g_beatTicks, 3.0), point("pressure", 2 * g_beatTicks, 0.5)}}}}}});
+	const Json glued = run(client, "note.glue",
+		{{"part", part}, {"note", added.at("notes").at(0).at("id")}, {"next", added.at("notes").at(1).at("id")}})
+						   .at("note");
+	CHECK(glued.at("length") == 3 * g_beatTicks / 2);
+	CHECK(
+		pointsOf(glued) == Points{{"tuning", 0, 0}, {"tuning", g_beatTicks / 2, 1000}, {"tuning", g_beatTicks, 2000}});
+}
+
+TEST_CASE(
+	"note.glue gives the join the defaults of what the next note doesn't express, across a gap too", "[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	const ObjectId part = addPart(client, setup.track);
+	const Json added = run(client, "note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", 0}, {"length", g_beatTicks}, {"pitch", 60}, {"velocity", 0.5},
+					 {"expressions",
+						 {point("tuning", 0, 0.0), point("vibrato", 0, 0.5), point("tuning", g_beatTicks / 2, 2.0),
+							 point("pressure", g_beatTicks / 2, 0.8), point("volume", g_beatTicks / 2, 2.0)}}},
+					{{"position", 2 * g_beatTicks}, {"length", g_beatTicks}, {"pitch", 60}, {"velocity", 0.5},
+						{"expressions", {point("pressure", 0, 0.3), point("brightness", g_beatTicks / 2, 1.0)}}}}}});
+	const Json glued = run(client, "note.glue",
+		{{"part", part}, {"note", added.at("notes").at(0).at("id")}, {"next", added.at("notes").at(1).at("id")}})
+						   .at("note");
+	CHECK(glued.at("length") == 3 * g_beatTicks);
+	// Bent up and louder before the gap, the next note played unbent at unity gain: the join goes back to that.
+	// Vibrato has no default, so the note keeps its own; the next note's pressure at its start is its own.
+	CHECK(pointsOf(glued) ==
+		Points{{"brightness", 5 * g_beatTicks / 2, 1000}, {"pressure", g_beatTicks / 2, 800},
+			{"pressure", 2 * g_beatTicks, 300}, {"tuning", 0, 0}, {"tuning", g_beatTicks / 2, 2000},
+			{"tuning", 2 * g_beatTicks, 0}, {"vibrato", 0, 500}, {"volume", g_beatTicks / 2, 2000},
+			{"volume", 2 * g_beatTicks, 1000}});
+}
+
+TEST_CASE("note.glue of a note inside the first one goes on with the first one's expression after it", "[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	const ObjectId part = addPart(client, setup.track);
+	const Json added = run(client, "note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", 0}, {"length", 4 * g_beatTicks}, {"pitch", 60}, {"velocity", 0.5},
+					 {"expressions",
+						 {point("tuning", 0, 1.0), point("vibrato", 0, 0.3), point("tuning", 2 * g_beatTicks, 2.0),
+							 point("tuning", 3 * g_beatTicks, 3.0)}}},
+					{{"position", g_beatTicks}, {"length", 3 * g_beatTicks / 2}, {"pitch", 60}, {"velocity", 0.5},
+						{"expressions", {point("brightness", 0, 1.0), point("tuning", g_beatTicks / 2, -1.0)}}}}}});
+	const Json glued = run(client, "note.glue",
+		{{"part", part}, {"note", added.at("notes").at(0).at("id")}, {"next", added.at("notes").at(1).at("id")}})
+						   .at("note");
+	CHECK(glued.at("length") == 4 * g_beatTicks);
+	// Up to the next note's end its expression, unbent at its start; then the first one's again, as it was there.
+	// The vibrato that the next note doesn't express goes on through it, without a point after it.
+	CHECK(pointsOf(glued) ==
+		Points{{"brightness", g_beatTicks, 1000}, {"brightness", 5 * g_beatTicks / 2, 500}, {"tuning", 0, 1000},
+			{"tuning", g_beatTicks, 0}, {"tuning", 3 * g_beatTicks / 2, -1000}, {"tuning", 5 * g_beatTicks / 2, 2000},
+			{"tuning", 3 * g_beatTicks, 3000}, {"vibrato", 0, 300}});
+}
+
+TEST_CASE("note.glue gives pan and pressure their defaults at the join, and no point where the value plays already",
+	"[integration]")
+{
+	// Review of #1470.
+	Setup setup;
+	Client& client = setup.client;
+	const ObjectId part = addPart(client, setup.track);
+	const Json added = run(client, "note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", 0}, {"length", g_beatTicks}, {"pitch", 60}, {"velocity", 0.5},
+					 {"expressions",
+						 {point("pan", 0, 0.2), point("pressure", 0, 0.6), point("volume", 0, 1.0),
+							 point("tuning", 0, 0.0), point("brightness", g_beatTicks / 2, 0.5)}}},
+					{{"position", g_beatTicks}, {"length", g_beatTicks}, {"pitch", 60}, {"velocity", 0.5},
+						{"expressions", {point("tuning", 0, 0.0), point("tuning", g_beatTicks / 2, 1.0)}}}}}});
+	const Json glued = run(client, "note.glue",
+		{{"part", part}, {"note", added.at("notes").at(0).at("id")}, {"next", added.at("notes").at(1).at("id")}})
+						   .at("note");
+	CHECK(glued.at("length") == 2 * g_beatTicks);
+	// Panned and pressed before the join, the next note played centered without pressure. Volume, brightness and
+	// tuning already have the value the next note starts with.
+	CHECK(pointsOf(glued) ==
+		Points{{"brightness", g_beatTicks / 2, 500}, {"pan", 0, 200}, {"pan", g_beatTicks, 500}, {"pressure", 0, 600},
+			{"pressure", g_beatTicks, 0}, {"tuning", 0, 0}, {"tuning", 3 * g_beatTicks / 2, 1000},
+			{"volume", 0, 1000}});
+}
+
+TEST_CASE("note.glue of a next note that starts inside the first one and ends after it", "[integration]")
+{
+	// Review of #1470: both notes have expression where they overlap.
+	Setup setup;
+	Client& client = setup.client;
+	const ObjectId part = addPart(client, setup.track);
+	const Json added = run(client, "note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", 0}, {"length", 2 * g_beatTicks}, {"pitch", 60}, {"velocity", 0.5},
+					 {"expressions",
+						 {point("brightness", 0, 0.8), point("tuning", 0, 0.0),
+							 point("tuning", 3 * g_beatTicks / 2, 1.0)}}},
+					{{"position", g_beatTicks}, {"length", 2 * g_beatTicks}, {"pitch", 60}, {"velocity", 0.5},
+						{"expressions", {point("tuning", 0, 2.0), point("pressure", g_beatTicks / 2, 0.5)}}}}}});
+	const Json glued = run(client, "note.glue",
+		{{"part", part}, {"note", added.at("notes").at(0).at("id")}, {"next", added.at("notes").at(1).at("id")}})
+						   .at("note");
+	CHECK(glued.at("length") == 3 * g_beatTicks);
+	// From the next note's start on its expression: the first one's tuning point inside it never played.
+	CHECK(pointsOf(glued) ==
+		Points{{"brightness", 0, 800}, {"brightness", g_beatTicks, 500}, {"pressure", 3 * g_beatTicks / 2, 500},
+			{"tuning", 0, 0}, {"tuning", g_beatTicks, 2000}});
+}
+
+TEST_CASE("note.glue takes a point within the next note's first sample as one it starts with", "[integration]")
+{
+	// Review of #1470: as playback does (RenderNote::startsWith), so the join gets no default before it.
+	Setup setup;
+	Client& client = setup.client;
+	const ObjectId part = addPart(client, setup.track);
+	const Json added = run(client, "note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", 0}, {"length", g_beatTicks}, {"pitch", 60}, {"velocity", 0.5},
+					 {"expressions", {point("tuning", 0, 2.0), point("pressure", 0, 0.4)}}},
+					{{"position", g_beatTicks}, {"length", g_beatTicks}, {"pitch", 60}, {"velocity", 0.5},
+						{"expressions", {point("tuning", 10, -1.0), point("pressure", ticksOf(2), 0.7)}}}}}});
+	const Json glued = run(client, "note.glue",
+		{{"part", part}, {"note", added.at("notes").at(0).at("id")}, {"next", added.at("notes").at(1).at("id")}})
+						   .at("note");
+	// The pressure point two samples in is not at its start: the next note started without pressure.
+	CHECK(pointsOf(glued) ==
+		Points{{"pressure", 0, 400}, {"pressure", g_beatTicks, 0}, {"pressure", g_beatTicks + ticksOf(2), 700},
+			{"tuning", 0, 2000}, {"tuning", g_beatTicks + 10, -1000}});
+}
+
+TEST_CASE("note.glue leaves out a point within the next note's first sample only where its value already plays",
+	"[integration]")
+{
+	// Review of #1519: what plays changes with each point the join keeps, and a point a few ticks in is at the start.
+	Setup setup;
+	Client& client = setup.client;
+	const ObjectId part = addPart(client, setup.track);
+	const Json added = run(client, "note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", 0}, {"length", g_beatTicks}, {"pitch", 60}, {"velocity", 0.5},
+					 {"expressions", {point("tuning", 0, 2.0), point("pressure", 0, 0.4)}}},
+					{{"position", g_beatTicks}, {"length", g_beatTicks}, {"pitch", 60}, {"velocity", 0.5},
+						{"expressions",
+							{point("tuning", 0, 1.0), point("tuning", 10, 2.0), point("pressure", 10, 0.4)}}}}}});
+	const Json glued = run(client, "note.glue",
+		{{"part", part}, {"note", added.at("notes").at(0).at("id")}, {"next", added.at("notes").at(1).at("id")}})
+						   .at("note");
+	// Tuning 1 at the join changes what plays, so tuning 2 ten ticks later changes it again. The pressure ten ticks in
+	// is within the first sample and repeats what plays: no point, and no default before it.
+	CHECK(pointsOf(glued) ==
+		Points{{"pressure", 0, 400}, {"tuning", 0, 2000}, {"tuning", g_beatTicks, 1000},
+			{"tuning", g_beatTicks + 10, 2000}});
+}
+
+TEST_CASE("note.split and note.glue refuse notes the part doesn't have, and undo in one step", "[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	const ObjectId part = addPart(client, setup.track);
+	const Json added = run(client, "note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", 0}, {"length", 2 * g_beatTicks}, {"pitch", 60}, {"velocity", 0.5}},
+					{{"position", g_beatTicks}, {"length", 2 * g_beatTicks}, {"pitch", 60}, {"velocity", 0.5}}}}});
+	const Json first = added.at("notes").at(0).at("id");
+	const Json second = added.at("notes").at(1).at("id");
+	const auto notes = [&] { return run(client, "project.get").at("midiParts").at(0).at("notes"); };
+	const Json before = notes();
+	CHECK_THAT(
+		reject(client, "note.split", {{"part", part}, {"notes", {first, 999999}}, {"position", g_beatTicks / 2}}),
+		ContainsSubstring("no note 999999"));
+	CHECK_THAT(reject(client, "note.glue", {{"part", part}, {"note", first}, {"next", 999999}}),
+		ContainsSubstring("no note 999999"));
+	CHECK_THAT(reject(client, "note.glue", {{"part", part}, {"note", 999999}, {"next", second}}),
+		ContainsSubstring("no note 999999"));
+	CHECK(notes() == before);
+
+	// Both notes cut at once, then put back by one undo.
+	CHECK(run(client, "note.split", {{"part", part}, {"notes", {first, second}}, {"position", 3 * g_beatTicks / 2}})
+			  .at("notes")
+			  .size() == 2);
+	CHECK(notes().size() == 4);
+	run(client, "history.undo");
+	CHECK(notes() == before);
+
+	// Overlapping notes glue to the later end, and one undo brings both back.
+	const Json glued = run(client, "note.glue", {{"part", part}, {"note", first}, {"next", second}}).at("note");
+	CHECK(glued.at("length") == 3 * g_beatTicks);
+	CHECK(notes().size() == 1);
+	run(client, "history.undo");
+	CHECK(notes() == before);
 }
 
 TEST_CASE("resizing a note's start keeps its expression where it was", "[integration]")
@@ -494,57 +650,9 @@ TEST_CASE("sends before the modifiers get the notes' expression", "[integration]
 				sent.push_back({captured.at("position").get<int64_t>() - start,
 					captured.at("bytes").at(0).get<int64_t>(), captured.at("bytes").at(1).get<int64_t>()});
 		INFO("sends " << (pre ? "pre" : "post"));
-		// The transformer moves the note, but not yet its expression: its initial point no longer comes before it.
-		CHECK(sent == std::vector<std::vector<int64_t>>{{0, 0x92, pre ? 61 : 73}, {0, 0xE2, 0}, {100, 0xE2, 0}});
+		// The transformer moves the note with its expression (#1618), whose initial point comes before it.
+		CHECK(sent == std::vector<std::vector<int64_t>>{{0, 0xE2, 0}, {0, 0x92, pre ? 61 : 73}, {100, 0xE2, 0}});
 	}
-}
-
-TEST_CASE("retrospective recording records MPE input by midi.mpePitchRange", "[integration]")
-{
-	Setup setup;
-	Client& client = setup.client;
-	run(client, "settings.set", {{"key", "midi.snapPartsToBars"}, {"value", false}});
-	run(client, "settings.set", {{"key", "midi.mpeInput"}, {"value", true}});
-	run(client, "settings.set", {{"key", "midi.mpePitchRange"}, {"value", 24}});
-	run(client, "channel.set", {{"channel", setup.channel}, {"recordEnable", false}});
-	// In stop mode: a bend before the note-on, its initial tuning, and one while it sounds.
-	run(client, "midi.inject",
-		{{"channel", setup.channel},
-			{"messages",
-				{message(900, {0xE1, 0, 96}), message(1000, {0x91, 60, 100}), message(2000, {0xE1, 0, 80}),
-					message(3000, {0x81, 60, 0})}}});
-	run(client, "audio.render", {{"frames", 4000}});
-	run(client, "midi.insertRetrospective", {{"track", setup.track}});
-	const Json part = run(client, "project.get").at("midiParts").at(0);
-	REQUIRE(part.at("notes").size() == 1);
-	CHECK(part.at("controllers").empty());
-	CHECK(pointsOf(part.at("notes").at(0)) ==
-		Points{{"tuning", 0, semitones(96 << 7, 24.0)}, {"tuning", ticksOf(1000), semitones(80 << 7, 24.0)}});
-	CHECK(semitones(96 << 7, 24.0) == 12001);
-}
-
-TEST_CASE("recording records MPE input by midi.mpePitchRange", "[integration]")
-{
-	Setup setup;
-	Client& client = setup.client;
-	run(client, "settings.set", {{"key", "midi.snapPartsToBars"}, {"value", false}});
-	run(client, "settings.set", {{"key", "midi.mpeInput"}, {"value", true}});
-	run(client, "settings.set", {{"key", "midi.mpePitchRange"}, {"value", 24}});
-	run(client, "transport.record");
-	run(client, "midi.inject",
-		{{"channel", setup.channel},
-			{"messages",
-				{message(900, {0xE1, 0, 96}), message(1000, {0x91, 60, 100}), message(2000, {0xE1, 0, 80}),
-					message(3000, {0x81, 60, 0})}}});
-	run(client, "audio.render", {{"frames", 4000}});
-	run(client, "transport.stop");
-	run(client, "audio.render", {{"frames", 640}});
-	REQUIRE(waitFor(client, "recording.added").is_object());
-	const Json part = run(client, "project.get").at("midiParts").at(0);
-	REQUIRE(part.at("notes").size() == 1);
-	CHECK(part.at("controllers").empty());
-	CHECK(pointsOf(part.at("notes").at(0)) ==
-		Points{{"tuning", 0, semitones(96 << 7, 24.0)}, {"tuning", ticksOf(1000), semitones(80 << 7, 24.0)}});
 }
 
 TEST_CASE(

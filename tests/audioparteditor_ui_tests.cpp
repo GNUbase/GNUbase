@@ -69,9 +69,8 @@ namespace
 			app.call("event.resize", {{"events", {part}}, {"edge", "end"}, {"delta", g_second / 2}});
 			// Two steps of the shell: the project window's first frames, which take a quarter second each in a Debug
 			// build and several seconds on a machine busy compiling.
-			REQUIRE(app.waitUntil([&]
-				{ return display.project().is_object() && display.project().at("audioParts").size() == 1; },
-				std::chrono::seconds(30)));
+			REQUIRE(app.waitUntil(
+				[&] { return display.project().at("audioParts").size() == 1; }, std::chrono::seconds(30)));
 		}
 
 		// Half a second of the clip from offset on.

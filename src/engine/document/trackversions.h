@@ -22,9 +22,10 @@ namespace gnubase::engine
 	std::string newVersionName(const Track& track);
 
 	// A copy of a track version with its events and parts, for track: new ids, its audio events in the copies of their
-	// parts, joined by the copies of their crossfades and in the same stack order. A shared copy among its MIDI parts
-	// stays one, with the notes and controllers it shares, as track.duplicate copies them. Its pattern events play the
-	// copies that patterns maps their patterns to, the others the patterns they played.
+	// parts, joined by the copies of their crossfades and in the same stack order. Shared copies among its MIDI parts
+	// get a group of their own, which they keep sharing with each other and with nothing else, since two versions never
+	// play together. Its pattern events play the copies that patterns maps their patterns to, the others the patterns
+	// they played.
 	TrackVersion copyVersion(Project& project, const TrackVersion& version, ObjectId track,
 		const std::map<ObjectId, ObjectId>& patterns = {});
 }

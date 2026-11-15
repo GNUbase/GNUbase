@@ -18,6 +18,7 @@ saved, and a new project closes the editors.
 | `moveInsert`, `recordPitch`, `recordVelocity`, `recordReleaseVelocity`, `keepNotes` | The Step/MIDI Input section's switches | p. 1197 |
 | `insertVelocity` | The velocity of drawn notes and of input that doesn't record it (0-1, default 100/127) | p. 1195 |
 | `lengthQuantize` | The length of new notes: a note value (`1/16`, `1/8T`, `1/4.`) or `link`, the quantize grid's | p. 1196 |
+| `showExpression`, `expressionDoubleClick`, `expressionType` | Show Note Expression Data, Double-Click Opens Note Expression Editor and the expression the expression editor edits ([note-expression.md](note-expression.md)) | pp. 1303, 1308-1309 |
 
 `editor.set` changes them; `editor.get` and `editor.changed` report them.
 
@@ -26,7 +27,7 @@ saved, and a new project closes the editors.
 | `editor.input` | Notes played, such as a chord from a MIDI keyboard: with step input they go into the active part at the step input cursor as notes of the length quantize's length, and the cursor moves on by a step of the quantize grid; with MIDI input the first selected note takes the played pitch and velocities, and the next note is selected | pp. 1219-1220 |
 | `note.chord` | The chord notes of a part make (query) | p. 1216 |
 | `note.voicing` | Fits notes to a chord type, or inverts them or drops notes | pp. 1215-1217 |
-| `note.move` | Moves notes into another MIDI part, by `ticks` on the project's timeline and by `semitones` in pitch, keeping their ids and every other field: what a drag between in-place editors sends ([in-place-editor.md](in-place-editor.md)) | p. 1261 |
+| `note.move` | Moves notes into another MIDI part, by `ticks` on the project's timeline and by `semitones` in pitch, keeping their ids and every other field, with the selected controller events (`controllers`) shifted in time: what a drag between in-place editors sends ([in-place-editor.md](in-place-editor.md)) | pp. 1188, 1261 |
 
 - **Step input.** Move Insert Mode first moves the part's notes from the cursor on by a step; without Keep Existing
   Notes the notes that start within the step are replaced. The cursor must be within the active part. The inserted
@@ -60,17 +61,30 @@ the edits of several parts go in one `history.transaction`.
                                       while on
     #key-length-quantize              Length Quantize, menu #key-length-menu (Quantize Link, 1/1 to 1/64, triplets)
     valuefield#key-insert-velocity    Insert Velocity, 1-127
+    button.key-input[setting=showExpression|expressionDoubleClick]
+                                      Show Note Expression Data and Double-Click Opens Note Expression Editor
+                                      (not in the drum editor); .checked while on
   .info-line.key-editor-info          the first selected note: textdisplay[field=start|end|length|pitch|velocity|
                                       releaseVelocity|channel]; .empty without, .multiple with several selected
   .editor-parts                       an .editor-part-row[track] per track, its .editor-part[part] at their time
   .key-editor-body                    scrolls vertically
     .key-editor-keys                  the piano keyboard: 128 .key-editor-key[pitch], the 75 white keys first, then
-                                      the 53 .black ones over them; C keys named, .selected for selected notes
+                                      the 53 .black ones over them; C keys named, .selected for selected notes. With
+                                      the active track's drum sound names (the view's soundNames, drum-editor.md)
+                                      the keys show them as their text and title, and the editor's root has
+                                      .named-keys, which makes the keyboard, the parts' margin and the controller
+                                      lanes' header 128dp wide
       .key-editor-keys-zoom           the keyboard's left part, where a drag zooms and scrolls (below); the pointer
                                       is the four-point arrow over it
     .key-editor-grid                  128 .key-editor-row (.black); .key-editor-notes with a .key-note[part][note]
                                       per note (.selected, .inactive outside the part editing mode, .drawing);
                                       .key-editor-step-cursor (.off while step input is off)
+                                      with Show Note Expression Data a .key-expression-step per point in a .key-note
+                                      (steps narrower than a pixel joined; the lines take no mouse events);
+      .key-expression-editor          the expression editor (.off while closed): button.key-expression-type (Parameter
+                                      Selection, menu #key-expression-menu) and .key-expression-area with the
+                                      selected notes' .key-expression-step, which take no mouse events either
+                                      (note-expression.md)
   .controller-lanes                   the controller lanes (controller-lanes.md)
 #key-editor-toolbox                   menu.toolbox with a menuitem[key-tool] per tool, [checked] for the current one
 .editor-chord-editing                 the inspector's Chord Editing section: .editor-chord-type (the chord's name),
@@ -91,27 +105,42 @@ keyboard's left part the pointer is the four-point arrow (`.key-editor-keys-zoom
 pitches vertically in and to the left out, doubling or halving the rows' height every 100 dp dragged, between a quarter
 and four times the height the style sheet gives them, and a drag up or down scrolls the note display by as much as the
 mouse went (p. 1261). The pitch row at the top of the view when the drag started stays there. The zoom is the editor's
-own state, like its scroll, and the keyboard's height follows the rows'. A press there plays the pitch under it as the
-rest of the keyboard does, and a drag of a few dp turns the press into the gesture. Pressing a key plays its pitch on
-the active part's track until the mouse is released, wherever that is: `midi.inject` sends a note on (velocity 100) into
-the track's channel as if from its MIDI input, so its instrument plays it, and then the note off, also whenever the key
-editor goes while the key is held: the editor window closing or being closed, the editor showing the list, pattern or
-audio part editor instead, the lower zone's Editor panel going (its tab hidden, the panel opened in a window of its own,
-or that window closed or docked again), an in-place editor closing, or the switch to the drum editor, which builds a key
-editor of its own. A press on a key selects and deselects no notes.
+own state, like its scroll. Only the style sheet gives the rows' height, and the keyboard stretches to the rows; the
+zoom scales that height as the style sheet gives it at each press there, so a theme or style change reaches an editor at
+zoom 1 at once and a zoomed one at its next press there, and a height that is no length (a percentage or auto) has
+nothing to scale. Within 5 dp of zoom 1 a drag snaps to it, since a drag back rarely ends on exactly the dp it started
+from. No theme gives the rows a height of its own yet; one that does would need the zoom applied again where the theme
+is activated. A press there plays the pitch under it as the rest of the keyboard does, and a drag of a few dp turns
+the press into the gesture. Pressing a key plays its pitch on the active part's track until the mouse is released,
+wherever that is: `midi.inject` sends a note on (velocity 100) into the track's channel as if from its MIDI input, so
+its instrument plays it, and then the note off, also whenever the key editor goes while the key is held: the editor
+window closing or being closed, the editor showing the list, pattern or audio part editor instead, the lower zone's
+Editor panel going (its tab hidden, the panel opened in a window of its own, or that window closed or docked again), an
+in-place editor closing, or the switch to the drum editor, which builds a key editor of its own. A press on a key
+selects and deselects no notes.
 
 | Tool | Gesture | Reference |
 |---|---|---|
-| Object Selection | A click selects a note, Ctrl (Cmd) or Shift and a click adds or removes it, a click in the empty grid deselects (with step input on, it also moves the step input cursor); a drag moves the selected notes in time and pitch, at a note's ends it resizes them; a double click inserts a note of the length quantize's length, on a note deletes it | pp. 1211-1214, 1220 |
+| Object Selection | A click selects a note, Ctrl (Cmd) or Shift and a click adds or removes it, a click in the empty grid deselects (with step input on, it also moves the step input cursor); a drag moves the selected notes in time and pitch, at a note's ends it resizes them; a double click inserts a note of the length quantize's length, on a note deletes it, or with Double-Click Opens Note Expression Editor opens the expression editor ([note-expression.md](note-expression.md)) | pp. 1211-1214, 1220, 1308 |
 | Draw | A click draws a note of the length quantize's length, a drag a multiple of it | p. 1212 |
 | Erase | A click deletes the note | p. 1212 |
 | Trim | A click cuts off the note's end from the mouse on, with Alt its start up to the mouse | p. 1215 |
-| Split | A click splits the note at the snapped position; on a selected note, every selected note there (`note.split`: the rests keep the notes' values and their expression from the cut on) | p. 1215 |
+| Split | A click splits the note at the snapped position; on a selected note, every selected note there (`note.split`: the rests keep the notes' values and their expression from the cut on; as with the notes that `event.split` cuts with `splitNotes`, both pieces lose their quantize origin, so `quantize.reset` no longer moves them) | p. 1215 |
 | Glue | A click glues the note to the next one of its pitch; the first one's values stay, the next one's expression joins its own (`note.glue`) | p. 1215 |
 
+- **Gestures that leave the editor.** While a press in the note display or on the keyboard's left part goes on, the
+  grid or the keyboard's left part is an RmlUi drag element (`.key-editor.in-gesture`): its drag events come wherever
+  the mouse is, also outside the window, where the platform captures the mouse while the button is held and nothing is
+  hovered, and its dragend comes where the button goes up, with the modifier keys held then. The draw tool's and the
+  drumstick's drags, the expression editor's draw and erase and the drag on the keyboard's left part follow the mouse
+  out there and end at the release as in the editor; the drumstick's delete drag deletes up to it. A move or resize released outside the editor ends without
+  its effect, except onto another in-place editor's grid ([in-place-editor.md](in-place-editor.md)). A gesture whose
+  release never comes, as when the window loses the focus before the mouse moved, ends without its effect at the next
+  press in the editor. Only during a gesture: RmlUi doesn't scroll on a touch move during a drag.
 - **Info line** (p. 1199). Start, end and length in bars and beats, the pitch as a name such as C3 (typing a number
-  works too), velocities 0-127 and the channel 1-16. A value typed moves every selected note by as much as the first
-  one's changes; the channel is set for all.
+  works too), velocities 0-127, the channel 1-16 and the Articulations, the attributes of the track's articulation
+  map that the note has, names separated by commas ([articulation-maps.md](articulation-maps.md)). A value typed
+  moves every selected note by as much as the first one's changes; the channel and the attributes are set for all.
 - **Chord Editing** (pp. 1215-1218) is in the editor window's inspector, under Global Tracks: the chord the selected
   notes make ("No Chord" for none), and buttons that send `note.voicing` for each part's selected notes.
 - **Toolbox** (p. 65). A right click in the note display opens `#key-editor-toolbox`, the toolbar's tools at the
@@ -152,9 +181,14 @@ menu.
   selected notes as they were, and a held key's pitch ending when the editor switches to the drum editor, closes through
   the engine API or has its window closed, and when the lower zone's Editor panel in a window of its own has that window
   closed or is docked again; the object selection tool selecting, deselecting, moving, resizing, inserting and deleting;
-  the draw tool with Quantize Link and an eighth from the Length Quantize menu; the erase, trim (and with Alt), split
-  and glue tools; the transpose palette and typing a pitch on the info line; step input with its cursor, a click moving
-  it, and MIDI input selecting the next note; the Chord Editing section naming and changing a chord; the toolbox with
-  the setting on and off, with and without a modifier key, choosing tools; drags on the keyboard's left part zooming the
-  rows in and out between the limits and scrolling the note display, while a click there zooms nothing, and a click and
-  a drag there leaving a note an earlier press selected and the history alone.
+  the draw tool with Quantize Link and an eighth from the Length Quantize menu; a move released outside the editor
+  ending without its effect, the note not following the mouse back and a later click moving nothing, and a draw
+  released there drawing; the erase, trim (and with Alt), split
+  and glue tools, and the split tool splitting the selected notes of two parts at one position in one undo step; the
+  transpose palette and typing a pitch on the info line; step input with its cursor, a click moving it, and MIDI input
+  selecting the next note; the Chord Editing section naming and changing a chord; the toolbox with the setting on and
+  off, with and without a modifier key, choosing tools; drags on the keyboard's left part zooming the rows in and out
+  between the limits, from the height a style sheet gives them, also after a style change at a zoom and back at 1, the
+  keyboard as high as the rows of any height, nothing zoomed or scrolled without a row height to scale and no height
+  left on the rows for a later style, the zoom snapping to 1 near it, and scrolling the note display, while a click
+  there zooms nothing, and a click and a drag there leaving a note an earlier press selected and the history alone.

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/audio/midiports.h"
 
+#include "engine/audio/miditap.h"
 #include "engine/engine.h"
 #include "engine/settings/usersettings.h"
 #include "platform/log.h"
@@ -22,7 +23,7 @@ namespace gnubase::engine
 	}
 
 	MidiPorts::MidiPorts(const settings::Store& settings, std::vector<std::unique_ptr<gnubase::midi::Backend>> backends)
-		: m_settings(settings), m_backends(std::move(backends)), m_monitor(g_monitorSize)
+		: m_settings(settings), m_backends(std::move(backends)), m_mpeInputs(g_maxInputs), m_monitor(g_monitorSize)
 	{
 	}
 
@@ -45,6 +46,7 @@ namespace gnubase::engine
 		}
 		const int slot = port.slot;
 		m_allInputs[static_cast<size_t>(slot)].store(inAllInputs(port), std::memory_order_relaxed); // first open too
+		m_mpeSetups[static_cast<size_t>(slot)].store(mpe(port).pack(), std::memory_order_relaxed);
 		m_slotHashes[static_cast<size_t>(slot)].store(chordPadPortHash(key(port)), std::memory_order_relaxed);
 		try
 		{
@@ -127,7 +129,10 @@ namespace gnubase::engine
 		for (Port& port : m_ports)
 		{
 			if (port.slot >= 0)
+			{
 				m_allInputs[static_cast<size_t>(port.slot)].store(inAllInputs(port), std::memory_order_relaxed);
+				m_mpeSetups[static_cast<size_t>(port.slot)].store(mpe(port).pack(), std::memory_order_relaxed);
+			}
 			const bool wanted = port.present && port.info.input && visible(port);
 			if (wanted && !port.input)
 			{
@@ -143,15 +148,70 @@ namespace gnubase::engine
 		return changed;
 	}
 
-	void MidiPorts::take(const audio::DeviceBlock& block, double sampleRate, audio::MidiBuffer& allInputs,
+	void MidiPorts::addInput(int slot, const audio::MidiMessage& message, graph::EventBuffer& allInputs) noexcept
+	{
+		if (message.size != gnubase::midi::messageSize(message.bytes[0]) || message.bytes[0] < 0x80 ||
+			message.bytes[0] >= 0xF0)
+			return; // not a channel message
+		const graph::ProcessEvent event = MidiTap::toEvent(message, message.offset);
+		if (slot < 0)
+		{
+			if (graph::endsNotes(event))
+				allInputs.addEnd(event);
+			else
+				allInputs.add(event);
+			return;
+		}
+		const auto index = static_cast<size_t>(slot);
+		const uint32_t setup = m_mpeSetups[index].load(std::memory_order_relaxed);
+		if (setup != m_mpeApplied[index])
+		{
+			m_mpeApplied[index] = setup;
+			m_mpeInputs[index].reset();
+		}
+		m_mpeInputs[index].process(midi::MpeSetup::unpack(setup), event, allInputs);
+	}
+
+	void MidiPorts::take(const audio::DeviceBlock& block, double sampleRate, graph::EventBuffer& allInputs,
 		PadBuffers& pads, const ChordPadKeys& padKeys) noexcept
 	{
+		// The keys down on the remote's input before another became it go up with it (#1447), and what they hold ends:
+		// their note-offs come from an input that is no longer the remote's (#1571).
+		if (padKeys.portHash != m_sectionHeldPort)
+		{
+			m_sectionHeldPort = padKeys.portHash;
+			m_sectionHeld.fill(0);
+			// The sections mode's pad key that was down is up, so its pad is no longer lit (#1652).
+			if (m_sectionPadDown)
+				m_padEvents.tryPush(PadEvent{PadEvent::Kind::Released, static_cast<uint8_t>(m_sectionPad), 0});
+			m_sectionPadDown = false;
+			for (size_t key = 0; key < midi::PadVoices::g_triggers; ++key)
+			{
+				bool held = false;
+				for (size_t player = 0; player < m_padVoices.size(); ++player)
+				{
+					held = held || m_padVoices.at(player).holds(key);
+					m_padVoices.at(player).off(key,
+						[&buffer = pads.at(player)](bool, uint8_t pitch, uint8_t, uint8_t channel)
+						{
+							audio::MidiMessage note;
+							note.size = 3;
+							note.bytes = {static_cast<uint8_t>(0x80 | channel), pitch, 0};
+							buffer.add(note);
+						});
+				}
+				// Only a pad key's chord was a pad's: a section key's notes are none (#1652).
+				if (held && m_sectionPadOf.at(key) == 0)
+					m_padEvents.tryPush(PadEvent{PadEvent::Kind::Released, static_cast<uint8_t>(key), 0});
+			}
+			m_sectionPadOf.fill(0);
+		}
 		m_queue.take(block.time, sampleRate, block.frames,
 			[this, &block, &allInputs, &pads, &padKeys](int slot, const audio::MidiMessage& message)
 			{
 				if (slot == g_keyboardSlot)
 				{
-					allInputs.add(message); // not a port, so not for the monitor
+					addInput(slot, message, allInputs); // not a port, so not for the monitor
 					return;
 				}
 				if (slot < 0)
@@ -163,14 +223,20 @@ namespace gnubase::engine
 				}
 				const bool inAll = m_allInputs[static_cast<size_t>(slot)].load(std::memory_order_relaxed);
 				const int status = message.bytes[0] & 0xF0;
+				// The remote keys come from all MIDI inputs, or only from the chosen one, which may be outside them.
+				const uint64_t hash = m_slotHashes[static_cast<size_t>(slot)].load(std::memory_order_relaxed);
+				const bool remote = padKeys.portHash == 0 ? inAll : hash == padKeys.portHash;
 				if (m_padListen.load(std::memory_order_relaxed) && message.size == 3 &&
 					(status == 0x90 || status == 0x80))
 				{
 					const bool on = status == 0x90 && message.bytes[2] > 0;
 					m_padEvents.tryPush(PadEvent{PadEvent::Kind::Note, static_cast<uint8_t>(message.bytes[1] & 0x7F),
 						static_cast<uint8_t>(on ? message.bytes[2] : 0)});
+					// A remote key that goes up meanwhile ends what it played and is no section key down (#1447).
+					if (!on && remote)
+						playPad(message, padKeys, pads);
 					if (inAll)
-						allInputs.add(message);
+						addInput(slot, message, allInputs);
 				}
 				else if (m_padListen.load(std::memory_order_relaxed) &&
 					((status == 0xD0 && message.size >= 2) ||
@@ -185,16 +251,11 @@ namespace gnubase::engine
 					m_padEvents.tryPush(PadEvent{PadEvent::Kind::ControlInput, source,
 						static_cast<uint8_t>(status == 0xB0 ? message.bytes[1] & 0x7F : 0)});
 					if (inAll)
-						allInputs.add(message);
+						addInput(slot, message, allInputs);
 				}
-				else
+				else if (!(remote && playPad(message, padKeys, pads)) && inAll)
 				{
-					// The remote keys come from all MIDI inputs, or only from the chosen one, which may be outside
-					// them.
-					const uint64_t hash = m_slotHashes[static_cast<size_t>(slot)].load(std::memory_order_relaxed);
-					const bool remote = padKeys.portHash == 0 ? inAll : hash == padKeys.portHash;
-					if (!(remote && playPad(message, padKeys, pads)) && inAll)
-						allInputs.add(message);
+					addInput(slot, message, allInputs);
 				}
 				if (!m_monitor.tryPush(Received{slot, block.position + message.offset, message}))
 					m_monitorDropped.fetch_add(1, std::memory_order_relaxed);
@@ -342,6 +403,7 @@ namespace gnubase::engine
 		}
 		if (!keys.active || keys.counts.at(keys.selected).at(key) == 0)
 			return filtered;
+		m_sectionPadOf.at(key) = 0;
 		for (size_t player = 0; player < m_padVoices.size(); ++player)
 			if (plays(player) && keys.counts.at(player).at(key) > 0)
 				m_padVoices.at(player).on(key, keys.pitches.at(player).at(key).data(), keys.counts.at(player).at(key),
@@ -401,9 +463,12 @@ namespace gnubase::engine
 					note.bytes = {static_cast<uint8_t>((on ? 0x90 : 0x80) | channel), pitch, level};
 					pads.at(player).add(note);
 				};
-				m_padVoices.at(player).on(key, notes.data(), n, velocity, keys.overlap, emit);
+				// Overlaps is for another chord's notes (p. 1382): the sections of one pad play together (p. 1383).
+				m_padVoices.at(player).on(key, notes.data(), n, velocity, keys.overlap, emit,
+					[this, pad](size_t other) { return m_sectionPadOf.at(other) == pad + 1; });
 			}
 		}
+		m_sectionPadOf.at(key) = static_cast<uint8_t>(pad + 1);
 		return true;
 	}
 
@@ -417,13 +482,23 @@ namespace gnubase::engine
 		return m_settings.value("midi.portSettings").value(key(port), Json::object());
 	}
 
+	midi::MpeSetup MidiPorts::mpe(const Port& port) const
+	{
+		if (!port.info.input)
+			return {};
+		return midi::MpeSetup::fromJson(setting(port).value("mpe", Json::object()));
+	}
+
 	Json MidiPorts::toJson(const Port& port) const
 	{
 		const std::string showAs = setting(port).value("showAs", std::string());
-		return {{"backend", port.backend->name()}, {"id", port.info.id}, {"input", port.info.input},
+		Json json = {{"backend", port.backend->name()}, {"id", port.info.id}, {"input", port.info.input},
 			{"name", port.info.name}, {"showAs", showAs.empty() ? port.info.name : showAs}, {"visible", visible(port)},
 			{"inAllInputs", inAllInputs(port)}, {"present", port.present}, {"open", port.input != nullptr},
 			{"midi2", port.info.midi2}};
+		if (port.info.input)
+			json["mpe"] = mpe(port).toJson();
+		return json;
 	}
 
 	Json MidiPorts::list() const
@@ -465,15 +540,25 @@ namespace gnubase::engine
 		const Port& port = m_ports[find(changes)];
 		if (changes.contains("inAllInputs") && !port.info.input)
 			throw CommandError("only inputs belong to all MIDI inputs");
+		if (changes.contains("mpe") && !port.info.input)
+			throw CommandError("only inputs have MPE input");
 		for (const char* name : {"backend", "id", "input"})
 			changes.erase(name);
+		if (changes.contains("mpe"))
+		{
+			// What the call leaves out stays; members of a later GNUbase's stay too.
+			Json mpe = setting(port).value("mpe", Json::object());
+			mpe.update(changes.at("mpe"));
+			mpe.update(midi::MpeSetup::fromJson(mpe).toJson());
+			changes["mpe"] = std::move(mpe);
+		}
 		// The engine applies the changed setting (applySettings), which opens or closes the port and sends
 		// midi.changed.
 		engine.modifySetting(context, "midi.portSettings",
 			[entry = key(port), &changes](const Json& value)
 			{
-				return settings::changeEntry(
-					value, entry, changes, {{"showAs", ""}, {"visible", true}, {"inAllInputs", true}});
+				return settings::changeEntry(value, entry, changes,
+					{{"showAs", ""}, {"visible", true}, {"inAllInputs", true}, {"mpe", midi::MpeSetup().toJson()}});
 			});
 		return toJson(port);
 	}
@@ -485,8 +570,9 @@ namespace gnubase::engine
 
 		engine.registerCommand(
 			{"midi.padListen", 1,
-				"Whether every MIDI input port's notes also go to the chord pads as they play (chordPads.listen, "
-				"which uses this, and chordPads.remoteInput), with the pads' remote keys left alone meanwhile.",
+				"Whether every MIDI input port's notes and controls (aftertouch, pitch bend and controllers) also go "
+				"to the chord pads as they play (chordPads.listen, which uses this, and chordPads.remoteInput), with "
+				"the pads' remote keys left alone meanwhile, but for their note-offs, which end what they play.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["on"],
 					"properties": {"on": {"type": "boolean"}}})"),
 				Json::object(), false},
@@ -500,9 +586,10 @@ namespace gnubase::engine
 		engine.registerCommand(
 			{"midi.ports", 1,
 				"The MIDI ports of every MIDI backend, inputs and outputs: backend, id, system name, the name they are "
-				"shown as (showAs), whether they are visible, whether an input belongs to all MIDI inputs, whether "
-				"the port is present now and open, and whether the system speaks MIDI 2.0 with it. Ports that were "
-				"unplugged stay listed with their settings, not present.",
+				"shown as (showAs), whether they are visible, whether an input belongs to all MIDI inputs, an "
+				"input's MPE input (mpe, as midi.setPort takes it), whether the port is present now and open, and "
+				"whether the system speaks MIDI 2.0 with it. Ports that were unplugged stay listed with their "
+				"settings, not present.",
 				CommandInfo{}.parameters, portsSchema(), true},
 			[this](CommandContext&)
 			{
@@ -513,14 +600,29 @@ namespace gnubase::engine
 			{"midi.setPort", 1,
 				"Changes a MIDI port's settings. The port is given by its id, whether it is an input, and its backend "
 				"if ids repeat. showAs: the name it is shown as; empty shows the system name. visible: hidden inputs "
-				"are closed. inAllInputs, for inputs: whether tracks set to all MIDI inputs receive it. The settings "
-				"are kept in the user setting midi.portSettings, so they come back with the port, also after a "
-				"restart. Returns the port. If that changes the setting, sends midi.ports as the event midi.changed, "
-				"as settings.set and settings.reset on midi.portSettings do.",
-				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["id", "input"],
-					"properties": {"backend": {"type": "string"}, "id": {"type": "string"},
-					"input": {"type": "boolean"}, "showAs": {"type": "string"}, "visible": {"type": "boolean"},
-					"inAllInputs": {"type": "boolean"}}})"),
+				"are closed. inAllInputs, for inputs: whether tracks set to all MIDI inputs receive it. mpe, for "
+				"inputs: its MPE input (reference manual pp. 1295-1298), whose members the call leaves out stay as "
+				"they were: mode off, lower (MPE's lower zone: master channel 1, the notes on channels 2 and up), "
+				"upper (its upper zone: master channel 16, the notes on 15 and down) or rotation (channel rotation: "
+				"the notes on the used channels from firstChannel on, up to 16, no master channel); channels, the "
+				"notes' channels (a zone has at most 15); pitchRange, the semitones of the notes' pitch bend; tuning "
+				"(Use for Tuning), whether the notes' pitch bend is their tuning; initialX and initialY (Send Initial "
+				"Value), what each note's tuning and CC 74 start at: off, the channel's latest value, or center, min "
+				"or max (CC 74 only). On the notes' channels pitch bend, channel pressure and CC 74 are the tuning, "
+				"pressure and brightness of the notes that sound there, as per-note expression, live and in "
+				"recordings (docs/features/note-expression.md). The settings are kept in the user setting "
+				"midi.portSettings, so they come back with the port, also after a restart. Returns the port. If that "
+				"changes the setting, sends midi.ports as the event midi.changed, as settings.set and settings.reset "
+				"on midi.portSettings do.",
+				[]
+				{
+					Json schema = Json::parse(R"({"type": "object", "additionalProperties": false,
+						"required": ["id", "input"], "properties": {"backend": {"type": "string"},
+						"id": {"type": "string"}, "input": {"type": "boolean"}, "showAs": {"type": "string"},
+						"visible": {"type": "boolean"}, "inAllInputs": {"type": "boolean"}}})");
+					schema["properties"]["mpe"] = midi::mpeSchema();
+					return schema;
+				}(),
 				Json::parse(R"({"type": "object"})"), false},
 			[this, &engine](CommandContext& context) { return setPort(engine, context); });
 		engine.registerCommand(

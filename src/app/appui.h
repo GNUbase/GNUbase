@@ -261,6 +261,18 @@ namespace gnubase::app
 		{
 			ui::WindowId window = 0;
 			std::unique_ptr<ui::TransportControls> controls;
+			// The transport panel's sections, and the width the window had before their last fit while the window
+			// system hasn't given it the fitted one yet (#1527).
+			Rml::ObserverPtr<Rml::Element> sections;
+			int unfitted = 0;
+			// Whether the panel follows its sections, once the controls show the project, and whether its next fit
+			// centres it, for a panel that opened without bounds (#1612).
+			bool follows = false;
+			bool centre = false;
+			// Where the shown sections ended and the window's bounds when the panel last looked at them: unchanged,
+			// it asks for no monitors.
+			float measured = 0;
+			ui::Rect measuredBounds;
 
 			// The window, or null if it is closed, also when the user closed it.
 			ui::Window* shown(ui::Shell& shell) const { return window == 0 ? nullptr : shell.find(window); }
@@ -270,8 +282,12 @@ namespace gnubase::app
 		std::unique_ptr<ui::TransportControls> transportControls(Rml::Element& root, ui::Window& window, bool fill);
 		// name is its window's in ui.layout (ui::Docking::addWindow).
 		void toggle(TransportWindow& shown, const char* name, const char* file, const char* title, ui::Size size);
-		// Gives a new transport panel the width of its shown sections, as far as the primary monitor has room (#1424).
-		void fitSections(ui::Window& window, Rml::Element& controls);
+		// Gives the transport panel the width of its shown sections, as far as its monitor has room (#1424): a new one
+		// in the middle of the primary monitor (centre), an open one where it is, whenever its sections' width changes
+		// and its window still has the width of their last fit, which ui.layout keeps: the user didn't size it since
+		// (#1527), and only once the controls show the project, so that a panel that opens with fitted bounds isn't
+		// fitted to their defaults first (#1612). Whether it changed the window's bounds.
+		bool fitSections(ui::Window& window, bool centre);
 		// Edits a display of the transport bar, or of the transport panel, which opens if the bar doesn't show.
 		void enter(const std::string& field);
 		// File > Import: the OS's file dialog for the window, then the event display imports what the user chose;
@@ -315,6 +331,9 @@ namespace gnubase::app
 			// The project window's selected audio events and parts (#145), for Quantize and Reset Quantize.
 			std::vector<uint64_t> events;
 			std::vector<uint64_t> audioParts;
+			// The project window's selection range (#1579): the audio events on its tracks, which Quantize warp
+			// quantizes between its start and end (project samples).
+			std::optional<std::pair<int64_t, int64_t>> range;
 			std::string lengthQuantize;
 			double insertVelocity = 100.0 / 127.0; // the editor's, for Fixed Velocity
 		};
@@ -323,12 +342,20 @@ namespace gnubase::app
 		// The quantize panel's commands for several audio tracks (#145): command with parameters on the project
 		// window's selected audio events and the events of its selected audio parts.
 		void quantizeAudioTracks(const std::string& command, engine::Json parameters);
+		// The project window's selected audio events and the events of its selected audio parts.
+		std::vector<uint64_t> selectedAudioEvents() const;
+		// The quantize panel's Hitpoint Tracks: [{track, name}] of the tracks of selectedAudioEvents whose clips have
+		// hitpoints, in the project's track order.
+		engine::Json hitpointTracks() const;
 		// The MIDI menu (#133, docs/features/midi-functions.md, appmidifunctions.cpp): MIDI > Functions on what
 		// quantizeTarget gives, and the dialogs of Transpose Setup, Merge MIDI in Loop, Dissolve Part and Restrict
 		// Polyphony (resources/ui/midi-function.rml).
 		void addMidiFunctions();
 		// File > Import > Tracks, File > Export > Selected Tracks and the track preset commands (#164).
 		void addTrackFileCommands();
+		// The OS's file dialog for objects of the project: chosen gets the file unless a project.reset came while it
+		// was open, as the ids it acts on are the old project's then (#1586, #1648).
+		void chooseProjectFile(const ui::FileDialog& dialog, std::function<void(const std::filesystem::path&)> chosen);
 		// The OS's file dialog for a track's picture in the mixer, then track.set.
 		void choosePicture(uint64_t track);
 		// The drum map of the active track of an editor (window, else lower), then the OS's file dialog to save it in
@@ -345,9 +372,10 @@ namespace gnubase::app
 		// window.
 		ui::Window& callingWindow();
 		// Opens resources/ui/<name> in the window, modal. Throws std::runtime_error if it can't be loaded.
-		// attributes go on the document before it shows, for its Lua.
+		// attributes go on the document before it shows, for its Lua. A dialog for objects of the project, with ids of
+		// tracks, parts or notes in its attributes, closes when project.reset replaces the project (#1464).
 		Rml::ElementDocument& openDialog(ui::Window& window, const char* name,
-			const std::vector<std::pair<std::string, std::string>>& attributes = {}) const;
+			const std::vector<std::pair<std::string, std::string>>& attributes = {});
 		// The Auto Fades dialog (resources/ui/auto-fades.rml) for the project, or for a track (not 0).
 		void openAutoFades(ui::Window& window, uint64_t track);
 		// The articulation map setup (resources/ui/articulation-maps.rml, #175) for a MIDI or instrument track, or with
@@ -355,10 +383,14 @@ namespace gnubase::app
 		void openArticulationMaps(ui::Window& window, uint64_t track);
 		// Shows why an articulation map's import or export failed in the setup's message, if the setup is open.
 		void showArticulationMapError(const engine::Result& result);
+		// Shows why a key commands file or the assignments list couldn't be exported or imported: in the key commands
+		// dialog's message if it is open, in an error dialog of that title over the window otherwise. An empty error
+		// takes the message away, as a command that worked does.
+		void showKeyCommandsError(ui::WindowId window, const std::string& title, const std::string& error);
 		// openDialog for a dialog whose Lua keeps its state in a global table, so that there is only one: while open
 		// is open, brings it to the front instead, as it is, and the attributes go unused.
 		Rml::ElementDocument& openOnce(ui::Window& window, const char* name, Rml::ObserverPtr<Rml::Element>& open,
-			const std::vector<std::pair<std::string, std::string>>& attributes = {}) const;
+			const std::vector<std::pair<std::string, std::string>>& attributes = {});
 
 		// Made in this order and destroyed in the reverse: RmlUi releases its resources through the renderer and
 		// its Lua plugin's in Lua, the shell's windows need all of them, the settings and the binding tell the shell,
@@ -391,6 +423,7 @@ namespace gnubase::app
 		std::unique_ptr<ui::GlobalEventLane> m_transposeLane; // as well
 		std::unique_ptr<ui::GlobalEventLane> m_chordLane;     // as well
 		std::unique_ptr<ui::GlobalEventLane> m_scaleLane;     // as well
+		std::unique_ptr<ui::GlobalEventLane> m_arrangerLane;  // as well
 		std::unique_ptr<ui::RulerLanes> m_rulerLanes;         // as well
 		std::unique_ptr<ui::InPlaceEditors> m_inPlace;        // as well
 		std::unique_ptr<ui::TempoEditor> m_tempoEditor;
@@ -408,10 +441,17 @@ namespace gnubase::app
 		std::unique_ptr<ui::TrackVisibility> m_trackVisibility; // the project window's (#166)
 		std::unique_ptr<ui::InfoLine> m_infoLine;               // and this too
 		std::unique_ptr<ui::QuantizePanel> m_toolbarQuantize;   // the toolbar's quantize section
+		std::weak_ptr<ui::QuantizePanel> m_quantizePanel;       // the quantize panel, while it is open
 		// What the undo history can undo and redo now, for the Edit menu's Undo and Redo.
 		bool m_canUndo = false;
 		bool m_canRedo = false;
 		ui::Subscription m_history;
+		// The dialogs openDialog opened for objects of the project, and project.reset, which closes them. An OS file
+		// dialog's answer for objects of the project is dropped when m_resets has changed since it opened
+		// (chooseProjectFile).
+		std::vector<Rml::ObserverPtr<Rml::Element>> m_projectDialogs;
+		uint64_t m_resets = 0;
+		ui::Subscription m_projectReset;
 		ui::ProjectFiles m_files;                          // the File menu's project commands
 		std::unique_ptr<ui::MainMenu> m_menu;              // the project window's
 		Rml::ObserverPtr<Rml::Element> m_studioSetup;      // the open studio setup dialog's document
@@ -450,6 +490,7 @@ namespace gnubase::app
 		{
 			ui::WindowId window = 0;
 			std::unique_ptr<ui::SampleEditor> editor;
+			std::unique_ptr<ui::QuantizePanel> quantize; // its toolbar's quantize functions (#1344)
 		};
 		SampleEditorWindow m_sampleEditor;
 		std::weak_ptr<ui::MidiEditor> m_lowerEditor;         // the docking system owns it while it is there

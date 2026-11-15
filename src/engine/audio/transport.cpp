@@ -375,7 +375,7 @@ namespace gnubase::engine
 			m_arranger = arrangerEnter(*plan, arrangerRemapped(*plan, m_arranger), m_start);
 			m_stateGeneration = plan->generation;
 		}
-		else if (plan != m_plan)
+		else if (plan->generation != m_planGeneration)
 		{
 			// During the pre-roll the position is before the start, where no step's event holds it yet, so enter at
 			// the start without the pre-roll to keep the chain playing (#885). After it, playback is at the position,
@@ -383,7 +383,7 @@ namespace gnubase::engine
 			m_arranger = arrangerEnter(*plan, arrangerRemapped(*plan, m_arranger), m_inPreRoll ? m_start : m_position);
 			m_stateGeneration = plan->generation;
 		}
-		m_plan = plan;
+		m_planGeneration = plan != nullptr ? plan->generation : 0;
 		GNUBASE_ASSERT(frames <= m_segments.size());
 		frames = std::min(frames, static_cast<uint32_t>(m_segments.size()));
 		if (m_playing && m_stopAt >= 0 && m_position >= m_stopAt)

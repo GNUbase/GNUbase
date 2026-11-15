@@ -52,9 +52,10 @@ reference manual pp. 164, 404-413).
   event it plays, and drops it only when the chain lost that step.
 - `transport.get` and `transport.changed` have `arranger`: the step and repeat playing and the arranger event playing,
   the step -1 and the event 0 both outside the chain and while the plan doesn't play (arranger mode off or an empty
-  chain). Every new plan gets a generation number; the transport publishes its arranger state after every block, in
-  one sequence lock with the generation its step and section indices walk, and a new step or repeat makes the engine
-  announce `transport.changed`.
+  chain). Every new plan gets a generation number, by which the transport tells a new plan from the one it played,
+  not by its address, which a new plan may get once the old one is freed (#1479); it publishes its arranger state
+  after every block, in one sequence lock with the generation its step and section indices walk, and a new step or
+  repeat makes the engine announce `transport.changed`.
 - **Cueing**: `Playback::points` and `Playback::ahead` walk the same path as the transport, through cycle jumps or
   arranger turns (`arrangerNext`), so the voices wait where each jump lands and real-time playback renders the same as
   offline. Sections need to be longer than a few cue intervals (5 ms each) for that; every musical section is. A cue
@@ -77,6 +78,21 @@ Range copies keep the order in which audio events stack, so overlapping events p
 ## UI
 
 - **Add Track** has Arranger, once per project.
+- **The arranger track's lane** (`ui::GlobalEventLane` with `LaneKind::Arranger`, `src/ui/transposetrack.h`, shared
+  with the transpose and chord tracks' lanes, #1393, pp. 404-405): an `.arranger-lane-event` per arranger event in an
+  `.arranger-lane-row` over the lane, as wide as its section, with its name. The class names are `arranger-lane-*`, not
+  `arranger-*`, because `.arranger-row` is a row of the arranger editor's lists. The draw tool draws an event from the
+  press to the release (`arranger.add`, named in alphabetical order), also over other arranger events, as they may
+  overlap (p. 404), and shows it as an `.arranger-lane-event.drawing` while the button is down. A click without a drag
+  draws one from the grid line at or before it, so that it holds the point clicked, up to the next bar line. With the
+  other tools a drag moves an event, keeping its length (`arranger.set`), and the event follows the mouse while the
+  button is down; a double click opens its name in the `.arranger-lane-field` over it, as wide as the event and at
+  least wide enough for a name, where Enter renames it (an empty name keeps the old one); the erase tool removes the
+  event clicked (`arranger.remove`). Drawing and moving snap as the event display's drags do ([snap.md](snap.md),
+  `EventDisplay::snapped`), with the other arranger events' edges as magnets too, so with Snap on and the snap type
+  Events, as p. 404 asks, a new event starts and ends at other arranger events', parts' and markers' edges. What the
+  drag shows stays until the lane shows the event as the engine has it. When the engine refuses an edit, such as a
+  drawn event shorter than a sample, the display's `#edit-refused` says why ([event-display.md](event-display.md)).
 - **The arranger editor** (`resources/ui/arranger-editor.rml`, the UI command `window.arranger`, in a window of its own)
   is driven by its own Lua script through the engine API: the toolbar switches arranger mode and picks the active chain
   and the jump mode, with Create New Chain, Duplicate Current Chain, Remove Current Chain and Flatten Chain, and the
@@ -93,18 +109,25 @@ repeats, repeat forever with a step that waits for the next beat, a triggered ev
 the cycle, chain edits during the pre-roll, while the chain plays back into the project and without a block between
 them - two back to back and 129 of them -, a stop and a cycle jump ending the pre-roll, a new plan finding the step
 playing and a step waiting again by their events, a locate from a repeated step into another step's own first repeat,
-a generation that wraps the packed field, and the generation of the plan the transport publishes with its state); the
-commands with undo, settings and the arranger track's removal; saving and loading, with a file's repeats capped to 1
-to 999; the chain playback render, sample by sample against the audio of each section, for two block sizes; real time
-against offline, also with a chain edit while playing; choosing steps and triggering events while stopped and playing,
-also across a chain edit that moves the chosen step; the plan a cue walks for the published generation, including
-when neither kept plan is it; a cue that falls between two plan generations; `transport.play` ending a repeat forever
-loop, keeping a triggered event and starting from the left locator with the start mode cycleStart, and `transport.get`
-reporting no step while the plan doesn't play; flattening, played back linearly against the chain's audio, with undo.
+a generation that wraps the packed field, a new plan at the old one's address, and the generation of the plan the
+transport publishes with its state); the commands with undo, settings and the arranger track's removal; saving and
+loading, with a file's repeats capped to 1 to 999; the chain playback render, sample by sample against the audio of
+each section, for two block sizes; real time against offline, also with a chain edit while playing; choosing steps and
+triggering events while stopped and playing, also across a chain edit that moves the chosen step; the plan a cue walks
+for the published generation, including when neither kept plan is it; a cue that falls between two plan generations;
+`transport.play` ending a repeat forever loop, keeping a triggered event and starting from the left locator with the
+start mode cycleStart, and `transport.get` reporting no step while the plan doesn't play; flattening, played back
+linearly against the chain's audio, with undo.
 `tests/lua/ui/arranger.lua` opens the arranger editor and drives it, with its step buttons disabled outside arranger
-mode and a locate arrow on every row.
+mode and a locate arrow on every row. `tests/arranger_ui_tests.cpp`: the arranger track's lane showing an event as wide
+as its section with its name, the draw tool drawing one over the stretch dragged and, with a click, from the bar line at
+or before it to the next one, both snapped to bars; with the snap type Events, drawing from and to other arranger
+events' edges, the event drawn showing while the button is down, and a drag that starts on an event drawing over it;
+a drag moving an event by bars, the event following the mouse until the release, a double click renaming it in a field
+as wide as the event, an empty name keeping the old one, and the erase tool removing it; `#edit-refused` saying why the
+engine refused a draw within one bar.
 
-Not yet: arranger events on the arranger track's lane in the event display and drawing them with the draw tool,
-the track list's arranger controls and the inspector's arranger section, renaming chains in the editor, drag and drop
+Not yet: resizing arranger events by their edges and selecting them, renaming them on the info line, the track
+list's arranger controls and the inspector's arranger section, renaming chains in the editor, drag and drop
 in the chain list, the other flatten options (Checked and All Chains, New Project, Make Real Event Copies, Don't Split
 Events, Rename Arranger Events), key commands for triggering events, and arranging to an external timecode.

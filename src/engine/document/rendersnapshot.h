@@ -35,10 +35,12 @@ namespace gnubase::engine
 		double sampleRate = 48000.0;
 		int channels = 2;
 		time::Samples length = 0;
-		// An audio event of a warped clip plays a media file of its own, the event's id: path played through this
-		// warp map (dsp::WarpReader) with the preset, from the event's start. Empty for a plain file.
+		// An audio event of a warped clip, or one that global transposition shifts (#1368), plays a media file of its
+		// own, the event's id: path played through this warp map (dsp::WarpReader) with the preset and the pitch map,
+		// from the event's start. Empty for a plain file.
 		std::vector<dsp::WarpPoint> warp;
 		dsp::StretchPreset preset = dsp::StretchPreset::Quality;
+		std::vector<dsp::PitchPoint> pitch;
 	};
 
 	// A clip of the project: its media file (an id of RenderSnapshot::media) and its fades, for auditioning it on its
@@ -112,6 +114,10 @@ namespace gnubase::engine
 		double value = 0.0;
 	};
 
+	// RenderController::part of a sound slot's output events (#175): they are the track's, whichever part's note sent
+	// them, so a chase limited to the parts under the position takes them too (#1521).
+	inline constexpr int32_t g_soundSlotPart = -2;
+
 	struct RenderController
 	{
 		time::Samples position = 0;
@@ -120,7 +126,7 @@ namespace gnubase::engine
 		uint32_t value = 0;
 		uint8_t channel = 0;
 		std::vector<uint8_t> data; // SysEx
-		int32_t part = -1;         // the index of its MIDI part in the channel's midiParts
+		int32_t part = -1;         // the index of its MIDI part in the channel's midiParts, or g_soundSlotPart
 	};
 
 	struct RenderPart

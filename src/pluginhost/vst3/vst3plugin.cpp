@@ -1058,8 +1058,22 @@ namespace gnubase::pluginhost::vst3
 		if (noteId < 0)
 			m_nextNoteId = (m_nextNoteId + 1) & 0x3fffffff;
 		const int16_t ch = channel < 0 ? 0 : channel;
+		const int16_t bus = port < 0 ? int16_t{0} : port;
+		// The key's released note has faded as far as its expression goes.
+		for (size_t i = 0; i < m_voiceCount;)
+		{
+			const Voice& voice = m_voices[i];
+			if (voice.released && voice.port == bus && voice.channel == ch && voice.key == key)
+				m_voices[i] = m_voices[--m_voiceCount];
+			else
+				++i;
+		}
+		// Without room, a released note makes room for the new one.
+		for (size_t i = 0; m_voiceCount == m_voices.size() && i < m_voiceCount; ++i)
+			if (m_voices[i].released)
+				m_voices[i] = m_voices[--m_voiceCount];
 		if (m_voiceCount < m_voices.size())
-			m_voices[m_voiceCount++] = Voice{port < 0 ? int16_t{0} : port, ch, key, id};
+			m_voices[m_voiceCount++] = Voice{bus, ch, key, id, false};
 		vst::Vst::Event event{};
 		event.busIndex = busIndex(port);
 		event.sampleOffset = offset;
@@ -1089,23 +1103,19 @@ namespace gnubase::pluginhost::vst3
 			addEvent(event);
 		};
 		bool found = false;
-		for (size_t i = 0; i < m_voiceCount;)
+		for (size_t i = 0; i < m_voiceCount; ++i)
 		{
-			const Voice voice = m_voices[i];
-			if (matches(port, voice.port) && matches(channel, voice.channel) && matches(key, voice.key) &&
-				(noteId < 0 || noteId == voice.id))
+			Voice& voice = m_voices[i];
+			if (!voice.released && matches(port, voice.port) && matches(channel, voice.channel) &&
+				matches(key, voice.key) && (noteId < 0 || noteId == voice.id))
 			{
 				send(voice);
-				m_voices[i] = m_voices[--m_voiceCount];
+				voice.released = true;
 				found = true;
-			}
-			else
-			{
-				++i;
 			}
 		}
 		if (!found && key >= 0 && key <= 127)
-			send(Voice{port < 0 ? int16_t{0} : port, channel < 0 ? int16_t{0} : channel, key, noteId});
+			send(Voice{port < 0 ? int16_t{0} : port, channel < 0 ? int16_t{0} : channel, key, noteId, false});
 	}
 
 	void Vst3Plugin::noteExpression(const plugin::Event& event, vst::int32 offset) noexcept
@@ -1151,7 +1161,7 @@ namespace gnubase::pluginhost::vst3
 		// Without a voice, an expression needs a note id; poly pressure only a key, as in MIDI.
 		if (!found && (event.noteId >= 0 || (pressure && event.key >= 0 && event.key <= 127)))
 			send(Voice{event.port < 0 ? int16_t{0} : event.port, event.channel < 0 ? int16_t{0} : event.channel,
-				event.key, event.noteId});
+				event.key, event.noteId, false});
 	}
 
 	void Vst3Plugin::controller(

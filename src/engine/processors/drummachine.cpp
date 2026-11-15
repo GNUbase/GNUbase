@@ -438,23 +438,34 @@ namespace gnubase::engine::processors
 				state.flush();
 		}
 
+		// An effect that goes off, or is bypassed, forgets what it held: switched on again, it doesn't play echoes and
+		// reverb from before (#1485).
+		const bool delayOn = effects && m_values[DelayOn] >= 0.5;
+		const bool reverbOn = effects && m_values[ReverbOn] >= 0.5;
+		if (m_delayOn && !delayOn)
+			m_delay.reset();
+		if (m_reverbOn && !reverbOn)
+			m_reverb.reset();
+		m_delayOn = delayOn;
+		m_reverbOn = reverbOn;
+
 		// The global delay and reverb (pp. 975-978), on the sends, into the pads' sum; the delay sends some of its
 		// echoes on to the reverb.
 		if (effects)
 		{
 			std::array<float*, 2> delay = {m_delayBus[0].data(), m_delayBus[1].data()};
 			std::array<float*, 2> reverb = {m_reverbBus[0].data(), m_reverbBus[1].data()};
-			const double delayLevel = m_values[DelayOn] >= 0.5 ? dsp::dbToGain(m_values[DelayLevel]) : 0.0;
+			const double delayLevel = delayOn ? dsp::dbToGain(m_values[DelayLevel]) : 0.0;
 			const double toReverb = std::clamp(m_values[DelayToReverb] / 100.0, 0.0, 1.0);
-			if (m_values[DelayOn] >= 0.5)
+			if (delayOn)
 			{
 				m_delay.process(delay.data(), 2, begin, end);
 				for (uint32_t i = begin; i < end; ++i)
 					for (size_t c = 0; c < 2; ++c)
 						reverb[c][i] += static_cast<float>(delay[c][i] * toReverb);
 			}
-			const double reverbLevel = m_values[ReverbOn] >= 0.5 ? dsp::dbToGain(m_values[ReverbLevel]) : 0.0;
-			if (m_values[ReverbOn] >= 0.5)
+			const double reverbLevel = reverbOn ? dsp::dbToGain(m_values[ReverbLevel]) : 0.0;
+			if (reverbOn)
 				m_reverb.process(reverb.data(), 2, begin, end);
 			for (uint32_t i = begin; i < end; ++i)
 			{

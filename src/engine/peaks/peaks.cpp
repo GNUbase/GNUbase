@@ -555,9 +555,11 @@ namespace gnubase::engine::peaks
 		}
 		if (!replacePeakFile(temporary, file))
 		{
+			// The cause first: a removal that fails stores its own error in errno.
+			const std::string problem = detail::lastError();
 			std::error_code ignored;
 			std::filesystem::remove(temporary, ignored);
-			throw PeakFileError("can't write " + file.u8string() + ": " + detail::lastError());
+			throw PeakFileError("can't write " + file.u8string() + ": " + problem);
 		}
 	}
 

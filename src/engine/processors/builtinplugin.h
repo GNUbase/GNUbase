@@ -55,7 +55,9 @@ namespace gnubase::engine::processors
 								public plugin::Tail
 	{
 	public:
-		static constexpr size_t g_maxTransportSegments = 16;
+		// The transport segments of a block it takes: as many as a plugin slot or a track's sequencer gives
+		// (plugins::g_maxTransportSegments).
+		static constexpr size_t g_maxTransportSegments = 64;
 
 		BuiltinPlugin(const BuiltinInfo& info, plugin::Host& host, uint32_t channels);
 

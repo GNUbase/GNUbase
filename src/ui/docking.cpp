@@ -217,7 +217,8 @@ namespace gnubase::ui
 		m_shell.onCloseRequest(
 			[this](Window& window)
 			{
-				later([this] { saveWindows(); }); // once the shell closed it
+				saveWindows();                    // its bounds as the user left them, also those of the last moment
+				later([this] { saveWindows(); }); // and once the shell closed it, that it is closed
 				for (auto& [id, shown] : m_shown)
 					if (shown.window == window.id())
 					{
@@ -805,11 +806,14 @@ namespace gnubase::ui
 	void Docking::resetSections(const std::string& window, const std::string& set)
 	{
 		if (const Json* sets = find(m_layout, {"windows", window, "sections"});
-			sets == nullptr || !sets->is_object() || !sets->contains(set))
-			return;
-		m_layout["windows"][window]["sections"].erase(set);
-		save();
-		apply();
+			sets != nullptr && sets->is_object() && sets->contains(set))
+		{
+			m_layout["windows"][window]["sections"].erase(set);
+			save();
+			apply();
+		}
+		if (m_reset)
+			m_reset(window, set);
 	}
 
 	void Docking::savePreset(const std::string& window, const std::string& set, const std::string& name)
@@ -914,6 +918,7 @@ namespace gnubase::ui
 
 	void Docking::save()
 	{
+		m_unsaved = false;
 		m_saves.insert(m_binding.send("settings.set", {{"key", "ui.layout"}, {"value", m_layout}},
 			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
@@ -928,7 +933,7 @@ namespace gnubase::ui
 	void Docking::saveWindows()
 	{
 		const std::vector<Display> displays = m_shell.displays();
-		bool changed = false;
+		bool changed = m_unsaved;
 		for (const auto& [id, shown] : m_shown)
 			if (shown.window != 0 && m_shell.find(shown.window) != nullptr)
 				changed = keepBounds(m_layout["panels"][id], m_shell.bounds(shown.window), displays) || changed;
@@ -1040,6 +1045,25 @@ namespace gnubase::ui
 			m_shell.setMaximized(id, maximized);
 			window.maximized = maximized;
 		}
+	}
+
+	std::optional<int> Docking::fittedWidth(const std::string& name) const
+	{
+		const Json* width = find(m_layout, {"windows", name, "fittedWidth"});
+		if (width == nullptr || !width->is_number_integer())
+			return std::nullopt;
+		return width->get<int>();
+	}
+
+	void Docking::setFittedWidth(const std::string& name, int width)
+	{
+		Json& entry = m_layout["windows"][name];
+		if (!entry.is_object())
+			entry = Json::object();
+		if (entry.value("fittedWidth", Json()) == width)
+			return;
+		entry["fittedWidth"] = width;
+		m_unsaved = true;
 	}
 
 	bool Docking::savedMaximized(const std::string& name) const

@@ -639,6 +639,155 @@ TEST_CASE("a note dragged from one in-place editor to another moves to that trac
 	REQUIRE(f.app.waitUntil([&] { return f.elements(f.editor() + " .key-note").size() == 2; }));
 }
 
+TEST_CASE("selected controller events go along with notes dragged from one in-place editor to another", "[ui]")
+{
+	// The key editor moves the selected controller events with the selected notes (reference manual p. 1188), so a
+	// drag into another in-place editor (p. 1261) takes them to that track's part too.
+	Fixture f;
+	const uint64_t other = f.app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	const uint64_t otherPart =
+		f.app.call("midiPart.add", {{"track", other}, {"position", 2 * g_bar}, {"length", 2 * g_bar}})
+			.at("part")
+			.at("id")
+			.get<uint64_t>();
+	const uint64_t controller =
+		f.app
+			.call("controller.add",
+				{{"part", f.part}, {"controllers", {{{"position", g_quarter / 2}, {"number", 1}, {"value", 0.5}}}}})
+			.at("controllers")
+			.at(0)
+			.at("id")
+			.get<uint64_t>();
+	REQUIRE(f.app.waitUntil([&] { return f.display.project().at("midiParts").size() == 2; }));
+	f.app.call("editor.inPlace", {{"tracks", {f.track, other}}, {"open", true}});
+	const std::string lane = ".in-place-editor[track=\"" + std::to_string(other) + "\"]";
+	REQUIRE(f.app.waitUntil([&] { return !f.elements(lane + " .key-editor-grid").empty(); }));
+	f.settle(2);
+	f.app.call("editor.set",
+		{{"editor", "inPlace:" + std::to_string(f.track)}, {"selection", {{{"part", f.part}, {"note", f.notes[0]}}}},
+			{"controllerSelection", {{{"part", f.part}, {"controller", controller}}}}});
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			return f.elements(f.note(f.notes[0]) + ".selected").size() == 1 &&
+				f.view().at("controllerSelection").size() == 1;
+		}));
+	const auto partOf = [&](uint64_t part)
+	{
+		const Json project = f.app.call("project.get");
+		for (const Json& each : project.at("midiParts"))
+			if (each.at("id") == part)
+				return each;
+		return Json::object();
+	};
+	const auto steps = f.app.call("history.get").at("steps").size();
+
+	// The note dragged a bar later into the other editor: the controller event half a beat after its start lands
+	// half a beat into the other part, which starts there, with its id.
+	const Json grid = f.box(lane + " .key-editor-grid");
+	const double y = grid.at("y").get<double>() + ((127.5 - 64) / 128.0 * grid.at("height").get<double>());
+	f.app.ui().drag(std::nullopt, f.at(g_bar + (g_quarter / 2), 60),
+		ui::Target{"", 0,
+			ui::Point{static_cast<int>(std::lround(f.timelineX((2 * g_bar) + (g_quarter / 2)))),
+				static_cast<int>(std::lround(y))}});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return partOf(otherPart).at("controllers").size() == 1; }));
+	const Json moved = partOf(otherPart).at("controllers").at(0);
+	CHECK(moved.at("id") == controller);
+	CHECK(moved.at("position") == g_quarter / 2);
+	CHECK(moved.at("number") == 1);
+	CHECK(partOf(f.part).at("controllers").empty());
+	CHECK(partOf(otherPart).at("notes").size() == 1);
+	CHECK(f.app.call("history.get").at("steps").size() == steps + 1);
+
+	// One undo brings the note and the controller event back.
+	f.app.call("history.undo");
+	REQUIRE(f.app.waitUntil([&] { return partOf(f.part).at("controllers").size() == 1; }));
+	CHECK(partOf(f.part).at("controllers").at(0).at("position") == g_quarter / 2);
+	CHECK(partOf(f.part).at("notes").size() == 2);
+	CHECK(partOf(otherPart).at("controllers").empty());
+}
+
+TEST_CASE("a controller event of another source part goes along as one undo step with the dragged note", "[ui]")
+{
+	// A note selected in one part of the track and a controller event in another: the second part sends a note.move
+	// with no notes, in one history.transaction with the first's, so both arrive and one undo brings both back.
+	Fixture f;
+	const uint64_t other = f.app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	const uint64_t otherPart =
+		f.app.call("midiPart.add", {{"track", other}, {"position", 2 * g_bar}, {"length", 4 * g_bar}})
+			.at("part")
+			.at("id")
+			.get<uint64_t>();
+	// The track's second part, in the third bar, with a controller event half a beat in.
+	const uint64_t secondPart =
+		f.app.call("midiPart.add", {{"track", f.track}, {"position", 2 * g_bar}, {"length", g_bar}})
+			.at("part")
+			.at("id")
+			.get<uint64_t>();
+	const uint64_t controller =
+		f.app
+			.call("controller.add",
+				{{"part", secondPart}, {"controllers", {{{"position", g_quarter / 2}, {"number", 1}, {"value", 0.5}}}}})
+			.at("controllers")
+			.at(0)
+			.at("id")
+			.get<uint64_t>();
+	REQUIRE(f.app.waitUntil([&] { return f.display.project().at("midiParts").size() == 3; }));
+	f.app.call("editor.inPlace", {{"tracks", {f.track, other}}, {"open", true}});
+	const std::string lane = ".in-place-editor[track=\"" + std::to_string(other) + "\"]";
+	REQUIRE(f.app.waitUntil([&] { return !f.elements(lane + " .key-editor-grid").empty(); }));
+	f.settle(2);
+	f.app.call("editor.set",
+		{{"editor", "inPlace:" + std::to_string(f.track)}, {"selection", {{{"part", f.part}, {"note", f.notes[0]}}}},
+			{"controllerSelection", {{{"part", secondPart}, {"controller", controller}}}}});
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			return f.elements(f.note(f.notes[0]) + ".selected").size() == 1 &&
+				f.view().at("controllerSelection").size() == 1;
+		}));
+	const auto partOf = [&](uint64_t part)
+	{
+		const Json project = f.app.call("project.get");
+		for (const Json& each : project.at("midiParts"))
+			if (each.at("id") == part)
+				return each;
+		return Json::object();
+	};
+	const auto steps = f.app.call("history.get").at("steps").size();
+
+	// The note dragged a bar later into the other editor: it lands at the other part's start, and the controller
+	// event, a bar and half a beat after the other part's start then, with its id.
+	const Json grid = f.box(lane + " .key-editor-grid");
+	const double y = grid.at("y").get<double>() + ((127.5 - 64) / 128.0 * grid.at("height").get<double>());
+	f.app.ui().drag(std::nullopt, f.at(g_bar + (g_quarter / 2), 60),
+		ui::Target{"", 0,
+			ui::Point{static_cast<int>(std::lround(f.timelineX((2 * g_bar) + (g_quarter / 2)))),
+				static_cast<int>(std::lround(y))}});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return partOf(otherPart).at("controllers").size() == 1; }));
+	const Json moved = partOf(otherPart).at("controllers").at(0);
+	CHECK(moved.at("id") == controller);
+	CHECK(moved.at("position") == g_bar + (g_quarter / 2));
+	CHECK(partOf(secondPart).at("controllers").empty());
+	REQUIRE(partOf(otherPart).at("notes").size() == 1);
+	CHECK(partOf(otherPart).at("notes").at(0).at("id") == f.notes[0]);
+	CHECK(partOf(otherPart).at("notes").at(0).at("position") == 0);
+	CHECK(partOf(f.part).at("notes").size() == 1);
+	const Json history = f.app.call("history.get");
+	CHECK(history.at("steps").size() == steps + 1);
+	CHECK(history.at("steps").back().at("action") == "Move");
+
+	// One undo brings the note and the controller event back to their parts.
+	f.app.call("history.undo");
+	REQUIRE(f.app.waitUntil([&] { return partOf(secondPart).at("controllers").size() == 1; }));
+	CHECK(partOf(secondPart).at("controllers").at(0).at("position") == g_quarter / 2);
+	CHECK(partOf(f.part).at("notes").size() == 2);
+	CHECK(partOf(otherPart).at("controllers").empty());
+	CHECK(partOf(otherPart).at("notes").empty());
+}
+
 TEST_CASE("a key held in an in-place editor that closes ends its pitch", "[ui]")
 {
 	// A key of the keyboard plays its pitch until the mouse is released (p. 1204); the in-place editor closing ends it
@@ -853,4 +1002,96 @@ TEST_CASE("a newly opened in-place editor scrolls to its notes", "[ui]")
 					return y >= top && y + found.at(0).at("box").at("height").get<double>() <= bottom;
 				});
 		}));
+}
+
+TEST_CASE(
+	"the draw tool draws on a line of the expression editor in an in-place editor, the project window aside", "[ui]")
+{
+	// The expression editor's lines lie under the mouse where a point was drawn; a press there is the area's, and the
+	// event display leaves its selection alone (#1512).
+	Fixture f;
+	const uint64_t other = f.app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	const uint64_t otherPart =
+		f.app.call("midiPart.add", {{"track", other}, {"position", 2 * g_bar}, {"length", g_bar}})
+			.at("part")
+			.at("id")
+			.get<uint64_t>();
+	REQUIRE(f.app.waitUntil([&] { return f.display.project().at("midiParts").size() == 2; }));
+	f.app.keys().run("editor.openInPlace", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil([&] { return f.elements(f.editor() + " .key-note").size() == 2; }));
+	f.display.zoomIn(); // once: after a second step the note lies outside the 1024 pixels wide window of Linux CI
+	f.settle(2);
+	f.display.select({otherPart});
+	f.click(f.editor() + " .in-place-toolbar-toggle");
+	f.settle(2);
+	f.scroll(60);
+	f.app.call("editor.set", {{"editor", "inPlace:" + std::to_string(f.track)}, {"expressionDoubleClick", true}});
+	REQUIRE(
+		f.app.waitUntil([&] { return f.has(f.editor() + " .key-input[setting=expressionDoubleClick]", "checked"); }));
+	const std::string editor = f.editor() + " .key-expression-editor";
+	f.click(ui::Target{f.note(f.notes[0]), 0, std::nullopt}, 2);
+	REQUIRE(f.app.waitUntil([&] { return !f.has(editor, "off"); }));
+	f.click(f.editor() + " .key-tool[key-tool=draw]");
+	REQUIRE(f.has(f.editor() + " .key-tool[key-tool=draw]", "checked"));
+
+	const auto points = [&f]
+	{
+		const Json project = f.app.call("project.get");
+		for (const Json& part : project.at("midiParts"))
+			for (const Json& note : part.at("notes"))
+				if (note.at("id") == f.notes[0])
+					return note.value("expressions", Json::array());
+		return Json::array();
+	};
+	const std::string area = f.editor() + " .key-expression-area";
+	const Json box = f.box(area);
+	REQUIRE(box.at("width").get<double>() >= 40);
+	const int y = static_cast<int>(std::lround(box.at("y").get<double>() + (box.at("height").get<double>() / 2)));
+	const int x = static_cast<int>(std::lround(box.at("x").get<double>() + (box.at("width").get<double>() / 4)));
+	f.click(ui::Target{"", 0, ui::Point{x, y}});
+	REQUIRE(f.app.waitUntil([&] { return points().size() == 1; }));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(area + " .key-expression-step").size() == 1; }));
+	// After the frame a line that took mouse events would be the next press's target; the lines take none.
+	f.app.shell().step(std::chrono::milliseconds(0));
+	// A press and release a few pixels to the right, on the line drawn from the point.
+	f.click(ui::Target{"", 0, ui::Point{x + 6, y}});
+	REQUIRE(f.app.waitUntil([&] { return points().size() == 2; }));
+	CHECK(f.display.selection() == std::vector<uint64_t>{otherPart});
+	CHECK(!f.has(editor, "off"));
+}
+
+TEST_CASE("an in-place editor joins a dense note's expression steps by its pixels, after its layout and as the "
+		  "project window zooms",
+	"[ui]")
+{
+	// A recorded MPE note has a point every few milliseconds (#1671). The in-place editor's first show comes before its
+	// layout, and the project window's zoom changes a pixel's ticks: the lines are built again for each.
+	Fixture f;
+	Json points = Json::array();
+	constexpr int count = 2000;
+	for (int i = 0; i < count; ++i)
+		points.push_back(
+			{{"type", "tuning"}, {"position", g_quarter * i / count}, {"value", i % 2 == 0 ? 10.0 : -10.0}});
+	f.app.call("note.set", {{"part", f.part}, {"notes", Json::array({{{"id", f.notes[0]}, {"expressions", points}}})}});
+	f.app.call("editor.set", {{"editor", "inPlace:" + std::to_string(f.track)}, {"showExpression", true}});
+	f.app.keys().run("editor.openInPlace", Json::object(), f.app.main(), nullptr);
+	f.settle(2);
+	const std::string steps = f.note(f.notes[0]) + " .key-expression-step";
+	// The note's points and the view come with the engine's events, which may follow the notes' placement.
+	REQUIRE(f.app.waitUntil([&] { return !f.elements(steps).empty(); }));
+	const auto perPixel = [&f, &steps]
+	{
+		f.app.shell().step(std::chrono::milliseconds(0));
+		const double width = f.box(f.note(f.notes[0])).at("width").get<double>();
+		const auto shown = static_cast<double>(f.elements(steps).size());
+		INFO("width " << width << ", lines " << shown);
+		CHECK(width < count / 4.0);
+		CHECK(shown <= width + 2);
+		CHECK(shown >= width * 0.8); // as many as the pixels: a line joined for fewer pixels spans several
+		return width;
+	};
+	const double before = perPixel();
+	f.display.zoomIn();
+	f.settle(2);
+	CHECK(perPixel() > before * 1.5);
 }

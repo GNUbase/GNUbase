@@ -127,12 +127,12 @@ All of it is the one undo step of the import.
   without Import Dropped File as Single Part, on a MIDI track's row), onto new tracks. Agents and UI tests drop files
   with `ui_drop` (`ui::Automation::drop`).
 - MIDI files (`.mid`, `.midi`, `.smf`) are imported at once, with the MIDI import preferences below, where they are
-  dropped; with Import Dropped File as Single Part into one part, on the MIDI or instrument track of the lane under
-  the mouse or of the track list row, or on a new track elsewhere. Audio files open the
-  **Import Options** dialog (`resources/ui/import-options.rml`): Copy Files to Project Folder, Convert to Project
-  Sample Rate, Split Channels and Import Files on One Track. The first three are disabled while the project has no
-  file (`project.location`), the last for a single file and for files dropped on a track, which all go on it. Split
-  Channels has the Name Format pop-up (`nameFormat`), disabled with it. OK sends `audioFile.import`.
+  dropped; with Import Dropped File as Single Part into one part, on the MIDI or instrument track of the lane under the
+  mouse or of the track list row, or on a new track elsewhere. Audio files open the **Import Options** dialog
+  (`resources/ui/import-options.rml`): Copy Files to Project Folder, Convert to Project Sample Rate, Split Channels and
+  Import Files on One Track. The first three are disabled while the project has no file (`project.location`), the last
+  for a single file and for files dropped on a track, which all go on it. Split Channels has the Name Format pop-up
+  (`nameFormat`), disabled with it. OK sends `audioFile.import`.
 
 ## Import preferences
 

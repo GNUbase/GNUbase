@@ -66,6 +66,7 @@ namespace
 	{
 		ArrangerPlan plan;
 		plan.active = true;
+		plan.generation = 1; // each edited copy below is a new plan with the next one
 		plan.sections = {{1000, 1300, {}, 1}, {2000, 2100, {}, 2}, {3000, 3500, {}, 3}}; // A, B, C
 		return plan;
 	}
@@ -176,17 +177,36 @@ TEST_CASE("a new plan while playing: playback finds its step again", "[unit]")
 	SECTION("a step removed before the one playing")
 	{
 		ArrangerPlan edited = plan;
+		++edited.generation;
 		edited.steps.erase(edited.steps.begin()); // A, C: A is step 0 now
 		CHECK(play(transport, edited, 700, blockSize) == path({{1200, 1300}, {3000, 3500}}, 700));
 	}
 	SECTION("another chain with fewer steps")
 	{
 		ArrangerPlan other = plan;
+		++other.generation;
 		other.steps = {{0, 2, ArrangerRepeat::Normal}}; // A twice
 		CHECK(play(transport, other, 50, blockSize) == path({{1200, 1250}}, 50));
 		CHECK(transport.arranger().step == 0);
 		CHECK(play(transport, other, 450, blockSize) == path({{1250, 1300}, {1000, 1300}}, 450));
 	}
+}
+
+TEST_CASE("a new plan at the old plan's address is still a new plan: the transport goes by its generation", "[unit]")
+{
+	const uint32_t blockSize = GENERATE(1u, 64u, 100u);
+	INFO("block size " << blockSize);
+	// One object for both plans, as when the allocator hands the old plan's memory to the next one (#1479).
+	ArrangerPlan plan = abPlan();
+	plan.steps = {{1, 1, ArrangerRepeat::Normal}, {0, 1, ArrangerRepeat::Normal}, {2, 1, ArrangerRepeat::Normal}};
+	Transport transport;
+	REQUIRE(transport.locate(1100)); // in A, step 1 of B, A, C
+	REQUIRE(transport.play());
+	CHECK(play(transport, plan, 100, blockSize) == path({{1100, 1200}}, 100));
+	plan.steps.erase(plan.steps.begin()); // A, C: A is step 0 now
+	++plan.generation;
+	CHECK(play(transport, plan, 700, blockSize) == path({{1200, 1300}, {3000, 3500}}, 700));
+	CHECK(transport.arranger().step == -1);
 }
 
 TEST_CASE("arranger mode switched on while playing enters the chain where playback is", "[unit]")
@@ -201,6 +221,7 @@ TEST_CASE("arranger mode switched on while playing enters the chain where playba
 	REQUIRE(transport.play());
 	CHECK(play(transport, off, 2100, blockSize) == path({{1100, 3200}}, 2100)); // linear into C
 	ArrangerPlan on = off;
+	++on.generation;
 	on.active = true;
 	CHECK(play(transport, on, 400, blockSize) == path({{3200, 3600}}, 400)); // on in C, no jump back
 	CHECK(transport.arranger().step == -1);                                  // past the chain
@@ -239,6 +260,7 @@ TEST_CASE("a real plan change during the pre-roll keeps the chain playing", "[un
 	// A chain edit that really changes the plan (A now repeats twice) while still in the pre-roll: playback enters at
 	// the start without the pre-roll, so it keeps the chain at A instead of going linear from the pre-roll position.
 	ArrangerPlan edited = plan;
+	++edited.generation;
 	edited.steps = {{0, 2, ArrangerRepeat::Normal}, {2, 1, ArrangerRepeat::Normal}}; // A twice, C
 	CHECK(play(transport, edited, 700, blockSize) == path({{900, 1300}, {1000, 1300}}, 700));
 	CHECK(transport.arranger().step == 1); // on to C
@@ -260,6 +282,7 @@ TEST_CASE("a chain edit while the chain plays back into the project keeps the st
 	// A real plan change while A plays (A gets one more repeat): the step playing and its repeat are kept, not
 	// re-found at the start position, which lies in C.
 	ArrangerPlan edited = plan;
+	++edited.generation;
 	edited.steps[1].repeats = 3;
 	CHECK(play(transport, edited, 450, blockSize) == path({{1100, 1300}, {1000, 1250}}, 450));
 	CHECK(transport.arranger().step == 1);
@@ -287,6 +310,7 @@ TEST_CASE("a new plan finds the step and the event waiting again by what they pl
 		REQUIRE(transport.arrange(chosen, true, &plan));
 		// A step is inserted before the one waiting, so its index moves from 1 to 2.
 		ArrangerPlan edited = plan;
+		++edited.generation;
 		edited.steps.insert(edited.steps.begin(), {1, 1, ArrangerRepeat::Normal}); // B first: B, A, C
 		CHECK(play(transport, edited, 250, blockSize) == path({{1100, 1300}, {3000, 3050}}, 250));
 		CHECK(transport.arranger().step == 2); // C takes over, not the step now at the old index (A again)
@@ -302,6 +326,7 @@ TEST_CASE("a new plan finds the step and the event waiting again by what they pl
 		CHECK(transport.arranger().repeat == 2);
 		// C moves before A: the step playing is found again at its new index, with the repeat it had.
 		ArrangerPlan edited = plan;
+		++edited.generation;
 		edited.steps = {{2, 1, ArrangerRepeat::Normal}, {0, 3, ArrangerRepeat::Normal}}; // C, A three times
 		CHECK(play(transport, edited, 150, blockSize) == path({{1100, 1250}}, 150));
 		CHECK(transport.arranger().step == 1);
@@ -322,6 +347,7 @@ TEST_CASE("a new plan finds the step and the event waiting again by what they pl
 		CHECK(transport.arranger().step == 2); // the second A
 		// B goes, so the second A moves from index 2 to 1: playback goes on at it, not at the first A.
 		ArrangerPlan edited = twice;
+		++edited.generation;
 		edited.steps = {{0, 1, ArrangerRepeat::Normal}, {0, 1, ArrangerRepeat::Normal}}; // A, A
 		CHECK(play(transport, edited, 100, blockSize) == path({{1100, 1200}}, 100));
 		CHECK(transport.arranger().step == 1);
@@ -417,6 +443,7 @@ TEST_CASE("a stop or a cycle jump ends the pre-roll the transport remembers", "[
 		// A chain edit while stopped: playback is no longer rolling in, so the new plan enters where the transport
 		// stands, outside the chain, not at the start the pre-roll was for.
 		ArrangerPlan edited = plan;
+		++edited.generation;
 		edited.steps = {{0, 2, ArrangerRepeat::Normal}};
 		CHECK(play(transport, edited, 10, 10) == std::vector<Samples>(10, -1)); // stopped: nothing plays
 		CHECK(transport.arranger().step == -1);
@@ -425,6 +452,7 @@ TEST_CASE("a stop or a cycle jump ends the pre-roll the transport remembers", "[
 	{
 		// Cycling with the plan off: the right locator comes before the start, so the jump lands in the pre-roll.
 		ArrangerPlan off = plan;
+		++off.generation;
 		off.active = false;
 		Transport cycling;
 		TransportSettings cycleSettings;

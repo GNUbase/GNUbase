@@ -961,6 +961,8 @@ TEST_CASE("marker files that can't be read or written change nothing", "[integra
 	CHECK_THAT(rejected("negative.csv", "Type,Position\nPosition,-1\n"), ContainsSubstring("row 2"));
 	CHECK_THAT(rejected("type.csv", "Type,Position\nRange,1\n"), ContainsSubstring("row 2"));
 	CHECK_THAT(rejected("end.csv", "Type,Position,End\nCycle,1,\n"), ContainsSubstring("row 2"));
+	CHECK_THAT(rejected("track.csv", "Type,Position\nTrack,1\n"), ContainsSubstring("no marker fields"));
+	CHECK_THAT(rejected("no-time.csv", "Type,Position\nPosition,\n"), ContainsSubstring("row 2"));
 	CHECK_THAT(rejected("taken.csv", "Type,ID,Position\nPosition,1,1\nPosition,1,2\n"), ContainsSubstring("row 3"));
 	CHECK_THAT(rejected("base.csv", "Time Base,Type,Position\nMusical,Position,1\nLinear,Position,2\n"),
 		ContainsSubstring("row 3"));
@@ -978,4 +980,76 @@ TEST_CASE("marker files that can't be read or written change nothing", "[integra
 	CHECK_THAT(
 		rejected("tracks.csv", "Track,Type,Position\nA,Position,1\nB,Position,1\n"), ContainsSubstring("at most 10"));
 	CHECK(run(client, "project.get") == before);
+}
+
+TEST_CASE("marker CSV files preserve empty tracks beside populated tracks", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	const auto path = dir.path() / "empty-tracks.csv";
+	Engine engine;
+	Client client(engine);
+	addMarkerTrack(client, {{"name", "Same"}});
+	const ObjectId filled = addMarkerTrack(client, {{"name", "Filled"}});
+	addMarker(client, {{"track", filled}, {"position", g_ticksPerQuarter}, {"name", "Cue"}});
+	addMarkerTrack(client, {{"name", "Same"}, {"timeBase", "linear"}});
+	CHECK(run(client, "marker.export", {{"path", path.u8string()}}).at("markers") == 1);
+	const std::string exported = gnubase::test::readText(path);
+	CHECK_THAT(exported, ContainsSubstring("1,Same,Musical,Track,,,,,\r\n"));
+	CHECK_THAT(exported, ContainsSubstring("3,Same,Linear,Track,,,,,\r\n"));
+	run(client, "project.new");
+	const Json before = run(client, "project.get");
+	const Json imported = run(client, "marker.import", {{"path", path.u8string()}});
+	REQUIRE(imported.at("tracks").size() == 3);
+	CHECK(imported.at("markers") == 1);
+	for (const size_t index : {size_t{0}, size_t{2}})
+		CHECK(run(client, "marker.list", {{"track", imported.at("tracks")[index]}}).at("markers").empty());
+	const auto again = dir.path() / "again.csv";
+	run(client, "marker.export", {{"path", again.u8string()}});
+	CHECK(gnubase::test::readText(again) == exported);
+	run(client, "history.undo");
+	CHECK(run(client, "project.get") == before);
+	run(client, "history.redo");
+	CHECK(run(client, "project.get").at("tracks").size() == 3);
+}
+
+TEST_CASE("marker CSV files accept semicolon sheets with decimal comma times", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	const auto path = dir.path() / "decimal-comma.csv";
+	std::ofstream(path, std::ios::binary) << "\xEF\xBB\xBF"
+										  << "\"Description\";\"Position\";Type;End;Track;Time Base\r\n"
+										  << "\"Verse; \"\"soft\"\"\";1,5;position;;Music;Musical\r\n"
+										  << "Loop;2,25;cycle;3,5;Music;Musical\r\n"
+										  << "Seconds;1,5;position;;Time;Linear\r\n";
+	Engine engine;
+	Client client(engine);
+	const Json imported = run(client, "marker.import", {{"path", path.u8string()}});
+	REQUIRE(imported.at("tracks").size() == 2);
+	CHECK(imported.at("markers") == 3);
+	const Json musical = run(client, "marker.list", {{"track", imported.at("tracks")[0]}}).at("markers");
+	REQUIRE(musical.size() == 2);
+	CHECK(musical[0].at("position") == (3 * g_ticksPerQuarter) / 2);
+	CHECK(musical[0].at("name") == "Verse; \"soft\"");
+	CHECK(musical[1].at("position") == (9 * g_ticksPerQuarter) / 4);
+	CHECK(musical[1].at("end") == (7 * g_ticksPerQuarter) / 2);
+	const Json linear = run(client, "marker.list", {{"track", imported.at("tracks")[1]}}).at("markers");
+	CHECK(linear[0].at("position") == 72000);
+}
+
+TEST_CASE("marker CSV files can contain only empty tracks", "[integration]")
+{
+	const gnubase::test::TempDir dir;
+	const auto path = dir.path() / "empty.csv";
+	Engine engine;
+	Client client(engine);
+	addMarkerTrack(client, {{"name", "Empty"}, {"timeBase", "linear"}});
+	CHECK(run(client, "marker.export", {{"path", path.u8string()}}).at("markers") == 0);
+	run(client, "project.new");
+	const Json imported = run(client, "marker.import", {{"path", path.u8string()}});
+	REQUIRE(imported.at("tracks").size() == 1);
+	CHECK(imported.at("markers") == 0);
+	const Json track = run(client, "project.get").at("tracks")[0];
+	CHECK(track.at("name") == "Empty");
+	CHECK(track.at("timeBase") == "linear");
+	CHECK(run(client, "marker.list").at("markers").empty());
 }

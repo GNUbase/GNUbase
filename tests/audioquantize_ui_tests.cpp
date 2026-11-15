@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Audio quantizing in the app (#145, docs/features/audio-quantize.md), driven with ui::Automation as MCP's UI tools
-// drive it: Edit > Quantize and Reset Quantize on the project window's selected audio events, Warp Quantize On/Off in
-// the quantize panel and the toolbar, and the panel's section for several audio tracks: Slice, Create and Crossfade.
+// drive it: Edit > Quantize and Reset Quantize on the project window's selected audio events, the sample editor
+// toolbar's quantize functions, Warp Quantize On/Off in the quantize panel and the toolbar, the panel's section for
+// several audio tracks: the Hitpoint Tracks' priorities, Slice, Create, Crossfade, Nudge Crossfade and Open Crossfade
+// Editor, and Create Groove Quantize Preset from an audio event.
 // tests/audioquantize_tests.cpp checks the engine's side.
 #include "platform/log.h"
 #include "ui/eventdisplay.h"
 #include "ui/keycommands.h"
+#include "ui/sampleeditor.h"
 #include "uiapp.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -14,6 +17,7 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -28,8 +32,14 @@ namespace
 	// quarters, with hitpoints at the clicks: the second track's a little later.
 	struct Fixture
 	{
-		Fixture() : display(app.appUi().showProject())
+		Fixture() : display(app.appUi().showProject()) { build(); }
+
+		// The tracks, clips and events, in a new project too: ids start at 1 again in every project.
+		void build()
 		{
+			tracks.clear();
+			clips.clear();
+			events.clear();
 			test::Audio audio;
 			audio.samples.assign(4 * g_quarter, 0.0F);
 			for (const int64_t click : {1000, 25000, 47000, 73000})
@@ -60,8 +70,7 @@ namespace
 						.get<uint64_t>());
 			}
 			app.call("quantize.set", {{"preset", "1/4"}});
-			REQUIRE(app.waitUntil(
-				[&] { return display.project().is_object() && display.project().at("audioEvents").size() == 2; }));
+			REQUIRE(app.waitUntil([&] { return display.project().at("audioEvents").size() == 2; }));
 		}
 
 		Json elements(const std::string& selector) { return app.ui().dom(std::nullopt, selector, 0).at("elements"); }
@@ -81,11 +90,11 @@ namespace
 			return std::find(classes.begin(), classes.end(), name) != classes.end();
 		}
 
-		void click(const std::string& selector)
+		void click(const std::string& selector, int count = 1)
 		{
 			INFO(selector);
 			REQUIRE(app.waitUntil([&] { return shown(selector); }));
-			app.ui().click(std::nullopt, {selector, 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+			app.ui().click(std::nullopt, {selector, 0, std::nullopt}, ui::MouseButton::Left, count, {});
 			app.shell().step(std::chrono::milliseconds(0));
 		}
 
@@ -122,6 +131,27 @@ namespace
 
 		Json settings() { return app.call("quantize.get").at("settings"); }
 
+		static std::string priorityField(uint64_t track)
+		{
+			return "#quantize-hitpoint-tracks .quantize-priority[track=\"" + std::to_string(track) + "\"]";
+		}
+
+		// A priority field's value, -1 without one.
+		double priority(const std::string& selector)
+		{
+			const Json fields = elements(selector);
+			return fields.empty() ? -1.0 : std::stod(fields[0].at("attributes").at("value").get<std::string>());
+		}
+
+		void setPriority(uint64_t track, const std::string& value)
+		{
+			click(priorityField(track), 2);
+			app.ui().key(std::nullopt, "Mod+A");
+			app.ui().text(std::nullopt, value);
+			app.ui().key(std::nullopt, "Enter");
+			app.shell().step(std::chrono::milliseconds(0));
+		}
+
 		test::TempDir dir;
 		std::filesystem::path file = dir.path() / "clicks.wav";
 		test::UiApp app{{1024, 720}};
@@ -146,6 +176,34 @@ TEST_CASE("Edit > Quantize and Reset Quantize quantize the selected audio events
 	CHECK(f.positions(f.tracks[1]) == std::vector<int64_t>{2000});
 	f.menu("edit.resetQuantize");
 	CHECK(f.positionsAre(f.tracks[0], {2000}));
+}
+
+TEST_CASE("the sample editor's toolbar quantizes the event it edits", "[ui]")
+{
+	Fixture f;
+	// Apply Quantize there quantizes the event it edits (reference manual p. 367).
+	f.display.select({f.events[0]});
+	f.app.keys().run("editor.openClose", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().sampleEditorWindow() != nullptr; }));
+	const ui::WindowId window = f.app.appUi().sampleEditorWindowId();
+	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().sampleEditorWindow()->event() == f.events[0]; }));
+	// The other track's event selected in the project window, so that quantizing the selection would show.
+	f.display.select({f.events[1]});
+	REQUIRE(f.app.waitUntil([&] { return f.display.selection() == std::vector<uint64_t>{f.events[1]}; }));
+	REQUIRE(f.app.appUi().sampleEditorWindow()->event() == f.events[0]);
+	const auto shown = [&](const std::string& selector)
+	{
+		const Json found = f.app.ui().dom(window, selector, 0).at("elements");
+		return !found.empty() && found[0].at("visible").get<bool>();
+	};
+	REQUIRE(f.app.waitUntil([&] { return shown("#toolbar-quantize-apply"); }));
+	CHECK(shown("#toolbar-quantize-presets"));
+	CHECK(shown("#toolbar-quantize-soft"));
+	CHECK(shown("#toolbar-quantize-panel"));
+	f.app.ui().click(window, {"#toolbar-quantize-apply", 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.positionsAre(f.tracks[0], {0}));
+	CHECK(f.positions(f.tracks[1]) == std::vector<int64_t>{2000});
 }
 
 TEST_CASE("Warp Quantize On/Off in the quantize panel follows the settings, as the toolbar does", "[ui]")
@@ -193,6 +251,110 @@ TEST_CASE("the quantize panel slices, quantizes and crossfades several audio tra
 			return std::count_if(now.at("audioEvents").begin(), now.at("audioEvents").end(),
 					   [](const Json& event) { return event.at("crossfade").is_object(); }) == 6;
 		}));
+
+	// Nudge Crossfade Right moves every crossfaded slice's start a millisecond later, Left back again.
+	const std::vector<int64_t> crossfaded = f.positions(f.tracks[0]);
+	f.click("#quantize-nudge-right");
+	CHECK(f.app.waitUntil([&] { return f.positions(f.tracks[0]) != crossfaded; }));
+	const std::vector<int64_t> nudged = f.positions(f.tracks[0]);
+	REQUIRE(nudged.size() == crossfaded.size());
+	for (size_t i = 0; i < nudged.size(); ++i)
+		CHECK((nudged[i] == crossfaded[i] || nudged[i] == crossfaded[i] + 48));
+	f.click("#quantize-nudge-left");
+	CHECK(f.positionsAre(f.tracks[0], crossfaded));
+
+	// Open Crossfade Editor opens the editor of a selected slice's crossfade, and crossfades nothing itself.
+	const Json before = f.project().at("audioEvents");
+	f.click("#quantize-crossfade-editor");
+	CHECK(f.app.waitUntil([&] { return f.shown("#crossfade-editor"); }));
+	CHECK(f.project().at("audioEvents") == before);
+}
+
+TEST_CASE("Create Groove Quantize Preset makes a groove of the selected audio event's hitpoints", "[ui]")
+{
+	Fixture f;
+	CHECK(!f.app.keys().canRun("edit.createGrooveQuantize", f.app.main(), nullptr));
+	f.display.select({f.events[0]});
+	CHECK(f.app.keys().canRun("edit.createGrooveQuantize", f.app.main(), nullptr));
+	f.app.keys().run("edit.createGrooveQuantize", Json::object(), f.app.main(), nullptr);
+	// A groove of the four hitpoints, which the project's settings then are.
+	CHECK(f.app.waitUntil(
+		[&]
+		{
+			const Json groove = f.settings().at("groove");
+			return groove.is_object() && groove.at("points").size() == 4;
+		}));
+	const Json presets = f.app.call("quantize.presets").at("presets");
+	CHECK(std::any_of(presets.begin(), presets.end(),
+		[&](const Json& preset) { return preset.at("name") == f.app.call("quantize.get").at("preset"); }));
+}
+
+TEST_CASE("the quantize panel's Hitpoint Tracks give each track's priority to Slice", "[ui]")
+{
+	Fixture f;
+	f.openPanel();
+	// The tracks of the selected events that have hitpoints, at priority 1.
+	CHECK(f.elements("#quantize-hitpoint-tracks .quantize-priority").empty());
+	f.display.select({f.events[0], f.events[1]});
+	REQUIRE(f.app.waitUntil([&] { return f.elements("#quantize-hitpoint-tracks .quantize-priority").size() == 2; }));
+	CHECK(f.priority("#quantize-hitpoint-tracks .quantize-priority") == 1.0);
+	f.display.select({f.events[1]});
+	CHECK(f.app.waitUntil([&] { return f.elements("#quantize-hitpoint-tracks .quantize-priority").size() == 1; }));
+	f.display.select({f.events[0], f.events[1]});
+	REQUIRE(f.app.waitUntil([&] { return f.elements("#quantize-hitpoint-tracks .quantize-priority").size() == 2; }));
+
+	// At priority 0 the first track's hitpoints don't count: the second track's, 100 samples later, cut both.
+	const std::string first = Fixture::priorityField(f.tracks[0]);
+	f.setPriority(f.tracks[0], "0");
+	f.click("#quantize-slice");
+	CHECK(f.positionsAre(f.tracks[0], {2000, 3100, 27100, 49100, 75100}));
+	CHECK(f.positions(f.tracks[1]) == f.positions(f.tracks[0]));
+	// The slices are selected now, and the first track keeps its priority.
+	CHECK(f.app.waitUntil([&] { return f.priority(first) == 0.0; }));
+}
+
+TEST_CASE("the Hitpoint Tracks' priorities go with Create too", "[ui]")
+{
+	Fixture f;
+	f.display.select({f.events[0], f.events[1]});
+	f.openPanel();
+	f.click("#quantize-warp");
+	REQUIRE(f.app.waitUntil([&] { return f.elements("#quantize-hitpoint-tracks .quantize-priority").size() == 2; }));
+	// At priority 0 the first track's hitpoints don't count: both clips get markers at the second track's.
+	f.setPriority(f.tracks[0], "0");
+	f.click("#quantize-create-markers");
+	const auto markers = [&f](size_t clip)
+	{
+		std::vector<int64_t> found;
+		const Json all = f.project();
+		for (const Json& each : all.at("clips"))
+			if (each.at("id") == f.clips[clip])
+				for (const Json& marker : each.at("warp").at("markers"))
+					found.push_back(marker.at("position").get<int64_t>());
+		return found;
+	};
+	CHECK(f.app.waitUntil([&] { return markers(0) == std::vector<int64_t>{1100, 25100, 47100, 73100}; }));
+	CHECK(markers(1) == markers(0));
+}
+
+TEST_CASE("the Hitpoint Tracks' priorities don't outlive the project", "[ui]")
+{
+	Fixture f;
+	f.display.select({f.events[0], f.events[1]});
+	f.openPanel();
+	REQUIRE(f.app.waitUntil([&] { return f.elements("#quantize-hitpoint-tracks .quantize-priority").size() == 2; }));
+	const uint64_t track = f.tracks[0];
+	f.setPriority(track, "0");
+	REQUIRE(f.app.waitUntil([&] { return f.priority(Fixture::priorityField(track)) == 0.0; }));
+
+	// A new project's track of the same id starts at priority 1.
+	f.app.call("project.new");
+	f.build();
+	REQUIRE(f.tracks[0] == track);
+	REQUIRE(f.app.waitUntil([&] { return f.display.project().at("audioEvents").size() == 2; }));
+	f.display.select({f.events[0], f.events[1]});
+	REQUIRE(f.app.waitUntil([&] { return f.elements("#quantize-hitpoint-tracks .quantize-priority").size() == 2; }));
+	CHECK(f.app.waitUntil([&] { return f.priority(Fixture::priorityField(track)) == 1.0; }));
 }
 
 TEST_CASE("a refused Slice in the quantize panel is logged", "[ui]")
@@ -209,6 +371,20 @@ TEST_CASE("a refused Slice in the quantize panel is logged", "[ui]")
 	REQUIRE(f.app.waitUntil(
 		[&] { return test::readText(file).find("Slicing audio events failed:") != std::string::npos; }));
 	CHECK(test::readText(file).find("the events have no hitpoints that count") != std::string::npos);
+}
+
+TEST_CASE("a refused Create Groove Quantize Preset from an audio event is logged", "[ui]")
+{
+	const test::TempDir folder;
+	const std::filesystem::path file = folder.path() / "groove.log";
+	const logging::Session log(file);
+	Fixture f;
+	f.app.call("clip.setHitpoints", {{"clip", f.clips[0]}, {"hitpoints", Json::array()}});
+	f.display.select({f.events[0]});
+	f.app.keys().run("edit.createGrooveQuantize", Json::object(), f.app.main(), nullptr);
+	REQUIRE(f.app.waitUntil(
+		[&] { return test::readText(file).find("Creating a groove quantize preset failed:") != std::string::npos; }));
+	CHECK(test::readText(file).find("no hitpoints") != std::string::npos);
 }
 
 TEST_CASE("the quantize panel slices audio parts and quantizes and crossfades every slice in them", "[ui]")
@@ -255,4 +431,162 @@ TEST_CASE("the quantize panel creates warp markers on several audio tracks", "[u
 			return std::all_of(all.at("clips").begin(), all.at("clips").end(),
 				[](const Json& clip) { return clip.at("warp").at("markers").size() == 4; });
 		}));
+}
+
+TEST_CASE("the quantize panel's Reset buttons undo Slice and Create", "[ui]")
+{
+	Fixture f;
+	f.display.select({f.events[0], f.events[1]});
+	f.openPanel();
+	// Reset of the Slice Rules (reference manual p. 378) puts the slices back together.
+	CHECK(f.shown("#quantize-slice-reset"));
+	CHECK(f.hasClass("#quantize-markers-reset", "hidden"));
+	f.click("#quantize-slice");
+	CHECK(f.positionsAre(f.tracks[0], {2000, 3000, 27000, 49000, 75000}));
+	REQUIRE(f.app.waitUntil([&] { return f.display.project().at("audioEvents").size() == 10; }));
+	REQUIRE(f.app.waitUntil([&] { return f.display.selection().size() == 10; }));
+	f.click("#quantize-apply");
+	CHECK(f.positionsAre(f.tracks[0], {0, 0, 24000, 48000, 72000}));
+	f.click("#quantize-slice-reset");
+	CHECK(f.positionsAre(f.tracks[0], {2000}));
+	CHECK(f.positionsAre(f.tracks[1], {2000}));
+
+	// Reset of the Warp Marker Creation Rules (p. 380) removes the markers Create made.
+	f.display.select({f.events[0], f.events[1]});
+	f.click("#quantize-warp");
+	CHECK(f.app.waitUntil([&] { return f.shown("#quantize-markers-reset"); }));
+	CHECK(f.hasClass("#quantize-slice-reset", "hidden"));
+	const auto markers = [&](size_t count)
+	{
+		return f.app.waitUntil(
+			[&]
+			{
+				const Json all = f.project();
+				return std::all_of(all.at("clips").begin(), all.at("clips").end(),
+					[count](const Json& clip) { return clip.at("warp").at("markers").size() == count; });
+			});
+	};
+	f.click("#quantize-create-markers");
+	CHECK(markers(4));
+	f.click("#quantize-markers-reset");
+	CHECK(markers(0));
+}
+
+TEST_CASE("Edit > Quantize warp quantizes the selection range of an audio event", "[ui]")
+{
+	Fixture f;
+	f.app.call("quantize.set", {{"settings", {{"warpQuantize", true}}}});
+	// The range on the first track from the second click to the third (p. 370): only its marker moves.
+	f.display.setTool(ui::Tool::RangeSelection);
+	f.display.setRange(ui::RangeSelection{12000, 60000, {f.tracks[0]}});
+	CHECK(f.app.keys().canRun("edit.quantize", f.app.main(), nullptr));
+	f.menu("edit.quantize");
+	CHECK(f.app.waitUntil(
+		[&]
+		{
+			const Json clip = f.project().at("clips").at(0);
+			return clip.at("id") == f.clips[0] && clip.at("warp").at("markers").size() == 4;
+		}));
+	const Json markers = f.project().at("clips").at(0).at("warp").at("markers");
+	// At the range's start and end, in the event's clip, and the two hitpoints inside it.
+	CHECK(markers.at(0) == Json{{"position", 10000}, {"target", 10000}});
+	CHECK(markers.at(1).at("position") == 25000);
+	CHECK(markers.at(2).at("position") == 47000);
+	CHECK(markers.at(3) == Json{{"position", 58000}, {"target", 58000}});
+	CHECK(f.project().at("clips").at(1).at("warp").at("markers").empty());
+}
+
+TEST_CASE("Edit > Reset Quantize with a selection range resets only the audio events it reaches", "[ui]")
+{
+	Fixture f;
+	// A second event on the first track, after the range.
+	const auto later = f.app
+						   .call("audioEvent.add",
+							   {{"track", f.tracks[0]}, {"clip", f.clips[0]}, {"position", 194000}, {"offset", 0},
+								   {"length", g_quarter}})
+						   .at("event")
+						   .at("id")
+						   .get<uint64_t>();
+	REQUIRE(f.app.waitUntil([&] { return f.display.project().at("audioEvents").size() == 3; }));
+	f.display.select({f.events[0], later});
+	f.menu("edit.quantize");
+	CHECK(f.positionsAre(f.tracks[0], {0, 192000}));
+
+	// The range reaches the first event only: Reset Quantize puts back that one, and the later one stays quantized.
+	f.display.setTool(ui::Tool::RangeSelection);
+	f.display.setRange(ui::RangeSelection{12000, 60000, {f.tracks[0]}});
+	f.menu("edit.resetQuantize");
+	CHECK(f.positionsAre(f.tracks[0], {2000, 192000}));
+	// A range that reaches no event leaves nothing to reset.
+	f.display.setRange(ui::RangeSelection{120000, 150000, {f.tracks[0]}});
+	CHECK(!f.app.keys().canRun("edit.resetQuantize", f.app.main(), nullptr));
+}
+
+TEST_CASE("the project window marks the cutting positions while the quantize panel is open", "[ui]")
+{
+	Fixture f;
+	f.display.select({f.events[0], f.events[1]});
+	f.openPanel();
+	// Where Slice would cut (reference manual p. 378): the first track's hitpoints, the second's within the range.
+	const std::vector<int64_t> cuts{3000, 27000, 49000, 75000};
+	CHECK(f.app.waitUntil([&] { return f.display.cuttingPositions() == cuts; }));
+	CHECK(f.app.waitUntil([&] { return f.elements(".event-display .cutting-position").size() == 4; }));
+	// Zoomed out until they run together, the lines go.
+	f.display.zoomTo(0.0, 3600.0);
+	CHECK(f.app.waitUntil([&] { return f.elements(".event-display .cutting-position").empty(); }));
+	f.display.zoomTo(0.0, 4.0);
+	CHECK(f.app.waitUntil([&] { return f.elements(".event-display .cutting-position").size() == 4; }));
+	// With warp quantizing on, nothing is cut, and without a selection neither.
+	f.click("#quantize-warp");
+	CHECK(f.app.waitUntil([&] { return f.display.cuttingPositions().empty(); }));
+	f.click("#quantize-warp");
+	CHECK(f.app.waitUntil([&] { return f.display.cuttingPositions() == cuts; }));
+	f.display.select({});
+	CHECK(f.app.waitUntil([&] { return f.display.cuttingPositions().empty(); }));
+}
+
+TEST_CASE("Group Editing of a folder selects the events and ranges of its other tracks at the same place", "[ui]")
+{
+	Fixture f;
+	// The two tracks in a folder, a third event on the second track elsewhere.
+	const auto folder = f.app.call("track.add", {{"type", "folder"}, {"tracks", {f.tracks[0], f.tracks[1]}}})
+							.at("track")
+							.at("id")
+							.get<uint64_t>();
+	const auto elsewhere = f.app
+							   .call("audioEvent.add",
+								   {{"track", f.tracks[1]}, {"clip", f.clips[1]}, {"position", 120000}, {"offset", 0},
+									   {"length", g_quarter}})
+							   .at("event")
+							   .at("id")
+							   .get<uint64_t>();
+	REQUIRE(f.app.waitUntil([&] { return f.display.project().at("audioEvents").size() == 3; }));
+	f.display.select({f.events[0]});
+	CHECK(f.display.selection() == std::vector<uint64_t>{f.events[0]});
+
+	// The folder's Group Editing button in the track list (reference manual pp. 196, 274) turns it on.
+	const std::string button = "#track-list listitem[value=\"" + std::to_string(folder) + "\"] [control=groupEditing]";
+	f.click(button);
+	CHECK(f.app.waitUntil([&] { return f.hasClass(button, "checked"); }));
+	CHECK(f.app.call("project.get").at("tracks").at(0).at("groupEditing") == true);
+	REQUIRE(f.app.waitUntil([&] { return f.display.project().at("tracks").at(0).value("groupEditing", false); }));
+
+	// An event selected selects the one on the other track with the same start and end, not the one elsewhere.
+	f.display.select({f.events[0]});
+	std::vector<uint64_t> both{f.events[0], f.events[1]};
+	std::sort(both.begin(), both.end());
+	CHECK(f.display.selection() == both);
+	f.display.select({elsewhere});
+	CHECK(f.display.selection() == std::vector<uint64_t>{elsewhere});
+	// A range on one track is on every track of the folder.
+	f.display.setTool(ui::Tool::RangeSelection);
+	f.display.setRange(ui::RangeSelection{12000, 60000, {f.tracks[0]}});
+	const std::optional<ui::RangeSelection> range = f.display.range();
+	CHECK(range.value_or(ui::RangeSelection{}).tracks == std::vector<uint64_t>{f.tracks[0], f.tracks[1]});
+
+	// Off again, selecting is as before.
+	f.click(button);
+	CHECK(f.app.waitUntil([&] { return !f.display.project().at("tracks").at(0).value("groupEditing", true); }));
+	f.display.select({f.events[0]});
+	CHECK(f.display.selection() == std::vector<uint64_t>{f.events[0]});
 }

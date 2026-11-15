@@ -13,59 +13,81 @@ they are.
   Presets/<name>.dawproject` in the settings folder: of one track, or of several as a multi-track preset (p. 241).
   Audio, instrument, MIDI, group and effect tracks have presets; other types are refused. The tracks keep the track
   list's order, whatever the order of `tracks`. The file has the tracks with their channels and inserts, without events
-  or automation, and the project's busses, tempo, time signatures and fader top. It isn't an undo step. A preset name
-  must be a file name, as a template's must. A MIDI track's preset keeps both its MIDI channel and its patch, where
-  the reference lets a MIDI track preset include either the channel or the patch (p. 238).
+  or automation, and the project's busses, tempo, time signatures and fader top, and the media files of the samples
+  that a sampler and drum pads play (p. 940), so that it keeps playing them when the project moves or goes; a file
+  that is missing is referred to by its absolute path, as `project.save` does, so that the track can still be saved
+  (#1567). It isn't an undo step. A preset name must be a file name, as a template's must. MIDI tracks' presets keep
+  their MIDI channel and their patch (program and bank), or with `keep` `channel` or `patch` only one of them (p. 238):
+  the file has the other at its default and says which one it kept (the project's `presetKeeps`, in GNUbase's entry of
+  the file), so that loading the preset leaves the other as the track has it and new tracks from it have the default.
 - **Listing them.** `track.presets` lists the presets by name with their file and the types of their tracks, top to
-  bottom. A file that isn't a readable DAWproject file is left out.
+  bottom, and of a preset that keeps only one of a MIDI track's channel and patch which one (`keeps`), which the Load
+  dialog shows after its name ("Keys (Patch only)"). A file that isn't a readable DAWproject file is left out.
 - **Loading a preset** (pp. 239-243). `track.loadPreset` `{tracks, name}` gives tracks the preset's sound, in one undo
   step (the reference can't undo it; GNUbase can, as every edit): the pre section, the equalizer, the strip, the fader
   and pan, the inserts (copies of the preset's, which replace the track's own and the automation of their plugins, as
   Paste Channel Settings does), the MIDI modifiers, inserts, sends, volume, pan, program, bank and device, the MIDI
-  channel (`channel.set` `midiChannel`), the instrument with its parameters, and for MIDI and instrument tracks the
-  color. Not the name, routing, sends, buttons
-  or notes. The tracks must be as many as the preset's, of the same types in the same order (p. 241): the first of
-  `tracks` gets the sound of the preset's top track, and so on.
+  channel (`channel.set` `midiChannel`; of a preset that keeps only one of them, that one), the instrument with its
+  parameters, a sampler's sample, a drum machine's pads with their names and samples, and for MIDI and instrument tracks
+  the color. The samples' files are extracted next to the preset (`Track Presets/<name> media`), as `track.import`
+  extracts an archive's: a file there with other content, as after the preset was saved again with another file of the
+  same name, stays, as a project may play it, and the new one goes beside it under a numbered name (`2-kick.wav`); one
+  with the same content (size and CRC-32) is used as it is, write time included, so that loading the preset again
+  doesn't write over the files the project plays (#1567). Their clips come into the pool (`media.added`, `clip.added`)
+  unless it has the same clips already, so loading a preset again adds none, a media file with the same audio as one of
+  the project's, as in the project the preset was saved in, shares the project's file, and the lanes of a drum track's
+  patterns take the names of the pads (`pattern.changed`). Not the name, routing, sends, buttons or notes. The tracks
+  must be as many as the preset's, of the same types in the same order (p. 241): the first of `tracks` gets the sound of
+  the preset's top track, and so on.
 - **Adding tracks from a preset** (Use Track Preset, p. 199). `track.addFromPreset` `{name, track}` adds the preset's
   tracks below `track` in its folder, or at the bottom of the track list, with their sound. Outputs go to the project's
   busses with the same names, or the main output.
 - **Exporting tracks** (pp. 205-206). `track.export` `{tracks, path, copyMedia}` writes a track archive: a DAWproject
-  file with the tracks, a folder with the tracks inside it, their channels, inserts, events, parts, markers, track
-  versions and automation, and the project's sample rate, busses, tempo, time signatures and fader top, so that
+  file with the tracks, a folder with the tracks inside it, their channels, inserts, events, parts, patterns, markers,
+  track versions and automation, and the project's sample rate, busses, tempo, time signatures and fader top, so that
   positions, volumes and routing mean the same there. `copyMedia` (default true, the reference's Copy Media Files)
   embeds the media files in the archive; false refers to them where they are (Reference Media Files). The archive is a
   DAWproject file rather than the reference's XML, as the project format is DAWproject. Routing to tracks that weren't
   exported doesn't go along. Tracks inside an exported folder that can't be exported yet (VCA tracks) stay behind,
   and the result lists them as `skipped`; listed themselves, they are refused.
-- **The tracks of a file.** `track.importSources` `{path}` lists the tracks of an archive or a project file, with their
-  ids in the file, names, types, folders, whether they can be imported (`importable`), and the sample rates of the media
-  files their events play (`mediaSampleRates`, each once, from the lowest, the events of the versions that aren't active
-  too), for choosing what to import and telling whether Convert Sample Rate has anything to convert for the tracks
-  chosen; a media file no event plays is nobody's. And the file's name, sample rate, frame rate and start time, for
-  comparing them with the project's (Project Settings, p. 205). Listing extracts no media files, nor does
-  `track.presets`: the engine reads the file without them, and doesn't read a file in their place either, as the path
-  of an embedded file that isn't extracted is its entry's name in the file, which would resolve against the working
-  folder.
+- **The tracks of a file.** `track.importSources` `{path, range, events}` lists the tracks of an archive or a project
+  file, with their ids in the file, names, types, folders, whether they can be imported (`importable`), and the sample
+  rates of the media files their events play (`mediaSampleRates`, each once, from the lowest, the events of the versions
+  that aren't active too, and a sampler's sample and a drum machine's pads' samples, which come with the instrument),
+  for choosing what to import and telling whether Convert Sample Rate has anything to convert for the tracks chosen; a
+  media file nothing plays is nobody's. With `range`, as `track.import` takes it, only the events that the import brings
+  with it count: the engine brings the file to the project's sample rate and leaves out what starts outside the range,
+  as the import does, so that the two never disagree; a sampler's samples count wherever the range is. With `events`
+  false, as `track.import` without events (default true), no events or track versions count, only the samplers' and drum
+  machines' samples, which come with the instrument either way. And the file's name, sample rate, frame rate and start
+  time, for comparing them with the project's (Project Settings, p. 205). Listing extracts no media files, nor does
+  `track.presets`: the engine reads the file without them, and doesn't read a file in their place either, as the path of
+  an embedded file that isn't extracted is its entry's name in the file, which would resolve against the working folder.
 - **Importing tracks** (pp. 200-205). `track.import` `{path, tracks, track, events, settings, automation, destinations,
   existing, position, range}` copies tracks of an archive or project file into the project, in one undo step: `tracks`
   (default: every top-level track it can import), a listed folder with the tracks inside it, in the file's order, below
   `track` in its folder or at the bottom (Import Position for New Tracks); marker tracks go to the top level, and the
   project's marker track limit holds for new ones. Tracks that can't be imported yet stay behind, inside a folder or,
   without `tracks`, at the top level, and the result lists them as `skipped`, from top to bottom in the file; listed
-  themselves, also inside a listed folder, they are refused. `events` brings events, parts, markers and track versions,
-  `settings` the channel settings and inserts, `automation` the automation; all default to true. Without `settings` the
-  channels start from the defaults, keeping their format, routing and instrument. Mute, solo, listen, monitor and record
-  enable are off, and automation lanes read, as a new lane does: the reference doesn't import these states (p. 200).
-  Routing between imported tracks stays; sends and outputs to other channels go to the tracks the project had before the
-  import with the same name and type (not to other copies, which could route them in a loop), outputs to busses to its
-  busses with the same name, or else the main output (p. 200). Clips come with the events, in the pool's top folder, and
-  media files the project has already are shared; drum maps the project has with the same name and sounds too. Media
-  files embedded in the file are extracted next to it, into `<name> media`, as `project.load` does, and the result lists
-  the media files the import added as `media`. Linear positions from a file at another sample rate are rescaled to keep
-  their time, as `project.set` does; faders, send levels and volume automation above the project's fader top come down
-  to it, from presets too. When what is imported ends after the project's end (its length in the project setup), the end
-  moves to where it ends, up to the setup's 24 hours (the note on Import Position, p. 204): its events, parts, markers
-  (a cycle marker's end too) and automation points, not those of versions that aren't active.
+  themselves, also inside a listed folder, they are refused. `events` brings events, parts, patterns, markers and track
+  versions, `settings` the channel settings and inserts, `automation` the automation; all default to true. Without
+  `settings` the channels start from the defaults, keeping their format, routing and instrument. Mute, solo, listen,
+  monitor and record enable are off, and automation lanes read, as a new lane does: the reference doesn't import these
+  states (p. 200). Routing between imported tracks stays; sends and outputs to other channels go to the tracks the
+  project had before the import with the same name and type (not to other copies, which could route them in a loop),
+  outputs to busses to its busses with the same name, or else the main output (p. 200). Clips come with the events, in
+  the pool's top folder, unless the project has the same clip already (the same media file, name, fades, regions,
+  hitpoints and warp), as after importing the file before: then the tracks share it, and two clips of the file that are
+  the same become one (#1567). Media files the project has already, at the same path or with the same audio, are shared;
+  drum maps the project has with the same name and sounds too. Media files embedded in the file are extracted next to
+  it, into `<name> media`, as `project.load` does: a file that is there with the entry's content stays as it is, write
+  time included, and so does one with other content, the entry going beside it under a numbered name. The result lists
+  the media files the import added as `media`.
+  Linear positions from a file at another sample rate are rescaled to keep their time, as `project.set` does; faders,
+  send levels and volume automation above the project's fader top come down to it, from presets too. When what is
+  imported ends after the project's end (its length in the project setup), the end moves to where it ends, up to the
+  setup's 24 hours (the note on Import Position, p. 204): its events, parts, markers (a cycle marker's end too) and
+  automation points, not those of versions that aren't active.
 - **Onto existing tracks** (Destination Track, pp. 200, 203). `destinations` `[{source, track}]` imports listed tracks
   onto the project's tracks of their type instead of as new ones. A group, effect, folder, marker or ruler track
   replaces the track, a folder with the tracks inside it: the copy takes its place, among the new tracks the result
@@ -78,11 +100,13 @@ they are.
   the track's first, `add` adds them, `version`, the default, puts them into a new version of the track, as the
   manual's note on Events and Parts says; the tracks imported onto get their new versions together), and its other
   versions after the track's, versions that share an ID in the file sharing a new one in the project, and a version
-  named as one of the track's getting the next free `vN` name; with `settings` its channel settings, inserts, routing
+  named as one of the track's getting the next free `vN` name (a source with only its first version, with `replace`
+  or `add`, leaves the track storing no version of its own, #1629); with `settings` its channel settings, inserts, routing
   and drum and articulation maps, the track's plugins going with their automation; with `automation` its automation in
   place of the track's, and without it, once events or settings are imported onto the track, the track loses its
   automation (the note on Automation, p. 204). The IDs of the file's versions become new ones, one for each ID of the
-  file, on the new tracks too, so that none of them falls into a version group the project has of its own; the new
+  file, on the new tracks too, including the implicit first version of a track without a version list, so that none
+  of them falls into a version group the project has of its own; the new
   version of a track imported onto gets the ID its source's active version has, so that the tracks imported onto get
   one ID when the versions their sources played shared one in the file, and the versions that shared one there keep
   playing together here when they didn't (p. 233). What played or sent into the copy's channel, such as another
@@ -132,10 +156,13 @@ Settings, Automation and Import Position for New Tracks (Bottom of Track List wi
 fields are timecodes at the project's frame rate, which the dialog turns into `range` as samples at the project's sample
 rate from the file's start. Project Settings shows the file's and the project's file name, sample rate, frame rate and
 start. Copy to Active Project Folder (disabled while the project has no file) sends `media.prepareArchive` for the media
-files the import added, and Convert Sample Rate (only with it, and only while one of the checked tracks has a media file
-at another sample rate than the project's, whatever the file's own rate: the dialog unions the checked tracks'
-`mediaSampleRates`, p. 205) `media.conform` for those at another sample rate, through `gnubase.ui.command` so that the
-pool shows how they go. The engine's refusal shows in the dialog, which stays open.
+files the import added, and Convert Sample Rate (only with it, and only while one of the tracks imported, checked or
+going along with a checked folder, has a media file at another sample rate than the project's in what the import
+brings, whatever the file's own rate: the dialog unions those tracks' `mediaSampleRates`, p. 205, listed again for the
+range while Range is on and its fields are two timecodes and without events while Events and Parts is off, once for
+each range and choice of events) `media.conform` for those at another sample rate, through `gnubase.ui.command` so that
+the pool shows how they go. A range field counts once it is left (Enter is OK), not for each key typed into it,
+as each new range has the engine read the file again. The engine's refusal shows in the dialog, which stays open.
 
 ```
 #track-import-dialog
@@ -152,14 +179,17 @@ pool shows how they go. The engine's refusal shows in the dialog, which stays op
 ```
 
 The track preset dialog (`resources/ui/track-preset.rml`) gets the mode and the selected tracks from `app::AppUi` and
-does the rest in its Lua through the engine's commands: a name field for Save, a list of the presets for Add, and for
-Load only the presets whose track types are those of the selected tracks in their order. When the engine refuses, its
-message shows and the dialog stays open.
+does the rest in its Lua through the engine's commands: a name field for Save, with MIDI tracks among the selected ones
+a choice of what they keep, Channel and Patch, Channel or Patch (`keep`), a list of the presets for Add, and for Load
+only the presets whose track types are those of the selected tracks in their order, a preset that keeps only one of a
+MIDI track's channel and patch named with it ("Keys (Patch only)"). When the engine refuses, its message shows and the
+dialog stays open.
 
 ```
 #track-preset-dialog
   #preset-title     Save Track Preset, Load Track Preset or Add Track from Preset
   #preset-row       #preset-name (Save) or #preset-list (Load, Add)
+  #preset-keep-row  #preset-keep (Save with MIDI tracks): "", channel or patch
   #preset-message   the engine's message when it refuses
   #preset-confirm   OK
 ```
@@ -169,21 +199,22 @@ message shows and the dialog stays open.
 Of the Import Options dialog: Range cuts nothing, so events and parts that start in it come whole, and musical positions
 move by the same time rather than by bars and beats when Bars+Beats is the primary time format (p. 204); tracks inside
 an imported folder are all imported or none; the media files are copied and converted after the import, as undo steps of
-their own; Convert Sample Rate follows the checked tracks but not the range, so it is offered for a media file at
-another rate that the range leaves out (#1436). Importing chord, signature and tempo tracks, VCA tracks and link
+their own. Importing chord, signature and tempo tracks, VCA tracks and link
 groups; the Export Selected Tracks dialog with Reference Media Files (the engine's `copyMedia` false); routing of
 exported tracks to tracks that weren't exported; frozen tracks keep their freeze file only in their own project, so
 they import unfrozen; shared copies of MIDI parts import as parts of their own. Presets: the media browser with
 attributes, previews, the type subfolders, renaming and removing presets, factory presets, instrument plugin presets
 and extracting the sound of an instrument (p. 241), loading only the inserts or the equalizer of a preset (p. 243),
-drum maps and Input Transformer settings in presets, sampler track presets, pattern banks, quick control presets
+drum maps and Input Transformer settings in presets, pattern banks, quick control presets
 (pp. 243-244), dragging presets onto tracks, and the inspector's Load Track Preset button.
 
 ## Checks
 
 - `tests/trackpresets_tests.cpp`: `track.savePreset` and `track.loadPreset` give tracks of the preset's types its sound
   in one undo step, not the buttons or the routing, and refuse other types, counts and orders, unknown presets, folders
-  and bad names; multi-track presets; `track.presets` lists names and types; `track.addFromPreset` adds below a track or
+  and bad names; multi-track presets; a MIDI track's preset keeping its channel or its patch alone, which loading it
+  leaves as the track has it and new tracks from it get at the default, and another `keep` refused; `track.presets`
+  lists names and types, and what a preset keeps; `track.addFromPreset` adds below a track or
   at the bottom; `track.export` and `track.import` round-trip a folder with its group channel, an audio track with its
   event, media file, insert, send and automation, a MIDI track playing an instrument track and an effect track, in one
   undo step, and import some tracks only, without events, settings or automation, with sends that find the project's
@@ -199,14 +230,18 @@ drum maps and Input Transformer settings in presets, sampler track presets, patt
   imported; a marker track replaces one of a project with 10, as the active one; merged versions keep the IDs they
   shared and get names of their own, the new versions of the tracks imported onto getting the ID their sources' active
   versions share, also when the sources don't play the versions they share, and the versions of new tracks getting IDs
-  of their own, which they share with a track imported onto and a saved project keeps; without automation, importing
+  of their own, which they share with a track imported onto and a saved project keeps, a new track's only version not
+  counting as track versions for the project rules; without automation, importing
   events or settings onto a track resets its automation, while importing neither leaves it and records no undo step;
   musical tracks merge onto linear ones with their versions and automation; Absolute, Relative and Cursor Position and
   Range, in samples at the project's rate, place the parts, and events before the project start are refused; the
   project's end moves after what is imported, also after an audio event's end at the project's rate, an empty audio
   part and an automation point, up to 24 hours; `track.importSources` lists, for each track, the sample rates of the
-  media files its events play, each once from the lowest, also those of the versions that aren't active and not one of
-  a media file no event plays. `tests/backup_tests.cpp`: `media.prepareArchive` with `media` copies only those.
+  media files its events play, each once from the lowest, also those of the versions that aren't active, of a
+  sampler's sample and of a drum machine's pads' samples, and not one of a media file nothing plays, with a range only
+  those of the events that start in it, at the project's rate, while the instruments' samples stay, and without events
+  only the instruments' samples, with a range or without; it refuses a range that doesn't end after its start.
+  `tests/backup_tests.cpp`: `media.prepareArchive` with `media` copies only those.
   `tests/mixer_tests.cpp`: a lower fader top brings volume automation down, and the project saved then opens with
   GNUbase's own data. In the app: File > Export > Selected Tracks and File > Import > Tracks through the file dialogs
   and the Import Options dialog, which imports below the selected track, imports onto the track of the same name with
@@ -214,7 +249,10 @@ drum maps and Input Transformer settings in presets, sampler track presets, patt
   settings, folds and searches the tracks, leaves a track inside a matched folder at New Track, keeps the upper of two
   file tracks of one name on the project's track and leaves a track that goes along with its folder at New Track,
   resets the destinations, offers Convert Sample Rate for a checked track's media files at another rate, and takes it
-  back when that track goes and when no media file of the file is at another rate than the project's, and imports a
-  range from the locators' timecodes at Relative Position; the engine's refusals of an
-  export in the project error dialog and the tracks it left out in the dialog titled Export Selected Tracks; and the
-  track preset dialog's Save, Load (with only matching presets listed) and Add.
+  back when that track goes and when no media file of the file is at another rate than the project's, counts a track
+  that goes along with a checked folder though its own box isn't checked, takes it back without Events and Parts and
+  for a range that leaves the media file out, once the range field is left rather than while it is typed, and offers it
+  again with Use Locators, and imports a range from the locators' timecodes at Relative Position; the engine's refusals
+  of an export in the project error dialog and the tracks it left out in the dialog titled Export Selected Tracks; and
+  the track preset dialog's Save, with a MIDI track's patch alone and no choice for an audio track, Load (with only
+  matching presets listed, the one that keeps the patch alone named so) and Add.

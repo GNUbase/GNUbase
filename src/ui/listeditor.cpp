@@ -4,6 +4,7 @@
 #include "engine/midi/chords.h"
 #include "engine/midi/midivalues.h"
 #include "engine/midi/quantizesettings.h"
+#include "ui/articulationnames.h"
 #include "ui/timeformat.h"
 
 #include <RmlUi/Core/Context.h>
@@ -36,7 +37,7 @@ namespace gnubase::ui
 			Rml::EventId::Click, Rml::EventId::Change, Rml::EventId::Dragend};
 
 		// The event types, as controller.add names them, with the list's names (p. 1253), in the filters bar's order.
-		constexpr std::array<std::pair<const char*, const char*>, 7> g_types = {{
+		constexpr std::array<std::pair<const char*, const char*>, 8> g_types = {{
 			{"note", "Note"},
 			{"controller", "Controller"},
 			{"program", "Program Change"},
@@ -44,6 +45,7 @@ namespace gnubase::ui
 			{"polyPressure", "Poly Pressure"},
 			{"pitchBend", "Pitchbend"},
 			{"sysEx", "SysEx"},
+			{"articulation", "Articulation"}, // directions (#1112, p. 1291), which have no channel
 		}};
 
 		constexpr std::array<std::pair<const char*, const char*>, 3> g_tools = {{
@@ -74,6 +76,12 @@ namespace gnubase::ui
 
 		constexpr std::array<const char*, 11> g_lengths = {
 			"link", "1/1", "1/2", "1/4", "1/8", "1/16", "1/32", "1/64", "1/4T", "1/8T", "1/16T"};
+
+		// Whether events of the type have a MIDI channel: SysEx and directions don't.
+		bool hasChannel(const std::string& type)
+		{
+			return type != "sysEx" && type != "articulation";
+		}
 
 		const char* typeLabel(const std::string& type)
 		{
@@ -237,7 +245,9 @@ namespace gnubase::ui
 		Rml::ElementDocument* document = root.GetOwnerDocument();
 		std::string types;
 		for (const auto& [type, label] : g_types)
-			types += std::string(R"(<menuitem type="toggle" insert-type=")") + type + R"(">)" + label + "</menuitem>";
+			if (std::string(type) != "articulation") // a direction needs a name: the Articulations lane adds them
+				types +=
+					std::string(R"(<menuitem type="toggle" insert-type=")") + type + R"(">)" + label + "</menuitem>";
 		std::string lengths;
 		for (const char* length : g_lengths)
 			lengths += std::string(R"(<menuitem type="toggle" length=")") + length + R"(">)" +
@@ -247,7 +257,8 @@ namespace gnubase::ui
 			focuses += std::string(R"(<menuitem type="toggle" focus=")") + focus + R"(">)" + label + "</menuitem>";
 		for (const std::string& rml : {R"(<menu id="list-insert-type-menu">)" + types + "</menu>",
 				 R"(<menu id="list-length-menu">)" + lengths + "</menu>",
-				 R"(<menu id="list-focus-menu">)" + focuses + "</menu>"})
+				 R"(<menu id="list-focus-menu">)" + focuses + "</menu>",
+				 std::string(R"(<menu id="list-articulations-menu"/>)")})
 		{
 			const Rml::ElementPtr holder = document->CreateElement("div");
 			holder->SetInnerRML(rml);
@@ -302,6 +313,7 @@ namespace gnubase::ui
 				if (part.at("id") != id)
 					continue;
 				const Json& track = *tracks.at(part.at("track").get<uint64_t>());
+				const Json* map = trackArticulationMap(m_project, track.at("id").get<uint64_t>());
 				const auto position = part.at("position").get<int64_t>();
 				const Part item{id.get<uint64_t>(), ticksOf(track, position, time),
 					ticksOf(track, position + part.at("length").get<int64_t>(), time),
@@ -311,6 +323,7 @@ namespace gnubase::ui
 				{
 					Row row;
 					row.part = item.id;
+					row.track = track.at("id").get<uint64_t>();
 					row.id = note.at("id").get<uint64_t>();
 					row.type = "note";
 					row.partStart = item.start;
@@ -320,6 +333,8 @@ namespace gnubase::ui
 					row.value = note.at("velocity").get<double>();
 					row.release = note.at("releaseVelocity").get<double>();
 					row.channel = note.at("channel").get<int>();
+					row.articulations = note.value("articulations", std::vector<std::string>());
+					row.unknown = unknownArticulations(map, row.articulations, "attribute");
 					row.editable = item.editable;
 					m_rows.push_back(row);
 				}
@@ -327,6 +342,7 @@ namespace gnubase::ui
 				{
 					Row row;
 					row.part = item.id;
+					row.track = track.at("id").get<uint64_t>();
 					row.id = controller.at("id").get<uint64_t>();
 					row.type = controller.at("type").get<std::string>();
 					row.partStart = item.start;
@@ -335,6 +351,10 @@ namespace gnubase::ui
 					row.value = controller.value("value", 0.0);
 					row.channel = controller.value("channel", 0);
 					row.data = controller.value("data", std::vector<int>());
+					row.articulation = controller.value("articulation", std::string());
+					row.reset = controller.value("reset", false);
+					row.unknown =
+						row.type == "articulation" && unknownArticulations(map, {row.articulation}, "direction");
 					row.editable = item.editable;
 					m_rows.push_back(row);
 				}
@@ -375,9 +395,11 @@ namespace gnubase::ui
 			return true;
 		const Row& focus = *first;
 		if (m_focus == "channel")
-			return row.type != "sysEx" && focus.type != "sysEx" && row.channel == focus.channel;
+			return hasChannel(row.type) && hasChannel(focus.type) && row.channel == focus.channel;
 		if (row.type != focus.type)
 			return false;
+		if (row.type == "articulation")
+			return m_focus == "type" || row.articulation == focus.articulation;
 		return m_focus == "type" || row.type == "sysEx" || row.type == "channelPressure" || row.type == "pitchBend" ||
 			row.number == focus.number;
 	}
@@ -391,7 +413,7 @@ namespace gnubase::ui
 			return row.start + row.length;
 		if (field == "length" && row.isNote())
 			return row.length;
-		if (field == "channel" && type != "sysEx")
+		if (field == "channel" && hasChannel(type))
 			return row.channel + 1;
 		if (field == "subtype")
 		{
@@ -417,7 +439,14 @@ namespace gnubase::ui
 	std::string ListEditor::text(const Row& row, const std::string& field) const
 	{
 		if (field == "attributes")
-			return row.type == "sysEx" ? hex(row.data) : "";
+		{
+			// SysEx's bytes, a direction's name, a note's attributes (#1112, p. 1291).
+			if (row.type == "sysEx")
+				return hex(row.data);
+			if (row.type == "articulation")
+				return row.articulation + (row.reset ? " (Reset)" : "");
+			return joinNames(row.articulations);
+		}
 		const std::optional<int64_t> value = number(row, field);
 		if (!value)
 			return "";
@@ -459,7 +488,7 @@ namespace gnubase::ui
 
 	std::optional<double> ListEditor::bar(const Row& row)
 	{
-		if (row.type == "sysEx")
+		if (row.type == "sysEx" || row.type == "articulation")
 			return std::nullopt;
 		if (row.type == "program")
 			return row.number / g_maxVelocity;
@@ -491,8 +520,9 @@ namespace gnubase::ui
 		for (const auto& [focus, name] : g_focuses)
 			if (m_focus == focus)
 				label(root->QuerySelector("#list-focus"), name);
+		// Not the Attributes column's menu, whose items are checked for its row (openArticulationMenu).
 		for (const Rml::ObserverPtr<Rml::Element>& menu : m_menus)
-			if (Rml::Element* element = menu.get())
+			if (Rml::Element* element = menu.get(); element != nullptr && element != m_menus.back().get())
 			{
 				Rml::ElementList items;
 				element->QuerySelectorAll(items, "menuitem");
@@ -519,10 +549,20 @@ namespace gnubase::ui
 				typeLabel(row.type) + "</span>";
 			for (const auto& [field, name] : g_fields)
 			{
-				const bool editable =
-					row.editable && (number(row, field) || (field == std::string("attributes") && row.type == "sysEx"));
+				const bool editable = row.editable &&
+					(number(row, field) ||
+						(field == std::string("attributes") &&
+							(row.type == "sysEx" || row.type == "articulation" || row.isNote())));
+				const bool menu =
+					field == std::string("attributes") && row.editable && (row.isNote() || row.type == "articulation");
 				rml += std::string(R"(<textdisplay class="list-cell" field=")") + field + '"' +
-					(editable ? "" : R"( disabled="")") + "/>";
+					(editable ? "" : R"( disabled="")") +
+					(menu ? R"( menu="list-articulations-menu" contextmenu="list-articulations-menu")" : "") + "/>";
+				// A warning sign for a note's attributes and a direction that the track's map doesn't have (#1580,
+				// p. 1291).
+				if (field == std::string("attributes") && row.unknown)
+					rml += R"(<svg class="icon warning articulation-warning" src="../icons/general-warning.svg" )"
+						   R"(title="Not in the track's articulation map"/>)";
 			}
 			rml += R"(<div class="list-event-lane"><div class="list-event"/></div><div class="list-value-lane">)" +
 				std::string(bar(row) ? R"(<div class="list-value"/>)" : "") + "</div></div>";
@@ -678,11 +718,30 @@ namespace gnubase::ui
 	{
 		if (field == "attributes")
 		{
+			std::map<std::pair<uint64_t, std::string>, Json> changes;
 			if (const std::optional<std::vector<int>> data = parseHex(typed); data && edited.type == "sysEx")
 			{
-				std::map<std::pair<uint64_t, std::string>, Json> changes;
 				changes[{edited.part, "controller.set"}].push_back({{"id", edited.id}, {"data", *data}});
 				edit("Change SysEx", std::move(changes));
+			}
+			else if (edited.isNote())
+			{
+				// The note's attributes, names separated by commas; empty clears them (p. 1291).
+				changes[{edited.part, "note.set"}].push_back({{"id", edited.id}, {"articulations", splitNames(typed)}});
+				edit("Change Articulations", std::move(changes));
+			}
+			else if (edited.type == "articulation")
+			{
+				// A direction's name, as the attributes column shows it.
+				std::string name = typed;
+				if (const std::string reset = " (Reset)";
+					name.size() > reset.size() && name.compare(name.size() - reset.size(), reset.size(), reset) == 0)
+					name.resize(name.size() - reset.size());
+				if (!name.empty())
+				{
+					changes[{edited.part, "controller.set"}].push_back({{"id", edited.id}, {"articulation", name}});
+					edit("Change Articulation", std::move(changes));
+				}
 			}
 			return;
 		}
@@ -774,8 +833,43 @@ namespace gnubase::ui
 			m_binding.send("controller.remove", {{"part", row.part}, {"controllers", Json::array({row.id})}});
 	}
 
+	void ListEditor::openArticulationMenu(const Row& row)
+	{
+		m_menuRow.emplace(row.part, row.id);
+		m_menuNote = row.isNote();
+		const Json* map = trackArticulationMap(m_project, row.track);
+		const std::string items = m_menuNote ? articulationItems(map, "attribute", row.articulations)
+											 : articulationItems(map, "direction", {row.articulation});
+		if (Rml::Element* menu = m_menus.back().get(); menu != nullptr && menu->GetInnerRML() != items)
+			menu->SetInnerRML(items);
+	}
+
+	void ListEditor::chooseArticulation(const std::string& name)
+	{
+		const Row* row = nullptr;
+		for (const Row& each : m_rows)
+			if (m_menuRow && each.part == m_menuRow->first && each.id == m_menuRow->second &&
+				each.isNote() == m_menuNote)
+				row = &each;
+		const Json* map = row != nullptr ? trackArticulationMap(m_project, row->track) : nullptr;
+		if (map == nullptr)
+			return;
+		std::map<std::pair<uint64_t, std::string>, Json> changes;
+		if (row->isNote())
+			changes[{row->part, "note.set"}].push_back(
+				{{"id", row->id}, {"articulations", toggleAttribute(*map, row->articulations, name)}});
+		else if (name != row->articulation)
+			changes[{row->part, "controller.set"}].push_back({{"id", row->id}, {"articulation", name}});
+		edit("Change Articulations", std::move(changes));
+	}
+
 	void ListEditor::click(Rml::Element& target, bool ctrl)
 	{
+		if (target.HasAttribute("articulation") && target.GetTagName() == "menuitem")
+		{
+			chooseArticulation(attribute(target, "articulation"));
+			return;
+		}
 		if (target.HasAttribute("list-tool"))
 		{
 			m_tool = attribute(target, "list-tool");
@@ -829,8 +923,24 @@ namespace gnubase::ui
 			m_ctrl = ctrl;
 			break;
 		case Rml::EventId::Mousedown:
+			if (event.GetParameter("button", 0) == 1 && event.GetCurrentElement() == m_root.get())
+			{
+				// After the document's popup behavior opened the menu (capture phase): the open menu moves inside the
+				// window again for the items filled in here. The press can be on the cell's text.
+				const Rml::Element* cell = target->HasAttribute("contextmenu") ? target : target->GetParentNode();
+				if (const Row* row = rowOf(target);
+					row != nullptr && cell != nullptr && cell->HasAttribute("contextmenu"))
+					openArticulationMenu(*row);
+				break;
+			}
 			if (event.GetParameter("button", 0) != 0)
 				break;
+			// A click on the Attributes column opens its menu too (p. 1291), under the cell: the popup behavior opens
+			// it on the click, the items are filled in here.
+			if (const Row* row = rowOf(target); row != nullptr && event.GetCurrentElement() == m_root.get())
+				if (const Rml::Element* cell = target->HasAttribute("menu") ? target : target->GetParentNode();
+					cell != nullptr && cell->HasAttribute("menu"))
+					openArticulationMenu(*row);
 			if (event.GetCurrentElement() == m_document.get())
 			{
 				// A left press anywhere in the document while a gesture goes on: the gesture's mouseup never came, as

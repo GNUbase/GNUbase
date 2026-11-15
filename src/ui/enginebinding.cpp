@@ -128,11 +128,18 @@ namespace gnubase::ui
 	}
 
 	void EngineBinding::sendStep(int gesture, const std::string& what, std::string description, engine::Json commands,
-		std::function<void(const engine::Result&)> done)
+		std::function<void(const engine::Result&)> done, const engine::Json& shown, const std::string& merge)
 	{
-		Step step{gesture != 0 ? what + " " + std::to_string(gesture) : std::string(), std::move(description),
-			std::move(commands), std::move(done)};
+		Step step{gesture != 0 ? (merge.empty() ? what : merge) + " " + std::to_string(gesture) : std::string(),
+			std::move(description), std::move(commands), std::move(done)};
 		Steps& steps = m_steps[what];
+		// While no step of the record is out and a project read after its last taken one is in, the project has what
+		// it kept, and a change from elsewhere since, such as an undo, may have changed that: the record keeps only
+		// the new step's then, not an older value of another event until the record goes (#1550).
+		if (steps.inFlight.empty() && steps.waiting.empty() && steps.taken < m_projectRead)
+			steps.shown = nullptr;
+		if (!shown.is_null())
+			steps.shown.merge_patch(shown);
 		if (!step.merge.empty() && !steps.waiting.empty() && steps.waiting.back().merge == step.merge)
 			steps.waiting.back() = std::move(step); // the newer value of the same gesture
 		else
@@ -187,6 +194,14 @@ namespace gnubase::ui
 	{
 		const auto steps = m_steps.find(what);
 		return sending(what) || (steps != m_steps.end() && steps->second.taken > read);
+	}
+
+	const engine::Json* EngineBinding::shown(const std::string& what, uint64_t read) const
+	{
+		const auto steps = m_steps.find(what);
+		if (steps == m_steps.end() || steps->second.shown.is_null() || !ahead(what, read))
+			return nullptr;
+		return &steps->second.shown;
 	}
 
 	size_t EngineBinding::waiting(const std::string& command) const

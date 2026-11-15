@@ -34,8 +34,9 @@ key editor's tools edit; lane presets, the line tool's modes and Auto Select Con
 
 | View field | What it is | Reference |
 |---|---|---|
-| `lanes` | From the top, each `{type, number}`: `velocity`, `offVelocity`, `probability`, `velocityVariance`, or controller events: `controller` (number: the controller), `pitchBend`, `channelPressure`, `polyPressure` (number: the pitch), `program`. Default: a velocity lane | pp. 1157-1163 |
+| `lanes` | From the top, each `{type, number}`: `velocity`, `offVelocity`, `probability`, `velocityVariance`, or controller events: `controller` (number: the controller), `pitchBend`, `channelPressure`, `polyPressure` (number: the pitch), `program`; or `articulations`, the Articulations lane ([articulation-maps.md](articulation-maps.md)). Default: a velocity lane | pp. 1157-1163 |
 | `showLanes` | Whether the controller display shows the lanes (Show/Hide Controller Lanes) | p. 1162 |
+| `soundSlotsLane`, `collapsedGroups` | The Articulations lane's: whether it shows its sound slots lane, and the groups of its map, by index, collapsed into one row each ([articulation-maps.md](articulation-maps.md)) | pp. 1287-1288 |
 | `autoSelectControllers` | Selecting notes selects the controller events from their start to their end | p. 1188 |
 | `controllerSelection` | The selected controller events, each `{part, controller}`, of the editable parts; removed ones leave it, closing the editor clears it | p. 1188 |
 
@@ -96,16 +97,17 @@ part, or else channel 0.
 ## Not yet
 
 The controller event editor and its smart controls (p. 1187); ramps and curves between controller events and Type of New
-Controller Events (pp. 1159, 1181); the pitchbend lane's semitone grid, Grid Settings and Snap Pitchbend Events (pp. 1173-1176);
-SysEx, articulation and dynamics lanes, and the Dynamics Mapping Setup (pp. 1177-1179); the MIDI Controller Setup
+Controller Events (pp. 1159, 1181); the pitchbend lane's semitone grid, Grid Settings and Snap Pitchbend Events
+(pp. 1173-1176); SysEx and dynamics lanes, and the Dynamics Mapping Setup (pp. 1177-1179); the MIDI Controller Setup
 dialog, RPN and NRPN controllers (p. 1165); the poly pressure lane's pitch menu and editing its events with
 Ctrl+Alt (pp. 1179-1180); the context menu's Cut, Copy, Paste and Paste at Origin, and pasting notes as modulation
 (pp. 1160, 1180); the rhombus for controllers with automation and the value at the project cursor (pp. 1161, 1166);
 the divider between the note display and the lanes (p. 1158); renaming presets in an Organize Presets dialog; a
 channel per lane; a velocity variance and play probability chosen anew on each cycle pass; MIDI file export,
 Merge MIDI in Loop and Freeze MIDI Modifiers applying them; the line tool's modifier keys and its use in the note
-display; the selection rectangle on lanes; the info line for controller events; the in-place editor's lanes. The drum editor ([drum-editor.md](drum-editor.md))
-has the key editor's lanes.
+display; the selection rectangle on lanes; the info line for controller events. The drum editor
+([drum-editor.md](drum-editor.md)) and the in-place editor ([in-place-editor.md](in-place-editor.md)) have the key
+editor's lanes.
 
 ## Checks
 
@@ -117,7 +119,7 @@ has the key editor's lanes.
   lanes for velocities, off velocities, probabilities and variances, named notes and undo; events it draws playing
   back through `midi.capture`; `controller.line` refusing positions at or past the part's end, also on a linear track, and
   lines of more than 65536 events; `note.apply` in a shared copy; the views' lanes, `showLanes`,
-  `controllerSelection` and Auto Select Controllers.
+  `controllerSelection` and Auto Select Controllers; `soundSlotsLane` and `collapsedGroups`.
 - `tests/controllerlanes_ui_tests.cpp` drives the app with `ui::Automation`: velocity bars at their notes, dragged,
   painted and drawn with the line tool; a lane from the Create Controller Lane menu, events drawn, painted, selected,
   dragged and erased; the line tool's line, square, parabola, sine, triangle and Paint modes from its menu, which shows
@@ -127,5 +129,5 @@ has the key editor's lanes.
   Show/Hide and Show Velocity Lane Only; a right click below a lane's name adding a lane and removing that one; the line
   tool and painting on a lane whose events are on another channel; drags released outside the lanes and never released;
   Auto Select Controllers with a note moved; a preset saved with Add Preset, loaded and removed with Remove Preset;
-  events drawn on a lane playing back.
+  events drawn on a lane playing back; a step that another event now starts with losing its width (#1580).
   `tests/uithemes_tests.cpp`: every theme draws play probability and velocity variance bars dashed.

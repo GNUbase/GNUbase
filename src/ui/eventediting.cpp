@@ -23,6 +23,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -154,7 +155,8 @@ namespace gnubase::ui
 		return grid;
 	}
 
-	time::Position EventDisplay::snapAt(double seconds, std::optional<double> from) const
+	time::Position EventDisplay::snapAt(
+		double seconds, std::optional<double> from, const std::vector<time::Samples>& magnets) const
 	{
 		engine::SnapTarget target;
 		target.position = samples(seconds);
@@ -172,13 +174,25 @@ namespace gnubase::ui
 				target.magnets.push_back(samples(*shown.snapPoint));
 		}
 		target.magnets.insert(target.magnets.end(), m_markers.begin(), m_markers.end());
+		target.magnets.insert(target.magnets.end(), magnets.begin(), magnets.end());
 		return engine::snap(m_snap, snapGrid(), target);
 	}
 
-	double EventDisplay::snapped(double seconds, std::optional<double> from) const
+	double EventDisplay::snapped(
+		double seconds, std::optional<double> from, const std::vector<time::Samples>& magnets) const
 	{
-		return static_cast<double>(time::toSamples(snapAt(seconds, from), m_time.tempo, m_time.sampleRate)) /
+		return static_cast<double>(time::toSamples(snapAt(seconds, from, magnets), m_time.tempo, m_time.sampleRate)) /
 			m_time.sampleRate;
+	}
+
+	double EventDisplay::gridLineBefore(double seconds) const
+	{
+		const engine::SnapGrid grid = snapGrid();
+		const time::Samples at = samples(seconds);
+		time::Position line = engine::nearestGridLine(m_snap.grid(), grid, at);
+		if (time::toSamples(line, m_time.tempo, m_time.sampleRate) > at)
+			line.value -= engine::gridStep(m_snap.grid(), grid, at).value;
+		return static_cast<double>(time::toSamples(line, m_time.tempo, m_time.sampleRate)) / m_time.sampleRate;
 	}
 
 	int64_t EventDisplay::clampMove(time::TimeBase base, int64_t shift) const
@@ -219,8 +233,88 @@ namespace gnubase::ui
 		return modifiers(action, modifiersOf(event));
 	}
 
+	std::map<uint64_t, uint64_t> EventDisplay::editGroups() const
+	{
+		std::map<uint64_t, uint64_t> groups;
+		if (!m_project.is_object())
+			return groups;
+		std::map<uint64_t, uint64_t> parents;
+		std::set<uint64_t> grouping;
+		for (const Json& track : m_project.value("tracks", Json::array()))
+		{
+			const auto id = track.at("id").get<uint64_t>();
+			parents[id] = track.value("parent", uint64_t{0});
+			if (track.value("groupEditing", false))
+				grouping.insert(id);
+		}
+		if (grouping.empty())
+			return groups;
+		for (const auto& [track, parent] : parents)
+			for (uint64_t folder = parent; folder != 0; folder = parents[folder])
+				if (grouping.count(folder) != 0)
+					groups[track] = folder;
+		return groups;
+	}
+
+	std::vector<uint64_t> EventDisplay::withEditGroups(std::vector<uint64_t> events) const
+	{
+		const std::map<uint64_t, uint64_t> groups = editGroups();
+		if (groups.empty() || events.empty())
+			return events;
+		// The lane on its track that each event and part plays on: where events overlap, the playback priority.
+		std::map<uint64_t, int> lanes;
+		for (const char* kind : {"audioEvents", "midiParts", "audioParts"})
+			for (const Json& item : m_project.value(kind, Json::array()))
+				lanes[item.at("id").get<uint64_t>()] = item.value("lane", 0);
+		const double sample = 0.5 / m_time.sampleRate; // seconds
+		const auto groupOf = [&groups](uint64_t track)
+		{
+			const auto found = groups.find(track);
+			return found != groups.end() ? found->second : 0;
+		};
+		std::vector<uint64_t> grouped = events;
+		// ponytail: the selected against every shown event, quadratic; fine for the events of a project window.
+		for (const Shown& one : m_events)
+		{
+			if (one.lane >= m_laneTracks.size() || std::find(events.begin(), events.end(), one.id) == events.end())
+				continue;
+			const uint64_t track = m_laneTracks[one.lane];
+			const uint64_t group = groupOf(track);
+			if (group == 0)
+				continue;
+			for (const Shown& other : m_events)
+				if (other.lane < m_laneTracks.size() && m_laneTracks[other.lane] != track &&
+					groupOf(m_laneTracks[other.lane]) == group && std::abs(other.start - one.start) < sample &&
+					std::abs(other.end - one.end) < sample && lanes[other.id] == lanes[one.id])
+					grouped.push_back(other.id);
+		}
+		return grouped;
+	}
+
+	std::vector<uint64_t> EventDisplay::withEditGroupTracks(const std::vector<uint64_t>& tracks) const
+	{
+		const std::map<uint64_t, uint64_t> groups = editGroups();
+		std::set<uint64_t> folders;
+		for (const uint64_t track : tracks)
+			if (const auto found = groups.find(track); found != groups.end())
+				folders.insert(found->second);
+		if (folders.empty())
+			return tracks;
+		std::vector<uint64_t> all;
+		for (const Json& track : m_project.value("tracks", Json::array()))
+		{
+			const auto id = track.at("id").get<uint64_t>();
+			const auto found = groups.find(id);
+			if (std::find(tracks.begin(), tracks.end(), id) != tracks.end() ||
+				(found != groups.end() && folders.count(found->second) != 0))
+				all.push_back(id);
+		}
+		return all;
+	}
+
 	void EventDisplay::select(std::vector<uint64_t> events)
 	{
+		events = withEditGroups(std::move(events));
 		std::sort(events.begin(), events.end());
 		events.erase(std::unique(events.begin(), events.end()), events.end());
 		m_selection = std::move(events);
@@ -247,6 +341,15 @@ namespace gnubase::ui
 		for (const uint64_t id : m_selection)
 			ids += (ids.empty() ? "" : " ") + std::to_string(id);
 		m_root->SetAttribute("selection", ids);
+		for (const std::function<void()>& listener : m_selectionListeners)
+			listener();
+	}
+
+	void EventDisplay::showRefusal(const std::string& error)
+	{
+		logging::warning("An edit of events failed: {}", error);
+		if (m_refusal != nullptr && alive())
+			m_refusal->SetAttribute("text", error);
 	}
 
 	void EventDisplay::edit(const std::string& command, Json parameters, bool selectResult)
@@ -257,7 +360,7 @@ namespace gnubase::ui
 				if (alive.expired())
 					return;
 				if (!result.ok())
-					logging::warning("An edit of events failed: {}", result.error);
+					showRefusal(result.error);
 				else if (selectResult)
 					select(result.value.at("events").get<std::vector<uint64_t>>());
 			});
@@ -1145,7 +1248,7 @@ namespace gnubase::ui
 				if (alive.expired())
 					return;
 				if (!result.ok())
-					logging::warning("An edit of events failed: {}", result.error);
+					showRefusal(result.error);
 				if (release == m_resizeReleases) // the last one: its preview goes with the next project
 					m_resizeLanded = true;
 				if (!result.ok() || !previewed)
@@ -1224,7 +1327,7 @@ namespace gnubase::ui
 					return;
 				if (!result.ok())
 				{
-					logging::warning("An edit of events failed: {}", result.error);
+					showRefusal(result.error);
 					return;
 				}
 				if (!copy)

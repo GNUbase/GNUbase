@@ -1,0 +1,46 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Rename Version (reference manual p. 236, docs/features/track-versions.md): ui::TrackList opens it from Project >
+     Track Versions and from the Track Versions pop-up menu, and takes the name in #rename-version-name when it closes
+     with OK. It names the active version of every selected track. -->
+<rml>
+<head>
+	<title>Rename Version</title>
+	<style>
+		dialog
+		{
+			width: 300dp;
+		}
+
+		.row
+		{
+			display: flex;
+			margin: 8dp 12dp 0 12dp;
+		}
+
+		#rename-version-name
+		{
+			flex: 1;
+		}
+
+		.buttons
+		{
+			justify-content: flex-end;
+		}
+
+		.buttons button
+		{
+			margin-left: 6dp;
+		}
+	</style>
+</head>
+<body>
+	<dialog id="rename-version-dialog">
+		<div class="dialog-titlebar">Rename Version</div>
+		<div class="row"><input type="text" id="rename-version-name" autofocus="autofocus"/></div>
+		<div class="row buttons">
+			<button result="cancel">Cancel</button>
+			<button class="primary" result="ok">OK</button>
+		</div>
+	</dialog>
+</body>
+</rml>

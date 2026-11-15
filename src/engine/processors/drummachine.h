@@ -169,6 +169,10 @@ namespace gnubase::engine::processors
 		std::array<Voice, g_drumVoices> m_voices{};
 		dsp::Delay m_delay;
 		dsp::Reverb m_reverb;
+		// Whether the delay and the reverb ran in the last stretch that render processed (render runs for every stretch
+		// between a block's events): one that goes off is cleared there, to the sample, so it starts empty.
+		bool m_delayOn = false;
+		bool m_reverbOn = false;
 		std::array<std::vector<float>, 2> m_delayBus;
 		std::array<std::vector<float>, 2> m_reverbBus;
 	};

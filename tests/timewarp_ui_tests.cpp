@@ -77,8 +77,7 @@ namespace
 						.at("event")
 						.at("id")
 						.get<uint64_t>();
-			REQUIRE(app.waitUntil(
-				[this] { return display.project().is_object() && display.project().at("audioEvents").size() == 1; }));
+			REQUIRE(app.waitUntil([this] { return display.project().at("audioEvents").size() == 1; }));
 		}
 
 		// The x of a time in seconds, and a y on the first lane, in the window's pixels.
@@ -212,8 +211,7 @@ TEST_CASE("Audio > Advanced sets the definition from the tempo and copies warp m
 			.at("id")
 			.get<uint64_t>();
 	f.app.call("clip.addWarpMarker", {{"clip", f.clip}, {"position", 30000}, {"target", 32000}});
-	REQUIRE(f.app.waitUntil(
-		[&f] { return f.display.project().is_object() && f.display.project().at("audioEvents").size() == 2; }));
+	REQUIRE(f.app.waitUntil([&f] { return f.display.project().at("audioEvents").size() == 2; }));
 	f.display.select({f.event});
 	f.app.keys().run("audio.copyWarpMarkers", Json::object(), f.app.main(), nullptr);
 	f.display.select({copy});

@@ -614,6 +614,13 @@ namespace gnubase::engine
 					return {};
 				AudioEvent right = event;
 				right.id = project.newId();
+				// A piece of a slice the quantize panel cut is one of its event's slices too, which the Reset of the
+				// Slice Rules puts back together (#1579).
+				if (right.sliceOrigin)
+				{
+					right.sliceOrigin.reset();
+					right.slicedFrom = event.id;
+				}
 				// The piece after the split comes right in front of its event, behind whatever was in front of it: at
 				// its event's place, ranked right after it (#1189, #1281). Only the events at that place, the pieces
 				// of the event, get new ranks; ties from before ranks go by id, as stackKey orders them.
@@ -652,41 +659,38 @@ namespace gnubase::engine
 				// the two differ, and resetting would play the wrong clip section and leave a gap (#1333). The
 				// panel can also have made the event longer than its original, so the piece before the split
 				// keeps at most the whole original, and a split past the original's end leaves nothing of it for
-				// the piece after, which then keeps no origin, as for an event moved by other means since (#1333).
-				// Such an origin, one that has stopped counting, doesn't come along either.
+				// the piece after: its original has no length, and resetting removes it (#1435). An origin that
+				// has stopped counting, as for an event moved by other means since, doesn't come along.
+				bool pastOriginal = false;
 				if (auto& origin = right.quantizeOrigin; origin && origin->quantized.position == event.position)
 				{
+					pastOriginal = frames >= origin->original.length;
 					event.quantizeOrigin->original.length = std::min(frames, origin->original.length);
 					event.quantizeOrigin->quantized.length = frames;
-					if (frames < origin->original.length)
-					{
-						const time::Samples original =
-							samples(project, origin->original.position) + (at - samples(project, event.position));
-						const time::Position shifted =
-							rebased(project, {time::TimeBase::Linear, original}, event.position.base);
-						const EventTiming originalTiming{shifted, origin->original.offset + frames,
-							origin->original.length - frames, right.crossfade};
-						*origin = EventQuantizeOrigin{
-							originalTiming, EventTiming{right.position, right.offset, right.length, right.crossfade}};
-					}
-					else
-					{
-						right.quantizeOrigin.reset();
-					}
+					const time::Samples original =
+						samples(project, origin->original.position) + (at - samples(project, event.position));
+					const time::Position shifted =
+						rebased(project, {time::TimeBase::Linear, original}, event.position.base);
+					const EventTiming originalTiming{shifted, origin->original.offset + frames,
+						std::max<time::Samples>(origin->original.length - frames, 0), right.crossfade};
+					*origin = EventQuantizeOrigin{
+						originalTiming, EventTiming{right.position, right.offset, right.length, right.crossfade}};
 				}
 				else
 				{
 					right.quantizeOrigin.reset();
 				}
-				// An event that crossfaded from this one now overlaps the piece after the split. Its origin's
-				// crossfades follow, so that resetting still knows them as the panel left them (#1333).
+				// An event that crossfaded from this one now overlaps the piece after the split. Its quantized
+				// crossfade follows, so that resetting still knows it as the panel left it (#1333), and so does its
+				// original one, unless that piece has nothing of the original: resetting then removes it, and the
+				// piece before the split is the whole original the crossfade came from (#1435).
 				for (auto& [id, other] : project.audioEvents)
 					if (other.crossfade.from == event.id && eventSpan(project, other).start >= at)
 					{
 						other.crossfade.from = right.id;
 						if (other.quantizeOrigin)
 						{
-							if (other.quantizeOrigin->original.crossfade.from == event.id)
+							if (!pastOriginal && other.quantizeOrigin->original.crossfade.from == event.id)
 								other.quantizeOrigin->original.crossfade.from = right.id;
 							if (other.quantizeOrigin->quantized.crossfade.from == event.id)
 								other.quantizeOrigin->quantized.crossfade.from = right.id;
@@ -953,18 +957,24 @@ namespace gnubase::engine
 			resizeEvents(copy, inner);
 			syncSharedParts(project.midiParts, copy, inner); // as ProjectModel does after the edit
 			Json result = {{"audioEvents", Json::array()}, {"audioParts", Json::array()}, {"midiParts", Json::array()}};
+			// With a warped event's playedLength and the derived rootKeyTranspose, as project.get gives them.
+			const auto audioEvent = [&copy](const AudioEvent& event)
+			{
+				Json json = audioEventJson(copy, event);
+				json["rootKeyTranspose"] = rootKeyTranspose(copy, event);
+				return json;
+			};
 			for (const Item& item : itemsFrom(copy, context.parameters(), true))
 			{
 				if (item.audio != nullptr)
 				{
-					result["audioEvents"].push_back(
-						audioEventJson(copy, *item.audio)); // with a warped event's playedLength
+					result["audioEvents"].push_back(audioEvent(*item.audio));
 				}
 				else if (item.audioPart != nullptr)
 				{
 					result["audioParts"].push_back(toJson(*item.audioPart));
 					for (const AudioEvent* event : eventsIn(copy, item.audioPart->id))
-						result["audioEvents"].push_back(audioEventJson(copy, *event));
+						result["audioEvents"].push_back(audioEvent(*event));
 				}
 				else
 				{
@@ -1139,7 +1149,17 @@ namespace gnubase::engine
 							std::clamp(point.volume + each.volume - loudest, g_minEventVolume, g_maxEventVolume);
 					curve.insert(curve.end(), own.begin(), own.end());
 				}
-				// Events that continue each other in a clip become one event.
+				// Events that continue each other in a clip become one event, with the first one's root key and Global
+				// Transpose: refused for events that follow global transpose differently, as for MIDI parts (#1368).
+				for (size_t i = 1; i < items.size(); ++i)
+					require(items[i].audio->independent == first.audio->independent &&
+							rootKeyTranspose(project, *items[i].audio) == rootKeyTranspose(project, *first.audio),
+						"audio events that follow global transpose differently, by their root key or Global "
+						"Transpose, don't glue");
+				// Nor do events that transpose differently by their own Transpose (#1555).
+				for (size_t i = 1; i < items.size(); ++i)
+					require(items[i].audio->transpose == first.audio->transpose,
+						"audio events that transpose differently by their own Transpose don't glue");
 				for (size_t i = 1; i < items.size(); ++i)
 				{
 					first.audio->length += items[i].audio->length;
@@ -1648,22 +1668,38 @@ namespace gnubase::engine
 
 		// The gap by which the items of a range that starts at from (ticks) land in a range that starts at at (project
 		// samples): gap, the one between the two, unless an item on a musical track starts where the range starts in
-		// samples. Then every musical item, on every track, goes by the ticks that put the first of those in ticks at
-		// at exactly, so that all of them keep their distances in ticks, also across tracks: by the gap, as from and
-		// at are rounded to ticks apart and the item's start in ticks lies up to half a sample from the range's, it
-		// could land a sample off at (#1261).
-		Gap landing(const Project& project, const std::vector<Item>& items, Gap gap, time::Ticks from, time::Samples at)
+		// samples and the gap doesn't put the first of those in ticks in at's sample. Then every musical item, on every
+		// track, goes by the ticks that put that first one at at exactly, so that all of them keep their distances in
+		// ticks, also across tracks: by the gap, as from and at are rounded to ticks apart and the item's start in
+		// ticks lies up to half a sample from the range's, it could land a sample off at (#1261). Where the gap already
+		// lands it in at's sample, the gap stays: pasted where it was copied, a part on a bar keeps the bar's tick
+		// (#1331). Not at 0, the project's start, which is tick 0 exactly: there the gap could put it before tick 0 or
+		// after it, and it lands on tick 0. And nothing lands before tick 0: the automation that lands with the items
+		// can start before the first of them, at a point that the range's start edge takes from its sample or at the
+		// edge's own tick (automationEdge), so at position 0 the first of everything lands on tick 0.
+		Gap landing(const Project& project, const std::vector<Item>& items,
+			const std::vector<AutomationLane>& automation, Gap gap, time::Ticks from, time::Samples at)
 		{
 			const time::Samples start = samples(project, {time::TimeBase::Musical, from});
 			std::optional<time::Ticks> first;
+			std::optional<time::Ticks> earliest;
 			for (const Item& item : items)
 			{
 				const time::Position& position = item.position();
-				if (position.base == time::TimeBase::Musical && samples(project, position) == start)
+				if (position.base != time::TimeBase::Musical)
+					continue;
+				earliest = std::min(earliest.value_or(position.value), position.value);
+				if (samples(project, position) == start)
 					first = std::min(first.value_or(position.value), position.value);
 			}
-			if (first)
+			for (const AutomationLane& lane : automation)
+				for (const auto& [id, point] : lane.points)
+					if (point.position.base == time::TimeBase::Musical)
+						earliest = std::min(earliest.value_or(point.position.value), point.position.value);
+			if (first && (at == 0 || samples(project, {time::TimeBase::Musical, *first + gap.ticks}) != at))
 				gap.ticks = ticks(project, {time::TimeBase::Linear, at}) - *first;
+			if (earliest && *earliest + gap.ticks < 0)
+				gap.ticks = -*earliest;
 			return gap;
 		}
 
@@ -1765,11 +1801,17 @@ namespace gnubase::engine
 		// Takes the automation between from and to out of a lane and keeps the curve outside: the value it arrives
 		// at from with holds up to to, where the curve goes on. With virgin territory the range becomes a gap instead
 		// (reference manual p. 881): the point at from is a terminator. Closing the gap moves the points after it back
-		// instead. Points at to make way for one that has their value and shape. Edges in gaps stay in them. A range
-		// without points in it is automation too where the curve goes across it, between two points outside a gap.
-		// ponytail: a curve shaped point at an edge keeps its bend over the shorter rest of its segment.
-		void cutAutomation(
-			Project& project, AutomationLane& lane, int64_t from, int64_t to, bool close, CommandContext& context)
+		// instead, by length (to - from, unless an edge lies at a point in its sample, automationEdge) as the events
+		// after it move, to a joint where the curve after it goes on. But not before a point that stays before the
+		// range nor before the project's start: with the end edge on a point in its sample, to - length can lie up to
+		// half a sample, in ticks at the end's tempo, before from, and the points after the range would land before
+		// the point that stays, a terminator's gap swallowing them, or at negative positions. Then the joint is at
+		// that point or at 0, and the points after the range move back by less. Points at to make way for one that has
+		// their value and shape. Edges in gaps stay in them. A range without points in it is automation too where the
+		// curve goes across it, between two points outside a gap. ponytail: a curve shaped point at an edge keeps its
+		// bend over the shorter rest of its segment.
+		void cutAutomation(Project& project, AutomationLane& lane, int64_t from, int64_t to, bool close, int64_t length,
+			CommandContext& context)
 		{
 			constexpr int64_t endless = std::numeric_limits<int64_t>::max();
 			const bool across = anyPoint(lane, std::numeric_limits<int64_t>::min(), from) &&
@@ -1782,6 +1824,14 @@ namespace gnubase::engine
 			const std::optional<AutomationPoint> shape = shapingPoint(lane, to, true);
 			const bool leftGap = inGap(project, lane, from, true);
 			const bool rightGap = inGap(project, lane, to, false);
+			int64_t joint = to;
+			if (close)
+			{
+				joint = std::max<int64_t>(to - length, 0);
+				for (const auto& [id, point] : lane.points)
+					if (point.position.value < from)
+						joint = std::max(joint, point.position.value);
+			}
 			for (auto point = lane.points.begin(); point != lane.points.end();)
 			{
 				int64_t& at = point->second.position.value;
@@ -1791,14 +1841,15 @@ namespace gnubase::engine
 					continue;
 				}
 				if (close && at > to)
-					at -= to - from;
+					at -= to - joint;
 				++point;
 			}
 			if (!leftGap)
 				addPoint(project, lane,
-					makePoint(base, from, left, std::nullopt, close ? rightGap : project.virginTerritory));
+					makePoint(base, close ? std::min(from, joint) : from, left, std::nullopt,
+						close ? rightGap : project.virginTerritory));
 			if (!rightGap)
-				addPoint(project, lane, makePoint(base, close ? from : to, right, shape));
+				addPoint(project, lane, makePoint(base, joint, right, shape));
 			else if (!leftGap && !close && !project.virginTerritory)
 				addPoint(project, lane, makePoint(base, to, left, std::nullopt, true)); // the held value ends there
 			context.emit("automationLane.changed", {{"lane", toJson(lane)}});
@@ -1899,17 +1950,30 @@ namespace gnubase::engine
 			context.emit("automationLane.changed", {{"lane", toJson(lane)}});
 		}
 
+		// Where an edge of a range at a position in samples lies in a lane: on the tick nearest to it on a musical
+		// track, or at the first point in its sample before that tick. A point is in a range where it shows, in
+		// samples, as events and parts are (#1261): a point on the downbeat of a part that starts in the range's start
+		// sample goes with the part, and one on the downbeat of a part in the end sample stays with it (#1331). Not a
+		// terminator: an edge on it would fill the gap it starts with the value the curve arrives there with.
+		int64_t automationEdge(const Project& project, const AutomationLane& lane, time::Samples at)
+		{
+			const time::TimeBase base = project.trackById.at(lane.track).timeBase;
+			int64_t edge = inBase(project, at, base);
+			if (base == time::TimeBase::Musical)
+				for (const auto& [id, point] : lane.points)
+					if (!point.terminator && point.position.value < edge && samples(project, point.position) == at)
+						edge = point.position.value;
+			return edge;
+		}
+
 		// The automation in a range, as the clipboard keeps it: of each lane with points on its tracks.
 		std::vector<AutomationLane> automationIn(const Project& project, const Range& range)
 		{
 			std::vector<AutomationLane> lanes;
 			for (const auto& [id, lane] : project.automation)
 				if (contains(range.tracks, lane.track) && !lane.points.empty())
-				{
-					const time::TimeBase base = project.trackById.at(lane.track).timeBase;
-					lanes.push_back(automationWithin(
-						project, lane, inBase(project, range.start, base), inBase(project, range.end, base)));
-				}
+					lanes.push_back(automationWithin(project, lane, automationEdge(project, lane, range.start),
+						automationEdge(project, lane, range.end)));
 			return lanes;
 		}
 
@@ -1919,9 +1983,11 @@ namespace gnubase::engine
 			for (auto& [id, lane] : project.automation)
 				if (contains(range.tracks, lane.track))
 				{
+					// Closed by the range's length in the lane's time base, as the events after it move back.
 					const time::TimeBase base = project.trackById.at(lane.track).timeBase;
-					cutAutomation(project, lane, inBase(project, range.start, base), inBase(project, range.end, base),
-						close, context);
+					cutAutomation(project, lane, automationEdge(project, lane, range.start),
+						automationEdge(project, lane, range.end), close,
+						inBase(project, range.end, base) - inBase(project, range.start, base), context);
 				}
 		}
 
@@ -1991,7 +2057,9 @@ namespace gnubase::engine
 		}
 
 		// Delete Time: the transpose events in the range go with it, and those after it move back by the gap, so that
-		// they keep their place in the music, which moves back too (#896).
+		// they keep their place in the music, which moves back too (#896). The transposition in force at the range's
+		// end goes on from the cut, so that the music after the range keeps its pitch (#1367), as Process Bars carries
+		// the signature in force.
 		void closeTransposeEvents(Project& project, const std::vector<ObjectId>& tracks, const Range& range,
 			const Gap& gap, CommandContext& context)
 		{
@@ -1999,21 +2067,37 @@ namespace gnubase::engine
 				return;
 			std::vector<TransposeEvent>& events = project.transpose.events;
 			bool changed = false;
+			int before = 0;             // the value in force at the range's start
+			std::optional<int> dropped; // the value in force at its end, if an event in the range set it
+			bool atEnd = false;         // an event at the range's end, which moves to the cut
 			for (auto it = events.begin(); it != events.end();)
 			{
 				const time::Samples at = samples(project, it->position);
+				if (at < range.start)
+					before = it->value;
 				if (at >= range.start && at < range.end)
 				{
+					dropped = it->value;
 					it = events.erase(it);
 					changed = true;
 					continue;
 				}
 				if (at >= range.end)
 				{
+					atEnd = atEnd || at == range.end;
 					it->position.value -= gap.in(it->position.base);
 					changed = true;
 				}
 				++it;
+			}
+			if (dropped && !atEnd && *dropped != before)
+			{
+				const time::TimeBase base = project.trackById.at(transposeTrackId(project)).timeBase;
+				TransposeEvent carried;
+				carried.id = project.newId();
+				carried.position = {base, inBase(project, range.start, base)};
+				carried.value = *dropped;
+				events.push_back(carried);
 			}
 			if (changed)
 			{
@@ -2068,7 +2152,7 @@ namespace gnubase::engine
 				if (contains(tracks, lane.track))
 				{
 					const time::TimeBase base = project.trackById.at(lane.track).timeBase;
-					openAutomation(project, lane, inBase(project, at, base), gap.in(base), context);
+					openAutomation(project, lane, automationEdge(project, lane, at), gap.in(base), context);
 				}
 		}
 
@@ -2259,7 +2343,18 @@ namespace gnubase::engine
 				const ObjectId id = part.id;
 				added.push_back({nullptr, &(project.midiParts[id] = std::move(part))});
 			}
-			const Gap landed = landing(project, added, shift, clipboard.startTicks, at);
+			// The automation that lands: on lanes of the same parameter that the tracks already have.
+			// ponytail: automation lands only on such lanes.
+			std::vector<AutomationLane> automation;
+			for (const AutomationLane& copied : clipboard.automation)
+			{
+				const ObjectId track = onto(copied.track);
+				if (std::any_of(project.automation.begin(), project.automation.end(),
+						[&copied, track](const auto& entry)
+						{ return entry.second.track == track && entry.second.target == copied.target; }))
+					automation.push_back(copied);
+			}
+			const Gap landed = landing(project, added, automation, shift, clipboard.startTicks, at);
 			for (const Item& item : added)
 			{
 				const ObjectId track = onto(item.track());
@@ -2267,13 +2362,12 @@ namespace gnubase::engine
 				place(project, item, landed.shift(item.position().base, 1), track);
 				announce(project, context, item, "added");
 			}
-			// ponytail: automation lands only on lanes of the same parameter that the tracks already have.
-			for (const AutomationLane& copied : clipboard.automation)
+			for (const AutomationLane& copied : automation)
 			{
 				const ObjectId track = onto(copied.track);
 				for (auto& [id, lane] : project.automation)
 					if (lane.track == track && lane.target == copied.target)
-						pasteAutomation(project, lane, copied, shift, context);
+						pasteAutomation(project, lane, copied, landed, context);
 			}
 			return added;
 		}
@@ -2316,7 +2410,7 @@ namespace gnubase::engine
 				movedEvents.insert(event->id);
 			}
 			const Gap landed =
-				landing(project, items, shift, ticks(project, {time::TimeBase::Linear, range.start}), at);
+				landing(project, items, automation, shift, ticks(project, {time::TimeBase::Linear, range.start}), at);
 			for (const Item& item : items)
 			{
 				place(project, item, landed.shift(item.position().base, 1), item.track());
@@ -2332,7 +2426,7 @@ namespace gnubase::engine
 			for (const AutomationLane& copied : automation)
 				for (auto& [id, lane] : project.automation)
 					if (lane.track == copied.track && lane.target == copied.target)
-						pasteAutomation(project, lane, copied, shift, context);
+						pasteAutomation(project, lane, copied, landed, context);
 			return {{"events", idsOf(items)}};
 		}
 
@@ -2810,7 +2904,8 @@ namespace gnubase::engine
 				"events split at the nearest point within 50 ms "
 				"and inside the event where their audio crosses zero. The pieces of a pattern event continue its "
 				"pattern (patternOffset). The piece of a quantized audio event after the split keeps where it "
-				"was before quantizing, shifted by the split, so that quantize.reset puts both pieces back. "
+				"was before quantizing, shifted by the split, so that quantize.reset puts both pieces back, or "
+				"removes the piece after a split past the original's length, which has nothing of it. "
 				"Returns the new events after the splits.",
 				schema({{"events", events()}, {"positions", {{"type", "array"}, {"items", integer()}}},
 						   {"splitNotes", boolean()}, {"zeroCrossing", boolean()}},
@@ -2831,7 +2926,10 @@ namespace gnubase::engine
 				"(refused if that would transpose a note beyond 0 to 127). Pattern events that continue the first "
 				"one's pattern, as the pieces of a split do, stay that "
 				"pattern event; otherwise the pattern events' steps become notes of the glued part, as they played. "
-				"Returns the event or part.",
+				"Refused for audio events that continue each other but follow global transpose differently, by their "
+				"root key or Global Transpose, or transpose differently by their own transpose, and for MIDI parts "
+				"that follow global transpose differently: the glued event or part keeps the first one's, so the "
+				"others would play at another pitch (audioEvent.set, midiPart.set). Returns the event or part.",
 				schema({{"events", events()}}, {"events"}), schema({{"event", integer()}}, {"event"}), false},
 			"Glue", glueEvents);
 
@@ -2969,7 +3067,8 @@ namespace gnubase::engine
 					"with virgin territory (automation.set) the range becomes a gap instead, the point at its start a "
 					"terminator. time (Delete Time) closes the gap: what comes after the range on its tracks moves "
 					"back by its length, in ticks on musical tracks, and the transpose events in the range go with it, "
-					"those after it moving back too, unless the transpose track is locked. Locked events stay. Without "
+					"those after it moving back too, and the transposition in force at its end goes on from its "
+					"start, unless the transpose track is locked. Locked events stay. Without "
 					"time it also takes the range out of the cycle markers that it lies in, on the marker tracks among "
 					"its tracks (reference manual p. 425): a cycle marker that starts or ends where the range does "
 					"gets shorter, and one that reaches past both of its edges is split in two, the part after the "

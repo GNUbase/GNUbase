@@ -355,6 +355,10 @@ namespace gnubase::ui
 			showError(window, result.error);
 			return;
 		}
+		// Its window may have gone since OK, such as a panel's own window: its progress shows in the main window
+		// instead, so that it doesn't run unseen (#1372). The refusal above shows there too (openWaiting).
+		if (const Window* main = mainWindow(); m_shell.find(window) == nullptr && main != nullptr)
+			window = main->id();
 		const Json& job = result.value.at("job");
 		const auto id = job.at("id").get<uint64_t>();
 		Backup& backup = m_backups[id];
@@ -389,13 +393,9 @@ namespace gnubase::ui
 		const auto found = m_backups.find(id);
 		if (found == m_backups.end())
 			return; // another client's, or reported already
-		WindowId window = found->second.window;
 		// Its window may have gone meanwhile, such as a panel's own window with a backup that ran without progress
-		// there: the main window shows what it has to say (#1206).
-		if (m_shell.find(window) == nullptr)
-			for (const Window* open : m_shell.windows())
-				if (open->main())
-					window = open->id();
+		// there: its errors show in the main window then, as every error does (openWaiting, #1206).
+		const WindowId window = found->second.window;
 		auto* progress = dynamic_cast<Rml::ElementDocument*>(found->second.progress.get());
 		m_backups.erase(found);
 		if (progress != nullptr)
@@ -445,6 +445,8 @@ namespace gnubase::ui
 
 	bool ProjectFiles::cancelBackupOf(Rml::Element* progress)
 	{
+		if (progress == nullptr)
+			return false; // a backup without progress has none to match (#1372)
 		for (auto& backup : m_backups)
 			if (backup.second.progress.get() == progress)
 			{

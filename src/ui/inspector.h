@@ -9,10 +9,10 @@
 
 #include <cstdint>
 #include <functional>
-#include <map>
 #include <memory>
 #include <set>
 #include <string>
+#include <vector>
 
 namespace Rml
 {
@@ -47,10 +47,11 @@ namespace gnubase::ui
 		Inspector(Inspector&&) = delete;
 		Inspector& operator=(Inspector&&) = delete;
 
-		// Shows a track (0: none) of the project as project.get returned it, the loads-th answer, which the binding
-		// handed on as EngineBinding::handed() returned read; call it once per step, it does nothing while neither
-		// changed. The project must stay until the next call.
-		void update(uint64_t track, const engine::Json& project, uint64_t loads, uint64_t read);
+		// Shows the first of the tracks (none when it is empty) of the project as project.get returned it, the loads-th
+		// answer, which the binding handed on as EngineBinding::handed() returned read; call it once per step, it does
+		// nothing while neither changed. The Track Versions section works on every one of the tracks that has versions.
+		// The project must stay until the next call.
+		void update(const std::vector<uint64_t>& tracks, const engine::Json& project, uint64_t loads, uint64_t read);
 
 	private:
 		void ProcessEvent(Rml::Event& event) override;
@@ -64,6 +65,13 @@ namespace gnubase::ui
 		// control panels, and send a control's change (channel.set midiInserts and midiSends).
 		void showMidiEffects(const std::string& section, const engine::Json& rack);
 		void changeMidiEffect(const std::string& control, const Rml::Event& event);
+		// The Track Versions section (pp. 231-232): the active version's name and ID, and the list of them all.
+		void showVersions(const engine::Json& track);
+		// The selected tracks that have versions: a version command lists only those, since the engine refuses one
+		// that names a track without any.
+		std::vector<uint64_t> versioned() const;
+		// A version command on every selected track that has versions, one undo step.
+		void versionCommand(const char* command);
 		// Shows the MIDI inserts' divider at a place, 0 above the first slot to 4 below the last.
 		void showDivider(int gap);
 		// A drag of the divider: it follows the mouse, and its end sends where it went (channel.set midiInserts).
@@ -73,8 +81,8 @@ namespace gnubase::ui
 		void sendChannel(engine::Json parameters);
 		// What a command does when it is done: if it was refused, the next update shows the channel again.
 		std::function<void(const engine::Result&)> whenRefused();
-		// Sends a value field's change as a step of its gesture (EngineBinding::sendStep) under key, and keeps the
-		// value that the field shows with it (shown).
+		// Sends a value field's change as a step of its gesture (EngineBinding::sendStep) under key, with the value
+		// that the field shows (shown), which the binding keeps with the step's record.
 		void sendFieldStep(
 			int gesture, const std::string& key, float shown, std::string description, engine::Json commands);
 		// What a value field shows for the project's value: while the project is older than the field's own steps for
@@ -93,11 +101,9 @@ namespace gnubase::ui
 		std::function<void(uint64_t track)> m_setupArticulations;
 		std::function<void(uint64_t track, bool project)> m_openInputTransformer;
 		uint64_t m_track = 0;
+		std::vector<uint64_t> m_selected; // the tracks the inspector shows, the first one's details
 		uint64_t m_loads = 0;
 		uint64_t m_read = 0;
-		// sendFieldStep's values, by key. ponytail: never pruned, one short entry per field and channel the user
-		// changed.
-		std::map<std::string, std::string> m_sent;
 		const engine::Json* m_project = nullptr;            // update's
 		engine::Json m_devices = engine::Json::object();    // the user setting midi.devices
 		engine::Json m_channel;                             // the track's, null without one

@@ -23,7 +23,9 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace gnubase;
@@ -257,6 +259,137 @@ TEST_CASE("every theme draws play probability and velocity variance bars dashed,
 			CHECK_THAT(decorator(*bar), ContainsSubstring("repeating-linear-gradient"));
 			CHECK(bar->GetComputedValues().background_color().alpha == 0);
 		}
+	}
+}
+
+TEST_CASE(
+	"the bars' look reaches their sections' buttons, not their setup panes, in each state and with the focus", "[unit]")
+{
+	// #1342: the default theme draws the buttons of toolbars and the transport bar flat (#1328). The transport's setup
+	// pane is filled into the transport bar and the transport panel together with its sections, and keeps framed
+	// buttons, as the toolbar's setup pane outside its bar does. Menu buttons that show a value look pressed and
+	// disabled, and every bar button shows the focus ring over its state. The test sets the states as pseudo-classes,
+	// as the widgets do for the disabled attribute (ui/widgets.h).
+	test::FakeUi fake{{{1, "Monitor", {0, 0, 1920, 1080}, {0, 0, 1920, 1080}, 1.0F}}};
+	ui::Fonts(resources() / "fonts").load();
+	const ui::Themes themes(resources());
+	ui::Window& window = fake.shell.open(spec());
+	Rml::ElementDocument* document = window.context().LoadDocumentFromMemory(R"(<rml><body>
+		<div class="toolbar"><button id="tool">Tool</button><button id="tool-checked" class="checked">On</button>
+			<button id="value" menu="value-menu">Bar</button>
+			<button id="value-off" menu="value-menu">Bar</button>
+			<button id="value-checked" class="checked" menu="value-menu">Bar</button>
+			<button id="icon-menu" class="icon-only" menu="value-menu">C</button></div>
+		<div class="strip transport"><div class="transport-section"><button id="locate">L</button>
+			<button id="start" class="icon-only checked">S</button><button id="record" class="icon-only checked">R</button>
+			<valuefield id="tempo"/><textdisplay id="signature" class="display"/></div>
+			<menu class="setup-pane"><button id="bar-pane">Save Preset</button></menu></div>
+		<div class="transport toolbar"><div class="transport-section"><button id="panel-locate">L</button></div>
+			<menu class="setup-pane"><button id="panel-pane">Show All</button></menu></div>
+		<menu class="setup-pane"><button id="pane">Save Preset</button></menu>
+		<menu id="value-menu"><menuitem>Bar</menuitem></menu>
+	</body></rml>)");
+	REQUIRE(document != nullptr);
+	document->Show();
+	const auto element = [document](const char* id)
+	{
+		Rml::Element* found = document->GetElementById(id);
+		REQUIRE(found != nullptr);
+		return found;
+	};
+	const auto update = [&]
+	{
+		window.requestRender();
+		fake.shell.step(milliseconds(0));
+	};
+	// The decorator in a state, set by pseudo-classes, which are cleared afterwards.
+	const auto in = [&](const char* id, std::initializer_list<const char*> states)
+	{
+		Rml::Element* button = element(id);
+		for (const char* state : states)
+			button->SetPseudoClass(state, true);
+		update();
+		const std::string skin = decorator(*button);
+		for (const char* state : states)
+			button->SetPseudoClass(state, false);
+		return skin;
+	};
+	for (const std::string theme : {"gnubase", "dark", "light", "high-contrast"})
+	{
+		INFO("theme " << theme);
+		fake.shell.setTheme(theme);
+		const bool flat = theme == "gnubase";
+
+		// Setup panes inside a bar look like the one outside, in every state.
+		for (const char* id : {"bar-pane", "panel-pane"})
+		{
+			INFO(id);
+			for (const auto& states : std::vector<std::vector<const char*>>{{}, {"hover"}, {"active"}})
+			{
+				Rml::Element* outside = element("pane");
+				Rml::Element* inside = element(id);
+				for (const char* state : states)
+				{
+					outside->SetPseudoClass(state, true);
+					inside->SetPseudoClass(state, true);
+				}
+				update();
+				CHECK(decorator(*inside) == decorator(*outside));
+				CHECK(inside->GetComputedValues().color() == outside->GetComputedValues().color());
+				for (const char* state : states)
+				{
+					outside->SetPseudoClass(state, false);
+					inside->SetPseudoClass(state, false);
+				}
+			}
+		}
+		CHECK_THAT(in("pane", {}), ContainsSubstring("button-normal.svg"));
+		// The sections' buttons in the bar's look: flat in the default theme, framed in the others.
+		for (const char* id : {"tool", "locate", "panel-locate"})
+		{
+			INFO(id);
+			if (flat)
+				CHECK_THAT(in(id, {}), !ContainsSubstring(".svg"));
+			else
+				CHECK_THAT(in(id, {}), ContainsSubstring("button-normal.svg"));
+		}
+
+		// A menu button that shows a value: a field, pressed under the mouse button, dimmed when disabled.
+		CHECK_THAT(in("value", {"hover", "active"}), ContainsSubstring("pressed.svg"));
+		CHECK_THAT(in("value-off", {"disabled"}), ContainsSubstring("disabled.svg"));
+		if (flat)
+		{
+			CHECK_THAT(in("value", {"hover", "active"}), ContainsSubstring("dropdown-button-pressed.svg"));
+			CHECK_THAT(in("value-off", {"disabled"}), ContainsSubstring("dropdown-button-disabled.svg"));
+			// An icon-only menu button stays flat, its icon the arrow.
+			for (const char* state : {"active", "disabled"})
+			{
+				INFO(state);
+				CHECK_THAT(in("icon-menu", {state}), !ContainsSubstring(".svg"));
+			}
+		}
+
+		// The focus ring over every state of a bar button.
+		const std::vector<std::pair<const char*, std::vector<const char*>>> focused{{"tool", {}}, {"tool", {"hover"}},
+			{"tool-checked", {}}, {"value", {}}, {"value", {"hover"}}, {"value-checked", {}}, {"icon-menu", {"hover"}},
+			{"start", {}}, {"record", {}}, {"locate", {"hover"}}};
+		for (const auto& [id, states] : focused)
+		{
+			INFO(id << " " << states.size() << " states");
+			std::vector<const char*> with = states;
+			with.push_back("focus-visible");
+			Rml::Element* button = element(id);
+			for (const char* state : with)
+				button->SetPseudoClass(state, true);
+			update();
+			CHECK_THAT(decorator(*button), ContainsSubstring("focus-ring.svg"));
+			for (const char* state : with)
+				button->SetPseudoClass(state, false);
+		}
+
+		// The tempo is plain digits in the transport bar, as the time displays and the signature.
+		update();
+		CHECK(decorator(*element("tempo")) == decorator(*element("signature")));
 	}
 }
 

@@ -4,14 +4,17 @@
 // selects a pad and sets its parameters and the global ones, renames, copies, cuts, pastes and resets pads, loads a
 // dropped file onto a pad, and the add track dialog's Drum page adds drum tracks. tests/drummachine_tests.cpp checks
 // the engine's side.
+#include "testutils/commandholds.h"
 #include "uiapp.h"
 
 #include "engine/engine.h"
 #include "ui/automation.h"
+#include "ui/enginebinding.h"
 #include "ui/shell.h"
 #include "ui/tracklist.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -22,6 +25,7 @@
 #include <vector>
 
 using namespace gnubase;
+using Catch::Matchers::WithinAbs;
 using engine::Json;
 
 namespace
@@ -108,13 +112,23 @@ namespace
 			return fallback;
 		}
 
-		std::string padName(int pad)
+		// A pad's name or another of its fields.
+		std::string padName(int pad, const char* field = "name")
 		{
 			const Json drums = drumChannel();
 			for (const Json& item : drums.at("pads"))
 				if (item.at("pad") == pad)
-					return item.value("name", std::string());
+					return item.value(field, std::string());
 			return {};
+		}
+
+		// Opens a drop-down list, moves the selection down that many options with the arrow key, and closes it.
+		void choose(const std::string& selector, int down)
+		{
+			click(selector);
+			for (int i = 0; i < down; ++i)
+				app.ui().key(std::nullopt, "Down");
+			click(selector);
 		}
 
 		static std::string pad(int number) { return ".drum-pad[pad=\"" + std::to_string(number) + "\"]"; }
@@ -178,6 +192,60 @@ TEST_CASE("the drum machine panel shows the selected drum track's pads and sets 
 	REQUIRE(f.app.waitUntil([&] { return f.has("#drum-machine", "empty"); }));
 }
 
+TEST_CASE("the drum machine panel shows another track's own value while a turned one's last step is out, and back on "
+		  "it the turn's",
+	"[ui]")
+{
+	test::CommandHolds holds; // declared before the app: its engine's command thread waits in hold()
+	Fixture f;
+	const test::ReleaseHolds releaseHolds{holds};
+	f.app.engine().registerCommand(
+		{"test.hold", 1, "Waits for the test to release it.", engine::CommandInfo{}.parameters, Json::object(), false},
+		[&holds](engine::CommandContext&) { return holds.hold(); });
+	engine::Client holder(f.app.engine(), "holder");
+	const Json created = f.app.call("drum.create");
+	const uint64_t other = created.at("track").at("id").get<uint64_t>();
+	const uint32_t id = (36 * g_padStride) + g_level;
+	f.app.call("parameter.set",
+		{{"channel", created.at("channel").at("id")}, {"target", {{"type", "instrument"}, {"parameter", id}}},
+			{"value", -12.0}});
+	f.open();
+	const std::string level = "#drum-parameter-" + std::to_string(id);
+	const auto value = [&] { return test::controlValue(f.app, std::nullopt, level); };
+	REQUIRE(f.app.waitUntil([&] { return !f.elements(level).empty(); }));
+	const double before = value();
+	ui::EngineBinding& binding = f.app.appUi().binding();
+	REQUIRE(f.app.waitUntil(
+		[&] { return binding.waiting("history.transaction") == 0 && binding.waiting("project.get") == 0; }));
+
+	// A wheel turn that the engine takes before a hold: the project read after it waits behind the hold, so the panel
+	// has a read from before the turn (#1305).
+	f.app.ui().wheel(std::nullopt, of(level), 0.0F, -1.0F);
+	holder.send("test.hold");
+	REQUIRE(holds.waitEntered(1));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(binding.waiting("history.transaction") == 0);
+	REQUIRE(binding.waiting("project.get") != 0);
+	const double turned = value();
+	CHECK(turned > before);
+
+	// The other drum track shows its own value, and back on the turned one the turn's, not the other track's (#1471).
+	f.select(other);
+	CHECK(f.app.waitUntil([&] { return value() == -12.0; }));
+	f.select(f.track);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(value() == turned);
+
+	REQUIRE(binding.waiting("project.get") != 0);
+
+	// The read after the turn agrees with it.
+	holds.release(1);
+	REQUIRE(f.app.waitUntil([&] { return binding.waiting("project.get") == 0; }));
+	CHECK_THAT(f.parameter(id, 0.0), WithinAbs(turned, 1e-5));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(value() == turned);
+}
+
 TEST_CASE("the drum machine panel renames, copies, cuts, pastes, resets and loads pads", "[ui]")
 {
 	Fixture f;
@@ -193,6 +261,14 @@ TEST_CASE("the drum machine panel renames, copies, cuts, pastes, resets and load
 	REQUIRE(f.app.waitUntil(
 		[&] { return f.elements(Fixture::pad(37) + " .drum-pad-name").at(0).value("text", "") == "Rim"; }));
 
+	// Set Color: the project's colors, the first after No Color; the pad shows it in its strip.
+	const std::string first = f.app.call("project.get").at("colors").at(0).at("color").get<std::string>();
+	f.choose("#drum-pad-color", 1);
+	REQUIRE(f.app.waitUntil([&] { return f.padName(37, "color") == first; }));
+	REQUIRE(f.app.waitUntil([&] { return f.has(Fixture::pad(37), "colored"); }));
+	CHECK(f.elements(Fixture::pad(37) + " .drum-pad-color").at(0).at("attributes").at("color") == first);
+	CHECK(f.padName(37) == "Rim");
+
 	// Copy and paste the kick onto pad 40, cut it and paste it onto 41.
 	const auto kick = [&](int pad) { return f.parameter(pad * g_padStride, 0.0) == g_kick; };
 	f.click(Fixture::pad(36));
@@ -201,6 +277,9 @@ TEST_CASE("the drum machine panel renames, copies, cuts, pastes, resets and load
 	f.click("#drum-paste");
 	REQUIRE(f.app.waitUntil([&] { return kick(40); }));
 	CHECK(kick(36));
+	// The copy goes by the kick's General MIDI sound, not by its own note's (Low Floor Tom).
+	REQUIRE(f.app.waitUntil(
+		[&] { return f.elements(Fixture::pad(40) + " .drum-pad-name").at(0).value("text", "") == "Bass Drum 1"; }));
 	f.click("#drum-cut");
 	f.click(Fixture::pad(41));
 	f.click("#drum-paste");
@@ -217,6 +296,60 @@ TEST_CASE("the drum machine panel renames, copies, cuts, pastes, resets and load
 	REQUIRE(f.app.waitUntil(
 		[&] { return f.elements(Fixture::pad(43) + " .drum-pad-name").at(0).value("text", "") == "tick"; }));
 	CHECK(f.has(Fixture::pad(43), "assigned"));
+}
+
+TEST_CASE("a pad plays at velocity 127 while the mouse button is down on it", "[ui]")
+{
+	Fixture f;
+	f.open();
+	f.app.call("audio.setDevice", {{"blockSize", 128}, {"inputChannels", 0}, {"captureSeconds", 1}});
+	f.app.call("audio.render", {{"frames", 128}}); // the new graph
+	f.app.call("midi.capture", {{"start", true}});
+	f.click(Fixture::pad(38));
+	std::vector<std::vector<int>> played;
+	CHECK(f.app.waitUntil(
+		[&]
+		{
+			f.app.call("audio.render", {{"frames", 128}});
+			const Json captured = f.app.call("midi.capture");
+			for (const Json& message : captured.at("captured"))
+			{
+				const auto bytes = message.at("bytes").get<std::vector<int>>();
+				if (message.at("channel") == f.channel && (bytes.at(0) & 0xE0) == 0x80)
+					played.push_back(bytes);
+			}
+			return played == std::vector<std::vector<int>>{{0x90, 38, 127}, {0x80, 38, 0}};
+		}));
+	CHECK(f.has(Fixture::pad(38), "selected"));
+}
+
+TEST_CASE("the drum machine's Save Preset and Load Preset open the track preset dialog for its track", "[ui]")
+{
+	Fixture f;
+	f.open();
+	const auto dialog = [&]
+	{
+		const Json found = f.elements("#track-preset-dialog");
+		return found.size() == 1 && found[0].at("visible").get<bool>();
+	};
+	f.app.call("drum.setPad", {{"track", f.track}, {"pad", 36}, {"name", "Boom"}});
+	f.click("#drum-save-preset");
+	REQUIRE(f.app.waitUntil(dialog));
+	f.click("#preset-name");
+	f.app.ui().text(std::nullopt, "Kit");
+	f.click("#preset-confirm");
+	REQUIRE(f.app.waitUntil([&] { return !dialog(); }));
+	const Json presets = f.app.call("track.presets").at("presets");
+	REQUIRE(presets.size() == 1);
+	CHECK(presets[0].at("name") == "Kit");
+
+	// Loading it gives the drum track the pads it had.
+	f.app.call("drum.resetPad", {{"track", f.track}});
+	REQUIRE(f.padName(36).empty());
+	f.click("#drum-load-preset");
+	REQUIRE(f.app.waitUntil(dialog));
+	f.click("#preset-confirm");
+	REQUIRE(f.app.waitUntil([&] { return f.padName(36) == "Boom"; }));
 }
 
 TEST_CASE("Add Drum Track opens the add track dialog on its Drum page", "[ui]")

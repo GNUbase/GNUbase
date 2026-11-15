@@ -94,8 +94,15 @@ attributes, through a data model or directly.
   a right click on an element whose `contextmenu` attribute names it: the nearest one with the attribute, so an empty
   `contextmenu` keeps the menu of an element around it from opening on a control. With a modifier key held (Ctrl,
   Alt, Shift or Cmd), the menu that its `modifiercontextmenu` attribute names opens instead, if it has the attribute,
-  as the event display's and the key editor's toolboxes do ([tools.md](tools.md)); an empty one opens none. It opens inside the window, moved left or up where it would
-  stick out. Put menus straight into the body, so that no container clips them.
+  as the event display's and the key editor's toolboxes do ([tools.md](tools.md)); an empty one opens none. It opens
+  inside the window, moved left or up where it would stick out. Put menus straight into the body, so that no container
+  clips them.
+- An open menu whose items come or go moves inside the window again (#1580, #1665). Until the next press, release or
+  key, it is placed from where it opened, as if the items had been there then: those that the opening click fills in,
+  as the Articulations lane's context menu and the list editor's pop-up menus do, so that a menu that shrinks goes back
+  to the mouse. After that it stays where it is while it fits and moves only as far as it must, so that a menu whose
+  search field leaves items out doesn't jump. Each move asks for the next update, which shows the menu there; a
+  tooltip that moves inside the window once it has its text does the same.
 - A click on an item is a click on that item, for the document to handle, and closes the menu. Escape and a click
   outside close it too. A `disabled` item gets `:disabled` and ignores clicks; `type="toggle"` makes an item checkable,
   as for buttons.
@@ -173,18 +180,20 @@ The theme draws them; the widget library adds nothing.
 as the edit history's done and undone steps with a separator between them ([edit-history.md](edit-history.md)): its
 rows are in the document's order. Each row has a `value` attribute (without commas).
 
-- **Selection.** A click selects a row. With the `multiple` attribute, Ctrl-click (Cmd-click on macOS) adds or removes
-  a row and Shift-click selects the rows from the last one clicked; with `shiftdeselects` too, Shift-click on a
-  selected row deselects it, as in the track list ([track-list.md](track-list.md)). Up and Down move the selection, Shift extends it,
-  Page Up and Page Down move it by one row less than the view shows, Home and End go to the first and last row.
-  Selected rows have the state class `.selected`. The view's `value` attribute is the selected rows' values separated
-  by commas, and `change` sends it, so `data-value` binds the selection both ways, also when `data-for` makes the rows.
+- **Selection.** A click selects a row. With the `multiple` attribute, Ctrl-click (Cmd-click on macOS) adds or removes a
+  row and Shift-click selects the rows from the last one clicked; with `shiftdeselects` too, Shift-click on a selected
+  row deselects it, as in the track list ([track-list.md](track-list.md)). Up and Down move the selection, Shift extends
+  it, Page Up and Page Down move it by one row less than the view shows, Home and End go to the first and last row.
+  Selected rows have the state class `.selected`. The view's `value` attribute is the selected rows' values separated by
+  commas, and `change` sends it, so `data-value` binds the selection both ways, also when `data-for` makes the rows.
   Rows that code adds, removes or replaces with new elements, all of them or only some, keep the selection that the
   view's `value` gives, also with as many rows and the same value; the keys and Shift-click then go from the first
-  selected row. A click or a key before the next update finds the view caught up as well: with the new rows selected
-  and shaped as a tree, and with a `value` that code set. Not yet: a row that keeps its element but gets another
-  `value`, as when `data-for` reorders its items. Clicks and keys in a form control in a row, such as a text field,
-  are the control's and don't change the selection.
+  selected row. A click or a key before the next update finds the view caught up as well: with the new rows selected and
+  shaped as a tree, and with a `value` that code set. Not yet: a row that keeps its element but gets another `value`, as
+  when `data-for` reorders its items. Clicks and keys in a form control in a row, such as a text field, are the
+  control's and don't change the selection, and neither does a click on a control that opens a menu (a `menu`
+  attribute), such as the track list's track versions arrow ([track-versions.md](track-versions.md)), so that its menu
+  works on the rows that are selected.
 - **Scrolling while dragging.** With the `dragscroll` attribute, a drag of an element in the view (`drag: drag`)
   scrolls the view while the mouse is above or below it, by ten times as far as the mouse is past the edge each second,
   also while the mouse is held still. The drag's end, the button going up or the view losing the focus stop it. The
