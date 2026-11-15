@@ -155,7 +155,8 @@ namespace gnubase::ui
 		return grid;
 	}
 
-	time::Position EventDisplay::snapAt(double seconds, std::optional<double> from) const
+	time::Position EventDisplay::snapAt(
+		double seconds, std::optional<double> from, const std::vector<time::Samples>& magnets) const
 	{
 		engine::SnapTarget target;
 		target.position = samples(seconds);
@@ -173,13 +174,25 @@ namespace gnubase::ui
 				target.magnets.push_back(samples(*shown.snapPoint));
 		}
 		target.magnets.insert(target.magnets.end(), m_markers.begin(), m_markers.end());
+		target.magnets.insert(target.magnets.end(), magnets.begin(), magnets.end());
 		return engine::snap(m_snap, snapGrid(), target);
 	}
 
-	double EventDisplay::snapped(double seconds, std::optional<double> from) const
+	double EventDisplay::snapped(
+		double seconds, std::optional<double> from, const std::vector<time::Samples>& magnets) const
 	{
-		return static_cast<double>(time::toSamples(snapAt(seconds, from), m_time.tempo, m_time.sampleRate)) /
+		return static_cast<double>(time::toSamples(snapAt(seconds, from, magnets), m_time.tempo, m_time.sampleRate)) /
 			m_time.sampleRate;
+	}
+
+	double EventDisplay::gridLineBefore(double seconds) const
+	{
+		const engine::SnapGrid grid = snapGrid();
+		const time::Samples at = samples(seconds);
+		time::Position line = engine::nearestGridLine(m_snap.grid(), grid, at);
+		if (time::toSamples(line, m_time.tempo, m_time.sampleRate) > at)
+			line.value -= engine::gridStep(m_snap.grid(), grid, at).value;
+		return static_cast<double>(time::toSamples(line, m_time.tempo, m_time.sampleRate)) / m_time.sampleRate;
 	}
 
 	int64_t EventDisplay::clampMove(time::TimeBase base, int64_t shift) const
