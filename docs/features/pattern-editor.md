@@ -114,7 +114,8 @@ part's pattern.
   new pitch from the position clicked, all of them at the tie's start.
 - **Step selection tool** (pp. 924-926): a click selects a step, with Shift more, with Ctrl (Cmd) one on or off; a
   click on an empty cell deselects; a double click adds or removes a step; Delete and Backspace delete the selected
-  steps; Alt draws as the draw tool does.
+  steps; Alt draws as the draw tool does. The selection loses the steps the pattern shown no longer has, after a mode
+  switch, a shorter Number of Steps, an undo or a script (#1615).
 - **Edit functions** (pp. 903, 910): Tie joins adjacent steps, Split cuts tied steps into single ones, of the selected
   steps or else of all; Double Length repeats the steps of the lanes that follow the pattern's length, Double
   Resolution doubles the steps' indexes and lengths of the lanes that follow its resolution, and the lengths of those
@@ -176,7 +177,8 @@ content that other applications read, which have the parts' own notes.
   project read before the last `pattern.set` shown with and without a gesture going on, mono mode over a tie, Double
   Resolution and Double Length with lanes of their own length and resolution, a gesture right after Double Length, a
   mode switch and a shorter Number of Steps with a project read before them, a click on a step right after a mode switch
-  and a shorter Number of Steps, a mute and a project read before it while a mode switch is out, selecting, deleting and
-  double-clicking steps, Tie and Split, mute, the parameter lane's velocity and probability, the toolbar's menus and
-  Double Length, Add Lane and melodic mode; New Melodic Pattern for a plain part, the pattern menu choosing, duplicating
-  and converting; Open Pattern Editor and the Edit menu's entries.
+  and a shorter Number of Steps, a mute, a double click, Delete and a project read before it while a mode switch is out,
+  a selection whose steps a script or a mode switch took, selecting, deleting and double-clicking steps, Tie and Split,
+  mute, the parameter lane's velocity and probability, the toolbar's menus and Double Length, Add Lane and melodic mode;
+  New Melodic Pattern for a plain part, the pattern menu choosing, duplicating and converting; Open Pattern Editor and
+  the Edit menu's entries.

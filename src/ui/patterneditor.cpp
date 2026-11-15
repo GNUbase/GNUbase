@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <iterator>
 #include <optional>
 
 namespace gnubase::ui
@@ -203,6 +204,10 @@ namespace gnubase::ui
 					m_pattern[key] = value;
 		if (m_pattern.is_object() && lane(m_lane) == nullptr)
 			m_lane = m_pattern.at("lanes").empty() ? -1 : m_pattern.at("lanes").at(0).at("pitch").get<int>();
+		// The selection keeps only the steps the pattern shown has: a mode switch, a shorter Number of Steps, an undo
+		// or a script may have taken some (#1615).
+		for (auto it = m_selection.begin(); it != m_selection.end();)
+			it = step(it->first, it->second) == nullptr ? m_selection.erase(it) : std::next(it);
 		render();
 	}
 
