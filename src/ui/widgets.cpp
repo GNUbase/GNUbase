@@ -107,7 +107,7 @@ namespace gnubase::ui
 					option->GetInnerRML() == Rml::StringUtilities::EncodeRml(options[static_cast<size_t>(i)].second);
 			}
 			// A change that the selection below sends may fill the list again: that one waits for this one.
-			static Rml::Element* filling = nullptr;
+			static const Rml::Element* filling = nullptr;
 			if (filling == &element)
 				return;
 			if (!same)

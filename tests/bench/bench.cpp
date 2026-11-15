@@ -252,12 +252,16 @@ namespace
 		const std::filesystem::path out =
 			std::filesystem::temp_directory_path() / "gnubase-bench-transposed-result.json";
 		const auto quoted = [](const std::string& text) { return '"' + text + '"'; };
-		std::string command = quoted(std::filesystem::absolute(std::filesystem::u8path(options.program)).u8string()) +
+		const std::string line =
+			quoted(std::filesystem::absolute(std::filesystem::u8path(options.program)).u8string()) +
 			" --render-transposed " + std::to_string(tracks) + " " + std::to_string(seconds) + " " + quoted(file) +
 			(follow ? " 1 " : " 0 ") + quoted(out.u8string());
 #ifdef _WIN32
-		command = quoted(command); // cmd /c takes away the outer quotes
+		const std::string command = quoted(line); // cmd /c takes away the outer quotes
+#else
+		const std::string& command = line;
 #endif
+		// NOLINTNEXTLINE(bugprone-command-processor): it starts this program again, with arguments of its own
 		if (std::system(command.c_str()) != 0)
 			throw std::runtime_error("transposedEvents: the render in a process of its own failed");
 		Json result;

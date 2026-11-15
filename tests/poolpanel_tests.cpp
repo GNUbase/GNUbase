@@ -249,7 +249,8 @@ TEST_CASE("the pool panel's Key column shows and sets the root key of a clip's a
 	click(app, key);
 	app.ui().key(std::nullopt, "Down");
 	click(app, key);
-	REQUIRE(app.waitUntil([&] { return eventKey() == "" && elements(app, key).at(0).at("value") == ""; }));
+	REQUIRE(app.waitUntil(
+		[&] { return eventKey().empty() && elements(app, key).at(0).at("value").get<std::string>().empty(); }));
 	// A clip that no audio event plays has nowhere to keep a key: its list is disabled (#1644).
 	app.call("audioEvent.remove", {{"event", event}});
 	app.call("audioEvent.remove", {{"event", second}});

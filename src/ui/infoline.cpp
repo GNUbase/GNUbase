@@ -499,7 +499,10 @@ namespace gnubase::ui
 			const bool independent = !different && part->value("globalTranspose", std::string()) == "independent";
 			setFlag(*button, "checked", independent);
 			// The button reads the value it holds (p. 421): Independent while checked, else Follow.
-			setText(button, different ? "" : independent ? "Independent" : "Follow");
+			std::string text = independent ? "Independent" : "Follow";
+			if (different)
+				text.clear();
+			setText(button, text.c_str());
 			const Rml::String title = independent ? "Global Transpose: Independent" : "Global Transpose: Follow";
 			if (button->GetAttribute<Rml::String>("title", "") != title)
 				button->SetAttribute("title", title);
