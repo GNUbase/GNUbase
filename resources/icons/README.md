@@ -44,6 +44,9 @@ Documents show an icon with `<svg src="…/icons/transport-play.svg"/>`. It is r
 - `track-effect.svg` — Effect track (`fx`).
 - `track-marker.svg` — Marker track.
 - `part-independent.svg` — A part excluded from global transpose (an anchor), in its upper right corner.
+- `lane-collapse-groups.svg` — Collapse all groups of the Articulations lane.
+- `lane-expand-groups.svg` — Expand all groups of the Articulations lane.
+- `lane-sound-slots.svg` — Show or hide the Articulations lane's sound slots lane.
 - `layout-channel-zone.svg` — Show or hide the Channel zone.
 - `layout-left-zone.svg` — Show or hide the left zone.
 - `layout-lower-zone.svg` — Show or hide the lower zone.
@@ -58,7 +61,7 @@ Documents show an icon with `<svg src="…/icons/transport-play.svg"/>`. It is r
 - `general-search.svg` — Search.
 - `general-menu.svg` — Open the menu.
 - `general-more.svg` — Show more actions.
-- `general-arrow-down.svg` — Open a pop-up menu of settings.
+- `general-arrow-down.svg` — Open a pop-up menu of settings, or a direction's event pop-up menu.
 - `general-undo.svg` — Undo the last action.
 - `general-warning.svg` — Something needs attention, such as an articulation that the track's map doesn't have.
 - `general-redo.svg` — Redo the last undone action.

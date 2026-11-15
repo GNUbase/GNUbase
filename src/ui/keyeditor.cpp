@@ -265,7 +265,7 @@ namespace gnubase::ui
 				(field == std::string("articulations")
 						? R"(<button class="articulation-menu" menu="key-articulations-menu)" + m_menuSuffix +
 							R"(" title="Attributes"><svg class="icon" src="../icons/general-arrow-down.svg"/></button>)"
-							R"(<svg class="icon articulation-warning" src="../icons/general-warning.svg" )"
+							R"(<svg class="icon warning articulation-warning" src="../icons/general-warning.svg" )"
 							R"(title="Not in the track's articulation map"/>)"
 						: std::string()) +
 				"</div>";
@@ -2015,6 +2015,7 @@ namespace gnubase::ui
 		if (const Part* part = partAt(start))
 			addNotes(*part, {start}, lengthQuantize(pitch), pitch);
 	}
+
 	const Json* KeyEditor::articulationMap(const Note& note) const
 	{
 		for (const Part& part : m_parts)
@@ -2034,6 +2035,8 @@ namespace gnubase::ui
 		std::map<uint64_t, Json> changes;
 		for (const Note* note : notes)
 		{
+			if (articulationMap(*note) != map)
+				continue; // a note of a track with another map, or none
 			const bool has =
 				std::find(note->articulations.begin(), note->articulations.end(), name) != note->articulations.end();
 			if (has != remove)

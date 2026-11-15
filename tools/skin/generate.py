@@ -565,6 +565,7 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         ("svg.icon.accent", {"image-color": c["accent"]}),
         ("svg.icon.muted", {"image-color": c["textMuted"]}),
         ("svg.icon.danger", {"image-color": c["danger"]}),
+        ("svg.icon.warning", {"image-color": c["warning"]}),
         # Containers
         (".dialog, dialog", {"decorator": skin("dialog")}),
         (".dialog-titlebar", {"decorator": skin("dialog-titlebar"), "font-weight": "600"}),
@@ -915,9 +916,9 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".articulation-item.reset", {"background-color": c["textMuted"]}),
         (".articulation-item.selected", {"background-color": c["accent2"]}),
         (".articulation-item.inactive", {"background-color": mix(c["surface"], c["textMuted"], .3)}),
-        # The warning sign of the info line and the list editor for articulations the track's map doesn't have
-        # (#1580), in the warning color
-        ("svg.articulation-warning", {"image-color": c["warning"]}),
+        # The lane with the keyboard focus (#1658, p. 100), framed on the left of its header in the accent
+        (".controller-lane.keyboard-focus .controller-lane-header", {"border-left-width": f"{widths['focus']}dp",
+                                                                     "border-left-color": c["accent"]}),
         # The audio part editor (docs/features/audio-part-editor.md): lines between the lanes, the events, selected
         # ones in the second accent, and muted ones, those outside the part editing mode and those their part hides
         # entirely dimmed
