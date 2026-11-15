@@ -527,6 +527,7 @@ namespace gnubase::engine
 			std::vector<std::string> missing() const
 			{
 				std::vector<std::string> paths;
+				paths.reserve(m_referenced.size());
 				for (const ObjectId id : m_referenced)
 					paths.push_back(m_project.media.at(id).path);
 				return paths;
