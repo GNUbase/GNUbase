@@ -1114,7 +1114,7 @@ namespace gnubase::engine::midi
 		{
 			Note note;           // as its track plays it, at its place in the project
 			uint64_t seed;       // its part's and its own id, as playback draws them
-			Modifiers modifiers; // its track's and part's, without the global transposition
+			Modifiers modifiers; // its track's with Include Inserts, and its part's velocity only
 			const MidiPart* source;
 			Ticks sourceAt;     // where it is stored in its part, as playback sees the global transposition there
 			uint8_t ownPitch;   // the pitch it is stored with, which a destination's map prefers
@@ -1150,7 +1150,6 @@ namespace gnubase::engine::midi
 			const TrackPitches sourcePitches(project, part.track);
 			const ArticulationMap* articulations = articulationMapOf(project, part.track);
 			Modifiers modifiers = settings.includeInserts ? trackModifiers(project, part.track) : Modifiers();
-			modifiers.transpose += part.transpose;
 			modifiers.velocityShift += part.velocity;
 			// Playback resolves directions per part (#175): a reset of each group where a part starts in the range
 			// keeps the directions of the parts before it from its notes, if one is in effect there (below).
@@ -1296,14 +1295,10 @@ namespace gnubase::engine::midi
 			Modifiers transposed = candidate.modifiers;
 			transposed.velocityShift -= setting.velocity;
 			int newGlobal = 0;
-			if (pitchKept)
+			if (!pitchKept)
 			{
-				transposed.transpose -= source.transpose;
-			}
-			else
-			{
-				// What the source part plays the note with, its transpose (already in the modifiers) folded in.
-				transposed.transpose += playedAt(project, source, candidate.sourceAt) - source.transpose;
+				// What the source part plays the note with, its transpose folded in.
+				transposed.transpose += playedAt(project, source, candidate.sourceAt);
 				newGlobal = globalAt(project, setting.global, copy.position);
 			}
 			if (settings.includeInserts)
