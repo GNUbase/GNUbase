@@ -44,29 +44,46 @@ the note plays over time.
 page edits ([studio-setup.md](studio-setup.md)). Its multi-channel input mode (`mode`) is off (the default), MPE's
 lower zone (master channel 1, the notes on channels 2 and up), its upper zone (master channel 16, the notes on 15 and
 down) or channel rotation (the notes on the used channels from `firstChannel` on, without a master channel);
-`channels` is how many channels the notes have, 15 by default and at most 15 in a zone, and rotation's end at 16. On
+`channels` is how many channels the notes have, 15 by default, and rotation's end at 16; `midi.setPort` makes it at most
+15 in a zone, which has no more member channels, so a zone set up with 16 lists and keeps 15. On
 the notes' channels, pitch bend is the tuning of the notes that sound on the channel, by the port's pitch range
 (`pitchRange`, 48 semitones by default, MPE's), channel pressure their pressure and CC 74 their brightness. Without
 Use for Tuning (`tuning` off, for devices that don't glide but play a new note for each key) pitch bend stays pitch
-bend. The master channel's messages and the notes' channels' other messages are what they were.
+bend. The master channel's messages and the notes' channels' other messages are what they were. The user settings `midi.mpeInput` and `midi.mpePitchRange`,
+which before #1514 made MIDI recording take every input as MPE's lower zone, are gone without a migration: a port's
+MPE input is set up again on the Note Expression Input page.
 
 `midi::MpeInput` does this on the audio thread, per port, before the ports' input merges into all MIDI inputs
 (`MidiPorts::take`): it keeps each channel's sounding notes and latest values, without allocating, and the port's
 setup reaches it as 32 bits (`midi::MpeSetup::pack`); a changed setup starts its state afresh. Expression messages
 become note expression events (`graph::ProcessEvent::Type::NoteExpression`) of the channel's sounding notes; without a
-note they only set the channel's state. What comes on a note's channel before its note-on is its initial state: after
-the note-on follow its initial values, each the channel's latest one. With Send Initial Value (`initialX` for the
-pitch bend, `initialY` for CC 74) a note starts at a fixed value instead, for devices whose input is relative: the
-center (no bend, or CC 74 at 64), or for CC 74 the minimum or maximum, whatever the channel's previous note left.
+note they only set the channel's state. A released note, or one the sustain pedal holds, still sounds while it fades,
+so the channel's messages still apply to it, as MPE has them, until the channel's next note-on: the device gives the
+channel to a new note once the old one has faded as far as it is concerned. What comes on a note's channel before its
+note-on is its initial state: after the note-on follow its initial values, each the channel's latest one. With Send
+Initial Value (`initialX` for the pitch bend, `initialY` for CC 74) a note starts at a fixed value instead, for devices
+whose input is relative: the center (no bend, or CC 74 at 64), or for CC 74 the minimum or maximum, whatever the
+channel's previous note left. The fixed value is the channel's from then on, so the channel's other sounding notes get
+it too.
 
 So live MPE input reaches the instrument as per-note expression, as playback sends it (below): MIDI thru passes the
 events to the tracks that monitor or are record-enabled, and the instrument plays them as note expression, a VST3 plugin
-as VST3 note expressions. On the track a note's expression follows the note its key plays, as poly pressure does
-(`MidiSequencer::modifyInput`): to the track's MIDI channel and the pitch the MIDI modifiers, Live Input, a drum map or
-a sound slot make of it, and nowhere where the note doesn't play. Recording, retrospective recording and the catch range
-record what the tracks get: each note expression event is a point of its note where it came (`MidiTakeBuilder`), its
-initial values at the note's start. Notes keep their channels. The MIDI record filter filters note expression by its
-channel only, as it is no MIDI message. `midi.inject` and the on-screen keyboard are no port and play plain MIDI.
+as VST3 note expressions; the VST3 adapter keeps a released note's id for its expression until its key plays again.
+The input transformer's modules and the transformer insert (`processors::LogicalStage`) send a note's expression where
+its note-on went: transposed, on another channel, to both notes where they insert one, and nowhere where they filter
+the note out; the expression of a key whose note-on came before the rules plays as it came. On the track a note's
+expression follows the note its key plays, as poly pressure does (`MidiSequencer::modifyInput`): to the track's MIDI
+channel and the pitch the MIDI modifiers, Live Input, a drum map or a sound slot make of it, also while the note fades
+after its note-off, until the next note-on on its channel. Where the note doesn't play (a muted drum sound, a velocity
+or pitch the MIDI modifiers filter out), and for a key whose note-on didn't reach the track (a sound slot's remote
+trigger key, or a key held before the track monitored or was record-enabled), its expression and poly pressure go
+nowhere. Recording, retrospective recording and the catch range record what the tracks get: each note expression
+event is a point of its note where it came (`MidiTakeBuilder`), its initial values at the note's start; what comes
+after the note-off isn't recorded, as playback sends only the points within a note. Notes keep their channels. The MIDI
+record filter filters note expression by its channel only, as it is no MIDI message. The on-screen keyboard is no port
+and plays plain MIDI; `midi.inject` does too, unless its `mpe` gives it an MPE setup to play through, as a port with it
+would, so MCP and Lua reach MPE input without a MIDI port. The track keeps that setup's state of the channels from one
+call to the next.
 
 **Playback.** The sequencer sends a note's points that lie within it as note expression events
 (`graph::ProcessEvent::Type::NoteExpression`, with the note's pitch and channel) where they are, after the note-on at
@@ -87,19 +104,24 @@ note probe, comparing what the instrument gets with what was played (`tests/mpei
 `midi::MpeInput` with the lower and upper zone, channel rotation, Send Initial Value and without Use for Tuning; that
 `midi.setPort` sets a port's setup, which `midi.ports` lists and `midi.portSettings` keeps; that an MPE port with a
 pitch range of 24 plays to the instrument as note expression while another port plays its pitch bend as it is; that
-the expression follows its note through a track that transposes and a MIDI track with a MIDI channel; and
-that recording and retrospective recording record the upper zone and channel rotation as the notes' expression.
+the expression follows its note through a track that transposes and a MIDI track with a MIDI channel, also after its
+note-off, and is dropped for a key whose note is filtered by velocity, a muted drum sound, a remote trigger key and a
+key held before the track got the input; that a changed setup starts a port's state afresh while the note that sounds
+still ends; that `midi.inject` plays through an MPE setup; and that recording and retrospective recording record the
+upper zone and channel rotation as the notes' expression. `tests/logical_tests.cpp` checks the expression through the
+input transformer, `tests/vst3_adapter_tests.cpp` a released note's expression in the VST3 adapter.
 
 ## Not yet
 
 - The note expression editor and the expression overlay in the event display (pp. 1303-1315, #1512).
 - The inspector's Note Expression section with its input assignments, MIDI learn, value ranges and bypass (pp.
   1300-1302, #1513).
-- The MPE input's MIDI Message assignments of pressure, X and Y, its VST Note Expression Assignments (p. 1298), the
-  pages of devices that are detected and set up on their own (p. 1295) and the MIDI activity display.
+- The MPE input's MIDI Message assignments of pressure, X and Y, its note expression assignments (p. 1298), the
+  pages of devices that are detected and set up on their own (p. 1295) and the MIDI activity display (#1674).
+- Both MPE zones at once on one port, past the reference manual's single zone (#1675).
 - Recording MIDI controllers as note expression, overdub and converting controller events into note expression (pp.
   1316-1318, #1515).
 - A plugin's own expressions with their names and ranges (VST3 custom note expressions), CLAP and MIDI 2.0 per-note
   controllers in the adapters, MPE output that allocates channels for notes that share one and a pitch range other
-  than 48, chasing expression after a jump into a note, per-note expression in DAWproject's own note content, and MIDI
-  effects that move notes moving their expression (#1516).
+  than 48, chasing expression after a jump into a note, per-note expression in DAWproject's own note content, and the
+  arpeggiator and chord generator moving the expression of the notes they play (#1516).
