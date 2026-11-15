@@ -697,15 +697,11 @@ namespace gnubase::app
 						dialog.filters = {
 							{"Audio files", "wav;w64;rf64;bwf;aif;aiff;aifc;flac;ogg;mp3"}, {"All files", "*"}};
 						dialog.parent = (window != nullptr ? *window : m_main).id();
-						m_shell.showFileDialog(dialog,
-							[this, track, keepSettings](const ui::FileDialogResult& result)
+						chooseProjectFile(dialog,
+							[this, track, keepSettings](const std::filesystem::path& file)
 							{
-								if (!result.error.empty())
-									logging::warning("The file dialog failed: {}", result.error);
-								if (result.files.empty())
-									return;
 								// The panel shows why the file didn't load; without it, the file loads all the same.
-								const std::string path = result.files.front().u8string();
+								const std::string path = file.u8string();
 								if (const std::shared_ptr<ui::SamplerPanel> panel = m_sampler.lock())
 									panel->load(track, path, keepSettings);
 								else
@@ -731,14 +727,10 @@ namespace gnubase::app
 						dialog.filters = {
 							{"Audio files", "wav;w64;rf64;bwf;aif;aiff;aifc;flac;ogg;mp3"}, {"All files", "*"}};
 						dialog.parent = (window != nullptr ? *window : m_main).id();
-						m_shell.showFileDialog(dialog,
-							[this, track, pad](const ui::FileDialogResult& result)
+						chooseProjectFile(dialog,
+							[this, track, pad](const std::filesystem::path& file)
 							{
-								if (!result.error.empty())
-									logging::warning("The file dialog failed: {}", result.error);
-								if (result.files.empty())
-									return;
-								const std::string path = result.files.front().u8string();
+								const std::string path = file.u8string();
 								if (const std::shared_ptr<ui::DrumMachinePanel> panel = m_drums.lock())
 									panel->load(track, pad, path);
 								else
@@ -2397,20 +2389,27 @@ namespace gnubase::app
 		return shown.window != 0 && m_shell.find(shown.window) != nullptr ? shown.mixer.get() : nullptr;
 	}
 
+	void AppUi::chooseProjectFile(
+		const ui::FileDialog& dialog, std::function<void(const std::filesystem::path&)> chosen)
+	{
+		m_shell.showFileDialog(dialog,
+			[this, chosen = std::move(chosen), resets = m_resets](const ui::FileDialogResult& result)
+			{
+				if (!result.error.empty())
+					logging::warning("The file dialog failed: {}", result.error);
+				if (!result.files.empty() && resets == m_resets)
+					chosen(result.files.front());
+			});
+	}
+
 	void AppUi::choosePicture(uint64_t track)
 	{
 		ui::FileDialog dialog;
 		dialog.title = "Choose Track Picture";
 		dialog.filters = {{"Images", "png;jpg;jpeg;svg"}, {"All files", "*"}};
 		dialog.parent = m_main.id();
-		m_shell.showFileDialog(dialog,
-			[this, track, resets = m_resets](const ui::FileDialogResult& result)
-			{
-				if (!result.error.empty())
-					logging::warning("The file dialog failed: {}", result.error);
-				if (!result.files.empty() && resets == m_resets)
-					m_binding.send("track.set", {{"track", track}, {"picture", result.files.front().u8string()}});
-			});
+		chooseProjectFile(dialog, [this, track](const std::filesystem::path& file)
+			{ m_binding.send("track.set", {{"track", track}, {"picture", file.u8string()}}); });
 	}
 
 	void AppUi::addTrackFileCommands()
@@ -2455,15 +2454,9 @@ namespace gnubase::app
 				dialog.filters = {{"DAWproject files", "dawproject"}};
 				dialog.location = "Tracks.dawproject";
 				dialog.parent = window.id();
-				m_shell.showFileDialog(dialog,
-					[this, tracks = selection(), id = window.id(), resets = m_resets](
-						const ui::FileDialogResult& chosen)
+				chooseProjectFile(dialog,
+					[this, tracks = selection(), id = window.id()](std::filesystem::path file)
 					{
-						if (!chosen.error.empty())
-							logging::warning("The file dialog failed: {}", chosen.error);
-						if (chosen.files.empty() || resets != m_resets)
-							return;
-						std::filesystem::path file = chosen.files.front();
 						if (file.extension().empty())
 							file += ".dawproject";
 						m_binding.send("track.export", {{"tracks", tracks}, {"path", file.u8string()}},
@@ -2518,14 +2511,11 @@ namespace gnubase::app
 				dialog.title = save ? "Save Pattern Preset" : "Load Pattern Preset";
 				dialog.filters = {{"Pattern presets", "patternpreset"}};
 				dialog.parent = parent;
-				m_shell.showFileDialog(dialog,
-					[this, save, track, resets = m_resets](const ui::FileDialogResult& result)
+				chooseProjectFile(dialog,
+					[this, save, track](const std::filesystem::path& file)
 					{
-						if (!result.error.empty())
-							logging::warning("The file dialog failed: {}", result.error);
-						if (!result.files.empty() && resets == m_resets)
-							m_binding.send(save ? "pattern.export" : "pattern.import",
-								{{"track", track}, {"path", result.files.front().u8string()}});
+						m_binding.send(
+							save ? "pattern.export" : "pattern.import", {{"track", track}, {"path", file.u8string()}});
 					});
 			});
 	}
@@ -2570,14 +2560,9 @@ namespace gnubase::app
 		dialog.title = "Save Drum Map";
 		dialog.filters = {{"Drum maps", "drm"}};
 		dialog.parent = parent;
-		m_shell.showFileDialog(dialog,
-			[this, map, resets = m_resets](const ui::FileDialogResult& result)
+		chooseProjectFile(dialog,
+			[this, map](std::filesystem::path file)
 			{
-				if (!result.error.empty())
-					logging::warning("The file dialog failed: {}", result.error);
-				if (result.files.empty() || resets != m_resets)
-					return;
-				std::filesystem::path file = result.files.front();
 				if (file.extension() != ".drm")
 					file += ".drm";
 				m_binding.send("drumMap.export", {{"map", map}, {"path", file.u8string()}});
