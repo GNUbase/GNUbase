@@ -556,11 +556,14 @@ TEST_CASE("Solo Instrument plays only the sounds of the drum editor's selected n
 	f.call("editor.set", {{"editor", "window"}, {"selection", {{{"part", f.part}, {"note", noteId(1)}}}}});
 	CHECK(pitches() == std::vector<int>{36, 38, 42, 38}); // Solo Instrument is off
 
-	const bool modified = revision().at("modified").get<bool>();
+	// Saved first, so that the project stays as saved while Solo Instrument changes what plays.
+	const test::TempDir dir;
+	f.call("project.save", {{"path", (dir.path() / "solo.dawproject").u8string()}});
+	REQUIRE(revision().at("modified") == false);
 	const Json view = f.call("editor.set", {{"editor", "window"}, {"soloInstrument", true}});
 	CHECK(view.at("soloInstrument") == true);
 	CHECK(pitches() == std::vector<int>{38, 38}); // every note of the selected note's sound
-	CHECK(revision().at("modified") == modified); // what plays changed, not the project
+	CHECK(revision().at("modified") == false);    // what plays changed, not the project
 
 	f.call("editor.set",
 		{{"editor", "window"},
@@ -589,6 +592,15 @@ TEST_CASE("Solo Instrument plays only the sounds of the drum editor's selected n
 	{
 		f.call("track.set", {{"track", f.track}, {"drumMap", 0}});
 		CHECK(pitches().size() == 4);
+	}
+	SECTION("a map assigned after Solo Instrument went on solos the selected notes")
+	{
+		f.call("editor.set", {{"editor", "window"}, {"soloInstrument", false}});
+		f.call("track.set", {{"track", f.track}, {"drumMap", 0}});
+		f.call("editor.set", {{"editor", "window"}, {"soloInstrument", true}});
+		CHECK(pitches().size() == 4);
+		f.call("track.set", {{"track", f.track}, {"drumMap", f.gm()}});
+		CHECK(pitches() == std::vector<int>{36, 38, 38, 38});
 	}
 	SECTION("turned off")
 	{
@@ -654,4 +666,38 @@ TEST_CASE("Show Drum Sounds in Use by Instrument has the sounds whose pads the d
 	CHECK(std::find(inUse.begin(), inUse.end(), 40) != inUse.end());
 	CHECK(std::find(inUse.begin(), inUse.end(), 36) == inUse.end());
 	CHECK(std::find(inUse.begin(), inUse.end(), 38) != inUse.end());
+
+	// The list hides the notes of the other sounds: they leave the selection, so that neither the editor's edits nor
+	// Solo Instrument take them.
+	const auto part = f.call("editor.get", {{"editor", "window"}}).at("activePart");
+	const Json added = f.call("note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", 0}, {"length", 60}, {"pitch", 40}, {"velocity", 0.5}},
+					{{"position", 120}, {"length", 60}, {"pitch", 36}, {"velocity", 0.5}}}}});
+	const Json shown = {{"part", part}, {"note", added.at("notes").at(0).at("id")}};
+	const Json hidden = {{"part", part}, {"note", added.at("notes").at(1).at("id")}};
+	f.call("editor.set", {{"editor", "window"}, {"selection", {shown, hidden}}, {"visibleSounds", "all"}});
+	CHECK(f.call("editor.get", {{"editor", "window"}}).at("selection").size() == 2);
+	const Json view =
+		f.call("editor.set", {{"editor", "window"}, {"pitchVisibility", true}, {"visibleSounds", "inUse"}});
+	CHECK(view.at("selection") == Json::array({shown}));
+	CHECK(f.call("editor.set", {{"editor", "window"}, {"selection", {shown, hidden}}}).at("selection") ==
+		Json::array({shown}));
+}
+
+TEST_CASE("the editor view names the active track's drum sounds", "[unit]")
+{
+	// p. 1239: the names the editors show, so that an MCP or Lua client has them too.
+	Fixture f;
+	CHECK(f.call("editor.open", {{"editor", "window"}, {"parts", {f.part}}}).at("soundNames").is_null());
+	f.call("track.set", {{"track", f.track}, {"gmNames", true}});
+	Json names = f.call("editor.get", {{"editor", "window"}}).at("soundNames");
+	REQUIRE(names.size() == 128);
+	CHECK(names.at(36) == "Bass Drum 1");
+	CHECK(names.at(0) == "");
+	const auto map = f.call("drumMap.add", {{"name", "Kit"}}).at("map").at("id");
+	f.call("track.set", {{"track", f.track}, {"drumMap", map}});
+	names = f.call("editor.get", {{"editor", "window"}}).at("soundNames");
+	CHECK(names.at(36) == "Sound 37");
 }

@@ -104,17 +104,24 @@ namespace gnubase::engine
 			std::vector<const SoundSlot*> addOns;
 		};
 
+		// Whether the track's drum map plays a note of the pitch: not a muted sound's, nor while Solo Instrument
+		// solos others (soloed).
+		bool soundPlays(const DrumMap* drums, const std::bitset<g_drumSounds>& soloed, uint8_t pitch)
+		{
+			return drums == nullptr || (!drums->sounds.at(pitch).mute && (soloed.none() || soloed.test(pitch)));
+		}
+
 		// The notes of a part that select a sound slot: notes that don't play (their probability, a muted drum
-		// sound) select none.
+		// sound or one that Solo Instrument silences) select none.
 		void addSlotNotes(const Project& project, const MidiPart& part, time::Ticks start, time::Ticks end,
 			const ArticulationMap& map, const std::map<ObjectId, size_t>& slots, const DrumMap* drums,
-			std::vector<SlotNote>& into)
+			const std::bitset<g_drumSounds>& soloed, std::vector<SlotNote>& into)
 		{
 			const std::optional<int> trackChannel = midi::trackMidiChannel(project, part.track);
 			const std::map<ObjectId, std::vector<size_t>> addOns = midi::addOnSlots(map, part);
 			for (const auto& [id, note] : part.notes)
 				if (note.position < end - start && slots.count(id) != 0 && midi::notePlays(note, part.id) &&
-					(drums == nullptr || !drums->sounds.at(note.pitch).mute))
+					soundPlays(drums, soloed, note.pitch))
 				{
 					const SoundSlot& slot = map.slots.at(slots.at(id));
 					std::vector<const SoundSlot*> added;
@@ -220,15 +227,15 @@ namespace gnubase::engine
 																		: nullptr;
 			};
 			if (slotNotes != nullptr && articulations != nullptr && !slots.empty())
-				addSlotNotes(project, part, start, end, *articulations, slots, map, *slotNotes);
+				addSlotNotes(project, part, start, end, *articulations, slots, map, soloed, *slotNotes);
 			for (const auto& [id, note] : part.notes)
 			{
 				// Notes the part hides beyond its end don't play, wherever a random position would move them.
 				if (note.position >= end - start || !midi::notePlays(note, part.id))
 					continue;
-				const DrumSound* sound = map != nullptr ? &map->sounds.at(note.pitch) : nullptr;
-				if (sound != nullptr && (sound->mute || (soloed.any() && !soloed.test(note.pitch))))
+				if (!soundPlays(map, soloed, note.pitch))
 					continue;
+				const DrumSound* sound = map != nullptr ? &map->sounds.at(note.pitch) : nullptr;
 				const SoundSlot* slot = slotOf(id);
 				const uint64_t seed = midi::noteSeed(partId, id);
 				uint8_t pitch = sound != nullptr ? sound->oNote : note.pitch;
