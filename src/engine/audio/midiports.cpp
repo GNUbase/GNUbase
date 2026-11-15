@@ -181,9 +181,11 @@ namespace gnubase::engine
 		{
 			m_sectionHeldPort = padKeys.portHash;
 			m_sectionHeld.fill(0);
-			// The sections mode's pad key that was down is up, so its pad is no longer lit (#1652).
-			if (m_sectionPadDown)
-				m_padEvents.tryPush(PadEvent{PadEvent::Kind::Released, static_cast<uint8_t>(m_sectionPad), 0});
+			// The sections mode's pad key that was down is up, so its pad is no longer lit (#1652), once: not again for
+			// a chord the key latched before the player mode changed (#1708).
+			const int padDown = m_sectionPadDown ? m_sectionPad : -1;
+			if (padDown >= 0)
+				m_padEvents.tryPush(PadEvent{PadEvent::Kind::Released, static_cast<uint8_t>(padDown), 0});
 			m_sectionPadDown = false;
 			for (size_t key = 0; key < midi::PadVoices::g_triggers; ++key)
 			{
@@ -201,7 +203,7 @@ namespace gnubase::engine
 						});
 				}
 				// Only a pad key's chord was a pad's: a section key's notes are none (#1652).
-				if (held && m_sectionPadOf.at(key) == 0)
+				if (held && m_sectionPadOf.at(key) == 0 && static_cast<int>(key) != padDown)
 					m_padEvents.tryPush(PadEvent{PadEvent::Kind::Released, static_cast<uint8_t>(key), 0});
 			}
 			m_sectionPadOf.fill(0);
