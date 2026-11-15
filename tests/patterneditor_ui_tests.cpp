@@ -350,6 +350,69 @@ TEST_CASE("while a mode switch is out, the editor neither edits the lanes nor sh
 	CHECK(f.elements(".pattern-step.on").empty());
 }
 
+TEST_CASE("while a mode switch is out, the step selection tool's double click and Delete don't edit the lanes", "[ui]")
+{
+	Fixture f;
+	f.click(of(cell(36, 0)));
+	REQUIRE(f.app.waitUntil([&] { return f.steps(36) == std::vector<int>{0}; }));
+	f.settle();
+	f.click(of(".pattern-tool[pattern-tool=select]"));
+	f.click(of(cell(36, 0)));
+	REQUIRE(f.has(cell(36, 0), "selected"));
+	// The answer comes only in a step: the double click and Delete go while the switch is out, and don't bring the
+	// drum lanes back into the cleared melodic pattern (#1615).
+	SECTION("Delete")
+	{
+		f.app.ui().click(f.window, of(".pattern-mode[pattern-mode=poly]"), ui::MouseButton::Left, 1, {});
+		f.app.ui().key(f.window, "Delete");
+	}
+	SECTION("double click")
+	{
+		f.app.ui().click(f.window, of(".pattern-mode[pattern-mode=poly]"), ui::MouseButton::Left, 1, {});
+		f.app.ui().click(f.window, of(cell(38, 4)), ui::MouseButton::Left, 2, {});
+	}
+	CHECK(f.has(cell(36, 0), "on"));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.has(".pattern-mode[pattern-mode=poly]", "checked"); }));
+	f.settle();
+	CHECK(f.patternJson().at("mode") == "poly");
+	CHECK(f.patternJson().at("lanes").empty());
+	CHECK(f.elements(".pattern-step.on").empty());
+}
+
+TEST_CASE("the selection drops the steps that the pattern no longer has", "[ui]")
+{
+	Fixture f;
+	f.click(of(cell(36, 0)));
+	REQUIRE(f.app.waitUntil([&] { return f.steps(36) == std::vector<int>{0}; }));
+	f.settle();
+	f.click(of(".pattern-tool[pattern-tool=select]"));
+	f.click(of(cell(36, 0)));
+	REQUIRE(f.has(cell(36, 0), "selected"));
+	// A script removes the step selected: one drawn later where it was doesn't show selected (#1615).
+	f.app.call("pattern.set", {{"pattern", f.pattern}, {"lanes", {{{"pitch", 36}, {"steps", Json::array()}}}}});
+	REQUIRE(f.app.waitUntil([&] { return !f.has(cell(36, 0), "on"); }));
+	f.click(of(".pattern-tool[pattern-tool=draw]"));
+	f.click(of(cell(36, 0)));
+	REQUIRE(f.app.waitUntil([&] { return f.has(cell(36, 0), "on"); }));
+	CHECK_FALSE(f.has(cell(36, 0), "selected"));
+	// A mode switch clears the step selected: Tie ties all steps, not the selected ones that are gone.
+	f.click(of(".pattern-tool[pattern-tool=select]"));
+	f.click(of(cell(36, 0)));
+	REQUIRE(f.has(cell(36, 0), "selected"));
+	f.click(of(".pattern-mode[pattern-mode=poly]"));
+	REQUIRE(f.app.waitUntil([&] { return f.has(".pattern-mode[pattern-mode=poly]", "checked"); }));
+	f.settle();
+	f.click(of(".pattern-tool[pattern-tool=draw]"));
+	f.click(of(cell(60, 0)));
+	REQUIRE(f.app.waitUntil([&] { return f.steps(60) == std::vector<int>{0}; }));
+	f.click(of(cell(60, 1)));
+	REQUIRE(f.app.waitUntil([&] { return f.steps(60) == std::vector<int>{0, 1}; }));
+	f.click(of("#pattern-tie"));
+	REQUIRE(f.app.waitUntil([&] { return f.steps(60) == std::vector<int>{0}; }));
+	CHECK(f.lane(60).at("steps").at(0).at("length") == 2);
+}
+
 TEST_CASE("a shorter Number of Steps edits the pattern as the engine has it, after its answer only", "[ui]")
 {
 	Fixture f;

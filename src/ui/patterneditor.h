@@ -91,6 +91,7 @@ namespace gnubase::ui
 		bool waiting() const;
 		// Sends the lanes as they are now in one pattern.set, an undo step named description, with changes of the
 		// pattern's other fields, which the pattern shown gets too; if it is refused, the engine's pattern shows again.
+		// Its callers ask waiting() first.
 		void sendLanes(const std::string& description, engine::Json changes = engine::Json::object());
 		// Sends changes of the pattern's other fields (mode, Number of Steps, Step Resolution, Play Direction); its
 		// answer's pattern shows until the project does.
