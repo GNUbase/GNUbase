@@ -278,7 +278,8 @@ namespace gnubase::ui
 		m_lineMode = std::move(lineMode);
 	}
 
-	void ControllerLanes::show(const Json& project, const Json& view, int64_t from, int64_t to)
+	void ControllerLanes::show(
+		const Json& project, const Json& view, int64_t from, int64_t to, const std::vector<bool>& shown)
 	{
 		m_view = view;
 		m_from = from;
@@ -315,6 +316,13 @@ namespace gnubase::ui
 					m_parts.push_back({found->first, ticksOf(track, position, time),
 						ticksOf(track, position + part.at("length").get<int64_t>(), time),
 						editable.count(found->first) != 0, part, track.value("articulationMap", uint64_t{0})});
+					if (!shown.empty())
+					{
+						Json& notes = m_parts.back().json.at("notes");
+						notes.erase(std::remove_if(notes.begin(), notes.end(), [&shown](const Json& note)
+										{ return !shown.at(note.at("pitch").get<size_t>()); }),
+							notes.end());
+					}
 				}
 			for (const Json& selected : m_view.value("selection", Json::array()))
 				m_noteSelection.emplace(selected.at("part").get<uint64_t>(), selected.at("note").get<uint64_t>());

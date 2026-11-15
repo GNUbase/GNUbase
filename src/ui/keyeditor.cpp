@@ -2,7 +2,6 @@
 #include "ui/keyeditor.h"
 
 #include "engine/midi/chords.h"
-#include "engine/midi/drummaps.h"
 #include "engine/midi/quantizesettings.h"
 #include "engine/time/tempomap.h"
 #include "platform/log.h"
@@ -570,7 +569,12 @@ namespace gnubase::ui
 		}
 		updateOrder();
 		render();
-		m_lanes->show(m_project, m_view, m_from, m_to);
+		// The lanes leave out the notes of the sounds the list hides, as the note display does.
+		std::vector<bool> shown;
+		if (std::find(m_rowOf.begin(), m_rowOf.end(), -1) != m_rowOf.end())
+			for (int pitch = 0; pitch < g_pitches; ++pitch)
+				shown.push_back(listed(pitch));
+		m_lanes->show(m_project, m_view, m_from, m_to, shown);
 	}
 
 	void KeyEditor::setTimeRange(std::optional<std::pair<int64_t, int64_t>> range)
@@ -756,8 +760,21 @@ namespace gnubase::ui
 
 		Rml::ElementList inputs;
 		root->QuerySelectorAll(inputs, ".key-input");
+		// Solo Instrument requires a drum map (p. 1223).
+		const bool soloable = !m_drum || activeMap() != nullptr;
 		for (Rml::Element* button : inputs)
-			setClass(button, "checked", m_view.value(attribute(*button, "setting"), false));
+		{
+			const std::string setting = attribute(*button, "setting");
+			const bool enabled = setting != "soloInstrument" || soloable;
+			setClass(button, "checked", enabled && m_view.value(setting, false));
+			if (enabled == button->HasAttribute("disabled"))
+			{
+				if (enabled)
+					button->RemoveAttribute("disabled");
+				else
+					button->SetAttribute("disabled", "");
+			}
+		}
 		const std::string length = m_view.value("lengthQuantize", std::string("link"));
 		setInner(
 			root->QuerySelector("#key-length-quantize"), lengthLabel(length) != nullptr ? lengthLabel(length) : length);
@@ -818,8 +835,11 @@ namespace gnubase::ui
 						item->RemoveAttribute("checked");
 				}
 		// The key editor names its keys as the active track's drum sounds (p. 1239).
-		if (!m_drum)
+		// Only when they change: a render doesn't go through the 128 keys.
+		if (const auto viewNames = m_view.find("soundNames");
+			!m_drum && viewNames != m_view.end() && *viewNames != m_keyNames)
 		{
+			m_keyNames = *viewNames;
 			Rml::ElementList named;
 			root->QuerySelectorAll(named, ".key-editor-key");
 			bool any = false;
@@ -883,18 +903,16 @@ namespace gnubase::ui
 	{
 		if (m_scrolled)
 			return;
-		int low = 60;
-		int high = 60;
-		if (!m_notes.empty())
-		{
-			low = high = m_notes.front().pitch;
-			for (const Note& note : m_notes)
+		// The middle of the rows of the notes the list shows (in the key editor, of their pitches).
+		int low = g_pitches;
+		int high = -1;
+		for (const Note& note : m_notes)
+			if (const int row = m_rowOf.at(static_cast<size_t>(note.pitch)); row >= 0)
 			{
-				low = std::min(low, note.pitch);
-				high = std::max(high, note.pitch);
+				low = std::min(low, row);
+				high = std::max(high, row);
 			}
-		}
-		m_scrolled = scrollToPitch((low + high) / 2);
+		m_scrolled = scrollToPitch(high < 0 ? 60 : m_order.at(static_cast<size_t>((low + high + 1) / 2)));
 	}
 
 	void KeyEditor::placeItems()
@@ -2364,19 +2382,9 @@ namespace gnubase::ui
 
 	std::vector<std::string> KeyEditor::soundNames() const
 	{
-		std::vector<std::string> names(static_cast<size_t>(g_pitches));
-		if (const Json* map = activeMap())
-		{
-			for (size_t pitch = 0; pitch < names.size(); ++pitch)
-				names[pitch] = map->at("sounds").at(pitch).at("name").get<std::string>();
-		}
-		else if (activeTrack().value("gmNames", false))
-		{
-			const engine::DrumMap gm = engine::midi::gmDrumMap();
-			for (size_t pitch = 0; pitch < names.size(); ++pitch)
-				names[pitch] = gm.sounds.at(pitch).name;
-		}
-		return names;
+		const auto names = m_view.find("soundNames");
+		return names != m_view.end() && names->is_array() ? names->get<std::vector<std::string>>()
+														  : std::vector<std::string>(static_cast<size_t>(g_pitches));
 	}
 
 	// The key editor's rows go from the highest pitch down; the drum editor's follow the drum map's order, or without

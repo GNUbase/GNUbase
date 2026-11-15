@@ -261,6 +261,7 @@ namespace gnubase::ui
 		std::vector<int> m_order;          // the pitches of the rows, from the top
 		std::vector<int> m_rowOf;          // each pitch's row, -1 for one the drum sound list doesn't show
 		std::string m_soundsRml;           // the drum sound list as last set
+		engine::Json m_keyNames;           // the view's soundNames that the key editor's keys show
 		std::string m_mapMenuRml;          // the Map menu as last set
 		std::string m_articulationMenuRml; // the info line's attributes menu as last set
 		engine::Json m_project = engine::Json::object();
