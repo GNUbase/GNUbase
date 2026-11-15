@@ -28,7 +28,8 @@ namespace gnubase::ui::widgets
 	// A drop-down list's choices: each option's value and text.
 	using Options = std::vector<std::pair<std::string, std::string>>;
 
-	// Fills a drop-down list (a select) with the options, unless it has them, and selects the value.
+	// Fills a drop-down list (a select) with the options, unless it has them, and selects the value. A fill of the
+	// same list from the change that this one sends is dropped.
 	void fill(Rml::Element& element, const Options& options, const std::string& value);
 
 	// Hands events to a function: a widget listens with a member, since an element can't be its own listener

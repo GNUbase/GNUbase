@@ -262,3 +262,5 @@ Down skips a collapsed parent's children, Right and Left expand and collapse, an
 Ctrl-click extend the rebuilt selection; Shift-click with `shiftdeselects` deselects a selected row; a drag held past a view's edge scrolls it with `dragscroll` only; splitters
 move the boundary in a row and in a column, never below nothing. The color picker picks from its field, its hue strip
 and its numbers, draws the old and the new color, and follows its data.
+`widgets::fill` drops a fill of a drop-down list from the change that its own fill sends, also with a fill of another
+list in between, so the list keeps the options of the fill that sent it (#1719).

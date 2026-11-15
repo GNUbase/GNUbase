@@ -400,7 +400,17 @@ namespace gnubase::ui
 		return kept ? static_cast<double>(*kept) : value;
 	}
 
+	// The changes that setting the fields sends aren't the user's: with several items selected, the first one's value
+	// would reach the others (#1719).
 	void InfoLine::show()
+	{
+		const bool showing = m_showing;
+		m_showing = true;
+		showFields();
+		m_showing = showing;
+	}
+
+	void InfoLine::showFields()
 	{
 		if (!m_root)
 			return;
@@ -510,7 +520,9 @@ namespace gnubase::ui
 			if (different)
 				text.clear();
 			setText(button, text.c_str());
-			const Rml::String title = independent ? "Global Transpose: Independent" : "Global Transpose: Follow";
+			Rml::String title = independent ? "Global Transpose: Independent" : "Global Transpose: Follow";
+			if (different)
+				title = "Global Transpose";
 			if (button->GetAttribute<Rml::String>("title", "") != title)
 				button->SetAttribute("title", title);
 		}
@@ -533,7 +545,7 @@ namespace gnubase::ui
 			return;
 		}
 		// A display's, a value field's or a button's change, not that of the text field inside a display.
-		if (target == nullptr || !target->HasAttribute("field") || !shows() || m_dropping)
+		if (target == nullptr || !target->HasAttribute("field") || !shows() || m_dropping || m_showing)
 			return;
 		const auto field = target->GetAttribute<Rml::String>("field", "");
 		m_absolute = m_absoluteTake && m_absoluteTake->first == field;

@@ -26,7 +26,7 @@ the pool and conforming files to the project's sample rate. The engine commands 
   event that plays the clip that root key, also those in inactive track versions; the file stays as it is. `pool.get`
   gives each clip `rootKey`, the root key its audio events share (`""` when they have none or differ),
   `rootKeysDiffer` (they differ) and `audioEvents`, how many audio events play it, those in inactive track versions
-  too: a clip without any has nowhere to keep a key.
+  too: a clip without any has nowhere to keep a key, so `clip.set` refuses its `rootKey` (#1719).
 - **`pool.removeUnused`** removes the clips that no audio event uses, then the media files no clip uses, as one undo
   step. The files stay on disk.
 - **`media.locate`** looks for missing media files in a folder and the folders inside it, by file name: the same
@@ -101,10 +101,10 @@ the pool and conforming files to the project's sample rate. The engine commands 
   length) and Path. The Key list is empty when the events' root keys differ, where "-" clears them, and disabled for
   a clip that no audio event plays; it holds only the key it shows until it gets the focus, when it gets all 13, so
   that a pool of thousands of clips doesn't hold 13 options for each (#1644). Rows have the state classes `.folder`
-  or `.clip`, and clips `.missing` and `.unused`. It follows `history.changed` and
-  `project.saved`, so changes from MCP, Lua or undo show, but reads the pool only while it shows
-  (`Docking::showing`, [docking.md](docking.md)): behind another tab or in a hidden zone it notes that the pool
-  changed, and `AppUi`'s step reads it once the panel shows again.
+  or `.clip`, and clips `.missing` and `.unused`. It follows `history.changed` and `project.saved`, so changes from
+  MCP, Lua or undo show, but reads the pool only while it shows (`Docking::showing`, [docking.md](docking.md)):
+  behind another tab or in a hidden zone it notes that the pool changed, and `AppUi`'s step reads it once the panel
+  shows again.
 - **Messages.** `#pool-message` says what the last pool command did: how many missing files Find Missing Files found,
   what Remove Unused Media and Remove Missing Files removed, how many files Conform Files converted, or why one
   failed, with the state class `.error`, which the themes color as danger. The app hears the results of
@@ -133,14 +133,15 @@ the pool and conforming files to the project's sample rate. The engine commands 
 
 ## Not yet
 
-The Trash folder and emptying it, which deletes files from disk (p. 747), and the confirmation the reference asks
-before removing (Remove from Pool is what GNUbase does); renaming files on disk with their clips; the Video folder,
-regions, the Record folder and Set Pool Record Folder; the Resolve Missing Files dialog when a project with missing
-files opens, Browse for File and the Search for File dialog (`media.relink` and `media.locate` do their work); the
-search section; auditioning; the Musical Mode, Tempo, Sign., Key, Algorithm, Type, Date, Origin Time, Image and Reel
-Name columns and choosing columns; Insert into Project and dragging clips into the project window; Minimize File,
-New Version, Reconstruct, pool files and libraries; converting to other bit depths, channels and file formats (only
-the sample rate is conformed); a theme color for missing clips.
+The Trash folder and emptying it, which deletes files from disk (p. 747), and the confirmation the reference asks before
+removing (Remove from Pool is what GNUbase does); renaming files on disk with their clips; the Video folder, regions,
+the Record folder and Set Pool Record Folder; the Resolve Missing Files dialog when a project with missing files opens,
+Browse for File and the Search for File dialog (`media.relink` and `media.locate` do their work); the search section;
+auditioning; the Musical Mode, Tempo, Sign., Algorithm, Type, Date, Origin Time, Image and Reel Name columns and
+choosing columns (the View/Attributes menu, whose Root Key option switches the Key column on, #1735); Insert into
+Project and dragging clips into the project window; Minimize File, New Version, Reconstruct, pool files and libraries;
+converting to other bit depths, channels and file formats (only the sample rate is conformed); a theme color for missing
+clips.
 
 ## Checks
 
