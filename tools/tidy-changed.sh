@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Runs clang-tidy on the C++ files a branch changes, so that most of CI's clang-tidy findings turn up before a push:
 # the changed and new .cpp files under src/ and tests/, and the .cpp file next to each changed header. It reports only
-# findings on the lines the branch changed and a few around them (below), since the rest passed CI already (and
-# Windows' headers bring a few findings that CI's don't). It needs a compile database, not a build: it configures one
+# findings on the lines the branch changed and 5 around each change, since the rest passed CI already (and Windows'
+# headers bring a few findings that CI's don't), and readability-function-size's on the whole changed files, as that
+# check reports on a function's first line (below). It needs a compile database, not a build: it configures one
 # in build/tidy, again when a CMake file is newer than it. CI checks more (every line of every file that includes a
 # changed header), so CI has the last word. On Linux, and so in WSL, it also compiles those files whole, with Clang
 # and -Werror from the same compile database, as CI's asan-ubsan, tsan and clang-tidy jobs build them, and with GCC in

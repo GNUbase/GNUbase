@@ -1015,7 +1015,8 @@ namespace gnubase::engine
 		// tensions, transposition) its step from its rest, and per pad how far it followed, which is less for a pad
 		// that has tensions already or reaches the limit of 12 inversions (#1448), per pad the tensions the tensions
 		// control added, in the order it added them, which the way back takes away again, and the pads the voicings
-		// control turned adaptive voicing off for, with their voicing before, which have it again at rest (#1571).
+		// control turned adaptive voicing off for, with their voicing before, which have it again once the voicings
+		// control rests (#1571).
 		struct ControlSteps
 		{
 			std::array<int, 3> steps{};
@@ -1074,7 +1075,7 @@ namespace gnubase::engine
 			for (size_t i = since; i < history.position(); ++i)
 			{
 				const ProjectChange& change = history.steps().at(i).change;
-				if (history.steps().at(i).action == "Modify chord pads" || !change.settingsBefore.has_value() ||
+				if (history.steps().at(i).action == chordpads::g_modifyAction || !change.settingsBefore.has_value() ||
 					!change.settingsAfter.has_value())
 					continue;
 				const std::vector<ChordPad>& before = change.settingsBefore->chordPads.pads;
@@ -1223,7 +1224,7 @@ namespace gnubase::engine
 			}
 			if (!commands.empty())
 				context.call("history.transaction",
-					{{"description", "Modify chord pads"}, {"merge", merge}, {"commands", commands}});
+					{{"description", chordpads::g_modifyAction}, {"merge", merge}, {"commands", commands}});
 			for (const auto& [by, targets] : moves)
 				for (const int target : targets)
 				{
@@ -1249,16 +1250,16 @@ namespace gnubase::engine
 						followed.at(i) += by;
 				}
 			where.steps.at(which) = step;
-			// At rest the pads are as before the control moved them: how far each followed and the tensions it added
-			// start again, so that the next gesture moves every pad as far (#1574), and the pads that had adaptive
-			// voicing have it again with their voicing, so that they follow the reference pad again (#1571).
+			// At rest, how far each pad followed and the tensions the control added start again, so that the next
+			// gesture moves every pad as far (#1574).
 			if (step == 0)
 			{
 				followed.assign(followed.size(), 0);
 				if (which == 1)
 					added.clear();
 			}
-			// Only the voicings control takes adaptive voicing away, so only its rest gives it back.
+			// Only the voicings control takes adaptive voicing away, so only its rest gives it back: the pads it took
+			// it from have it again with their voicing, so that they follow the reference pad again (#1571).
 			if (step == 0 && which == 0)
 			{
 				Json restore = Json::array();
@@ -1278,7 +1279,7 @@ namespace gnubase::engine
 				where.adaptive.clear();
 				if (!restore.empty())
 					context.call("history.transaction",
-						{{"description", "Modify chord pads"}, {"merge", merge}, {"commands", restore}});
+						{{"description", chordpads::g_modifyAction}, {"merge", merge}, {"commands", restore}});
 			}
 			// The steps after the history's last done step; those of steps gone from it go too.
 			if (history.position() > 0)
@@ -1617,8 +1618,9 @@ namespace gnubase::engine
 				"from 3 inversions and 6 semitones down to 3 and 6 up, and from none to 3 more tensions above its "
 				"middle. A pad that follows a move only partly, such as one with tensions or at the limit of 12 "
 				"inversions, goes back as far as it went, and one whose chord changed another way meanwhile, such as "
-				"by chordPads.assign, stays as it is; at rest the pads that had adaptive voicing have it again. Each "
-				"gesture of a control is one undo step; a second without a move ends the gesture.",
+				"by chordPads.assign, stays as it is; once the voicings control rests, the pads it turned adaptive "
+				"voicing off for have it again. Each gesture of a control is one undo step; a second without a move "
+				"ends the gesture.",
 				objectSchema({{"rootKey", integerSchema}, {"transposePads", booleanSchema}, {"padCount", integerSchema},
 					{"octaveOffset", integerSchema}, {"player", integerSchema}, {"velocity", integerSchema},
 					{"remote", booleanSchema}, {"remoteStart", integerSchema}, {"remoteEnd", integerSchema},
