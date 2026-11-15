@@ -112,7 +112,7 @@ namespace gnubase::ui
 			using Rml::Element::Element;
 
 			// Opens the menu at a point in the window's pixels, inside the window. Items that come or go while it is
-			// open keep it inside the window (OnResize).
+			// open keep it inside the window (OnUpdate).
 			void open(Rml::Vector2f at)
 			{
 				addArrows(*this);
@@ -164,7 +164,7 @@ namespace gnubase::ui
 			}
 
 			// Input came after the menu opened: the items that the opening input filled in are laid out and place the
-			// menu from where it opened, and from now on it stays where it is while it fits (OnResize).
+			// menu from where it opened, and from now on it stays where it is while it fits (OnUpdate).
 			void settle()
 			{
 				if (!m_settling || !m_at)
