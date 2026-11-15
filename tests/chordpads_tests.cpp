@@ -669,6 +669,22 @@ TEST_CASE("a MIDI input's notes on the remote keys trigger the pads while the re
 namespace
 {
 	// A rig with two MIDI inputs, Keys and Other, and the pads' remote on.
+	using Lit = std::vector<std::pair<int, bool>>; // chordPads.triggered's pad and on
+
+	// The pads chordPads.triggered lit and put out, up to the pad index going on or off.
+	Lit litUpTo(Client& client, int index, bool on)
+	{
+		Lit seen;
+		for (Json event = waitFor(client, "chordPads.triggered"); event.is_object();
+			event = waitFor(client, "chordPads.triggered"))
+		{
+			seen.emplace_back(event.at("pad").get<int>(), event.at("on").get<bool>());
+			if (seen.back() == std::pair{index, on})
+				break;
+		}
+		return seen;
+	}
+
 	struct RemoteRig
 	{
 		RemoteRig() : rig(backends())
@@ -1801,6 +1817,8 @@ TEST_CASE("undo takes back the voicings control's rest with the adaptive voicing
 	sendBytes(remote, {0xB0, 20, 127});
 	CHECK(remote.until([&] { return pad(client, 5).at("adaptive") == false; }));
 	const Json voiced = pad(client, 5);
+	// The control moved the pad: one undo step tells apart from two only so.
+	REQUIRE(voiced.at("voicing") != before.at("voicing"));
 	remote.rig.engine.advanceClock(std::chrono::seconds(2));
 	sendBytes(remote, {0xB0, 20, 0});
 	CHECK(remote.until([&] { return pad(client, 5).at("adaptive") == true; }));
@@ -2025,19 +2043,6 @@ TEST_CASE(
 	// #1652: the pads whose keys were down are off, and no pad that a section key's note would be.
 	RemoteRig remote;
 	Client& client = remote.rig.client;
-	using Lit = std::vector<std::pair<int, bool>>; // chordPads.triggered's pad and on
-	const auto litUpTo = [&](int index, bool on)
-	{
-		Lit seen;
-		for (Json event = waitFor(client, "chordPads.triggered"); event.is_object();
-			event = waitFor(client, "chordPads.triggered"))
-		{
-			seen.emplace_back(event.at("pad").get<int>(), event.at("on").get<bool>());
-			if (seen.back() == std::pair{index, on})
-				break;
-		}
-		return seen;
-	};
 	run(client, "chordPads.set", {{"remotePort", "dummy/in/Keys"}});
 	run(client, "audio.render", {{"frames", 64}});
 	CHECK(remote.send(0x90, 36, 90).size() == 4);
@@ -2046,7 +2051,7 @@ TEST_CASE(
 	CHECK(ended.size() == 4);
 	CHECK(std::all_of(
 		ended.begin(), ended.end(), [](const std::vector<int>& note) { return (note.at(0) & 0xF0) == 0x80; }));
-	CHECK(litUpTo(0, false) == Lit{{0, true}, {0, false}});
+	CHECK(litUpTo(client, 0, false) == Lit{{0, true}, {0, false}});
 
 	// The sections mode: the pad key down on the former input is up, and a section that Latch Chord Pads keeps ends.
 	run(client, "chordPads.set", {{"remotePort", "dummy/in/Keys"}, {"mode", "sections"}});
@@ -2054,7 +2059,7 @@ TEST_CASE(
 	CHECK(remote.send(0x90, 36, 90).empty());
 	run(client, "chordPads.set", {{"remotePort", "dummy/in/Other"}});
 	run(client, "audio.render", {{"frames", 64}});
-	CHECK(litUpTo(0, false) == Lit{{0, true}, {0, false}});
+	CHECK(litUpTo(client, 0, false) == Lit{{0, true}, {0, false}});
 	CHECK(remote.send(0x90, 55, 80, true).empty());
 	remote.send(0x80, 55, 0, true);
 	// 20 pads from C1: the section key G2 is a remote key too, but the section it held is no pad's chord.
@@ -2066,7 +2071,45 @@ TEST_CASE(
 	run(client, "chordPads.set", {{"remotePort", "dummy/in/Keys"}});
 	CHECK(remote.rig.played() == std::vector<std::vector<int>>{{0x80, 48, 0}});
 	CHECK(remote.send(0x90, 37, 90).empty());
-	CHECK(litUpTo(1, true) == Lit{{0, true}, {0, false}, {1, true}});
+	CHECK(litUpTo(client, 1, true) == Lit{{0, true}, {0, false}, {1, true}});
+}
+
+TEST_CASE("a remote key ends the pad it lit after the remote's input or range changed", "[integration]")
+{
+	// #1708: the remote's input and its range change in one call, and the range alone while a key is down.
+	RemoteRig remote;
+	Client& client = remote.rig.client;
+	run(client, "chordPads.set", {{"remotePort", "dummy/in/Keys"}});
+	run(client, "audio.render", {{"frames", 64}});
+	remote.send(0x90, 36, 90);
+	run(client, "chordPads.set", {{"remotePort", "dummy/in/Other"}, {"remoteStart", 30}, {"remoteEnd", 41}});
+	run(client, "audio.render", {{"frames", 64}});
+	remote.send(0x90, 31, 90, true);
+	CHECK(litUpTo(client, 1, true) == Lit{{0, true}, {0, false}, {1, true}});
+	run(client, "chordPads.set", {{"remoteStart", 29}, {"remoteEnd", 40}});
+	run(client, "audio.render", {{"frames", 64}});
+	remote.send(0x80, 31, 0, true);
+	remote.send(0x90, 32, 90, true);
+	CHECK(litUpTo(client, 3, true) == Lit{{1, false}, {3, true}});
+}
+
+TEST_CASE(
+	"a pad key that latched a chord before the sections mode goes off once with the remote's input", "[integration]")
+{
+	// #1708: the sections mode's pad key still holds the chord it latched before, and its pad goes off only once.
+	RemoteRig remote;
+	Client& client = remote.rig.client;
+	run(client, "chordPads.set", {{"remotePort", "dummy/in/Keys"}, {"latch", true}});
+	run(client, "audio.render", {{"frames", 64}});
+	remote.send(0x90, 36, 90);
+	remote.send(0x80, 36, 0);
+	run(client, "chordPads.set", {{"mode", "sections"}});
+	run(client, "audio.render", {{"frames", 64}});
+	remote.send(0x90, 36, 90);
+	run(client, "chordPads.set", {{"remotePort", "dummy/in/Other"}});
+	run(client, "audio.render", {{"frames", 64}});
+	remote.send(0x90, 37, 90, true);
+	CHECK(litUpTo(client, 1, true) == Lit{{0, true}, {0, true}, {0, false}, {1, true}});
 }
 
 TEST_CASE("with Snap Playback the audio engine places the pads' notes by the transport's segments", "[integration]")
