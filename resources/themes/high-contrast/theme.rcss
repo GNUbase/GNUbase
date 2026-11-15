@@ -1065,13 +1065,9 @@
 	{
 		background-color: #3c3c3c;
 	}
-	.controller-lane[lane-kind=articulations]
+	.controller-lane-frame
 	{
 		border-width: 3dp;
-		border-color: transparent;
-	}
-	.controller-lane[lane-kind=articulations].focused
-	{
 		border-color: #ffff00;
 	}
 	.ape-display

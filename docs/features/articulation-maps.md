@@ -218,8 +218,9 @@ removed).
   note stays selected with the others (#1688). As the attribute selection is the editor view's, `editor.get` shows it,
   Lua and MCP select single attributes with `editor.set`, and a new selection of the note elsewhere selects all its
   attributes again. A press on the lane gives it the keyboard focus (on the lanes' root, as the lane's elements can go
-  with the next render), which its state class `.focused` shows, a frame the themes draw around the whole lane, as
-  around the docking zone with the focus (p. 100, #1658, #1688), until the root loses the focus: Delete or Backspace then removes its selected directions and attributes
+  with the next render), which its state class `.focused` shows, a frame the themes draw over the whole lane
+  (`.controller-lane-frame`, taking no room, so that the area lines up with the other lanes'), as around the docking
+  zone with the focus (p. 100, #1658, #1688), until the root loses the focus: Delete or Backspace then removes its selected directions and attributes
   (`controller.remove`, `note.set`, one undo step), not the notes, as the reference does (p. 1289). With the object
   selection tool an arrow in a direction's upper left corner (`.articulation-menu-arrow`, shown while the mouse is over
   the direction or it is selected; beside a reset, which is narrower than it, so that a press on the reset selects

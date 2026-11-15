@@ -448,7 +448,11 @@ namespace gnubase::ui
 			rml += index;
 			rml += R"(" lane-kind=")";
 			rml += lane.type;
-			rml += R"("><div class="controller-lane-header" contextmenu="controller-lane-context-menu)";
+			rml += R"(">)";
+			// The Articulations lane's header and area in a row of their own, under the lane's frame (#1688)
+			if (lane.type == "articulations")
+				rml += R"(<div class="controller-lane-row">)";
+			rml += R"(<div class="controller-lane-header" contextmenu="controller-lane-context-menu)";
 			rml += m_menuSuffix;
 			rml += R"("><button class="controller-lane-type" lane-menu=")";
 			rml += index;
@@ -489,7 +493,8 @@ namespace gnubase::ui
 				rml += R"(</div></div><div class="controller-lane-area" lane=")" + index + R"(">)";
 				m_items.emplace_back();
 				rml += articulationArea(m_items.back());
-				rml += "</div></div>";
+				// The frame the themes draw while the lane has the keyboard focus, over the lane without taking room
+				rml += R"(</div></div><div class="controller-lane-frame"/></div>)";
 				continue;
 			}
 			rml += R"(</div><div class="controller-lane-area" lane=")";

@@ -68,8 +68,36 @@
    directions and attributes in percent of the area's width; a reset (.reset) is as wide as this gives it. */
 .controller-lane[lane-kind=articulations]
 {
+	display: block;
+	position: relative;
 	height: auto;
 	min-height: 14dp;
+}
+
+.controller-lane-row
+{
+	display: flex;
+	flex-direction: row;
+}
+
+/* The frame of the lane with the keyboard focus (#1688), over the lane, as the docking zones' frame, so that it takes
+   no room from the area, which lines up with the other lanes' areas; the themes draw it. The lane is a block around
+   the row of its header and area, as RmlUi gives an absolute child of a flex box as tall as its content no height. */
+.controller-lane-frame
+{
+	display: none;
+	position: absolute;
+	left: 0;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 10;
+	pointer-events: none;
+}
+
+.controller-lane.focused .controller-lane-frame
+{
+	display: block;
 }
 
 .controller-lane[lane-kind=articulations] .controller-lane-type

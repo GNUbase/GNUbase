@@ -1374,6 +1374,33 @@ TEST_CASE("the Articulations lane deletes the attributes selected, and shows whe
 	REQUIRE(f.app.waitUntil([&] { return f.elements(focused).empty(); }));
 }
 
+TEST_CASE("the Articulations lane's frame takes no room, so that its area lines up with the other lanes'", "[ui]")
+{
+	// #1688, reference manual p. 100: directions and attributes are placed in percent of the area, so it has the same
+	// x and width as another lane's area, with the keyboard focus and without.
+	Editor f;
+	f.app.call("editor.set", {{"editor", "window"}, {"lanes", {{{"type", "velocity"}}, {{"type", "articulations"}}}}});
+	REQUIRE(f.app.waitUntil([&f] { return f.elements(inLane(" .articulation-row")).size() == 4; }));
+	const auto linedUp = [&f]
+	{
+		f.app.shell().step(std::chrono::milliseconds(0));
+		const Json velocity = f.box(".controller-lane[lane-kind=velocity] .controller-lane-area");
+		const Json articulations = f.box(inLane(" .controller-lane-area"));
+		return std::abs(velocity.at("x").get<double>() - articulations.at("x").get<double>()) < 0.5 &&
+			std::abs(velocity.at("width").get<double>() - articulations.at("width").get<double>()) < 0.5;
+	};
+	CHECK(!f.shown(inLane(" .controller-lane-frame")));
+	CHECK(linedUp());
+	f.click(f.at(1, 1.0));
+	REQUIRE(f.app.waitUntil([&f] { return f.shown(inLane(".focused .controller-lane-frame")); }));
+	CHECK(linedUp());
+	// The frame lies over the whole lane.
+	const Json lane = f.box(inLane(""));
+	const Json frame = f.box(inLane(" .controller-lane-frame"));
+	for (const char* key : {"x", "y", "width", "height"})
+		CHECK(std::abs(frame.at(key).get<double>() - lane.at(key).get<double>()) < 0.5);
+}
+
 TEST_CASE("the info line's pop-up menu changes only the selected notes of tracks with the first one's map", "[ui]")
 {
 	// #1658, reference manual p. 1290.
