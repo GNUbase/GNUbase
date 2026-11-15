@@ -75,10 +75,12 @@ the edits of several parts go in one `history.transaction`.
     .key-editor-grid                  128 .key-editor-row (.black); .key-editor-notes with a .key-note[part][note]
                                       per note (.selected, .inactive outside the part editing mode, .drawing);
                                       .key-editor-step-cursor (.off while step input is off)
-                                      with Show Note Expression Data a .key-expression-step per point in a .key-note;
+                                      with Show Note Expression Data a .key-expression-step per point in a .key-note
+                                      (steps narrower than a pixel joined; the lines take no mouse events);
       .key-expression-editor          the expression editor (.off while closed): button.key-expression-type (Parameter
                                       Selection, menu #key-expression-menu) and .key-expression-area with the
-                                      selected notes' .key-expression-step (note-expression.md)
+                                      selected notes' .key-expression-step, which take no mouse events either
+                                      (note-expression.md)
   .controller-lanes                   the controller lanes (controller-lanes.md)
 #key-editor-toolbox                   menu.toolbox with a menuitem[key-tool] per tool, [checked] for the current one
 .editor-chord-editing                 the inspector's Chord Editing section: .editor-chord-type (the chord's name),
