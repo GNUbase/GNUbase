@@ -44,6 +44,7 @@ namespace gnubase::ui
 		constexpr float g_minPitchZoom = 0.25F;
 		constexpr float g_maxPitchZoom = 4.0F;
 		constexpr float g_zoomDoubling = 100.0F;
+		constexpr float g_zoomSnap = 0.05F; // within 5 dp of a drag of zoom 1, in doublings, the zoom is 1 (#1627)
 		// dp: the drum editor's Adapt to Zoom (p. 1227) snaps to the finest note value at least this wide
 		constexpr double g_minGridWidth = 12.0;
 
@@ -629,9 +630,10 @@ namespace gnubase::ui
 		if (!m_zoomDrag && std::abs(dx) < g_dragThreshold * ratio && std::abs(dy) < g_dragThreshold * ratio)
 			return; // still a click on a key
 		m_zoomDrag = true;
-		if (const float zoom =
-				std::clamp(m_zoomStart * std::exp2(dx / ratio / g_zoomDoubling), g_minPitchZoom, g_maxPitchZoom);
-			zoom != m_pitchZoom)
+		float zoom = std::clamp(m_zoomStart * std::exp2(dx / ratio / g_zoomDoubling), g_minPitchZoom, g_maxPitchZoom);
+		if (std::abs(std::log2(zoom)) < g_zoomSnap)
+			zoom = 1.0F; // a drag back rarely lands on 1 exactly: at 1 the rows have no height of the zoom's
+		if (zoom != m_pitchZoom)
 			setPitchZoom(zoom);
 		body->SetScrollTop((m_scrollStart * m_pitchZoom / m_zoomStart) - dy);
 		if (context != nullptr)

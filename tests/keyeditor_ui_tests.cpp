@@ -550,11 +550,38 @@ TEST_CASE("the keyboard's zoom zooms nothing when the style sheet gives the rows
 	f.app.setDpRatio(1.0F);
 	f.add({{0, 60, g_quarter}});
 	restyle(f, ".key-editor-rows .key-editor-row { height: auto; min-height: 10dp; }");
-	f.scroll(127);
+	f.scroll(60); // away from the top, where a zoom would move the pitches in view
+	const double top = f.box(".key-editor-key[pitch=\"60\"]").at("y").get<double>();
 	CHECK(std::abs(rowHeight(f) - 10.0) <= 0.5);
 	zoomDrag(f, 100);
 	CHECK(std::abs(rowHeight(f) - 10.0) <= 0.5);
 	CHECK(std::abs(keyboardHeight(f) - 1280.0) <= 1);
+	CHECK(std::abs(f.box(".key-editor-key[pitch=\"60\"]").at("y").get<double>() - top) <= 1);
+
+	// The rows keep no height of the zoom's: a later style's length applies at once (#1627).
+	restyle(f, ".key-editor-body .key-editor-rows .key-editor-row { height: 12dp; min-height: 0; }");
+	CHECK(std::abs(rowHeight(f) - 12.0) <= 0.5);
+	CHECK(std::abs(keyboardHeight(f) - (128 * 12.0)) <= 1);
+}
+
+TEST_CASE("the keyboard's zoom snaps to 1 near it, and the rows follow a style change at once again", "[ui]")
+{
+	// A drag back rarely lands on exactly the zoom it started from; near 1 the zoom is 1, so the zoom's heights go
+	// and a theme or style change reaches the rows without a press on the keyboard (#1627).
+	Fixture f({1024, 600});
+	f.app.setDpRatio(1.0F);
+	f.add({{0, 60, g_quarter}});
+	f.scroll(127);
+	zoomDrag(f, 100);
+	CHECK(std::abs(rowHeight(f) - 20.0) <= 0.5);
+	zoomDrag(f, -97); // 3 dp short of zoom 1
+	CHECK(std::abs(rowHeight(f) - 10.0) <= 0.5);
+	restyle(f, ".key-editor-body .key-editor-rows .key-editor-row { height: 12dp; }");
+	CHECK(std::abs(rowHeight(f) - 12.0) <= 0.5);
+
+	// Further away it zooms as before.
+	zoomDrag(f, 20);
+	CHECK(std::abs(rowHeight(f) - (12.0 * std::exp2(0.2))) <= 0.5);
 }
 
 TEST_CASE("a click and a drag on the keyboard's left part leave the selected notes and the history alone", "[ui]")
