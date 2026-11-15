@@ -905,6 +905,7 @@ namespace gnubase::engine
 			m_inputSlotsSerial = sequence.slotsSerial;
 			m_inputSlot = -1;
 			m_inputSlotHeld = -1;
+			m_inputAddOnCount = 0;
 		}
 		// The track set to another MIDI channel: the selected slot's off events on the channel its on events went to,
 		// and its on events on the new one, as the track's patch goes out again there.
@@ -1361,15 +1362,34 @@ namespace gnubase::engine
 		// A key whose note-on played, before the map came or the key became a trigger: its note-off ends that note.
 		if (event.type == Type::NoteOff && m_inputDown[((event.channel % 16) * 128) + (event.key % 128)])
 			return false;
-		// An add-on slot (#1113) sends its on events besides the selected slot, and without latch its off events
-		// where the key is released.
+		// An add-on slot (#1113) sends its on events besides the selected slot, on the channel the notes play on, as
+		// the notes' add-ons go in playback, and ends the add-on slots on of its groups (#1667); without latch it ends
+		// where the key is released, on the channel its on events went to.
 		if (found->addOn)
 		{
-			const auto on = found->channel >= 0 ? static_cast<uint8_t>(found->channel) : channel;
-			if (event.type != Type::NoteOff)
-				sendSlotEvents(*found, false, on, event.offset, out);
-			else if (!map.latch)
-				sendSlotEvents(*found, true, on, event.offset, out);
+			size_t at = 0;
+			while (at < m_inputAddOnCount && m_inputAddOns[at].slot != slot)
+				++at;
+			const bool on = at < m_inputAddOnCount;
+			if (event.type == Type::NoteOff)
+			{
+				if (!map.latch && on)
+				{
+					sendSlotEvents(*found, true, m_inputAddOns[at].channel, event.offset, out);
+					m_inputAddOns[at] = m_inputAddOns[--m_inputAddOnCount];
+				}
+				return true;
+			}
+			endAddOns(map, *found, event.offset, out);
+			// The channel the notes play on: the selected slot's on events', else the default slot's own or the given.
+			uint8_t to = channel;
+			if (m_inputSlot >= 0)
+				to = m_inputSlotChannel;
+			else if (map.slots.front().channel >= 0)
+				to = static_cast<uint8_t>(map.slots.front().channel);
+			if (!on && m_inputAddOnCount < m_inputAddOns.size())
+				m_inputAddOns[m_inputAddOnCount++] = {slot, to};
+			sendSlotEvents(*found, false, to, event.offset, out);
 			return true;
 		}
 		if (event.type == Type::NoteOff)
@@ -1387,8 +1407,26 @@ namespace gnubase::engine
 		m_inputSlotHeld = event.type == Type::NoteOn && !map.latch ? slot : -1;
 		if (slot != m_inputSlot)
 			m_inputSlotTrigger = event.channel % 16;
+		endAddOns(map, *found, event.offset, out);
 		selectSlot(map, slot, channel, event.offset, out);
 		return true;
+	}
+
+	void MidiSequencer::endAddOns(
+		const ArticulationMap& map, const SoundSlot& slot, uint32_t offset, graph::EventBuffer& out) noexcept
+	{
+		for (size_t i = 0; i < m_inputAddOnCount;)
+		{
+			const auto index = static_cast<size_t>(m_inputAddOns[i].slot);
+			if (index >= map.slots.size() || &map.slots[index] == &slot ||
+				!midi::shareGroup(map, map.slots[index], slot))
+			{
+				++i;
+				continue;
+			}
+			sendSlotEvents(map.slots[index], true, m_inputAddOns[i].channel, offset, out);
+			m_inputAddOns[i] = m_inputAddOns[--m_inputAddOnCount];
+		}
 	}
 
 	void MidiSequencer::takeSlot(const MidiSequencer& track) noexcept
@@ -1400,6 +1438,8 @@ namespace gnubase::engine
 		m_inputSlotsSerial = track.m_inputSlotsSerial;
 		m_inputSlotTrack = track.m_inputSlotTrack;
 		m_inputSlotTrigger = track.m_inputSlotTrigger;
+		m_inputAddOns = track.m_inputAddOns;
+		m_inputAddOnCount = track.m_inputAddOnCount;
 	}
 
 	void MidiSequencer::selectSlot(const ArticulationMap& map, int slot, uint8_t channel, uint32_t offset,
