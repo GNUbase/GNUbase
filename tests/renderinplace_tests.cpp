@@ -868,6 +868,37 @@ TEST_CASE("a rendered event under a transpose event is independent of it", "[int
 	CHECK(found);
 }
 
+TEST_CASE("a rendered event without transpose events gets the project root key and follows it", "[integration]")
+{
+	// As a recorded event (#1368, reference manual p. 420): changing the root key afterwards shifts the render.
+	Session project;
+	const Session::Track mono = project.addTrack("Mono", 1);
+	run(project.client, "project.set", {{"rootKey", "D"}});
+	const Json result =
+		run(project.client, "track.renderInPlace", {{"tracks", {mono.track}}, {"sourceTracks", "mute"}});
+	const auto rendered = result.at("events").at(0).get<ObjectId>();
+	const Json state = run(project.client, "project.get");
+	for (const Json& event : state.at("audioEvents"))
+		if (event.at("id") == rendered)
+		{
+			CHECK(event.at("rootKey") == "D");
+			CHECK(event.at("globalTranspose") == "follow");
+		}
+	using Pitch = std::vector<dsp::PitchPoint>;
+	const auto pitch = [&project, rendered]() -> std::optional<Pitch>
+	{
+		const RenderSnapshot& snapshot = project.engine.renderSnapshots().acquire();
+		for (const RenderChannel& channel : snapshot.channels)
+			for (const RenderAudioEvent& event : channel.audioEvents)
+				if (event.id == rendered)
+					return snapshot.media.at(static_cast<size_t>(event.media)).pitch;
+		return std::nullopt;
+	};
+	CHECK(pitch() == Pitch{});
+	run(project.client, "project.set", {{"rootKey", "E"}});
+	CHECK(pitch() == Pitch{{0.0, 2.0}});
+}
+
 TEST_CASE("render in place refuses what it can't render", "[integration]")
 {
 	Session project;

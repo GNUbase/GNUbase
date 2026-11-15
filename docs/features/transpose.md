@@ -61,14 +61,15 @@ snapshot adds it to each note's MIDI modifiers' transpose at the note's start, w
 ranges.
 
 An audio event plays the same sum with its own Transpose (#1368, #1555), shifted in real time by the time stretcher
-([time-stretch.md](../time-stretch.md)) on the disk thread: the render snapshot gives an event that some of it
-shifts a media entry of its own, as a warped event has ([warp.md](warp.md)), with a pitch map
-(`RenderMedia::pitch`): the semitones from the event's start and from each transpose event within it, in the event's
-frames. `dsp::WarpReader` sets the stretcher's pitch from each point on, through the warp map of a warped event or
-an identity map of a plain one, with the clip's warp preset, clamped to the real-time range of 24 semitones. An event
-that nothing can shift, without a Transpose of its own and Independent or without a root key step and transpose
-events, gets no warp or pitch map at all (#1555), so a project without global transposition pays nothing for it; it
-plays its file as before.
+([time-stretch.md](../time-stretch.md)) on the disk thread: the render snapshot gives an event that some of it shifts a
+media entry of its own, as a warped event has ([warp.md](warp.md)), with a pitch map (`RenderMedia::pitch`): the
+semitones from the event's start and from each transpose event within it, in the event's frames. `dsp::WarpReader` plays
+it through the warp map of a warped event or an identity map of a plain one, with the clip's warp preset, clamped to the
+real-time range of 24 semitones. The stretcher's latency depends on the pitch, so the reader starts over at each point
+with the pitch from there on, as [warp.md](warp.md) says, and crossfades the run it ends into the new one over 5 ms, so
+that sustained audio doesn't click there (#1564). An event that nothing can shift, without a Transpose of its own and
+Independent or without a root key step and transpose events, gets no warp or pitch map at all (#1555), so a project
+without global transposition pays nothing for it; it plays its file as before.
 
 ## UI
 
@@ -100,27 +101,29 @@ plays its file as before.
 `tests/transpose_tests.cpp`: the pitches the render snapshot plays for the root key (both ways, with the part's own
 transpose, Independent, undo), transpose events (adding the track, timeline order, Keep Transpose in Octave Range, mute,
 moving, the value range, lock, the track's removal), the octave-range option folding the whole sum a part plays, its own
-transpose included (7 staying 7 and 8 folding, a muted track, an Independent part left as it is), `transpose.changed` and
-`arranger.changed` announced by undo and redo, glue refusing parts that follow global transpose differently and keeping
-the sound of parts the option folds differently, Set Root Key for Unassigned Events (also in inactive track versions),
-Delete Time and Insert Silence moving the events, Delete Time carrying the transposition at the range's end to the cut
-and nothing when an event is at the end or none in the range, recorded parts with and without transpose events, and
-saving and loading. For audio events: the pitch map of the render snapshot for the root key, transpose events, a muted
-track, the octave range and Independent, with undo and splits; Set Root Key for Unassigned Events and glue; recorded
-events with and without transpose events; saving and loading. An audio event's own Transpose with the root key step,
-Independent and the octave range, its range and `rootKeyTranspose`; no media entry of its own for an event that
-nothing can shift; glue refusing events with different Transposes; the pool's Key column (`clip.set` `rootKey`) over
-the events of a clip, inactive track versions included, and what `pool.get` shows when they differ. `tests/renderinplace_tests.cpp`: a rendered event under a
-transpose event Independent with an empty pitch map. `tests/warp_tests.cpp`: `dsp::WarpReader` shifting a sine an octave
-up from a point of its pitch map, also after a seek, clicks after a pitch point an octave up and down where its map puts
-them, read through and after a seek, and an audio event in C playing 4 semitones up in a
-project in E and 8 down after a transpose event, measured in an offline render, and unshifted when Independent.
-`tests/transpose_ui_tests.cpp`: the toolbar's root key, the info line's Root Key and Global Transpose (its button
-reading Follow or Independent) for parts and audio events and a part's root key step, the mark of Independent parts and
-audio events, the reason of a refused glue in `#edit-refused`, drawing, typing, dragging, double-clicking and erasing
-transpose events on the lane, the track list's controls and its context menu's Set Root Key for Unassigned Events, an
-audio event's own Transpose with the root key step in brackets, and an audio part's events' Root Key and Global
-Transpose. `tests/poolpanel_tests.cpp`: the pool's Key column.
+transpose included (7 staying 7 and 8 folding, a muted track, an Independent part left as it is), `transpose.changed`
+and `arranger.changed` announced by undo and redo, glue refusing parts that follow global transpose differently and
+keeping the sound of parts the option folds differently, Set Root Key for Unassigned Events (also in inactive track
+versions), Delete Time and Insert Silence moving the events, Delete Time carrying the transposition at the range's end
+to the cut and nothing when an event is at the end or none in the range, recorded parts with and without transpose
+events, and saving and loading. For audio events: the pitch map of the render snapshot for the root key, transpose
+events, a muted track, the octave range and Independent, with undo and splits; Set Root Key for Unassigned Events and
+glue; recorded events with and without transpose events; saving and loading. An audio event's own Transpose with the
+root key step, Independent and the octave range, its range and `rootKeyTranspose`; no media entry of its own for an
+event that nothing can shift; glue refusing events with different Transposes; the pool's Key column (`clip.set`
+`rootKey`) over the events of a clip, inactive track versions included, and what `pool.get` shows when they differ.
+`tests/renderinplace_tests.cpp`: a rendered event under a transpose event Independent with an empty pitch map, and one
+without transpose events in the project root key, following it, with a pitch map that a later root key shifts.
+`tests/warp_tests.cpp`: `dsp::WarpReader` shifting a sine an octave up from a point of its pitch map, also after a seek,
+clicks after a pitch point an octave up and down where its map puts them, read through and after a seek, no step in a
+sine across a pitch point up and down or the end of a segment beyond the real-time range, and an audio event in C
+playing 4 semitones up in a project in E and 8 down after a transpose event, measured in an offline render, and
+unshifted when Independent. `tests/transpose_ui_tests.cpp`: the toolbar's root key, the info line's Root Key and Global
+Transpose (its button reading Follow or Independent) for parts and audio events and a part's root key step, the mark of
+Independent parts and audio events, the reason of a refused glue in `#edit-refused`, drawing, typing, dragging,
+double-clicking and erasing transpose events on the lane, the track list's controls and its context menu's Set Root Key
+for Unassigned Events, an audio event's own Transpose with the root key step in brackets, and an audio part's events'
+Root Key and Global Transpose. `tests/poolpanel_tests.cpp`: the pool's Key column.
 
 ## Not yet
 
