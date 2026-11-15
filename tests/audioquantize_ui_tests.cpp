@@ -17,6 +17,7 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -516,4 +517,50 @@ TEST_CASE("the project window marks the cutting positions while the quantize pan
 	CHECK(f.app.waitUntil([&] { return f.display.cuttingPositions() == cuts; }));
 	f.display.select({});
 	CHECK(f.app.waitUntil([&] { return f.display.cuttingPositions().empty(); }));
+}
+
+TEST_CASE("Group Editing of a folder selects the events and ranges of its other tracks at the same place", "[ui]")
+{
+	Fixture f;
+	// The two tracks in a folder, a third event on the second track elsewhere.
+	const auto folder = f.app.call("track.add", {{"type", "folder"}, {"tracks", {f.tracks[0], f.tracks[1]}}})
+							.at("track")
+							.at("id")
+							.get<uint64_t>();
+	const auto elsewhere = f.app
+							   .call("audioEvent.add",
+								   {{"track", f.tracks[1]}, {"clip", f.clips[1]}, {"position", 120000}, {"offset", 0},
+									   {"length", g_quarter}})
+							   .at("event")
+							   .at("id")
+							   .get<uint64_t>();
+	REQUIRE(f.app.waitUntil([&] { return f.display.project().at("audioEvents").size() == 3; }));
+	f.display.select({f.events[0]});
+	CHECK(f.display.selection() == std::vector<uint64_t>{f.events[0]});
+
+	// The folder's Group Editing button in the track list (reference manual pp. 196, 274) turns it on.
+	const std::string button = "#track-list listitem[value=\"" + std::to_string(folder) + "\"] [control=groupEditing]";
+	f.click(button);
+	CHECK(f.app.waitUntil([&] { return f.hasClass(button, "checked"); }));
+	CHECK(f.app.call("project.get").at("tracks").at(0).at("groupEditing") == true);
+	REQUIRE(f.app.waitUntil([&] { return f.display.project().at("tracks").at(0).value("groupEditing", false); }));
+
+	// An event selected selects the one on the other track with the same start and end, not the one elsewhere.
+	f.display.select({f.events[0]});
+	std::vector<uint64_t> both{f.events[0], f.events[1]};
+	std::sort(both.begin(), both.end());
+	CHECK(f.display.selection() == both);
+	f.display.select({elsewhere});
+	CHECK(f.display.selection() == std::vector<uint64_t>{elsewhere});
+	// A range on one track is on every track of the folder.
+	f.display.setTool(ui::Tool::RangeSelection);
+	f.display.setRange(ui::RangeSelection{12000, 60000, {f.tracks[0]}});
+	const std::optional<ui::RangeSelection> range = f.display.range();
+	CHECK(range.value_or(ui::RangeSelection{}).tracks == std::vector<uint64_t>{f.tracks[0], f.tracks[1]});
+
+	// Off again, selecting is as before.
+	f.click(button);
+	CHECK(f.app.waitUntil([&] { return !f.display.project().at("tracks").at(0).value("groupEditing", true); }));
+	f.display.select({f.events[0]});
+	CHECK(f.display.selection() == std::vector<uint64_t>{f.events[0]});
 }

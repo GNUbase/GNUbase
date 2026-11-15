@@ -1638,3 +1638,27 @@ TEST_CASE("The cutting positions are where Slice would cut", "[integration]")
 	CHECK(Json(starts) == positions);
 	CHECK_THAT(reject(client, "quantize.slicePositions", {{"events", {999}}}), ContainsSubstring("no audio event 999"));
 }
+
+TEST_CASE("Group Editing is a folder track's mode, saved with the project", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	const ObjectId audio =
+		run(client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track").at("id").get<ObjectId>();
+	const ObjectId folder =
+		run(client, "track.add", {{"type", "folder"}, {"tracks", {audio}}}).at("track").at("id").get<ObjectId>();
+	CHECK(byId(client, "tracks", folder).at("groupEditing") == false);
+	const Json result = run(client, "track.set", {{"track", folder}, {"groupEditing", true}});
+	CHECK(result.at("track").at("groupEditing") == true);
+	run(client, "history.undo");
+	CHECK(byId(client, "tracks", folder).at("groupEditing") == false);
+	run(client, "history.redo");
+	const std::string file = (dir.path() / "group.dawproject").u8string();
+	run(client, "project.save", {{"path", file}, {"embedMedia", false}});
+	run(client, "project.new");
+	run(client, "project.load", {{"path", file}});
+	CHECK(byId(client, "tracks", folder).at("groupEditing") == true);
+	CHECK_THAT(reject(client, "track.set", {{"track", audio}, {"groupEditing", true}}),
+		ContainsSubstring("only folder tracks"));
+}

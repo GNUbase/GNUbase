@@ -821,6 +821,7 @@ namespace gnubase::engine
 		ObjectId parent = 0;                // a folder track, or 0 at the top level
 		ObjectId channel = 0;               // 0 for folders without a group channel
 		std::vector<ObjectId> children;     // folders: the tracks inside, from top to bottom
+		bool groupEditing = false;          // folders: Group Editing mode (reference manual p. 274, #1579)
 		std::optional<AutoFades> autoFades; // audio tracks: settings of their own instead of the project's
 		std::string timeFormat;             // ruler tracks: one of g_rulerTimeFormats
 		bool enabled = true; // audio, instrument and MIDI tracks: a disabled one plays nothing and is silent
@@ -2048,11 +2049,11 @@ namespace gnubase::engine
 
 	inline bool operator==(const Track& a, const Track& b)
 	{
-		return std::tie(a.id, a.type, a.name, a.color, a.timeBase, a.parent, a.channel, a.children, a.autoFades,
-				   a.timeFormat, a.enabled, a.picture, a.timeOffset, a.timeOffsetOn, a.frozen, a.drumMap,
+		return std::tie(a.id, a.type, a.name, a.color, a.timeBase, a.parent, a.channel, a.children, a.groupEditing,
+				   a.autoFades, a.timeFormat, a.enabled, a.picture, a.timeOffset, a.timeOffsetOn, a.frozen, a.drumMap,
 				   a.articulationMap, a.versions, a.activeVersion) ==
-			std::tie(b.id, b.type, b.name, b.color, b.timeBase, b.parent, b.channel, b.children, b.autoFades,
-				b.timeFormat, b.enabled, b.picture, b.timeOffset, b.timeOffsetOn, b.frozen, b.drumMap,
+			std::tie(b.id, b.type, b.name, b.color, b.timeBase, b.parent, b.channel, b.children, b.groupEditing,
+				b.autoFades, b.timeFormat, b.enabled, b.picture, b.timeOffset, b.timeOffsetOn, b.frozen, b.drumMap,
 				b.articulationMap, b.versions, b.activeVersion);
 	}
 	// Where an audio event plays, in the project's samples (fadeedits.cpp).

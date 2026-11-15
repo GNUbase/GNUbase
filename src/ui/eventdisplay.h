@@ -598,6 +598,13 @@ namespace gnubase::ui
 		// Sends an event.* command for the selection; with selectResult, the events it returns become the selection.
 		void edit(const std::string& command, engine::Json parameters, bool selectResult = false);
 		void selectWhere(const std::function<bool(const Shown&)>& selected);
+		// Group Editing of folder tracks (#1579, reference manual p. 274): each track's outermost folder with Group
+		// Editing on, for the tracks that have one; the events and parts with those of their folder's other tracks
+		// that have the same start, end and lane; and a range's tracks with the other tracks of their folders, in the
+		// project's order.
+		std::map<uint64_t, uint64_t> editGroups() const;
+		std::vector<uint64_t> withEditGroups(std::vector<uint64_t> events) const;
+		std::vector<uint64_t> withEditGroupTracks(const std::vector<uint64_t>& tracks) const;
 		int64_t samples(double seconds) const;
 		// Snapping (eventediting.cpp): where a point at seconds goes, from where it was for grid relative; the
 		// selection's edges and snap points don't attract.

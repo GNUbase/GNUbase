@@ -206,9 +206,9 @@ the project's settings ([hitpoints.md](hitpoints.md)), kept as a preset, so it i
   audio event when no MIDI part is selected, and makes its groove the project's settings, as for a MIDI part. A
   refusal, as for an event without hitpoints, is logged, as a refused Slice is.
 
-## Not yet
-
-Group editing of folder tracks (the commands take the events, of any tracks) (#1579).
+Group editing (p. 274, [folder-tracks.md](folder-tracks.md)) selects the events of a folder's tracks at the same
+place together, so the commands for several tracks take the edit group as the reference manual's procedures do; they
+still take whatever events are selected, of any tracks.
 
 ## Checks
 
