@@ -624,8 +624,8 @@ TEST_CASE("sends before the modifiers get the notes' expression", "[integration]
 				sent.push_back({captured.at("position").get<int64_t>() - start,
 					captured.at("bytes").at(0).get<int64_t>(), captured.at("bytes").at(1).get<int64_t>()});
 		INFO("sends " << (pre ? "pre" : "post"));
-		// The transformer moves the note, but not yet its expression: its initial point no longer comes before it.
-		CHECK(sent == std::vector<std::vector<int64_t>>{{0, 0x92, pre ? 61 : 73}, {0, 0xE2, 0}, {100, 0xE2, 0}});
+		// The transformer moves the note with its expression (#1618), whose initial point comes before it.
+		CHECK(sent == std::vector<std::vector<int64_t>>{{0, 0xE2, 0}, {0, 0x92, pre ? 61 : 73}, {100, 0xE2, 0}});
 	}
 }
 

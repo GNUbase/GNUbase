@@ -5,6 +5,7 @@
 #include "engine/document/rendersnapshot.h"
 #include "engine/graph/processor.h"
 #include "engine/midi/effects.h"
+#include "engine/midi/mpeinput.h"
 #include "engine/processors/builtinplugin.h"
 #include "engine/processors/midieffects.h"
 #include "platform/rt/snapshotpublisher.h"
@@ -321,6 +322,10 @@ namespace gnubase::engine
 		// playing, and the notes play with the selected slot's MIDI modifiers before the track's (#175). The audio
 		// engine fills them before the graph processes a block.
 		graph::EventBuffer& input() noexcept { return m_input; }
+		// Audio thread: an event of midi.inject's into input through an MPE setup (midi::MpeSetup::pack), as from a
+		// port with it: the track keeps the state of the notes' channels while the setup stays. False, adding nothing,
+		// if input has no room for a note-on and its initial values.
+		bool injectMpe(uint32_t setup, const graph::ProcessEvent& event) noexcept;
 
 	protected:
 		void prepare(double sampleRate, uint32_t maxFrames) override;
@@ -359,6 +364,9 @@ namespace gnubase::engine
 		// ends with the last of their note-offs (Live Input moves keys onto one note).
 		bool modifyInput(
 			const MidiSequence& sequence, int64_t position, graph::ProcessEvent& event, uint16_t& ends) noexcept;
+		// A note-on on the channel of its input: the keys there that aren't held lose the note their expression went
+		// to, which has faded as far as MPE is concerned.
+		void forgetReleased(uint8_t channel) noexcept;
 		// Remote triggers on its input (#175, reference manual pp. 1263, 1268): whether the event is one of the
 		// articulation map's, which selects its sound slot instead of playing. A new slot sends the off events of the
 		// one before, then its own on events.
@@ -428,7 +436,8 @@ namespace gnubase::engine
 		graph::EventBuffer m_input;
 		std::shared_ptr<graph::EventBuffer> m_stripChase; // see stripChase
 		std::array<bool, g_notes> m_inputHeld{};          // notes its input sent a note-on for and no note-off since
-		// Where each note of its input went after the modifiers, as channel * 128 + pitch; g_notes: left out.
+		// Where each note of its input went after the modifiers, as channel * 128 + pitch; g_notes: left out, or no
+		// note-on came. It stays after the note-off, for the note's expression while it fades (forgetReleased).
 		std::array<uint16_t, g_notes> m_inputTo{};
 		std::array<bool, g_notes> m_inputDown{};     // the keys of its input, as channel * 128 + pitch, that are held
 		std::array<uint16_t, g_notes> m_inputKeys{}; // how many held keys play each note, as channel * 128 + pitch
@@ -439,10 +448,13 @@ namespace gnubase::engine
 		uint8_t m_inputSlotChannel = 0;
 		int m_inputSlotHeld = -1;
 		uint64_t m_inputSlotsSerial = 0; // the MidiSequence::slotsSerial they belong to
-		int8_t m_inputSlotTrack = -1;    // the MidiSequence::inputChannel they belong to
-		uint8_t m_inputSlotTrigger = 0;  // the channel of the trigger that selected the slot
-		bool m_tookSlot = false;         // a sequencer for sends before the modifiers: takeSlot ran
-		uint64_t m_instrument = 0;       // playOn: where its notes went in the graph that runs
+		// midi.inject's MPE input (injectMpe) and the setup it is for.
+		midi::MpeInput m_injectedMpe;
+		uint32_t m_injectedMpeSetup = 0;
+		int8_t m_inputSlotTrack = -1;   // the MidiSequence::inputChannel they belong to
+		uint8_t m_inputSlotTrigger = 0; // the channel of the trigger that selected the slot
+		bool m_tookSlot = false;        // a sequencer for sends before the modifiers: takeSlot ran
+		uint64_t m_instrument = 0;      // playOn: where its notes went in the graph that runs
 
 		// Command thread: the effect in each slot, the inserts' then the sends', while it plays.
 		struct SlotEffect
