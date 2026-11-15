@@ -505,6 +505,28 @@ TEST_CASE("retrospective recording inserts what a track's input played while it 
 	CHECK_THAT(reject(client, "midi.insertRetrospective", {{"track", setup.track}}), ContainsSubstring("nothing"));
 }
 
+TEST_CASE("input in stop mode on the next audio device starts the retrospective buffer afresh", "[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	run(client, "settings.set", {{"key", "midi.snapPartsToBars"}, {"value", false}});
+	run(client, "channel.set", {{"channel", setup.channel}, {"recordEnable", false}});
+	run(client, "audio.render", {{"frames", 20000}});
+	setup.inject({message(20100, {0x90, 60, 100}), message(20200, {0x80, 60, 0})});
+	run(client, "audio.render", {{"frames", 1000}});
+	// The new device counts its frames from 0 again, far less than 30 s after the old one's last input.
+	run(client, "audio.setDevice", {{"blockSize", 64}, {"inputChannels", 0}, {"captureSeconds", 1}});
+	setup.inject({message(1000, {0x90, 62, 100}), message(1000 + g_beat, {0x80, 62, 0})});
+	run(client, "audio.render", {{"frames", 1000 + (2 * g_beat)}});
+	run(client, "transport.locate", {{"position", 2 * g_beat}});
+	run(client, "audio.render", {{"frames", 64}});
+	run(client, "midi.insertRetrospective", {{"track", setup.track}});
+	const std::vector<Json> parts = setup.parts();
+	REQUIRE(parts.size() == 1);
+	CHECK(parts[0].at("position") == 2 * g_beatTicks);
+	CHECK(notesOf(parts[0]) == std::vector<std::vector<int64_t>>{{0, g_beatTicks, 62}});
+}
+
 TEST_CASE("drum sounds auditioned with midi.inject drumSounds are neither recorded nor kept", "[integration]")
 {
 	// The drum editor auditions a sound (reference manual p. 1236), which is no MIDI input. With the I-notes of the
