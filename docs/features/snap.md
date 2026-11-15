@@ -64,7 +64,9 @@ the project start. The sample grids count from the project start, as the samples
   magnets, the cursor and how near they attract). The musical grids answer in ticks, so a part snapped to a bar starts
   exactly on it across tempo changes; the others in samples. `snap.position` runs it on the project, with every other
   event's edges and snap points and every marker as magnets; the event display runs it on what it shows while the
-  mouse drags, so the preview and the result agree.
+  mouse drags, so the preview and the result agree. `EventDisplay::snapped` takes more magnets: the arranger track's
+  lane adds the other arranger events' edges, so that arranger events snap to each other with `events` (p. 404,
+  [arranger.md](arranger.md)).
 - **Markers attract from every marker track** (#415, p. 106: markers are events on the marker tracks, and other
   tracks' events attract too), the active one's or not: a marker's position, and a cycle marker's end too. Both
   `snap.position` and the event display take them from the project, the display from the same `project.get` answer

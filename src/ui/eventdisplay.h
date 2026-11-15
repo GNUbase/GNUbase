@@ -249,8 +249,17 @@ namespace gnubase::ui
 		// whose buttons #snap-type and #grid-type show the choice, and a toggle button #snap-zero-crossing.
 		const engine::SnapSettings& snap() const { return m_snap; }
 		// Where a point dragged to seconds snaps to, in seconds, from where it was (for grid relative), as the
-		// display's own drags snap: e.g. markers on the marker track (ui/markers.h).
-		double snapped(double seconds, std::optional<double> from = std::nullopt) const;
+		// display's own drags snap: e.g. markers on the marker track (ui/markers.h). The magnets (samples) attract as
+		// the events' edges do, e.g. the other arranger events' edges for one on the arranger track's lane.
+		double snapped(double seconds, std::optional<double> from = std::nullopt,
+			const std::vector<time::Samples>& magnets = {}) const;
+		// The grid line at or before seconds, in seconds: where a click draws an arranger event from when snapping
+		// would put it after the click (ui/transposetrack.h).
+		double gridLineBefore(double seconds) const;
+		// Why the engine refused an edit of events, such as a glue of parts that follow global transpose differently,
+		// in the notification #edit-refused for a moment (#1367), or of the global tracks' events
+		// (ui/transposetrack.h); logged too.
+		void showRefusal(const std::string& error);
 
 		// The default tool modifiers (reference manual p. 1601) of the tools that GNUbase has, by action, which the
 		// user setting ui.toolModifiers overrides one by one.
@@ -597,7 +606,8 @@ namespace gnubase::ui
 		// Snapping (eventediting.cpp): where a point at seconds goes, from where it was for grid relative; the
 		// selection's edges and snap points don't attract.
 		engine::SnapGrid snapGrid() const;
-		time::Position snapAt(double seconds, std::optional<double> from) const;
+		time::Position snapAt(
+			double seconds, std::optional<double> from, const std::vector<time::Samples>& magnets = {}) const;
 		// The distance from seconds to a snapped position as event.move and event.resize take it: ticks when the grid
 		// is musical and every selected event is on a musical track, else samples. Also in seconds.
 		std::pair<engine::Json, double> shiftTo(const time::Position& to, double from, bool moving = false) const;
@@ -706,9 +716,6 @@ namespace gnubase::ui
 		void showContextMenus();
 		// The notification for a tool chosen with a key command.
 		void notify(const std::string& text);
-		// Why the engine refused an edit of events, such as a glue of parts that follow global transpose differently,
-		// in the notification #edit-refused for a moment (#1367); logged too.
-		void showRefusal(const std::string& error);
 		// Whether the pressed modifiers, or the keys, are the ones the user setting ui.toolModifiers gives the action.
 		bool modifiers(const char* action) const { return modifiers(action, m_pressed); }
 		bool modifiers(const char* action, const std::string& keys) const;
