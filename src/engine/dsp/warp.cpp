@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <stdexcept>
 #include <utility>
 
@@ -11,6 +12,7 @@ namespace gnubase::engine::dsp
 	namespace
 	{
 		constexpr size_t g_blockFrames = 1024;
+		constexpr double g_fadeSeconds = 0.005; // the crossfade where the reader starts over while reading on
 
 		// The segment of a map that key falls in: the index of its first point.
 		template <typename Key> size_t segmentOf(const std::vector<WarpPoint>& map, double value, Key key)
@@ -64,6 +66,8 @@ namespace gnubase::engine::dsp
 		m_planar.assign(channels, std::vector<float>(g_blockFrames));
 		for (std::vector<float>& channel : m_planar)
 			m_pointers.push_back(channel.data());
+		m_fade = std::max<size_t>(1, static_cast<size_t>(std::llround(g_fadeSeconds * m_info.sampleRate)));
+		m_tail.resize(m_fade * channels);
 		restart(0);
 	}
 
@@ -105,6 +109,7 @@ namespace gnubase::engine::dsp
 		m_drop = m_stretcher->latency();
 		m_position = frame;
 		m_final = false;
+		m_faded = m_fade;
 		for (size_t s = segmentOf(m_map, static_cast<double>(frame), &WarpPoint::target); s + 1 < m_map.size(); ++s)
 			if (const double r = ratio(s); r > g_maxRealtimeRatio || r < g_minRealtimeRatio)
 				if (const time::Samples end = std::llround(m_map[s + 1].target); end > frame)
@@ -148,17 +153,12 @@ namespace gnubase::engine::dsp
 		m_input += static_cast<time::Samples>(got);
 	}
 
-	size_t WarpReader::read(float* buffer, size_t frames)
+	size_t WarpReader::pull(float* buffer, size_t frames)
 	{
 		const auto channels = static_cast<size_t>(m_info.channels);
 		size_t done = 0;
-		while (done < frames && m_position < m_info.frames)
+		while (done < frames)
 		{
-			if (m_position >= m_restartAt)
-			{
-				restart(m_position);
-				continue;
-			}
 			const size_t available = m_stretcher->available();
 			if (available == 0)
 			{
@@ -167,16 +167,58 @@ namespace gnubase::engine::dsp
 				feed();
 				continue;
 			}
-			const size_t wanted = std::min<size_t>(frames - done, static_cast<size_t>(m_restartAt - m_position));
 			const size_t got =
-				m_stretcher->retrieve(m_pointers.data(), std::min({available, g_blockFrames, m_drop + wanted}));
+				m_stretcher->retrieve(m_pointers.data(), std::min({available, g_blockFrames, m_drop + frames - done}));
 			const size_t dropped = std::min(got, m_drop);
 			m_drop -= dropped;
 			for (size_t f = dropped; f < got; ++f)
 				for (size_t c = 0; c < channels; ++c)
 					buffer[((done + f - dropped) * channels) + c] = m_planar[c][f];
 			done += got - dropped;
-			m_position += static_cast<time::Samples>(got - dropped);
+		}
+		return done;
+	}
+
+	void WarpReader::fadeIn(float* buffer, size_t frames)
+	{
+		// In place over the tail too: frame f reads the tail at m_faded + f, never before what it has written.
+		const auto channels = static_cast<size_t>(m_info.channels);
+		for (size_t f = 0; f < frames && m_faded < m_fade; ++f, ++m_faded)
+		{
+			const float in = (static_cast<float>(m_faded) + 0.5F) / static_cast<float>(m_fade);
+			for (size_t c = 0; c < channels; ++c)
+			{
+				float& sample = buffer[(f * channels) + c];
+				sample = (sample * in) + (m_tail[(m_faded * channels) + c] * (1.0F - in));
+			}
+		}
+	}
+
+	size_t WarpReader::read(float* buffer, size_t frames)
+	{
+		const auto channels = static_cast<size_t>(m_info.channels);
+		size_t done = 0;
+		while (done < frames && m_position < m_info.frames)
+		{
+			if (m_position >= m_restartAt)
+			{
+				// The ended run would play on with other audio than the new one starts with: its next frames fade out
+				// over the new run's first, after the rest of a fade still going, and silence after the source's end.
+				const size_t tail = pull(m_tail.data(), m_fade);
+				std::fill(m_tail.begin() + static_cast<std::ptrdiff_t>(tail * channels), m_tail.end(), 0.0F);
+				fadeIn(m_tail.data(), m_fade);
+				restart(m_position);
+				m_faded = 0;
+				continue;
+			}
+			const size_t wanted = std::min<size_t>(frames - done, static_cast<size_t>(m_restartAt - m_position));
+			float* out = buffer + (done * channels);
+			const size_t got = pull(out, wanted);
+			fadeIn(out, got);
+			done += got;
+			m_position += static_cast<time::Samples>(got);
+			if (got < wanted)
+				break;
 		}
 		// The stretcher's output may end a little early: silence up to the length.
 		const size_t rest = std::min<size_t>(frames - done, static_cast<size_t>(m_info.frames - m_position));

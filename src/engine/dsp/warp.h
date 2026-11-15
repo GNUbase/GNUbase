@@ -48,7 +48,9 @@ namespace gnubase::engine::dsp
 	// the clamped ratio plays its audio too long or too short: the reader starts over at the segment's end, as after a
 	// seek, so the audio after it is back where the map puts it. A pitch map shifts the pitch of the audio from each of
 	// its points on, clamped to the real-time range, as global transposition does (#1368). The stretcher's latency
-	// depends on the pitch, so the reader starts over at each pitch point too.
+	// depends on the pitch, so the reader starts over at each pitch point too. Where it starts over while reading on,
+	// it crossfades the next frames of the run it ends into the new run over a few milliseconds, so that sustained
+	// audio doesn't step there (#1564).
 	class WarpReader : public AudioFileReader
 	{
 	public:
@@ -69,6 +71,10 @@ namespace gnubase::engine::dsp
 		void restart(time::Samples frame);
 		// Feeds the stretcher the next input frames, up to the next point of the map.
 		void feed();
+		// Up to frames output frames of the current run into buffer, interleaved: fewer only at the source's end.
+		size_t pull(float* buffer, size_t frames);
+		// Fades frames output frames at buffer in over the run that the last restart ended, as far as the fade goes.
+		void fadeIn(float* buffer, size_t frames);
 		// The ratio of a segment of the map.
 		double ratio(size_t segment) const;
 
@@ -85,5 +91,8 @@ namespace gnubase::engine::dsp
 		size_t m_drop = 0;             // output frames of latency still to drop
 		time::Samples m_restartAt = 0; // the next pitch point or end of a segment beyond the real-time range
 		bool m_final = false;          // the source's end was fed
+		std::vector<float> m_tail;     // the ended run's frames after its restart, interleaved: as many as the fade
+		size_t m_fade = 0;             // frames of the crossfade
+		size_t m_faded = 0;            // frames of it done: m_fade when there is none
 	};
 }

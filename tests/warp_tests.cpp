@@ -289,6 +289,47 @@ TEST_CASE("a warp reader plays clicks after a pitch point where its map puts the
 	checkClicks(placed, {18000.0, 30000.0, 42000.0});
 }
 
+TEST_CASE("a warp reader crossfades where it starts over, without a step", "[unit]")
+{
+	// It starts over at a pitch point and at the end of a segment beyond the real-time range: the two runs are
+	// crossfaded, or sustained audio would click there (#1564).
+	struct Case
+	{
+		std::vector<engine::dsp::WarpPoint> map;
+		std::vector<engine::dsp::PitchPoint> pitch;
+		int64_t at = 0;
+	};
+	const Case each = GENERATE(Case{{{0.0, 0.0}, {96000.0, 96000.0}}, {{48000.0, 12.0}}, 48000},
+		Case{{{0.0, 0.0}, {96000.0, 96000.0}}, {{48000.0, -7.0}}, 48000},
+		Case{{{0.0, 0.0}, {12000.0, 72000.0}, {36000.0, 96000.0}}, {}, 72000});
+	CAPTURE(each.at, each.pitch.size());
+	const test::TempDir dir;
+	const std::string file = (dir.path() / "sine.wav").u8string();
+	test::writeWav(file, sine(96000));
+	engine::dsp::WarpReader reader(
+		engine::AudioFileReader::open(file), each.map, engine::dsp::StretchPreset::Quality, each.pitch);
+	std::vector<float> output(96000);
+	size_t done = 0;
+	while (done < output.size())
+	{
+		const size_t got = reader.read(output.data() + done, std::min<size_t>(1000, output.size() - done));
+		REQUIRE(got > 0);
+		done += got;
+	}
+	// The largest step between neighbouring samples within a range: the sine's own slope away from the point.
+	const auto step = [&output](int64_t from, int64_t to)
+	{
+		float largest = 0.0F;
+		for (auto i = static_cast<size_t>(from); i < static_cast<size_t>(to); ++i)
+			largest = std::max(largest, std::abs(output[i] - output[i - 1]));
+		return largest;
+	};
+	const float own = std::max(step(each.at - 14400, each.at - 9600), step(each.at + 9600, each.at + 14400));
+	CAPTURE(own);
+	REQUIRE(own > 0.01F);
+	CHECK(step(each.at - 2400, each.at + 2400) <= 1.2F * own);
+}
+
 TEST_CASE("an audio event that follows global transpose plays shifted in real time", "[integration]")
 {
 	const test::TempDir dir;
