@@ -20,6 +20,7 @@ they are.
   their MIDI channel and their patch (program and bank), or with `keep` `channel` or `patch` only one of them (p. 238):
   the file has the other at its default and says which one it kept (the project's `presetKeeps`, in GNUbase's entry of
   the file), so that loading the preset leaves the other as the track has it and new tracks from it have the default.
+  `keep` without a MIDI track among the tracks is refused, so a preset of audio tracks never says it keeps one.
 - **Listing them.** `track.presets` lists the presets by name with their file and the types of their tracks, top to
   bottom, and of a preset that keeps only one of a MIDI track's channel and patch which one (`keeps`), which the Load
   dialog shows after its name ("Keys (Patch only)"). A file that isn't a readable DAWproject file is left out.

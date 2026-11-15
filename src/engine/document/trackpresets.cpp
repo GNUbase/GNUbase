@@ -1085,7 +1085,8 @@ namespace gnubase::engine
 				"Presets in the user settings' folder, with the media files of a sampler's and drum pads' samples in "
 				"them; a file that is missing is referred to where it was. keep: of the MIDI tracks' MIDI channel and "
 				"patch (program and bank) only the channel or only the patch (p. 238), the other left at its default, "
-				"which loading the preset leaves as the track has it; without it both. Changes nothing in the project. "
+				"which loading the preset leaves as the track has it; without it both. Refused without a MIDI track "
+				"among tracks. Changes nothing in the project. "
 				"Returns the preset's file.",
 				objectSchema({{"tracks", idsSchema}, {"name", stringSchema},
 								 {"keep", {{"type", "string"}, {"enum", {"channel", "patch"}}}}},
@@ -1109,6 +1110,10 @@ namespace gnubase::engine
 				}
 				const std::string keep = parameters.value("keep", std::string());
 				require(keep.empty() || keep == "channel" || keep == "patch", "keep is channel or patch");
+				require(keep.empty() ||
+						std::any_of(tracks.begin(), tracks.end(),
+							[&project](ObjectId id) { return project.trackById.at(id).type == TrackType::Midi; }),
+					"keep is for MIDI tracks, and none of tracks is a MIDI track");
 				Project preset = tracksFile(project, tracks, {false, true, false});
 				preset.presetKeeps = keep;
 				for (auto& [id, channel] : preset.channels)
