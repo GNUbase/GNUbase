@@ -15,7 +15,11 @@
      track's map, if it has one, and shows Assign to Track only with a track. project.reset drops the track, since
      object ids are per project. The buttons are outside the rows that the Lua writes again, since an element must not
      go while its own event runs: Remove Articulation, Remove Sound Slot and Remove Output Mapping remove the row
-     picked with its radio button. -->
+     picked with its radio button, and the sound slot actions act on the picked slot (#1113). The maps list has a search
+     field and Show only Maps used in this Project, and marks those with P. The articulation combinations below the
+     slots check the picked slot's articulations; Add Sound Slot and Add Sound Slot (Add-on) add a slot with the checked
+     ones, Apply to Slot gives them to the picked slot, and the search shows only the articulations with one of its
+     terms (separated by OR or |). -->
 <rml>
 <head>
 	<title>Articulation Map Setup</title>
@@ -101,6 +105,24 @@
 			flex: 1;
 		}
 
+		#articulation-maps-search
+		{
+			width: 100%;
+			margin-bottom: 4dp;
+		}
+
+		.combination
+		{
+			display: inline-block;
+			margin-right: 8dp;
+		}
+
+		/* Articulations the combinations' search leaves out. */
+		.combination.hidden
+		{
+			display: none;
+		}
+
 		/* Without a map, or a track to assign it to. */
 		#articulation-map.unavailable, #articulation-map-assign.unavailable
 		{
@@ -115,6 +137,8 @@
 		local selected = 1 -- the map
 		local picked = {articulation = 1, slot = 1, output = 1} -- the rows picked with the radio buttons
 		local track = nil
+		local used = {} -- the ids of the maps the project's tracks use
+		local clipboard = nil -- a cut or copied slot
 
 		local function escape(text)
 			return (tostring(text):gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"):gsub('"', "&quot;"))
@@ -243,7 +267,8 @@
 				rml[#rml + 1] = '<div class="map-row">' .. pick("slot", index) ..
 					field("slot", index, "name", each.name) ..
 					field("slot", index, "articulations", table.concat(each.articulations, ", "), "wide") ..
-					field("slot", index, "trigger", each.trigger or "", "number") .. "</div>"
+					field("slot", index, "trigger", each.trigger or "", "number") ..
+					(each.addOn and '<span class="add-on">Add-on</span>' or "") .. "</div>"
 			end
 			fill(document, "articulation-slots", rml)
 		end
@@ -267,7 +292,13 @@
 					field("modifier", picked.slot, "channel", slot.channel and (slot.channel + 1) or "", "number") ..
 					field("modifier", picked.slot, "length", slot.length, "number") ..
 					field("modifier", picked.slot, "velocity", slot.velocity, "number") ..
-					field("modifier", picked.slot, "transpose", slot.transpose, "number") .. "</div>"
+					field("modifier", picked.slot, "transpose", slot.transpose, "number") ..
+					field("modifier", picked.slot, "attack", slot.attack, "number") ..
+					field("modifier", picked.slot, "separation", slot.separation, "number") ..
+					field("modifier", picked.slot, "minPitch", slot.minPitch, "number") ..
+					field("modifier", picked.slot, "maxPitch", slot.maxPitch, "number") ..
+					field("modifier", picked.slot, "minVelocity", slot.minVelocity, "number") ..
+					field("modifier", picked.slot, "maxVelocity", slot.maxVelocity, "number") .. "</div>"
 			end
 			fill(document, "articulation-outputs", outputs)
 			fill(document, "articulation-modifiers", modifiers)
@@ -275,8 +306,15 @@
 
 		function dialog.show(document)
 			local list = {}
+			local search = string.lower(tostring(
+				document:GetElementById("articulation-maps-search"):GetAttribute("value") or ""))
+			local usedOnly = document:GetElementById("articulation-maps-used"):HasAttribute("checked")
 			for index, map in ipairs(maps) do
-				list[#list + 1] = '<listitem value="' .. index .. '">' .. escape(map.name) .. "</listitem>"
+				if (not usedOnly or used[map.id]) and string.find(string.lower(map.name), search, 1, true) then
+					list[#list + 1] = '<listitem value="' .. index .. '">' ..
+						(used[map.id] and '<span class="used-mark">P </span>' or "") .. '<span class="map-name">' ..
+						escape(map.name) .. "</span></listitem>"
+				end
 			end
 			local view = document:GetElementById("articulation-maps")
 			view.inner_rml = table.concat(list)
@@ -295,6 +333,7 @@
 			showArticulations(document, map)
 			showSlots(document, map)
 			showSlot(document, map)
+			dialog.showCombinations(document)
 		end
 
 		-- While it runs a command, the events of its changes come in: it shows them itself after the command.
@@ -308,6 +347,12 @@
 			busy = false
 			project = ok and project or {}
 			maps = project.articulationMaps or {}
+			used = {}
+			for _, each in ipairs(project.tracks or {}) do
+				if (each.articulationMap or 0) ~= 0 then
+					used[each.articulationMap] = true
+				end
+			end
 			for index, map in ipairs(maps) do
 				if map.id == id then
 					selected = index
@@ -403,7 +448,9 @@
 
 		-- A radio button picked a row; a slot shows its output mapping and MIDI modifiers.
 		function dialog.pick(document, event)
-			if filling then
+			-- The radio button that goes off announces it while the new one turns the others off: the rows may only
+			-- be written again for the one that comes on.
+			if filling or not event.target_element:HasAttribute("checked") then
 				return
 			end
 			local kind = event.target_element:GetAttribute("kind")
@@ -411,6 +458,7 @@
 			if kind == "slot" and current() ~= nil then
 				picked.output = 1
 				showSlot(document, current())
+				dialog.showCombinations(document)
 			end
 		end
 
@@ -594,13 +642,188 @@
 			end)
 		end
 
-		function dialog.addSlot(document)
+		-- The articulations checked in the combinations.
+		local function checked(document)
+			local names = {}
+			for _, box in ipairs(document:GetElementById("articulation-combinations"):QuerySelectorAll("input")) do
+				if box:HasAttribute("checked") then
+					names[#names + 1] = box:GetAttribute("articulation")
+				end
+			end
+			return names
+		end
+
+		-- Add Sound Slot and Add Sound Slot (Add-on): a slot with the checked articulations, named after them.
+		function dialog.addSlot(document, addOn)
+			local names = checked(document)
 			edit(document, function(map)
 				local slots = slotsOf(map)
-				slots[#slots + 1] = {name = "Slot " .. (#slots + 1)}
+				slots[#slots + 1] = {name = #names > 0 and table.concat(names, " ") or ("Slot " .. (#slots + 1)),
+					articulations = names, addOn = addOn}
 				picked.slot = #slots
 				set(document, {slots = slots})
 			end)
+		end
+
+		-- The articulation combinations: a check box for each of the map's articulations, by group, the picked
+		-- slot's checked; the search shows those with one of its terms.
+		function dialog.showCombinations(document)
+			local map = current()
+			local rml = {}
+			if map ~= nil then
+				local slot = map.slots[picked.slot] or {articulations = {}}
+				local has = {}
+				for _, name in ipairs(slot.articulations) do
+					has[name] = true
+				end
+				for group, groupName in ipairs(map.groups) do
+					rml[#rml + 1] = '<div class="map-row"><span class="label">' .. escape(groupName) .. "</span>"
+					for _, articulation in ipairs(map.articulations) do
+						if articulation.group == group - 1 then
+							rml[#rml + 1] = '<span class="combination" name="' .. escape(articulation.name) ..
+								'"><input type="checkbox" articulation="' .. escape(articulation.name) .. '"' ..
+								(has[articulation.name] and " checked" or "") .. "/>" .. escape(articulation.name) ..
+								"</span>"
+						end
+					end
+					rml[#rml + 1] = "</div>"
+				end
+			end
+			fill(document, "articulation-combinations", rml)
+			dialog.searchCombinations(document)
+		end
+
+		function dialog.searchCombinations(document)
+			local text = string.lower(tostring(
+				document:GetElementById("articulation-combination-search"):GetAttribute("value") or ""))
+			local terms = {}
+			for term in (text:gsub("%s+or%s+", "|") .. "|"):gmatch("([^|]*)|") do
+				term = term:match("^%s*(.-)%s*$")
+				if term ~= "" then
+					terms[#terms + 1] = term
+				end
+			end
+			local list = document:GetElementById("articulation-combinations")
+			for _, item in ipairs(list:QuerySelectorAll(".combination")) do
+				local name = string.lower(item:GetAttribute("name") or "")
+				local found = #terms == 0
+				for _, term in ipairs(terms) do
+					found = found or string.find(name, term, 1, true) ~= nil
+				end
+				item:SetClass("hidden", not found)
+			end
+		end
+
+		-- Apply to Slot: the picked slot gets the checked articulations.
+		function dialog.applyCombination(document)
+			local names = checked(document)
+			edit(document, function(map)
+				local slots = slotsOf(map)
+				if slots[picked.slot] ~= nil then
+					slots[picked.slot].articulations = names
+					set(document, {slots = slots})
+				end
+			end)
+		end
+
+		-- The sound slot actions (p. 1273) on the picked slot.
+		local function moveSlot(document, to)
+			edit(document, function(map)
+				local slots = slotsOf(map)
+				if slots[picked.slot] ~= nil and slots[to] ~= nil then
+					table.insert(slots, to, table.remove(slots, picked.slot))
+					picked.slot = to
+					set(document, {slots = slots})
+				end
+			end)
+		end
+
+		function dialog.moveSlot(document, by)
+			moveSlot(document, picked.slot + by)
+		end
+
+		function dialog.defaultSlot(document)
+			moveSlot(document, 1)
+		end
+
+		-- A copy of a slot as articulationMap.set takes it.
+		local function copyOf(slot)
+			return slotsOf({slots = {slot}})[1]
+		end
+
+		function dialog.duplicateSlot(document)
+			edit(document, function(map)
+				local slots = slotsOf(map)
+				if slots[picked.slot] ~= nil then
+					local copy = copyOf(map.slots[picked.slot])
+					copy.trigger = nil
+					table.insert(slots, picked.slot + 1, copy)
+					picked.slot = picked.slot + 1
+					set(document, {slots = slots})
+				end
+			end)
+		end
+
+		function dialog.copySlot(document, cut)
+			local map = current()
+			if map == nil or map.slots[picked.slot] == nil then
+				return
+			end
+			clipboard = copyOf(map.slots[picked.slot])
+			if cut then
+				dialog.removeSlot(document)
+			end
+		end
+
+		-- Paste: the cut or copied slot after the picked one.
+		function dialog.pasteSlot(document)
+			if clipboard == nil then
+				return
+			end
+			edit(document, function(map)
+				local slots = slotsOf(map)
+				local at = math.min(picked.slot + 1, #slots + 1)
+				table.insert(slots, at, copyOf(clipboard))
+				picked.slot = at
+				set(document, {slots = slots})
+			end)
+		end
+
+		-- Remote Trigger > Transpose Up and Transpose Down: the picked slot's trigger.
+		function dialog.transposeTrigger(document, by)
+			edit(document, function(map)
+				local slots = slotsOf(map)
+				local slot = slots[picked.slot]
+				if slot ~= nil and slot.trigger ~= nil then
+					slot.trigger = slot.trigger + by
+					set(document, {slots = slots})
+				end
+			end)
+		end
+
+		local function number(document, id)
+			return math.tointeger(tonumber(document:GetElementById(id):GetAttribute("value") or "")) or 0
+		end
+
+		-- Remote Trigger > Transpose All, Reassign All and Remove All (pp. 1273-1275).
+		function dialog.remoteTriggers(document, action)
+			local map = current()
+			if map == nil then
+				return
+			end
+			local parameters = {map = map.id, action = action}
+			if action == "transpose" then
+				local by = number(document, "articulation-transpose-by")
+				local unit = document:GetElementById("articulation-transpose-unit"):GetAttribute("value")
+				parameters.semitones = unit == "octaves" and by * 12 or by
+				parameters.allMaps = document:GetElementById("articulation-transpose-all"):HasAttribute("checked")
+			elseif action == "reassign" then
+				parameters.start = number(document, "articulation-reassign-start")
+				parameters.keys = document:GetElementById("articulation-reassign-keys"):GetAttribute("value") or "all"
+				parameters.skipFirst = document:GetElementById("articulation-reassign-skip"):HasAttribute("checked")
+			end
+			run(document, function() gnubase.articulationMap.remoteTriggers(parameters) end)
+			dialog.show(document)
 		end
 
 		function dialog.removeSlot(document)
@@ -640,6 +863,11 @@
 		<div class="dialog-titlebar">Articulation Map Setup</div>
 		<div class="content">
 			<div class="maps">
+				<input type="text" class="text" id="articulation-maps-search" onchange="ArticulationMaps.show(document)"/>
+				<div class="map-row">
+					<input type="checkbox" id="articulation-maps-used" onchange="ArticulationMaps.show(document)"/>
+					<label for="articulation-maps-used">Show only Maps used in this Project</label>
+				</div>
 				<listview id="articulation-maps" onchange="ArticulationMaps.select(document)"/>
 			</div>
 			<div class="map" id="articulation-map">
@@ -666,9 +894,65 @@
 				<div class="map-heading">Sound Slots: Name, Articulations, Remote Trigger</div>
 				<div id="articulation-slots"/>
 				<div class="map-row">
-					<button id="articulation-slot-add" onclick="ArticulationMaps.addSlot(document)">Add Sound Slot</button>
+					<button id="articulation-slot-add" onclick="ArticulationMaps.addSlot(document, false)">
+						Add Sound Slot</button>
+					<button id="articulation-slot-add-on" onclick="ArticulationMaps.addSlot(document, true)">
+						Add Sound Slot (Add-on)</button>
+					<button id="articulation-slot-duplicate" onclick="ArticulationMaps.duplicateSlot(document)">
+						Duplicate</button>
 					<button id="articulation-slot-remove" onclick="ArticulationMaps.removeSlot(document)">
 						Remove Sound Slot</button>
+				</div>
+				<div class="map-row">
+					<button id="articulation-slot-up" onclick="ArticulationMaps.moveSlot(document, -1)">Move Up</button>
+					<button id="articulation-slot-down" onclick="ArticulationMaps.moveSlot(document, 1)">Move Down</button>
+					<button id="articulation-slot-default" onclick="ArticulationMaps.defaultSlot(document)">
+						As Default</button>
+					<button id="articulation-slot-cut" onclick="ArticulationMaps.copySlot(document, true)">Cut</button>
+					<button id="articulation-slot-copy" onclick="ArticulationMaps.copySlot(document, false)">Copy</button>
+					<button id="articulation-slot-paste" onclick="ArticulationMaps.pasteSlot(document)">Paste</button>
+				</div>
+				<div class="map-row">
+					<span class="label">Remote Trigger</span>
+					<button id="articulation-trigger-up" onclick="ArticulationMaps.transposeTrigger(document, 1)">
+						Transpose Up</button>
+					<button id="articulation-trigger-down" onclick="ArticulationMaps.transposeTrigger(document, -1)">
+						Transpose Down</button>
+					<button id="articulation-triggers-remove"
+						onclick="ArticulationMaps.remoteTriggers(document, 'remove')">Remove All</button>
+				</div>
+				<div class="map-row">
+					<span class="label">Transpose All by</span>
+					<input type="text" class="text number" id="articulation-transpose-by" value="12"/>
+					<select id="articulation-transpose-unit">
+						<option value="semitones" selected="selected">Semitones</option>
+						<option value="octaves">Octaves</option>
+					</select>
+					<input type="checkbox" id="articulation-transpose-all"/>
+					<label for="articulation-transpose-all">All Maps in Project</label>
+					<button id="articulation-triggers-transpose"
+						onclick="ArticulationMaps.remoteTriggers(document, 'transpose')">Transpose All</button>
+				</div>
+				<div class="map-row">
+					<span class="label">Reassign All from</span>
+					<input type="text" class="text number" id="articulation-reassign-start" value="24"/>
+					<select id="articulation-reassign-keys">
+						<option value="all" selected="selected">All Keys</option>
+						<option value="white">White Keys</option>
+						<option value="black">Black Keys</option>
+					</select>
+					<input type="checkbox" id="articulation-reassign-skip"/>
+					<label for="articulation-reassign-skip">Skip First Slot</label>
+					<button id="articulation-triggers-reassign"
+						onclick="ArticulationMaps.remoteTriggers(document, 'reassign')">Reassign All</button>
+				</div>
+				<div class="map-heading">Articulation Combinations</div>
+				<input type="text" class="text wide" id="articulation-combination-search"
+					onchange="ArticulationMaps.searchCombinations(document)"/>
+				<div id="articulation-combinations"/>
+				<div class="map-row">
+					<button id="articulation-combination-apply" onclick="ArticulationMaps.applyCombination(document)">
+						Apply to Slot</button>
 				</div>
 				<div class="map-heading">Output Mapping: Status, Data 1, Data 2, Event Mode</div>
 				<div id="articulation-outputs"/>
@@ -678,7 +962,8 @@
 					<button id="articulation-output-remove" onclick="ArticulationMaps.removeOutput(document)">
 						Remove Output Mapping</button>
 				</div>
-				<div class="map-heading">MIDI Modifiers: Channel, Length %, Velocity %, Transpose</div>
+				<div class="map-heading">MIDI Modifiers: Channel, Length %, Velocity %, Transpose, Attack Compensation ms,
+					Separation ms, Min. and Max. Pitch, Min. and Max. Velocity</div>
 				<div id="articulation-modifiers"/>
 			</div>
 		</div>
