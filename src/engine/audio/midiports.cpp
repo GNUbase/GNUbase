@@ -181,7 +181,9 @@ namespace gnubase::engine
 		{
 			m_sectionHeldPort = padKeys.portHash;
 			m_sectionHeld.fill(0);
-			m_sectionPadOf.fill(0);
+			// The sections mode's pad key that was down is up, so its pad is no longer lit (#1652).
+			if (m_sectionPadDown)
+				m_padEvents.tryPush(PadEvent{PadEvent::Kind::Released, static_cast<uint8_t>(m_sectionPad), 0});
 			m_sectionPadDown = false;
 			for (size_t key = 0; key < midi::PadVoices::g_triggers; ++key)
 			{
@@ -198,9 +200,11 @@ namespace gnubase::engine
 							buffer.add(note);
 						});
 				}
-				if (held)
+				// Only a pad key's chord was a pad's: a section key's notes are none (#1652).
+				if (held && m_sectionPadOf.at(key) == 0)
 					m_padEvents.tryPush(PadEvent{PadEvent::Kind::Released, static_cast<uint8_t>(key), 0});
 			}
+			m_sectionPadOf.fill(0);
 		}
 		m_queue.take(block.time, sampleRate, block.frames,
 			[this, &block, &allInputs, &pads, &padKeys](int slot, const audio::MidiMessage& message)

@@ -3409,7 +3409,7 @@ namespace gnubase::engine
 			{"chord.assignVoices", "Assign voices to notes"},
 			{"chordPads.set", "Change chord pads"},
 			{"chordPads.assign", "Assign chords to pads"},
-			{"chordPads.modify", "Modify chord pads"},
+			{"chordPads.modify", chordpads::g_modifyAction},
 			{"chordPads.setPad", "Change chord pad"},
 			{"chordPads.move", "Move chord pad"},
 			{"chordPads.fromChordTrack", "Assign pads from chord track"},
