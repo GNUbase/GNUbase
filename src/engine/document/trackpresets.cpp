@@ -1013,9 +1013,14 @@ namespace gnubase::engine
 			channel.panBypass = sound.panBypass;
 			channel.midiVolume = sound.midiVolume;
 			channel.midiPan = sound.midiPan;
-			channel.program = sound.program;
-			channel.bank = sound.bank;
-			channel.midiChannel = sound.midiChannel;
+			// A preset that keeps one of the MIDI channel and the patch leaves the other as the track has it (p. 238).
+			if (preset.presetKeeps != "channel")
+			{
+				channel.program = sound.program;
+				channel.bank = sound.bank;
+			}
+			if (preset.presetKeeps != "patch")
+				channel.midiChannel = sound.midiChannel;
 			channel.device = sound.device;
 			channel.modifiers = sound.modifiers;
 			const Channel before = channel;
@@ -1076,13 +1081,17 @@ namespace gnubase::engine
 				"which keeps them in the order of the track list, whatever the order of tracks. "
 				"Audio, instrument, MIDI, group and effect tracks have one: their channel's pre section, equalizer, "
 				"strip, fader, pan and inserts, their MIDI modifiers, inserts, sends, volume, pan, program, bank and "
-				"device, the MIDI channel (channel.set midiChannel; a MIDI track's preset keeps both its channel and "
-				"its patch, of which the reference manual's keeps one, p. 238), the instrument with its parameters "
+				"device, the MIDI channel (channel.set midiChannel), the instrument with its parameters "
 				"and a drum machine's pads, and the color. Presets are DAWproject files in the folder Track "
 				"Presets in the user settings' folder, with the media files of a sampler's and drum pads' samples in "
-				"them; a file that is missing is referred to where it was. Changes nothing in the project. Returns the "
-				"preset's file.",
-				objectSchema({{"tracks", idsSchema}, {"name", stringSchema}}, {"tracks", "name"}), fileResult, false},
+				"them; a file that is missing is referred to where it was. keep: of the MIDI tracks' MIDI channel and "
+				"patch (program and bank) only the channel or only the patch (p. 238), the other left at its default, "
+				"which loading the preset leaves as the track has it; without it both. Changes nothing in the project. "
+				"Returns the preset's file.",
+				objectSchema({{"tracks", idsSchema}, {"name", stringSchema},
+								 {"keep", {{"type", "string"}, {"enum", {"channel", "patch"}}}}},
+					{"tracks", "name"}),
+				fileResult, false},
 			[&model, &engine](CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
@@ -1099,8 +1108,27 @@ namespace gnubase::engine
 						std::string(trackTypeName(track->second.type)) +
 							" tracks have no track presets: audio, instrument, MIDI, group and effect tracks have");
 				}
+				const std::string keep = parameters.value("keep", std::string());
+				require(keep.empty() || keep == "channel" || keep == "patch", "keep is channel or patch");
+				Project preset = tracksFile(project, tracks, {false, true, false});
+				preset.presetKeeps = keep;
+				for (auto& [id, channel] : preset.channels)
+				{
+					const auto track = preset.trackById.find(channel.track);
+					if (track == preset.trackById.end() || track->second.type != TrackType::Midi)
+						continue;
+					if (keep == "channel")
+					{
+						channel.program.reset();
+						channel.bank.reset();
+					}
+					else if (keep == "patch")
+					{
+						channel.midiChannel.reset();
+					}
+				}
 				const fs::path file = presetFile(engine, name);
-				save(tracksFile(project, tracks, {false, true, false}), file, true); // with the samples (#1503)
+				save(preset, file, true); // with the samples (#1503)
 				return Json{{"file", file.u8string()}};
 			});
 		engine.registerCommand(
@@ -1214,13 +1242,12 @@ namespace gnubase::engine
 				"Exports tracks as a track archive (Export Selected Tracks, reference manual pp. 205-206): a "
 				"DAWproject file with the tracks, a folder with the tracks inside it, their channels, events, patterns "
 				"and automation, which track.import imports into other projects and other applications open as a "
-				"project. "
-				"The project's sample rate, tempo, time signatures, fader top and busses come along so that positions, "
-				"volumes and routing mean the same. copyMedia (default true) copies the media files into the archive, "
-				"otherwise it refers to them where they are. Marker and ruler tracks can be exported; tempo, "
-				"signature, arranger, transpose, chord and VCA tracks not yet: listed, also inside a listed folder, "
-				"they are refused, otherwise they stay behind. Changes nothing in the project. Returns the file and "
-				"the tracks that stayed behind (skipped).",
+				"project. The project's sample rate, tempo, time signatures, fader top and busses come along so that "
+				"positions, volumes and routing mean the same. copyMedia (default true) copies the media files into "
+				"the archive, otherwise it refers to them where they are. Marker and ruler tracks can be exported; "
+				"tempo, signature, arranger, transpose, chord and VCA tracks not yet: listed, also inside a listed "
+				"folder, they are refused, otherwise they stay behind. Changes nothing in the project. Returns the "
+				"file and the tracks that stayed behind (skipped).",
 				objectSchema(
 					{{"tracks", idsSchema}, {"path", stringSchema}, {"copyMedia", booleanSchema}}, {"tracks", "path"}),
 				objectSchema({{"file", stringSchema}, {"skipped", skippedSchema}}, {"file", "skipped"}), false},
@@ -1325,8 +1352,7 @@ namespace gnubase::engine
 				"active version has, so that the tracks imported onto get one ID when their sources played versions "
 				"that shared one, and a version with the name of one of the track's gets a name of its own. events "
 				"(default true) brings their events, parts, patterns, markers and track versions, settings (default "
-				"true) "
-				"their channel settings and inserts, automation (default true) their automation, replacing the "
+				"true) their channel settings and inserts, automation (default true) their automation, replacing the "
 				"track's; without automation, a track that events or settings are imported onto loses its automation "
 				"(p. 204). position (Import Position) puts the events where they were in the file's timecode "
 				"(absolute, the default: moved by the difference of the project start times), as far from the project "

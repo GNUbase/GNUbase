@@ -21,10 +21,11 @@ Layout and Mod+I show and hide ([docking.md](docking.md)). It follows the event 
     textdisplay[field=pitch]  a note's pitch as a name (an in-place editor's notes, below)
     valuefield[field=volume]  audio events, in dB; .unavailable for parts
     button[field=mute], button[field=lock]                  toggle buttons
-    valuefield[field=transpose], [field=velocity]           MIDI parts, -127 to 127; .unavailable for others
+    valuefield[field=transpose]                             MIDI parts, -127 to 127; audio events, -24 to 24
+    valuefield[field=velocity]                              MIDI parts, -127 to 127; .unavailable for others
     textdisplay[field=releaseVelocity], [field=channel]     a note's off velocity, 0-127, and channel, 1-16
     span[field=rootKeyTranspose]                            what the project root key adds, "(+2)", empty for 0
-    select[field=rootKey], button[field=globalTranspose]    root key and Global Transpose of MIDI parts and audio events
+    select[field=rootKey], button[field=globalTranspose]    of MIDI parts, audio events and audio parts' events
 ```
 
 - **Editing** (p. 72). A double click edits a display or the volume as text, Enter takes it; mute and lock are toggles.
@@ -38,10 +39,13 @@ Layout and Mod+I show and hide ([docking.md](docking.md)). It follows the event 
 - **Transpose and Velocity** (p. 1107): a MIDI part's transpose in semitones and velocity offset, which add to the
   track's MIDI modifiers ([midi-modifiers.md](midi-modifiers.md)). Like the volume they change every selected part by
   as much as the first one changes, kept from -127 to 127, or with Ctrl+Enter give them all the value typed
-  (`midiPart.set` `transpose` and `velocity`).
+  (`midiPart.set` `transpose` and `velocity`). An audio event has a Transpose too (p. 420, #1555), from -24 to 24, the
+  time stretcher's real-time range (`audioEvent.set` `transpose`), and no velocity.
 - **Root Key and Global Transpose** (pp. 417, 421, [transpose.md](transpose.md)): a MIDI part's or an audio event's
   root key, from a drop-down list, and a toggle that is checked for Independent; both go to every selected part and
   audio event (`midiPart.set` and `audioEvent.set` `rootKey` and `globalTranspose`, #1368), `.unavailable` for others.
+  An audio part has none of its own (p. 417): the fields show its first event's and set them on all its events
+  (#1555); they are `.unavailable` for an empty one.
 - **Positions.** In bars and beats the moves and resizes are in ticks, exact on musical tracks; in the other formats
   in samples. Lengths are typed as `formatLength` shows them, e.g. "2.0.0.0" for two bars.
 - The themes give `.multiple` its own color, as the reference shows a multiple selection "in another color".
@@ -68,8 +72,11 @@ Layout and Mod+I show and hide ([docking.md](docking.md)). It follows the event 
   editors' `editor.changed`, so it shows whichever editor's selection changed last, also while the editor's own toolbar,
   and with it its info line, is hidden. Edits go to every selected note as one `history.transaction` of `note.set`s per
   part (p. 1140): relative to the first note's value, or with Ctrl+Enter the value typed for every one, the channel set
-  for all; positions are in ticks. An event or part selected in the project window, an empty selection in the editor or
-  the editor closing gives the info line back to what was selected before.
+  for all; positions are in ticks. The velocity field's steps work as the events' volume does: each keeps the velocity
+  of every note it changes, by note id, so another note selected while the last step is out shows its own velocity and a
+  dragged note the drag's, and wheel turns over the field on two selections are an undo step for each (#1550,
+  [ui-engine-binding.md](ui-engine-binding.md)). An event or part selected in the project window, an empty selection in
+  the editor or the editor closing gives the info line back to what was selected before.
 
 ## Inspector
 
@@ -217,5 +224,8 @@ instrument and MIDI tracks (pp. 173–176) wait for #97. Set up Sections for the
   track without them. A drag of the inspector's volume up to the project's maximum, wheel turns on the pan and a drag of
   the info line's volume are one undo step each, and a MIDI modifier and a part's transpose dragged back to where they
   started while the engine answers late end there. The info line's volume step that the engine refuses, one of the two
-  selected events being gone, shows in the command log, leaves no undo step and shows the engine's value again.
+  selected events being gone, shows in the command log, leaves no undo step and shows the engine's value again. While
+  a dragged note's last velocity step is out, another note selected in an in-place editor shows its own velocity and
+  the dragged one the drag's; wheel turns on the velocity of one note, then of the next with the mouse still over the
+  field, are two undo steps.
 - `tests/mixerwindow_tests.cpp`: a drag of a mixer fader is one undo step.

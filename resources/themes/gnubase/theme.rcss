@@ -1055,6 +1055,10 @@
 	{
 		background-color: #3f4559;
 	}
+	svg.articulation-warning
+	{
+		image-color: #ffc44d;
+	}
 	.ape-display
 	{
 		background-color: #101426;

@@ -558,8 +558,15 @@ namespace gnubase::engine
 		if (event.lock)
 			return false;
 		const EventTiming original = originalOf(event, timingOf(event));
+		// Unless soft, from the original with its offset and length, so that the snap point is where it was before
+		// the panel's steps nudged or stretched the event's start (#1581).
 		AudioEvent from = event;
-		from.position = grid.settings().soft ? event.position : original.position;
+		if (!grid.settings().soft)
+		{
+			from.position = original.position;
+			from.offset = original.offset;
+			from.length = original.length;
+		}
 		const time::Samples snap = snapOffset(project, from);
 		const time::Samples at = startOf(project, from) + snap;
 		const bool musical = from.position.base == time::TimeBase::Musical;
@@ -570,6 +577,15 @@ namespace gnubase::engine
 		{
 			const int64_t delta = musical ? *moved - tick : project.tempo.toSamples(*moved, project.sampleRate) - at;
 			result.value = std::max<int64_t>(from.position.value + delta, 0);
+		}
+		// The event keeps playing its clip from its offset: its start moves by how far that changed since.
+		if (event.offset != from.offset)
+		{
+			from.position = result;
+			const time::Samples start = startOf(project, from) +
+				std::llround(eventSamples(project, from, static_cast<double>(event.offset - from.offset)));
+			result = time::rebase({time::TimeBase::Linear, std::max<time::Samples>(start, 0)}, result.base,
+				project.tempo, project.sampleRate);
 		}
 		const time::Position before = event.position;
 		event.position = result;

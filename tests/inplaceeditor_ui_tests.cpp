@@ -708,6 +708,86 @@ TEST_CASE("selected controller events go along with notes dragged from one in-pl
 	CHECK(partOf(otherPart).at("controllers").empty());
 }
 
+TEST_CASE("a controller event of another source part goes along as one undo step with the dragged note", "[ui]")
+{
+	// A note selected in one part of the track and a controller event in another: the second part sends a note.move
+	// with no notes, in one history.transaction with the first's, so both arrive and one undo brings both back.
+	Fixture f;
+	const uint64_t other = f.app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	const uint64_t otherPart =
+		f.app.call("midiPart.add", {{"track", other}, {"position", 2 * g_bar}, {"length", 4 * g_bar}})
+			.at("part")
+			.at("id")
+			.get<uint64_t>();
+	// The track's second part, in the third bar, with a controller event half a beat in.
+	const uint64_t secondPart =
+		f.app.call("midiPart.add", {{"track", f.track}, {"position", 2 * g_bar}, {"length", g_bar}})
+			.at("part")
+			.at("id")
+			.get<uint64_t>();
+	const uint64_t controller =
+		f.app
+			.call("controller.add",
+				{{"part", secondPart}, {"controllers", {{{"position", g_quarter / 2}, {"number", 1}, {"value", 0.5}}}}})
+			.at("controllers")
+			.at(0)
+			.at("id")
+			.get<uint64_t>();
+	REQUIRE(f.app.waitUntil([&] { return f.display.project().at("midiParts").size() == 3; }));
+	f.app.call("editor.inPlace", {{"tracks", {f.track, other}}, {"open", true}});
+	const std::string lane = ".in-place-editor[track=\"" + std::to_string(other) + "\"]";
+	REQUIRE(f.app.waitUntil([&] { return !f.elements(lane + " .key-editor-grid").empty(); }));
+	f.settle(2);
+	f.app.call("editor.set",
+		{{"editor", "inPlace:" + std::to_string(f.track)}, {"selection", {{{"part", f.part}, {"note", f.notes[0]}}}},
+			{"controllerSelection", {{{"part", secondPart}, {"controller", controller}}}}});
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			return f.elements(f.note(f.notes[0]) + ".selected").size() == 1 &&
+				f.view().at("controllerSelection").size() == 1;
+		}));
+	const auto partOf = [&](uint64_t part)
+	{
+		const Json project = f.app.call("project.get");
+		for (const Json& each : project.at("midiParts"))
+			if (each.at("id") == part)
+				return each;
+		return Json::object();
+	};
+	const auto steps = f.app.call("history.get").at("steps").size();
+
+	// The note dragged a bar later into the other editor: it lands at the other part's start, and the controller
+	// event, a bar and half a beat after the other part's start then, with its id.
+	const Json grid = f.box(lane + " .key-editor-grid");
+	const double y = grid.at("y").get<double>() + ((127.5 - 64) / 128.0 * grid.at("height").get<double>());
+	f.app.ui().drag(std::nullopt, f.at(g_bar + (g_quarter / 2), 60),
+		ui::Target{"", 0,
+			ui::Point{static_cast<int>(std::lround(f.timelineX((2 * g_bar) + (g_quarter / 2)))),
+				static_cast<int>(std::lround(y))}});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return partOf(otherPart).at("controllers").size() == 1; }));
+	const Json moved = partOf(otherPart).at("controllers").at(0);
+	CHECK(moved.at("id") == controller);
+	CHECK(moved.at("position") == g_bar + (g_quarter / 2));
+	CHECK(partOf(secondPart).at("controllers").empty());
+	REQUIRE(partOf(otherPart).at("notes").size() == 1);
+	CHECK(partOf(otherPart).at("notes").at(0).at("id") == f.notes[0]);
+	CHECK(partOf(otherPart).at("notes").at(0).at("position") == 0);
+	CHECK(partOf(f.part).at("notes").size() == 1);
+	const Json history = f.app.call("history.get");
+	CHECK(history.at("steps").size() == steps + 1);
+	CHECK(history.at("steps").back().at("action") == "Move");
+
+	// One undo brings the note and the controller event back to their parts.
+	f.app.call("history.undo");
+	REQUIRE(f.app.waitUntil([&] { return partOf(secondPart).at("controllers").size() == 1; }));
+	CHECK(partOf(secondPart).at("controllers").at(0).at("position") == g_quarter / 2);
+	CHECK(partOf(f.part).at("notes").size() == 2);
+	CHECK(partOf(otherPart).at("controllers").empty());
+	CHECK(partOf(otherPart).at("notes").empty());
+}
+
 TEST_CASE("a key held in an in-place editor that closes ends its pitch", "[ui]")
 {
 	// A key of the keyboard plays its pitch until the mouse is released (p. 1204); the in-place editor closing ends it

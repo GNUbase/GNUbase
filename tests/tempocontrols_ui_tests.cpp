@@ -538,9 +538,17 @@ TEST_CASE("Current Tempo on the tempo track and in the editor follows the cursor
 TEST_CASE("the track list watches the cursor while playing only when it has a Current Tempo field", "[ui]")
 {
 	test::UiApp app{{1024, 500}};
-	app.appUi().showProject();
+	const ui::EventDisplay& display = app.appUi().showProject();
 	app.call("project.set", {{"tempoTrackActive", true}});
 	app.call("tempo.add", {{"position", 2 * g_quarter}, {"bpm", 100.0}, {"ramp", false}});
+	// The UI has read the changes before playback, so that a slow read (under sanitizers) doesn't count as a frame's.
+	REQUIRE(app.waitUntil(
+		[&app, &display]
+		{
+			const Json& tempo = display.project().at("tempo");
+			return !tempo.empty() && tempo.back().at("bpm") == 100.0 &&
+				app.appUi().binding().waiting("project.get") == 0;
+		}));
 	app.call("audio.setDevice", {{"blockSize", 256}}); // the dummy device
 	app.call("audio.start");
 	const auto position = [&app] { return app.call("transport.get").at("position").get<int64_t>(); };

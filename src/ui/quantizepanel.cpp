@@ -271,7 +271,15 @@ namespace gnubase::ui
 		m_subscriptions.push_back(
 			m_binding.on("quantize.changed", [this](const engine::Event& event) { showSettings(event.data); }));
 		m_subscriptions.push_back(m_binding.on("quantize.presetsChanged", [this](const engine::Event&) { request(); }));
-		m_subscriptions.push_back(m_binding.on("project.reset", [this](const engine::Event&) { request(); }));
+		m_subscriptions.push_back(m_binding.on("project.reset",
+			[this](const engine::Event&)
+			{
+				// Track ids start at 1 again in every project, so the priorities go with the project (#1581).
+				m_priorities.clear();
+				m_hitpointTracks = nullptr;
+				showHitpointTracks(Json::array());
+				request();
+			}));
 		request();
 	}
 

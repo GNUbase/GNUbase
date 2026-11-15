@@ -922,21 +922,27 @@ namespace gnubase::engine::midi
 			return a.rootKey == b.rootKey && a.independent == b.independent;
 		}
 
-		// The global transpose a part with the setting plays at a position, as compilePart adds it.
+		// The transposition a part plays its notes with at a position, its own transpose included, as compilePart adds
+		// it: Keep Transpose in Octave Range folds the two as one sum (#896, #1453).
+		int playedAt(const Project& project, const MidiPart& part, Ticks at)
+		{
+			return globalTranspose(project, part, project.tempo.toSamples(at, project.sampleRate));
+		}
+
+		// The global transpose a part with the setting and no transpose of its own plays at a position.
 		int globalAt(const Project& project, const GlobalSetting& setting, Ticks at)
 		{
 			MidiPart probe;
 			probe.rootKey = setting.rootKey;
 			probe.independent = setting.independent;
-			return globalTranspose(project, probe, project.tempo.toSamples(at, project.sampleRate));
+			return playedAt(project, probe, at);
 		}
 
-		// The semitones a part transposes a note at a position by, against a part with another global setting: its
-		// transpose and the difference in global transpose.
+		// The semitones a part transposes a note at a position by, against a part with another global setting and no
+		// transpose of its own: the difference of what the two play their notes with.
 		int semitonesAgainst(const Project& project, const MidiPart& part, const GlobalSetting& other, Ticks at)
 		{
-			return part.transpose + globalAt(project, {part.rootKey, part.independent}, at) -
-				globalAt(project, other, at);
+			return playedAt(project, part, at) - globalAt(project, other, at);
 		}
 
 		// The root key and Global Transpose setting (#954) of a part made from source parts: the one they all share,
@@ -1296,7 +1302,8 @@ namespace gnubase::engine::midi
 			}
 			else
 			{
-				transposed.transpose += globalAt(project, {source.rootKey, source.independent}, candidate.sourceAt);
+				// What the source part plays the note with, its transpose (already in the modifiers) folded in.
+				transposed.transpose += playedAt(project, source, candidate.sourceAt) - source.transpose;
 				newGlobal = globalAt(project, setting.global, copy.position);
 			}
 			if (settings.includeInserts)
@@ -1560,7 +1567,8 @@ namespace gnubase::engine::midi
 					trackFor[key] = addMidiTrack(project, source.name + " " + suffixOf(key), source.parent, ++index,
 						instrument, source.timeBase);
 					// The track's MIDI modifiers, so that the new parts play as the part did; by channel each new
-					// track set to its channel (reference manual p. 1122), by pitch to the track's.
+					// track set to the channel it holds (reference manual p. 1122), which it plays on also where the
+					// track played every channel on its own, by pitch to the track's.
 					Channel& added = project.channels.at(project.trackById.at(trackFor[key]).channel);
 					added.modifiers = project.channels.at(source.channel).modifiers;
 					added.midiChannel = by == DissolveBy::Channel ? std::optional<int>(key) : trackChannel;

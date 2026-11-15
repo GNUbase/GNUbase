@@ -360,7 +360,7 @@ namespace gnubase::app
 		// attributes go on the document before it shows, for its Lua. A dialog for objects of the project, with ids of
 		// tracks, parts or notes in its attributes, closes when project.reset replaces the project (#1464).
 		Rml::ElementDocument& openDialog(ui::Window& window, const char* name,
-			const std::vector<std::pair<std::string, std::string>>& attributes = {}) const;
+			const std::vector<std::pair<std::string, std::string>>& attributes = {});
 		// The Auto Fades dialog (resources/ui/auto-fades.rml) for the project, or for a track (not 0).
 		void openAutoFades(ui::Window& window, uint64_t track);
 		// The articulation map setup (resources/ui/articulation-maps.rml, #175) for a MIDI or instrument track, or with
@@ -375,7 +375,7 @@ namespace gnubase::app
 		// openDialog for a dialog whose Lua keeps its state in a global table, so that there is only one: while open
 		// is open, brings it to the front instead, as it is, and the attributes go unused.
 		Rml::ElementDocument& openOnce(ui::Window& window, const char* name, Rml::ObserverPtr<Rml::Element>& open,
-			const std::vector<std::pair<std::string, std::string>>& attributes = {}) const;
+			const std::vector<std::pair<std::string, std::string>>& attributes = {});
 
 		// Made in this order and destroyed in the reverse: RmlUi releases its resources through the renderer and
 		// its Lua plugin's in Lua, the shell's windows need all of them, the settings and the binding tell the shell,
@@ -431,8 +431,10 @@ namespace gnubase::app
 		bool m_canUndo = false;
 		bool m_canRedo = false;
 		ui::Subscription m_history;
-		// The dialogs openDialog opened for objects of the project, and project.reset, which closes them.
-		mutable std::vector<Rml::ObserverPtr<Rml::Element>> m_projectDialogs;
+		// The dialogs openDialog opened for objects of the project, and project.reset, which closes them. An OS file
+		// dialog's answer for objects of the project is dropped when m_resets has changed since it opened (#1586).
+		std::vector<Rml::ObserverPtr<Rml::Element>> m_projectDialogs;
+		uint64_t m_resets = 0;
 		ui::Subscription m_projectReset;
 		ui::ProjectFiles m_files;                          // the File menu's project commands
 		std::unique_ptr<ui::MainMenu> m_menu;              // the project window's
