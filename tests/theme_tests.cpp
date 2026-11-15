@@ -375,19 +375,19 @@ TEST_CASE("the default theme's bars, tabs and inspector headers are flat, the ot
 {
 	// #1328: the default theme follows the mockup; dark, light and high contrast keep their framed widgets, with the
 	// same selectors as the default theme. Their drop-down button and disclosure skins are the plain button's, so the
-	// rules that use them change nothing.
-	const std::string bar = ".toolbar button:not(.toggle):not(.primary), .transport button:not(.toggle):not(.primary)";
-	const std::string menu =
-		".toolbar button[menu]:not(.toggle):not(.primary), .transport button[menu]:not(.toggle):not(.primary)";
+	// rules that use them change nothing. The bars' rules reach the transport's sections, not its setup pane, which
+	// is filled in with them (#1342; tests/uithemes_tests.cpp checks the cascade).
 	const std::string header = ".inspector-section button.section-header";
 	const std::string collapsed = ".inspector-section.collapsed button.section-header";
 	// The selector of the buttons in bars with more classes or attributes and a state, as tools/skin/generate.py
 	// writes it.
 	const auto bars = [](const std::string& more, const std::string& state)
 	{
-		return ".toolbar button" + more + ":not(.toggle):not(.primary)" + state + ", .transport button" + more +
-			":not(.toggle):not(.primary)" + state;
+		return ".toolbar:not(.transport) button" + more + ":not(.toggle):not(.primary)" + state +
+			", .transport .transport-section button" + more + ":not(.toggle):not(.primary)" + state;
 	};
+	const std::string bar = bars("", "");
+	const std::string menu = bars("[menu]", "");
 	// A property's value in a rule's declarations, or empty.
 	const auto value = [](const std::string& declarations, const std::string& property)
 	{
@@ -406,8 +406,15 @@ TEST_CASE("the default theme's bars, tabs and inspector headers are flat, the ot
 		{
 			const size_t first = selector.find_first_not_of(" \t");
 			const std::string name = selector.substr(first, selector.find_last_not_of(" \t\r") + 1 - first);
-			// Rules for buttons in bars leave toggle and primary buttons their own skins.
-			if (name.rfind(".toolbar button", 0) == 0 || name.rfind(".transport button", 0) == 0)
+			// No rule reaches all the transport's buttons, its setup pane's too, only those of its sections or one by
+			// its id, nor all a toolbar's, which the transport panel is; rules for buttons in bars leave toggle and
+			// primary buttons their own skins.
+			CHECK(name.find(".toolbar button") == std::string::npos);
+			for (size_t at = name.find(".transport button"); at != std::string::npos;
+				at = name.find(".transport button", at + 1))
+				CHECK(name.compare(at, std::string_view(".transport button#").size(), ".transport button#") == 0);
+			if (name.rfind(".toolbar:not(.transport) button", 0) == 0 ||
+				name.rfind(".transport .transport-section button", 0) == 0)
 			{
 				INFO(name);
 				CHECK(name.find(":not(.toggle):not(.primary)") != std::string::npos);
@@ -438,14 +445,36 @@ TEST_CASE("the default theme's bars, tabs and inspector headers are flat, the ot
 			// Start in the accent, filled while playing; Record in the danger color, filled while recording; the
 			// primary time display bold.
 			CHECK(value(last(".transport #start svg.icon"), "image-color") == token("accent"));
-			CHECK(value(last(".transport #start.checked"), "background-color") == token("accent"));
+			CHECK(value(last(".transport button#start.checked"), "background-color") == token("accent"));
 			CHECK(value(last(".transport #record svg.icon"), "image-color") == token("danger"));
-			CHECK(value(last(".transport #record.checked"), "background-color") == token("danger"));
+			CHECK(value(last(".transport button#record.checked"), "background-color") == token("danger"));
 			CHECK(value(last(".transport .primary-time"), "font-weight") == "600");
 			CHECK(value(last(".transport .primary-time"), "color") == token("text"));
 			// Zones as rounded panels on the surface.
 			CHECK(!value(last(".docking [zone]"), "border-radius").empty());
 			CHECK(value(last(".docking [zone]"), "background-color") == token("surface"));
+			// The zone with the keyboard focus framed by a hairline in the accent, as round as the zone (#1342).
+			CHECK(value(last(".docking .zone-frame"), "border-width") ==
+				std::to_string(tokens.at("borderWidths").at("hairline").get<int>()) + "dp");
+			CHECK(value(last(".docking .zone-frame"), "border-color").rfind(token("accent"), 0) == 0);
+			CHECK(value(last(".docking .zone-frame"), "border-radius") ==
+				value(last(".docking [zone]"), "border-radius"));
+			// The tempo plain digits, as the time displays (#1342).
+			CHECK(value(last(".transport .transport-section valuefield"), "decorator") == "none");
+			// The fader's slot keeps its round ends in the nine-patch's corners, which don't stretch (#1342): from the
+			// slot's top and bottom edges a radius inwards.
+			const nlohmann::json slice = readJson(dir / "manifest.json").at("assets").at("fader-track").at("slice");
+			const std::string slot = file("fader-track.svg");
+			const size_t slotAt = slot.find("<rect", slot.find("<rect") + 1);
+			REQUIRE(slotAt != std::string::npos);
+			const auto attribute = [&slot, slotAt](const std::string& name)
+			{
+				const size_t at = slot.find(" " + name + "=\"", slotAt) + name.size() + 3;
+				return std::stod(slot.substr(at, slot.find('"', at) - at));
+			};
+			const double end = attribute("y") + attribute("rx");
+			CHECK(slice.at("top").get<double>() >= end);
+			CHECK(slice.at("bottom").get<double>() >= end);
 			// Lanes and the track list on the panels' surface over the window's background, the selected row outlined.
 			const std::string background = token("background");
 			CHECK(value(last(".event-display"), "background-color") == token("surface"));
@@ -493,6 +522,7 @@ TEST_CASE("the default theme's bars, tabs and inspector headers are flat, the ot
 			same(bars("[menu]", ":hover"), "button:hover");
 			same(bars("[menu]", ":active"), "button:active");
 			same(bars(".checked[menu]", ""), "button.checked");
+			same(bars("[menu]", ":disabled"), "button:disabled");
 			same(header + ":hover", "button:hover");
 			same(header + ":active", "button:active");
 			const std::string background = readJson(dir / "tokens.json").at("background").get<std::string>();
@@ -502,6 +532,11 @@ TEST_CASE("the default theme's bars, tabs and inspector headers are flat, the ot
 					CHECK(declarations.find("background-color: " + background) != std::string::npos);
 			CHECK(file("dropdown-button-normal.svg") == file("button-normal.svg"));
 			CHECK(file("dropdown-button-hover.svg") == file("button-hover.svg"));
+			CHECK(file("dropdown-button-pressed.svg") == file("button-pressed.svg"));
+			CHECK(file("dropdown-button-disabled.svg") == file("button-disabled.svg"));
+			// The tempo keeps the displays' skin.
+			CHECK(value(last(".transport .transport-section valuefield"), "decorator") ==
+				value(last(".display, valuefield"), "decorator"));
 			CHECK(file("disclosure-open.svg") == file("button-normal.svg"));
 			CHECK(file("disclosure-closed.svg") == file("button-normal.svg"));
 		}
