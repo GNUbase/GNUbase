@@ -210,6 +210,11 @@ namespace gnubase::ui
 			std::optional<double> velocity = std::nullopt);
 		void transpose(int semitones);
 		void editInfo(const std::string& field, const std::string& text);
+		// The articulation map of a note's track, or null.
+		const engine::Json* articulationMap(const Note& note) const;
+		// The info line's pop-up menu of the attributes (#1580, p. 1290): an attribute chosen goes to every selected
+		// note in place of its group's, or goes where the first selected note has it.
+		void chooseAttribute(const std::string& name);
 
 		EngineBinding& m_binding;
 		Rml::ObserverPtr<Rml::Element> m_root;
@@ -218,10 +223,11 @@ namespace gnubase::ui
 		bool m_drum = false;
 		std::function<void()> m_drumMapSetup;
 		KeyTool m_tool = KeyTool::ObjectSelection;
-		std::vector<int> m_order; // the pitches of the rows, from the top
-		std::vector<int> m_rowOf; // each pitch's row
-		std::string m_soundsRml;  // the drum sound list as last set
-		std::string m_mapMenuRml; // the Map menu as last set
+		std::vector<int> m_order;          // the pitches of the rows, from the top
+		std::vector<int> m_rowOf;          // each pitch's row
+		std::string m_soundsRml;           // the drum sound list as last set
+		std::string m_mapMenuRml;          // the Map menu as last set
+		std::string m_articulationMenuRml; // the info line's attributes menu as last set
 		engine::Json m_project = engine::Json::object();
 		engine::Json m_view = engine::Json::object();
 		std::vector<Part> m_parts;
