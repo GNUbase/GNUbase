@@ -344,6 +344,9 @@ namespace gnubase::app
 		void addMidiFunctions();
 		// File > Import > Tracks, File > Export > Selected Tracks and the track preset commands (#164).
 		void addTrackFileCommands();
+		// The OS's file dialog for objects of the project: chosen gets the file unless a project.reset came while it
+		// was open, as the ids it acts on are the old project's then (#1586, #1648).
+		void chooseProjectFile(const ui::FileDialog& dialog, std::function<void(const std::filesystem::path&)> chosen);
 		// The OS's file dialog for a track's picture in the mixer, then track.set.
 		void choosePicture(uint64_t track);
 		// The drum map of the active track of an editor (window, else lower), then the OS's file dialog to save it in
@@ -435,7 +438,8 @@ namespace gnubase::app
 		bool m_canRedo = false;
 		ui::Subscription m_history;
 		// The dialogs openDialog opened for objects of the project, and project.reset, which closes them. An OS file
-		// dialog's answer for objects of the project is dropped when m_resets has changed since it opened (#1586).
+		// dialog's answer for objects of the project is dropped when m_resets has changed since it opened
+		// (chooseProjectFile).
 		std::vector<Rml::ObserverPtr<Rml::Element>> m_projectDialogs;
 		uint64_t m_resets = 0;
 		ui::Subscription m_projectReset;
