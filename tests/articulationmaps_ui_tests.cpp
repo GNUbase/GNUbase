@@ -1140,8 +1140,14 @@ TEST_CASE("the info line's and the list editor's pop-up menus choose the map's a
 
 TEST_CASE("the list editor's pop-up menu of a row at the window's bottom lies inside the window", "[ui]")
 {
-	// #1580: the menu gets its items after it opened, and moves inside the window for them.
+	// #1580: the menu gets its items after it opened, and moves inside the window for them. With more attributes
+	// than fit under the lowest row, the menu can't lie inside the window without the move (#1665).
 	Editor f("list");
+	Json map = f.app.call("project.get").at("articulationMaps").at(0);
+	Json articulations = map.at("articulations");
+	for (int extra = 1; extra <= 8; ++extra)
+		articulations.push_back({{"name", "Accent " + std::to_string(extra)}, {"type", "attribute"}, {"group", 1}});
+	f.app.call("articulationMap.set", {{"map", map.at("id")}, {"articulations", articulations}});
 	Json items = Json::array();
 	for (int at = 0; at < 64; ++at)
 		items.push_back(
@@ -1165,18 +1171,22 @@ TEST_CASE("the list editor's pop-up menu of a row at the window's bottom lies in
 		}
 	}
 	REQUIRE_FALSE(lowest.empty());
-	f.app.ui().click(f.window, of(".list-editor-rows .list-row[note=\"" + lowest + "\"] textdisplay[field=attributes]"),
-		ui::MouseButton::Right, 1, {});
+	const std::string cell = ".list-editor-rows .list-row[note=\"" + lowest + "\"] textdisplay[field=attributes]";
+	const Json pressed = f.box(cell);
+	f.app.ui().click(f.window, of(cell), ui::MouseButton::Right, 1, {});
 	f.app.shell().step(std::chrono::milliseconds(0));
-	const std::string item = "#list-articulations-menu menuitem[articulation=Staccato]";
+	const std::string menu = "#list-articulations-menu";
 	REQUIRE(f.app.waitUntil(
 		[&]
 		{
-			const Json found = f.elements(item);
-			return !found.empty() && found.at(0).at("visible") == true;
+			const Json found = f.elements(menu + " menuitem[articulation]");
+			return found.size() == 9 && found.at(0).at("visible") == true;
 		}));
 	f.app.shell().step(std::chrono::milliseconds(0));
-	CHECK(f.inside(item));
+	CHECK(f.inside(menu));
+	// It didn't fit under the press: it moved up.
+	CHECK(
+		f.box(menu).at("y").get<double>() < pressed.at("y").get<double>() + (pressed.at("height").get<double>() / 2.0));
 }
 
 TEST_CASE("the Articulations lane has no event pop-up menu on a direction of a part that isn't editable", "[ui]")

@@ -161,8 +161,8 @@ removed).
   adds or removes it, a click beside them deselects. A press on the lane gives it the keyboard focus (on the lanes'
   root, as the lane's elements can go with the next render): Delete or Backspace then removes its selected directions
   and the map's attributes of the selected notes (`controller.remove`, `note.set`, one undo step), not the notes. A
-  right click on a direction opens its event pop-up menu (`#controller-articulation-menu`), whose Reset makes it a
-  reset or a direction again (`controller.set` `reset`).
+  right click on a direction of an editable part opens its event pop-up menu (`#controller-articulation-menu`), whose
+  Reset makes it a reset or a direction again (`controller.set` `reset`); a direction of another part has none.
 - **Articulations field** (p. 1290): the key and drum editors' info line shows the first selected note's attributes,
   names separated by commas; typed, they replace every selected note's, and typed empty, they go. A warning sign
   (`svg.articulation-warning`, the field's state class `.unknown`) shows where one of them isn't an attribute of the
