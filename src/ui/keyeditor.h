@@ -132,9 +132,18 @@ namespace gnubase::ui
 		// Scales the pitch rows' height that the style sheet gives them by the zoom, and with them the keyboard; at 1
 		// the rows have the style sheet's height itself. Without a length to scale the zoom stays 1.
 		void setPitchZoom(float zoom);
-		// The grid of another in-place editor under the event's target, and its track: where a move's release drops
-		// the selected notes (p. 1261); null when the target isn't in one or this editor isn't an in-place one.
-		std::pair<Rml::Element*, uint64_t> foreignInPlaceGrid(const Rml::Event& event) const;
+		// The button went up outside the editor (dragend): the draws, the drumstick's deletion and the keyboard's drag
+		// end as in it, a move over another in-place editor's grid drops the notes there, the others end without their
+		// effect.
+		void releaseOutside(Rml::Event& event);
+		// Ends the gesture without its effect: the drawn note goes, the notes go back where they are.
+		void cancelGesture();
+		// During a gesture the grid and the keyboard's left part are RmlUi drag elements (.in-gesture), whose drag
+		// events come wherever the mouse is, also outside the window, and whose dragend comes at the release.
+		void dragDuringGesture();
+		// The grid of another in-place editor under the element, and its track: where a move's release drops the
+		// selected notes (p. 1261); null when the element isn't in one or this editor isn't an in-place one.
+		std::pair<Rml::Element*, uint64_t> foreignInPlaceGrid(Rml::Element* hovered) const;
 		// A move released over that grid: the selected notes and controller events go to the target track's part at
 		// the drop's time, as note.move, which keeps their distances to the pressed note and everything they have;
 		// one undo step. A part that gives only controller events sends a note.move with no notes.
@@ -143,6 +152,8 @@ namespace gnubase::ui
 		Gesture edgeGesture(Rml::Element* target, const Rml::Event& event) const;
 		// Starts drawing a note at the snapped position under the press, as the draw tool's press does.
 		void startDraw(double ticks);
+		// Takes the drawn note out of the grid, into m_removedDrawn.
+		void removeDrawn();
 		// Where a note drawn from the ticks pressed starts: the grid's step it falls in, unsnapped with Snap off.
 		int64_t drawStart(double ticks, int pitch) const;
 		// The drumstick's note as a drag changes it (p. 1241): where it starts, its length, pitch and velocity, and how
@@ -275,9 +286,11 @@ namespace gnubase::ui
 		float m_scrollStart = 0.0F;             // the note display's scroll top at the press, in pixels
 		bool m_zoomDrag = false;                // the drag went past the threshold
 		Rml::ObserverPtr<Rml::Element> m_drawn; // the note a draw drags out
-		int64_t m_drawnLength = 0;              // its length, at m_pressedAt
-		double m_drawnFrom = 0.0;               // the mouse's ticks at the press that started it
-		DrumDraw m_drumDrawn;                   // what the drumstick's draw shows, for the mouse leaving the window
+		// The drawn note taken out of the grid, kept until the next one goes: the mouse event that ends the draw may
+		// have it as its target, which the listeners after this one still read.
+		Rml::ElementPtr m_removedDrawn;
+		int64_t m_drawnLength = 0;                          // its length, at m_pressedAt
+		double m_drawnFrom = 0.0;                           // the mouse's ticks at the press that started it
 		std::optional<std::pair<uint64_t, int>> m_sounding; // the channel and pitch of the key pressed
 		Rml::ObserverPtr<Rml::Element> m_document;          // ends the key's pitch on a release anywhere in it
 		// the length quantize menu, the line tool's menu, the toolbox, then the drum editor's Map, Pitch Visibility
