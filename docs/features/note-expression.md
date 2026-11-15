@@ -92,9 +92,42 @@ pitch range of 24 plays to the instrument as note expression while another port 
 the expression follows its note through a track that transposes and a MIDI track with a MIDI channel; and
 that recording and retrospective recording record the upper zone and channel rotation as the notes' expression.
 
+## In the key editor
+
+The key editor (#1512, pp. 1303, 1308-1311, [key-editor.md](key-editor.md)) shows and edits the notes' expression
+through `note.set` only. Its view has three settings, which `editor.set` changes and `editor.get` reports:
+`showExpression` (Show Note Expression Data), `expressionDoubleClick` (Double-Click Opens Note Expression Editor), both
+off by default and toggled by toolbar buttons, and `expressionType`, the expression the editor edits, `tuning` at
+first.
+
+- **Overlay** (p. 1303). With Show Note Expression Data each point of a note is a line over the note box, from the
+  point to the type's next one (or the note's end) at its value, as playback holds a value until the next point. The
+  values go from the box's bottom to its top: tuning from -48 to 48 semitones, MPE's pitch range (values beyond show
+  at the edge), volume from 0 to 4 and the others from 0 to 1.
+- **Expression editor** (pp. 1308-1311). With Double-Click Opens Note Expression Editor a double click on a note with
+  the object selection tool opens the editor instead of deleting the note: on the note, or on the selected notes if it
+  is one of them. It lies over the note display from the first selected note's start to the last one's end, centered
+  on the first one's row, and shows their points of the chosen expression the same way. Its button at the top left is
+  Parameter Selection, a menu of the seven expressions. In it the draw tool draws a point where it clicks, and a drag
+  draws points along the way, replacing those of the expression in the range it went over; with Shift, tuning goes in
+  semitone steps (Vertical Snap). The erase tool deletes the points of the expression it is dragged over, a click those
+  within a few dp. An edit reaches every selected note at the time where it happens, each note's points from its own
+  start, and is one undo step. A press elsewhere in the note display closes the editor, and so does a selection without
+  notes.
+
+The UI tests (`tests/keyeditor_ui_tests.cpp`) check the overlay's lines at their positions and values, opening the
+editor with a double click, Parameter Selection, drawing a point and a drag of points with their values, undo, the
+erase tool deleting only the chosen expression's points, closing it with a click, and that without the setting a
+double click deletes the note; `tests/keyeditor_tests.cpp` checks the three settings as view state.
+
 ## Not yet
 
-- The note expression editor and the expression overlay in the event display (pp. 1303-1315, #1512).
+- In the expression editor (pp. 1309-1313): One-Shot Mode, the Horizontal Snap button, Change Editor Size, the value
+  at the mouse (Parameter Range), the smart controls (tilt, compress, scale, move, stretch), the Line tool, selecting
+  points with a rectangle, moving, copying, pasting (also Paste Note Expression to other notes) and repeating them,
+  the Left and Right Arrow and Tab keys to step through the notes, the release phase (Change Release Length) and a key
+  command for Double-Click Opens Note Expression Editor; the overlay's display size slider (p. 1303), Acoustic
+  Feedback, and Trim Note Expression to Note Length and Remove Note Expression in the MIDI menu (p. 1314).
 - The inspector's Note Expression section with its input assignments, MIDI learn, value ranges and bypass (pp.
   1300-1302, #1513).
 - The MPE input's MIDI Message assignments of pressure, X and Y, its VST Note Expression Assignments (p. 1298), the

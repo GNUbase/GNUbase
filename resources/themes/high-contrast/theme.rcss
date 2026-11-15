@@ -947,6 +947,21 @@
 	{
 		background-color: #ffff00;
 	}
+	.key-expression-step
+	{
+		border-top-width: 1px;
+		border-top-color: #ffffff;
+	}
+	.key-expression-editor
+	{
+		background-color: #0d0d0d;
+		border-width: 1px;
+		border-color: #ffff00;
+	}
+	.key-expression-editor .key-expression-step
+	{
+		border-top-color: #00ffff;
+	}
 	.in-place-editor
 	{
 		background-color: #000000;
