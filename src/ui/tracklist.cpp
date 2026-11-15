@@ -692,6 +692,11 @@ namespace gnubase::ui
 				if (m_drag == Drag::Height)
 					m_drag = Drag::None;
 				m_dragTracks.clear();
+				// Remove Tracks' question and the chord dialogs are for the old project's tracks or parts: OK would act
+				// on whatever has those ids in the new one (#1586).
+				for (const Rml::ObserverPtr<Rml::Element>* open : {&m_removeDialog, &m_chordDialog})
+					if (auto* dialog = dynamic_cast<Rml::ElementDocument*>(open->get()))
+						closeDialog(*dialog, "cancel");
 				readVisibility();
 				readLayout(true);
 			}));
