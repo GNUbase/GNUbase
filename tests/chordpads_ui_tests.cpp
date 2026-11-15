@@ -913,6 +913,9 @@ TEST_CASE(
 	{
 		window.click("#chord-pads-learn-" + target);
 		REQUIRE(window.app.waitUntil([&] { return pads().at("listening") == Json{{"learn", target}}; }));
+		// And the panel heard of it, as the command's event comes before its result: the toggle button lights at the
+		// click already, and a click before the event would ask the panel's last target for listening again.
+		REQUIRE(window.app.waitUntil([&] { return window.app.appUi().binding().waiting("chordPads.listen") == 0; }));
 		CHECK(window.app.waitUntil([&] { return window.hasClass("#chord-pads-learn-" + target, "checked"); }));
 	};
 	window.click("#chord-pads-pane-remote-button");
