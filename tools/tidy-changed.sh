@@ -100,8 +100,6 @@ reconfigure()
 {
 	echo "Configuring $build for its compile database"
 	mkdir -p "$build" && configure > "$build/configure.log" 2>&1 || { echo "Configuring failed, see $build/configure.log"; exit 2; }
-	# CMake leaves a database whose content is the same as it was, older than the CMake file that was changed.
-	touch "$build/compile_commands.json"
 }
 [ -f "$build/compile_commands.json" ] || reconfigure
 
@@ -191,7 +189,6 @@ if [ "$(uname -s)" = Linux ]; then
 		mkdir -p "$gcc" && cmake --preset linux-gcc -B "$gcc" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
 			-DCMAKE_CONFIGURATION_TYPES=Release -DGNUBASE_LTO=OFF > "$gcc/configure.log" 2>&1 ||
 			{ echo "Configuring failed, see $gcc/configure.log"; exit 2; }
-		touch "$gcc/compile_commands.json"
 	fi
 	# GCC at -O3 takes up to about 2 GB for one of the larger files: no more compiles at once than WSL's free memory
 	# holds, so that many changed files don't run it out of memory.
