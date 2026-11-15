@@ -1577,7 +1577,7 @@ TEST_CASE("the info line shows another event's own volume while a dragged one's 
 }
 
 TEST_CASE("the info line shows another part's own transpose while a dragged selection's last step is out, and one "
-		  "dragged part alone the drag's",
+		  "dragged part, alone or with the other, the drag's",
 	"[ui]")
 {
 	test::CommandHolds holds; // declared before the window: its engine's command thread waits in hold()
@@ -1641,32 +1641,54 @@ TEST_CASE("the info line shows another part's own transpose while a dragged sele
 	CHECK(window.shows(field, "5")); // its own, not the dragged parts'
 	REQUIRE(binding.waiting("project.get") != 0);
 
-	// The first dragged part alone, asked for after the last step. A third hold keeps the project read after the
-	// last step out: the display shows the read after the first one, and the field where the drag left the part,
-	// though the drag changed it with another part selected (#1471).
-	window.display.select({first});
-	window.app.shell().step(std::chrono::milliseconds(0));
-	REQUIRE(binding.waiting("event.get") != 0);
-	holder.send("test.hold");
-	holds.release(2);
-	REQUIRE(holds.waitEntered(3));
-	REQUIRE(window.shows("#info-line textdisplay[field=name]", "First"));
-	CHECK(window.app.waitUntil([&] { return drag.value() == value; }));
-	REQUIRE(binding.waiting("history.transaction") == 0);
-	REQUIRE(binding.waiting("project.get") != 0);
-	REQUIRE(shown() != value);
+	// The first dragged part, asked for after the last step, alone or with the other one. A third hold keeps the
+	// project read after the last step out: the display shows the read after the first one, and the field where the
+	// drag left the part, though the drag changed it with another part selected (#1471).
+	const auto heldBehindLastStep = [&](std::vector<uint64_t> parts)
+	{
+		window.display.select(std::move(parts));
+		window.app.shell().step(std::chrono::milliseconds(0));
+		REQUIRE(binding.waiting("event.get") != 0);
+		holder.send("test.hold");
+		holds.release(2);
+		REQUIRE(holds.waitEntered(3));
+		REQUIRE(window.shows("#info-line textdisplay[field=name]", "First"));
+		CHECK(window.app.waitUntil([&] { return drag.value() == value; }));
+		REQUIRE(binding.waiting("history.transaction") == 0);
+		REQUIRE(binding.waiting("project.get") != 0);
+		REQUIRE(shown() != value);
+	};
 
-	// The read after the last step agrees with it, and so does the engine, for both dragged parts.
-	holds.release(3);
-	REQUIRE(window.app.waitUntil([&] { return shown() == value; }));
-	CHECK(drag.value() == value);
-	CHECK(window.part(first).value("transpose", 0) == value);
-	CHECK(window.part(second).value("transpose", 0) == value);
-	CHECK(window.part(other).value("transpose", 0) == 5);
+	SECTION("alone")
+	{
+		heldBehindLastStep({first});
+
+		// The read after the last step agrees with it, and so does the engine, for both dragged parts.
+		holds.release(3);
+		REQUIRE(window.app.waitUntil([&] { return shown() == value; }));
+		CHECK(drag.value() == value);
+		CHECK(window.part(first).value("transpose", 0) == value);
+		CHECK(window.part(second).value("transpose", 0) == value);
+		CHECK(window.part(other).value("transpose", 0) == 5);
+	}
+
+	SECTION("with the other part, one wheel turn moves each by one from what it shows (#1632)")
+	{
+		heldBehindLastStep({first, other});
+		window.app.ui().wheel(std::nullopt, {field, 0, std::nullopt}, 0.0F, 1.0F);
+		const double turn = static_cast<double>(std::lround(drag.value())) - value;
+		REQUIRE(std::abs(turn) == 1.0);
+
+		// From where the drag left the first part, not from the project's older value.
+		holds.release(3);
+		REQUIRE(window.app.waitUntil([&] { return window.part(first).value("transpose", 0) == value + turn; }));
+		CHECK(window.app.waitUntil([&] { return window.part(other).value("transpose", 0) == 5 + turn; }));
+		CHECK(window.part(second).value("transpose", 0) == value);
+	}
 }
 
 TEST_CASE("the info line shows another note's own velocity while a dragged note's last step is out, and back on the "
-		  "dragged one the drag's",
+		  "dragged one, alone or with the other, the drag's",
 	"[ui]")
 {
 	test::CommandHolds holds; // declared before the window: its engine's command thread waits in hold()
@@ -1735,27 +1757,58 @@ TEST_CASE("the info line shows another note's own velocity while a dragged note'
 	CHECK(window.shows(field, "100")); // its own, not the dragged note's (#1550)
 	REQUIRE(binding.waiting("project.get") != 0);
 
-	// Back on the dragged note, after the last step. A third hold keeps the project read after the last step out:
-	// the display shows the read after the first one, and the field where the drag left the note.
-	holder.send("editor.set", {{"editor", editor}, {"selection", selection(dragged)}});
-	holder.send("test.hold");
-	holds.release(2);
-	REQUIRE(holds.waitEntered(3));
-	REQUIRE(window.shows("#info-line textdisplay[field=pitch]", "C3"));
-	CHECK(window.app.waitUntil([&] { return drag.value() == value; }));
-	REQUIRE(binding.waiting("history.transaction") == 0);
-	REQUIRE(binding.waiting("project.get") != 0);
-	REQUIRE(shown() != value);
+	// Back on the dragged note, alone or with the other one, after the last step. A third hold keeps the project
+	// read after the last step out: the display shows the read after the first one, and the field where the drag
+	// left the note.
+	const auto heldBehindLastStep = [&](Json notes)
+	{
+		holder.send("editor.set", {{"editor", editor}, {"selection", std::move(notes)}});
+		holder.send("test.hold");
+		holds.release(2);
+		REQUIRE(holds.waitEntered(3));
+		REQUIRE(window.shows("#info-line textdisplay[field=pitch]", "C3"));
+		CHECK(window.app.waitUntil([&] { return drag.value() == value; }));
+		REQUIRE(binding.waiting("history.transaction") == 0);
+		REQUIRE(binding.waiting("project.get") != 0);
+		REQUIRE(shown() != value);
+	};
+	// Each note's velocity, 0-127, in the engine.
+	const auto velocities = [&]
+	{
+		std::map<uint64_t, double> found;
+		const Json notes = window.part(part); // the temporary must outlive the loop over its notes
+		for (const Json& note : notes.at("notes"))
+			found[note.at("id").get<uint64_t>()] =
+				static_cast<double>(std::lround(note.at("velocity").get<double>() * 127.0));
+		return found;
+	};
 
-	// The read after the last step agrees with it, and so does the engine; the other note kept its own.
-	holds.release(3);
-	REQUIRE(window.app.waitUntil([&] { return shown() == value; }));
-	CHECK(drag.value() == value);
-	CHECK(window.shows(field, std::to_string(std::lround(value))));
-	const Json notes = window.part(part); // the temporary must outlive the loop over its notes
-	for (const Json& note : notes.at("notes"))
-		CHECK(static_cast<double>(std::lround(note.at("velocity").get<double>() * 127.0)) ==
-			(note.at("id") == dragged ? value : 100.0));
+	SECTION("alone")
+	{
+		heldBehindLastStep(selection(dragged));
+
+		// The read after the last step agrees with it, and so does the engine; the other note kept its own.
+		holds.release(3);
+		REQUIRE(window.app.waitUntil([&] { return shown() == value; }));
+		CHECK(drag.value() == value);
+		CHECK(window.shows(field, std::to_string(std::lround(value))));
+		CHECK(velocities() == std::map<uint64_t, double>{{dragged, value}, {other, 100.0}});
+	}
+
+	SECTION("with the other note, one wheel turn moves each by one from what it shows (#1632)")
+	{
+		Json both = selection(dragged);
+		both.push_back({{"part", part}, {"note", other}});
+		heldBehindLastStep(std::move(both));
+		window.app.ui().wheel(std::nullopt, {field, 0, std::nullopt}, 0.0F, 1.0F);
+		const double turn = static_cast<double>(std::lround(drag.value())) - value;
+		REQUIRE(std::abs(turn) == 1.0);
+
+		// From where the drag left the dragged note, not from the project's older value.
+		holds.release(3);
+		CHECK(window.app.waitUntil([&]
+			{ return velocities() == std::map<uint64_t, double>{{dragged, value + turn}, {other, 100.0 + turn}}; }));
+	}
 }
 
 TEST_CASE("the info line's note velocity turned on one note, then on the next with the mouse still over it: two "
