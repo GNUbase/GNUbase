@@ -9,7 +9,8 @@ the pool and conforming files to the project's sample rate. The engine commands 
 
 - **`pool.get`** (query) returns the pool folders and every clip with its folder, how many audio events use it
   (`used`), its media file's path, sample rate, channel count and length, `missing` (the file isn't there) and
-  `external` (outside the project folder; every file of a project that has no file yet), plus the info line's totals:
+  `external` (outside the project folder; every file of a project that has no file yet), `rootKey` (the root key its
+  audio events share, `""` when they have none or differ; [transpose.md](transpose.md)), plus the info line's totals:
   `audioFiles`, `usedFiles` (media files an event plays), `missingFiles`, `externalFiles` and `totalSize` in bytes,
   plus `missingExternalFiles`, the external files that are missing, which Prepare Archive can't copy.
   It looks at each media file on disk once (a `std::filesystem::directory_entry` for whether it is there and its
@@ -17,7 +18,8 @@ the pool and conforming files to the project's sample rate. The engine commands 
 - **Folders.** `poolFolder.add` (name, default New Folder; parent), `poolFolder.set` (rename, or move into another
   folder but not into itself or a folder inside it) and `poolFolder.remove` (what was in it goes into its parent).
   Clips have a `folder` (0: the pool's Audio folder); `clip.set` renames a clip or moves it into a folder. Folders
-  only organize the pool: files keep their names and places. They are objects with ids in the document
+  only organize the pool: files keep their names and places. `clip.set` `rootKey` is the Key column (p. 417): every
+  audio event that plays the clip gets that root key, also in inactive track versions; the file stays as it is. They are objects with ids in the document
   (`Project::poolFolders`), so they are in undo and in the project file's GNUbase entry. A file with a folder inside
   one that isn't there loads with it at the top; of folders inside each other in a loop, the first one (by id) goes
   to the top and the others stay inside it, as do folders that are only inside the loop.
@@ -90,7 +92,9 @@ the pool and conforming files to the project's sample rate. The engine commands 
 - **What it shows.** A toolbar, the message line, the info line (Audio Files, Used, Total Size, External Files,
   Missing) and a tree (`<listview id="pool">`, [widgets.md](widgets.md)) with the Audio folder, its folders and their
   clips, folders first and each by name, ASCII letters in either case alike (alpha before Bass), in the columns Media,
-  Used (empty when unused), Status (Missing or External), Info (sample rate, channels, length) and Path. Rows have the
+  Used (empty when unused), Status (Missing or External), Key (a drop-down list of the root key of the clip's audio
+  events, `select[field=rootKey]`, which sets it with `clip.set`; #1555, p. 417), Info (sample rate, channels,
+  length) and Path. Rows have the
   state classes `.folder` or `.clip`, and clips `.missing` and `.unused`. It follows `history.changed` and
   `project.saved`, so changes from MCP, Lua or undo show, but reads the pool only while it shows
   (`Docking::showing`, [docking.md](docking.md)): behind another tab or in a hidden zone it notes that the pool

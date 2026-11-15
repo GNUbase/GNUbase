@@ -2027,7 +2027,7 @@ TEST_CASE("the info line edits the selected MIDI parts' transpose and velocity, 
 	REQUIRE(window.app.waitUntil([&] { return window.part(first).at("velocity") == -20; }));
 	CHECK(window.part(second).at("velocity") == -120);
 
-	// Changes from another client show; markers and audio events have no transpose.
+	// Changes from another client show; markers have no transpose, audio events no velocity (#1555).
 	window.call("midiPart.set", {{"part", first}, {"transpose", -7}});
 	CHECK(window.shows("#info-line valuefield[field=transpose]", "-7"));
 	const uint64_t audio = window.addTrack({{"type", "audio"}});
@@ -2044,7 +2044,7 @@ TEST_CASE("the info line edits the selected MIDI parts' transpose and velocity, 
 	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("audioEvents").size() == 1; }));
 	window.display.select({event});
 	REQUIRE(window.shows("#info-line textdisplay[field=name]", "take"));
-	CHECK(hasClass(window.app, "#info-line [info-field=transpose]", "unavailable"));
+	CHECK_FALSE(hasClass(window.app, "#info-line [info-field=transpose]", "unavailable"));
 	CHECK(hasClass(window.app, "#info-line [info-field=velocity]", "unavailable"));
 }
 

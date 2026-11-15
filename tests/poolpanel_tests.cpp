@@ -193,6 +193,39 @@ TEST_CASE("the pool panel lists folders and clips, renames them and moves clips 
 	REQUIRE(app.waitUntil([&app] { return rows(app).size() == 6; }));
 }
 
+TEST_CASE("the pool panel's Key column shows and sets the root key of a clip's audio events", "[ui]")
+{
+	const test::TempDir dir;
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	const uint64_t loop = addClip(app, writeAudio(dir.path() / "loop.wav", 4800));
+	const Json track = app.call("track.add", {{"type", "audio"}}).at("track");
+	const uint64_t event = app.call("audioEvent.add", {{"track", track.at("id")}, {"clip", loop}, {"position", 0}})
+							   .at("event")
+							   .at("id")
+							   .get<uint64_t>();
+	const auto eventKey = [&app, event]
+	{
+		const Json project = app.call("project.get");
+		for (const Json& each : project.at("audioEvents"))
+			if (each.at("id") == event)
+				return each.at("rootKey").get<std::string>();
+		return std::string("no event");
+	};
+	openPool(app, 2);
+	// The Key column (reference manual p. 417): no key yet; the next one after none is C.
+	const std::string key = "#pool listitem select[field=rootKey]";
+	REQUIRE(elements(app, key).size() == 1); // the Audio folder has none
+	CHECK(elements(app, key).at(0).at("value") == "");
+	click(app, key);
+	app.ui().key(std::nullopt, "Down");
+	click(app, key);
+	REQUIRE(app.waitUntil([&] { return eventKey() == "C"; }));
+	// A key set on the info line, or from another client, shows.
+	app.call("audioEvent.set", {{"event", event}, {"rootKey", "G"}});
+	CHECK(app.waitUntil([&] { return elements(app, key).at(0).at("value") == "G"; }));
+}
+
 TEST_CASE("the pool panel's Import puts files into the pool through the Import Options dialog", "[ui]")
 {
 	const test::TempDir dir;
