@@ -1297,7 +1297,14 @@ namespace gnubase::engine
 				m_inputKeys[before] == 0)
 				ends = before;
 			if (m_inputTo[from] != g_notes)
+			{
 				++m_inputKeys[m_inputTo[from]];
+				// The released keys of other channels whose note this one starts again lose it, as their release has
+				// ended: their expression would change the new note (#1685).
+				for (size_t key = 0; key < g_notes; ++key)
+					if (key != from && !m_inputDown[key] && m_inputTo[key] == m_inputTo[from])
+						m_inputTo[key] = static_cast<uint16_t>(g_notes);
+			}
 			m_inputDown[from] = true;
 		}
 		// A note-off of a key that isn't held, e.g. since before the track got the input, passes as it came.
@@ -1322,15 +1329,16 @@ namespace gnubase::engine
 		return true;
 	}
 
-	bool MidiSequencer::injectMpe(uint32_t setup, const graph::ProcessEvent& event) noexcept
+	bool MidiSequencer::injectMpe(uint64_t setup, const graph::ProcessEvent& event) noexcept
 	{
-		if (m_input.size() + 4 > m_input.capacity())
-			return false;
 		if (setup != m_injectedMpeSetup)
 		{
 			m_injectedMpeSetup = setup;
 			m_injectedMpe.reset();
 		}
+		// Room for all it adds, one point per note of the channel: else the event waits for the next block (#1685).
+		if (m_input.size() + m_injectedMpe.maxEvents(event) > m_input.capacity())
+			return false;
 		m_injectedMpe.process(midi::MpeSetup::unpack(setup), event, m_input);
 		return true;
 	}

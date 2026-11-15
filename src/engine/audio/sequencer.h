@@ -327,8 +327,8 @@ namespace gnubase::engine
 		graph::EventBuffer& input() noexcept { return m_input; }
 		// Audio thread: an event of midi.inject's into input through an MPE setup (midi::MpeSetup::pack), as from a
 		// port with it: the track keeps the state of the notes' channels while the setup stays. False, adding nothing,
-		// if input has no room for a note-on and its initial values.
-		bool injectMpe(uint32_t setup, const graph::ProcessEvent& event) noexcept;
+		// if input has no room for all that the event adds (midi::MpeInput::maxEvents).
+		bool injectMpe(uint64_t setup, const graph::ProcessEvent& event) noexcept;
 
 	protected:
 		void prepare(double sampleRate, uint32_t maxFrames) override;
@@ -466,7 +466,7 @@ namespace gnubase::engine
 		uint64_t m_inputSlotsSerial = 0; // the MidiSequence::slotsSerial they belong to
 		// midi.inject's MPE input (injectMpe) and the setup it is for.
 		midi::MpeInput m_injectedMpe;
-		uint32_t m_injectedMpeSetup = 0;
+		uint64_t m_injectedMpeSetup = 0;
 		int8_t m_inputSlotTrack = -1;   // the MidiSequence::inputChannel they belong to
 		uint8_t m_inputSlotTrigger = 0; // the channel of the trigger that selected the slot
 		bool m_tookSlot = false;        // a sequencer for sends before the modifiers: takeSlot ran

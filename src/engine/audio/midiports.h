@@ -45,8 +45,8 @@ namespace gnubase::engine
 		MidiPorts(const MidiPorts&) = delete;
 		MidiPorts& operator=(const MidiPorts&) = delete;
 
-		// Registers midi.ports, midi.setPort, midi.refresh and midi.monitor. When a backend's ports change, the engine
-		// refreshes them on its own.
+		// Registers midi.ports, midi.setPort, midi.refresh, midi.monitor and midi.activity. When a backend's ports
+		// change, the engine refreshes them on its own.
 		void registerCommands(Engine& engine);
 
 		// Lists the ports again, opens new and returning visible inputs, closes the others. True if anything changed.
@@ -106,6 +106,10 @@ namespace gnubase::engine
 		// key triggers a pad (Assign from MIDI Input, MIDI Learn: chordPads.listen).
 		void listenForPads(bool on) { m_padListen.store(on, std::memory_order_relaxed); }
 
+		// Any thread: how many messages the open inputs received so far. The audio engine's cue thread runs
+		// midi.activity when it changed.
+		uint64_t activity() const { return m_activityCount.load(std::memory_order_relaxed); }
+
 		// Drops the input that waits for the audio thread. Only while no audio thread takes.
 		void clear() { m_queue.clear(); }
 
@@ -145,7 +149,9 @@ namespace gnubase::engine
 		Json setting(const Port& port) const;                  // its entry there; empty while it has the defaults
 		bool visible(const Port& port) const { return setting(port).value("visible", true); }
 		bool inAllInputs(const Port& port) const { return port.info.input && setting(port).value("inAllInputs", true); }
+		// An input's MPE setup, and what it is until midi.setPort changes it: a detected device's preset settings.
 		midi::MpeSetup mpe(const Port& port) const;
+		static midi::MpeSetup preset(const Port& port);
 		// Audio thread: a message of the input slot (or the on-screen keyboard's) into allInputs, by the slot's MPE
 		// setup.
 		void addInput(int slot, const audio::MidiMessage& message, graph::EventBuffer& allInputs) noexcept;
@@ -161,10 +167,13 @@ namespace gnubase::engine
 		std::array<std::atomic<bool>, g_maxInputs> m_allInputs{};
 		// Per input slot, its port's MPE setup (midi::MpeSetup::pack); the audio thread's state of each, and the setup
 		// it was made for, which starts it afresh when the setup changes.
-		std::array<std::atomic<uint32_t>, g_maxInputs> m_mpeSetups{};
+		std::array<std::atomic<uint64_t>, g_maxInputs> m_mpeSetups{};
 		std::vector<midi::MpeInput> m_mpeInputs;
-		std::array<uint32_t, g_maxInputs> m_mpeApplied{};
+		std::array<uint64_t, g_maxInputs> m_mpeApplied{};
 		rt::SpscQueue<Received> m_monitor;
+		rt::SpscQueue<Received> m_activity; // what the inputs received, for midi.activity
+		std::atomic<uint64_t> m_activityCount{0};
+		std::atomic<size_t> m_activityDropped{0};
 		// Audio thread: the pitches each remote key's note-on played, until its note-off.
 		std::array<midi::PadVoices, ChordPadKeys::g_maxPlayers> m_padVoices; // per player
 		// The sections player mode: the pad key that is down or was last, whether it is down, and the velocity of
