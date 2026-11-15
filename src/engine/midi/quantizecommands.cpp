@@ -419,12 +419,24 @@ namespace gnubase::engine::midi
 		// to the result.
 		void quantizeAudio(Project& project, CommandContext& context, const QuantizeGrid& grid, Json& result)
 		{
-			const std::vector<ObjectId> events = audioTargets(project, context.parameters());
+			const Json& parameters = context.parameters();
+			const std::vector<ObjectId> events = audioTargets(project, parameters);
+			// A selection range of the events, warp quantized (p. 370).
+			std::optional<SampleRange> range;
+			if (parameters.contains("start") || parameters.contains("end"))
+			{
+				require(parameters.contains("start") && parameters.contains("end"), "give start and end, or neither");
+				range =
+					SampleRange{parameters.at("start").get<time::Samples>(), parameters.at("end").get<time::Samples>()};
+				require(range->end > range->start, "give an end after start");
+				require(grid.settings().warpQuantize,
+					"start and end quantize a range by warp quantizing: turn on settings.warpQuantize");
+			}
 			Json moved = Json::array();
 			Json clips = Json::array();
 			if (grid.settings().warpQuantize)
 			{
-				for (const ObjectId clip : warpQuantize(project, events, grid))
+				for (const ObjectId clip : warpQuantize(project, events, grid, range))
 				{
 					clips.push_back(clip);
 					context.emit("clip.changed", {{"clip", toJson(project.clips.at(clip))}});
@@ -685,13 +697,20 @@ namespace gnubase::engine::midi
 			"warp "
 			"markers inside each event (made of its clip's hitpoints that count if it has none there) move to the "
 			"grid, the one nearest to each grid position onto it and the others keeping their places relative to "
-			"those. Locked events stay. They too start from their original positions or markers unless soft. Returns "
+			"those. With start and end (project samples, both or neither, only with warpQuantize) only the selection "
+			"range "
+			"between them is warp quantized (p. 370): the markers inside it move, markers at its start and end keep "
+			"the audio outside it where it plays, and quantizing starts from the markers as they are, so that a range "
+			"quantized before stays so. Locked events stay. They too start from their original positions or markers "
+			"unless soft. Returns "
 			"the notes and audio events that changed and the clips whose warp markers did.";
 		withSettings["preset"] = stringSchema;
 		withSettings["settings"] = settingsSchema;
 		Json audioSettings = withSettings;
 		audioSettings["events"] = arraySchema(idSchema);
 		audioSettings["audioParts"] = arraySchema(idSchema);
+		audioSettings["start"] = {{"type", "integer"}};
+		audioSettings["end"] = {{"type", "integer"}};
 		Json withLength = withSettings;
 		withLength["length"] = {{"type", {"string", "integer"}}};
 

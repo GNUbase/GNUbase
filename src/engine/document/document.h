@@ -482,6 +482,9 @@ namespace gnubase::engine
 		std::vector<WarpMarker> markers; // by position, targets increasing
 		std::string preset = "quality";
 		std::optional<WarpQuantizeOrigin> quantizeOrigin;
+		// The positions of the markers that quantize.createWarpMarkers made (#1579), for the Reset of the Warp Marker
+		// Creation Rules to remove (reference manual p. 380).
+		std::vector<time::Samples> created;
 	};
 
 	// What audio events play: for now, a whole media file. Its fades apply to every event that plays it, at the
@@ -541,6 +544,15 @@ namespace gnubase::engine
 		EventTiming quantized;
 	};
 
+	// What an audio event was before quantize.slice first cut it (#1579): the Reset of the Slice Rules puts it back
+	// (reference manual p. 378).
+	struct SliceOrigin
+	{
+		EventTiming timing;
+		std::optional<time::Samples> snapPoint;
+		Fade fadeOut; // event.split gives it to the last slice
+	};
+
 	// Plays a section of a clip on an audio track.
 	struct AudioEvent
 	{
@@ -578,6 +590,10 @@ namespace gnubase::engine
 		// length changes (#910) left it. While it is there, quantizing starts from the original position and
 		// resetting puts it back; moved by other means, it is where it is.
 		std::optional<EventQuantizeOrigin> quantizeOrigin;
+		// An event that quantize.slice cut keeps what it was before (#1579), and its slices, also those split from
+		// them since, the event's id in slicedFrom, so that the Reset of the Slice Rules puts them back together.
+		std::optional<SliceOrigin> sliceOrigin;
+		ObjectId slicedFrom = 0;
 		// Global transposition (#1368, reference manual pp. 414-421), as a MIDI part's: its root key (-1 for none, 0 C
 		// to 11 B) and Global Transpose Independent. Playback shifts its pitch in real time (dsp::WarpReader).
 		int rootKey = -1;
@@ -833,6 +849,8 @@ namespace gnubase::engine
 		// NOLINTNEXTLINE(readability-redundant-member-init): see above
 		std::vector<TrackVersion> versions = {};
 		int activeVersion = 1; // the ID of the active version
+		// Folders: Group Editing mode (reference manual p. 274, #1579). Last, so that Track{...} can leave it out.
+		bool groupEditing = false;
 	};
 
 	// Whether tracks of a type have versions: audio, instrument and MIDI tracks.
@@ -1835,9 +1853,10 @@ namespace gnubase::engine
 
 	inline bool operator==(const ClipWarp& a, const ClipWarp& b)
 	{
-		return std::tie(
-				   a.musical, a.tempo, a.beatsPerBar, a.gridStart, a.beats, a.markers, a.preset, a.quantizeOrigin) ==
-			std::tie(b.musical, b.tempo, b.beatsPerBar, b.gridStart, b.beats, b.markers, b.preset, b.quantizeOrigin);
+		return std::tie(a.musical, a.tempo, a.beatsPerBar, a.gridStart, a.beats, a.markers, a.preset, a.quantizeOrigin,
+				   a.created) ==
+			std::tie(b.musical, b.tempo, b.beatsPerBar, b.gridStart, b.beats, b.markers, b.preset, b.quantizeOrigin,
+				b.created);
 	}
 
 	inline bool operator==(const Clip& a, const Clip& b)
@@ -1869,14 +1888,19 @@ namespace gnubase::engine
 		return a.original == b.original && a.quantized == b.quantized;
 	}
 
+	inline bool operator==(const SliceOrigin& a, const SliceOrigin& b)
+	{
+		return a.timing == b.timing && a.snapPoint == b.snapPoint && a.fadeOut == b.fadeOut;
+	}
+
 	inline bool operator==(const AudioEvent& a, const AudioEvent& b)
 	{
 		return std::tie(a.id, a.track, a.position, a.clip, a.offset, a.length, a.volume, a.mute, a.lock, a.fadeIn,
 				   a.fadeOut, a.crossfade, a.snapPoint, a.color, a.part, a.lane, a.volumeCurve, a.front, a.rank,
-				   a.quantizeOrigin, a.rootKey, a.independent, a.transpose) ==
+				   a.quantizeOrigin, a.sliceOrigin, a.slicedFrom, a.rootKey, a.independent, a.transpose) ==
 			std::tie(b.id, b.track, b.position, b.clip, b.offset, b.length, b.volume, b.mute, b.lock, b.fadeIn,
 				b.fadeOut, b.crossfade, b.snapPoint, b.color, b.part, b.lane, b.volumeCurve, b.front, b.rank,
-				b.quantizeOrigin, b.rootKey, b.independent, b.transpose);
+				b.quantizeOrigin, b.sliceOrigin, b.slicedFrom, b.rootKey, b.independent, b.transpose);
 	}
 
 	inline bool operator==(const AudioPart& a, const AudioPart& b)
@@ -2050,11 +2074,11 @@ namespace gnubase::engine
 
 	inline bool operator==(const Track& a, const Track& b)
 	{
-		return std::tie(a.id, a.type, a.name, a.color, a.timeBase, a.parent, a.channel, a.children, a.autoFades,
-				   a.timeFormat, a.enabled, a.picture, a.timeOffset, a.timeOffsetOn, a.frozen, a.drumMap,
+		return std::tie(a.id, a.type, a.name, a.color, a.timeBase, a.parent, a.channel, a.children, a.groupEditing,
+				   a.autoFades, a.timeFormat, a.enabled, a.picture, a.timeOffset, a.timeOffsetOn, a.frozen, a.drumMap,
 				   a.articulationMap, a.gmNames, a.versions, a.activeVersion) ==
-			std::tie(b.id, b.type, b.name, b.color, b.timeBase, b.parent, b.channel, b.children, b.autoFades,
-				b.timeFormat, b.enabled, b.picture, b.timeOffset, b.timeOffsetOn, b.frozen, b.drumMap,
+			std::tie(b.id, b.type, b.name, b.color, b.timeBase, b.parent, b.channel, b.children, b.groupEditing,
+				b.autoFades, b.timeFormat, b.enabled, b.picture, b.timeOffset, b.timeOffsetOn, b.frozen, b.drumMap,
 				b.articulationMap, b.gmNames, b.versions, b.activeVersion);
 	}
 	// Where an audio event plays, in the project's samples (fadeedits.cpp).

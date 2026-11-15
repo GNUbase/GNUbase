@@ -515,6 +515,10 @@
 	{
 		background-color: #646464;
 	}
+	.event-display .cutting-position
+	{
+		background-color: #ffff00;
+	}
 	.event-display .marker-lines
 	{
 		stroke-color: #008080;

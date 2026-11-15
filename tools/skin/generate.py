@@ -712,6 +712,8 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".event-display .step-input-cursor, .event-display .step-input-handle", {"background-color": c["accent"]}),
         (".event-display .cross-hair-vertical, .event-display .cross-hair-horizontal",
          {"background-color": mix(c["background"], c["textMuted"], .5)}),
+        # The quantize panel's cutting positions (reference manual p. 378): where Slice would cut
+        (".event-display .cutting-position", {"background-color": c["accent"]}),
         # Markers (docs/features/markers.md): lines behind the events, marker events and labels on marker tracks
         (".event-display .marker-lines", {"stroke-color": mix(c["background"], c["accent2"], .5),
                                           "stroke-width": f"{widths['hairline']}dp"}),

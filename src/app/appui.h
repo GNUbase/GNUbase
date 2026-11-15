@@ -322,6 +322,9 @@ namespace gnubase::app
 			// The project window's selected audio events and parts (#145), for Quantize and Reset Quantize.
 			std::vector<uint64_t> events;
 			std::vector<uint64_t> audioParts;
+			// The project window's selection range (#1579): the audio events on its tracks, which Quantize warp
+			// quantizes between its start and end (project samples).
+			std::optional<std::pair<int64_t, int64_t>> range;
 			std::string lengthQuantize;
 			double insertVelocity = 100.0 / 127.0; // the editor's, for Fixed Velocity
 		};

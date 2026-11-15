@@ -23,6 +23,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -219,8 +220,88 @@ namespace gnubase::ui
 		return modifiers(action, modifiersOf(event));
 	}
 
+	std::map<uint64_t, uint64_t> EventDisplay::editGroups() const
+	{
+		std::map<uint64_t, uint64_t> groups;
+		if (!m_project.is_object())
+			return groups;
+		std::map<uint64_t, uint64_t> parents;
+		std::set<uint64_t> grouping;
+		for (const Json& track : m_project.value("tracks", Json::array()))
+		{
+			const auto id = track.at("id").get<uint64_t>();
+			parents[id] = track.value("parent", uint64_t{0});
+			if (track.value("groupEditing", false))
+				grouping.insert(id);
+		}
+		if (grouping.empty())
+			return groups;
+		for (const auto& [track, parent] : parents)
+			for (uint64_t folder = parent; folder != 0; folder = parents[folder])
+				if (grouping.count(folder) != 0)
+					groups[track] = folder;
+		return groups;
+	}
+
+	std::vector<uint64_t> EventDisplay::withEditGroups(std::vector<uint64_t> events) const
+	{
+		const std::map<uint64_t, uint64_t> groups = editGroups();
+		if (groups.empty() || events.empty())
+			return events;
+		// The lane on its track that each event and part plays on: where events overlap, the playback priority.
+		std::map<uint64_t, int> lanes;
+		for (const char* kind : {"audioEvents", "midiParts", "audioParts"})
+			for (const Json& item : m_project.value(kind, Json::array()))
+				lanes[item.at("id").get<uint64_t>()] = item.value("lane", 0);
+		const double sample = 0.5 / m_time.sampleRate; // seconds
+		const auto groupOf = [&groups](uint64_t track)
+		{
+			const auto found = groups.find(track);
+			return found != groups.end() ? found->second : 0;
+		};
+		std::vector<uint64_t> grouped = events;
+		// ponytail: the selected against every shown event, quadratic; fine for the events of a project window.
+		for (const Shown& one : m_events)
+		{
+			if (one.lane >= m_laneTracks.size() || std::find(events.begin(), events.end(), one.id) == events.end())
+				continue;
+			const uint64_t track = m_laneTracks[one.lane];
+			const uint64_t group = groupOf(track);
+			if (group == 0)
+				continue;
+			for (const Shown& other : m_events)
+				if (other.lane < m_laneTracks.size() && m_laneTracks[other.lane] != track &&
+					groupOf(m_laneTracks[other.lane]) == group && std::abs(other.start - one.start) < sample &&
+					std::abs(other.end - one.end) < sample && lanes[other.id] == lanes[one.id])
+					grouped.push_back(other.id);
+		}
+		return grouped;
+	}
+
+	std::vector<uint64_t> EventDisplay::withEditGroupTracks(const std::vector<uint64_t>& tracks) const
+	{
+		const std::map<uint64_t, uint64_t> groups = editGroups();
+		std::set<uint64_t> folders;
+		for (const uint64_t track : tracks)
+			if (const auto found = groups.find(track); found != groups.end())
+				folders.insert(found->second);
+		if (folders.empty())
+			return tracks;
+		std::vector<uint64_t> all;
+		for (const Json& track : m_project.value("tracks", Json::array()))
+		{
+			const auto id = track.at("id").get<uint64_t>();
+			const auto found = groups.find(id);
+			if (std::find(tracks.begin(), tracks.end(), id) != tracks.end() ||
+				(found != groups.end() && folders.count(found->second) != 0))
+				all.push_back(id);
+		}
+		return all;
+	}
+
 	void EventDisplay::select(std::vector<uint64_t> events)
 	{
+		events = withEditGroups(std::move(events));
 		std::sort(events.begin(), events.end());
 		events.erase(std::unique(events.begin(), events.end()), events.end());
 		m_selection = std::move(events);
