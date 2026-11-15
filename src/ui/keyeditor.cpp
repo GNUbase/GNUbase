@@ -1579,6 +1579,12 @@ namespace gnubase::ui
 		m_drawn = added->GetObserverPtr();
 	}
 
+	void KeyEditor::removeDrawn()
+	{
+		if (Rml::Element* drawn = m_drawn.get(); drawn != nullptr && drawn->GetParentNode() != nullptr)
+			m_removedDrawn = drawn->GetParentNode()->RemoveChild(drawn);
+	}
+
 	int64_t KeyEditor::drawStart(double ticks, int pitch) const
 	{
 		return snap(ticks - (m_snapOff ? 0.0 : static_cast<double>(grid(pitch)) / 2.0), m_snapOff, pitch);
@@ -1719,8 +1725,7 @@ namespace gnubase::ui
 	void KeyEditor::endDrumDraw(const DrumDraw& draw)
 	{
 		m_gesture = Gesture::None;
-		if (Rml::Element* drawn = m_drawn.get(); drawn != nullptr && drawn->GetParentNode() != nullptr)
-			drawn->GetParentNode()->RemoveChild(drawn);
+		removeDrawn();
 		if (Rml::Element* velocity = m_root.get()->QuerySelector(".key-editor-velocity"))
 			velocity->SetClass("off", true);
 		// The drumstick repeats notes at every step of the grid it was dragged over (p. 1241).
@@ -1772,9 +1777,7 @@ namespace gnubase::ui
 				endDrumDraw(drumDraw(event));
 				return;
 			}
-			Rml::Element* drawn = m_drawn.get();
-			if (drawn != nullptr && drawn->GetParentNode() != nullptr)
-				drawn->GetParentNode()->RemoveChild(drawn);
+			removeDrawn();
 			const auto start = std::llround(m_pressedAt.first);
 			const int64_t length = lengthQuantize(m_pressedAt.second);
 			const auto steps = std::max<int64_t>(
@@ -1868,8 +1871,7 @@ namespace gnubase::ui
 	{
 		if (std::exchange(m_gesture, Gesture::None) == Gesture::None)
 			return;
-		if (Rml::Element* drawn = m_drawn.get(); drawn != nullptr && drawn->GetParentNode() != nullptr)
-			drawn->GetParentNode()->RemoveChild(drawn);
+		removeDrawn();
 		if (Rml::Element* velocity = m_root.get()->QuerySelector(".key-editor-velocity"))
 			velocity->SetClass("off", true);
 		m_pressed.reset();

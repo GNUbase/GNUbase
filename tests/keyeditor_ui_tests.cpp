@@ -7,9 +7,11 @@
 #include "ui/docking.h"
 #include "ui/keyeditor.h"
 #include "ui/midieditor.h"
+#include "ui/rmlui.h"
 #include "uiapp.h"
 
 #include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Factory.h>
 #include <RmlUi/Core/StyleSheetContainer.h>
@@ -790,6 +792,43 @@ TEST_CASE("a move released outside the key editor ends without its effect, a dra
 	CHECK(f.partNotes()[1].at("length") == 4 * g_sixteenth);
 	CHECK(f.partNotes()[1].at("pitch") == 64);
 	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note.drawing").empty(); }));
+}
+
+TEST_CASE("a draw whose release was lost ends without its effect at a press on the drawn note", "[ui]")
+{
+	Fixture f;
+	f.scroll(64);
+	f.tool("draw");
+	ui::Window* window = f.app.shell().find(f.app.appUi().editorWindowId());
+	REQUIRE(window != nullptr);
+	Rml::Context& context = window->context();
+	// The mouse leaves the window before it moves, as when the window loses the focus: no drag starts, so the button
+	// going up out there ends nothing, and the drawn note stays where it was pressed.
+	f.app.ui().press(f.window, f.at(4.3, 64), ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	context.ProcessMouseLeave();
+	context.ProcessMouseButtonUp(0, 0);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.elements(".key-note.drawing").size() == 1);
+	const Json drawn = f.box(".key-note.drawing");
+	const ui::Point on{
+		static_cast<int>(std::lround(drawn.at("x").get<double>() + (drawn.at("width").get<double>() / 2))),
+		static_cast<int>(std::lround(drawn.at("y").get<double>() + (drawn.at("height").get<double>() / 2)))};
+	// The next press goes to the drawn note and ends the draw, which takes the note out while the press still has it
+	// as its target; the press draws nothing either.
+	const Rml::Element* hit = context.GetElementAtPoint({static_cast<float>(on.x), static_cast<float>(on.y)});
+	REQUIRE(hit != nullptr);
+	REQUIRE(hit->IsClassSet("drawing"));
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	clock->advance(1.0); // no double click with the press before
+	f.app.ui().press(f.window, {"", 0, on}, ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.elements(".key-note.drawing").empty());
+	f.app.ui().release(f.window, {"", 0, on}, ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK_FALSE(f.app.waitUntil([&] { return !f.partNotes().empty(); }, std::chrono::milliseconds(300)));
+	CHECK(f.elements(".key-note.drawing").empty());
 }
 
 TEST_CASE("the draw tool follows a quantize grid changed in the project window", "[ui]")

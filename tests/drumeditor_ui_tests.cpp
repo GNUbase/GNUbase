@@ -855,6 +855,44 @@ TEST_CASE(
 	CHECK_FALSE(f.app.waitUntil([&] { return f.partNotes().empty(); }, std::chrono::milliseconds(300)));
 }
 
+TEST_CASE("a drumstick draw whose release was lost ends without its effect at a press on the drawn note", "[ui]")
+{
+	Fixture f;
+	f.scroll(36);
+	f.click(of(".key-tool[key-tool=draw]"));
+	ui::Window* window = f.app.shell().find(f.app.appUi().editorWindowId());
+	REQUIRE(window != nullptr);
+	Rml::Context& context = window->context();
+	// The mouse leaves the window before it moves, as when the window loses the focus: no drag starts, so the button
+	// going up out there ends nothing, and the drawn note stays where it was pressed.
+	f.app.ui().press(f.window, f.at(4.0, 36), ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	context.ProcessMouseLeave();
+	context.ProcessMouseButtonUp(0, 0);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.elements(".key-note.drawing").size() == 1);
+	const Json drawn = f.box(".key-note.drawing");
+	// Left of its middle, as the velocity shown beside it covers its right half.
+	const ui::Point on{
+		static_cast<int>(std::lround(drawn.at("x").get<double>() + (drawn.at("width").get<double>() / 4))),
+		static_cast<int>(std::lround(drawn.at("y").get<double>() + (drawn.at("height").get<double>() / 2)))};
+	// The next press goes to the drawn note and ends the draw, which takes the note out while the press still has it
+	// as its target; the press inserts nothing either.
+	const Rml::Element* hit = context.GetElementAtPoint({static_cast<float>(on.x), static_cast<float>(on.y)});
+	REQUIRE(hit != nullptr);
+	REQUIRE(hit->IsClassSet("drawing"));
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	clock->advance(1.0); // no double click with the press before
+	f.app.ui().press(f.window, {"", 0, on}, ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.elements(".key-note.drawing").empty());
+	f.app.ui().release(f.window, {"", 0, on}, ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK_FALSE(f.app.waitUntil([&] { return !f.partNotes().empty(); }, std::chrono::milliseconds(300)));
+	CHECK(f.elements(".key-note.drawing").empty());
+}
+
 TEST_CASE("with Use Snap from Drum Map a note moved to another sound snaps to that sound's snap", "[ui]")
 {
 	// p. 1227: events snap to the snap of their sound, so a note moved to another sound to that one's. The bass
