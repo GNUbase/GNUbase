@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -94,7 +95,8 @@ namespace gnubase::ui
 			double releaseVelocity = 0.5;
 			int channel = 0;
 			bool editable = false;
-			std::vector<std::string> articulations; // its attributes (#1112)
+			std::vector<std::string> articulations;           // its attributes (#1112)
+			engine::Json expressions = engine::Json::array(); // its expression points (#176), by position
 		};
 
 		struct Part
@@ -116,6 +118,7 @@ namespace gnubase::ui
 			Draw,
 			Erase,      // the drumstick's press on a note
 			ZoomScroll, // the press on the keyboard's left part (p. 1261)
+			Expression, // the draw or erase tool in the expression editor (pp. 1310-1311)
 		};
 
 		void ProcessEvent(Rml::Event& event) override;
@@ -167,6 +170,19 @@ namespace gnubase::ui
 		// Places the parts' boxes, the notes and the step input cursor on the time axis m_from to m_to.
 		void placeItems();
 		void renderInfo();
+		// Per-note expression (#1512, pp. 1303-1313): the steps of a note's points of the type, as lines at their
+		// values in percent of a span of ticks that starts offset ticks before the note.
+		static std::string stepsRml(
+			const engine::Json& points, const std::string& type, int64_t offset, int64_t span, int64_t length);
+		// The expression editor: open on the selected notes, from the first one's start to the last one's end, it
+		// shows their points of the view's expressionType.
+		void renderExpression();
+		std::pair<int64_t, int64_t> expressionSpan() const;
+		// The draw tool's points or the erase tool's sweep at the mouse in the expression editor.
+		void paint(const Rml::Event& event);
+		// A note's points as the gesture in the expression editor changes them: the swept range's points of the
+		// type replaced by those drawn there.
+		engine::Json edited(const Note& note) const;
 		void scrollToNotes(); // the first scroll, to the middle of the notes, until one succeeds (m_scrolled)
 		// The drum editor's: the active track's drum map, the rows' order from it, and the sound list and Map menu.
 		const engine::Json* activeMap() const;
@@ -246,7 +262,8 @@ namespace gnubase::ui
 		int64_t m_to = 1;
 		std::optional<std::pair<int64_t, int64_t>> m_range; // setTimeRange's
 		bool m_scrolled = false;
-		std::string m_notesRml; // the notes' elements as last set
+		std::string m_notesRml;      // the notes' elements as last set
+		std::string m_expressionRml; // the expression editor's lines as last set
 
 		Gesture m_gesture = Gesture::None;
 		std::pair<double, int> m_pressedAt;
@@ -269,6 +286,10 @@ namespace gnubase::ui
 		std::vector<Rml::ObserverPtr<Rml::Element>> m_menus;
 		std::string m_lineMode = "line"; // the line tool's (#128)
 		std::unique_ptr<ControllerLanes> m_lanes;
+		bool m_expressionOpen = false;       // the expression editor (p. 1308)
+		std::map<int64_t, double> m_painted; // the draw tool's points in it, project ticks
+		int64_t m_paintFrom = 0;             // the range it swept, project ticks
+		int64_t m_paintTo = -1;
 		bool m_toolboxOnRightClick = false; // ui.toolboxOnRightClick
 		bool m_toolboxKnown = false;        // changed since it was asked for
 		std::vector<Subscription> m_subscriptions;

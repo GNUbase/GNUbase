@@ -951,6 +951,21 @@
 	{
 		background-color: #0969da;
 	}
+	.key-expression-step
+	{
+		border-top-width: 1px;
+		border-top-color: #17202d;
+	}
+	.key-expression-editor
+	{
+		background-color: #f7f9fc;
+		border-width: 1px;
+		border-color: #0969da;
+	}
+	.key-expression-editor .key-expression-step
+	{
+		border-top-color: #6554c0;
+	}
 	.in-place-editor
 	{
 		background-color: #eef1f5;

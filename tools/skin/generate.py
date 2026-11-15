@@ -876,6 +876,12 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".key-note.drawing", {"background-color": c["accent"] + "66"}),
         (".key-editor-velocity", {"color": c["text"]}),
         (".key-editor-step-cursor", {"background-color": c["accent"]}),
+        # Per-note expression (docs/features/note-expression.md): its steps as lines over the notes and in the
+        # expression editor, which lies over the note display
+        (".key-expression-step", {"border-top-width": f"{widths['hairline']}px", "border-top-color": c["text"]}),
+        (".key-expression-editor", {"background-color": c["surfaceRaised"],
+                                    "border-width": f"{widths['hairline']}px", "border-color": c["accent"]}),
+        (".key-expression-editor .key-expression-step", {"border-top-color": c["accent2"]}),
         # The in-place editor (docs/features/in-place-editor.md): opaque over its track's events, a line below it
         (".in-place-editor", {"background-color": c["background"], "border-bottom-width": f"{widths['hairline']}px",
                               "border-bottom-color": c["border"]}),

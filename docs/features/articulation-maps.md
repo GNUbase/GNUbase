@@ -165,6 +165,7 @@ removed).
   selection tool an arrow in a direction's upper left corner (`.articulation-menu-arrow`, shown while the mouse is over
   the direction or it is selected) opens its event pop-up menu (`#controller-articulation-menu`, p. 1290, #1658), as a
   right click on it does; Reset, checked on a reset, makes it a reset or a direction again (`controller.set` `reset`).
+  A direction of a part that isn't editable has neither.
 - **Articulations field** (p. 1290): the key and drum editors' info line shows the first selected note's attributes,
   names separated by commas; typed, they replace every selected note's, and typed empty, they go. A warning sign
   (`svg.icon.warning`, which the themes color for every warning sign, the field's state class `.unknown`) shows where
