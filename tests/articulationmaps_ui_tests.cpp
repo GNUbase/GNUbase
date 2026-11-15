@@ -1219,9 +1219,23 @@ TEST_CASE("the info line's and the list editor's pop-up menus choose the map's a
 	CHECK(f.articulations(f.notes[0]).empty());
 	REQUIRE(f.app.waitUntil([&] { return f.value(field) == "Staccato"; }));
 	CHECK(f.elements("#key-articulations-menu menuitem[articulation]").size() == 1);
-	choose(of(".key-editor-info button.articulation-menu"), ui::MouseButton::Left, staccato);
+	// Opened again, the notes' attribute is checked (#1658); chosen, it goes and is no longer checked.
+	const std::string checkedStaccato = staccato + "[checked]";
+	choose(of(".key-editor-info button.articulation-menu"), ui::MouseButton::Left, checkedStaccato);
 	REQUIRE(f.app.waitUntil([&f] { return f.articulations(f.notes[1]).empty(); }));
 	CHECK(f.articulations(f.notes[2]).empty());
+	REQUIRE(f.app.waitUntil([&] { return f.value(field).empty(); }));
+	f.app.ui().click(f.window, of(".key-editor-info button.articulation-menu"), ui::MouseButton::Left, 1, {});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const Json found = f.elements(staccato);
+			return !found.empty() && found.at(0).at("visible") == true;
+		}));
+	CHECK(f.elements(checkedStaccato).empty());
+	f.app.ui().key(f.window, "Escape");
+	f.app.shell().step(std::chrono::milliseconds(0));
 
 	// The list editor's Attributes column: a click on a note's (#1658), a right click on a direction's.
 	const Json added = f.app.call("controller.add",
