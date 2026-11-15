@@ -1328,6 +1328,28 @@ TEST_CASE(
 	effects->idle = true;
 }
 
+TEST_CASE("an effect that processes again after failing ends the notes that passed it meanwhile", "[unit]")
+{
+	auto effects = std::make_shared<TestEffects>();
+	MidiSequencer sequencer(effects);
+	sequencer.prepareFor(48000.0, 128);
+	sequencer.setSequence(withInsert("arpeggiator"));
+	effects->idle = false;
+	effects->failing = true;
+	std::vector<int> held;
+	// The key passes the failing arpeggiator as it came.
+	follow(playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOn, 5, 60)}), held);
+	CHECK(held == std::vector<int>{60});
+	// It processes again, started afresh without the key: the note ends, as the arpeggiator swallows its note-off.
+	effects->failing = false;
+	follow(playBlock(sequencer, {}), held);
+	CHECK(held.empty());
+	follow(playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOff, 7, 60)}), held);
+	CHECK(playBlocks(sequencer, 200, held) == 0);
+	CHECK(held.empty());
+	effects->idle = true;
+}
+
 TEST_CASE("an insert above the divider that starts to fail ends the notes it played in what the track records, not "
 		  "the parts' notes",
 	"[unit]")
