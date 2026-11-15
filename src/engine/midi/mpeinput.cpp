@@ -254,8 +254,8 @@ namespace gnubase::engine::midi
 			"tuning": {"type": "boolean"},
 			"initialX": {"type": "string", "enum": ["off", "center"]},
 			"initialY": {"type": "string", "enum": ["off", "min", "center", "max"]}}})");
-		const Json message = {
-			{"type", "string"}, {"pattern", "^(pitchBend|aftertouch|cc(12[0-7]|1[01][0-9]|[1-9]?[0-9]))$"}};
+		const Json message = {{"type", "string"},
+			{"pattern", "^(pitchBend|aftertouch|cc(12[0-7]|1[01][0-9]|[1-9]?[0-9]))$"}, {"maxLength", 10}};
 		const Json assignment = {{"type", "string"}, {"enum", g_assignments}};
 		for (size_t i = 0; i < g_messageMembers.size(); ++i)
 		{
