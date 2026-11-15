@@ -390,6 +390,13 @@ namespace gnubase::engine
 		// off events on the channel their on events went to (#1667).
 		void endAddOns(
 			const ArticulationMap& map, const SoundSlot& slot, uint32_t offset, graph::EventBuffer& out) noexcept;
+		// The channel the notes played into the track play on: the selected slot's, else the default slot's own, else
+		// channel (the track's or the trigger's).
+		uint8_t notesChannel(const ArticulationMap& map, uint8_t channel) const noexcept;
+		// The add-on slots on follow the notes to another channel: their off events on the channel their on events
+		// went to, their on events on the new one (#1718). track is the track's MIDI channel, -1 for none: then each
+		// goes by the channel of the trigger that turned it on.
+		void moveAddOns(const ArticulationMap& map, int track, uint32_t offset, graph::EventBuffer& out) noexcept;
 		// A slot's on or off output events, on channel.
 		static void sendSlotEvents(
 			const SoundSlot& slot, bool off, uint8_t channel, uint32_t offset, graph::EventBuffer& out) noexcept;
@@ -471,12 +478,13 @@ namespace gnubase::engine
 		uint8_t m_inputSlotTrigger = 0; // the channel of the trigger that selected the slot
 		bool m_tookSlot = false;        // a sequencer for sends before the modifiers: takeSlot ran
 		// The add-on slots its input's remote triggers turned on and nothing turned off yet, by index, with the
-		// channel their on events went to (#1667). ponytail: at most 16 at once, one per group as a rule; one more
-		// sends no off events.
+		// channel their on events went to (#1667) and that of their trigger (#1718). ponytail: at most 16 at once, one
+		// per group as a rule; one more sends no off events.
 		struct InputAddOn
 		{
 			int slot = -1;
 			uint8_t channel = 0;
+			uint8_t trigger = 0;
 		};
 		std::array<InputAddOn, 16> m_inputAddOns{};
 		size_t m_inputAddOnCount = 0;

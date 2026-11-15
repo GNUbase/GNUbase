@@ -714,16 +714,19 @@ namespace gnubase::engine::midi
 				[&](int64_t at, size_t index) { return at < triggers[index].position; });
 			return after == list.begin() ? triggers.size() : *std::prev(after);
 		};
-		// The groups a slot's directions go to at a position.
-		const auto written = [&](size_t slot, int64_t position)
+		// The groups a slot's directions go to at a position. The default slot coming back where a key is released
+		// (back) leaves those of an add-on slot whose key is still held alone, also with an articulation of its own
+		// there, as the track keeps the add-on on (#1718).
+		const auto written = [&](size_t slot, int64_t position, bool back = false)
 		{
 			std::vector<bool> groups = groupsOf[slot];
 			if (!map.slots[slot].addOn)
 				for (size_t group = 0; group < groups.size(); ++group)
 				{
 					const size_t held = holder(group, position);
-					groups[group] = groups[group] || held == triggers.size() || !map.slots[triggers[held].slot].addOn ||
+					const bool free = held == triggers.size() || !map.slots[triggers[held].slot].addOn ||
 						position >= triggers[held].end;
+					groups[group] = free || (groups[group] && !back);
 				}
 			return groups;
 		};
@@ -742,7 +745,8 @@ namespace gnubase::engine::midi
 				continue;
 			if (!slot.addOn)
 			{
-				selectSlot(map, map.slots.front(), trigger.end, trigger.take, controllers, written(0, trigger.end));
+				selectSlot(
+					map, map.slots.front(), trigger.end, trigger.take, controllers, written(0, trigger.end, true));
 				continue;
 			}
 			// An add-on slot's resets, in the groups it still holds.
