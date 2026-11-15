@@ -239,6 +239,27 @@ namespace gnubase::app
 	{
 		const std::vector<uint64_t> parts = selected("audioParts");
 		const std::vector<uint64_t> events = selectedAudioEvents();
+		// The cutting positions (p. 378): where Slice would cut the selected events, shown in the project window.
+		if (command == "quantize.slicePositions")
+		{
+			if (!m_eventDisplay)
+				return;
+			if (events.empty() || parameters.is_null())
+			{
+				m_eventDisplay->setCuttingPositions({});
+				return;
+			}
+			parameters["events"] = events;
+			m_binding.send(command, std::move(parameters),
+				[this](const engine::Result& result)
+				{
+					if (m_eventDisplay)
+						m_eventDisplay->setCuttingPositions(result.ok()
+								? result.value.at("positions").get<std::vector<int64_t>>()
+								: std::vector<int64_t>());
+				});
+			return;
+		}
 		if (events.empty())
 			return;
 		parameters["events"] = events;

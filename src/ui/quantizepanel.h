@@ -85,6 +85,9 @@ namespace gnubase::ui
 		double fieldValue(const std::string& id) const;
 		// The Hitpoint Tracks' priorities as quantize.slice and quantize.createWarpMarkers take them.
 		engine::Json priorities() const;
+		// Asks audio for quantize.slicePositions with the Slice Rules' values, the project window's cutting positions
+		// (#1579, p. 378), or with null parameters for none, as with warp quantizing on.
+		void showCuts();
 		Rml::Element* find(const std::string& id) const;
 
 		EngineBinding& m_binding;

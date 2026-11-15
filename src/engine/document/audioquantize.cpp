@@ -106,7 +106,7 @@ namespace gnubase::engine
 			const time::Samples end = last;
 			if (range)
 			{
-				const auto frameAt = [&](time::Samples sample)
+				const auto frameAt = [&](time::Samples sample) -> time::Samples
 				{
 					return event.offset +
 						std::llround(eventFrames(project, event, static_cast<double>(sample - start)));
@@ -259,9 +259,9 @@ namespace gnubase::engine
 		// the track with the highest priority (0 leaves a track out, default 1), then at those of the others that have
 		// none of a higher priority, or of the same priority earlier, within range. Range tells when hitpoints of
 		// different tracks mark the same beat; two of one track, such as a flam, stay two positions. In project
-		// samples.
+		// samples. Without any, it fails if required, otherwise there are none.
 		std::vector<time::Samples> groupPositions(
-			const Project& project, const std::vector<ObjectId>& events, const Json& parameters)
+			const Project& project, const std::vector<ObjectId>& events, const Json& parameters, bool required = true)
 		{
 			std::map<ObjectId, int> priorities;
 			for (const Json& item : parameters.value("priorities", Json::array()))
@@ -315,7 +315,7 @@ namespace gnubase::engine
 			positions.reserve(taken.size());
 			for (const Candidate& candidate : taken)
 				positions.push_back(candidate.at);
-			require(!positions.empty(),
+			require(!required || !positions.empty(),
 				"the events have no hitpoints that count on tracks with a priority above 0: detect them first");
 			return positions;
 		}
@@ -351,15 +351,39 @@ namespace gnubase::engine
 			return original;
 		}
 
+		// The Slice Rules' offset in project samples: how much earlier than each position the events are cut.
+		time::Samples sliceOffset(const Project& project, const Json& parameters)
+		{
+			const double offsetMs = parameters.value("offset", 0.0);
+			require(offsetMs >= 0.0 && offsetMs <= 1000.0, "offset must be 0 to 1000 ms");
+			return std::llround(offsetMs * project.sampleRate / 1000.0);
+		}
+
+		// quantize.slicePositions: where quantize.slice would cut, for the project window's cutting positions.
+		Json slicePositions(const Project& project, const Json& parameters)
+		{
+			const std::vector<ObjectId> events = eventList(project, parameters.at("events"));
+			const time::Samples offset = sliceOffset(project, parameters);
+			Json cuts = Json::array();
+			for (const time::Samples position : groupPositions(project, events, parameters, false))
+				if (std::any_of(events.begin(), events.end(),
+						[&](ObjectId id)
+						{
+							const AudioEvent& event = project.audioEvents.at(id);
+							const EventSpan span = eventSpan(project, event);
+							return !event.lock && position - offset > span.start && position - offset < span.end;
+						}))
+					cuts.push_back(position - offset);
+			return {{"positions", std::move(cuts)}};
+		}
+
 		// quantize.slice: cuts every event offset before each position and gives the slices snap points there.
 		Json slice(ProjectModel& model, Project& project, CommandContext& context)
 		{
 			const Json& parameters = context.parameters();
 			const std::vector<ObjectId> events = eventList(project, parameters.at("events"));
 			const std::vector<time::Samples> positions = groupPositions(project, events, parameters);
-			const double offsetMs = parameters.value("offset", 0.0);
-			require(offsetMs >= 0.0 && offsetMs <= 1000.0, "offset must be 0 to 1000 ms");
-			const auto offset = std::llround(offsetMs * project.sampleRate / 1000.0);
+			const time::Samples offset = sliceOffset(project, parameters);
 			Json made = Json::array();
 			for (const ObjectId id : events)
 			{
@@ -834,6 +858,18 @@ namespace gnubase::engine
 					{{"events", ids}, {"priorities", priorities}, {"range", number}, {"offset", number}}, {"events"}),
 				objectSchema({{"events", ids}, {"positions", ids}}, {"events", "positions"}), false},
 			"Slice", [&model](Project& project, CommandContext& context) { return slice(model, project, context); });
+		engine.registerCommand(
+			{"quantize.slicePositions", 1,
+				"Where quantize.slice would cut the audio events with the same parameters, changing nothing: the "
+				"cutting positions the project window marks with vertical lines (reference manual p. 378). " +
+					groupText +
+					" Each cutting position is offset ms (default 0) before a position, inside an event that isn't "
+					"locked. Returns them in project samples, by position; none when the events have no hitpoints "
+					"that count.",
+				objectSchema(
+					{{"events", ids}, {"priorities", priorities}, {"range", number}, {"offset", number}}, {"events"}),
+				objectSchema({{"positions", ids}}, {"positions"}), true},
+			[&model](CommandContext& context) { return slicePositions(model.project(), context.parameters()); });
 		model.addEdit(engine,
 			{"quantize.createWarpMarkers", 1,
 				"Creates warp markers in the clips of audio events of several tracks at the same positions, for "

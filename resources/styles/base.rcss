@@ -1323,6 +1323,26 @@ meter .meter-peak
 	pointer-events: none;
 }
 
+/* The quantize panel's cutting positions (docs/features/audio-quantize.md): code puts a .cutting-position line where
+   Slice would cut. */
+.event-display .cutting-positions
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	bottom: 0;
+	pointer-events: none;
+}
+
+.event-display .cutting-position
+{
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	width: 1px;
+}
+
 .event-display .part-mark
 {
 	position: absolute;

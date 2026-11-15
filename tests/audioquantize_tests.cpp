@@ -1611,3 +1611,30 @@ TEST_CASE("Warp quantizing a selection range moves only the warp markers inside 
 	CHECK_THAT(
 		reject(client, "quantize.apply", {{"events", {loop.event}}, {"start", 0}}), ContainsSubstring("start and end"));
 }
+
+TEST_CASE("The cutting positions are where Slice would cut", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	const std::vector<int64_t> played{6200, 25600, 47300, 72800};
+	const Loop close = addLoop(client, dir, "close", clicks(played, 4 * g_quarter));
+	const Loop room = addLoop(client, dir, "room", clicks(played, 4 * g_quarter));
+	// Without hitpoints there is nothing to show, which is no error.
+	CHECK(run(client, "quantize.slicePositions", {{"events", {close.event, room.event}}}).at("positions").empty());
+	setHitpoints(client, close.clip, played);
+	setHitpoints(client, room.clip, {6300, 60000});
+	const Json parameters = {{"events", {close.event, room.event}},
+		{"priorities", {{{"track", close.track}, {"priority", 2}}}}, {"range", 20.0}, {"offset", 5.0}};
+	const size_t steps = run(client, "history.get").at("steps").size();
+	const Json positions = run(client, "quantize.slicePositions", parameters).at("positions");
+	CHECK(positions == Json::array({5960, 25360, 47060, 59760, 72560}));
+	CHECK(run(client, "history.get").at("steps").size() == steps);
+	CHECK(eventsOn(client, close.track).size() == 1);
+	// Slice cuts there.
+	run(client, "quantize.slice", parameters);
+	std::vector<int64_t> starts = startsOn(client, close.track);
+	starts.erase(starts.begin());
+	CHECK(Json(starts) == positions);
+	CHECK_THAT(reject(client, "quantize.slicePositions", {{"events", {999}}}), ContainsSubstring("no audio event 999"));
+}

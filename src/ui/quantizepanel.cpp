@@ -336,10 +336,15 @@ namespace gnubase::ui
 			{
 				m_priorities[std::stoull(attribute(*target, "track"))] =
 					static_cast<int>(std::lround(event.GetParameter<float>("value", 1.0F)));
+				showCuts();
 				return;
 			}
+			// Range and Offset, which move the cutting positions.
 			if (!target->HasAttribute("setting"))
+			{
+				showCuts();
 				return;
+			}
 			const std::string setting = attribute(*target, "setting");
 			const auto value = static_cast<double>(event.GetParameter<float>("value", 0.0F));
 			if (percent(setting))
@@ -431,10 +436,14 @@ namespace gnubase::ui
 	void QuantizePanel::showHitpointTracks(const Json& tracks)
 	{
 		// Only a change of the list rebuilds it, so that a field being dragged or typed into stays: the selection
-		// shows again after every project update.
+		// shows again after every project update. The cutting positions follow both.
 		if (tracks == m_hitpointTracks)
+		{
+			showCuts();
 			return;
+		}
 		m_hitpointTracks = tracks;
+		showCuts();
 		std::string rml;
 		for (const Json& track : tracks)
 		{
@@ -448,6 +457,19 @@ namespace gnubase::ui
 		}
 		if (Rml::Element* list = find("quantize-hitpoint-tracks"))
 			list->SetInnerRML(rml);
+	}
+
+	void QuantizePanel::showCuts()
+	{
+		if (!m_audio || m_layout != Layout::Panel)
+			return;
+		// Slice Rules only: with warp quantizing nothing is cut (p. 378).
+		if (m_settings.value("warpQuantize", false) || m_hitpointTracks.empty())
+			m_audio("quantize.slicePositions", nullptr);
+		else
+			m_audio("quantize.slicePositions",
+				{{"range", fieldValue("quantize-range")}, {"offset", fieldValue("quantize-offset")},
+					{"priorities", priorities()}});
 	}
 
 	Json QuantizePanel::priorities() const
@@ -533,6 +555,7 @@ namespace gnubase::ui
 		setClass(find("quantize-slice"), "hidden", warp);
 		setClass(find("quantize-create-markers"), "hidden", !warp);
 		setClass(find("quantize-slice-reset"), "hidden", warp);
+		showCuts();
 		setClass(find("quantize-markers-reset"), "hidden", !warp);
 
 		const bool groove = m_settings.at("groove").is_object();

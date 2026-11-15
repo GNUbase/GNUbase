@@ -440,6 +440,9 @@ namespace gnubase::app
 					m_menu->update();
 				if (const std::shared_ptr<ui::PoolPanel> pool = m_pool.lock())
 					pool->update();
+				// The cutting positions show while the quantize panel is open.
+				if (m_eventDisplay && m_quantizePanel.expired())
+					m_eventDisplay->setCuttingPositions({});
 				for (MixerWindow& shown : m_mixers)
 					if (shown.mixer && m_shell.find(shown.window) == nullptr)
 						shown.mixer.reset(); // the user closed its window

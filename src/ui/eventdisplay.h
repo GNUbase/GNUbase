@@ -178,6 +178,11 @@ namespace gnubase::ui
 		// The tracks whose in-place editors are open (#131, ui/inplaceeditor.h): they are at least g_inPlaceHeight
 		// high, for the editor over their lane.
 		void setInPlaceTracks(std::set<uint64_t> tracks);
+		// The quantize panel's cutting positions (#1579, reference manual p. 378): a .cutting-position line over the
+		// event lanes where Slice would cut, at each of the project samples, by position. They show while the view
+		// is zoomed in far enough for every two of them to be at least g_cutDistance dp apart.
+		void setCuttingPositions(std::vector<int64_t> positions);
+		const std::vector<int64_t>& cuttingPositions() const { return m_cuttingPositions; }
 		// The project as project.get last returned it, or null before the first answer; loads() counts the answers,
 		// and read() is when the binding handed the last one on (EngineBinding::handed).
 		const engine::Json& project() const { return m_project; }
@@ -741,10 +746,11 @@ namespace gnubase::ui
 		// in the same undo step.
 		void addLane(uint64_t track, const engine::Json& target, engine::Json before = engine::Json::array(),
 			std::optional<size_t> at = std::nullopt);
-		void reload();              // the lanes again, from the project as it was last read
-		void showAutomationLanes(); // the curves, after the lanes changed
-		void placeAutomation();     // where they are, after the view changed
-		void placePartMarks();      // the marks of parts excluded from global transpose, after the view changed
+		void reload();                // the lanes again, from the project as it was last read
+		void showAutomationLanes();   // the curves, after the lanes changed
+		void placeAutomation();       // where they are, after the view changed
+		void placePartMarks();        // the marks of parts excluded from global transpose, after the view changed
+		void placeCuttingPositions(); // setCuttingPositions' lines, after the view changed
 		// The automation lane of a display lane, or null for a track's own lane.
 		const AutomationView* automationAt(size_t lane) const;
 		double automationValue(size_t lane, double y) const; // y dp in the event lanes, as a display value
@@ -836,7 +842,10 @@ namespace gnubase::ui
 		// shown that is excluded from global transpose (#168, #1368, reference manual p. 421).
 		Rml::Element* m_partMarks = nullptr;
 		std::set<uint64_t> m_independent;
-		std::string m_partMarksRml;             // what m_partMarks holds
+		std::string m_partMarksRml;     // what m_partMarks holds
+		Rml::Element* m_cuts = nullptr; // the .cutting-position lines
+		std::vector<int64_t> m_cuttingPositions;
+		size_t m_cutsShown = 0;                 // lines in m_cuts
 		std::map<uint64_t, AudioFades> m_fades; // by audio event
 		std::vector<EventLanes::Lane> m_folderData;
 		std::string m_folderMode = "always"; // ui.folderData

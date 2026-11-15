@@ -494,3 +494,26 @@ TEST_CASE("Edit > Quantize warp quantizes the selection range of an audio event"
 	CHECK(markers.at(3) == Json{{"position", 58000}, {"target", 58000}});
 	CHECK(f.project().at("clips").at(1).at("warp").at("markers").empty());
 }
+
+TEST_CASE("the project window marks the cutting positions while the quantize panel is open", "[ui]")
+{
+	Fixture f;
+	f.display.select({f.events[0], f.events[1]});
+	f.openPanel();
+	// Where Slice would cut (reference manual p. 378): the first track's hitpoints, the second's within the range.
+	const std::vector<int64_t> cuts{3000, 27000, 49000, 75000};
+	CHECK(f.app.waitUntil([&] { return f.display.cuttingPositions() == cuts; }));
+	CHECK(f.app.waitUntil([&] { return f.elements(".event-display .cutting-position").size() == 4; }));
+	// Zoomed out until they run together, the lines go.
+	f.display.zoomTo(0.0, 3600.0);
+	CHECK(f.app.waitUntil([&] { return f.elements(".event-display .cutting-position").empty(); }));
+	f.display.zoomTo(0.0, 4.0);
+	CHECK(f.app.waitUntil([&] { return f.elements(".event-display .cutting-position").size() == 4; }));
+	// With warp quantizing on, nothing is cut, and without a selection neither.
+	f.click("#quantize-warp");
+	CHECK(f.app.waitUntil([&] { return f.display.cuttingPositions().empty(); }));
+	f.click("#quantize-warp");
+	CHECK(f.app.waitUntil([&] { return f.display.cuttingPositions() == cuts; }));
+	f.display.select({});
+	CHECK(f.app.waitUntil([&] { return f.display.cuttingPositions().empty(); }));
+}

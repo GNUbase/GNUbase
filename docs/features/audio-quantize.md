@@ -102,6 +102,7 @@ commands on the events of several tracks. Each is one undo step.
 | `quantize.createWarpMarkers` | Adds a warp marker at each position to every event's clip, changing nothing until it is quantized | pp. 371-372, 379-380 |
 | `quantize.crossfade` | On each track: an event overlapping the next ends where it starts, an event after a gap starts where the one before ends, then each goes `length` ms into the next with a crossfade. `quantize.reset` undoes all of it | pp. 367, 379 |
 | `quantize.nudgeCrossfade` | Moves each crossfade into one of the events by `amount` ms (default 1, negative earlier): the end of the event before and the start of the event alike, so the crossfade keeps its length. `quantize.reset` undoes it too | p. 379 |
+| `quantize.slicePositions` | Where `quantize.slice` would cut with the same parameters, changing nothing: the cutting positions. None, rather than an error, without hitpoints | p. 378 |
 | `quantize.resetSlices` | The Slice Rules' Reset: puts the slices back together into the events they were cut from, as those were before slicing | p. 378 |
 | `quantize.resetWarpMarkers` | The Warp Marker Creation Rules' Reset: removes the warp markers `quantize.createWarpMarkers` made | p. 380 |
 
@@ -179,6 +180,12 @@ the project's settings ([hitpoints.md](hitpoints.md)), kept as a preset, so it i
   Slice and sends `quantize.resetSlices`; with warp quantizing on, Reset (`#quantize-markers-reset`) is next to Create
   and sends `quantize.resetWarpMarkers`. Each sends its engine command with the
   selected audio events and those of the selected audio parts.
+- **Cutting positions** (p. 378): while the panel is open with Slice Rules (warp quantizing off), the project
+  window marks where Slice would cut the selected audio events with a vertical `.cutting-position` line over the
+  event lanes. The panel asks `quantize.slicePositions` with its Range, Offset and priorities after every selection
+  change and project update and when one of those changes, and `ui::EventDisplay::setCuttingPositions` shows them.
+  They show while the view is zoomed in far enough for every two to be at least 4 dp apart: the reference manual
+  shows them once the zoom is high enough without saying how high. Closing the panel takes them away.
 - **Hitpoint Tracks** lists the tracks of those events whose clips have hitpoints, in the project's track order, each
   with its priority in a value field (`.quantize-priority`, its `track` attribute the track's id): 0 to 5, dragged
   up or down or typed, 1 until it is changed. Slice and Create send them as `priorities`, so 0 leaves a track's
@@ -201,8 +208,7 @@ the project's settings ([hitpoints.md](hitpoints.md)), kept as a preset, so it i
 
 ## Not yet
 
-Group editing of folder tracks (the commands take the events, of any tracks) and cutting positions shown in the
-project window (#1579).
+Group editing of folder tracks (the commands take the events, of any tracks) (#1579).
 
 ## Checks
 
@@ -234,10 +240,12 @@ hitpoints that then quantizes another event, its name and its errors; the Slice 
 and crossfading two tracks, with undo, from any slice, with a slice split by hand, across a save and a load, after
 slicing the slices again and with a locked slice; the Warp Marker Creation Rules' Reset keeping the user's own marker,
 after warp quantizing and across a save and a load, and with a locked event; warp quantizing a selection range,
-rendered, with a range the event doesn't reach, a second range and its errors.
+rendered, with a range the event doesn't reach, a second range and its errors; the cutting positions where Slice then
+cuts, none without hitpoints, and no undo step.
 `tests/audioquantize_ui_tests.cpp` drives the app with `ui::Automation`: Edit > Quantize and Reset Quantize on a
 selected audio event, the sample editor toolbar's Apply Quantize on the event it edits, Warp Quantize On/Off, the
 panel's Slice, Apply, Crossfade, Nudge Crossfade, Open Crossfade Editor and Create on two tracks, the Hitpoint Tracks
 following the selection and a track at priority 0 leaving its hitpoints out of Slice and of Create, the priorities
 forgotten in a new project, and Create Groove Quantize Preset from a selected audio event, logged when it is refused; the panel's two Reset
-buttons after Slice and Apply and after Create, and Edit > Quantize on a selection range with Warp Quantize on.
+buttons after Slice and Apply and after Create, Edit > Quantize on a selection range with Warp Quantize on, and the
+cutting positions following the selection, the zoom and Warp Quantize On/Off.
