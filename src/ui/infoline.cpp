@@ -310,11 +310,17 @@ namespace gnubase::ui
 			});
 	}
 
-	const widgets::Options& rootKeyOptions()
+	const widgets::Options& rootKeyOptions(bool differ)
 	{
 		static const widgets::Options keys = {{"", "-"}, {"C", "C"}, {"C#", "C#"}, {"D", "D"}, {"D#", "D#"}, {"E", "E"},
 			{"F", "F"}, {"F#", "F#"}, {"G", "G"}, {"G#", "G#"}, {"A", "A"}, {"A#", "A#"}, {"B", "B"}};
-		return keys;
+		static const widgets::Options differing = [&]
+		{
+			widgets::Options all = {{g_differentRootKeys, ""}};
+			all.insert(all.end(), keys.begin(), keys.end());
+			return all;
+		}();
+		return differ ? differing : keys;
 	}
 
 	double InfoLine::volumeOf(uint64_t event) const
@@ -342,6 +348,9 @@ namespace gnubase::ui
 			for (const Json& audio : project.at("audioEvents"))
 				if (audio.value("part", uint64_t{0}) == part)
 					events.push_back(&audio);
+		// The first one is the one the user sees first.
+		std::stable_sort(events.begin(), events.end(),
+			[](const Json* a, const Json* b) { return a->at("position") < b->at("position"); });
 		return events;
 	}
 
@@ -477,14 +486,30 @@ namespace gnubase::ui
 			if (step->GetInnerRML() != text)
 				step->SetInnerRML(text);
 		}
+		// An audio part's events whose root keys or Global Transpose differ show an empty value (#1644).
+		const std::vector<const Json*> events =
+			first.at("kind") == "audioPart" ? eventsOf(first.at("id").get<uint64_t>()) : std::vector<const Json*>();
+		const auto differ = [&events, part](const char* field)
+		{
+			return std::any_of(events.begin(), events.end(), [&](const Json* event)
+				{ return event->value(field, std::string()) != part->value(field, std::string()); });
+		};
 		if (Rml::Element* key = root.QuerySelector("select[field=rootKey]"))
-			widgets::fill(*key, rootKeyOptions(), part->value("rootKey", std::string()));
+		{
+			const bool different = differ("rootKey");
+			widgets::fill(*key, rootKeyOptions(different),
+				different ? std::string(g_differentRootKeys) : part->value("rootKey", std::string()));
+		}
 		if (Rml::Element* button = root.QuerySelector("button[field=globalTranspose]"))
 		{
-			const bool independent = part->value("globalTranspose", std::string()) == "independent";
+			const bool different = differ("globalTranspose");
+			const bool independent = !different && part->value("globalTranspose", std::string()) == "independent";
 			setFlag(*button, "checked", independent);
 			// The button reads the value it holds (p. 421): Independent while checked, else Follow.
-			setText(button, independent ? "Independent" : "Follow");
+			std::string text = independent ? "Independent" : "Follow";
+			if (different)
+				text.clear();
+			setText(button, text.c_str());
 			const Rml::String title = independent ? "Global Transpose: Independent" : "Global Transpose: Follow";
 			if (button->GetAttribute<Rml::String>("title", "") != title)
 				button->SetAttribute("title", title);
@@ -992,6 +1017,10 @@ namespace gnubase::ui
 						{"parameters", {{midi ? "part" : "event", id}, {field, value}}}});
 				shown[std::to_string(id)] = widgets::format(static_cast<float>(value));
 			}
+		}
+		else if (field == "rootKey" && text == g_differentRootKeys)
+		{
+			// The events' root keys differ, as shown: nothing chosen.
 		}
 		else if (field == "rootKey" || field == "globalTranspose")
 		{

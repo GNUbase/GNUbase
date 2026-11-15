@@ -539,6 +539,8 @@ namespace gnubase::ui
 			double start = 0.0;
 			double end = 0.0;
 			uint32_t color = 0;
+			bool independent = false; // it has events, and all of them are Independent (#1644)
+			bool follows = false;     // one of them follows global transposition
 		};
 		std::map<uint64_t, AudioPart> audioParts;
 		for (const Json& part : project.at("audioParts"))
@@ -547,7 +549,7 @@ namespace gnubase::ui
 			const auto position = part.at("position").get<int64_t>();
 			const double start = seconds(position, linear[track]);
 			const double end = seconds(position + part.at("length").get<int64_t>(), linear[track]);
-			audioParts[part.at("id").get<uint64_t>()] = {start, end, colorOf(part)};
+			audioParts[part.at("id").get<uint64_t>()] = {start, end, colorOf(part), false, false};
 			addEvent(part, start, end);
 		}
 		std::vector<EventWaveforms::Event> waves;
@@ -591,8 +593,12 @@ namespace gnubase::ui
 				length = played->get<double>() / m_time.sampleRate;
 			const double waveRate =
 				played != event.end() && length > 0.0 ? event.at("length").get<double>() / length : rate;
+			const bool independent = event.value("globalTranspose", std::string()) == "independent"; // #1368
 			if (const auto part = audioParts.find(event.value("part", uint64_t{0})); part != audioParts.end())
 			{
+				// The part shows the mark of Independent events (p. 421) when all its events are.
+				part->second.follows = part->second.follows || !independent;
+				part->second.independent = independent && !part->second.follows;
 				const double from = std::max(start, part->second.start);
 				const double to = std::min(start + length, part->second.end);
 				if (file != media.end() && rate > 0.0 && lanes.count(track) != 0 && to > from)
@@ -604,7 +610,7 @@ namespace gnubase::ui
 				continue;
 			}
 			addEvent(event, start, start + length, false);
-			if (event.value("globalTranspose", std::string()) == "independent") // #1368
+			if (independent)
 				m_independent.insert(event.at("id").get<uint64_t>());
 			if (lanes.count(track) != 0)
 			{
@@ -662,6 +668,9 @@ namespace gnubase::ui
 				waves.push_back(wave);
 			}
 		m_waveforms->setEvents(waves);
+		for (const auto& [id, part] : audioParts)
+			if (part.independent)
+				m_independent.insert(id);
 		for (const Json& part : project.at("midiParts"))
 		{
 			const auto track = part.at("track").get<uint64_t>();

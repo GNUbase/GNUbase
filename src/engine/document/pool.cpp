@@ -547,7 +547,8 @@ namespace gnubase::engine
 		const Json folderSchema = objectSchema({{"id", integer}, {"name", string}, {"parent", integer}});
 		const Json clipSchema = objectSchema({{"id", integer}, {"name", string}, {"folder", integer},
 			{"media", integer}, {"used", integer}, {"path", string}, {"sampleRate", number}, {"channels", integer},
-			{"length", integer}, {"missing", boolean}, {"external", boolean}, {"rootKey", string}});
+			{"length", integer}, {"missing", boolean}, {"external", boolean}, {"rootKey", string},
+			{"audioEvents", integer}, {"rootKeysDiffer", boolean}});
 		add(engine,
 			{"pool.get", 1,
 				"The pool (reference manual pp. 739-744): its folders, and every clip with the folder it is in, the "
@@ -557,7 +558,9 @@ namespace gnubase::engine
 				"line: audioFiles, usedFiles (media files that an event plays), missingFiles, externalFiles and "
 				"totalSize, the bytes of the files on disk; and missingExternalFiles, how many of the external files "
 				"are missing, which Prepare Archive can't copy. A clip's rootKey is the root key its audio events "
-				"share (the Key column, p. 417), \"\" when they have none or differ.",
+				"share (the Key column, p. 417), \"\" when they have none or differ, which rootKeysDiffer tells "
+				"apart; audioEvents counts the audio events that play it, those of inactive track versions too, "
+				"which clip.set rootKey sets.",
 				objectSchema({}),
 				objectSchema({{"folders", {{"type", "array"}, {"items", folderSchema}}},
 								 {"clips", {{"type", "array"}, {"items", clipSchema}}}, {"audioFiles", integer},
@@ -593,14 +596,22 @@ namespace gnubase::engine
 					}
 				}
 				const std::map<ObjectId, int> uses = clipUses(project);
-				// The root key a clip's audio events share, -1 for none or when they differ.
-				std::map<ObjectId, int> keys;
+				// The root key a clip's audio events share, whether they differ, and how many there are.
+				struct Keys
+				{
+					int key = -1;
+					bool differ = false;
+					int events = 0;
+				};
+				std::map<ObjectId, Keys> keys;
 				forEveryAudioEvent(project,
 					[&keys](const AudioEvent& event)
 					{
-						if (const auto [key, added] = keys.emplace(event.clip, event.rootKey);
-							!added && key->second != event.rootKey)
-							key->second = -1;
+						Keys& clip = keys[event.clip];
+						if (clip.events++ == 0)
+							clip.key = event.rootKey;
+						else if (clip.key != event.rootKey)
+							clip.differ = true;
 					});
 				std::set<ObjectId> usedMedia;
 				Json clips = Json::array();
@@ -609,13 +620,16 @@ namespace gnubase::engine
 					const MediaFile& media = project.media.at(clip.media);
 					const auto used = uses.find(id);
 					const int count = used == uses.end() ? 0 : used->second;
+					const auto keyed = keys.find(id);
+					const Keys found = keyed == keys.end() ? Keys{} : keyed->second;
 					if (count > 0)
 						usedMedia.insert(clip.media);
 					clips.push_back({{"id", id}, {"name", clip.name}, {"folder", clip.folder}, {"media", clip.media},
 						{"used", count}, {"path", media.path}, {"sampleRate", media.sampleRate},
 						{"channels", media.channels}, {"length", media.length},
 						{"missing", missingMedia.count(clip.media) != 0}, {"external", external(media)},
-						{"rootKey", rootKeyName(keys.count(id) != 0 ? keys.at(id) : -1)}});
+						{"rootKey", rootKeyName(found.differ ? -1 : found.key)}, {"audioEvents", found.events},
+						{"rootKeysDiffer", found.differ}});
 				}
 				Json folders = Json::array();
 				for (const auto& [id, folder] : project.poolFolders)
