@@ -67,6 +67,10 @@
 	{
 		image-color: #ff5270;
 	}
+	svg.icon.warning
+	{
+		image-color: #ffc44d;
+	}
 	.dialog, dialog
 	{
 		decorator: svg-ninepatch(dialog.svg, 6 6 6 6);
@@ -1059,9 +1063,10 @@
 	{
 		background-color: #3f4559;
 	}
-	svg.articulation-warning
+	.controller-lane.keyboard-focus .controller-lane-header
 	{
-		image-color: #ffc44d;
+		border-left-width: 2dp;
+		border-left-color: #10dff2;
 	}
 	.ape-display
 	{

@@ -248,7 +248,8 @@ namespace gnubase::ui
 		// The articulation map of a note's track, or null.
 		const engine::Json* articulationMap(const Note& note) const;
 		// The info line's pop-up menu of the attributes (#1580, p. 1290): an attribute chosen goes to every selected
-		// note in place of its group's, or goes where the first selected note has it.
+		// note of a track with the first selected note's map in place of its group's, or goes from them where the first
+		// selected note has it.
 		void chooseAttribute(const std::string& name);
 
 		EngineBinding& m_binding;
