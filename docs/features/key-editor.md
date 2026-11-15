@@ -102,7 +102,9 @@ mouse went (p. 1261). The pitch row at the top of the view when the drag started
 own state, like its scroll. Only the style sheet gives the rows' height, and the keyboard stretches to the rows; the
 zoom scales that height as the style sheet gives it at each press there, so a theme or style change reaches an editor at
 zoom 1 at once and a zoomed one at its next press there, and a height that is no length (a percentage or auto) has
-nothing to scale. A press there plays the pitch under it as the rest of the keyboard does, and a drag of a few dp turns
+nothing to scale. Within 5 dp of zoom 1 a drag snaps to it, since a drag back rarely ends on exactly the dp it started
+from. No theme gives the rows a height of its own yet; one that does would need the zoom applied again where the theme
+is activated. A press there plays the pitch under it as the rest of the keyboard does, and a drag of a few dp turns
 the press into the gesture. Pressing a key plays its pitch on the active part's track until the mouse is released,
 wherever that is: `midi.inject` sends a note on (velocity 100) into the track's channel as if from its MIDI input, so
 its instrument plays it, and then the note off, also whenever the key editor goes while the key is held: the editor
@@ -170,6 +172,6 @@ menu.
   selecting the next note; the Chord Editing section naming and changing a chord; the toolbox with the setting on and
   off, with and without a modifier key, choosing tools; drags on the keyboard's left part zooming the rows in and out
   between the limits, from the height a style sheet gives them, also after a style change at a zoom and back at 1, the
-  keyboard as high as the rows of any height, nothing zoomed without a row height to scale, and scrolling the note
-  display, while a click there zooms nothing, and a click and a drag there leaving a note an earlier press selected and
-  the history alone.
+  keyboard as high as the rows of any height, nothing zoomed or scrolled without a row height to scale and no height
+  left on the rows for a later style, the zoom snapping to 1 near it, and scrolling the note display, while a click
+  there zooms nothing, and a click and a drag there leaving a note an earlier press selected and the history alone.
