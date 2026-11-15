@@ -82,7 +82,9 @@ namespace gnubase::ui
 		void ProcessEvent(Rml::Event& event) override;
 		// An editor.changed of an in-place editor: when its selection changed, the info line shows its notes.
 		void followEditor(const engine::Json& view);
+		// Shows the selection's values in the fields; changes the fields send meanwhile are no edits.
 		void show();
+		void showFields();
 		// Edits the selected events; gesture is the value field's (ValueControl), 0 for others.
 		void edit(const std::string& field, const std::string& text, float number, int gesture = 0);
 		void showMarkers();
@@ -133,6 +135,7 @@ namespace gnubase::ui
 		engine::Json m_events = engine::Json::array(); // event.get's, the first one first
 		bool m_absolute = false;                       // while edit applies an absolute take
 		bool m_dropping = false; // while another project ends the edits in progress, which then aren't taken
+		bool m_showing = false;  // while show sets the fields, whose changes aren't the user's (#1719)
 		std::optional<std::pair<std::string, std::string>> m_absoluteTake; // field and text taken with Ctrl+Enter
 		Subscription m_reset;                                              // project.reset
 		std::function<std::vector<uint64_t>()> m_markerSource;
