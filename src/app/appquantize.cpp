@@ -173,18 +173,52 @@ namespace gnubase::app
 			target.parts.emplace_back(part, std::vector<uint64_t>());
 		target.events = selected("audioEvents");
 		target.audioParts = selected("audioParts");
-		// A selection range with the range selection tool: the audio events on its tracks, warp quantized in it
-		// (p. 370). The engine leaves an event outside it alone.
+		// A selection range with the range selection tool: the audio events on its tracks that it reaches, warp
+		// quantized in it (p. 370), so that Reset Quantize and Create Groove Quantize Preset leave the others alone.
 		const std::optional<ui::RangeSelection>& range =
 			m_eventDisplay ? m_eventDisplay->range() : std::optional<ui::RangeSelection>();
 		if (range && range->end > range->start && m_eventDisplay->project().is_object())
 		{
 			target.events.clear();
 			target.audioParts.clear();
-			for (const Json& event : m_eventDisplay->project().value("audioEvents", Json::array()))
-				if (std::find(range->tracks.begin(), range->tracks.end(), event.at("track").get<uint64_t>()) !=
-					range->tracks.end())
+			const Json& project = m_eventDisplay->project();
+			const ui::TimeContext& time = m_eventDisplay->time();
+			const Json none = Json::array();
+			const auto list = [&project, &none](const char* key) -> const Json&
+			{
+				const auto found = project.find(key);
+				return found != project.end() ? *found : none;
+			};
+			std::set<uint64_t> linear; // tracks
+			for (const Json& track : list("tracks"))
+				if (track.value("timeBase", std::string()) == "linear")
+					linear.insert(track.at("id").get<uint64_t>());
+			std::map<uint64_t, double> mediaRates;
+			for (const Json& media : list("media"))
+				mediaRates[media.at("id").get<uint64_t>()] = media.value("sampleRate", 0.0);
+			std::map<uint64_t, double> clipRates;
+			for (const Json& clip : list("clips"))
+				clipRates[clip.at("id").get<uint64_t>()] = mediaRates[clip.value("media", uint64_t{0})];
+			for (const Json& event : list("audioEvents"))
+			{
+				const auto track = event.at("track").get<uint64_t>();
+				if (std::find(range->tracks.begin(), range->tracks.end(), track) == range->tracks.end())
+					continue;
+				// Its start and end in project samples, as the event display shows it: a warped event's end where
+				// its warp puts it (playedLength).
+				const auto position = event.at("position").get<int64_t>();
+				const int64_t start =
+					linear.count(track) != 0 ? position : time.tempo.toSamples(position, time.sampleRate);
+				const double rate = clipRates[event.at("clip").get<uint64_t>()];
+				const auto played = event.find("playedLength");
+				auto end = static_cast<double>(start);
+				if (played != event.end())
+					end += played->get<double>();
+				else if (rate > 0.0)
+					end += event.at("length").get<double>() * time.sampleRate / rate;
+				if (start < range->end && end > static_cast<double>(range->start))
 					target.events.push_back(event.at("id").get<uint64_t>());
+			}
 			target.range = std::make_pair(range->start, range->end);
 		}
 		return target;

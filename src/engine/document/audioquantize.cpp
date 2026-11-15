@@ -397,7 +397,7 @@ namespace gnubase::engine
 				// What it was before slicing, unquantized, for the Reset of the Slice Rules to put back (p. 378). A
 				// slice cut again stays one of its event's: event.split makes each piece of it one.
 				if (!event.sliceOrigin && event.slicedFrom == 0)
-					event.sliceOrigin = SliceOrigin{originalOf(event, timingOf(event)), event.snapPoint};
+					event.sliceOrigin = SliceOrigin{originalOf(event, timingOf(event)), event.snapPoint, event.fadeOut};
 				const EventSpan span = eventSpan(project, event);
 				Json cuts = Json::array();
 				for (const time::Samples position : positions)
@@ -642,12 +642,15 @@ namespace gnubase::engine
 				// A locked event is protected from being edited (p. 276): the event and its slices stay.
 				if (locked)
 					continue;
+				// The origin keeps the time base it was sliced in: the track's may have changed since.
 				const SliceOrigin origin = *event.sliceOrigin;
-				event.position = origin.timing.position;
+				event.position =
+					time::rebase(origin.timing.position, event.position.base, project.tempo, project.sampleRate);
 				event.offset = origin.timing.offset;
 				event.length = origin.timing.length;
 				event.crossfade = origin.timing.crossfade;
 				event.snapPoint = origin.snapPoint;
+				event.fadeOut = origin.fadeOut;
 				event.quantizeOrigin.reset();
 				event.sliceOrigin.reset();
 				for (const ObjectId slice : slices)
@@ -910,7 +913,8 @@ namespace gnubase::engine
 				"Puts audio events that quantize.slice cut back together (the Reset of the Slice Rules, reference "
 				"manual p. 378): of each event that one of events is or is a slice of, the slices on its track, also "
 				"those split from them since, are removed and the event gets back the position, offset, length, "
-				"crossfade and snap point it had before slicing, unquantized. Crossfades from the slices go to it. An "
+				"crossfade, snap point and fade out it had before slicing, unquantized. Crossfades from the slices go "
+				"to it. An "
 				"event that is locked, or has a locked slice, stays as it is with its slices. Returns the events put "
 				"back together and the slices removed.",
 				objectSchema({{"events", ids}}, {"events"}),

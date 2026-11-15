@@ -139,14 +139,16 @@ Marker Creation Rules' Reset takes back the markers Create made (p. 380), so eac
 also after other steps such as quantizing and crossfading have changed it.
 
 `quantize.slice` keeps in each event it cuts what the event was before (`AudioEvent::sliceOrigin`: its unquantized
-position, offset, length and crossfade, and its snap point), and each slice keeps the event's id (`slicedFrom`), both
-saved in `gnubase.json`. `event.split` makes a piece of a slice a slice of the same event, so a slice split by hand
-since goes too, and slicing the slices again keeps the first event's origin. `quantize.resetSlices` takes any of the
-event or its slices: it removes the slices on the event's track, in one undo step, and gives the event back what it
-was, whole and unquantized, so `quantize.reset` has nothing left to do for it. Crossfades from the slices go to the
-event, as removing a piece moves them for Reset Quantize. An event that is locked or has a locked slice stays as it
-is, slices and all. A slice moved to another track since is left alone; a copy of a slice or of the event, made with
-the clipboard or by duplicating, carries the same ids and on its track counts as one of them.
+position, offset, length and crossfade, its snap point and its fade out, which `event.split` gives to the last slice),
+and each slice keeps the event's id (`slicedFrom`), both saved in `gnubase.json`. `event.split` makes a piece of a slice
+a slice of the same event, so a slice split by hand since goes too, and slicing the slices again keeps the first event's
+origin. `quantize.resetSlices` takes any of the event or its slices: it removes the slices on the event's track, in one
+undo step, and gives the event back what it was, whole and unquantized, so `quantize.reset` has nothing left to do for
+it. Crossfades from the slices go to the event, as removing a piece moves them for Reset Quantize. An event that is
+locked or has a locked slice stays as it is, slices and all. A slice moved to another track since is left alone; a copy
+of a slice or of the event, made with the clipboard or by duplicating, carries the same ids and on its track counts as
+one of them. The origin keeps the time base it was cut in, and resetting puts the event's start back in its track's
+time base of now.
 
 `quantize.createWarpMarkers` keeps the clip frames of the markers it adds in the clip's warp (`ClipWarp::created`,
 saved with the warp), and `quantize.resetWarpMarkers` removes the markers at those frames from the clip, also once
@@ -165,10 +167,11 @@ the project's settings ([hitpoints.md](hitpoints.md)), kept as a preset, so it i
 `src/app/appquantize.cpp` and `ui::QuantizePanel` (`src/ui/quantizepanel.h`), as for MIDI ([quantize.md](quantize.md)):
 
 - **Edit > Quantize and Reset Quantize** (and the panel's Apply and Reset) take the project window's selected audio
-  events and audio parts too, with its MIDI parts in one `quantize.apply` or `quantize.reset`. With a selection
-  range (the range selection tool), they take the audio events on its tracks instead, and Quantize sends the range as
-  `start` and `end`, which warp quantizes the range (p. 370); with Warp Quantize off the engine refuses it. Quantize MIDI Event
-  Ends and Lengths and Freeze MIDI Quantize stay MIDI only.
+  events and audio parts too, with its MIDI parts in one `quantize.apply` or `quantize.reset`. With a selection range
+  (the range selection tool), they take the audio events on its tracks that it reaches instead, so that Reset Quantize
+  and Create Groove Quantize Preset leave the others alone, and Quantize sends the range as `start` and `end`, which
+  warp quantizes the range (p. 370); with Warp Quantize off the engine refuses it. Quantize MIDI Event Ends and Lengths
+  and Freeze MIDI Quantize stay MIDI only.
 - **Warp Quantize On/Off**: `#quantize-warp` in the panel, next to the strength, and `#toolbar-quantize-warp` in the
   toolbar's quantize section, where it is the first thing to go when the toolbar has no room for all its sections
   (`fit="spare"`, [docking.md](docking.md)).
@@ -238,14 +241,15 @@ a crossfade from a piece that resetting removes going to the piece before it, of
 hand, and an original crossfade from an event removed by hand not coming back; a groove preset from an audio event's
 hitpoints that then quantizes another event, its name and its errors; the Slice Rules' Reset after slicing, quantizing
 and crossfading two tracks, with undo, from any slice, with a slice split by hand, across a save and a load, after
-slicing the slices again and with a locked slice; the Warp Marker Creation Rules' Reset keeping the user's own marker,
-after warp quantizing and across a save and a load, and with a locked event; warp quantizing a selection range,
-rendered, with a range the event doesn't reach, a second range and its errors; the cutting positions where Slice then
-cuts, none without hitpoints, and no undo step.
+slicing the slices again, with a locked slice, with the event's fade out and on a track whose time base changed since
+slicing; the Warp Marker Creation Rules' Reset keeping the user's own marker, after warp quantizing and across a save
+and a load, and with a locked event; warp quantizing a selection range, rendered, with a range the event doesn't reach,
+a second range and its errors; the cutting positions where Slice then cuts, none without hitpoints, and no undo step.
 `tests/audioquantize_ui_tests.cpp` drives the app with `ui::Automation`: Edit > Quantize and Reset Quantize on a
 selected audio event, the sample editor toolbar's Apply Quantize on the event it edits, Warp Quantize On/Off, the
 panel's Slice, Apply, Crossfade, Nudge Crossfade, Open Crossfade Editor and Create on two tracks, the Hitpoint Tracks
 following the selection and a track at priority 0 leaving its hitpoints out of Slice and of Create, the priorities
-forgotten in a new project, and Create Groove Quantize Preset from a selected audio event, logged when it is refused; the panel's two Reset
-buttons after Slice and Apply and after Create, Edit > Quantize on a selection range with Warp Quantize on, and the
-cutting positions following the selection, the zoom and Warp Quantize On/Off.
+forgotten in a new project, and Create Groove Quantize Preset from a selected audio event, logged when it is refused;
+the panel's two Reset buttons after Slice and Apply and after Create, Edit > Quantize on a selection range with Warp
+Quantize on, Reset Quantize on a selection range leaving an event outside it as it is, and the cutting positions
+following the selection, the zoom and Warp Quantize On/Off.

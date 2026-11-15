@@ -550,6 +550,7 @@ namespace gnubase::engine
 	{
 		EventTiming timing;
 		std::optional<time::Samples> snapPoint;
+		Fade fadeOut; // event.split gives it to the last slice
 	};
 
 	// Plays a section of a clip on an audio track.
@@ -1865,7 +1866,7 @@ namespace gnubase::engine
 
 	inline bool operator==(const SliceOrigin& a, const SliceOrigin& b)
 	{
-		return a.timing == b.timing && a.snapPoint == b.snapPoint;
+		return a.timing == b.timing && a.snapPoint == b.snapPoint && a.fadeOut == b.fadeOut;
 	}
 
 	inline bool operator==(const AudioEvent& a, const AudioEvent& b)

@@ -755,7 +755,8 @@ namespace gnubase::engine
 				{"original", eventTimingJson(origin->original)}, {"quantized", eventTimingJson(origin->quantized)}};
 		if (const auto& origin = event.sliceOrigin; origin && origin->timing.position.base == event.position.base)
 			json["sliceOrigin"] = {{"timing", eventTimingJson(origin->timing)},
-				{"snapPoint", origin->snapPoint ? Json(*origin->snapPoint) : Json()}};
+				{"snapPoint", origin->snapPoint ? Json(*origin->snapPoint) : Json()},
+				{"fadeOut", toJson(origin->fadeOut)}};
 		if (event.slicedFrom != 0)
 			json["slicedFrom"] = event.slicedFrom;
 		return json;
@@ -2513,7 +2514,8 @@ namespace gnubase::engine
 					eventTimingFrom(origin->at("original"), event), eventTimingFrom(origin->at("quantized"), event)};
 			if (const auto origin = item.find("sliceOrigin"); origin != item.end()) // files from before #1579
 			{
-				event.sliceOrigin = SliceOrigin{eventTimingFrom(origin->at("timing"), event), std::nullopt};
+				event.sliceOrigin = SliceOrigin{eventTimingFrom(origin->at("timing"), event), std::nullopt,
+					fadeFromJson(origin->value("fadeOut", Json::object()))};
 				if (const Json snap = origin->value("snapPoint", Json()); !snap.is_null())
 					event.sliceOrigin->snapPoint = snap.get<time::Samples>();
 			}

@@ -1515,6 +1515,43 @@ TEST_CASE("Reset of the Slice Rules puts the slices back together into their eve
 	CHECK_THAT(reject(client, "quantize.resetSlices", {{"events", {999}}}), ContainsSubstring("no audio event 999"));
 }
 
+TEST_CASE(
+	"Reset of the Slice Rules puts back the event's fade out, and its start in the track's time base", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	const std::vector<int64_t> played{6200, 25600, 47300, 72800};
+	const Loop loop = addLoop(client, dir, "loop", clicks(played, 4 * g_quarter), 2000);
+	setHitpoints(client, loop.clip, played);
+	run(client, "audioEvent.setFades", {{"event", loop.event}, {"fadeOut", {{"length", 4800}}}});
+	const Json fadeOut = byId(client, "audioEvents", loop.event).at("fadeOut");
+	const Json sliced = run(client, "quantize.slice", {{"events", {loop.event}}}).at("events");
+	REQUIRE(sliced.size() == 5);
+	// event.split gave the fade out to the last slice.
+	REQUIRE(byId(client, "audioEvents", loop.event).at("fadeOut").at("length") == 0);
+
+	SECTION("the fade out comes back, also after a save and a load")
+	{
+		const std::string file = (dir.path() / "sliced.dawproject").u8string();
+		run(client, "project.save", {{"path", file}, {"embedMedia", false}});
+		run(client, "project.new");
+		run(client, "project.load", {{"path", file}});
+		run(client, "quantize.resetSlices", {{"events", sliced}});
+		CHECK(eventsOn(client, loop.track) == std::vector<std::vector<int64_t>>{{2000, 0, 4 * g_quarter}});
+		CHECK(byId(client, "audioEvents", loop.event).at("fadeOut") == fadeOut);
+	}
+
+	SECTION("a track switched to musical time since slicing: the event starts where it did, in ticks")
+	{
+		run(client, "track.set", {{"track", loop.track}, {"timeBase", "musical"}});
+		run(client, "quantize.resetSlices", {{"events", sliced}});
+		CHECK(eventsOn(client, loop.track) ==
+			std::vector<std::vector<int64_t>>{{time::g_ticksPerQuarter / 12, 0, 4 * g_quarter}}); // 2000 samples
+		CHECK(byId(client, "audioEvents", loop.event).at("fadeOut") == fadeOut);
+	}
+}
+
 TEST_CASE("Reset of the Warp Marker Creation Rules removes the markers Create made", "[integration]")
 {
 	const test::TempDir dir;

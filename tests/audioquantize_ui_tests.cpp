@@ -496,6 +496,32 @@ TEST_CASE("Edit > Quantize warp quantizes the selection range of an audio event"
 	CHECK(f.project().at("clips").at(1).at("warp").at("markers").empty());
 }
 
+TEST_CASE("Edit > Reset Quantize with a selection range resets only the audio events it reaches", "[ui]")
+{
+	Fixture f;
+	// A second event on the first track, after the range.
+	const auto later = f.app
+						   .call("audioEvent.add",
+							   {{"track", f.tracks[0]}, {"clip", f.clips[0]}, {"position", 194000}, {"offset", 0},
+								   {"length", g_quarter}})
+						   .at("event")
+						   .at("id")
+						   .get<uint64_t>();
+	REQUIRE(f.app.waitUntil([&] { return f.display.project().at("audioEvents").size() == 3; }));
+	f.display.select({f.events[0], later});
+	f.menu("edit.quantize");
+	CHECK(f.positionsAre(f.tracks[0], {0, 192000}));
+
+	// The range reaches the first event only: Reset Quantize puts back that one, and the later one stays quantized.
+	f.display.setTool(ui::Tool::RangeSelection);
+	f.display.setRange(ui::RangeSelection{12000, 60000, {f.tracks[0]}});
+	f.menu("edit.resetQuantize");
+	CHECK(f.positionsAre(f.tracks[0], {2000, 192000}));
+	// A range that reaches no event leaves nothing to reset.
+	f.display.setRange(ui::RangeSelection{120000, 150000, {f.tracks[0]}});
+	CHECK(!f.app.keys().canRun("edit.resetQuantize", f.app.main(), nullptr));
+}
+
 TEST_CASE("the project window marks the cutting positions while the quantize panel is open", "[ui]")
 {
 	Fixture f;
