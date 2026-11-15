@@ -114,6 +114,8 @@ namespace gnubase::engine
 		// Audio thread: one block, after it starts processing if it hasn't yet. Error while it isn't active or
 		// doesn't start.
 		plugin::ProcessStatus process(const plugin::Process& process) noexcept;
+		// Audio thread: forgets the past (plugin::Plugin::reset), the notes it holds too, if it processes.
+		void startAfresh() noexcept;
 
 	private:
 		void deactivate();
@@ -248,8 +250,8 @@ namespace gnubase::engine
 		// What is chased by itself: a control change per channel and number, a program and a pitch bend per channel.
 		static constexpr size_t g_chased = g_notes + (size_t{16} * 2);
 
-		// effects makes the MIDI effects' plugins by "builtin:" and the effect's id; nullptr: a
-		// processors::BuiltinFactory, made with the first effect.
+		// effects makes the MIDI effects' plugins by "builtin:" and the effect's id; nullptr: the
+		// processors::BuiltinFactory every sequencer shares.
 		explicit MidiSequencer(std::shared_ptr<plugin::Factory> effects = nullptr);
 
 		// Command thread: what to play from the next block on. Indexes the notes for chasing, and makes the MIDI
@@ -332,14 +334,18 @@ namespace gnubase::engine
 		// Runs an effect on in, with the parameter events of its automation (m_effectEvents), into to. Logs the events
 		// its event lists drop as it starts to drop them. In a block the effect fails, an insert passes in on as it is,
 		// as a third-party effect that fails would otherwise swallow the block's note-offs, and a send plays nothing,
-		// as the inserts' notes play already. Returns true as the effect starts to fail, which it logs: then the notes
-		// its slot holds end, as those it played itself get no note-off.
+		// as the inserts' notes play already. An effect that failed its last block is reset before it processes, so
+		// that it doesn't play on the notes whose note-offs passed it meanwhile. Returns true as the effect starts to
+		// fail, which it logs, and as it processes again: then the notes its slot holds end, as those it played
+		// itself get no note-off, and the effects after it start afresh (reset), as they hold the notes it played
+		// before or passed on meanwhile.
 		bool runEffect(const RunningEffect& running, const graph::EventBuffer& in, graph::EventBuffer& to,
 			uint32_t frames, const graph::TransportBlock& transport) noexcept;
-		// Runs the effects below the divider on the events in m_own and adds what they play to out. insertsFail: an
-		// insert above the divider started to fail in the block.
-		void runEffects(const MidiSequence& sequence, const graph::ProcessContext& context, graph::EventBuffer& out,
-			bool insertsFail) noexcept;
+		// Runs the inserts above the divider on m_input, which then holds what they play.
+		void runInputEffects(const MidiSequence& sequence, const graph::ProcessContext& context) noexcept;
+		// Runs the effects below the divider on the events in m_own and adds what they play to out.
+		void runEffects(
+			const MidiSequence& sequence, const graph::ProcessContext& context, graph::EventBuffer& out) noexcept;
 		// Ends the notes held holds, at offset 0 in out, unless another of the effects' outputs to the track's output
 		// holds them too (shared), and forgets them.
 		void endHeld(std::array<bool, g_notes>& held, graph::EventBuffer& out, bool shared) noexcept;
@@ -428,6 +434,8 @@ namespace gnubase::engine
 		graph::EventBuffer m_input;
 		std::shared_ptr<graph::EventBuffer> m_stripChase; // see stripChase
 		std::array<bool, g_notes> m_inputHeld{};          // notes its input sent a note-on for and no note-off since
+		// Notes the inserts above the divider played a note-on for and no note-off since, before the modifiers.
+		std::array<bool, g_notes> m_inputPlayed{};
 		// Where each note of its input went after the modifiers, as channel * 128 + pitch; g_notes: left out.
 		std::array<uint16_t, g_notes> m_inputTo{};
 		std::array<bool, g_notes> m_inputDown{};     // the keys of its input, as channel * 128 + pitch, that are held
