@@ -173,6 +173,15 @@
 	cursor: move;
 }
 
+/* While a gesture goes on, the grid and the keyboard's left part are RmlUi drag elements: their drag events come
+   wherever the mouse is, also outside the window, and their dragend comes when the button goes up, also out there,
+   where the document gets no mouseup. Only then: RmlUi doesn't scroll on a touch move during a drag. */
+.key-editor.in-gesture .key-editor-grid,
+.key-editor.in-gesture .key-editor-keys-zoom
+{
+	drag: drag;
+}
+
 .key-editor-notes
 {
 	position: absolute;

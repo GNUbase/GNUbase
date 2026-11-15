@@ -31,7 +31,10 @@ plugin's parameter as the user sets it. The lanes and their playback are in [aut
   overrides the button. So the automation player plays these gaps as ordinary steps, sample-accurately and from any
   position. MIDI lanes without a static value of the channel (any controller but a MIDI channel's volume and pan,
   pitch bend, channel pressure) keep their gap points and send nothing in their gaps, also at a locate or while
-  stopped there, like a lane that doesn't read; the value after a gap is always sent.
+  stopped there, like a lane that doesn't read; the value after a gap is always sent. A lane side by side with others
+  of its controller on a MIDI track set to a channel (`PlayedLane::shared`, [mixer.md](mixer.md)) is the exception:
+  the value its last point left stands in the gap after it, and a locate there sends it if no other lane's point lies
+  later.
 - **Range edits** (`range.delete`, `range.cut`, `range.copy`, `range.paste`, `range.insertSilence`, in
   `eventedits.cpp`) keep the gaps: an edge in a gap gets no point with a value, but a terminator or nothing. With
   virgin territory `range.delete` makes the range a gap (p. 881): the point at its start is a terminator, and across
@@ -61,6 +64,8 @@ before the first point and after the last one ([automation-tracks.md](automation
   one position that never play with virgin territory, and a controller lane that sends nothing in its gaps, also at
   a locate and while stopped, and a lone point's value once; volume automation rendered with both modes and block
   sizes 64 and 100, sample by sample.
+- `tests/midipatches_tests.cpp`: lanes of one controller side by side on a MIDI track's channel, with and without
+  virgin territory, whose last points' values stand in their gaps and go out again at a locate past them.
 - `tests/eventedit_tests.cpp`: `range.delete` across a terminator and, with virgin territory, in a lane's curve and
   across its last point; a range in a ramp without points in it, also up to the ramp's end point and with
   `range.cut`, in both modes, and ranges in a gap, before the first and after the last point that change nothing;

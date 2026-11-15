@@ -84,7 +84,10 @@ without global transposition pays nothing for it; it plays its file as before.
   event display (p. 421): a `.part-mark.independent` with attribute `part` in the display's `.part-marks`.
 - **The transpose track's lane** (`ui::GlobalEventLane`, `src/ui/transposetrack.h`, shared with the chord track's
   lanes) shows each event's value from its position: the draw tool adds an event at the nearest bar and opens its
-  value for typing, a double click opens it too, a drag moves it to the nearest bar and the erase tool removes it.
+  value for typing, a double click opens it too, a drag moves it to the nearest bar, following the mouse while the
+  button is down, and the erase tool removes it. The lanes read the project the event display reads, once per answer,
+  and the track's own `transpose.changed`, `chord.changed` or `arranger.changed`, which carry its events, instead of a
+  `project.get` of their own; an edit the engine refuses shows its reason in `#edit-refused`.
 - **The track list** has the transpose track's controls by default (`ui.trackControls` `transpose`): Mute Transpose
   Events (`transposeMute`), Keep Transpose in Octave Range (`keepInOctave`), Switch Time Base and Lock
   (`transposeLock`).

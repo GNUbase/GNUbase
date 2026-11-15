@@ -38,7 +38,11 @@ nothing if it fails.
   The reference's sizing applies time stretch waits for time stretching in the project window.
 - **Splitting** an audio event gives the piece before the split its fade in, the piece after it its fade out; an event
   that crossfaded from it now crossfades from the piece it overlaps. A MIDI part's notes stay in the part they start in,
-  sticking out of it, or with `splitNotes` (the reference's Split MIDI Events preference) are cut in two.
+  sticking out of it, or with `splitNotes` (the reference's Split MIDI Events preference) are cut in two. Events and
+  parts are split where they show, in samples: a position in the sample a part or event on a musical track starts or
+  ends in, whose start or end in ticks can lie up to half a sample from it, doesn't split it, so no piece shorter than
+  a sample is cut off with the note on its downbeat. The range commands, Delete Time, Insert Silence and the comp tool
+  cut the same way ([range-editing.md](range-editing.md)).
 - **Gluing** audio events where one continues the other in the same clip, as after a split, makes one event; other
   audio events and audio parts become one audio part ([audio-parts.md](audio-parts.md)). MIDI parts become one part
   from the first start to the last end, with every note and controller.

@@ -312,14 +312,9 @@ namespace gnubase::app
 				dialog.location = std::filesystem::u8path(
 					engine::safeFileName(parameters.value("name", std::string("Map"))) + ".articulationmap");
 				dialog.parent = m_main.id();
-				m_shell.showFileDialog(dialog,
-					[this, map](const ui::FileDialogResult& result)
+				chooseProjectFile(dialog,
+					[this, map](std::filesystem::path file)
 					{
-						if (!result.error.empty())
-							logging::warning("The file dialog failed: {}", result.error);
-						if (result.files.empty())
-							return;
-						std::filesystem::path file = result.files.front();
 						if (file.extension() != ".articulationmap")
 							file += ".articulationmap";
 						m_binding.send("articulationMap.export", {{"map", map}, {"path", file.u8string()}},

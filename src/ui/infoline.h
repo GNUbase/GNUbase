@@ -112,6 +112,8 @@ namespace gnubase::ui
 		// changed item gave it instead, also after other items showed in the field meanwhile (#1421), and when it was
 		// dragged with others (#1471, #1550).
 		std::string fieldValue(const char* edits, const std::string& field, uint64_t item, std::string value) const;
+		// The number fieldValue shows for any item, not only the first: what a relative step goes from (#1632).
+		double fieldNumber(const char* edits, const std::string& field, uint64_t item, double value) const;
 		// The notes a selection of an in-place editor names, from the display's project, by start, then pitch.
 		std::vector<Note> notesOf(const engine::Json& selection) const;
 		// A part's start in project ticks, a linear track's position converted as the key editor does.

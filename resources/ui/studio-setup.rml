@@ -287,7 +287,8 @@
 		end
 
 		-- The Note Expression Input page (reference manual pp. 1295-1298): the MIDI Input list selects an input, whose
-		-- MPE setup (mpe in midi.ports) shows below it; each input has its fields, the others' hidden.
+		-- MPE setup (mpe in midi.ports) shows below it; each input has its fields, the others' hidden. Built again after
+		-- Apply, it keeps showing the input selected (setup.mpeShown, its backend/id).
 		local mpeModes = {{"off", "Off"}, {"lower", "MPE Mode, Lower Zone"}, {"upper", "MPE Mode, Upper Zone"},
 			{"rotation", "Channel Rotation"}}
 		local initialsX = {{"off", "Off"}, {"center", "Center (64)"}}
@@ -309,12 +310,22 @@
 			return named(class, values, current, disabled and " disabled" or "")
 		end
 
+		local function portKey(port)
+			return port.backend .. "/" .. port.id
+		end
+
 		local function mpePage(ports)
+			local shownKey = nil
+			for _, port in ipairs(ports) do
+				if port.input and (shownKey == nil or portKey(port) == setup.mpeShown) then
+					shownKey = portKey(port)
+				end
+			end
 			local inputs, fields = {}, {}
 			for index, port in ipairs(ports) do
 				if port.input then
 					local mpe = port.mpe
-					local shown = #inputs == 0
+					local shown = portKey(port) == shownKey
 					inputs[#inputs + 1] = option(index, port.showAs, shown)
 					fields[#fields + 1] = '<div class="mpe-port' .. (shown and " shown" or "") .. '" index="' .. index ..
 						'">' ..
@@ -371,6 +382,7 @@
 
 		-- Shows the selected MIDI input's MPE setup.
 		function setup.showMpeInput(document, index)
+			setup.mpeShown = portKey(setup.midiPorts[tonumber(index)])
 			for _, fields in ipairs(document:QuerySelectorAll(".mpe-port")) do
 				fields:SetClass("shown", fields:GetAttribute("index") == tostring(index))
 			end

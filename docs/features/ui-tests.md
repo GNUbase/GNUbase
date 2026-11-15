@@ -11,7 +11,11 @@ UI setup as the app, and drive it with the interface behind MCP's UI tools ([ui-
   positions. A test:
   - loads documents into the main window (`show`);
   - runs engine commands (`call`), e.g. `settings.set`, and steps the shell as the app's event loop does until the UI
-    has followed (`waitUntil`);
+    has followed (`waitUntil`). `waitUntil` treats a JSON exception from its predicate as "not done yet", so predicates
+    may read UI data that hasn't arrived yet without a type guard. If the predicate still throws after the timeout, the
+    wait rethrows that exception: a misspelled key, for example, fails with its JSON error after the timeout. A
+    predicate that returns false at the timeout still makes the wait return false. This applies to the shared wait, not
+    to custom polling loops in fixtures.
   - quits the UI and the engine and starts them again with the same user settings (`restart`), e.g. to check what the
     user gets back after a restart;
   - runs the UI from another resources folder than GNUbase's, such as a copy with a document changed, to test what
@@ -22,13 +26,6 @@ UI setup as the app, and drive it with the interface behind MCP's UI tools ([ui-
     golden images in `tests/golden/ui/` (`screenshot`, `checkGolden`). Each channel of a pixel may differ by 8 of 255,
     and one pixel in 500 by more, for GPUs that round an edge or a blend differently. `GNUBASE_UPDATE_GOLDEN=1`
     accepts a new look; look at the images before committing them.
-
-  `waitUntil` treats a JSON exception from its predicate as "not done yet", so predicates may read UI data that
-  hasn't arrived yet without a type guard. If the predicate still throws after the timeout, the wait rethrows
-  that exception: a misspelled key, for example, fails with its JSON error after the timeout. A predicate that
-  returns false at the timeout still makes the wait return false. This applies to the shared wait, not to custom
-  polling loops in fixtures.
-
 - **Where they run.** UI tests are tagged `[ui]`. On Linux they use SDL's offscreen video driver and Mesa's software
   Vulkan driver, so they need no display; CI runs them on Linux and Windows, and on Apple Silicon after every push to
   main in `.github/workflows/ui-macos.yml` (not on pull requests: its runners often never pick jobs up). Where SDL_GPU

@@ -182,13 +182,15 @@ namespace gnubase::pluginhost::vst3
 			int32_t flags = 0; // Restart: VST3's RestartFlags
 		};
 
-		// A note the plugin plays, so expressions and note offs without a note id find its id.
+		// A note the plugin plays, so expressions and note offs without a note id find its id. A released one stays for
+		// the expression of its release (MPE's), until its key plays again or room is needed.
 		struct Voice
 		{
 			int16_t port = -1;
 			int16_t channel = -1;
 			int16_t key = -1;
 			int32_t id = -1;
+			bool released = false;
 		};
 
 		// An output of a sub-block, in order of its offset: an event, or an index into the VST3 output events.

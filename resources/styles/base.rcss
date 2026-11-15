@@ -1049,6 +1049,14 @@ meter .meter-peak
 	width: 48dp;
 }
 
+/* The arranger lane's field is as wide as the event it renames (code sets its width), at least wide enough for a
+   name. */
+.arranger-lane-row .arranger-lane-field.shown
+{
+	box-sizing: border-box;
+	min-width: 96dp;
+}
+
 .arranger-lane-row .arranger-lane-event
 {
 	position: absolute;
