@@ -912,15 +912,8 @@ namespace gnubase::ui
 		Rml::Element* root = m_root.get();
 		if (root == nullptr)
 			return;
-		// The expression lines join the steps narrower than a pixel: built again when a pixel has other ticks, as the
-		// in-place editor's range has after its first layout and as the project window zooms (#1671). Not during a
-		// gesture, whose elements a rebuild would free; the next placement after it catches up.
-		if (m_gesture == Gesture::None && (m_expressionOpen || (!m_drum && m_view.value("showExpression", false))) &&
-			ticksPerPixel() != m_linesPixel)
-		{
-			render(); // which places the items
+		if (fitLines()) // which places the items
 			return;
-		}
 		Rml::ElementList shown;
 		root->QuerySelectorAll(shown, ".editor-part");
 		for (Rml::Element* element : shown)
@@ -955,6 +948,18 @@ namespace gnubase::ui
 			cursor != nullptr && m_view.value("stepInput", false))
 			place(*cursor, m_view.value("stepPosition", int64_t{0}), 0, -1);
 		placeExpression();
+	}
+
+	bool KeyEditor::fitLines()
+	{
+		// The expression lines join the steps narrower than a pixel: built again when a pixel has other ticks, as the
+		// in-place editor's range has after its first layout and as the project window zooms (#1671). Not during a
+		// gesture, whose elements a rebuild would free; the next placement after it catches up.
+		const bool shown = m_expressionOpen || (!m_drum && m_view.value("showExpression", false));
+		if (m_root.get() == nullptr || m_gesture != Gesture::None || !shown || ticksPerPixel() == m_linesPixel)
+			return false;
+		render();
+		return true;
 	}
 
 	void KeyEditor::placeExpression()

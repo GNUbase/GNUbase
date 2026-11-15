@@ -1382,6 +1382,46 @@ TEST_CASE("the note expression lines join the steps narrower than a pixel", "[ui
 	CHECK(static_cast<double>(f.elements(".key-expression-area .key-expression-step").size()) <= area + 2);
 }
 
+TEST_CASE(
+	"the key editor window joins a dense note's expression steps by its pixels after its layout and a resize", "[ui]")
+{
+	// The window renders its notes before its first layout, when a pixel has no ticks yet: opened on a recorded MPE
+	// note with Show Note Expression Data already on, and resized, it builds the lines again for its width (#1671).
+	Fixture f;
+	const std::vector<uint64_t> ids = f.add({{0, 60, 2 * g_quarter}});
+	Json points = Json::array();
+	constexpr int count = 2000;
+	for (int i = 0; i < count; ++i)
+		points.push_back(
+			{{"type", "tuning"}, {"position", 2 * g_quarter * i / count}, {"value", i % 2 == 0 ? 10.0 : -10.0}});
+	f.app.call("note.set", {{"part", f.part}, {"notes", Json::array({{{"id", ids[0]}, {"expressions", points}}})}});
+	f.app.call("editor.set", {{"editor", "window"}, {"showExpression", true}});
+	f.app.call("editor.close", {{"editor", "window"}});
+	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().editorWindow() == nullptr; }));
+	f.app.call("editor.open", {{"editor", "window"}, {"parts", Json::array({f.part})}});
+	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().editorWindow() != nullptr; }));
+	f.window = f.app.appUi().editorWindowId();
+	const std::string steps = noteSelector(ids[0]) + " .key-expression-step";
+	REQUIRE(f.app.waitUntil([&] { return !f.elements(steps).empty(); }));
+	const auto perPixel = [&f, &steps, &ids]
+	{
+		f.app.shell().step(std::chrono::milliseconds(0));
+		const double width = f.box(noteSelector(ids[0])).at("width").get<double>();
+		const auto shown = static_cast<double>(f.elements(steps).size());
+		INFO("width " << width << ", lines " << shown);
+		CHECK(width < count / 4.0);
+		CHECK(shown <= width + 2);
+		CHECK(shown >= width * 0.8);
+		return width;
+	};
+	const double before = perPixel();
+	const ui::WindowId window = f.app.appUi().editorWindowId();
+	const ui::Rect bounds = f.app.shell().bounds(window);
+	f.app.shell().setBounds(window, {bounds.x, bounds.y, bounds.width / 2, bounds.height});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(perPixel() < before * 0.8);
+}
+
 TEST_CASE("the expression editor stays centered on its note as the pitches zoom", "[ui]")
 {
 	Fixture f({1024, 600});

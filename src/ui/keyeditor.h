@@ -78,6 +78,11 @@ namespace gnubase::ui
 		// (#131, ui/inplaceeditor.h) is the project window's timeline. Without one it fits the parts' range.
 		void setTimeRange(std::optional<std::pair<int64_t, int64_t>> range);
 
+		// Builds the notes' expression lines again when a pixel has other ticks than they were built with, as after
+		// the editor's first layout and when its window or zone changes its width (#1671). True when it did, so that
+		// the window updates again (Shell::afterUpdate).
+		bool fitLines();
+
 		// Scrolls the note display so that the pitch is in the middle; false before the display has its size. The
 		// display scrolls to the middle of its notes, or to middle C, when it first has a size, unless it was
 		// scrolled to a pitch before.

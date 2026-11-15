@@ -105,8 +105,8 @@ first.
   from the box's bottom to its top: tuning from -48 to 48 semitones, MPE's pitch range (values beyond show at the edge),
   volume from 0 to 4 and the others from 0 to 1. A step narrower than a pixel of the note display joins the next ones
   until it is as wide, at the last one's value, so that a recorded note with a point every few milliseconds is a line
-  per pixel at most, not hundreds of elements (#1671); the lines are built again when a pixel has other ticks, as after
-  the in-place editor's first layout and as the project window zooms. The drum editor shows no overlay, as it has
+  per pixel at most, not hundreds of elements (#1671); the lines are built again when a pixel has other ticks: after
+  an editor's first layout, as the editor window or the lower zone resizes and as the project window zooms. The drum editor shows no overlay, as it has
   neither the buttons nor the expression editor, also with Show Note Length.
 - **Expression editor** (pp. 1308-1311). With Double-Click Opens Note Expression Editor a double click on a note with
   the object selection tool opens the editor instead of deleting the note: on the note, or on the selected notes if it
