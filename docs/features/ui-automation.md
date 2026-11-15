@@ -22,7 +22,8 @@ and keyboard input. [mcp.md](../mcp.md#ui-tools) is the guide for agents.
   on, from the same list ([ui-lua.md](ui-lua.md)).
 - **Coordinates.** Everything is in the window's pixels, as in its screenshots: an element's box, the points that
   mouse tools take, the window's size. A window's dp ratio (its monitor's scale times the UI scale, #53) converts to dp.
-- **The DOM.** An element has its tag, id, classes, other attributes, a form control's value, its active
+- **The DOM.** An element has its tag, id, classes, other attributes, a form control's value, a drop-down list's
+  `options` (each its `value`, `text` and whether it's `selected`, as RmlUi keeps them outside the DOM), its active
   pseudo-classes (`hover`, `focus`, `checked`, `disabled`, ...), whether it's visible (not `display: none` or
   `visibility: hidden`, nor inside such an element, and not empty) and its border box. Text is a child `{"text": ...}`
   with white space collapsed; an element whose children are left out by the depth has its text instead. A selector

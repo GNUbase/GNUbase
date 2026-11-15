@@ -272,6 +272,14 @@ TEST_CASE("ui_dom reads the DOM: ids, classes, attributes, text, values, visibil
 		CHECK(list[0].at("children")[0].at("text") == "Drums");
 		CHECK(fixture.call("ui_dom", {{"selector", "#nothing"}}).at("elements").empty());
 	}
+	SECTION("a drop-down list has its options, which aren't DOM children, with their value and text")
+	{
+		const Json found = fixture.call("ui_dom", {{"selector", "#sound"}, {"depth", 0}}).at("elements");
+		REQUIRE(found.size() == 1);
+		CHECK(found[0].at("value") == "pad");
+		CHECK(found[0].at("options") == Json::parse(R"([{"value": "piano", "text": "Grand piano", "selected": false},
+				{"value": "pad", "text": "Warm pad", "selected": true}])"));
+	}
 	SECTION("boxes are in the window's pixels, twice the dp on a Retina monitor")
 	{
 		const ui::Window* retina = fixture.open({2000, 100, 640, 480}, "automation.rml");

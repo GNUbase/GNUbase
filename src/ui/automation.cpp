@@ -10,6 +10,7 @@
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/ElementText.h>
 #include <RmlUi/Core/Elements/ElementFormControl.h>
+#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <RmlUi/Core/Input.h>
 #include <RmlUi/Core/StringUtilities.h>
 
@@ -95,6 +96,20 @@ namespace gnubase::ui
 				result["attributes"] = std::move(attributes);
 			if (auto* control = rmlui_dynamic_cast<Rml::ElementFormControl*>(&element))
 				result["value"] = control->GetValue();
+			// A drop-down list's options aren't DOM children.
+			if (auto* select = rmlui_dynamic_cast<Rml::ElementFormControlSelect*>(&element))
+			{
+				Json options = Json::array();
+				for (int i = 0; i < select->GetNumOptions(); ++i)
+				{
+					Rml::Element& option = *select->GetOption(i);
+					std::string text;
+					collectText(option, text);
+					options.push_back({{"value", option.GetAttribute<Rml::String>("value", "")},
+						{"text", collapsed(text)}, {"selected", i == select->GetSelection()}});
+				}
+				result["options"] = std::move(options);
+			}
 			if (const Rml::StringList pseudoClasses = element.GetActivePseudoClasses(); !pseudoClasses.empty())
 				result["pseudoClasses"] = pseudoClasses;
 			result["visible"] = visible(element);
