@@ -66,8 +66,10 @@ namespace gnubase::engine
 		// set by AutomationPlayer::setAutomation. Other new automation doesn't send its value again, which would
 		// override a part's own program change or controller. Not compared.
 		uint64_t revision = 0;
-		// A MIDI lane that plays side by side with others of its target (channelAutomation): at a start, a locate or a
-		// jump only the one whose latest point lies latest sends its value there. Not compared.
+		// A MIDI lane that plays side by side with others of its target (channelAutomation): it sends every point it
+		// arrives at, also one that repeats its value or that a gap follows, since another lane may have changed the
+		// controller in between; at a start, a locate or a jump only the one whose latest point lies latest sends its
+		// value there, also in a gap after its points. Not compared.
 		bool shared = false;
 
 		bool operator==(const PlayedLane& other) const;
