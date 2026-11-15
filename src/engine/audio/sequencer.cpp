@@ -14,7 +14,6 @@
 #include <cstddef>
 #include <iterator>
 #include <limits>
-#include <numeric>
 #include <string_view>
 #include <tuple>
 #include <utility>
@@ -335,7 +334,7 @@ namespace gnubase::engine
 		  m_sequence(std::make_unique<const MidiSequence>()), m_input(graph::g_maxEventsPerBlock),
 		  m_stripChase(std::make_shared<graph::EventBuffer>(graph::g_maxEventsPerBlock))
 	{
-		std::iota(m_inputTo.begin(), m_inputTo.end(), uint16_t{0});
+		m_inputTo.fill(static_cast<uint16_t>(g_notes));
 	}
 
 	namespace
@@ -925,7 +924,12 @@ namespace gnubase::engine
 		for (graph::ProcessEvent event : m_input)
 		{
 			if (triggerSlot(sequence, event, out))
+			{
+				// The trigger's note-on gives its channel to a new note, which plays nothing: no expression.
+				if (event.type == graph::ProcessEvent::Type::NoteOn)
+					forgetReleased(event.channel);
 				continue;
+			}
 			auto ends = static_cast<uint16_t>(g_notes);
 			const bool plays = modifyInput(sequence, transport.position + event.offset, event, ends);
 			// Still held if the buffer was full: then a stop ends it.
@@ -1227,7 +1231,9 @@ namespace gnubase::engine
 		const midi::Modifiers& modifiers = sequence.modifiers;
 		using Type = graph::ProcessEvent::Type;
 		// The track's MIDI channel plays them on it (reference manual p. 351); the keys stay where they came in. Poly
-		// pressure and a note's expression follow the note its key plays, as MPE input's does (#1514).
+		// pressure and a note's expression follow the note its key plays, as MPE input's does (#1514), and go nowhere
+		// for a key whose note-on didn't reach the track or didn't play (#1625). A note's expression still follows it
+		// after its note-off, while it fades, until the next note-on on its channel (MPE's release, #1618).
 		if (event.type != Type::NoteOn && event.type != Type::NoteOff && event.type != Type::PolyPressure &&
 			event.type != Type::NoteExpression)
 		{
@@ -1252,6 +1258,7 @@ namespace gnubase::engine
 		{
 			const uint16_t before = m_inputTo[from];
 			letGo();
+			forgetReleased(event.channel);
 			// A drum map plays the sound's O-note on its channel (MIDI thru, p. 1239), else Live Input moves it.
 			int channel = sequence.inputChannel >= 0 ? sequence.inputChannel : event.channel % 16;
 			bool plays = true;
@@ -1292,21 +1299,47 @@ namespace gnubase::engine
 				++m_inputKeys[m_inputTo[from]];
 			m_inputDown[from] = true;
 		}
-		const uint16_t to = m_inputTo[from];
+		// A note-off of a key that isn't held, e.g. since before the track got the input, passes as it came.
+		const uint16_t to =
+			event.type == Type::NoteOff && !m_inputDown[from] ? static_cast<uint16_t>(from) : m_inputTo[from];
 		if (event.type == Type::NoteOff)
 		{
 			letGo();
-			m_inputTo[from] = static_cast<uint16_t>(from);
-			m_inputDown[from] = false;
+			m_inputDown[from] = false; // its m_inputTo stays, for its expression
 			// Two held keys play the same note (Live Input moved one onto the other's): it ends with the last.
 			if (to != g_notes && m_inputKeys[to] > 0)
 				return false;
+		}
+		else if (event.type == Type::PolyPressure && !m_inputDown[from])
+		{
+			return false;
 		}
 		if (to == g_notes)
 			return false;
 		event.key = static_cast<uint8_t>(to % 128);
 		event.channel = static_cast<uint8_t>(to / 128);
 		return true;
+	}
+
+	bool MidiSequencer::injectMpe(uint32_t setup, const graph::ProcessEvent& event) noexcept
+	{
+		if (m_input.size() + 4 > m_input.capacity())
+			return false;
+		if (setup != m_injectedMpeSetup)
+		{
+			m_injectedMpeSetup = setup;
+			m_injectedMpe.reset();
+		}
+		m_injectedMpe.process(midi::MpeSetup::unpack(setup), event, m_input);
+		return true;
+	}
+
+	void MidiSequencer::forgetReleased(uint8_t channel) noexcept
+	{
+		const size_t first = size_t{channel % 16U} * 128U;
+		for (size_t key = first; key < first + 128; ++key)
+			if (!m_inputDown[key])
+				m_inputTo[key] = static_cast<uint16_t>(g_notes);
 	}
 
 	bool MidiSequencer::triggerSlot(

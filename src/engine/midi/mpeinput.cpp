@@ -59,7 +59,8 @@ namespace gnubase::engine::midi
 	{
 		MpeSetup setup;
 		setup.mode = named<Mode>(json, "mode", g_modes);
-		setup.channels = clampedInt(json, "channels", setup.channels, 1, 16);
+		setup.channels = clampedInt(
+			json, "channels", setup.channels, 1, setup.mode == Mode::Lower || setup.mode == Mode::Upper ? 15 : 16);
 		setup.firstChannel = clampedInt(json, "firstChannel", setup.firstChannel, 1, 16);
 		setup.pitchRange = clampedInt(json, "pitchRange", setup.pitchRange, 1, 96);
 		setup.tuning = json.value("tuning", setup.tuning);
@@ -149,8 +150,18 @@ namespace gnubase::engine::midi
 			point.parameterValue = value;
 			return point;
 		};
+		// The notes the channel's expression applies to: those that sound and those that fade.
+		const auto toNotes = [&](size_t index)
+		{
+			const std::bitset<128> notes = state.sounding | state.released;
+			for (size_t key = 0; key < notes.size(); ++key)
+				if (notes.test(key))
+					out.add(expression(static_cast<uint8_t>(key), index, state.values.at(index)));
+		};
 		if (event.type == Type::NoteOn)
 		{
+			// The device gives the channel to a new note: as far as it is concerned, the released ones have faded.
+			state.released.reset();
 			state.sounding.set(event.key % 128U);
 			addEvent(out, event);
 			// Its initial values follow it, as playback sends them.
@@ -164,16 +175,23 @@ namespace gnubase::engine::midi
 				const MpeSetup::Initial initial = initials.at(i);
 				if (initial != MpeSetup::Initial::Off)
 				{
+					// The channel's value, so its other notes get it too.
 					state.values.at(i) = initialValue(i, initial);
 					state.known.set(i);
+					toNotes(i);
 				}
-				if (state.known.test(i))
+				else if (state.known.test(i))
+				{
 					out.add(expression(event.key, i, state.values.at(i)));
+				}
 			}
 			return;
 		}
-		if (event.type == Type::NoteOff)
+		if (event.type == Type::NoteOff && state.sounding.test(event.key % 128U))
+		{
 			state.sounding.reset(event.key % 128U);
+			state.released.set(event.key % 128U);
+		}
 		const int index = expressionIndex(setup, event);
 		if (index < 0)
 		{
@@ -184,8 +202,6 @@ namespace gnubase::engine::midi
 		state.values.at(at) =
 			index == 0 ? bendToSemitones(event.value, setup.pitchRange) : controllerToUnit(event.value);
 		state.known.set(at);
-		for (size_t key = 0; key < state.sounding.size(); ++key)
-			if (state.sounding.test(key))
-				out.add(expression(static_cast<uint8_t>(key), at, state.values.at(at)));
+		toNotes(at);
 	}
 }

@@ -29,6 +29,7 @@ namespace gnubase::engine
 			uint64_t position = 0;
 			audio::MidiMessage message; // its offset is ignored
 			bool drumSound = false;     // injected notes: the key is a drum sound's pitch (midi.inject drumSounds)
+			uint32_t mpe = 0;           // injected: the MPE setup they play through (midi::MpeSetup::pack), 0 for none
 		};
 
 		using Sequencers = std::vector<std::pair<ObjectId, std::shared_ptr<MidiSequencer>>>;      // by channel id
@@ -53,7 +54,8 @@ namespace gnubase::engine
 
 		// Audio thread, before the graph processes the block at position: gives each sequencer the injected messages
 		// for it, at their offsets; messages for positions that have passed play at the block's start, those for
-		// channels that are gone are dropped. A sequencer whose input is full gets the rest in the next block.
+		// channels that are gone are dropped, those with an MPE setup go through it (MidiSequencer::injectMpe). A
+		// sequencer whose input is full gets the rest in the next block.
 		void deliver(uint64_t position, uint32_t frames, const Sequencers& sequencers) noexcept;
 
 		// Audio thread, after deliver: the block's channel messages from all MIDI inputs go to the input of each
