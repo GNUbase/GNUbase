@@ -68,6 +68,7 @@ namespace gnubase::engine::dsp
 			m_pointers.push_back(channel.data());
 		m_fade = std::max<size_t>(1, static_cast<size_t>(std::llround(g_fadeSeconds * m_info.sampleRate)));
 		m_tail.resize(m_fade * channels);
+		m_nextTail.resize(m_fade * channels);
 		restart(0);
 	}
 
@@ -181,7 +182,6 @@ namespace gnubase::engine::dsp
 
 	void WarpReader::fadeIn(float* buffer, size_t frames)
 	{
-		// In place over the tail too: frame f reads the tail at m_faded + f, never before what it has written.
 		const auto channels = static_cast<size_t>(m_info.channels);
 		for (size_t f = 0; f < frames && m_faded < m_fade; ++f, ++m_faded)
 		{
@@ -204,9 +204,10 @@ namespace gnubase::engine::dsp
 			{
 				// The ended run would play on with other audio than the new one starts with: its next frames fade out
 				// over the new run's first, after the rest of a fade still going, and silence after the source's end.
-				const size_t tail = pull(m_tail.data(), m_fade);
-				std::fill(m_tail.begin() + static_cast<std::ptrdiff_t>(tail * channels), m_tail.end(), 0.0F);
-				fadeIn(m_tail.data(), m_fade);
+				const size_t tail = pull(m_nextTail.data(), m_fade);
+				std::fill(m_nextTail.begin() + static_cast<std::ptrdiff_t>(tail * channels), m_nextTail.end(), 0.0F);
+				fadeIn(m_nextTail.data(), m_fade);
+				m_tail.swap(m_nextTail);
 				restart(m_position);
 				m_faded = 0;
 				continue;

@@ -301,6 +301,9 @@ TEST_CASE("a warp reader crossfades where it starts over, without a step", "[uni
 	};
 	const Case each = GENERATE(Case{{{0.0, 0.0}, {96000.0, 96000.0}}, {{48000.0, 12.0}}, 48000},
 		Case{{{0.0, 0.0}, {96000.0, 96000.0}}, {{48000.0, -7.0}}, 48000},
+		// A second restart while the first fade is still going fades over what is left of that one. The run between
+		// plays lower than the ones around it, so that the sine's own slope around the points bounds it too.
+		Case{{{0.0, 0.0}, {96000.0, 96000.0}}, {{48000.0, -12.0}, {48100.0, -5.0}}, 48000},
 		Case{{{0.0, 0.0}, {12000.0, 72000.0}, {36000.0, 96000.0}}, {}, 72000});
 	CAPTURE(each.at, each.pitch.size());
 	const test::TempDir dir;

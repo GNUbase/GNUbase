@@ -92,6 +92,7 @@ namespace gnubase::engine::dsp
 		time::Samples m_restartAt = 0; // the next pitch point or end of a segment beyond the real-time range
 		bool m_final = false;          // the source's end was fed
 		std::vector<float> m_tail;     // the ended run's frames after its restart, interleaved: as many as the fade
+		std::vector<float> m_nextTail; // the next restart's tail, faded in over m_tail before they swap
 		size_t m_fade = 0;             // frames of the crossfade
 		size_t m_faded = 0;            // frames of it done: m_fade when there is none
 	};
