@@ -222,6 +222,13 @@ namespace gnubase::ui
 					return pitch;
 			return std::nullopt;
 		}
+
+		// Whether the expression lines built for a pixel of `built` ticks are off by more than about a pixel at
+		// `pixel`: it has a quarter more or fewer (#1716).
+		bool linesOff(int64_t pixel, int64_t built)
+		{
+			return std::abs(pixel - built) * 4 > built;
+		}
 	}
 
 	const char* keyToolName(KeyTool tool)
@@ -730,7 +737,8 @@ namespace gnubase::ui
 		// Show Note Expression Data (p. 1303): the notes' expression over them.
 		// Not in the drum editor, which has neither its button nor the expression editor (#1671).
 		const bool expression = !m_drum && m_view.value("showExpression", false);
-		m_linesPixel = ticksPerPixel();
+		if (linesOff(ticksPerPixel(), m_linesPixel))
+			m_linesPixel = ticksPerPixel();
 		const int64_t pixel = m_linesPixel;
 		std::string rml;
 		for (const Note& note : m_notes)
@@ -972,10 +980,12 @@ namespace gnubase::ui
 	bool KeyEditor::fitLines()
 	{
 		// The expression lines join the steps narrower than a pixel: built again when a pixel has other ticks, as the
-		// in-place editor's range has after its first layout and as the project window zooms (#1671). Not during a
-		// gesture, whose elements a rebuild would free; the next placement after it catches up.
+		// in-place editor's range has after its first layout and as the project window zooms (#1671). Only when it has
+		// a quarter more or fewer: a scroll across a tempo change changes the in-place editor's ticks per pixel a
+		// little on nearly every frame (#1716). Not during a gesture, whose elements a rebuild would free; the next
+		// placement after it catches up.
 		const bool shown = m_expressionOpen || (!m_drum && m_view.value("showExpression", false));
-		if (m_root.get() == nullptr || m_gesture != Gesture::None || !shown || ticksPerPixel() == m_linesPixel)
+		if (m_root.get() == nullptr || m_gesture != Gesture::None || !shown || !linesOff(ticksPerPixel(), m_linesPixel))
 			return false;
 		render();
 		return true;
@@ -990,6 +1000,18 @@ namespace gnubase::ui
 			return;
 		const auto [from, to] = expressionSpan();
 		place(*editor, from, to - from, -1);
+		// On notes narrower than its button the style sheet widens it: in the note display's right half it grows to the
+		// left from their end, so that it stays inside the note display there too (#1713).
+		if (from + to > m_from + m_to)
+		{
+			editor->RemoveProperty(Rml::PropertyId::Left);
+			editor->SetProperty(Rml::PropertyId::Right,
+				percent(static_cast<double>(m_to - to) / static_cast<double>(m_to - m_from) * 100.0));
+		}
+		else
+		{
+			editor->RemoveProperty(Rml::PropertyId::Right);
+		}
 		// Centered on the row of the note double-clicked, else the first selected one, and inside the note display:
 		// the editor's height from the style sheet, which it has while it is closed too.
 		const Note* centered = selection.front();
