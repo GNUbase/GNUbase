@@ -5,6 +5,7 @@
 // several audio tracks: the Hitpoint Tracks' priorities, Slice, Create, Crossfade, Nudge Crossfade and Open Crossfade
 // Editor, and Create Groove Quantize Preset from an audio event.
 // tests/audioquantize_tests.cpp checks the engine's side.
+#include "engine/time/tempomap.h"
 #include "platform/log.h"
 #include "ui/eventdisplay.h"
 #include "ui/keycommands.h"
@@ -496,6 +497,41 @@ TEST_CASE("Edit > Quantize warp quantizes the selection range of an audio event"
 	CHECK(f.project().at("clips").at(1).at("warp").at("markers").empty());
 }
 
+TEST_CASE("Edit > Quantize on a selection range with Warp Quantize off logs the refusal", "[ui]")
+{
+	const test::TempDir folder;
+	const std::filesystem::path file = folder.path() / "quantize.log";
+	const logging::Session log(file);
+	Fixture f;
+	f.display.setTool(ui::Tool::RangeSelection);
+	f.display.setRange(ui::RangeSelection{12000, 60000, {f.tracks[0]}});
+	f.menu("edit.quantize");
+	REQUIRE(f.app.waitUntil([&] { return test::readText(file).find("Quantize failed:") != std::string::npos; }));
+	CHECK(test::readText(file).find("turn on settings.warpQuantize") != std::string::npos);
+	CHECK(f.positions(f.tracks[0]) == std::vector<int64_t>{2000});
+}
+
+TEST_CASE("Create Groove Quantize Preset on a selection range takes the first audio event it reaches", "[ui]")
+{
+	Fixture f;
+	// Another event of the second track's clip after the range: the groove is the one of the event at 2000 samples,
+	// starting there (#1672).
+	f.app.call("audioEvent.add",
+		{{"track", f.tracks[1]}, {"clip", f.clips[1]}, {"position", 200000}, {"offset", 0}, {"length", g_quarter}});
+	REQUIRE(f.app.waitUntil([&] { return f.display.project().at("audioEvents").size() == 3; }));
+	f.display.setTool(ui::Tool::RangeSelection);
+	f.display.setRange(ui::RangeSelection{12000, 60000, {f.tracks[1]}});
+	f.app.keys().run("edit.createGrooveQuantize", Json::object(), f.app.main(), nullptr);
+	CHECK(f.app.waitUntil(
+		[&]
+		{
+			const Json settings = f.settings();
+			const Json groove = settings.value("groove", Json());
+			return groove.is_object() && groove.at("points").size() == 4 &&
+				settings.value("origin", int64_t{0}) == time::g_ticksPerQuarter / 12;
+		}));
+}
+
 TEST_CASE("Edit > Reset Quantize with a selection range resets only the audio events it reaches", "[ui]")
 {
 	Fixture f;
@@ -522,6 +558,28 @@ TEST_CASE("Edit > Reset Quantize with a selection range resets only the audio ev
 	CHECK(!f.app.keys().canRun("edit.resetQuantize", f.app.main(), nullptr));
 }
 
+TEST_CASE(
+	"Edit > Reset Quantize with Group Editing resets the events of every track of the folder in the range", "[ui]")
+{
+	Fixture f;
+	const auto folder = f.app.call("track.add", {{"type", "folder"}, {"tracks", {f.tracks[0], f.tracks[1]}}})
+							.at("track")
+							.at("id")
+							.get<uint64_t>();
+	f.app.call("track.set", {{"track", folder}, {"groupEditing", true}});
+	REQUIRE(f.app.waitUntil([&] { return f.display.project().at("tracks").at(0).value("groupEditing", false); }));
+	f.display.select({f.events[0], f.events[1]});
+	f.menu("edit.quantize");
+	CHECK(f.positionsAre(f.tracks[0], {0}));
+	CHECK(f.positionsAre(f.tracks[1], {0}));
+	// A range on the first track is on both (#1672).
+	f.display.setTool(ui::Tool::RangeSelection);
+	f.display.setRange(ui::RangeSelection{12000, 60000, {f.tracks[0]}});
+	f.menu("edit.resetQuantize");
+	CHECK(f.positionsAre(f.tracks[0], {2000}));
+	CHECK(f.positionsAre(f.tracks[1], {2000}));
+}
+
 TEST_CASE("the project window marks the cutting positions while the quantize panel is open", "[ui]")
 {
 	Fixture f;
@@ -531,9 +589,9 @@ TEST_CASE("the project window marks the cutting positions while the quantize pan
 	const std::vector<int64_t> cuts{3000, 27000, 49000, 75000};
 	CHECK(f.app.waitUntil([&] { return f.display.cuttingPositions() == cuts; }));
 	CHECK(f.app.waitUntil([&] { return f.elements(".event-display .cutting-position").size() == 4; }));
-	// Zoomed out until they run together, the lines go.
+	// Zoomed out until they run together, the first stays, and each line that is far enough from it (#1668).
 	f.display.zoomTo(0.0, 3600.0);
-	CHECK(f.app.waitUntil([&] { return f.elements(".event-display .cutting-position").empty(); }));
+	CHECK(f.app.waitUntil([&] { return f.elements(".event-display .cutting-position").size() == 1; }));
 	f.display.zoomTo(0.0, 4.0);
 	CHECK(f.app.waitUntil([&] { return f.elements(".event-display .cutting-position").size() == 4; }));
 	// With warp quantizing on, nothing is cut, and without a selection neither.
@@ -542,6 +600,11 @@ TEST_CASE("the project window marks the cutting positions while the quantize pan
 	f.click("#quantize-warp");
 	CHECK(f.app.waitUntil([&] { return f.display.cuttingPositions() == cuts; }));
 	f.display.select({});
+	CHECK(f.app.waitUntil([&] { return f.display.cuttingPositions().empty(); }));
+	// Closing the panel takes them away.
+	f.display.select({f.events[0], f.events[1]});
+	REQUIRE(f.app.waitUntil([&] { return f.display.cuttingPositions() == cuts; }));
+	f.app.appUi().docking().setTabHidden("quantize", true);
 	CHECK(f.app.waitUntil([&] { return f.display.cuttingPositions().empty(); }));
 }
 

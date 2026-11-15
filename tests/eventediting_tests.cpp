@@ -3041,3 +3041,76 @@ TEST_CASE("the draw tool draws parts on the lane it draws on", "[unit]")
 	CHECK(f.audioParts()[0].at("lane") == 1);
 	CHECK(f.audioParts()[0].at("track") == audioTrack);
 }
+
+TEST_CASE("Group Editing selects parts too, on the same lane only, by the outermost folder, and Ctrl and a click takes "
+		  "the whole group out",
+	"[unit]")
+{
+	Fixture f;
+	const auto idOf = [](const Json& result, const char* kind) { return result.at(kind).at("id").get<uint64_t>(); };
+	const Json first = f.call("project.get").at("tracks");
+	const auto audio = first.at(0).at("id").get<uint64_t>();
+	const auto midi = first.at(1).at("id").get<uint64_t>();
+	const uint64_t audio2 = idOf(f.call("track.add", {{"type", "audio"}, {"timeBase", "linear"}}), "track");
+	const uint64_t midi2 = idOf(f.call("track.add", {{"type", "midi"}}), "track");
+	const uint64_t event2 =
+		idOf(f.call("audioEvent.add",
+				 {{"track", audio2}, {"clip", f.audioEvents()[0].at("clip")}, {"position", 96000}, {"length", 24000}}),
+			"event");
+	const uint64_t part2 = idOf(
+		f.call("midiPart.add", {{"track", midi2}, {"position", 2 * g_quarter}, {"length", 4 * g_quarter}}), "part");
+	// At the same place on the track's second lane: not a counterpart of the part (#1668).
+	f.call("midiPart.add", {{"track", midi2}, {"position", 2 * g_quarter}, {"length", 4 * g_quarter}, {"lane", 1}});
+	// The audio tracks in a folder with Group Editing. The MIDI track in a folder with Group Editing in another one
+	// with it, which midi2 is in: the outermost decides, so the part and part2 are one group.
+	const uint64_t audioFolder = idOf(f.call("track.add", {{"type", "folder"}, {"tracks", {audio, audio2}}}), "track");
+	const uint64_t inner = idOf(f.call("track.add", {{"type", "folder"}, {"tracks", {midi}}}), "track");
+	const uint64_t outer = idOf(f.call("track.add", {{"type", "folder"}, {"tracks", {inner, midi2}}}), "track");
+	for (const uint64_t folder : {audioFolder, inner, outer})
+		f.call("track.set", {{"track", folder}, {"groupEditing", true}});
+	REQUIRE(f.waitUntil(
+		[&f]
+		{
+			const Json& tracks = f.display.project().at("tracks");
+			return std::count_if(tracks.begin(), tracks.end(),
+					   [](const Json& track) { return track.value("groupEditing", false); }) == 3;
+		}));
+	const auto sorted = [](std::vector<uint64_t> ids)
+	{
+		std::sort(ids.begin(), ids.end());
+		return ids;
+	};
+
+	f.display.select({f.part});
+	CHECK(f.display.selection() == sorted({f.part, part2}));
+	f.display.select({f.event});
+	CHECK(f.display.selection() == sorted({f.event, event2}));
+
+	// The middle of a track's lane, in the project's track order.
+	const auto middleOf = [&f](uint64_t track)
+	{
+		const Json& tracks = f.display.project().at("tracks");
+		const std::vector<ui::EventLanes::Lane>& lanes = f.lanes("events");
+		double y = 0.0;
+		for (size_t i = 0; i < tracks.size() && i < lanes.size(); ++i)
+		{
+			if (tracks[i].at("id") == track)
+				return y + (lanes[i].height / 2.0);
+			y += lanes[i].height;
+		}
+		return -1.0;
+	};
+	REQUIRE(middleOf(audio) > 0.0);
+	f.click(225, middleOf(audio), {"ctrl"});
+	CHECK(f.display.selection().empty());
+	f.click(225, middleOf(audio2), {"ctrl"});
+	CHECK(f.display.selection() == sorted({f.event, event2}));
+
+	// Audio parts of the same place are a group as well.
+	const std::vector<uint64_t> parts =
+		f.call("event.toPart", {{"events", {f.event, event2}}}).at("events").get<std::vector<uint64_t>>();
+	REQUIRE(parts.size() == 2);
+	REQUIRE(f.waitUntil([&f] { return f.display.project().at("audioParts").size() == 2; }));
+	f.display.select({parts[0]});
+	CHECK(f.display.selection() == sorted(parts));
+}

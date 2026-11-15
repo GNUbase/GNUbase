@@ -181,44 +181,14 @@ namespace gnubase::app
 		{
 			target.events.clear();
 			target.audioParts.clear();
-			const Json& project = m_eventDisplay->project();
-			const ui::TimeContext& time = m_eventDisplay->time();
-			const Json none = Json::array();
-			const auto list = [&project, &none](const char* key) -> const Json&
-			{
-				const auto found = project.find(key);
-				return found != project.end() ? *found : none;
-			};
-			std::set<uint64_t> linear; // tracks
-			for (const Json& track : list("tracks"))
-				if (track.value("timeBase", std::string()) == "linear")
-					linear.insert(track.at("id").get<uint64_t>());
-			std::map<uint64_t, double> mediaRates;
-			for (const Json& media : list("media"))
-				mediaRates[media.at("id").get<uint64_t>()] = media.value("sampleRate", 0.0);
-			std::map<uint64_t, double> clipRates;
-			for (const Json& clip : list("clips"))
-				clipRates[clip.at("id").get<uint64_t>()] = mediaRates[clip.value("media", uint64_t{0})];
-			for (const Json& event : list("audioEvents"))
-			{
-				const auto track = event.at("track").get<uint64_t>();
-				if (std::find(range->tracks.begin(), range->tracks.end(), track) == range->tracks.end())
-					continue;
-				// Its start and end in project samples, as the event display shows it: a warped event's end where
-				// its warp puts it (playedLength).
-				const auto position = event.at("position").get<int64_t>();
-				const int64_t start =
-					linear.count(track) != 0 ? position : time.tempo.toSamples(position, time.sampleRate);
-				const double rate = clipRates[event.at("clip").get<uint64_t>()];
-				const auto played = event.find("playedLength");
-				auto end = static_cast<double>(start);
-				if (played != event.end())
-					end += played->get<double>();
-				else if (rate > 0.0)
-					end += event.at("length").get<double>() * time.sampleRate / rate;
-				if (start < range->end && end > static_cast<double>(range->start))
-					target.events.push_back(event.at("id").get<uint64_t>());
-			}
+			// Where each event plays as the event display shows it (#1672), in seconds.
+			const double rate = m_eventDisplay->time().sampleRate;
+			const double from = static_cast<double>(range->start) / rate;
+			const double to = static_cast<double>(range->end) / rate;
+			for (const auto& [id, span] : m_eventDisplay->audioEventSpans())
+				if (std::find(range->tracks.begin(), range->tracks.end(), span.track) != range->tracks.end() &&
+					span.start < to && span.end > from)
+					target.events.push_back(id);
 			target.range = std::make_pair(range->start, range->end);
 		}
 		return target;
@@ -362,9 +332,16 @@ namespace gnubase::app
 			}
 			commands.push_back({{"command", command}, {"parameters", std::move(parameters)}});
 		}
+		// Refused, as Quantize on a selection range with Warp Quantize off is (#1668), it is logged as a refused
+		// Slice is.
+		const auto refused = [step](const engine::Result& result)
+		{
+			if (!result.ok())
+				logging::warning("{} failed: {}", step, result.error);
+		};
 		if (commands.size() == 1)
-			m_binding.send(command, commands[0].at("parameters"));
+			m_binding.send(command, commands[0].at("parameters"), refused);
 		else
-			m_binding.send("history.transaction", {{"description", step}, {"commands", std::move(commands)}});
+			m_binding.send("history.transaction", {{"description", step}, {"commands", std::move(commands)}}, refused);
 	}
 }
