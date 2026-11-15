@@ -527,6 +527,63 @@ TEST_CASE("remote triggers in a recording select sound slots", "[unit]")
 		CHECK(directions(part) == Directions{{"Pizzicato", false}});
 		CHECK(part.at("controllers").size() == 2); // program 9 triggers nothing
 	}
+	SECTION("add-on slots")
+	{
+		// E1 turns the add-on Sordino on, the direction Con sordino of the group Mute; F1 the add-on Accent, an
+		// attribute of the group Accent.
+		Json settings = stringsSettings();
+		settings["map"] = id;
+		settings["groups"].push_back("Mute");
+		settings["groups"].push_back("Accent");
+		settings["articulations"].push_back({{"name", "Con sordino"}, {"type", "direction"}, {"group", 2}});
+		settings["articulations"].push_back({{"name", "Accent"}, {"type", "attribute"}, {"group", 3}});
+		settings["slots"].push_back(
+			{{"name", "Sordino"}, {"addOn", true}, {"articulations", {"Con sordino"}}, {"trigger", 40}});
+		settings["slots"].push_back(
+			{{"name", "Accent"}, {"addOn", true}, {"articulations", {"Accent"}}, {"trigger", 41}});
+		// The directions in the order of their positions: position, as recorded, name and reset. The part has
+		// ticks, the recording samples: the first note, recorded at sample, gives the scale.
+		const auto placed = [](const Json& part, int64_t sample)
+		{
+			const double scale = part.at("notes").at(0).at("position").get<double>() / static_cast<double>(sample);
+			std::vector<std::tuple<int64_t, std::string, bool>> found;
+			for (const Json& controller : part.at("controllers"))
+				if (controller.at("type") == "articulation")
+					found.emplace_back(std::llround(controller.at("position").get<double>() / scale),
+						controller.at("articulation").get<std::string>(), controller.at("reset").get<bool>());
+			std::sort(found.begin(), found.end());
+			return found;
+		};
+		using Placed = std::vector<std::tuple<int64_t, std::string, bool>>;
+
+		SECTION("with latch, a slot of another group keeps them, and their attributes stay on the notes")
+		{
+			f.call("articulationMap.set", settings);
+			const Json part = record(
+				Json::array({key(0, 100, 40), key(0, 100, 41), key(1000, 100, 37), key(2000, 500, 60)}), Json::array());
+			REQUIRE(part.at("notes").size() == 1);
+			CHECK(part.at("notes").at(0).at("articulations") == Json{"Accent"});
+			CHECK(placed(part, 2000) == Placed{{0, "Con sordino", false}, {1000, "Pizzicato", false}});
+		}
+		SECTION("without latch, one pressed and released while another slot's key is held")
+		{
+			settings["latch"] = false;
+			f.call("articulationMap.set", settings);
+			// Pizzicato held, Sordino and Accent pressed and released meanwhile: Arco is back where Pizzicato's key
+			// is released.
+			const Json part = record(Json::array({key(0, 5000, 37), key(1000, 1000, 40), key(1000, 1000, 41),
+										 key(1500, 100, 60), key(3000, 100, 62), key(6000, 100, 64)}),
+				Json::array());
+			const Json& notes = part.at("notes");
+			REQUIRE(notes.size() == 3);
+			CHECK(notes.at(0).at("articulations") == Json{"Accent"});
+			CHECK(!notes.at(1).contains("articulations"));
+			CHECK(!notes.at(2).contains("articulations"));
+			CHECK(placed(part, 1500) ==
+				Placed{{0, "Con sordino", true}, {0, "Pizzicato", false}, {1000, "Con sordino", false},
+					{2000, "Con sordino", true}, {5000, "Arco", true}, {5000, "Con sordino", true}});
+		}
+	}
 }
 
 TEST_CASE("renaming or removing an articulation does so in the parts of the tracks that use the map", "[unit]")
@@ -1277,6 +1334,44 @@ TEST_CASE("Attack Compensation, Separation and the pitch and velocity ranges mod
 	settings["slots"][1]["minPitch"] = 80;
 	CHECK_THAT(
 		f.fails("articulationMap.set", {{"map", id}, {"slots", settings["slots"]}}), ContainsSubstring("maxPitch"));
+}
+
+TEST_CASE("Sound slots change in the order the notes play, earlier by their Attack Compensation", "[unit]")
+{
+	Fixture f;
+	Json settings = {{"name", "Compensated"}, {"groups", {"Group 1"}},
+		{"articulations", {{{"name", "Accent"}, {"type", "attribute"}, {"group", 0}}}},
+		{"slots",
+			{{{"name", "Normal"}, {"outputs", {{{"status", "note"}, {"data1", 24}}}}},
+				{{"name", "Accent"}, {"articulations", {"Accent"}}, {"attack", 150},
+					{"outputs", {{{"status", "note"}, {"data1", 25}}}}}}}};
+	const auto id = f.call("articulationMap.add", settings).at("map").at("id");
+	f.call("track.set", {{"track", f.track}, {"articulationMap", id}});
+	// A note of the uncompensated slot just before the first of two notes of the compensated one, which plays
+	// before it.
+	f.call("note.add",
+		{{"part", f.part},
+			{"notes",
+				{{{"position", (2 * g_quarter) - (g_quarter / 10)}, {"length", g_quarter / 20}, {"pitch", 60},
+					 {"velocity", 0.5}},
+					{{"position", 2 * g_quarter}, {"length", g_quarter}, {"pitch", 61}, {"velocity", 0.5},
+						{"articulations", {"Accent"}}},
+					{{"position", 3 * g_quarter}, {"length", g_quarter}, {"pitch", 62}, {"velocity", 0.5},
+						{"articulations", {"Accent"}}}}}});
+	const engine::RenderChannel channel = f.rendered();
+	REQUIRE(notePlaying(channel, 61).start < notePlaying(channel, 60).start);
+	std::vector<std::pair<int64_t, int>> switches;
+	for (const engine::RenderNote& note : channel.notes)
+		if (note.pitch == 24 || note.pitch == 25)
+			switches.emplace_back(note.start, note.pitch);
+	std::sort(switches.begin(), switches.end());
+	REQUIRE(switches.size() == 3);
+	CHECK(switches[0].second == 25);
+	CHECK(switches[1].second == 24);
+	CHECK(switches[1].first < notePlaying(channel, 60).start);
+	// The compensated slot's key switch goes again before the third note.
+	CHECK(switches[2].second == 25);
+	CHECK(switches[2].first < notePlaying(channel, 62).start);
 }
 
 TEST_CASE("articulationMap.remoteTriggers transposes, reassigns and removes the remote triggers", "[unit]")

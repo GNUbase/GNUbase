@@ -78,12 +78,13 @@ namespace gnubase::engine
 			return std::llround(value * project.sampleRate / 1000.0);
 		}
 
-		// A note that selects a sound slot (#175): where it starts in the project and where its slot's events go
-		// there, its slot, the channel it plays on and the add-on slots it plays besides (#1113).
+		// A note that selects a sound slot (#175): where it starts in the project, where it plays (earlier by its
+		// slot's Attack Compensation, unclamped so that it orders the notes), its slot, the channel it plays on and
+		// the add-on slots it plays besides (#1113).
 		struct SlotNote
 		{
 			time::Ticks order = 0;
-			time::Ticks at = 0;
+			time::Samples plays = 0;
 			const SoundSlot* slot = nullptr;
 			uint8_t channel = 0;
 			std::vector<const SoundSlot*> addOns;
@@ -106,31 +107,32 @@ namespace gnubase::engine
 					if (const auto found = addOns.find(id); found != addOns.end())
 						for (const size_t index : found->second)
 							added.push_back(&map.slots.at(index));
-					into.push_back({start + note.position, start + std::max<time::Ticks>(note.position, 0), &slot,
+					const time::Samples plays = toSamples(project, start + std::max<time::Ticks>(note.position, 0)) -
+						milliseconds(project, slot.attack);
+					into.push_back({start + note.position, plays, &slot,
 						playedChannel(note, nullptr, &slot, trackChannel), std::move(added)});
 				}
 		}
 
 		// The output events of a track's sound slots (#175, reference manual p. 1270), across its parts in the order
-		// of the notes' starts (#1491): where a note's slot differs from the last one the track sent, the off events
-		// of that one, on the channel its notes played on, and the on events of the new one, on the channel of the
-		// note. Key switches play for a sample, ending where the note starts; a jump after them sends them again
-		// (MidiSequencer::chaseNotes). The controller and program changes are the track's (g_soundSlotPart), not the
-		// part's of the note, so a chase limited to parts finds them where a part continues the slot of another.
+		// the notes play in, earlier by their slots' Attack Compensation (#1491, #1113): where a note's slot differs
+		// from the last one the track sent, the off events of that one, on the channel its notes played on, and the on
+		// events of the new one, on the channel of the note. Key switches play for a sample, ending where the note
+		// starts; a jump after them sends them again (MidiSequencer::chaseNotes). The controller and program changes
+		// are the track's (g_soundSlotPart), not the part's of the note, so a chase limited to parts finds them where a
+		// part continues the slot of another.
 		void addOutputEvents(const Project& project, std::vector<SlotNote>& notes, RenderChannel& channel)
 		{
-			std::stable_sort(
-				notes.begin(), notes.end(), [](const SlotNote& a, const SlotNote& b) { return a.order < b.order; });
+			std::stable_sort(notes.begin(), notes.end(), [](const SlotNote& a, const SlotNote& b)
+				{ return std::tie(a.plays, a.order) < std::tie(b.plays, b.order); });
 			const SlotNote* previous = nullptr;
 			for (const SlotNote& note : notes)
 			{
 				const bool same = previous != nullptr && note.slot == previous->slot;
 				if (same && note.addOns == previous->addOns)
 					continue;
-				// Where the note starts, earlier by its slot's Attack Compensation; key switches a sample before it, or
-				// the slot's Separation (p. 1271).
-				const time::Samples at =
-					std::max<time::Samples>(toSamples(project, note.at) - milliseconds(project, note.slot->attack), 0);
+				// Where the note plays; key switches a sample before it, or the slot's Separation (p. 1271).
+				const time::Samples at = std::max<time::Samples>(note.plays, 0);
 				const time::Samples keySwitch = std::max<time::Samples>(
 					at - std::max<time::Samples>(milliseconds(project, note.slot->separation), 1), 0);
 				const auto send = [&](const SoundSlot& from, bool off, uint8_t on)

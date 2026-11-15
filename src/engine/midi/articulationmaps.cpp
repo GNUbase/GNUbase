@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -494,14 +495,15 @@ namespace gnubase::engine::midi
 				});
 		}
 
-		// The directions that select a slot: its own, and a reset for each other group with directions. An add-on
-		// slot's are only those of its own groups, and resets of them where it ends (reset).
+		// The directions that select a slot: its own, and a reset for each other group with directions, but those
+		// in which an add-on slot is selected (kept). An add-on slot's are only those of its own groups, and resets
+		// of them where it ends (reset).
 		void selectSlot(const ArticulationMap& map, const SoundSlot& slot, int64_t position, const Json& take,
-			Json& controllers, bool reset = false)
+			Json& controllers, const std::vector<bool>& kept, bool reset = false)
 		{
 			for (size_t group = 0; group < map.groups.size(); ++group)
 			{
-				if (slot.addOn && !hasGroup(map, slot, group))
+				if (slot.addOn ? !hasGroup(map, slot, group) : kept[group])
 					continue;
 				const Articulation* first = nullptr;
 				const Articulation* own = nullptr;
@@ -681,17 +683,33 @@ namespace gnubase::engine::midi
 			return;
 		std::stable_sort(triggers.begin(), triggers.end(),
 			[](const Trigger& a, const Trigger& b) { return a.position < b.position; });
+		// The groups in which an add-on slot is selected at a position: the last add-on trigger of the group up to
+		// there hasn't ended yet. Slots that aren't add-ons leave them alone, as the track does while it records
+		// (MidiSequencer::triggerSlot).
+		const auto addOnGroups = [&](int64_t position)
+		{
+			std::vector<bool> kept(map.groups.size(), false);
+			for (const Trigger& trigger : triggers)
+				if (trigger.position <= position && map.slots[trigger.slot].addOn)
+					for (size_t group = 0; group < map.groups.size(); ++group)
+						if (hasGroup(map, map.slots[trigger.slot], group))
+							kept[group] = position < trigger.end;
+			return kept;
+		};
 		for (size_t i = 0; i < triggers.size(); ++i)
 		{
 			const Trigger& trigger = triggers[i];
-			selectSlot(map, map.slots[trigger.slot], trigger.position, trigger.take, controllers);
-			// Without latch the default slot is back where the key is released, unless another key came first.
 			const SoundSlot& slot = map.slots[trigger.slot];
+			selectSlot(map, slot, trigger.position, trigger.take, controllers, addOnGroups(trigger.position));
+			// Without latch the default slot is back where the key is released, unless the key of another slot that
+			// isn't an add-on came first.
+			const auto next = std::find_if(triggers.begin() + static_cast<std::ptrdiff_t>(i + 1), triggers.end(),
+				[&map](const Trigger& later) { return !map.slots[later.slot].addOn; });
 			const bool released = trigger.end != std::numeric_limits<int64_t>::max() &&
-				(slot.addOn || i + 1 == triggers.size() || triggers[i + 1].position > trigger.end);
+				(slot.addOn || next == triggers.end() || next->position > trigger.end);
 			if (released)
-				selectSlot(
-					map, slot.addOn ? slot : map.slots.front(), trigger.end, trigger.take, controllers, slot.addOn);
+				selectSlot(map, slot.addOn ? slot : map.slots.front(), trigger.end, trigger.take, controllers,
+					addOnGroups(trigger.end), slot.addOn);
 		}
 		// The attributes of the slot selected where a note starts, and of the add-on slots selected there that no
 		// later trigger of a slot with an articulation of their groups replaced.
