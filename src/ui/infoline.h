@@ -28,6 +28,12 @@ namespace Rml
 // The project window's info line (#89, reference manual p. 72): docs/features/inspector.md describes it.
 namespace gnubase::ui
 {
+	// The root keys, as midiPart.set, audioEvent.set and clip.set take them: none ("-"), then C to B. With differ,
+	// first an empty one, g_differentRootKeys, which shows that the root keys of the events a list stands for differ
+	// (#1644): choosing "-" there clears them.
+	const widgets::Options& rootKeyOptions(bool differ = false);
+	constexpr const char* g_differentRootKeys = "*";
+
 	// Fills an element with the info line of the event display's selected events and parts: the first one's name,
 	// start, end and length in the ruler's time format (<textdisplay field="start">), an audio event's volume
 	// (<valuefield field="volume">) and mute and lock (toggle buttons), a MIDI part's or an audio event's transpose
@@ -43,8 +49,6 @@ namespace gnubase::ui
 	// bars and beats, the pitch as a name, the velocities 0-127 and the channel 1-16, which note.set edits the same
 	// way, relative to the first note or with Ctrl (Cmd)+Enter the same value for all, the channel set for all. Use
 	// it on the UI thread; the display and the binding must outlive it.
-	// The root keys, as midiPart.set, audioEvent.set and clip.set take them: none ("-"), then C to B.
-	const widgets::Options& rootKeyOptions();
 
 	class InfoLine final : private Rml::EventListener
 	{
@@ -102,10 +106,10 @@ namespace gnubase::ui
 		// A MIDI part as the display's project has it, or null.
 		const engine::Json* partOf(uint64_t part) const;
 		// A selected MIDI part or audio event (of m_events) as the display's project has it, for its root key and
-		// Global Transpose (#1368), or null. For an audio part, the first of its audio events, whose root key and
-		// Global Transpose it shows (#1555); null for an empty one.
+		// Global Transpose (#1368), or null. For an audio part, the first of its audio events by position, whose root
+		// key and Global Transpose it shows unless they differ (#1555, #1644); null for an empty one.
 		const engine::Json* transposableOf(const engine::Json& event) const;
-		// The audio events of an audio part, from the display's project.
+		// The audio events of an audio part by position, from the display's project.
 		std::vector<const engine::Json*> eventsOf(uint64_t part) const;
 		// What a value field shows for the project's value of item, the first selected event or note (edits "events"
 		// or "notes"): while the project is older than the field's own steps (#716), the value that the steps that

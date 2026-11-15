@@ -8,6 +8,9 @@
 #include "ui/poolpanel.h"
 #include "uiapp.h"
 
+#include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
@@ -104,6 +107,16 @@ namespace
 	void addMissing(test::UiApp& app, const std::filesystem::path& path)
 	{
 		app.call("media.add", {{"path", path.u8string()}, {"sampleRate", 48000.0}, {"channels", 1}, {"length", 48000}});
+	}
+
+	// How many options the first drop-down list that matches has: they aren't in the DOM that the UI tools see.
+	int options(test::UiApp& app, const std::string& selector)
+	{
+		Rml::Element* element = nullptr;
+		for (int i = 0; element == nullptr && i < app.main().context().GetNumDocuments(); ++i)
+			element = app.main().context().GetDocument(i)->QuerySelector(selector);
+		auto* select = dynamic_cast<Rml::ElementFormControlSelect*>(element);
+		return select != nullptr ? select->GetNumOptions() : -1;
 	}
 
 	void openPool(test::UiApp& app, size_t rowCount)
@@ -217,13 +230,30 @@ TEST_CASE("the pool panel's Key column shows and sets the root key of a clip's a
 	const std::string key = "#pool listitem select[field=rootKey]";
 	REQUIRE(elements(app, key).size() == 1); // the Audio folder has none
 	CHECK(elements(app, key).at(0).at("value") == "");
+	// A row's list holds only the key it shows until it is used (#1644).
+	CHECK(options(app, key) == 1);
 	click(app, key);
+	CHECK(options(app, key) == 13);
 	app.ui().key(std::nullopt, "Down");
 	click(app, key);
 	REQUIRE(app.waitUntil([&] { return eventKey() == "C"; }));
 	// A key set on the info line, or from another client, shows.
 	app.call("audioEvent.set", {{"event", event}, {"rootKey", "G"}});
 	CHECK(app.waitUntil([&] { return elements(app, key).at(0).at("value") == "G"; }));
+	// Events of the clip in different keys show empty, a state of their own, and "-" clears them (#1644).
+	const uint64_t second = app.call("audioEvent.add", {{"track", track.at("id")}, {"clip", loop}, {"position", 9600}})
+								.at("event")
+								.at("id")
+								.get<uint64_t>();
+	REQUIRE(app.waitUntil([&] { return elements(app, key).at(0).at("value") == "*"; }));
+	click(app, key);
+	app.ui().key(std::nullopt, "Down");
+	click(app, key);
+	REQUIRE(app.waitUntil([&] { return eventKey() == "" && elements(app, key).at(0).at("value") == ""; }));
+	// A clip that no audio event plays has nowhere to keep a key: its list is disabled (#1644).
+	app.call("audioEvent.remove", {{"event", event}});
+	app.call("audioEvent.remove", {{"event", second}});
+	REQUIRE(app.waitUntil([&] { return elements(app, key).at(0).at("attributes").contains("disabled"); }));
 }
 
 TEST_CASE("the pool panel's Import puts files into the pool through the Import Options dialog", "[ui]")

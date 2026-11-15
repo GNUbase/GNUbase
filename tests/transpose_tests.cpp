@@ -609,15 +609,25 @@ TEST_CASE("audio events that transpose differently by their own Transpose don't 
 TEST_CASE("the pool's Key column sets the root key of every audio event of a clip", "[integration]")
 {
 	AudioSong song;
-	const auto clipKey = [&song]
+	const auto clipJson = [&song]
 	{
 		const Json pool = run(song.client, "pool.get");
 		for (const Json& clip : pool.at("clips"))
 			if (clip.at("id") == song.clip)
-				return clip.at("rootKey").get<std::string>();
-		return std::string("no clip");
+				return clip;
+		return Json::object();
 	};
+	const auto clipKey = [&clipJson] { return clipJson().value("rootKey", std::string("no clip")); };
 	CHECK(clipKey() == "");
+	CHECK(clipJson().at("audioEvents") == 1);
+	CHECK(clipJson().at("rootKeysDiffer") == false);
+	// A clip that no audio event plays has nowhere to keep a key (#1644).
+	const Json media = clipJson().at("media");
+	const ObjectId unplayed = run(song.client, "clip.add", {{"media", media}}).at("clip").at("id").get<ObjectId>();
+	const Json pool = run(song.client, "pool.get");
+	for (const Json& clip : pool.at("clips"))
+		if (clip.at("id") == unplayed)
+			CHECK(clip.at("audioEvents") == 0);
 	// A second event of the clip, stashed in an inactive track version (reference manual p. 417).
 	run(song.client, "trackVersion.add", {{"tracks", {song.audioTrack}}});
 	run(song.client, "audioEvent.add",
@@ -628,11 +638,14 @@ TEST_CASE("the pool's Key column sets the root key of every audio event of a cli
 	CHECK(song.eventJson(other).at("rootKey") == "A");
 	run(song.client, "trackVersion.activate", {{"tracks", {song.audioTrack}}, {"version", 1}});
 	CHECK(song.eventJson().at("rootKey") == "A");
-	// Events of the clip in different keys: the column shows none.
+	CHECK(clipJson().at("audioEvents") == 2);
+	// Events of the clip in different keys: no key, and rootKeysDiffer says why (#1644).
 	run(song.client, "audioEvent.set", {{"event", song.event}, {"rootKey", "B"}});
 	CHECK(clipKey() == "");
+	CHECK(clipJson().at("rootKeysDiffer") == true);
 	run(song.client, "history.undo");
 	CHECK(clipKey() == "A");
+	CHECK(clipJson().at("rootKeysDiffer") == false);
 	// One undo step; the audio file stays as it is.
 	run(song.client, "history.undo"); // the version activated
 	run(song.client, "history.undo"); // the clip's root key

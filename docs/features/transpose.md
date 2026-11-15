@@ -27,9 +27,11 @@ transpose events and controls, and MIDI parts and audio events that follow it or
   `event.glue` refuses audio events that transpose differently by their own Transpose.
 - **The pool's Key column** (#1555, p. 417): `clip.set` `rootKey` gives every audio event that plays the clip that
   root key, also those in inactive track versions; `pool.get` gives each clip `rootKey`, the root key its audio events
-  share (`""` when they have none or differ). The audio file stays as it is.
+  share (`""` when they have none or differ), `rootKeysDiffer` (they differ) and `audioEvents`, how many play it
+  (#1644). The audio file stays as it is.
 - **Audio parts** (#1555, p. 417) have no root key or Global Transpose of their own: their events play by theirs.
-  The info line shows the first event's for a selected audio part and sets them on all its events.
+  The info line shows those of a selected audio part's first event by position, or an empty value where its events
+  differ (#1644), and sets them on all its events.
 - **The transpose track** (`TrackType::Transpose`, `"transpose"`) has no channel, stays at the top level and is there
   at most once. Its events and controls are `Project::transpose`; removing the track removes them. Switching its time
   base and changing the sample rate keep the events where they are, as for markers.
@@ -71,6 +73,13 @@ that sustained audio doesn't click there (#1564). An event that nothing can shif
 Independent or without a root key step and transpose events, gets no warp or pitch map at all (#1555), so a project
 without global transposition pays nothing for it; it plays its file as before.
 
+What following the root key costs, `gnubase-bench --case transposedEvents` ([performance.md](performance.md)): 16 and
+64 mono audio events in C on tracks of their own, played as they are and in a project in D, each render in a process of
+its own. One Release run on Windows with 32 hardware threads, on a machine that other builds kept busy (#1644): as they
+are 2.8 times faster than real time for 16 and 64 events, following the root key 0.99 times for 16 and 0.33 times for
+64, and 2.4 and 2.3 MB more per shifted event. A project that shifts many events at once is bound by their stretchers
+on the disk threads, which offline rendering waits for.
+
 ## UI
 
 - **The toolbar** has the Project Root Key (`#root-key` with `#root-key-menu`), which the event display shows and
@@ -81,7 +90,8 @@ without global transposition pays nothing for it; it plays its file as before.
   for a part in C in a project in D, from `rootKeyTranspose`. Its Global Transpose button reads the value it holds
   (p. 421): Follow, or Independent while it is checked.
 - **Independent parts and audio events** show an icon (`part-independent.svg`) in their upper right corner in the
-  event display (p. 421): a `.part-mark.independent` with attribute `part` in the display's `.part-marks`.
+  event display (p. 421): a `.part-mark.independent` with attribute `part` in the display's `.part-marks`. An audio
+  part shows it when all its events are Independent (#1644).
 - **The transpose track's lane** (`ui::GlobalEventLane`, `src/ui/transposetrack.h`, shared with the chord track's
   lanes) shows each event's value from its position: the draw tool adds an event at the nearest bar and opens its
   value for typing, a double click opens it too, a drag moves it to the nearest bar, following the mouse while the
@@ -95,7 +105,8 @@ without global transposition pays nothing for it; it plays its file as before.
 - **Refused edits**: the event display shows why the engine refused an edit, such as a glue of parts that follow global
   transpose differently, in its notification `#edit-refused` (#1367, [event-display.md](event-display.md)).
 - **The pool's Key column** (`select[field=rootKey]` in each clip's row, [pool.md](pool.md)) shows and sets the root
-  key of the clip's audio events (`clip.set` `rootKey`).
+  key of the clip's audio events (`clip.set` `rootKey`): empty when they differ, where "-" clears them, and disabled
+  for a clip that no audio event plays (#1644). Each list holds only the key it shows until it gets the focus.
 - **The track list's context menu** has Set Root Key for Unassigned Events (`transpose.assignRootKey`, p. 416),
   enabled while the transpose track is selected, as a right click on it selects it.
 
@@ -114,7 +125,8 @@ events, a muted track, the octave range and Independent, with undo and splits; S
 glue; recorded events with and without transpose events; saving and loading. An audio event's own Transpose with the
 root key step, Independent and the octave range, its range and `rootKeyTranspose`; no media entry of its own for an
 event that nothing can shift; glue refusing events with different Transposes; the pool's Key column (`clip.set`
-`rootKey`) over the events of a clip, inactive track versions included, and what `pool.get` shows when they differ.
+`rootKey`) over the events of a clip, inactive track versions included, and what `pool.get` shows when they differ
+and for a clip without events.
 `tests/renderinplace_tests.cpp`: a rendered event under a transpose event Independent with an empty pitch map, and one
 without transpose events in the project root key, following it, with a pitch map that a later root key shifts.
 `tests/warp_tests.cpp`: `dsp::WarpReader` shifting a sine an octave up from a point of its pitch map, also after a seek,
@@ -126,7 +138,9 @@ Transpose (its button reading Follow or Independent) for parts and audio events 
 Independent parts and audio events, the reason of a refused glue in `#edit-refused`, drawing, typing, dragging,
 double-clicking and erasing transpose events on the lane, the track list's controls and its context menu's Set Root Key
 for Unassigned Events, an audio event's own Transpose with the root key step in brackets, and an audio part's events'
-Root Key and Global Transpose. `tests/poolpanel_tests.cpp`: the pool's Key column.
+Root Key and Global Transpose, empty when they differ, with the mark when all of them are Independent.
+`tests/poolpanel_tests.cpp`: the pool's Key column, its options filled once it is used, differing keys cleared with
+"-", and disabled for a clip without audio events.
 
 ## Not yet
 

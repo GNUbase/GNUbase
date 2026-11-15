@@ -106,11 +106,29 @@ namespace gnubase::ui
 				same = option->GetAttribute<Rml::String>("value", "") == options[static_cast<size_t>(i)].first &&
 					option->GetInnerRML() == Rml::StringUtilities::EncodeRml(options[static_cast<size_t>(i)].second);
 			}
+			// A change that the selection below sends may fill the list again: that one waits for this one.
+			static Rml::Element* filling = nullptr;
+			if (filling == &element)
+				return;
 			if (!same)
 			{
-				select->RemoveAll();
+				// The new options come before the old ones go, with the value selected among them, so that the list
+				// doesn't lose its selection in between: that would send a change to "", which a list of root keys
+				// takes for a choice of none (#1644).
+				filling = &element;
+				const int old = select->GetNumOptions();
+				int chosen = -1;
 				for (const auto& [optionValue, text] : options)
-					select->Add(Rml::StringUtilities::EncodeRml(text), optionValue);
+				{
+					const int index = select->Add(Rml::StringUtilities::EncodeRml(text), optionValue);
+					if (chosen < 0 && optionValue == value)
+						chosen = index;
+				}
+				if (chosen >= 0)
+					select->SetSelection(chosen);
+				for (int i = 0; i < old; ++i)
+					select->Remove(0);
+				filling = nullptr;
 			}
 			if (select->GetValue() != value)
 				select->SetValue(value);
