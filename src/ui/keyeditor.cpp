@@ -33,6 +33,9 @@ namespace gnubase::ui
 		constexpr int g_pitches = 128;
 		constexpr double g_maxVelocity = 127.0;
 		constexpr float g_edge = 6.0F; // dp at a note's ends where the object selection tool resizes it
+		constexpr std::array<Rml::EventId, 8> g_rootEvents = {Rml::EventId::Mousedown, Rml::EventId::Mousemove,
+			Rml::EventId::Mouseup, Rml::EventId::Drag, Rml::EventId::Dragend, Rml::EventId::Click,
+			Rml::EventId::Dblclick, Rml::EventId::Change};
 		// dp the drumstick goes from its press before its release deletes the sound's later notes too (p. 1242)
 		constexpr float g_dragThreshold = 4.0F;
 		// The zoom the keyboard's left part drags (p. 1261): its limits, and the dp a drag goes to the right to double
@@ -361,11 +364,9 @@ namespace gnubase::ui
 			menu->AddEventListener(Rml::EventId::Click, this);
 			m_menus.push_back(menu->GetObserverPtr());
 		}
-		for (const Rml::EventId event : {Rml::EventId::Mousedown, Rml::EventId::Mousemove, Rml::EventId::Mouseup,
-				 Rml::EventId::Click, Rml::EventId::Dblclick, Rml::EventId::Change})
+		for (const Rml::EventId event : g_rootEvents)
 			root.AddEventListener(event, this);
 		document->AddEventListener(Rml::EventId::Mouseup, this);
-		document->AddEventListener(Rml::EventId::Mousemove, this);
 		document->AddEventListener(Rml::EventId::Mouseout, this);
 		m_document = document->GetObserverPtr();
 		setTool(KeyTool::ObjectSelection);
@@ -422,12 +423,10 @@ namespace gnubase::ui
 		if (Rml::Element* document = m_document.get())
 		{
 			document->RemoveEventListener(Rml::EventId::Mouseup, this);
-			document->RemoveEventListener(Rml::EventId::Mousemove, this);
 			document->RemoveEventListener(Rml::EventId::Mouseout, this);
 		}
 		if (Rml::Element* root = m_root.get())
-			for (const Rml::EventId event : {Rml::EventId::Mousedown, Rml::EventId::Mousemove, Rml::EventId::Mouseup,
-					 Rml::EventId::Click, Rml::EventId::Dblclick, Rml::EventId::Change})
+			for (const Rml::EventId event : g_rootEvents)
 				root->RemoveEventListener(event, this);
 		for (const Rml::ObserverPtr<Rml::Element>& menu : m_menus)
 			if (Rml::Element* element = menu.get())
@@ -1297,63 +1296,43 @@ namespace gnubase::ui
 		{
 		case Rml::EventId::Mousedown:
 			if (event.GetParameter("button", 0) == 0)
+			{
 				press(event);
+				dragDuringGesture();
+			}
 			break;
 		case Rml::EventId::Mousemove:
-			// A keyboard drag hears the mouse in the whole document: zooming out to the left takes the mouse out of
-			// the editor; so does the drumstick's draw, which its release takes from anywhere. The root's pass and
-			// the document's compute the same absolute state, so both are harmless.
-			if (event.GetCurrentElement() == m_root.get() || m_gesture == Gesture::ZoomScroll ||
-				(m_gesture == Gesture::Draw && m_drum))
+			drag(event);
+			break;
+		case Rml::EventId::Drag:
+			// The draws and the keyboard's drag follow the mouse wherever it is, also outside the window, where the
+			// platform captures it while the button is held but nothing is hovered; in the editor the root's
+			// mousemove computes the same absolute state, so both are harmless.
+			if (m_gesture == Gesture::ZoomScroll || m_gesture == Gesture::Draw)
 				drag(event);
 			break;
 		case Rml::EventId::Mouseup:
-		{
 			// A key's pitch ends wherever the mouse is released; the document hears that, the root only within.
 			sound(std::nullopt);
 			if (Rml::Element* velocity = m_root.get()->QuerySelector(".key-editor-velocity"))
 				velocity->SetClass("off", true);
-			// The drumstick's insertion and deletion and a keyboard's drag end wherever the mouse is released; the
-			// other gestures only within.
-			if (event.GetCurrentElement() == m_root.get() || m_gesture == Gesture::Erase ||
-				m_gesture == Gesture::ZoomScroll || (m_gesture == Gesture::Draw && m_drum))
-			{
+			if (event.GetCurrentElement() == m_root.get())
 				release(event);
-			}
-			else if (const auto [grid, track] = foreignInPlaceGrid(event);
-				grid != nullptr && m_gesture != Gesture::None)
-			{
-				// A gesture released over another in-place editor's grid: a move drops the selected notes there
-				// (p. 1261); the others end without their effect.
-				if (std::exchange(m_gesture, Gesture::None) == Gesture::Move)
-				{
-					moveToInPlace(event, *grid, track);
-				}
-				else
-				{
-					if (Rml::Element* drawn = m_drawn.get(); drawn != nullptr && drawn->GetParentNode() != nullptr)
-						drawn->GetParentNode()->RemoveChild(drawn);
-					m_pressed.reset();
-					placeItems();
-				}
-			}
 			break;
-		}
+		case Rml::EventId::Dragend:
+			// After the mouseup, if there was one: a gesture still going on was released outside the editor, also
+			// outside the window, where no element hears the mouseup.
+			if (m_gesture != Gesture::None)
+				releaseOutside(event);
+			break;
 		case Rml::EventId::Mouseout:
 			// The mouse leaving the window ends the pitch too: the button going up out there sends no mouseup.
 			if (target == m_document.get())
-			{
 				sound(std::nullopt);
-				// The keyboard's drag ends too, for the same reason, and the drumstick's draw inserts what it showed
-				// last: the event has the mouse where it left but not the modifier keys.
-				if (m_gesture == Gesture::ZoomScroll)
-					m_gesture = Gesture::None;
-				else if (m_gesture == Gesture::Draw && m_drum)
-					endDrumDraw(m_drumDrawn);
-			}
 			break;
 		case Rml::EventId::Dblclick:
 			doubleClick(event);
+			dragDuringGesture();
 			break;
 		case Rml::EventId::Click:
 			toolbar(*target);
@@ -1376,6 +1355,8 @@ namespace gnubase::ui
 
 	void KeyEditor::press(Rml::Event& event)
 	{
+		// A gesture whose release never came, as when the window lost the focus before the mouse moved, ends here.
+		cancelGesture();
 		Rml::Element* root = m_root.get();
 		Rml::Element* target = event.GetTargetElement();
 		// The keyboard's left part (p. 1261): a press plays the pitch under it as a key does, and a drag zooms the
@@ -1596,7 +1577,6 @@ namespace gnubase::ui
 		m_drawnLength = lengthQuantize(m_pressedAt.second);
 		place(*added, start, m_drawnLength, m_pressedAt.second);
 		m_drawn = added->GetObserverPtr();
-		m_drumDrawn = {start, m_drawnLength, pitch, m_view.value("insertVelocity", 100.0 / g_maxVelocity)};
 	}
 
 	int64_t KeyEditor::drawStart(double ticks, int pitch) const
@@ -1669,7 +1649,6 @@ namespace gnubase::ui
 			if (Rml::Element* drawn = m_drawn.get(); drawn != nullptr && m_drum)
 			{
 				const DrumDraw draw = drumDraw(event);
-				m_drumDrawn = draw;
 				place(*drawn, draw.start, draw.length, draw.pitch);
 				// The new notes' velocity shows beside them while dragging.
 				if (Rml::Element* velocity = m_root.get()->QuerySelector(".key-editor-velocity"))
@@ -1859,14 +1838,65 @@ namespace gnubase::ui
 		edit(gesture == Gesture::Move ? "Move" : "Resize", std::move(commands));
 	}
 
-	std::pair<Rml::Element*, uint64_t> KeyEditor::foreignInPlaceGrid(const Rml::Event& event) const
+	void KeyEditor::releaseOutside(Rml::Event& event)
+	{
+		Rml::Context* context = m_root.get()->GetContext();
+		const auto [grid, track] = foreignInPlaceGrid(context != nullptr ? context->GetHoverElement() : nullptr);
+		switch (m_gesture)
+		{
+		case Gesture::Move:
+			// Over another in-place editor's grid a move drops the selected notes there (p. 1261).
+			if (grid != nullptr)
+			{
+				m_gesture = Gesture::None;
+				moveToInPlace(event, *grid, track);
+				return;
+			}
+			cancelGesture();
+			return;
+		case Gesture::ResizeStart:
+		case Gesture::ResizeEnd:
+			cancelGesture();
+			return;
+		default:
+			release(event);
+			return;
+		}
+	}
+
+	void KeyEditor::cancelGesture()
+	{
+		if (std::exchange(m_gesture, Gesture::None) == Gesture::None)
+			return;
+		if (Rml::Element* drawn = m_drawn.get(); drawn != nullptr && drawn->GetParentNode() != nullptr)
+			drawn->GetParentNode()->RemoveChild(drawn);
+		if (Rml::Element* velocity = m_root.get()->QuerySelector(".key-editor-velocity"))
+			velocity->SetClass("off", true);
+		m_pressed.reset();
+		placeItems();
+	}
+
+	void KeyEditor::dragDuringGesture()
+	{
+		Rml::Element* root = m_root.get();
+		const bool on = m_gesture != Gesture::None;
+		if (root == nullptr || root->IsClassSet("in-gesture") == on)
+			return;
+		root->SetClass("in-gesture", on);
+		// RmlUi looks for the drag element right after the press's mousedown and double click, from the computed
+		// values.
+		if (Rml::ElementDocument* owner = root->GetOwnerDocument())
+			owner->UpdateDocument();
+	}
+
+	std::pair<Rml::Element*, uint64_t> KeyEditor::foreignInPlaceGrid(Rml::Element* hovered) const
 	{
 		// Only an in-place editor drops its notes into another one (p. 1261): the other editors' grids lie on time
 		// axes of their own, so a drop there wouldn't land at the time under the mouse.
 		if (m_name.rfind("inPlace:", 0) != 0)
 			return {nullptr, 0};
 		Rml::Element* grid = nullptr;
-		for (Rml::Element* up = event.GetTargetElement(); up != nullptr; up = up->GetParentNode())
+		for (Rml::Element* up = hovered; up != nullptr; up = up->GetParentNode())
 		{
 			if (up->IsClassSet("key-editor-grid"))
 			{

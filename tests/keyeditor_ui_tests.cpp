@@ -702,7 +702,7 @@ TEST_CASE("the object selection tool selects, moves, resizes, inserts and delete
 	const std::vector<uint64_t> ids = f.add({{0, 60, g_quarter}, {g_quarter, 62, g_quarter}});
 	// A click selects, Ctrl and a click adds, a click in the empty grid deselects (p. 1211).
 	f.click(of(noteSelector(ids[0])));
-	REQUIRE(f.app.waitUntil([&] { return f.selection() == std::vector<uint64_t>{ids[0]}; }));
+	REQUIRE(f.app.waitUntil([&] { return f.has(noteSelector(ids[0]), "selected"); }));
 	f.click(of(noteSelector(ids[1])), 1, {"ctrl"});
 	REQUIRE(f.app.waitUntil([&] { return f.selection().size() == 2; }));
 	f.click(f.at(12.5, 70));
@@ -753,6 +753,43 @@ TEST_CASE("the draw tool draws notes of the length quantize's length or a multip
 	f.settle();
 	CHECK(f.partNotes()[1].at("position") == 2 * g_quarter);
 	CHECK(f.partNotes()[1].at("length") == 6 * g_sixteenth);
+}
+
+TEST_CASE("a move released outside the key editor ends without its effect, a draw released there draws", "[ui]")
+{
+	Fixture f;
+	const std::vector<uint64_t> ids = f.add({{0, 60, g_sixteenth}});
+	const auto x = [&] { return f.box(noteSelector(ids[0])).at("x").get<double>(); };
+	const double before = x();
+	// A move of the note released over the editor window's toolbar, outside the key editor, ends there with the note
+	// where it was: back over the editor it doesn't follow the mouse, and a click on the parts' row above the grid
+	// moves nothing.
+	f.app.ui().press(f.window, f.at(0.5, 60), ui::MouseButton::Left);
+	REQUIRE(f.app.waitUntil([&] { return f.selection() == std::vector<uint64_t>{ids[0]}; }));
+	f.app.ui().move(f.window, f.at(6.0, 60));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.app.ui().move(f.window, f.at(6.5, 60));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return std::abs(x() - before) > 1.5; }));
+	f.app.ui().release(f.window, of("#editor-keep-contents"), ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return std::abs(x() - before) <= 1.5; }));
+	f.app.ui().move(f.window, f.at(8.5, 60));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(std::abs(x() - before) <= 1.5);
+	f.click(of(".editor-parts"));
+	CHECK_FALSE(f.app.waitUntil([&] { return f.note(ids[0]).at("position") != 0; }, std::chrono::milliseconds(300)));
+	CHECK(f.note(ids[0]).at("pitch") == 60);
+	// The draw tool's drag released above the editor draws as one released in it: from 8 sixteenths over three and a
+	// half, a note of four.
+	f.tool("draw");
+	const ui::Point later = f.at(11.5, 64).point.value_or(ui::Point{});
+	f.drag(f.at(8.3, 64), {"", 0, ui::Point{later.x, f.box(".key-editor").at("y").get<int>() - 4}});
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 2; }));
+	CHECK(f.partNotes()[1].at("position") == 8 * g_sixteenth);
+	CHECK(f.partNotes()[1].at("length") == 4 * g_sixteenth);
+	CHECK(f.partNotes()[1].at("pitch") == 64);
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note.drawing").empty(); }));
 }
 
 TEST_CASE("the draw tool follows a quantize grid changed in the project window", "[ui]")

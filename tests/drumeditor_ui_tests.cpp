@@ -12,6 +12,7 @@
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Core.h>
+#include <RmlUi/Core/Input.h>
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
@@ -723,7 +724,8 @@ TEST_CASE("a drumstick drag released outside the editor still inserts its notes"
 	CHECK(f.has(".key-editor-velocity", "off"));
 }
 
-TEST_CASE("a drumstick drag follows the mouse outside the editor and ends when it leaves the window", "[ui]")
+TEST_CASE(
+	"a drumstick drag follows the mouse outside the editor and out of the window until the button goes up", "[ui]")
 {
 	Fixture f;
 	f.scroll(36);
@@ -742,8 +744,8 @@ TEST_CASE("a drumstick drag follows the mouse outside the editor and ends when i
 	REQUIRE(f.app.waitUntil([&] { return shown() != std::to_string(std::lround(velocity * 127)); }));
 	const long outside = std::stol(shown());
 	CHECK(outside > std::lround(velocity * 127));
-	// Out of the window, where no mouseup arrives, the draw ends as there: the notes drawn so far go in, with that
-	// velocity.
+	// Out of the window, where no element hears the mouseup, the draw ends where the button goes up: the notes drawn
+	// so far go in, with that velocity.
 	ui::Window* window = f.app.shell().find(f.app.appUi().editorWindowId());
 	REQUIRE(window != nullptr);
 	Rml::Context& context = window->context();
@@ -761,6 +763,96 @@ TEST_CASE("a drumstick drag follows the mouse outside the editor and ends when i
 	CHECK(f.elements(".key-note.drawing").empty());
 	CHECK(f.has(".key-editor-velocity", "off"));
 	CHECK(f.partNotes().size() == 4);
+}
+
+TEST_CASE("a drumstick drag goes on past the window's edge until the button goes up", "[ui]")
+{
+	Fixture f;
+	f.scroll(36);
+	f.click(of(".key-tool[key-tool=draw]"));
+	ui::Window* window = f.app.shell().find(f.app.appUi().editorWindowId());
+	REQUIRE(window != nullptr);
+	Rml::Context& context = window->context();
+	// To the right over 3.5 sixteenths, then past the window's right edge: the platform captures the mouse while the
+	// button is held, so the moves go on out there, where nothing is hovered. Released there, the draw inserts a note
+	// at every sixteenth up to the part's end, not only those it showed at the window's edge.
+	f.app.ui().press(f.window, f.at(0.3, 36), ui::MouseButton::Left);
+	f.app.ui().move(f.window, f.at(3.5, 36));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const int y = f.at(3.5, 36).point.value_or(ui::Point{}).y;
+	context.ProcessMouseMove(context.GetDimensions().x + 40, y, 0);
+	context.ProcessMouseButtonUp(0, 0);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 16; }));
+	CHECK(f.partNotes()[15].at("position") == 15 * g_sixteenth);
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note.drawing").empty(); }));
+	CHECK(f.has(".key-editor-velocity", "off"));
+}
+
+TEST_CASE("a drumstick drag with Shift released out of the window inserts its one moved note", "[ui]")
+{
+	// p. 1241: with Shift the note moves along instead of repeating. Out of the window the release takes the
+	// modifier keys held when the button goes up, as in it.
+	Fixture f;
+	f.scroll(36);
+	f.click(of(".key-tool[key-tool=draw]"));
+	ui::Window* window = f.app.shell().find(f.app.appUi().editorWindowId());
+	REQUIRE(window != nullptr);
+	Rml::Context& context = window->context();
+	f.app.ui().press(f.window, f.at(0.3, 36), ui::MouseButton::Left, {"shift"});
+	f.app.ui().move(f.window, f.at(3.5, 36), {"shift"});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	context.ProcessMouseLeave();
+	context.ProcessMouseButtonUp(0, Rml::Input::KM_SHIFT);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return !f.partNotes().empty(); }));
+	REQUIRE(f.partNotes().size() == 1);
+	CHECK(f.partNotes()[0].at("position") == 3 * g_sixteenth);
+	CHECK(f.partNotes()[0].at("pitch") == 36);
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note.drawing").empty(); }));
+}
+
+TEST_CASE(
+	"a drumstick delete drag ends where the button goes up out of the window, and a lost one with no effect", "[ui]")
+{
+	// p. 1242: a drag from a note to the right deletes the notes of its sound up to the release.
+	Fixture f;
+	f.app.call("note.add",
+		{{"part", f.part},
+			{"notes",
+				{{{"position", 0}, {"length", g_sixteenth}, {"pitch", 36}, {"velocity", 0.5}},
+					{{"position", 2 * g_sixteenth}, {"length", g_sixteenth}, {"pitch", 36}, {"velocity", 0.5}},
+					{{"position", 6 * g_sixteenth}, {"length", g_sixteenth}, {"pitch", 36}, {"velocity", 0.5}}}}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-note").size() == 3; }));
+	f.scroll(36);
+	f.click(of(".key-tool[key-tool=draw]"));
+	ui::Window* window = f.app.shell().find(f.app.appUi().editorWindowId());
+	REQUIRE(window != nullptr);
+	Rml::Context& context = window->context();
+	// From the first note to 3 sixteenths, then out of the window, where no element hears the mouseup: the button
+	// going up there deletes the first two.
+	f.app.ui().press(f.window, f.at(0.0, 36), ui::MouseButton::Left);
+	f.app.ui().move(f.window, f.at(3.0, 36));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	context.ProcessMouseLeave();
+	context.ProcessMouseButtonUp(0, 0);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 1; }));
+	CHECK(f.partNotes()[0].at("position") == 6 * g_sixteenth);
+	// A press on the last note that loses the mouse before it moves, as when the window loses the focus, gets no
+	// release at all. It ends with the next press, also one outside the grid: a click on a sound's pitch deletes
+	// nothing.
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-note").size() == 1; }));
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	clock->advance(1.0); // no double click with the press before
+	f.app.ui().press(f.window, f.at(6.0, 36), ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	context.ProcessMouseLeave();
+	context.ProcessMouseButtonUp(0, 0);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.click(of(sound(38) + " .drum-sound-pitch"));
+	CHECK_FALSE(f.app.waitUntil([&] { return f.partNotes().empty(); }, std::chrono::milliseconds(300)));
 }
 
 TEST_CASE("with Use Snap from Drum Map a note moved to another sound snaps to that sound's snap", "[ui]")
