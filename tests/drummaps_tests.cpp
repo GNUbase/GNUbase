@@ -597,10 +597,11 @@ TEST_CASE("Solo Instrument plays only the sounds of the drum editor's selected n
 	{
 		f.call("editor.set", {{"editor", "window"}, {"soloInstrument", false}});
 		f.call("track.set", {{"track", f.track}, {"drumMap", 0}});
+		f.call("editor.set", {{"editor", "window"}, {"selection", {{{"part", f.part}, {"note", noteId(0)}}}}});
 		f.call("editor.set", {{"editor", "window"}, {"soloInstrument", true}});
 		CHECK(pitches().size() == 4);
 		f.call("track.set", {{"track", f.track}, {"drumMap", f.gm()}});
-		CHECK(pitches() == std::vector<int>{36, 38, 38, 38});
+		CHECK(pitches() == std::vector<int>{36});
 	}
 	SECTION("turned off")
 	{
