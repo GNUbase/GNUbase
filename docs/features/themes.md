@@ -66,7 +66,8 @@ The theme styles RmlUi's controls by their tags and states, and GNUbase's contai
 
 - **Text:** `body` has the theme's font and colors; `h1`, `h2`, `.text-title`, `.text-display`, `.text-label`,
   `.text-small`, `.text-muted`, `.text-accent`, and `.counter` for time and counter displays in the counter font.
-- **Icons:** `svg.icon` (resources/icons) in the text color, `.accent`, `.muted` or `.danger`; icons in buttons follow
+- **Icons:** `svg.icon` (resources/icons) in the text color, `.accent`, `.muted`, `.danger` or `.warning` (every warning
+  sign); icons in buttons follow
   the button's state.
 - **Buttons:** `button` with `:hover`, `:active`, `:disabled`, `:focus-visible` and the state classes `.checked` and
   `.suspended` (a switch that is on but paused, such as auto-scroll while editing); `button.primary`; `button.icon-only`; toggle buttons `button.toggle` with `.mute`, `.solo`, `.record` or `.monitor`

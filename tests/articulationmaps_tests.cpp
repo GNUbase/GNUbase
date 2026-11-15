@@ -1590,3 +1590,154 @@ TEST_CASE("articulationMap.remoteTriggers transposes, reassigns and removes the 
 	CHECK_THAT(
 		f.fails("articulationMap.remoteTriggers", {{"map", 999}, {"action", "remove"}}), ContainsSubstring("999"));
 }
+
+TEST_CASE("muted directions and attributes select no sound slot", "[unit]")
+{
+	// #1684, reference manual p. 1289: the mute tool's muted articulations.
+	Fixture f;
+	f.strings();
+	const Json direction =
+		f.call("controller.add",
+			 {{"part", f.part},
+				 {"controllers", {{{"position", 0}, {"type", "articulation"}, {"articulation", "Pizzicato"}}}}})
+			.at("controllers")
+			.at(0);
+	CHECK_FALSE(direction.contains("muted"));
+	const Json added = f.call("note.add",
+		{{"part", f.part},
+			{"notes",
+				{{{"position", 0}, {"length", 60}, {"pitch", 60}, {"velocity", 0.5}},
+					{{"position", g_quarter}, {"length", 60}, {"pitch", 61}, {"velocity", 0.5},
+						{"articulations", {"Staccato"}}}}}});
+	const Json staccato = added.at("notes").at(1);
+	CHECK(notePlaying(f.rendered(), 60).channel == 2); // Pizzicato
+	CHECK(notePlaying(f.rendered(), 73).channel == 0); // Pizzicato Staccato, an octave up
+	CHECK(engine::midi::soundSlots(f.maps().at(0), f.partJson()).at(staccato.at("id").get<uint64_t>()) == 3);
+
+	// A muted direction ends no direction before it and selects no slot: the default slot plays.
+	const Json muted =
+		f.call("controller.set", {{"part", f.part}, {"controllers", {{{"id", direction.at("id")}, {"muted", true}}}}})
+			.at("controllers")
+			.at(0);
+	CHECK(muted.at("muted") == true);
+	CHECK(notePlaying(f.rendered(), 60).channel == 0);
+	CHECK(notePlaying(f.rendered(), 24).start == 0); // C0, Arco's key switch
+	// A muted attribute selects no slot either: the note plays the default slot, not Staccato.
+	const Json mutedNote =
+		f.call("note.set",
+			 {{"part", f.part}, {"notes", {{{"id", staccato.at("id")}, {"mutedArticulations", {"Staccato"}}}}}})
+			.at("notes")
+			.at(0);
+	CHECK(mutedNote.at("mutedArticulations") == Json{"Staccato"});
+	CHECK(mutedNote.at("articulations") == Json{"Staccato"});
+	CHECK(notePlaying(f.rendered(), 61).channel == 0);
+	CHECK(f.rendered().controllers.empty()); // no Staccato controller 32
+	CHECK(engine::midi::soundSlots(f.maps().at(0), f.partJson()).at(staccato.at("id").get<uint64_t>()) == 0);
+
+	// Only a note's own attributes can be muted, and directions only can be.
+	CHECK_THAT(f.fails("note.set",
+				   {{"part", f.part},
+					   {"notes", {{{"id", added.at("notes").at(0).at("id")}, {"mutedArticulations", {"Staccato"}}}}}}),
+		ContainsSubstring("mutedArticulations"));
+	const Json control =
+		f.call("controller.add",
+			 {{"part", f.part},
+				 {"controllers", {{{"position", 0}, {"type", "controller"}, {"number", 1}, {"value", 0.5}}}}})
+			.at("controllers")
+			.at(0);
+	CHECK_THAT(
+		f.fails("controller.set", {{"part", f.part}, {"controllers", {{{"id", control.at("id")}, {"muted", true}}}}}),
+		ContainsSubstring("muted"));
+	CHECK_THAT(
+		f.fails("controller.add",
+			{{"part", f.part},
+				{"controllers",
+					{{{"position", 0}, {"type", "controller"}, {"number", 1}, {"value", 0.5}, {"muted", true}}}}}),
+		ContainsSubstring("muted"));
+	f.call("controller.remove", {{"part", f.part}, {"controllers", {control.at("id")}}});
+
+	// An attribute that goes takes its mute with it; unmuted, the slots play again.
+	const Json cleared =
+		f.call(
+			 "note.set", {{"part", f.part}, {"notes", {{{"id", staccato.at("id")}, {"articulations", Json::array()}}}}})
+			.at("notes")
+			.at(0);
+	CHECK_FALSE(cleared.contains("mutedArticulations"));
+	f.call("note.set", {{"part", f.part}, {"notes", {{{"id", staccato.at("id")}, {"articulations", {"Staccato"}}}}}});
+	CHECK_FALSE(f.partJson().at("notes").at(1).contains("mutedArticulations"));
+	f.call("controller.set", {{"part", f.part}, {"controllers", {{{"id", direction.at("id")}, {"muted", false}}}}});
+	CHECK_FALSE(f.partJson().at("controllers").at(0).contains("muted"));
+	CHECK(notePlaying(f.rendered(), 73).channel == 0);
+}
+
+TEST_CASE("muted articulations are saved, renamed with the map and stay muted in Merge MIDI in Loop", "[integration]")
+{
+	// #1684.
+	Fixture f;
+	const test::TempDir dir;
+	const std::string file = (dir.path() / "muted.dawproject").u8string();
+	const auto id = f.strings();
+	f.call("controller.add",
+		{{"part", f.part},
+			{"controllers",
+				{{{"position", 0}, {"type", "articulation"}, {"articulation", "Pizzicato"}},
+					{{"position", 10}, {"type", "articulation"}, {"articulation", "Arco"}, {"muted", true}}}}});
+	f.call("note.add",
+		{{"part", f.part},
+			{"notes",
+				{{{"position", 2 * g_quarter}, {"length", 60}, {"pitch", 60}, {"velocity", 0.5},
+					{"articulations", {"Staccato"}}, {"mutedArticulations", {"Staccato"}}}}}});
+	const Json before = f.call("project.get");
+	f.call("project.save", {{"path", file}});
+	f.call("project.new");
+	f.call("project.load", {{"path", file}});
+	CHECK(f.call("project.get").at("midiParts") == before.at("midiParts"));
+
+	// Renamed in the map: the muted names too.
+	Json settings = stringsSettings();
+	settings["articulations"][2]["name"] = "Stacc";
+	settings["slots"][2]["articulations"] = {"Stacc"};
+	settings["slots"][3]["articulations"] = {"Pizzicato", "Stacc"};
+	settings["map"] = id;
+	f.call("articulationMap.set", settings);
+	CHECK(f.partJson().at("notes").at(0).at("mutedArticulations") == Json{"Stacc"});
+
+	// Merge MIDI in Loop: the muted Arco isn't in effect where the range starts, Pizzicato is; the muted attribute
+	// stays muted.
+	const Json changes = f.call("midi.merge", {{"start", 12000}, {"end", 96000}});
+	Json merged;
+	const Json project = f.call("project.get");
+	for (const Json& part : project.at("midiParts"))
+		if (part.at("id") == changes.at("parts").at(0))
+			merged = part;
+	REQUIRE(merged.at("controllers").size() == 1);
+	CHECK(merged.at("controllers").at(0).at("articulation") == "Pizzicato");
+	CHECK(merged.at("notes").at(0).at("mutedArticulations") == Json{"Stacc"});
+}
+
+TEST_CASE("the selected notes' entries name the attributes selected of them", "[unit]")
+{
+	// #1688: the Articulations lane's attribute selection is the editor view's.
+	Fixture f;
+	f.strings();
+	const Json added = f.call("note.add",
+		{{"part", f.part},
+			{"notes",
+				{{{"position", 0}, {"length", 60}, {"pitch", 60}, {"velocity", 0.5}, {"articulations", {"Staccato"}}},
+					{{"position", g_quarter}, {"length", 60}, {"pitch", 61}, {"velocity", 0.5}}}}});
+	const Json first = added.at("notes").at(0).at("id");
+	const Json second = added.at("notes").at(1).at("id");
+	f.call("editor.open", {{"editor", "window"}, {"parts", Json::array({f.part})}});
+	const Json view = f.call("editor.set",
+		{{"editor", "window"},
+			{"selection",
+				{{{"part", f.part}, {"note", first}, {"articulations", {"Staccato"}}},
+					{{"part", f.part}, {"note", second}}}}});
+	CHECK(view.at("selection") ==
+		Json::array({{{"part", f.part}, {"note", first}, {"articulations", {"Staccato"}}},
+			{{"part", f.part}, {"note", second}}}));
+	CHECK(f.call("editor.get", {{"editor", "window"}}).at("selection") == view.at("selection"));
+	// A new selection without them selects all of a note's attributes again.
+	CHECK(f.call("editor.set", {{"editor", "window"}, {"selection", {{{"part", f.part}, {"note", first}}}}})
+			  .at("selection") == Json::array({{{"part", f.part}, {"note", first}}}));
+}

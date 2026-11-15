@@ -103,6 +103,7 @@ namespace gnubase::engine
 				note.velocityVariance = item.value("velocityVariance", note.velocityVariance);
 				require(std::abs(note.velocityVariance) <= 1.0, name + ".velocityVariance must be -1 to 1");
 				note.articulations = item.value("articulations", note.articulations);
+				note.mutedArticulations = mutedArticulationsFrom(item, note, name);
 				if (item.contains("expressions"))
 					note.expressions = expressionsFromJson(item.at("expressions"), name + ".expressions");
 				notes.push_back(note);
@@ -390,7 +391,7 @@ namespace gnubase::engine
 			case ControllerType::SysEx:
 				return key == "data";
 			case ControllerType::Articulation:
-				return key == "articulation" || key == "reset";
+				return key == "articulation" || key == "reset" || key == "muted";
 			}
 			return false;
 		}
@@ -418,6 +419,9 @@ namespace gnubase::engine
 						require(field.key() == "id" || field.key() == "position" || field.key() == "type" ||
 								uses(*type, field.key()),
 							name + "." + field.key() + " doesn't apply to " + controllerTypeName(*type) + " events");
+				// A muted direction made another type isn't muted.
+				if (type != ControllerType::Articulation && !item.contains("muted"))
+					merged.erase("muted");
 				Controller controller = controllerFrom(merged, name);
 				controller.id = current.id;
 				controllers.push_back(std::move(controller));
@@ -456,7 +460,8 @@ namespace gnubase::engine
 			{"note.set", 1,
 				"Changes notes of a MIDI part: each change names a note by id and gives what changes, position and "
 				"length in ticks, pitch 0-127, velocity 0-1, release velocity 0-1, MIDI channel 0-15, play probability "
-				"0-1, velocity variance -1 to 1, articulations, the attributes it has, or expressions, which replace "
+				"0-1, velocity variance -1 to 1, articulations, the attributes it has, mutedArticulations, those of "
+				"them that are muted (an attribute that goes is no longer muted), or expressions, which replace "
 				"its expression points (see note.add). The points move with the note's start, but for a start that "
 				"moves while the end stays: then they stay where they are, and the values at the new start become "
 				"its initial ones. Returns the changed notes.",
@@ -465,6 +470,7 @@ namespace gnubase::engine
 						{"releaseVelocity", number}, {"channel", integer}, {"probability", number},
 						{"velocityVariance", number},
 						{"articulations", {{"type", "array"}, {"items", {{"type", "string"}}}}},
+						{"mutedArticulations", {{"type", "array"}, {"items", {{"type", "string"}}}}},
 						{"expressions", expressionsSchema()}}),
 				resultSchema("notes"), false},
 			setNotes);
@@ -507,7 +513,8 @@ namespace gnubase::engine
 			{"controller.set", 1,
 				"Changes controller events of a MIDI part: each change names a controller event by id and gives what "
 				"changes: position in ticks, type, and the fields of the type as controller.add takes them (number, "
-				"value, channel, bank, data, articulation, reset). A field the type doesn't have is an error, such as "
+				"value, channel, bank, data, articulation, reset, muted). A field the type doesn't have is an error, "
+				"such as "
 				"value on a program "
 				"change; a null bank removes it. A new type keeps the fields it shares with the old one and needs the "
 				"others. Returns the changed controller events.",
@@ -520,7 +527,8 @@ namespace gnubase::engine
 										"articulation"}}}},
 						{"number", integer}, {"value", number}, {"channel", integer},
 						{"bank", {{"type", {"integer", "null"}}}}, {"data", {{"type", "array"}, {"items", integer}}},
-						{"articulation", {{"type", "string"}}}, {"reset", {{"type", "boolean"}}}}),
+						{"articulation", {{"type", "string"}}}, {"reset", {{"type", "boolean"}}},
+						{"muted", {{"type", "boolean"}}}}),
 				resultSchema("controllers"), false},
 			setControllers);
 

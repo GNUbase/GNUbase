@@ -20,6 +20,7 @@
 #include <array>
 #include <charconv>
 #include <cmath>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <optional>
@@ -84,6 +85,9 @@ namespace gnubase::engine
 			std::set<int> collapsedGroups;
 			bool autoSelectControllers = false;
 			std::vector<std::pair<ObjectId, ObjectId>> controllerSelection; // each a part and a controller event of it
+			// The attributes selected of selected notes on the Articulations lane (#1688, p. 1289), by part and note;
+			// a selected note without them has all its attributes selected.
+			std::map<std::pair<ObjectId, ObjectId>, std::vector<std::string>> selectedArticulations;
 			// The audio part editor (#146): the selected audio events of its parts.
 			std::vector<ObjectId> eventSelection;
 			// Per-note expression in the key editor (#1512): Show Note Expression Data, Double-Click Opens Note
@@ -211,6 +215,10 @@ namespace gnubase::engine
 							}),
 						view.selection.end());
 			dropUneditable(project, editable, view.controllerSelection, &MidiPart::controllers);
+			for (auto each = view.selectedArticulations.begin(); each != view.selectedArticulations.end();)
+				each = std::find(view.selection.begin(), view.selection.end(), each->first) != view.selection.end()
+					? std::next(each)
+					: view.selectedArticulations.erase(each);
 			view.eventSelection.erase(
 				std::remove_if(view.eventSelection.begin(), view.eventSelection.end(),
 					[&](ObjectId event) { return editablePartOf(project, editable, event) == 0; }),
@@ -346,7 +354,12 @@ namespace gnubase::engine
 			const std::vector<ObjectId> editable = editableParts(project, view);
 			Json selection = Json::array();
 			for (const auto& [part, note] : view.selection)
+			{
 				selection.push_back({{"part", part}, {"note", note}});
+				if (const auto found = view.selectedArticulations.find({part, note});
+					found != view.selectedArticulations.end())
+					selection.back()["articulations"] = found->second;
+			}
 			Json lanes = Json::array();
 			for (const auto& [type, number] : view.lanes)
 				lanes.push_back({{"type", type}, {"number", number}});
@@ -581,7 +594,9 @@ namespace gnubase::engine
 		const Json selectionSchema = {{"type", "array"},
 			{"items",
 				{{"type", "object"}, {"additionalProperties", false}, {"required", {"part", "note"}},
-					{"properties", {{"part", idSchema}, {"note", idSchema}}}}}};
+					{"properties",
+						{{"part", idSchema}, {"note", idSchema},
+							{"articulations", {{"type", "array"}, {"items", {{"type", "string"}}}}}}}}}};
 		const Json groupsSchema = {{"type", "array"}, {"items", {{"type", "integer"}, {"minimum", 0}}}};
 		const Json lanesSchema = {{"type", "array"},
 			{"items",
@@ -635,7 +650,8 @@ namespace gnubase::engine
 			"reach: allParts, activePart or activeTrack (the active part's track); editable, the parts that reach; "
 			"keepContents, whether it keeps its parts when the project window's selection changes; globalTracks, the "
 			"marker and ruler tracks the editor window shows above its events. The key editor's (pp. 1189-1220): "
-			"selection, the selected notes, each {part, note}, of the editable parts; stepInput and midiInput, what "
+			"selection, the selected notes, each {part, note}, of the editable parts, with articulations, the "
+			"attributes selected of it on the Articulations lane, where not all are; stepInput and midiInput, what "
 			"editor.input does with notes played; stepPosition, the step input cursor in project ticks; moveInsert, "
 			"recordPitch, recordVelocity, recordReleaseVelocity and keepNotes, how they go in; insertVelocity (0-1), "
 			"the velocity of drawn notes and of input that doesn't record it; lengthQuantize, the length of new notes, "
@@ -873,6 +889,15 @@ namespace gnubase::engine
 					}
 				};
 				select("selection", "note", &MidiPart::notes, view.selection);
+				if (parameters.contains("selection"))
+				{
+					view.selectedArticulations.clear();
+					for (const Json& item : parameters.at("selection"))
+						if (item.contains("articulations"))
+							view.selectedArticulations[{
+								item.at("part").get<ObjectId>(), item.at("note").get<ObjectId>()}] =
+								item.at("articulations").get<std::vector<std::string>>();
+				}
 				select("controllerSelection", "controller", &MidiPart::controllers, view.controllerSelection);
 				if (parameters.contains("eventSelection"))
 				{

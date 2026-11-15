@@ -51,6 +51,7 @@
 #include <ctime>
 #include <filesystem>
 #include <initializer_list>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <optional>
@@ -3078,6 +3079,7 @@ namespace gnubase::engine
 				note.velocityVariance = item.value("velocityVariance", 0.0);
 				require(std::abs(note.velocityVariance) <= 1.0, name + ".velocityVariance must be -1 to 1");
 				note.articulations = item.value("articulations", std::vector<std::string>());
+				note.mutedArticulations = mutedArticulationsFrom(item, note, name);
 				note.expressions = expressionsFromJson(item.value("expressions", Json::array()), name + ".expressions");
 				notes.push_back(note);
 			}
@@ -3091,6 +3093,26 @@ namespace gnubase::engine
 			context.emit("note.added", {{"part", part.id}, {"notes", added}});
 			return {{"notes", added}};
 		}
+	}
+
+	std::vector<std::string> mutedArticulationsFrom(const Json& item, const Note& note, const std::string& name)
+	{
+		const auto has = [&note](const std::string& each)
+		{ return std::find(note.articulations.begin(), note.articulations.end(), each) != note.articulations.end(); };
+		std::vector<std::string> muted;
+		if (!item.contains("mutedArticulations"))
+		{
+			std::copy_if(
+				note.mutedArticulations.begin(), note.mutedArticulations.end(), std::back_inserter(muted), has);
+			return muted;
+		}
+		for (const std::string& each : item.at("mutedArticulations").get<std::vector<std::string>>())
+		{
+			require(has(each), name + ".mutedArticulations: " + each + " isn't one of the note's articulations");
+			if (std::find(muted.begin(), muted.end(), each) == muted.end())
+				muted.push_back(each);
+		}
+		return muted;
 	}
 
 	Controller controllerFrom(const Json& item, const std::string& name)
@@ -3109,6 +3131,8 @@ namespace gnubase::engine
 			needs("number");
 			requireRange(item.at("number").get<int64_t>(), 0, 127, name + ".number");
 		}
+		require(type == ControllerType::Articulation || !item.contains("muted"),
+			name + ".muted applies only to articulation events");
 		if (type == ControllerType::Articulation)
 		{
 			needs("articulation");
@@ -4737,7 +4761,8 @@ namespace gnubase::engine
 			objectSchema({{"position", integerSchema}, {"length", integerSchema}, {"pitch", integerSchema},
 							 {"velocity", numberSchema}, {"releaseVelocity", numberSchema}, {"channel", integerSchema},
 							 {"probability", numberSchema}, {"velocityVariance", numberSchema},
-							 {"articulations", arraySchema(stringSchema)}, {"expressions", expressionsSchema()}},
+							 {"articulations", arraySchema(stringSchema)},
+							 {"mutedArticulations", arraySchema(stringSchema)}, {"expressions", expressionsSchema()}},
 				{"position", "length", "pitch", "velocity"});
 		add(engine,
 			{"note.add", 1,
@@ -4745,7 +4770,9 @@ namespace gnubase::engine
 				"0-1, release (note-off) velocity 0-1 (default 0.5), MIDI channel 0-15 (default 0), play probability "
 				"0-1, the chance that the note plays (default 1), and velocity variance -1 to 1, the share by which "
 				"playback raises (positive) or lowers (negative) its velocity at most (default 0). articulations are "
-				"the attributes of the track's articulation map (articulationMap.add) that the note has, by name. "
+				"the attributes of the track's articulation map (articulationMap.add) that the note has, by name, and "
+				"mutedArticulations those of them that are muted, as the mute tool mutes them: they select no sound "
+				"slot. "
 				"expressions are its per-note expression: points {type, position, value}, position in ticks from the "
 				"note's start, type volume (a linear gain 0-4), pan (0-1, 0.5 the center), tuning (semitones, -120 to "
 				"120), vibrato, expression, brightness or pressure (0-1).",
@@ -4759,14 +4786,15 @@ namespace gnubase::engine
 			[](Project& project, CommandContext& context)
 			{ return removeFromPart(project, context, &MidiPart::notes, "notes", "note"); });
 
-		const Json controller = objectSchema(
-			{{"position", integerSchema},
-				{"type",
-					enumSchema({"controller", "pitchBend", "channelPressure", "polyPressure", "program", "sysEx",
-						"articulation"})},
-				{"number", integerSchema}, {"value", numberSchema}, {"channel", integerSchema}, {"bank", integerSchema},
-				{"data", arraySchema(integerSchema)}, {"articulation", stringSchema}, {"reset", booleanSchema}},
-			{"position"});
+		const Json controller =
+			objectSchema({{"position", integerSchema},
+							 {"type",
+								 enumSchema({"controller", "pitchBend", "channelPressure", "polyPressure", "program",
+									 "sysEx", "articulation"})},
+							 {"number", integerSchema}, {"value", numberSchema}, {"channel", integerSchema},
+							 {"bank", integerSchema}, {"data", arraySchema(integerSchema)},
+							 {"articulation", stringSchema}, {"reset", booleanSchema}, {"muted", booleanSchema}},
+				{"position"});
 		add(engine,
 			{"controller.add", 1,
 				"Adds controller events to a MIDI part: position from the part's start in ticks, MIDI channel 0-15 "
@@ -4775,7 +4803,8 @@ namespace gnubase::engine
 				"pitch) and value; program: number (the program) and optionally bank 0-16383; sysEx: data, the "
 				"message's bytes from 0xF0 to 0xF7; articulation: a direction of the track's articulation map "
 				"(articulationMap.add), articulation its name and reset (default false) whether it ends the "
-				"directions of its group instead; it plays nothing itself.",
+				"directions of its group instead, and muted (default false) whether the mute tool muted it: a muted "
+				"direction selects no sound slot. It plays nothing itself.",
 				objectSchema({{"part", idSchema}, {"controllers", arraySchema(controller)}}, {"part", "controllers"}),
 				{{"type", "object"}, {"properties", {{"controllers", {{"type", "array"}}}}},
 					{"required", {"controllers"}}},
