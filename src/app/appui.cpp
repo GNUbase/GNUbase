@@ -9,6 +9,7 @@
 #include "ui/fonts.h"
 #include "ui/historypanel.h"
 #include "ui/inspector.h"
+#include "ui/keyeditor.h"
 #include "ui/poolpanel.h"
 #include "ui/timeformat.h"
 #include "ui/widgets.h"
@@ -1227,6 +1228,17 @@ namespace gnubase::app
 			m_keys.bind({wind.keys, wind.id});
 		}
 		m_shell.eachStep([this] { return m_winding.step(); });
+		// The MIDI editors render before their layout and keep their width when their window or zone resizes: their
+		// expression lines follow the width the update gave them (#1671). The in-place editors' setTimeRange does so.
+		m_shell.afterUpdate(
+			[this](ui::Window&)
+			{
+				bool changed = false;
+				for (ui::MidiEditor* editor : {editorWindow(), lowerZoneEditor()})
+					if (ui::KeyEditor* keys = editor != nullptr ? editor->keyEditor() : nullptr)
+						changed = keys->fitLines() || changed;
+				return changed;
+			});
 		// The transport panel follows its sections whenever an update may have changed their width (#1527), once its
 		// controls show the project (#1612).
 		m_shell.afterUpdate(

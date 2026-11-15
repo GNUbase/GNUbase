@@ -228,8 +228,9 @@
 
 /* Per-note expression (reference manual pp. 1303-1313, docs/features/note-expression.md). Code places each step of an
    expression, from one point to the next, in percent of its note or of the expression editor: a line at its value.
-   The expression editor lies over the note display on the selected notes' time and centered on the first one's row;
-   its parameter button sits at its top left, and the area below is where the draw and erase tools edit. */
+   The expression editor lies over the note display on the selected notes' time, which code centers on the row of the
+   note double-clicked and keeps inside the note display; its parameter button sits at its top left, and the area
+   below is where the draw and erase tools edit. */
 .key-expression-step
 {
 	position: absolute;
@@ -241,7 +242,7 @@
 {
 	position: absolute;
 	height: 96dp;
-	margin-top: -43dp;
+	min-width: 72dp; /* wider than Parameter Selection on a short note */
 	box-sizing: border-box;
 	display: flex;
 	flex-direction: column;

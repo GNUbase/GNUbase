@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/keyeditor.h"
 
+#include "engine/document/document.h"
 #include "engine/midi/chords.h"
 #include "engine/midi/quantizesettings.h"
 #include "engine/time/tempomap.h"
@@ -9,6 +10,7 @@
 #include "ui/controllerlanes.h"
 #include "ui/timeformat.h"
 
+#include <RmlUi/Core/ComputedValues.h>
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
@@ -660,15 +662,18 @@ namespace gnubase::ui
 		if (height == nullptr || !Rml::Any(height->unit & Rml::Unit::LENGTH))
 		{
 			m_pitchZoom = 1.0F; // a percentage or auto: no height to scale
-			return;
 		}
-		const Rml::Context* context = root->GetContext();
-		const float ratio = context != nullptr ? context->GetDensityIndependentPixelRatio() : 1.0F;
-		const float rowDp = rows.front()->ResolveLength(height->GetNumericValue()) / ratio;
-		m_pitchZoom = zoom;
-		if (zoom != 1.0F)
-			for (Rml::Element* row : rows)
-				row->SetProperty(Rml::PropertyId::Height, dp(rowDp * zoom));
+		else
+		{
+			const Rml::Context* context = root->GetContext();
+			const float ratio = context != nullptr ? context->GetDensityIndependentPixelRatio() : 1.0F;
+			const float rowDp = rows.front()->ResolveLength(height->GetNumericValue()) / ratio;
+			m_pitchZoom = zoom;
+			if (zoom != 1.0F)
+				for (Rml::Element* row : rows)
+					row->SetProperty(Rml::PropertyId::Height, dp(rowDp * zoom));
+		}
+		placeExpression(); // on its note's row as high as the rows are now
 	}
 
 	void KeyEditor::place(Rml::Element& element, int64_t start, int64_t length, int pitch) const
@@ -723,7 +728,10 @@ namespace gnubase::ui
 
 		// The selection only changes classes, so that a press that selects keeps the element under the mouse.
 		// Show Note Expression Data (p. 1303): the notes' expression over them.
-		const bool expression = !diamonds() && m_view.value("showExpression", false);
+		// Not in the drum editor, which has neither its button nor the expression editor (#1671).
+		const bool expression = !m_drum && m_view.value("showExpression", false);
+		m_linesPixel = ticksPerPixel();
+		const int64_t pixel = m_linesPixel;
 		std::string rml;
 		for (const Note& note : m_notes)
 		{
@@ -733,7 +741,8 @@ namespace gnubase::ui
 				(note.editable ? "" : " inactive") + R"(" part=")" + std::to_string(note.part) + R"(" note=")" +
 				std::to_string(note.id) + R"(">)";
 			for (const char* type : engine::g_expressionNames)
-				rml += expression ? stepsRml(note.expressions, type, 0, note.length, note.length) : std::string();
+				rml +=
+					expression ? stepsRml(note.expressions, type, 0, note.length, note.length, pixel) : std::string();
 			rml += "</div>";
 		}
 		// Compared with what was set last: the element's own RML has the classes set since.
@@ -922,6 +931,8 @@ namespace gnubase::ui
 		Rml::Element* root = m_root.get();
 		if (root == nullptr)
 			return;
+		if (fitLines()) // which places the items
+			return;
 		Rml::ElementList shown;
 		root->QuerySelectorAll(shown, ".editor-part");
 		for (Rml::Element* element : shown)
@@ -955,38 +966,87 @@ namespace gnubase::ui
 		if (Rml::Element* cursor = root->QuerySelector(".key-editor-step-cursor");
 			cursor != nullptr && m_view.value("stepInput", false))
 			place(*cursor, m_view.value("stepPosition", int64_t{0}), 0, -1);
+		placeExpression();
+	}
+
+	bool KeyEditor::fitLines()
+	{
+		// The expression lines join the steps narrower than a pixel: built again when a pixel has other ticks, as the
+		// in-place editor's range has after its first layout and as the project window zooms (#1671). Not during a
+		// gesture, whose elements a rebuild would free; the next placement after it catches up.
+		const bool shown = m_expressionOpen || (!m_drum && m_view.value("showExpression", false));
+		if (m_root.get() == nullptr || m_gesture != Gesture::None || !shown || ticksPerPixel() == m_linesPixel)
+			return false;
+		render();
+		return true;
+	}
+
+	void KeyEditor::placeExpression()
+	{
+		Rml::Element* root = m_root.get();
+		Rml::Element* editor = root != nullptr ? root->QuerySelector(".key-expression-editor") : nullptr;
 		const std::vector<const Note*> selection = selectedNotes();
-		if (Rml::Element* editor = root->QuerySelector(".key-expression-editor");
-			editor != nullptr && m_expressionOpen && !selection.empty())
-		{
-			const auto [from, to] = expressionSpan();
-			place(*editor, from, to - from, -1);
-			editor->SetProperty(Rml::PropertyId::Top,
-				percent(m_rowOf.at(static_cast<size_t>(selection.front()->pitch)) * 100.0 / g_pitches));
-		}
+		if (editor == nullptr || !m_expressionOpen || selection.empty())
+			return;
+		const auto [from, to] = expressionSpan();
+		place(*editor, from, to - from, -1);
+		// Centered on the row of the note double-clicked, else the first selected one, and inside the note display:
+		// the editor's height from the style sheet, which it has while it is closed too.
+		const Note* centered = selection.front();
+		for (const Note* each : selection)
+			if (std::make_pair(each->part, each->id) == m_expressionNote)
+				centered = each;
+		const double row = m_rowOf.at(static_cast<size_t>(centered->pitch));
+		Rml::Element* grid = editor->GetParentNode();
+		double height = grid != nullptr ? grid->GetBox().GetSize(Rml::BoxArea::Border).y : 0.0;
+		// The rows' height as the pitch zoom sets it, which the layout has not caught up with yet (setPitchZoom).
+		if (Rml::Element* first = grid != nullptr ? grid->QuerySelector(".key-editor-row") : nullptr)
+			if (const Rml::Property* rowHeight = first->GetProperty(Rml::PropertyId::Height);
+				rowHeight != nullptr && Rml::Any(rowHeight->unit & Rml::Unit::LENGTH))
+				height = first->ResolveLength(rowHeight->GetNumericValue()) * g_pitches;
+		const Rml::Style::Height own = editor->GetComputedValues().height();
+		double top = row * 100.0 / g_pitches;
+		if (height > 0.0 && own.type == Rml::Style::Height::Length)
+			top = std::clamp(
+					  ((row + 0.5) * height / g_pitches) - (own.value / 2.0), 0.0, std::max(height - own.value, 0.0)) *
+				100.0 / height;
+		editor->SetProperty(Rml::PropertyId::Top, percent(top));
+	}
+
+	int64_t KeyEditor::ticksPerPixel() const
+	{
+		Rml::Element* notes = m_root.get() != nullptr ? m_root.get()->QuerySelector(".key-editor-notes") : nullptr;
+		const float width = notes != nullptr ? notes->GetBox().GetSize(Rml::BoxArea::Border).x : 0.0F;
+		return width > 0.0F ? static_cast<int64_t>(static_cast<double>(m_to - m_from) / width) : 0;
 	}
 
 	std::string KeyEditor::stepsRml(
-		const Json& points, const std::string& type, int64_t offset, int64_t span, int64_t length)
+		const Json& points, const std::string& type, int64_t offset, int64_t span, int64_t length, int64_t minimum)
 	{
 		const auto [low, high] = expressionRange(type);
 		const auto percentOf = [span](int64_t ticks)
 		{
 			return std::to_string(static_cast<double>(ticks) * 100.0 / static_cast<double>(std::max<int64_t>(span, 1)));
 		};
+		std::vector<std::pair<int64_t, double>> steps; // the type's points: where they start, their values
+		for (const Json& point : points)
+			if (point.at("type") == type)
+				steps.emplace_back(
+					std::max<int64_t>(point.at("position").get<int64_t>(), 0), point.at("value").get<double>());
 		std::string rml;
-		for (size_t i = 0; i < points.size(); ++i)
+		for (size_t i = 0; i < steps.size();)
 		{
-			if (points[i].at("type") != type)
-				continue;
-			const auto start = std::max<int64_t>(points[i].at("position").get<int64_t>(), 0);
-			int64_t end = length;
-			for (size_t next = i + 1; next < points.size() && end == length; ++next)
-				if (points[next].at("type") == type)
-					end = std::min(points[next].at("position").get<int64_t>(), length);
+			// A step narrower than the minimum joins the next ones until it is as wide, at the last one's value: a
+			// recorded note has a point every few milliseconds (#1671), and of points at one position the last plays.
+			const int64_t start = steps[i].first;
+			size_t next = i + 1;
+			while (next < steps.size() && steps[next].first < start + std::max<int64_t>(minimum, 1))
+				++next;
+			const int64_t end = std::min(next < steps.size() ? steps[next].first : length, length);
+			const double value = std::clamp((steps[next - 1].second - low) / (high - low), 0.0, 1.0);
+			i = next;
 			if (start >= end)
 				continue;
-			const double value = std::clamp((points[i].at("value").get<double>() - low) / (high - low), 0.0, 1.0);
 			rml += R"(<div class="key-expression-step" style="left: )" + percentOf(offset + start) +
 				"%; width: " + percentOf(end - start) + "%; top: " + std::to_string((1.0 - value) * 100.0) + R"(%;"/>)";
 		}
@@ -1038,9 +1098,10 @@ namespace gnubase::ui
 		// Each selected note's points, as the gesture going on changes them, on the editor's span.
 		const auto [from, to] = expressionSpan();
 		std::string rml;
+		const int64_t pixel = ticksPerPixel(); // the editor lies on the note display's time axis
 		for (const Note* note : notes)
 			rml += stepsRml(m_gesture == Gesture::Expression ? edited(*note) : note->expressions, type,
-				note->start - from, to - from, note->length);
+				note->start - from, to - from, note->length, pixel);
 		// Compared with what was set last, as the notes are: the element's own RML never equals it, and rebuilding the
 		// lines would free one that a mouse event still goes through.
 		if (Rml::Element* area = editor->QuerySelector(".key-expression-area");
@@ -1049,7 +1110,7 @@ namespace gnubase::ui
 			area->SetInnerRML(rml);
 			m_expressionRml = rml;
 		}
-		placeItems();
+		placeExpression();
 	}
 
 	void KeyEditor::paint(const Rml::Event& event)
@@ -1062,7 +1123,8 @@ namespace gnubase::ui
 		const auto [from, to] = expressionSpan();
 		const double x =
 			std::clamp((event.GetParameter("mouse_x", 0.0F) - origin.x) / std::max(size.x, 1.0F), 0.0F, 1.0F);
-		const int64_t ticks = from + std::llround(x * static_cast<double>(to - from));
+		// At the right edge the last tick of the last note, where a point still plays.
+		const int64_t ticks = std::min<int64_t>(from + std::llround(x * static_cast<double>(to - from)), to - 1);
 		// The erase tool takes the points within a few dp of the mouse too, so that a click deletes one.
 		const Rml::Context* context = m_root.get()->GetContext();
 		const float ratio = context != nullptr ? context->GetDensityIndependentPixelRatio() : 1.0F;
@@ -1096,8 +1158,10 @@ namespace gnubase::ui
 			if (point.at("type") != type || at < m_paintFrom || at > m_paintTo)
 				points.push_back(point);
 		}
+		// A drag leaves a point only where the value changes, not one per mouse position (#1655).
+		std::optional<double> previous;
 		for (const auto& [ticks, value] : m_painted)
-			if (ticks >= note.start && ticks < note.start + note.length)
+			if (ticks >= note.start && ticks < note.start + note.length && std::exchange(previous, value) != value)
 				points.push_back({{"type", type}, {"position", ticks - note.start}, {"value", value}});
 		std::stable_sort(points.begin(), points.end(), [](const Json& a, const Json& b)
 			{ return a.at("position").get<int64_t>() < b.at("position").get<int64_t>(); });
@@ -1615,8 +1679,9 @@ namespace gnubase::ui
 			return;
 		if (m_expressionOpen)
 		{
-			// In the expression editor the draw tool draws points and the erase tool deletes them (pp. 1310-1311); a
-			// press elsewhere in the note display closes it (p. 1308).
+			// In the expression editor the draw tool draws points (pp. 1310-1311) and the erase tool deletes them, a
+			// tool of GNUbase's own until points can be selected and deleted (p. 1311); a press elsewhere in the note
+			// display closes it (p. 1308).
 			const Rml::Element* editor = root->QuerySelector(".key-expression-editor");
 			const Rml::Element* paintArea = root->QuerySelector(".key-expression-area");
 			bool inEditor = false;
@@ -1985,6 +2050,26 @@ namespace gnubase::ui
 			addNotes(*part, starts, draw.length, draw.pitch, draw.velocity);
 	}
 
+	void KeyEditor::endExpression()
+	{
+		// Every selected note the gesture reached gets its points as it changed them, in one undo step.
+		m_gesture = Gesture::None;
+		std::map<uint64_t, Json> changes;
+		for (const Note* note : selectedNotes())
+			if (Json points = edited(*note); points != note->expressions)
+			{
+				Json change = noteChange(note->id);
+				change["expressions"] = std::move(points);
+				changes[note->part].push_back(change);
+			}
+		m_painted.clear();
+		renderExpression(); // the notes as they are, until the engine's change shows the edit
+		Json commands = Json::array();
+		for (auto& [part, items] : changes)
+			commands.push_back({{"command", "note.set"}, {"parameters", {{"part", part}, {"notes", items}}}});
+		edit(m_tool == KeyTool::Erase ? "Delete Note Expression" : "Draw Note Expression", std::move(commands));
+	}
+
 	void KeyEditor::release(Rml::Event& event)
 	{
 		const Gesture gesture = std::exchange(m_gesture, Gesture::None);
@@ -1998,24 +2083,9 @@ namespace gnubase::ui
 		}
 		if (gesture == Gesture::Expression)
 		{
-			// Every selected note the gesture reached gets its points as it changed them, in one undo step.
 			m_gesture = Gesture::Expression;
 			paint(event);
-			m_gesture = Gesture::None;
-			std::map<uint64_t, Json> changes;
-			for (const Note* note : selectedNotes())
-				if (Json points = edited(*note); points != note->expressions)
-				{
-					Json change = noteChange(note->id);
-					change["expressions"] = std::move(points);
-					changes[note->part].push_back(change);
-				}
-			m_painted.clear();
-			renderExpression(); // the notes as they are, until the engine's change shows the edit
-			Json commands = Json::array();
-			for (auto& [part, items] : changes)
-				commands.push_back({{"command", "note.set"}, {"parameters", {{"part", part}, {"notes", items}}}});
-			edit(m_tool == KeyTool::Erase ? "Delete Note Expression" : "Draw Note Expression", std::move(commands));
+			endExpression();
 			return;
 		}
 		const auto [ticks, pitch] = at(event);
@@ -2296,6 +2366,7 @@ namespace gnubase::ui
 			{
 				if (!selected(*pressed))
 					select({{pressed->part, pressed->id}});
+				m_expressionNote = {pressed->part, pressed->id}; // the editor centers on it
 				m_expressionOpen = true;
 				renderExpression();
 				return;

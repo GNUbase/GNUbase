@@ -78,6 +78,11 @@ namespace gnubase::ui
 		// (#131, ui/inplaceeditor.h) is the project window's timeline. Without one it fits the parts' range.
 		void setTimeRange(std::optional<std::pair<int64_t, int64_t>> range);
 
+		// Builds the notes' expression lines again when a pixel has other ticks than they were built with, as after
+		// the editor's first layout and when its window or zone changes its width (#1671). True when it did, so that
+		// the window updates again (Shell::afterUpdate).
+		bool fitLines();
+
 		// Scrolls the note display so that the pitch is in the middle; false before the display has its size. The
 		// display scrolls to the middle of its notes, or to middle C, when it first has a size, unless it was
 		// scrolled to a pitch before.
@@ -178,19 +183,27 @@ namespace gnubase::ui
 		void showToolbox();
 
 		void render();
-		// Places the parts' boxes, the notes and the step input cursor on the time axis m_from to m_to.
+		// Places the parts' boxes, the notes, the step input cursor and the expression editor on the time axis m_from
+		// to m_to.
 		void placeItems();
+		// The expression editor alone, as its gesture changes it.
+		void placeExpression();
+		// The ticks of a pixel of the note display, or 0 before its layout.
+		int64_t ticksPerPixel() const;
 		void renderInfo();
 		// Per-note expression (#1512, pp. 1303-1313): the steps of a note's points of the type, as lines at their
-		// values in percent of a span of ticks that starts offset ticks before the note.
-		static std::string stepsRml(
-			const engine::Json& points, const std::string& type, int64_t offset, int64_t span, int64_t length);
+		// values in percent of a span of ticks that starts offset ticks before the note. Steps narrower than minimum
+		// ticks join the next ones.
+		static std::string stepsRml(const engine::Json& points, const std::string& type, int64_t offset, int64_t span,
+			int64_t length, int64_t minimum);
 		// The expression editor: open on the selected notes, from the first one's start to the last one's end, it
 		// shows their points of the view's expressionType.
 		void renderExpression();
 		std::pair<int64_t, int64_t> expressionSpan() const;
 		// The draw tool's points or the erase tool's sweep at the mouse in the expression editor.
 		void paint(const Rml::Event& event);
+		// Ends its gesture: the selected notes get their points as it changed them.
+		void endExpression();
 		// A note's points as the gesture in the expression editor changes them: the swept range's points of the
 		// type replaced by those drawn there.
 		engine::Json edited(const Note& note) const;
@@ -300,10 +313,12 @@ namespace gnubase::ui
 		std::vector<Rml::ObserverPtr<Rml::Element>> m_menus;
 		std::string m_lineMode = "line"; // the line tool's (#128)
 		std::unique_ptr<ControllerLanes> m_lanes;
-		bool m_expressionOpen = false;       // the expression editor (p. 1308)
-		std::map<int64_t, double> m_painted; // the draw tool's points in it, project ticks
-		int64_t m_paintFrom = 0;             // the range it swept, project ticks
+		bool m_expressionOpen = false;                  // the expression editor (p. 1308)
+		std::pair<uint64_t, uint64_t> m_expressionNote; // the note double-clicked to open it: part, id
+		std::map<int64_t, double> m_painted;            // the draw tool's points in it, project ticks
+		int64_t m_paintFrom = 0;                        // the range it swept, project ticks
 		int64_t m_paintTo = -1;
+		int64_t m_linesPixel = -1;          // the ticks per pixel the notes' expression lines were built with
 		bool m_toolboxOnRightClick = false; // ui.toolboxOnRightClick
 		bool m_toolboxKnown = false;        // changed since it was asked for
 		std::vector<Subscription> m_subscriptions;
