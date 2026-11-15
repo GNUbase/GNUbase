@@ -923,7 +923,9 @@ namespace gnubase::engine
 				onto(project.patterns); // which the copy's pattern events play, in its other versions too (#1347)
 				Track& source = project.trackById.at(copy);
 				Track& track = project.trackById.at(id);
-				if (!source.versions.empty() && track.versions.empty())
+				// Only versions besides the copy's active one give the track a list of its own: one without them keeps
+				// storing none (#1629).
+				if (source.versions.size() > 1 && track.versions.empty())
 					track.versions = versionsOf(track);
 				for (TrackVersion& version : source.versions)
 				{

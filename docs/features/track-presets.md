@@ -98,7 +98,8 @@ they are.
   the track's first, `add` adds them, `version`, the default, puts them into a new version of the track, as the
   manual's note on Events and Parts says; the tracks imported onto get their new versions together), and its other
   versions after the track's, versions that share an ID in the file sharing a new one in the project, and a version
-  named as one of the track's getting the next free `vN` name; with `settings` its channel settings, inserts, routing
+  named as one of the track's getting the next free `vN` name (a source with only its first version, with `replace`
+  or `add`, leaves the track storing no version of its own, #1629); with `settings` its channel settings, inserts, routing
   and drum and articulation maps, the track's plugins going with their automation; with `automation` its automation in
   place of the track's, and without it, once events or settings are imported onto the track, the track loses its
   automation (the note on Automation, p. 204). The IDs of the file's versions become new ones, one for each ID of the
@@ -225,7 +226,8 @@ drum maps and Input Transformer settings in presets, pattern banks, quick contro
   imported; a marker track replaces one of a project with 10, as the active one; merged versions keep the IDs they
   shared and get names of their own, the new versions of the tracks imported onto getting the ID their sources' active
   versions share, also when the sources don't play the versions they share, and the versions of new tracks getting IDs
-  of their own, which they share with a track imported onto and a saved project keeps; without automation, importing
+  of their own, which they share with a track imported onto and a saved project keeps, a new track's only version not
+  counting as track versions for the project rules; without automation, importing
   events or settings onto a track resets its automation, while importing neither leaves it and records no undo step;
   musical tracks merge onto linear ones with their versions and automation; Absolute, Relative and Cursor Position and
   Range, in samples at the project's rate, place the parts, and events before the project start are refused; the
