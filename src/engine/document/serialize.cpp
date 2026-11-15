@@ -745,7 +745,8 @@ namespace gnubase::engine
 			{"crossfade", toJson(event.crossfade)}, {"snapPoint", event.snapPoint ? Json(*event.snapPoint) : Json()},
 			{"color", colorJson(event.color)}, {"part", event.part}, {"lane", event.lane},
 			{"volumeCurve", toJson(event.volumeCurve)}, {"front", event.front}, {"rank", event.rank},
-			{"rootKey", rootKeyName(event.rootKey)}, {"globalTranspose", event.independent ? "independent" : "follow"}};
+			{"rootKey", rootKeyName(event.rootKey)}, {"globalTranspose", event.independent ? "independent" : "follow"},
+			{"transpose", event.transpose}};
 		// Only an origin in the event's time base still counts (#145): one from before the track's time base changed
 		// is gone, as the event isn't where quantizing put it.
 		if (const auto& origin = event.quantizeOrigin; origin &&
@@ -1282,6 +1283,8 @@ namespace gnubase::engine
 			{"trackLayout", toJson(project.trackLayout)}, {"metronome", metronome::toJson(project.metronome)},
 			{"workspaces", toJson(project.workspaces)}};
 		json.update(toJson(project.setup));
+		if (!project.presetKeeps.empty())
+			json["presetKeeps"] = project.presetKeeps;
 		// What the inactive track versions hold (#165).
 		Json versionContents = Json::array();
 		for (const ObjectId id : project.trackOrder())
@@ -2509,6 +2512,7 @@ namespace gnubase::engine
 			// nor from before #1368 a root key and Global Transpose
 			event.rootKey = rootKeyFromName(item.value("rootKey", std::string())).value_or(-1);
 			event.independent = item.value("globalTranspose", std::string("follow")) == "independent";
+			event.transpose = std::clamp(item.value("transpose", 0), -24, 24); // nor from before #1555 a Transpose
 			if (const auto origin = item.find("quantizeOrigin"); origin != item.end()) // files from before #145
 				event.quantizeOrigin = EventQuantizeOrigin{
 					eventTimingFrom(origin->at("original"), event), eventTimingFrom(origin->at("quantized"), event)};
@@ -2765,6 +2769,9 @@ namespace gnubase::engine
 			if (project.patterns.count(part.pattern) == 0)
 				part.pattern = 0;
 		project.virginTerritory = json.value("virginTerritory", false); // files from before #124 have none
+		// Track presets that keep both, and projects, have none.
+		if (const Json keeps = json.value("presetKeeps", Json()); keeps == "channel" || keeps == "patch")
+			project.presetKeeps = keeps.get<std::string>();
 		// Files from before quantizing have neither.
 		if (json.contains("quantize"))
 			project.quantize = midi::quantizeSettingsFromJson(json.at("quantize"));

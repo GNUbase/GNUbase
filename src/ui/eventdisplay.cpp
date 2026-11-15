@@ -3,6 +3,7 @@
 
 #include "platform/log.h"
 #include "ui/rmlui.h"
+#include "ui/widgets.h"
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
@@ -157,6 +158,15 @@ namespace gnubase::ui
 					requestProject();
 					requestMarkers();
 				}));
+		// A dialog for the old project's events or parts closes: OK would act on whatever has those ids in the new
+		// project (#1586).
+		m_subscriptions.push_back(m_binding.on("project.reset",
+			[this](const engine::Event&)
+			{
+				if (auto* dialog = dynamic_cast<Rml::ElementDocument*>(m_dialog.get());
+					dialog != nullptr && m_dialogForObjects)
+					closeDialog(*dialog, "cancel");
+			}));
 		// The ruler follows snap.changed; keep the cached primary format without another project.get.
 		m_subscriptions.push_back(m_binding.on("project.changed",
 			[this](const engine::Event& event)

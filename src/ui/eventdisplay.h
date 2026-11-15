@@ -970,6 +970,7 @@ namespace gnubase::ui
 		Rml::Element* m_rootKeyButton = nullptr; // the Project Root Key (#168)
 		Rml::Element* m_rootKeyMenu = nullptr;
 		Rml::ObserverPtr<Rml::Element> m_dialog; // the dialog document open now
+		bool m_dialogForObjects = false;         // whether it is for objects of the project, which project.reset closes
 		// What the Tempo Detection dialog analyzes, and how its buttons changed the result.
 		struct TempoDetection
 		{

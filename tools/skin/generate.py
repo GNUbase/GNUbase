@@ -917,6 +917,9 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".articulation-item.reset", {"background-color": c["textMuted"]}),
         (".articulation-item.selected", {"background-color": c["accent2"]}),
         (".articulation-item.inactive", {"background-color": mix(c["surface"], c["textMuted"], .3)}),
+        # The warning sign of the info line and the list editor for articulations the track's map doesn't have
+        # (#1580), in the warning color
+        ("svg.articulation-warning", {"image-color": c["warning"]}),
         # The audio part editor (docs/features/audio-part-editor.md): lines between the lanes, the events, selected
         # ones in the second accent, and muted ones, those outside the part editing mode and those their part hides
         # entirely dimmed

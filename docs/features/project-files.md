@@ -163,6 +163,12 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
   the selected tracks, the track preset dialog for the selected tracks, Import Tracks below a track) and closes the
   ones still open. Dialogs for the whole project stay open. The articulation map setup stays too and drops its track
   ([articulation-maps.md](articulation-maps.md)).
+  The event display closes its own dialogs for events or parts in the same way (Fades, Crossfade, Detect Silence,
+  Spectrum Analyzer, Statistics, Set Definition from Tempo, Repeat, Tempo Detection, Calculate Tempo, audio Import
+  Options; the zoom presets, Process Tempo and Process Bars stay), and the track list cancels Remove Tracks' question
+  and its two chord dialogs (#1586). An OS file dialog for objects of the project drops its answer when a `project.reset` came while it was
+  open (track picture, Export Selected Tracks, pattern presets, Save Drum Map); Import Tracks reads the selected track
+  when the file is chosen.
 
 ## Not yet
 

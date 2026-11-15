@@ -72,7 +72,7 @@ Each is one undo step and emits `clip.changed`, except `event.flatten`, which em
 
 | Command | What it does | Reference |
 |---|---|---|
-| `clip.setWarp` | Musical mode on or off (a clip without a tempo takes the project's where its first event starts, also one on an inactive track version, so nothing changes until the tempo does), `tempo`, length in `bars` and `beats` (sets the tempo), `beatsPerBar`, `gridStart` and `preset` | pp. 616, 648-650 |
+| `clip.setWarp` | Musical mode on or off (a clip without a tempo takes the project's where its first event on the active track versions starts, so the events that play don't change until the tempo does; a clip with events on inactive versions only takes it at the first of those, which plays as soon as its version is active), `tempo`, length in `bars` and `beats` (sets the tempo), `beatsPerBar`, `gridStart` and `preset` | pp. 616, 648-650 |
 | `clip.autoAdjust` | The tempo and grid start from a section (`start`, `end`; default the clip) that starts and ends at a barline and is `bars` bars long (default: the nearest whole bars), and every beat with a hitpoint that counts within a quarter beat of it edited onto that hitpoint; the snap point of `event` (the sample editor's) moves to the section's start | pp. 651-652 |
 | `clip.adjustGrid` | Manual Adjust: `mode` `start` (Set Grid Start), `stretch` (Stretch Grid: beat `beat`, default the second bar, at `frame` by the tempo), `bar` (Set Bar Position: the beats edited after it move with it), `beat` (Set Beat Position), `remove` (Remove Beat Edit) | pp. 652-654 |
 | `clip.addWarpMarker`, `clip.setWarpMarker` | Inserts a warp marker at `position` playing at `target`, moves one; markers can't pass each other, and no section between two markers, or a marker and the clip's ends, may play more than 4 times or less than a quarter as long, the real-time stretcher's range (`checkMarkers`, which warp quantizing and `event.pasteWarpMarkers` keep to as well). A section the edit leaves playing as it did, give or take the half frame a marker inserted on it is rounded by, may stay beyond the range, so a clip from a project saved before the range was checked still takes edits elsewhere | pp. 654-656 |
@@ -180,11 +180,12 @@ drawn volume curves and hitpoint cuts through the warp; sizing with the contents
 the snap point and Detect Silence's splits through the warp; the sample editor's Select Locators; fades that stop
 fitting after a tempo change still changing; the warped events' entries refused as media files; the warp saved and
 loaded; a clip in musical mode loaded without a tempo taking the project's at its first event; one whose first event is
-on an inactive track version taking the tempo there; a quarter in musical mode at 8 times its length leaving the clicks
+on an inactive track version taking the tempo there, through `clip.setWarp` and when loaded; the active versions' events
+deciding over an earlier one on an inactive version; a quarter in musical mode at 8 times its length leaving the clicks
 after it where the map puts them; a warped event's `playedLength` and `fadeRoom` in `project.get` and announced after a
 tempo change, an undo and an edit of the event, and gone out of musical mode; musical mode and warp markers through
 `project.xml`'s `Warps` alone, playing as before and musical mode still following the tempo, `Warps` whose audio isn't
 within the file, and two events of a file sharing its clip with a fade longer than the clip; 4 warped events on the
-quality preset playing in real time without dropouts (`[realtime]`).
-`tests/sampleeditor_ui_tests.cpp`: Musical Mode, the Audio Tempo field, Auto Adjust, Free Warp's drags and removal,
-Reset, Unstretch Audio from the Audio menu and Flatten.
+quality preset playing in real time without dropouts (`[realtime]`). `tests/sampleeditor_ui_tests.cpp`: Musical Mode,
+the Audio Tempo field, Auto Adjust, Free Warp's drags and removal, Reset, Unstretch Audio from the Audio menu and
+Flatten.

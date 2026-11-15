@@ -2576,6 +2576,16 @@ listview.pool-list
 	width: 64dp;
 }
 
+.pool-header span.key, .pool-list span.key
+{
+	width: 56dp;
+}
+
+.pool-list span.key select
+{
+	width: 100%;
+}
+
 .pool-header span.info, .pool-list span.info
 {
 	width: 160dp;

@@ -21,6 +21,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 using namespace gnubase;
 using engine::Json;
@@ -176,6 +177,99 @@ TEST_CASE("the info line sets an audio event's root key and Global Transpose", "
 			return window.element("#info-line button[field=globalTranspose]").value("text", std::string()) ==
 				"Independent";
 		}));
+}
+
+TEST_CASE("the info line sets an audio event's own Transpose and shows what the project root key adds", "[ui]")
+{
+	Window window;
+	const gnubase::test::TempDir dir;
+	test::Audio audio;
+	audio.samples.assign(48000, 0.0F);
+	const auto file = dir.path() / "silence.wav";
+	test::writeWav(file, audio);
+	const auto track = window.call("track.add", {{"type", "audio"}, {"channels", 1}}).at("track").at("id");
+	const auto media = window.call("media.add", {{"path", file.u8string()}}).at("media").at("id");
+	const auto clip = window.call("clip.add", {{"media", media}}).at("clip").at("id");
+	const auto event =
+		window.call("audioEvent.add", {{"track", track}, {"clip", clip}, {"position", 0}, {"length", 48000}})
+			.at("event")
+			.at("id")
+			.get<uint64_t>();
+	const auto audioEvent = [&window, event]
+	{
+		const Json project = window.call("project.get");
+		for (const Json& each : project.at("audioEvents"))
+			if (each.at("id") == event)
+				return each;
+		return Json::object();
+	};
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("audioEvents").size() == 1; }));
+	window.display.select({event});
+	REQUIRE(window.app.waitUntil([&] { return !window.hasClass("#info-line", "empty"); }));
+	// An audio event's Transpose (#1555, reference manual p. 420), within the stretcher's range of 24 semitones.
+	CHECK_FALSE(window.hasClass("#info-line [info-field=transpose]", "unavailable"));
+	CHECK(window.element("#info-line valuefield[field=transpose]").at("attributes").at("max") == "24");
+	// A double click edits it as text, as the volume.
+	window.app.ui().click(
+		std::nullopt, {"#info-line valuefield[field=transpose]", 0, std::nullopt}, ui::MouseButton::Left, 2, {});
+	window.app.ui().key(std::nullopt, "Mod+A");
+	window.app.ui().text(std::nullopt, "5");
+	window.app.ui().key(std::nullopt, "Enter");
+	REQUIRE(window.app.waitUntil([&] { return audioEvent().at("transpose") == 5; }));
+	// The step the project root key adds, in brackets: an event in C in a project in D.
+	window.call("audioEvent.set", {{"event", event}, {"rootKey", "C"}});
+	window.call("project.set", {{"rootKey", "D"}});
+	CHECK(window.app.waitUntil(
+		[&] { return window.element("#info-line [field=rootKeyTranspose]").value("text", std::string()) == "(+2)"; }));
+	CHECK(window.app.waitUntil(
+		[&]
+		{
+			return window.element("#info-line valuefield[field=transpose]").at("attributes").value("value", "") == "5";
+		}));
+}
+
+TEST_CASE("the info line sets the root key and Global Transpose of an audio part's events", "[ui]")
+{
+	Window window;
+	const gnubase::test::TempDir dir;
+	test::Audio audio;
+	audio.samples.assign(48000, 0.0F);
+	const auto file = dir.path() / "silence.wav";
+	test::writeWav(file, audio);
+	const auto track = window.call("track.add", {{"type", "audio"}, {"channels", 1}}).at("track").at("id");
+	const auto media = window.call("media.add", {{"path", file.u8string()}}).at("media").at("id");
+	const auto clip = window.call("clip.add", {{"media", media}}).at("clip").at("id");
+	Json events = Json::array();
+	for (const int64_t at : {0, 48000})
+		events.push_back(
+			window.call("audioEvent.add", {{"track", track}, {"clip", clip}, {"position", at}, {"length", 24000}})
+				.at("event")
+				.at("id"));
+	const auto part = window.call("event.toPart", {{"events", events}}).at("events")[0].get<uint64_t>();
+	const auto keys = [&window]
+	{
+		std::vector<std::string> result;
+		const Json project = window.call("project.get");
+		for (const Json& each : project.at("audioEvents"))
+			result.push_back(
+				each.at("rootKey").get<std::string>() + " " + each.at("globalTranspose").get<std::string>());
+		return result;
+	};
+	REQUIRE(window.app.waitUntil([&] { return window.display.project().at("audioParts").size() == 1; }));
+	window.display.select({part});
+	REQUIRE(window.app.waitUntil([&] { return !window.hasClass("#info-line", "empty"); }));
+	// An audio part has no root key of its own (reference manual p. 417): the info line shows and sets its events'.
+	REQUIRE(window.app.waitUntil([&] { return !window.hasClass("#info-line [info-field=rootKey]", "unavailable"); }));
+	CHECK_FALSE(window.hasClass("#info-line [info-field=globalTranspose]", "unavailable"));
+	window.click("#info-line select[field=rootKey]");
+	window.app.ui().key(std::nullopt, "Down");
+	window.click("#info-line select[field=rootKey]");
+	REQUIRE(window.app.waitUntil([&] { return keys() == std::vector<std::string>{"C follow", "C follow"}; }));
+	window.click("#info-line button[field=globalTranspose]");
+	REQUIRE(window.app.waitUntil([&] { return keys() == std::vector<std::string>{"C independent", "C independent"}; }));
+	// One undo step for both.
+	window.call("history.undo");
+	CHECK(window.app.waitUntil([&] { return keys() == std::vector<std::string>{"C follow", "C follow"}; }));
 }
 
 TEST_CASE("the event display says why the engine refused a glue of parts that follow transpose differently", "[ui]")
