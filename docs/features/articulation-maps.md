@@ -28,6 +28,11 @@ undo step. A new project has none.
 | `channel` | 0-15, the channel the notes play on, or `null` for their own | p. 1271 |
 | `length`, `velocity` | Percent of the notes' length and velocity, 1-1000 | pp. 1271-1272 |
 | `transpose` | Semitones | p. 1271 |
+| `addOn` | An add-on slot (#1113): its output events go besides the slot of the other groups; not the default slot | pp. 1272, 1281 |
+| `attack` | Attack Compensation: ms 0-1000 the notes start earlier | p. 1271 |
+| `separation` | Ms 0-1000 the key switches go before the notes, 0 for one sample | p. 1271 |
+| `minPitch`, `maxPitch` | The range the notes' pitch is kept in, after `transpose` | p. 1272 |
+| `minVelocity`, `maxVelocity` | The range (1-127) the notes' velocity is kept in, after `velocity` | p. 1272 |
 
 | Command | What it does | Reference |
 |---|---|---|
@@ -37,6 +42,7 @@ undo step. A new project has none.
 | `articulationMap.export` | Saves a map as an articulation map file (`.articulationmap`) | p. 1292 |
 | `articulationMap.import` | Loads an articulation map file into the project as a new map | p. 1283 |
 | `articulationMap.soundSlots` | The sound slot each note of a part plays (`midi::soundSlots`), the sound slots lane's, for MCP and Lua clients | p. 1287 |
+| `articulationMap.remoteTriggers` | The remote triggers at once (#1113): Transpose All (`transpose` by `semitones`, with `allMaps` of every map, one undo step), Reassign All (`reassign` from `start` on the `keys` `all`, `white` or `black`, `skipFirst`) and Remove All (`remove`) | pp. 1273-1275 |
 | `track.set articulationMap` | The map of a MIDI or instrument track, 0 for none | p. 1286 |
 
 They emit `articulationMap.added`, `articulationMap.changed` and `articulationMap.removed` with the map (its id for
@@ -57,7 +63,8 @@ removed).
   (`midi::soundSlots`): of each group, its attribute or else the direction in effect at its start; the slot with
   exactly those articulations, else the slot that has those of the more important groups, then the fewest others,
   then the first: with no match the default slot (pp. 1262, 1278). Where a note's slot differs from the last one its
-  track sent, across the track's parts in the order of the notes' starts (and at the track's first note), the off events
+  track sent, across the track's parts in the order the notes play in, earlier by their slots' Attack Compensation
+  (and at the track's first note), the off events
   of that slot and the new slot's on events play (#1491): controller and program changes where the note starts, key
   switches for one sample just before it, and at one sample before the notes that start there, whatever their pitch (at
   the project's start a key switch can't come a sample before), in the order the track sends them, so that the
@@ -80,6 +87,19 @@ removed).
   map of the first merged track that has one. The directions of several tracks with maps share the new part's one lane,
   so they can't all keep their slots: a direction of one track's part also selects the slots of the other tracks' notes
   after it, and the reset where another track's part starts ends it, even where its own part still plays.
+- **Add-on slots and the other MIDI modifiers** (#1113, pp. 1271-1272, 1281). A note plays the best slot that isn't an
+  add-on, as above, and besides it each add-on slot whose articulations are all in effect for it
+  (`midi::addOnSlots`): where the add-ons differ from those of the note before, the off events of those that end and
+  the on events of those that start go after the slot's own. The sound slots lane and `articulationMap.soundSlots`
+  show the slot, not the add-ons. Attack Compensation starts a note earlier by its slot's `attack`, with its end, its
+  expression and its slot's output events; its key switches go `separation` before that (one sample with 0). The
+  pitch and velocity ranges keep the note's pitch and velocity in them after the slot's transpose and velocity, also
+  for the notes played into the track. A remote trigger of an add-on slot in a recording adds the directions of its own
+  groups only, and their resets where its key is released without latch; its attributes go to the notes that start
+  while it is selected, until a trigger of a slot of its groups. Slots that aren't add-ons leave its groups alone
+  while it is selected, and without latch its key isn't one that comes before a held key's release. Played into the
+  track, it sends its on events, and without latch its off events where the key is released, and leaves the selected
+  slot as it is.
 - **Remote triggers** (pp. 1263, 1268, 1282). In what a recording brings to a track with a map (`recording.add`), the
   notes whose pitch is a slot's trigger (Key Switch), or the program changes whose program is one (Program Change),
   aren't recorded; they select their slot instead: a direction for each group that has directions, the slot's own or
@@ -125,6 +145,17 @@ removed).
   instrument track selected, it has no track, as when it opens without one, and hides Assign to Track. Opened again
   for the same track, it keeps the map it shows. A new or loaded project (`project.reset`) drops its track too, since
   object ids are per project: Assign to Track would otherwise assign to whatever track has that id in the new project.
+  The maps list has a search field (by name) and Show only Maps used in this Project, and marks the maps the
+  project's tracks use with P (p. 1267). The sound slot actions (p. 1273, #1113) act on the slot picked with its radio
+  button: Add Sound Slot and Add Sound Slot (Add-on) (marked Add-on in its row) add a slot with the articulations
+  checked in the articulation combinations, named after them; Duplicate (without the trigger), Move Up, Move Down,
+  As Default, Cut, Copy and Paste (after the picked slot) send the slots to `articulationMap.set`; Remote Trigger's
+  Transpose Up and Down change the picked slot's trigger by a semitone, and Transpose All (by semitones or octaves,
+  optionally of all maps in the project), Reassign All (from a start key, all, white or black keys, Skip First Slot)
+  and Remove All run `articulationMap.remoteTriggers`. The articulation combinations (pp. 1275-1276) list a check box
+  for each articulation of the map by group, the picked slot's checked; Apply to Slot gives the picked slot the
+  checked ones, and the search shows only the articulations whose names have one of its terms, separated by `OR` or
+  `|`. The MIDI modifiers have Attack Compensation, Separation and the pitch and velocity ranges too.
 - **Inspector** ([inspector.md](inspector.md), p. 1263): MIDI and instrument tracks' Articulation Map section chooses
   the track's map, or No Map (`track.set articulationMap`), and opens the setup.
 - **Articulations lane** (`ui::ControllerLanes`, pp. 1287-1289): the lane type `articulations` of the key, drum and
@@ -190,12 +221,14 @@ removed).
 ## Not yet
 
 The mute tool's muted articulations (p. 1289), as the key editor has no mute tool and notes and controller events no
-mute yet; the project window's info line for the in-place editor's notes; add-on slots, the MIDI modifiers Attack
-Compensation, Separation and the pitch and velocity ranges; playback techniques, aliases and fallbacks, symbols,
-articulation combinations beyond one per group; a slot's length for the notes played into a track, which aren't known to
-end yet; Sound Slot event colors; Transpose All and Reassign All Remote Triggers; the articulation combinations dialog,
-and the maps list's search and "used in this project" filter; Import Key Switches from instrument presets; importing the
-reference's own files and other applications' maps.
+mute yet; the project window's info line for the in-place editor's notes; playback techniques, aliases and fallbacks,
+symbols, categories and Add Custom Articulation, articulation combinations beyond one per group; a slot's length for
+the notes played into a track, which aren't known to end yet; Sound Slot event colors, which wait for the MIDI
+editors' event colors menu (p. 1133, [colors.md](colors.md)); the slot actions Rename and Reset Color (the slots'
+names and colors are typed or set through `articulationMap.set`), the keyboard preview and assigning triggers from a
+MIDI keyboard; the sound slot actions as a menu and Transpose All and Reassign All as dialogs of their own (they are
+rows of the setup); changing several maps' remote trigger mode and latch at once; Import Key Switches from instrument
+presets; importing the reference's own files and other applications' maps.
 
 ## Checks
 
@@ -205,28 +238,32 @@ reference's own files and other applications' maps.
   MIDI menu's setup removes it. Its second test case shows changes from elsewhere (an add, a rename, an undo), exports
   and imports a map, which the setup selects, shows why an import and an export failed, and offers a map's name with a
   slash as a file name without it. Its third test case opens the setup, the profile manager and the workspaces organizer
-  twice each and counts their Lua handlers (`gnubase.on`): one set while open, none after. Its fourth test case opens
-  the setup for one track, another and the first again, and assigns the map it selected to the last. Its fifth opens it
-  again for the same track, which keeps the map browsed to, then without a track, which hides Assign to Track, then for
-  the track again. Its sixth opens it fresh without a track, which hides Assign to Track, then for the track and starts
-  a new project, which drops the track, then for a track of the new project. Its seventh to tenth test cases check the
-  Articulations lane: the sound slots each note plays in their color, a direction and an attribute drawn and removed
-  with the draw and erase tools; a reset's own width, and the lane in the drum editor; the key editor's Articulations
-  field setting and clearing the selected notes' attributes; the list editor's Articulation events without a channel, a
-  direction renamed and notes' attributes typed and cleared. Its eleventh to fourteenth (#1498): a slot color's light or
-  dark class, a cleared color and a width a kept element no longer has, and the articulations' names beside their rows;
-  no second direction where the row's starts, and Select All Events on Lane selecting the directions; only the parts
-  whose track has the lane's map shown and edited; the lane in the in-place editor. Four more (#1580): groups collapsed
-  and expanded with the lane's buttons, which the other lanes don't have, and their names, an attribute erased in a
-  collapsed row, the sound slots lane hidden and shown; directions and attributes' notes selected with the object
-  selection tool and Shift, Delete and Backspace removing the selected directions and attributes but not the notes, and
-  Reset from a direction's pop-up menu, from its arrow and a right click, checked on a reset, and no arrows for the
-  other tools; the warning sign in the info line and the list editor; the info line's and the list editor's pop-up
-  menus, the list editor's opening on a click and keeping its checks while it renders. Two more (#1658): an attribute
-  deleted while the note's other one stays, Shift adding and removing an attribute of a selected note, all attributes of
-  a note selected elsewhere, and the lane's `.keyboard-focus` while it has the keyboard focus; the info line's pop-up
-  menu changing only the selected notes of tracks with the first one's map. `tests/scripting_tests.cpp` checks empty Lua
-  tables as lists and `gnubase.off`.
+  twice each and counts their Lua handlers (`gnubase.on`): one set while open, none after. Its fourth test case
+  opens the setup for one track, another and the first again, and assigns the map it selected to the last. Its fifth
+  opens it again for the same track, which keeps the map browsed to, then without a track, which hides Assign to
+  Track, then for the track again. Its sixth opens it fresh without a track, which hides Assign to Track, then for
+  the track and starts a new project, which drops the track, then for a track of the new project. Its seventh to
+  tenth test cases check the Articulations lane: the sound slots each note plays in their color, a direction and an
+  attribute drawn and removed with the draw and erase tools; a reset's own width, and the lane in the drum editor;
+  the key editor's Articulations field setting and clearing the selected notes' attributes; the list editor's
+  Articulation events without a channel, a direction renamed and notes' attributes typed and cleared. Its eleventh to
+  fourteenth (#1498): a slot color's light or dark class, a cleared color and a width a kept element no longer has,
+  and the articulations' names beside their rows; no second direction where the row's starts, and Select All Events
+  on Lane selecting the directions; only the parts whose track has the lane's map shown and edited; the lane in the
+  in-place editor. Its test case for #1113 checks the maps list's P mark, Show only Maps used in this Project and
+  search, an add-on slot added from a checked combination, the combinations' search with OR, Attack Compensation and
+  the maximum velocity typed, Move Up and Down, Copy, Paste and Cut, Transpose Up, Reassign All, Transpose All and
+  Remove All. The ones after it (#1580): groups collapsed and expanded with the lane's buttons, which the other lanes
+  don't have, and their names, an attribute erased in a collapsed row, the sound slots lane hidden and shown; directions
+  and attributes' notes selected with the object selection tool and Shift, Delete and Backspace removing the selected
+  directions and attributes but not the notes, and Reset from a direction's pop-up menu, from its arrow and a right
+  click, checked on a reset, and no arrows for the other tools; the warning sign in the info line and the list editor;
+  the info line's and the list editor's pop-up menus, the list editor's opening on a click and keeping its checks while
+  it renders. Two more (#1658): an attribute deleted while the note's other one stays, Shift adding and removing an
+  attribute of a selected note, all attributes of a note selected elsewhere, and the lane's `.keyboard-focus` while it
+  has the keyboard focus; the info line's pop-up menu changing only the selected notes of tracks with the first one's
+  map.
+  `tests/scripting_tests.cpp` checks empty Lua tables as lists and `gnubase.off`.
 - `tests/articulationmaps_tests.cpp`: maps added, copied, changed and removed with their errors and undo, a track's map;
   directions and attributes; playback through the slots' output events and MIDI modifiers, the closest slot and resets;
   export and import round trip with errors; maps, the tracks' maps and articulations saved and loaded; remote triggers
@@ -240,14 +277,22 @@ reference's own files and other applications' maps.
   resets only where a direction of their group is in effect, on one track and in the lane two tracks share (a reset
   where the second track's part starts while the first's direction is in effect, none once that direction was reset);
   the slots a map and a part as `project.get` lists them choose (the sound slots lane's) and
-  `articulationMap.soundSlots`, and the `articulations` lane type, which `controller.line` refuses; track presets and
-  track import with the map; remote triggers played into a track (`midi.inject`, `midi.capture`), the default slot after
-  another map or other slots but not after a slot's new name or color, and a held key's note-off once it is a trigger.
-  `tests/midipatches_tests.cpp` plays them into a MIDI track set to a channel: key switches with latch, the selected
-  slot going out again when the track's channel changes, the default slot coming back on the track's channel where a
-  trigger key is released without latch, and program change triggers. `tests/midi_tests.cpp` and
-  `tests/sequencing_tests.cpp` check the chased key switches, and `tests/sequencing_tests.cpp` a jump with the chase
-  limited to parts into a part that continues the slot of the part before it (#1521); `tests/rtcheck_tests.cpp` plays
-  remote triggers through the RT checker.
+  `articulationMap.soundSlots`, and the `articulations` lane type, which
+  `controller.line` refuses; track presets and track import with the map; remote triggers played into a track
+  (`midi.inject`, `midi.capture`), the default slot after another map or other slots but not after a slot's new name or
+  color, and a held key's note-off once it is a trigger. `tests/midipatches_tests.cpp` plays them into a MIDI track set
+  to a channel: key switches with latch, the selected slot going out again when the track's channel changes, the default
+  slot coming back on the track's channel where a trigger key is released without latch, and program change triggers.
+  Its last test cases (#1113): add-on slots' output events besides the slot of the other groups, and the
+  default slot refused as one; Attack Compensation, Separation and the pitch and velocity ranges, with a range refused;
+  slots changing in the order the notes play with Attack Compensation;
+  `articulationMap.remoteTriggers` transposing one map and all with one undo step, refusing triggers out of range,
+  reassigning on white and black keys with Skip First Slot and past 127, program changes, and removing them;
+  an add-on slot's trigger played into a track (`midi.inject`); remote triggers in a recording also check one recorded
+  with latch before another slot's trigger and without latch while another slot's key is held, with its attribute on
+  the notes.
+  `tests/midi_tests.cpp` and `tests/sequencing_tests.cpp` check the chased key switches, and
+  `tests/sequencing_tests.cpp` a jump with the chase limited to parts into a part that continues the slot of the part
+  before it (#1521); `tests/rtcheck_tests.cpp` plays remote triggers through the RT checker.
 - `tests/articulationnames_tests.cpp` (`[unit]`): names joined and split at commas, a track's map and the names it
   doesn't have, the pop-up menus' items and an attribute toggled in place of its group's (`ui/articulationnames.h`).
