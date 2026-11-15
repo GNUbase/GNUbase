@@ -4,6 +4,7 @@
 #include "engine/document/document.h"
 #include "engine/midi/quantize.h"
 
+#include <optional>
 #include <vector>
 
 namespace gnubase::engine
@@ -25,18 +26,28 @@ namespace gnubase::engine
 	// has nothing of it and comes back with no length, for the caller to remove.
 	bool resetEventQuantize(AudioEvent& event);
 
+	// A selection range, in project samples.
+	struct SampleRange
+	{
+		time::Samples start = 0;
+		time::Samples end = 0;
+	};
+
 	// Warp quantizing (p. 370): moves the warp markers inside each event (clip frames within it) so that they
 	// play on the grid, by time stretch. A clip without markers in the event gets one at each of its hitpoints that
 	// count there. For each grid position the marker nearest to it goes toward it; the others keep their place
 	// relative to those around them. Quantizing starts from the clip's markers from before it first quantized them,
-	// unless it is soft. Returns the clips changed.
-	std::vector<ObjectId> warpQuantize(
-		Project& project, const std::vector<ObjectId>& events, const midi::QuantizeGrid& grid);
+	// unless it is soft. With a range only the markers inside it move, and the audio outside it stays where it plays
+	// (#1579): quantizing starts from the markers as they are, so that another range quantized before stays so.
+	// Returns the clips changed.
+	std::vector<ObjectId> warpQuantize(Project& project, const std::vector<ObjectId>& events,
+		const midi::QuantizeGrid& grid, const std::optional<SampleRange>& range = std::nullopt);
 
 	// Puts back a clip's warp markers from before warp quantizing, while they still are what it made of them.
 	bool resetWarpQuantize(Clip& clip);
 
 	// Quantizing several audio tracks (pp. 370-372, 378-380): quantize.slice, quantize.createWarpMarkers and
-	// quantize.crossfade.
+	// quantize.crossfade, quantize.nudgeCrossfade, and the Reset buttons quantize.resetSlices and
+	// quantize.resetWarpMarkers.
 	void registerAudioQuantizeCommands(ProjectModel& model, Engine& engine);
 }

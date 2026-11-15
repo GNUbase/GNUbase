@@ -1090,3 +1090,145 @@ TEST_CASE("the inspector's Chord Editing section shows and changes the chord of 
 	f.settle();
 	CHECK(f.elements(".editor-chord-type").at(0).value("text", "") == "Cm");
 }
+
+TEST_CASE("Show Note Expression Data shows the notes' expression over them", "[ui]")
+{
+	Fixture f;
+	const std::vector<uint64_t> ids = f.add({{0, 60, 2 * g_quarter}, {2 * g_quarter, 62, g_quarter}});
+	const auto point = [](const char* type, int64_t position, double value)
+	{ return Json{{"type", type}, {"position", position}, {"value", value}}; };
+	f.app.call("note.set",
+		{{"part", f.part},
+			{"notes",
+				Json::array({{{"id", ids[0]},
+					{"expressions",
+						Json::array({point("tuning", 0, 0.0), point("tuning", g_quarter, 24.0),
+							point("pressure", g_quarter, 1.0)})}}})}});
+	f.settle();
+	const std::string steps = noteSelector(ids[0]) + " .key-expression-step";
+	CHECK(f.elements(steps).empty()); // off by default (reference manual p. 1303)
+	f.click(of(".key-input[setting=showExpression]"));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(steps).size() == 3; }));
+	CHECK(f.view().at("showExpression") == true);
+	CHECK(f.has(".key-input[setting=showExpression]", "checked"));
+	CHECK(f.elements(noteSelector(ids[1]) + " .key-expression-step").empty());
+	// Each point is a line from it to the next one at its value: tuning in MPE's range of 48 semitones each way, the
+	// others 0 to 1, from the note's bottom to its top.
+	const Json note = f.box(noteSelector(ids[0]));
+	const auto near = [](const Json& value, double expected)
+	{ return std::abs(value.get<double>() - expected) <= 2.0; };
+	const double x = note.at("x").get<double>();
+	const double y = note.at("y").get<double>();
+	const double width = note.at("width").get<double>();
+	const double height = note.at("height").get<double>();
+	const Json shown = f.elements(steps);
+	CHECK(near(shown.at(0).at("box").at("x"), x));
+	CHECK(near(shown.at(0).at("box").at("width"), width / 2));
+	CHECK(near(shown.at(0).at("box").at("y"), y + (height / 2)));
+	CHECK(near(shown.at(1).at("box").at("x"), x + (width / 2)));
+	CHECK(near(shown.at(1).at("box").at("y"), y + (height / 4)));
+	CHECK(near(shown.at(2).at("box").at("x"), x + (width / 2))); // pressure
+	CHECK(near(shown.at(2).at("box").at("y"), y));
+	f.click(of(".key-input[setting=showExpression]"));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(steps).empty(); }));
+}
+
+TEST_CASE(
+	"a double click opens the note expression editor, where the draw tool draws points and the erase tool deletes "
+	"them",
+	"[ui]")
+{
+	Fixture f;
+	const std::vector<uint64_t> ids = f.add({{0, 60, 2 * g_quarter}, {3 * g_quarter, 64, g_quarter}});
+	f.settle();
+	f.click(of(".key-input[setting=expressionDoubleClick]"));
+	REQUIRE(f.app.waitUntil([&] { return f.has(".key-input[setting=expressionDoubleClick]", "checked"); }));
+	CHECK(f.has(".key-expression-editor", "off"));
+	// With Double-Click Opens Note Expression Editor a double click opens it on the note instead of deleting it
+	// (reference manual p. 1308), over the note's time, with tuning chosen.
+	f.click(of(noteSelector(ids[0])), 2);
+	REQUIRE(f.app.waitUntil([&] { return !f.has(".key-expression-editor", "off"); }));
+	CHECK(f.partNotes().size() == 2);
+	CHECK(f.selection() == std::vector<uint64_t>{ids[0]});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const Json editor = f.box(".key-expression-editor");
+	const Json note = f.box(noteSelector(ids[0]));
+	CHECK(std::abs(editor.at("x").get<double>() - note.at("x").get<double>()) <= 1.5);
+	CHECK(std::abs(editor.at("width").get<double>() - note.at("width").get<double>()) <= 1.5);
+	CHECK(f.elements(".key-expression-type").at(0).at("text") == "Tuning");
+
+	// Parameter Selection chooses the expression (p. 1309).
+	f.click(of(".key-expression-type"));
+	f.click(of("#key-expression-menu > menuitem[expression-type=pressure]"));
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("expressionType") == "pressure"; }));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-expression-type").at(0).at("text") == "Pressure"; }));
+
+	// A point in the editor's area: x and y in parts of its width and height from the top left.
+	const auto area = [&f](double x, double y)
+	{
+		const Json box = f.box(".key-expression-area");
+		return ui::Target{"", 0,
+			ui::Point{static_cast<int>(std::lround(box.at("x").get<double>() + (x * box.at("width").get<double>()))),
+				static_cast<int>(std::lround(box.at("y").get<double>() + (y * box.at("height").get<double>())))}};
+	};
+	const auto points = [&f, &ids]
+	{
+		const Json found = f.note(ids[0]);
+		return found.is_null() ? Json::array() : found.value("expressions", Json::array());
+	};
+	// The draw tool draws a point where it clicks (p. 1311), its value from the area's height.
+	f.tool("draw");
+	f.click(area(0.25, 0.25));
+	REQUIRE(f.app.waitUntil([&] { return points().size() == 1; }));
+	CHECK(points().at(0).at("type") == "pressure");
+	CHECK(std::abs(points().at(0).at("position").get<double>() - (g_quarter / 2.0)) <= g_sixteenth / 4.0);
+	CHECK(std::abs(points().at(0).at("value").get<double>() - 0.75) <= 0.05);
+	// The editor shows it once the note has it.
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-expression-area .key-expression-step").size() == 1; }));
+	// A click a few pixels to the right, on the line drawn from that point, draws one there too.
+	f.app.shell().step(std::chrono::milliseconds(0)); // the line under the mouse, as the hover element
+	const ui::Point first = area(0.25, 0.25).point.value_or(ui::Point{});
+	f.click(ui::Target{"", 0, ui::Point{first.x + 6, first.y}});
+	REQUIRE(f.app.waitUntil([&] { return points().size() == 2; }));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-expression-area .key-expression-step").size() == 2; }));
+	// A drag draws the points along the way, replacing those there, and stays with the expression editor.
+	f.drag(area(0.5, 0.9), area(0.75, 0.1));
+	REQUIRE(f.app.waitUntil([&] { return points().size() >= 4; }));
+	CHECK(std::abs(points().at(2).at("value").get<double>() - 0.1) <= 0.05);
+	CHECK(std::abs(points().back().at("value").get<double>() - 0.9) <= 0.05);
+	CHECK(!f.has(".key-expression-editor", "off"));
+	// One undo step brings back the points before the drag.
+	f.app.call("history.undo");
+	REQUIRE(f.app.waitUntil([&] { return points().size() == 2; }));
+	f.app.call("history.redo");
+	REQUIRE(f.app.waitUntil([&] { return points().size() >= 4; }));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-expression-area .key-expression-step").size() >= 4; }));
+	// The erase tool deletes the points it is dragged over, of the chosen expression only.
+	f.app.call("note.set",
+		{{"part", f.part},
+			{"notes",
+				Json::array({{{"id", ids[0]},
+					{"expressions",
+						Json::array({{{"type", "tuning"}, {"position", 0}, {"value", 2.0}},
+							{{"type", "pressure"}, {"position", g_quarter / 2}, {"value", 0.5}},
+							{{"type", "pressure"}, {"position", g_quarter}, {"value", 0.5}}})}}})}});
+	REQUIRE(f.app.waitUntil([&] { return points().size() == 3; }));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-expression-area .key-expression-step").size() == 2; }));
+	f.tool("erase");
+	f.drag(area(0.2, 0.5), area(0.95, 0.5));
+	REQUIRE(f.app.waitUntil([&] { return points().size() == 1; }));
+	CHECK(points().at(0).at("type") == "tuning");
+
+	// A click in the note display outside it closes it and changes nothing else.
+	f.click(f.at(12.5, 70));
+	REQUIRE(f.app.waitUntil([&] { return f.has(".key-expression-editor", "off"); }));
+	CHECK(f.selection() == std::vector<uint64_t>{ids[0]});
+	CHECK(f.partNotes().size() == 2);
+	// Without the setting a double click deletes the note as before.
+	f.click(of(".key-input[setting=expressionDoubleClick]"));
+	REQUIRE(f.app.waitUntil([&] { return !f.has(".key-input[setting=expressionDoubleClick]", "checked"); }));
+	f.tool("objectSelection");
+	f.click(of(noteSelector(ids[1])), 2);
+	REQUIRE(f.app.waitUntil([&] { return f.note(ids[1]).is_null(); }));
+	CHECK(f.has(".key-expression-editor", "off"));
+}

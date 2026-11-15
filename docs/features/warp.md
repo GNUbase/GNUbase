@@ -96,7 +96,10 @@ An event that global transposition shifts (#1368, [transpose.md](transpose.md)) 
 (an unwarped one with a map from its offset that plays its frames as they are), with a pitch map
 (`RenderMedia::pitch`): `dsp::WarpReader` starts over at each of its points, as after a seek, with the stretcher's
 pitch from there on. The stretcher's latency depends on the pitch, so reading on through a pitch change would play
-the audio after it early or late by the difference (tested with clicks, an octave up and down).
+the audio after it early or late by the difference (tested with clicks, an octave up and down). Where it starts over
+while reading on, at a pitch point or at the end of a segment beyond the real-time range (below), the run it ends would
+go on with other audio than the new one starts with: the reader takes 5 ms more of the old run before starting over
+and crossfades them linearly, so sustained audio doesn't step there (#1564, tested with a sine). A seek doesn't fade.
 
 `Playback` opens such a file through `dsp::WarpReader` (`src/engine/dsp/warp.h`): a real-time `TimeStretcher` whose
 ratio is the slope of the map, fed and read by the disk thread that fills the voice's disk stream, so the audio thread
