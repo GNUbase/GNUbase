@@ -61,7 +61,8 @@ namespace gnubase::engine
 	};
 
 	// Command thread: the chase index of a track's controller events (sorted by position, each with the index of its
-	// part in parts) and MIDI parts (sorted by start).
+	// part in parts, or g_soundSlotPart for a sound slot's output events, which go to ChaseTrack::slots) and MIDI parts
+	// (sorted by start).
 	ChaseTrack makeChaseTrack(const std::vector<RenderController>& controllers, const std::vector<RenderPart>& parts);
 
 	// Command thread: the kinds of controller events (ChaseLane::kind) that a MIDI channel's own values and automation
@@ -377,6 +378,10 @@ namespace gnubase::engine
 		// again sends the off and on events of the slot that is selected, as for a new one.
 		void selectSlot(const ArticulationMap& map, int slot, uint8_t channel, uint32_t offset, graph::EventBuffer& out,
 			bool again = false) noexcept;
+		// Ends the add-on slots on (m_inputAddOns) that have an articulation of a group of slot, but slot itself: their
+		// off events on the channel their on events went to (#1667).
+		void endAddOns(
+			const ArticulationMap& map, const SoundSlot& slot, uint32_t offset, graph::EventBuffer& out) noexcept;
 		// A slot's on or off output events, on channel.
 		static void sendSlotEvents(
 			const SoundSlot& slot, bool off, uint8_t channel, uint32_t offset, graph::EventBuffer& out) noexcept;
@@ -453,7 +458,17 @@ namespace gnubase::engine
 		int8_t m_inputSlotTrack = -1;    // the MidiSequence::inputChannel they belong to
 		uint8_t m_inputSlotTrigger = 0;  // the channel of the trigger that selected the slot
 		bool m_tookSlot = false;         // a sequencer for sends before the modifiers: takeSlot ran
-		uint64_t m_instrument = 0;       // playOn: where its notes went in the graph that runs
+		// The add-on slots its input's remote triggers turned on and nothing turned off yet, by index, with the
+		// channel their on events went to (#1667). ponytail: at most 16 at once, one per group as a rule; one more
+		// sends no off events.
+		struct InputAddOn
+		{
+			int slot = -1;
+			uint8_t channel = 0;
+		};
+		std::array<InputAddOn, 16> m_inputAddOns{};
+		size_t m_inputAddOnCount = 0;
+		uint64_t m_instrument = 0; // playOn: where its notes went in the graph that runs
 
 		// Command thread: the effect in each slot, the inserts' then the sends', while it plays.
 		struct SlotEffect

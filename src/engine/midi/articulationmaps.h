@@ -37,6 +37,9 @@ namespace gnubase::engine::midi
 	// Real-time safe.
 	uint16_t slotVelocity(const SoundSlot& slot, uint16_t velocity) noexcept;
 
+	// Whether two slots have articulations of a group in common. Real-time safe.
+	bool shareGroup(const ArticulationMap& map, const SoundSlot& a, const SoundSlot& b) noexcept;
+
 	// Remote triggers (pp. 1263, 1268) in what a recording brings to a track with the map, as recording.add takes
 	// it: notes and controllers with positions in samples. Takes the notes (key switches) or program changes that
 	// trigger slots out and adds directions (articulation controller events) where they select a slot, and the
