@@ -236,6 +236,9 @@ namespace gnubase::ui
 				field("Range", milliseconds("quantize-range", 0, 1000, 20, "Range")) +
 				field("Offset", milliseconds("quantize-offset", 0, 1000, 0, "Offset")) +
 				R"(<div class="quantize-row"><div class="quantize-spacer"/>)"
+				R"(<button id="quantize-slice-reset" action="resetSlices" title="Reset Slices">Reset</button>)"
+				R"(<button id="quantize-markers-reset" action="resetWarpMarkers" title="Reset Warp Markers">)"
+				R"(Reset</button>)"
 				R"(<button id="quantize-slice" action="slice" title="Slice">Slice</button>)"
 				R"(<button id="quantize-create-markers" action="createWarpMarkers" title="Create">Create</button>)"
 				R"(</div>)" +
@@ -271,7 +274,15 @@ namespace gnubase::ui
 		m_subscriptions.push_back(
 			m_binding.on("quantize.changed", [this](const engine::Event& event) { showSettings(event.data); }));
 		m_subscriptions.push_back(m_binding.on("quantize.presetsChanged", [this](const engine::Event&) { request(); }));
-		m_subscriptions.push_back(m_binding.on("project.reset", [this](const engine::Event&) { request(); }));
+		m_subscriptions.push_back(m_binding.on("project.reset",
+			[this](const engine::Event&)
+			{
+				// Track ids start at 1 again in every project, so the priorities go with the project (#1581).
+				m_priorities.clear();
+				m_hitpointTracks = nullptr;
+				showHitpointTracks(Json::array());
+				request();
+			}));
 		request();
 	}
 
@@ -325,10 +336,15 @@ namespace gnubase::ui
 			{
 				m_priorities[std::stoull(attribute(*target, "track"))] =
 					static_cast<int>(std::lround(event.GetParameter<float>("value", 1.0F)));
+				showCuts();
 				return;
 			}
+			// Range and Offset, which move the cutting positions.
 			if (!target->HasAttribute("setting"))
+			{
+				showCuts();
 				return;
+			}
 			const std::string setting = attribute(*target, "setting");
 			const auto value = static_cast<double>(event.GetParameter<float>("value", 0.0F));
 			if (percent(setting))
@@ -384,6 +400,8 @@ namespace gnubase::ui
 			else if (m_audio && action == "createWarpMarkers")
 				m_audio("quantize.createWarpMarkers",
 					{{"range", fieldValue("quantize-range")}, {"priorities", priorities()}});
+			else if (m_audio && (action == "resetSlices" || action == "resetWarpMarkers"))
+				m_audio("quantize." + action, Json::object());
 			else if (m_audio && action == "crossfade")
 				m_audio("quantize.crossfade", {{"length", fieldValue("quantize-crossfade-length")}});
 			else if (m_audio && (action == "nudgeLeft" || action == "nudgeRight"))
@@ -418,10 +436,14 @@ namespace gnubase::ui
 	void QuantizePanel::showHitpointTracks(const Json& tracks)
 	{
 		// Only a change of the list rebuilds it, so that a field being dragged or typed into stays: the selection
-		// shows again after every project update.
+		// shows again after every project update. The cutting positions follow both.
 		if (tracks == m_hitpointTracks)
+		{
+			showCuts();
 			return;
+		}
 		m_hitpointTracks = tracks;
+		showCuts();
 		std::string rml;
 		for (const Json& track : tracks)
 		{
@@ -435,6 +457,19 @@ namespace gnubase::ui
 		}
 		if (Rml::Element* list = find("quantize-hitpoint-tracks"))
 			list->SetInnerRML(rml);
+	}
+
+	void QuantizePanel::showCuts()
+	{
+		if (!m_audio || m_layout != Layout::Panel)
+			return;
+		// Slice Rules only: with warp quantizing nothing is cut (p. 378).
+		if (m_settings.value("warpQuantize", false) || m_hitpointTracks.empty())
+			m_audio("quantize.slicePositions", nullptr);
+		else
+			m_audio("quantize.slicePositions",
+				{{"range", fieldValue("quantize-range")}, {"offset", fieldValue("quantize-offset")},
+					{"priorities", priorities()}});
 	}
 
 	Json QuantizePanel::priorities() const
@@ -519,6 +554,9 @@ namespace gnubase::ui
 		// Warp quantizing several tracks creates warp markers instead of slicing them (p. 378).
 		setClass(find("quantize-slice"), "hidden", warp);
 		setClass(find("quantize-create-markers"), "hidden", !warp);
+		setClass(find("quantize-slice-reset"), "hidden", warp);
+		showCuts();
+		setClass(find("quantize-markers-reset"), "hidden", !warp);
 
 		const bool groove = m_settings.at("groove").is_object();
 		setClass(find("quantize-grid-settings"), "hidden", groove);

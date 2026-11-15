@@ -94,8 +94,15 @@ attributes, through a data model or directly.
   a right click on an element whose `contextmenu` attribute names it: the nearest one with the attribute, so an empty
   `contextmenu` keeps the menu of an element around it from opening on a control. With a modifier key held (Ctrl,
   Alt, Shift or Cmd), the menu that its `modifiercontextmenu` attribute names opens instead, if it has the attribute,
-  as the event display's and the key editor's toolboxes do ([tools.md](tools.md)); an empty one opens none. It opens inside the window, moved left or up where it would
-  stick out. Put menus straight into the body, so that no container clips them.
+  as the event display's and the key editor's toolboxes do ([tools.md](tools.md)); an empty one opens none. It opens
+  inside the window, moved left or up where it would stick out. Put menus straight into the body, so that no container
+  clips them.
+- An open menu whose items come or go moves inside the window again (#1580, #1665). Until the next press, release or
+  key, it is placed from where it opened, as if the items had been there then: those that the opening click fills in,
+  as the Articulations lane's context menu and the list editor's pop-up menus do, so that a menu that shrinks goes back
+  to the mouse. After that it stays where it is while it fits and moves only as far as it must, so that a menu whose
+  search field leaves items out doesn't jump. Each move asks for the next update, which shows the menu there; a
+  tooltip that moves inside the window once it has its text does the same.
 - A click on an item is a click on that item, for the document to handle, and closes the menu. Escape and a click
   outside close it too. A `disabled` item gets `:disabled` and ignores clicks; `type="toggle"` makes an item checkable,
   as for buttons.

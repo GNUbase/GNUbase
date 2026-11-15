@@ -10,6 +10,7 @@
 #include <RmlUi/Core/ObserverPtr.h>
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -31,8 +32,9 @@ namespace gnubase::ui
 {
 	// Which track's events a lane shows: the transpose track's (class names transpose-*), the chord track's chord
 	// events (chord-*) or its scale events (scale-*), which show in the lower half of its lane while Show Scales is on,
-	// with the chord events in the upper half, or the arranger track's arranger events (arranger-*), which span their
-	// sections and show their names.
+	// with the chord events in the upper half, or the arranger track's arranger events (arranger-lane-*), which span
+	// their sections and show their names. Not arranger-*: those are the arranger editor's, whose lists' rows are
+	// .arranger-row, and the styles of the one would style the other.
 	enum class LaneKind : uint8_t
 	{
 		Transpose,
@@ -49,10 +51,14 @@ namespace gnubase::ui
 	// opens it for editing: the row's <input class="transpose-field">, .shown over it, where Enter sets the value (the
 	// chord, the scale such as "D dorian") typed. A chord event made from audio is .detected. With the chord track's
 	// Acoustic Feedback and a track for auditioning, a press on a chord or scale event auditions it until the button
-	// goes up (chord.audition). Arranger events differ: they are as wide as their sections, the draw tool draws one
-	// from the press to the release (a click: to the next bar line), a drag moves one, both snapped as the display's
-	// drags snap, and the field renames one. The row follows the project and the display's view. Use it on the UI
-	// thread; the display and the binding must outlive it.
+	// goes up (chord.audition). While a drag moves an event, it follows the mouse. Arranger events differ: they are as
+	// wide as their sections, the draw tool draws one from the press to the release, also over other arranger events,
+	// showing it as an .arranger-lane-event.drawing while the button is down (a click draws from the grid line at or
+	// before it to the next bar line), a drag moves one, both snapped as the display's drags snap with the other
+	// arranger events' edges as magnets too, and the field, as wide as the event, renames one (an empty name keeps the
+	// old one). An edit the engine refuses says why, as the display's own edits do (EventDisplay::showRefusal). The
+	// row follows the project as the display reads it, and the track's own events (transpose.changed, chord.changed,
+	// arranger.changed), and the display's view. Use it on the UI thread; the display and the binding must outlive it.
 	class GlobalEventLane final : private Rml::EventListener
 	{
 	public:
@@ -78,20 +84,48 @@ namespace gnubase::ui
 			bool detected = false;
 		};
 
+		// An event a drag moves, which shows moved until the lane reads it where the engine moved it.
+		struct Moved
+		{
+			uint64_t event = 0;
+			double shift = 0.0;    // seconds, snapped
+			int64_t from = 0;      // where it was, samples
+			bool dragging = false; // the button is still down
+			bool answered = false; // the move's answer is in
+		};
+
 		void ProcessEvent(Rml::Event& event) override;
 		bool alive() const { return static_cast<bool>(m_element); }
-		void requestProject();
+		// Reads the project the display read last, once per answer, or the track's part of it, as project.get and
+		// the track's *.changed events have it.
+		void follow();
+		void read(const engine::Json& section);
 		void show();
 		void place();
+		// Whether the display shows the track's lane, and the scale lane Show Scales.
+		bool shownOnLane() const;
 		void press(Rml::Event& event);
+		void move(Rml::Event& event);
 		void release(Rml::Event& event);
+		const Event* find(uint64_t id) const;
+		// Shows an event moved as a drag dx dp across moves it, if it moves that far; whether it does.
+		bool moveTo(uint64_t id, double dx);
+		// Ends what a drag shows once the lane shows the event drawn or moved as the engine has it.
+		void settle();
+		// Sends an edit; if the engine refuses it, the display says why. Then done runs with the result.
+		void send(const std::string& name, engine::Json parameters,
+			std::function<void(const engine::Result&)> done = nullptr);
 		// The position of the bar nearest to a time in seconds, in the transpose track's time base.
 		int64_t nearestBar(double seconds) const;
-		double seconds(int64_t samples) const { return static_cast<double>(samples) / m_time.sampleRate; }
+		double seconds(int64_t samples) const { return static_cast<double>(samples) / m_display.time().sampleRate; }
 		// A time in seconds as a position in the track's time base.
 		int64_t position(double seconds) const;
-		// Adds an arranger event the draw tool drew from the press at seconds to the release dx dp away.
-		void draw(double from, double dx);
+		// The arranger event the draw tool draws from the press at seconds to dx dp away: its start and end, seconds.
+		std::pair<double, double> drawn(double from, double dx) const;
+		// Where a drag dx dp across moves an event's start to, in seconds.
+		double movedTo(const Event& event, double dx) const;
+		// The edges of the arranger events but one (0: all of them), in samples, which arranger events snap to.
+		std::vector<int64_t> magnets(uint64_t except) const;
 
 		// A class name of the lane's kind, such as "transpose-event", and a command or event, such as "chord.add".
 		std::string named(const char* suffix) const;
@@ -105,19 +139,20 @@ namespace gnubase::ui
 		Rml::Element* m_events = nullptr;           // a .transpose-event per event
 		Rml::ElementFormControl* m_field = nullptr; // .shown while an event is edited
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
-		TimeContext m_time;
-		uint64_t m_track = 0; // the transpose or chord track, 0 without one
+		uint64_t m_loaded = 0; // the display's answers read (EventDisplay::loads)
+		uint64_t m_track = 0;  // the transpose or chord track, 0 without one
 		bool m_linear = false;
 		bool m_showScales = false; // the chord track's Show Scales
 		bool m_audition = false;   // a press auditions the event
 		bool m_auditioning = false;
 		std::vector<Event> m_list;
 		std::optional<std::pair<uint64_t, float>> m_drag;       // the event pressed and where, in pixels
+		std::optional<Moved> m_moved;                           // what a drag moves
 		std::optional<std::pair<double, float>> m_draw;         // where the draw tool pressed, in seconds and pixels
+		std::optional<std::pair<double, double>> m_drawn;       // what it draws, seconds, until m_added shows
+		std::optional<uint64_t> m_added;                        // the event drawn, once answered
 		std::optional<uint64_t> m_editing;                      // the event the field edits
 		std::optional<std::pair<uint64_t, double>> m_lastPress; // the event pressed, and when
-		bool m_loading = false;
-		bool m_stale = false;
 		std::vector<Subscription> m_subscriptions;
 	};
 }

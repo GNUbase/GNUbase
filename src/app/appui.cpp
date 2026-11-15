@@ -412,6 +412,7 @@ namespace gnubase::app
 						  document != nullptr && document->GetParentNode() != nullptr)
 						  document->Close();
 				  m_projectDialogs.clear();
+				  ++m_resets;
 			  })),
 		  m_files(m_keys, m_binding, m_shell, resources / "ui")
 	{
@@ -440,6 +441,9 @@ namespace gnubase::app
 					m_menu->update();
 				if (const std::shared_ptr<ui::PoolPanel> pool = m_pool.lock())
 					pool->update();
+				// The cutting positions show while the quantize panel is open.
+				if (m_eventDisplay && m_quantizePanel.expired())
+					m_eventDisplay->setCuttingPositions({});
 				for (MixerWindow& shown : m_mixers)
 					if (shown.mixer && m_shell.find(shown.window) == nullptr)
 						shown.mixer.reset(); // the user closed its window
@@ -693,15 +697,11 @@ namespace gnubase::app
 						dialog.filters = {
 							{"Audio files", "wav;w64;rf64;bwf;aif;aiff;aifc;flac;ogg;mp3"}, {"All files", "*"}};
 						dialog.parent = (window != nullptr ? *window : m_main).id();
-						m_shell.showFileDialog(dialog,
-							[this, track, keepSettings](const ui::FileDialogResult& result)
+						chooseProjectFile(dialog,
+							[this, track, keepSettings](const std::filesystem::path& file)
 							{
-								if (!result.error.empty())
-									logging::warning("The file dialog failed: {}", result.error);
-								if (result.files.empty())
-									return;
 								// The panel shows why the file didn't load; without it, the file loads all the same.
-								const std::string path = result.files.front().u8string();
+								const std::string path = file.u8string();
 								if (const std::shared_ptr<ui::SamplerPanel> panel = m_sampler.lock())
 									panel->load(track, path, keepSettings);
 								else
@@ -727,14 +727,10 @@ namespace gnubase::app
 						dialog.filters = {
 							{"Audio files", "wav;w64;rf64;bwf;aif;aiff;aifc;flac;ogg;mp3"}, {"All files", "*"}};
 						dialog.parent = (window != nullptr ? *window : m_main).id();
-						m_shell.showFileDialog(dialog,
-							[this, track, pad](const ui::FileDialogResult& result)
+						chooseProjectFile(dialog,
+							[this, track, pad](const std::filesystem::path& file)
 							{
-								if (!result.error.empty())
-									logging::warning("The file dialog failed: {}", result.error);
-								if (result.files.empty())
-									return;
-								const std::string path = result.files.front().u8string();
+								const std::string path = file.u8string();
 								if (const std::shared_ptr<ui::DrumMachinePanel> panel = m_drums.lock())
 									panel->load(track, pad, path);
 								else
@@ -1231,9 +1227,29 @@ namespace gnubase::app
 			m_keys.bind({wind.keys, wind.id});
 		}
 		m_shell.eachStep([this] { return m_winding.step(); });
-		// The transport panel follows its sections whenever an update may have changed their width (#1527).
-		m_shell.afterUpdate([this](ui::Window& window)
-			{ return window.id() == m_transportPanel.window && fitSections(window, false); });
+		// The transport panel follows its sections whenever an update may have changed their width (#1527), once its
+		// controls show the project (#1612).
+		m_shell.afterUpdate(
+			[this](ui::Window& window)
+			{
+				TransportWindow& panel = m_transportPanel;
+				return window.id() == panel.window && panel.follows &&
+					fitSections(window, std::exchange(panel.centre, false));
+			});
+		// Reset All in its setup pane fits a panel that the user sized, or one with bounds from before #1527, again:
+		// it follows its sections from the width it has (#1612).
+		m_docking.onReset(
+			[this](const std::string& window, const std::string&)
+			{
+				if (window != "transportPanel")
+					return;
+				if (const ui::Window* panel = m_transportPanel.shown(m_shell))
+				{
+					m_transportPanel.measured = 0;
+					m_docking.setFittedWidth("transportPanel", m_shell.bounds(panel->id()).width);
+					panel->context().RequestNextUpdate(0);
+				}
+			});
 		// The time display window's context menu (reference manual p. 313).
 		m_keys.add({"timeDisplay.beatCountOnly",
 			"Shows only the beat in its bar in the time display window, or the whole position again.",
@@ -1519,13 +1535,25 @@ namespace gnubase::app
 		if (root == controls)
 		{
 			m_docking.attach("transportPanel", *document);
-			// Fitted to the controls' defaults at once, so that a panel closed before the engine answered their
-			// queries doesn't keep the unfitted width in ui.layout. Once they show the project, their displays grow
-			// with their text, and the panel follows (#1474, #1527).
+			// A new panel is fitted to the controls' defaults at once, so that a panel closed before the engine
+			// answered their queries doesn't keep the unfitted width in ui.layout. Once they show the project, their
+			// displays grow with their text, and the panel follows (#1474, #1527): from then on, so that one with
+			// fitted bounds doesn't take the defaults' width first, and a new one centred for what they show (#1612).
 			shown.sections = controls->GetObserverPtr();
 			shown.unfitted = 0;
+			shown.follows = false;
+			shown.measured = 0;
 			if (!spec.bounds)
 				fitSections(window, true);
+			shown.controls->onShown(
+				[this, centre = !spec.bounds]
+				{
+					TransportWindow& panel = m_transportPanel;
+					panel.follows = true;
+					panel.centre = centre;
+					if (const ui::Window* shownWindow = panel.shown(m_shell))
+						shownWindow->context().RequestNextUpdate(0);
+				});
 		}
 		else
 		{
@@ -1547,13 +1575,15 @@ namespace gnubase::app
 	{
 		TransportWindow& panel = m_transportPanel;
 		Rml::Element* controls = panel.sections.get();
-		const std::vector<ui::Display> displays = m_shell.displays();
 		const ui::Size pixels = window.pixelSize();
-		if (controls == nullptr || displays.empty() || pixels.width <= 0)
+		if (controls == nullptr || pixels.width <= 0)
 			return false;
 		const ui::Rect bounds = m_shell.bounds(window.id());
 		const std::optional<int> fitted = m_docking.fittedWidth("transportPanel");
-		if (!centre)
+		// Once it follows, a new panel is centred again only where it opened, and sized by the user it isn't fitted.
+		const bool opening = centre && !panel.follows;
+		centre = centre && (opening || bounds.position() == panel.measuredBounds.position());
+		if (!opening)
 		{
 			if (!fitted || (bounds.width != *fitted && bounds.width != panel.unfitted))
 				return false; // sized by the user, or by a layout from before #1527
@@ -1572,18 +1602,20 @@ namespace gnubase::app
 				right = std::max(right,
 					section->GetAbsoluteLeft() + section->GetOffsetWidth() +
 						section->GetBox().GetEdge(Rml::BoxArea::Margin, Rml::BoxEdge::Right));
-		if (right <= 0)
+		// Unchanged since the last look, e.g. in every frame while the transport runs: no monitors asked for.
+		if (right <= 0 || (!centre && right == panel.measured && bounds == panel.measuredBounds))
 			return false;
-		const ui::Display* display = centre ? nullptr : ui::displayOf(bounds, displays);
-		const ui::Rect& area = (display != nullptr ? *display : displays.front()).usable;
-		const int width = std::min(area.width,
-			static_cast<int>(std::ceil(right * static_cast<float>(bounds.width) / static_cast<float>(pixels.width))));
-		if (!centre && width == fitted)
+		panel.measured = right;
+		panel.measuredBounds = bounds;
+		const std::vector<ui::Display> displays = m_shell.displays();
+		if (displays.empty())
 			return false;
-		// An open panel stays where it is, moved left only as far as its monitor's right edge needs.
-		const ui::Rect fit = centre
-			? ui::centred({width, bounds.height}, displays.front())
-			: ui::Rect{std::min(bounds.x, area.x + area.width - width), bounds.y, width, bounds.height};
+		const ui::Rect fit = ui::fitWidth(bounds,
+			static_cast<int>(std::ceil(right * static_cast<float>(bounds.width) / static_cast<float>(pixels.width))),
+			displays, centre);
+		if (!centre && fit.width == fitted)
+			return false;
+		const int width = fit.width;
 		m_shell.setBounds(window.id(), fit);
 		// A window system that sizes windows later has the old width meanwhile; one that gave the window a width of
 		// its own, such as a minimum, keeps that as the fit's.
@@ -1591,7 +1623,8 @@ namespace gnubase::app
 		const bool applied = now != bounds.width || now == width;
 		panel.unfitted = applied ? 0 : bounds.width;
 		m_docking.setFittedWidth("transportPanel", applied ? now : width);
-		m_docking.saveWindows(); // so that a panel closed at once comes back as wide
+		m_docking.saveWindows(); // so that a panel closed at once comes back as wide, in one save with the width
+		panel.measuredBounds = m_shell.bounds(window.id());
 		return true;
 	}
 
@@ -2393,20 +2426,27 @@ namespace gnubase::app
 		return shown.window != 0 && m_shell.find(shown.window) != nullptr ? shown.mixer.get() : nullptr;
 	}
 
+	void AppUi::chooseProjectFile(
+		const ui::FileDialog& dialog, std::function<void(const std::filesystem::path&)> chosen)
+	{
+		m_shell.showFileDialog(dialog,
+			[this, chosen = std::move(chosen), resets = m_resets](const ui::FileDialogResult& result)
+			{
+				if (!result.error.empty())
+					logging::warning("The file dialog failed: {}", result.error);
+				if (!result.files.empty() && resets == m_resets)
+					chosen(result.files.front());
+			});
+	}
+
 	void AppUi::choosePicture(uint64_t track)
 	{
 		ui::FileDialog dialog;
 		dialog.title = "Choose Track Picture";
 		dialog.filters = {{"Images", "png;jpg;jpeg;svg"}, {"All files", "*"}};
 		dialog.parent = m_main.id();
-		m_shell.showFileDialog(dialog,
-			[this, track](const ui::FileDialogResult& result)
-			{
-				if (!result.error.empty())
-					logging::warning("The file dialog failed: {}", result.error);
-				if (!result.files.empty())
-					m_binding.send("track.set", {{"track", track}, {"picture", result.files.front().u8string()}});
-			});
+		chooseProjectFile(dialog, [this, track](const std::filesystem::path& file)
+			{ m_binding.send("track.set", {{"track", track}, {"picture", file.u8string()}}); });
 	}
 
 	void AppUi::addTrackFileCommands()
@@ -2427,13 +2467,15 @@ namespace gnubase::app
 				dialog.filters = {{"DAWproject files", "dawproject"}, {"All files", "*"}};
 				dialog.parent = window.id();
 				m_shell.showFileDialog(dialog,
-					[this, below = selection(), id = window.id()](const ui::FileDialogResult& chosen)
+					[this, selection, id = window.id()](const ui::FileDialogResult& chosen)
 					{
 						if (!chosen.error.empty())
 							logging::warning("The file dialog failed: {}", chosen.error);
 						ui::Window* parent = m_shell.find(id);
 						if (chosen.files.empty() || parent == nullptr)
 							return;
+						// The selection now: a project.reset while the file dialog was open replaced the one before.
+						const std::vector<uint64_t> below = selection();
 						openDialog(*parent, "track-import.rml",
 							{{"path", chosen.files.front().u8string()},
 								{"below", below.empty() ? std::string() : std::to_string(below.front())}});
@@ -2449,14 +2491,9 @@ namespace gnubase::app
 				dialog.filters = {{"DAWproject files", "dawproject"}};
 				dialog.location = "Tracks.dawproject";
 				dialog.parent = window.id();
-				m_shell.showFileDialog(dialog,
-					[this, tracks = selection(), id = window.id()](const ui::FileDialogResult& chosen)
+				chooseProjectFile(dialog,
+					[this, tracks = selection(), id = window.id()](std::filesystem::path file)
 					{
-						if (!chosen.error.empty())
-							logging::warning("The file dialog failed: {}", chosen.error);
-						if (chosen.files.empty())
-							return;
-						std::filesystem::path file = chosen.files.front();
 						if (file.extension().empty())
 							file += ".dawproject";
 						m_binding.send("track.export", {{"tracks", tracks}, {"path", file.u8string()}},
@@ -2511,14 +2548,11 @@ namespace gnubase::app
 				dialog.title = save ? "Save Pattern Preset" : "Load Pattern Preset";
 				dialog.filters = {{"Pattern presets", "patternpreset"}};
 				dialog.parent = parent;
-				m_shell.showFileDialog(dialog,
-					[this, save, track](const ui::FileDialogResult& result)
+				chooseProjectFile(dialog,
+					[this, save, track](const std::filesystem::path& file)
 					{
-						if (!result.error.empty())
-							logging::warning("The file dialog failed: {}", result.error);
-						if (!result.files.empty())
-							m_binding.send(save ? "pattern.export" : "pattern.import",
-								{{"track", track}, {"path", result.files.front().u8string()}});
+						m_binding.send(
+							save ? "pattern.export" : "pattern.import", {{"track", track}, {"path", file.u8string()}});
 					});
 			});
 	}
@@ -2563,14 +2597,9 @@ namespace gnubase::app
 		dialog.title = "Save Drum Map";
 		dialog.filters = {{"Drum maps", "drm"}};
 		dialog.parent = parent;
-		m_shell.showFileDialog(dialog,
-			[this, map](const ui::FileDialogResult& result)
+		chooseProjectFile(dialog,
+			[this, map](std::filesystem::path file)
 			{
-				if (!result.error.empty())
-					logging::warning("The file dialog failed: {}", result.error);
-				if (result.files.empty())
-					return;
-				std::filesystem::path file = result.files.front();
 				if (file.extension() != ".drm")
 					file += ".drm";
 				m_binding.send("drumMap.export", {{"map", map}, {"path", file.u8string()}});
@@ -2609,7 +2638,7 @@ namespace gnubase::app
 	}
 
 	Rml::ElementDocument& AppUi::openOnce(ui::Window& window, const char* name, Rml::ObserverPtr<Rml::Element>& open,
-		const std::vector<std::pair<std::string, std::string>>& attributes) const
+		const std::vector<std::pair<std::string, std::string>>& attributes)
 	{
 		// One dialog: a second document would share the first one's table in the UI's Lua. A closed document has left
 		// its context, until the context releases it.
@@ -2663,7 +2692,7 @@ namespace gnubase::app
 	}
 
 	Rml::ElementDocument& AppUi::openDialog(
-		ui::Window& window, const char* name, const std::vector<std::pair<std::string, std::string>>& attributes) const
+		ui::Window& window, const char* name, const std::vector<std::pair<std::string, std::string>>& attributes)
 	{
 		const std::filesystem::path file = m_resources / "ui" / name;
 		Rml::ElementDocument* document = window.context().LoadDocument(file.generic_u8string());

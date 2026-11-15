@@ -455,17 +455,17 @@ namespace gnubase::engine::processors
 		{
 			std::array<float*, 2> delay = {m_delayBus[0].data(), m_delayBus[1].data()};
 			std::array<float*, 2> reverb = {m_reverbBus[0].data(), m_reverbBus[1].data()};
-			const double delayLevel = m_values[DelayOn] >= 0.5 ? dsp::dbToGain(m_values[DelayLevel]) : 0.0;
+			const double delayLevel = delayOn ? dsp::dbToGain(m_values[DelayLevel]) : 0.0;
 			const double toReverb = std::clamp(m_values[DelayToReverb] / 100.0, 0.0, 1.0);
-			if (m_values[DelayOn] >= 0.5)
+			if (delayOn)
 			{
 				m_delay.process(delay.data(), 2, begin, end);
 				for (uint32_t i = begin; i < end; ++i)
 					for (size_t c = 0; c < 2; ++c)
 						reverb[c][i] += static_cast<float>(delay[c][i] * toReverb);
 			}
-			const double reverbLevel = m_values[ReverbOn] >= 0.5 ? dsp::dbToGain(m_values[ReverbLevel]) : 0.0;
-			if (m_values[ReverbOn] >= 0.5)
+			const double reverbLevel = reverbOn ? dsp::dbToGain(m_values[ReverbLevel]) : 0.0;
+			if (reverbOn)
 				m_reverb.process(reverb.data(), 2, begin, end);
 			for (uint32_t i = begin; i < end; ++i)
 			{

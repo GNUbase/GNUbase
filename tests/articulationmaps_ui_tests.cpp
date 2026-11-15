@@ -75,7 +75,7 @@ namespace
 		std::vector<std::string> listed()
 		{
 			std::vector<std::string> names;
-			for (const Json& item : elements("#articulation-maps listitem"))
+			for (const Json& item : elements("#articulation-maps listitem .map-name"))
 				names.push_back(item.value("text", std::string()));
 			return names;
 		}
@@ -207,7 +207,7 @@ TEST_CASE("the articulation map setup shows changes from elsewhere, and imports 
 	REQUIRE(f.app.waitUntil(
 		[&f]
 		{
-			const Json selected = f.elements("#articulation-maps listitem.selected");
+			const Json selected = f.elements("#articulation-maps listitem.selected .map-name");
 			return selected.size() == 1 && selected[0].value("text", std::string()) == "Horns";
 		}));
 
@@ -320,7 +320,7 @@ TEST_CASE("the articulation map setup opened again without a track can't assign,
 	};
 	const auto selected = [&f]
 	{
-		const Json item = f.elements("#articulation-maps listitem.selected");
+		const Json item = f.elements("#articulation-maps listitem.selected .map-name");
 		return item.size() == 1 ? item[0].value("text", std::string()) : std::string();
 	};
 	open();
@@ -455,6 +455,21 @@ namespace
 		Json elements(const std::string& selector) { return app.ui().dom(window, selector, 0).at("elements"); }
 
 		Json box(const std::string& selector) { return elements(selector).at(0).at("box"); }
+
+		// Whether the first element's border box lies inside the editor's window.
+		bool inside(const std::string& selector)
+		{
+			const Json shown = box(selector);
+			const Json windows = app.ui().windows();
+			for (const Json& each : windows.at("windows"))
+				if (each.at("id") == window)
+					return shown.at("x").get<double>() >= 0.0 && shown.at("y").get<double>() >= 0.0 &&
+						shown.at("x").get<double>() + shown.at("width").get<double>() <=
+						each.at("width").get<double>() &&
+						shown.at("y").get<double>() + shown.at("height").get<double>() <=
+						each.at("height").get<double>();
+			return false;
+		}
 
 		std::string value(const std::string& selector)
 		{
@@ -660,7 +675,8 @@ TEST_CASE("the list editor lists directions as Articulation events and edits the
 
 TEST_CASE("the Articulations lane drops a cleared slot color and width, and its rows line up with their names", "[ui]")
 {
-	// #1498: the lane keeps its elements while their RML is the same, so what code set on them must go again.
+	// #1498: the lane keeps its elements while their RML is the same, so a width code set on a kept element must go
+	// again. A slot that loses its color loses its class .light or .dark, so its elements are new and have no color.
 	Editor f;
 	const std::string first = inLane(" .sound-slot[note=\"" + std::to_string(f.notes[0]) + "\"]");
 	const auto has = [&f](const std::string& selector, const std::string& name)
@@ -866,4 +882,722 @@ TEST_CASE("the articulation map setup opened right after a new project has no tr
 	f.app.shell().step(std::chrono::milliseconds(0));
 	CHECK(f.elements("body[track]").empty());
 	CHECK(f.elements("#articulation-map-assign.unavailable").size() == 1);
+}
+
+TEST_CASE("the articulation map setup filters its maps, combines articulations and has the sound slot actions", "[ui]")
+{
+	Fixture f;
+	const Json strings =
+		f.app
+			.call("articulationMap.add",
+				{{"name", "Strings"}, {"groups", {"Technique", "Legato"}},
+					{"articulations",
+						{{{"name", "Arco"}, {"type", "direction"}, {"group", 0}},
+							{{"name", "Pizzicato"}, {"type", "direction"}, {"group", 0}},
+							{{"name", "Legato"}, {"type", "attribute"}, {"group", 1}}}},
+					{"slots",
+						{{{"name", "Arco"}, {"trigger", 36}},
+							{{"name", "Pizzicato"}, {"articulations", {"Pizzicato"}}, {"trigger", 37}}}}})
+			.at("map");
+	f.app.call("articulationMap.add", {{"name", "Brass"}});
+	f.app.call("track.set", {{"track", f.track}, {"articulationMap", strings.at("id")}});
+	f.click("#menu-bar button[menu=midi-menu]");
+	f.click("menuitem[command=\"midi.articulationMapSetup\"]");
+	REQUIRE(f.app.waitUntil([&f] { return f.shown("#articulation-maps-dialog"); }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const auto slots = [&f] { return f.maps().at(0).at("slots"); };
+	const auto names = [&slots]
+	{
+		std::vector<std::string> found;
+		for (const Json& slot : slots())
+			found.push_back(slot.at("name").get<std::string>());
+		return found;
+	};
+	const auto triggers = [&slots]
+	{
+		std::vector<int> found;
+		for (const Json& slot : slots())
+			found.push_back(slot.at("trigger").is_null() ? -1 : slot.at("trigger").get<int>());
+		return found;
+	};
+	using Names = std::vector<std::string>;
+
+	// The maps list (p. 1267): the used map marked P, Show only Maps used in this Project and the search.
+	REQUIRE(f.app.waitUntil([&f] { return f.listed() == Names{"Strings", "Brass"}; }));
+	CHECK(f.elements("#articulation-maps .used-mark").size() == 1);
+	f.click("#articulation-maps-used");
+	REQUIRE(f.app.waitUntil([&f] { return f.listed() == Names{"Strings"}; }));
+	f.click("#articulation-maps-used");
+	f.write("#articulation-maps-search", "bra");
+	REQUIRE(f.app.waitUntil([&f] { return f.listed() == Names{"Brass"}; }));
+	f.click("#articulation-maps-search");
+	f.app.ui().key(std::nullopt, "Mod+A");
+	f.app.ui().key(std::nullopt, "Backspace");
+	REQUIRE(f.app.waitUntil([&f] { return f.listed() == Names{"Strings", "Brass"}; }));
+	// The search selected Brass, the only map it listed (#1667): Strings again.
+	f.click("#articulation-maps listitem");
+	REQUIRE(f.app.waitUntil([&f] { return f.elements("#articulation-maps listitem.selected .map-name").size() == 1; }));
+	REQUIRE(f.app.waitUntil(
+		[&f]
+		{
+			return f.elements("#articulation-maps listitem.selected .map-name").at(0).value("text", std::string()) ==
+				"Strings";
+		}));
+
+	// The articulation combinations (pp. 1275-1276): Legato checked makes an add-on slot of it; the search shows
+	// the articulations with one of its terms.
+	f.click("#articulation-combinations input[articulation=Legato]");
+	f.click("#articulation-slot-add-on");
+	REQUIRE(f.app.waitUntil([&slots] { return slots().size() == 3; }));
+	CHECK(slots().at(2).at("name") == "Legato");
+	CHECK(slots().at(2).at("articulations") == Json{"Legato"});
+	CHECK(slots().at(2).at("addOn") == true);
+	f.write("#articulation-combination-search", "pizz OR leg");
+	REQUIRE(f.app.waitUntil([&f] { return !f.shown(".combination[name=Arco]"); }));
+	CHECK(f.shown(".combination[name=Pizzicato]"));
+	CHECK(f.shown(".combination[name=Legato]"));
+
+	// The new MIDI modifiers of the picked slot, which an add-on slot doesn't have (#1667).
+	CHECK(f.elements("#articulation-modifiers .add-on-modifiers").size() == 1);
+	CHECK(f.elements("#articulation-map input[kind=modifier]").empty());
+	f.click("input[name=articulation-pick-slot][index=\"2\"]");
+	f.write("#articulation-map input[kind=modifier][key=attack]", "15");
+	REQUIRE(f.app.waitUntil([&slots] { return slots().at(1).at("attack") == 15; }));
+	f.write("#articulation-map input[kind=modifier][key=maxVelocity]", "100");
+	REQUIRE(f.app.waitUntil([&slots] { return slots().at(1).at("maxVelocity") == 100; }));
+
+	// The sound slot actions (p. 1273): Move Up and Down, Copy, Paste and Cut.
+	f.click("input[name=articulation-pick-slot][index=\"2\"]");
+	f.click("#articulation-slot-up");
+	REQUIRE(f.app.waitUntil([&names] { return names() == Names{"Pizzicato", "Arco", "Legato"}; }));
+	f.click("#articulation-slot-down");
+	REQUIRE(f.app.waitUntil([&names] { return names() == Names{"Arco", "Pizzicato", "Legato"}; }));
+	f.click("#articulation-slot-copy");
+	f.click("#articulation-slot-paste");
+	REQUIRE(f.app.waitUntil([&names] { return names() == Names{"Arco", "Pizzicato", "Pizzicato", "Legato"}; }));
+	f.click("#articulation-slot-cut");
+	REQUIRE(f.app.waitUntil([&names] { return names() == Names{"Arco", "Pizzicato", "Legato"}; }));
+
+	// The remote triggers: Transpose Up of the picked slot, Reassign All, Transpose All and Remove All.
+	f.click("input[name=articulation-pick-slot][index=\"1\"]");
+	f.click("#articulation-trigger-up");
+	REQUIRE(f.app.waitUntil([&triggers] { return triggers() == std::vector<int>{37, 37, -1}; }));
+	f.write("#articulation-reassign-start", "60");
+	f.click("#articulation-triggers-reassign");
+	REQUIRE(f.app.waitUntil([&triggers] { return triggers() == std::vector<int>{60, 61, 62}; }));
+	f.click("#articulation-triggers-transpose"); // by 12 semitones
+	REQUIRE(f.app.waitUntil([&triggers] { return triggers() == std::vector<int>{72, 73, 74}; }));
+	f.click("#articulation-triggers-remove");
+	REQUIRE(f.app.waitUntil([&triggers] { return triggers() == std::vector<int>{-1, -1, -1}; }));
+}
+
+TEST_CASE("the articulation map setup's slot actions send what they say, and its rows follow the changes", "[ui]")
+{
+	Fixture f;
+	const Json strings =
+		f.app
+			.call("articulationMap.add",
+				{{"name", "Strings"}, {"groups", {"Technique", "Legato"}},
+					{"articulations",
+						{{{"name", "Arco"}, {"type", "direction"}, {"group", 0}},
+							{{"name", "Pizzicato"}, {"type", "direction"}, {"group", 0}},
+							{{"name", "Legato"}, {"type", "attribute"}, {"group", 1}}}},
+					{"slots",
+						{{{"name", "Arco"}, {"trigger", 36}},
+							{{"name", "Pizzicato"}, {"articulations", {"Pizzicato"}}, {"trigger", 37},
+								{"outputs", {{{"status", "note"}, {"data1", 25}, {"data2", 100}}}}},
+							{{"name", "Legato"}, {"articulations", {"Legato"}}, {"trigger", 38}, {"addOn", true}}}}})
+			.at("map");
+	const Json brass =
+		f.app.call("articulationMap.add", {{"name", "Brass"}, {"slots", {{{"name", "Open"}, {"trigger", 40}}}}})
+			.at("map");
+	f.app.call("track.set", {{"track", f.track}, {"articulationMap", strings.at("id")}});
+	f.click("#menu-bar button[menu=midi-menu]");
+	f.click("menuitem[command=\"midi.articulationMapSetup\"]");
+	REQUIRE(f.app.waitUntil([&f] { return f.shown("#articulation-maps-dialog"); }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	using Names = std::vector<std::string>;
+	using Triggers = std::vector<int>;
+	const auto slots = [&f](size_t map = 0) { return f.maps().at(map).at("slots"); };
+	const auto names = [&slots]
+	{
+		Names found;
+		for (const Json& slot : slots())
+			found.push_back(slot.at("name").get<std::string>());
+		return found;
+	};
+	const auto triggers = [&slots](size_t map = 0)
+	{
+		Triggers found;
+		for (const Json& slot : slots(map))
+			found.push_back(slot.at("trigger").is_null() ? -1 : slot.at("trigger").get<int>());
+		return found;
+	};
+	const auto marks = [&f] { return f.elements("#articulation-maps .used-mark").size(); };
+	const auto pickSlot = [&f](int index)
+	{ f.click("input[name=articulation-pick-slot][index=\"" + std::to_string(index) + "\"]"); };
+	const auto picked = [&f](int index)
+	{
+		return f.elements("input[name=articulation-pick-slot][index=\"" + std::to_string(index) + "\"][checked]")
+				   .size() == 1;
+	};
+	const auto mapName = [&f]
+	{
+		const Json found = f.elements("#articulation-map input[kind=map][key=name]");
+		return found.empty() ? std::string() : found.at(0).at("attributes").value("value", std::string());
+	};
+	// Chooses the next option of a drop-down.
+	const auto nextOption = [&f](const std::string& selector)
+	{
+		f.click(selector);
+		f.app.ui().key(std::nullopt, "Down");
+		f.click(selector);
+	};
+
+	// The P marks follow the tracks' maps, changed elsewhere (track.changed) or with Assign to Track (#1667).
+	REQUIRE(f.app.waitUntil([&f] { return f.listed() == Names{"Strings", "Brass"}; }));
+	CHECK(marks() == 1);
+	f.app.call("track.set", {{"track", f.track}, {"articulationMap", 0}});
+	REQUIRE(f.app.waitUntil([&marks] { return marks() == 0; }));
+	f.click("#articulation-map-assign");
+	REQUIRE(f.app.waitUntil([&marks] { return marks() == 1; }));
+
+	// A search that leaves the selected map out selects the first one it lists, and one that lists none shows no
+	// map (#1667).
+	REQUIRE(mapName() == "Strings");
+	f.write("#articulation-maps-search", "bra");
+	REQUIRE(f.app.waitUntil([&f] { return f.listed() == Names{"Brass"}; }));
+	REQUIRE(f.app.waitUntil([&mapName] { return mapName() == "Brass"; }));
+	f.write("#articulation-maps-search", "none");
+	REQUIRE(f.app.waitUntil([&f] { return f.listed().empty(); }));
+	CHECK(f.elements("#articulation-map.unavailable").size() == 1);
+	f.write("#articulation-maps-search", "str");
+	REQUIRE(f.app.waitUntil([&mapName] { return mapName() == "Strings"; }));
+	CHECK(f.elements("#articulation-map.unavailable").empty());
+
+	// The combinations follow a renamed articulation and the articulations typed for the picked slot (#1667).
+	f.write("#articulation-list input[kind=articulation][index=\"2\"][key=name]", "Pizz");
+	REQUIRE(f.app.waitUntil([&f] { return f.shown(".combination[name=Pizz]"); }));
+	CHECK(f.elements(".combination[name=Pizzicato]").empty());
+	f.write("#articulation-slots input[kind=slot][index=\"1\"][key=articulations]", "Arco");
+	REQUIRE(f.app.waitUntil(
+		[&f] { return f.elements("#articulation-combinations input[articulation=Arco][checked]").size() == 1; }));
+
+	// Apply to Slot: the picked slot gets the checked articulations.
+	f.click("#articulation-combinations input[articulation=Arco]");
+	f.click("#articulation-combinations input[articulation=Legato]");
+	f.click("#articulation-combination-apply");
+	REQUIRE(f.app.waitUntil([&slots] { return slots().at(0).at("articulations") == Json{"Legato"}; }));
+
+	// As Default refused for an add-on slot keeps it picked; Duplicate leaves the trigger out and picks the copy;
+	// As Default moves the picked slot to the top.
+	pickSlot(3);
+	f.click("#articulation-slot-default");
+	REQUIRE(f.app.waitUntil([&f] { return f.message().find("default") != std::string::npos; }));
+	CHECK(names() == Names{"Arco", "Pizzicato", "Legato"});
+	CHECK(picked(3));
+	pickSlot(2);
+	f.click("#articulation-slot-duplicate");
+	REQUIRE(f.app.waitUntil([&names] { return names() == Names{"Arco", "Pizzicato", "Pizzicato", "Legato"}; }));
+	CHECK(triggers() == Triggers{36, 37, -1, 38});
+	CHECK(picked(3));
+	f.click("#articulation-slot-default");
+	REQUIRE(f.app.waitUntil([&triggers] { return triggers() == Triggers{-1, 36, 37, 38}; }));
+	CHECK(picked(1));
+
+	// The clipboard keeps the slot as it was copied: an output mapping added after Copy doesn't paste (#1667).
+	pickSlot(3);
+	f.click("#articulation-slot-copy");
+	f.click("#articulation-output-add");
+	REQUIRE(f.app.waitUntil([&slots] { return slots().at(2).at("outputs").size() == 2; }));
+	f.click("#articulation-slot-paste");
+	REQUIRE(f.app.waitUntil([&slots] { return slots().size() == 5; }));
+	CHECK(slots().at(3).at("outputs").size() == 1);
+	CHECK(triggers() == Triggers{-1, 36, 37, 37, 38});
+
+	// Transpose Down of the picked slot.
+	pickSlot(2);
+	f.click("#articulation-trigger-down");
+	REQUIRE(f.app.waitUntil([&triggers] { return triggers() == Triggers{-1, 35, 37, 37, 38}; }));
+
+	// Reassign All on the white keys from 59 with Skip First Slot: the first slot keeps none.
+	f.write("#articulation-reassign-start", "59");
+	nextOption("#articulation-reassign-keys");
+	f.click("#articulation-reassign-skip");
+	f.click("#articulation-triggers-reassign");
+	REQUIRE(f.app.waitUntil([&triggers] { return triggers() == Triggers{-1, 59, 60, 62, 64}; }));
+
+	// Transpose All by an octave, of all maps.
+	f.write("#articulation-transpose-by", "1");
+	nextOption("#articulation-transpose-unit");
+	f.click("#articulation-transpose-all");
+	f.click("#articulation-triggers-transpose");
+	REQUIRE(f.app.waitUntil([&triggers] { return triggers() == Triggers{-1, 71, 72, 74, 76}; }));
+	CHECK(triggers(1) == Triggers{52});
+	CHECK(f.maps().at(1).at("id") == brass.at("id"));
+}
+
+TEST_CASE("the Articulations lane collapses and expands its groups and hides its sound slots lane", "[ui]")
+{
+	// #1580, reference manual pp. 1287-1288.
+	Editor f;
+	f.app.call("controller.add",
+		{{"part", f.part},
+			{"controllers",
+				{{{"position", 4 * g_sixteenth}, {"type", "articulation"}, {"articulation", "Pizzicato"}}}}});
+	f.app.call("note.set", {{"part", f.part}, {"notes", {{{"id", f.notes[2]}, {"articulations", {"Staccato"}}}}}});
+	REQUIRE(f.app.waitUntil([&f] { return f.elements(inLane(" .articulation-item")).size() == 2; }));
+	const auto view = [&f] { return f.app.call("editor.get", {{"editor", "window"}}); };
+	// The lane's controls (#1658, pp. 1287-1288), under the articulations' names.
+	const auto control = [&f](const std::string& action)
+	{
+		const std::string button = inLane(" .articulation-control[lane-action=" + action + "]");
+		const Json names = f.elements(inLane(" .articulation-name"));
+		const Json last = names.at(names.size() - 1).at("box");
+		CHECK(
+			f.box(button).at("y").get<double>() >= last.at("y").get<double>() + last.at("height").get<double>() - 0.5);
+		const Json header = f.box(inLane(" .controller-lane-header"));
+		CHECK(f.box(button).at("x").get<double>() + f.box(button).at("width").get<double>() <=
+			header.at("x").get<double>() + header.at("width").get<double>() + 0.5);
+		f.click(of(button));
+	};
+
+	// Collapse All Groups: a row per group with the group's name beside it, and its articulations in it.
+	control("collapseGroups");
+	REQUIRE(f.app.waitUntil([&] { return view().at("collapsedGroups") == Json::array({0, 1}); }));
+	REQUIRE(f.app.waitUntil([&f] { return f.elements(inLane(" .articulation-row")).size() == 3; }));
+	const Json names = f.elements(inLane(" .articulation-name"));
+	REQUIRE(names.size() == 2);
+	CHECK(names.at(0).value("text", std::string()) == "Technique");
+	CHECK(names.at(1).value("text", std::string()) == "Length");
+	CHECK(f.elements(inLane(" .articulation-row.collapsed .articulation-item")).size() == 2);
+	CHECK(f.elements(inLane(" .articulation-row.collapsed .articulation-item.direction"))
+			  .at(0)
+			  .value("text", std::string()) == "Pizzicato");
+	// The erase tool removes an articulation in a collapsed row too.
+	f.tool("erase");
+	f.click(f.at(2, 9.0));
+	REQUIRE(f.app.waitUntil([&f] { return f.articulations(f.notes[2]).empty(); }));
+
+	// A click on a group's name expands it, a click on an articulation's name collapses its group.
+	f.click(of(inLane(" .articulation-name[articulation-group=\"0\"]")));
+	REQUIRE(f.app.waitUntil([&] { return view().at("collapsedGroups") == Json::array({1}); }));
+	REQUIRE(f.app.waitUntil([&f] { return f.elements(inLane(" .articulation-row")).size() == 4; }));
+	f.click(of(inLane(" .articulation-name[articulation-group=\"0\"]")));
+	REQUIRE(f.app.waitUntil([&] { return view().at("collapsedGroups") == Json::array({0, 1}); }));
+	REQUIRE(f.app.waitUntil([&f] { return f.elements(inLane(" .articulation-row")).size() == 3; }));
+	control("expandGroups");
+	REQUIRE(f.app.waitUntil([&] { return view().at("collapsedGroups").empty(); }));
+	REQUIRE(f.app.waitUntil([&f] { return f.elements(inLane(" .articulation-row")).size() == 4; }));
+
+	// Show/Hide Sound Slots Lane: its row beside the lane's name stays, without the slots.
+	REQUIRE(f.elements(inLane(" .sound-slot")).size() == 3);
+	control("soundSlots");
+	REQUIRE(f.app.waitUntil([&] { return view().at("soundSlotsLane") == false; }));
+	REQUIRE(f.app.waitUntil([&f] { return f.elements(inLane(" .sound-slot")).empty(); }));
+	control("soundSlots");
+	REQUIRE(f.app.waitUntil([&f] { return f.elements(inLane(" .sound-slot")).size() == 3; }));
+
+	// They are the lane's, not items of the lanes' context menu; the other lanes don't have them.
+	CHECK(f.elements("#controller-lane-context-menu menuitem[lane-action=collapseGroups]").empty());
+	f.app.call("editor.set", {{"editor", "window"}, {"lanes", {{{"type", "velocity"}}}}});
+	REQUIRE(f.app.waitUntil([&f] { return f.elements(".controller-lane[lane-kind=velocity]").size() == 1; }));
+	CHECK(f.elements(".articulation-control").empty());
+}
+
+TEST_CASE(
+	"the Articulations lane selects with the object selection tool, deletes with the keys and makes resets", "[ui]")
+{
+	// #1580, reference manual pp. 1289-1290.
+	Editor f;
+	const Json added = f.app.call("controller.add",
+		{{"part", f.part},
+			{"controllers",
+				{{{"position", 4 * g_sixteenth}, {"type", "articulation"}, {"articulation", "Pizzicato"}}}}});
+	const auto direction = added.at("controllers").at(0).at("id").get<uint64_t>();
+	f.app.call("note.set",
+		{{"part", f.part},
+			{"notes",
+				{{{"id", f.notes[1]}, {"articulations", {"Staccato", "Other"}}},
+					{{"id", f.notes[2]}, {"articulations", {"Staccato"}}}}}});
+	REQUIRE(f.app.waitUntil([&f] { return f.elements(inLane(" .articulation-item")).size() == 3; }));
+	const auto view = [&f] { return f.app.call("editor.get", {{"editor", "window"}}); };
+
+	// A click selects a direction, or an attribute's note; Shift adds to the selection.
+	f.click(f.at(2, 6.0));
+	REQUIRE(f.app.waitUntil([&]
+		{ return view().at("controllerSelection") == Json::array({{{"part", f.part}, {"controller", direction}}}); }));
+	f.click(f.at(3, 5.0));
+	REQUIRE(f.app.waitUntil(
+		[&] { return view().at("selection") == Json::array({{{"part", f.part}, {"note", f.notes[1]}}}); }));
+	CHECK(view().at("controllerSelection").empty());
+	// The lane has the selection too before Shift adds to it.
+	REQUIRE(f.app.waitUntil([&f] { return f.elements(inLane(" .articulation-item.attribute.selected")).size() == 1; }));
+	f.app.ui().click(f.window, f.at(2, 6.0), ui::MouseButton::Left, 1, {"shift"});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return view().at("controllerSelection").size() == 1; }));
+	CHECK(view().at("selection").size() == 1);
+	REQUIRE(f.app.waitUntil([&f] { return f.elements(inLane(" .articulation-item.selected")).size() == 2; }));
+
+	// Delete removes the selected direction and the map's attributes of the selected note, not the note.
+	f.app.ui().key(f.window, "Delete");
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&f] { return f.midiPart().at("controllers").empty(); }));
+	REQUIRE(f.app.waitUntil([&f] { return f.articulations(f.notes[1]) == Json{"Other"}; }));
+	CHECK(f.midiPart().at("notes").size() == 3);
+	CHECK(f.articulations(f.notes[2]) == Json{"Staccato"});
+	// Backspace too, once the lane shows what Delete left.
+	REQUIRE(f.app.waitUntil([&f] { return f.elements(inLane(" .articulation-item")).size() == 1; }));
+	f.click(f.at(3, 9.0));
+	REQUIRE(f.app.waitUntil(
+		[&] { return view().at("selection") == Json::array({{{"part", f.part}, {"note", f.notes[2]}}}); }));
+	REQUIRE(f.app.waitUntil([&f] { return f.elements(inLane(" .articulation-item.attribute.selected")).size() == 1; }));
+	f.app.ui().key(f.window, "Backspace");
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&f] { return f.articulations(f.notes[2]).empty(); }));
+	CHECK(f.midiPart().at("notes").size() == 3);
+
+	// The event pop-up menu's Reset makes a direction a reset (p. 1290), and again a direction.
+	f.app.call("controller.add",
+		{{"part", f.part},
+			{"controllers",
+				{{{"position", 4 * g_sixteenth}, {"type", "articulation"}, {"articulation", "Pizzicato"}}}}});
+	REQUIRE(f.app.waitUntil([&f] { return f.elements(inLane(" .articulation-item.direction")).size() == 1; }));
+	// Reset is checked on a reset (#1658).
+	const auto reset = [&f](const ui::Target& target, ui::MouseButton button, bool checked)
+	{
+		f.app.ui().click(f.window, target, button, 1, {});
+		f.app.shell().step(std::chrono::milliseconds(0));
+		const std::string item = "#controller-articulation-menu menuitem[lane-action=reset]";
+		REQUIRE(f.app.waitUntil(
+			[&]
+			{
+				const Json found = f.elements(item);
+				return !found.empty() && found.at(0).at("visible") == true;
+			}));
+		CHECK(f.elements(item).at(0).at("attributes").contains("checked") == checked);
+		f.click(of(item));
+	};
+	// The object selection tool's arrow in the upper left corner of a selected direction, or of the direction the
+	// mouse is over, opens the menu (#1658, p. 1290); a right click does too.
+	CHECK(f.elements(inLane(" .articulation-item.direction .articulation-menu-arrow")).size() == 1);
+	f.click(f.at(2, 6.0));
+	const std::string arrow = inLane(" .articulation-item.direction.selected .articulation-menu-arrow");
+	REQUIRE(f.app.waitUntil([&] { return f.elements(arrow).size() == 1 && f.elements(arrow).at(0).at("visible"); }));
+	reset(of(arrow), ui::MouseButton::Left, false);
+	REQUIRE(f.app.waitUntil([&f] { return f.midiPart().at("controllers").at(0).value("reset", false); }));
+	REQUIRE(f.app.waitUntil([&f] { return f.elements(inLane(" .articulation-item.reset")).size() == 1; }));
+	reset(of(inLane(" .articulation-item.reset")), ui::MouseButton::Right, true);
+	REQUIRE(f.app.waitUntil([&f] { return !f.midiPart().at("controllers").at(0).value("reset", false); }));
+	REQUIRE(f.app.waitUntil([&f] { return f.elements(inLane(" .articulation-item.reset")).empty(); }));
+	// The other tools have no arrows.
+	f.tool("draw");
+	REQUIRE(f.app.waitUntil([&f] { return f.elements(inLane(" .articulation-menu-arrow")).empty(); }));
+}
+
+TEST_CASE("the Articulations lane deletes the attributes selected, and shows when it has the keyboard focus", "[ui]")
+{
+	// #1658, reference manual pp. 100, 1289.
+	Editor f;
+	Json map = f.app.call("project.get").at("articulationMaps").at(0);
+	map["groups"].push_back("Dynamics");
+	map["articulations"].push_back({{"name", "Accent"}, {"type", "attribute"}, {"group", 2}});
+	f.app.call("articulationMap.set",
+		{{"map", map.at("id")}, {"groups", map.at("groups")}, {"articulations", map.at("articulations")}});
+	const auto both = [&f]
+	{
+		f.app.call("note.set",
+			{{"part", f.part}, {"notes", {{{"id", f.notes[1]}, {"articulations", {"Staccato", "Accent"}}}}}});
+		REQUIRE(f.app.waitUntil([&f] { return f.elements(inLane(" .articulation-item.attribute")).size() == 2; }));
+	};
+	REQUIRE(f.app.waitUntil([&f] { return f.elements(inLane(" .articulation-row")).size() == 5; }));
+	both();
+	const auto selected = [&f](const char* row)
+	{
+		return f
+			.elements(inLane(" .articulation-item.attribute.selected[articulation-row=\"" + std::string(row) + "\"]"))
+			.size();
+	};
+	const std::string focused = ".controller-lane[lane-kind=articulations].keyboard-focus";
+	CHECK(f.elements(focused).empty());
+
+	// A click selects the attribute pressed, with its note, and gives the lane the keyboard focus, which it shows.
+	f.click(f.at(3, 5.0));
+	REQUIRE(f.app.waitUntil([&] { return selected("2") == 1; }));
+	CHECK(selected("3") == 0);
+	CHECK(f.elements(focused).size() == 1);
+	// Delete removes that attribute, not the note's other one.
+	f.app.ui().key(f.window, "Delete");
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&f] { return f.articulations(f.notes[1]) == Json{"Accent"}; }));
+
+	// Shift adds an attribute of a selected note and removes it again; the note stays selected while one is.
+	both();
+	f.click(f.at(3, 5.0));
+	REQUIRE(f.app.waitUntil([&] { return selected("2") == 1; }));
+	f.app.ui().click(f.window, f.at(4, 5.0), ui::MouseButton::Left, 1, {"shift"});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return selected("2") == 1 && selected("3") == 1; }));
+	f.app.ui().click(f.window, f.at(3, 5.0), ui::MouseButton::Left, 1, {"shift"});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return selected("2") == 0 && selected("3") == 1; }));
+	CHECK(f.app.call("editor.get", {{"editor", "window"}}).at("selection") ==
+		Json::array({{{"part", f.part}, {"note", f.notes[1]}}}));
+	f.app.ui().key(f.window, "Backspace");
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&f] { return f.articulations(f.notes[1]) == Json{"Staccato"}; }));
+
+	// A note selected elsewhere has all its attributes selected.
+	both();
+	f.app.call("editor.set", {{"editor", "window"}, {"selection", Json::array()}});
+	REQUIRE(f.app.waitUntil([&] { return selected("2") == 0 && selected("3") == 0; }));
+	f.app.call("editor.set", {{"editor", "window"}, {"selection", {{{"part", f.part}, {"note", f.notes[1]}}}}});
+	REQUIRE(f.app.waitUntil([&] { return selected("2") == 1 && selected("3") == 1; }));
+
+	// A click outside the lanes takes the keyboard focus, and the lane no longer shows it.
+	REQUIRE(f.app.waitUntil([&] { return !f.elements(focused).empty(); }));
+	f.tool("draw");
+	REQUIRE(f.app.waitUntil([&] { return f.elements(focused).empty(); }));
+}
+
+TEST_CASE("the info line's pop-up menu changes only the selected notes of tracks with the first one's map", "[ui]")
+{
+	// #1658, reference manual p. 1290.
+	Editor f;
+	const auto other = f.app.call("track.add", {{"type", "instrument"}}).at("track").at("id").get<uint64_t>();
+	const auto part = f.app.call("midiPart.add", {{"track", other}, {"position", 0}, {"length", g_bar}})
+						  .at("part")
+						  .at("id")
+						  .get<uint64_t>();
+	const auto note = f.app
+						  .call("note.add",
+							  {{"part", part},
+								  {"notes",
+									  Json::array({{{"position", 2 * g_sixteenth}, {"length", g_sixteenth},
+										  {"pitch", 64}, {"velocity", 0.5}}})}})
+						  .at("notes")
+						  .at(0)
+						  .at("id")
+						  .get<uint64_t>();
+	f.app.call("editor.open", {{"editor", "window"}, {"parts", Json::array({f.part, part})}});
+	f.app.call("editor.set",
+		{{"editor", "window"},
+			{"selection", {{{"part", f.part}, {"note", f.notes[0]}}, {{"part", part}, {"note", note}}}}});
+	REQUIRE(
+		f.app.waitUntil([&f] { return f.app.call("editor.get", {{"editor", "window"}}).at("selection").size() == 2; }));
+	REQUIRE(f.app.waitUntil([&f] { return f.elements(".key-editor-info.empty").empty(); }));
+	f.click(of(".key-editor-info button.articulation-menu"));
+	const std::string staccato = "#key-articulations-menu menuitem[articulation=Staccato]";
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const Json found = f.elements(staccato);
+			return !found.empty() && found.at(0).at("visible") == true;
+		}));
+	f.click(of(staccato));
+	REQUIRE(f.app.waitUntil([&f] { return f.articulations(f.notes[0]) == Json{"Staccato"}; }));
+	// The other track has no map: its note gets none.
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const Json project = f.app.call("project.get");
+	for (const Json& each : project.at("midiParts"))
+		if (each.at("id") == part)
+			CHECK(each.at("notes").at(0).value("articulations", Json::array()).empty());
+}
+
+TEST_CASE("the info line and the list editor show a warning sign for articulations the map doesn't have", "[ui]")
+{
+	// #1580, reference manual p. 1291.
+	Editor f;
+	f.app.call("note.set",
+		{{"part", f.part},
+			{"notes",
+				{{{"id", f.notes[0]}, {"articulations", {"Staccato"}}},
+					{{"id", f.notes[1]}, {"articulations", {"Staccato", "Legato"}}}}}});
+	const std::string field = ".key-editor-info .info-field[info-field=articulations]";
+	const auto warns = [&f](const std::string& selector)
+	{
+		const Json found = f.elements(selector + " .articulation-warning");
+		return !found.empty() && found.at(0).at("visible") == true;
+	};
+	const auto select = [&f](uint64_t note)
+	{ f.app.call("editor.set", {{"editor", "window"}, {"selection", {{{"part", f.part}, {"note", note}}}}}); };
+	select(f.notes[0]);
+	REQUIRE(
+		f.app.waitUntil([&f] { return f.value(".key-editor-info textdisplay[field=articulations]") == "Staccato"; }));
+	CHECK_FALSE(warns(field));
+	select(f.notes[1]);
+	REQUIRE(f.app.waitUntil([&] { return warns(field); }));
+
+	// The list editor: a note's attributes and a direction the map doesn't have.
+	f.app.call("controller.add",
+		{{"part", f.part},
+			{"controllers", {{{"position", 0}, {"type", "articulation"}, {"articulation", "Tremolo"}}}}});
+	f.app.call("editor.set", {{"editor", "window"}, {"content", "list"}});
+	const auto row = [](const char* kind, uint64_t id)
+	{ return std::string(".list-editor-rows .list-row[") + kind + "=\"" + std::to_string(id) + "\"]"; };
+	REQUIRE(f.app.waitUntil([&] { return warns(row("note", f.notes[1])); }));
+	CHECK_FALSE(warns(row("note", f.notes[0])));
+	const auto direction = f.midiPart().at("controllers").at(0).at("id").get<uint64_t>();
+	REQUIRE(f.app.waitUntil([&] { return warns(row("controller", direction)); }));
+	f.app.call("controller.set", {{"part", f.part}, {"controllers", {{{"id", direction}, {"articulation", "Arco"}}}}});
+	REQUIRE(f.app.waitUntil([&] { return !warns(row("controller", direction)); }));
+}
+
+TEST_CASE("the info line's and the list editor's pop-up menus choose the map's articulations", "[ui]")
+{
+	// #1580, reference manual pp. 1290-1291.
+	Editor f;
+	const auto choose = [&f](const ui::Target& opener, ui::MouseButton button, const std::string& item)
+	{
+		f.app.ui().click(f.window, opener, button, 1, {});
+		f.app.shell().step(std::chrono::milliseconds(0));
+		REQUIRE(f.app.waitUntil(
+			[&]
+			{
+				const Json found = f.elements(item);
+				return !found.empty() && found.at(0).at("visible") == true;
+			}));
+		f.click(of(item));
+	};
+	f.app.call("editor.set",
+		{{"editor", "window"},
+			{"selection", {{{"part", f.part}, {"note", f.notes[1]}}, {{"part", f.part}, {"note", f.notes[2]}}}}});
+	const std::string field = ".key-editor-info textdisplay[field=articulations]";
+	REQUIRE(f.app.waitUntil([&f] { return f.elements(".key-editor-info.empty").empty(); }));
+	// The map's attributes; one chosen goes to every selected note, chosen again it goes.
+	const std::string staccato = "#key-articulations-menu menuitem[articulation=Staccato]";
+	choose(of(".key-editor-info button.articulation-menu"), ui::MouseButton::Left, staccato);
+	REQUIRE(f.app.waitUntil([&f] { return f.articulations(f.notes[2]) == Json{"Staccato"}; }));
+	CHECK(f.articulations(f.notes[1]) == Json{"Staccato"});
+	CHECK(f.articulations(f.notes[0]).empty());
+	REQUIRE(f.app.waitUntil([&] { return f.value(field) == "Staccato"; }));
+	CHECK(f.elements("#key-articulations-menu menuitem[articulation]").size() == 1);
+	// Opened again, the notes' attribute is checked (#1658); chosen, it goes and is no longer checked.
+	const std::string checkedStaccato = staccato + "[checked]";
+	choose(of(".key-editor-info button.articulation-menu"), ui::MouseButton::Left, checkedStaccato);
+	REQUIRE(f.app.waitUntil([&f] { return f.articulations(f.notes[1]).empty(); }));
+	CHECK(f.articulations(f.notes[2]).empty());
+	REQUIRE(f.app.waitUntil([&] { return f.value(field).empty(); }));
+	f.app.ui().click(f.window, of(".key-editor-info button.articulation-menu"), ui::MouseButton::Left, 1, {});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const Json found = f.elements(staccato);
+			return !found.empty() && found.at(0).at("visible") == true;
+		}));
+	CHECK(f.elements(checkedStaccato).empty());
+	f.app.ui().key(f.window, "Escape");
+	f.app.shell().step(std::chrono::milliseconds(0));
+
+	// The list editor's Attributes column: a click on a note's (#1658), a right click on a direction's.
+	const Json added = f.app.call("controller.add",
+		{{"part", f.part},
+			{"controllers",
+				{{{"position", 4 * g_sixteenth}, {"type", "articulation"}, {"articulation", "Pizzicato"}}}}});
+	const auto direction = added.at("controllers").at(0).at("id").get<uint64_t>();
+	f.app.call("editor.set", {{"editor", "window"}, {"content", "list"}});
+	const auto cell = [](const char* kind, uint64_t id)
+	{
+		return std::string(".list-editor-rows .list-row[") + kind + "=\"" + std::to_string(id) +
+			"\"] textdisplay[field=attributes]";
+	};
+	REQUIRE(f.app.waitUntil([&] { return !f.elements(cell("note", f.notes[0])).empty(); }));
+	choose(of(cell("note", f.notes[0])), ui::MouseButton::Left,
+		"#list-articulations-menu menuitem[articulation=Staccato]");
+	REQUIRE(f.app.waitUntil([&f] { return f.articulations(f.notes[0]) == Json{"Staccato"}; }));
+	// Opened again, the note's attribute is checked, and stays checked while the list editor renders (#1658).
+	REQUIRE(f.app.waitUntil([&] { return f.value(cell("note", f.notes[0])) == "Staccato"; }));
+	f.click(of(cell("note", f.notes[0])));
+	const std::string checked = "#list-articulations-menu menuitem[articulation=Staccato][checked]";
+	REQUIRE(f.app.waitUntil([&] { return !f.elements(checked).empty(); }));
+	f.app.call("editor.set", {{"editor", "window"}, {"insertVelocity", 0.25}});
+	REQUIRE(f.app.waitUntil(
+		[&f] { return f.app.call("editor.get", {{"editor", "window"}}).at("insertVelocity") == 0.25; }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK_FALSE(f.elements(checked).empty());
+	f.app.ui().key(f.window, "Escape");
+	f.app.shell().step(std::chrono::milliseconds(0));
+	choose(of(cell("controller", direction)), ui::MouseButton::Right,
+		"#list-articulations-menu menuitem[articulation=Arco]");
+	REQUIRE(f.app.waitUntil([&f] { return f.midiPart().at("controllers").at(0).at("articulation") == "Arco"; }));
+	CHECK(f.elements("#list-articulations-menu menuitem[articulation]").size() == 2);
+}
+
+TEST_CASE("the list editor's pop-up menu of a row at the window's bottom lies inside the window", "[ui]")
+{
+	// #1580: the menu gets its items after it opened, and moves inside the window for them. With more attributes
+	// than fit under the lowest row, the menu can't lie inside the window without the move (#1665).
+	Editor f("list");
+	Json map = f.app.call("project.get").at("articulationMaps").at(0);
+	Json articulations = map.at("articulations");
+	for (int extra = 1; extra <= 8; ++extra)
+		articulations.push_back({{"name", "Accent " + std::to_string(extra)}, {"type", "attribute"}, {"group", 1}});
+	f.app.call("articulationMap.set", {{"map", map.at("id")}, {"articulations", articulations}});
+	Json items = Json::array();
+	for (int at = 0; at < 64; ++at)
+		items.push_back(
+			{{"position", at * g_sixteenth / 4}, {"length", g_sixteenth / 4}, {"pitch", 62}, {"velocity", 0.5}});
+	f.app.call("note.add", {{"part", f.part}, {"notes", items}});
+	const std::string rows = ".list-editor-rows .list-row[note]";
+	REQUIRE(f.app.waitUntil([&] { return f.elements(rows).size() == 67; }));
+	// The lowest row that the scrolled area shows whole.
+	const Json area = f.box(".list-editor-body");
+	const double bottom = area.at("y").get<double>() + area.at("height").get<double>();
+	std::string lowest;
+	double lowestY = -1.0;
+	for (const Json& row : f.elements(rows))
+	{
+		const Json shown = row.at("box");
+		const double y = shown.at("y").get<double>();
+		if (y > lowestY && y + shown.at("height").get<double>() <= bottom)
+		{
+			lowestY = y;
+			lowest = row.at("attributes").at("note").get<std::string>();
+		}
+	}
+	REQUIRE_FALSE(lowest.empty());
+	const std::string cell = ".list-editor-rows .list-row[note=\"" + lowest + "\"] textdisplay[field=attributes]";
+	const Json pressed = f.box(cell);
+	f.app.ui().click(f.window, of(cell), ui::MouseButton::Right, 1, {});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const std::string menu = "#list-articulations-menu";
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const Json found = f.elements(menu + " menuitem[articulation]");
+			return found.size() == 9 && found.at(0).at("visible") == true;
+		}));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.inside(menu));
+	// It didn't fit under the press: it moved up.
+	CHECK(
+		f.box(menu).at("y").get<double>() < pressed.at("y").get<double>() + (pressed.at("height").get<double>() / 2.0));
+}
+
+TEST_CASE("the Articulations lane has no event pop-up menu on a direction of a part that isn't editable", "[ui]")
+{
+	// #1580, reference manual p. 1290: with Edit Active Part Only, Reset doesn't change the other parts.
+	Editor f;
+	const uint64_t second = f.app.call("midiPart.add", {{"track", f.track}, {"position", g_bar}, {"length", g_bar}})
+								.at("part")
+								.at("id")
+								.get<uint64_t>();
+	f.app.call("controller.add",
+		{{"part", f.part},
+			{"controllers",
+				{{{"position", 4 * g_sixteenth}, {"type", "articulation"}, {"articulation", "Pizzicato"}}}}});
+	f.app.call("editor.open", {{"editor", "window"}, {"parts", Json::array({f.part, second})}});
+	f.app.call("editor.set",
+		{{"editor", "window"}, {"activePart", second}, {"editingMode", "activePart"},
+			{"lanes", {{{"type", "articulations"}}}}});
+	const std::string direction = inLane(" .articulation-item.direction.inactive");
+	REQUIRE(f.app.waitUntil([&] { return f.elements(direction).size() == 1; }));
+	f.app.ui().click(f.window, of(direction), ui::MouseButton::Right, 1, {});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const Json reset = f.elements("#controller-articulation-menu menuitem[lane-action=reset]");
+	CHECK((reset.empty() || reset.at(0).at("visible") == false));
+	CHECK_FALSE(f.midiPart().at("controllers").at(0).value("reset", false));
 }

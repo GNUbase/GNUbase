@@ -5,8 +5,6 @@
 #include "engine/schema.h"
 
 #include <map>
-#include <string>
-#include <vector>
 
 namespace gnubase::engine
 {
@@ -29,6 +27,16 @@ namespace gnubase::engine::midi
 	std::map<ObjectId, size_t> soundSlots(const ArticulationMap& map, const MidiPart& part);
 	// The same for a map and a part as project.get lists them, which the sound slots lane shows (#1112, p. 1287).
 	std::map<ObjectId, size_t> soundSlots(const Json& map, const Json& part);
+	// The add-on slots (pp. 1272, 1281) each note of a part plays besides its sound slot, by note id, for the notes
+	// that have any: those whose articulations are all in effect for the note.
+	std::map<ObjectId, std::vector<size_t>> addOnSlots(const ArticulationMap& map, const MidiPart& part);
+
+	// A note's velocity (16 bits) as a slot plays it: by its velocity percent, then in its velocity range (#1113).
+	// Real-time safe.
+	uint16_t slotVelocity(const SoundSlot& slot, uint16_t velocity) noexcept;
+
+	// Whether two slots have articulations of a group in common. Real-time safe.
+	bool shareGroup(const ArticulationMap& map, const SoundSlot& a, const SoundSlot& b) noexcept;
 
 	// Remote triggers (pp. 1263, 1268) in what a recording brings to a track with the map, as recording.add takes
 	// it: notes and controllers with positions in samples. Takes the notes (key switches) or program changes that
@@ -43,6 +51,6 @@ namespace gnubase::engine::midi
 	ArticulationMap newArticulationMap();
 
 	// Registers articulationMap.add, articulationMap.set, articulationMap.remove, articulationMap.export,
-	// articulationMap.import and articulationMap.soundSlots.
+	// articulationMap.import, articulationMap.soundSlots and articulationMap.remoteTriggers.
 	void registerArticulationMapCommands(ProjectModel& model, Engine& engine);
 }

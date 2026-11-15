@@ -80,12 +80,19 @@ Range copies keep the order in which audio events stack, so overlapping events p
 - **Add Track** has Arranger, once per project.
 - **The arranger track's lane** (`ui::GlobalEventLane` with `LaneKind::Arranger`, `src/ui/transposetrack.h`, shared
   with the transpose and chord tracks' lanes, #1393, pp. 404-405): an `.arranger-lane-event` per arranger event in an
-  `.arranger-lane-row` over the lane, as wide as its section, with its name. The draw tool draws an event from the press to
-  the release (`arranger.add`, named in alphabetical order); a click without a drag draws one up to the next bar line.
-  With the other tools a drag moves an event, keeping its length (`arranger.set`), and a double click opens its name in
-  the `.arranger-lane-field` over it, where Enter renames it; the erase tool removes the event clicked (`arranger.remove`).
-  Drawing and moving snap as the event display's drags do ([snap.md](snap.md), `EventDisplay::snapped`), so with
-  Snap on and the snap type Events, as p. 404 asks, new events start and end at other events' edges.
+  `.arranger-lane-row` over the lane, as wide as its section, with its name. The class names are `arranger-lane-*`, not
+  `arranger-*`, because `.arranger-row` is a row of the arranger editor's lists. The draw tool draws an event from the
+  press to the release (`arranger.add`, named in alphabetical order), also over other arranger events, as they may
+  overlap (p. 404), and shows it as an `.arranger-lane-event.drawing` while the button is down. A click without a drag
+  draws one from the grid line at or before it, so that it holds the point clicked, up to the next bar line. With the
+  other tools a drag moves an event, keeping its length (`arranger.set`), and the event follows the mouse while the
+  button is down; a double click opens its name in the `.arranger-lane-field` over it, as wide as the event and at
+  least wide enough for a name, where Enter renames it (an empty name keeps the old one); the erase tool removes the
+  event clicked (`arranger.remove`). Drawing and moving snap as the event display's drags do ([snap.md](snap.md),
+  `EventDisplay::snapped`), with the other arranger events' edges as magnets too, so with Snap on and the snap type
+  Events, as p. 404 asks, a new event starts and ends at other arranger events', parts' and markers' edges. What the
+  drag shows stays until the lane shows the event as the engine has it. When the engine refuses an edit, such as a
+  drawn event shorter than a sample, the display's `#edit-refused` says why ([event-display.md](event-display.md)).
 - **The arranger editor** (`resources/ui/arranger-editor.rml`, the UI command `window.arranger`, in a window of its own)
   is driven by its own Lua script through the engine API: the toolbar switches arranger mode and picks the active chain
   and the jump mode, with Create New Chain, Duplicate Current Chain, Remove Current Chain and Flatten Chain, and the
@@ -113,8 +120,12 @@ start mode cycleStart, and `transport.get` reporting no step while the plan does
 linearly against the chain's audio, with undo.
 `tests/lua/ui/arranger.lua` opens the arranger editor and drives it, with its step buttons disabled outside arranger
 mode and a locate arrow on every row. `tests/arranger_ui_tests.cpp`: the arranger track's lane showing an event as wide
-as its section with its name, the draw tool drawing one over the stretch dragged and, with a click, up to the next bar
-line, both snapped to bars; a drag moving an event by bars, a double click renaming it and the erase tool removing it.
+as its section with its name, the draw tool drawing one over the stretch dragged and, with a click, from the bar line at
+or before it to the next one, both snapped to bars; with the snap type Events, drawing from and to other arranger
+events' edges, the event drawn showing while the button is down, and a drag that starts on an event drawing over it;
+a drag moving an event by bars, the event following the mouse until the release, a double click renaming it in a field
+as wide as the event, an empty name keeping the old one, and the erase tool removing it; `#edit-refused` saying why the
+engine refused a draw within one bar.
 
 Not yet: resizing arranger events by their edges and selecting them, renaming them on the info line, the track
 list's arranger controls and the inspector's arranger section, renaming chains in the editor, drag and drop

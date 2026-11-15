@@ -113,6 +113,9 @@ namespace gnubase::ui
 		void resize(int steps);
 		int size() const { return m_size; }
 		void onSize(std::function<void(int size)> sized) { m_sized = std::move(sized); }
+		// shown hears once when the controls show the project: the engine answered their first queries, of the
+		// project, the transport and the time formats. Before, they show their defaults. At once if they show it.
+		void onShown(std::function<void()> shown);
 		// Where the project window's selection starts, in ticks, which Tap Tempo hands tempo.tap as its selection.
 		void followSelection(std::function<std::optional<int64_t>()> start) { m_selectionStart = std::move(start); }
 
@@ -126,6 +129,7 @@ namespace gnubase::ui
 		void followFormats(const engine::Json& formats);
 		void followTimeDisplay(const engine::Json& options);
 		void saveTimeDisplay();
+		void answered(); // one of the first queries
 		void changed(Rml::Element& element, const std::string& text);
 		void wheel(Rml::Element& element, float delta);
 		void wheelTempo();
@@ -156,6 +160,9 @@ namespace gnubase::ui
 		bool m_beatCountOnly = false;
 		int m_size = 1;
 		std::function<void(int)> m_sized;
+		int m_unanswered = 3; // of the first queries that onShown waits for
+		bool m_projectRead = false;
+		std::function<void()> m_shown;
 		std::string m_holding; // the command of the button held
 
 		// A gesture on the tempo field: a drag, or wheel turns until a pause. It sets the tempo at its end.

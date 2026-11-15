@@ -100,8 +100,6 @@ reconfigure()
 {
 	echo "Configuring $build for its compile database"
 	mkdir -p "$build" && configure > "$build/configure.log" 2>&1 || { echo "Configuring failed, see $build/configure.log"; exit 2; }
-	# CMake leaves a database whose content is the same as it was, older than the CMake file that was changed.
-	touch "$build/compile_commands.json"
 }
 [ -f "$build/compile_commands.json" ] || reconfigure
 
@@ -164,8 +162,12 @@ fi
 echo "clang-tidy on ${#files[@]} file(s): ${files[*]}"
 
 # One clang-tidy per file and hardware thread; each prints its findings in one piece when it's done.
+# readability-function-size reports on a function's first line, which a change further down in the function leaves
+# out of the line filter (#1585), so a second run checks only that, on the whole file: main has no such findings.
 printf '%s\n' "${files[@]}" | xargs -P "$(nproc)" -I{} bash -c \
 	'out=$("$0" -p "$1" --quiet --warnings-as-errors="*" --line-filter="[$2]" "$3" 2>&1); status=$?
+	size=$("$0" -p "$1" --quiet --warnings-as-errors="*" --checks="-*,readability-function-size" "$3" 2>&1) ||
+		{ out=$(printf "%s\n%s" "$out" "$size"); [ $status -ne 0 ] || status=1; }
 	[ $status -ne 0 ] && printf "%s\n" "$out"; exit $status' "$tidy" "$build" "$filter" {}
 status=$?
 [ $status -eq 0 ] && echo "No findings."
@@ -187,7 +189,6 @@ if [ "$(uname -s)" = Linux ]; then
 		mkdir -p "$gcc" && cmake --preset linux-gcc -B "$gcc" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
 			-DCMAKE_CONFIGURATION_TYPES=Release -DGNUBASE_LTO=OFF > "$gcc/configure.log" 2>&1 ||
 			{ echo "Configuring failed, see $gcc/configure.log"; exit 2; }
-		touch "$gcc/compile_commands.json"
 	fi
 	# GCC at -O3 takes up to about 2 GB for one of the larger files: no more compiles at once than WSL's free memory
 	# holds, so that many changed files don't run it out of memory.

@@ -13,7 +13,11 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
 - **New.** `project.new` starts an empty project with the default busses, or with `template` a copy of that project
   template. Either way it has no file until it is saved, and the undo history is cleared. A template name must be a
   file name, as for `project.saveTemplate`, so that only templates in `Project Templates` open.
-- **Open.** `project.load` opens a DAWproject file.
+- **Open.** `project.load` opens a DAWproject file. Media files embedded in it are extracted next to it, into
+  `<name> media`. A file that is there already with the entry's size and CRC-32 stays as it is, write time included,
+  so that opening the project again doesn't write over files that are playing; one with other content stays too, as a
+  project may play it, and the entry goes beside it under a numbered name (`2-kick.wav`, `ZipReader::holds` and
+  `Importer::freeTarget` in `engine/dawproject/dawproject.cpp`).
 - **Save, Save As.** `project.save` with `path` saves the project as that file, which is then its file; without `path`
   it saves to the project's file and fails for a project that has none. The engine saves under the path as it is,
   without adding `.dawproject`, so that a script or MCP client gets the file it named; Save As in the UI adds the
@@ -159,6 +163,13 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
   the selected tracks, the track preset dialog for the selected tracks, Import Tracks below a track) and closes the
   ones still open. Dialogs for the whole project stay open. The articulation map setup stays too and drops its track
   ([articulation-maps.md](articulation-maps.md)).
+  The event display closes its own dialogs for events or parts in the same way (Fades, Crossfade, Detect Silence,
+  Spectrum Analyzer, Statistics, Set Definition from Tempo, Repeat, Tempo Detection, Calculate Tempo, audio Import
+  Options; the zoom presets, Process Tempo and Process Bars stay), and the track list cancels Remove Tracks' question
+  and its two chord dialogs (#1586). An OS file dialog for objects of the project drops its answer when a
+  `project.reset` came while it was open (`AppUi::chooseProjectFile`: track picture, Export Selected Tracks, pattern
+  presets, Save Drum Map, Export Articulation Map, the sampler's Import Audio File and the drum machine's Load Sample,
+  #1648); Import Tracks reads the selected track when the file is chosen.
 
 ## Not yet
 

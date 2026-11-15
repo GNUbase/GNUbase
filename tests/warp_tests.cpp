@@ -289,6 +289,50 @@ TEST_CASE("a warp reader plays clicks after a pitch point where its map puts the
 	checkClicks(placed, {18000.0, 30000.0, 42000.0});
 }
 
+TEST_CASE("a warp reader crossfades where it starts over, without a step", "[unit]")
+{
+	// It starts over at a pitch point and at the end of a segment beyond the real-time range: the two runs are
+	// crossfaded, or sustained audio would click there (#1564).
+	struct Case
+	{
+		std::vector<engine::dsp::WarpPoint> map;
+		std::vector<engine::dsp::PitchPoint> pitch;
+		int64_t at = 0;
+	};
+	const Case each = GENERATE(Case{{{0.0, 0.0}, {96000.0, 96000.0}}, {{48000.0, 12.0}}, 48000},
+		Case{{{0.0, 0.0}, {96000.0, 96000.0}}, {{48000.0, -7.0}}, 48000},
+		// A second restart while the first fade is still going fades over what is left of that one. The run between
+		// plays lower than the ones around it, so that the sine's own slope around the points bounds it too.
+		Case{{{0.0, 0.0}, {96000.0, 96000.0}}, {{48000.0, -12.0}, {48100.0, -5.0}}, 48000},
+		Case{{{0.0, 0.0}, {12000.0, 72000.0}, {36000.0, 96000.0}}, {}, 72000});
+	CAPTURE(each.at, each.pitch.size());
+	const test::TempDir dir;
+	const std::string file = (dir.path() / "sine.wav").u8string();
+	test::writeWav(file, sine(96000));
+	engine::dsp::WarpReader reader(
+		engine::AudioFileReader::open(file), each.map, engine::dsp::StretchPreset::Quality, each.pitch);
+	std::vector<float> output(96000);
+	size_t done = 0;
+	while (done < output.size())
+	{
+		const size_t got = reader.read(output.data() + done, std::min<size_t>(1000, output.size() - done));
+		REQUIRE(got > 0);
+		done += got;
+	}
+	// The largest step between neighbouring samples within a range: the sine's own slope away from the point.
+	const auto step = [&output](int64_t from, int64_t to)
+	{
+		float largest = 0.0F;
+		for (auto i = static_cast<size_t>(from); i < static_cast<size_t>(to); ++i)
+			largest = std::max(largest, std::abs(output[i] - output[i - 1]));
+		return largest;
+	};
+	const float own = std::max(step(each.at - 14400, each.at - 9600), step(each.at + 9600, each.at + 14400));
+	CAPTURE(own);
+	REQUIRE(own > 0.01F);
+	CHECK(step(each.at - 2400, each.at + 2400) <= 1.2F * own);
+}
+
 TEST_CASE("an audio event that follows global transpose plays shifted in real time", "[integration]")
 {
 	const test::TempDir dir;
@@ -952,6 +996,57 @@ TEST_CASE("a clip whose first event is on an inactive track version takes the te
 	REQUIRE(run(client, "project.get").at("audioEvents").empty());
 
 	run(client, "clip.setWarp", {{"clip", loop.clip}, {"musical", true}});
+	CHECK(warpOf(client, loop.clip).at("tempo") == 140.0);
+}
+
+// Follow-ups of #1461 (#1534).
+TEST_CASE("a clip's events on the active track versions decide its tempo over earlier ones on inactive versions",
+	"[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	run(client, "project.set", {{"tempoTrackActive", true}});
+	run(client, "tempo.add", {{"position", 0}, {"bpm", 100.0}, {"ramp", false}});
+	run(client, "tempo.add", {{"position", 4 * g_ticksPerQuarter}, {"bpm", 140.0}, {"ramp", false}});
+	const Loop loop = addLoop(client, dir, clicks({1000, 25000}, 48000)); // at the start, where the tempo is 100
+	run(client, "trackVersion.add", {{"tracks", {loop.track}}});          // the event stays on the first version
+	run(client, "audioEvent.add",
+		{{"track", loop.track}, {"clip", loop.clip}, {"position", 8 * g_ticksPerQuarter}, {"offset", 0},
+			{"length", 48000}});
+
+	// The event that plays keeps playing as it did, until the tempo changes.
+	run(client, "clip.setWarp", {{"clip", loop.clip}, {"musical", true}});
+	CHECK(warpOf(client, loop.clip).at("tempo") == 140.0);
+}
+
+TEST_CASE("a clip in musical mode loaded without a tempo whose first event is on an inactive track version takes the "
+		  "tempo there",
+	"[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	run(client, "project.set", {{"tempoTrackActive", true}});
+	run(client, "tempo.add", {{"position", 0}, {"bpm", 100.0}, {"ramp", false}});
+	run(client, "tempo.add", {{"position", 4 * g_ticksPerQuarter}, {"bpm", 140.0}, {"ramp", false}});
+	const Loop loop = addLoop(client, dir, clicks({1000, 25000}, 48000));
+	run(client, "audioEvent.set", {{"event", loop.event}, {"position", 8 * g_ticksPerQuarter}});
+	run(client, "clip.setWarp", {{"clip", loop.clip}, {"musical", true}, {"tempo", 120.0}});
+	run(client, "trackVersion.add", {{"tracks", {loop.track}}}); // the event stays on the first version
+
+	// Without a tempo in the file, the inactive version's event is read before the clip takes the tempo there.
+	const std::string file = (dir.path() / "edited.dawproject").u8string();
+	run(client, "project.save", {{"path", file}, {"embedMedia", false}});
+	std::map<std::string, std::string> entries = test::readZip(file);
+	Json extension = Json::parse(entries.at("gnubase.json"));
+	for (Json& clip : extension.at("project").at("clips"))
+		if (clip.at("id") == loop.clip)
+			clip.at("warp")["tempo"] = 0.0;
+	entries["gnubase.json"] = extension.dump();
+	test::writeZip(file, entries);
+	run(client, "project.load", {{"path", file}});
+	REQUIRE(run(client, "project.get").at("audioEvents").empty());
 	CHECK(warpOf(client, loop.clip).at("tempo") == 140.0);
 }
 

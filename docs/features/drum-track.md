@@ -77,7 +77,8 @@ How it plays:
 - A synth voice takes its pad's tuning, tone and noise at its note on; level, pan, envelope and sends follow the
   pad's values while it sounds.
 - The delay and the reverb are cleared when they are switched off or Bypass All Effects goes on: switched on again,
-  they start empty instead of playing what they held from before (#1485).
+  they start empty instead of playing what they held from before (#1485). A reset clears only what the effect wrote
+  since the last one, so automation that switches an effect off and on often costs next to nothing (#1595).
 
 ## In the UI
 

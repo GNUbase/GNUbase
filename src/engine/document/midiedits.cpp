@@ -495,10 +495,13 @@ namespace gnubase::engine
 				"events of the source part that go along, as the key editor moves the selected ones with the notes "
 				"(p. 1188): each keeps its id and every field, ticks shifts it and semitones doesn't, and one that "
 				"would land before the target part's start lands at its start; a controller event that doesn't exist "
-				"refuses the move. notes may then be empty. Emits controller.removed and controller.added for them, "
-				"and the note events only when notes names any. Returns the moved notes and controller events, as the "
-				"target part has them.",
-				noteMove, resultSchema("notes"), false},
+				"refuses the move. notes may then be empty; the undo step is \"Move notes\" also then. Emits "
+				"controller.removed and controller.added for them, and the note events only when notes names any. "
+				"Returns the moved notes and controller events, as the target part has them.",
+				noteMove,
+				{{"type", "object"}, {"required", {"notes", "controllers"}},
+					{"properties", {{"notes", {{"type", "array"}}}, {"controllers", {{"type", "array"}}}}}},
+				false},
 			moveNotes);
 		add(engine,
 			{"controller.set", 1,

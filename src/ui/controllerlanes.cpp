@@ -13,6 +13,7 @@
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Elements/ElementFormControl.h>
 #include <RmlUi/Core/Event.h>
+#include <RmlUi/Core/Input.h>
 #include <RmlUi/Core/StringUtilities.h>
 
 #include <algorithm>
@@ -20,6 +21,8 @@
 #include <cmath>
 #include <filesystem>
 #include <map>
+#include <set>
+#include <tuple>
 #include <utility>
 
 namespace gnubase::ui
@@ -133,6 +136,13 @@ namespace gnubase::ui
 			return std::string(R"(<menuitem lane-action=")") + action + R"(">)" + text + "</menuitem>";
 		}
 
+		// The controls on the Articulations lane (pp. 1287-1288): their action, title and icon.
+		constexpr std::array<std::tuple<const char*, const char*, const char*>, 3> g_articulationControls = {{
+			{"collapseGroups", "Collapse All Groups", "lane-collapse-groups.svg"},
+			{"expandGroups", "Expand All Groups", "lane-expand-groups.svg"},
+			{"soundSlots", "Show/Hide Sound Slots Lane", "lane-sound-slots.svg"},
+		}};
+
 		// The controller value of an event as a lane shows it, 0 to 1: a program change's program.
 		double eventValue(const Json& event)
 		{
@@ -192,7 +202,7 @@ namespace gnubase::ui
 			R"(<button id="controller-lane-setup" menu="controller-setup-menu)" +
 			m_menuSuffix + R"(" title="Controller Lane Setup">Setup</button></div>)");
 		Rml::ElementDocument* document = root.GetOwnerDocument();
-		const std::array<std::pair<const char*, std::string>, 4> menus = {{
+		const std::array<std::pair<const char*, std::string>, 5> menus = {{
 			{"controller-lane-menu",
 				typeItems() + "<menuseparator/>" + actionItem("selectAll", "Select All Events on Lane") +
 					actionItem("remove", "Remove This Lane") + "<menuseparator/>" +
@@ -208,6 +218,8 @@ namespace gnubase::ui
 			// What a right click below a lane's name opens (p. 1261): the lanes to add, and this one to remove.
 			{"controller-lane-context-menu",
 				typeItems() + "<menuseparator/>" + actionItem("remove", "Remove This Lane")},
+			// The event pop-up menu of a direction on the Articulations lane (p. 1290), Reset checked on a reset.
+			{"controller-articulation-menu", R"(<menuitem type="toggle" lane-action="reset">Reset</menuitem>)"},
 		}};
 		for (const auto& [id, items] : menus)
 		{
@@ -218,7 +230,8 @@ namespace gnubase::ui
 			m_menus.push_back(menu->GetObserverPtr());
 		}
 		// The mouseup that ends a gesture goes to the document (listen), so that it ends wherever the mouse goes up.
-		for (const Rml::EventId event : {Rml::EventId::Mousedown, Rml::EventId::Mousemove, Rml::EventId::Click})
+		for (const Rml::EventId event : {Rml::EventId::Mousedown, Rml::EventId::Mousemove, Rml::EventId::Click,
+				 Rml::EventId::Keydown, Rml::EventId::Blur})
 			root.AddEventListener(event, this);
 
 		// The presets are a user setting (p. 1166).
@@ -247,7 +260,8 @@ namespace gnubase::ui
 	{
 		listen(false);
 		if (Rml::Element* root = m_root.get())
-			for (const Rml::EventId event : {Rml::EventId::Mousedown, Rml::EventId::Mousemove, Rml::EventId::Click})
+			for (const Rml::EventId event : {Rml::EventId::Mousedown, Rml::EventId::Mousemove, Rml::EventId::Click,
+					 Rml::EventId::Keydown, Rml::EventId::Blur})
 				root->RemoveEventListener(event, this);
 		for (const Rml::ObserverPtr<Rml::Element>& menu : m_menus)
 			if (Rml::Element* element = menu.get())
@@ -262,8 +276,11 @@ namespace gnubase::ui
 
 	void ControllerLanes::setTool(std::string tool, std::string lineMode)
 	{
+		const bool changed = tool != m_tool;
 		m_tool = std::move(tool);
 		m_lineMode = std::move(lineMode);
+		if (changed)
+			render(); // the directions' arrows are the object selection tool's
 	}
 
 	void ControllerLanes::show(const Json& project, const Json& view, int64_t from, int64_t to)
@@ -273,6 +290,7 @@ namespace gnubase::ui
 		m_to = std::max(to, from + 1);
 		m_parts.clear();
 		m_partIndex.clear();
+		const std::set<std::pair<uint64_t, uint64_t>> previous = std::move(m_noteSelection);
 		m_noteSelection.clear();
 		m_controllerSelection.clear();
 		m_lanes.clear();
@@ -306,6 +324,12 @@ namespace gnubase::ui
 				}
 			for (const Json& selected : m_view.value("selection", Json::array()))
 				m_noteSelection.emplace(selected.at("part").get<uint64_t>(), selected.at("note").get<uint64_t>());
+			// The attributes pressed of notes that were selected and are no longer go; a note pressed on the lane
+			// may not be selected yet.
+			for (auto each = m_attributeSelection.begin(); each != m_attributeSelection.end();)
+				each = previous.count(each->first) == 0 || m_noteSelection.count(each->first) != 0
+					? std::next(each)
+					: m_attributeSelection.erase(each);
 			for (const Json& selected : m_view.value("controllerSelection", Json::array()))
 				m_controllerSelection.emplace(
 					selected.at("part").get<uint64_t>(), selected.at("controller").get<uint64_t>());
@@ -426,16 +450,34 @@ namespace gnubase::ui
 			rml += "</button>";
 			if (lane.type == "articulations")
 			{
-				// The articulations' names beside their rows, under the lane's name beside the sound slots lane.
+				// The articulations' names beside their rows, under the lane's name beside the sound slots lane; a
+				// collapsed group's name beside its row (#1580). A click on a name collapses or expands its group.
 				if (const Json* map = laneMap())
+				{
+					const std::set<int> collapsed = collapsedGroups();
+					std::set<int> done;
 					for (const Json& articulation : map->at("articulations"))
 					{
-						const std::string name =
-							Rml::StringUtilities::EncodeRml(articulation.at("name").get<std::string>());
-						rml += R"(<div class="articulation-name" articulation-type=")" +
-							articulation.at("type").get<std::string>() + R"(">)" + name + "</div>";
+						const int group = articulation.at("group").get<int>();
+						const std::string attributes = R"(" articulation-group=")" + std::to_string(group) + R"(">)";
+						if (collapsed.count(group) == 0)
+							rml += R"(<div class="articulation-name" articulation-type=")" +
+								articulation.at("type").get<std::string>() + attributes +
+								Rml::StringUtilities::EncodeRml(articulation.at("name").get<std::string>()) + "</div>";
+						else if (done.insert(group).second)
+							rml += R"(<div class="articulation-name collapsed)" + attributes +
+								Rml::StringUtilities::EncodeRml(
+									map->at("groups").at(static_cast<size_t>(group)).get<std::string>()) +
+								"</div>";
 					}
-				rml += R"(</div><div class="controller-lane-area" lane=")" + index + R"(">)";
+				}
+				// Collapse All Groups, Expand All Groups and Show/Hide Sound Slots Lane (pp. 1287-1288), under the
+				// names.
+				rml += R"(<div class="articulation-controls">)";
+				for (const auto& [action, title, icon] : g_articulationControls)
+					rml += std::string(R"(<button class="articulation-control" lane-action=")") + action +
+						R"(" title=")" + title + R"("><svg class="icon" src="../icons/)" + icon + R"("/></button>)";
+				rml += R"(</div></div><div class="controller-lane-area" lane=")" + index + R"(">)";
 				m_items.emplace_back();
 				rml += articulationArea(m_items.back());
 				rml += "</div></div>";
@@ -459,6 +501,7 @@ namespace gnubase::ui
 			m_rml = rml;
 		}
 		placeItems();
+		showKeyLane();
 
 		// The setup menu: the presets, Add Preset, and a submenu that removes one.
 		if (Rml::Element* menu = m_menus.size() > 2 ? m_menus[2].get() : nullptr)
@@ -696,15 +739,65 @@ namespace gnubase::ui
 			else if (event.GetParameter("button", 0) == 1)
 			{
 				// A right click below a lane's name opens that lane's context menu (p. 1261), which the document's
-				// popup behavior shows; its Remove This Lane takes the lane the click was in.
+				// popup behavior shows; its Remove This Lane takes the lane the click was in. On a direction of the
+				// Articulations lane it opens the direction's event pop-up menu (p. 1290).
 				if (const Rml::Element* lane = withAttribute(target, "lane", m_root.get()))
 					m_menuLane = static_cast<size_t>(std::stoul(attribute(*lane, "lane")));
+				const bool articulations =
+					m_menuLane && *m_menuLane < m_lanes.size() && m_lanes[*m_menuLane].type == "articulations";
+				directionMenu(articulations ? withAttribute(target, "controller", m_root.get()) : nullptr);
 			}
 			else if (event.GetParameter("button", 0) == 0)
 			{
+				// The arrow in a direction's upper left corner opens its event pop-up menu (p. 1290), whose button it
+				// is: the press neither selects nor edits.
+				if (target->IsClassSet("articulation-menu-arrow"))
+				{
+					directionMenu(target->GetParentNode());
+					break;
+				}
+				// The controls on the Articulations lane (pp. 1287-1288).
+				if (const Rml::Element* control = withAttribute(target, "lane-action", m_root.get()))
+				{
+					articulationControl(attribute(*control, "lane-action"));
+					break;
+				}
+				// A click on an articulation's name collapses its group, on a collapsed group's name expands it.
+				if (const Rml::Element* name = withAttribute(target, "articulation-group", m_root.get());
+					name != nullptr && name->IsClassSet("articulation-name"))
+				{
+					std::set<int> groups = collapsedGroups();
+					const int group = std::stoi(attribute(*name, "articulation-group"));
+					if (groups.erase(group) == 0)
+						groups.insert(group);
+					setCollapsedGroups(groups);
+					break;
+				}
+				m_keyLane.reset();
 				press(event);
+				showKeyLane();
 			}
 			break;
+		case Rml::EventId::Blur:
+			// The lanes' root lost the keyboard focus: Delete and Backspace go on to the key commands again.
+			if (target == m_root.get() && m_keyLane)
+			{
+				m_keyLane.reset();
+				showKeyLane();
+			}
+			break;
+		case Rml::EventId::Keydown:
+		{
+			// Delete or Backspace while the Articulations lane has the keyboard focus (pressArticulation).
+			const auto key = static_cast<Rml::Input::KeyIdentifier>(event.GetParameter<int>("key_identifier", 0));
+			if ((key == Rml::Input::KI_DELETE || key == Rml::Input::KI_BACK) && target == m_root.get() && m_keyLane &&
+				*m_keyLane < m_lanes.size() && m_lanes[*m_keyLane].type == "articulations")
+			{
+				deleteArticulations();
+				event.StopPropagation();
+			}
+			break;
+		}
 		case Rml::EventId::Mousemove:
 			drag(event);
 			break;
@@ -793,6 +886,20 @@ namespace gnubase::ui
 						lanes.push_back(lane);
 				}
 			setLanes(lanes);
+		}
+		else if (action == "reset" && m_menuDirection)
+		{
+			// Reset (p. 1290): the direction ends its group's directions instead, or is a direction again.
+			const auto [pressed, direction] = *m_menuDirection;
+			if (const Json* part = partJson(pressed))
+				for (const Json& event : part->at("controllers"))
+					if (event.at("id") == direction)
+					{
+						const Json change = {{"id", event.at("id")}, {"reset", !event.value("reset", false)}};
+						edit("Reset",
+							Json::array({{{"command", "controller.set"},
+								{"parameters", {{"part", part->at("id")}, {"controllers", Json::array({change})}}}}}));
+					}
 		}
 		// The lane menu and a lane's context menu act on the lane their menu opened for.
 		const bool oneLane = laneMenu || (m_menus.size() > 3 && &menu == m_menus[3].get());
@@ -1209,21 +1316,43 @@ namespace gnubase::ui
 		return found;
 	}
 
+	std::set<int> ControllerLanes::collapsedGroups() const
+	{
+		return m_view.value("collapsedGroups", Json::array()).get<std::set<int>>();
+	}
+
+	void ControllerLanes::setCollapsedGroups(const std::set<int>& groups)
+	{
+		setView({{"collapsedGroups", groups}});
+	}
+
 	std::string ControllerLanes::articulationArea(std::vector<Item>& items) const
 	{
-		const auto element = [](const char* classes, const Item& item, const char* key)
+		const auto element = [this](const char* classes, const Item& item, const char* key, size_t row)
 		{
+			// The object selection tool's arrow in a direction's upper left corner opens its event pop-up menu (p.
+			// 1290).
+			const bool arrow = std::string(key) == "controller" && item.editable && m_tool == "objectSelection";
 			return std::string(R"(<div class=")") + classes + (item.selected ? " selected" : "") +
 				(item.editable ? "" : " inactive") + R"(" part=")" + std::to_string(item.part) + R"(" )" + key +
-				R"(=")" + std::to_string(item.id) + R"(")";
+				R"(=")" + std::to_string(item.id) + R"(" articulation-row=")" + std::to_string(row) + R"(")" +
+				(std::string(key) == "controller" && item.editable
+						? R"( contextmenu="controller-articulation-menu)" + m_menuSuffix + R"(")"
+						: std::string()) +
+				">" +
+				(arrow ? R"(<svg class="icon articulation-menu-arrow" src="../icons/general-arrow-down.svg" )"
+						 R"(menu="controller-articulation-menu)" +
+							m_menuSuffix + R"("/>)"
+					   : std::string());
 		};
 		// The sound slots lane (p. 1287): the slot each note plays, as the map chooses it, in its color. Only the parts
-		// whose track has the lane's map show (#1498).
+		// whose track has the lane's map show (#1498). Hidden (Show/Hide Sound Slots Lane, #1580), its row beside the
+		// lane's name stays without them.
 		std::string rml = R"(<div class="articulation-row sound-slots">)";
 		const Json* map = laneMap();
 		for (const Part& part : m_parts)
 		{
-			if (map == nullptr || part.map != map->at("id"))
+			if (map == nullptr || part.map != map->at("id") || !m_view.value("soundSlotsLane", true))
 				continue;
 			const Json& slots = map->at("slots");
 			const std::map<uint64_t, size_t> chosen = engine::midi::soundSlots(*map, part.json);
@@ -1242,8 +1371,14 @@ namespace gnubase::ui
 				const char* classes = "sound-slot";
 				if (!color.empty())
 					classes = lightColor(color) ? "sound-slot light" : "sound-slot dark";
-				rml.append(element(classes, items.back(), "note"))
-					.append(R"( title=")")
+				rml.append(R"(<div class=")")
+					.append(classes)
+					.append(part.editable ? "" : " inactive")
+					.append(R"(" part=")")
+					.append(std::to_string(part.id))
+					.append(R"(" note=")")
+					.append(std::to_string(id))
+					.append(R"(" title=")")
 					.append(name)
 					.append(R"(">)")
 					.append(name)
@@ -1253,15 +1388,16 @@ namespace gnubase::ui
 		rml += "</div>";
 		if (map == nullptr)
 			return rml;
-		// A row per articulation (p. 1287): directions last until the next direction of their group, a reset has a
-		// width of its own (p. 1290); attributes are on their notes.
 		const Json& articulations = map->at("articulations");
-		for (size_t row = 0; row < articulations.size(); ++row)
+		// The directions and attributes of an articulation: directions last until the next direction of their group, a
+		// reset has a width of its own (p. 1290); attributes are on their notes. In a collapsed group's row they have
+		// their names.
+		const auto articulationItems = [&](size_t row, bool named)
 		{
 			const Json& articulation = articulations.at(row);
 			const std::string name = articulation.at("name").get<std::string>();
 			const bool direction = articulation.at("type") == "direction";
-			rml += R"(<div class="articulation-row" articulation-row=")" + std::to_string(row) + R"(">)";
+			const std::string end = (named ? Rml::StringUtilities::EncodeRml(name) : std::string()) + "</div>";
 			for (const Part& part : m_parts)
 			{
 				if (part.map != map->at("id"))
@@ -1276,8 +1412,8 @@ namespace gnubase::ui
 						const uint64_t id = note.at("id").get<uint64_t>();
 						const int64_t start = part.start + note.at("position").get<int64_t>();
 						items.push_back({part.id, id, start, start + note.at("length").get<int64_t>(), 0.0, 0,
-							part.editable, noteSelected(part.id, id), std::string()});
-						rml += element("articulation-item attribute", items.back(), "note") + "/>";
+							part.editable, attributeSelected(part.id, id, name), std::string()});
+						rml += element("articulation-item attribute", items.back(), "note", row) + end;
 					}
 					continue;
 				}
@@ -1297,33 +1433,69 @@ namespace gnubase::ui
 						continue;
 					const bool reset = event.value("reset", false);
 					const int64_t start = part.start + group[i].first;
-					int64_t end = part.end;
+					int64_t until = part.end;
 					if (reset)
-						end = start;
+						until = start;
 					else if (i + 1 < group.size())
-						end = part.start + group[i + 1].first;
+						until = part.start + group[i + 1].first;
 					const uint64_t id = event.at("id").get<uint64_t>();
-					items.push_back({part.id, id, start, end, 0.0, 0, part.editable,
+					items.push_back({part.id, id, start, until, 0.0, 0, part.editable,
 						m_controllerSelection.count({part.id, id}) != 0, std::string()});
 					rml += element(reset ? "articulation-item direction reset" : "articulation-item direction",
-							   items.back(), "controller") +
-						"/>";
+							   items.back(), "controller", row) +
+						end;
 				}
 			}
-			rml += "</div>";
+		};
+		// A row per articulation (p. 1287), or per collapsed group where its first articulation's row would be.
+		const std::set<int> collapsed = collapsedGroups();
+		std::set<int> done;
+		for (size_t row = 0; row < articulations.size(); ++row)
+		{
+			const int group = articulations.at(row).at("group").get<int>();
+			if (collapsed.count(group) == 0)
+			{
+				rml += R"(<div class="articulation-row" articulation-row=")" + std::to_string(row) + R"(">)";
+				articulationItems(row, false);
+				rml += "</div>";
+			}
+			else if (done.insert(group).second)
+			{
+				rml +=
+					R"(<div class="articulation-row collapsed" articulation-group=")" + std::to_string(group) + R"(">)";
+				for (size_t each = row; each < articulations.size(); ++each)
+					if (articulations.at(each).at("group") == group)
+						articulationItems(each, true);
+				rml += "</div>";
+			}
 		}
 		return rml;
 	}
 
 	// Adding articulations on the lane (pp. 1288-1289): the draw tool adds a direction at the quantize grid's position
 	// pressed, or the attribute to the notes that sound there and started last (a chord), in place of their attribute
-	// of the same group; on a direction or attribute it removes it, as the erase tool does.
+	// of the same group; on a direction or attribute it removes it, as the erase tool does. The object selection tool
+	// selects (pp. 1289-1290).
 	void ControllerLanes::pressArticulation(Rml::Event& event)
 	{
 		Rml::Element* target = event.GetTargetElement();
-		const Rml::Element* row = withAttribute(target, "articulation-row", m_root.get());
 		const Json* map = laneMap();
-		if (row == nullptr || map == nullptr || (m_tool != "draw" && m_tool != "erase"))
+		if (map == nullptr)
+			return;
+		// The lane takes the keyboard focus, for Delete and Backspace: its elements can go with the next render.
+		m_keyLane = m_lane;
+		if (Rml::Element* root = m_root.get())
+			root->Focus();
+		// An articulation's item, or its row; a collapsed group's row has none of its own.
+		const Rml::Element* row = withAttribute(target, "articulation-row", m_root.get());
+		const Rml::Element* item =
+			row != nullptr && (row->HasAttribute("controller") || row->HasAttribute("note")) ? row : nullptr;
+		if (m_tool == "objectSelection")
+		{
+			selectArticulation(item, event.GetParameter("shift_key", 0) != 0 || m_snapOff);
+			return;
+		}
+		if (row == nullptr || (m_tool != "draw" && m_tool != "erase"))
 			return;
 		const auto index = static_cast<size_t>(std::stoul(attribute(*row, "articulation-row")));
 		const Json& articulations = map->at("articulations");
@@ -1332,7 +1504,7 @@ namespace gnubase::ui
 		const Json& articulation = articulations.at(index);
 		const std::string name = articulation.at("name").get<std::string>();
 		const bool direction = articulation.at("type") == "direction";
-		if (const Rml::Element* item = withAttribute(target, direction ? "controller" : "note", m_root.get()))
+		if (item != nullptr)
 		{
 			const uint64_t part = idAttribute(*item, "part");
 			const uint64_t id = idAttribute(*item, direction ? "controller" : "note");
@@ -1415,5 +1587,155 @@ namespace gnubase::ui
 		for (auto& [part, items] : changes)
 			commands.push_back({{"command", "note.set"}, {"parameters", {{"part", part}, {"notes", items}}}});
 		edit("Add Articulation", std::move(commands));
+	}
+
+	// The object selection tool on the lane (p. 1289): a click selects the direction pressed, or the note of the
+	// attribute pressed, and nothing else; Shift or Ctrl (Cmd) adds or removes it. A click beside them deselects.
+	void ControllerLanes::selectArticulation(const Rml::Element* item, bool add)
+	{
+		Json notes = add ? m_view.value("selection", Json::array()) : Json::array();
+		Json controllers = add ? m_view.value("controllerSelection", Json::array()) : Json::array();
+		if (!add)
+			m_attributeSelection.clear();
+		if (item != nullptr)
+		{
+			const uint64_t part = idAttribute(*item, "part");
+			const auto found = m_partIndex.find(part);
+			if (found == m_partIndex.end() || !m_parts[found->second].editable)
+				return;
+			const bool direction = item->HasAttribute("controller");
+			const char* key = direction ? "controller" : "note";
+			const Json pressed = {{"part", part}, {key, idAttribute(*item, key)}};
+			Json& selection = direction ? controllers : notes;
+			Json kept = Json::array();
+			for (const Json& each : selection)
+				if (each.at("part") != pressed.at("part") || each.at(key) != pressed.at(key))
+					kept.push_back(each);
+			bool selected = !add || kept.size() == selection.size();
+			// The attribute pressed (p. 1289): Shift adds or removes it, and its note stays selected while one of its
+			// attributes is. A note selected elsewhere has all its attributes selected.
+			const Json* map = laneMap();
+			const auto row = static_cast<size_t>(std::stoul(attribute(*item, "articulation-row")));
+			if (!direction && map != nullptr && row < map->at("articulations").size())
+			{
+				const std::string name = map->at("articulations").at(row).at("name").get<std::string>();
+				const std::pair<uint64_t, uint64_t> note{part, pressed.at("note").get<uint64_t>()};
+				const auto names = m_attributeSelection.find(note);
+				if (selected)
+					m_attributeSelection[note] = {name};
+				else if (names != m_attributeSelection.end() && names->second.erase(name) == 0)
+					selected = names->second.insert(name).second;
+				else if (names != m_attributeSelection.end() && !names->second.empty())
+					selected = true;
+				if (!selected)
+					m_attributeSelection.erase(note);
+			}
+			if (selected)
+				kept.push_back(pressed);
+			selection = std::move(kept);
+		}
+		else if (add)
+		{
+			return;
+		}
+		setView({{"selection", notes}, {"controllerSelection", controllers}});
+		render(); // the selection of the note can stay as it is, and the lane show another of its attributes
+	}
+
+	bool ControllerLanes::attributeSelected(uint64_t part, uint64_t note, const std::string& name) const
+	{
+		if (!noteSelected(part, note))
+			return false;
+		const auto names = m_attributeSelection.find({part, note});
+		return names == m_attributeSelection.end() || names->second.count(name) != 0;
+	}
+
+	void ControllerLanes::directionMenu(const Rml::Element* direction)
+	{
+		// Only a direction of an editable part: the others have no event pop-up menu. Its Reset is checked on a reset.
+		m_menuDirection.reset();
+		bool reset = false;
+		if (direction != nullptr && direction->HasAttribute("controller"))
+			if (const auto found = m_partIndex.find(idAttribute(*direction, "part"));
+				found != m_partIndex.end() && m_parts[found->second].editable)
+			{
+				m_menuDirection.emplace(found->first, idAttribute(*direction, "controller"));
+				for (const Json& event : m_parts[found->second].json.at("controllers"))
+					if (event.at("id") == m_menuDirection->second)
+						reset = event.value("reset", false);
+			}
+		Rml::Element* menu = m_menus.size() > 4 ? m_menus[4].get() : nullptr;
+		if (Rml::Element* item = menu != nullptr ? menu->QuerySelector("menuitem") : nullptr)
+		{
+			if (reset && !item->HasAttribute("checked"))
+				item->SetAttribute("checked", "");
+			else if (!reset && item->HasAttribute("checked"))
+				item->RemoveAttribute("checked");
+		}
+	}
+
+	void ControllerLanes::articulationControl(const std::string& action)
+	{
+		if (action == "collapseGroups" || action == "expandGroups")
+		{
+			std::set<int> groups;
+			if (const Json* map = laneMap(); map != nullptr && action == "collapseGroups")
+				for (size_t group = 0; group < map->at("groups").size(); ++group)
+					groups.insert(static_cast<int>(group));
+			setCollapsedGroups(groups);
+		}
+		else if (action == "soundSlots")
+		{
+			setView({{"soundSlotsLane", !m_view.value("soundSlotsLane", true)}});
+		}
+	}
+
+	void ControllerLanes::showKeyLane()
+	{
+		const Rml::Element* list =
+			m_root.get() != nullptr ? m_root.get()->QuerySelector(".controller-lane-list") : nullptr;
+		for (int i = 0; list != nullptr && i < list->GetNumChildren(); ++i)
+		{
+			Rml::Element* lane = list->GetChild(i);
+			const bool focused = m_keyLane && *m_keyLane == static_cast<size_t>(i);
+			if (lane->IsClassSet("keyboard-focus") != focused)
+				lane->SetClass("keyboard-focus", focused);
+		}
+	}
+
+	void ControllerLanes::deleteArticulations()
+	{
+		const Json* map = laneMap();
+		if (map == nullptr)
+			return;
+		Json commands = Json::array();
+		std::map<uint64_t, Json> directions;
+		for (const Item& item : items({"articulations", 0}))
+			if (item.selected && item.editable)
+				directions[item.part].push_back(item.id);
+		for (auto& [part, ids] : directions)
+			commands.push_back(
+				{{"command", "controller.remove"}, {"parameters", {{"part", part}, {"controllers", ids}}}});
+		for (const Part& part : m_parts)
+		{
+			if (!part.editable || part.map != map->at("id"))
+				continue;
+			Json changes = Json::array();
+			for (const Json& note : part.json.at("notes"))
+			{
+				const auto id = note.at("id").get<uint64_t>();
+				const auto names = note.value("articulations", std::vector<std::string>());
+				std::vector<std::string> kept;
+				for (const std::string& name : names)
+					if (const Json* articulation = articulationOf(*map, name); articulation == nullptr ||
+						articulation->at("type") != "attribute" || !attributeSelected(part.id, id, name))
+						kept.push_back(name);
+				if (kept.size() != names.size())
+					changes.push_back({{"id", id}, {"articulations", kept}});
+			}
+			if (!changes.empty())
+				commands.push_back({{"command", "note.set"}, {"parameters", {{"part", part.id}, {"notes", changes}}}});
+		}
+		edit("Delete Articulations", std::move(commands));
 	}
 }

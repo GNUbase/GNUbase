@@ -3676,6 +3676,207 @@ TEST_CASE("merge and bounce take the global transpose at each note's position", 
 	}
 }
 
+TEST_CASE("merge, bounce and dissolve play the part's own transpose as Keep Transpose in Octave Range folds it",
+	"[integration]")
+{
+	Fixture fixture;
+	Client& client = fixture.client;
+	const ObjectId track = fixture.track;
+	// The part's own transpose of 4 and the transpose event's 5 add up to 9, which the option folds to 3 down (#896):
+	// 60 and 64 play 57 and 61. A new part that follows plays 5 up, so it stores them 8 lower.
+	run(client, "transpose.add", {{"position", 0}, {"value", 5}});
+	run(client, "transpose.setTrack", {{"keepInOctave", true}});
+	run(client, "midiPart.set", {{"part", fixture.part}, {"transpose", 4}});
+	const auto before = playedOn(fixture.engine, track);
+	REQUIRE(before == std::vector<std::vector<int64_t>>{{0, 57, 0}, {24000, 61, 0}, {24000, 61, 0}});
+	const auto mergeOntoNewTrack = [&](bool includeInserts)
+	{
+		const Json merged = run(client, "midi.merge",
+			{{"start", 0}, {"end", g_eightQuarters}, {"tracks", {track}}, {"includeInserts", includeInserts}});
+		REQUIRE(merged.at("tracks").size() == 1);
+		return merged.at("tracks").at(0).get<ObjectId>();
+	};
+
+	SECTION("bounce")
+	{
+		run(client, "midi.bounce", {{"parts", {fixture.part}}});
+		CHECK(playedOn(fixture.engine, track) == before);
+		const Json part = onlyPartJson(client, track);
+		CHECK(part.at("transpose") == 0);
+		CHECK(storedPitches(part) == std::vector<int>{52, 56, 56});
+	}
+
+	SECTION("merge")
+	{
+		const ObjectId added = mergeOntoNewTrack(false);
+		CHECK(playedOn(fixture.engine, added) == before);
+		CHECK(storedPitches(onlyPartJson(client, added)) == std::vector<int>{52, 56, 56});
+	}
+
+	SECTION("merge with Include Inserts")
+	{
+		const ObjectId added = mergeOntoNewTrack(true);
+		CHECK(playedOn(fixture.engine, added) == before);
+		CHECK(storedPitches(onlyPartJson(client, added)) == std::vector<int>{52, 56, 56});
+	}
+
+	SECTION("dissolve, whose parts keep the part's transpose")
+	{
+		run(client, "midi.dissolve", {{"parts", {fixture.part}}, {"by", "pitch"}, {"to", "lanes"}});
+		CHECK(playedOn(fixture.engine, track) == before);
+	}
+}
+
+TEST_CASE("merge and bounce fold the part's transpose with a transpose event within it, a root key and other parts "
+		  "as Keep Transpose in Octave Range does",
+	"[integration]")
+{
+	Fixture fixture;
+	Client& client = fixture.client;
+	const ObjectId track = fixture.track;
+	const std::string way = GENERATE("bounce", "merge", "merge with Include Inserts");
+	// Bounces the parts or merges the track onto a new track: one new part, which plays what the track played, with
+	// the root key, follow, no transpose of its own and the stored pitches.
+	const auto makesOne =
+		[&](const std::vector<ObjectId>& parts, const std::string& rootKey, const std::vector<int>& pitches)
+	{
+		const auto before = playedOn(fixture.engine, track);
+		ObjectId on = track;
+		if (way == "bounce")
+			run(client, "midi.bounce", {{"parts", parts}});
+		else
+			on = run(client, "midi.merge",
+				{{"start", 0}, {"end", 2 * g_eightQuarters}, {"tracks", {track}}, {"includeInserts", way != "merge"}})
+					 .at("tracks")
+					 .at(0)
+					 .get<ObjectId>();
+		CHECK(playedOn(fixture.engine, on) == before);
+		const Json part = onlyPartJson(client, on);
+		CHECK(part.at("rootKey") == rootKey);
+		CHECK(part.at("globalTranspose") == "follow");
+		CHECK(part.at("transpose") == 0);
+		CHECK(storedPitches(part) == pitches);
+	};
+
+	SECTION("a transpose event within the part")
+	{
+		// The part's transpose of 4 plays alone before the event at the second quarter and with its 5 after it, folded
+		// to -3: 60 plays 64, 64 plays 61. The new part plays 0 and then 5, so 4 and then -8 go into the notes.
+		run(client, "transpose.add", {{"position", g_quarter}, {"value", 5}});
+		run(client, "transpose.setTrack", {{"keepInOctave", true}});
+		run(client, "midiPart.set", {{"part", fixture.part}, {"transpose", 4}});
+		REQUIRE(playedOn(fixture.engine, track) ==
+			std::vector<std::vector<int64_t>>{{0, 64, 0}, {24000, 61, 0}, {24000, 61, 0}});
+		makesOne({fixture.part}, "", {56, 56, 64});
+	}
+
+	SECTION("a root key")
+	{
+		// The part in D under the project's C plays 2 lower: -2 + 6 + 5 folds to -3. The new part in D plays 3, so the
+		// notes go 6 lower.
+		run(client, "project.set", {{"rootKey", "C"}});
+		run(client, "transpose.add", {{"position", 0}, {"value", 5}});
+		run(client, "transpose.setTrack", {{"keepInOctave", true}});
+		run(client, "midiPart.set", {{"part", fixture.part}, {"rootKey", "D"}, {"transpose", 6}});
+		REQUIRE(playedOn(fixture.engine, track) ==
+			std::vector<std::vector<int64_t>>{{0, 57, 0}, {24000, 61, 0}, {24000, 61, 0}});
+		makesOne({fixture.part}, "D", {54, 58, 58});
+	}
+
+	SECTION("two parts with different transposes")
+	{
+		// 4 + 5 folds to -3, 1 + 5 stays 6; the new part plays 5.
+		run(client, "transpose.add", {{"position", 0}, {"value", 5}});
+		run(client, "transpose.setTrack", {{"keepInOctave", true}});
+		run(client, "midiPart.set", {{"part", fixture.part}, {"transpose", 4}});
+		const ObjectId second = addPartWith(client, track, 8 * g_quarter, 4 * g_quarter, {{0, 70}});
+		run(client, "midiPart.set", {{"part", second}, {"transpose", 1}});
+		REQUIRE(playedOn(fixture.engine, track) ==
+			std::vector<std::vector<int64_t>>{{0, 57, 0}, {24000, 61, 0}, {24000, 61, 0}, {g_eightQuarters, 76, 0}});
+		makesOne({fixture.part, second}, "", {52, 56, 56, 71});
+	}
+
+	SECTION("two parts in different root keys, so that the new part takes the project's")
+	{
+		// The part in D plays -2 + 6 + 5, the one in E -4 + 8 + 5: both fold to -3. The new part in C plays 5.
+		run(client, "project.set", {{"rootKey", "C"}});
+		run(client, "transpose.add", {{"position", 0}, {"value", 5}});
+		run(client, "transpose.setTrack", {{"keepInOctave", true}});
+		run(client, "midiPart.set", {{"part", fixture.part}, {"rootKey", "D"}, {"transpose", 6}});
+		const ObjectId second = addPartWith(client, track, 8 * g_quarter, 4 * g_quarter, {{0, 70}});
+		run(client, "midiPart.set", {{"part", second}, {"rootKey", "E"}, {"transpose", 8}});
+		REQUIRE(playedOn(fixture.engine, track) ==
+			std::vector<std::vector<int64_t>>{{0, 57, 0}, {24000, 61, 0}, {24000, 61, 0}, {g_eightQuarters, 67, 0}});
+		makesOne({fixture.part, second}, "C", {52, 56, 56, 62});
+	}
+}
+
+TEST_CASE(
+	"merge and bounce keep a part of its own as Keep Transpose in Octave Range folds its transpose", "[integration]")
+{
+	Fixture fixture;
+	Client& client = fixture.client;
+	const ObjectId track = fixture.track;
+	run(client, "transpose.add", {{"position", 0}, {"value", 5}});
+	run(client, "transpose.setTrack", {{"keepInOctave", true}});
+
+	SECTION("merge, where a note the new part can't hold keeps its part's setting or goes into an Independent part")
+	{
+		// Both parts play 4 + 5 folded to -3 and the new part 5: the fixture's notes hold that 8 lower, the later
+		// part's 5, which plays 2, can't.
+		run(client, "midiPart.set", {{"part", fixture.part}, {"transpose", 4}});
+		const ObjectId low = addPartWith(client, track, 8 * g_quarter, 4 * g_quarter, {{0, 5}, {g_quarter, 62}});
+		run(client, "midiPart.set", {{"part", low}, {"transpose", 4}});
+		const auto before = playedOn(fixture.engine, track);
+		REQUIRE(before ==
+			std::vector<std::vector<int64_t>>{
+				{0, 57, 0}, {24000, 61, 0}, {24000, 61, 0}, {g_eightQuarters, 2, 0}, {g_eightQuarters + 24000, 59, 0}});
+		const bool includeInserts = GENERATE(false, true);
+		const auto added = run(client, "midi.merge",
+			{{"start", 0}, {"end", 2 * g_eightQuarters}, {"tracks", {track}}, {"includeInserts", includeInserts}})
+							   .at("tracks")
+							   .at(0)
+							   .get<ObjectId>();
+		CHECK(playedOn(fixture.engine, added) == before);
+		const std::vector<Json> parts = partsOn(client, added);
+		REQUIRE(parts.size() == 2);
+		CHECK(parts[0].at("transpose") == 0);
+		CHECK(parts[0].at("globalTranspose") == "follow");
+		CHECK(storedPitches(parts[0]) == std::vector<int>{52, 56, 56});
+		// Without Include Inserts with the part's transpose and setting and the notes as they are; with, Independent,
+		// with the pitches that play.
+		CHECK(parts[1].at("transpose") == (includeInserts ? 0 : 4));
+		CHECK(parts[1].at("globalTranspose") == (includeInserts ? "independent" : "follow"));
+		CHECK(storedPitches(parts[1]) == (includeInserts ? std::vector<int>{2, 59} : std::vector<int>{5, 62}));
+	}
+
+	SECTION("bounce, where a drum map keeps the shared setting out of a part's notes and its own goes in")
+	{
+		// The Independent fixture part takes the project's C and the new part's 5 into its notes. The part in D plays
+		// -2 + 6 + 5 folded to -3, 70 as 67: 8 lower against the new part, 62, which the map plays as 90, so it keeps
+		// its root key, which plays 3; what goes into its notes is -6, not its transpose of 6.
+		run(client, "project.set", {{"rootKey", "C"}});
+		useDrumMap(client, track, {{{"pitch", 62}, {"oNote", 90}}});
+		run(client, "midiPart.set", {{"part", fixture.part}, {"globalTranspose", "independent"}});
+		const ObjectId keyed = addPartWith(client, track, 8 * g_quarter, 4 * g_quarter, {{0, 70}});
+		run(client, "midiPart.set", {{"part", keyed}, {"rootKey", "D"}, {"transpose", 6}});
+		const auto before = playedOn(fixture.engine, track);
+		REQUIRE(before ==
+			std::vector<std::vector<int64_t>>{{0, 60, 0}, {24000, 64, 0}, {24000, 64, 0}, {g_eightQuarters, 67, 0}});
+		const Json bounced = run(client, "midi.bounce", {{"parts", {fixture.part, keyed}}});
+		CHECK(playedOn(fixture.engine, track) == before);
+		REQUIRE(bounced.at("parts").size() == 2);
+		std::vector<std::tuple<std::string, std::string, int, std::vector<int>>> made;
+		for (const Json& part : partsOn(client, track))
+			made.emplace_back(part.at("rootKey").get<std::string>(), part.at("globalTranspose").get<std::string>(),
+				part.at("transpose").get<int>(), storedPitches(part));
+		std::sort(made.begin(), made.end());
+		CHECK(made ==
+			std::vector<std::tuple<std::string, std::string, int, std::vector<int>>>{
+				{"C", "follow", 0, {55, 59, 59}}, {"D", "follow", 0, {64}}});
+	}
+}
+
 TEST_CASE("the new part's root key and Global Transpose setting come from the parts with notes in it", "[integration]")
 {
 	Fixture fixture;

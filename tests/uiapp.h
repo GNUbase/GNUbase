@@ -95,6 +95,11 @@ namespace gnubase::test
 		// may differ by more than 8 of 255.
 		static void checkGolden(const std::string& name, const ui::Image& image);
 
+		// The sections the main window shows in the container with this id, such as "toolbar", in their order: those
+		// neither hidden nor out of room (docs/features/docking.md). A golden image's tolerance can hide a whole
+		// toolbar button, so tests with goldens of the project window check these too (#1342).
+		std::vector<std::string> shownSections(const std::string& container);
+
 	private:
 		void start(std::vector<std::unique_ptr<midi::Backend>> midiBackends,
 			std::vector<std::unique_ptr<audio::Backend>> audioBackends);
