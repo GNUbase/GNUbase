@@ -72,43 +72,6 @@ namespace gnubase::engine
 			return keys;
 		}
 
-		// Where the controls that move all pads left them (reference manual p. 1387): per control (voicings,
-		// tensions, transposition) its step from its rest, and per pad how far it followed, which is less for a pad
-		// that has tensions already or reaches the limit of 12 inversions (#1448), and per pad the tensions the
-		// tensions control added, in the order it added them, which the way back takes away again.
-		struct ControlSteps
-		{
-			std::array<int, 3> steps{};
-			std::array<std::vector<int>, 3> followed;
-			std::vector<std::vector<std::string>> added;
-		};
-
-		// What chordPads.listen listens for, and what chordPads.remoteInput saw of the remote keys (#1089).
-		struct RemoteState
-		{
-			std::set<int> held;  // the pads whose remote keys are down
-			int last = -1;       // the pad triggered last, which the chord modifiers change when none is held
-			int auditioned = -1; // the pad a chord modifier's key plays while it is down, or -1
-			// How far the controls moved all pads' voicings, tensions and transposition, after each history step a
-			// control made: the latest of them that is done says where the pads are, also after undo and redo.
-			std::map<uint64_t, ControlSteps> controlSteps;
-			// Each control's gesture for its undo step's merge key, a new one after a second without its messages.
-			std::array<int, 3> gestures{};
-			std::array<Clock::TimePoint, 3> lastControl{};
-			std::string listen;       // "", "assign" or "learn"
-			int pad = -1;             // assign: the pad that gets the chord
-			std::string target;       // learn: "range" or a modifier's name
-			std::set<int> down;       // the notes down while listening
-			std::vector<int> pitches; // assign: the notes played; learn range: the keys pressed
-
-			Json listening() const
-			{
-				if (listen.empty())
-					return nullptr;
-				return listen == "assign" ? Json{{"assign", pad}} : Json{{"learn", target}};
-			}
-		};
-
 		// MIDI Learn's targets beyond the remote range and the chord modifiers' keys: the Player Remote Control tab's
 		// keys, which the next keys fill one after another, and what moves all pads, which the next control becomes.
 		bool learnsKeys(const std::string& target)
@@ -1044,9 +1007,290 @@ namespace gnubase::engine
 		}
 	}
 
+	// What chordPads.listen listens for, and what chordPads.remoteInput saw of the remote keys (#1089), which the
+	// commands that play the pads share (ProjectModel::registerChordPadPlayCommands).
+	struct ChordPadRemote
+	{
+		// Where the controls that move all pads left them (reference manual p. 1387): per control (voicings,
+		// tensions, transposition) its step from its rest, and per pad how far it followed, which is less for a pad
+		// that has tensions already or reaches the limit of 12 inversions (#1448), per pad the tensions the tensions
+		// control added, in the order it added them, which the way back takes away again, and the pads the voicings
+		// control turned adaptive voicing off for, with their voicing before, which have it again at rest (#1571).
+		struct ControlSteps
+		{
+			std::array<int, 3> steps{};
+			std::array<std::vector<int>, 3> followed;
+			std::vector<std::vector<std::string>> added;
+			std::map<int, int> adaptive;
+
+			// A pad whose chord changed another way, such as chordPads.assign: the controls' way back leaves it as it
+			// is, and it follows the next move from there (#1574).
+			void forget(size_t index)
+			{
+				for (std::vector<int>& each : followed)
+					if (index < each.size())
+						each.at(index) = 0;
+				if (index < added.size())
+					added.at(index).clear();
+				adaptive.erase(static_cast<int>(index));
+			}
+		};
+
+		std::set<int> held;  // the pads whose remote keys are down
+		int last = -1;       // the pad triggered last, which the chord modifiers change when none is held
+		int auditioned = -1; // the pad a chord modifier's key plays while it is down, or -1
+		// How far the controls moved all pads' voicings, tensions and transposition, after each history step a
+		// control made: the latest of them that is done says where the pads are, also after undo and redo.
+		std::map<uint64_t, ControlSteps> controlSteps;
+		// Each control's gesture for its undo step's merge key, a new one after a second without its messages.
+		std::array<int, 3> gestures{};
+		std::array<Clock::TimePoint, 3> lastControl{};
+		std::string listen;       // "", "assign" or "learn"
+		int pad = -1;             // assign: the pad that gets the chord
+		std::string target;       // learn: "range" or a modifier's name
+		std::set<int> down;       // the notes down while listening
+		std::vector<int> pitches; // assign: the notes played; learn range: the keys pressed
+
+		Json listening() const
+		{
+			if (listen.empty())
+				return nullptr;
+			return listen == "assign" ? Json{{"assign", pad}} : Json{{"learn", target}};
+		}
+
+		// Where the controls left the pads, as the latest done history step of theirs says, without the pads whose
+		// chords changed another way than by the pad modifiers since (#1574).
+		ControlSteps where(const History& history) const
+		{
+			ControlSteps result;
+			size_t since = history.position();
+			for (size_t i = history.position(); i-- > 0;)
+				if (const auto found = controlSteps.find(history.steps().at(i).id); found != controlSteps.end())
+				{
+					result = found->second;
+					since = i + 1;
+					break;
+				}
+			for (size_t i = since; i < history.position(); ++i)
+			{
+				const ProjectChange& change = history.steps().at(i).change;
+				if (history.steps().at(i).action == "Modify chord pads" || !change.settingsBefore.has_value() ||
+					!change.settingsAfter.has_value())
+					continue;
+				const std::vector<ChordPad>& before = change.settingsBefore->chordPads.pads;
+				const std::vector<ChordPad>& after = change.settingsAfter->chordPads.pads;
+				for (size_t index = 0; index < after.size(); ++index)
+					if (index >= before.size() || before.at(index).chord != after.at(index).chord)
+						result.forget(index);
+			}
+			return result;
+		}
+	};
+
 	namespace
 	{
-		// chordPads.loadPreset, outside registerChordPadCommands to keep that within the function size limit.
+		Json padsResultSchema()
+		{
+			const Json integerSchema = {{"type", "integer"}};
+			const Json booleanSchema = {{"type", "boolean"}};
+			const Json stringSchema = {{"type", "string"}};
+			return {{"type", "object"},
+				{"properties",
+					{{"pads", {{"type", "array"}}}, {"rootKey", integerSchema}, {"reference", integerSchema},
+						{"octaveOffset", integerSchema}, {"players", {{"type", "array"}}}, {"player", integerSchema},
+						{"velocity", integerSchema}, {"remote", booleanSchema}, {"remoteStart", integerSchema},
+						{"remoteEnd", integerSchema}, {"preset", stringSchema}, {"scale", stringSchema},
+						{"stepInput", booleanSchema}, {"moveInsert", booleanSchema}, {"stepPosition", integerSchema},
+						{"outputMode", booleanSchema}, {"latch", booleanSchema}, {"overlaps", stringSchema},
+						{"filterNotes", booleanSchema}, {"modifiers", booleanSchema},
+						{"modifierKeys", {{"type", "object"}}}, {"remotePort", stringSchema},
+						{"snapPlayback", booleanSchema}, {"mode", stringSchema}, {"pattern", {{"type", "object"}}},
+						{"velocityFromKeyboard", booleanSchema}, {"flats", booleanSchema},
+						{"sectionKeys", {{"type", "array"}}}, {"subsectionKeys", {{"type", "array"}}},
+						{"subsectionSections", {{"type", "array"}}}, {"subsectionOffsets", {{"type", "array"}}},
+						{"sectionPlay", stringSchema}, {"latchPads", booleanSchema}, {"spread", booleanSchema},
+						{"mutedSections", {{"type", "array"}}}, {"playerKeys", {{"type", "array"}}},
+						{"controlSources", {{"type", "array"}}}, {"controlNumbers", {{"type", "array"}}}}},
+				{"required",
+					{"pads", "rootKey", "reference", "octaveOffset", "players", "player", "velocity", "remote",
+						"remoteStart", "remoteEnd", "preset", "scale", "stepInput", "moveInsert", "stepPosition",
+						"outputMode", "latch", "overlaps", "filterNotes", "modifiers", "modifierKeys", "remotePort",
+						"snapPlayback", "mode", "pattern", "velocityFromKeyboard", "flats", "sectionKeys",
+						"subsectionKeys", "subsectionSections", "subsectionOffsets", "sectionPlay", "latchPads",
+						"spread", "mutedSections", "playerKeys", "controlSources", "controlNumbers"}}};
+		}
+
+		// Each command that changes the pads announces them.
+		Json padsChanged(const Project& project, CommandContext& context)
+		{
+			Json result = chordPadsJson(project);
+			context.emit("chordPads.changed", result);
+			return result;
+		}
+
+		// Modify All Pad Voicings, Modify All Pad Tensions and Transpose All Pads (reference manual p. 1387), control
+		// which (0 to 2) at value (0 to 127) on the remote's input (chordPads.remoteInput): all pads, from where the
+		// controls left them to where it is, one undo step per gesture. A control at rest changes nothing: pitch bend
+		// rests in the middle of its range, from 3 inversions (6 semitones) down to 3 (6) up, and adds the tensions
+		// from its middle up; aftertouch and controllers rest at 0 and go up. project and history are the model's,
+		// which the commands this calls change.
+		void moveAllPads(ChordPadRemote& state, const Project& project, const History& history, Clock::TimePoint now,
+			size_t which, int value, CommandContext& context)
+		{
+			static constexpr std::array<const char*, 3> changes = {"voicing", "tensions", "transpose"};
+			static constexpr std::array<int, 3> lowest = {-3, 0, -6};
+			static constexpr std::array<int, 3> highest = {3, 3, 6};
+			const ChordPads& pads = project.chordPads;
+			const bool bend = pads.controlSources.at(which) == "pitchBend";
+			const int low = bend ? lowest.at(which) : 0;
+			const int rest = bend && low == 0 ? 64 : 0;
+			const int step = low +
+				static_cast<int>(std::lround(
+					std::max(value - rest, 0) / static_cast<double>(127 - rest) * (highest.at(which) - low)));
+			ChordPadRemote::ControlSteps where = state.where(history);
+			if (now - state.lastControl.at(which) > std::chrono::seconds(1))
+				++state.gestures.at(which);
+			state.lastControl.at(which) = now;
+			const std::string merge =
+				std::string("chordPads.control ") + changes.at(which) + " " + std::to_string(state.gestures.at(which));
+			const int from = where.steps.at(which);
+			if (step == from)
+				return;
+			// Each pad as far as the control goes, but on the way back no further than it followed on the way out, so
+			// that a control back at rest leaves the pads as they were (#1448).
+			std::vector<int>& followed = where.followed.at(which);
+			followed.resize(pads.pads.size(), 0);
+			std::map<int, std::vector<int>> moves; // by how much, which pads
+			for (size_t i = 0; i < followed.size(); ++i)
+			{
+				int to = step;
+				if (from > 0 && followed.at(i) < from)
+					to = std::min(step, followed.at(i));
+				else if (from < 0 && followed.at(i) > from)
+					to = std::max(step, followed.at(i));
+				if (to != followed.at(i))
+					moves[to - followed.at(i)].push_back(static_cast<int>(i));
+			}
+			// What a pad has of the control's change: its voicing's inversion or its tensions.
+			const auto measure = [&pads, which](const std::vector<std::vector<int>>& voicings, size_t i)
+			{
+				const ChordPad& pad = pads.pads.at(i);
+				if (pad.chord.empty() || which == 2)
+					return 0;
+				if (which == 1)
+					return static_cast<int>(chordOf(pad.chord).tensions.size());
+				return pad.adaptive ? inversionOf(pads, chordOf(pad.chord), voicings.at(i))
+									: voicingOf(pad, pads.player);
+			};
+			const std::vector<std::vector<int>> voicings = chordPadVoicings(pads);
+			// A pad's tensions; those the control added are the ones it takes away again, not the last ones in the
+			// tensions' order, which may be the pad's own (#1447).
+			const auto tensionsOf = [&pads](size_t i)
+			{
+				const ChordPad& pad = pads.pads.at(i);
+				return pad.chord.empty() ? std::vector<std::string>() : chordOf(pad.chord).tensions;
+			};
+			std::vector<std::vector<std::string>>& added = where.added;
+			added.resize(followed.size());
+			std::vector<int> before(followed.size());
+			std::vector<std::vector<std::string>> tensionsBefore(followed.size());
+			for (size_t i = 0; i < followed.size(); ++i)
+			{
+				before.at(i) = measure(voicings, i);
+				tensionsBefore.at(i) = tensionsOf(i);
+			}
+			Json commands = Json::array();
+			for (const auto& [by, targets] : moves)
+			{
+				if (which == 1 && by < 0)
+					for (const int target : targets)
+					{
+						const std::vector<std::string>& mine = added.at(static_cast<size_t>(target));
+						const auto count = static_cast<std::ptrdiff_t>(std::min(static_cast<size_t>(-by), mine.size()));
+						commands.push_back({{"command", "chordPads.modify"},
+							{"parameters",
+								{{"pads", Json::array({target})},
+									{"without", std::vector<std::string>(mine.end() - count, mine.end())}}}});
+					}
+				else
+					commands.push_back({{"command", "chordPads.modify"},
+						{"parameters", {{"pads", targets}, {changes.at(which), by}}}});
+				// The voicings control turns adaptive voicing off: the pads that had it get it back at rest (#1571).
+				for (const int target : targets)
+					if (const ChordPad& pad = pads.pads.at(static_cast<size_t>(target));
+						which == 0 && pad.adaptive && !pad.locked && !pad.chord.empty())
+						where.adaptive.emplace(target, voicingOf(pad, pads.player));
+			}
+			if (!commands.empty())
+				context.call("history.transaction",
+					{{"description", "Modify chord pads"}, {"merge", merge}, {"commands", commands}});
+			for (const auto& [by, targets] : moves)
+				for (const int target : targets)
+				{
+					const auto i = static_cast<size_t>(target);
+					const ChordPad& moved = pads.pads.at(i);
+					if (which == 1)
+					{
+						// The ones it added that the pad still has, then the ones new to it.
+						const std::vector<std::string> after = tensionsOf(i);
+						const auto has = [](const std::vector<std::string>& tensions, const std::string& t)
+						{ return std::find(tensions.begin(), tensions.end(), t) != tensions.end(); };
+						std::vector<std::string>& mine = added.at(i);
+						mine.erase(std::remove_if(
+									   mine.begin(), mine.end(), [&](const std::string& t) { return !has(after, t); }),
+							mine.end());
+						for (const std::string& tension : after)
+							if (!has(tensionsBefore.at(i), tension))
+								mine.push_back(tension);
+					}
+					if (which != 2)
+						followed.at(i) += measure(voicings, i) - before.at(i);
+					else if (!moved.chord.empty() && !moved.locked)
+						followed.at(i) += by;
+				}
+			where.steps.at(which) = step;
+			// At rest the pads are as before the control moved them: how far each followed and the tensions it added
+			// start again, so that the next gesture moves every pad as far (#1574), and the pads that had adaptive
+			// voicing have it again with their voicing, so that they follow the reference pad again (#1571).
+			if (step == 0)
+			{
+				followed.assign(followed.size(), 0);
+				if (which == 1)
+					added.clear();
+			}
+			// Only the voicings control takes adaptive voicing away, so only its rest gives it back.
+			if (step == 0 && which == 0)
+			{
+				Json restore = Json::array();
+				for (const auto& [index, voicing] : where.adaptive)
+				{
+					const auto i = static_cast<size_t>(index);
+					if (i >= pads.pads.size() || pads.pads.at(i).chord.empty() || pads.pads.at(i).locked ||
+						pads.pads.at(i).adaptive)
+						continue;
+					restore.push_back({{"command", "chordPads.modify"},
+						{"parameters",
+							{{"pads", Json::array({index})},
+								{"voicing", voicing - voicingOf(pads.pads.at(i), pads.player)}}}});
+					restore.push_back(
+						{{"command", "chordPads.setPad"}, {"parameters", {{"pad", index}, {"adaptive", true}}}});
+				}
+				where.adaptive.clear();
+				if (!restore.empty())
+					context.call("history.transaction",
+						{{"description", "Modify chord pads"}, {"merge", merge}, {"commands", restore}});
+			}
+			// The steps after the history's last done step; those of steps gone from it go too.
+			if (history.position() > 0)
+				state.controlSteps[history.steps().at(history.position() - 1).id] = where;
+			for (auto it = state.controlSteps.begin(); it != state.controlSteps.end();)
+				it = std::any_of(history.steps().begin(), history.steps().end(),
+						 [&it](const HistoryStep& done) { return done.id == it->first; })
+					? std::next(it)
+					: state.controlSteps.erase(it);
+		}
+
+		// chordPads.loadPreset, outside the registration to keep that within clang-tidy's function size limit.
 		void loadPreset(ChordPads& pads, CommandContext& context)
 		{
 			const Json& parameters = context.parameters();
@@ -1110,7 +1354,7 @@ namespace gnubase::engine
 			}
 		}
 
-		// chordPads.assistant, outside registerChordPadCommands to keep that within the function size limit.
+		// chordPads.assistant, outside the registration to keep that within clang-tidy's function size limit.
 		Json assistant(const Project& project, CommandContext& context)
 		{
 			const Json& parameters = context.parameters();
@@ -1294,67 +1538,34 @@ namespace gnubase::engine
 		const Json integerSchema = {{"type", "integer"}};
 		const Json booleanSchema = {{"type", "boolean"}};
 		const Json stringSchema = {{"type", "string"}};
-		const Json padsSchema = {{"type", "array"}, {"items", integerSchema}};
-		const Json padsResult = {{"type", "object"},
-			{"properties",
-				{{"pads", {{"type", "array"}}}, {"rootKey", integerSchema}, {"reference", integerSchema},
-					{"octaveOffset", integerSchema}, {"players", {{"type", "array"}}}, {"player", integerSchema},
-					{"velocity", integerSchema}, {"remote", booleanSchema}, {"remoteStart", integerSchema},
-					{"remoteEnd", integerSchema}, {"preset", stringSchema}, {"scale", stringSchema},
-					{"stepInput", booleanSchema}, {"moveInsert", booleanSchema}, {"stepPosition", integerSchema},
-					{"outputMode", booleanSchema}, {"latch", booleanSchema}, {"overlaps", stringSchema},
-					{"filterNotes", booleanSchema}, {"modifiers", booleanSchema},
-					{"modifierKeys", {{"type", "object"}}}, {"remotePort", stringSchema},
-					{"snapPlayback", booleanSchema}, {"mode", stringSchema}, {"pattern", {{"type", "object"}}},
-					{"velocityFromKeyboard", booleanSchema}, {"flats", booleanSchema},
-					{"sectionKeys", {{"type", "array"}}}, {"subsectionKeys", {{"type", "array"}}},
-					{"subsectionSections", {{"type", "array"}}}, {"subsectionOffsets", {{"type", "array"}}},
-					{"sectionPlay", stringSchema}, {"latchPads", booleanSchema}, {"spread", booleanSchema},
-					{"mutedSections", {{"type", "array"}}}, {"playerKeys", {{"type", "array"}}},
-					{"controlSources", {{"type", "array"}}}, {"controlNumbers", {{"type", "array"}}}}},
-			{"required",
-				{"pads", "rootKey", "reference", "octaveOffset", "players", "player", "velocity", "remote",
-					"remoteStart", "remoteEnd", "preset", "scale", "stepInput", "moveInsert", "stepPosition",
-					"outputMode", "latch", "overlaps", "filterNotes", "modifiers", "modifierKeys", "remotePort",
-					"snapPlayback", "mode", "pattern", "velocityFromKeyboard", "flats", "sectionKeys", "subsectionKeys",
-					"subsectionSections", "subsectionOffsets", "sectionPlay", "latchPads", "spread", "mutedSections",
-					"playerKeys", "controlSources", "controlNumbers"}}};
-		// Each command that changes the pads announces them.
-		auto remote = std::make_shared<RemoteState>();
+		const Json padsResult = padsResultSchema();
+		// What the remote's input and chordPads.listen keep, for the commands that play the pads.
+		auto remote = std::make_shared<ChordPadRemote>();
 		// Another project: its pads are others, so a pending Assign from MIDI Input or MIDI Learn ends, and the held
 		// pads, the pad triggered last and the controls' steps start again.
 		m_chordPadsOpened = [remote](CommandContext& context)
 		{
 			const bool listening = !remote->listen.empty();
-			*remote = RemoteState();
+			*remote = ChordPadRemote();
 			if (listening)
 			{
 				context.call("midi.padListen", {{"on", false}});
 				context.emit("chordPads.listening", {{"listening", nullptr}});
 			}
 		};
-		const auto changed = [](Project& project, CommandContext& context)
-		{
-			Json result = chordPadsJson(project);
-			context.emit("chordPads.changed", result);
-			return result;
-		};
-
 		add(engine,
 			{"chordPads.get", 1,
 				"The chord pads (reference manual pp. 1346-1391): pads, each with its chord (\"\" while unassigned), "
 				"degree (its scale degree as a roman numeral, in the loaded preset's scale on the root key), nashville "
-				"(the same in the Nashville Number System, such as 2m), pitches "
-				"(the voicing it plays, from the lowest up), voicing (the inversion of its basic voicing), adaptive "
-				"(adaptive voicing), locked and key (the remote key that triggers it, or null); rootKey (0 C to 11 "
-				"B); reference (the adaptive voicing reference pad, or -1); octaveOffset (the selected basic "
-				"player's); players (each "
-				"with its name, library, style and octaveOffset) and player (the selected one's index); "
-				"velocity (of pads triggered with the mouse); remote, remoteStart and remoteEnd (the pads' remote "
-				"keys); preset (the last loaded) and scale (its scale); stepInput, moveInsert and stepPosition "
-				"(ticks); outputMode, latch, "
-				"overlaps, filterNotes, modifiers, modifierKeys and remotePort (as chordPads.set takes them); "
-				"listening, what chordPads.listen listens for ({assign: pad} or {learn: target}), or null.",
+				"(the same in the Nashville Number System, such as 2m), pitches (the voicing it plays, from the lowest "
+				"up), voicing (the inversion of its basic voicing), adaptive (adaptive voicing), locked and key (the "
+				"remote key that triggers it, or null); rootKey (0 C to 11 B); reference (the adaptive voicing "
+				"reference pad, or -1); octaveOffset (the selected basic player's); players (each with its name, "
+				"library, style and octaveOffset) and player (the selected one's index); velocity (of pads triggered "
+				"with the mouse); remote, remoteStart and remoteEnd (the pads' remote keys); preset (the last loaded) "
+				"and scale (its scale); stepInput, moveInsert and stepPosition (ticks); outputMode, latch, overlaps, "
+				"filterNotes, modifiers, modifierKeys and remotePort (as chordPads.set takes them); listening, what "
+				"chordPads.listen listens for ({assign: pad} or {learn: target}), or null.",
 				objectSchema({}), padsResult, true},
 			[remote](Project& project, CommandContext&)
 			{
@@ -1367,48 +1578,47 @@ namespace gnubase::engine
 				"Changes the chord pads' settings: rootKey (0 C to 11 B; with transposePads the assigned unlocked pads "
 				"move with it, the nearer way, reference manual p. 1365, without only their degrees change, p. 1364); "
 				"padCount (1 to 32, the number of pads; pads beyond it go); player (the selected player, "
-				"chordPads.addPlayer); octaveOffset (-3 to 3, the selected basic "
-				"player's Octave Offset, p. 1377); velocity (1 to 127, Velocity on Mouse Click); remote (Pad Remote "
-				"Control: notes from MIDI inputs on the remote keys trigger the pads instead of playing, p. 1386), "
-				"remoteStart and remoteEnd (Pads Remote Range Start and End, MIDI notes: the first key triggers the "
-				"first pad and so on); stepInput, moveInsert and stepPosition (ticks, from 0 to the end of the bar "
-				"the longest project, 2^48 samples, ends in at the project's tempo) for chordPads.step (p. 1369); "
-				"stepBars moves the step position by bars, to a bar's start, at most that bar's (after "
-				"stepPosition), as Left and Right Arrow move the step input cursor. Moving the step position is no "
-				"undo step of its own; with another change it goes back on undo. outputMode (Chord Pad Output Mode, "
-				"p. 1347, on by default): on, the pads play into every MIDI and instrument track that monitors or is "
-				"record-enabled; off, only into those whose midiInput is chordPads (channel.set). latch (Latch "
-				"Chords, p. 1386): a pad's chord plays until the pad is triggered again. overlaps (p. 1379), what a "
-				"chord played over another does with the other's notes: holdFirst (the default: they go on until "
-				"their own off; shared notes sound once), legato (they end but for the shared ones, which go on) or "
-				"stopFirst (they all end). filterNotes (Filter Notes From MIDI Thru): the remote keys of pads without "
-				"a chord play nothing. modifiers activates the chord modifiers' remote keys (p. 1387), modifierKeys "
-				"(MIDI notes by name: previousVoicing, nextVoicing, fewerTensions, moreTensions, transposeDown, "
-				"transposeUp; C2 to F2 by default): such a key changes the pads whose remote keys are down, or else "
-				"the "
-				"one triggered last, and plays nothing. remotePort: the MIDI input whose notes trigger the pads, its "
-				"midi.portSettings key such as dummy/in/Keys (p. 1386); empty (the default) for all MIDI inputs. "
-				"snapPlayback (Snap Playback to Musical Grid, p. 1349): while the transport plays, a triggered pad's "
-				"chord starts at the next position of the quantize grid (quantize.set). mode (Player Mode, p. 1378): "
-				"plainChords, or pattern, which plays the pattern (chordPads.setPattern) with the notes of the chord "
-				"that plays, velocityFromKeyboard with the velocity it was triggered with instead of the pattern's. "
-				"flats (the Root Key pane's Enh. Shift, p. 1363): the pads' spelled names have flats, Db for C#. "
-				"mode sections (pp. 1381-1385): a pad's remote key chooses its chord and plays nothing; the remote "
-				"keys of sectionKeys (five MIDI notes, -1 for none; G2 to B2 by default) play its sections, the notes "
-				"from the lowest up, one each, and the rest to the top section, or with spread spread over them; "
-				"subsectionKeys play the sections of subsectionSections moved by subsectionOffsets semitones; "
-				"sectionPlay sections (with the pad's key down), chordPads (the pad triggered last) or combination "
-				"(either first); latchPads (Latch Chord Pads): the sections go on after the pad's key goes up; "
-				"mutedSections (five) play nothing. playerKeys (Select/Mute Player, p. 1389): the remote keys that "
-				"select the previous and the next player and mute or unmute the selected one, -1 for none. "
-				"controlSources (Modify All Pad Voicings, Modify All Pad Tensions, Transpose All Pads, p. 1387): what "
-				"moves them from the remote's input, none, aftertouch, pitchBend or controller (of controlNumbers): "
-				"a control at rest changes nothing: aftertouch and controllers rest at 0 and go up to 3 inversions "
-				"up, 3 more tensions and 6 semitones up; pitch bend rests in its middle and goes from 3 inversions "
-				"and 6 semitones down to 3 and 6 up, and from none to 3 more tensions above its middle. A pad that "
-				"follows a move only partly, such as one with tensions or at the limit of 12 inversions, goes back "
-				"as far as it went. Each gesture of a control is one undo step; a second without a move ends the "
-				"gesture.",
+				"chordPads.addPlayer); octaveOffset (-3 to 3, the selected basic player's Octave Offset, p. 1377); "
+				"velocity (1 to 127, Velocity on Mouse Click); remote (Pad Remote Control: notes from MIDI inputs on "
+				"the remote keys trigger the pads instead of playing, p. 1386), remoteStart and remoteEnd (Pads Remote "
+				"Range Start and End, MIDI notes: the first key triggers the first pad and so on); stepInput, "
+				"moveInsert and stepPosition (ticks, from 0 to the end of the bar the longest project, 2^48 samples, "
+				"ends in at the project's tempo) for chordPads.step (p. 1369); stepBars moves the step position by "
+				"bars, to a bar's start, at most that bar's (after stepPosition), as Left and Right Arrow move the "
+				"step input cursor. Moving the step position is no undo step of its own; with another change it goes "
+				"back on undo. outputMode (Chord Pad Output Mode, p. 1347, on by default): on, the pads play into "
+				"every MIDI and instrument track that monitors or is record-enabled; off, only into those whose "
+				"midiInput is chordPads (channel.set). latch (Latch Chords, p. 1386): a pad's chord plays until the "
+				"pad is triggered again. overlaps (p. 1379), what a chord played over another does with the other's "
+				"notes: holdFirst (the default: they go on until their own off; shared notes sound once), legato (they "
+				"end but for the shared ones, which go on) or stopFirst (they all end). filterNotes (Filter Notes From "
+				"MIDI Thru): the remote keys of pads without a chord play nothing. modifiers activates the chord "
+				"modifiers' remote keys (p. 1387), modifierKeys (MIDI notes by name: previousVoicing, nextVoicing, "
+				"fewerTensions, moreTensions, transposeDown, transposeUp; C2 to F2 by default): such a key changes the "
+				"pads whose remote keys are down, or else the one triggered last, and plays nothing. remotePort: the "
+				"MIDI input whose notes trigger the pads, its midi.portSettings key such as dummy/in/Keys (p. 1386); "
+				"empty (the default) for all MIDI inputs. snapPlayback (Snap Playback to Musical Grid, p. 1349): while "
+				"the transport plays, a triggered pad's chord starts at the next position of the quantize grid "
+				"(quantize.set). mode (Player Mode, p. 1378): plainChords, or pattern, which plays the pattern "
+				"(chordPads.setPattern) with the notes of the chord that plays, velocityFromKeyboard with the velocity "
+				"it was triggered with instead of the pattern's. flats (the Root Key pane's Enh. Shift, p. 1363): the "
+				"pads' spelled names have flats, Db for C#. mode sections (pp. 1381-1385): a pad's remote key chooses "
+				"its chord and plays nothing; the remote keys of sectionKeys (five MIDI notes, -1 for none; G2 to B2 "
+				"by default) play its sections, the notes from the lowest up, one each, and the rest to the top "
+				"section, or with spread spread over them; subsectionKeys play the sections of subsectionSections "
+				"moved by subsectionOffsets semitones; sectionPlay sections (with the pad's key down), chordPads (the "
+				"pad triggered last) or combination (either first); latchPads (Latch Chord Pads): the sections go on "
+				"after the pad's key goes up; mutedSections (five) play nothing. playerKeys (Select/Mute Player, p. "
+				"1389): the remote keys that select the previous and the next player and mute or unmute the selected "
+				"one, -1 for none. controlSources (Modify All Pad Voicings, Modify All Pad Tensions, Transpose All "
+				"Pads, p. 1387): what moves them from the remote's input, none, aftertouch, pitchBend or controller "
+				"(of controlNumbers): a control at rest changes nothing: aftertouch and controllers rest at 0 and go "
+				"up to 3 inversions up, 3 more tensions and 6 semitones up; pitch bend rests in its middle and goes "
+				"from 3 inversions and 6 semitones down to 3 and 6 up, and from none to 3 more tensions above its "
+				"middle. A pad that follows a move only partly, such as one with tensions or at the limit of 12 "
+				"inversions, goes back as far as it went, and one whose chord changed another way meanwhile, such as "
+				"by chordPads.assign, stays as it is; at rest the pads that had adaptive voicing have it again. Each "
+				"gesture of a control is one undo step; a second without a move ends the gesture.",
 				objectSchema({{"rootKey", integerSchema}, {"transposePads", booleanSchema}, {"padCount", integerSchema},
 					{"octaveOffset", integerSchema}, {"player", integerSchema}, {"velocity", integerSchema},
 					{"remote", booleanSchema}, {"remoteStart", integerSchema}, {"remoteEnd", integerSchema},
@@ -1440,22 +1650,22 @@ namespace gnubase::engine
 							{"maxItems", 3}}},
 					{"controlNumbers", {{"type", "array"}, {"items", integerSchema}, {"maxItems", 3}}}}),
 				padsResult, false},
-			[changed](Project& project, CommandContext& context)
+			[](Project& project, CommandContext& context)
 			{
 				applyPadSettings(project, context.parameters());
-				return changed(project, context);
+				return padsChanged(project, context);
 			});
 		add(engine,
 			{"chordPads.addPlayer", 1,
 				"Add Player (reference manual pp. 1376-1377): a basic, piano or guitar player (library) with a name "
-				"(default after its library) and, for piano and guitar, a voicing style (style, default the "
-				"library's first: chord.setTrack lists them), which becomes the selected player whose voicings the "
-				"pads play. At most 8.",
+				"(default after its library) and, for piano and guitar, a voicing style (style, default the library's "
+				"first: chord.setTrack lists them), which becomes the selected player whose voicings the pads play. At "
+				"most 8.",
 				objectSchema({{"library", {{"type", "string"}, {"enum", midi::voicingLibraries()}}},
 								 {"name", stringSchema}, {"style", stringSchema}, {"track", integerSchema}},
 					{"library"}),
 				padsResult, false},
-			[changed](Project& project, CommandContext& context)
+			[](Project& project, CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
 				ChordPads& pads = project.chordPads;
@@ -1472,20 +1682,20 @@ namespace gnubase::engine
 				player.track = playerTrack(project, parameters.value("track", ObjectId{0}), -1);
 				pads.players.push_back(player);
 				pads.player = static_cast<int>(pads.players.size()) - 1;
-				return changed(project, context);
+				return padsChanged(project, context);
 			});
 		add(engine,
 			{"chordPads.setPlayer", 1,
 				"Changes a chord pads player (player, default the selected one; reference manual p. 1377): name "
 				"(Rename Selected Player), style (Chord Voicing Style, piano and guitar players: their library's "
-				"styles), octaveOffset (-3 to 3, basic players), track (Using Different Players on Multiple Tracks, "
-				"p. 1377: a MIDI or instrument track that gets this player's voicings while the other tracks get the "
+				"styles), octaveOffset (-3 to 3, basic players), track (Using Different Players on Multiple Tracks, p. "
+				"1377: a MIDI or instrument track that gets this player's voicings while the other tracks get the "
 				"selected player's; 0 for none; one player a track), muted (Select/Mute Player, p. 1389: it plays "
 				"nothing).",
 				objectSchema({{"player", integerSchema}, {"name", stringSchema}, {"style", stringSchema},
 					{"octaveOffset", integerSchema}, {"track", integerSchema}, {"muted", booleanSchema}}),
 				padsResult, false},
-			[changed](Project& project, CommandContext& context)
+			[](Project& project, CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
 				ChordPads& pads = project.chordPads;
@@ -1512,14 +1722,14 @@ namespace gnubase::engine
 				if (parameters.contains("track"))
 					player.track = playerTrack(project, parameters.at("track").get<ObjectId>(), index);
 				player.muted = parameters.value("muted", player.muted);
-				return changed(project, context);
+				return padsChanged(project, context);
 			});
 		add(engine,
 			{"chordPads.removePlayer", 1,
 				"Delete Selected Player (reference manual p. 1377): removes a chord pads player (player, default the "
 				"selected one), but not the last one. The one before it is selected.",
 				objectSchema({{"player", integerSchema}}), padsResult, false},
-			[changed](Project& project, CommandContext& context)
+			[](Project& project, CommandContext& context)
 			{
 				ChordPads& pads = project.chordPads;
 				const int index = context.parameters().value("player", pads.player);
@@ -1532,20 +1742,31 @@ namespace gnubase::engine
 						pad.voicings.erase(pad.voicings.begin() + index);
 				if (pads.player >= index && pads.player > 0)
 					--pads.player;
-				return changed(project, context);
+				return padsChanged(project, context);
 			});
+		registerChordPadEditCommands(engine);
+		registerChordPadStepCommands(engine);
+		registerChordPadPlayCommands(engine, remote);
+	}
+
+	void ProjectModel::registerChordPadEditCommands(Engine& engine)
+	{
+		const Json integerSchema = {{"type", "integer"}};
+		const Json booleanSchema = {{"type", "boolean"}};
+		const Json stringSchema = {{"type", "string"}};
+		const Json padsSchema = {{"type", "array"}, {"items", integerSchema}};
+		const Json padsResult = padsResultSchema();
 		add(engine,
 			{"chordPads.setPattern", 1,
 				"The pattern of the pattern player mode (reference manual pp. 1379-1380), which it turns on: from a "
-				"MIDI "
-				"part (part: its notes, their distinct pitches the voices from the lowest up, 3 to 5 of them, as long "
-				"as the part; as a MIDI part dropped on the Player Mode section does) or a preset (arpeggioUp, "
+				"MIDI part (part: its notes, their distinct pitches the voices from the lowest up, 3 to 5 of them, as "
+				"long as the part; as a MIDI part dropped on the Player Mode section does) or a preset (arpeggioUp, "
 				"arpeggioDown, brokenChord, eighths: a bar of four voices) or a MIDI file (file, a path: Import from "
 				"MIDI Loop, its notes on all its tracks as long as its longest track). At most 64 notes.",
 				needsOne(objectSchema({{"part", integerSchema},
 					{"preset", {{"type", "string"}, {"enum", patternPresetNames()}}}, {"file", stringSchema}})),
 				padsResult, false},
-			[changed](Project& project, CommandContext& context)
+			[](Project& project, CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
 				require(static_cast<int>(parameters.contains("part")) +
@@ -1579,7 +1800,7 @@ namespace gnubase::engine
 					pads.pattern = patternOf(part.name, end - start, std::move(notes));
 				}
 				pads.mode = "pattern";
-				return changed(project, context);
+				return padsChanged(project, context);
 			});
 		add(engine,
 			{"chordPads.assign", 1,
@@ -1587,10 +1808,8 @@ namespace gnubase::engine
 				"chord as the chord editor's text input takes it (such as Cmaj7, Dm7(9) or C/E; \"\" removes the "
 				"assignment), pitches (MIDI notes, Assign from MIDI Input: the chord they make) or symbol (the chord "
 				"editor's buttons, p. 1357: root 0 C to 11 B, type maj, min, dim, aug, sus2 or sus4, tensions such as "
-				"7, "
-				"maj7, 9 and b9, and bass, a pitch class or -1 for the root's, as chordPads.get's symbol). The pad's "
-				"voicing "
-				"goes back to its basic voicing with adaptive voicing. Locked pads are refused.",
+				"7, maj7, 9 and b9, and bass, a pitch class or -1 for the root's, as chordPads.get's symbol). The "
+				"pad's voicing goes back to its basic voicing with adaptive voicing. Locked pads are refused.",
 				objectSchema({{"assignments",
 								 {{"type", "array"},
 									 {"items",
@@ -1599,7 +1818,7 @@ namespace gnubase::engine
 											 {"pad"})}}}},
 					{"assignments"}),
 				padsResult, false},
-			[changed](Project& project, CommandContext& context)
+			[](Project& project, CommandContext& context)
 			{
 				for (const Json& item : context.parameters().at("assignments"))
 				{
@@ -1650,22 +1869,27 @@ namespace gnubase::engine
 					pad.voicings.clear();
 					pad.adaptive = true;
 				}
-				return changed(project, context);
+				return padsChanged(project, context);
 			});
 		add(engine,
 			{"chordPads.modify", 1,
 				"The pad modifiers (reference manual pp. 1351-1352) on the assigned, unlocked pads of pads: transpose "
 				"moves their chords by semitones, tensions adds (more) or takes away (fewer) as many tensions, voicing "
 				"steps through their voicings (inversions), which turns their adaptive voicing off, and without takes "
-				"away the tensions it names, as chord names write them (\"9\", \"#11\").",
+				"away the tensions it names, as chord names write them (\"9\", \"#11\"), after the others; a name that "
+				"is no tension is an error.",
 				objectSchema({{"pads", padsSchema}, {"transpose", integerSchema}, {"tensions", integerSchema},
 								 {"voicing", integerSchema}, {"without", {{"type", "array"}, {"items", stringSchema}}}},
 					{"pads"}),
 				padsResult, false},
-			[changed](Project& project, CommandContext& context)
+			[](Project& project, CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
 				ChordPads& pads = project.chordPads;
+				const std::vector<std::string>& known = midi::chordTensions();
+				for (const Json& tension : parameters.value("without", Json::array()))
+					require(std::find(known.begin(), known.end(), tension.get<std::string>()) != known.end(),
+						"no tension " + tension.get<std::string>());
 				const std::vector<std::vector<int>> voicings = chordPadVoicings(pads);
 				for (const Json& index : parameters.at("pads"))
 				{
@@ -1689,19 +1913,19 @@ namespace gnubase::engine
 					}
 					pad.chord = midi::chordName(chord);
 				}
-				return changed(project, context);
+				return padsChanged(project, context);
 			});
 		add(engine,
 			{"chordPads.setPad", 1,
 				"Changes a chord pad's state (reference manual p. 1351): locked (Lock: its chord and voicing can't "
 				"change; locking turns adaptive voicing off), adaptive (Adaptive Voicing: it takes the voicing nearest "
-				"to the reference pad's) and reference (Adaptive Voicing Reference: true makes it the reference, "
-				"false leaves no pad the reference).",
+				"to the reference pad's) and reference (Adaptive Voicing Reference: true makes it the reference, false "
+				"leaves no pad the reference).",
 				objectSchema({{"pad", integerSchema}, {"locked", booleanSchema}, {"adaptive", booleanSchema},
 								 {"reference", booleanSchema}},
 					{"pad"}),
 				padsResult, false},
-			[changed](Project& project, CommandContext& context)
+			[](Project& project, CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
 				ChordPads& pads = project.chordPads;
@@ -1722,7 +1946,7 @@ namespace gnubase::engine
 					pads.reference = index;
 				else if (parameters.contains("reference") && pads.reference == index)
 					pads.reference = -1;
-				return changed(project, context);
+				return padsChanged(project, context);
 			});
 		add(engine,
 			{"chordPads.move", 1,
@@ -1730,7 +1954,7 @@ namespace gnubase::engine
 				"(reference manual p. 1361). The adaptive voicing reference stays on its pad. A locked to is refused.",
 				objectSchema({{"from", integerSchema}, {"to", integerSchema}, {"copy", booleanSchema}}, {"from", "to"}),
 				padsResult, false},
-			[changed](Project& project, CommandContext& context)
+			[](Project& project, CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
 				ChordPads& pads = project.chordPads;
@@ -1747,7 +1971,7 @@ namespace gnubase::engine
 						!from.locked, "chord pad " + std::to_string(parameters.at("from").get<int>()) + " is locked");
 					std::swap(from, to);
 				}
-				return changed(project, context);
+				return padsChanged(project, context);
 			});
 		add(engine,
 			{"chordPads.fromChordTrack", 1,
@@ -1755,7 +1979,7 @@ namespace gnubase::engine
 				"once, onto the pads from the first; the other unlocked pads become unassigned. Undefined chords are "
 				"left out.",
 				objectSchema({}), padsResult, false},
-			[changed](Project& project, CommandContext& context)
+			[](Project& project, CommandContext& context)
 			{
 				std::vector<std::string> chords;
 				for (const ChordEvent& event : project.chords.events)
@@ -1771,27 +1995,25 @@ namespace gnubase::engine
 					if (next < chords.size())
 						pad.chord = chords[next++];
 				}
-				return changed(project, context);
+				return padsChanged(project, context);
 			});
 		add(engine,
 			{"chordPads.loadPreset", 1,
 				"Loads a chord pads preset (reference manual pp. 1370-1371). The scale-based ones, major, minor, "
-				"dorian, "
-				"phrygian, lydian, mixolydian and locrian, are the triads on the seven degrees of the scale on root (0 "
-				"C to 11 B, default the root key), which becomes the root key, onto the pads from the first. The "
-				"user's own (chordPads.savePreset) bring back their chords pad by pad with their voicings, their root "
-				"key and scale, and their players with the player mode and its pattern. load: chordsAndPlayers (the "
-				"default), chords (the chords; the other "
-				"unlocked pads become unassigned) or players (the player: for the scale-based presets the basic "
-				"player with no octave offset). chordPads.presets lists them.",
+				"dorian, phrygian, lydian, mixolydian and locrian, are the triads on the seven degrees of the scale on "
+				"root (0 C to 11 B, default the root key), which becomes the root key, onto the pads from the first. "
+				"The user's own (chordPads.savePreset) bring back their chords pad by pad with their voicings, their "
+				"root key and scale, and their players with the player mode and its pattern. load: chordsAndPlayers "
+				"(the default), chords (the chords; the other unlocked pads become unassigned) or players (the player: "
+				"for the scale-based presets the basic player with no octave offset). chordPads.presets lists them.",
 				objectSchema({{"preset", stringSchema}, {"root", integerSchema},
 								 {"load", {{"type", "string"}, {"enum", {"chordsAndPlayers", "chords", "players"}}}}},
 					{"preset"}),
 				padsResult, false},
-			[changed](Project& project, CommandContext& context)
+			[](Project& project, CommandContext& context)
 			{
 				loadPreset(project.chordPads, context);
-				return changed(project, context);
+				return padsChanged(project, context);
 			});
 		add(engine,
 			{"chordPads.presets", 1,
@@ -1810,12 +2032,9 @@ namespace gnubase::engine
 		addControl(engine,
 			{"chordPads.savePreset", 1,
 				"Save Preset (reference manual p. 1371): the chord pads as a preset of the user's own, kept in the "
-				"user "
-				"setting chordPads.presets: each pad's chord, voicing and adaptive voicing, the root key, the scale "
-				"and the players without their tracks, with the player mode and its pattern (p. 1370). A preset of "
-				"the name is replaced; the scale-based ones can't "
-				"be. "
-				"No change to the project.",
+				"user setting chordPads.presets: each pad's chord, voicing and adaptive voicing, the root key, the "
+				"scale and the players without their tracks, with the player mode and its pattern (p. 1370). A preset "
+				"of the name is replaced; the scale-based ones can't be. No change to the project.",
 				objectSchema({{"name", stringSchema}}, {"name"}), objectSchema({}), false},
 			[this, &engine](CommandContext& context)
 			{
@@ -1860,6 +2079,35 @@ namespace gnubase::engine
 				return Json::object();
 			});
 		add(engine,
+			{"chordPads.assistant", 1,
+				"The chord assistant (reference manual pp. 1372-1375). kind list (the List assistant): suggestions for "
+				"the chord after chord (the reference, such as the selected pad's), at most 24, each with its chord, "
+				"its degree in the root key and its level: 0 common (green), 1 adventurous (orange), 2 far (red), by "
+				"how many of its notes are outside the scale of the loaded preset (chordPads.get preset) on the root "
+				"key; algorithm cadence (the default: the common ones first, and of the same level those that follow "
+				"most strongly first) or commonNotes (those that share commonNotes notes, default 2, with it). kind "
+				"circle (the Circle of Fifths assistant): outer, the twelve major chords from the root key's in fifths "
+				"(minor: from its relative major's), and inner, their relative minor chords, each with its degree in "
+				"the key, empty for chords outside it. cadenceType (with cadence, p. 1373): all (the default), or the "
+				"chords of one harmonic function, by the scale degree of their root: tonic (I, iii, vi), subdominant "
+				"(ii, IV) or dominant (V, vii). kind proximity (the Proximity assistant, p. 1374): the same chords "
+				"around the reference, at most 24, nearest first, each with its distance: how many of its notes the "
+				"reference doesn't have, one more for a seventh.",
+				objectSchema(
+					{{"kind", {{"type", "string"}, {"enum", {"list", "circle", "proximity"}}}}, {"chord", stringSchema},
+						{"algorithm", {{"type", "string"}, {"enum", {"cadence", "commonNotes"}}}},
+						{"cadenceType", {{"type", "string"}, {"enum", {"all", "tonic", "subdominant", "dominant"}}}},
+						{"commonNotes", integerSchema}, {"minor", booleanSchema}},
+					{"kind"}),
+				{{"type", "object"}}, true},
+			[](Project& project, CommandContext& context) { return assistant(project, context); });
+	}
+
+	void ProjectModel::registerChordPadStepCommands(Engine& engine)
+	{
+		const Json integerSchema = {{"type", "integer"}};
+		const Json padsResult = padsResultSchema();
+		add(engine,
 			{"chordPads.step", 1,
 				"Step input from the chord pads (reference manual p. 1369): the pad's chord becomes a chord event at "
 				"the start of the bar of the step input position (ticks, chordPads.set stepPosition) on the chord "
@@ -1867,7 +2115,7 @@ namespace gnubase::engine
 				"chord events from there on move a bar later first; without, a chord event already there gets the "
 				"pad's chord. Needs stepInput, and a bar not after the one the longest project ends in.",
 				objectSchema({{"pad", integerSchema}}, {"pad"}), padsResult, false},
-			[this, changed](Project& project, CommandContext& context)
+			[this](Project& project, CommandContext& context)
 			{
 				ChordPads& pads = project.chordPads;
 				require(pads.stepInput, "step input is off");
@@ -1931,7 +2179,7 @@ namespace gnubase::engine
 				else
 					runEdit("chord.add", project, {{"position", start}, {"chord", chord}}, context);
 				project.chordPads.stepPosition = next;
-				return changed(project, context);
+				return padsChanged(project, context);
 			});
 		add(engine,
 			{"chordPads.toTrack", 1,
@@ -1980,7 +2228,14 @@ namespace gnubase::engine
 				runEdit("note.add", project, {{"part", part}, {"notes", notes}}, context);
 				return Json{{"part", toJson(project.midiParts.at(part))}};
 			});
+	}
 
+	void ProjectModel::registerChordPadPlayCommands(Engine& engine, const std::shared_ptr<ChordPadRemote>& remote)
+	{
+		const Json integerSchema = {{"type", "integer"}};
+		const Json booleanSchema = {{"type", "boolean"}};
+		const Json stringSchema = {{"type", "string"}};
+		const Json padsSchema = {{"type", "array"}, {"items", integerSchema}};
 		// While the transport records, a triggered pad's chord becomes a chord event on the record-enabled chord track
 		// (reference manual p. 1368), where the cursor is.
 		const auto record = [this](CommandContext& context, int pad)
@@ -2033,12 +2288,12 @@ namespace gnubase::engine
 				"manual p. 1366): on (the default) plays its voicing, off ends it; with latch (chordPads.set) an off "
 				"ends nothing and an on ends the pad's chord if it sounds. A chord played over another treats the "
 				"other's notes as overlaps says (chordPads.set). The notes play as the chord pads' (midi.keyboard "
-				"chordPads), the highest voice on MIDI channel 1, the next on channel 2 and so on: MIDI and "
-				"instrument tracks whose MIDI input is the chord pads, and with outputMode those set to all MIDI "
-				"inputs, play them while they monitor or are record-enabled, and record them. velocity: 1 to 127, "
-				"default the pads' velocity. Returns the pitches the pad plays now, or that ended, and on, whether it "
-				"sounds now. Emits chordPads.triggered with the pad (-1 for a chord), the chord, on and the pitches, "
-				"also for the pads that the overlap ended.",
+				"chordPads), the highest voice on MIDI channel 1, the next on channel 2 and so on: MIDI and instrument "
+				"tracks whose MIDI input is the chord pads, and with outputMode those set to all MIDI inputs, play "
+				"them while they monitor or are record-enabled, and record them. velocity: 1 to 127, default the pads' "
+				"velocity. Returns the pitches the pad plays now, or that ended, and on, whether it sounds now. Emits "
+				"chordPads.triggered with the pad (-1 for a chord), the chord, on and the pitches, also for the pads "
+				"that the overlap ended.",
 				needsOne(objectSchema({{"pad", integerSchema}, {"chord", stringSchema}, {"on", booleanSchema},
 					{"velocity", integerSchema}})),
 				objectSchema({{"pitches", padsSchema}, {"on", booleanSchema}}, {"pitches", "on"}), false},
@@ -2151,14 +2406,14 @@ namespace gnubase::engine
 			{"chordPads.listen", 1,
 				"Listens to the next notes from the MIDI inputs, which play as they are meanwhile: assign (Assign from "
 				"MIDI Input, reference manual p. 1360), a pad that gets the chord of the notes played once they are "
-				"all released; learn (MIDI Learn, p. 1388): range, the next two keys make the pads' remote range, or "
-				"a chord modifier's name (chordPads.set modifierKeys), the next key becomes its key; sectionKeys, "
-				"subsectionKeys or playerKeys (p. 1389), the next keys become those keys one after another, until "
-				"each has one; modifyAllVoicings, modifyAllTensions or transposeAllPads (p. 1387), the next "
-				"aftertouch, pitch bend or controller becomes what moves all pads' voicings, tensions or "
-				"transposition (chordPads.set controlSources and controlNumbers). Without either it stops "
-				"listening. Emits chordPads.listening with listening ({assign: pad}, {learn: target} or "
-				"null), also once it is done; chordPads.get has it too.",
+				"all released; learn (MIDI Learn, p. 1388): range, the next two keys make the pads' remote range, or a "
+				"chord modifier's name (chordPads.set modifierKeys), the next key becomes its key; sectionKeys, "
+				"subsectionKeys or playerKeys (p. 1389), the next keys become those keys one after another, until each "
+				"has one; modifyAllVoicings, modifyAllTensions or transposeAllPads (p. 1387), the next aftertouch, "
+				"pitch bend or controller becomes what moves all pads' voicings, tensions or transposition "
+				"(chordPads.set controlSources and controlNumbers). Without either it stops listening. Emits "
+				"chordPads.listening with listening ({assign: pad}, {learn: target} or null), also once it is done; "
+				"chordPads.get has it too.",
 				objectSchema({{"assign", integerSchema},
 					{"learn",
 						{{"type", "string"},
@@ -2171,7 +2426,7 @@ namespace gnubase::engine
 			{
 				const Json& parameters = context.parameters();
 				require(!(parameters.contains("assign") && parameters.contains("learn")), "give assign or learn");
-				RemoteState& state = *remote;
+				ChordPadRemote& state = *remote;
 				if (parameters.contains("assign"))
 				{
 					const int pad = parameters.at("assign").get<int>();
@@ -2219,7 +2474,7 @@ namespace gnubase::engine
 				objectSchema({}), false},
 			[this, remote, record](CommandContext& context)
 			{
-				RemoteState& state = *remote;
+				ChordPadRemote& state = *remote;
 				for (const Json& event : context.parameters().at("events"))
 				{
 					const ChordPads& pads = m_project.chordPads;
@@ -2279,140 +2534,8 @@ namespace gnubase::engine
 					}
 					else if (kind == "control" && key >= 0 && key < 3)
 					{
-						// All pads, from where the controls left them to where it is: one undo step per gesture. A
-						// control at rest changes nothing: pitch bend rests in the middle of its range, from 3
-						// inversions (6 semitones) down to 3 (6) up, and adds the tensions from its middle up;
-						// aftertouch and controllers rest at 0 and go up.
-						static constexpr std::array<const char*, 3> changes = {"voicing", "tensions", "transpose"};
-						static constexpr std::array<int, 3> lowest = {-3, 0, -6};
-						static constexpr std::array<int, 3> highest = {3, 3, 6};
-						const auto which = static_cast<size_t>(key);
-						const bool bend = pads.controlSources.at(which) == "pitchBend";
-						const int low = bend ? lowest.at(which) : 0;
-						const int rest = bend && low == 0 ? 64 : 0;
-						const int step = low +
-							static_cast<int>(std::lround(std::max(velocity - rest, 0) /
-								static_cast<double>(127 - rest) * (highest.at(which) - low)));
-						// Where the controls left the pads, as the latest done step of theirs says.
-						ControlSteps where;
-						for (size_t i = m_history.position(); i-- > 0;)
-							if (const auto found = state.controlSteps.find(m_history.steps().at(i).id);
-								found != state.controlSteps.end())
-							{
-								where = found->second;
-								break;
-							}
-						const Clock::TimePoint now = m_clock->now();
-						if (now - state.lastControl.at(which) > std::chrono::seconds(1))
-							++state.gestures.at(which);
-						state.lastControl.at(which) = now;
-						const int from = where.steps.at(which);
-						if (step == from)
-							continue;
-						// Each pad as far as the control goes, but on the way back no further than it followed on
-						// the way out, so that a control back at rest leaves the pads as they were (#1448).
-						std::vector<int>& followed = where.followed.at(which);
-						followed.resize(pads.pads.size(), 0);
-						std::map<int, std::vector<int>> moves; // by how much, which pads
-						for (size_t i = 0; i < followed.size(); ++i)
-						{
-							int to = step;
-							if (from > 0 && followed.at(i) < from)
-								to = std::min(step, followed.at(i));
-							else if (from < 0 && followed.at(i) > from)
-								to = std::max(step, followed.at(i));
-							if (to != followed.at(i))
-								moves[to - followed.at(i)].push_back(static_cast<int>(i));
-						}
-						// What a pad has of the control's change: its voicing's inversion or its tensions.
-						const auto measure = [this, which](const std::vector<std::vector<int>>& voicings, size_t i)
-						{
-							const ChordPads& current = m_project.chordPads;
-							const ChordPad& pad = current.pads.at(i);
-							if (pad.chord.empty() || which == 2)
-								return 0;
-							if (which == 1)
-								return static_cast<int>(chordOf(pad.chord).tensions.size());
-							return pad.adaptive ? inversionOf(current, chordOf(pad.chord), voicings.at(i))
-												: voicingOf(pad, current.player);
-						};
-						const std::vector<std::vector<int>> voicings = chordPadVoicings(pads);
-						// A pad's tensions; those the control added are the ones it takes away again, not the last ones
-						// in the tensions' order, which may be the pad's own (#1447).
-						const auto tensionsOf = [this](size_t i)
-						{
-							const ChordPad& pad = m_project.chordPads.pads.at(i);
-							return pad.chord.empty() ? std::vector<std::string>() : chordOf(pad.chord).tensions;
-						};
-						std::vector<std::vector<std::string>>& added = where.added;
-						added.resize(followed.size());
-						std::vector<int> before(followed.size());
-						std::vector<std::vector<std::string>> tensionsBefore(followed.size());
-						for (size_t i = 0; i < followed.size(); ++i)
-						{
-							before.at(i) = measure(voicings, i);
-							tensionsBefore.at(i) = tensionsOf(i);
-						}
-						Json commands = Json::array();
-						for (const auto& [by, targets] : moves)
-						{
-							if (which == 1 && by < 0)
-								for (const int target : targets)
-								{
-									const std::vector<std::string>& mine = added.at(static_cast<size_t>(target));
-									const auto count =
-										static_cast<std::ptrdiff_t>(std::min(static_cast<size_t>(-by), mine.size()));
-									commands.push_back({{"command", "chordPads.modify"},
-										{"parameters",
-											{{"pads", Json::array({target})},
-												{"without",
-													std::vector<std::string>(mine.end() - count, mine.end())}}}});
-								}
-							else
-								commands.push_back({{"command", "chordPads.modify"},
-									{"parameters", {{"pads", targets}, {changes.at(which), by}}}});
-						}
-						if (commands.empty())
-							continue;
-						context.call("history.transaction",
-							{{"description", "Modify chord pads"},
-								{"merge",
-									std::string("chordPads.control ") + changes.at(which) + " " +
-										std::to_string(state.gestures.at(which))},
-								{"commands", commands}});
-						for (const auto& [by, targets] : moves)
-							for (const int target : targets)
-							{
-								const auto i = static_cast<size_t>(target);
-								const ChordPad& moved = pads.pads.at(i);
-								if (which == 1)
-								{
-									// The ones it added that the pad still has, then the ones new to it.
-									const std::vector<std::string> after = tensionsOf(i);
-									const auto has = [](const std::vector<std::string>& tensions, const std::string& t)
-									{ return std::find(tensions.begin(), tensions.end(), t) != tensions.end(); };
-									std::vector<std::string>& mine = added.at(i);
-									mine.erase(std::remove_if(mine.begin(), mine.end(),
-												   [&](const std::string& t) { return !has(after, t); }),
-										mine.end());
-									for (const std::string& tension : after)
-										if (!has(tensionsBefore.at(i), tension))
-											mine.push_back(tension);
-								}
-								if (which != 2)
-									followed.at(i) += measure(voicings, i) - before.at(i);
-								else if (!moved.chord.empty() && !moved.locked)
-									followed.at(i) += by;
-							}
-						where.steps.at(which) = step;
-						// The steps after the history's last done step; those of steps gone from it go too.
-						if (m_history.position() > 0)
-							state.controlSteps[m_history.steps().at(m_history.position() - 1).id] = where;
-						for (auto it = state.controlSteps.begin(); it != state.controlSteps.end();)
-							it = std::any_of(m_history.steps().begin(), m_history.steps().end(),
-									 [&it](const HistoryStep& done) { return done.id == it->first; })
-								? std::next(it)
-								: state.controlSteps.erase(it);
+						moveAllPads(
+							state, m_project, m_history, m_clock->now(), static_cast<size_t>(key), velocity, context);
 					}
 					else if (kind == "player")
 					{
@@ -2499,28 +2622,5 @@ namespace gnubase::engine
 				}
 				return Json::object();
 			});
-		add(engine,
-			{"chordPads.assistant", 1,
-				"The chord assistant (reference manual pp. 1372-1375). kind list (the List assistant): suggestions for "
-				"the chord after chord (the reference, such as the selected pad's), at most 24, each with its chord, "
-				"its degree in the root key and its level: 0 common (green), 1 adventurous (orange), 2 far (red), "
-				"by how many of its notes are outside the scale of the loaded preset (chordPads.get preset) on the "
-				"root key; algorithm cadence (the default: the common ones first, and of the same level those that "
-				"follow most strongly first) or commonNotes (those that share commonNotes notes, default 2, with "
-				"it). kind circle (the Circle of Fifths assistant): outer, the twelve major chords from the "
-				"root key's in fifths (minor: from its relative major's), and inner, their relative minor chords, "
-				"each with its degree in the key, empty for chords outside it. cadenceType (with cadence, p. 1373): "
-				"all (the default), or the chords of one harmonic function, by the scale degree of their root: tonic "
-				"(I, iii, vi), subdominant (ii, IV) or dominant (V, vii). kind proximity (the Proximity assistant, "
-				"p. 1374): the same chords around the reference, at most 24, nearest first, each with its distance: "
-				"how many of its notes the reference doesn't have, one more for a seventh.",
-				objectSchema(
-					{{"kind", {{"type", "string"}, {"enum", {"list", "circle", "proximity"}}}}, {"chord", stringSchema},
-						{"algorithm", {{"type", "string"}, {"enum", {"cadence", "commonNotes"}}}},
-						{"cadenceType", {{"type", "string"}, {"enum", {"all", "tonic", "subdominant", "dominant"}}}},
-						{"commonNotes", integerSchema}, {"minor", booleanSchema}},
-					{"kind"}),
-				{{"type", "object"}}, true},
-			[](Project& project, CommandContext& context) { return assistant(project, context); });
 	}
 }

@@ -164,8 +164,12 @@ fi
 echo "clang-tidy on ${#files[@]} file(s): ${files[*]}"
 
 # One clang-tidy per file and hardware thread; each prints its findings in one piece when it's done.
+# readability-function-size reports on a function's first line, which a change further down in the function leaves
+# out of the line filter (#1585), so a second run checks only that, on the whole file: main has no such findings.
 printf '%s\n' "${files[@]}" | xargs -P "$(nproc)" -I{} bash -c \
 	'out=$("$0" -p "$1" --quiet --warnings-as-errors="*" --line-filter="[$2]" "$3" 2>&1); status=$?
+	size=$("$0" -p "$1" --quiet --warnings-as-errors="*" --checks="-*,readability-function-size" "$3" 2>&1) ||
+		{ out=$(printf "%s\n%s" "$out" "$size"); [ $status -ne 0 ] || status=1; }
 	[ $status -ne 0 ] && printf "%s\n" "$out"; exit $status' "$tidy" "$build" "$filter" {}
 status=$?
 [ $status -eq 0 ] && echo "No findings."
