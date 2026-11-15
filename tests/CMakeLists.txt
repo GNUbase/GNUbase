@@ -315,9 +315,10 @@ if(NOT GNUBASE_SANITIZERS)
 	target_compile_definitions(gnubase-tests PRIVATE GNUBASE_APP="$<TARGET_FILE:gnubase>")
 endif()
 
-# Every tests/lua/*.lua is a ctest test that the app runs headless; its test cases use gnubase.test (the Lua API reference, docs/api-reference.md).
-# They run in the source folder, so a failure names tests/lua/<file>.lua and the line. Sanitizer builds run them too,
-# with the app built under the same sanitizers, so building gnubase-tests builds the app.
+# Every tests/lua/*.lua is a ctest test that the app runs headless; its test cases use gnubase.test (the Lua API
+# reference, docs/api-reference.md). They run in the source folder, so a failure names tests/lua/<file>.lua and the
+# line. Sanitizer builds run them too, with the app built under the same sanitizers, so building gnubase-tests builds
+# the app.
 add_dependencies(gnubase-tests gnubase)
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/output")
 file(GLOB luaTests CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/lua/*.lua")
