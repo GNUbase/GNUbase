@@ -1012,9 +1012,13 @@ TEST_CASE("Pitch Visibility shows the drum sounds with events, Solo Instrument a
 		f.app.waitUntil([&] { return f.app.call("editor.get", {{"editor", "window"}}).at("soloInstrument") == true; }));
 	CHECK(f.app.waitUntil([&] { return f.has(".key-input[setting=soloInstrument]", "checked"); }));
 
-	// Without a drum map the Names menu's GM Default names the sounds (p. 1239), and the key editor's keys.
+	// Without a drum map the Names menu's GM Default names the sounds (p. 1239), and the key editor's keys. Solo
+	// Instrument requires a map (p. 1223): its button is disabled and unlit then.
 	f.app.call("track.set", {{"track", f.track}, {"drumMap", 0}});
 	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-sound-name").empty(); }));
+	REQUIRE(f.app.waitUntil(
+		[&] { return f.elements(".key-input[setting=soloInstrument]").at(0).at("attributes").contains("disabled"); }));
+	CHECK_FALSE(f.has(".key-input[setting=soloInstrument]", "checked"));
 	f.click(of("#drum-names"));
 	f.click(of("#drum-names-menu menuitem[gm-names=true]"));
 	REQUIRE(f.app.waitUntil([&] { return f.app.call("project.get").at("tracks").at(0).at("gmNames") == true; }));
@@ -1074,15 +1078,22 @@ TEST_CASE("Show Drum Sounds in Use by Instrument shows the sounds of a drum trac
 		f.app.call("midiPart.add", {{"track", drums.at("track").at("id")}, {"position", 0}, {"length", g_bar}})
 			.at("part")
 			.at("id");
-	// A note of a pad and one of a pitch without a pad.
+	// A note of a pad and one of a pitch without a pad, both selected.
 	const Json added = f.app.call("note.add",
 		{{"part", part},
 			{"notes",
 				{{{"position", 0}, {"length", g_sixteenth}, {"pitch", 36}, {"velocity", 0.5}},
 					{{"position", g_quarter}, {"length", g_sixteenth}, {"pitch", 100}, {"velocity", 0.5}}}}});
-	const std::string padless =
-		".key-note[note=\"" + std::to_string(added.at("notes").at(1).at("id").get<uint64_t>()) + "\"]";
+	const std::string padId = std::to_string(added.at("notes").at(0).at("id").get<uint64_t>());
+	const std::string padlessId = std::to_string(added.at("notes").at(1).at("id").get<uint64_t>());
+	const std::string padless = ".key-note[note=\"" + padlessId + "\"]";
 	f.app.call("editor.open", {{"editor", "window"}, {"parts", Json::array({part})}});
+	f.app.call("editor.set",
+		{{"editor", "window"},
+			{"selection",
+				{{{"part", part}, {"note", added.at("notes").at(0).at("id")}},
+					{{"part", part}, {"note", added.at("notes").at(1).at("id")}}}}});
+	REQUIRE(f.app.waitUntil([&] { return !f.elements(".controller-bar[note=\"" + padlessId + "\"]").empty(); }));
 	REQUIRE(f.app.waitUntil(
 		[&]
 		{
@@ -1099,6 +1110,23 @@ TEST_CASE("Show Drum Sounds in Use by Instrument shows the sounds of a drum trac
 	// The note of the sound the list hides isn't shown on any row, until the option is off again.
 	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note").size() == 1; }));
 	CHECK(f.elements(padless).empty());
+	// Nor in the controller lanes, and it leaves the selection: the palette transposes only the shown note.
+	CHECK(f.app.waitUntil([&] { return f.elements(".controller-bar[note=\"" + padlessId + "\"]").empty(); }));
+	CHECK(f.elements(".controller-bar[note=\"" + padId + "\"]").size() == 1);
+	CHECK(f.app.call("editor.get", {{"editor", "window"}}).at("selection").size() == 1);
+	f.click(of(".key-transpose[semitones=\"12\"]"));
+	const auto pitchOf = [&](const Json& id)
+	{
+		const Json project = f.app.call("project.get");
+		for (const Json& each : project.at("midiParts"))
+			if (each.at("id") == part)
+				for (const Json& note : each.at("notes"))
+					if (note.at("id") == id)
+						return note.at("pitch").get<int>();
+		return -1;
+	};
+	REQUIRE(f.app.waitUntil([&] { return pitchOf(added.at("notes").at(0).at("id")) == 48; }));
+	CHECK(pitchOf(added.at("notes").at(1).at("id")) == 100);
 	f.click(of("#drum-pitch-options"));
 	f.click(of("#drum-pitch-menu menuitem[visible-sounds=inUse]"));
 	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-sound").size() == 128; }));
@@ -1123,6 +1151,23 @@ TEST_CASE("with drum sound names the key editor's notes line up with their veloc
 	CHECK(f.app.waitUntil([&] { return std::abs(left(note) - left(part)) <= 1.0; }));
 	CHECK(std::abs(left(bar) - left(note)) <= 1.0);
 	CHECK(left(note) > left(".key-editor-keys") + 100.0); // past the named keyboard
+}
+
+TEST_CASE("the drum editor's notes line up with their velocity bars and parts", "[ui]")
+{
+	// The drum sound list, the parts' row and the controller lanes' header are as wide.
+	Fixture f;
+	const Json added = f.app.call("note.add",
+		{{"part", f.part}, {"notes", {{{"position", 0}, {"length", g_quarter}, {"pitch", 36}, {"velocity", 0.5}}}}});
+	const std::string id = std::to_string(added.at("notes").at(0).at("id").get<uint64_t>());
+	const std::string note = ".key-note[note=\"" + id + "\"]";
+	const std::string bar = ".controller-bar[note=\"" + id + "\"]";
+	const std::string part = ".editor-part[part=\"" + std::to_string(f.part) + "\"]";
+	REQUIRE(f.app.waitUntil([&] { return !f.elements(note).empty() && !f.elements(bar).empty(); }));
+	const auto left = [&](const std::string& selector) { return f.box(selector).at("x").get<double>(); };
+	const double start = left(".key-editor-grid"); // the note's start, which its diamond is centered on
+	CHECK(f.app.waitUntil([&] { return std::abs(left(part) - start) <= 1.0; }));
+	CHECK(std::abs(left(bar) - start) <= 1.0);
 }
 
 TEST_CASE("with Adapt to Zoom and Insert Length linked the drumstick's notes are as long as the quantize grid's value",

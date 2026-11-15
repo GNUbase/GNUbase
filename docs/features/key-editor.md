@@ -69,7 +69,11 @@ the edits of several parts go in one `history.transaction`.
   .editor-parts                       an .editor-part-row[track] per track, its .editor-part[part] at their time
   .key-editor-body                    scrolls vertically
     .key-editor-keys                  the piano keyboard: 128 .key-editor-key[pitch], the 75 white keys first, then
-                                      the 53 .black ones over them; C keys named, .selected for selected notes
+                                      the 53 .black ones over them; C keys named, .selected for selected notes. With
+                                      the active track's drum sound names (the view's soundNames, drum-editor.md)
+                                      the keys show them as their text and title, and the editor's root has
+                                      .named-keys, which makes the keyboard, the parts' margin and the controller
+                                      lanes' header 128dp wide
       .key-editor-keys-zoom           the keyboard's left part, where a drag zooms and scrolls (below); the pointer
                                       is the four-point arrow over it
     .key-editor-grid                  128 .key-editor-row (.black); .key-editor-notes with a .key-note[part][note]

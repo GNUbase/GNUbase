@@ -45,8 +45,10 @@ namespace gnubase::ui
 		ControllerLanes& operator=(ControllerLanes&&) = delete;
 
 		// The project, the editor view and the time axis of the note display, project ticks. Keeps the view and the
-		// parts it shows, not the whole project.
-		void show(const engine::Json& project, const engine::Json& view, int64_t from, int64_t to);
+		// parts it shows, not the whole project. With shown, by pitch, only the notes of the pitches it has (the drum
+		// sounds the drum editor's list shows).
+		void show(const engine::Json& project, const engine::Json& view, int64_t from, int64_t to,
+			const std::vector<bool>& shown = {});
 		// Only another time axis: moves the bars and steps shown.
 		void setRange(int64_t from, int64_t to);
 		// The key editor's tool by name (keyToolName) and the line tool's mode: line, parabola, sine, triangle, square

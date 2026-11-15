@@ -5039,7 +5039,9 @@ namespace gnubase::engine
 				"A number that grows with every change of the project: every edit, undo and redo, and loading or "
 				"starting a project. quantize.savePreset, quantize.renamePreset, quantize.removePreset and "
 				"quantize.extractGroove also advance it when they change the quantize preset saved with the project, "
-				"without an undo step. project.load with revision loads only if it hasn't changed. modified says "
+				"without an undo step, and so does the drum editor's Solo Instrument (editor.set soloInstrument, and "
+				"the selection while it is on) when it changes what plays, without a change of the project: modified "
+				"stays as it was. project.load with revision loads only if it hasn't changed. modified says "
 				"whether the project changed since it was last saved, loaded or started; undoing back to the saved "
 				"state still counts as a change. project identifies the open project: the revision at which it was "
 				"loaded or started, so it changes only when another project is opened.",

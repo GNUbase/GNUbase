@@ -778,9 +778,23 @@ TEST_CASE("notes that don't play send no output events", "[unit]")
 		f.call("drumMap.set", {{"map", drums}, {"sounds", {{{"pitch", 61}, {"mute", true}}}}});
 		f.call("track.set", {{"track", f.track}, {"drumMap", drums}});
 	}
-	f.call("note.add",
+	bool solo = false;
+	SECTION("a drum sound that Solo Instrument silences")
+	{
+		const auto drums = f.call("drumMap.add", {{"name", "Kit"}}).at("map").at("id");
+		f.call("track.set", {{"track", f.track}, {"drumMap", drums}});
+		solo = true;
+	}
+	const Json added = f.call("note.add",
 		{{"part", f.part},
 			{"notes", {silent, {{"position", g_quarter}, {"length", 60}, {"pitch", 60}, {"velocity", 0.5}}}}});
+	if (solo) // the drum editor soloing the second note's sound
+	{
+		f.call("editor.open", {{"editor", "window"}, {"parts", {f.part}}, {"content", "drum"}});
+		f.call("editor.set",
+			{{"editor", "window"}, {"soloInstrument", true},
+				{"selection", {{{"part", f.part}, {"note", added.at("notes").at(1).at("id")}}}}});
+	}
 	const engine::RenderChannel channel = f.rendered();
 	CHECK(channel.controllers.empty()); // neither Staccato's controller 32 nor its off event
 	REQUIRE(channel.notes.size() == 2);
