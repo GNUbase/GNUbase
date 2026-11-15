@@ -6,6 +6,7 @@
 #include "engine/audio/audioengine.h"
 #include "engine/engine.h"
 #include "engine/midi/midivalues.h"
+#include "engine/midi/mpeinput.h"
 #include "engine/settings/usersettings.h"
 #include "platform/midi/port.h"
 #include "plugin/events.h"
@@ -215,8 +216,15 @@ namespace gnubase::engine
 					message.position > position ? static_cast<uint32_t>(message.position - position) : 0;
 				graph::ProcessEvent event = toEvent(message.message, offset);
 				event.drumSound = message.drumSound;
-				wait = found != sequencers.end() && found->first == message.channel &&
-					!(message.direct ? found->second->direct() : found->second->input()).add(event);
+				if (found != sequencers.end() && found->first == message.channel)
+				{
+					MidiSequencer& sequencer = *found->second;
+					if (message.direct)
+						wait = !sequencer.direct().add(event);
+					else
+						wait =
+							message.mpe != 0 ? !sequencer.injectMpe(message.mpe, event) : !sequencer.input().add(event);
+				}
 			}
 			if (wait)
 				m_waiting[kept++] = message;
@@ -307,14 +315,25 @@ namespace gnubase::engine
 				"drum editor auditions sounds so; reference manual p. 1236). direct: the messages go straight to the "
 				"track's instrument as they are, past its drum map, Live Input, its input transformer, its MIDI "
 				"modifiers and its MIDI effects, and aren't recorded either (the drum machine panel plays a pad so, "
-				"p. 942). midi.capture returns what instruments played.",
-				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["channel", "messages"],
-					"properties": {"channel": {"type": "integer"}, "drumSounds": {"type": "boolean"},
-					"direct": {"type": "boolean"},
-					"messages": {"type": "array", "items": {
-						"type": "object", "additionalProperties": false, "required": ["position", "bytes"],
-						"properties": {"position": {"type": "integer", "minimum": 0}, "bytes": {"type": "array",
-							"items": {"type": "integer", "minimum": 0, "maximum": 255}}}}}}})"),
+				"p. 942). mpe: the messages play through this MPE "
+				"input setup (midi.setPort mpe; what it leaves out has its default), as a MIDI input port with it "
+				"plays them: on the notes' channels pitch bend, channel pressure and CC 74 reach the track as its "
+				"notes' per-note expression (docs/features/note-expression.md). The track keeps the state of those "
+				"channels from one call to the next while the setup stays. midi.capture returns what instruments "
+				"played.",
+				[]
+				{
+					Json schema = Json::parse(R"({"type": "object", "additionalProperties": false,
+						"required": ["channel", "messages"],
+						"properties": {"channel": {"type": "integer"}, "drumSounds": {"type": "boolean"},
+						"direct": {"type": "boolean"},
+						"messages": {"type": "array", "items": {
+							"type": "object", "additionalProperties": false, "required": ["position", "bytes"],
+							"properties": {"position": {"type": "integer", "minimum": 0}, "bytes": {"type": "array",
+								"items": {"type": "integer", "minimum": 0, "maximum": 255}}}}}}})");
+					schema["properties"]["mpe"] = midi::mpeSchema();
+					return schema;
+				}(),
 				Json::object(), false},
 			[this](CommandContext& context)
 			{
@@ -327,13 +346,15 @@ namespace gnubase::engine
 				require(messages.size() <= MidiTap::g_size, "at most 4096 messages at a time");
 				const bool drumSounds = parameters.value("drumSounds", false);
 				const bool direct = parameters.value("direct", false);
+				const uint32_t mpe =
+					parameters.contains("mpe") ? midi::MpeSetup::fromJson(parameters.at("mpe")).pack() : 0;
 				std::vector<MidiTap::Message> injected;
 				injected.reserve(messages.size());
 				for (size_t i = 0; i < messages.size(); ++i)
 				{
 					injected.push_back({channel, messages[i].at("position").get<uint64_t>(),
 						channelMessage(messages[i].at("bytes"), "messages[" + std::to_string(i) + "]: "), drumSounds,
-						direct});
+						direct, mpe});
 				}
 				require(m_tap.inject(injected),
 					"too many MIDI messages wait for the audio device; none were injected, try again later");

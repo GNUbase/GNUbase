@@ -265,11 +265,29 @@ TEST_CASE("the info line sets the root key and Global Transpose of an audio part
 	window.app.ui().key(std::nullopt, "Down");
 	window.click("#info-line select[field=rootKey]");
 	REQUIRE(window.app.waitUntil([&] { return keys() == std::vector<std::string>{"C follow", "C follow"}; }));
+	const std::string mark = ".part-mark.independent[part=" + std::to_string(part) + "]";
+	const auto marked = [&] { return window.app.ui().dom(std::nullopt, mark, 0).at("elements").size() == 1; };
+	CHECK_FALSE(marked());
 	window.click("#info-line button[field=globalTranspose]");
 	REQUIRE(window.app.waitUntil([&] { return keys() == std::vector<std::string>{"C independent", "C independent"}; }));
+	// A part whose events are Independent shows the mark (p. 421, #1644).
+	CHECK(window.app.waitUntil(marked));
 	// One undo step for both.
 	window.call("history.undo");
 	CHECK(window.app.waitUntil([&] { return keys() == std::vector<std::string>{"C follow", "C follow"}; }));
+	CHECK(window.app.waitUntil([&] { return !marked(); }));
+	// Events whose root keys or Global Transpose differ show an empty value; "-" clears their keys (#1644).
+	const Json second = events[1];
+	window.call("audioEvent.set", {{"event", second}, {"rootKey", "E"}, {"globalTranspose", "independent"}});
+	REQUIRE(window.app.waitUntil(
+		[&] { return window.element("#info-line select[field=rootKey]").value("value", std::string()) == "*"; }));
+	CHECK(window.element("#info-line button[field=globalTranspose]").value("text", std::string()).empty());
+	CHECK_FALSE(window.hasClass("#info-line button[field=globalTranspose]", "checked"));
+	CHECK_FALSE(marked()); // only one of them is Independent
+	window.click("#info-line select[field=rootKey]");
+	window.app.ui().key(std::nullopt, "Down");
+	window.click("#info-line select[field=rootKey]");
+	CHECK(window.app.waitUntil([&] { return keys() == std::vector<std::string>{" follow", " independent"}; }));
 }
 
 TEST_CASE("the event display says why the engine refused a glue of parts that follow transpose differently", "[ui]")

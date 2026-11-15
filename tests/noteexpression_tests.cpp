@@ -341,7 +341,8 @@ TEST_CASE("note.split cuts notes with their expression where it was, note.glue j
 	CHECK(now[2].at("length") == g_beatTicks);
 
 	// Glued, the note plays what the two played: its own points up to the rest's start, then the rest's, without the
-	// points of the rest that only repeat the value that plays there. That is the note before the cut.
+	// points of the rest that only repeat the value that plays there. That is the expression the note had before the
+	// cut, as it has no point that changes nothing.
 	const Json glued =
 		run(client, "note.glue", {{"part", part}, {"note", note.at("id")}, {"next", rest.at("id")}}).at("note");
 	CHECK(glued.at("length") == 2 * g_beatTicks);
@@ -525,6 +526,31 @@ TEST_CASE("note.glue takes a point within the next note's first sample as one it
 			{"tuning", 0, 2000}, {"tuning", g_beatTicks + 10, -1000}});
 }
 
+TEST_CASE("note.glue leaves out a point within the next note's first sample only where its value already plays",
+	"[integration]")
+{
+	// Review of #1519: what plays changes with each point the join keeps, and a point a few ticks in is at the start.
+	Setup setup;
+	Client& client = setup.client;
+	const ObjectId part = addPart(client, setup.track);
+	const Json added = run(client, "note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", 0}, {"length", g_beatTicks}, {"pitch", 60}, {"velocity", 0.5},
+					 {"expressions", {point("tuning", 0, 2.0), point("pressure", 0, 0.4)}}},
+					{{"position", g_beatTicks}, {"length", g_beatTicks}, {"pitch", 60}, {"velocity", 0.5},
+						{"expressions",
+							{point("tuning", 0, 1.0), point("tuning", 10, 2.0), point("pressure", 10, 0.4)}}}}}});
+	const Json glued = run(client, "note.glue",
+		{{"part", part}, {"note", added.at("notes").at(0).at("id")}, {"next", added.at("notes").at(1).at("id")}})
+						   .at("note");
+	// Tuning 1 at the join changes what plays, so tuning 2 ten ticks later changes it again. The pressure ten ticks in
+	// is within the first sample and repeats what plays: no point, and no default before it.
+	CHECK(pointsOf(glued) ==
+		Points{{"pressure", 0, 400}, {"tuning", 0, 2000}, {"tuning", g_beatTicks, 1000},
+			{"tuning", g_beatTicks + 10, 2000}});
+}
+
 TEST_CASE("note.split and note.glue refuse notes the part doesn't have, and undo in one step", "[integration]")
 {
 	Setup setup;
@@ -624,8 +650,8 @@ TEST_CASE("sends before the modifiers get the notes' expression", "[integration]
 				sent.push_back({captured.at("position").get<int64_t>() - start,
 					captured.at("bytes").at(0).get<int64_t>(), captured.at("bytes").at(1).get<int64_t>()});
 		INFO("sends " << (pre ? "pre" : "post"));
-		// The transformer moves the note, but not yet its expression: its initial point no longer comes before it.
-		CHECK(sent == std::vector<std::vector<int64_t>>{{0, 0x92, pre ? 61 : 73}, {0, 0xE2, 0}, {100, 0xE2, 0}});
+		// The transformer moves the note with its expression (#1618), whose initial point comes before it.
+		CHECK(sent == std::vector<std::vector<int64_t>>{{0, 0xE2, 0}, {0, 0x92, pre ? 61 : 73}, {100, 0xE2, 0}});
 	}
 }
 

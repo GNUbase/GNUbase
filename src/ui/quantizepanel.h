@@ -38,8 +38,9 @@ namespace gnubase::ui
 	// Quantize Panel runs window.quantizePanel. Use it on the UI thread; the binding must outlive it.
 	//
 	// Audio (#145, docs/features/audio-quantize.md): Warp Quantize On/Off (settings.warpQuantize) in both, and in the
-	// panel the section for several audio tracks: Range and Offset with Slice (quantize.slice), or with warp quantizing
-	// on Create (quantize.createWarpMarkers), Nudge Crossfade Left and Right (quantize.nudgeCrossfade, 1 ms), and
+	// panel the section for several audio tracks: Range and Offset with Slice (quantize.slice) and its Reset
+	// (quantize.resetSlices), or with warp quantizing on Create (quantize.createWarpMarkers) and its Reset
+	// (quantize.resetWarpMarkers), Nudge Crossfade Left and Right (quantize.nudgeCrossfade, 1 ms), and
 	// Crossfade Length with Crossfade (quantize.crossfade). Those send the engine command with the panel's values
 	// through audio, which adds the audio events to quantize. Open Crossfade Editor runs the UI command
 	// audio.crossfadeEditor through run. Above them the Hitpoint Tracks (pp. 378, 380): each track
@@ -84,6 +85,9 @@ namespace gnubase::ui
 		double fieldValue(const std::string& id) const;
 		// The Hitpoint Tracks' priorities as quantize.slice and quantize.createWarpMarkers take them.
 		engine::Json priorities() const;
+		// Asks audio for quantize.slicePositions with the Slice Rules' values, the project window's cutting positions
+		// (#1579, p. 378), or with null parameters for none, as with warp quantizing on.
+		void showCuts();
 		Rml::Element* find(const std::string& id) const;
 
 		EngineBinding& m_binding;

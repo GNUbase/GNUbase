@@ -127,7 +127,8 @@ NINE_NAMES = [
     "button-primary-normal", "button-primary-hover", "button-primary-pressed",
     "toggle-off", "toggle-hover", "toggle-mute", "toggle-solo", "toggle-record", "toggle-monitor",
     "field-normal", "field-focus", "field-disabled", "dropdown-normal", "dropdown-hover", "dropdown-open",
-    "dropdown-button-normal", "dropdown-button-hover", "disclosure-open", "disclosure-closed",
+    "dropdown-button-normal", "dropdown-button-hover", "dropdown-button-pressed", "dropdown-button-disabled",
+    "disclosure-open", "disclosure-closed",
     "menu", "menu-item-hover", "menu-separator", "list", "list-item-hover", "list-item-selected",
     "tabbar", "tab-normal", "tab-hover", "tab-active",
     "scrollbar-track-vertical", "scrollbar-track-horizontal", "scrollbar-thumb-vertical", "scrollbar-thumb-horizontal",
@@ -246,8 +247,9 @@ def nine_svg(name: str, theme: dict) -> tuple[int, int, str, dict]:
             extra = glow_rect(w, h, colors[state], r) if theme["glow"] else ""
     elif name.startswith(("disclosure-", "dropdown-button-")) and not theme["flat"]:
         # Framed themes draw no arrows on buttons: their drop-down and section header buttons are the plain button,
-        # under the mouse too (flat_rules)
-        return nine_svg("button-hover" if name.endswith("hover") else "button-normal", theme)
+        # in each state (flat_rules)
+        state = name.split("-")[-1]
+        return nine_svg("button-" + (state if state in ("hover", "pressed", "disabled") else "normal"), theme)
     elif name.startswith("disclosure-"):
         # A section header's arrow in the left slice, which doesn't stretch, pointing down while the section is open;
         # nothing else, so the header's background shows
@@ -258,10 +260,16 @@ def nine_svg(name: str, theme: dict) -> tuple[int, int, str, dict]:
         return w, h, svg_doc(w, h, arrow), {"left": 20, "top": 6, "right": 6, "bottom": 6}
     elif name.startswith("dropdown-button-"):
         # A menu button that shows a value: a field with the arrow in its right slice, which doesn't stretch across
+        # (#1328); pressed a step toward the accent, disabled dimmed as a disabled field (#1342)
         bg = mix(c["surface"], c["surfaceRaised"], .7)
+        stroke = c["textMuted"]
         if name.endswith("hover"): border = mix(border, accent, .55)
+        elif name.endswith("pressed"): bg = mix(c["background"], accent, .24); border = mix(border, accent, .75)
+        elif name.endswith("disabled"):
+            bg = mix(c["surface"], c["background"], .35); border = mix(border, bg, .45)
+            stroke = mix(c["textMuted"], c["surface"], .45)
         y = h / 2
-        arrow = (f'<polyline points="{w-15},{y-2} {w-11},{y+2} {w-7},{y-2}" fill="none" stroke="{c["textMuted"]}" '
+        arrow = (f'<polyline points="{w-15},{y-2} {w-11},{y+2} {w-7},{y-2}" fill="none" stroke="{stroke}" '
                  'stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>')
         return w, h, svg_doc(w, h, rect(w, h, bg, border, r, 1, None, .5) + arrow), {"left": 6, "top": 6, "right": 20, "bottom": 6}
     elif name.startswith("field-") or name.startswith("dropdown-"):
@@ -298,9 +306,11 @@ def nine_svg(name: str, theme: dict) -> tuple[int, int, str, dict]:
         bg = accent; border = mix(accent, "#ffffff", .12); r = 4; inset = 1
         if theme["glow"]: extra = glow_rect(w, h, accent, 4)
     elif name == "fader-track" and theme["flat"]:
-        # A thin slot down the middle, no box around it
-        bg = "none"; border = "none"; r = 0; inset = 2
+        # A thin slot down the middle, no box around it; its round ends in the corners, which don't stretch (#1342)
+        bg = "none"; border = "none"; r = 0
         extra = f'<rect x="{w/2-2}" y="2" width="4" height="{h-4}" rx="2" fill="{mix(c["background"], "#000000", .3)}"/>'
+        main = f'<rect x="0" y="0" width="{w}" height="{h}" rx="{r}" fill="{bg}"/>'
+        return w, h, svg_doc(w, h, main + extra), {"left": 2, "top": 4, "right": 2, "bottom": 4}
     elif name == "fader-track":
         bg = mix(c["background"], "#000000", .12); border = c["border"]; r = 4; inset = 2
         extra = f'<line x1="{w/2+.5}" y1="4" x2="{w/2+.5}" y2="{h-4}" stroke="{mix(c["border"], c["textMuted"], .3)}"/>'
@@ -399,12 +409,15 @@ def flat_rules(theme: dict, skin, on_accent: str) -> list:
     sets only border radii and the padding that makes room for a drop-down or disclosure arrow.
 
     Bars' rules skip toggle and primary buttons, which keep their own skins in every theme, and list each state in
-    the general rules' order, so the same state wins in a bar as elsewhere. Bars' buttons take no focus from the
-    keyboard (resources/styles/base.rcss), but they show the ring when they have it, as everywhere.
+    the general rules' order, so the same state wins in a bar as elsewhere. They reach the transport's sections, not
+    the setup pane that is filled into the transport bar and the transport panel with them, so it keeps framed buttons
+    as the other setup panes do (#1342). Bars' buttons take no focus from the keyboard (resources/styles/base.rcss),
+    but they show the ring when they have it, as everywhere: each rule that gives a FOCUSABLE widget a skin in either
+    look gets a :focus-visible twin with the ring, in every theme, after all the rules. A look that leaves the skin
+    to the cascade names it in an optional fourth element, (flat, framed), for its twin.
     """
     c = theme["colors"]
     accent, r, widths = c["accent"], theme["radii"], theme["borderWidths"]
-    ring = skin("focus-ring")
     dim = mix(c["textMuted"], c["surface"], .45)
     pressed = mix(c["background"], accent, .24)
     row = c["surfaceRaised"]
@@ -412,9 +425,10 @@ def flat_rules(theme: dict, skin, on_accent: str) -> list:
     record = c["danger"]
 
     def bars(more: str = "", state: str = "", tail: str = "") -> str:
-        """The plain buttons in toolbars and the transport bar, with more classes or attributes, a state and a tail."""
+        """The plain buttons in toolbars and the transport's sections, with more classes or attributes, a state and a
+        tail. The transport panel is a toolbar too, with the setup pane inside."""
         return ", ".join(f"{bar} button{more}:not(.toggle):not(.primary){state}{tail}"
-                         for bar in (".toolbar", ".transport"))
+                         for bar in (".toolbar:not(.transport)", ".transport .transport-section"))
 
     pairs = [
         # Menu bar and toolbars in the window's dark tone, the zones' panels lighter below them
@@ -429,7 +443,8 @@ def flat_rules(theme: dict, skin, on_accent: str) -> list:
         (bars("[menu]"), {"decorator": skin("dropdown-button-normal"), "color": c["text"], "text-align": "left",
                           "padding-right": "22dp"},
          {"decorator": skin("dropdown-button-normal")}),
-        (bars(".icon-only[menu]"), {"decorator": "none", "padding-right": "0", "text-align": "center"}, {}),
+        (bars(".icon-only[menu]"), {"decorator": "none", "padding-right": "0", "text-align": "center"}, {},
+         ("none", skin("dropdown-button-normal"))),
         (bars(state=":hover"), {"decorator": "none", "background-color": mix(c["surfaceRaised"], accent, .14),
                                 "color": c["text"]},
          {"decorator": skin("button-hover")}),
@@ -439,8 +454,9 @@ def flat_rules(theme: dict, skin, on_accent: str) -> list:
         (bars(".icon-only[menu]", ":hover"), {"decorator": "none"}, {}),
         (bars(state=":active"), {"decorator": "none", "background-color": pressed},
          {"decorator": skin("button-pressed")}),
-        (bars("[menu]", ":active"), {}, {"decorator": skin("button-pressed")}),
-        (bars(".checked[menu]"), {}, {"decorator": skin("button-checked")}),
+        (bars("[menu]", ":active"), {"decorator": skin("dropdown-button-pressed")},
+         {"decorator": skin("dropdown-button-pressed")}),
+        (bars(".checked[menu]"), {"decorator": "none"}, {"decorator": skin("button-checked")}),
         (bars(".checked"), {"decorator": "none", "background-color": accent + "2e", "color": accent},
          {"decorator": skin("button-checked")}),
         (bars(".checked", tail=" svg.icon"), {"image-color": accent}, {"image-color": c["text"]}),
@@ -450,15 +466,19 @@ def flat_rules(theme: dict, skin, on_accent: str) -> list:
         (bars(state=":disabled"), {"decorator": "none", "background-color": "transparent", "color": dim},
          {"decorator": skin("button-disabled"), "color": c["textMuted"]}),
         (bars(state=":disabled", tail=" svg.icon"), {"image-color": dim}, {"image-color": c["textMuted"]}),
-        (bars(state=":focus-visible"), {"decorator": ring}, {"decorator": f"{ring}, {skin('button-normal')}"}),
-        (bars(".checked", ":focus-visible"), {"decorator": ring}, {"decorator": f"{ring}, {skin('button-checked')}"}),
+        # A disabled menu button keeps its field, dimmed, as the padding for its arrow stays
+        (bars("[menu]", ":disabled"), {"decorator": skin("dropdown-button-disabled"), "color": dim},
+         {"decorator": skin("dropdown-button-disabled"), "color": c["textMuted"]}),
+        # Icon-only menu buttons keep no field when pressed or disabled either, the arrow being their icon
+        (bars(".icon-only[menu]", ":active"), {"decorator": "none"}, {}),
+        (bars(".icon-only[menu]", ":disabled"), {"decorator": "none"}, {}),
         # Start in the accent, filled while playing; Record in the danger color, filled while recording
         (".transport #start svg.icon", {"image-color": accent}, {"image-color": c["text"]}),
-        (".transport #start.checked", {"decorator": "none", "background-color": accent},
+        (".transport button#start.checked", {"decorator": "none", "background-color": accent},
          {"decorator": skin("button-checked")}),
         (".transport #start.checked svg.icon", {"image-color": on_accent}, {"image-color": c["text"]}),
         (".transport #record svg.icon", {"image-color": record}, {"image-color": c["text"]}),
-        (".transport #record.checked", {"decorator": "none", "background-color": record},
+        (".transport button#record.checked", {"decorator": "none", "background-color": record},
          {"decorator": skin("button-checked")}),
         (".transport #record.checked svg.icon", {"image-color": "#ffffff"}, {"image-color": c["text"]}),
         # The primary time display bold; at the body's size, since the position displays' height is fixed (#1335)
@@ -502,8 +522,19 @@ def flat_rules(theme: dict, skin, on_accent: str) -> list:
                             "border-right-color": c["background"]}, {}),
         (".mixer-channel-name", {"font-weight": "600"}, {}),
         (".transport .display", {"decorator": "none"}, {}),
+        # The tempo too, a value field the general rules give the displays' skin (#1342)
+        (".transport .transport-section valuefield", {"decorator": "none"}, {"decorator": skin("display")}),
     ]
-    return [(selector, flat_look if theme["flat"] else framed) for selector, flat_look, framed in pairs]
+    ring = skin("focus-ring")
+    rules, twins = [], []
+    for selector, flat_look, framed, *under in pairs:
+        look = flat_look if theme["flat"] else framed
+        rules.append((selector, look))
+        parts = [part + ":focus-visible" for part in selector.split(", ") if focusable(part)]
+        if parts and ("decorator" in flat_look or "decorator" in framed):
+            decorator = look.get("decorator", under[0][0 if theme["flat"] else 1] if under else "none")
+            twins.append((", ".join(parts), {"decorator": ring if decorator == "none" else f"{ring}, {decorator}"}))
+    return rules + twins
 
 
 def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
@@ -565,6 +596,7 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         ("svg.icon.accent", {"image-color": c["accent"]}),
         ("svg.icon.muted", {"image-color": c["textMuted"]}),
         ("svg.icon.danger", {"image-color": c["danger"]}),
+        ("svg.icon.warning", {"image-color": c["warning"]}),
         # Containers
         (".dialog, dialog", {"decorator": skin("dialog")}),
         (".dialog-titlebar", {"decorator": skin("dialog-titlebar"), "font-weight": "600"}),
@@ -712,6 +744,8 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".event-display .step-input-cursor, .event-display .step-input-handle", {"background-color": c["accent"]}),
         (".event-display .cross-hair-vertical, .event-display .cross-hair-horizontal",
          {"background-color": mix(c["background"], c["textMuted"], .5)}),
+        # The quantize panel's cutting positions (reference manual p. 378): where Slice would cut
+        (".event-display .cutting-position", {"background-color": c["accent"]}),
         # Markers (docs/features/markers.md): lines behind the events, marker events and labels on marker tracks
         (".event-display .marker-lines", {"stroke-color": mix(c["background"], c["accent2"], .5),
                                           "stroke-width": f"{widths['hairline']}dp"}),
@@ -875,6 +909,12 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".key-note.drawing", {"background-color": c["accent"] + "66"}),
         (".key-editor-velocity", {"color": c["text"]}),
         (".key-editor-step-cursor", {"background-color": c["accent"]}),
+        # Per-note expression (docs/features/note-expression.md): its steps as lines over the notes and in the
+        # expression editor, which lies over the note display
+        (".key-expression-step", {"border-top-width": f"{widths['hairline']}px", "border-top-color": c["text"]}),
+        (".key-expression-editor", {"background-color": c["surfaceRaised"],
+                                    "border-width": f"{widths['hairline']}px", "border-color": c["accent"]}),
+        (".key-expression-editor .key-expression-step", {"border-top-color": c["accent2"]}),
         # The in-place editor (docs/features/in-place-editor.md): opaque over its track's events, a line below it
         (".in-place-editor", {"background-color": c["background"], "border-bottom-width": f"{widths['hairline']}px",
                               "border-bottom-color": c["border"]}),
@@ -915,9 +955,9 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".articulation-item.reset", {"background-color": c["textMuted"]}),
         (".articulation-item.selected", {"background-color": c["accent2"]}),
         (".articulation-item.inactive", {"background-color": mix(c["surface"], c["textMuted"], .3)}),
-        # The warning sign of the info line and the list editor for articulations the track's map doesn't have
-        # (#1580), in the warning color
-        ("svg.articulation-warning", {"image-color": c["warning"]}),
+        # The lane with the keyboard focus (#1658, p. 100), framed on the left of its header in the accent
+        (".controller-lane.keyboard-focus .controller-lane-header", {"border-left-width": f"{widths['focus']}dp",
+                                                                     "border-left-color": c["accent"]}),
         # The audio part editor (docs/features/audio-part-editor.md): lines between the lanes, the events, selected
         # ones in the second accent, and muted ones, those outside the part editing mode and those their part hides
         # entirely dimmed
@@ -1064,12 +1104,12 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         ("menuitem .menu-keys", {"color": c["textMuted"]}),
         ("menuitem > .menu-arrow", {"decorator": skin("dropdown-arrow")}),
     ]
-    rules += flat_rules(theme, skin, on_accent)
     # The time display window's digits at each of its sizes (docs/features/transport-bar.md), a line twice as high.
     rules.extend((f".time-display.size-{i}", {"font-size": f"{size}dp", "line-height": f"{2 * size}dp"})
                  for i, size in enumerate(theme["timeDisplaySizes"]))
 
-    rules = with_focus_rings(rules, skin("focus-ring"))
+    # The flat widgets' rules come with their own focus twins, the same in every theme
+    rules = with_focus_rings(rules, skin("focus-ring")) + flat_rules(theme, skin, on_accent)
     lines = ["/* SPDX-License-Identifier: GPL-3.0-or-later */",
              f"/* The {name} theme: colors, fonts and skins of GNUbase's widgets (docs/features/themes.md). Generated by",
              "   tools/skin/generate.py: change the generator and run it again rather than editing this file. */",
@@ -1084,15 +1124,20 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
 
 
 def focusable(selector: str) -> bool:
-    """Whether a selector's last part is a FOCUSABLE widget in a state other than hovered, pressed or focused."""
+    """Whether a selector's last part is a FOCUSABLE widget in a state other than hovered, pressed or focused.
+
+    The widget may have classes, attributes and an id, and exclude classes with :not(), as the bars' buttons do.
+    """
     widget, *states = selector.split(" ")[-1].split(":")
-    return any(widget == f or widget.startswith(f + ".") for f in FOCUSABLE) and all(s == "checked" for s in states)
+    return (any(widget == f or widget.startswith((f + ".", f + "[", f + "#")) for f in FOCUSABLE)
+            and all(s == "checked" or s.startswith("not(") for s in states))
 
 
 def with_focus_rings(rules: list, ring: str) -> list:
     """The rules, then for each that gives a FOCUSABLE widget a skin its :focus-visible twin with the ring.
 
-    The twins come last, so the ring also shows on a hovered widget. The ring is the first decorator, because RmlUi
+    The twins come after the rules (flat_rules, which follow them, add their own), so the ring also shows on a hovered
+    widget. The ring is the first decorator, because RmlUi
     draws the first one on top.
     """
     twins = []

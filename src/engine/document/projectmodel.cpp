@@ -1515,6 +1515,11 @@ namespace gnubase::engine
 			setTimeOffset(project, track, parameters, context); // in the new time base
 			if (parameters.contains("groupChannel"))
 				setGroupChannel(project, track, parameters.at("groupChannel").get<bool>(), context);
+			if (parameters.contains("groupEditing"))
+			{
+				require(track.type == TrackType::Folder, "only folder tracks have group editing");
+				track.groupEditing = parameters.at("groupEditing").get<bool>();
+			}
 			Json result = {{"track", toJson(track)}};
 			context.emit("track.changed", result);
 			if (track.type == TrackType::Folder && parameters.contains("color"))
@@ -3404,7 +3409,7 @@ namespace gnubase::engine
 			{"chord.assignVoices", "Assign voices to notes"},
 			{"chordPads.set", "Change chord pads"},
 			{"chordPads.assign", "Assign chords to pads"},
-			{"chordPads.modify", "Modify chord pads"},
+			{"chordPads.modify", chordpads::g_modifyAction},
 			{"chordPads.setPad", "Change chord pad"},
 			{"chordPads.move", "Move chord pad"},
 			{"chordPads.fromChordTrack", "Assign pads from chord track"},
@@ -4355,7 +4360,10 @@ namespace gnubase::engine
 				"then plays through it, or without it through the next group channel up, or the main output, and "
 				"its automation and the routing of other channels to it go. Channels routed elsewhere by hand or "
 				"disconnected keep their routing. With the user setting editing.applyFolderColor, a folder's new "
-				"color goes to the tracks inside it. picture is an image file (PNG, JPEG or SVG) that the mixer shows "
+				"color goes to the tracks inside it. groupEditing turns a folder's Group Editing mode on or off "
+				"(reference manual p. 274): in the project window, selecting an event, a part or a range on a track "
+				"inside it then selects those of its other tracks with the same start and end too. picture is an image "
+				"file (PNG, JPEG or SVG) that the mixer shows "
 				"on the track's channel, or empty for none. drumMap is the drum map (drumMap.add) a MIDI or instrument "
 				"track's notes play through, or 0 for none; articulationMap its articulation map "
 				"(articulationMap.add), or 0 for none, whose remote triggers also select the sound slot of the notes "
@@ -4367,8 +4375,9 @@ namespace gnubase::engine
 				objectSchema(
 					{{"track", idSchema}, {"name", stringSchema}, {"color", color}, {"timeBase", timeBases},
 						{"timeFormat", timeFormats}, {"timeOffset", positionSchema}, {"timeOffsetOn", booleanSchema},
-						{"enabled", booleanSchema}, {"groupChannel", booleanSchema}, {"picture", stringSchema},
-						{"drumMap", idSchema}, {"articulationMap", idSchema}, {"gmNames", booleanSchema}},
+						{"enabled", booleanSchema}, {"groupChannel", booleanSchema}, {"groupEditing", booleanSchema},
+						{"picture", stringSchema}, {"drumMap", idSchema}, {"articulationMap", idSchema},
+						{"gmNames", booleanSchema}},
 					{"track"}),
 				resultSchema({"track"}), false},
 			setTrack);
@@ -5032,7 +5041,9 @@ namespace gnubase::engine
 				"A number that grows with every change of the project: every edit, undo and redo, and loading or "
 				"starting a project. quantize.savePreset, quantize.renamePreset, quantize.removePreset and "
 				"quantize.extractGroove also advance it when they change the quantize preset saved with the project, "
-				"without an undo step. project.load with revision loads only if it hasn't changed. modified says "
+				"without an undo step, and so does the drum editor's Solo Instrument (editor.set soloInstrument, and "
+				"the selection while it is on) when it changes what plays, without a change of the project: modified "
+				"stays as it was. project.load with revision loads only if it hasn't changed. modified says "
 				"whether the project changed since it was last saved, loaded or started; undoing back to the saved "
 				"state still counts as a change. project identifies the open project: the revision at which it was "
 				"loaded or started, so it changes only when another project is opened.",

@@ -729,6 +729,68 @@ TEST_CASE("an input transformer that inserts past its buffers' capacity ends eve
 	CHECK(off == on);
 }
 
+TEST_CASE("a note's expression follows the note the input transformer made of it, also after its note-off", "[unit]")
+{
+	using graph::ProcessEvent;
+	processors::InputTransformerProcessor processor(16);
+	const Json isNote = filter("type", "equal", "note");
+	// What the modules make of the events, one line each: "on 1 72", "expression 1 72".
+	const auto played = [&processor](const std::vector<LogicalRules>& modules,
+							const std::vector<std::pair<ProcessEvent::Type, int>>& in)
+	{
+		graph::EventBuffer events(16);
+		for (const auto& [type, pitch] : in)
+		{
+			ProcessEvent e;
+			e.type = type;
+			e.channel = 1;
+			e.key = static_cast<uint8_t>(pitch);
+			e.velocity = 40000;
+			e.parameterValue = 1.0;
+			events.add(e);
+		}
+		processor.process(events, modules);
+		std::vector<std::string> lines;
+		for (const ProcessEvent& e : events)
+		{
+			std::string name = "expression";
+			if (e.type == ProcessEvent::Type::NoteOn)
+				name = "on";
+			else if (e.type == ProcessEvent::Type::NoteOff)
+				name = "off";
+			lines.push_back(name + " " + std::to_string(e.channel) + " " + std::to_string(e.key));
+		}
+		return lines;
+	};
+	using Lines = std::vector<std::string>;
+	constexpr ProcessEvent::Type on = ProcessEvent::Type::NoteOn;
+	constexpr ProcessEvent::Type off = ProcessEvent::Type::NoteOff;
+	constexpr ProcessEvent::Type expression = ProcessEvent::Type::NoteExpression;
+	SECTION("transposed and on another channel")
+	{
+		const std::vector<LogicalRules> modules = {
+			logicalRulesFromJson(rules({isNote}, "transform", {action("subtype", "add", 12)})),
+			logicalRulesFromJson(rules({isNote}, "transform", {action("channel", "setFixed", 3)}))};
+		CHECK(played(modules, {{on, 60}, {expression, 60}}) == Lines{"on 2 72", "expression 2 72"});
+		// Released, it still fades where it sounds.
+		CHECK(played(modules, {{off, 60}, {expression, 60}}) == Lines{"off 2 72", "expression 2 72"});
+		// A key without a note-on through the rules: a note from before them, which plays as it came.
+		CHECK(played(modules, {{expression, 61}}) == Lines{"expression 1 61"});
+	}
+	SECTION("inserted: the note and the one the rules add")
+	{
+		const std::vector<LogicalRules> modules = {
+			logicalRulesFromJson(rules({isNote}, "insert", {action("subtype", "add", 7)}))};
+		CHECK(played(modules, {{on, 60}, {expression, 60}}) ==
+			Lines{"on 1 60", "on 1 67", "expression 1 60", "expression 1 67"});
+	}
+	SECTION("filtered out: no note, no expression")
+	{
+		const std::vector<LogicalRules> modules = {logicalRulesFromJson(rules({isNote}, "delete"))};
+		CHECK(played(modules, {{on, 60}, {expression, 60}, {off, 60}, {expression, 60}}).empty());
+	}
+}
+
 TEST_CASE("input transformers change what a track's MIDI input plays", "[integration]")
 {
 	LiveFixture f;

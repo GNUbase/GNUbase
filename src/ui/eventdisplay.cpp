@@ -34,6 +34,7 @@ namespace gnubase::ui
 		// Zoom limits, in seconds per dp: about half a sample at 48 kHz, and an hour in a minute of dp.
 		constexpr double g_minScale = 1e-5;
 		constexpr double g_maxScale = 60.0;
+		constexpr double g_cutDistance = 4.0; // dp between the cutting positions for them to show
 		constexpr double g_minTrackZoom = 0.25;
 		constexpr double g_maxTrackZoom = 8.0;
 		constexpr double g_zoomStep = 2.0;          // zoom in and out
@@ -104,6 +105,7 @@ namespace gnubase::ui
 		m_waveforms = std::make_unique<EventWaveforms>(binding, add(*m_area, "div", "waveforms"));
 		m_fadeLines = &addCanvas<FadeLines>(*m_area, "fade-lines", "fades");
 		m_partMarks = &add(*m_area, "div", "part-marks");
+		m_cuts = &add(*m_area, "div", "cutting-positions");
 		m_automationArea = &add(*m_area, "div", "automation-lanes");
 		m_editor = &add(*m_area, "div", "automation-editor");
 		m_rangeElement = &add(*m_area, "div", "range-selection");
@@ -537,6 +539,8 @@ namespace gnubase::ui
 			double start = 0.0;
 			double end = 0.0;
 			uint32_t color = 0;
+			bool independent = false; // it has events, and all of them are Independent (#1644)
+			bool follows = false;     // one of them follows global transposition
 		};
 		std::map<uint64_t, AudioPart> audioParts;
 		for (const Json& part : project.at("audioParts"))
@@ -545,7 +549,7 @@ namespace gnubase::ui
 			const auto position = part.at("position").get<int64_t>();
 			const double start = seconds(position, linear[track]);
 			const double end = seconds(position + part.at("length").get<int64_t>(), linear[track]);
-			audioParts[part.at("id").get<uint64_t>()] = {start, end, colorOf(part)};
+			audioParts[part.at("id").get<uint64_t>()] = {start, end, colorOf(part), false, false};
 			addEvent(part, start, end);
 		}
 		std::vector<EventWaveforms::Event> waves;
@@ -589,8 +593,12 @@ namespace gnubase::ui
 				length = played->get<double>() / m_time.sampleRate;
 			const double waveRate =
 				played != event.end() && length > 0.0 ? event.at("length").get<double>() / length : rate;
+			const bool independent = event.value("globalTranspose", std::string()) == "independent"; // #1368
 			if (const auto part = audioParts.find(event.value("part", uint64_t{0})); part != audioParts.end())
 			{
+				// The part shows the mark of Independent events (p. 421) when all its events are.
+				part->second.follows = part->second.follows || !independent;
+				part->second.independent = independent && !part->second.follows;
 				const double from = std::max(start, part->second.start);
 				const double to = std::min(start + length, part->second.end);
 				if (file != media.end() && rate > 0.0 && lanes.count(track) != 0 && to > from)
@@ -602,7 +610,7 @@ namespace gnubase::ui
 				continue;
 			}
 			addEvent(event, start, start + length, false);
-			if (event.value("globalTranspose", std::string()) == "independent") // #1368
+			if (independent)
 				m_independent.insert(event.at("id").get<uint64_t>());
 			if (lanes.count(track) != 0)
 			{
@@ -660,6 +668,9 @@ namespace gnubase::ui
 				waves.push_back(wave);
 			}
 		m_waveforms->setEvents(waves);
+		for (const auto& [id, part] : audioParts)
+			if (part.independent)
+				m_independent.insert(id);
 		for (const Json& part : project.at("midiParts"))
 		{
 			const auto track = part.at("track").get<uint64_t>();
@@ -963,6 +974,7 @@ namespace gnubase::ui
 		showRange();
 		placeAutomation();
 		placePartMarks();
+		placeCuttingPositions();
 
 		// The overview line shows the whole project, and the view as a rectangle.
 		const double across = m_overview->GetClientWidth() / dpRatio();
@@ -1002,6 +1014,42 @@ namespace gnubase::ui
 				mark->SetProperty(Rml::PropertyId::Left, dp((marked[i]->end - m_view.start) / scale));
 				mark->SetProperty(Rml::PropertyId::Top, dp(m_laneTops[marked[i]->lane] - m_view.top));
 			}
+	}
+
+	void EventDisplay::setCuttingPositions(std::vector<int64_t> positions)
+	{
+		if (positions == m_cuttingPositions)
+			return;
+		m_cuttingPositions = std::move(positions);
+		placeCuttingPositions();
+	}
+
+	void EventDisplay::placeCuttingPositions()
+	{
+		if (!alive())
+			return;
+		const double scale = m_view.scale > 0.0 ? m_view.scale : g_minScale;
+		const auto seconds = [this](int64_t samples) { return static_cast<double>(samples) / m_time.sampleRate; };
+		bool apart = true;
+		for (size_t i = 1; i < m_cuttingPositions.size(); ++i)
+			apart =
+				apart && (seconds(m_cuttingPositions[i]) - seconds(m_cuttingPositions[i - 1])) / scale >= g_cutDistance;
+		std::vector<double> lines;
+		if (apart)
+			for (const int64_t position : m_cuttingPositions)
+				if (const double x = (seconds(position) - m_view.start) / scale; x >= 0.0 && x <= width())
+					lines.push_back(x);
+		if (lines.size() != m_cutsShown)
+		{
+			std::string rml;
+			for (size_t i = 0; i < lines.size(); ++i)
+				rml += R"(<div class="cutting-position"/>)";
+			m_cuts->SetInnerRML(rml);
+			m_cutsShown = lines.size();
+		}
+		for (size_t i = 0; i < lines.size(); ++i)
+			if (Rml::Element* line = m_cuts->GetChild(static_cast<int>(i)))
+				line->SetProperty(Rml::PropertyId::Left, dp(lines[i]));
 	}
 
 	double EventDisplay::ownHeight(uint64_t track) const

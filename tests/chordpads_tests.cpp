@@ -1788,6 +1788,52 @@ TEST_CASE("only the voicings control at rest gives the pads their adaptive voici
 	CHECK(pad(client, 5).at("pitches") == before.at("pitches"));
 }
 
+TEST_CASE("undo takes back the voicings control's rest with the adaptive voicing it gave back", "[integration]")
+{
+	// #1656: the rest gives the pads their adaptive voicing back in the same undo step as its own move.
+	RemoteRig remote;
+	Client& client = remote.rig.client;
+	run(client, "chordPads.set", {{"controlSources", {"controller", "none", "none"}}, {"controlNumbers", {20, 1, 1}}});
+	run(client, "chordPads.setPad", {{"pad", 0}, {"reference", true}});
+	run(client, "audio.render", {{"frames", 64}});
+	const Json before = pad(client, 5);
+	REQUIRE(before.at("adaptive") == true);
+	sendBytes(remote, {0xB0, 20, 127});
+	CHECK(remote.until([&] { return pad(client, 5).at("adaptive") == false; }));
+	const Json voiced = pad(client, 5);
+	remote.rig.engine.advanceClock(std::chrono::seconds(2));
+	sendBytes(remote, {0xB0, 20, 0});
+	CHECK(remote.until([&] { return pad(client, 5).at("adaptive") == true; }));
+	run(client, "history.undo");
+	CHECK(pad(client, 5).at("adaptive") == false);
+	CHECK(pad(client, 5).at("voicing") == voiced.at("voicing"));
+	CHECK(pad(client, 5).at("pitches") == voiced.at("pitches"));
+	sendBytes(remote, {0xB0, 20, 0});
+	CHECK(remote.until([&] { return pad(client, 5).at("adaptive") == true; }));
+	CHECK(pad(client, 5).at("voicing") == before.at("voicing"));
+	CHECK(pad(client, 5).at("pitches") == before.at("pitches"));
+}
+
+TEST_CASE(
+	"a pad changed by a pad modifier while a control is away from its rest goes back with the control", "[integration]")
+{
+	// #1652: the pad modifiers' steps are no chord assigned anew: Dm with the tensions control's 7, 9 and 11,
+	// transposed up a tone, loses them at the control's rest.
+	RemoteRig remote;
+	Client& client = remote.rig.client;
+	run(client, "chordPads.set", {{"controlSources", {"none", "controller", "none"}}, {"controlNumbers", {1, 21, 1}}});
+	run(client, "audio.render", {{"frames", 64}});
+	const auto tensions = [&] { return pad(client, 1).at("symbol").at("tensions"); };
+	sendBytes(remote, {0xB0, 21, 127});
+	CHECK(remote.until([&] { return tensions() == Json::array({"7", "9", "11"}); }));
+	run(client, "chordPads.modify", {{"pads", Json::array({1})}, {"transpose", 2}});
+	REQUIRE(pad(client, 1).at("symbol").at("root") == 4);
+	REQUIRE(tensions() == Json::array({"7", "9", "11"}));
+	sendBytes(remote, {0xB0, 21, 0});
+	CHECK(remote.until([&] { return tensions().empty(); }));
+	CHECK(pad(client, 1).at("chord") == "Em");
+}
+
 TEST_CASE("another project ends Assign from MIDI Input, so the remote keys trigger the pads again", "[integration]")
 {
 	// #1236: what chordPads.listen listens for belongs to the project it was asked in.
@@ -1976,8 +2022,22 @@ TEST_CASE(
 	"what the remote keys hold ends when the remote's input changes, a pad's chord and a section", "[integration]")
 {
 	// #1571: the note-offs of the keys held on the former input come from an input that is no longer the remote's.
+	// #1652: the pads whose keys were down are off, and no pad that a section key's note would be.
 	RemoteRig remote;
 	Client& client = remote.rig.client;
+	using Lit = std::vector<std::pair<int, bool>>; // chordPads.triggered's pad and on
+	const auto litUpTo = [&](int index, bool on)
+	{
+		Lit seen;
+		for (Json event = waitFor(client, "chordPads.triggered"); event.is_object();
+			event = waitFor(client, "chordPads.triggered"))
+		{
+			seen.emplace_back(event.at("pad").get<int>(), event.at("on").get<bool>());
+			if (seen.back() == std::pair{index, on})
+				break;
+		}
+		return seen;
+	};
 	run(client, "chordPads.set", {{"remotePort", "dummy/in/Keys"}});
 	run(client, "audio.render", {{"frames", 64}});
 	CHECK(remote.send(0x90, 36, 90).size() == 4);
@@ -1986,6 +2046,7 @@ TEST_CASE(
 	CHECK(ended.size() == 4);
 	CHECK(std::all_of(
 		ended.begin(), ended.end(), [](const std::vector<int>& note) { return (note.at(0) & 0xF0) == 0x80; }));
+	CHECK(litUpTo(0, false) == Lit{{0, true}, {0, false}});
 
 	// The sections mode: the pad key down on the former input is up, and a section that Latch Chord Pads keeps ends.
 	run(client, "chordPads.set", {{"remotePort", "dummy/in/Keys"}, {"mode", "sections"}});
@@ -1993,15 +2054,19 @@ TEST_CASE(
 	CHECK(remote.send(0x90, 36, 90).empty());
 	run(client, "chordPads.set", {{"remotePort", "dummy/in/Other"}});
 	run(client, "audio.render", {{"frames", 64}});
+	CHECK(litUpTo(0, false) == Lit{{0, true}, {0, false}});
 	CHECK(remote.send(0x90, 55, 80, true).empty());
 	remote.send(0x80, 55, 0, true);
-	run(client, "chordPads.set", {{"latchPads", true}});
+	// 20 pads from C1: the section key G2 is a remote key too, but the section it held is no pad's chord.
+	run(client, "chordPads.set", {{"latchPads", true}, {"padCount", 20}, {"remoteEnd", 55}});
 	run(client, "audio.render", {{"frames", 64}});
 	remote.send(0x90, 36, 90, true);
 	remote.send(0x80, 36, 0, true);
 	CHECK(remote.send(0x90, 55, 80, true) == std::vector<std::vector<int>>{{0x90, 48, 80}});
 	run(client, "chordPads.set", {{"remotePort", "dummy/in/Keys"}});
 	CHECK(remote.rig.played() == std::vector<std::vector<int>>{{0x80, 48, 0}});
+	CHECK(remote.send(0x90, 37, 90).empty());
+	CHECK(litUpTo(1, true) == Lit{{0, true}, {0, false}, {1, true}});
 }
 
 TEST_CASE("with Snap Playback the audio engine places the pads' notes by the transport's segments", "[integration]")

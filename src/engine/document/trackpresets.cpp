@@ -616,16 +616,10 @@ namespace gnubase::engine
 				if (media != file.media.end())
 					rates[track].insert(media->second.sampleRate);
 			};
-			for (const auto& [id, event] : file.audioEvents)
-				add(event.track, event.clip);
+			forEveryAudioEvent(file, [&add](const AudioEvent& event) { add(event.track, event.clip); });
 			for (const auto& [id, track] : file.trackById)
-			{
-				for (const TrackVersion& version : track.versions)
-					for (const AudioEvent& event : version.audioEvents)
-						add(id, event.clip);
 				if (const auto channel = file.channels.find(track.channel); channel != file.channels.end())
 					forEveryInstrumentClip(channel->second, [&add, id = id](ObjectId clip) { add(id, clip); });
-			}
 			return rates;
 		}
 
@@ -931,7 +925,9 @@ namespace gnubase::engine
 				onto(project.patterns); // which the copy's pattern events play, in its other versions too (#1347)
 				Track& source = project.trackById.at(copy);
 				Track& track = project.trackById.at(id);
-				if (!source.versions.empty() && track.versions.empty())
+				// Only versions besides the copy's active one give the track a list of its own: one without them keeps
+				// storing none (#1629).
+				if (source.versions.size() > 1 && track.versions.empty())
 					track.versions = versionsOf(track);
 				for (TrackVersion& version : source.versions)
 				{
@@ -1141,14 +1137,17 @@ namespace gnubase::engine
 		engine.registerCommand(
 			{"track.presets", 1,
 				"The track presets (track.savePreset), sorted by name: each a name, its file and the types of its "
-				"tracks from top to bottom, which the tracks it goes to must have.",
+				"tracks from top to bottom, which the tracks it goes to must have; keeps of a preset saved with keep: "
+				"channel or patch, which of the two it gives MIDI tracks.",
 				objectSchema({}),
-				objectSchema({{"presets",
-								 {{"type", "array"},
-									 {"items",
-										 objectSchema({{"name", stringSchema}, {"file", stringSchema},
-														  {"tracks", {{"type", "array"}, {"items", stringSchema}}}},
-											 {"name", "file", "tracks"})}}}},
+				objectSchema(
+					{{"presets",
+						{{"type", "array"},
+							{"items",
+								objectSchema({{"name", stringSchema}, {"file", stringSchema},
+												 {"tracks", {{"type", "array"}, {"items", stringSchema}}},
+												 {"keeps", {{"type", "string"}, {"enum", {"channel", "patch"}}}}},
+									{"name", "file", "tracks"})}}}},
 					{"presets"}),
 				true},
 			[&engine](CommandContext&)
@@ -1164,19 +1163,21 @@ namespace gnubase::engine
 				Json presets = Json::array();
 				for (const fs::path& file : files)
 				{
-					Json types = Json::array();
+					Json entry = {
+						{"name", file.stem().u8string()}, {"file", file.u8string()}, {"tracks", Json::array()}};
 					try
 					{
 						const Project preset = load(file, false);
 						for (const ObjectId id : preset.trackOrder())
-							types.push_back(trackTypeName(preset.trackById.at(id).type));
+							entry["tracks"].push_back(trackTypeName(preset.trackById.at(id).type));
+						if (!preset.presetKeeps.empty())
+							entry["keeps"] = preset.presetKeeps;
 					}
 					catch (const std::exception&)
 					{
 						continue; // not a preset GNUbase can read
 					}
-					presets.push_back(
-						{{"name", file.stem().u8string()}, {"file", file.u8string()}, {"tracks", std::move(types)}});
+					presets.push_back(std::move(entry));
 				}
 				return Json{{"presets", std::move(presets)}};
 			});
@@ -1283,12 +1284,14 @@ namespace gnubase::engine
 				"media.conform converts those at another rate than the project's (Convert Sample Rate); from top to "
 				"bottom. With range {start, end} only the events that track.import brings with that range: what "
 				"starts from start up to end, in samples at the project's sample rate from the file's start (Range, "
-				"reference manual p. 204). And the file's project settings as project.get has them, to compare them "
-				"with the project's (Project Settings, p. 205): name, sampleRate, frameRate and startTime. Extracts no "
-				"media files.",
+				"reference manual p. 204). With events false, as track.import without events (default true), none of "
+				"the events and track versions: only the samplers' and drum machines' samples. And the file's project "
+				"settings as project.get has them, to compare them with the project's (Project Settings, p. 205): "
+				"name, sampleRate, frameRate and startTime. Extracts no media files.",
 				objectSchema(
 					{{"path", stringSchema},
-						{"range", objectSchema({{"start", samplesSchema}, {"end", samplesSchema}}, {"start", "end"})}},
+						{"range", objectSchema({{"start", samplesSchema}, {"end", samplesSchema}}, {"start", "end"})},
+						{"events", booleanSchema}},
 					{"path"}),
 				objectSchema(
 					{{"tracks",
@@ -1308,21 +1311,26 @@ namespace gnubase::engine
 			{
 				const Json& parameters = context.parameters();
 				const auto range = rangeOf(parameters);
+				CopyOptions options;
+				options.events = parameters.value("events", true);
 				const Project file = load(fs::u8path(parameters.at("path").get<std::string>()), false);
 				std::map<ObjectId, std::set<double>> rates;
-				if (range)
+				if (range || !options.events)
 				{
-					// What track.import brings with the range: the file at the project's rate, as it imports it.
+					// What track.import brings with the range and options: with a range the file at the project's
+					// rate, as it imports it; the media files' rates stay. Without events the range changes nothing,
+					// as the instruments' samples count wherever it is.
+					const auto within = options.events ? range : std::nullopt;
 					const Project& project = model.project();
 					Project placed = file;
 					const Json none = Json::object();
 					CommandContext inner(none);
-					if (placed.sampleRate != project.sampleRate)
+					if (within && placed.sampleRate != project.sampleRate)
 						changeSampleRate(placed, project.sampleRate, inner);
 					std::set<ObjectId> every;
 					for (const auto& [id, track] : placed.trackById)
 						every.insert(id);
-					place(placed, project, 0, range, every, {});
+					place(placed, project, 0, within, every, options);
 					rates = mediaSampleRatesByTrack(placed);
 				}
 				else

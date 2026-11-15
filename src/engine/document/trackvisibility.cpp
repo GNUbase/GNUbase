@@ -93,10 +93,6 @@ namespace gnubase::engine
 			return nullptr;
 		}
 
-	}
-
-	namespace
-	{
 		// trackVisibilityJson for the visibility with the project's tracks.
 		Json visibilityJson(const Project& project, TrackVisibility visibility)
 		{
@@ -208,9 +204,13 @@ namespace gnubase::engine
 
 	void followTrackFolders(Project& project, CommandContext& context, const Project& before)
 	{
-		// With the visibility the edit left: the commands that change it announce that themselves (#1539).
+		// With the visibility the edit left: the commands that change it announce that themselves (#1539). Once: a
+		// trackVisibility.set in a transaction after the track edit announced it already (#1622).
 		if (Json now = trackVisibilityJson(project); now != visibilityJson(before, project.trackVisibility))
+		{
+			context.discardEvents("trackVisibility.changed");
 			context.emit("trackVisibility.changed", std::move(now));
+		}
 		syncMixers(project, context);
 	}
 
@@ -300,7 +300,13 @@ namespace gnubase::engine
 				{
 					std::vector<VisibilityConfiguration> configurations;
 					std::set<std::string> names;
-					for (const Json& item : parameters.at("configurations"))
+					const Json& items = parameters.at("configurations");
+					const std::vector<ObjectId> current = hiddenTracks(project);
+					const std::vector<ObjectId> none;
+					const VisibilityConfiguration* const wasActive = active(visibility);
+					const bool activeGone = std::none_of(items.begin(), items.end(),
+						[&visibility](const Json& item) { return item.at("name") == visibility.configuration; });
+					for (const Json& item : items)
 					{
 						const auto name = item.at("name").get<std::string>();
 						require(!name.empty(), "a configuration needs a name");
@@ -308,9 +314,18 @@ namespace gnubase::engine
 						const auto old = std::find_if(visibility.configurations.begin(),
 							visibility.configurations.end(), [&name](const VisibilityConfiguration& configuration)
 							{ return configuration.name == name; });
-						configurations.push_back({name,
-							withoutInside(project, tracksFrom(project, item.at("hidden")),
-								old != visibility.configurations.end() ? old->hidden : std::vector<ObjectId>())});
+						// The tracks hidden on their own inside its folders, which stay when they leave them (#1533):
+						// the configuration's of the name, or the active one's that Rename Configuration renamed; the
+						// active or a new one with the tracks hidden now, as Add and Update Configuration send them,
+						// takes the visibility's (#1622).
+						const VisibilityConfiguration* from = activeGone ? wasActive : nullptr;
+						if (old != visibility.configurations.end())
+							from = &*old;
+						const std::vector<ObjectId> ids = tracksFrom(project, item.at("hidden"));
+						const std::vector<ObjectId>* keep = from != nullptr ? &from->hidden : &none;
+						if ((from == nullptr || from == wasActive) && ids == current)
+							keep = &visibility.hidden;
+						configurations.push_back({name, withoutInside(project, ids, *keep)});
 					}
 					visibility.configurations = std::move(configurations);
 					if (active(visibility) == nullptr)

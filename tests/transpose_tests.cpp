@@ -363,6 +363,75 @@ TEST_CASE("Set Root Key for Unassigned Events reaches the parts of inactive trac
 	CHECK(song.partJson().at("rootKey") == "E");
 }
 
+TEST_CASE("Set Root Key for Unassigned Events reaches the audio events of inactive versions and announces their tracks",
+	"[integration]")
+{
+	AudioSong song;
+	const ObjectId second = run(song.client, "audioEvent.add",
+		{{"track", song.audioTrack}, {"clip", song.clip}, {"position", 48000}, {"offset", 0}, {"length", 48000}})
+								.at("event")
+								.at("id")
+								.get<ObjectId>();
+	// A MIDI track whose part has a root key of its own already.
+	const ObjectId keyed = run(song.client, "track.add", {{"type", "midi"}}).at("track").at("id").get<ObjectId>();
+	const ObjectId keyedPart =
+		run(song.client, "midiPart.add", {{"track", keyed}, {"position", 0}, {"length", g_beatTicks}})
+			.at("part")
+			.at("id")
+			.get<ObjectId>();
+	run(song.client, "midiPart.set", {{"part", keyedPart}, {"rootKey", "A"}});
+	// A MIDI track whose part has none.
+	const ObjectId unkeyed = run(song.client, "track.add", {{"type", "midi"}}).at("track").at("id").get<ObjectId>();
+	const ObjectId unkeyedPart =
+		run(song.client, "midiPart.add", {{"track", unkeyed}, {"position", 0}, {"length", g_beatTicks}})
+			.at("part")
+			.at("id")
+			.get<ObjectId>();
+	run(song.client, "project.set", {{"rootKey", "E"}});
+	// The audio track's two events and both MIDI tracks' parts go into inactive versions; the song's MIDI part plays
+	// on.
+	run(song.client, "trackVersion.add", {{"tracks", {song.audioTrack, keyed, unkeyed}}});
+	REQUIRE(run(song.client, "project.get").at("audioEvents").empty());
+	while (song.client.poll())
+	{
+	}
+
+	// One track.changed for the audio track and one for the unkeyed track, whose stashed events and part got the root
+	// key, in id order, none for the keyed track; the playing part is announced as changed, the stashed events and
+	// part aren't.
+	run(song.client, "transpose.assignRootKey");
+	std::vector<ObjectId> tracks;
+	std::vector<ObjectId> parts;
+	std::vector<ObjectId> events;
+	while (const auto message = song.client.poll())
+		if (const auto* event = std::get_if<Event>(&*message); event != nullptr)
+		{
+			if (event->name == "track.changed")
+				tracks.push_back(event->data.at("track").at("id").get<ObjectId>());
+			else if (event->name == "midiPart.changed")
+				parts.push_back(event->data.at("part").at("id").get<ObjectId>());
+			else if (event->name == "audioEvent.changed")
+				events.push_back(event->data.at("event").at("id").get<ObjectId>());
+		}
+	CHECK(tracks == std::vector<ObjectId>{song.audioTrack, unkeyed});
+	CHECK(parts == std::vector<ObjectId>{song.part});
+	CHECK(events.empty());
+
+	// Activating the stashed versions brings the events and the unkeyed part back with the project root key, the
+	// keyed part with its own.
+	run(song.client, "trackVersion.activate", {{"tracks", {song.audioTrack, keyed, unkeyed}}, {"version", 1}});
+	CHECK(song.eventJson().at("rootKey") == "E");
+	CHECK(song.eventJson(second).at("rootKey") == "E");
+	const Json project = run(song.client, "project.get");
+	bool unkeyedBack = false;
+	for (const Json& part : project.at("midiParts"))
+	{
+		CHECK(part.at("rootKey") == (part.at("id") == keyedPart ? "A" : "E"));
+		unkeyedBack = unkeyedBack || part.at("id") == unkeyedPart;
+	}
+	CHECK(unkeyedBack);
+}
+
 TEST_CASE("audio events follow the root key and the transpose track with their pitch", "[integration]")
 {
 	AudioSong song;
@@ -540,15 +609,25 @@ TEST_CASE("audio events that transpose differently by their own Transpose don't 
 TEST_CASE("the pool's Key column sets the root key of every audio event of a clip", "[integration]")
 {
 	AudioSong song;
-	const auto clipKey = [&song]
+	const auto clipJson = [&song]
 	{
 		const Json pool = run(song.client, "pool.get");
 		for (const Json& clip : pool.at("clips"))
 			if (clip.at("id") == song.clip)
-				return clip.at("rootKey").get<std::string>();
-		return std::string("no clip");
+				return clip;
+		return Json::object();
 	};
+	const auto clipKey = [&clipJson] { return clipJson().value("rootKey", std::string("no clip")); };
 	CHECK(clipKey() == "");
+	CHECK(clipJson().at("audioEvents") == 1);
+	CHECK(clipJson().at("rootKeysDiffer") == false);
+	// A clip that no audio event plays has nowhere to keep a key (#1644).
+	const Json media = clipJson().at("media");
+	const ObjectId unplayed = run(song.client, "clip.add", {{"media", media}}).at("clip").at("id").get<ObjectId>();
+	const Json pool = run(song.client, "pool.get");
+	for (const Json& clip : pool.at("clips"))
+		if (clip.at("id") == unplayed)
+			CHECK(clip.at("audioEvents") == 0);
 	// A second event of the clip, stashed in an inactive track version (reference manual p. 417).
 	run(song.client, "trackVersion.add", {{"tracks", {song.audioTrack}}});
 	run(song.client, "audioEvent.add",
@@ -559,11 +638,14 @@ TEST_CASE("the pool's Key column sets the root key of every audio event of a cli
 	CHECK(song.eventJson(other).at("rootKey") == "A");
 	run(song.client, "trackVersion.activate", {{"tracks", {song.audioTrack}}, {"version", 1}});
 	CHECK(song.eventJson().at("rootKey") == "A");
-	// Events of the clip in different keys: the column shows none.
+	CHECK(clipJson().at("audioEvents") == 2);
+	// Events of the clip in different keys: no key, and rootKeysDiffer says why (#1644).
 	run(song.client, "audioEvent.set", {{"event", song.event}, {"rootKey", "B"}});
 	CHECK(clipKey() == "");
+	CHECK(clipJson().at("rootKeysDiffer") == true);
 	run(song.client, "history.undo");
 	CHECK(clipKey() == "A");
+	CHECK(clipJson().at("rootKeysDiffer") == false);
 	// One undo step; the audio file stays as it is.
 	run(song.client, "history.undo"); // the version activated
 	run(song.client, "history.undo"); // the clip's root key

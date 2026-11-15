@@ -31,6 +31,10 @@ namespace gnubase::engine
 	// The music theory of the pads and the assistant.
 	namespace chordpads
 	{
+		// chordPads.modify's undo step name, which the controls' transactions share: the controls know their own and
+		// the pad modifiers' steps by it (#1652).
+		inline constexpr const char* g_modifyAction = "Modify chord pads";
+
 		// The scale-based presets (reference manual p. 1370): "major", "minor", "dorian", "phrygian", "lydian",
 		// "mixolydian" and "locrian".
 		const std::vector<std::string>& presetNames();

@@ -92,12 +92,14 @@
 				document:GetElementById("preset-name"):Focus()
 				return
 			end
-			-- Load lists the presets for the selected tracks' types, in their order (reference manual p. 241).
+			-- Load lists the presets for the selected tracks' types, in their order (reference manual p. 241), with
+			-- what a preset that keeps only one of them keeps of MIDI tracks.
+			local keeps = {channel = " (Channel only)", patch = " (Patch only)"}
 			local options = {}
 			for _, preset in ipairs(gnubase.track.presets().presets) do
 				if dialog.mode == "add" or table.concat(preset.tracks, ",") == table.concat(types, ",") then
 					options[#options + 1] = '<option value="' .. escape(preset.name) .. '">' .. escape(preset.name) ..
-						"</option>"
+						(keeps[preset.keeps] or "") .. "</option>"
 				end
 			end
 			document:GetElementById("preset-row").inner_rml =

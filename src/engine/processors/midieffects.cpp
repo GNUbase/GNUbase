@@ -574,6 +574,14 @@ namespace gnubase::engine::processors
 				held.down = false;
 			return;
 		}
+		if (event.type == Type::NoteExpression && held.played)
+		{
+			if (held.passed)
+				out.add(event);
+			if (held.to != g_none && (!held.passed || held.to != index))
+				out.add(movedTo(event, held.to));
+			return;
+		}
 		if (!logical)
 		{
 			out.add(event);
@@ -607,7 +615,7 @@ namespace gnubase::engine::processors
 			pass = emit = false;
 		const uint16_t to = emit && changed.type == Type::NoteOn ? indexOf(changed) : g_none;
 		const Held previous = held;
-		held = {to, pass, true};
+		held = {to, pass, true, true};
 		// Played again before its note-off: ends what the earlier one started and this one doesn't, and plays again
 		// what both do.
 		for (const uint16_t note : {index, previous.to != index ? previous.to : g_none})

@@ -265,6 +265,14 @@ namespace gnubase::app
 			// system hasn't given it the fitted one yet (#1527).
 			Rml::ObserverPtr<Rml::Element> sections;
 			int unfitted = 0;
+			// Whether the panel follows its sections, once the controls show the project, and whether its next fit
+			// centres it, for a panel that opened without bounds (#1612).
+			bool follows = false;
+			bool centre = false;
+			// Where the shown sections ended and the window's bounds when the panel last looked at them: unchanged,
+			// it asks for no monitors.
+			float measured = 0;
+			ui::Rect measuredBounds;
 
 			// The window, or null if it is closed, also when the user closed it.
 			ui::Window* shown(ui::Shell& shell) const { return window == 0 ? nullptr : shell.find(window); }
@@ -277,7 +285,8 @@ namespace gnubase::app
 		// Gives the transport panel the width of its shown sections, as far as its monitor has room (#1424): a new one
 		// in the middle of the primary monitor (centre), an open one where it is, whenever its sections' width changes
 		// and its window still has the width of their last fit, which ui.layout keeps: the user didn't size it since
-		// (#1527). Whether it changed the window's bounds.
+		// (#1527), and only once the controls show the project, so that a panel that opens with fitted bounds isn't
+		// fitted to their defaults first (#1612). Whether it changed the window's bounds.
 		bool fitSections(ui::Window& window, bool centre);
 		// Edits a display of the transport bar, or of the transport panel, which opens if the bar doesn't show.
 		void enter(const std::string& field);
@@ -322,6 +331,9 @@ namespace gnubase::app
 			// The project window's selected audio events and parts (#145), for Quantize and Reset Quantize.
 			std::vector<uint64_t> events;
 			std::vector<uint64_t> audioParts;
+			// The project window's selection range (#1579): the audio events on its tracks, which Quantize warp
+			// quantizes between its start and end (project samples).
+			std::optional<std::pair<int64_t, int64_t>> range;
 			std::string lengthQuantize;
 			double insertVelocity = 100.0 / 127.0; // the editor's, for Fixed Velocity
 		};
@@ -341,6 +353,9 @@ namespace gnubase::app
 		void addMidiFunctions();
 		// File > Import > Tracks, File > Export > Selected Tracks and the track preset commands (#164).
 		void addTrackFileCommands();
+		// The OS's file dialog for objects of the project: chosen gets the file unless a project.reset came while it
+		// was open, as the ids it acts on are the old project's then (#1586, #1648).
+		void chooseProjectFile(const ui::FileDialog& dialog, std::function<void(const std::filesystem::path&)> chosen);
 		// The OS's file dialog for a track's picture in the mixer, then track.set.
 		void choosePicture(uint64_t track);
 		// The drum map of the active track of an editor (window, else lower), then the OS's file dialog to save it in
@@ -432,7 +447,8 @@ namespace gnubase::app
 		bool m_canRedo = false;
 		ui::Subscription m_history;
 		// The dialogs openDialog opened for objects of the project, and project.reset, which closes them. An OS file
-		// dialog's answer for objects of the project is dropped when m_resets has changed since it opened (#1586).
+		// dialog's answer for objects of the project is dropped when m_resets has changed since it opened
+		// (chooseProjectFile).
 		std::vector<Rml::ObserverPtr<Rml::Element>> m_projectDialogs;
 		uint64_t m_resets = 0;
 		ui::Subscription m_projectReset;

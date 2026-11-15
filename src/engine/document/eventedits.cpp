@@ -614,6 +614,13 @@ namespace gnubase::engine
 					return {};
 				AudioEvent right = event;
 				right.id = project.newId();
+				// A piece of a slice the quantize panel cut is one of its event's slices too, which the Reset of the
+				// Slice Rules puts back together (#1579).
+				if (right.sliceOrigin)
+				{
+					right.sliceOrigin.reset();
+					right.slicedFrom = event.id;
+				}
 				// The piece after the split comes right in front of its event, behind whatever was in front of it: at
 				// its event's place, ranked right after it (#1189, #1281). Only the events at that place, the pieces
 				// of the event, get new ranks; ties from before ranks go by id, as stackKey orders them.
@@ -1661,22 +1668,38 @@ namespace gnubase::engine
 
 		// The gap by which the items of a range that starts at from (ticks) land in a range that starts at at (project
 		// samples): gap, the one between the two, unless an item on a musical track starts where the range starts in
-		// samples. Then every musical item, on every track, goes by the ticks that put the first of those in ticks at
-		// at exactly, so that all of them keep their distances in ticks, also across tracks: by the gap, as from and
-		// at are rounded to ticks apart and the item's start in ticks lies up to half a sample from the range's, it
-		// could land a sample off at (#1261).
-		Gap landing(const Project& project, const std::vector<Item>& items, Gap gap, time::Ticks from, time::Samples at)
+		// samples and the gap doesn't put the first of those in ticks in at's sample. Then every musical item, on every
+		// track, goes by the ticks that put that first one at at exactly, so that all of them keep their distances in
+		// ticks, also across tracks: by the gap, as from and at are rounded to ticks apart and the item's start in
+		// ticks lies up to half a sample from the range's, it could land a sample off at (#1261). Where the gap already
+		// lands it in at's sample, the gap stays: pasted where it was copied, a part on a bar keeps the bar's tick
+		// (#1331). Not at 0, the project's start, which is tick 0 exactly: there the gap could put it before tick 0 or
+		// after it, and it lands on tick 0. And nothing lands before tick 0: the automation that lands with the items
+		// can start before the first of them, at a point that the range's start edge takes from its sample or at the
+		// edge's own tick (automationEdge), so at position 0 the first of everything lands on tick 0.
+		Gap landing(const Project& project, const std::vector<Item>& items,
+			const std::vector<AutomationLane>& automation, Gap gap, time::Ticks from, time::Samples at)
 		{
 			const time::Samples start = samples(project, {time::TimeBase::Musical, from});
 			std::optional<time::Ticks> first;
+			std::optional<time::Ticks> earliest;
 			for (const Item& item : items)
 			{
 				const time::Position& position = item.position();
-				if (position.base == time::TimeBase::Musical && samples(project, position) == start)
+				if (position.base != time::TimeBase::Musical)
+					continue;
+				earliest = std::min(earliest.value_or(position.value), position.value);
+				if (samples(project, position) == start)
 					first = std::min(first.value_or(position.value), position.value);
 			}
-			if (first)
+			for (const AutomationLane& lane : automation)
+				for (const auto& [id, point] : lane.points)
+					if (point.position.base == time::TimeBase::Musical)
+						earliest = std::min(earliest.value_or(point.position.value), point.position.value);
+			if (first && (at == 0 || samples(project, {time::TimeBase::Musical, *first + gap.ticks}) != at))
 				gap.ticks = ticks(project, {time::TimeBase::Linear, at}) - *first;
+			if (earliest && *earliest + gap.ticks < 0)
+				gap.ticks = -*earliest;
 			return gap;
 		}
 
@@ -1778,11 +1801,17 @@ namespace gnubase::engine
 		// Takes the automation between from and to out of a lane and keeps the curve outside: the value it arrives
 		// at from with holds up to to, where the curve goes on. With virgin territory the range becomes a gap instead
 		// (reference manual p. 881): the point at from is a terminator. Closing the gap moves the points after it back
-		// instead. Points at to make way for one that has their value and shape. Edges in gaps stay in them. A range
-		// without points in it is automation too where the curve goes across it, between two points outside a gap.
-		// ponytail: a curve shaped point at an edge keeps its bend over the shorter rest of its segment.
-		void cutAutomation(
-			Project& project, AutomationLane& lane, int64_t from, int64_t to, bool close, CommandContext& context)
+		// instead, by length (to - from, unless an edge lies at a point in its sample, automationEdge) as the events
+		// after it move, to a joint where the curve after it goes on. But not before a point that stays before the
+		// range nor before the project's start: with the end edge on a point in its sample, to - length can lie up to
+		// half a sample, in ticks at the end's tempo, before from, and the points after the range would land before
+		// the point that stays, a terminator's gap swallowing them, or at negative positions. Then the joint is at
+		// that point or at 0, and the points after the range move back by less. Points at to make way for one that has
+		// their value and shape. Edges in gaps stay in them. A range without points in it is automation too where the
+		// curve goes across it, between two points outside a gap. ponytail: a curve shaped point at an edge keeps its
+		// bend over the shorter rest of its segment.
+		void cutAutomation(Project& project, AutomationLane& lane, int64_t from, int64_t to, bool close, int64_t length,
+			CommandContext& context)
 		{
 			constexpr int64_t endless = std::numeric_limits<int64_t>::max();
 			const bool across = anyPoint(lane, std::numeric_limits<int64_t>::min(), from) &&
@@ -1795,6 +1824,14 @@ namespace gnubase::engine
 			const std::optional<AutomationPoint> shape = shapingPoint(lane, to, true);
 			const bool leftGap = inGap(project, lane, from, true);
 			const bool rightGap = inGap(project, lane, to, false);
+			int64_t joint = to;
+			if (close)
+			{
+				joint = std::max<int64_t>(to - length, 0);
+				for (const auto& [id, point] : lane.points)
+					if (point.position.value < from)
+						joint = std::max(joint, point.position.value);
+			}
 			for (auto point = lane.points.begin(); point != lane.points.end();)
 			{
 				int64_t& at = point->second.position.value;
@@ -1804,14 +1841,15 @@ namespace gnubase::engine
 					continue;
 				}
 				if (close && at > to)
-					at -= to - from;
+					at -= to - joint;
 				++point;
 			}
 			if (!leftGap)
 				addPoint(project, lane,
-					makePoint(base, from, left, std::nullopt, close ? rightGap : project.virginTerritory));
+					makePoint(base, close ? std::min(from, joint) : from, left, std::nullopt,
+						close ? rightGap : project.virginTerritory));
 			if (!rightGap)
-				addPoint(project, lane, makePoint(base, close ? from : to, right, shape));
+				addPoint(project, lane, makePoint(base, joint, right, shape));
 			else if (!leftGap && !close && !project.virginTerritory)
 				addPoint(project, lane, makePoint(base, to, left, std::nullopt, true)); // the held value ends there
 			context.emit("automationLane.changed", {{"lane", toJson(lane)}});
@@ -1912,17 +1950,30 @@ namespace gnubase::engine
 			context.emit("automationLane.changed", {{"lane", toJson(lane)}});
 		}
 
+		// Where an edge of a range at a position in samples lies in a lane: on the tick nearest to it on a musical
+		// track, or at the first point in its sample before that tick. A point is in a range where it shows, in
+		// samples, as events and parts are (#1261): a point on the downbeat of a part that starts in the range's start
+		// sample goes with the part, and one on the downbeat of a part in the end sample stays with it (#1331). Not a
+		// terminator: an edge on it would fill the gap it starts with the value the curve arrives there with.
+		int64_t automationEdge(const Project& project, const AutomationLane& lane, time::Samples at)
+		{
+			const time::TimeBase base = project.trackById.at(lane.track).timeBase;
+			int64_t edge = inBase(project, at, base);
+			if (base == time::TimeBase::Musical)
+				for (const auto& [id, point] : lane.points)
+					if (!point.terminator && point.position.value < edge && samples(project, point.position) == at)
+						edge = point.position.value;
+			return edge;
+		}
+
 		// The automation in a range, as the clipboard keeps it: of each lane with points on its tracks.
 		std::vector<AutomationLane> automationIn(const Project& project, const Range& range)
 		{
 			std::vector<AutomationLane> lanes;
 			for (const auto& [id, lane] : project.automation)
 				if (contains(range.tracks, lane.track) && !lane.points.empty())
-				{
-					const time::TimeBase base = project.trackById.at(lane.track).timeBase;
-					lanes.push_back(automationWithin(
-						project, lane, inBase(project, range.start, base), inBase(project, range.end, base)));
-				}
+					lanes.push_back(automationWithin(project, lane, automationEdge(project, lane, range.start),
+						automationEdge(project, lane, range.end)));
 			return lanes;
 		}
 
@@ -1932,9 +1983,11 @@ namespace gnubase::engine
 			for (auto& [id, lane] : project.automation)
 				if (contains(range.tracks, lane.track))
 				{
+					// Closed by the range's length in the lane's time base, as the events after it move back.
 					const time::TimeBase base = project.trackById.at(lane.track).timeBase;
-					cutAutomation(project, lane, inBase(project, range.start, base), inBase(project, range.end, base),
-						close, context);
+					cutAutomation(project, lane, automationEdge(project, lane, range.start),
+						automationEdge(project, lane, range.end), close,
+						inBase(project, range.end, base) - inBase(project, range.start, base), context);
 				}
 		}
 
@@ -2099,7 +2152,7 @@ namespace gnubase::engine
 				if (contains(tracks, lane.track))
 				{
 					const time::TimeBase base = project.trackById.at(lane.track).timeBase;
-					openAutomation(project, lane, inBase(project, at, base), gap.in(base), context);
+					openAutomation(project, lane, automationEdge(project, lane, at), gap.in(base), context);
 				}
 		}
 
@@ -2290,7 +2343,18 @@ namespace gnubase::engine
 				const ObjectId id = part.id;
 				added.push_back({nullptr, &(project.midiParts[id] = std::move(part))});
 			}
-			const Gap landed = landing(project, added, shift, clipboard.startTicks, at);
+			// The automation that lands: on lanes of the same parameter that the tracks already have.
+			// ponytail: automation lands only on such lanes.
+			std::vector<AutomationLane> automation;
+			for (const AutomationLane& copied : clipboard.automation)
+			{
+				const ObjectId track = onto(copied.track);
+				if (std::any_of(project.automation.begin(), project.automation.end(),
+						[&copied, track](const auto& entry)
+						{ return entry.second.track == track && entry.second.target == copied.target; }))
+					automation.push_back(copied);
+			}
+			const Gap landed = landing(project, added, automation, shift, clipboard.startTicks, at);
 			for (const Item& item : added)
 			{
 				const ObjectId track = onto(item.track());
@@ -2298,13 +2362,12 @@ namespace gnubase::engine
 				place(project, item, landed.shift(item.position().base, 1), track);
 				announce(project, context, item, "added");
 			}
-			// ponytail: automation lands only on lanes of the same parameter that the tracks already have.
-			for (const AutomationLane& copied : clipboard.automation)
+			for (const AutomationLane& copied : automation)
 			{
 				const ObjectId track = onto(copied.track);
 				for (auto& [id, lane] : project.automation)
 					if (lane.track == track && lane.target == copied.target)
-						pasteAutomation(project, lane, copied, shift, context);
+						pasteAutomation(project, lane, copied, landed, context);
 			}
 			return added;
 		}
@@ -2347,7 +2410,7 @@ namespace gnubase::engine
 				movedEvents.insert(event->id);
 			}
 			const Gap landed =
-				landing(project, items, shift, ticks(project, {time::TimeBase::Linear, range.start}), at);
+				landing(project, items, automation, shift, ticks(project, {time::TimeBase::Linear, range.start}), at);
 			for (const Item& item : items)
 			{
 				place(project, item, landed.shift(item.position().base, 1), item.track());
@@ -2363,7 +2426,7 @@ namespace gnubase::engine
 			for (const AutomationLane& copied : automation)
 				for (auto& [id, lane] : project.automation)
 					if (lane.track == copied.track && lane.target == copied.target)
-						pasteAutomation(project, lane, copied, shift, context);
+						pasteAutomation(project, lane, copied, landed, context);
 			return {{"events", idsOf(items)}};
 		}
 

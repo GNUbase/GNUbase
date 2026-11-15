@@ -1432,3 +1432,270 @@ TEST_CASE("Create Groove Quantize Preset makes a preset of an audio event's hitp
 			ContainsSubstring("length goes with part"));
 	}
 }
+
+TEST_CASE("Reset of the Slice Rules puts the slices back together into their events", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	const std::vector<int64_t> played{6200, 25600, 47300, 72800};
+	const Loop close = addLoop(client, dir, "close", clicks(played, 4 * g_quarter));
+	const Loop room = addLoop(client, dir, "room", clicks(played, 4 * g_quarter));
+	setHitpoints(client, close.clip, played);
+	run(client, "event.setSnapPoint", {{"events", {close.event}}, {"position", 3000}});
+	const std::vector<std::vector<int64_t>> whole{{0, 0, 4 * g_quarter}};
+
+	// Sliced, quantized and crossfaded, as the panel does it (pp. 370-371).
+	const Json sliced =
+		run(client, "quantize.slice", {{"events", {close.event, room.event}}, {"offset", 5.0}}).at("events");
+	REQUIRE(sliced.size() == 10);
+	run(client, "quantize.set", {{"preset", "1/8"}});
+	run(client, "quantize.apply", {{"events", sliced}});
+	run(client, "quantize.crossfade", {{"events", sliced}, {"length", 2.0}});
+	REQUIRE(crossfades(client) == 8);
+
+	SECTION("every slice goes back into its event, which is as it was before slicing")
+	{
+		const Json result = run(client, "quantize.resetSlices", {{"events", sliced}});
+		CHECK(lastStep(client) == "Reset slices");
+		CHECK(result.at("events") == Json::array({close.event, room.event}));
+		CHECK(result.at("removed").size() == 8);
+		CHECK(eventsOn(client, close.track) == whole);
+		CHECK(eventsOn(client, room.track) == whole);
+		CHECK(byId(client, "audioEvents", close.event).at("snapPoint") == 3000);
+		CHECK(byId(client, "audioEvents", room.event).at("snapPoint").is_null());
+		CHECK(crossfades(client) == 0);
+		// Nothing left to reset, and quantize.reset has nothing either.
+		CHECK(run(client, "quantize.resetSlices", {{"events", {close.event}}}).at("events").empty());
+		CHECK(run(client, "quantize.reset", {{"events", {close.event}}}).at("events").empty());
+		run(client, "history.undo");
+		CHECK(eventsOn(client, close.track).size() == 5);
+		CHECK(crossfades(client) == 8);
+	}
+
+	SECTION("any slice of an event resets all of them, also one split by hand since and after a save and a load")
+	{
+		const std::vector<std::vector<int64_t>> slices = eventsOn(client, close.track);
+		const ObjectId slice = sliced.at(3).get<ObjectId>(); // a slice of close
+		const Json found = byId(client, "audioEvents", slice);
+		REQUIRE(found.at("track") == close.track);
+		run(client, "event.split", {{"events", {slice}}, {"positions", {found.at("position").get<int64_t>() + 1000}}});
+		const std::string file = (dir.path() / "sliced.dawproject").u8string();
+		run(client, "project.save", {{"path", file}, {"embedMedia", false}});
+		run(client, "project.new");
+		run(client, "project.load", {{"path", file}});
+		const Json result = run(client, "quantize.resetSlices", {{"events", {slice}}});
+		CHECK(result.at("events") == Json::array({close.event}));
+		CHECK(result.at("removed").size() == 5);
+		CHECK(eventsOn(client, close.track) == whole);
+		CHECK(eventsOn(client, room.track).size() == 5);
+	}
+
+	SECTION("slicing a slice again keeps the event it came from")
+	{
+		setHitpoints(client, room.clip, {36000});
+		run(client, "quantize.slice", {{"events", sliced}});
+		run(client, "quantize.resetSlices", {{"events", {room.event}}});
+		CHECK(eventsOn(client, room.track) == whole);
+	}
+
+	SECTION("a locked event and its slices stay")
+	{
+		Json closeSlices = Json::array();
+		for (const Json& id : sliced)
+			if (byId(client, "audioEvents", id.get<ObjectId>()).at("track") == close.track)
+				closeSlices.push_back(id);
+		run(client, "event.set", {{"events", {closeSlices.at(2)}}, {"lock", true}});
+		const Json result = run(client, "quantize.resetSlices", {{"events", sliced}});
+		CHECK(result.at("events") == Json::array({room.event}));
+		CHECK(eventsOn(client, close.track).size() == 5);
+		CHECK(eventsOn(client, room.track) == whole);
+	}
+
+	CHECK_THAT(reject(client, "quantize.resetSlices", {{"events", {999}}}), ContainsSubstring("no audio event 999"));
+}
+
+TEST_CASE(
+	"Reset of the Slice Rules puts back the event's fade out, and its start in the track's time base", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	const std::vector<int64_t> played{6200, 25600, 47300, 72800};
+	const Loop loop = addLoop(client, dir, "loop", clicks(played, 4 * g_quarter), 2000);
+	setHitpoints(client, loop.clip, played);
+	run(client, "audioEvent.setFades", {{"event", loop.event}, {"fadeOut", {{"length", 4800}}}});
+	const Json fadeOut = byId(client, "audioEvents", loop.event).at("fadeOut");
+	const Json sliced = run(client, "quantize.slice", {{"events", {loop.event}}}).at("events");
+	REQUIRE(sliced.size() == 5);
+	// event.split gave the fade out to the last slice.
+	REQUIRE(byId(client, "audioEvents", loop.event).at("fadeOut").at("length") == 0);
+
+	SECTION("the fade out comes back, also after a save and a load")
+	{
+		const std::string file = (dir.path() / "sliced.dawproject").u8string();
+		run(client, "project.save", {{"path", file}, {"embedMedia", false}});
+		run(client, "project.new");
+		run(client, "project.load", {{"path", file}});
+		run(client, "quantize.resetSlices", {{"events", sliced}});
+		CHECK(eventsOn(client, loop.track) == std::vector<std::vector<int64_t>>{{2000, 0, 4 * g_quarter}});
+		CHECK(byId(client, "audioEvents", loop.event).at("fadeOut") == fadeOut);
+	}
+
+	SECTION("a track switched to musical time since slicing: the event starts where it did, in ticks")
+	{
+		run(client, "track.set", {{"track", loop.track}, {"timeBase", "musical"}});
+		run(client, "quantize.resetSlices", {{"events", sliced}});
+		CHECK(eventsOn(client, loop.track) ==
+			std::vector<std::vector<int64_t>>{{time::g_ticksPerQuarter / 12, 0, 4 * g_quarter}}); // 2000 samples
+		CHECK(byId(client, "audioEvents", loop.event).at("fadeOut") == fadeOut);
+	}
+}
+
+TEST_CASE("Reset of the Warp Marker Creation Rules removes the markers Create made", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	const Loop a = addLoop(client, dir, "a", clicks({1000, 25600}, 2 * g_quarter));
+	setHitpoints(client, a.clip, {1000, 25600});
+	run(client, "clip.addWarpMarker", {{"clip", a.clip}, {"position", 40000}});
+	const Json mine = markersOf(client, a.clip);
+	REQUIRE(mine.size() == 1);
+	run(client, "quantize.createWarpMarkers", {{"events", {a.event}}});
+	REQUIRE(markersOf(client, a.clip).size() == 3);
+
+	SECTION("the user's own marker stays")
+	{
+		const Json result = run(client, "quantize.resetWarpMarkers", {{"events", {a.event}}});
+		CHECK(lastStep(client) == "Reset warp markers");
+		CHECK(result.at("clips") == Json::array({a.clip}));
+		CHECK(markersOf(client, a.clip) == mine);
+		CHECK(run(client, "quantize.resetWarpMarkers", {{"events", {a.event}}}).at("clips").empty());
+		run(client, "history.undo");
+		CHECK(markersOf(client, a.clip).size() == 3);
+	}
+
+	SECTION("also once they are warp quantized, and across a save and a load; quantize.reset then puts back the rest")
+	{
+		run(client, "quantize.set", {{"preset", "1/4"}, {"settings", {{"warpQuantize", true}}}});
+		run(client, "quantize.apply", {{"events", {a.event}}});
+		const std::string file = (dir.path() / "markers.dawproject").u8string();
+		run(client, "project.save", {{"path", file}, {"embedMedia", false}});
+		run(client, "project.new");
+		run(client, "project.load", {{"path", file}});
+		run(client, "quantize.resetWarpMarkers", {{"events", {a.event}}});
+		const Json left = markersOf(client, a.clip);
+		CHECK(std::none_of(left.begin(), left.end(),
+			[](const Json& marker) { return marker.at("position") == 1000 || marker.at("position") == 25600; }));
+		CHECK(std::any_of(left.begin(), left.end(), [](const Json& marker) { return marker.at("position") == 40000; }));
+		run(client, "quantize.reset", {{"events", {a.event}}});
+		CHECK(markersOf(client, a.clip) == mine);
+	}
+
+	SECTION("a locked event's clip keeps them")
+	{
+		run(client, "event.set", {{"events", {a.event}}, {"lock", true}});
+		CHECK(run(client, "quantize.resetWarpMarkers", {{"events", {a.event}}}).at("clips").empty());
+		CHECK(markersOf(client, a.clip).size() == 3);
+	}
+}
+
+TEST_CASE("Warp quantizing a selection range moves only the warp markers inside it", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	run(client, "audio.setDevice", {{"blockSize", 256}, {"inputChannels", 0}, {"captureSeconds", 6}});
+	// As in the whole event's test: beats 2 to 4 a little off, an eighth between beats 2 and 3.
+	const Loop loop = addLoop(client, dir, "loop", clicks({1000, 25000, 36500, 47000, 73000}, 4 * g_quarter));
+	setHitpoints(client, loop.clip, {25000, 36500, 47000, 73000});
+	run(client, "quantize.set", {{"preset", "1/4"}, {"settings", {{"warpQuantize", true}}}});
+
+	// The range from 12000 to 60000 (p. 370): the hitpoint at 73000 is outside it and stays where it plays.
+	const Json result = run(client, "quantize.apply", {{"events", {loop.event}}, {"start", 12000}, {"end", 60000}});
+	CHECK(result.at("clips") == Json::array({loop.clip}));
+	const Json markers = markersOf(client, loop.clip);
+	REQUIRE(markers.size() == 5);
+	CHECK(markers.front() == Json{{"position", 12000}, {"target", 12000}});
+	CHECK(markers.back() == Json{{"position", 60000}, {"target", 60000}});
+	const double eighth = g_quarter + (11500.0 * 24000.0 / 22000.0);
+	checkClicks(render(client, 4 * g_quarter), {1000.0, 24000.0, eighth, 48000.0, 73000.0});
+
+	SECTION("a range outside the event changes nothing")
+	{
+		run(client, "quantize.reset", {{"events", {loop.event}}});
+		CHECK(
+			run(client, "quantize.apply", {{"events", {loop.event}}, {"start", 5 * g_quarter}, {"end", 6 * g_quarter}})
+				.at("clips")
+				.empty());
+		CHECK(markersOf(client, loop.clip).empty());
+	}
+
+	SECTION("another range keeps what the first one quantized, and reset puts all back")
+	{
+		run(client, "quantize.apply", {{"events", {loop.event}}, {"start", 60000}, {"end", 90000}});
+		checkClicks(render(client, 4 * g_quarter), {1000.0, 24000.0, eighth, 48000.0, 72000.0});
+		run(client, "quantize.reset", {{"events", {loop.event}}});
+		CHECK(markersOf(client, loop.clip).empty());
+	}
+
+	CHECK_THAT(reject(client, "quantize.apply", {{"events", {loop.event}}, {"start", 12000}, {"end", 12000}}),
+		ContainsSubstring("end after start"));
+	CHECK_THAT(reject(client, "quantize.apply",
+				   {{"events", {loop.event}}, {"start", 0}, {"end", 12000}, {"settings", {{"warpQuantize", false}}}}),
+		ContainsSubstring("warpQuantize"));
+	CHECK_THAT(
+		reject(client, "quantize.apply", {{"events", {loop.event}}, {"start", 0}}), ContainsSubstring("start and end"));
+}
+
+TEST_CASE("The cutting positions are where Slice would cut", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	const std::vector<int64_t> played{6200, 25600, 47300, 72800};
+	const Loop close = addLoop(client, dir, "close", clicks(played, 4 * g_quarter));
+	const Loop room = addLoop(client, dir, "room", clicks(played, 4 * g_quarter));
+	// Without hitpoints there is nothing to show, which is no error.
+	CHECK(run(client, "quantize.slicePositions", {{"events", {close.event, room.event}}}).at("positions").empty());
+	setHitpoints(client, close.clip, played);
+	setHitpoints(client, room.clip, {6300, 60000});
+	const Json parameters = {{"events", {close.event, room.event}},
+		{"priorities", {{{"track", close.track}, {"priority", 2}}}}, {"range", 20.0}, {"offset", 5.0}};
+	const size_t steps = run(client, "history.get").at("steps").size();
+	const Json positions = run(client, "quantize.slicePositions", parameters).at("positions");
+	CHECK(positions == Json::array({5960, 25360, 47060, 59760, 72560}));
+	CHECK(run(client, "history.get").at("steps").size() == steps);
+	CHECK(eventsOn(client, close.track).size() == 1);
+	// Slice cuts there.
+	run(client, "quantize.slice", parameters);
+	std::vector<int64_t> starts = startsOn(client, close.track);
+	starts.erase(starts.begin());
+	CHECK(Json(starts) == positions);
+	CHECK_THAT(reject(client, "quantize.slicePositions", {{"events", {999}}}), ContainsSubstring("no audio event 999"));
+}
+
+TEST_CASE("Group Editing is a folder track's mode, saved with the project", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	const ObjectId audio =
+		run(client, "track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track").at("id").get<ObjectId>();
+	const ObjectId folder =
+		run(client, "track.add", {{"type", "folder"}, {"tracks", {audio}}}).at("track").at("id").get<ObjectId>();
+	CHECK(byId(client, "tracks", folder).at("groupEditing") == false);
+	const Json result = run(client, "track.set", {{"track", folder}, {"groupEditing", true}});
+	CHECK(result.at("track").at("groupEditing") == true);
+	run(client, "history.undo");
+	CHECK(byId(client, "tracks", folder).at("groupEditing") == false);
+	run(client, "history.redo");
+	const std::string file = (dir.path() / "group.dawproject").u8string();
+	run(client, "project.save", {{"path", file}, {"embedMedia", false}});
+	run(client, "project.new");
+	run(client, "project.load", {{"path", file}});
+	CHECK(byId(client, "tracks", folder).at("groupEditing") == true);
+	CHECK_THAT(reject(client, "track.set", {{"track", audio}, {"groupEditing", true}}),
+		ContainsSubstring("only folder tracks"));
+}

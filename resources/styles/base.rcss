@@ -1049,6 +1049,14 @@ meter .meter-peak
 	width: 48dp;
 }
 
+/* The arranger lane's field is as wide as the event it renames (code sets its width), at least wide enough for a
+   name. */
+.arranger-lane-row .arranger-lane-field.shown
+{
+	box-sizing: border-box;
+	min-width: 96dp;
+}
+
 .arranger-lane-row .arranger-lane-event
 {
 	position: absolute;
@@ -1321,6 +1329,26 @@ meter .meter-peak
 	top: 0;
 	bottom: 0;
 	pointer-events: none;
+}
+
+/* The quantize panel's cutting positions (docs/features/audio-quantize.md): code puts a .cutting-position line where
+   Slice would cut. */
+.event-display .cutting-positions
+{
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 0;
+	bottom: 0;
+	pointer-events: none;
+}
+
+.event-display .cutting-position
+{
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	width: 1px;
 }
 
 .event-display .part-mark

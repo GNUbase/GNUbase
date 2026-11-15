@@ -1,7 +1,8 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- GNUbase's widgets in 560x360 dp (#53): every skin of a theme in its states, with text and icons in the theme's
      colors. The document only lays them out; the shared style sheets and the active theme style them (ui::Themes).
-     The test hovers one button and list item and focuses a text field. Its screenshots are
+     The toolbar holds bar buttons: plain, checked, disabled and one that shows a value and opens a menu (#1342). The
+     test hovers one button and list item and focuses a text field. Its screenshots are
      tests/golden/ui/theme-<theme>.png, and theme-gnubase-2x.png at dp ratio 2. -->
 <rml>
 <head>
@@ -88,9 +89,10 @@
 	</div>
 	<div class="side">
 		<div class="toolbar">
-			<svg class="icon" src="../../../resources/icons/tool-pointer.svg"/>
-			<svg class="icon" src="../../../resources/icons/tool-split.svg"/>
-			<svg class="icon" src="../../../resources/icons/tool-draw.svg"/>
+			<button class="icon-only"><svg class="icon" src="../../../resources/icons/tool-pointer.svg"/></button>
+			<button class="icon-only checked"><svg class="icon" src="../../../resources/icons/tool-split.svg"/></button>
+			<button class="icon-only" disabled="disabled"><svg class="icon" src="../../../resources/icons/tool-draw.svg"/></button>
+			<button menu="grid-menu">Bar</button>
 		</div>
 		<div class="panel">
 			<div class="panel-header">Inspector</div>

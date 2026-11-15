@@ -540,6 +540,8 @@ TEST_CASE("note.move takes the named controller events along, keeping every fiel
 	CHECK(aloneEvents.count("note.removed") == 0);
 	CHECK(aloneEvents.count("note.added") == 0);
 	CHECK(aloneEvents.count("controller.added") == 1);
+	// A command's undo step has one name, so it is "Move notes" also when only controller events move.
+	CHECK(call(client, "history.get").at("steps").back().at("action") == "Move notes");
 	call(client, "history.undo");
 
 	// Within one part the controller events move in time with the notes, and nothing else of the part changes.

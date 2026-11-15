@@ -104,8 +104,16 @@ the same pane for its own sections (Set up Transport Panel, p. 295). Both are ke
   room (#1424). It then follows that width wherever it is, as far as its monitor has room, until the user sizes the
   window: when the controls show the project and whenever it changes, since the locator and range displays grow with
   their text, such as a time format's or a far locator's (#1474), and when the setup pane shows or hides sections
-  (#1527). Its window's entry in `ui.layout` keeps the width of the last fit as `fittedWidth`; a panel opened with
-  bounds of that width follows again, one the user sized keeps its bounds as they were.
+  (#1527). Its window's entry in `ui.layout` keeps the width of the last fit as `fittedWidth`, saved with the bounds
+  in one save; a panel opened with bounds of that width follows again, one the user sized keeps its bounds as they
+  were, also a width set right before the window's close button, since a close request saves the bounds before the
+  window goes. A panel that opens with bounds follows only once its controls show the project, when the engine
+  answered their first queries (`ui::TransportControls::onShown`), so it isn't fitted to their defaults first; a new
+  one is fitted to the defaults at once and then once more, again centred, for what they show (#1612). Reset All in
+  the panel's setup pane makes a panel the user sized, or one with bounds from before #1527, follow its sections
+  again. The fit (`ui::fitWidth`, `src/ui/displays.h`) keeps an open panel on its monitor, moved left only as far as
+  the monitor's right edge needs; it asks for the monitors only when the sections' width or the window's bounds
+  changed since it last looked, not in every frame while the transport runs.
 - **Time display window** (pp. 312–313): `window.timeDisplay` shows and hides `resources/ui/time-display.rml`, the
   project cursor in large digits, in the format of the slot `timeDisplay`, which its context menu picks. The main
   menu's Studio menu will run it. The context menu also has Show Beat Count Only (`timeDisplay.beatCountOnly`): the
