@@ -236,6 +236,9 @@ namespace gnubase::ui
 				field("Range", milliseconds("quantize-range", 0, 1000, 20, "Range")) +
 				field("Offset", milliseconds("quantize-offset", 0, 1000, 0, "Offset")) +
 				R"(<div class="quantize-row"><div class="quantize-spacer"/>)"
+				R"(<button id="quantize-slice-reset" action="resetSlices" title="Reset Slices">Reset</button>)"
+				R"(<button id="quantize-markers-reset" action="resetWarpMarkers" title="Reset Warp Markers">)"
+				R"(Reset</button>)"
 				R"(<button id="quantize-slice" action="slice" title="Slice">Slice</button>)"
 				R"(<button id="quantize-create-markers" action="createWarpMarkers" title="Create">Create</button>)"
 				R"(</div>)" +
@@ -392,6 +395,8 @@ namespace gnubase::ui
 			else if (m_audio && action == "createWarpMarkers")
 				m_audio("quantize.createWarpMarkers",
 					{{"range", fieldValue("quantize-range")}, {"priorities", priorities()}});
+			else if (m_audio && (action == "resetSlices" || action == "resetWarpMarkers"))
+				m_audio("quantize." + action, Json::object());
 			else if (m_audio && action == "crossfade")
 				m_audio("quantize.crossfade", {{"length", fieldValue("quantize-crossfade-length")}});
 			else if (m_audio && (action == "nudgeLeft" || action == "nudgeRight"))
@@ -527,6 +532,8 @@ namespace gnubase::ui
 		// Warp quantizing several tracks creates warp markers instead of slicing them (p. 378).
 		setClass(find("quantize-slice"), "hidden", warp);
 		setClass(find("quantize-create-markers"), "hidden", !warp);
+		setClass(find("quantize-slice-reset"), "hidden", warp);
+		setClass(find("quantize-markers-reset"), "hidden", !warp);
 
 		const bool groove = m_settings.at("groove").is_object();
 		setClass(find("quantize-grid-settings"), "hidden", groove);

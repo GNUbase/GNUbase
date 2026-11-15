@@ -704,6 +704,8 @@ namespace gnubase::engine
 		if (warp.quantizeOrigin)
 			json["quantizeOrigin"] = {{"original", markersJson(warp.quantizeOrigin->original)},
 				{"quantized", markersJson(warp.quantizeOrigin->quantized)}};
+		if (!warp.created.empty())
+			json["created"] = warp.created;
 		return json;
 	}
 
@@ -726,6 +728,7 @@ namespace gnubase::engine
 		if (const auto origin = json.find("quantizeOrigin"); origin != json.end()) // files from before #145
 			warp.quantizeOrigin =
 				WarpQuantizeOrigin{markersFrom(origin->at("original")), markersFrom(origin->at("quantized"))};
+		warp.created = json.value("created", std::vector<time::Samples>()); // files from before #1579
 		return warp;
 	}
 
@@ -750,6 +753,11 @@ namespace gnubase::engine
 			origin->quantized.position.base == event.position.base)
 			json["quantizeOrigin"] = {
 				{"original", eventTimingJson(origin->original)}, {"quantized", eventTimingJson(origin->quantized)}};
+		if (const auto& origin = event.sliceOrigin; origin && origin->timing.position.base == event.position.base)
+			json["sliceOrigin"] = {{"timing", eventTimingJson(origin->timing)},
+				{"snapPoint", origin->snapPoint ? Json(*origin->snapPoint) : Json()}};
+		if (event.slicedFrom != 0)
+			json["slicedFrom"] = event.slicedFrom;
 		return json;
 	}
 
@@ -2502,6 +2510,13 @@ namespace gnubase::engine
 			if (const auto origin = item.find("quantizeOrigin"); origin != item.end()) // files from before #145
 				event.quantizeOrigin = EventQuantizeOrigin{
 					eventTimingFrom(origin->at("original"), event), eventTimingFrom(origin->at("quantized"), event)};
+			if (const auto origin = item.find("sliceOrigin"); origin != item.end()) // files from before #1579
+			{
+				event.sliceOrigin = SliceOrigin{eventTimingFrom(origin->at("timing"), event), std::nullopt};
+				if (const Json snap = origin->value("snapPoint", Json()); !snap.is_null())
+					event.sliceOrigin->snapPoint = snap.get<time::Samples>();
+			}
+			event.slicedFrom = item.value("slicedFrom", ObjectId{0});
 			return event;
 		};
 		for (const Json& item : json.at("audioEvents"))

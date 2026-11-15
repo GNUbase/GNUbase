@@ -93,28 +93,48 @@ namespace gnubase::engine
 			return true;
 		}
 
-		// Quantizes the warp markers inside one event (positions after its offset and before its end).
-		void quantizeMarkers(Project& project, const AudioEvent& event, const midi::QuantizeGrid& grid)
+		// Quantizes the warp markers inside one event (positions after its offset and before its end), or inside the
+		// part of it in range (project samples, #1579).
+		void quantizeMarkers(Project& project, const AudioEvent& event, const midi::QuantizeGrid& grid,
+			const std::optional<SampleRange>& range)
 		{
 			Clip& clip = project.clips.at(event.clip);
 			const time::Samples length = clipLength(project, clip);
-			const time::Samples end = std::min(event.offset + event.length, length);
-			const auto inside = [&event, end](const WarpMarker& marker)
-			{ return marker.position > event.offset && marker.position < end; };
+			const time::Samples start = startOf(project, event);
+			time::Samples first = event.offset;
+			time::Samples last = std::min(event.offset + event.length, length);
+			const time::Samples end = last;
+			if (range)
+			{
+				const auto frameAt = [&](time::Samples sample)
+				{
+					return event.offset +
+						std::llround(eventFrames(project, event, static_cast<double>(sample - start)));
+				};
+				first = std::max(first, frameAt(range->start));
+				last = std::min(last, frameAt(range->end));
+				if (first >= last)
+					return;
+			}
+			const auto inside = [first, last](const WarpMarker& marker)
+			{ return marker.position > first && marker.position < last; };
 			std::vector<WarpMarker>& markers = clip.warp.markers;
 			const std::vector<WarpMarker> unchanged = markers;
 			if (std::none_of(markers.begin(), markers.end(), inside))
 			{
 				const std::vector<bool> active = activeHitpoints(clip);
 				for (size_t i = 0; i < clip.hitpoints.size(); ++i)
-					if (active[i] && clip.hitpoints[i].position > event.offset && clip.hitpoints[i].position < end)
+					if (active[i] && clip.hitpoints[i].position > first && clip.hitpoints[i].position < last)
 						addNeutralMarker(clip, length, clip.hitpoints[i].position);
 			}
 			if (std::none_of(markers.begin(), markers.end(), inside))
 				return;
-			// The event's start keeps playing the frame it plays, so that each marker inside plays where its own
-			// target puts it.
-			addNeutralMarker(clip, length, event.offset);
+			// The event's start, or the range's, keeps playing the frame it plays, so that each marker inside plays
+			// where its own target puts it; so does the range's end, so that the audio after it stays where it plays
+			// (p. 370).
+			addNeutralMarker(clip, length, first);
+			if (last < end)
+				addNeutralMarker(clip, length, last);
 
 			// Where each marker plays and where quantizing takes it, in project samples after the event's start.
 			struct Move
@@ -125,7 +145,6 @@ namespace gnubase::engine
 				time::Ticks grid = 0;
 				time::Ticks distance = 0;
 			};
-			const time::Samples start = startOf(project, event);
 			std::vector<Move> moves;
 			for (size_t i = 0; i < markers.size(); ++i)
 			{
@@ -149,10 +168,16 @@ namespace gnubase::engine
 							(other.distance == move.distance && other.index < move.index)))
 						move.to.reset();
 			// The others keep their places relative to the markers around them that move, and the event's start.
-			std::vector<std::pair<double, double>> anchors{{0.0, 0.0}};
+			const double startsAt = range ? warpedOffset(project, event, static_cast<double>(first)) : 0.0;
+			std::vector<std::pair<double, double>> anchors{{startsAt, startsAt}};
 			for (const Move& move : moves)
 				if (move.to)
 					anchors.emplace_back(move.from, *move.to);
+			if (last < end)
+			{
+				const double endsAt = warpedOffset(project, event, static_cast<double>(last));
+				anchors.emplace_back(endsAt, endsAt);
+			}
 			for (Move& move : moves)
 			{
 				if (move.to)
@@ -174,7 +199,7 @@ namespace gnubase::engine
 				// the real-time stretcher's range of both, so that playback follows it (dsp::WarpReader).
 				const WarpMarker before = move.index == 0 ? WarpMarker{} : markers[move.index - 1];
 				const auto next = std::find_if(markers.begin() + static_cast<std::ptrdiff_t>(move.index) + 1,
-					markers.end(), [end](const WarpMarker& each) { return each.position >= end; });
+					markers.end(), [last](const WarpMarker& each) { return each.position >= last; });
 				const WarpMarker after = next == markers.end() ? WarpMarker{length, length} : *next;
 				const auto fromBefore = static_cast<double>(marker.position - before.position);
 				// The fewest and most target frames that the sections from it to after may play in, each within
@@ -338,13 +363,17 @@ namespace gnubase::engine
 			Json made = Json::array();
 			for (const ObjectId id : events)
 			{
-				const AudioEvent& event = project.audioEvents.at(id);
+				AudioEvent& event = project.audioEvents.at(id);
 				Json pieces = Json::array({id});
 				if (event.lock)
 				{
 					made.push_back(id);
 					continue;
 				}
+				// What it was before slicing, unquantized, for the Reset of the Slice Rules to put back (p. 378). A
+				// slice cut again stays one of its event's: event.split makes each piece of it one.
+				if (!event.sliceOrigin && event.slicedFrom == 0)
+					event.sliceOrigin = SliceOrigin{originalOf(event, timingOf(event)), event.snapPoint};
 				const EventSpan span = eventSpan(project, event);
 				Json cuts = Json::array();
 				for (const time::Samples position : positions)
@@ -392,12 +421,17 @@ namespace gnubase::engine
 				const EventSpan span = eventSpan(project, event);
 				bool added = false;
 				for (const time::Samples position : positions)
-					if (position >= span.start && position < span.end)
-						added = addNeutralMarker(clip, clipLength(project, clip),
-									event.offset +
-										std::llround(
-											eventFrames(project, event, static_cast<double>(position - span.start)))) ||
-							added;
+				{
+					if (position < span.start || position >= span.end)
+						continue;
+					const time::Samples frame = event.offset +
+						std::llround(eventFrames(project, event, static_cast<double>(position - span.start)));
+					if (!addNeutralMarker(clip, clipLength(project, clip), frame))
+						continue;
+					added = true;
+					// The Reset of the Warp Marker Creation Rules removes it (p. 380).
+					clip.warp.created.push_back(frame);
+				}
 				if (added && std::find(clips.begin(), clips.end(), clip.id) == clips.end())
 					clips.push_back(clip.id);
 			}
@@ -551,6 +585,117 @@ namespace gnubase::engine
 				emitEvent(project.audioEvents.at(id), context);
 			return {{"events", changed}};
 		}
+
+		// quantize.resetSlices, the Reset of the Slice Rules (p. 378): puts the slices of each event that
+		// quantize.slice cut back together into it, as it was before slicing.
+		Json resetSlices(ProjectModel& model, Project& project, CommandContext& context)
+		{
+			std::vector<ObjectId> sliced; // the events the slices were cut from
+			for (const ObjectId id : eventList(project, context.parameters().at("events")))
+			{
+				const AudioEvent& event = project.audioEvents.at(id);
+				const ObjectId from = event.sliceOrigin ? id : event.slicedFrom;
+				const auto found = project.audioEvents.find(from);
+				if (found != project.audioEvents.end() && found->second.sliceOrigin &&
+					std::find(sliced.begin(), sliced.end(), from) == sliced.end())
+					sliced.push_back(from);
+			}
+			std::map<ObjectId, ObjectId> removed; // slice, the event it goes back into
+			Json reset = Json::array();
+			for (const ObjectId id : sliced)
+			{
+				AudioEvent& event = project.audioEvents.at(id);
+				// Its slices on its track; one moved to another track since, or a copy of one elsewhere, is the
+				// user's own now.
+				std::vector<ObjectId> slices;
+				bool locked = event.lock;
+				for (const auto& [other, each] : project.audioEvents)
+					if (each.slicedFrom == id && each.track == event.track && each.clip == event.clip)
+					{
+						slices.push_back(other);
+						locked = locked || each.lock;
+					}
+				// A locked event is protected from being edited (p. 276): the event and its slices stay.
+				if (locked)
+					continue;
+				const SliceOrigin origin = *event.sliceOrigin;
+				event.position = origin.timing.position;
+				event.offset = origin.timing.offset;
+				event.length = origin.timing.length;
+				event.crossfade = origin.timing.crossfade;
+				event.snapPoint = origin.snapPoint;
+				event.quantizeOrigin.reset();
+				event.sliceOrigin.reset();
+				for (const ObjectId slice : slices)
+					removed[slice] = id;
+				reset.push_back(id);
+			}
+			// Crossfades from the slices go to the events they go back into, and those of the events from before
+			// slicing come back only from events still there.
+			for (auto& [id, each] : project.audioEvents)
+			{
+				if (removed.count(id) != 0)
+					continue;
+				const auto follow = [&removed, &project](Crossfade& crossfade)
+				{
+					if (const auto into = removed.find(crossfade.from); into != removed.end())
+						crossfade.from = into->second;
+					else if (crossfade.from != 0 && project.audioEvents.count(crossfade.from) == 0)
+						crossfade = Crossfade();
+					else
+						return false;
+					return true;
+				};
+				bool changed = follow(each.crossfade);
+				if (each.quantizeOrigin)
+				{
+					changed = follow(each.quantizeOrigin->original.crossfade) || changed;
+					changed = follow(each.quantizeOrigin->quantized.crossfade) || changed;
+				}
+				if (changed || std::find(reset.begin(), reset.end(), Json(id)) != reset.end())
+					emitEvent(each, context);
+			}
+			Json gone = Json::array();
+			for (const auto& [slice, into] : removed)
+				gone.push_back(slice);
+			if (!gone.empty())
+				model.runEdit("event.remove", project, {{"events", gone}}, context);
+			return {{"events", std::move(reset)}, {"removed", std::move(gone)}};
+		}
+
+		// quantize.resetWarpMarkers, the Reset of the Warp Marker Creation Rules (p. 380): removes the warp markers
+		// quantize.createWarpMarkers made in the events' clips, also once warp quantizing moved them.
+		Json resetWarpMarkers(Project& project, CommandContext& context)
+		{
+			Json clips = Json::array();
+			for (const ObjectId id : eventList(project, context.parameters().at("events")))
+			{
+				const AudioEvent& event = project.audioEvents.at(id);
+				ClipWarp& warp = project.clips.at(event.clip).warp;
+				if (event.lock || warp.created.empty())
+					continue;
+				const std::vector<time::Samples> created = warp.created;
+				const auto remove = [&created](std::vector<WarpMarker>& markers)
+				{
+					markers.erase(
+						std::remove_if(markers.begin(), markers.end(), [&created](const WarpMarker& marker)
+							{ return std::find(created.begin(), created.end(), marker.position) != created.end(); }),
+						markers.end());
+				};
+				remove(warp.markers);
+				if (warp.quantizeOrigin)
+				{
+					remove(warp.quantizeOrigin->original);
+					remove(warp.quantizeOrigin->quantized);
+					if (warp.quantizeOrigin->original == warp.quantizeOrigin->quantized)
+						warp.quantizeOrigin.reset();
+				}
+				warp.created.clear();
+				clips.push_back(event.clip);
+				context.emit("clip.changed", {{"clip", toJson(project.clips.at(event.clip))}});
+			}
+			return {{"clips", std::move(clips)}};
+		}
 	}
 
 	bool quantizeEventStart(const Project& project, AudioEvent& event, const midi::QuantizeGrid& grid)
@@ -614,8 +759,8 @@ namespace gnubase::engine
 		return true;
 	}
 
-	std::vector<ObjectId> warpQuantize(
-		Project& project, const std::vector<ObjectId>& events, const midi::QuantizeGrid& grid)
+	std::vector<ObjectId> warpQuantize(Project& project, const std::vector<ObjectId>& events,
+		const midi::QuantizeGrid& grid, const std::optional<SampleRange>& range)
 	{
 		// Each clip starts from its original markers once, so that its events don't undo each other's quantizing.
 		std::map<ObjectId, ClipWarp> before;
@@ -629,14 +774,14 @@ namespace gnubase::engine
 			before[event.clip] = warp;
 			const bool still = warp.quantizeOrigin && warp.quantizeOrigin->quantized == warp.markers;
 			originals[event.clip] = still ? warp.quantizeOrigin->original : warp.markers;
-			if (!grid.settings().soft)
+			if (!grid.settings().soft && !range)
 				warp.markers = originals[event.clip];
 		}
 		for (const ObjectId id : events)
 		{
 			const AudioEvent& event = project.audioEvents.at(id);
 			if (!event.lock)
-				quantizeMarkers(project, event, grid);
+				quantizeMarkers(project, event, grid, range);
 		}
 		std::vector<ObjectId> changed;
 		for (const auto& [id, warp] : before)
@@ -724,5 +869,25 @@ namespace gnubase::engine
 				objectSchema({{"events", ids}, {"amount", number}}, {"events"}),
 				objectSchema({{"events", ids}}, {"events"}), false},
 			"Nudge crossfade", nudgeCrossfade);
+		model.addEdit(engine,
+			{"quantize.resetSlices", 1,
+				"Puts audio events that quantize.slice cut back together (the Reset of the Slice Rules, reference "
+				"manual p. 378): of each event that one of events is or is a slice of, the slices on its track, also "
+				"those split from them since, are removed and the event gets back the position, offset, length, "
+				"crossfade and snap point it had before slicing, unquantized. Crossfades from the slices go to it. An "
+				"event that is locked, or has a locked slice, stays as it is with its slices. Returns the events put "
+				"back together and the slices removed.",
+				objectSchema({{"events", ids}}, {"events"}),
+				objectSchema({{"events", ids}, {"removed", ids}}, {"events", "removed"}), false},
+			"Reset slices",
+			[&model](Project& project, CommandContext& context) { return resetSlices(model, project, context); });
+		model.addEdit(engine,
+			{"quantize.resetWarpMarkers", 1,
+				"Removes the warp markers that quantize.createWarpMarkers made in the clips of audio events (the Reset "
+				"of the Warp Marker Creation Rules, reference manual p. 380), also once warp quantizing moved them; "
+				"the clip's other markers stay, and quantize.reset still puts those back. The clips of locked events "
+				"keep them. Returns the clips changed.",
+				objectSchema({{"events", ids}}, {"events"}), objectSchema({{"clips", ids}}, {"clips"}), false},
+			"Reset warp markers", resetWarpMarkers);
 	}
 }

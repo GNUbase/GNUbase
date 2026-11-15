@@ -431,3 +431,66 @@ TEST_CASE("the quantize panel creates warp markers on several audio tracks", "[u
 				[](const Json& clip) { return clip.at("warp").at("markers").size() == 4; });
 		}));
 }
+
+TEST_CASE("the quantize panel's Reset buttons undo Slice and Create", "[ui]")
+{
+	Fixture f;
+	f.display.select({f.events[0], f.events[1]});
+	f.openPanel();
+	// Reset of the Slice Rules (reference manual p. 378) puts the slices back together.
+	CHECK(f.shown("#quantize-slice-reset"));
+	CHECK(f.hasClass("#quantize-markers-reset", "hidden"));
+	f.click("#quantize-slice");
+	CHECK(f.positionsAre(f.tracks[0], {2000, 3000, 27000, 49000, 75000}));
+	REQUIRE(f.app.waitUntil([&] { return f.display.project().at("audioEvents").size() == 10; }));
+	REQUIRE(f.app.waitUntil([&] { return f.display.selection().size() == 10; }));
+	f.click("#quantize-apply");
+	CHECK(f.positionsAre(f.tracks[0], {0, 0, 24000, 48000, 72000}));
+	f.click("#quantize-slice-reset");
+	CHECK(f.positionsAre(f.tracks[0], {2000}));
+	CHECK(f.positionsAre(f.tracks[1], {2000}));
+
+	// Reset of the Warp Marker Creation Rules (p. 380) removes the markers Create made.
+	f.display.select({f.events[0], f.events[1]});
+	f.click("#quantize-warp");
+	CHECK(f.app.waitUntil([&] { return f.shown("#quantize-markers-reset"); }));
+	CHECK(f.hasClass("#quantize-slice-reset", "hidden"));
+	const auto markers = [&](size_t count)
+	{
+		return f.app.waitUntil(
+			[&]
+			{
+				const Json all = f.project();
+				return std::all_of(all.at("clips").begin(), all.at("clips").end(),
+					[count](const Json& clip) { return clip.at("warp").at("markers").size() == count; });
+			});
+	};
+	f.click("#quantize-create-markers");
+	CHECK(markers(4));
+	f.click("#quantize-markers-reset");
+	CHECK(markers(0));
+}
+
+TEST_CASE("Edit > Quantize warp quantizes the selection range of an audio event", "[ui]")
+{
+	Fixture f;
+	f.app.call("quantize.set", {{"settings", {{"warpQuantize", true}}}});
+	// The range on the first track from the second click to the third (p. 370): only its marker moves.
+	f.display.setTool(ui::Tool::RangeSelection);
+	f.display.setRange(ui::RangeSelection{12000, 60000, {f.tracks[0]}});
+	CHECK(f.app.keys().canRun("edit.quantize", f.app.main(), nullptr));
+	f.menu("edit.quantize");
+	CHECK(f.app.waitUntil(
+		[&]
+		{
+			const Json clip = f.project().at("clips").at(0);
+			return clip.at("id") == f.clips[0] && clip.at("warp").at("markers").size() == 4;
+		}));
+	const Json markers = f.project().at("clips").at(0).at("warp").at("markers");
+	// At the range's start and end, in the event's clip, and the two hitpoints inside it.
+	CHECK(markers.at(0) == Json{{"position", 10000}, {"target", 10000}});
+	CHECK(markers.at(1).at("position") == 25000);
+	CHECK(markers.at(2).at("position") == 47000);
+	CHECK(markers.at(3) == Json{{"position", 58000}, {"target", 58000}});
+	CHECK(f.project().at("clips").at(1).at("warp").at("markers").empty());
+}

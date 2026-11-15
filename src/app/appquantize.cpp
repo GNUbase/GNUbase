@@ -173,6 +173,20 @@ namespace gnubase::app
 			target.parts.emplace_back(part, std::vector<uint64_t>());
 		target.events = selected("audioEvents");
 		target.audioParts = selected("audioParts");
+		// A selection range with the range selection tool: the audio events on its tracks, warp quantized in it
+		// (p. 370). The engine leaves an event outside it alone.
+		const std::optional<ui::RangeSelection>& range =
+			m_eventDisplay ? m_eventDisplay->range() : std::optional<ui::RangeSelection>();
+		if (range && range->end > range->start && m_eventDisplay->project().is_object())
+		{
+			target.events.clear();
+			target.audioParts.clear();
+			for (const Json& event : m_eventDisplay->project().value("audioEvents", Json::array()))
+				if (std::find(range->tracks.begin(), range->tracks.end(), event.at("track").get<uint64_t>()) !=
+					range->tracks.end())
+					target.events.push_back(event.at("id").get<uint64_t>());
+			target.range = std::make_pair(range->start, range->end);
+		}
 		return target;
 	}
 
@@ -285,6 +299,11 @@ namespace gnubase::app
 			{
 				parameters["events"] = target.events;
 				parameters["audioParts"] = target.audioParts;
+				if (target.range && command == "quantize.apply")
+				{
+					parameters["start"] = target.range->first;
+					parameters["end"] = target.range->second;
+				}
 			}
 			commands.push_back({{"command", command}, {"parameters", std::move(parameters)}});
 		}

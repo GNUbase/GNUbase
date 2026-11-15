@@ -614,6 +614,13 @@ namespace gnubase::engine
 					return {};
 				AudioEvent right = event;
 				right.id = project.newId();
+				// A piece of a slice the quantize panel cut is one of its event's slices too, which the Reset of the
+				// Slice Rules puts back together (#1579).
+				if (right.sliceOrigin)
+				{
+					right.sliceOrigin.reset();
+					right.slicedFrom = event.id;
+				}
 				// The piece after the split comes right in front of its event, behind whatever was in front of it: at
 				// its event's place, ranked right after it (#1189, #1281). Only the events at that place, the pieces
 				// of the event, get new ranks; ties from before ranks go by id, as stackKey orders them.

@@ -490,7 +490,8 @@ namespace gnubase::engine
 				{"markers", markersSchema}, {"preset", preset},
 				{"quantizeOrigin",
 					objectSchema(
-						{{"original", markersSchema}, {"quantized", markersSchema}}, {"original", "quantized"})}},
+						{{"original", markersSchema}, {"quantized", markersSchema}}, {"original", "quantized"})},
+				{"created", ids}},
 			{"musical", "tempo", "beatsPerBar", "gridStart", "beats", "markers", "preset"});
 		const Json resultSchema = objectSchema({{"clip", integer}, {"warp", warpSchema}}, {"clip", "warp"});
 		const std::string warpText =
@@ -500,7 +501,8 @@ namespace gnubase::engine
 			"than the tempo would, each at a clip frame), its free warp markers (each plays the audio at its "
 			"position where the clip frame target would play without it) and preset, the time stretch algorithm of "
 			"real-time warping; after warp quantizing also quantizeOrigin, the markers before it (original) and as it "
-			"left them (quantized). Emits clip.changed. Returns the clip's id and its warp.";
+			"left them (quantized), and created, the positions of the markers quantize.createWarpMarkers made. Emits "
+			"clip.changed. Returns the clip's id and its warp.";
 		const std::string markerRules =
 			"Markers can't pass each other, and no section between two of them, or one and the clip's start or end, "
 			"may play more than 4 times or less than a quarter as long, the real-time stretcher's range; a section "
