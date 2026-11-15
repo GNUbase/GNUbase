@@ -21,23 +21,24 @@ they are.
   the file has the other at its default and says which one it kept (the project's `presetKeeps`, in GNUbase's entry of
   the file), so that loading the preset leaves the other as the track has it and new tracks from it have the default.
 - **Listing them.** `track.presets` lists the presets by name with their file and the types of their tracks, top to
-  bottom. A file that isn't a readable DAWproject file is left out.
+  bottom, and of a preset that keeps only one of a MIDI track's channel and patch which one (`keeps`), which the Load
+  dialog shows after its name ("Keys (Patch only)"). A file that isn't a readable DAWproject file is left out.
 - **Loading a preset** (pp. 239-243). `track.loadPreset` `{tracks, name}` gives tracks the preset's sound, in one undo
   step (the reference can't undo it; GNUbase can, as every edit): the pre section, the equalizer, the strip, the fader
   and pan, the inserts (copies of the preset's, which replace the track's own and the automation of their plugins, as
   Paste Channel Settings does), the MIDI modifiers, inserts, sends, volume, pan, program, bank and device, the MIDI
-  channel (`channel.set` `midiChannel`; of a preset that keeps only one of them, that one), the instrument with its parameters, a sampler's sample, a drum machine's pads
-  with their names and samples, and for MIDI and instrument tracks the color. The samples' files are extracted next to
-  the preset (`Track Presets/<name> media`), as `track.import` extracts an archive's: a file there with other content,
-  as after the preset was saved again with another file of the same name, stays, as a project may play it, and the
-  new one goes beside it under a numbered name (`2-kick.wav`); one with the same content (size and CRC-32) is used as it
-  is, write time included, so that loading the preset again doesn't write over the files the project plays (#1567).
-  Their clips come into the pool (`media.added`, `clip.added`) unless it has the same clips already, so loading a
-  preset again adds none, a media file with the same audio as one of the project's, as in the project the preset was
-  saved in, shares the project's file, and the
-  lanes of a drum track's patterns take the names of the pads (`pattern.changed`). Not the name, routing, sends, buttons
-  or notes. The tracks must be as many as the preset's, of the same types in the same order (p. 241): the first of
-  `tracks` gets the sound of the preset's top track, and so on.
+  channel (`channel.set` `midiChannel`; of a preset that keeps only one of them, that one), the instrument with its
+  parameters, a sampler's sample, a drum machine's pads with their names and samples, and for MIDI and instrument tracks
+  the color. The samples' files are extracted next to the preset (`Track Presets/<name> media`), as `track.import`
+  extracts an archive's: a file there with other content, as after the preset was saved again with another file of the
+  same name, stays, as a project may play it, and the new one goes beside it under a numbered name (`2-kick.wav`); one
+  with the same content (size and CRC-32) is used as it is, write time included, so that loading the preset again
+  doesn't write over the files the project plays (#1567). Their clips come into the pool (`media.added`, `clip.added`)
+  unless it has the same clips already, so loading a preset again adds none, a media file with the same audio as one of
+  the project's, as in the project the preset was saved in, shares the project's file, and the lanes of a drum track's
+  patterns take the names of the pads (`pattern.changed`). Not the name, routing, sends, buttons or notes. The tracks
+  must be as many as the preset's, of the same types in the same order (p. 241): the first of `tracks` gets the sound of
+  the preset's top track, and so on.
 - **Adding tracks from a preset** (Use Track Preset, p. 199). `track.addFromPreset` `{name, track}` adds the preset's
   tracks below `track` in its folder, or at the bottom of the track list, with their sound. Outputs go to the project's
   busses with the same names, or the main output.
@@ -177,8 +178,9 @@ stays open.
 The track preset dialog (`resources/ui/track-preset.rml`) gets the mode and the selected tracks from `app::AppUi` and
 does the rest in its Lua through the engine's commands: a name field for Save, with MIDI tracks among the selected ones
 a choice of what they keep, Channel and Patch, Channel or Patch (`keep`), a list of the presets for Add, and for Load
-only the presets whose track types are those of the selected tracks in their order. When the engine refuses, its
-message shows and the dialog stays open.
+only the presets whose track types are those of the selected tracks in their order, a preset that keeps only one of a
+MIDI track's channel and patch named with it ("Keys (Patch only)"). When the engine refuses, its message shows and the
+dialog stays open.
 
 ```
 #track-preset-dialog
@@ -209,7 +211,7 @@ drum maps and Input Transformer settings in presets, pattern banks, quick contro
   in one undo step, not the buttons or the routing, and refuse other types, counts and orders, unknown presets, folders
   and bad names; multi-track presets; a MIDI track's preset keeping its channel or its patch alone, which loading it
   leaves as the track has it and new tracks from it get at the default, and another `keep` refused; `track.presets`
-  lists names and types; `track.addFromPreset` adds below a track or
+  lists names and types, and what a preset keeps; `track.addFromPreset` adds below a track or
   at the bottom; `track.export` and `track.import` round-trip a folder with its group channel, an audio track with its
   event, media file, insert, send and automation, a MIDI track playing an instrument track and an effect track, in one
   undo step, and import some tracks only, without events, settings or automation, with sends that find the project's
@@ -251,4 +253,4 @@ drum maps and Input Transformer settings in presets, pattern banks, quick contro
   range from the locators' timecodes at Relative Position; the engine's refusals of an
   export in the project error dialog and the tracks it left out in the dialog titled Export Selected Tracks; and the
   track preset dialog's Save, with a MIDI track's patch alone and no choice for an audio track, Load (with only
-  matching presets listed) and Add.
+  matching presets listed, the one that keeps the patch alone named so) and Add.

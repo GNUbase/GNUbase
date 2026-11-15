@@ -11,6 +11,10 @@
 #include "ui/tracklist.h"
 #include "uiapp.h"
 
+#include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
@@ -130,6 +134,21 @@ namespace
 		app.shell().step(std::chrono::milliseconds(0));
 	}
 
+	// The texts of a drop-down list's options, which aren't in the DOM that the UI tools see.
+	std::vector<std::string> options(test::UiApp& app, const std::string& selector)
+	{
+		Rml::Element* element = nullptr;
+		for (int i = 0; element == nullptr && i < app.main().context().GetNumDocuments(); ++i)
+			element = app.main().context().GetDocument(i)->QuerySelector(selector);
+		auto* list = dynamic_cast<Rml::ElementFormControlSelect*>(element);
+		REQUIRE(list != nullptr);
+		std::vector<std::string> texts;
+		texts.reserve(static_cast<size_t>(list->GetNumOptions()));
+		for (int i = 0; i < list->GetNumOptions(); ++i)
+			texts.push_back(list->GetOption(i)->GetInnerRML());
+		return texts;
+	}
+
 	void select(test::UiApp& app, const std::vector<ObjectId>& tracks)
 	{
 		// The track list shows new tracks once their events came.
@@ -216,6 +235,7 @@ TEST_CASE(
 	CHECK(presets[0].at("tracks") == Json{"audio", "midi"});
 	CHECK(presets[1].at("name") == "Lead Vox");
 	CHECK(presets[1].at("tracks") == Json{"audio"});
+	CHECK(!presets[0].contains("keeps")); // a preset that keeps a MIDI track's channel and patch
 
 	const Added other = add(client, {{"type", "audio"}, {"name", "Other"}});
 	const Json before = channelJson(client, other.channel);
@@ -262,6 +282,11 @@ TEST_CASE("a MIDI track's preset keeps its channel or its patch, which loading i
 	run(client, "track.savePreset", {{"tracks", {strings.track}}, {"name", "Patch"}, {"keep", "patch"}});
 	CHECK_THAT(reject(client, "track.savePreset", {{"tracks", {strings.track}}, {"name", "Both"}, {"keep", "both"}}),
 		ContainsSubstring("keep"));
+	// track.presets says which one a preset keeps.
+	const Json presets = run(client, "track.presets").at("presets");
+	REQUIRE(presets.size() == 2);
+	CHECK(presets[0].at("keeps") == "channel");
+	CHECK(presets[1].at("keeps") == "patch");
 
 	const auto patch = [](const Json& channel)
 	{ return Json{channel.at("program"), channel.at("bank"), channel.at("midiChannel"), channel.at("midiVolume")}; };
@@ -1923,7 +1948,7 @@ TEST_CASE("the track preset dialog saves, loads and adds track presets", "[ui]")
 	select(app, {midi.at("track").at("id").get<ObjectId>()});
 	app.keys().run("track.loadTrackPreset", Json::object(), app.main(), nullptr);
 	REQUIRE(app.waitUntil([&app] { return shown(app, "#track-preset-dialog"); }));
-	CHECK(app.ui().dom(std::nullopt, "#preset-list option", 0).at("elements").empty());
+	CHECK(options(app, "#preset-list").empty());
 	click(app, "#track-preset-dialog button[result=cancel]");
 
 	// Its preset keeps the patch alone: Patch is the last choice.
@@ -1937,6 +1962,11 @@ TEST_CASE("the track preset dialog saves, loads and adds track presets", "[ui]")
 	app.ui().text(std::nullopt, "Keys");
 	click(app, "#preset-confirm");
 	REQUIRE(app.waitUntil([&app] { return !shown(app, "#track-preset-dialog"); }));
+	// Load says what it keeps.
+	app.keys().run("track.loadTrackPreset", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#track-preset-dialog"); }));
+	CHECK(options(app, "#preset-list") == std::vector<std::string>{"Keys (Patch only)"});
+	click(app, "#track-preset-dialog button[result=cancel]");
 	app.call("channel.set", {{"channel", midi.at("channel").at("id")}, {"program", 10}, {"midiChannel", 3}});
 	app.call("track.loadPreset", {{"tracks", {midi.at("track").at("id")}}, {"name", "Keys"}});
 	const Json keys = channelOf(app.call("project.get"), "Keys");
