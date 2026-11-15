@@ -63,7 +63,8 @@ removed).
   (`midi::soundSlots`): of each group, its attribute or else the direction in effect at its start; the slot with
   exactly those articulations, else the slot that has those of the more important groups, then the fewest others,
   then the first: with no match the default slot (pp. 1262, 1278). Where a note's slot differs from the last one its
-  track sent, across the track's parts in the order of the notes' starts (and at the track's first note), the off events
+  track sent, across the track's parts in the order the notes play in, earlier by their slots' Attack Compensation
+  (and at the track's first note), the off events
   of that slot and the new slot's on events play (#1491): controller and program changes where the note starts, key
   switches for one sample just before it, and at one sample before the notes that start there, whatever their pitch (at
   the project's start a key switch can't come a sample before), in the order the track sends them, so that the
@@ -95,8 +96,10 @@ removed).
   pitch and velocity ranges keep the note's pitch and velocity in them after the slot's transpose and velocity, also
   for the notes played into the track. A remote trigger of an add-on slot in a recording adds the directions of its own
   groups only, and their resets where its key is released without latch; its attributes go to the notes that start
-  while it is selected, until a trigger of a slot of its groups. Played into the track, it sends its on events, and
-  without latch its off events where the key is released, and leaves the selected slot as it is.
+  while it is selected, until a trigger of a slot of its groups. Slots that aren't add-ons leave its groups alone
+  while it is selected, and without latch its key isn't one that comes before a held key's release. Played into the
+  track, it sends its on events, and without latch its off events where the key is released, and leaves the selected
+  slot as it is.
 - **Remote triggers** (pp. 1263, 1268, 1282). In what a recording brings to a track with a map (`recording.add`), the
   notes whose pitch is a slot's trigger (Key Switch), or the program changes whose program is one (Program Change),
   aren't recorded; they select their slot instead: a direction for each group that has directions, the slot's own or
@@ -244,11 +247,14 @@ files and other applications' maps.
   color, and a held key's note-off once it is a trigger. `tests/midipatches_tests.cpp` plays them into a MIDI track set
   to a channel: key switches with latch, the selected slot going out again when the track's channel changes, the default
   slot coming back on the track's channel where a trigger key is released without latch, and program change triggers.
-  Its last three test cases (#1113): add-on slots' output events besides the slot of the other groups, and the
+  Its last test cases (#1113): add-on slots' output events besides the slot of the other groups, and the
   default slot refused as one; Attack Compensation, Separation and the pitch and velocity ranges, with a range refused;
+  slots changing in the order the notes play with Attack Compensation;
   `articulationMap.remoteTriggers` transposing one map and all with one undo step, refusing triggers out of range,
   reassigning on white and black keys with Skip First Slot and past 127, program changes, and removing them;
-  an add-on slot's trigger played into a track (`midi.inject`).
+  an add-on slot's trigger played into a track (`midi.inject`); remote triggers in a recording also check one recorded
+  with latch before another slot's trigger and without latch while another slot's key is held, with its attribute on
+  the notes.
   `tests/midi_tests.cpp` and `tests/sequencing_tests.cpp` check the chased key switches, and
   `tests/sequencing_tests.cpp` a jump with the chase limited to parts into a part that continues the slot of the part
   before it (#1521); `tests/rtcheck_tests.cpp` plays remote triggers through the RT checker.
