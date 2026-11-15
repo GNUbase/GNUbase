@@ -1077,6 +1077,8 @@ TEST_CASE("an in-place editor joins a dense note's expression steps by its pixel
 	f.app.keys().run("editor.openInPlace", Json::object(), f.app.main(), nullptr);
 	f.settle(2);
 	const std::string steps = f.note(f.notes[0]) + " .key-expression-step";
+	// The note's points and the view come with the engine's events, which may follow the notes' placement.
+	REQUIRE(f.app.waitUntil([&] { return !f.elements(steps).empty(); }));
 	const auto perPixel = [&f, &steps]
 	{
 		f.app.shell().step(std::chrono::milliseconds(0));
