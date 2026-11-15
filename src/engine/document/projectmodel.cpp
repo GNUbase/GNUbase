@@ -1485,6 +1485,12 @@ namespace gnubase::engine
 				require(track.drumMap == 0 || project.drumMaps.count(track.drumMap) != 0,
 					"no drum map " + std::to_string(track.drumMap));
 			}
+			if (parameters.contains("gmNames"))
+			{
+				track.gmNames = parameters.at("gmNames").get<bool>();
+				require(!track.gmNames || track.type == TrackType::Midi || track.type == TrackType::Instrument,
+					"only MIDI and instrument tracks have a name list");
+			}
 			if (parameters.contains("articulationMap"))
 			{
 				track.articulationMap = parameters.at("articulationMap").get<ObjectId>();
@@ -3703,6 +3709,20 @@ namespace gnubase::engine
 				{"redo", position < steps.size() ? Json(steps[position].action) : Json(nullptr)}});
 	}
 
+	void ProjectModel::setSoloNotes(std::vector<std::pair<ObjectId, ObjectId>> notes)
+	{
+		if (notes == m_project.soloNotes)
+			return;
+		m_project.soloNotes = std::move(notes);
+		const bool saved = m_savedRevision == m_revision;
+		const bool autoSaved = m_autoSavedRevision == m_revision;
+		publish();
+		if (saved)
+			m_savedRevision = m_revision;
+		if (autoSaved)
+			m_autoSavedRevision = m_revision;
+	}
+
 	void ProjectModel::publish()
 	{
 		m_snapshots.publish(compile(m_project, ++m_revision, &m_snapshots.latest(), m_openedRevision));
@@ -4338,12 +4358,15 @@ namespace gnubase::engine
 				"track's notes play through, or 0 for none; articulationMap its articulation map "
 				"(articulationMap.add), or 0 for none, whose remote triggers also select the sound slot of the notes "
 				"played into the track (midi.inject, its MIDI input): a trigger key or program doesn't play but sends "
-				"the slot's output events, and the notes after it get the slot's channel, transpose and velocity.",
+				"the slot's output events, and the notes after it get the slot's channel, transpose and velocity. "
+				"gmNames, for a MIDI or instrument track, is its name list (reference manual p. 1239): true for GM "
+				"Default, which names its pitches by General MIDI's percussion sounds in the editors while it has no "
+				"drum map, false for No Names.",
 				objectSchema(
 					{{"track", idSchema}, {"name", stringSchema}, {"color", color}, {"timeBase", timeBases},
 						{"timeFormat", timeFormats}, {"timeOffset", positionSchema}, {"timeOffsetOn", booleanSchema},
 						{"enabled", booleanSchema}, {"groupChannel", booleanSchema}, {"picture", stringSchema},
-						{"drumMap", idSchema}, {"articulationMap", idSchema}},
+						{"drumMap", idSchema}, {"articulationMap", idSchema}, {"gmNames", booleanSchema}},
 					{"track"}),
 				resultSchema({"track"}), false},
 			setTrack);
