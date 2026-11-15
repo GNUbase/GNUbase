@@ -620,8 +620,9 @@ namespace gnubase::engine
 		// The notes they played end where the track records and plays, ahead of the parts' notes, which never
 		// passed them, and the inserts below the divider get the note-offs.
 		m_input.clear();
-		if (changes)
+		if (changes || m_inputGo)
 			endHeld(m_inputPlayed, m_input, false);
+		m_inputGo = false;
 		m_input.merge(*played);
 		holdNotes(m_input, m_inputPlayed);
 	}
@@ -767,13 +768,22 @@ namespace gnubase::engine
 						m_sendOut[slot].add(noteEvent(graph::ProcessEvent::Type::NoteOff, index, 0));
 			m_sendHeld[slot].fill(false);
 		}
+		// The notes the inserts above the divider played end in the track's input when one of them goes, so that the
+		// track records their note-offs: at once without inserts there any more, else after those, which are new
+		// (runInputEffects).
+		const bool inputGoes = sequence.inputCount != m_inputCount ||
+			!std::equal(
+				inserts.begin(), inserts.begin() + static_cast<std::ptrdiff_t>(m_inputCount), m_inserts.begin());
+		if (sequence.inputCount == 0)
+			endHeld(m_inputPlayed, m_input, false);
+		else
+			m_inputGo = inputGoes;
+		m_inputCount = sequence.inputCount;
 		m_inserts = inserts;
 		m_insertCount = insertCount;
 		m_sends = sends;
 		m_sendElsewhere = elsewhere;
 		m_effects = !sequence.effects.empty();
-		if (sequence.inputCount == 0)
-			m_inputPlayed.fill(false);
 	}
 
 	void MidiSequencer::remember(const MidiSequence& sequence, const graph::EventBuffer& events) noexcept

@@ -357,8 +357,10 @@ namespace gnubase::engine
 		void endHeld(std::array<bool, g_notes>& held, graph::EventBuffer& out, bool shared) noexcept;
 		// When the sequence is new: ends the notes that the effects that go played, at the track's output unless one
 		// that stays holds them too, and at the instrument tracks the sends played to. The inserts' output counts as
-		// gone when any insert is new or gone, as the effects that arrive didn't see the note-ons. A new instance
-		// takes the values its slot's automation sent last (m_automated), which the lanes don't send again.
+		// gone when any insert is new or gone, as the effects that arrive didn't see the note-ons. When an insert above
+		// the divider goes, the notes the inserts there played (m_inputPlayed) end in the track's input too, where the
+		// track records them. A new instance takes the values its slot's automation sent last (m_automated), which the
+		// lanes don't send again.
 		void takeEffects(const MidiSequence& sequence, graph::EventBuffer& out) noexcept;
 		// Remembers the values the automation sends the effects' parameters in the block (m_automated).
 		void remember(const MidiSequence& sequence, const graph::EventBuffer& events) noexcept;
@@ -524,6 +526,8 @@ namespace gnubase::engine
 		// highest serial that played.
 		std::array<uint64_t, midi::g_effectSlots> m_inserts{};
 		size_t m_insertCount = 0;
+		size_t m_inputCount = 0; // of them above the divider
+		bool m_inputGo = false;  // one of those went: runInputEffects ends the notes they played (m_inputPlayed)
 		std::array<uint64_t, midi::g_effectSlots> m_sends{};
 		std::array<bool, midi::g_effectSlots> m_sendElsewhere{}; // those sends played to another instrument track
 		uint64_t m_newest = 0;
