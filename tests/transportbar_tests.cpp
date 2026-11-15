@@ -31,6 +31,7 @@
 #include <cmath>
 #include <cstdint>
 #include <functional>
+#include <future>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -317,6 +318,9 @@ namespace
 			}
 			return std::make_pair(last, inside);
 		};
+		// After the controls' first queries: the next step hands their answers on, and the panel follows from then.
+		app.call("engine.version");
+		app.shell().step(std::chrono::milliseconds(0));
 		const auto fitted = [&]
 		{
 			const auto [last, inside] = measure();
@@ -438,6 +442,174 @@ TEST_CASE("an open transport panel follows the width of its sections until the u
 	app.ui().key(std::nullopt, "F2");
 	settle();
 	CHECK(panelWidth(app) == wide + 40);
+}
+
+namespace
+{
+	// Keeps the engine's command thread busy until it goes: what the UI sends meanwhile is answered later, as by a
+	// command thread busy with a long command.
+	class BusyEngine
+	{
+	public:
+		explicit BusyEngine(engine::Engine& engine)
+		{
+			engine.post("engine.version", Json::object(),
+				[released = m_release.get_future().share()](const engine::Result&) { released.wait(); });
+		}
+		~BusyEngine() { m_release.set_value(); }
+		BusyEngine(const BusyEngine&) = delete;
+		BusyEngine& operator=(const BusyEngine&) = delete;
+		BusyEngine(BusyEngine&&) = delete;
+		BusyEngine& operator=(BusyEngine&&) = delete;
+
+	private:
+		std::promise<void> m_release;
+	};
+
+	// A project whose transport controls are wider than their defaults: timecode, with the locators an hour out.
+	void wideProject(test::UiApp& app)
+	{
+		app.call("project.set", {{"timeFormat", "timecode"}});
+		app.call("transport.set", {{"left", int64_t{48000} * 3600}, {"right", int64_t{48000} * 7200}});
+	}
+
+	bool showsWideProject(test::UiApp& app)
+	{
+		const ui::Window* panel = app.appUi().transportPanel();
+		return panel != nullptr && shows(app, "#left-locator", panel->id()) == "01:00:00:00";
+	}
+
+	// Steps the shell for a while, adding the transport panel's width after every step.
+	void recordWidths(test::UiApp& app, std::vector<int>& widths, std::chrono::milliseconds time)
+	{
+		app.waitUntil(
+			[&]
+			{
+				widths.push_back(panelWidth(app));
+				return false;
+			},
+			time);
+	}
+}
+
+TEST_CASE("a fitted transport panel opens as wide as it was, also while the engine is busy", "[ui]")
+{
+	// Until the engine answers, the controls show their defaults, narrower than the project's: the panel follows its
+	// sections only once they show the project, so it doesn't get narrower and then as wide as it was (#1612).
+	test::UiApp app({1024, 700});
+	app.appUi().showProject();
+	wideProject(app);
+	checkPanelFits(app, 0.5F, [&app] { return showsWideProject(app); });
+	const int wide = panelWidth(app);
+	app.ui().key(std::nullopt, "F2");
+	REQUIRE(app.appUi().transportPanel() == nullptr);
+	std::vector<int> widths;
+	{
+		const BusyEngine busy(app.engine());
+		app.ui().key(std::nullopt, "F2");
+		recordWidths(app, widths, std::chrono::milliseconds(200));
+		CHECK_FALSE(showsWideProject(app));
+	}
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			widths.push_back(panelWidth(app));
+			return showsWideProject(app);
+		}));
+	recordWidths(app, widths, std::chrono::milliseconds(300));
+	for (const int width : widths)
+		CHECK(width == wide);
+}
+
+TEST_CASE("a new transport panel is centred for the project it shows, also when the engine answers late", "[ui]")
+{
+	// Fitted to the controls' defaults at once, centred, and once they show the project centred again for its width.
+	test::UiApp app({1024, 700});
+	app.setDpRatio(0.5F);
+	app.appUi().showProject();
+	wideProject(app);
+	{
+		const BusyEngine busy(app.engine());
+		app.ui().key(std::nullopt, "F2");
+		REQUIRE(app.appUi().transportPanel() != nullptr);
+		app.shell().step(std::chrono::milliseconds(0));
+	}
+	const int defaults = panelWidth(app);
+	REQUIRE(app.waitUntil([&] { return showsWideProject(app) && panelWidth(app) > defaults; }));
+	const ui::Rect bounds = app.shell().bounds(app.appUi().transportPanel()->id());
+	CHECK(bounds == ui::centred(bounds.size(), app.shell().displays().front()));
+}
+
+TEST_CASE("each fit of the transport panel saves the window layout once", "[ui]")
+{
+	test::UiApp app({1024, 700});
+	app.appUi().showProject();
+	checkPanelFits(app, 0.5F);
+	REQUIRE(app.waitUntil([&app]
+		{ return app.call("settings.get", {{"key", "ui.layout"}}).at("value") == app.appUi().docking().layout(); }));
+	int saves = 0;
+	const ui::Subscription counting = app.appUi().binding().on("settings.changed",
+		[&saves](const engine::Event& event)
+		{
+			if (event.data.at("values").contains("ui.layout"))
+				++saves;
+		});
+	int fits = 0;
+	int last = panelWidth(app);
+	wideProject(app);
+	app.waitUntil(
+		[&]
+		{
+			if (const int width = panelWidth(app); width != last)
+			{
+				++fits;
+				last = width;
+			}
+			return false;
+		},
+		std::chrono::seconds(1));
+	REQUIRE(fits > 0);
+	CHECK(saves == fits);
+}
+
+TEST_CASE("a transport panel keeps a width set right before its window's close button", "[ui]")
+{
+	// The close request saves the bounds before the window goes, not only once the shell closed it (#1612).
+	test::UiApp app({1024, 700});
+	app.appUi().showProject();
+	checkPanelFits(app, 0.5F);
+	const ui::WindowId id = app.appUi().transportPanel()->id();
+	ui::Rect sized = app.shell().bounds(id);
+	sized.width += 40;
+	app.shell().setBounds(id, sized);
+	app.shell().requestClose(id);
+	REQUIRE(app.appUi().transportPanel() == nullptr);
+	app.ui().key(std::nullopt, "F2");
+	std::vector<int> widths;
+	recordWidths(app, widths, std::chrono::milliseconds(300));
+	for (const int width : widths)
+		CHECK(width == sized.width);
+}
+
+TEST_CASE("Reset All in its setup pane makes a transport panel the user sized follow its sections again", "[ui]")
+{
+	test::UiApp app({1024, 700});
+	app.appUi().showProject();
+	checkPanelFits(app, 0.5F);
+	const int fitted = panelWidth(app);
+	const ui::WindowId id = app.appUi().transportPanel()->id();
+	ui::Rect sized = app.shell().bounds(id);
+	sized.width += 40;
+	app.shell().setBounds(id, sized);
+	std::vector<int> widths;
+	recordWidths(app, widths, std::chrono::milliseconds(300));
+	CHECK(panelWidth(app) == sized.width); // sized by the user
+
+	app.appUi().docking().resetSections("transportPanel", "transport");
+	REQUIRE(app.waitUntil([&] { return panelWidth(app) == fitted; }, std::chrono::seconds(2)));
+	// And it follows from there: wider for a wider project.
+	wideProject(app);
+	REQUIRE(app.waitUntil([&] { return panelWidth(app) > fitted; }, std::chrono::seconds(2)));
 }
 
 TEST_CASE("the transport bar goes to markers, the project's ends and the selection", "[ui]")

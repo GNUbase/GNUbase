@@ -265,6 +265,14 @@ namespace gnubase::app
 			// system hasn't given it the fitted one yet (#1527).
 			Rml::ObserverPtr<Rml::Element> sections;
 			int unfitted = 0;
+			// Whether the panel follows its sections, once the controls show the project, and whether its next fit
+			// centres it, for a panel that opened without bounds (#1612).
+			bool follows = false;
+			bool centre = false;
+			// Where the shown sections ended and the window's bounds when the panel last looked at them: unchanged,
+			// it asks for no monitors.
+			float measured = 0;
+			ui::Rect measuredBounds;
 
 			// The window, or null if it is closed, also when the user closed it.
 			ui::Window* shown(ui::Shell& shell) const { return window == 0 ? nullptr : shell.find(window); }
@@ -277,7 +285,8 @@ namespace gnubase::app
 		// Gives the transport panel the width of its shown sections, as far as its monitor has room (#1424): a new one
 		// in the middle of the primary monitor (centre), an open one where it is, whenever its sections' width changes
 		// and its window still has the width of their last fit, which ui.layout keeps: the user didn't size it since
-		// (#1527). Whether it changed the window's bounds.
+		// (#1527), and only once the controls show the project, so that a panel that opens with fitted bounds isn't
+		// fitted to their defaults first (#1612). Whether it changed the window's bounds.
 		bool fitSections(ui::Window& window, bool centre);
 		// Edits a display of the transport bar, or of the transport panel, which opens if the bar doesn't show.
 		void enter(const std::string& field);

@@ -61,6 +61,18 @@ namespace gnubase::ui
 		return {area.x + ((area.width - width) / 2), area.y + ((area.height - height) / 2), width, height};
 	}
 
+	Rect fitWidth(const Rect& window, int width, const std::vector<Display>& displays, bool centre)
+	{
+		if (displays.empty())
+			return {window.x, window.y, width, window.height};
+		if (centre)
+			return centred({width, window.height}, displays.front());
+		const Display* display = displayOf(window, displays);
+		const Rect& area = (display != nullptr ? *display : displays.front()).usable;
+		const int fitted = std::min(width, area.width);
+		return {std::min(window.x, area.x + area.width - fitted), window.y, fitted, window.height};
+	}
+
 	Rect place(const Rect& window, const std::vector<Display>& displays)
 	{
 		if (displays.empty() || reachable(window, displays))

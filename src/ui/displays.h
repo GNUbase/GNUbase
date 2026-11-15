@@ -72,6 +72,12 @@ namespace gnubase::ui
 	// A window of the given size, centred in the display's usable area and shrunk to fit.
 	Rect centred(Size size, const Display& display);
 
+	// A window given a width of its own, such as the transport panel that takes the width of its sections (#1424,
+	// #1527), never wider than its monitor's usable area: a new one (centre) in the middle of the primary monitor, an
+	// open one where it is on the monitor it is on, moved left only as far as that monitor's right edge needs. Without
+	// any display only its width changes.
+	Rect fitWidth(const Rect& window, int width, const std::vector<Display>& displays, bool centre);
+
 	// Where a window from a saved layout goes, such as a workspace's (#163): where it was if its monitor, by name, is
 	// connected (and it is reachable there, as place has it), otherwise fully visible on the primary monitor, centred
 	// and shrunk to fit. An empty monitor name only places it.

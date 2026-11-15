@@ -155,14 +155,20 @@ namespace gnubase::ui
 		m_binding.send("transport.get", Json::object(),
 			[this, alive](const engine::Result& result)
 			{
-				if (!alive.expired() && result.ok())
+				if (alive.expired())
+					return;
+				if (result.ok())
 					followTransport(result.value);
+				answered();
 			});
 		m_binding.send("settings.get", {{"key", g_formatsKey}},
 			[this, alive](const engine::Result& result)
 			{
-				if (!alive.expired() && result.ok())
+				if (alive.expired())
+					return;
+				if (result.ok())
 					followFormats(result.value.at("value"));
+				answered();
 			});
 		m_binding.send("settings.get", {{"key", g_timeDisplayKey}},
 			[this, alive](const engine::Result& result)
@@ -352,7 +358,26 @@ namespace gnubase::ui
 				else
 					m_sent.reset(); // read after the tempo the gesture set
 				show();
+				if (!std::exchange(m_projectRead, true))
+					answered();
 			});
+	}
+
+	void TransportControls::onShown(std::function<void()> shown)
+	{
+		if (m_unanswered == 0)
+			shown();
+		else
+			m_shown = std::move(shown);
+	}
+
+	void TransportControls::answered()
+	{
+		if (m_unanswered == 0)
+			return;
+		--m_unanswered;
+		if (m_unanswered == 0 && m_shown)
+			std::exchange(m_shown, {})();
 	}
 
 	void TransportControls::followTransport(const Json& status)
