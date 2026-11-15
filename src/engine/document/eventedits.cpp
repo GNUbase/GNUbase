@@ -331,6 +331,14 @@ namespace gnubase::engine
 			item.position() = start;
 		}
 
+		// A copy of a slice or of the event it was cut from is the user's own: the Reset of the Slice Rules would put
+		// a copy of the event back where the event was, and remove the copies of its slices with the slices (#1668).
+		void noSliceOrigin(AudioEvent& copy)
+		{
+			copy.sliceOrigin.reset();
+			copy.slicedFrom = 0;
+		}
+
 		// A copy with a new id, unlocked and without a crossfade. A MIDI part's notes and controllers get new ids, or
 		// for a shared copy are the original's, with which it then shares them.
 		Item copyOf(Project& project, const Item& item, bool shared, CommandContext& context)
@@ -342,6 +350,7 @@ namespace gnubase::engine
 				copy.front = 0; // in front, as added last
 				copy.lock = false;
 				copy.crossfade = Crossfade();
+				noSliceOrigin(copy);
 				return audioItem(project.audioEvents[copy.id] = copy);
 			}
 			if (item.audioPart != nullptr)
@@ -369,6 +378,7 @@ namespace gnubase::engine
 					event.id = ids.at(event.id);
 					event.front = 0;
 					event.part = copy.id;
+					noSliceOrigin(event);
 					project.audioEvents[event.id] = event;
 				}
 				return audioPartItem(copy);
@@ -2279,6 +2289,7 @@ namespace gnubase::engine
 				event.front = 0;
 				event.lock = false;
 				event.crossfade = Crossfade();
+				noSliceOrigin(event);
 				const auto part = parts.find(copied.part);
 				event.part = part == parts.end() ? 0 : part->second;
 				AudioEvent& pasted = project.audioEvents[event.id] = event;
