@@ -520,8 +520,9 @@ namespace gnubase::ui
 		for (const auto& [focus, name] : g_focuses)
 			if (m_focus == focus)
 				label(root->QuerySelector("#list-focus"), name);
+		// Not the Attributes column's menu, whose items are checked for its row (openArticulationMenu).
 		for (const Rml::ObserverPtr<Rml::Element>& menu : m_menus)
-			if (Rml::Element* element = menu.get())
+			if (Rml::Element* element = menu.get(); element != nullptr && element != m_menus.back().get())
 			{
 				Rml::ElementList items;
 				element->QuerySelectorAll(items, "menuitem");
@@ -555,12 +556,12 @@ namespace gnubase::ui
 				const bool menu =
 					field == std::string("attributes") && row.editable && (row.isNote() || row.type == "articulation");
 				rml += std::string(R"(<textdisplay class="list-cell" field=")") + field + '"' +
-					(editable ? "" : R"( disabled="")") + (menu ? R"( contextmenu="list-articulations-menu")" : "") +
-					"/>";
+					(editable ? "" : R"( disabled="")") +
+					(menu ? R"( menu="list-articulations-menu" contextmenu="list-articulations-menu")" : "") + "/>";
 				// A warning sign for a note's attributes and a direction that the track's map doesn't have (#1580,
 				// p. 1291).
 				if (field == std::string("attributes") && row.unknown)
-					rml += R"(<svg class="icon articulation-warning" src="../icons/general-warning.svg" )"
+					rml += R"(<svg class="icon warning articulation-warning" src="../icons/general-warning.svg" )"
 						   R"(title="Not in the track's articulation map"/>)";
 			}
 			rml += R"(<div class="list-event-lane"><div class="list-event"/></div><div class="list-value-lane">)" +
@@ -934,6 +935,12 @@ namespace gnubase::ui
 			}
 			if (event.GetParameter("button", 0) != 0)
 				break;
+			// A click on the Attributes column opens its menu too (p. 1291), under the cell: the popup behavior opens
+			// it on the click, the items are filled in here.
+			if (const Row* row = rowOf(target); row != nullptr && event.GetCurrentElement() == m_root.get())
+				if (const Rml::Element* cell = target->HasAttribute("menu") ? target : target->GetParentNode();
+					cell != nullptr && cell->HasAttribute("menu"))
+					openArticulationMenu(*row);
 			if (event.GetCurrentElement() == m_document.get())
 			{
 				// A left press anywhere in the document while a gesture goes on: the gesture's mouseup never came, as

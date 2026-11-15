@@ -519,15 +519,16 @@ TEST_CASE("a send before the MIDI modifiers plays the input through the remote t
 	SECTION("the slot the remote triggers selected")
 	{
 		// Arco, the default slot, with the key C1 (36); Up with D1 (38), two semitones up at half the velocity on
-		// channel 7.
-		const Json map = run(track.client, "articulationMap.add",
-			{{"name", "Strings"},
-				{"slots",
-					{{{"name", "Arco"}, {"trigger", 36}},
-						{{"name", "Up"}, {"trigger", 38}, {"transpose", 2}, {"velocity", 50}, {"channel", 6}}}}})
-							 .at("map")
-							 .at("id");
+		// channel 7. Up first has one semitone: the slots changed once, so that the track's count of slot changes
+		// isn't the one a new sequencer for the sends starts with, and only taking it over keeps the slot there.
+		const Json slots = {{{"name", "Arco"}, {"trigger", 36}},
+			{{"name", "Up"}, {"trigger", 38}, {"transpose", 2}, {"velocity", 50}, {"channel", 6}}};
+		Json first = slots;
+		first[1]["transpose"] = 1;
+		const Json map =
+			run(track.client, "articulationMap.add", {{"name", "Strings"}, {"slots", first}}).at("map").at("id");
 		run(track.client, "track.set", {{"track", trackId}, {"articulationMap", map}});
+		run(track.client, "articulationMap.set", {{"map", map}, {"slots", slots}});
 		track.played();
 		// The trigger reaches neither the track nor the send as a note; the note after it plays Up's transpose,
 		// velocity and channel in both.
@@ -539,6 +540,17 @@ TEST_CASE("a send before the MIDI modifiers plays the input through the remote t
 		track.played();
 		CHECK(play({{0x91, 64, 100}, {0x81, 64, 0}}) ==
 			Bytes{{0x86, 67, 0}, {0x86, 78, 0}, {0x96, 67, 50}, {0x96, 78, 50}});
+
+		// Without latch, sends that start to play while the trigger is held take it as held: its release brings the
+		// default slot back in them too, on the track's channel without a transpose.
+		run(track.client, "articulationMap.set", {{"map", map}, {"latch", false}});
+		track.played();
+		CHECK(play({{0x91, 38, 100}}).empty());
+		sends(false);
+		sends(true);
+		track.played();
+		CHECK(play({{0x81, 38, 0}, {0x91, 64, 100}, {0x81, 64, 0}}) ==
+			Bytes{{0x82, 65, 0}, {0x82, 76, 0}, {0x92, 65, 100}, {0x92, 76, 100}});
 	}
 	SECTION("Live Input")
 	{
@@ -621,6 +633,13 @@ TEST_CASE("of two lanes of the MIDI volume, the first plays it before its first 
 	run(track.client, "transport.stop");
 	// At frame 2000 the first lane's gap plays the MIDI volume, the second lane's terminator its 0, which then stands.
 	CHECK(played == Bytes{{0xB2, 7, 90}, {0xB2, 7, 127}, {0xB2, 7, 0}, {0xB2, 7, 90}, {0xB2, 7, 0}});
+
+	// A locate past frame 2000 sends that 0 again: both lanes' gaps start there, and on the tie the second one wins.
+	run(track.client, "transport.locate", {{"position", 2500}});
+	track.played();
+	run(track.client, "transport.play");
+	CHECK(track.played() == Bytes{{0xB2, 7, 0}});
+	run(track.client, "transport.stop");
 }
 
 TEST_CASE("lanes of one controller side by side send every point and keep their last value past a gap", "[integration]")

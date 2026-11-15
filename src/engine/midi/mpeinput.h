@@ -36,14 +36,15 @@ namespace gnubase::engine::midi
 		};
 
 		Mode mode = Mode::Off;
-		int channels = 15;    // the notes' channels: a zone's member channels (at most 15) or the used channels
+		int channels = 15;    // the notes' channels: a zone's member channels (at most 15) or the used channels (16)
 		int firstChannel = 1; // channel rotation's first channel, 1-16; the used ones end at 16
 		int pitchRange = 48;  // of the notes' pitch bend, in semitones, 1-96
 		bool tuning = true;   // Use for Tuning: the notes' pitch bend is their tuning, else it stays pitch bend
 		Initial initialX = Initial::Off; // Horizontal/X, pitch bend: off or center (no bend)
 		Initial initialY = Initial::Off; // Vertical/Y, CC 74
 
-		// From an mpe value as midi.setPort and midi.portSettings have it; what it lacks keeps its default.
+		// From an mpe value as midi.setPort and midi.portSettings have it; what it lacks keeps its default, and a
+		// zone's channels are at most 15.
 		static MpeSetup fromJson(const Json& json);
 		Json toJson() const;
 		// In 32 bits, for the audio thread, and back.
@@ -60,9 +61,11 @@ namespace gnubase::engine::midi
 
 	// Turns one port's MPE input into per-note expression, on the audio thread: on the notes' channels, pitch bend
 	// (with Use for Tuning), channel pressure and CC 74 are NoteExpression events of the notes that sound there, their
-	// tuning by the pitch range, pressure and brightness; without a note they only set the channel's state. After a
-	// note-on come the note's initial values, each the channel's latest one or the fixed one Send Initial Value gives.
-	// Everything else passes as it is. No allocation; the state is the port's channels.
+	// tuning by the pitch range, pressure and brightness; without a note they only set the channel's state. A released
+	// note (or one the sustain pedal holds) keeps getting them while it fades, until the channel's next note-on, as MPE
+	// has it. After a note-on come the note's initial values, each the channel's latest one or the fixed one Send
+	// Initial Value gives, which the channel's other sounding notes then get too. Everything else passes as it is. No
+	// allocation; the state is the port's channels.
 	class MpeInput
 	{
 	public:
@@ -75,6 +78,7 @@ namespace gnubase::engine::midi
 		struct Channel
 		{
 			std::bitset<128> sounding;
+			std::bitset<128> released;      // since the channel's last note-on: their release still has its expression
 			std::array<double, 3> values{}; // tuning, pressure, brightness
 			std::bitset<3> known;           // which of values the channel has had
 		};

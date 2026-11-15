@@ -33,6 +33,7 @@
 .controller-lane-header
 {
 	flex-shrink: 0;
+	box-sizing: border-box; /* the themes' frame of the lane with the keyboard focus (.keyboard-focus) is inside */
 	width: 48dp;
 	overflow: hidden;
 }
@@ -126,15 +127,46 @@
 	white-space: nowrap;
 }
 
-/* The lane's context menu has the Articulations lane's items only on that lane (.articulations). */
-menu menuitem.articulations-only, menu menuseparator.articulations-only
+/* Collapse All Groups, Expand All Groups and Show/Hide Sound Slots Lane under the articulations' names (#1658,
+   pp. 1287-1288). */
+.articulation-controls
 {
-	display: none;
+	display: flex;
+	flex-direction: row;
+	height: 14dp;
 }
 
-menu.articulations menuitem.articulations-only, menu.articulations menuseparator.articulations-only
+.articulation-control
 {
-	display: block;
+	min-width: 0;
+	width: 14dp;
+	height: 14dp;
+	padding: 0;
+}
+
+.articulation-control svg.icon
+{
+	width: 10dp;
+	height: 10dp;
+	vertical-align: 0;
+}
+
+/* The arrow in a direction's upper left corner that opens its event pop-up menu (p. 1290), shown while the mouse is
+   over the direction or it is selected. */
+.articulation-menu-arrow
+{
+	visibility: hidden;
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 8dp;
+	height: 8dp;
+}
+
+.articulation-item.direction:hover .articulation-menu-arrow,
+.articulation-item.direction.selected .articulation-menu-arrow
+{
+	visibility: visible;
 }
 
 .controller-lanes-footer

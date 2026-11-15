@@ -5,8 +5,6 @@
 #include "engine/schema.h"
 
 #include <map>
-#include <string>
-#include <vector>
 
 namespace gnubase::engine
 {

@@ -675,7 +675,8 @@ TEST_CASE("the list editor lists directions as Articulation events and edits the
 
 TEST_CASE("the Articulations lane drops a cleared slot color and width, and its rows line up with their names", "[ui]")
 {
-	// #1498: the lane keeps its elements while their RML is the same, so what code set on them must go again.
+	// #1498: the lane keeps its elements while their RML is the same, so a width code set on a kept element must go
+	// again. A slot that loses its color loses its class .light or .dark, so its elements are new and have no color.
 	Editor f;
 	const std::string first = inLane(" .sound-slot[note=\"" + std::to_string(f.notes[0]) + "\"]");
 	const auto has = [&f](const std::string& selector, const std::string& name)
@@ -1147,31 +1148,22 @@ TEST_CASE("the Articulations lane collapses and expands its groups and hides its
 	f.app.call("note.set", {{"part", f.part}, {"notes", {{{"id", f.notes[2]}, {"articulations", {"Staccato"}}}}}});
 	REQUIRE(f.app.waitUntil([&f] { return f.elements(inLane(" .articulation-item")).size() == 2; }));
 	const auto view = [&f] { return f.app.call("editor.get", {{"editor", "window"}}); };
-	const auto visible = [&f](const std::string& selector)
+	// The lane's controls (#1658, pp. 1287-1288), under the articulations' names.
+	const auto control = [&f](const std::string& action)
 	{
-		const Json found = f.elements(selector);
-		return !found.empty() && found.at(0).at("visible") == true;
-	};
-	// A right click below the lane's name opens its context menu, which has the lane's own items.
-	const auto menu = [&](const std::string& action)
-	{
+		const std::string button = inLane(" .articulation-control[lane-action=" + action + "]");
+		const Json names = f.elements(inLane(" .articulation-name"));
+		const Json last = names.at(names.size() - 1).at("box");
+		CHECK(
+			f.box(button).at("y").get<double>() >= last.at("y").get<double>() + last.at("height").get<double>() - 0.5);
 		const Json header = f.box(inLane(" .controller-lane-header"));
-		const Json name = f.elements(inLane(" .articulation-name")).at(0).at("box");
-		const int x = static_cast<int>(std::lround(header.at("x").get<double>() + 4.0));
-		const int y = static_cast<int>(std::lround(name.at("y").get<double>() + (name.at("height").get<double>() / 2)));
-		f.app.ui().click(f.window, {"", 0, ui::Point{x, y}}, ui::MouseButton::Right, 1, {});
-		f.app.shell().step(std::chrono::milliseconds(0));
-		const std::string item = "#controller-lane-context-menu menuitem[lane-action=" + action + "]";
-		REQUIRE(f.app.waitUntil([&] { return visible(item); }));
-		// The lane's own items come after the menu opened, and it moves inside the window for them.
-		f.app.shell().step(std::chrono::milliseconds(0));
-		for (const char* each : {"collapseGroups", "expandGroups", "soundSlots"})
-			CHECK(f.inside("#controller-lane-context-menu menuitem[lane-action=" + std::string(each) + "]"));
-		f.click(of(item));
+		CHECK(f.box(button).at("x").get<double>() + f.box(button).at("width").get<double>() <=
+			header.at("x").get<double>() + header.at("width").get<double>() + 0.5);
+		f.click(of(button));
 	};
 
 	// Collapse All Groups: a row per group with the group's name beside it, and its articulations in it.
-	menu("collapseGroups");
+	control("collapseGroups");
 	REQUIRE(f.app.waitUntil([&] { return view().at("collapsedGroups") == Json::array({0, 1}); }));
 	REQUIRE(f.app.waitUntil([&f] { return f.elements(inLane(" .articulation-row")).size() == 3; }));
 	const Json names = f.elements(inLane(" .articulation-name"));
@@ -1193,29 +1185,24 @@ TEST_CASE("the Articulations lane collapses and expands its groups and hides its
 	REQUIRE(f.app.waitUntil([&f] { return f.elements(inLane(" .articulation-row")).size() == 4; }));
 	f.click(of(inLane(" .articulation-name[articulation-group=\"0\"]")));
 	REQUIRE(f.app.waitUntil([&] { return view().at("collapsedGroups") == Json::array({0, 1}); }));
-	menu("expandGroups");
+	REQUIRE(f.app.waitUntil([&f] { return f.elements(inLane(" .articulation-row")).size() == 3; }));
+	control("expandGroups");
 	REQUIRE(f.app.waitUntil([&] { return view().at("collapsedGroups").empty(); }));
 	REQUIRE(f.app.waitUntil([&f] { return f.elements(inLane(" .articulation-row")).size() == 4; }));
 
 	// Show/Hide Sound Slots Lane: its row beside the lane's name stays, without the slots.
 	REQUIRE(f.elements(inLane(" .sound-slot")).size() == 3);
-	menu("soundSlots");
+	control("soundSlots");
 	REQUIRE(f.app.waitUntil([&] { return view().at("soundSlotsLane") == false; }));
 	REQUIRE(f.app.waitUntil([&f] { return f.elements(inLane(" .sound-slot")).empty(); }));
-	menu("soundSlots");
+	control("soundSlots");
 	REQUIRE(f.app.waitUntil([&f] { return f.elements(inLane(" .sound-slot")).size() == 3; }));
 
-	// The other lanes' context menus don't have these items.
+	// They are the lane's, not items of the lanes' context menu; the other lanes don't have them.
+	CHECK(f.elements("#controller-lane-context-menu menuitem[lane-action=collapseGroups]").empty());
 	f.app.call("editor.set", {{"editor", "window"}, {"lanes", {{{"type", "velocity"}}}}});
 	REQUIRE(f.app.waitUntil([&f] { return f.elements(".controller-lane[lane-kind=velocity]").size() == 1; }));
-	const Json header = f.box(".controller-lane-header");
-	const Json button = f.box(".controller-lane-type");
-	const int x = static_cast<int>(std::lround(header.at("x").get<double>() + 4.0));
-	const int y = static_cast<int>(std::lround(button.at("y").get<double>() + button.at("height").get<double>() + 4.0));
-	f.app.ui().click(f.window, {"", 0, ui::Point{x, y}}, ui::MouseButton::Right, 1, {});
-	f.app.shell().step(std::chrono::milliseconds(0));
-	REQUIRE(f.app.waitUntil([&] { return visible("#controller-lane-context-menu menuitem[lane-action=remove]"); }));
-	CHECK_FALSE(visible("#controller-lane-context-menu menuitem[lane-action=collapseGroups]"));
+	CHECK(f.elements(".articulation-control").empty());
 }
 
 TEST_CASE(
@@ -1276,9 +1263,10 @@ TEST_CASE(
 			{"controllers",
 				{{{"position", 4 * g_sixteenth}, {"type", "articulation"}, {"articulation", "Pizzicato"}}}}});
 	REQUIRE(f.app.waitUntil([&f] { return f.elements(inLane(" .articulation-item.direction")).size() == 1; }));
-	const auto reset = [&f](const ui::Target& target)
+	// Reset is checked on a reset (#1658).
+	const auto reset = [&f](const ui::Target& target, ui::MouseButton button, bool checked)
 	{
-		f.app.ui().click(f.window, target, ui::MouseButton::Right, 1, {});
+		f.app.ui().click(f.window, target, button, 1, {});
 		f.app.shell().step(std::chrono::milliseconds(0));
 		const std::string item = "#controller-articulation-menu menuitem[lane-action=reset]";
 		REQUIRE(f.app.waitUntil(
@@ -1287,14 +1275,133 @@ TEST_CASE(
 				const Json found = f.elements(item);
 				return !found.empty() && found.at(0).at("visible") == true;
 			}));
+		CHECK(f.elements(item).at(0).at("attributes").contains("checked") == checked);
 		f.click(of(item));
 	};
-	reset(f.at(2, 6.0));
+	// The object selection tool's arrow in the upper left corner of a selected direction, or of the direction the
+	// mouse is over, opens the menu (#1658, p. 1290); a right click does too.
+	CHECK(f.elements(inLane(" .articulation-item.direction .articulation-menu-arrow")).size() == 1);
+	f.click(f.at(2, 6.0));
+	const std::string arrow = inLane(" .articulation-item.direction.selected .articulation-menu-arrow");
+	REQUIRE(f.app.waitUntil([&] { return f.elements(arrow).size() == 1 && f.elements(arrow).at(0).at("visible"); }));
+	reset(of(arrow), ui::MouseButton::Left, false);
 	REQUIRE(f.app.waitUntil([&f] { return f.midiPart().at("controllers").at(0).value("reset", false); }));
 	REQUIRE(f.app.waitUntil([&f] { return f.elements(inLane(" .articulation-item.reset")).size() == 1; }));
-	reset(of(inLane(" .articulation-item.reset")));
+	reset(of(inLane(" .articulation-item.reset")), ui::MouseButton::Right, true);
 	REQUIRE(f.app.waitUntil([&f] { return !f.midiPart().at("controllers").at(0).value("reset", false); }));
 	REQUIRE(f.app.waitUntil([&f] { return f.elements(inLane(" .articulation-item.reset")).empty(); }));
+	// The other tools have no arrows.
+	f.tool("draw");
+	REQUIRE(f.app.waitUntil([&f] { return f.elements(inLane(" .articulation-menu-arrow")).empty(); }));
+}
+
+TEST_CASE("the Articulations lane deletes the attributes selected, and shows when it has the keyboard focus", "[ui]")
+{
+	// #1658, reference manual pp. 100, 1289.
+	Editor f;
+	Json map = f.app.call("project.get").at("articulationMaps").at(0);
+	map["groups"].push_back("Dynamics");
+	map["articulations"].push_back({{"name", "Accent"}, {"type", "attribute"}, {"group", 2}});
+	f.app.call("articulationMap.set",
+		{{"map", map.at("id")}, {"groups", map.at("groups")}, {"articulations", map.at("articulations")}});
+	const auto both = [&f]
+	{
+		f.app.call("note.set",
+			{{"part", f.part}, {"notes", {{{"id", f.notes[1]}, {"articulations", {"Staccato", "Accent"}}}}}});
+		REQUIRE(f.app.waitUntil([&f] { return f.elements(inLane(" .articulation-item.attribute")).size() == 2; }));
+	};
+	REQUIRE(f.app.waitUntil([&f] { return f.elements(inLane(" .articulation-row")).size() == 5; }));
+	both();
+	const auto selected = [&f](const char* row)
+	{
+		return f
+			.elements(inLane(" .articulation-item.attribute.selected[articulation-row=\"" + std::string(row) + "\"]"))
+			.size();
+	};
+	const std::string focused = ".controller-lane[lane-kind=articulations].keyboard-focus";
+	CHECK(f.elements(focused).empty());
+
+	// A click selects the attribute pressed, with its note, and gives the lane the keyboard focus, which it shows.
+	f.click(f.at(3, 5.0));
+	REQUIRE(f.app.waitUntil([&] { return selected("2") == 1; }));
+	CHECK(selected("3") == 0);
+	CHECK(f.elements(focused).size() == 1);
+	// Delete removes that attribute, not the note's other one.
+	f.app.ui().key(f.window, "Delete");
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&f] { return f.articulations(f.notes[1]) == Json{"Accent"}; }));
+
+	// Shift adds an attribute of a selected note and removes it again; the note stays selected while one is.
+	both();
+	f.click(f.at(3, 5.0));
+	REQUIRE(f.app.waitUntil([&] { return selected("2") == 1; }));
+	f.app.ui().click(f.window, f.at(4, 5.0), ui::MouseButton::Left, 1, {"shift"});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return selected("2") == 1 && selected("3") == 1; }));
+	f.app.ui().click(f.window, f.at(3, 5.0), ui::MouseButton::Left, 1, {"shift"});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return selected("2") == 0 && selected("3") == 1; }));
+	CHECK(f.app.call("editor.get", {{"editor", "window"}}).at("selection") ==
+		Json::array({{{"part", f.part}, {"note", f.notes[1]}}}));
+	f.app.ui().key(f.window, "Backspace");
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&f] { return f.articulations(f.notes[1]) == Json{"Staccato"}; }));
+
+	// A note selected elsewhere has all its attributes selected.
+	both();
+	f.app.call("editor.set", {{"editor", "window"}, {"selection", Json::array()}});
+	REQUIRE(f.app.waitUntil([&] { return selected("2") == 0 && selected("3") == 0; }));
+	f.app.call("editor.set", {{"editor", "window"}, {"selection", {{{"part", f.part}, {"note", f.notes[1]}}}}});
+	REQUIRE(f.app.waitUntil([&] { return selected("2") == 1 && selected("3") == 1; }));
+
+	// A click outside the lanes takes the keyboard focus, and the lane no longer shows it.
+	REQUIRE(f.app.waitUntil([&] { return !f.elements(focused).empty(); }));
+	f.tool("draw");
+	REQUIRE(f.app.waitUntil([&] { return f.elements(focused).empty(); }));
+}
+
+TEST_CASE("the info line's pop-up menu changes only the selected notes of tracks with the first one's map", "[ui]")
+{
+	// #1658, reference manual p. 1290.
+	Editor f;
+	const auto other = f.app.call("track.add", {{"type", "instrument"}}).at("track").at("id").get<uint64_t>();
+	const auto part = f.app.call("midiPart.add", {{"track", other}, {"position", 0}, {"length", g_bar}})
+						  .at("part")
+						  .at("id")
+						  .get<uint64_t>();
+	const auto note = f.app
+						  .call("note.add",
+							  {{"part", part},
+								  {"notes",
+									  Json::array({{{"position", 2 * g_sixteenth}, {"length", g_sixteenth},
+										  {"pitch", 64}, {"velocity", 0.5}}})}})
+						  .at("notes")
+						  .at(0)
+						  .at("id")
+						  .get<uint64_t>();
+	f.app.call("editor.open", {{"editor", "window"}, {"parts", Json::array({f.part, part})}});
+	f.app.call("editor.set",
+		{{"editor", "window"},
+			{"selection", {{{"part", f.part}, {"note", f.notes[0]}}, {{"part", part}, {"note", note}}}}});
+	REQUIRE(
+		f.app.waitUntil([&f] { return f.app.call("editor.get", {{"editor", "window"}}).at("selection").size() == 2; }));
+	REQUIRE(f.app.waitUntil([&f] { return f.elements(".key-editor-info.empty").empty(); }));
+	f.click(of(".key-editor-info button.articulation-menu"));
+	const std::string staccato = "#key-articulations-menu menuitem[articulation=Staccato]";
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const Json found = f.elements(staccato);
+			return !found.empty() && found.at(0).at("visible") == true;
+		}));
+	f.click(of(staccato));
+	REQUIRE(f.app.waitUntil([&f] { return f.articulations(f.notes[0]) == Json{"Staccato"}; }));
+	// The other track has no map: its note gets none.
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const Json project = f.app.call("project.get");
+	for (const Json& each : project.at("midiParts"))
+		if (each.at("id") == part)
+			CHECK(each.at("notes").at(0).value("articulations", Json::array()).empty());
 }
 
 TEST_CASE("the info line and the list editor show a warning sign for articulations the map doesn't have", "[ui]")
@@ -1365,11 +1472,25 @@ TEST_CASE("the info line's and the list editor's pop-up menus choose the map's a
 	CHECK(f.articulations(f.notes[0]).empty());
 	REQUIRE(f.app.waitUntil([&] { return f.value(field) == "Staccato"; }));
 	CHECK(f.elements("#key-articulations-menu menuitem[articulation]").size() == 1);
-	choose(of(".key-editor-info button.articulation-menu"), ui::MouseButton::Left, staccato);
+	// Opened again, the notes' attribute is checked (#1658); chosen, it goes and is no longer checked.
+	const std::string checkedStaccato = staccato + "[checked]";
+	choose(of(".key-editor-info button.articulation-menu"), ui::MouseButton::Left, checkedStaccato);
 	REQUIRE(f.app.waitUntil([&f] { return f.articulations(f.notes[1]).empty(); }));
 	CHECK(f.articulations(f.notes[2]).empty());
+	REQUIRE(f.app.waitUntil([&] { return f.value(field).empty(); }));
+	f.app.ui().click(f.window, of(".key-editor-info button.articulation-menu"), ui::MouseButton::Left, 1, {});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const Json found = f.elements(staccato);
+			return !found.empty() && found.at(0).at("visible") == true;
+		}));
+	CHECK(f.elements(checkedStaccato).empty());
+	f.app.ui().key(f.window, "Escape");
+	f.app.shell().step(std::chrono::milliseconds(0));
 
-	// The list editor's Attributes column: a right click on a note's or a direction's.
+	// The list editor's Attributes column: a click on a note's (#1658), a right click on a direction's.
 	const Json added = f.app.call("controller.add",
 		{{"part", f.part},
 			{"controllers",
@@ -1382,9 +1503,22 @@ TEST_CASE("the info line's and the list editor's pop-up menus choose the map's a
 			"\"] textdisplay[field=attributes]";
 	};
 	REQUIRE(f.app.waitUntil([&] { return !f.elements(cell("note", f.notes[0])).empty(); }));
-	choose(of(cell("note", f.notes[0])), ui::MouseButton::Right,
+	choose(of(cell("note", f.notes[0])), ui::MouseButton::Left,
 		"#list-articulations-menu menuitem[articulation=Staccato]");
 	REQUIRE(f.app.waitUntil([&f] { return f.articulations(f.notes[0]) == Json{"Staccato"}; }));
+	// Opened again, the note's attribute is checked, and stays checked while the list editor renders (#1658).
+	REQUIRE(f.app.waitUntil([&] { return f.value(cell("note", f.notes[0])) == "Staccato"; }));
+	f.click(of(cell("note", f.notes[0])));
+	const std::string checked = "#list-articulations-menu menuitem[articulation=Staccato][checked]";
+	REQUIRE(f.app.waitUntil([&] { return !f.elements(checked).empty(); }));
+	f.app.call("editor.set", {{"editor", "window"}, {"insertVelocity", 0.25}});
+	REQUIRE(f.app.waitUntil(
+		[&f] { return f.app.call("editor.get", {{"editor", "window"}}).at("insertVelocity") == 0.25; }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK_FALSE(f.elements(checked).empty());
+	f.app.ui().key(f.window, "Escape");
+	f.app.shell().step(std::chrono::milliseconds(0));
 	choose(of(cell("controller", direction)), ui::MouseButton::Right,
 		"#list-articulations-menu menuitem[articulation=Arco]");
 	REQUIRE(f.app.waitUntil([&f] { return f.midiPart().at("controllers").at(0).at("articulation") == "Arco"; }));

@@ -150,11 +150,12 @@ TEST_CASE("MPE's lower zone makes the notes' channels' pitch bend, pressure and 
 			"on 1 60", "tuning 1 60 " + semitones(96, 24), "pressure 1 60 " + unit(40), "brightness 1 60 " + unit(64)});
 	CHECK(semitones(96, 24) == "12001");
 	// While it sounds, each message is a point of the notes on its channel; the master channel's and the others stay.
+	// Released, the note keeps its channel's expression for its release.
 	CHECK(through(input, setup,
 			  {event(Type::Controller, 1, 74, 100), event(Type::Controller, 1, 1, 10), event(Type::PitchBend, 0, 0, 80),
 				  event(Type::ChannelPressure, 2, 0, 50), event(Type::NoteOff, 1, 60),
 				  event(Type::PitchBend, 1, 0, 64)}) ==
-		Lines{"brightness 1 60 " + unit(100), "cc 1 1", "bend 0", "off 1 60"});
+		Lines{"brightness 1 60 " + unit(100), "cc 1 1", "bend 0", "off 1 60", "tuning 1 60 0"});
 
 	// Fewer member channels: the channels above them are no notes' own.
 	setup.channels = 2;
@@ -164,6 +165,27 @@ TEST_CASE("MPE's lower zone makes the notes' channels' pitch bend, pressure and 
 	CHECK(setup.notesChannel(2));
 	CHECK_FALSE(setup.notesChannel(0));
 	CHECK_FALSE(setup.notesChannel(3));
+}
+
+TEST_CASE("a released note keeps its channel's expression until the channel's next note-on", "[unit]")
+{
+	midi::MpeSetup setup;
+	setup.mode = midi::MpeSetup::Mode::Lower;
+	midi::MpeInput input;
+	// Released, or held by the sustain pedal, it still sounds: the channel's messages apply to it while it fades.
+	CHECK(through(input, setup,
+			  {event(Type::NoteOn, 1, 60), event(Type::NoteOff, 1, 60), event(Type::ChannelPressure, 1, 0, 40)}) ==
+		Lines{"on 1 60", "off 1 60", "pressure 1 60 " + unit(40)});
+	// Another channel's note-on leaves it its channel.
+	CHECK(through(input, setup, {event(Type::NoteOn, 2, 62), event(Type::ChannelPressure, 1, 0, 50)}) ==
+		Lines{"on 2 62", "pressure 1 60 " + unit(50)});
+	// The device gives its channel to the next note: the released one has faded as far as it is concerned.
+	CHECK(through(input, setup, {event(Type::NoteOn, 1, 64), event(Type::ChannelPressure, 1, 0, 60)}) ==
+		Lines{"on 1 64", "pressure 1 64 " + unit(50), "pressure 1 64 " + unit(60)});
+	// The same key again is the new note.
+	CHECK(through(input, setup,
+			  {event(Type::NoteOff, 1, 64), event(Type::NoteOn, 1, 64), event(Type::ChannelPressure, 1, 0, 70)}) ==
+		Lines{"off 1 64", "on 1 64", "pressure 1 64 " + unit(60), "pressure 1 64 " + unit(70)});
 }
 
 TEST_CASE("MPE's upper zone has its master channel on 16 and the notes' channels below it", "[unit]")
@@ -226,6 +248,12 @@ TEST_CASE("Send Initial Value starts each note at a fixed value instead of the c
 		Lines{"on 1 60", "tuning 1 60 0", "brightness 1 60 1000", "tuning 1 60 " + semitones(96, 48),
 			"brightness 1 60 " + unit(10), "pressure 1 60 " + unit(30), "off 1 60", "on 1 64", "tuning 1 64 0",
 			"pressure 1 64 " + unit(30), "brightness 1 64 1000"});
+	// Several notes on one channel: the fixed value is the channel's, so its other notes get it too.
+	input.reset();
+	CHECK(through(input, setup,
+			  {event(Type::NoteOn, 3, 60), event(Type::PitchBend, 3, 0, 96), event(Type::NoteOn, 3, 64)}) ==
+		Lines{"on 3 60", "tuning 3 60 0", "brightness 3 60 1000", "tuning 3 60 " + semitones(96, 48), "on 3 64",
+			"tuning 3 60 0", "tuning 3 64 0", "brightness 3 60 1000", "brightness 3 64 1000"});
 	setup.initialY = midi::MpeSetup::Initial::Min;
 	input.reset();
 	CHECK(
@@ -270,6 +298,11 @@ TEST_CASE("an MPE setup reads its JSON with defaults and packs into 32 bits", "[
 	// Out of range values are clamped.
 	CHECK(midi::MpeSetup::fromJson({{"pitchRange", 200}, {"channels", 0}}).toJson().at("pitchRange") == 96);
 	CHECK(midi::MpeSetup::fromJson({{"pitchRange", 200}, {"channels", 0}}).toJson().at("channels") == 1);
+	// A zone has at most 15 member channels, channel rotation 16.
+	CHECK(midi::MpeSetup::fromJson({{"mode", "lower"}, {"channels", 16}}).channels == 15);
+	CHECK(midi::MpeSetup::fromJson({{"mode", "upper"}, {"channels", 16}}).channels == 15);
+	CHECK(midi::MpeSetup::fromJson({{"mode", "rotation"}, {"channels", 16}}).channels == 16);
+	CHECK(midi::MpeSetup::fromJson({{"channels", 16}}).channels == 16);
 }
 
 namespace
@@ -551,7 +584,8 @@ TEST_CASE("MPE input is recorded as per-note expression and played back to an MP
 	setup.play(*setup.mpe, {{0xB1, 74, 100}});
 	setup.renderTo(3008);
 	setup.play(*setup.mpe, {{0x81, 60, 0}});
-	// No note sounds on channel 2: its state for the next note, nothing recorded.
+	// No note sounds on channel 2: its state for the next note, and the released note's while it fades, which isn't
+	// recorded.
 	setup.renderTo(3200);
 	setup.play(*setup.mpe, {{0xE1, 0, 64}});
 	setup.renderTo(3520);
@@ -607,4 +641,128 @@ TEST_CASE("MPE input is recorded as per-note expression and played back to an MP
 		std::vector<std::vector<int64_t>>{{960, 0x91, 60, 100}, {960, 0xB1, 74, 64}, {960, 0xD1, 40},
 			{960, 0xE1, 0, 96}, {1472, 0x92, 64, 90}, {1472, 0xD2, 0}, {1984, 0xE1, 0, 80}, {2240, 0xD2, 100},
 			{2368, 0xB0, 1, 64}, {2496, 0xB1, 74, 100}, {3008, 0x81, 60, 0}, {3520, 0x82, 64, 0}});
+}
+
+TEST_CASE("a changed MPE setup starts the port's state afresh, and the note that sounds still ends", "[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	run(client, "midi.setPort", {{"id", "MPE"}, {"input", true}, {"mpe", {{"mode", "lower"}, {"pitchRange", 24}}}});
+	run(client, "audio.render", {{"frames", 64}});
+	run(client, "midi.capture", {{"start", true}});
+	setup.play(*setup.mpe, {{0x91, 60, 100}});
+	setup.play(*setup.mpe, {{0xE1, 0, 96}});
+	CHECK(captured(client) == std::vector<std::vector<int64_t>>{{0x91, 60, 100}, {0xE1, 0, 80}});
+	// Without MPE input the bend is the channel's again, and the note-off still reaches the note.
+	run(client, "midi.setPort", {{"id", "MPE"}, {"input", true}, {"mpe", {{"mode", "off"}}}});
+	setup.play(*setup.mpe, {{0xE1, 0, 96}, {0x81, 60, 0}});
+	CHECK(captured(client) == std::vector<std::vector<int64_t>>{{0xE1, 0, 96}, {0x81, 60, 0}});
+	// MPE input again: no note sounds or fades on the channel, so the bend is only the channel's state.
+	run(client, "midi.setPort", {{"id", "MPE"}, {"input", true}, {"mpe", {{"mode", "lower"}}}});
+	setup.play(*setup.mpe, {{0xE1, 0, 96}});
+	CHECK(captured(client).empty());
+}
+
+TEST_CASE("an MPE note's expression reaches the instrument after its note-off, while it fades", "[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	run(client, "midi.setPort", {{"id", "MPE"}, {"input", true}, {"mpe", {{"mode", "lower"}, {"pitchRange", 24}}}});
+	run(client, "channel.set", {{"channel", setup.channel}, {"modifiers", {{"transpose", 12}}}});
+	run(client, "audio.render", {{"frames", 64}});
+	run(client, "midi.capture", {{"start", true}});
+	// On the note that plays: the track transposes it.
+	setup.play(*setup.mpe, {{0x91, 60, 100}});
+	setup.play(*setup.mpe, {{0x81, 60, 0}});
+	setup.play(*setup.mpe, {{0xE1, 0, 96}});
+	CHECK(captured(client) == std::vector<std::vector<int64_t>>{{0x91, 72, 100}, {0x81, 72, 0}, {0xE1, 0, 80}});
+}
+
+TEST_CASE("an MPE key's expression is dropped where its note doesn't play", "[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	run(client, "midi.setPort", {{"id", "MPE"}, {"input", true}, {"mpe", {{"mode", "lower"}, {"pitchRange", 24}}}});
+	SECTION("a velocity filter in the MIDI modifiers")
+	{
+		run(client, "channel.set",
+			{{"channel", setup.channel},
+				{"modifiers", {{"range", {{{"target", "velocityFilter"}, {"minimum", 1}, {"maximum", 50}}}}}}});
+	}
+	SECTION("a muted drum sound")
+	{
+		const auto drums = run(client, "drumMap.add", {{"name", "Kit"}}).at("map").at("id");
+		run(client, "drumMap.set", {{"map", drums}, {"sounds", {{{"pitch", 60}, {"mute", true}}}}});
+		run(client, "track.set", {{"track", setup.track}, {"drumMap", drums}});
+	}
+	SECTION("a sound slot's remote trigger key")
+	{
+		const auto map = run(client, "articulationMap.add",
+			{{"name", "Strings"}, {"slots", {{{"name", "Arco"}}, {{"name", "Pizzicato"}, {"trigger", 60}}}}})
+							 .at("map")
+							 .at("id");
+		run(client, "track.set", {{"track", setup.track}, {"articulationMap", map}});
+	}
+	run(client, "audio.render", {{"frames", 64}});
+	run(client, "midi.capture", {{"start", true}});
+	setup.play(*setup.mpe, {{0x91, 60, 100}});
+	setup.play(*setup.mpe, {{0xE1, 0, 96}, {0xD1, 40}, {0xA1, 60, 30}});
+	setup.play(*setup.mpe, {{0x81, 60, 0}});
+	setup.play(*setup.mpe, {{0xE1, 0, 80}});
+	for (const std::vector<int64_t>& message : captured(client))
+	{
+		INFO(message.at(0));
+		const int64_t status = message.at(0) & 0xF0;
+		CHECK(status != 0xE0);
+		CHECK(status != 0xD0);
+		CHECK(status != 0xA0);
+		CHECK(status != 0x90);
+	}
+}
+
+TEST_CASE("an MPE key that was held before the track got the input plays no expression", "[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	run(client, "midi.setPort", {{"id", "MPE"}, {"input", true}, {"mpe", {{"mode", "lower"}, {"pitchRange", 24}}}});
+	run(client, "channel.set", {{"channel", setup.channel}, {"recordEnable", false}});
+	run(client, "audio.render", {{"frames", 64}});
+	run(client, "midi.capture", {{"start", true}});
+	setup.play(*setup.mpe, {{0x91, 60, 100}});
+	run(client, "channel.set", {{"channel", setup.channel}, {"monitor", true}});
+	setup.play(*setup.mpe, {{0xE1, 0, 96}, {0xA1, 60, 30}});
+	setup.play(*setup.mpe, {{0x81, 60, 0}});
+	// Its note-off passes, as a note-off without a note-on does.
+	CHECK(captured(client) == std::vector<std::vector<int64_t>>{{0x81, 60, 0}});
+}
+
+TEST_CASE("midi.inject plays its messages through an MPE setup as a port with it would", "[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	run(client, "audio.render", {{"frames", 64}});
+	run(client, "midi.capture", {{"start", true}});
+	const auto inject = [&](const std::vector<std::vector<int>>& messages, const Json& mpe)
+	{
+		Json list = Json::array();
+		for (const std::vector<int>& bytes : messages)
+			list.push_back({{"position", 0}, {"bytes", bytes}});
+		Json parameters = {{"channel", setup.channel}, {"messages", list}};
+		if (!mpe.is_null())
+			parameters["mpe"] = mpe;
+		run(client, "midi.inject", parameters);
+		setup.render(64);
+	};
+	const Json lower = {{"mode", "lower"}, {"pitchRange", 24}};
+	inject({{0xE1, 0, 96}, {0x91, 60, 100}}, lower);
+	CHECK(captured(client) == std::vector<std::vector<int64_t>>{{0xE1, 0, 80}, {0x91, 60, 100}});
+	// The track keeps the channels' state from one call to the next.
+	inject({{0xD1, 40}, {0x81, 60, 0}}, lower);
+	CHECK(captured(client) == std::vector<std::vector<int64_t>>{{0xD1, 40}, {0x81, 60, 0}});
+	// Without mpe it is plain MIDI.
+	inject({{0xE1, 0, 96}}, nullptr);
+	CHECK(captured(client) == std::vector<std::vector<int64_t>>{{0xE1, 0, 96}});
+	CHECK_THAT(reject(client, "midi.inject",
+				   {{"channel", setup.channel}, {"messages", Json::array()}, {"mpe", {{"mode", "middle"}}}}),
+		ContainsSubstring("mode"));
 }
