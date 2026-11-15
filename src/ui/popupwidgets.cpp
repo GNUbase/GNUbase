@@ -791,9 +791,7 @@ namespace gnubase::ui
 						{
 							// A click toggles the menu under its button. A text field being edited (.editing) keeps
 							// its clicks: it doesn't open the menu (#1688).
-							if (menu->openedUnder(*button))
-								menu->close();
-							else if (!button->IsClassSet("editing"))
+							if (!menu->openedUnder(*button) && !button->IsClassSet("editing"))
 								menu->openUnder(*button);
 							else if (menu->IsClassSet("open"))
 								menu->close();

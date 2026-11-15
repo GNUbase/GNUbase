@@ -3108,7 +3108,9 @@ namespace gnubase::engine
 		}
 		for (const std::string& each : item.at("mutedArticulations").get<std::vector<std::string>>())
 		{
-			require(has(each), name + ".mutedArticulations: " + each + " isn't one of the note's articulations");
+			std::string message = name;
+			message.append(".mutedArticulations: ").append(each).append(" isn't one of the note's articulations");
+			require(has(each), message);
 			if (std::find(muted.begin(), muted.end(), each) == muted.end())
 				muted.push_back(each);
 		}
