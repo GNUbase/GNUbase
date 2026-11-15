@@ -1227,9 +1227,29 @@ namespace gnubase::app
 			m_keys.bind({wind.keys, wind.id});
 		}
 		m_shell.eachStep([this] { return m_winding.step(); });
-		// The transport panel follows its sections whenever an update may have changed their width (#1527).
-		m_shell.afterUpdate([this](ui::Window& window)
-			{ return window.id() == m_transportPanel.window && fitSections(window, false); });
+		// The transport panel follows its sections whenever an update may have changed their width (#1527), once its
+		// controls show the project (#1612).
+		m_shell.afterUpdate(
+			[this](ui::Window& window)
+			{
+				TransportWindow& panel = m_transportPanel;
+				return window.id() == panel.window && panel.follows &&
+					fitSections(window, std::exchange(panel.centre, false));
+			});
+		// Reset All in its setup pane fits a panel that the user sized, or one with bounds from before #1527, again:
+		// it follows its sections from the width it has (#1612).
+		m_docking.onReset(
+			[this](const std::string& window, const std::string&)
+			{
+				if (window != "transportPanel")
+					return;
+				if (const ui::Window* panel = m_transportPanel.shown(m_shell))
+				{
+					m_transportPanel.measured = 0;
+					m_docking.setFittedWidth("transportPanel", m_shell.bounds(panel->id()).width);
+					panel->context().RequestNextUpdate(0);
+				}
+			});
 		// The time display window's context menu (reference manual p. 313).
 		m_keys.add({"timeDisplay.beatCountOnly",
 			"Shows only the beat in its bar in the time display window, or the whole position again.",
@@ -1515,13 +1535,25 @@ namespace gnubase::app
 		if (root == controls)
 		{
 			m_docking.attach("transportPanel", *document);
-			// Fitted to the controls' defaults at once, so that a panel closed before the engine answered their
-			// queries doesn't keep the unfitted width in ui.layout. Once they show the project, their displays grow
-			// with their text, and the panel follows (#1474, #1527).
+			// A new panel is fitted to the controls' defaults at once, so that a panel closed before the engine
+			// answered their queries doesn't keep the unfitted width in ui.layout. Once they show the project, their
+			// displays grow with their text, and the panel follows (#1474, #1527): from then on, so that one with
+			// fitted bounds doesn't take the defaults' width first, and a new one centred for what they show (#1612).
 			shown.sections = controls->GetObserverPtr();
 			shown.unfitted = 0;
+			shown.follows = false;
+			shown.measured = 0;
 			if (!spec.bounds)
 				fitSections(window, true);
+			shown.controls->onShown(
+				[this, centre = !spec.bounds]
+				{
+					TransportWindow& panel = m_transportPanel;
+					panel.follows = true;
+					panel.centre = centre;
+					if (const ui::Window* shownWindow = panel.shown(m_shell))
+						shownWindow->context().RequestNextUpdate(0);
+				});
 		}
 		else
 		{
@@ -1543,13 +1575,15 @@ namespace gnubase::app
 	{
 		TransportWindow& panel = m_transportPanel;
 		Rml::Element* controls = panel.sections.get();
-		const std::vector<ui::Display> displays = m_shell.displays();
 		const ui::Size pixels = window.pixelSize();
-		if (controls == nullptr || displays.empty() || pixels.width <= 0)
+		if (controls == nullptr || pixels.width <= 0)
 			return false;
 		const ui::Rect bounds = m_shell.bounds(window.id());
 		const std::optional<int> fitted = m_docking.fittedWidth("transportPanel");
-		if (!centre)
+		// Once it follows, a new panel is centred again only where it opened, and sized by the user it isn't fitted.
+		const bool opening = centre && !panel.follows;
+		centre = centre && (opening || bounds.position() == panel.measuredBounds.position());
+		if (!opening)
 		{
 			if (!fitted || (bounds.width != *fitted && bounds.width != panel.unfitted))
 				return false; // sized by the user, or by a layout from before #1527
@@ -1568,18 +1602,20 @@ namespace gnubase::app
 				right = std::max(right,
 					section->GetAbsoluteLeft() + section->GetOffsetWidth() +
 						section->GetBox().GetEdge(Rml::BoxArea::Margin, Rml::BoxEdge::Right));
-		if (right <= 0)
+		// Unchanged since the last look, e.g. in every frame while the transport runs: no monitors asked for.
+		if (right <= 0 || (!centre && right == panel.measured && bounds == panel.measuredBounds))
 			return false;
-		const ui::Display* display = centre ? nullptr : ui::displayOf(bounds, displays);
-		const ui::Rect& area = (display != nullptr ? *display : displays.front()).usable;
-		const int width = std::min(area.width,
-			static_cast<int>(std::ceil(right * static_cast<float>(bounds.width) / static_cast<float>(pixels.width))));
-		if (!centre && width == fitted)
+		panel.measured = right;
+		panel.measuredBounds = bounds;
+		const std::vector<ui::Display> displays = m_shell.displays();
+		if (displays.empty())
 			return false;
-		// An open panel stays where it is, moved left only as far as its monitor's right edge needs.
-		const ui::Rect fit = centre
-			? ui::centred({width, bounds.height}, displays.front())
-			: ui::Rect{std::min(bounds.x, area.x + area.width - width), bounds.y, width, bounds.height};
+		const ui::Rect fit = ui::fitWidth(bounds,
+			static_cast<int>(std::ceil(right * static_cast<float>(bounds.width) / static_cast<float>(pixels.width))),
+			displays, centre);
+		if (!centre && fit.width == fitted)
+			return false;
+		const int width = fit.width;
 		m_shell.setBounds(window.id(), fit);
 		// A window system that sizes windows later has the old width meanwhile; one that gave the window a width of
 		// its own, such as a minimum, keeps that as the fit's.
@@ -1587,7 +1623,8 @@ namespace gnubase::app
 		const bool applied = now != bounds.width || now == width;
 		panel.unfitted = applied ? 0 : bounds.width;
 		m_docking.setFittedWidth("transportPanel", applied ? now : width);
-		m_docking.saveWindows(); // so that a panel closed at once comes back as wide
+		m_docking.saveWindows(); // so that a panel closed at once comes back as wide, in one save with the width
+		panel.measuredBounds = m_shell.bounds(window.id());
 		return true;
 	}
 
