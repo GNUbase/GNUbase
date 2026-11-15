@@ -1005,7 +1005,7 @@ TEST_CASE("a right click in the note display opens the toolbox, by the setting a
 	CHECK(!toolbox());
 	rightClick(f.at(8, 70), {"shift"});
 	REQUIRE(toolbox());
-	CHECK(f.elements("#key-editor-toolbox > menuitem").size() == 7);
+	CHECK(f.elements("#key-editor-toolbox > menuitem").size() == 8); // with the mute tool (#1684)
 	CHECK(f.elements("#key-editor-toolbox > menuitem[checked]").at(0).at("attributes").at("key-tool") ==
 		"objectSelection");
 	// A tool in it chooses the tool, as the toolbar does, and closes it.
