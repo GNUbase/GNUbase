@@ -36,8 +36,10 @@ its first sample, as playback takes a note's initial points) gets its default th
 MPE's initial values for tuning, pressure and brightness, as playback gives them (one definition,
 `defaultExpression`, serves both), unity gain for volume and the center for pan. Vibrato and expression have no default
 (the plugin decides), so they keep their value. A point there whose value already plays is left out, so that the
-expression editor shows no point that changes nothing: glued again after a split, the note is what it was before. The reference manual's glue keeps the first note's properties (p. 1215), and expression is no property but what
-the note plays over time.
+expression editor shows no point that changes nothing: glued again after a split, the note has the expression it had
+before, without the points in it that changed nothing (one that repeated the value before it exactly at the cut doesn't
+come back). The reference manual's glue keeps the first note's properties (p. 1215), and expression is no property but
+what the note plays over time.
 
 **MPE input** (pp. 1295-1298, #1514). Each MIDI input port has its own MPE setup, `mpe` in `midi.setPort` and
 `midi.ports`, kept in its entry of the user setting `midi.portSettings`, which the studio setup's Note Expression Input
