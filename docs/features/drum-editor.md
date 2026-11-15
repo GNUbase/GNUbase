@@ -49,9 +49,12 @@ They emit `drumMap.added`, `drumMap.changed` and `drumMap.removed` with the map 
   I-notes: they play their sounds as the track's notes do (the second 128 entries of `drumInput`), so that the drum
   editor auditions a sound whose I-note an earlier sound has too. The notes the built-in MIDI inserts above the divider
   play for them keep the flag (`ProcessEvent::drumSound`, `plugin::Event::DrumSound`), and the sequencer clears it once
-  it has mapped a note. A third-party MIDI effect there plays events of its own that the format adapter makes without
-  the flag: behind one, an auditioned sound goes through the I-notes. They are no MIDI input: the recorder leaves them
-  out of recordings and the retrospective buffer (`Recorder::sendMidi`).
+  it has mapped a note. The auditioned sounds are no MIDI input: the recorder, which reads the sequencer's input after
+  the MIDI inserts above the divider, leaves the flagged events out of recordings and the retrospective buffer
+  (`Recorder::sendMidi`). The MIDI insert slots take only built-in effects today (`effectRackFromJson` refuses others,
+  and the sequencer makes only `builtin:` ones); a hosted MIDI effect there, once the slots take one, would play events
+  of its own that its format adapter makes without the flag: behind one, an auditioned sound would go through the
+  I-notes, and the recorder would record those events.
 - **Solo Instrument** (p. 1223): while a drum editor is open with `soloInstrument` on, of the tracks with a map that
   its selected notes are on only the notes of the selected notes' sounds play; with no note selected every sound
   plays. The editor views set `Project::soloNotes` (`ProjectModel::setSoloNotes`), the selected notes, which the render
@@ -123,9 +126,8 @@ content is `drum`. It is the key editor ([key-editor.md](key-editor.md)) with th
   marks, play alone.
 - **Drumstick** (pp. 1240-1242). A click inserts a note at the snapped position, as long as Insert Length says; a drag
   to the right inserts one at every step of the quantize grid, also when it is released outside the editor, where the
-  drawn note and its velocity follow the mouse; when the mouse leaves the window, where no release arrives, the draw
-  ends with the notes it showed last; a click on a
-  note deletes it, and a drag from it to the right (4 dp or more) also the notes of its sound that start up to where the
+  drawn note and its velocity follow the mouse, also out of the window until the button goes up there, with the
+  modifier keys held then ([key-editor.md](key-editor.md)); a click on a note deletes it, and a drag from it to the right (4 dp or more) also the notes of its sound that start up to where the
   mouse is released, in one undo step, also when it is released outside the editor. A click that hardly moves deletes
   only the note clicked, not the doubles and close flams under the mouse. The object selection tool's double click does
   the same: in the empty grid it inserts, with a drag to the right at every step of the grid; on a note it deletes it,
@@ -199,7 +201,9 @@ importing the reference's own drum map files.
   drag changing the velocity, with Alt the pitch, with Shift the position and with Snap off and Show Note Length the
   length, a slip of less than 4 dp keeping the insert velocity, which shows while dragging; with Alt the sound under the
   mouse's length and snap; every velocity past the 4 dp reachable; a drag released outside the editor inserting, the
-  velocity following the mouse out there, and the mouse leaving the window ending the draw; Use Snap from Drum Map
+  velocity following the mouse out there, the draw going on out of the window and past its edge until the button goes
+  up, with Shift held then inserting its one moved note, and a delete drag released out of the window deleting up to
+  there, a lost one nothing; Use Snap from Drum Map
   snapping new notes, a moved note and a resized one to their sound's snap, a note moved to another sound to that
   one's, and the step input cursor to the quantize grid; the object selection tool's double click and drag inserting and
   deleting several notes; the Drum Map Setup renaming a map, changing each setting of a sound, refusing a wrong snap,
