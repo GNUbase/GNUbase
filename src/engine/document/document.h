@@ -1462,13 +1462,15 @@ namespace gnubase::engine
 	struct VisibilityConfiguration
 	{
 		std::string name;
-		std::vector<ObjectId> hidden;
+		std::vector<ObjectId> hidden; // stored like TrackVisibility::hidden
 	};
 
 	// What the project window's track list hides (#166, docs/features/track-visibility.md, reference manual pp. 80-82).
 	struct TrackVisibility
 	{
-		std::vector<ObjectId> hidden; // tracks, sorted
+		// The hidden tracks, sorted, as stored: a hidden folder without the tracks inside it that it hides, unless
+		// they were hidden on their own (#1533). Read them with hiddenTracks or trackVisibility.get, which add them.
+		std::vector<ObjectId> hidden;
 		// The mixer window whose channel visibility follows the tracks' (window1 to window4), or empty; the lower
 		// zone's mixer always does.
 		std::string sync;
