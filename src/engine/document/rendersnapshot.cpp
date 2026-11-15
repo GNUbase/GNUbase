@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bitset>
 #include <cmath>
 #include <cstddef>
 #include <limits>
@@ -76,6 +77,19 @@ namespace gnubase::engine
 		time::Samples milliseconds(const Project& project, int value)
 		{
 			return std::llround(value * project.sampleRate / 1000.0);
+		}
+
+		// Solo Instrument (#1493, reference manual p. 1223): the pitches of the track's notes that Project::soloNotes
+		// names, whose sounds alone play; none if it names none of the track's.
+		std::bitset<g_drumSounds> soloedSounds(const Project& project, ObjectId track)
+		{
+			std::bitset<g_drumSounds> pitches;
+			for (const auto& [partId, noteId] : project.soloNotes)
+				if (const auto part = project.midiParts.find(partId);
+					part != project.midiParts.end() && part->second.track == track)
+					if (const auto note = part->second.notes.find(noteId); note != part->second.notes.end())
+						pitches.set(note->second.pitch);
+			return pitches;
 		}
 
 		// A note that selects a sound slot (#175): where it starts in the project, where it plays (earlier by its
@@ -191,6 +205,8 @@ namespace gnubase::engine
 			// The track's drum map plays each note's sound: its O-note, on its channel unless that is Any, and not
 			// at all if it is muted (#129). The modifiers then apply to the O-note.
 			const DrumMap* map = midi::drumMapOf(project, part.track);
+			const std::bitset<g_drumSounds> soloed =
+				map != nullptr ? soloedSounds(project, part.track) : std::bitset<g_drumSounds>();
 			// The track's articulation map plays each note's sound slot (#175): the slot's output events where the
 			// slot changes, and the slot's MIDI modifiers.
 			const ArticulationMap* articulations = midi::articulationMapOf(project, part.track);
@@ -211,7 +227,7 @@ namespace gnubase::engine
 				if (note.position >= end - start || !midi::notePlays(note, part.id))
 					continue;
 				const DrumSound* sound = map != nullptr ? &map->sounds.at(note.pitch) : nullptr;
-				if (sound != nullptr && sound->mute)
+				if (sound != nullptr && (sound->mute || (soloed.any() && !soloed.test(note.pitch))))
 					continue;
 				const SoundSlot* slot = slotOf(id);
 				const uint64_t seed = midi::noteSeed(partId, id);
