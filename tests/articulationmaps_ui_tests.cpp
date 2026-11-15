@@ -934,6 +934,15 @@ TEST_CASE("the articulation map setup filters its maps, combines articulations a
 	f.app.ui().key(std::nullopt, "Mod+A");
 	f.app.ui().key(std::nullopt, "Backspace");
 	REQUIRE(f.app.waitUntil([&f] { return f.listed() == Names{"Strings", "Brass"}; }));
+	// The search selected Brass, the only map it listed (#1667): Strings again.
+	f.click("#articulation-maps listitem");
+	REQUIRE(f.app.waitUntil([&f] { return f.elements("#articulation-maps listitem.selected .map-name").size() == 1; }));
+	REQUIRE(f.app.waitUntil(
+		[&f]
+		{
+			return f.elements("#articulation-maps listitem.selected .map-name").at(0).value("text", std::string()) ==
+				"Strings";
+		}));
 
 	// The articulation combinations (pp. 1275-1276): Legato checked makes an add-on slot of it; the search shows
 	// the articulations with one of its terms.
@@ -948,11 +957,14 @@ TEST_CASE("the articulation map setup filters its maps, combines articulations a
 	CHECK(f.shown(".combination[name=Pizzicato]"));
 	CHECK(f.shown(".combination[name=Legato]"));
 
-	// The new MIDI modifiers of the picked slot.
+	// The new MIDI modifiers of the picked slot, which an add-on slot doesn't have (#1667).
+	CHECK(f.elements("#articulation-modifiers .add-on-modifiers").size() == 1);
+	CHECK(f.elements("#articulation-map input[kind=modifier]").empty());
+	f.click("input[name=articulation-pick-slot][index=\"2\"]");
 	f.write("#articulation-map input[kind=modifier][key=attack]", "15");
-	REQUIRE(f.app.waitUntil([&slots] { return slots().at(2).at("attack") == 15; }));
+	REQUIRE(f.app.waitUntil([&slots] { return slots().at(1).at("attack") == 15; }));
 	f.write("#articulation-map input[kind=modifier][key=maxVelocity]", "100");
-	REQUIRE(f.app.waitUntil([&slots] { return slots().at(2).at("maxVelocity") == 100; }));
+	REQUIRE(f.app.waitUntil([&slots] { return slots().at(1).at("maxVelocity") == 100; }));
 
 	// The sound slot actions (p. 1273): Move Up and Down, Copy, Paste and Cut.
 	f.click("input[name=articulation-pick-slot][index=\"2\"]");
@@ -977,6 +989,152 @@ TEST_CASE("the articulation map setup filters its maps, combines articulations a
 	REQUIRE(f.app.waitUntil([&triggers] { return triggers() == std::vector<int>{72, 73, 74}; }));
 	f.click("#articulation-triggers-remove");
 	REQUIRE(f.app.waitUntil([&triggers] { return triggers() == std::vector<int>{-1, -1, -1}; }));
+}
+
+TEST_CASE("the articulation map setup's slot actions send what they say, and its rows follow the changes", "[ui]")
+{
+	Fixture f;
+	const Json strings =
+		f.app
+			.call("articulationMap.add",
+				{{"name", "Strings"}, {"groups", {"Technique", "Legato"}},
+					{"articulations",
+						{{{"name", "Arco"}, {"type", "direction"}, {"group", 0}},
+							{{"name", "Pizzicato"}, {"type", "direction"}, {"group", 0}},
+							{{"name", "Legato"}, {"type", "attribute"}, {"group", 1}}}},
+					{"slots",
+						{{{"name", "Arco"}, {"trigger", 36}},
+							{{"name", "Pizzicato"}, {"articulations", {"Pizzicato"}}, {"trigger", 37},
+								{"outputs", {{{"status", "note"}, {"data1", 25}, {"data2", 100}}}}},
+							{{"name", "Legato"}, {"articulations", {"Legato"}}, {"trigger", 38}, {"addOn", true}}}}})
+			.at("map");
+	const Json brass =
+		f.app.call("articulationMap.add", {{"name", "Brass"}, {"slots", {{{"name", "Open"}, {"trigger", 40}}}}})
+			.at("map");
+	f.app.call("track.set", {{"track", f.track}, {"articulationMap", strings.at("id")}});
+	f.click("#menu-bar button[menu=midi-menu]");
+	f.click("menuitem[command=\"midi.articulationMapSetup\"]");
+	REQUIRE(f.app.waitUntil([&f] { return f.shown("#articulation-maps-dialog"); }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	using Names = std::vector<std::string>;
+	using Triggers = std::vector<int>;
+	const auto slots = [&f](size_t map = 0) { return f.maps().at(map).at("slots"); };
+	const auto names = [&slots]
+	{
+		Names found;
+		for (const Json& slot : slots())
+			found.push_back(slot.at("name").get<std::string>());
+		return found;
+	};
+	const auto triggers = [&slots](size_t map = 0)
+	{
+		Triggers found;
+		for (const Json& slot : slots(map))
+			found.push_back(slot.at("trigger").is_null() ? -1 : slot.at("trigger").get<int>());
+		return found;
+	};
+	const auto marks = [&f] { return f.elements("#articulation-maps .used-mark").size(); };
+	const auto pickSlot = [&f](int index)
+	{ f.click("input[name=articulation-pick-slot][index=\"" + std::to_string(index) + "\"]"); };
+	const auto picked = [&f](int index)
+	{
+		return f.elements("input[name=articulation-pick-slot][index=\"" + std::to_string(index) + "\"][checked]")
+				   .size() == 1;
+	};
+	const auto mapName = [&f]
+	{
+		const Json found = f.elements("#articulation-map input[kind=map][key=name]");
+		return found.empty() ? std::string() : found.at(0).at("attributes").value("value", std::string());
+	};
+	// Chooses the next option of a drop-down.
+	const auto nextOption = [&f](const std::string& selector)
+	{
+		f.click(selector);
+		f.app.ui().key(std::nullopt, "Down");
+		f.click(selector);
+	};
+
+	// The P marks follow the tracks' maps, changed elsewhere (track.changed) or with Assign to Track (#1667).
+	REQUIRE(f.app.waitUntil([&f] { return f.listed() == Names{"Strings", "Brass"}; }));
+	CHECK(marks() == 1);
+	f.app.call("track.set", {{"track", f.track}, {"articulationMap", 0}});
+	REQUIRE(f.app.waitUntil([&marks] { return marks() == 0; }));
+	f.click("#articulation-map-assign");
+	REQUIRE(f.app.waitUntil([&marks] { return marks() == 1; }));
+
+	// A search that leaves the selected map out selects the first one it lists, and one that lists none shows no
+	// map (#1667).
+	REQUIRE(mapName() == "Strings");
+	f.write("#articulation-maps-search", "bra");
+	REQUIRE(f.app.waitUntil([&f] { return f.listed() == Names{"Brass"}; }));
+	REQUIRE(f.app.waitUntil([&mapName] { return mapName() == "Brass"; }));
+	f.write("#articulation-maps-search", "none");
+	REQUIRE(f.app.waitUntil([&f] { return f.listed().empty(); }));
+	CHECK(f.elements("#articulation-map.unavailable").size() == 1);
+	f.write("#articulation-maps-search", "str");
+	REQUIRE(f.app.waitUntil([&mapName] { return mapName() == "Strings"; }));
+	CHECK(f.elements("#articulation-map.unavailable").empty());
+
+	// The combinations follow a renamed articulation and the articulations typed for the picked slot (#1667).
+	f.write("#articulation-list input[kind=articulation][index=\"2\"][key=name]", "Pizz");
+	REQUIRE(f.app.waitUntil([&f] { return f.shown(".combination[name=Pizz]"); }));
+	CHECK(f.elements(".combination[name=Pizzicato]").empty());
+	f.write("#articulation-slots input[kind=slot][index=\"1\"][key=articulations]", "Arco");
+	REQUIRE(f.app.waitUntil(
+		[&f] { return f.elements("#articulation-combinations input[articulation=Arco][checked]").size() == 1; }));
+
+	// Apply to Slot: the picked slot gets the checked articulations.
+	f.click("#articulation-combinations input[articulation=Arco]");
+	f.click("#articulation-combinations input[articulation=Legato]");
+	f.click("#articulation-combination-apply");
+	REQUIRE(f.app.waitUntil([&slots] { return slots().at(0).at("articulations") == Json{"Legato"}; }));
+
+	// As Default refused for an add-on slot keeps it picked; Duplicate leaves the trigger out and picks the copy;
+	// As Default moves the picked slot to the top.
+	pickSlot(3);
+	f.click("#articulation-slot-default");
+	REQUIRE(f.app.waitUntil([&f] { return f.message().find("default") != std::string::npos; }));
+	CHECK(names() == Names{"Arco", "Pizzicato", "Legato"});
+	CHECK(picked(3));
+	pickSlot(2);
+	f.click("#articulation-slot-duplicate");
+	REQUIRE(f.app.waitUntil([&names] { return names() == Names{"Arco", "Pizzicato", "Pizzicato", "Legato"}; }));
+	CHECK(triggers() == Triggers{36, 37, -1, 38});
+	CHECK(picked(3));
+	f.click("#articulation-slot-default");
+	REQUIRE(f.app.waitUntil([&triggers] { return triggers() == Triggers{-1, 36, 37, 38}; }));
+	CHECK(picked(1));
+
+	// The clipboard keeps the slot as it was copied: an output mapping added after Copy doesn't paste (#1667).
+	pickSlot(3);
+	f.click("#articulation-slot-copy");
+	f.click("#articulation-output-add");
+	REQUIRE(f.app.waitUntil([&slots] { return slots().at(2).at("outputs").size() == 2; }));
+	f.click("#articulation-slot-paste");
+	REQUIRE(f.app.waitUntil([&slots] { return slots().size() == 5; }));
+	CHECK(slots().at(3).at("outputs").size() == 1);
+	CHECK(triggers() == Triggers{-1, 36, 37, 37, 38});
+
+	// Transpose Down of the picked slot.
+	pickSlot(2);
+	f.click("#articulation-trigger-down");
+	REQUIRE(f.app.waitUntil([&triggers] { return triggers() == Triggers{-1, 35, 37, 37, 38}; }));
+
+	// Reassign All on the white keys from 59 with Skip First Slot: the first slot keeps none.
+	f.write("#articulation-reassign-start", "59");
+	nextOption("#articulation-reassign-keys");
+	f.click("#articulation-reassign-skip");
+	f.click("#articulation-triggers-reassign");
+	REQUIRE(f.app.waitUntil([&triggers] { return triggers() == Triggers{-1, 59, 60, 62, 64}; }));
+
+	// Transpose All by an octave, of all maps.
+	f.write("#articulation-transpose-by", "1");
+	nextOption("#articulation-transpose-unit");
+	f.click("#articulation-transpose-all");
+	f.click("#articulation-triggers-transpose");
+	REQUIRE(f.app.waitUntil([&triggers] { return triggers() == Triggers{-1, 71, 72, 74, 76}; }));
+	CHECK(triggers(1) == Triggers{52});
+	CHECK(f.maps().at(1).at("id") == brass.at("id"));
 }
 
 TEST_CASE("the Articulations lane collapses and expands its groups and hides its sound slots lane", "[ui]")
