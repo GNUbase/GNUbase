@@ -18,6 +18,7 @@ saved, and a new project closes the editors.
 | `moveInsert`, `recordPitch`, `recordVelocity`, `recordReleaseVelocity`, `keepNotes` | The Step/MIDI Input section's switches | p. 1197 |
 | `insertVelocity` | The velocity of drawn notes and of input that doesn't record it (0-1, default 100/127) | p. 1195 |
 | `lengthQuantize` | The length of new notes: a note value (`1/16`, `1/8T`, `1/4.`) or `link`, the quantize grid's | p. 1196 |
+| `showExpression`, `expressionDoubleClick`, `expressionType` | Show Note Expression Data, Double-Click Opens Note Expression Editor and the expression the expression editor edits ([note-expression.md](note-expression.md)) | pp. 1303, 1308-1309 |
 
 `editor.set` changes them; `editor.get` and `editor.changed` report them.
 
@@ -60,6 +61,9 @@ the edits of several parts go in one `history.transaction`.
                                       while on
     #key-length-quantize              Length Quantize, menu #key-length-menu (Quantize Link, 1/1 to 1/64, triplets)
     valuefield#key-insert-velocity    Insert Velocity, 1-127
+    button.key-input[setting=showExpression|expressionDoubleClick]
+                                      Show Note Expression Data and Double-Click Opens Note Expression Editor
+                                      (not in the drum editor); .checked while on
   .info-line.key-editor-info          the first selected note: textdisplay[field=start|end|length|pitch|velocity|
                                       releaseVelocity|channel]; .empty without, .multiple with several selected
   .editor-parts                       an .editor-part-row[track] per track, its .editor-part[part] at their time
@@ -71,6 +75,10 @@ the edits of several parts go in one `history.transaction`.
     .key-editor-grid                  128 .key-editor-row (.black); .key-editor-notes with a .key-note[part][note]
                                       per note (.selected, .inactive outside the part editing mode, .drawing);
                                       .key-editor-step-cursor (.off while step input is off)
+                                      with Show Note Expression Data a .key-expression-step per point in a .key-note;
+      .key-expression-editor          the expression editor (.off while closed): button.key-expression-type (Parameter
+                                      Selection, menu #key-expression-menu) and .key-expression-area with the
+                                      selected notes' .key-expression-step (note-expression.md)
   .controller-lanes                   the controller lanes (controller-lanes.md)
 #key-editor-toolbox                   menu.toolbox with a menuitem[key-tool] per tool, [checked] for the current one
 .editor-chord-editing                 the inspector's Chord Editing section: .editor-chord-type (the chord's name),
@@ -105,7 +113,7 @@ selects and deselects no notes.
 
 | Tool | Gesture | Reference |
 |---|---|---|
-| Object Selection | A click selects a note, Ctrl (Cmd) or Shift and a click adds or removes it, a click in the empty grid deselects (with step input on, it also moves the step input cursor); a drag moves the selected notes in time and pitch, at a note's ends it resizes them; a double click inserts a note of the length quantize's length, on a note deletes it | pp. 1211-1214, 1220 |
+| Object Selection | A click selects a note, Ctrl (Cmd) or Shift and a click adds or removes it, a click in the empty grid deselects (with step input on, it also moves the step input cursor); a drag moves the selected notes in time and pitch, at a note's ends it resizes them; a double click inserts a note of the length quantize's length, on a note deletes it, or with Double-Click Opens Note Expression Editor opens the expression editor ([note-expression.md](note-expression.md)) | pp. 1211-1214, 1220, 1308 |
 | Draw | A click draws a note of the length quantize's length, a drag a multiple of it | p. 1212 |
 | Erase | A click deletes the note | p. 1212 |
 | Trim | A click cuts off the note's end from the mouse on, with Alt its start up to the mouse | p. 1215 |

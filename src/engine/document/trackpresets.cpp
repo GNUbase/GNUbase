@@ -615,16 +615,10 @@ namespace gnubase::engine
 				if (media != file.media.end())
 					rates[track].insert(media->second.sampleRate);
 			};
-			for (const auto& [id, event] : file.audioEvents)
-				add(event.track, event.clip);
+			forEveryAudioEvent(file, [&add](const AudioEvent& event) { add(event.track, event.clip); });
 			for (const auto& [id, track] : file.trackById)
-			{
-				for (const TrackVersion& version : track.versions)
-					for (const AudioEvent& event : version.audioEvents)
-						add(id, event.clip);
 				if (const auto channel = file.channels.find(track.channel); channel != file.channels.end())
 					forEveryInstrumentClip(channel->second, [&add, id = id](ObjectId clip) { add(id, clip); });
-			}
 			return rates;
 		}
 

@@ -83,7 +83,7 @@ TEST_CASE("a MIDI editor opens with several parts on several tracks, in the trac
 			 "recordVelocity", "recordReleaseVelocity", "keepNotes", "insertVelocity", "lengthQuantize", "content",
 			 "lanes", "showLanes", "soundSlotsLane", "collapsedGroups", "autoSelectControllers", "controllerSelection",
 			 "eventSelection", "pitchVisibility", "reverseSounds", "visibleSounds", "soundsInUse", "soloInstrument",
-			 "showNoteLength", "gridType"})
+			 "showNoteLength", "gridType", "showExpression", "expressionDoubleClick", "expressionType"})
 		shown.erase(key);
 	CHECK(shown == closed);
 

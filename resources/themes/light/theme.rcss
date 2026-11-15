@@ -515,6 +515,10 @@
 	{
 		background-color: #a2aab4;
 	}
+	.event-display .cutting-position
+	{
+		background-color: #0969da;
+	}
 	.event-display .marker-lines
 	{
 		stroke-color: #aaa2da;
@@ -946,6 +950,21 @@
 	.key-editor-step-cursor
 	{
 		background-color: #0969da;
+	}
+	.key-expression-step
+	{
+		border-top-width: 1px;
+		border-top-color: #17202d;
+	}
+	.key-expression-editor
+	{
+		background-color: #f7f9fc;
+		border-width: 1px;
+		border-color: #0969da;
+	}
+	.key-expression-editor .key-expression-step
+	{
+		border-top-color: #6554c0;
 	}
 	.in-place-editor
 	{

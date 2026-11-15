@@ -251,21 +251,9 @@ namespace gnubase::engine
 			int64_t& end = at.base == time::TimeBase::Linear ? options.contentEndSamples : options.contentEnd;
 			end = std::max(end, at.value + holds);
 		};
-		const auto extendParts = [&extend](const auto& parts)
-		{
-			for (const auto& part : parts)
-				extend({part.position.base, part.position.value + part.length});
-		};
-		for (const auto& [id, part] : project.midiParts)
-			extend({part.position.base, part.position.value + part.length});
-		for (const auto& [id, part] : project.audioParts)
-			extend({part.position.base, part.position.value + part.length});
-		for (const auto& [id, track] : project.trackById)
-			for (const TrackVersion& version : track.versions)
-			{
-				extendParts(version.midiParts);
-				extendParts(version.audioParts);
-			}
+		const auto extendPart = [&extend](const auto& part, bool)
+		{ extend({part.position.base, part.position.value + part.length}); };
+		forEveryEventAndPart(project, [](const AudioEvent&, bool) {}, extendPart, extendPart);
 		// An audio event keeps its position in its track's time base. If its clip plays in musical mode, its length
 		// is in beats, which follow the tempo: on a musical track it keeps its end in ticks, on a linear one it ends at
 		// its start in ticks in the file's tempo plus that length. Otherwise its length is in samples: on a linear

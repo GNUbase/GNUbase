@@ -949,6 +949,51 @@ TEST_CASE("every effect forgets its past on reset", "[unit]")
 	}
 }
 
+TEST_CASE("a reset clears the delay and the reverb after a few frames and after more than a line", "[unit]")
+{
+	// A reset clears only the frames written since the last one (#1595): after a few frames, and after more than a
+	// whole line, the core is silent afterwards. Longest time, full feedback and only the wet signal, so anything
+	// left in a line would come out again.
+	const auto check = [](auto& core, const char* name, uint32_t written, uint32_t listen)
+	{
+		INFO(name << ", reset after " << written << " frames");
+		core.prepare(g_sampleRate, g_block);
+		const auto run = [&core](Signal& signal)
+		{
+			float* const channels[] = {signal[0].data(), signal[1].data()};
+			const auto length = static_cast<uint32_t>(signal[0].size());
+			for (uint32_t start = 0; start < length; start += g_block)
+				core.process(channels, 2, start, std::min(start + g_block, length));
+		};
+		Signal input = noise(2, written, 0.5);
+		run(input);
+		core.reset();
+		Signal output = silence(2, listen);
+		run(output);
+		CHECK(peak(output[0]) == 0.0);
+		CHECK(peak(output[1]) == 0.0);
+	};
+
+	const auto line = static_cast<uint32_t>(dsp::Delay::g_maxSeconds * g_sampleRate) + 1;
+	for (const uint32_t written : {uint32_t{100}, line + 1000})
+	{
+		dsp::Delay delay;
+		delay.setParameter(dsp::Delay::Time, 5000.0);
+		delay.setParameter(dsp::Delay::Feedback, 100.0);
+		delay.setParameter(dsp::Delay::Mix, 100.0);
+		check(delay, "delay", written, line + 1);
+	}
+	for (const uint32_t written : {uint32_t{100}, uint32_t{20000}})
+	{
+		dsp::Reverb reverb;
+		reverb.setParameter(dsp::Reverb::Size, 100.0);
+		reverb.setParameter(dsp::Reverb::Decay, 20.0);
+		reverb.setParameter(dsp::Reverb::Predelay, 200.0);
+		reverb.setParameter(dsp::Reverb::Mix, 100.0);
+		check(reverb, "reverb", written, 20000);
+	}
+}
+
 TEST_CASE("the effect cores decay to exact silence without subnormal numbers", "[unit]")
 {
 	// The cores on their own, without the processors' denormal mode: their own flushing has to do it.

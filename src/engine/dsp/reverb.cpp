@@ -62,6 +62,10 @@ namespace gnubase::engine::dsp
 				channel.allpasses[k].buffer.assign(frames((g_allpassTunings[k] + spread) * rate), 0.0f);
 		}
 		m_predelay.buffer.assign(frames(std::ceil(g_maxPredelaySeconds * sampleRate)) + 3, 0.0f);
+		m_longest = m_predelay.buffer.size();
+		for (const Channel& channel : m_channels)
+			for (const Comb& comb : channel.combs)
+				m_longest = std::max(m_longest, comb.line.buffer.size());
 		m_predelayFrames.setTime(g_glideSeconds, sampleRate);
 		m_glide.setTime(g_glideSeconds, sampleRate);
 		m_wet.setTime(g_smoothingSeconds, sampleRate);
@@ -72,23 +76,26 @@ namespace gnubase::engine::dsp
 
 	void Reverb::reset() noexcept
 	{
+		const auto clear = [this](std::vector<float>& buffer)
+		{ std::fill_n(buffer.begin(), std::min(m_written, buffer.size()), 0.0f); };
 		for (Channel& channel : m_channels)
 		{
 			for (Comb& comb : channel.combs)
 			{
-				std::fill(comb.line.buffer.begin(), comb.line.buffer.end(), 0.0f);
+				clear(comb.line.buffer);
 				comb.line.write = 0;
 				comb.from = comb.to;
 				comb.filter = 0.0f;
 			}
 			for (Allpass& allpass : channel.allpasses)
 			{
-				std::fill(allpass.buffer.begin(), allpass.buffer.end(), 0.0f);
+				clear(allpass.buffer);
 				allpass.position = 0;
 			}
 		}
-		std::fill(m_predelay.buffer.begin(), m_predelay.buffer.end(), 0.0f);
+		clear(m_predelay.buffer);
 		m_predelay.write = 0;
+		m_written = 0;
 		m_predelayFrames.finish();
 		m_glide.finish();
 		m_wet.finish();
@@ -227,5 +234,6 @@ namespace gnubase::engine::dsp
 			if (count == 2)
 				audio[1][i] = (dry * audio[1][i]) + (wet * processChannel(m_channels[1], input, glide, damp));
 		}
+		m_written = std::min(m_written + (end - begin), m_longest);
 	}
 }

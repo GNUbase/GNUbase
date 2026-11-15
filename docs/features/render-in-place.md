@@ -77,6 +77,10 @@ audio track below the track, named after it with "(Rendered)", in its folder, ti
   track gets the fader, pan and sends; `completeSignalPath` renders at `output`, so a mono track panned on a stereo
   bus gives a stereo track, with no settings of its own.
 - `sourceTracks` (p. 1473): `keep` (the default), `mute`, `disable` or `remove` the tracks it rendered.
+- The new event holds the global transposition it was rendered with (#1368, [transpose.md](transpose.md)), and gets
+  the root key and Global Transpose that a recorded event gets (p. 420): without transpose events the project root
+  key, if it has one, and Follow, so that changing the project root key afterwards shifts it by the step from the old
+  key; with transpose events no root key and Independent, since following them it would be transposed again (tested).
 - Refused for a disabled track; `dry` for a frozen track, whose freeze file is already through the slots that `dry`
   copies onto the new track (unfreeze it first); and `completeSignalPath` for a silent track, muted or silenced by
   another track's solo, since the complete signal path ends after the mute (unmute it, or solo it too). Before the

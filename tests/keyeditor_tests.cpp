@@ -337,3 +337,24 @@ TEST_CASE("note.chord and note.voicing edit the chord of notes", "[unit]")
 	CHECK_THAT(
 		f.fails("note.voicing", {{"part", f.part}, {"notes", ids}}), ContainsSubstring("either chord or voicing"));
 }
+
+TEST_CASE("the note expression settings of the key editor are view state", "[unit]")
+{
+	Fixture f;
+	// Show Note Expression Data and Double-Click Opens Note Expression Editor are off, and the expression editor
+	// starts with tuning (reference manual pp. 1303, 1308-1309).
+	const Json initial = f.view();
+	CHECK(initial.at("showExpression") == false);
+	CHECK(initial.at("expressionDoubleClick") == false);
+	CHECK(initial.at("expressionType") == "tuning");
+	const int64_t revision = f.call("project.revision").at("revision").get<int64_t>();
+	const Json changed = f.call("editor.set",
+		{{"editor", "window"}, {"showExpression", true}, {"expressionDoubleClick", true},
+			{"expressionType", "brightness"}});
+	CHECK(changed.at("showExpression") == true);
+	CHECK(changed.at("expressionDoubleClick") == true);
+	CHECK(changed.at("expressionType") == "brightness");
+	CHECK(f.view().at("expressionType") == "brightness");
+	CHECK(f.call("project.revision").at("revision").get<int64_t>() == revision); // no undo step
+	CHECK(!f.fails("editor.set", {{"editor", "window"}, {"expressionType", "loudness"}}).empty());
+}

@@ -152,9 +152,10 @@ if [ "$(uname -s)" = Linux ]; then
 	printed "GCC compiles the other file" "GCC compiles the others."
 
 	# A CMake file newer than the compile databases configures both again (with a stub cmake that logs its build
-	# folder), once: the next run finds them up to date, also when CMake left their content as it was.
+	# folder and, as CMake's Ninja generators do on every configure, writes its database again), once: the next run
+	# finds them up to date.
 	mkdir -p "$tmp/bin"
-	printf '#!/bin/sh\necho "$4" >> "%s/configured"\n' "$tmp" > "$tmp/bin/cmake"
+	printf '#!/bin/sh\necho "$4" >> "%s/configured"\ntouch "$4/compile_commands.json"\n' "$tmp" > "$tmp/bin/cmake"
 	chmod +x "$tmp/bin/cmake"
 	touch -d '1 hour ago' "$repo/build/tidy/compile_commands.json" "$repo/build/tidy-gcc/compile_commands.json"
 	touch "$repo/CMakeLists.txt"
@@ -164,7 +165,11 @@ if [ "$(uname -s)" = Linux ]; then
 	printed "a changed CMake file configures build/tidy again" "Configuring build/tidy for its compile database"
 	[ "$(cat "$tmp/configured")" = "$(printf 'build/tidy\nbuild/tidy-gcc')" ] &&
 		echo "ok: a changed CMake file configures both compile databases again" ||
-		{ echo "FAILED: a changed CMake file configures both compile databases again"; failures=$((failures + 1)); }
+		{
+			echo "FAILED: a changed CMake file configures both compile databases again"
+			sed 's/^/    /' "$tmp/configured"
+			failures=$((failures + 1))
+		}
 	check "the next run passes" 0
 	[ "$(wc -l < "$tmp/configured" | tr -d ' ')" -eq 2 ] && echo "ok: the next run configures nothing" ||
 		{ echo "FAILED: the next run configures nothing"; sed 's/^/    /' "$tmp/output"; failures=$((failures + 1)); }
