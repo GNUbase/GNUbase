@@ -47,22 +47,25 @@ nothing where the piece is. Splitting such a piece again gives two pieces that r
 trimmed by hand since has a length set by other means, which counts as its original as any such length does: resetting
 keeps it, moves it back by the distance its event moved and leaves it that length, past the end of the original.
 
-An event that crossfaded from the split event now crossfades from the piece after the split, and its origin's
-crossfades follow, so that resetting still takes out one the panel made and keeps one made by hand, from the piece that
-is then the neighbour before it. When the piece after the split has nothing of the original, the crossfade from before
-quantizing stays with the piece before it, the whole original, and resetting removes the piece after the others are
-back, so that crossfade comes back. Removing the piece moves every crossfade still from it to the piece before it, the
-whole original again, as gluing moves crossfades to the event it keeps (#1566): that of a neighbour left out of the
-reset or locked, and one changed by hand since quantizing, which counts as the neighbour's original. It plays where
-the two overlap. The neighbour's origin follows, so resetting it later still brings back the crossfade from before
-quantizing, or keeps the one changed by hand. An original crossfade from an event that is gone, such as one removed by
-hand since, doesn't come back: resetting leaves the event without one.
+An event that crossfaded from the split event now crossfades from the piece after the split, and its origin's crossfades
+follow, so that resetting still takes out one the panel made and keeps one made by hand, from the piece that is then the
+neighbour before it. When the piece after the split has nothing of the original, the crossfade from before quantizing
+stays with the piece before it, the whole original, and resetting removes the piece after the others are back, so that
+crossfade comes back. Removing the piece moves every crossfade still from it to the piece before it, the whole original
+again, as gluing moves crossfades to the event it keeps (#1566): that of a neighbour left out of the reset or locked,
+and one changed by hand since quantizing, which counts as the neighbour's original. It plays where the two overlap. The
+piece before is the event of the piece's track and clip that ended where the piece starts, within the rounding of a
+musical position (#1642); without one, such as after the event the piece was split from was removed or trimmed by hand,
+the crossfade ends, rather than coming from another copy of the clip on the track. The neighbour's origin follows, so
+resetting it later still brings back the crossfade from before quantizing, or keeps the one changed by hand. An original
+crossfade from an event that is gone, such as one removed by hand since, doesn't come back: resetting leaves the event
+without one.
 
 Locked events stay as they are when resetting, a piece with nothing of the original too, and so do the warp markers
 that resetting would put back for them: a locked event is protected from being moved and edited (p. 276), and
-quantizing leaves it alone as well; a crossfade from a piece that resetting removes goes to the piece before it. Whether
-a part's lock protects its events is #1076's question. `src/engine/document/audioquantize.cpp` has the functions; the commands stay in
-`midi/quantizecommands.cpp`.
+quantizing leaves it alone as well; a crossfade from a piece that resetting removes goes to the piece before it.
+Whether a part's lock protects its events is #1076's question. `src/engine/document/audioquantize.cpp` has the
+functions; the commands stay in `midi/quantizecommands.cpp`.
 
 ## Warp quantizing
 
@@ -146,21 +149,27 @@ origin. `quantize.resetSlices` takes any of the event or its slices: it removes 
 undo step, and gives the event back what it was, whole and unquantized, so `quantize.reset` has nothing left to do for
 it. Crossfades from the slices go to the event, as removing a piece moves them for Reset Quantize. An event that is
 locked or has a locked slice stays as it is, slices and all. A slice moved to another track since is left alone; a copy
-of a slice or of the event, made with the clipboard or by duplicating, carries the same ids and on its track counts as
-one of them. The origin keeps the time base it was cut in, and resetting puts the event's start back in its track's
-time base of now.
+of a slice or of the event, made with the clipboard or by duplicating, is the user's own, with neither (#1668), so that
+resetting neither puts a copy of the event on top of the event nor removes copies of its slices. The slices of a
+duplicated or imported track, also those of its other versions, and of a duplicated version are slices of the copy of
+their event, which resets them. The origin changes its time base with the track's (`rebaseTrack`) and with the event's
+when the event moves onto a track of the other time base, alone or in an audio part, so the file keeps it and the event
+gets its start back in that one.
 
 `quantize.createWarpMarkers` keeps the clip frames of the markers it adds in the clip's warp (`ClipWarp::created`,
 saved with the warp), and `quantize.resetWarpMarkers` removes the markers at those frames from the clip, also once
 warp quantizing moved them, and from the markers warp quantizing keeps for `quantize.reset`: the clip's own markers
-stay, and resetting the quantizing still puts those back. Locked events' clips keep them.
+stay, and resetting the quantizing still puts those back. Locked events' clips keep them. Removing markers
+(`clip.removeWarpMarkers`, `event.unstretch`) takes their frames out of `created` too, so a marker the user adds at
+such a frame later is the user's own.
 
 ## Groove quantize presets from hitpoints
 
 `quantize.extractGroove` makes a groove preset of an audio event's hitpoints that count with `event` instead of a MIDI
 part (Create Groove Quantize Preset, pp. 367, 373): a groove position at each, the groove as long as the event and
-repeating from its start, named by default after its clip; `length` goes with `part` only and is refused with `event`. It is the groove `event.fromHitpoints` with `groove` makes
-the project's settings ([hitpoints.md](hitpoints.md)), kept as a preset, so it is on every Quantize Presets menu.
+repeating from its start, named by default after its clip; `length` goes with `part` only and is refused with `event`.
+It is the groove `event.fromHitpoints` with `groove` makes the project's settings ([hitpoints.md](hitpoints.md)), kept
+as a preset, so it is on every Quantize Presets menu.
 
 ## In the UI
 
@@ -170,8 +179,10 @@ the project's settings ([hitpoints.md](hitpoints.md)), kept as a preset, so it i
   events and audio parts too, with its MIDI parts in one `quantize.apply` or `quantize.reset`. With a selection range
   (the range selection tool), they take the audio events on its tracks that it reaches instead, so that Reset Quantize
   and Create Groove Quantize Preset leave the others alone, and Quantize sends the range as `start` and `end`, which
-  warp quantizes the range (p. 370); with Warp Quantize off the engine refuses it. Quantize MIDI Event Ends and Lengths
-  and Freeze MIDI Quantize stay MIDI only.
+  warp quantizes the range (p. 370); with Warp Quantize off the engine refuses it, and the refusal is logged, as a
+  refused Slice is (#1668). Which events the range reaches is where the project window shows them
+  (`ui::EventDisplay::audioEventSpans`, worked out once per project update): an event in an audio part by its own
+  span. Quantize MIDI Event Ends and Lengths and Freeze MIDI Quantize stay MIDI only.
 - **Warp Quantize On/Off**: `#quantize-warp` in the panel, next to the strength, and `#toolbar-quantize-warp` in the
   toolbar's quantize section, where it is the first thing to go when the toolbar has no room for all its sections
   (`fit="spare"`, [docking.md](docking.md)).
@@ -187,16 +198,17 @@ the project's settings ([hitpoints.md](hitpoints.md)), kept as a preset, so it i
   window marks where Slice would cut the selected audio events with a vertical `.cutting-position` line over the
   event lanes. The panel asks `quantize.slicePositions` with its Range, Offset and priorities after every selection
   change and project update and when one of those changes, and `ui::EventDisplay::setCuttingPositions` shows them.
-  They show while the view is zoomed in far enough for every two to be at least 4 dp apart: the reference manual
-  shows them once the zoom is high enough without saying how high. Closing the panel takes them away.
+  Each line shows that is at least 4 dp after the one shown before it, so zoomed out two hitpoints close together,
+  such as a flam, leave one line and the others stay (#1668): the reference manual shows them once the zoom is high
+  enough without saying how high. Closing the panel takes them away.
 - **Hitpoint Tracks** lists the tracks of those events whose clips have hitpoints, in the project's track order, each
-  with its priority in a value field (`.quantize-priority`, its `track` attribute the track's id): 0 to 5, dragged
-  up or down or typed, 1 until it is changed. Slice and Create send them as `priorities`, so 0 leaves a track's
-  hitpoints out. The list follows the project window's selection and every project update
-  (`ui::EventDisplay::onSelectionShown`); a track keeps its priority while the panel is open, also when it leaves the
-  list and comes back, until another project is new or opened (`project.reset`): track ids start at 1 again in every
-  project. The reference manual shows the priority as up to five stars, dragged left or right (p. 378); a value field
-  is the panel's own widget for a number, and it drags vertically as every value field does. Nudge Crossfade Left and Right (`#quantize-nudge-left`,
+  with its priority in a value field (`.quantize-priority`, its `track` attribute the track's id): 0 to 5, dragged up or
+  down or typed, 1 until it is changed. Slice and Create send them as `priorities`, so 0 leaves a track's hitpoints out.
+  The list follows the project window's selection and every project update (`ui::EventDisplay::onSelectionShown`); a
+  track keeps its priority while the panel is open, also when it leaves the list and comes back, until another project
+  is new or opened (`project.reset`): track ids start at 1 again in every project. The reference manual shows the
+  priority as up to five stars, dragged left or right (p. 378); a value field is the panel's own widget for a number,
+  and it drags vertically as every value field does. Nudge Crossfade Left and Right (`#quantize-nudge-left`,
   `#quantize-nudge-right`, next to Crossfade) send `quantize.nudgeCrossfade` with -1 and 1 ms. Open Crossfade Editor
   (`#quantize-crossfade-editor`) runs the UI command `audio.crossfadeEditor`, which opens the crossfade editor
   ([fades.md](fades.md)) of the first crossfade into or out of a selected audio event, as Crossfade (`audio.crossfade`)
@@ -211,7 +223,8 @@ the project's settings ([hitpoints.md](hitpoints.md)), kept as a preset, so it i
 
 Group editing (p. 274, [folder-tracks.md](folder-tracks.md)) selects the events of a folder's tracks at the same
 place together, so the commands for several tracks take the edit group as the reference manual's procedures do; they
-still take whatever events are selected, of any tracks.
+still take whatever events are selected, of any tracks. Ctrl and a click on a selected event of an edit group takes
+the whole group out of the selection (#1668).
 
 ## Checks
 
@@ -235,21 +248,26 @@ and with the piece's end trimmed by hand, which keeps it; resetting keeping a cr
 while the one the Crossfade step made goes, also across a save and a load and from the piece after a split of the event
 it comes from; resetting keeping an end trimmed and a crossfade made by hand after quantizing, and an end trimmed by
 hand on a slice the step stretched; resetting leaving a locked event where quantizing left it; a project file whose
-origins keep no offset or length yet; warp markers for several tracks of the same priority; Nudge Crossfade right,
-left and back, with reset after it, not past a clip's start and not with a locked event, and quantizing again after it;
-a crossfade from a piece that resetting removes going to the piece before it, of a locked neighbour and changed by
-hand, and an original crossfade from an event removed by hand not coming back; a groove preset from an audio event's
-hitpoints that then quantizes another event, its name and its errors; the Slice Rules' Reset after slicing, quantizing
-and crossfading two tracks, with undo, from any slice, with a slice split by hand, across a save and a load, after
-slicing the slices again, with a locked slice, with the event's fade out and on a track whose time base changed since
-slicing; the Warp Marker Creation Rules' Reset keeping the user's own marker, after warp quantizing and across a save
-and a load, and with a locked event; warp quantizing a selection range, rendered, with a range the event doesn't reach,
-a second range and its errors; the cutting positions where Slice then cuts, none without hitpoints, and no undo step.
+origins keep no offset or length yet; warp markers for several tracks of the same priority; Nudge Crossfade right, left
+and back, with reset after it, not past a clip's start and not with a locked event, and quantizing again after it, also
+on a musical track at 97 BPM; a crossfade from a piece that resetting removes going to the piece before it, of a locked
+neighbour and changed by hand, ending without the event the piece was split from, and an original crossfade from an
+event removed by hand not coming back; a groove preset from an audio event's hitpoints that then quantizes another
+event, its name and its errors; the Slice Rules' Reset after slicing, quantizing and crossfading two tracks, with undo,
+from any slice, with a slice split by hand, across a save and a load, after slicing the slices again, with a locked
+slice, with the event's fade out and on a track whose time base changed since slicing, also across a save and a load;
+copies of slices with no origin, and a duplicated track resetting its own; the Warp Marker Creation Rules' Reset keeping
+the user's own marker, after warp quantizing and across a save and a load, with a locked event, and leaving a marker
+added where a removed one was; warp quantizing a selection range, rendered, with a range the event doesn't reach, a
+second range and its errors; the cutting positions where Slice then cuts, none without hitpoints, and no undo step.
 `tests/audioquantize_ui_tests.cpp` drives the app with `ui::Automation`: Edit > Quantize and Reset Quantize on a
 selected audio event, the sample editor toolbar's Apply Quantize on the event it edits, Warp Quantize On/Off, the
 panel's Slice, Apply, Crossfade, Nudge Crossfade, Open Crossfade Editor and Create on two tracks, the Hitpoint Tracks
 following the selection and a track at priority 0 leaving its hitpoints out of Slice and of Create, the priorities
-forgotten in a new project, and Create Groove Quantize Preset from a selected audio event, logged when it is refused;
-the panel's two Reset buttons after Slice and Apply and after Create, Edit > Quantize on a selection range with Warp
-Quantize on, Reset Quantize on a selection range leaving an event outside it as it is, and the cutting positions
-following the selection, the zoom and Warp Quantize On/Off.
+forgotten in a new project, and Create Groove Quantize Preset from a selected audio event, logged when it is refused,
+and from the event a selection range reaches; the panel's two Reset buttons after Slice and Apply and after Create,
+Edit > Quantize on a selection range with Warp Quantize on, and with it off logging the refusal, Reset Quantize on a
+selection range leaving an event outside it as it is, and with Group Editing on every track of the folder, and the
+cutting positions following the selection, the zoom and Warp Quantize On/Off, and going with the panel.
+`tests/eventediting_tests.cpp` selects MIDI and audio parts with Group Editing, not one on another lane, by the
+outermost folder with Group Editing, and takes a group out with Ctrl and a click.

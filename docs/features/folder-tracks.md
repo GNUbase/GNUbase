@@ -57,7 +57,8 @@ manual pp. 160–161, 221–226). Adding, nesting, moving and folding folders is
   it is on, the event display (`EventDisplay::select`) selects with an event or part on a track inside the folder,
   nested folders included, those on the folder's other tracks with the same start and end and on the same lane of
   their track, the playback priority where events overlap (p. 274), and a selection range on one of its tracks is on
-  all of them (`EventDisplay::setRange`). The outermost folder with Group Editing on decides. The quantize panel's
+  all of them (`EventDisplay::setRange`). The outermost folder with Group Editing on decides. Ctrl and a click on a
+  selected event of a group takes the whole group out of the selection (#1668). The quantize panel's
   commands for several audio tracks then take the edit group, as pp. 370-372 and 378 start from it. The reference
   manual also groups them for editing for as long as they are selected; here selecting them is all, and editing the
   selection edits them all as it edits any selection.
@@ -65,9 +66,10 @@ manual pp. 160–161, 221–226). Adding, nesting, moving and folding folders is
 ## Not yet
 
 Event details instead of data blocks on folders, and automation instead of data on folders with a group channel
-(p. 222); mute and solo on folders without a group channel; phase-coherent warping of the edit group (p. 196); the modified folder icon;
-the folder's channel in the mixer, and moving channels into folders there; Deep Track Folding; a folder's data blocks
-following an event drag (they move on the drop); and the color picker, with the track colors ticket (#94).
+(p. 222); mute and solo on folders without a group channel; phase-coherent warping of the edit group (p. 196); the
+modified folder icon; the folder's channel in the mixer, and moving channels into folders there; Deep Track Folding; a
+folder's data blocks following an event drag (they move on the drop); and the color picker, with the track colors
+ticket (#94).
 
 ## Checks
 
@@ -80,4 +82,5 @@ following an event drag (they move on the drop); and the color picker, with the 
   nothing to do, and the data blocks by `ui.folderData` while the folder is folded and unfolded.
 - `tests/audioquantize_tests.cpp` sets Group Editing with undo, redo, a save and a load, and refuses it for an audio
   track; `tests/audioquantize_ui_tests.cpp` turns it on and off with the folder's button and selects events and a
-  range of the folder's tracks with it.
+  range of the folder's tracks with it; `tests/eventediting_tests.cpp` selects MIDI and audio parts with it, not one on
+  another lane, by the outermost folder with it, and takes a group out with Ctrl and a click.

@@ -771,11 +771,18 @@ namespace gnubase::engine
 			{
 				const Json& parameters = context.parameters();
 				Clip& clip = clipOf(project, parameters);
+				// A marker the user adds at the frame of a removed one that quantize.createWarpMarkers made is the
+				// user's own: the Reset of the Warp Marker Creation Rules leaves it (#1668).
+				std::vector<time::Samples>& created = clip.warp.created;
 				if (!parameters.contains("positions"))
+				{
 					clip.warp.markers.clear();
+					created.clear();
+				}
 				for (const Json& position : parameters.value("positions", Json::array()))
 				{
 					const WarpMarker& marker = markerAt(clip.warp, position.get<time::Samples>());
+					created.erase(std::remove(created.begin(), created.end(), marker.position), created.end());
 					clip.warp.markers.erase(clip.warp.markers.begin() + (&marker - clip.warp.markers.data()));
 				}
 				return warpResult(clip, context);
@@ -799,6 +806,7 @@ namespace gnubase::engine
 						continue;
 					clip.warp.musical = false;
 					clip.warp.markers.clear();
+					clip.warp.created.clear();
 					context.emit("clip.changed", {{"clip", toJson(clip)}});
 					clips.push_back(clip.id);
 				}

@@ -510,11 +510,12 @@ namespace gnubase::engine::midi
 				{ return std::find(removed.begin(), removed.end(), Json(id)) != removed.end(); };
 				// The piece before a removed one: of the events of its track and clip but follower, whose crossfade
 				// from it is followed, those that played its clip frames up to where it starts, or past it into a
-				// crossfade, the one that ended nearest to where it starts, as the event it was split from did. Not
-				// the first in id order: the follower stretched back over those frames by the Crossfade step, or
-				// another copy of the clip elsewhere on the track, play them too. It is the whole original again,
-				// or removed too and then has one of its own; its clip frames come before the piece's, so the chain
-				// ends. 0 without one.
+				// crossfade, the one that ended where it starts (within a sample, the rounding of a musical
+				// position), as the event it was split from did. Not just any that plays those frames: the follower
+				// stretched back over them by the Crossfade step, or another copy of the clip elsewhere on the track,
+				// play them too, and with the event it was split from gone or trimmed by hand there is none (#1642).
+				// It is the whole original again, or removed too and then has one of its own; its clip frames come
+				// before the piece's, so the chain ends. 0 without one.
 				const auto pieceBefore = [&](ObjectId id, ObjectId follower)
 				{
 					while (isRemoved(id))
@@ -529,7 +530,7 @@ namespace gnubase::engine::midi
 							const time::Samples distance = std::abs(other.span.end - where.span.start);
 							if (otherId != piece.id && otherId != follower && event.track == piece.track &&
 								event.clip == piece.clip && other.from < where.from && other.to >= where.from &&
-								(id == 0 || distance < nearest))
+								distance <= 1 && (id == 0 || distance < nearest))
 							{
 								id = otherId;
 								nearest = distance;
@@ -921,9 +922,9 @@ namespace gnubase::engine::midi
 				"origin is the part's start, so it repeats in phase with the part. With event instead of part, from "
 				"an audio event's hitpoints that count (Create Groove Quantize Preset, reference manual pp. 367, "
 				"373): a position at each, as long as the event and starting where it does, named by default after "
-				"its clip. Like quantize.savePreset, it replaces the user's preset of that name, and "
-				"quantize.changed announces when another preset is the one the project's settings are (see "
-				"quantize.get).",
+				"its clip; length goes with part only and is refused with event. Like quantize.savePreset, it "
+				"replaces the user's preset of that name, and quantize.changed announces when another preset is the "
+				"one the project's settings are (see quantize.get).",
 				objectSchema(
 					{{"part", idSchema}, {"event", idSchema}, {"name", stringSchema}, {"length", idSchema}}, {}),
 				presetResult, false},

@@ -179,13 +179,23 @@ namespace gnubase::ui
 		// high, for the editor over their lane.
 		void setInPlaceTracks(std::set<uint64_t> tracks);
 		// The quantize panel's cutting positions (#1579, reference manual p. 378): a .cutting-position line over the
-		// event lanes where Slice would cut, at each of the project samples, by position. They show while the view
-		// is zoomed in far enough for every two of them to be at least g_cutDistance dp apart.
+		// event lanes where Slice would cut, at each of the project samples, by position. Each line shows that is
+		// at least g_cutDistance dp after the one shown before it (#1668), so that a flam zoomed out keeps the others.
 		void setCuttingPositions(std::vector<int64_t> positions);
 		const std::vector<int64_t>& cuttingPositions() const { return m_cuttingPositions; }
 		// The project as project.get last returned it, or null before the first answer; loads() counts the answers,
 		// and read() is when the binding handed the last one on (EngineBinding::handed).
 		const engine::Json& project() const { return m_project; }
+		// Where each audio event of the project plays, in seconds, as the project window shows it: from its position
+		// in its track's time base to where its warp puts its end (playedLength), or else as long as its clip frames
+		// at its media's rate. An event in an audio part by its own span, also where the part cuts it off.
+		struct AudioEventSpan
+		{
+			uint64_t track = 0;
+			double start = 0.0;
+			double end = 0.0;
+		};
+		const std::map<uint64_t, AudioEventSpan>& audioEventSpans() const { return m_audioSpans; }
 		uint64_t loads() const { return m_loads; }
 		uint64_t read() const { return m_read; }
 		// The tempo map and signatures of project(), read once per answer.
@@ -856,6 +866,7 @@ namespace gnubase::ui
 		// shown that is excluded from global transpose (#168, #1368, reference manual p. 421).
 		Rml::Element* m_partMarks = nullptr;
 		std::set<uint64_t> m_independent;
+		std::map<uint64_t, AudioEventSpan> m_audioSpans;
 		std::string m_partMarksRml;     // what m_partMarks holds
 		Rml::Element* m_cuts = nullptr; // the .cutting-position lines
 		std::vector<int64_t> m_cuttingPositions;

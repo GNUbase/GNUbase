@@ -25,6 +25,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -266,28 +267,33 @@ namespace gnubase::ui
 		for (const char* kind : {"audioEvents", "midiParts", "audioParts"})
 			for (const Json& item : m_project.value(kind, Json::array()))
 				lanes[item.at("id").get<uint64_t>()] = item.value("lane", 0);
-		const double sample = 0.5 / m_time.sampleRate; // seconds
-		const auto groupOf = [&groups](uint64_t track)
+		// The shown events of the edit groups by group, start and end (to the sample) and lane, once: after Slice
+		// every slice of a multi-track recording is selected (#1668).
+		using Place = std::tuple<uint64_t, int64_t, int64_t, int>;
+		const auto placeOf = [&](const Shown& shown, uint64_t group)
 		{
-			const auto found = groups.find(track);
-			return found != groups.end() ? found->second : 0;
+			return Place{group, std::llround(shown.start * m_time.sampleRate),
+				std::llround(shown.end * m_time.sampleRate), lanes[shown.id]};
 		};
-		std::vector<uint64_t> grouped = events;
-		// ponytail: the selected against every shown event, quadratic; fine for the events of a project window.
-		for (const Shown& one : m_events)
+		std::map<Place, std::vector<const Shown*>> places;
+		std::vector<std::pair<const Shown*, uint64_t>> selected; // with its group
+		const std::set<uint64_t> wanted(events.begin(), events.end());
+		for (const Shown& shown : m_events)
 		{
-			if (one.lane >= m_laneTracks.size() || std::find(events.begin(), events.end(), one.id) == events.end())
+			if (shown.lane >= m_laneTracks.size())
 				continue;
-			const uint64_t track = m_laneTracks[one.lane];
-			const uint64_t group = groupOf(track);
-			if (group == 0)
+			const auto group = groups.find(m_laneTracks[shown.lane]);
+			if (group == groups.end())
 				continue;
-			for (const Shown& other : m_events)
-				if (other.lane < m_laneTracks.size() && m_laneTracks[other.lane] != track &&
-					groupOf(m_laneTracks[other.lane]) == group && std::abs(other.start - one.start) < sample &&
-					std::abs(other.end - one.end) < sample && lanes[other.id] == lanes[one.id])
-					grouped.push_back(other.id);
+			places[placeOf(shown, group->second)].push_back(&shown);
+			if (wanted.count(shown.id) != 0)
+				selected.emplace_back(&shown, group->second);
 		}
+		std::vector<uint64_t> grouped = events;
+		for (const auto& [one, group] : selected)
+			for (const Shown* other : places.at(placeOf(*one, group)))
+				if (m_laneTracks[other->lane] != m_laneTracks[one->lane])
+					grouped.push_back(other->id);
 		return grouped;
 	}
 
@@ -1056,10 +1062,21 @@ namespace gnubase::ui
 		m_dragLanes = 0;
 		setLanes(); // without the drag's preview
 		// A click with Ctrl or Shift on a selected event, also one that moved a little before the drag delay.
+		// Taken out with Group Editing, its whole edit group goes (#1668): select() would bring it back through the
+		// others.
+		const auto withGroup = [this]
+		{
+			std::vector<uint64_t> group = withEditGroups({m_dragEvent});
+			std::sort(group.begin(), group.end());
+			return group;
+		};
 		if (toggles && (!moved || (drag == Drag::Events && !started)))
 		{
+			const std::vector<uint64_t> group = withGroup();
 			std::vector<uint64_t> events = m_selection;
-			events.erase(std::remove(events.begin(), events.end(), m_dragEvent), events.end());
+			events.erase(std::remove_if(events.begin(), events.end(),
+							 [&group](uint64_t id) { return std::binary_search(group.begin(), group.end(), id); }),
+				events.end());
 			select(std::move(events));
 			return;
 		}
@@ -1067,10 +1084,11 @@ namespace gnubase::ui
 		{
 			// From the selection as it is now, of the events still there (#1018).
 			const bool selected = std::binary_search(m_selection.begin(), m_selection.end(), m_dragEvent);
+			const std::vector<uint64_t> group = selected ? withGroup() : std::vector<uint64_t>{m_dragEvent};
 			selectWhere(
-				[this, selected](const Shown& shown)
+				[this, selected, &group](const Shown& shown)
 				{
-					return shown.id == m_dragEvent
+					return std::binary_search(group.begin(), group.end(), shown.id)
 						? !selected
 						: std::binary_search(m_selection.begin(), m_selection.end(), shown.id);
 				});

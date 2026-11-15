@@ -503,6 +503,10 @@ namespace gnubase::engine
 				if (event.track != track.id)
 					return;
 				event.position = time::rebase(event.position, base, project.tempo, project.sampleRate);
+				// The Reset of the Slice Rules puts the event back there, also after a save and a load (#1672).
+				if (event.sliceOrigin)
+					event.sliceOrigin->timing.position =
+						time::rebase(event.sliceOrigin->timing.position, base, project.tempo, project.sampleRate);
 				if (plays)
 					context.emit("audioEvent.changed", {{"event", toJson(event)}});
 			},
@@ -1614,6 +1618,9 @@ namespace gnubase::engine
 				event.track = copy.id;
 				const auto from = events.find(event.crossfade.from);
 				event.crossfade.from = from == events.end() ? 0 : from->second;
+				// The copies' slices reset into the copy of their event, not into the original track's (#1668).
+				const auto sliced = events.find(event.slicedFrom);
+				event.slicedFrom = sliced == events.end() ? 0 : sliced->second;
 				const auto part = audioParts.find(event.part);
 				event.part = part == audioParts.end() ? 0 : part->second;
 				project.audioEvents[event.id] = event;
