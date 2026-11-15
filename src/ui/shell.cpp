@@ -303,6 +303,8 @@ namespace gnubase::ui
 				}
 				refresh(*window);
 			}
+			for (const std::function<void()>& task : m_displaysChanged)
+				task();
 			return;
 		}
 		default:

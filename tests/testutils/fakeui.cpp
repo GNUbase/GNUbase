@@ -104,7 +104,17 @@ namespace gnubase::test
 
 	void FakeWindowSystem::setBounds(ui::WindowId window, const ui::Rect& bounds)
 	{
-		move(window, bounds);
+		if (m_boundsLater)
+			m_laterBounds[window] = bounds;
+		else
+			move(window, bounds);
+	}
+
+	void FakeWindowSystem::applyBounds()
+	{
+		for (const auto& [window, bounds] : std::exchange(m_laterBounds, {}))
+			if (m_windows.count(window) != 0)
+				move(window, bounds);
 	}
 
 	void FakeWindowSystem::move(ui::WindowId window, const ui::Rect& bounds)
