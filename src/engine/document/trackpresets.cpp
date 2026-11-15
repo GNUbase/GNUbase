@@ -211,8 +211,9 @@ namespace gnubase::engine
 
 			// The copy of a clip, with its media file: a file the project has already is used as it is, and so is a
 			// clip of the project that is the same but for its id, folder and region ids, so that loading a preset
-			// again adds no copies of its clips to the pool.
-			ObjectId clip(ObjectId id)
+			// again adds no copies of its clips to the pool. A new one goes into the pool's top folder, or a drum
+			// pad's into its folder Drum Machine (drumPoolFolder, #1614).
+			ObjectId clip(ObjectId id, bool drumPad = false)
 			{
 				if (const auto found = m_clips.find(id); found != m_clips.end())
 					return found->second;
@@ -225,7 +226,7 @@ namespace gnubase::engine
 					if (sameClip(clip, other))
 						return m_clips[id] = mine;
 				clip.id = m_to.newId();
-				clip.folder = 0;
+				clip.folder = drumPad ? drumPoolFolder(m_to, nullptr) : 0;
 				for (ClipRegion& region : clip.regions)
 					region.id = m_to.newId();
 				m_clips[id] = clip.id;
@@ -293,7 +294,7 @@ namespace gnubase::engine
 				channel.sample = clip(original.sample); // a sampler's (#180), with the instrument
 				channel.pads = original.pads;           // a drum machine's (#182)
 				for (auto& [pad, drum] : channel.pads)
-					drum.sample = clip(drum.sample);
+					drum.sample = clip(drum.sample, true);
 				// The fader top may be lower here (as project.set brings volumes down to it).
 				channel.volume = std::min(channel.volume, m_to.maxVolume);
 				for (Send& send : channel.sends)
@@ -650,7 +651,8 @@ namespace gnubase::engine
 			return file;
 		}
 
-		void save(const Project& project, const fs::path& file, bool embedMedia)
+		// Returns the media files that are missing, which the file refers to where they were (saveDawProject).
+		Json save(const Project& project, const fs::path& file, bool embedMedia)
 		{
 			try
 			{
@@ -658,7 +660,7 @@ namespace gnubase::engine
 					fs::create_directories(file.parent_path());
 				DawProjectSaveOptions options;
 				options.embedMedia = embedMedia;
-				saveDawProject(project, file.u8string(), options);
+				return saveDawProject(project, file.u8string(), options);
 			}
 			catch (const std::exception& error)
 			{
@@ -1042,7 +1044,7 @@ namespace gnubase::engine
 			{
 				channel.pads = sound.pads;
 				for (auto& [pad, drum] : channel.pads)
-					drum.sample = copier.clip(drum.sample);
+					drum.sample = copier.clip(drum.sample, true);
 				syncDrumLanes(project, channel, context);
 			}
 			if (channel.format != ChannelFormat::None)
@@ -1067,6 +1069,10 @@ namespace gnubase::engine
 		const Json booleanSchema = {{"type", "boolean"}};
 		const Json numberSchema = {{"type", "number"}};
 		const Json samplesSchema = {{"type", "integer"}}; // a position in samples
+		const Json missingSchema = {{"type", "array"}, {"items", stringSchema},
+			{"description",
+				"The media files that are missing, which the file refers to where they were instead of having them "
+				"in it."}};
 		const Json fileResult = objectSchema({{"file", stringSchema}}, {"file"});
 		const Json tracksResult = objectSchema({{"tracks", {{"type", "array"}, {"items", idSchema}}}}, {"tracks"});
 		const Json skippedSchema = {{"type", "array"},
@@ -1084,14 +1090,15 @@ namespace gnubase::engine
 				"device, the MIDI channel (channel.set midiChannel), the instrument with its parameters "
 				"and a drum machine's pads, and the color. Presets are DAWproject files in the folder Track "
 				"Presets in the user settings' folder, with the media files of a sampler's and drum pads' samples in "
-				"them; a file that is missing is referred to where it was. keep: of the MIDI tracks' MIDI channel and "
+				"them; a file that is missing is referred to where it was (missing). keep: of the MIDI tracks' MIDI "
+				"channel and "
 				"patch (program and bank) only the channel or only the patch (p. 238), the other left at its default, "
 				"which loading the preset leaves as the track has it; without it both. Changes nothing in the project. "
-				"Returns the preset's file.",
+				"Returns the preset's file and the media files that are missing.",
 				objectSchema({{"tracks", idsSchema}, {"name", stringSchema},
 								 {"keep", {{"type", "string"}, {"enum", {"channel", "patch"}}}}},
 					{"tracks", "name"}),
-				fileResult, false},
+				objectSchema({{"file", stringSchema}, {"missing", missingSchema}}, {"file", "missing"}), false},
 			[&model, &engine](CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
@@ -1128,8 +1135,8 @@ namespace gnubase::engine
 					}
 				}
 				const fs::path file = presetFile(engine, name);
-				save(preset, file, true); // with the samples (#1503)
-				return Json{{"file", file.u8string()}};
+				Json missing = save(preset, file, true); // with the samples (#1503)
+				return Json{{"file", file.u8string()}, {"missing", std::move(missing)}};
 			});
 		engine.registerCommand(
 			{"track.presets", 1,
@@ -1213,6 +1220,9 @@ namespace gnubase::engine
 					applyPreset(model, project, tracks[i], preset, sources[i], copier, context);
 				for (const ObjectId media : copier.addedMedia())
 					context.emit("media.added", {{"media", toJson(project.media.at(media))}});
+				for (auto folder = project.poolFolders.lower_bound(firstNew); folder != project.poolFolders.end();
+					++folder)
+					context.emit("poolFolder.added", {{"folder", toJson(folder->second)}});
 				for (auto clip = project.clips.lower_bound(firstNew); clip != project.clips.end(); ++clip)
 					context.emit("clip.added", {{"clip", toJson(clip->second)}});
 				return Json{{"tracks", tracks}};
@@ -1244,21 +1254,25 @@ namespace gnubase::engine
 				"and automation, which track.import imports into other projects and other applications open as a "
 				"project. The project's sample rate, tempo, time signatures, fader top and busses come along so that "
 				"positions, volumes and routing mean the same. copyMedia (default true) copies the media files into "
-				"the archive, otherwise it refers to them where they are. Marker and ruler tracks can be exported; "
+				"the archive, otherwise it refers to them where they are; those that are missing it refers to where "
+				"they were (missing). Marker and ruler tracks can be exported; "
 				"tempo, signature, arranger, transpose, chord and VCA tracks not yet: listed, also inside a listed "
 				"folder, they are refused, otherwise they stay behind. Changes nothing in the project. Returns the "
-				"file and the tracks that stayed behind (skipped).",
+				"file, the tracks that stayed behind (skipped) and the media files that are missing.",
 				objectSchema(
 					{{"tracks", idsSchema}, {"path", stringSchema}, {"copyMedia", booleanSchema}}, {"tracks", "path"}),
-				objectSchema({{"file", stringSchema}, {"skipped", skippedSchema}}, {"file", "skipped"}), false},
+				objectSchema({{"file", stringSchema}, {"skipped", skippedSchema}, {"missing", missingSchema}},
+					{"file", "skipped", "missing"}),
+				false},
 			[&model](CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
 				const fs::path file = fs::u8path(parameters.at("path").get<std::string>());
 				Json skipped;
-				save(tracksFile(model.project(), ids(parameters.at("tracks")), {}, &skipped), file,
+				Json missing = save(tracksFile(model.project(), ids(parameters.at("tracks")), {}, &skipped), file,
 					parameters.value("copyMedia", true));
-				return Json{{"file", file.u8string()}, {"skipped", std::move(skipped)}};
+				return Json{
+					{"file", file.u8string()}, {"skipped", std::move(skipped)}, {"missing", std::move(missing)}};
 			});
 		engine.registerCommand(
 			{"track.importSources", 1,

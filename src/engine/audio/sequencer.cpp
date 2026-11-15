@@ -309,7 +309,7 @@ namespace gnubase::engine
 
 	MidiSequencer::MidiSequencer(std::shared_ptr<plugin::Factory> effects)
 		: m_factory(std::move(effects)), m_sequence(std::make_unique<const MidiSequence>()),
-		  m_input(graph::g_maxEventsPerBlock),
+		  m_input(graph::g_maxEventsPerBlock), m_direct(graph::g_maxEventsPerBlock),
 		  m_stripChase(std::make_shared<graph::EventBuffer>(graph::g_maxEventsPerBlock))
 	{
 		std::iota(m_inputTo.begin(), m_inputTo.end(), uint16_t{0});
@@ -549,6 +549,8 @@ namespace gnubase::engine
 			else if (!sequence.effects.empty())
 				m_effectEvents.add(event);
 		}
+		context.eventsOut.nextSource();
+		context.eventsOut.merge(m_direct);
 		context.eventsOut.nextSource();
 		if (sequence.sendBuffers)
 			for (graph::EventBuffer& buffer : m_sendOut)

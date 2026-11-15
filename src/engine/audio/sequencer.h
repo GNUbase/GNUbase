@@ -322,6 +322,11 @@ namespace gnubase::engine
 		// engine fills them before the graph processes a block.
 		graph::EventBuffer& input() noexcept { return m_input; }
 
+		// Audio thread: the notes played straight to the track's instrument in this block (midi.inject direct, #1614),
+		// as they are: neither its input's mapping and modifiers nor its MIDI effects change them, and they aren't its
+		// MIDI input, so nothing records them. The audio engine fills them before the graph processes a block.
+		graph::EventBuffer& direct() noexcept { return m_direct; }
+
 	protected:
 		void prepare(double sampleRate, uint32_t maxFrames) override;
 
@@ -426,6 +431,7 @@ namespace gnubase::engine
 		std::array<uint32_t, g_notes> m_chasedNotes{}; // while chasing: the notes to start, as indices into notes
 		std::array<bool, g_chased> m_resent{}; // while chasing tracks heard again: the kinds their channels sent
 		graph::EventBuffer m_input;
+		graph::EventBuffer m_direct;                      // see direct
 		std::shared_ptr<graph::EventBuffer> m_stripChase; // see stripChase
 		std::array<bool, g_notes> m_inputHeld{};          // notes its input sent a note-on for and no note-off since
 		// Where each note of its input went after the modifiers, as channel * 128 + pitch; g_notes: left out.

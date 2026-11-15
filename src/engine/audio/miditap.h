@@ -29,6 +29,7 @@ namespace gnubase::engine
 			uint64_t position = 0;
 			audio::MidiMessage message; // its offset is ignored
 			bool drumSound = false;     // injected notes: the key is a drum sound's pitch (midi.inject drumSounds)
+			bool direct = false;        // injected: straight to the instrument as it is (midi.inject direct)
 		};
 
 		using Sequencers = std::vector<std::pair<ObjectId, std::shared_ptr<MidiSequencer>>>;      // by channel id

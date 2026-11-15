@@ -507,6 +507,51 @@ TEST_CASE("notes played live into a track with a drum map go through its I-notes
 	CHECK(play(0x90, 45) == std::vector<std::vector<int>>{{0x90, 45}, {0x80, 45}});
 }
 
+TEST_CASE("notes injected direct reach the instrument as they are, past the drum map, modifiers and MIDI effects",
+	"[integration]")
+{
+	// The drum machine panel plays a pad itself at velocity 127 (reference manual p. 942, #1614): neither the track's
+	// drum map nor its MIDI modifiers nor its MIDI inserts change the note.
+	engine::Engine engine(audio::makeBackends(), {}, std::vector<std::unique_ptr<midi::Backend>>());
+	engine::Client client(engine);
+	const auto run = [&client](const std::string& command, Json parameters = Json::object())
+	{
+		const engine::Result result = client.call(command, std::move(parameters));
+		INFO(command << " failed: " << result.error);
+		REQUIRE(result.ok());
+		return result.value;
+	};
+	run("audio.setDevice", {{"blockSize", 64}, {"inputChannels", 0}});
+	const Json added = run("track.add", {{"type", "instrument"}});
+	const Json track = added.at("track").at("id");
+	const Json channel = added.at("channel").at("id");
+	run("channel.set",
+		{{"channel", channel}, {"instrument", "noteProbe"}, {"modifiers", {{"transpose", 12}, {"velocityShift", -40}}},
+			{"midiInserts", {{"slots", {{{"effect", "chordGenerator"}, {"parameters", {{"chord", "Octave"}}}}}}}}});
+	const Json gm = run("project.get").at("drumMaps").at(0).at("id");
+	const auto map = run("drumMap.add", {{"copy", gm}, {"track", track}}).at("map").at("id");
+	run("drumMap.set", {{"map", map}, {"sounds", {{{"pitch", 38}, {"oNote", 40}, {"channel", 3}}}}});
+	run("audio.render", {{"frames", 64}}); // the new graph
+	run("midi.capture", {{"start", true}});
+	const auto play = [&](bool direct)
+	{
+		run("midi.inject",
+			{{"channel", channel}, {"drumSounds", true}, {"direct", direct},
+				{"messages",
+					{{{"position", 0}, {"bytes", {0x90, 38, 127}}}, {{"position", 0}, {"bytes", {0x80, 38, 0}}}}}});
+		run("audio.render", {{"frames", 64}});
+		std::vector<std::vector<int>> notes;
+		const Json capture = run("midi.capture");
+		for (const Json& captured : capture.at("captured"))
+			if (const auto bytes = captured.at("bytes").get<std::vector<int>>(); (bytes.at(0) & 0xE0) == 0x80)
+				notes.push_back(bytes);
+		return notes;
+	};
+	// As a drum sound, the snare plays its O-note on its channel, transposed, softer, and with its octave.
+	CHECK(play(false) == std::vector<std::vector<int>>{{0x93, 52, 87}, {0x93, 64, 87}, {0x83, 52, 0}, {0x83, 64, 0}});
+	CHECK(play(true) == std::vector<std::vector<int>>{{0x90, 38, 127}, {0x80, 38, 0}});
+}
+
 TEST_CASE("the notes played in map to the first sound by pitch whose I-note they are", "[unit]")
 {
 	// The render snapshot maps MIDI thru with inputPitches, recording and step input with inputPitch (p. 1239): two

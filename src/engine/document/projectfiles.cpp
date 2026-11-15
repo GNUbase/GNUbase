@@ -235,24 +235,29 @@ namespace gnubase::engine
 				"Saves the project as a new version of its file and goes on with that: in the same folder, with the "
 				"same name and the next number after the highest one there, \"Song-01.dawproject\" after "
 				"\"Song.dawproject\", \"Song-03.dawproject\" after \"Song-02.dawproject\". The earlier versions stay "
-				"as they are. Returns the new file. Fails for a project without a file: save it first.",
-				objectSchema({{"embedMedia", embedMedia}}), fileResult, false},
+				"as they are. Returns the new file and, as project.save, the media files that are missing. Fails for a "
+				"project without a file: save it first.",
+				objectSchema({{"embedMedia", embedMedia}}),
+				objectSchema({{"file", stringSchema}, {"missing", {{"type", "array"}, {"items", stringSchema}}}},
+					{"file", "missing"}),
+				false},
 			[this](CommandContext& context)
 			{
 				require(!m_file.empty(), "the project has no file yet: save it with a path first");
 				const fs::path file = nextVersion(fs::u8path(m_file));
 				DawProjectSaveOptions options;
 				options.embedMedia = context.parameters().value("embedMedia", true);
+				std::vector<std::string> missing;
 				try
 				{
-					saveDawProject(m_project, file.u8string(), options);
+					missing = saveDawProject(m_project, file.u8string(), options);
 				}
 				catch (const std::exception& error)
 				{
 					throw CommandError(error.what());
 				}
 				saved(file.u8string(), context);
-				return Json{{"file", m_file}};
+				return Json{{"file", m_file}, {"missing", missing}};
 			});
 
 		addControl(engine,

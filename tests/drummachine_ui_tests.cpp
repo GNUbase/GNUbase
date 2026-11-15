@@ -9,10 +9,14 @@
 
 #include "engine/engine.h"
 #include "ui/automation.h"
+#include "ui/docking.h"
 #include "ui/enginebinding.h"
 #include "ui/shell.h"
 #include "ui/tracklist.h"
 
+#include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
@@ -21,6 +25,7 @@
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -321,6 +326,111 @@ TEST_CASE("a pad plays at velocity 127 while the mouse button is down on it", "[
 			return played == std::vector<std::vector<int>>{{0x90, 38, 127}, {0x80, 38, 0}};
 		}));
 	CHECK(f.has(Fixture::pad(38), "selected"));
+}
+
+TEST_CASE(
+	"a pad's note ends where the mouse button goes up, outside the panel or its window, and with the panel", "[ui]")
+{
+	// #1614: the panel hears the button going up on its document and the mouse leaving the window, and its destructor
+	// ends the note, as the key editor's keyboard does.
+	Fixture f;
+	f.open();
+	f.app.call("audio.setDevice", {{"blockSize", 128}, {"inputChannels", 0}, {"captureSeconds", 1}});
+	f.app.call("audio.render", {{"frames", 128}}); // the new graph
+	f.app.call("midi.capture", {{"start", true}});
+	std::vector<std::vector<int>> played;
+	const auto plays = [&](const std::vector<std::vector<int>>& expected)
+	{
+		return f.app.waitUntil(
+			[&]
+			{
+				f.app.call("audio.render", {{"frames", 128}});
+				const Json captured = f.app.call("midi.capture");
+				for (const Json& message : captured.at("captured"))
+				{
+					const auto bytes = message.at("bytes").get<std::vector<int>>();
+					if (message.at("channel") == f.channel && (bytes.at(0) & 0xE0) == 0x80)
+						played.push_back(bytes);
+				}
+				return played == expected;
+			});
+	};
+	const auto press = [&](int pad, std::optional<ui::WindowId> window = std::nullopt)
+	{
+		played.clear();
+		f.app.ui().press(window, of(Fixture::pad(pad)), ui::MouseButton::Left, {});
+		f.app.shell().step(std::chrono::milliseconds(0));
+		CHECK(plays({{0x90, pad, 127}}));
+	};
+
+	// Released over the project window outside the panel.
+	press(38);
+	f.app.ui().release(std::nullopt, of("#toolbar"), ui::MouseButton::Left, {});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(plays({{0x90, 38, 127}, {0x80, 38, 0}}));
+
+	// Released outside the window, where no mouseup arrives: the note ends as the mouse leaves the window.
+	press(40);
+	Rml::Context& context = f.app.main().context();
+	context.ProcessMouseMove(-50, -50, 0);
+	context.ProcessMouseLeave();
+	context.ProcessMouseButtonUp(0, 0);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(plays({{0x90, 40, 127}, {0x80, 40, 0}}));
+
+	// The panel going while a pad is held: docked again from a window of its own, which drops the panel first.
+	ui::Docking& docking = f.app.appUi().docking();
+	docking.setFloating("drumMachine", true);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(docking.windowOf("drumMachine") != nullptr);
+	const ui::WindowId window = docking.windowOf("drumMachine")->id();
+	REQUIRE(f.app.waitUntil([&] { return !f.app.ui().dom(window, Fixture::pad(42), 0).at("elements").empty(); }));
+	press(42, window);
+	docking.setFloating("drumMachine", false);
+	REQUIRE(f.app.waitUntil([&] { return docking.windowOf("drumMachine") == nullptr; }));
+	CHECK(plays({{0x90, 42, 127}, {0x80, 42, 0}}));
+}
+
+TEST_CASE("Set Color shows a pad's color that the project's color set doesn't have as an option of its own", "[ui]")
+{
+	// #1614: a track preset from another project, or a color set edited since, leaves a pad with another color. The
+	// drop-down list's options aren't in the DOM that the UI tools see.
+	Fixture f;
+	f.open();
+	const auto select = [&]
+	{
+		Rml::Element* element = nullptr;
+		Rml::Context& context = f.app.main().context();
+		for (int i = 0; element == nullptr && i < context.GetNumDocuments(); ++i)
+			element = context.GetDocument(i)->QuerySelector("#drum-pad-color");
+		auto* found = dynamic_cast<Rml::ElementFormControlSelect*>(element);
+		REQUIRE(found != nullptr);
+		return found;
+	};
+	// The value and the text of the option shown, and whether there is one for the color.
+	const auto shown = [&]
+	{
+		Rml::ElementFormControlSelect* list = select();
+		const Rml::Element* option = list->GetSelection() >= 0 ? list->GetOption(list->GetSelection()) : nullptr;
+		return option == nullptr ? std::string("none")
+								 : option->GetAttribute<Rml::String>("value", "") + " " + option->GetInnerRML();
+	};
+	const auto offered = [&]
+	{
+		Rml::ElementFormControlSelect* list = select();
+		for (int i = 0; i < list->GetNumOptions(); ++i)
+			if (list->GetOption(i)->GetAttribute<Rml::String>("value", "") == "#123456")
+				return true;
+		return false;
+	};
+	f.app.call("drum.setPad", {{"track", f.track}, {"pad", 36}, {"color", "#123456"}});
+	REQUIRE(f.app.waitUntil([&] { return f.has(Fixture::pad(36), "colored"); }));
+	CHECK(f.app.waitUntil([&] { return shown() == "#123456 #123456"; }));
+	// No color: the option goes with it.
+	f.app.call("drum.setPad", {{"track", f.track}, {"pad", 36}, {"color", nullptr}});
+	REQUIRE(f.app.waitUntil([&] { return !f.has(Fixture::pad(36), "colored"); }));
+	CHECK(f.app.waitUntil([&] { return shown() == " No Color"; }));
+	CHECK(!offered());
 }
 
 TEST_CASE("the drum machine's Save Preset and Load Preset open the track preset dialog for its track", "[ui]")

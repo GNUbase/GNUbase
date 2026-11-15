@@ -20,13 +20,15 @@ engine (architecture rule 3).
 | `drum.copyPad` | Copy Pad and Paste Pad onto `to`: name, sample and settings; with `move` Cut Pad. A pad that plays something and goes by the General MIDI sound of its note goes by that sound in the copy too (`sound`, the note of the sound), until it gets a name or a sample (#1567) | p. 943 |
 | `drum.resetPad` | Reset Pad, or Reset All Pads without `pad`: no name, no sample, every setting at its default | p. 943 |
 
-Each is one undo step and emits `channel.changed`. Another instrument (`channel.set`, a track preset's) drops the pads.
-The pads' clips count as used in the pool (`pool.get`, `pool.removeUnused`, `clip.remove` refuses them,
+Each is one undo step and emits `channel.changed`; `drum.loadPad` with a file also `media.added`, `clip.added`,
+`clip.changed` and, for the first one, `poolFolder.added`. Another instrument (`channel.set`, a track preset's) drops
+the pads. The pads' clips count as used in the pool (`pool.get`, `pool.removeUnused`, `clip.remove` refuses them,
 `media.removeMissing` empties their pads) and in backups, as a sampler's do; imported and exported tracks and track
 presets take them along (`track.loadPreset` and `track.addFromPreset` bring the preset's clips into the pool, as
-`track.import` does, unless it has the same clips already, and share the project's media files that have the same audio;
-a preset has the samples' files in it, and refers to those that are missing where they were), and they are saved with
-the channel in `gnubase.json`, where a clip that isn't in the pool when the project loads is dropped.
+`track.import` does, into the pool folder Drum Machine as `drum.loadPad` does (#1614), unless it has the same clips
+already, and share the project's media files that have the same audio; a preset has the samples' files in it, and refers
+to those that are missing where they were), and they are saved with the channel in `gnubase.json`, where a clip that
+isn't in the pool when the project loads is dropped.
 
 **The default kit** of `drum.create` (p. 942) is made of the percussion synths on the General MIDI notes that new drum
 patterns start with, without names of their own, so that they go by the General MIDI sounds' until they get a sample
@@ -101,15 +103,17 @@ a hint and Add Drum Track (`#drum-add-track`, p. 146), which opens the Add Track
   (`padNames`), as pattern lanes do; pads that play something are `.assigned`, the selected one `.selected`, muted,
   soloed and soloed-out ones `.muted`, `.soloed` and `.soloed-out`, and those with a color `.colored`, with the color
   in their strip (`.drum-pad-color`, attribute `color` and `background-color`, user data). A click selects a pad, and
-  the pad plays at velocity 127 while the mouse button is down on it (p. 942): a note on and off into the track's
-  channel through `midi.inject` with `drumSounds`, as the drum editor auditions sounds; a button released outside the
-  panel ends the note with the next press. It opens on the third group, with the kick.
+  the pad plays at velocity 127 while the mouse button is down on it (p. 942): a note on and off through `midi.inject`
+  with `direct`, straight to the drum machine, so that the pad itself plays whatever the track's drum map, Live Input,
+  input transformer, MIDI modifiers and MIDI effects would make of the note (#1614). The note ends where the button
+  goes up, also outside the panel, when the mouse leaves the window, and when the panel goes, as the key editor's
+  keyboard's does. It opens on the third group, with the kick.
 - **Pad tools**, in the toolbar too: the selected pad's name (`#drum-pad-name`, Rename Pad when Enter is pressed or the
-  field loses the focus), Set Color (`#drum-pad-color`, a drop-down list of No Color and the project's color set, the
-  16 colors of the factory set in a new project, [colors.md](colors.md)), Load (`#drum-load`, a file dialog, then
-  `drum.loadPad` with `path`), Copy, Cut, Paste
-  (`drum.copyPad`) and Reset (`drum.resetPad`). A file dropped on a pad loads onto that pad, elsewhere on the panel onto
-  the selected one.
+  field loses the focus), Set Color (`#drum-pad-color`, a drop-down list of No Color and the project's color set, the 16
+  colors of the factory set in a new project, [colors.md](colors.md), and a color the set doesn't have, from a track
+  preset of another project or a set edited since, as an option of its own named by its code), Load (`#drum-load`, a
+  file dialog, then `drum.loadPad` with `path`), Copy, Cut, Paste (`drum.copyPad`) and Reset (`drum.resetPad`). A file
+  dropped on a pad loads onto that pad, elsewhere on the panel onto the selected one.
 - **Page**: the Instrument page has a control per parameter of the selected pad (`[parameter]`,
   `#drum-parameter-<id>`), the Delay and Reverb pages the global ones: a toggle, a drop-down list or a value field,
   each gesture one undo step (`parameter.set` through `EngineBinding::sendStep`).
@@ -123,7 +127,9 @@ the drum machine's own undo history, MIDI Reset, MIDI Follow, the triggered pad'
 browser's Find Samples and Find Instruments, layer and pad presets, the toolbar's Read/Write Automation (p. 939), the
 automation parameters with their quick controls, Learn CC and ranges (pp. 978-980), and the Add Track dialog's Event
 Type (pattern event or MIDI part) and Input Routing. A track preset has the whole file of a sample that a pad or a
-sampler plays a section of; `project.backup`'s `minimize` cuts such files down for backups.
+sampler plays a section of; `project.backup`'s `minimize` cuts such files down for backups. The numbered files that
+loading presets and projects leaves in `Track Presets/<name> media` and in media folders (`2-kick.wav`) stay until the
+user removes them: nothing yet says which of them a project still plays, as the reference's Cleanup would.
 
 ## Tests
 
@@ -134,12 +140,14 @@ its parameters in `processor.list`), a pad parameter ignoring the events of its 
 clip in the pool folder Drum Machine), the default kit and the names it goes by (`processor.list`'s `padNames`), a copy
 going by the sound a synth pad went by until a sample names it, a synth voice keeping its tuning, tone and noise from
 its note on, pattern lanes that follow the pads, track presets and drum tracks imported onto the track, saving and
-loading, another instrument dropping the pads, the pads' clips in the pool (`pool.removeUnused`, `media.removeMissing`),
-track presets loaded onto a drum track and onto another instrument's, tracks added from a preset or imported from
-another project with their pads' clips, automation of a pad's parameter and the values set without it, and offline
-renders of a drum track against the sample itself and the golden file `drum-track-beat` (a pattern event playing the
-kit with its sends); `tests/rtcheck_tests.cpp` plays samples, every synth, groups and the effects without allocating;
-`tests/drummachine_ui_tests.cpp` drives the panel (following the selection, the names of pads without their own,
-groups, pages, controls, playing a pad with a click, saving and loading track presets, renaming, coloring, copying (a
-synth pad's copy shown by the sound it was copied from), cutting, pasting, resetting and dropping a file on a pad) and
-the Add Track dialog's Drum page, from the Project menu's command and from the empty panel.
+loading, a copy's sound in the project file and in track presets, the pads' clips of presets and imports in the pool
+folder Drum Machine, another instrument dropping the pads, the pads' clips in the pool (`pool.removeUnused`,
+`media.removeMissing`), track presets loaded onto a drum track and onto another instrument's, tracks added from a preset
+or imported from another project with their pads' clips, automation of a pad's parameter and the values set without it,
+and offline renders of a drum track against the sample itself and the golden file `drum-track-beat` (a pattern event
+playing the kit with its sends); `tests/rtcheck_tests.cpp` plays samples, every synth, groups and the effects without
+allocating; `tests/drummachine_ui_tests.cpp` drives the panel (following the selection, the names of pads without their
+own, groups, pages, controls, playing a pad with a click and ending its note outside the panel, outside its window and
+with the panel, a color outside the set, saving and loading track presets, renaming, coloring, copying (a synth pad's
+copy shown by the sound it was copied from), cutting, pasting, resetting and dropping a file on a pad) and the Add Track
+dialog's Drum page, from the Project menu's command and from the empty panel.

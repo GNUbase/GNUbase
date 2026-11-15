@@ -194,7 +194,10 @@ namespace gnubase::engine
 	void MidiTap::deliver(uint64_t position, uint32_t frames, const Sequencers& sequencers) noexcept
 	{
 		for (const auto& entry : sequencers)
+		{
 			entry.second->input().clear();
+			entry.second->direct().clear();
+		}
 		while (m_waitingCount < m_waiting.size() && m_injected.tryPop(m_waiting[m_waitingCount]))
 			++m_waitingCount;
 
@@ -212,8 +215,8 @@ namespace gnubase::engine
 					message.position > position ? static_cast<uint32_t>(message.position - position) : 0;
 				graph::ProcessEvent event = toEvent(message.message, offset);
 				event.drumSound = message.drumSound;
-				wait =
-					found != sequencers.end() && found->first == message.channel && !found->second->input().add(event);
+				wait = found != sequencers.end() && found->first == message.channel &&
+					!(message.direct ? found->second->direct() : found->second->input()).add(event);
 			}
 			if (wait)
 				m_waiting[kept++] = message;
@@ -301,10 +304,13 @@ namespace gnubase::engine
 				"drumSounds: on a track with a drum map, the notes' keys are drum sounds' pitches, not I-notes: they "
 				"play their sounds as the track's notes do but are neither recorded nor kept for "
 				"midi.insertRetrospective (the "
-				"drum editor auditions sounds so; reference manual p. 1236). midi.capture returns what instruments "
-				"played.",
+				"drum editor auditions sounds so; reference manual p. 1236). direct: the messages go straight to the "
+				"track's instrument as they are, past its drum map, Live Input, its input transformer, its MIDI "
+				"modifiers and its MIDI effects, and aren't recorded either (the drum machine panel plays a pad so, "
+				"p. 942). midi.capture returns what instruments played.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["channel", "messages"],
 					"properties": {"channel": {"type": "integer"}, "drumSounds": {"type": "boolean"},
+					"direct": {"type": "boolean"},
 					"messages": {"type": "array", "items": {
 						"type": "object", "additionalProperties": false, "required": ["position", "bytes"],
 						"properties": {"position": {"type": "integer", "minimum": 0}, "bytes": {"type": "array",
@@ -320,12 +326,14 @@ namespace gnubase::engine
 				const Json& messages = parameters.at("messages");
 				require(messages.size() <= MidiTap::g_size, "at most 4096 messages at a time");
 				const bool drumSounds = parameters.value("drumSounds", false);
+				const bool direct = parameters.value("direct", false);
 				std::vector<MidiTap::Message> injected;
 				injected.reserve(messages.size());
 				for (size_t i = 0; i < messages.size(); ++i)
 				{
 					injected.push_back({channel, messages[i].at("position").get<uint64_t>(),
-						channelMessage(messages[i].at("bytes"), "messages[" + std::to_string(i) + "]: "), drumSounds});
+						channelMessage(messages[i].at("bytes"), "messages[" + std::to_string(i) + "]: "), drumSounds,
+						direct});
 				}
 				require(m_tap.inject(injected),
 					"too many MIDI messages wait for the audio device; none were injected, try again later");
