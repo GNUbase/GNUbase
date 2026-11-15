@@ -170,9 +170,16 @@ namespace gnubase::ui
 		void scrollToNotes(); // the first scroll, to the middle of the notes, until one succeeds (m_scrolled)
 		// The drum editor's: the active track's drum map, the rows' order from it, and the sound list and Map menu.
 		const engine::Json* activeMap() const;
+		engine::Json activeTrack() const; // as project.get lists it, or an empty object
+		// The names of the active track's drum sounds, by pitch: its drum map's, else with the GM Default name list
+		// (#1493, p. 1239) General MIDI's, else empty.
+		std::vector<std::string> soundNames() const;
 		// The drum editor shows its notes as diamonds, unless Show Note Length is on.
 		bool diamonds() const { return m_drum && !m_view.value("showNoteLength", false); }
 		void updateOrder();
+		// Whether the drum sound list shows the pitch: Show Drum Sounds with Events and in Use by Instrument hide
+		// sounds, and their notes.
+		bool listed(int pitch) const { return m_rowOf.at(static_cast<size_t>(pitch)) >= 0; }
 		std::string soundsRml() const;
 		void renderDrumMap();
 		void drumMapMenu(Rml::Element& target);
@@ -188,6 +195,7 @@ namespace gnubase::ui
 		// the snap of the pitch it moves to.
 		int64_t delta(Gesture gesture, double ticks, int rows = 0) const;
 		int64_t grid(int pitch = -1) const;
+		int64_t quantizeGrid() const;                                 // the project's quantize grid (quantize.set)
 		static int64_t soundSnap(const engine::Json& map, int pitch); // a drum sound's snap, in ticks
 		// The length of new notes of the pitch: with Drum-Map Link its sound's snap.
 		int64_t lengthQuantize(int pitch) const;
@@ -224,7 +232,7 @@ namespace gnubase::ui
 		std::function<void()> m_drumMapSetup;
 		KeyTool m_tool = KeyTool::ObjectSelection;
 		std::vector<int> m_order;          // the pitches of the rows, from the top
-		std::vector<int> m_rowOf;          // each pitch's row
+		std::vector<int> m_rowOf;          // each pitch's row, -1 for one the drum sound list doesn't show
 		std::string m_soundsRml;           // the drum sound list as last set
 		std::string m_mapMenuRml;          // the Map menu as last set
 		std::string m_articulationMenuRml; // the info line's attributes menu as last set
@@ -256,7 +264,7 @@ namespace gnubase::ui
 		std::optional<std::pair<uint64_t, int>> m_sounding; // the channel and pitch of the key pressed
 		Rml::ObserverPtr<Rml::Element> m_document;          // ends the key's pitch on a release anywhere in it
 		// the length quantize menu, the line tool's menu, the toolbox, then the drum editor's Map, Pitch Visibility
-		// Options and Grid Type menus
+		// Options, Grid Type and Names menus
 		std::vector<Rml::ObserverPtr<Rml::Element>> m_menus;
 		std::string m_lineMode = "line"; // the line tool's (#128)
 		std::unique_ptr<ControllerLanes> m_lanes;

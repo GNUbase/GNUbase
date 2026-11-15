@@ -149,6 +149,10 @@ namespace gnubase::engine
 			m_project.quantizePreset = std::move(name);
 			publish();
 		}
+		// Sets Project::soloNotes, for the editor views (editors.cpp): Solo Instrument changes what plays, not the
+		// project, so it publishes a render snapshot but leaves the project as saved and auto saved as it was. Only on
+		// the command thread.
+		void setSoloNotes(std::vector<std::pair<ObjectId, ObjectId>> notes);
 		// Sets Project::workspaces, for the workspace commands (#163), which aren't edits either: the project file
 		// saves the project workspaces and the active one, so a change advances the revision as setQuantizePreset's
 		// does. Only on the command thread.
