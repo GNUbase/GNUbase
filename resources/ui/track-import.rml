@@ -5,8 +5,9 @@
      Track or a track of the project of the same type), and on OK sends track.import with the options, then for Copy
      to Active Project Folder media.conform for the imported media files at another sample rate (Convert Sample Rate,
      available when what the import brings plays media files at another rate than the project's, which
-     track.importSources lists for the range) and media.prepareArchive for the others. Tracks that can't be imported
-     yet show, disabled. The engine's message shows when it refuses, and the dialog stays open. -->
+     track.importSources lists for the range and Events and Parts) and media.prepareArchive for the others.
+     Tracks that can't be imported yet show, disabled. The engine's message shows when it refuses, and the dialog
+     stays open. -->
 <rml>
 <head>
 	<title>Import Options</title>
@@ -217,9 +218,10 @@
 			return seconds and math.floor((seconds - dialog.file.startTime) * dialog.project.sampleRate + 0.5)
 		end
 
-		-- The sample rates of the media files each track of the file plays, by its id: with Range, only of what the
-		-- range brings, as track.importSources lists them for it (once for each range), else of everything; also while
-		-- the range isn't two timecodes yet, or one the engine refuses.
+		-- The sample rates of the media files each track of the file plays, by its id, in what the import brings, as
+		-- track.importSources lists them for the range and Events and Parts (once for each pair of them): with Range,
+		-- only what the range brings, else everything, also while the range isn't two timecodes yet or is one the
+		-- engine refuses; without Events and Parts only the samplers' and drum machines' samples.
 		local function sampleRates()
 			local range
 			if checked("import-range") then
@@ -228,11 +230,17 @@
 					range = {start = start, ["end"] = finish}
 				end
 			end
-			local key = range and (range.start .. ":" .. range["end"]) or ""
+			-- Without events the range changes nothing: the instruments' samples count wherever it is.
+			local events = checked("import-events")
+			if not events then
+				range = nil
+			end
+			local key = (range and (range.start .. ":" .. range["end"]) or "") .. (events and "" or ":no events")
 			if dialog.ratesKey ~= key then
 				local tracks = dialog.sources
-				if range then
-					local ok, listed = pcall(gnubase.track.importSources, {path = dialog.path, range = range})
+				if key ~= "" then
+					local ok, listed = pcall(gnubase.track.importSources,
+						{path = dialog.path, range = range, events = events})
 					tracks = ok and listed.tracks or tracks
 				end
 				dialog.rates, dialog.ratesKey = {}, key
@@ -553,8 +561,10 @@
 				<div class="field">
 					<label class="label" for="import-range">Range</label>
 					<input type="checkbox" id="import-range" onchange="TrackImport.update()"/>
-					<input type="text" class="text" id="import-range-start" onchange="TrackImport.update()"/>
-					<input type="text" class="text" id="import-range-end" onchange="TrackImport.update()"/>
+					<!-- Followed once left (Enter is OK), not for each key typed: track.importSources reads the whole
+					     file for each range. -->
+					<input type="text" class="text" id="import-range-start" onblur="TrackImport.update()"/>
+					<input type="text" class="text" id="import-range-end" onblur="TrackImport.update()"/>
 				</div>
 				<div class="field">
 					<span class="label"/>
