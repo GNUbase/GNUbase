@@ -657,15 +657,18 @@ namespace gnubase::ui
 		if (height == nullptr || !Rml::Any(height->unit & Rml::Unit::LENGTH))
 		{
 			m_pitchZoom = 1.0F; // a percentage or auto: no height to scale
-			return;
 		}
-		const Rml::Context* context = root->GetContext();
-		const float ratio = context != nullptr ? context->GetDensityIndependentPixelRatio() : 1.0F;
-		const float rowDp = rows.front()->ResolveLength(height->GetNumericValue()) / ratio;
-		m_pitchZoom = zoom;
-		if (zoom != 1.0F)
-			for (Rml::Element* row : rows)
-				row->SetProperty(Rml::PropertyId::Height, dp(rowDp * zoom));
+		else
+		{
+			const Rml::Context* context = root->GetContext();
+			const float ratio = context != nullptr ? context->GetDensityIndependentPixelRatio() : 1.0F;
+			const float rowDp = rows.front()->ResolveLength(height->GetNumericValue()) / ratio;
+			m_pitchZoom = zoom;
+			if (zoom != 1.0F)
+				for (Rml::Element* row : rows)
+					row->SetProperty(Rml::PropertyId::Height, dp(rowDp * zoom));
+		}
+		placeExpression(); // on its note's row as high as the rows are now
 	}
 
 	void KeyEditor::place(Rml::Element& element, int64_t start, int64_t length, int pitch) const
@@ -722,7 +725,8 @@ namespace gnubase::ui
 		// Show Note Expression Data (p. 1303): the notes' expression over them.
 		// Not in the drum editor, which has neither its button nor the expression editor (#1671).
 		const bool expression = !m_drum && m_view.value("showExpression", false);
-		const int64_t pixel = ticksPerPixel();
+		m_linesPixel = ticksPerPixel();
+		const int64_t pixel = m_linesPixel;
 		std::string rml;
 		for (const Note& note : m_notes)
 		{
@@ -908,6 +912,15 @@ namespace gnubase::ui
 		Rml::Element* root = m_root.get();
 		if (root == nullptr)
 			return;
+		// The expression lines join the steps narrower than a pixel: built again when a pixel has other ticks, as the
+		// in-place editor's range has after its first layout and as the project window zooms (#1671). Not during a
+		// gesture, whose elements a rebuild would free; the next placement after it catches up.
+		if (m_gesture == Gesture::None && (m_expressionOpen || (!m_drum && m_view.value("showExpression", false))) &&
+			ticksPerPixel() != m_linesPixel)
+		{
+			render(); // which places the items
+			return;
+		}
 		Rml::ElementList shown;
 		root->QuerySelectorAll(shown, ".editor-part");
 		for (Rml::Element* element : shown)
@@ -961,7 +974,12 @@ namespace gnubase::ui
 				centered = each;
 		const double row = m_rowOf.at(static_cast<size_t>(centered->pitch));
 		Rml::Element* grid = editor->GetParentNode();
-		const double height = grid != nullptr ? grid->GetBox().GetSize(Rml::BoxArea::Border).y : 0.0;
+		double height = grid != nullptr ? grid->GetBox().GetSize(Rml::BoxArea::Border).y : 0.0;
+		// The rows' height as the pitch zoom sets it, which the layout has not caught up with yet (setPitchZoom).
+		if (Rml::Element* first = grid != nullptr ? grid->QuerySelector(".key-editor-row") : nullptr)
+			if (const Rml::Property* rowHeight = first->GetProperty(Rml::PropertyId::Height);
+				rowHeight != nullptr && Rml::Any(rowHeight->unit & Rml::Unit::LENGTH))
+				height = first->ResolveLength(rowHeight->GetNumericValue()) * g_pitches;
 		const Rml::Style::Height own = editor->GetComputedValues().height();
 		double top = row * 100.0 / g_pitches;
 		if (height > 0.0 && own.type == Rml::Style::Height::Length)

@@ -100,39 +100,41 @@ through `note.set` only. Its view has three settings, which `editor.set` changes
 off by default and toggled by toolbar buttons, and `expressionType`, the expression the editor edits, `tuning` at
 first.
 
-- **Overlay** (p. 1303). With Show Note Expression Data each point of a note is a line over the note box, from the
-  point to the type's next one (or the note's end) at its value, as playback holds a value until the next point. The
-  values go from the box's bottom to its top: tuning from -48 to 48 semitones, MPE's pitch range (values beyond show
-  at the edge), volume from 0 to 4 and the others from 0 to 1. A step narrower than a pixel of the note display joins
-  the next ones until it is as wide, at the last one's value, so that a recorded note with a point every few
-  milliseconds is a line per pixel at most, not hundreds of elements (#1671). The drum editor shows no overlay, as it
-  has neither the buttons nor the expression editor, also with Show Note Length.
+- **Overlay** (p. 1303). With Show Note Expression Data each point of a note is a line over the note box, from the point
+  to the type's next one (or the note's end) at its value, as playback holds a value until the next point. The values go
+  from the box's bottom to its top: tuning from -48 to 48 semitones, MPE's pitch range (values beyond show at the edge),
+  volume from 0 to 4 and the others from 0 to 1. A step narrower than a pixel of the note display joins the next ones
+  until it is as wide, at the last one's value, so that a recorded note with a point every few milliseconds is a line
+  per pixel at most, not hundreds of elements (#1671); the lines are built again when a pixel has other ticks, as after
+  the in-place editor's first layout and as the project window zooms. The drum editor shows no overlay, as it has
+  neither the buttons nor the expression editor, also with Show Note Length.
 - **Expression editor** (pp. 1308-1311). With Double-Click Opens Note Expression Editor a double click on a note with
   the object selection tool opens the editor instead of deleting the note: on the note, or on the selected notes if it
-  is one of them. It lies over the note display from the first selected note's start to the last one's end, centered
-  on the row of the note double-clicked and kept inside the note display at the top and bottom rows, never narrower
-  than its button, and shows their points of the chosen expression the same way. Its button at the top left is
-  Parameter Selection, a menu of the seven expressions. In it the draw tool draws a point where it clicks, and a drag
-  draws points along the way where the value changes (not one per mouse position), replacing those of the expression
-  in the range it went over; at the right edge it draws at the last note's last tick. With Shift, tuning goes in
-  semitone steps (Vertical Snap). The erase tool deletes the points of the expression it is dragged over, a click those
-  within a few dp: it is GNUbase's own, standing in until points can be selected and deleted with Edit > Delete as the
-  reference manual does (pp. 1310-1311). An edit reaches every selected note at the time where it happens, each note's
-  points from its own start, and is one undo step. A gesture released outside the window ends when the mouse leaves
-  it, with what it drew. A press elsewhere in the note display closes the editor, and so does a selection without
-  notes. The `.key-expression-step` lines, in the editor and over the notes, take no mouse events: a client of the UI
-  tools that clicks one reaches its note or `.key-expression-area`.
+  is one of them. It lies over the note display from the first selected note's start to the last one's end, centered on
+  the row of the note double-clicked and kept inside the note display at the top and bottom rows, never narrower than
+  its button, and it stays there as the pitches zoom; it shows their points of the chosen expression the same way. Its
+  button at the top left is Parameter Selection, a menu of the seven expressions. In it the draw tool draws a point
+  where it clicks, and a drag draws points along the way where the value changes (not one per mouse position), replacing
+  those of the expression in the range it went over; at the right edge it draws at the last note's last tick. With
+  Shift, tuning goes in semitone steps (Vertical Snap). The erase tool deletes the points of the expression it is
+  dragged over, a click those within a few dp: it is GNUbase's own, standing in until points can be selected and deleted
+  with Edit > Delete as the reference manual does (pp. 1310-1311). An edit reaches every selected note at the time where
+  it happens, each note's points from its own start, and is one undo step. A gesture released outside the window ends
+  when the mouse leaves it, with what it drew. A press elsewhere in the note display closes the editor, and so does a
+  selection without notes. The `.key-expression-step` lines, in the editor and over the notes, take no mouse events: a
+  client of the UI tools that clicks one reaches its note or `.key-expression-area`.
 
 The UI tests (`tests/keyeditor_ui_tests.cpp`) check the overlay's lines at their positions and values, volume's range
 and tuning beyond 48 semitones at the edge, the steps narrower than a pixel joined, opening the editor with a double
 click, Parameter Selection, drawing a point and a drag of points with their values, undo, the erase tool deleting only
-the chosen expression's points and a click deleting one, closing it with a click, and that without the setting a
-double click deletes the note. With several selected notes of two parts they check the double click opening the
-editor on all of them over their span, centered on the note clicked, an edit reaching each note at its time, a drag
-leaving a point where the value changes, one undo step for both parts, Vertical Snap and the editor closing when the
-selection empties; on the top row the editor inside the note display and wider than its button, and a draw released
-outside the window. `tests/inplaceeditor_ui_tests.cpp` checks the draw tool on a line of the editor in an in-place
-editor, `tests/drumeditor_ui_tests.cpp` that the drum editor has neither the buttons, the overlay nor the editor, and
+the chosen expression's points and a click deleting one, closing it with a click, and that without the setting a double
+click deletes the note. With several selected notes of two parts they check the double click opening the editor on all
+of them over their span, centered on the note clicked, an edit reaching each note at its time, a drag leaving a point
+where the value changes, one undo step for both parts, Vertical Snap and the editor closing when the selection empties;
+the editor centered on its note while the pitches zoom; on the top row the editor inside the note display and wider than
+its button, and a draw released outside the window. `tests/inplaceeditor_ui_tests.cpp` checks the draw tool on a line of
+the editor in an in-place editor and a dense note's lines a pixel each after its layout and as the project window zooms,
+`tests/drumeditor_ui_tests.cpp` that the drum editor has neither the buttons, the overlay nor the editor, and
 `tests/keyeditor_tests.cpp` the three settings as view state.
 
 ## Not yet

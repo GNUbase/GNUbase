@@ -298,6 +298,7 @@ namespace gnubase::ui
 		std::map<int64_t, double> m_painted;            // the draw tool's points in it, project ticks
 		int64_t m_paintFrom = 0;                        // the range it swept, project ticks
 		int64_t m_paintTo = -1;
+		int64_t m_linesPixel = -1;          // the ticks per pixel the notes' expression lines were built with
 		bool m_toolboxOnRightClick = false; // ui.toolboxOnRightClick
 		bool m_toolboxKnown = false;        // changed since it was asked for
 		std::vector<Subscription> m_subscriptions;

@@ -1381,3 +1381,37 @@ TEST_CASE("the note expression lines join the steps narrower than a pixel", "[ui
 	const double area = f.box(".key-expression-area").at("width").get<double>();
 	CHECK(static_cast<double>(f.elements(".key-expression-area .key-expression-step").size()) <= area + 2);
 }
+
+TEST_CASE("the expression editor stays centered on its note as the pitches zoom", "[ui]")
+{
+	Fixture f({1024, 600});
+	f.app.setDpRatio(1.0F);
+	const std::vector<uint64_t> ids = f.add({{0, 60, g_quarter}});
+	f.scroll(60);
+	f.app.call("editor.set", {{"editor", "window"}, {"expressionDoubleClick", true}});
+	REQUIRE(f.app.waitUntil([&] { return f.has(".key-input[setting=expressionDoubleClick]", "checked"); }));
+	f.click(of(noteSelector(ids[0])), 2);
+	REQUIRE(f.app.waitUntil([&] { return !f.has(".key-expression-editor", "off"); }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const auto centered = [&f, &ids]
+	{
+		const Json editor = f.box(".key-expression-editor");
+		const Json note = f.box(noteSelector(ids[0]));
+		return std::abs(editor.at("y").get<double>() + (editor.at("height").get<double>() / 2) -
+				   (note.at("y").get<double>() + (note.at("height").get<double>() / 2))) <= 1.5;
+	};
+	CHECK(centered());
+	const Json keyboard = f.box(".key-editor-keys");
+	const int left = keyboard.at("x").get<int>() + 4; // the keyboard's left 12 dp, where a drag zooms (p. 1261)
+	const int y = f.box(".key-editor-body").at("y").get<int>() + 150;
+	const auto at = [](int x, int at) { return ui::Target{"", 0, ui::Point{x, at}}; };
+	// From 1 to 2, to 4 and back to 1: the editor keeps its height and stays on the note's row.
+	for (const auto& [dx, height] : {std::pair{100, 20.0}, std::pair{100, 40.0}, std::pair{-200, 10.0}})
+	{
+		f.drag(at(left, y), at(left + dx, y));
+		f.app.shell().step(std::chrono::milliseconds(0));
+		REQUIRE(std::abs(f.box(".key-editor-row").at("height").get<double>() - height) <= 0.5);
+		CHECK(!f.has(".key-expression-editor", "off"));
+		CHECK(centered());
+	}
+}
