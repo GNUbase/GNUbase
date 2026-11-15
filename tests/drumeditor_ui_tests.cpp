@@ -1013,3 +1013,23 @@ TEST_CASE("with Adapt to Zoom and Insert Length linked the drumstick's notes are
 	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 1; }));
 	CHECK(f.partNotes()[0].at("length") == g_quarter);
 }
+
+TEST_CASE("the drum editor has neither the note expression buttons, the overlay nor the expression editor", "[ui]")
+{
+	// The key editor's Show Note Expression Data and its expression editor (#1512) are not the drum editor's: with
+	// both settings on in the view, and Show Note Length drawing the notes as boxes, no note shows its expression.
+	Fixture f;
+	f.app.call("note.add",
+		{{"part", f.part},
+			{"notes",
+				{{{"position", 0}, {"length", g_quarter}, {"pitch", 36}, {"velocity", 0.5},
+					{"expressions", {{{"type", "tuning"}, {"position", 0}, {"value", 12.0}}}}}}}});
+	f.app.call("editor.set",
+		{{"editor", "window"}, {"showNoteLength", true}, {"showExpression", true}, {"expressionDoubleClick", true}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note").size() == 1; }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.elements(".key-expression-step").empty());
+	CHECK(f.elements(".key-input[setting=showExpression]").empty());
+	CHECK(f.elements(".key-input[setting=expressionDoubleClick]").empty());
+	CHECK(f.elements(".key-expression-editor").empty());
+}

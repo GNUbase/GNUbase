@@ -1051,7 +1051,8 @@ TEST_CASE(
 	f.click(ui::Target{"", 0, ui::Point{x, y}});
 	REQUIRE(f.app.waitUntil([&] { return points().size() == 1; }));
 	REQUIRE(f.app.waitUntil([&] { return f.elements(area + " .key-expression-step").size() == 1; }));
-	f.app.shell().step(std::chrono::milliseconds(0)); // the line under the mouse, as the hover element
+	// After the frame a line that took mouse events would be the next press's target; the lines take none.
+	f.app.shell().step(std::chrono::milliseconds(0));
 	// A press and release a few pixels to the right, on the line drawn from the point.
 	f.click(ui::Target{"", 0, ui::Point{x + 6, y}});
 	REQUIRE(f.app.waitUntil([&] { return points().size() == 2; }));
