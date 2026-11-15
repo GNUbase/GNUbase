@@ -2810,43 +2810,25 @@ namespace gnubase::engine
 			see(id);
 		for (const auto& [id, folder] : project.poolFolders)
 			see(id);
-		for (const auto& [id, event] : project.audioEvents)
-		{
-			see(id);
-			see(event.front);
-		}
-		for (const auto& [id, part] : project.audioParts)
-			see(id);
-
-		for (const auto& [id, part] : project.midiParts)
-		{
-			see(id);
-			for (const auto& [noteId, note] : part.notes)
-				see(noteId);
-			for (const auto& [controllerId, controller] : part.controllers)
-				see(controllerId);
-		}
+		// The events and parts of the inactive track versions too.
+		forEveryEventAndPart(
+			project,
+			[&see](const AudioEvent& event, bool)
+			{
+				see(event.id);
+				see(event.front);
+			},
+			[&see](const AudioPart& part, bool) { see(part.id); },
+			[&see](const MidiPart& part, bool)
+			{
+				see(part.id);
+				for (const auto& [noteId, note] : part.notes)
+					see(noteId);
+				for (const auto& [controllerId, controller] : part.controllers)
+					see(controllerId);
+			});
 		for (const auto& [id, marker] : project.markers)
 			see(id);
-		for (const auto& [id, track] : project.trackById)
-			for (const TrackVersion& version : track.versions)
-			{
-				for (const AudioEvent& event : version.audioEvents)
-				{
-					see(event.id);
-					see(event.front);
-				}
-				for (const AudioPart& part : version.audioParts)
-					see(part.id);
-				for (const MidiPart& part : version.midiParts)
-				{
-					see(part.id);
-					for (const auto& [noteId, note] : part.notes)
-						see(noteId);
-					for (const auto& [controllerId, controller] : part.controllers)
-						see(controllerId);
-				}
-			}
 		for (const auto& [id, group] : project.linkGroups)
 			see(id);
 		for (const auto& [id, map] : project.drumMaps)
