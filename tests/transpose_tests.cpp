@@ -363,6 +363,60 @@ TEST_CASE("Set Root Key for Unassigned Events reaches the parts of inactive trac
 	CHECK(song.partJson().at("rootKey") == "E");
 }
 
+TEST_CASE("Set Root Key for Unassigned Events reaches the audio events of inactive versions and announces their tracks",
+	"[integration]")
+{
+	AudioSong song;
+	const ObjectId second = run(song.client, "audioEvent.add",
+		{{"track", song.audioTrack}, {"clip", song.clip}, {"position", 48000}, {"offset", 0}, {"length", 48000}})
+								.at("event")
+								.at("id")
+								.get<ObjectId>();
+	// A MIDI track whose part has a root key of its own already.
+	const ObjectId keyed = run(song.client, "track.add", {{"type", "midi"}}).at("track").at("id").get<ObjectId>();
+	const ObjectId keyedPart =
+		run(song.client, "midiPart.add", {{"track", keyed}, {"position", 0}, {"length", g_beatTicks}})
+			.at("part")
+			.at("id")
+			.get<ObjectId>();
+	run(song.client, "midiPart.set", {{"part", keyedPart}, {"rootKey", "A"}});
+	run(song.client, "project.set", {{"rootKey", "E"}});
+	// The audio track's two events and the keyed part go into inactive versions; the song's MIDI part plays on.
+	run(song.client, "trackVersion.add", {{"tracks", {song.audioTrack, keyed}}});
+	REQUIRE(run(song.client, "project.get").at("audioEvents").empty());
+	while (song.client.poll())
+	{
+	}
+
+	// One track.changed for the audio track, whose stashed events got the root key, none for the keyed track; the
+	// playing part is announced as changed, the stashed events aren't.
+	run(song.client, "transpose.assignRootKey");
+	std::vector<ObjectId> tracks;
+	std::vector<ObjectId> parts;
+	std::vector<ObjectId> events;
+	while (const auto message = song.client.poll())
+		if (const auto* event = std::get_if<Event>(&*message); event != nullptr)
+		{
+			if (event->name == "track.changed")
+				tracks.push_back(event->data.at("track").at("id").get<ObjectId>());
+			else if (event->name == "midiPart.changed")
+				parts.push_back(event->data.at("part").at("id").get<ObjectId>());
+			else if (event->name == "audioEvent.changed")
+				events.push_back(event->data.at("event").at("id").get<ObjectId>());
+		}
+	CHECK(tracks == std::vector<ObjectId>{song.audioTrack});
+	CHECK(parts == std::vector<ObjectId>{song.part});
+	CHECK(events.empty());
+
+	// Activating the stashed versions brings the events back with the project root key, the keyed part with its own.
+	run(song.client, "trackVersion.activate", {{"tracks", {song.audioTrack, keyed}}, {"version", 1}});
+	CHECK(song.eventJson().at("rootKey") == "E");
+	CHECK(song.eventJson(second).at("rootKey") == "E");
+	const Json project = run(song.client, "project.get");
+	for (const Json& part : project.at("midiParts"))
+		CHECK(part.at("rootKey") == (part.at("id") == keyedPart ? "A" : "E"));
+}
+
 TEST_CASE("audio events follow the root key and the transpose track with their pitch", "[integration]")
 {
 	AudioSong song;
