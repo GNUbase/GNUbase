@@ -90,7 +90,9 @@ attributes, through a data model or directly.
 ## Menus and context menus
 
 - `<menu>` holds `<menuitem>`s and `<menuseparator>`s and stays hidden until it opens, with the state class `.open`:
-  under a button whose `menu` attribute names it by id (a second click on the button closes it), or at the mouse on
+  under a button whose `menu` attribute names it by id (a second click on the button closes it; a click on another
+  button with the same menu, such as another row's cell of the list editor, opens it under that one, and a text field
+  being edited, `.editing`, doesn't open it, #1688), or at the mouse on
   a right click on an element whose `contextmenu` attribute names it: the nearest one with the attribute, so an empty
   `contextmenu` keeps the menu of an element around it from opening on a control. With a modifier key held (Ctrl,
   Alt, Shift or Cmd), the menu that its `modifiercontextmenu` attribute names opens instead, if it has the attribute,
