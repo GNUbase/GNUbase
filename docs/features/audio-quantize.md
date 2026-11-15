@@ -150,10 +150,11 @@ undo step, and gives the event back what it was, whole and unquantized, so `quan
 it. Crossfades from the slices go to the event, as removing a piece moves them for Reset Quantize. An event that is
 locked or has a locked slice stays as it is, slices and all. A slice moved to another track since is left alone; a copy
 of a slice or of the event, made with the clipboard or by duplicating, is the user's own, with neither (#1668), so that
-resetting neither puts a copy of the event on top of the event nor removes copies of its slices. A duplicated track's
-slices are slices of the copy of their event, which resets them. The origin changes its time base with the track's
-(`rebaseTrack`), so the file keeps it; an event moved onto a track of the other time base since gets its start back in
-that one.
+resetting neither puts a copy of the event on top of the event nor removes copies of its slices. The slices of a
+duplicated or imported track, also those of its other versions, and of a duplicated version are slices of the copy of
+their event, which resets them. The origin changes its time base with the track's (`rebaseTrack`) and with the event's
+when the event moves onto a track of the other time base, alone or in an audio part, so the file keeps it and the event
+gets its start back in that one.
 
 `quantize.createWarpMarkers` keeps the clip frames of the markers it adds in the clip's warp (`ClipWarp::created`,
 saved with the warp), and `quantize.resetWarpMarkers` removes the markers at those frames from the clip, also once

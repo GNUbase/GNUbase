@@ -299,6 +299,14 @@ namespace gnubase::engine
 			}
 		}
 
+		// A slice origin goes into the new track's time base with its event, since a save keeps only an origin in the
+		// event's own, and the Reset of the Slice Rules then still puts the event back (#1672).
+		void rebaseSliceOrigin(const Project& project, AudioEvent& event, time::TimeBase base)
+		{
+			if (event.sliceOrigin)
+				event.sliceOrigin->timing.position = rebased(project, event.sliceOrigin->timing.position, base);
+		}
+
 		// Moves an item by shift onto a track, keeping its length; a part's length goes into the track's time base.
 		// An audio part's events go with it.
 		void place(Project& project, const Item& item, const Shift& shift, ObjectId track)
@@ -312,6 +320,7 @@ namespace gnubase::engine
 			}
 			if (item.audio != nullptr)
 			{
+				rebaseSliceOrigin(project, *item.audio, base);
 				item.audio->track = track;
 			}
 			else if (item.audioPart != nullptr)
@@ -320,6 +329,7 @@ namespace gnubase::engine
 				for (AudioEvent* event : eventsIn(project, item.audioPart->id))
 				{
 					event->position = rebased(project, shifted(project, event->position, shift, true), base);
+					rebaseSliceOrigin(project, *event, base);
 					event->track = track;
 				}
 				item.audioPart->track = track;

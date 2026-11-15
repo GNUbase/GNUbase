@@ -1605,6 +1605,23 @@ TEST_CASE(
 		run(client, "quantize.resetSlices", {{"events", sliced}});
 		CHECK(eventsOn(client, loop.track) == std::vector<std::vector<int64_t>>{{2000, 0, 4 * g_quarter}});
 	}
+
+	SECTION("the event and its slices moved onto a musical track, saved and loaded in between")
+	{
+		// The origin goes into the musical track's time base with the event (#1672), so the file keeps it.
+		const ObjectId musical = run(client, "track.add", {{"type", "audio"}, {"timeBase", "musical"}, {"channels", 1}})
+									 .at("track")
+									 .at("id")
+									 .get<ObjectId>();
+		run(client, "event.move", {{"events", sliced}, {"delta", 0}, {"track", musical}});
+		const std::string file = (dir.path() / "moved.dawproject").u8string();
+		run(client, "project.save", {{"path", file}, {"embedMedia", false}});
+		run(client, "project.new");
+		run(client, "project.load", {{"path", file}});
+		CHECK(run(client, "quantize.resetSlices", {{"events", sliced}}).at("events") == Json::array({loop.event}));
+		CHECK(eventsOn(client, musical) ==
+			std::vector<std::vector<int64_t>>{{time::g_ticksPerQuarter / 12, 0, 4 * g_quarter}}); // 2000 samples
+	}
 }
 
 TEST_CASE("Copies of slices have no slice origin of their own, but a duplicated track's slices do", "[integration]")
@@ -1651,6 +1668,22 @@ TEST_CASE("Copies of slices have no slice origin of their own, but a duplicated 
 		CHECK(result.at("removed").size() == 4);
 		CHECK(eventsOn(client, copy) == whole);
 		CHECK(eventsOn(client, loop.track) == slices);
+	}
+
+	SECTION("a duplicated version resets its own slices (#1668)")
+	{
+		run(client, "trackVersion.duplicate", {{"tracks", {loop.track}}});
+		Json copied = Json::array();
+		const Json project = run(client, "project.get");
+		for (const Json& event : project.at("audioEvents"))
+			if (event.at("track") == loop.track)
+				copied.push_back(event.at("id"));
+		REQUIRE(copied.size() == 5);
+		for (const Json& id : copied)
+			REQUIRE(std::find(sliced.begin(), sliced.end(), id) == sliced.end());
+		const Json result = run(client, "quantize.resetSlices", {{"events", Json::array({copied.at(3)})}});
+		CHECK(result.at("removed").size() == 4);
+		CHECK(eventsOn(client, loop.track) == whole);
 	}
 }
 
