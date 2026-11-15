@@ -367,6 +367,9 @@ namespace gnubase::engine
 		// again sends the off and on events of the slot that is selected, as for a new one.
 		void selectSlot(const ArticulationMap& map, int slot, uint8_t channel, uint32_t offset, graph::EventBuffer& out,
 			bool again = false) noexcept;
+		// A slot's on or off output events, on channel.
+		void sendOutputs(
+			const SoundSlot& slot, bool off, uint8_t channel, uint32_t offset, graph::EventBuffer& out) noexcept;
 		void play(
 			const MidiSequence& sequence, const graph::TransportSegment& segment, graph::EventBuffer& out) noexcept;
 		// Each returns false if the event buffer was full; then the note didn't start or end (though noteOn may have

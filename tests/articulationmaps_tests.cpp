@@ -16,6 +16,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <map>
 #include <memory>
@@ -141,7 +142,8 @@ TEST_CASE("articulation maps are added, copied, changed and removed", "[unit]")
 	CHECK(strings.at("slots").at(1) ==
 		Json{{"name", "Pizzicato"}, {"color", ""}, {"articulations", {"Pizzicato"}}, {"trigger", 37},
 			{"outputs", {{{"status", "note"}, {"data1", 25}, {"data2", 100}, {"off", false}}}}, {"channel", 2},
-			{"length", 100}, {"velocity", 100}, {"transpose", 0}});
+			{"length", 100}, {"velocity", 100}, {"transpose", 0}, {"addOn", false}, {"attack", 0}, {"separation", 0},
+			{"minPitch", 0}, {"maxPitch", 127}, {"minVelocity", 1}, {"maxVelocity", 127}});
 	CHECK(strings.at("slots").at(3).at("trigger").is_null());
 	CHECK(strings.at("slots").at(3).at("channel").is_null());
 
@@ -1151,4 +1153,182 @@ TEST_CASE("remote triggers played into a track select sound slots", "[integratio
 		call("audio.render", {{"frames", 64}});
 		CHECK(play({{0x80, 37, 0}}) == Played{{0x80, 37}});
 	}
+	SECTION("add-on slots")
+	{
+		// E1 turns the add-on Mute on, and without latch off where it is released; the selected slot stays.
+		Json slots = stringsSettings().at("slots");
+		slots.push_back({{"name", "Mute"}, {"addOn", true}, {"articulations", {"Staccato"}}, {"trigger", 40},
+			{"outputs",
+				{{{"status", "controller"}, {"data1", 33}, {"data2", 127}},
+					{{"status", "controller"}, {"data1", 33}, {"data2", 0}, {"off", true}}}}});
+		call("articulationMap.set", {{"map", map}, {"slots", slots}, {"latch", false}});
+		call("audio.render", {{"frames", 64}});
+		CHECK(play({{0x90, 40, 100}, {0x90, 60, 100}, {0x80, 60, 0}, {0x80, 40, 0}}) ==
+			Played{{0xB0, 33, 127}, {0x90, 60}, {0x80, 60}, {0xB0, 33, 0}});
+	}
+}
+
+TEST_CASE("add-on slots add their output events to the slot of the other groups", "[unit]")
+{
+	Fixture f;
+	// Arco and Pizzicato switch with key switches; Legato is an add-on of a group of its own (pp. 1272, 1281):
+	// controller 68 at 127 turns it on, at 0 off, whichever slot plays.
+	Json settings = {{"name", "Add-on"}, {"groups", {"Technique", "Legato"}},
+		{"articulations",
+			{{{"name", "Arco"}, {"type", "direction"}, {"group", 0}},
+				{{"name", "Pizzicato"}, {"type", "direction"}, {"group", 0}},
+				{{"name", "Legato"}, {"type", "attribute"}, {"group", 1}}}},
+		{"slots",
+			{{{"name", "Arco"}, {"outputs", {{{"status", "note"}, {"data1", 24}}}}},
+				{{"name", "Pizzicato"}, {"articulations", {"Pizzicato"}},
+					{"outputs", {{{"status", "note"}, {"data1", 25}}}}},
+				{{"name", "Legato"}, {"articulations", {"Legato"}}, {"addOn", true},
+					{"outputs",
+						{{{"status", "controller"}, {"data1", 68}, {"data2", 127}},
+							{{"status", "controller"}, {"data1", 68}, {"data2", 0}, {"off", true}}}}}}}};
+	const Json map = f.call("articulationMap.add", settings).at("map");
+	CHECK(map.at("slots").at(2).at("addOn") == true);
+	CHECK(map.at("slots").at(0).at("addOn") == false);
+	f.call("track.set", {{"track", f.track}, {"articulationMap", map.at("id")}});
+	f.call("controller.add",
+		{{"part", f.part},
+			{"controllers", {{{"position", 2 * g_quarter}, {"type", "articulation"}, {"articulation", "Pizzicato"}}}}});
+	const auto note = [](int64_t position, int pitch, Json articulations)
+	{
+		return Json{{"position", position}, {"length", g_quarter / 2}, {"pitch", pitch}, {"velocity", 0.5},
+			{"articulations", std::move(articulations)}};
+	};
+	f.call("note.add",
+		{{"part", f.part},
+			{"notes",
+				{note(0, 60, Json::array()), note(g_quarter, 61, {"Legato"}), note(2 * g_quarter, 62, {"Legato"}),
+					note(3 * g_quarter, 63, Json::array())}}});
+
+	const engine::RenderChannel channel = f.rendered();
+	// Arco's key switch once at the start, Pizzicato's with the third note; Legato on with the second note, off
+	// with the fourth.
+	CHECK(std::count_if(channel.notes.begin(), channel.notes.end(),
+			  [](const engine::RenderNote& each) { return each.pitch == 24; }) == 1);
+	CHECK(notePlaying(channel, 25).end == notePlaying(channel, 62).start);
+	REQUIRE(channel.controllers.size() == 2);
+	CHECK(channel.controllers[0].position == notePlaying(channel, 61).start);
+	CHECK(channel.controllers[0].number == 68);
+	CHECK(channel.controllers[0].value == engine::midi::controllerFromMidi1(127));
+	CHECK(channel.controllers[1].position == notePlaying(channel, 63).start);
+	CHECK(channel.controllers[1].value == 0);
+
+	// The notes' sound slots are the other groups' slots.
+	const Json slots = f.call("articulationMap.soundSlots", {{"part", f.part}}).at("notes");
+	std::vector<std::string> names;
+	for (const Json& each : slots)
+		names.push_back(each.at("name").get<std::string>());
+	CHECK(names == std::vector<std::string>{"Arco", "Arco", "Pizzicato", "Pizzicato"});
+
+	// The default slot can't be an add-on.
+	settings["slots"][0]["addOn"] = true;
+	CHECK_THAT(f.fails("articulationMap.add", settings), ContainsSubstring("default"));
+}
+
+TEST_CASE("Attack Compensation, Separation and the pitch and velocity ranges modify the notes", "[unit]")
+{
+	Fixture f;
+	Json settings = {{"name", "Modifiers"}, {"groups", {"Group 1"}},
+		{"articulations", {{{"name", "Accent"}, {"type", "attribute"}, {"group", 0}}}},
+		{"slots",
+			{{{"name", "Normal"}, {"outputs", {{{"status", "note"}, {"data1", 24}}}}},
+				{{"name", "Accent"}, {"articulations", {"Accent"}},
+					{"outputs",
+						{{{"status", "note"}, {"data1", 25}},
+							{{"status", "controller"}, {"data1", 1}, {"data2", 9}}}}}}}};
+	const auto id = f.call("articulationMap.add", settings).at("map").at("id");
+	f.call("track.set", {{"track", f.track}, {"articulationMap", id}});
+	f.call("note.add",
+		{{"part", f.part},
+			{"notes",
+				{{{"position", g_quarter}, {"length", g_quarter}, {"pitch", 80}, {"velocity", 0.5},
+					{"articulations", {"Accent"}}}}}});
+	const engine::RenderChannel before = f.rendered();
+	const engine::RenderNote plain = notePlaying(before, 80);
+	CHECK(notePlaying(before, 25).start == plain.start - 1);
+
+	// 10 ms earlier, its key switch 20 ms before it, and into the pitch range 50-70 and velocity range 100-120.
+	settings["slots"][1].update({{"attack", 10}, {"separation", 20}, {"minPitch", 50}, {"maxPitch", 70},
+		{"minVelocity", 100}, {"maxVelocity", 120}});
+	f.call("articulationMap.set", {{"map", id}, {"slots", settings["slots"]}});
+	const auto rate = f.call("project.get").at("sampleRate").get<double>();
+	const auto ms = [rate](int64_t value) { return static_cast<int64_t>(std::llround(value * rate / 1000.0)); };
+	const engine::RenderChannel channel = f.rendered();
+	const engine::RenderNote& accent = notePlaying(channel, 70);
+	CHECK(accent.start == plain.start - ms(10));
+	CHECK(accent.end == plain.end - ms(10));
+	CHECK(accent.velocity == engine::midi::velocityFromMidi1(100));
+	const engine::RenderNote& keySwitch = notePlaying(channel, 25);
+	CHECK(keySwitch.start == accent.start - ms(20));
+	CHECK(keySwitch.end == keySwitch.start + 1);
+	REQUIRE(channel.controllers.size() == 1);
+	CHECK(channel.controllers[0].position == accent.start);
+	const Json slot = f.maps().at(0).at("slots").at(1);
+	CHECK(slot.at("attack") == 10);
+	CHECK(slot.at("separation") == 20);
+	CHECK(slot.at("minPitch") == 50);
+	CHECK(slot.at("maxVelocity") == 120);
+
+	settings["slots"][1]["minPitch"] = 80;
+	CHECK_THAT(
+		f.fails("articulationMap.set", {{"map", id}, {"slots", settings["slots"]}}), ContainsSubstring("maxPitch"));
+}
+
+TEST_CASE("articulationMap.remoteTriggers transposes, reassigns and removes the remote triggers", "[unit]")
+{
+	Fixture f;
+	const auto strings = f.strings(); // triggers 36, 37, 38 and none
+	const auto brass =
+		f.call("articulationMap.add", {{"name", "Brass"}, {"slots", {{{"name", "Open"}, {"trigger", 40}}}}})
+			.at("map")
+			.at("id");
+	const auto triggers = [&f](size_t index)
+	{
+		std::vector<int> found;
+		const Json maps = f.maps();
+		for (const Json& slot : maps.at(index).at("slots"))
+			found.push_back(slot.at("trigger").is_null() ? -1 : slot.at("trigger").get<int>());
+		return found;
+	};
+	using Triggers = std::vector<int>;
+
+	// Transpose All, by semitones (p. 1274): the map's, or with allMaps every map's, in one undo step.
+	f.call("articulationMap.remoteTriggers", {{"map", strings}, {"action", "transpose"}, {"semitones", 12}});
+	CHECK(triggers(0) == Triggers{48, 49, 50, -1});
+	CHECK(triggers(1) == Triggers{40});
+	f.call("articulationMap.remoteTriggers",
+		{{"map", strings}, {"action", "transpose"}, {"semitones", -24}, {"allMaps", true}});
+	CHECK(triggers(0) == Triggers{24, 25, 26, -1});
+	CHECK(triggers(1) == Triggers{16});
+	f.call("history.undo");
+	CHECK(triggers(0) == Triggers{48, 49, 50, -1});
+	CHECK(triggers(1) == Triggers{40});
+	CHECK_THAT(
+		f.fails("articulationMap.remoteTriggers", {{"map", strings}, {"action", "transpose"}, {"semitones", 80}}),
+		ContainsSubstring("0-127"));
+
+	// Reassign All: from a start key, on the white or black keys or all, optionally skipping the first slot.
+	f.call("articulationMap.remoteTriggers",
+		{{"map", strings}, {"action", "reassign"}, {"start", 60}, {"keys", "white"}, {"skipFirst", true}});
+	CHECK(triggers(0) == Triggers{48, 60, 62, 64});
+	f.call(
+		"articulationMap.remoteTriggers", {{"map", strings}, {"action", "reassign"}, {"start", 60}, {"keys", "black"}});
+	CHECK(triggers(0) == Triggers{61, 63, 66, 68});
+	f.call("articulationMap.remoteTriggers", {{"map", strings}, {"action", "reassign"}, {"start", 126}});
+	CHECK(triggers(0) == Triggers{126, 127, -1, -1}); // none beyond 127
+
+	// Program changes: consecutive programs, whatever the keys.
+	f.call("articulationMap.set", {{"map", brass}, {"remoteTrigger", "programChange"}});
+	f.call("articulationMap.remoteTriggers", {{"map", brass}, {"action", "reassign"}, {"start", 5}, {"keys", "black"}});
+	CHECK(triggers(1) == Triggers{5});
+
+	// Remove All.
+	f.call("articulationMap.remoteTriggers", {{"map", strings}, {"action", "remove"}});
+	CHECK(triggers(0) == Triggers{-1, -1, -1, -1});
+	CHECK_THAT(
+		f.fails("articulationMap.remoteTriggers", {{"map", 999}, {"action", "remove"}}), ContainsSubstring("999"));
 }

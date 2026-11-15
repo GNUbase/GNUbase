@@ -1318,14 +1318,24 @@ namespace gnubase::engine
 		int length = 100;   // percent of the notes' length
 		int velocity = 100; // percent of the notes' velocity
 		int transpose = 0;  // semitones
+		bool addOn = false; // its output events add to the slot of the other groups (pp. 1272, 1281)
+		int attack = 0;     // Attack Compensation: ms the notes start earlier (p. 1271)
+		int separation = 0; // ms its key switches go before the notes, 0 for one sample (p. 1271)
+		int minPitch = 0;   // the notes' pitch and velocity (MIDI 1) are kept in these ranges (pp. 1271-1272)
+		int maxPitch = 127;
+		int minVelocity = 1;
+		int maxVelocity = 127;
 	};
 
 	inline bool operator==(const SoundSlot& a, const SoundSlot& b)
 	{
-		return std::tie(a.name, a.color, a.articulations, a.trigger, a.outputs, a.channel, a.length, a.velocity,
-				   a.transpose) ==
-			std::tie(
-				b.name, b.color, b.articulations, b.trigger, b.outputs, b.channel, b.length, b.velocity, b.transpose);
+		const auto tie = [](const SoundSlot& slot)
+		{
+			return std::tie(slot.name, slot.color, slot.articulations, slot.trigger, slot.outputs, slot.channel,
+				slot.length, slot.velocity, slot.transpose, slot.addOn, slot.attack, slot.separation, slot.minPitch,
+				slot.maxPitch, slot.minVelocity, slot.maxVelocity);
+		};
+		return tie(a) == tie(b);
 	}
 
 	struct ArticulationMap

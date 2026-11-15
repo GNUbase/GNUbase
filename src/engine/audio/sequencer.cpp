@@ -2,6 +2,7 @@
 #include "engine/audio/sequencer.h"
 
 #include "engine/graph/graph.h"
+#include "engine/midi/articulationmaps.h"
 #include "engine/midi/midivalues.h"
 #include "engine/plugins/pluginslot.h"
 #include "platform/log.h"
@@ -467,7 +468,10 @@ namespace gnubase::engine
 		}
 		// Only what plays from the input counts: a slot renamed or recolored in the setup stays selected.
 		const auto plays = [](const SoundSlot& slot)
-		{ return std::tie(slot.trigger, slot.outputs, slot.channel, slot.transpose, slot.velocity); };
+		{
+			return std::tie(slot.trigger, slot.outputs, slot.channel, slot.transpose, slot.velocity, slot.addOn,
+				slot.minPitch, slot.maxPitch, slot.minVelocity, slot.maxVelocity);
+		};
 		const std::vector<SoundSlot>& slots = sequence->articulations.slots;
 		if (sequence->articulations.id != m_mapId ||
 			!std::equal(slots.begin(), slots.end(), m_mapSlots.begin(), m_mapSlots.end(),
@@ -1227,9 +1231,8 @@ namespace gnubase::engine
 			{
 				const SoundSlot& slot =
 					slots[m_inputSlot >= 0 && static_cast<size_t>(m_inputSlot) < slots.size() ? m_inputSlot : 0];
-				pitch = static_cast<uint8_t>(std::clamp(pitch + slot.transpose, 0, 127));
-				event.velocity = static_cast<uint16_t>(std::clamp<int64_t>(
-					(int64_t{event.velocity} * slot.velocity) / 100, 1, std::numeric_limits<uint16_t>::max()));
+				pitch = static_cast<uint8_t>(std::clamp(pitch + slot.transpose, slot.minPitch, slot.maxPitch));
+				event.velocity = midi::slotVelocity(slot, event.velocity);
 				if (slot.channel >= 0)
 					channel = slot.channel;
 			}
@@ -1281,6 +1284,17 @@ namespace gnubase::engine
 		// A key whose note-on played, before the map came or the key became a trigger: its note-off ends that note.
 		if (event.type == Type::NoteOff && m_inputDown[((event.channel % 16) * 128) + (event.key % 128)])
 			return false;
+		// An add-on slot (#1113) sends its on events besides the selected slot, and without latch its off events
+		// where the key is released.
+		if (found->addOn)
+		{
+			const auto on = found->channel >= 0 ? static_cast<uint8_t>(found->channel) : channel;
+			if (event.type != Type::NoteOff)
+				sendOutputs(*found, false, on, event.offset, out);
+			else if (!map.latch)
+				sendOutputs(*found, true, on, event.offset, out);
+			return true;
+		}
 		if (event.type == Type::NoteOff)
 		{
 			// Without latch the default slot comes back where the key is released, unless another came since.
@@ -1306,42 +1320,44 @@ namespace gnubase::engine
 		if (slot == m_inputSlot && !again)
 			return;
 		// As in playback (rendersnapshot.cpp): the off events on the channel the slot's on events went to, the on
-		// events on the slot's channel or else the given one (the track's or the trigger's). A key switch is a note-on
-		// and its note-off.
-		const auto send = [&](const SoundSlot& from, bool off, uint8_t on)
-		{
-			for (const OutputEvent& output : from.outputs)
-			{
-				if (output.off != off)
-					continue;
-				if (output.status == OutputStatus::Note)
-				{
-					graph::ProcessEvent note = noteEvent(graph::ProcessEvent::Type::NoteOn,
-						static_cast<uint16_t>((on * 128) + (output.data1 % 128)), offset);
-					note.velocity = midi::velocityFromMidi1(output.data2);
-					out.add(note);
-					note.type = graph::ProcessEvent::Type::NoteOff;
-					note.velocity = 0;
-					out.add(note);
-				}
-				else if (output.status == OutputStatus::Controller)
-				{
-					out.add(controllerEvent(
-						ControllerType::Control, on, output.data1, midi::controllerFromMidi1(output.data2), offset));
-				}
-				else
-				{
-					out.add(controllerEvent(ControllerType::Program, on, output.data1, g_noBank, offset));
-				}
-			}
-		};
+		// events on the slot's channel or else the given one (the track's or the trigger's).
 		if (m_inputSlot >= 0 && static_cast<size_t>(m_inputSlot) < map.slots.size())
-			send(map.slots[static_cast<size_t>(m_inputSlot)], true, m_inputSlotChannel);
+			sendOutputs(map.slots[static_cast<size_t>(m_inputSlot)], true, m_inputSlotChannel, offset, out);
 		const SoundSlot& next = map.slots[static_cast<size_t>(slot)];
 		m_inputSlot = slot;
 		m_inputSlotChannel =
 			next.channel >= 0 ? static_cast<uint8_t>(next.channel) : static_cast<uint8_t>(channel % 16);
-		send(next, false, m_inputSlotChannel);
+		sendOutputs(next, false, m_inputSlotChannel, offset, out);
+	}
+
+	void MidiSequencer::sendOutputs(
+		const SoundSlot& slot, bool off, uint8_t channel, uint32_t offset, graph::EventBuffer& out) noexcept
+	{
+		// A key switch is a note-on and its note-off.
+		for (const OutputEvent& output : slot.outputs)
+		{
+			if (output.off != off)
+				continue;
+			if (output.status == OutputStatus::Note)
+			{
+				graph::ProcessEvent note = noteEvent(graph::ProcessEvent::Type::NoteOn,
+					static_cast<uint16_t>((channel * 128) + (output.data1 % 128)), offset);
+				note.velocity = midi::velocityFromMidi1(output.data2);
+				out.add(note);
+				note.type = graph::ProcessEvent::Type::NoteOff;
+				note.velocity = 0;
+				out.add(note);
+			}
+			else if (output.status == OutputStatus::Controller)
+			{
+				out.add(controllerEvent(
+					ControllerType::Control, channel, output.data1, midi::controllerFromMidi1(output.data2), offset));
+			}
+			else
+			{
+				out.add(controllerEvent(ControllerType::Program, channel, output.data1, g_noBank, offset));
+			}
+		}
 	}
 
 	bool MidiSequencer::sounds(uint16_t index) const noexcept

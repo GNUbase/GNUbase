@@ -72,14 +72,21 @@ namespace gnubase::engine
 			return static_cast<uint8_t>(trackChannel.value_or(note.channel));
 		}
 
+		// A slot's Attack Compensation or Separation (p. 1271), in samples.
+		time::Samples milliseconds(const Project& project, int value)
+		{
+			return std::llround(value * project.sampleRate / 1000.0);
+		}
+
 		// A note that selects a sound slot (#175): where it starts in the project and where its slot's events go
-		// there, its slot and the channel it plays on.
+		// there, its slot, the channel it plays on and the add-on slots it plays besides (#1113).
 		struct SlotNote
 		{
 			time::Ticks order = 0;
 			time::Ticks at = 0;
 			const SoundSlot* slot = nullptr;
 			uint8_t channel = 0;
+			std::vector<const SoundSlot*> addOns;
 		};
 
 		// The notes of a part that select a sound slot: notes that don't play (their probability, a muted drum
@@ -89,13 +96,18 @@ namespace gnubase::engine
 			std::vector<SlotNote>& into)
 		{
 			const std::optional<int> trackChannel = midi::trackMidiChannel(project, part.track);
+			const std::map<ObjectId, std::vector<size_t>> addOns = midi::addOnSlots(map, part);
 			for (const auto& [id, note] : part.notes)
 				if (note.position < end - start && slots.count(id) != 0 && midi::notePlays(note, part.id) &&
 					(drums == nullptr || !drums->sounds.at(note.pitch).mute))
 				{
 					const SoundSlot& slot = map.slots.at(slots.at(id));
+					std::vector<const SoundSlot*> added;
+					if (const auto found = addOns.find(id); found != addOns.end())
+						for (const size_t index : found->second)
+							added.push_back(&map.slots.at(index));
 					into.push_back({start + note.position, start + std::max<time::Ticks>(note.position, 0), &slot,
-						playedChannel(note, nullptr, &slot, trackChannel)});
+						playedChannel(note, nullptr, &slot, trackChannel), std::move(added)});
 				}
 		}
 
@@ -112,9 +124,15 @@ namespace gnubase::engine
 			const SlotNote* previous = nullptr;
 			for (const SlotNote& note : notes)
 			{
-				if (previous != nullptr && note.slot == previous->slot)
+				const bool same = previous != nullptr && note.slot == previous->slot;
+				if (same && note.addOns == previous->addOns)
 					continue;
-				const time::Samples at = toSamples(project, note.at);
+				// Where the note starts, earlier by its slot's Attack Compensation; key switches a sample before it, or
+				// the slot's Separation (p. 1271).
+				const time::Samples at =
+					std::max<time::Samples>(toSamples(project, note.at) - milliseconds(project, note.slot->attack), 0);
+				const time::Samples keySwitch = std::max<time::Samples>(
+					at - std::max<time::Samples>(milliseconds(project, note.slot->separation), 1), 0);
 				const auto send = [&](const SoundSlot& from, bool off, uint8_t on)
 				{
 					for (const OutputEvent& output : from.outputs)
@@ -122,8 +140,8 @@ namespace gnubase::engine
 						if (output.off != off)
 							continue;
 						if (output.status == OutputStatus::Note)
-							channel.notes.push_back({std::max<time::Samples>(at - 1, 0), std::max<time::Samples>(at, 1),
-								output.data1, midi::velocityFromMidi1(output.data2), on, true, 0});
+							channel.notes.push_back({keySwitch, std::max<time::Samples>(keySwitch + 1, 1), output.data1,
+								midi::velocityFromMidi1(output.data2), on, true, 0});
 						else if (output.status == OutputStatus::Controller)
 							channel.controllers.push_back({at, ControllerType::Control, output.data1,
 								midi::controllerFromMidi1(output.data2), on, {}, g_soundSlotPart});
@@ -132,9 +150,22 @@ namespace gnubase::engine
 								{at, ControllerType::Program, output.data1, g_noBank, on, {}, g_soundSlotPart});
 					}
 				};
+				if (!same)
+				{
+					if (previous != nullptr)
+						send(*previous->slot, true, previous->channel);
+					send(*note.slot, false, note.channel);
+				}
+				// Add-on slots (#1113): the off events of those that end, the on events of those that start.
+				const auto has = [](const std::vector<const SoundSlot*>& slots, const SoundSlot* slot)
+				{ return std::find(slots.begin(), slots.end(), slot) != slots.end(); };
 				if (previous != nullptr)
-					send(*previous->slot, true, previous->channel);
-				send(*note.slot, false, note.channel);
+					for (const SoundSlot* addOn : previous->addOns)
+						if (!has(note.addOns, addOn))
+							send(*addOn, true, previous->channel);
+				for (const SoundSlot* addOn : note.addOns)
+					if (previous == nullptr || !has(previous->addOns, addOn))
+						send(*addOn, false, note.channel);
 				previous = &note;
 			}
 		}
@@ -188,9 +219,8 @@ namespace gnubase::engine
 				uint16_t velocity = midi::playedVelocity(note, part.id);
 				if (slot != nullptr)
 				{
-					pitch = static_cast<uint8_t>(std::clamp(pitch + slot->transpose, 0, 127));
-					velocity = static_cast<uint16_t>(std::clamp<int64_t>(
-						(int64_t{velocity} * slot->velocity) / 100, 1, std::numeric_limits<uint16_t>::max()));
+					pitch = static_cast<uint8_t>(std::clamp(pitch + slot->transpose, slot->minPitch, slot->maxPitch));
+					velocity = midi::slotVelocity(*slot, velocity);
 				}
 				midi::Modifiers transposed = modifiers;
 				transposed.transpose += globalTranspose(project, part, toSamples(project, start + note.position));
@@ -207,13 +237,17 @@ namespace gnubase::engine
 					slot != nullptr ? std::max<time::Ticks>((note.length * slot->length) / 100, 1) : note.length;
 				const time::Ticks length = note.length > 0 ? midi::modifyLength(modifiers, seed, slotLength) : 0;
 				const time::Ticks noteEnd = std::min(start + position + length, end);
-				channel.notes.push_back({toSamples(project, start + position), toSamples(project, noteEnd), pitch,
-					velocity, playedChannel(note, sound, slot, trackChannel), false, 0});
+				// Attack Compensation starts the note earlier (p. 1271), with its expression.
+				const time::Samples noteStart = toSamples(project, start + position);
+				const time::Samples early =
+					slot != nullptr ? std::min(milliseconds(project, slot->attack), noteStart) : time::Samples{0};
+				channel.notes.push_back({noteStart - early, toSamples(project, noteEnd) - early, pitch, velocity,
+					playedChannel(note, sound, slot, trackChannel), false, 0});
 				for (const ExpressionPoint& point : note.expressions)
 				{
 					if (start + position + point.position >= noteEnd)
 						continue;
-					channel.expressions.push_back({toSamples(project, start + position + point.position), pitch,
+					channel.expressions.push_back({toSamples(project, start + position + point.position) - early, pitch,
 						channel.notes.back().channel, point.type, point.value});
 					// A point within the note's first sample is one of its initial ones, as it plays at its start.
 					if (channel.expressions.back().position == channel.notes.back().start)

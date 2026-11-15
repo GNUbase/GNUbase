@@ -8,6 +8,7 @@
 #include "engine/document/projectmodel.h"
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
+#include "engine/midi/midivalues.h"
 
 #include <algorithm>
 #include <array>
@@ -97,7 +98,7 @@ namespace gnubase::engine::midi
 			size_t best = 0;
 			auto bestScore = score(map, map.slots.front(), active);
 			for (size_t i = 1; i < map.slots.size(); ++i)
-				if (auto next = score(map, map.slots[i], active); next > bestScore)
+				if (auto next = score(map, map.slots[i], active); !map.slots[i].addOn && next > bestScore)
 				{
 					best = i;
 					bestScore = std::move(next);
@@ -135,7 +136,9 @@ namespace gnubase::engine::midi
 			return {{"name", slot.name}, {"color", slot.color}, {"articulations", slot.articulations},
 				{"trigger", slot.trigger < 0 ? Json(nullptr) : Json(slot.trigger)}, {"outputs", outputs},
 				{"channel", slot.channel < 0 ? Json(nullptr) : Json(slot.channel)}, {"length", slot.length},
-				{"velocity", slot.velocity}, {"transpose", slot.transpose}};
+				{"velocity", slot.velocity}, {"transpose", slot.transpose}, {"addOn", slot.addOn},
+				{"attack", slot.attack}, {"separation", slot.separation}, {"minPitch", slot.minPitch},
+				{"maxPitch", slot.maxPitch}, {"minVelocity", slot.minVelocity}, {"maxVelocity", slot.maxVelocity}};
 		}
 
 		SoundSlot slotFromJson(const Json& json, const std::string& name)
@@ -153,6 +156,13 @@ namespace gnubase::engine::midi
 			slot.length = integer(json, "length", 100, 1, 1000, name);
 			slot.velocity = integer(json, "velocity", 100, 1, 1000, name);
 			slot.transpose = integer(json, "transpose", 0, -127, 127, name);
+			slot.addOn = json.value("addOn", false);
+			slot.attack = integer(json, "attack", 0, 0, 1000, name);
+			slot.separation = integer(json, "separation", 0, 0, 1000, name);
+			slot.minPitch = integer(json, "minPitch", 0, 0, 127, name);
+			slot.maxPitch = integer(json, "maxPitch", 127, slot.minPitch, 127, name);
+			slot.minVelocity = integer(json, "minVelocity", 1, 1, 127, name);
+			slot.maxVelocity = integer(json, "maxVelocity", 127, slot.minVelocity, 127, name);
 			return slot;
 		}
 
@@ -161,6 +171,7 @@ namespace gnubase::engine::midi
 		void checkMap(const ArticulationMap& map)
 		{
 			check(!map.groups.empty(), "an articulation map has at least one group");
+			check(map.slots.empty() || !map.slots.front().addOn, "the default slot (slots[0]) can't be an add-on");
 			for (size_t i = 0; i < map.articulations.size(); ++i)
 			{
 				const Articulation& articulation = map.articulations[i];
@@ -375,6 +386,61 @@ namespace gnubase::engine::midi
 			return {{"map", map != nullptr ? map->id : 0}, {"notes", notes}};
 		}
 
+		// Transpose All, Reassign All and Remove All of the remote triggers (pp. 1272-1275).
+		Json remoteTriggers(Project& project, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			ArticulationMap& map = findMap(project, parameters);
+			const auto action = parameters.at("action").get<std::string>();
+			std::vector<ArticulationMap*> maps = {&map};
+			if (action == "transpose")
+			{
+				if (parameters.value("allMaps", false))
+				{
+					maps.clear();
+					for (auto& [id, each] : project.articulationMaps)
+						maps.push_back(&each);
+				}
+				const int semitones = parameters.value("semitones", 0);
+				for (ArticulationMap* each : maps)
+					for (SoundSlot& slot : each->slots)
+						if (slot.trigger >= 0)
+						{
+							slot.trigger += semitones;
+							require(slot.trigger >= 0 && slot.trigger <= 127,
+								each->name + ": a remote trigger would leave 0-127");
+						}
+			}
+			else if (action == "reassign")
+			{
+				// From the start key on the keys chosen (key switches), or consecutive programs; none past 127.
+				const auto keys =
+					map.programTriggers ? std::string("all") : parameters.value("keys", std::string("all"));
+				const auto fits = [&keys](int key)
+				{
+					const int pitch = key % 12;
+					const bool black = pitch == 1 || pitch == 3 || pitch == 6 || pitch == 8 || pitch == 10;
+					return keys == "all" || black == (keys == "black");
+				};
+				int key = parameters.value("start", 0);
+				for (size_t i = parameters.value("skipFirst", false) ? 1 : 0; i < map.slots.size(); ++i)
+				{
+					while (key <= 127 && !fits(key))
+						++key;
+					map.slots[i].trigger = key <= 127 ? key : -1;
+					++key;
+				}
+			}
+			else
+			{
+				for (SoundSlot& slot : map.slots)
+					slot.trigger = -1;
+			}
+			for (const ArticulationMap* each : maps)
+				context.emit("articulationMap.changed", {{"map", toJson(*each)}});
+			return Json::object();
+		}
+
 		Json importMap(Project& project, CommandContext& context)
 		{
 			const std::string path = context.parameters().at("path").get<std::string>();
@@ -417,12 +483,26 @@ namespace gnubase::engine::midi
 			return -1;
 		}
 
-		// The directions that select a slot: its own, and a reset for each other group with directions.
-		void selectSlot(
-			const ArticulationMap& map, const SoundSlot& slot, int64_t position, const Json& take, Json& controllers)
+		// Whether a slot has an articulation of a group.
+		bool hasGroup(const ArticulationMap& map, const SoundSlot& slot, size_t group)
+		{
+			return std::any_of(slot.articulations.begin(), slot.articulations.end(),
+				[&](const std::string& name)
+				{
+					const Articulation* articulation = findArticulation(map, name);
+					return articulation != nullptr && static_cast<size_t>(articulation->group) == group;
+				});
+		}
+
+		// The directions that select a slot: its own, and a reset for each other group with directions. An add-on
+		// slot's are only those of its own groups, and resets of them where it ends (reset).
+		void selectSlot(const ArticulationMap& map, const SoundSlot& slot, int64_t position, const Json& take,
+			Json& controllers, bool reset = false)
 		{
 			for (size_t group = 0; group < map.groups.size(); ++group)
 			{
+				if (slot.addOn && !hasGroup(map, slot, group))
+					continue;
 				const Articulation* first = nullptr;
 				const Articulation* own = nullptr;
 				for (const Articulation& articulation : map.articulations)
@@ -431,8 +511,9 @@ namespace gnubase::engine::midi
 					{
 						if (first == nullptr)
 							first = &articulation;
-						if (std::find(slot.articulations.begin(), slot.articulations.end(), articulation.name) !=
-							slot.articulations.end())
+						if (!reset &&
+							std::find(slot.articulations.begin(), slot.articulations.end(), articulation.name) !=
+								slot.articulations.end())
 							own = &articulation;
 					}
 				if (first == nullptr)
@@ -455,42 +536,75 @@ namespace gnubase::engine::midi
 		return map != project.articulationMaps.end() ? &map->second : nullptr;
 	}
 
+	namespace
+	{
+		// Calls each(note, active) for each note of a part by start, with the articulation of each group in effect
+		// for it: its attribute, else the direction in effect where it starts.
+		template <typename Each> void forEachNote(const ArticulationMap& map, const MidiPart& part, Each each)
+		{
+			std::vector<const Controller*> directions;
+			for (const auto& [id, controller] : part.controllers)
+				if (controller.type == ControllerType::Articulation)
+					directions.push_back(&controller);
+			std::stable_sort(directions.begin(), directions.end(),
+				[](const Controller* a, const Controller* b) { return a->position < b->position; });
+			std::vector<const Note*> notes;
+			notes.reserve(part.notes.size());
+			for (const auto& [id, note] : part.notes)
+				notes.push_back(&note);
+			std::stable_sort(
+				notes.begin(), notes.end(), [](const Note* a, const Note* b) { return a->position < b->position; });
+
+			Active directed(map.groups.size());
+			auto next = directions.begin();
+			for (const Note* note : notes)
+			{
+				for (; next != directions.end() && (*next)->position <= note->position; ++next)
+				{
+					const Articulation* articulation = findArticulation(map, (*next)->articulation);
+					if (articulation == nullptr || articulation->type != ArticulationType::Direction)
+						continue; // not the map's: it doesn't play (p. 1291)
+					directed.at(static_cast<size_t>(articulation->group)) =
+						(*next)->value != 0 ? nullptr : articulation;
+				}
+				Active active = directed;
+				for (const std::string& name : note->articulations)
+					if (const Articulation* articulation = findArticulation(map, name);
+						articulation != nullptr && articulation->type == ArticulationType::Attribute)
+						active.at(static_cast<size_t>(articulation->group)) = articulation;
+				each(*note, active);
+			}
+		}
+	}
+
 	std::map<ObjectId, size_t> soundSlots(const ArticulationMap& map, const MidiPart& part)
 	{
 		std::map<ObjectId, size_t> slots;
-		if (map.slots.empty())
-			return slots;
-		std::vector<const Controller*> directions;
-		for (const auto& [id, controller] : part.controllers)
-			if (controller.type == ControllerType::Articulation)
-				directions.push_back(&controller);
-		std::stable_sort(directions.begin(), directions.end(),
-			[](const Controller* a, const Controller* b) { return a->position < b->position; });
-		std::vector<const Note*> notes;
-		notes.reserve(part.notes.size());
-		for (const auto& [id, note] : part.notes)
-			notes.push_back(&note);
-		std::stable_sort(
-			notes.begin(), notes.end(), [](const Note* a, const Note* b) { return a->position < b->position; });
+		if (!map.slots.empty())
+			forEachNote(
+				map, part, [&](const Note& note, const Active& active) { slots[note.id] = bestSlot(map, active); });
+		return slots;
+	}
 
-		Active directed(map.groups.size());
-		auto next = directions.begin();
-		for (const Note* note : notes)
-		{
-			for (; next != directions.end() && (*next)->position <= note->position; ++next)
+	std::map<ObjectId, std::vector<size_t>> addOnSlots(const ArticulationMap& map, const MidiPart& part)
+	{
+		std::map<ObjectId, std::vector<size_t>> slots;
+		if (std::none_of(map.slots.begin(), map.slots.end(), [](const SoundSlot& slot) { return slot.addOn; }))
+			return slots;
+		forEachNote(map, part,
+			[&](const Note& note, const Active& active)
 			{
-				const Articulation* articulation = findArticulation(map, (*next)->articulation);
-				if (articulation == nullptr || articulation->type != ArticulationType::Direction)
-					continue; // not the map's: it doesn't play (p. 1291)
-				directed.at(static_cast<size_t>(articulation->group)) = (*next)->value != 0 ? nullptr : articulation;
-			}
-			Active active = directed;
-			for (const std::string& name : note->articulations)
-				if (const Articulation* articulation = findArticulation(map, name);
-					articulation != nullptr && articulation->type == ArticulationType::Attribute)
-					active.at(static_cast<size_t>(articulation->group)) = articulation;
-			slots[note->id] = bestSlot(map, active);
-		}
+				for (size_t i = 0; i < map.slots.size(); ++i)
+					if (map.slots[i].addOn && !map.slots[i].articulations.empty() &&
+						std::all_of(map.slots[i].articulations.begin(), map.slots[i].articulations.end(),
+							[&](const std::string& name)
+							{
+								const Articulation* articulation = findArticulation(map, name);
+								return articulation != nullptr &&
+									active.at(static_cast<size_t>(articulation->group)) == articulation;
+							}))
+						slots[note.id].push_back(i);
+			});
 		return slots;
 	}
 
@@ -514,6 +628,15 @@ namespace gnubase::engine::midi
 				parsed.controllers[controller.id] = std::move(controller);
 			}
 		return soundSlots(articulationMapFromJson(map, ArticulationMap()), parsed);
+	}
+
+	uint16_t slotVelocity(const SoundSlot& slot, uint16_t velocity) noexcept
+	{
+		// The range's defaults, 1 and 127, leave the velocities as they are.
+		const int64_t low = slot.minVelocity > 1 ? velocityFromMidi1(static_cast<uint8_t>(slot.minVelocity)) : 1;
+		const int64_t high = slot.maxVelocity < 127 ? velocityFromMidi1(static_cast<uint8_t>(slot.maxVelocity))
+													: std::numeric_limits<uint16_t>::max();
+		return static_cast<uint16_t>(std::clamp<int64_t>((int64_t{velocity} * slot.velocity) / 100, low, high));
 	}
 
 	void applyRemoteTriggers(const ArticulationMap& map, Json& notes, Json& controllers)
@@ -563,26 +686,44 @@ namespace gnubase::engine::midi
 			const Trigger& trigger = triggers[i];
 			selectSlot(map, map.slots[trigger.slot], trigger.position, trigger.take, controllers);
 			// Without latch the default slot is back where the key is released, unless another key came first.
+			const SoundSlot& slot = map.slots[trigger.slot];
 			const bool released = trigger.end != std::numeric_limits<int64_t>::max() &&
-				(i + 1 == triggers.size() || triggers[i + 1].position > trigger.end);
+				(slot.addOn || i + 1 == triggers.size() || triggers[i + 1].position > trigger.end);
 			if (released)
-				selectSlot(map, map.slots.front(), trigger.end, trigger.take, controllers);
+				selectSlot(
+					map, slot.addOn ? slot : map.slots.front(), trigger.end, trigger.take, controllers, slot.addOn);
 		}
-		// The attributes of the slot selected where a note starts.
+		// The attributes of the slot selected where a note starts, and of the add-on slots selected there that no
+		// later trigger of a slot with an articulation of their groups replaced.
 		for (Json& note : notes)
 		{
 			const auto position = note.at("position").get<int64_t>();
-			const Trigger* selected = nullptr;
+			std::vector<const Trigger*> selected;
 			for (const Trigger& trigger : triggers)
 				if (trigger.position <= position)
-					selected = &trigger;
-			if (selected == nullptr || position >= selected->end)
-				continue;
+				{
+					const SoundSlot& slot = map.slots[trigger.slot];
+					selected.erase(std::remove_if(selected.begin(), selected.end(),
+									   [&](const Trigger* before)
+									   {
+										   const SoundSlot& other = map.slots[before->slot];
+										   if (!slot.addOn)
+											   return !other.addOn;
+										   for (size_t group = 0; group < map.groups.size(); ++group)
+											   if (hasGroup(map, slot, group) && hasGroup(map, other, group))
+												   return true;
+										   return false;
+									   }),
+						selected.end());
+					selected.push_back(&trigger);
+				}
 			Json attributes = Json::array();
-			for (const std::string& name : map.slots[selected->slot].articulations)
-				if (const Articulation* articulation = findArticulation(map, name);
-					articulation != nullptr && articulation->type == ArticulationType::Attribute)
-					attributes.push_back(name);
+			for (const Trigger* trigger : selected)
+				if (position < trigger->end)
+					for (const std::string& name : map.slots[trigger->slot].articulations)
+						if (const Articulation* articulation = findArticulation(map, name);
+							articulation != nullptr && articulation->type == ArticulationType::Attribute)
+							attributes.push_back(name);
 			if (!attributes.empty())
 				note["articulations"] = attributes;
 		}
@@ -658,7 +799,9 @@ namespace gnubase::engine::midi
 			object({{"name", stringSchema}, {"color", stringSchema},
 					   {"articulations", {{"type", "array"}, {"items", stringSchema}}}, {"trigger", nullableInteger},
 					   {"outputs", {{"type", "array"}, {"items", outputSchema}}}, {"channel", nullableInteger},
-					   {"length", idSchema}, {"velocity", idSchema}, {"transpose", idSchema}},
+					   {"length", idSchema}, {"velocity", idSchema}, {"transpose", idSchema}, {"addOn", booleanSchema},
+					   {"attack", idSchema}, {"separation", idSchema}, {"minPitch", idSchema}, {"maxPitch", idSchema},
+					   {"minVelocity", idSchema}, {"maxVelocity", idSchema}},
 				{});
 		const Json settings = {{"name", stringSchema}, {"groups", {{"type", "array"}, {"items", stringSchema}}},
 			{"articulations", {{"type", "array"}, {"items", articulationSchema}}},
@@ -678,7 +821,12 @@ namespace gnubase::engine::midi
 			"0-127, or null), outputs (the output mapping: {status note, controller or program, data1 the pitch, "
 			"controller or program, data2 the velocity or value, off: sent when the slot ends instead of when it "
 			"starts}), channel (0-15, or null for the notes' own), length and velocity (percent of the notes', "
-			"1-1000) and transpose (semitones)}; remoteTrigger, keySwitch (the default) or programChange, what selects "
+			"1-1000), transpose (semitones), addOn (an add-on slot, not the default: its output events go besides the "
+			"slot "
+			"of the other groups, for the notes that have all its articulations), attack (Attack Compensation: ms "
+			"0-1000 the notes start earlier), separation (ms 0-1000 the key switches go before the notes, 0 for one "
+			"sample), minPitch and maxPitch, minVelocity and maxVelocity (the ranges the notes' pitch, 0-127, and "
+			"velocity, 1-127, are kept in)}; remoteTrigger, keySwitch (the default) or programChange, what selects "
 			"slots in recordings; latch, whether a key switch's slot stays after the key's release (the default) "
 			"instead of the default slot coming back. articulations and slots replace the map's whole lists. Tracks "
 			"use one with track.set articulationMap; each note plays the slot whose articulations are its "
@@ -743,6 +891,24 @@ namespace gnubase::engine::midi
 					{"map", "notes"}),
 				true},
 			"", listSoundSlots);
+		model.addEdit(engine,
+			{"articulationMap.remoteTriggers", 1,
+				"Changes the remote triggers of an articulation map's sound slots at once (reference manual pp. "
+				"1272-1275). action transpose (Transpose All): adds semitones (negative: down; an octave is 12) to "
+				"every trigger, of every map of the project with allMaps; refused if one would leave 0-127. action "
+				"reassign (Reassign All): the slots in order get the keys from start on, of keys all (the default), "
+				"white or black (Key Mapping, key switches only; program changes are consecutive), skipping the "
+				"default slot with skipFirst, and no trigger past 127. action remove (Remove All): no slot has a "
+				"trigger. Emits articulationMap.changed for each map it changes.",
+				object(
+					{{"map", idSchema}, {"action", {{"type", "string"}, {"enum", {"transpose", "reassign", "remove"}}}},
+						{"semitones", idSchema}, {"allMaps", booleanSchema},
+						{"start", {{"type", "integer"}, {"minimum", 0}, {"maximum", 127}}},
+						{"keys", {{"type", "string"}, {"enum", {"all", "white", "black"}}}},
+						{"skipFirst", booleanSchema}},
+					{"map", "action"}),
+				Json::object(), false},
+			"Change remote triggers", remoteTriggers);
 	}
 }
 
