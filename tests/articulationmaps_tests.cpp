@@ -1256,7 +1256,8 @@ TEST_CASE("Attack Compensation, Separation and the pitch and velocity ranges mod
 		{"minVelocity", 100}, {"maxVelocity", 120}});
 	f.call("articulationMap.set", {{"map", id}, {"slots", settings["slots"]}});
 	const auto rate = f.call("project.get").at("sampleRate").get<double>();
-	const auto ms = [rate](int64_t value) { return static_cast<int64_t>(std::llround(value * rate / 1000.0)); };
+	const auto ms = [rate](int64_t value)
+	{ return static_cast<int64_t>(std::llround(static_cast<double>(value) * rate / 1000.0)); };
 	const engine::RenderChannel channel = f.rendered();
 	const engine::RenderNote& accent = notePlaying(channel, 70);
 	CHECK(accent.start == plain.start - ms(10));

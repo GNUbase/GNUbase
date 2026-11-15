@@ -1290,9 +1290,9 @@ namespace gnubase::engine
 		{
 			const auto on = found->channel >= 0 ? static_cast<uint8_t>(found->channel) : channel;
 			if (event.type != Type::NoteOff)
-				sendOutputs(*found, false, on, event.offset, out);
+				sendSlotEvents(*found, false, on, event.offset, out);
 			else if (!map.latch)
-				sendOutputs(*found, true, on, event.offset, out);
+				sendSlotEvents(*found, true, on, event.offset, out);
 			return true;
 		}
 		if (event.type == Type::NoteOff)
@@ -1322,15 +1322,15 @@ namespace gnubase::engine
 		// As in playback (rendersnapshot.cpp): the off events on the channel the slot's on events went to, the on
 		// events on the slot's channel or else the given one (the track's or the trigger's).
 		if (m_inputSlot >= 0 && static_cast<size_t>(m_inputSlot) < map.slots.size())
-			sendOutputs(map.slots[static_cast<size_t>(m_inputSlot)], true, m_inputSlotChannel, offset, out);
+			sendSlotEvents(map.slots[static_cast<size_t>(m_inputSlot)], true, m_inputSlotChannel, offset, out);
 		const SoundSlot& next = map.slots[static_cast<size_t>(slot)];
 		m_inputSlot = slot;
 		m_inputSlotChannel =
 			next.channel >= 0 ? static_cast<uint8_t>(next.channel) : static_cast<uint8_t>(channel % 16);
-		sendOutputs(next, false, m_inputSlotChannel, offset, out);
+		sendSlotEvents(next, false, m_inputSlotChannel, offset, out);
 	}
 
-	void MidiSequencer::sendOutputs(
+	void MidiSequencer::sendSlotEvents(
 		const SoundSlot& slot, bool off, uint8_t channel, uint32_t offset, graph::EventBuffer& out) noexcept
 	{
 		// A key switch is a note-on and its note-off.
