@@ -94,9 +94,11 @@ chord track's music theory ([chord-track.md](chord-track.md)).
   playing player (`MidiPorts::playSection`). A section key released while `chordPads.listen` listens, or on the remote's
   input before another became it, is up: the remote keys' note-offs end what they play while it listens, and the keys
   held go when the remote's input changes. What the former input's keys hold ends then too, chords and sections alike,
-  since their note-offs no longer come from the remote's input (#1571). `playerKeys` are Select/Mute Player's keys: the
-  previous and the next player, and mute or unmute the selected one (`chordPads.setPlayer` `muted`; a muted player plays
-  nothing). Pads triggered with the mouse play their whole chord in this mode.
+  since their note-offs no longer come from the remote's input (#1571), and the pads whose keys were down are off, this
+  mode's pad key too, but not a pad whose remote key is a section key, which played no chord of it (#1652). `playerKeys`
+  are Select/Mute Player's keys: the previous and the next player, and mute or unmute the selected one
+  (`chordPads.setPlayer` `muted`; a muted player plays nothing). Pads triggered with the mouse play their whole chord in
+  this mode.
 - **Snap Playback to Musical Grid** (p. 1349): with `snapPlayback`, while the transport plays, the pads' note-ons wait
   for the next position of the quantize grid (`quantize.set`) on the audio thread (`midi::PadSnap`), and a note-off
   waits with its note-on, so a chord released before the grid position ends right after it starts. When the transport
@@ -281,17 +283,19 @@ undo step and the next move after undo going from where the pads are; Assign fro
 Player Remote Control tab's keys and of the controls, ended by another project; the sections mode's combination with
 several section keys and Overlaps between the sections of two pads; section keys released while listening or on the
 remote's input before; a pad with tensions and one near the voicing's limit back as before after a control's move, and
-pitch bend below its middle, with a reference pad whose adaptive voicing comes back at the voicings control's rest only;
-a pad assigned anew while a control is away from its rest, the tensions control's way back in steps and after undo, and
-`chordPads.modify` `without`; what the remote keys hold ended when the remote's input changes; Snap Playback after a
-jump back and after a cycle's jump inside a block, on its own and through the audio engine; a player's track
-removed with its track and checked in a file; a user preset with its player mode and pattern; chords recorded on the
-record-enabled chord track from the mouse and the remote keys; step input with Move Insert Mode, at a bar's start, over
-a chord that is there and moved by bars, also on a chord track in linear time base at a tempo whose bars start between
-samples and with Move Insert across a tempo change, `stepBars` of any size and a step position past the longest
-project's end, cursor moves without undo steps and steps undone with their chord, moved events, chord track and
-position, the step range at 8 kHz and in a project at 100 Hz and Move Insert refused for a far event, and pads onto the
-chord track and a MIDI track; a file with no pads or a reference below -1; and saving and loading.
+pitch bend below its middle, with a reference pad whose adaptive voicing comes back at the voicings control's rest only
+and goes again with that rest's undo; a pad assigned anew while a control is away from its rest and one a pad modifier
+changed meanwhile, the tensions control's way back in steps and after undo, and `chordPads.modify` `without`; what the
+remote keys hold ended when the remote's input changes, with the pads they lit off and no pad for a section key among
+the remote keys; Snap Playback after a jump back and after a cycle's jump inside a block, on its own and through the
+audio engine; a player's track removed with its track and checked in a file; a user preset with its player mode and
+pattern; chords recorded on the record-enabled chord track from the mouse and the remote keys; step input with Move
+Insert Mode, at a bar's start, over a chord that is there and moved by bars, also on a chord track in linear time base
+at a tempo whose bars start between samples and with Move Insert across a tempo change, `stepBars` of any size and a
+step position past the longest project's end, cursor moves without undo steps and steps undone with their chord, moved
+events, chord track and position, the step range at 8 kHz and in a project at 100 Hz and Move Insert refused for a far
+event, and pads onto the chord track and a MIDI track; a file with no pads or a reference below -1; and saving and
+loading.
 `tests/keycommandsdialog_tests.cpp`: the key commands don't list `chordPads.trigger` without parameters.
 `tests/inspector_tests.cpp`: the Inspector's Input Routing of an instrument track choosing the chord pads.
 `tests/rtcheck_tests.cpp`: the remote keys for two players with Filter Notes, the chord modifiers and a control,
@@ -314,8 +318,8 @@ and hovered key, a pad lit by a remote key, a suggestion dropped onto a pad, the
 MIDI Input's frame, a drop location's frame, the assistant's hint kept for a pad without a chord selected before an
 answer came, every MIDI Learn button, the section keys on the keyboard, Number of Pads, Start Note apart from the remote
 range and Number of Rows, and Import from MIDI Loop with why a loop without 3 to 5 voices was refused, gone once the
-pattern changes through the engine and with another project; a pad dropped
-onto an instrument track's lane and onto the chord track; and the step input cursor in the event display.
+pattern changes through the engine and with another project; a pad dropped onto an instrument track's lane and onto the
+chord track; and the step input cursor in the event display.
 
 ## Not yet
 

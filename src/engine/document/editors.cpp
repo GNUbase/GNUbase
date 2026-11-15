@@ -191,10 +191,25 @@ namespace gnubase::engine
 				: 0;
 		}
 
+		Json soundsInUse(const Project& project, ObjectId track);
+
 		void dropUneditable(const Project& project, EditorView& view)
 		{
 			const std::vector<ObjectId> editable = editableParts(project, view);
 			dropUneditable(project, editable, view.selection, &MidiPart::notes);
+			// Show Drum Sounds in Use by Instrument hides the notes of the other sounds (p. 1234), which leave the
+			// selection: neither the editor's edits nor Solo Instrument take them.
+			if (view.content == "drum" && view.pitchVisibility && view.visibleSounds == "inUse")
+				if (const Json inUse = soundsInUse(project, trackOf(project, view.activePart));
+					inUse.is_array() && !inUse.empty())
+					view.selection.erase(
+						std::remove_if(view.selection.begin(), view.selection.end(),
+							[&](const std::pair<ObjectId, ObjectId>& selected)
+							{
+								const int pitch = project.midiParts.at(selected.first).notes.at(selected.second).pitch;
+								return std::find(inUse.begin(), inUse.end(), Json(pitch)) == inUse.end();
+							}),
+						view.selection.end());
 			dropUneditable(project, editable, view.controllerSelection, &MidiPart::controllers);
 			view.eventSelection.erase(
 				std::remove_if(view.eventSelection.begin(), view.eventSelection.end(),
@@ -306,6 +321,25 @@ namespace gnubase::engine
 			return pitches;
 		}
 
+		// The names of the track's drum sounds by pitch (p. 1239), as the editors show them: its drum map's, else with
+		// the GM Default name list General MIDI's; null for neither.
+		Json soundNames(const Project& project, ObjectId track)
+		{
+			static const DrumMap gm = midi::gmDrumMap();
+			const DrumMap* map = midi::drumMapOf(project, track);
+			if (map == nullptr)
+			{
+				const auto found = project.trackById.find(track);
+				if (found == project.trackById.end() || !found->second.gmNames)
+					return nullptr;
+				map = &gm;
+			}
+			Json names = Json::array();
+			for (const DrumSound& sound : map->sounds)
+				names.push_back(sound.name);
+			return names;
+		}
+
 		Json viewJson(const Project& project, const std::string& editor, const EditorView& view)
 		{
 			const ObjectId activeTrack = trackOf(project, view.activePart);
@@ -329,12 +363,13 @@ namespace gnubase::engine
 				{"lengthQuantize", view.lengthQuantize}, {"content", view.content},
 				{"pitchVisibility", view.pitchVisibility}, {"reverseSounds", view.reverseSounds},
 				{"visibleSounds", view.visibleSounds}, {"soundsInUse", soundsInUse(project, activeTrack)},
-				{"soloInstrument", view.soloInstrument}, {"showNoteLength", view.showNoteLength},
-				{"gridType", view.gridType}, {"lanes", lanes}, {"showLanes", view.showLanes},
-				{"soundSlotsLane", view.soundSlotsLane}, {"collapsedGroups", view.collapsedGroups},
-				{"autoSelectControllers", view.autoSelectControllers}, {"controllerSelection", controllerSelection},
-				{"eventSelection", view.eventSelection}, {"showExpression", view.showExpression},
-				{"expressionDoubleClick", view.expressionDoubleClick}, {"expressionType", view.expressionType}};
+				{"soundNames", soundNames(project, activeTrack)}, {"soloInstrument", view.soloInstrument},
+				{"showNoteLength", view.showNoteLength}, {"gridType", view.gridType}, {"lanes", lanes},
+				{"showLanes", view.showLanes}, {"soundSlotsLane", view.soundSlotsLane},
+				{"collapsedGroups", view.collapsedGroups}, {"autoSelectControllers", view.autoSelectControllers},
+				{"controllerSelection", controllerSelection}, {"eventSelection", view.eventSelection},
+				{"showExpression", view.showExpression}, {"expressionDoubleClick", view.expressionDoubleClick},
+				{"expressionType", view.expressionType}};
 		}
 
 		// The controller events in the ranges of the selected notes, from a note's start to its end (p. 1188).
@@ -396,19 +431,15 @@ namespace gnubase::engine
 			return view;
 		}
 
-		// Solo Instrument (p. 1223): the selected notes of the open drum editors that have it on, of tracks with a drum
-		// map.
+		// Solo Instrument (p. 1223): the selected notes of the open drum editors that have it on. The render snapshot
+		// solos them on the tracks with a drum map, also one assigned after they were selected.
 		std::vector<std::pair<ObjectId, ObjectId>> soloNotes(const Views& views, const ProjectModel& model)
 		{
 			std::vector<std::pair<ObjectId, ObjectId>> notes;
-			const Project& project = model.project();
 			for (const auto& [name, view] : views)
 				if (view.project == model.openedRevision() && view.open && view.content == "drum" &&
 					view.soloInstrument)
-					for (const auto& selected : view.selection)
-						if (const auto part = project.midiParts.find(selected.first);
-							part != project.midiParts.end() && midi::drumMapOf(project, part->second.track) != nullptr)
-							notes.push_back(selected);
+					notes.insert(notes.end(), view.selection.begin(), view.selection.end());
 			std::sort(notes.begin(), notes.end());
 			notes.erase(std::unique(notes.begin(), notes.end()), notes.end());
 			return notes;
@@ -586,12 +617,14 @@ namespace gnubase::engine
 				{"editor", "open", "parts", "activePart", "activeTrack", "editable", "editingMode", "keepContents",
 					"globalTracks", "selection", "stepInput", "midiInput", "stepPosition", "moveInsert", "recordPitch",
 					"recordVelocity", "recordReleaseVelocity", "keepNotes", "insertVelocity", "lengthQuantize",
-					"content", "pitchVisibility", "reverseSounds", "visibleSounds", "soundsInUse", "soloInstrument",
-					"showNoteLength", "gridType", "lanes", "showLanes", "soundSlotsLane", "collapsedGroups",
-					"autoSelectControllers", "controllerSelection", "eventSelection", "showExpression",
-					"expressionDoubleClick", "expressionType"}}};
+					"content", "pitchVisibility", "reverseSounds", "visibleSounds", "soundsInUse", "soundNames",
+					"soloInstrument", "showNoteLength", "gridType", "lanes", "showLanes", "soundSlotsLane",
+					"collapsedGroups", "autoSelectControllers", "controllerSelection", "eventSelection",
+					"showExpression", "expressionDoubleClick", "expressionType"}}};
 		viewSchema["properties"].update(keyEditorSchema);
 		viewSchema["properties"]["soundsInUse"] = {{"type", {"array", "null"}}, {"items", idSchema}};
+		viewSchema["properties"]["soundNames"] = {
+			{"type", {"array", "null"}}, {"items", {{"type", "string"}}}, {"minItems", 128}, {"maxItems", 128}};
 		const std::string viewText =
 			"editor: lower (the editor in the project window's lower zone), window (the editor window) or "
 			"inPlace:<track>, the in-place editor of a MIDI or instrument track (editor.inPlace), which shows every "
@@ -616,7 +649,10 @@ namespace gnubase::engine
 			"of, or inUse for only soundsInUse (pp. 1223-1224, 1234): the pitches of the active track's drum sounds "
 			"(through its drum map's O-notes) whose pads its instrument plays, the built-in drum machine of a drum "
 			"track (drum.create) or of the instrument track a MIDI track plays to, null for an instrument that can't "
-			"tell; soloInstrument (Solo Instrument, p. 1223) plays, of the tracks with a drum map "
+			"tell; with inUse the selection leaves out the notes of the sounds it hides. soundNames: the names of the "
+			"active track's drum sounds by pitch (p. 1239), its drum map's, else with its GM Default name list "
+			"(track.set gmNames) General MIDI's, else null; the editors show them. soloInstrument (Solo Instrument, "
+			"p. 1223) plays, of the tracks with a drum map "
 			"that its selected notes are on, only the notes of the selected notes' sounds, while it is open with "
 			"content drum; showNoteLength shows its notes as boxes of their length, not "
 			"diamonds (p. 1227); gridType, what its notes snap to (p. 1227): quantize, the quantize grid, zoom, a note "

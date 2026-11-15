@@ -12,6 +12,7 @@
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Core.h>
+#include <RmlUi/Core/Input.h>
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
@@ -723,7 +724,8 @@ TEST_CASE("a drumstick drag released outside the editor still inserts its notes"
 	CHECK(f.has(".key-editor-velocity", "off"));
 }
 
-TEST_CASE("a drumstick drag follows the mouse outside the editor and ends when it leaves the window", "[ui]")
+TEST_CASE(
+	"a drumstick drag follows the mouse outside the editor and out of the window until the button goes up", "[ui]")
 {
 	Fixture f;
 	f.scroll(36);
@@ -742,8 +744,8 @@ TEST_CASE("a drumstick drag follows the mouse outside the editor and ends when i
 	REQUIRE(f.app.waitUntil([&] { return shown() != std::to_string(std::lround(velocity * 127)); }));
 	const long outside = std::stol(shown());
 	CHECK(outside > std::lround(velocity * 127));
-	// Out of the window, where no mouseup arrives, the draw ends as there: the notes drawn so far go in, with that
-	// velocity.
+	// Out of the window, where no element hears the mouseup, the draw ends where the button goes up: the notes drawn
+	// so far go in, with that velocity.
 	ui::Window* window = f.app.shell().find(f.app.appUi().editorWindowId());
 	REQUIRE(window != nullptr);
 	Rml::Context& context = window->context();
@@ -761,6 +763,134 @@ TEST_CASE("a drumstick drag follows the mouse outside the editor and ends when i
 	CHECK(f.elements(".key-note.drawing").empty());
 	CHECK(f.has(".key-editor-velocity", "off"));
 	CHECK(f.partNotes().size() == 4);
+}
+
+TEST_CASE("a drumstick drag goes on past the window's edge until the button goes up", "[ui]")
+{
+	Fixture f;
+	f.scroll(36);
+	f.click(of(".key-tool[key-tool=draw]"));
+	ui::Window* window = f.app.shell().find(f.app.appUi().editorWindowId());
+	REQUIRE(window != nullptr);
+	Rml::Context& context = window->context();
+	// To the right over 3.5 sixteenths, then past the window's right edge: the platform captures the mouse while the
+	// button is held, so the moves go on out there, where nothing is hovered. Released there, the draw inserts a note
+	// at every sixteenth up to the part's end, not only those it showed at the window's edge.
+	f.app.ui().press(f.window, f.at(0.3, 36), ui::MouseButton::Left);
+	f.app.ui().move(f.window, f.at(3.5, 36));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const int y = f.at(3.5, 36).point.value_or(ui::Point{}).y;
+	context.ProcessMouseMove(context.GetDimensions().x + 40, y, 0);
+	context.ProcessMouseButtonUp(0, 0);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 16; }));
+	CHECK(f.partNotes()[15].at("position") == 15 * g_sixteenth);
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note.drawing").empty(); }));
+	CHECK(f.has(".key-editor-velocity", "off"));
+}
+
+TEST_CASE("a drumstick drag with Shift released out of the window inserts its one moved note", "[ui]")
+{
+	// p. 1241: with Shift the note moves along instead of repeating. Out of the window the release takes the
+	// modifier keys held when the button goes up, as in it.
+	Fixture f;
+	f.scroll(36);
+	f.click(of(".key-tool[key-tool=draw]"));
+	ui::Window* window = f.app.shell().find(f.app.appUi().editorWindowId());
+	REQUIRE(window != nullptr);
+	Rml::Context& context = window->context();
+	f.app.ui().press(f.window, f.at(0.3, 36), ui::MouseButton::Left, {"shift"});
+	f.app.ui().move(f.window, f.at(3.5, 36), {"shift"});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	context.ProcessMouseLeave();
+	context.ProcessMouseButtonUp(0, Rml::Input::KM_SHIFT);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return !f.partNotes().empty(); }));
+	REQUIRE(f.partNotes().size() == 1);
+	CHECK(f.partNotes()[0].at("position") == 3 * g_sixteenth);
+	CHECK(f.partNotes()[0].at("pitch") == 36);
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note.drawing").empty(); }));
+}
+
+TEST_CASE(
+	"a drumstick delete drag ends where the button goes up out of the window, and a lost one with no effect", "[ui]")
+{
+	// p. 1242: a drag from a note to the right deletes the notes of its sound up to the release.
+	Fixture f;
+	f.app.call("note.add",
+		{{"part", f.part},
+			{"notes",
+				{{{"position", 0}, {"length", g_sixteenth}, {"pitch", 36}, {"velocity", 0.5}},
+					{{"position", 2 * g_sixteenth}, {"length", g_sixteenth}, {"pitch", 36}, {"velocity", 0.5}},
+					{{"position", 6 * g_sixteenth}, {"length", g_sixteenth}, {"pitch", 36}, {"velocity", 0.5}}}}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-note").size() == 3; }));
+	f.scroll(36);
+	f.click(of(".key-tool[key-tool=draw]"));
+	ui::Window* window = f.app.shell().find(f.app.appUi().editorWindowId());
+	REQUIRE(window != nullptr);
+	Rml::Context& context = window->context();
+	// From the first note to 3 sixteenths, then out of the window, where no element hears the mouseup: the button
+	// going up there deletes the first two.
+	f.app.ui().press(f.window, f.at(0.0, 36), ui::MouseButton::Left);
+	f.app.ui().move(f.window, f.at(3.0, 36));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	context.ProcessMouseLeave();
+	context.ProcessMouseButtonUp(0, 0);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 1; }));
+	CHECK(f.partNotes()[0].at("position") == 6 * g_sixteenth);
+	// A press on the last note that loses the mouse before it moves, as when the window loses the focus, gets no
+	// release at all. It ends with the next press, also one outside the grid: a click on a sound's pitch deletes
+	// nothing.
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-note").size() == 1; }));
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	clock->advance(1.0); // no double click with the press before
+	f.app.ui().press(f.window, f.at(6.0, 36), ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	context.ProcessMouseLeave();
+	context.ProcessMouseButtonUp(0, 0);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.click(of(sound(38) + " .drum-sound-pitch"));
+	CHECK_FALSE(f.app.waitUntil([&] { return f.partNotes().empty(); }, std::chrono::milliseconds(300)));
+}
+
+TEST_CASE("a drumstick draw whose release was lost ends without its effect at a press on the drawn note", "[ui]")
+{
+	Fixture f;
+	f.scroll(36);
+	f.click(of(".key-tool[key-tool=draw]"));
+	ui::Window* window = f.app.shell().find(f.app.appUi().editorWindowId());
+	REQUIRE(window != nullptr);
+	Rml::Context& context = window->context();
+	// The mouse leaves the window before it moves, as when the window loses the focus: no drag starts, so the button
+	// going up out there ends nothing, and the drawn note stays where it was pressed.
+	f.app.ui().press(f.window, f.at(4.0, 36), ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	context.ProcessMouseLeave();
+	context.ProcessMouseButtonUp(0, 0);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.elements(".key-note.drawing").size() == 1);
+	const Json drawn = f.box(".key-note.drawing");
+	// Left of its middle, as the velocity shown beside it covers its right half.
+	const ui::Point on{
+		static_cast<int>(std::lround(drawn.at("x").get<double>() + (drawn.at("width").get<double>() / 4))),
+		static_cast<int>(std::lround(drawn.at("y").get<double>() + (drawn.at("height").get<double>() / 2)))};
+	// The next press goes to the drawn note and ends the draw, which takes the note out while the press still has it
+	// as its target; the press inserts nothing either.
+	const Rml::Element* hit = context.GetElementAtPoint({static_cast<float>(on.x), static_cast<float>(on.y)});
+	REQUIRE(hit != nullptr);
+	REQUIRE(hit->IsClassSet("drawing"));
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	clock->advance(1.0); // no double click with the press before
+	f.app.ui().press(f.window, {"", 0, on}, ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.elements(".key-note.drawing").empty());
+	f.app.ui().release(f.window, {"", 0, on}, ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK_FALSE(f.app.waitUntil([&] { return !f.partNotes().empty(); }, std::chrono::milliseconds(300)));
+	CHECK(f.elements(".key-note.drawing").empty());
 }
 
 TEST_CASE("with Use Snap from Drum Map a note moved to another sound snaps to that sound's snap", "[ui]")
@@ -882,9 +1012,13 @@ TEST_CASE("Pitch Visibility shows the drum sounds with events, Solo Instrument a
 		f.app.waitUntil([&] { return f.app.call("editor.get", {{"editor", "window"}}).at("soloInstrument") == true; }));
 	CHECK(f.app.waitUntil([&] { return f.has(".key-input[setting=soloInstrument]", "checked"); }));
 
-	// Without a drum map the Names menu's GM Default names the sounds (p. 1239), and the key editor's keys.
+	// Without a drum map the Names menu's GM Default names the sounds (p. 1239), and the key editor's keys. Solo
+	// Instrument requires a map (p. 1223): its button is disabled and unlit then.
 	f.app.call("track.set", {{"track", f.track}, {"drumMap", 0}});
 	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-sound-name").empty(); }));
+	REQUIRE(f.app.waitUntil(
+		[&] { return f.elements(".key-input[setting=soloInstrument]").at(0).at("attributes").contains("disabled"); }));
+	CHECK_FALSE(f.has(".key-input[setting=soloInstrument]", "checked"));
 	f.click(of("#drum-names"));
 	f.click(of("#drum-names-menu menuitem[gm-names=true]"));
 	REQUIRE(f.app.waitUntil([&] { return f.app.call("project.get").at("tracks").at(0).at("gmNames") == true; }));
@@ -944,15 +1078,22 @@ TEST_CASE("Show Drum Sounds in Use by Instrument shows the sounds of a drum trac
 		f.app.call("midiPart.add", {{"track", drums.at("track").at("id")}, {"position", 0}, {"length", g_bar}})
 			.at("part")
 			.at("id");
-	// A note of a pad and one of a pitch without a pad.
+	// A note of a pad and one of a pitch without a pad, both selected.
 	const Json added = f.app.call("note.add",
 		{{"part", part},
 			{"notes",
 				{{{"position", 0}, {"length", g_sixteenth}, {"pitch", 36}, {"velocity", 0.5}},
 					{{"position", g_quarter}, {"length", g_sixteenth}, {"pitch", 100}, {"velocity", 0.5}}}}});
-	const std::string padless =
-		".key-note[note=\"" + std::to_string(added.at("notes").at(1).at("id").get<uint64_t>()) + "\"]";
+	const std::string padId = std::to_string(added.at("notes").at(0).at("id").get<uint64_t>());
+	const std::string padlessId = std::to_string(added.at("notes").at(1).at("id").get<uint64_t>());
+	const std::string padless = ".key-note[note=\"" + padlessId + "\"]";
 	f.app.call("editor.open", {{"editor", "window"}, {"parts", Json::array({part})}});
+	f.app.call("editor.set",
+		{{"editor", "window"},
+			{"selection",
+				{{{"part", part}, {"note", added.at("notes").at(0).at("id")}},
+					{{"part", part}, {"note", added.at("notes").at(1).at("id")}}}}});
+	REQUIRE(f.app.waitUntil([&] { return !f.elements(".controller-bar[note=\"" + padlessId + "\"]").empty(); }));
 	REQUIRE(f.app.waitUntil(
 		[&]
 		{
@@ -969,6 +1110,23 @@ TEST_CASE("Show Drum Sounds in Use by Instrument shows the sounds of a drum trac
 	// The note of the sound the list hides isn't shown on any row, until the option is off again.
 	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note").size() == 1; }));
 	CHECK(f.elements(padless).empty());
+	// Nor in the controller lanes, and it leaves the selection: the palette transposes only the shown note.
+	CHECK(f.app.waitUntil([&] { return f.elements(".controller-bar[note=\"" + padlessId + "\"]").empty(); }));
+	CHECK(f.elements(".controller-bar[note=\"" + padId + "\"]").size() == 1);
+	CHECK(f.app.call("editor.get", {{"editor", "window"}}).at("selection").size() == 1);
+	f.click(of(".key-transpose[semitones=\"12\"]"));
+	const auto pitchOf = [&](const Json& id)
+	{
+		const Json project = f.app.call("project.get");
+		for (const Json& each : project.at("midiParts"))
+			if (each.at("id") == part)
+				for (const Json& note : each.at("notes"))
+					if (note.at("id") == id)
+						return note.at("pitch").get<int>();
+		return -1;
+	};
+	REQUIRE(f.app.waitUntil([&] { return pitchOf(added.at("notes").at(0).at("id")) == 48; }));
+	CHECK(pitchOf(added.at("notes").at(1).at("id")) == 100);
 	f.click(of("#drum-pitch-options"));
 	f.click(of("#drum-pitch-menu menuitem[visible-sounds=inUse]"));
 	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-sound").size() == 128; }));
@@ -993,6 +1151,23 @@ TEST_CASE("with drum sound names the key editor's notes line up with their veloc
 	CHECK(f.app.waitUntil([&] { return std::abs(left(note) - left(part)) <= 1.0; }));
 	CHECK(std::abs(left(bar) - left(note)) <= 1.0);
 	CHECK(left(note) > left(".key-editor-keys") + 100.0); // past the named keyboard
+}
+
+TEST_CASE("the drum editor's notes line up with their velocity bars and parts", "[ui]")
+{
+	// The drum sound list, the parts' row and the controller lanes' header are as wide.
+	Fixture f;
+	const Json added = f.app.call("note.add",
+		{{"part", f.part}, {"notes", {{{"position", 0}, {"length", g_quarter}, {"pitch", 36}, {"velocity", 0.5}}}}});
+	const std::string id = std::to_string(added.at("notes").at(0).at("id").get<uint64_t>());
+	const std::string note = ".key-note[note=\"" + id + "\"]";
+	const std::string bar = ".controller-bar[note=\"" + id + "\"]";
+	const std::string part = ".editor-part[part=\"" + std::to_string(f.part) + "\"]";
+	REQUIRE(f.app.waitUntil([&] { return !f.elements(note).empty() && !f.elements(bar).empty(); }));
+	const auto left = [&](const std::string& selector) { return f.box(selector).at("x").get<double>(); };
+	const double start = left(".key-editor-grid"); // the note's start, which its diamond is centered on
+	CHECK(f.app.waitUntil([&] { return std::abs(left(part) - start) <= 1.0; }));
+	CHECK(std::abs(left(bar) - start) <= 1.0);
 }
 
 TEST_CASE("with Adapt to Zoom and Insert Length linked the drumstick's notes are as long as the quantize grid's value",

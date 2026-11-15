@@ -129,8 +129,13 @@ namespace gnubase::ui
 			const std::string& window, const std::string& set, const std::string& id, const std::string& before);
 		void setSectionHidden(const std::string& window, const std::string& set, const std::string& id, bool hidden);
 		std::vector<std::string> sections(const std::string& window, const std::string& set) const; // in order
-		// Reset All: the set's default order and hidden sections.
+		// Reset All: the set's default order and hidden sections. reset hears of every Reset All, also of a set that
+		// had them already, e.g. to fit the window to its sections again (#1612).
 		void resetSections(const std::string& window, const std::string& set);
+		void onReset(std::function<void(const std::string& window, const std::string& set)> reset)
+		{
+			m_reset = std::move(reset);
+		}
 		// The set's presets in ui.setupPresets, which all windows share: saving one replaces that of the same name;
 		// recalling one that isn't there does nothing. Sections a preset lacks keep their defaults' order after its.
 		void savePreset(const std::string& window, const std::string& set, const std::string& name);
@@ -164,7 +169,8 @@ namespace gnubase::ui
 		void saveWindows();
 		// The width the app fitted the window to, kept in its ui.layout entry as fittedWidth: a window whose bounds
 		// still have that width wasn't sized by the user since, e.g. a transport panel that follows its sections
-		// (#1527). None if ui.layout has none.
+		// (#1527). None if ui.layout has none. A width set goes to the engine with the next save, such as saveWindows,
+		// which saves it also when no window moved.
 		std::optional<int> fittedWidth(const std::string& name) const;
 		void setFittedWidth(const std::string& name, int width);
 
@@ -262,6 +268,8 @@ namespace gnubase::ui
 			m_reloadEvent; // g_documentReloadEvent, made once: the destructor removes listeners without allocating
 		Rml::String m_closeEvent;            // g_dialogCloseEvent, made once, as m_reloadEvent
 		std::set<engine::RequestId> m_saves; // layouts sent to the engine that it hasn't answered yet
+		bool m_unsaved = false;              // a fitted width that no save has sent yet
+		std::function<void(const std::string& window, const std::string& set)> m_reset;
 		engine::Json m_layout = engine::Json::object();
 		engine::Json m_presets = engine::Json::object(); // ui.setupPresets
 		Rml::ObserverPtr<Rml::Element> m_presetDialog;   // Save Preset's, while it is open

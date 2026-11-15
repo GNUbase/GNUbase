@@ -27,11 +27,12 @@ and activating versions across tracks.
   number no version of the track is named (p. 236). Switching emits the removal and addition of the events and parts
   that go and come, and `track.changed`. A track a command leaves alone keeps storing no version of its own:
   `trackVersion.activate` on a track without that ID and `trackVersion.remove` on a track with a single version skip it,
-  so it stays out of the undo step, out of the `hasTrackVersion` rule property ([project-rules.md](project-rules.md))
-  and out of what the commands return; a track whose only version is named v1 again stores none either. A duplicated
-  version's shared copies are a group of their own, with note and controller ids of their own that they share with each
-  other and with nothing else: two versions never play together, so a group across them is none, and the first switch
-  would take it apart.
+  so it stays out of the undo step and out of what the commands return; a track whose only version is named v1 again
+  stores none either. The project rules' `hasTrackVersion` ([project-rules.md](project-rules.md), p. 1434) finds the
+  tracks with more than one version, not one that stores only its first, as a new imported track does for the ID it
+  shares (#1629). A duplicated version's shared copies are a group of their own, with note and controller ids of their
+  own that they share with each other and with nothing else: two versions never play together, so a group across them
+  is none, and the first switch would take it apart.
 - **`project.get` and the project file.** Each such track has `versions` (`[{id, name}]`) and `activeVersion`;
   `versionContents` lists what the inactive versions hold (`[{track, version, audioEvents, audioParts, midiParts}]`),
   which GNUbase's entry of the DAWproject file keeps. Other applications see the active versions only. Ids loaded go

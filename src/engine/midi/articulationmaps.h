@@ -5,8 +5,6 @@
 #include "engine/schema.h"
 
 #include <map>
-#include <string>
-#include <vector>
 
 namespace gnubase::engine
 {
@@ -36,6 +34,9 @@ namespace gnubase::engine::midi
 	// A note's velocity (16 bits) as a slot plays it: by its velocity percent, then in its velocity range (#1113).
 	// Real-time safe.
 	uint16_t slotVelocity(const SoundSlot& slot, uint16_t velocity) noexcept;
+
+	// Whether two slots have articulations of a group in common. Real-time safe.
+	bool shareGroup(const ArticulationMap& map, const SoundSlot& a, const SoundSlot& b) noexcept;
 
 	// Remote triggers (pp. 1263, 1268) in what a recording brings to a track with the map, as recording.add takes
 	// it: notes and controllers with positions in samples. Takes the notes (key switches) or program changes that

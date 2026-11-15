@@ -16,8 +16,9 @@
      object ids are per project. The buttons are outside the rows that the Lua writes again, since an element must not
      go while its own event runs: Remove Articulation, Remove Sound Slot and Remove Output Mapping remove the row
      picked with its radio button, and the sound slot actions act on the picked slot (#1113). The maps list has a search
-     field and Show only Maps used in this Project, and marks those with P. The articulation combinations below the
-     slots check the picked slot's articulations; Add Sound Slot and Add Sound Slot (Add-on) add a slot with the checked
+     field and Show only Maps used in this Project, and marks those with P, following the tracks' events; where they
+     leave the selected map out, the first one listed is selected. The articulation combinations below the slots check
+     the picked slot's articulations; Add Sound Slot and Add Sound Slot (Add-on) add a slot with the checked
      ones, Apply to Slot gives them to the picked slot, and the search shows only the articulations with one of its
      terms (separated by OR or |). -->
 <rml>
@@ -172,19 +173,34 @@
 			document:GetElementById("articulation-maps-message").inner_rml = escape(text or "")
 		end
 
+		-- A search or Show only Maps used in this Project that leaves out every map: the editor shows none.
+		local hidden = false
+
 		local function current()
-			return maps[selected]
+			return not hidden and maps[selected] or nil
+		end
+
+		local function deepCopy(value)
+			if type(value) ~= "table" then
+				return value
+			end
+			local copy = {}
+			for key, item in pairs(value) do
+				copy[key] = deepCopy(item)
+			end
+			return copy
 		end
 
 		-- The slots as articulationMap.set takes them: lists without items left out, as Lua can't tell an empty list
-		-- from an empty table.
+		-- from an empty table. Copies, down to the output mappings, so that changing them changes neither the map
+		-- shown nor the clipboard (#1667).
 		local function slotsOf(map)
 			local result = {}
 			for index, each in ipairs(map.slots) do
 				local copy = {}
 				for key, value in pairs(each) do
 					if type(value) ~= "table" or #value > 0 then
-						copy[key] = value
+						copy[key] = deepCopy(value)
 					end
 				end
 				copy.outputs = copy.outputs or {}
@@ -288,6 +304,12 @@
 						dropDown("output", index, "off", {{"false", "On Events"}, {"true", "Off Events"}}, output.off) ..
 						"</div>"
 				end
+			end
+			if slot ~= nil and slot.addOn then
+				-- Add-on slots play with the MIDI modifiers of the slot of the other groups (#1667).
+				modifiers[1] = '<div class="map-row add-on-modifiers">Add-on slots use the MIDI modifiers of the ' ..
+					"slot they play besides.</div>"
+			elseif slot ~= nil then
 				modifiers[1] = '<div class="map-row">' ..
 					field("modifier", picked.slot, "channel", slot.channel and (slot.channel + 1) or "", "number") ..
 					field("modifier", picked.slot, "length", slot.length, "number") ..
@@ -309,12 +331,22 @@
 			local search = string.lower(tostring(
 				document:GetElementById("articulation-maps-search"):GetAttribute("value") or ""))
 			local usedOnly = document:GetElementById("articulation-maps-used"):HasAttribute("checked")
+			local first = nil -- the first map listed
+			hidden = true
 			for index, map in ipairs(maps) do
 				if (not usedOnly or used[map.id]) and string.find(string.lower(map.name), search, 1, true) then
 					list[#list + 1] = '<listitem value="' .. index .. '">' ..
 						(used[map.id] and '<span class="used-mark">P </span>' or "") .. '<span class="map-name">' ..
 						escape(map.name) .. "</span></listitem>"
+					first = first or index
+					hidden = hidden and index ~= selected
 				end
+			end
+			-- The selected map left out of the list: the first one listed, if any, is selected instead (#1667).
+			if hidden and first ~= nil then
+				selected = first
+				hidden = false
+				picked = {articulation = 1, slot = 1, output = 1}
 			end
 			local view = document:GetElementById("articulation-maps")
 			view.inner_rml = table.concat(list)
@@ -403,7 +435,9 @@
 			return run(document, function() gnubase.articulationMap.set(changes) end)
 		end
 
-		local events = {"articulationMap.added", "articulationMap.changed", "articulationMap.removed", "project.reset"}
+		-- The tracks' events change the maps that are used (#1667).
+		local events = {"articulationMap.added", "articulationMap.changed", "articulationMap.removed", "project.reset",
+			"track.added", "track.changed", "track.removed"}
 
 		function dialog.open(document)
 			dialog.document = document
@@ -561,10 +595,17 @@
 			end
 			if not set(document, changed(map, kind, index, key, value)) then
 				element:SetAttribute("value", shown(current(), kind, index, key))
-			elseif kind == "group" then
-				showArticulations(document, current())
-			elseif kind == "articulation" then
-				showSlots(document, current())
+			else
+				-- The other rows that show what changed (#1667): the combinations show the groups, the articulations
+				-- and the picked slot's.
+				if kind == "group" then
+					showArticulations(document, current())
+				elseif kind == "articulation" then
+					showSlots(document, current())
+				end
+				if kind == "group" or kind == "articulation" or (kind == "slot" and key == "articulations") then
+					dialog.showCombinations(document)
+				end
 			end
 		end
 
@@ -605,6 +646,7 @@
 		function dialog.assign(document)
 			if current() ~= nil and track ~= nil then
 				run(document, function() gnubase.track.set{track = track, articulationMap = current().id} end)
+				dialog.show(document)
 			end
 		end
 
@@ -629,8 +671,9 @@
 				local articulations = map.articulations
 				articulations[#articulations + 1] =
 					{name = "Articulation " .. (#articulations + 1), type = "direction", group = 0}
-				picked.articulation = #articulations
-				set(document, {articulations = articulations})
+				if set(document, {articulations = articulations}) then
+					picked.articulation = #articulations
+				end
 			end)
 		end
 
@@ -660,8 +703,9 @@
 				local slots = slotsOf(map)
 				slots[#slots + 1] = {name = #names > 0 and table.concat(names, " ") or ("Slot " .. (#slots + 1)),
 					articulations = names, addOn = addOn}
-				picked.slot = #slots
-				set(document, {slots = slots})
+				if set(document, {slots = slots}) then
+					picked.slot = #slots
+				end
 			end)
 		end
 
@@ -726,14 +770,16 @@
 			end)
 		end
 
-		-- The sound slot actions (p. 1273) on the picked slot.
+		-- The sound slot actions (p. 1273) on the picked slot. The picked row moves once the engine took the change:
+		-- a refused one (an add-on slot as the default) keeps it (#1667).
 		local function moveSlot(document, to)
 			edit(document, function(map)
 				local slots = slotsOf(map)
 				if slots[picked.slot] ~= nil and slots[to] ~= nil then
 					table.insert(slots, to, table.remove(slots, picked.slot))
-					picked.slot = to
-					set(document, {slots = slots})
+					if set(document, {slots = slots}) then
+						picked.slot = to
+					end
 				end
 			end)
 		end
@@ -758,8 +804,9 @@
 					local copy = copyOf(map.slots[picked.slot])
 					copy.trigger = nil
 					table.insert(slots, picked.slot + 1, copy)
-					picked.slot = picked.slot + 1
-					set(document, {slots = slots})
+					if set(document, {slots = slots}) then
+						picked.slot = picked.slot + 1
+					end
 				end
 			end)
 		end
@@ -784,8 +831,9 @@
 				local slots = slotsOf(map)
 				local at = math.min(picked.slot + 1, #slots + 1)
 				table.insert(slots, at, copyOf(clipboard))
-				picked.slot = at
-				set(document, {slots = slots})
+				if set(document, {slots = slots}) then
+					picked.slot = at
+				end
 			end)
 		end
 
@@ -840,8 +888,9 @@
 				if slots[picked.slot] ~= nil then
 					local outputs = slots[picked.slot].outputs
 					outputs[#outputs + 1] = {status = "note", data1 = 0, data2 = 100}
-					picked.output = #outputs
-					set(document, {slots = slots})
+					if set(document, {slots = slots}) then
+						picked.output = #outputs
+					end
 				end
 			end)
 		end

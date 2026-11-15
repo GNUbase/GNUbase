@@ -262,6 +262,9 @@ TEST_CASE("the project window shows events and the project cursor where the engi
 	CHECK(lanes.at("attributes").at("scale") == "0.01");
 	CHECK(element(".project-cursor").at("box").at("x").get<int>() - lanes.at("box").at("x").get<int>() == 150);
 	test::UiApp::checkGolden("event-display", app.screenshot("event-display", {800, 300}));
+	// The toolbar sections the image shows, which its tolerance could hide a button of (#1342).
+	CHECK(app.shownSections("toolbar") ==
+		std::vector<std::string>{"tools", "autoScroll", "zoomPresets", "snap", "gridType", "zones"});
 
 	// Ctrl and the mouse wheel zoom in around the mouse, through the UI tools.
 	const ui::Target over{
@@ -337,6 +340,42 @@ TEST_CASE(
 		}));
 	app.shell().step(std::chrono::milliseconds(0));
 	test::UiApp::checkGolden("event-colors", app.screenshot("event-colors", {800, 300}));
+	CHECK(app.shownSections("toolbar") ==
+		std::vector<std::string>{"tools", "autoScroll", "zoomPresets", "snap", "gridType", "zones"});
+}
+
+TEST_CASE(
+	"the project window in the default theme shows its transport bar, inspector sections and zones as panels", "[ui]")
+{
+	// #1342: the default theme's flat bars, the transport bar's buttons and plain displays, the inspector's section
+	// headers, and the left zone beside the main zone as rounded panels with the window's background between them.
+	test::UiApp app({1000, 700}); // CI's screens are 1024 pixels wide
+	app.appUi().showProject();
+	app.setDpRatio(1.0F);
+	app.call("project.set", {{"length", 60.0}});
+	app.appUi().docking().setVisible("project", "transportBar", true);
+	app.ui().key(std::nullopt, "Mod+Alt+L");
+	const uint64_t guitar = app.call("track.add", {{"type", "audio"}, {"name", "Guitar"}, {"color", "#e12ad8"}})
+								.at("track")
+								.at("id")
+								.get<uint64_t>();
+	app.call("track.add", {{"type", "midi"}, {"name", "Keys"}});
+	ui::TrackList& list = *app.appUi().trackList();
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			list.select({guitar}); // until the list has the track
+			return visible(app, "#left-zone") && visible(app, "#transport-bar") &&
+				count(app, ".track-list listitem") == 2 && list.selection() == std::vector<uint64_t>{guitar} &&
+				visible(app, ".inspector-section[section=basics] button.section-header");
+		}));
+	app.shell().step(std::chrono::milliseconds(0));
+	test::UiApp::checkGolden("default-theme-window", app.screenshot("default-theme-window", {1000, 700}));
+	CHECK(app.shownSections("toolbar") ==
+		std::vector<std::string>{"tools", "autoScroll", "zoomPresets", "snap", "gridType", "quantize", "zones"});
+	CHECK(app.shownSections("transport-bar") ==
+		std::vector<std::string>{
+			"locators", "locatorRange", "punchPoints", "transportControls", "timeDisplays", "tempoSignature", "click"});
 }
 
 TEST_CASE("the project cursor and the cross-hair cursor are drawn only inside the event display's time area", "[ui]")

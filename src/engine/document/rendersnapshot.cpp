@@ -104,17 +104,24 @@ namespace gnubase::engine
 			std::vector<const SoundSlot*> addOns;
 		};
 
+		// Whether the track's drum map plays a note of the pitch: not a muted sound's, nor while Solo Instrument
+		// solos others (soloed).
+		bool soundPlays(const DrumMap* drums, const std::bitset<g_drumSounds>& soloed, uint8_t pitch)
+		{
+			return drums == nullptr || (!drums->sounds.at(pitch).mute && (soloed.none() || soloed.test(pitch)));
+		}
+
 		// The notes of a part that select a sound slot: notes that don't play (their probability, a muted drum
-		// sound) select none.
+		// sound or one that Solo Instrument silences) select none.
 		void addSlotNotes(const Project& project, const MidiPart& part, time::Ticks start, time::Ticks end,
 			const ArticulationMap& map, const std::map<ObjectId, size_t>& slots, const DrumMap* drums,
-			std::vector<SlotNote>& into)
+			const std::bitset<g_drumSounds>& soloed, std::vector<SlotNote>& into)
 		{
 			const std::optional<int> trackChannel = midi::trackMidiChannel(project, part.track);
 			const std::map<ObjectId, std::vector<size_t>> addOns = midi::addOnSlots(map, part);
 			for (const auto& [id, note] : part.notes)
 				if (note.position < end - start && slots.count(id) != 0 && midi::notePlays(note, part.id) &&
-					(drums == nullptr || !drums->sounds.at(note.pitch).mute))
+					soundPlays(drums, soloed, note.pitch))
 				{
 					const SoundSlot& slot = map.slots.at(slots.at(id));
 					std::vector<const SoundSlot*> added;
@@ -131,24 +138,29 @@ namespace gnubase::engine
 		// The output events of a track's sound slots (#175, reference manual p. 1270), across its parts in the order
 		// the notes play in, earlier by their slots' Attack Compensation (#1491, #1113): where a note's slot differs
 		// from the last one the track sent, the off events of that one, on the channel its notes played on, and the on
-		// events of the new one, on the channel of the note. Key switches play for a sample, ending where the note
-		// starts; a jump after them sends them again (MidiSequencer::chaseNotes). The controller and program changes
-		// are the track's (g_soundSlotPart), not the part's of the note, so a chase limited to parts finds them where a
-		// part continues the slot of another.
+		// events of the new one, on the channel of the note. Key switches play for a sample, ending a sample before the
+		// note starts, or by the slot's Separation (p. 1271) earlier, with its controller and program changes (#1667),
+		// but after the start of the note before, which would play the slot otherwise; a jump after them sends them
+		// again (MidiSequencer::chaseNotes). The controller and program changes are the track's (g_soundSlotPart), not
+		// the part's of the note, so a chase limited to parts finds them where a part continues the slot of another.
+		// Add-on slots go on the channel of the notes that play them and follow them to another channel.
 		void addOutputEvents(const Project& project, std::vector<SlotNote>& notes, RenderChannel& channel)
 		{
 			std::stable_sort(notes.begin(), notes.end(), [](const SlotNote& a, const SlotNote& b)
 				{ return std::tie(a.plays, a.order) < std::tie(b.plays, b.order); });
-			const SlotNote* previous = nullptr;
+			const SlotNote* previous = nullptr;                       // the last one whose slot the track sent
+			std::optional<time::Samples> before;                      // where the note before played
+			std::vector<std::pair<const SoundSlot*, uint8_t>> addOns; // the add-on slots on, with their channel
 			for (const SlotNote& note : notes)
 			{
-				const bool same = previous != nullptr && note.slot == previous->slot;
-				if (same && note.addOns == previous->addOns)
-					continue;
-				// Where the note plays; key switches a sample before it, or the slot's Separation (p. 1271).
 				const time::Samples at = std::max<time::Samples>(note.plays, 0);
-				const time::Samples keySwitch = std::max<time::Samples>(
-					at - std::max<time::Samples>(milliseconds(project, note.slot->separation), 1), 0);
+				const int separation = note.slot->separation;
+				time::Samples keySwitch = at - std::max<time::Samples>(milliseconds(project, separation), 1);
+				if (before.has_value())
+					keySwitch = std::max(keySwitch, std::min(*before + 1, at - 1));
+				keySwitch = std::max<time::Samples>(keySwitch, 0);
+				before = at;
+				const time::Samples controllers = separation > 0 ? keySwitch : at;
 				const auto send = [&](const SoundSlot& from, bool off, uint8_t on)
 				{
 					for (const OutputEvent& output : from.outputs)
@@ -159,30 +171,48 @@ namespace gnubase::engine
 							channel.notes.push_back({keySwitch, std::max<time::Samples>(keySwitch + 1, 1), output.data1,
 								midi::velocityFromMidi1(output.data2), on, true, 0});
 						else if (output.status == OutputStatus::Controller)
-							channel.controllers.push_back({at, ControllerType::Control, output.data1,
+							channel.controllers.push_back({controllers, ControllerType::Control, output.data1,
 								midi::controllerFromMidi1(output.data2), on, {}, g_soundSlotPart});
 						else
-							channel.controllers.push_back(
-								{at, ControllerType::Program, output.data1, g_noBank, on, {}, g_soundSlotPart});
+							channel.controllers.push_back({controllers, ControllerType::Program, output.data1, g_noBank,
+								on, {}, g_soundSlotPart});
 					}
 				};
-				if (!same)
+				if (previous == nullptr || note.slot != previous->slot)
 				{
 					if (previous != nullptr)
 						send(*previous->slot, true, previous->channel);
 					send(*note.slot, false, note.channel);
+					previous = &note;
 				}
-				// Add-on slots (#1113): the off events of those that end, the on events of those that start.
-				const auto has = [](const std::vector<const SoundSlot*>& slots, const SoundSlot* slot)
-				{ return std::find(slots.begin(), slots.end(), slot) != slots.end(); };
-				if (previous != nullptr)
-					for (const SoundSlot* addOn : previous->addOns)
-						if (!has(note.addOns, addOn))
-							send(*addOn, true, previous->channel);
+				// Add-on slots (#1113): the off events of those that end, on the channel they went to, and the on
+				// events of those that start; one that stays goes to the note's channel where it differs.
+				for (auto on = addOns.begin(); on != addOns.end();)
+				{
+					const bool stays =
+						std::find(note.addOns.begin(), note.addOns.end(), on->first) != note.addOns.end();
+					if (stays && on->second == note.channel)
+					{
+						++on;
+						continue;
+					}
+					send(*on->first, true, on->second);
+					if (!stays)
+					{
+						on = addOns.erase(on);
+						continue;
+					}
+					on->second = note.channel;
+					send(*on->first, false, note.channel);
+					++on;
+				}
 				for (const SoundSlot* addOn : note.addOns)
-					if (previous == nullptr || !has(previous->addOns, addOn))
+					if (std::none_of(addOns.begin(), addOns.end(),
+							[addOn](const std::pair<const SoundSlot*, uint8_t>& on) { return on.first == addOn; }))
+					{
 						send(*addOn, false, note.channel);
-				previous = &note;
+						addOns.emplace_back(addOn, note.channel);
+					}
 			}
 		}
 
@@ -220,15 +250,15 @@ namespace gnubase::engine
 																		: nullptr;
 			};
 			if (slotNotes != nullptr && articulations != nullptr && !slots.empty())
-				addSlotNotes(project, part, start, end, *articulations, slots, map, *slotNotes);
+				addSlotNotes(project, part, start, end, *articulations, slots, map, soloed, *slotNotes);
 			for (const auto& [id, note] : part.notes)
 			{
 				// Notes the part hides beyond its end don't play, wherever a random position would move them.
 				if (note.position >= end - start || !midi::notePlays(note, part.id))
 					continue;
-				const DrumSound* sound = map != nullptr ? &map->sounds.at(note.pitch) : nullptr;
-				if (sound != nullptr && (sound->mute || (soloed.any() && !soloed.test(note.pitch))))
+				if (!soundPlays(map, soloed, note.pitch))
 					continue;
+				const DrumSound* sound = map != nullptr ? &map->sounds.at(note.pitch) : nullptr;
 				const SoundSlot* slot = slotOf(id);
 				const uint64_t seed = midi::noteSeed(partId, id);
 				uint8_t pitch = sound != nullptr ? sound->oNote : note.pitch;

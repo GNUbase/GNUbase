@@ -166,9 +166,10 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
   The event display closes its own dialogs for events or parts in the same way (Fades, Crossfade, Detect Silence,
   Spectrum Analyzer, Statistics, Set Definition from Tempo, Repeat, Tempo Detection, Calculate Tempo, audio Import
   Options; the zoom presets, Process Tempo and Process Bars stay), and the track list cancels Remove Tracks' question
-  and its two chord dialogs (#1586). An OS file dialog for objects of the project drops its answer when a `project.reset` came while it was
-  open (track picture, Export Selected Tracks, pattern presets, Save Drum Map); Import Tracks reads the selected track
-  when the file is chosen.
+  and its two chord dialogs (#1586). An OS file dialog for objects of the project drops its answer when a
+  `project.reset` came while it was open (`AppUi::chooseProjectFile`: track picture, Export Selected Tracks, pattern
+  presets, Save Drum Map, Export Articulation Map, the sampler's Import Audio File and the drum machine's Load Sample,
+  #1648); Import Tracks reads the selected track when the file is chosen.
 
 ## Not yet
 

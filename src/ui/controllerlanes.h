@@ -45,8 +45,10 @@ namespace gnubase::ui
 		ControllerLanes& operator=(ControllerLanes&&) = delete;
 
 		// The project, the editor view and the time axis of the note display, project ticks. Keeps the view and the
-		// parts it shows, not the whole project.
-		void show(const engine::Json& project, const engine::Json& view, int64_t from, int64_t to);
+		// parts it shows, not the whole project. With shown, by pitch, only the notes of the pitches it has (the drum
+		// sounds the drum editor's list shows).
+		void show(const engine::Json& project, const engine::Json& view, int64_t from, int64_t to,
+			const std::vector<bool>& shown = {});
 		// Only another time axis: moves the bars and steps shown.
 		void setRange(int64_t from, int64_t to);
 		// The key editor's tool by name (keyToolName) and the line tool's mode: line, parabola, sine, triangle, square
@@ -112,14 +114,23 @@ namespace gnubase::ui
 		std::string articulationArea(std::vector<Item>& items) const;
 		// The map whose articulations the Articulations lane shows: the active part's track's, else the first one's.
 		const engine::Json* laneMap() const;
-		// A press on the Articulations lane: the object selection tool selects the direction or the attribute's note
-		// pressed, the draw tool adds the row's articulation where it is pressed or removes the one pressed, the erase
-		// tool removes it. The lane takes the keyboard focus.
+		// A press on the Articulations lane: the object selection tool selects the direction or the attribute pressed
+		// with its note, the draw tool adds the row's articulation where it is pressed or removes the one pressed, the
+		// erase tool removes it. The lane takes the keyboard focus.
 		void pressArticulation(Rml::Event& event);
 		void selectArticulation(const Rml::Element* item, bool add);
+		// Whether a note's attribute shows selected on the lane: its note is selected, and the attribute is one pressed
+		// on the lane, or none of the note's was.
+		bool attributeSelected(uint64_t part, uint64_t note, const std::string& name) const;
 		// Delete or Backspace while the Articulations lane has the keyboard focus: removes its selected directions and
-		// its map's attributes of the selected notes, not the notes (p. 1289).
+		// attributes, not the notes (p. 1289).
 		void deleteArticulations();
+		// The direction whose event pop-up menu opens (p. 1290), none for an element that isn't an editable direction.
+		void directionMenu(const Rml::Element* direction);
+		// The Articulations lane's controls: collapseGroups, expandGroups and soundSlots (pp. 1287-1288).
+		void articulationControl(const std::string& action);
+		// The state class .keyboard-focus of the lane that has the keyboard focus (p. 100).
+		void showKeyLane();
 		// The groups of the lane's map collapsed into a row each (p. 1287), by index.
 		std::set<int> collapsedGroups() const;
 		void setCollapsedGroups(const std::set<int>& groups);
@@ -177,6 +188,8 @@ namespace gnubase::ui
 		// The direction whose event pop-up menu opened on the Articulations lane: its part and id.
 		std::optional<std::pair<uint64_t, uint64_t>> m_menuDirection;
 		std::optional<size_t> m_keyLane; // the Articulations lane that has the keyboard focus
+		// The attributes pressed on the Articulations lane, by part and note: what Delete removes of a selected note.
+		std::map<std::pair<uint64_t, uint64_t>, std::set<std::string>> m_attributeSelection;
 		Rml::ObserverPtr<Rml::Element> m_dialog;
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it's gone
 		// The document that a gesture hears the mouseup in, wherever in it the mouse goes up.

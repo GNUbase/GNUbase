@@ -35,6 +35,7 @@ add_executable(gnubase-tests
 	arranger_ui_tests.cpp
 	articulationmaps_tests.cpp
 	articulationmaps_ui_tests.cpp
+	articulationnames_tests.cpp
 	audio_tests.cpp
 	audiofile_tests.cpp
 	audiofunctions_tests.cpp

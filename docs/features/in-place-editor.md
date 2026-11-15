@@ -15,7 +15,7 @@ project closes it.
 | Command | What it does | Reference |
 |---|---|---|
 | `editor.inPlace` | Opens (`open` true), closes (false) or toggles (without `open`) the in-place editors of `tracks`; returns `tracks`, those whose in-place editors are open, in the track list's order. Without `tracks` it only lists them | pp. 1259, 1261 |
-| `note.move` | Moves a MIDI `part`'s named `notes` to a `target` part: `ticks` shifts them on the project's timeline — the command converts to the target part's own positions, wherever the two parts start and whatever their time bases — and `semitones` shifts their pitch, as the drag between in-place editors sends it. Each note keeps its id and every other field, the move is one undo step and the shared copies of both parts follow it. A note may reach past the target part's end, as `note.add` and `note.set` allow. It refuses a part or a note that doesn't exist, a note that would land on the timeline before the target part's start or outside the pitches 0-127, and a move between shared copies of one group, which must stay equal; nothing changes then. Emits `note.removed` for the source part and `note.added` for the target. `controllers` names controller events of the source part that go along, as the key editor moves the selected ones with the notes (p. 1188): shifted in time only, keeping their ids and fields, one that would land before the target part's start landing at its start; `notes` may then be empty, and `controller.removed` and `controller.added` come for them. Returns the moved notes and controller events, as `notes` and `controllers` | pp. 1188, 1261 |
+| `note.move` | Moves a MIDI `part`'s named `notes` to a `target` part: `ticks` shifts them on the project's timeline — the command converts to the target part's own positions, wherever the two parts start and whatever their time bases — and `semitones` shifts their pitch, as the drag between in-place editors sends it. Each note keeps its id and every other field, the move is one undo step and the shared copies of both parts follow it. A note may reach past the target part's end, as `note.add` and `note.set` allow. It refuses a part or a note that doesn't exist, a note that would land on the timeline before the target part's start or outside the pitches 0-127, and a move between shared copies of one group, which must stay equal; nothing changes then. Emits `note.removed` for the source part and `note.added` for the target. `controllers` names controller events of the source part that go along, as the key editor moves the selected ones with the notes (p. 1188): shifted in time only, keeping their ids and fields, one that would land before the target part's start landing at its start; `notes` may then be empty, the undo step being "Move notes" also then, and `controller.removed` and `controller.added` come for them. Returns the moved notes and controller events, as `notes` and `controllers` | pp. 1188, 1261 |
 
 - Reading `editor.inPlace` without `tracks` leaves `engine.commandLog` unchanged; calls with `tracks` remain logged.
 - **Parts.** An open in-place editor shows every MIDI part of its track, in order, and parts added later; its parts
@@ -65,10 +65,11 @@ menu#in-place-editing-mode-menu-inPlace-<track>, menu#in-place-active-part-menu-
   them to that track's part at the drop, keeping their ids, their distances to the pressed one and every other field
   they have, as one undo step; the selected controller events go along, as in a move within the editor (p. 1188), each
   part's in its `note.move`, with empty `notes` for a part that gives only controller events; several source parts' go
-  in one `history.transaction`, the undo step "Move" (one part's alone is `note.move`'s "Move notes"); nothing moves when the drop lies where the target track has no part, or a note would land
-  before that part's start or outside the pitches (p. 1261). A click on a part in the row of parts activates it (p.
-  1152). The editors' menus have ids of their own, ending in `-inPlace-<track>` (`ui::menuIdSuffix`), since they share
-  the project window's document with each other and with the lower zone's editor.
+  in one `history.transaction`, the undo step "Move" (one part's alone is `note.move`'s "Move notes"); nothing moves
+  when the drop lies where the target track has no part, or a note would land before that part's start or outside the
+  pitches (p. 1261). A click on a part in the row of parts activates it (p. 1152). The editors' menus have ids of their
+  own, ending in `-inPlace-<track>` (`ui::menuIdSuffix`), since they share the project window's document with each other
+  and with the lower zone's editor.
 - **Multiple part controls** (p. 1260), first in the toolbar: Part Editing Mode, a menu of All Parts and Active Part
   (`editingMode` allParts or activePart), and Activate Part for Editing, a menu of the track's parts with the active
   one's name on the button (`activePart`).
@@ -103,8 +104,9 @@ has none yet).
   with `editor.changed`, the list of open ones in the track list's order, every part of the track shown and parts
   added later, the selection and settings through `editor.set`, `editor.close`; audio tracks, unknown tracks and
   names, `editor.open`, setting parts, showing tracks, other contents, global tracks and the editing mode activeTrack
-  refused, and the names' pattern in the schema; a track without parts; a removed track closing it and its undo
-  bringing it back, and a new project closing them all. `tests/engine_tests.cpp` checks schema patterns and their text in the API references.
+  refused, and the names' pattern in the schema; a track without parts; a removed track closing it and its undo bringing
+  it back, and a new project closing them all. `tests/engine_tests.cpp` checks schema patterns and their text in the API
+  references.
 - `tests/inplaceeditor_ui_tests.cpp` drives the app with `ui::Automation`: MIDI > Open In-Place Editor for a MIDI and an
   audio track selected opens the MIDI track's editor over its grown lane, notes and the part's box at their times on the
   timeline, also after zooming and scrolling and with the toolbar shown; Edit In-Place, an engine client and a new
@@ -119,9 +121,9 @@ has none yet).
   scrolling them; a double click on the lanes' footer strip closing it, and one on the strip's buttons not; a note
   dragged into another in-place editor moving to that track's part with its id, as one undo step, with the other
   selected note, back with an undo into its selection, and dropped where the other track has no part or where a note
-  wouldn't fit staying where it is; a selected controller event going along to the other part with its id, back with
-  the note in one undo, also from another part of the source track that gives only controller events; the menu commands waiting for a MIDI or instrument track; a note being drawn moving
-  with the notes while the project window zooms.
+  wouldn't fit staying where it is; a selected controller event going along to the other part with its id, back with the
+  note in one undo, also from another part of the source track that gives only controller events; the menu commands
+  waiting for a MIDI or instrument track; a note being drawn moving with the notes while the project window zooms.
 - `tests/midiedit_tests.cpp`: `note.move` moving notes to another part as one undo step, keeping every field, a quantize
   origin included, and their ids, two notes keeping their distance, with its `note.removed` and `note.added` events,
   undo and redo; ticks counting on the project's timeline, so that parts starting at different places and a part on a
@@ -129,8 +131,9 @@ has none yet).
   target part's start is refused; refusing too a part or a note that doesn't exist, a note that would land outside the
   pitches and a move between shared copies of one group, changing nothing then; a note reaching past the target part's
   end, a move within the source part itself, and the shared copies of the source and of the target staying consistent,
-  for the notes and the controller events; the named controller events going along with their ids and fields, shifted
-  in time but not in pitch, alone without notes, at the target part's start when they would land before it, within one
-  part, and one that doesn't exist refusing the move; the result schema naming `notes` and `controllers`.
+  for the notes and the controller events; the named controller events going along with their ids and fields, shifted in
+  time but not in pitch, alone without notes and still as the undo step "Move notes", at the target part's start when
+  they would land before it, within one part, and one that doesn't exist refusing the move; the result schema naming
+  `notes` and `controllers`.
 - `tests/inspector_tests.cpp`: the project window's info line showing and editing the notes an in-place editor has
   selected (inspector.md).

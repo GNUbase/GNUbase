@@ -197,6 +197,22 @@ namespace gnubase::test
 		CHECK(diff.equal);
 	}
 
+	std::vector<std::string> UiApp::shownSections(const std::string& container)
+	{
+		std::vector<std::string> shown;
+		Rml::Context& context = main().context();
+		for (int i = 0; i < context.GetNumDocuments(); ++i)
+			if (const Rml::Element* sections = context.GetDocument(i)->GetElementById(container))
+				for (int child = 0; child < sections->GetNumChildren(); ++child)
+				{
+					const Rml::Element* section = sections->GetChild(child);
+					if (section->HasAttribute("section") && !section->IsClassSet("hidden") &&
+						!section->IsClassSet("no-room"))
+						shown.push_back(section->GetAttribute<Rml::String>("section", ""));
+				}
+		return shown;
+	}
+
 	namespace
 	{
 		Rml::Context& contextOf(UiApp& app, std::optional<ui::WindowId> window)

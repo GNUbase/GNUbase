@@ -9,20 +9,24 @@ the pool and conforming files to the project's sample rate. The engine commands 
 
 - **`pool.get`** (query) returns the pool folders and every clip with its folder, how many audio events use it
   (`used`), its media file's path, sample rate, channel count and length, `missing` (the file isn't there) and
-  `external` (outside the project folder; every file of a project that has no file yet), `rootKey` (the root key its
-  audio events share, `""` when they have none or differ; [transpose.md](transpose.md)), plus the info line's totals:
-  `audioFiles`, `usedFiles` (media files an event plays), `missingFiles`, `externalFiles` and `totalSize` in bytes,
-  plus `missingExternalFiles`, the external files that are missing, which Prepare Archive can't copy.
+  `external` (outside the project folder; every file of a project that has no file yet), `rootKey`, `rootKeysDiffer`
+  and `audioEvents` (see the Key column below), plus the info line's totals: `audioFiles`, `usedFiles` (media files
+  an event plays), `missingFiles`, `externalFiles` and `totalSize` in bytes, plus `missingExternalFiles`, the
+  external files that are missing, which Prepare Archive can't copy.
   It looks at each media file on disk once (a `std::filesystem::directory_entry` for whether it is there and its
   size), not once per clip and again per file, since the panel asks after every edit.
 - **Folders.** `poolFolder.add` (name, default New Folder; parent), `poolFolder.set` (rename, or move into another
   folder but not into itself or a folder inside it) and `poolFolder.remove` (what was in it goes into its parent).
   Clips have a `folder` (0: the pool's Audio folder); `clip.set` renames a clip or moves it into a folder. Folders
-  only organize the pool: files keep their names and places. `clip.set` `rootKey` is the Key column (p. 417): every
-  audio event that plays the clip gets that root key, also in inactive track versions; the file stays as it is. They are objects with ids in the document
+  only organize the pool: files keep their names and places. They are objects with ids in the document
   (`Project::poolFolders`), so they are in undo and in the project file's GNUbase entry. A file with a folder inside
   one that isn't there loads with it at the top; of folders inside each other in a loop, the first one (by id) goes
   to the top and the others stay inside it, as do folders that are only inside the loop.
+- **The Key column** (#1555, #1644, p. 417, [transpose.md](transpose.md)). `clip.set` `rootKey` gives every audio
+  event that plays the clip that root key, also those in inactive track versions; the file stays as it is. `pool.get`
+  gives each clip `rootKey`, the root key its audio events share (`""` when they have none or differ),
+  `rootKeysDiffer` (they differ) and `audioEvents`, how many audio events play it, those in inactive track versions
+  too: a clip without any has nowhere to keep a key.
 - **`pool.removeUnused`** removes the clips that no audio event uses, then the media files no clip uses, as one undo
   step. The files stay on disk.
 - **`media.locate`** looks for missing media files in a folder and the folders inside it, by file name: the same
@@ -40,8 +44,8 @@ the pool and conforming files to the project's sample rate. The engine commands 
   32-bit float WAV file at the project's rate (as `media.convert` does) and points the media file at it, the
   reference's Convert Files with New + Replace in Pool. Clip fades, and the offsets, lengths, fades, crossfades,
   snap points and volume curves of the events that play it, are in the file's sample frames, so they are scaled to
-  the new rate and events play the same section. A crossfade's `length` is in the frames of the event it goes into and its
-  `outLength` in those of the event it comes from, so each scales with its own file. A media file given twice in
+  the new rate and events play the same section. A crossfade's `length` is in the frames of the event it goes into
+  and its `outLength` in those of the event it comes from, so each scales with its own file. A media file given twice in
   `media` is conformed once; one given that is missing is refused. The originals stay on disk; it needs a saved
   project and is one undo step. Converting runs as a job (see below); `media.relinkResampled` then points the media
   files at the new files and scales what plays them. That command takes the new file's sample rate and length,
@@ -94,8 +98,10 @@ the pool and conforming files to the project's sample rate. The engine commands 
   clips, folders first and each by name, ASCII letters in either case alike (alpha before Bass), in the columns Media,
   Used (empty when unused), Status (Missing or External), Key (a drop-down list of the root key of the clip's audio
   events, `select[field=rootKey]`, which sets it with `clip.set`; #1555, p. 417), Info (sample rate, channels,
-  length) and Path. Rows have the
-  state classes `.folder` or `.clip`, and clips `.missing` and `.unused`. It follows `history.changed` and
+  length) and Path. The Key list is empty when the events' root keys differ, where "-" clears them, and disabled for
+  a clip that no audio event plays; it holds only the key it shows until it gets the focus, when it gets all 13, so
+  that a pool of thousands of clips doesn't hold 13 options for each (#1644). Rows have the state classes `.folder`
+  or `.clip`, and clips `.missing` and `.unused`. It follows `history.changed` and
   `project.saved`, so changes from MCP, Lua or undo show, but reads the pool only while it shows
   (`Docking::showing`, [docking.md](docking.md)): behind another tab or in a hidden zone it notes that the pool
   changed, and `AppUi`'s step reads it once the panel shows again.

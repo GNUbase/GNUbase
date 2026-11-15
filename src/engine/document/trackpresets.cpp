@@ -926,7 +926,9 @@ namespace gnubase::engine
 				onto(project.patterns); // which the copy's pattern events play, in its other versions too (#1347)
 				Track& source = project.trackById.at(copy);
 				Track& track = project.trackById.at(id);
-				if (!source.versions.empty() && track.versions.empty())
+				// Only versions besides the copy's active one give the track a list of its own: one without them keeps
+				// storing none (#1629).
+				if (source.versions.size() > 1 && track.versions.empty())
 					track.versions = versionsOf(track);
 				for (TrackVersion& version : source.versions)
 				{
@@ -1131,14 +1133,17 @@ namespace gnubase::engine
 		engine.registerCommand(
 			{"track.presets", 1,
 				"The track presets (track.savePreset), sorted by name: each a name, its file and the types of its "
-				"tracks from top to bottom, which the tracks it goes to must have.",
+				"tracks from top to bottom, which the tracks it goes to must have; keeps of a preset saved with keep: "
+				"channel or patch, which of the two it gives MIDI tracks.",
 				objectSchema({}),
-				objectSchema({{"presets",
-								 {{"type", "array"},
-									 {"items",
-										 objectSchema({{"name", stringSchema}, {"file", stringSchema},
-														  {"tracks", {{"type", "array"}, {"items", stringSchema}}}},
-											 {"name", "file", "tracks"})}}}},
+				objectSchema(
+					{{"presets",
+						{{"type", "array"},
+							{"items",
+								objectSchema({{"name", stringSchema}, {"file", stringSchema},
+												 {"tracks", {{"type", "array"}, {"items", stringSchema}}},
+												 {"keeps", {{"type", "string"}, {"enum", {"channel", "patch"}}}}},
+									{"name", "file", "tracks"})}}}},
 					{"presets"}),
 				true},
 			[&engine](CommandContext&)
@@ -1154,19 +1159,21 @@ namespace gnubase::engine
 				Json presets = Json::array();
 				for (const fs::path& file : files)
 				{
-					Json types = Json::array();
+					Json entry = {
+						{"name", file.stem().u8string()}, {"file", file.u8string()}, {"tracks", Json::array()}};
 					try
 					{
 						const Project preset = load(file, false);
 						for (const ObjectId id : preset.trackOrder())
-							types.push_back(trackTypeName(preset.trackById.at(id).type));
+							entry["tracks"].push_back(trackTypeName(preset.trackById.at(id).type));
+						if (!preset.presetKeeps.empty())
+							entry["keeps"] = preset.presetKeeps;
 					}
 					catch (const std::exception&)
 					{
 						continue; // not a preset GNUbase can read
 					}
-					presets.push_back(
-						{{"name", file.stem().u8string()}, {"file", file.u8string()}, {"tracks", std::move(types)}});
+					presets.push_back(std::move(entry));
 				}
 				return Json{{"presets", std::move(presets)}};
 			});

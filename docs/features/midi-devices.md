@@ -52,20 +52,24 @@ program and bank it sends to its instrument (#136, reference manual pp. 1108–1
 - `tests/midipatches_tests.cpp`: installing a GM device and an empty one, a taken or empty name refused, removing,
   patches edited and a broken one refused with `settings.set`; a MIDI track's program, bank and device set, refused on
   an instrument track and out of range, saved and loaded, undone; and a patch selected reaching the instrument
-  (`midi.capture`) as bank select MSB and LSB and program change, at once while stopped, again when playback starts,
-  the program change alone without a bank, nothing without a program, and a device's patch. On a MIDI track's channel
+  (`midi.capture`) as bank select MSB and LSB and program change, at once while stopped, again when playback starts, the
+  program change alone without a bank, nothing without a program, and a device's patch. On a MIDI track's channel
   ([mixer.md](mixer.md)): the patch, MIDI volume and pan going out on it and again on another; its parts', automation's
   (a controller, pitch bend and channel pressure) and input's events (notes, controllers, pitch bend, pressure and
   program changes) on it, a held key's note-off on the channel its note-on went to, and Any keeping theirs; a drum
   sound's own channel; sound slots' output events in playback and from remote triggers (key switches with and without
   latch, program changes), a selected slot going out again on a new channel and back to Any, and one with a channel of
-  its own staying there; a send before the MIDI modifiers getting the input there, through the drum map (a drum sound
-  on Any and one with a channel of its own), Live Input and the slot that the remote triggers selected, without the
-  trigger, also once it starts to play again after the trigger; and automation lanes of one controller playing there
-  side by side: of two, only the one whose latest point lies latest sending where playback starts or locates; two
-  lanes of the MIDI volume, the first sending the channel's before its first point and in its gaps, the second
-  nothing; every point sent, also one that repeats its lane's value, and the value a lane's last point left standing
-  in its gap sent again at a locate, and at a cycle jump the value of the lane whose point lies latest.
+  its own staying there; a send before the MIDI modifiers getting the input there, through the drum map (a drum sound on
+  Any and one with a channel of its own), Live Input and the slot that the remote triggers selected, without the
+  trigger, also once it starts to play again after the trigger, with the map's slots changed before, and while a trigger
+  without latch is held, whose release brings the default slot back there too; and automation lanes of one controller
+  playing there side by side: of two, only the one whose latest point lies latest sending where playback starts or
+  locates; two lanes of the MIDI volume, the first sending the channel's before its first point and in its gaps, the
+  second nothing; every point sent, also one that repeats its lane's value, and the value a lane's last point left
+  standing in its gap sent again at a locate, also past two lanes that end at one position, where the second one's
+  terminator wins; a point that a gap follows, a terminator that repeats its lane's value and the lanes' last points
+  with virgin territory, each sent when played through and again at a locate past it; and at a cycle jump the value of
+  the lane whose point lies latest.
 - `tests/mididevices_ui_tests.cpp` drives the app with `ui::Automation`: the inspector choosing a program and typing a
   bank, then with an installed device its patches by name, the bank row gone, the track's own patch listed, a patch
   chosen and a removed device shown as not installed; the MIDI device manager installing a GM device with its bank,

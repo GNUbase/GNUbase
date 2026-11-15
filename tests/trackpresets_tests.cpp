@@ -11,6 +11,10 @@
 #include "ui/tracklist.h"
 #include "uiapp.h"
 
+#include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
@@ -130,6 +134,21 @@ namespace
 		app.shell().step(std::chrono::milliseconds(0));
 	}
 
+	// The texts of a drop-down list's options, which aren't in the DOM that the UI tools see.
+	std::vector<std::string> options(test::UiApp& app, const std::string& selector)
+	{
+		Rml::Element* element = nullptr;
+		for (int i = 0; element == nullptr && i < app.main().context().GetNumDocuments(); ++i)
+			element = app.main().context().GetDocument(i)->QuerySelector(selector);
+		auto* list = dynamic_cast<Rml::ElementFormControlSelect*>(element);
+		REQUIRE(list != nullptr);
+		std::vector<std::string> texts;
+		texts.reserve(static_cast<size_t>(list->GetNumOptions()));
+		for (int i = 0; i < list->GetNumOptions(); ++i)
+			texts.push_back(list->GetOption(i)->GetInnerRML());
+		return texts;
+	}
+
 	void select(test::UiApp& app, const std::vector<ObjectId>& tracks)
 	{
 		// The track list shows new tracks once their events came.
@@ -162,6 +181,16 @@ namespace
 		for (const Json& version : track.at("versions"))
 			result.push_back(version.at("id").get<int>());
 		return result;
+	}
+
+	// The ids of the tracks that the project rules' property has track version finds.
+	std::vector<ObjectId> withVersions(Client& client)
+	{
+		const Json rules = {{"filters",
+								Json::array({{{"target", "property"}, {"condition", "propertyIsSet"},
+									{"parameter1", "hasTrackVersion"}, {"parameter2", 0.0}}})},
+			{"function", "select"}, {"actions", Json::array()}};
+		return run(client, "project.findByRules", {{"rules", rules}}).at("tracks").get<std::vector<ObjectId>>();
 	}
 
 	// The positions of the MIDI parts that play on a track, in their order.
@@ -216,6 +245,7 @@ TEST_CASE(
 	CHECK(presets[0].at("tracks") == Json{"audio", "midi"});
 	CHECK(presets[1].at("name") == "Lead Vox");
 	CHECK(presets[1].at("tracks") == Json{"audio"});
+	CHECK(!presets[0].contains("keeps")); // a preset that keeps a MIDI track's channel and patch
 
 	const Added other = add(client, {{"type", "audio"}, {"name", "Other"}});
 	const Json before = channelJson(client, other.channel);
@@ -262,6 +292,11 @@ TEST_CASE("a MIDI track's preset keeps its channel or its patch, which loading i
 	run(client, "track.savePreset", {{"tracks", {strings.track}}, {"name", "Patch"}, {"keep", "patch"}});
 	CHECK_THAT(reject(client, "track.savePreset", {{"tracks", {strings.track}}, {"name", "Both"}, {"keep", "both"}}),
 		ContainsSubstring("keep"));
+	// track.presets says which one a preset keeps.
+	const Json presets = run(client, "track.presets").at("presets");
+	REQUIRE(presets.size() == 2);
+	CHECK(presets[0].at("keeps") == "channel");
+	CHECK(presets[1].at("keeps") == "patch");
 
 	const auto patch = [](const Json& channel)
 	{ return Json{channel.at("program"), channel.at("bank"), channel.at("midiChannel"), channel.at("midiVolume")}; };
@@ -1088,6 +1123,8 @@ TEST_CASE("track.import keeps implicit first versions in the imported version gr
 	CHECK(firstVersion > 2);
 	CHECK(idsOf(second) == std::vector<int>{firstVersion});
 	CHECK(second.at("activeVersion") == firstVersion);
+	// Its one version doesn't count as track versions for the project rules, the other two tracks' two do (#1629).
+	CHECK(withVersions(client) == std::vector<ObjectId>{existing.track, firstTrack});
 
 	// Leave both imported first versions, then activate their group without touching the project's own group.
 	run(client, "trackVersion.add", {{"tracks", {firstTrack, secondTrack}}});
@@ -1102,6 +1139,42 @@ TEST_CASE("track.import keeps implicit first versions in the imported version gr
 	CHECK(run(client, "project.get").at("midiParts").empty());
 	run(client, "history.redo");
 	CHECK(playing(run(client, "project.get"), secondTrack) == std::vector<int64_t>{960});
+}
+
+TEST_CASE("track.import of a track without versions onto one leaves it without versions of its own", "[integration]")
+{
+	const test::TempDir dir;
+	const fs::path song = dir.path() / "Plain.dawproject";
+	Engine engine(gnubase::audio::makeBackends(), dir.path() / "settings");
+	Client client(engine);
+	const Added keys = add(client, {{"type", "midi"}, {"name", "Keys"}});
+	run(client, "midiPart.add", {{"track", keys.track}, {"position", 1920}, {"length", 960}});
+	run(client, "project.save", {{"path", song.u8string()}});
+	const Json source = run(client, "track.importSources", {{"path", song.u8string()}}).at("tracks")[0].at("id");
+
+	run(client, "project.new");
+	const Added piano = add(client, {{"type", "midi"}, {"name", "Piano"}});
+	run(client, "midiPart.add", {{"track", piano.track}, {"position", 0}, {"length", 960}});
+	const auto import = [&](const std::string& existing)
+	{
+		run(client, "track.import",
+			{{"path", song.u8string()}, {"existing", existing},
+				{"destinations", {{{"source", source}, {"track", piano.track}}}}});
+	};
+	// Replacing the track's parts or adding to them keeps it at its one version, which isn't track versions for the
+	// project rules (#1629); a new version is.
+	for (const std::string existing : {"replace", "add"})
+	{
+		INFO(existing);
+		import(existing);
+		const Json project = run(client, "project.get");
+		CHECK(count(project, "midiParts", piano.track) == (existing == "add" ? 2 : 1));
+		CHECK(idsOf(trackNamed(project, "Piano")) == std::vector<int>{1});
+		CHECK(withVersions(client).empty());
+		run(client, "history.undo");
+	}
+	import("version");
+	CHECK(withVersions(client) == std::vector<ObjectId>{piano.track});
 }
 
 TEST_CASE("track.import without automation resets the automation of a track that it imports events or settings onto",
@@ -1923,7 +1996,7 @@ TEST_CASE("the track preset dialog saves, loads and adds track presets", "[ui]")
 	select(app, {midi.at("track").at("id").get<ObjectId>()});
 	app.keys().run("track.loadTrackPreset", Json::object(), app.main(), nullptr);
 	REQUIRE(app.waitUntil([&app] { return shown(app, "#track-preset-dialog"); }));
-	CHECK(app.ui().dom(std::nullopt, "#preset-list option", 0).at("elements").empty());
+	CHECK(options(app, "#preset-list").empty());
 	click(app, "#track-preset-dialog button[result=cancel]");
 
 	// Its preset keeps the patch alone: Patch is the last choice.
@@ -1937,6 +2010,11 @@ TEST_CASE("the track preset dialog saves, loads and adds track presets", "[ui]")
 	app.ui().text(std::nullopt, "Keys");
 	click(app, "#preset-confirm");
 	REQUIRE(app.waitUntil([&app] { return !shown(app, "#track-preset-dialog"); }));
+	// Load says what it keeps.
+	app.keys().run("track.loadTrackPreset", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#track-preset-dialog"); }));
+	CHECK(options(app, "#preset-list") == std::vector<std::string>{"Keys (Patch only)"});
+	click(app, "#track-preset-dialog button[result=cancel]");
 	app.call("channel.set", {{"channel", midi.at("channel").at("id")}, {"program", 10}, {"midiChannel", 3}});
 	app.call("track.loadPreset", {{"tracks", {midi.at("track").at("id")}}, {"name", "Keys"}});
 	const Json keys = channelOf(app.call("project.get"), "Keys");

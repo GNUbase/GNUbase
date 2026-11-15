@@ -62,8 +62,9 @@ Start, end and length are in bars and beats; end and length only for notes. The 
 directions (Articulation, [articulation-maps.md](articulation-maps.md)) have none. A note's Attributes are its
 attributes of the track's articulation map, names separated by commas; typed, they replace them, and typed empty, they
 go (p. 1291). A direction's name can be typed there too; the Insert Event Type menu has no Articulation, as a
-direction needs a name: the Articulations lane draws them. A right click on the column opens the pop-up menu of the
-map's attributes or directions, and a warning sign shows names the map doesn't have (#1580).
+direction needs a name: the Articulations lane draws them. A click on the column opens the pop-up menu of the map's
+attributes or directions under it (#1658, p. 1291), a right click at the mouse, and a warning sign shows names the map
+doesn't have (#1580).
 
 - **Event list** (pp. 1251-1252, 1254). A click on a row selects its event, Ctrl (Cmd) or Shift and a click adds or
   removes it, a click in the empty rest deselects; a click also activates the event's part, as `MidiEditor` handles

@@ -424,9 +424,12 @@ namespace gnubase::engine::midi
 					return keys == "all" || black == (keys == "black");
 				};
 				int key = parameters.value("start", 0);
-				for (size_t i = parameters.value("skipFirst", false) ? 1 : 0; i < map.slots.size(); ++i)
+				const bool skipFirst = parameters.value("skipFirst", false);
+				// Skip First Slot: the first slot keeps its trigger, which no other slot gets again (#1667).
+				const int kept = skipFirst && !map.slots.empty() ? map.slots.front().trigger : -1;
+				for (size_t i = skipFirst ? 1 : 0; i < map.slots.size(); ++i)
 				{
-					while (key <= 127 && !fits(key))
+					while (key <= 127 && (!fits(key) || key == kept))
 						++key;
 					map.slots[i].trigger = key <= 127 ? key : -1;
 					++key;
@@ -484,26 +487,25 @@ namespace gnubase::engine::midi
 			return -1;
 		}
 
-		// Whether a slot has an articulation of a group.
-		bool hasGroup(const ArticulationMap& map, const SoundSlot& slot, size_t group)
+		// Per slot, the groups it has an articulation of.
+		std::vector<std::vector<bool>> slotGroups(const ArticulationMap& map)
 		{
-			return std::any_of(slot.articulations.begin(), slot.articulations.end(),
-				[&](const std::string& name)
-				{
-					const Articulation* articulation = findArticulation(map, name);
-					return articulation != nullptr && static_cast<size_t>(articulation->group) == group;
-				});
+			std::vector<std::vector<bool>> groups(map.slots.size(), std::vector<bool>(map.groups.size(), false));
+			for (size_t i = 0; i < map.slots.size(); ++i)
+				for (const std::string& name : map.slots[i].articulations)
+					if (const Articulation* articulation = findArticulation(map, name); articulation != nullptr)
+						groups[i].at(static_cast<size_t>(articulation->group)) = true;
+			return groups;
 		}
 
-		// The directions that select a slot: its own, and a reset for each other group with directions, but those
-		// in which an add-on slot is selected (kept). An add-on slot's are only those of its own groups, and resets
-		// of them where it ends (reset).
+		// The directions that select a slot in the groups written: its own, else a reset, in each of them that has
+		// directions; with reset only resets.
 		void selectSlot(const ArticulationMap& map, const SoundSlot& slot, int64_t position, const Json& take,
-			Json& controllers, const std::vector<bool>& kept, bool reset = false)
+			Json& controllers, const std::vector<bool>& written, bool reset = false)
 		{
 			for (size_t group = 0; group < map.groups.size(); ++group)
 			{
-				if (slot.addOn ? !hasGroup(map, slot, group) : kept[group])
+				if (!written[group])
 					continue;
 				const Articulation* first = nullptr;
 				const Articulation* own = nullptr;
@@ -641,6 +643,17 @@ namespace gnubase::engine::midi
 		return static_cast<uint16_t>(std::clamp<int64_t>((int64_t{velocity} * slot.velocity) / 100, low, high));
 	}
 
+	bool shareGroup(const ArticulationMap& map, const SoundSlot& a, const SoundSlot& b) noexcept
+	{
+		for (const std::string& first : a.articulations)
+			if (const Articulation* one = findArticulation(map, first); one != nullptr)
+				for (const std::string& second : b.articulations)
+					if (const Articulation* other = findArticulation(map, second);
+						other != nullptr && other->group == one->group)
+						return true;
+		return false;
+	}
+
 	void applyRemoteTriggers(const ArticulationMap& map, Json& notes, Json& controllers)
 	{
 		std::vector<Trigger> triggers;
@@ -683,33 +696,60 @@ namespace gnubase::engine::midi
 			return;
 		std::stable_sort(triggers.begin(), triggers.end(),
 			[](const Trigger& a, const Trigger& b) { return a.position < b.position; });
-		// The groups in which an add-on slot is selected at a position: the last add-on trigger of the group up to
-		// there hasn't ended yet. Slots that aren't add-ons leave them alone, as the track does while it records
+		// Per group, the triggers of the slots with an articulation of it, by position: the last one up to a position
+		// holds the group there. Where that is an add-on slot that hasn't ended yet, slots that aren't add-ons leave
+		// the group alone, unless they have an articulation of it (#1669), as the track does while it records
 		// (MidiSequencer::triggerSlot).
-		const auto addOnGroups = [&](int64_t position)
+		const std::vector<std::vector<bool>> groupsOf = slotGroups(map);
+		std::vector<std::vector<size_t>> byGroup(map.groups.size());
+		for (size_t i = 0; i < triggers.size(); ++i)
+			for (size_t group = 0; group < map.groups.size(); ++group)
+				if (groupsOf[triggers[i].slot][group])
+					byGroup[group].push_back(i);
+		// The trigger that holds a group at a position, or triggers.size() for none.
+		const auto holder = [&](size_t group, int64_t position)
 		{
-			std::vector<bool> kept(map.groups.size(), false);
-			for (const Trigger& trigger : triggers)
-				if (trigger.position <= position && map.slots[trigger.slot].addOn)
-					for (size_t group = 0; group < map.groups.size(); ++group)
-						if (hasGroup(map, map.slots[trigger.slot], group))
-							kept[group] = position < trigger.end;
-			return kept;
+			const std::vector<size_t>& list = byGroup[group];
+			const auto after = std::upper_bound(list.begin(), list.end(), position,
+				[&](int64_t at, size_t index) { return at < triggers[index].position; });
+			return after == list.begin() ? triggers.size() : *std::prev(after);
+		};
+		// The groups a slot's directions go to at a position.
+		const auto written = [&](size_t slot, int64_t position)
+		{
+			std::vector<bool> groups = groupsOf[slot];
+			if (!map.slots[slot].addOn)
+				for (size_t group = 0; group < groups.size(); ++group)
+				{
+					const size_t held = holder(group, position);
+					groups[group] = groups[group] || held == triggers.size() || !map.slots[triggers[held].slot].addOn ||
+						position >= triggers[held].end;
+				}
+			return groups;
 		};
 		for (size_t i = 0; i < triggers.size(); ++i)
 		{
 			const Trigger& trigger = triggers[i];
 			const SoundSlot& slot = map.slots[trigger.slot];
-			selectSlot(map, slot, trigger.position, trigger.take, controllers, addOnGroups(trigger.position));
+			selectSlot(map, slot, trigger.position, trigger.take, controllers, written(trigger.slot, trigger.position));
 			// Without latch the default slot is back where the key is released, unless the key of another slot that
 			// isn't an add-on came first.
 			const auto next = std::find_if(triggers.begin() + static_cast<std::ptrdiff_t>(i + 1), triggers.end(),
 				[&map](const Trigger& later) { return !map.slots[later.slot].addOn; });
 			const bool released = trigger.end != std::numeric_limits<int64_t>::max() &&
 				(slot.addOn || next == triggers.end() || next->position > trigger.end);
-			if (released)
-				selectSlot(map, slot.addOn ? slot : map.slots.front(), trigger.end, trigger.take, controllers,
-					addOnGroups(trigger.end), slot.addOn);
+			if (!released)
+				continue;
+			if (!slot.addOn)
+			{
+				selectSlot(map, map.slots.front(), trigger.end, trigger.take, controllers, written(0, trigger.end));
+				continue;
+			}
+			// An add-on slot's resets, in the groups it still holds.
+			std::vector<bool> held = groupsOf[trigger.slot];
+			for (size_t group = 0; group < held.size(); ++group)
+				held[group] = held[group] && holder(group, trigger.end) == i;
+			selectSlot(map, slot, trigger.end, trigger.take, controllers, held, true);
 		}
 		// The attributes of the slot selected where a note starts, and of the add-on slots selected there that no
 		// later trigger of a slot with an articulation of their groups replaced.
@@ -724,11 +764,11 @@ namespace gnubase::engine::midi
 					selected.erase(std::remove_if(selected.begin(), selected.end(),
 									   [&](const Trigger* before)
 									   {
-										   const SoundSlot& other = map.slots[before->slot];
-										   if (!slot.addOn)
-											   return !other.addOn;
+										   // A slot of a group of an add-on slot takes its place (#1667).
+										   if (!slot.addOn && !map.slots[before->slot].addOn)
+											   return true;
 										   for (size_t group = 0; group < map.groups.size(); ++group)
-											   if (hasGroup(map, slot, group) && hasGroup(map, other, group))
+											   if (groupsOf[trigger.slot][group] && groupsOf[before->slot][group])
 												   return true;
 										   return false;
 									   }),
@@ -841,12 +881,14 @@ namespace gnubase::engine::midi
 			"starts}), channel (0-15, or null for the notes' own), length and velocity (percent of the notes', "
 			"1-1000), transpose (semitones), addOn (an add-on slot, not the default: its output events go besides the "
 			"slot "
-			"of the other groups, for the notes that have all its articulations), attack (Attack Compensation: ms "
-			"0-1000 the notes start earlier), separation (ms 0-1000 the key switches go before the notes, 0 for one "
-			"sample), minPitch and maxPitch, minVelocity and maxVelocity (the ranges the notes' pitch, 0-127, and "
-			"velocity, 1-127, are kept in)}; remoteTrigger, keySwitch (the default) or programChange, what selects "
-			"slots in recordings; latch, whether a key switch's slot stays after the key's release (the default) "
-			"instead of the default slot coming back. articulations and slots replace the map's whole lists. Tracks "
+			"of the other groups, for the notes that have all its articulations, on their channel; its MIDI modifiers "
+			"do nothing), attack (Attack Compensation: ms 0-1000 the notes start earlier), separation (ms 0-1000 the "
+			"output events go before the notes, but after the note before; 0: key switches one sample before, the "
+			"others with the note), minPitch and maxPitch, minVelocity and maxVelocity (the ranges the notes' pitch, "
+			"0-127, and velocity, 1-127, are kept in)}; remoteTrigger, keySwitch (the default) or programChange, what "
+			"selects slots in recordings; latch, whether a key switch's slot stays after the key's release (the "
+			"default) instead of the default slot coming back. articulations and slots replace the map's whole "
+			"lists. Tracks "
 			"use one with track.set articulationMap; each note plays the slot whose articulations are its "
 			"attributes and the directions in effect at its start, else the closest one.";
 
@@ -913,15 +955,16 @@ namespace gnubase::engine::midi
 			{"articulationMap.remoteTriggers", 1,
 				"Changes the remote triggers of an articulation map's sound slots at once (reference manual pp. "
 				"1272-1275). action transpose (Transpose All): adds semitones (negative: down; an octave is 12) to "
-				"every trigger, of every map of the project with allMaps; refused if one would leave 0-127. action "
-				"reassign (Reassign All): the slots in order get the keys from start on, of keys all (the default), "
-				"white or black (Key Mapping, key switches only; program changes are consecutive), skipping the "
-				"default slot with skipFirst, and no trigger past 127. action remove (Remove All): no slot has a "
+				"every trigger, of every map of the project with allMaps; refused if one would leave 0-127; semitones "
+				"is -127 to 127. action reassign (Reassign All): the slots in order get the keys from start on, of "
+				"keys all (the default), white or black (Key Mapping, key switches only; program changes are "
+				"consecutive), skipping the default slot with skipFirst, which keeps its trigger and no other slot "
+				"gets it, and no trigger past 127. action remove (Remove All): no slot has a "
 				"trigger. Emits articulationMap.changed for each map it changes.",
 				object(
 					{{"map", idSchema}, {"action", {{"type", "string"}, {"enum", {"transpose", "reassign", "remove"}}}},
-						{"semitones", idSchema}, {"allMaps", booleanSchema},
-						{"start", {{"type", "integer"}, {"minimum", 0}, {"maximum", 127}}},
+						{"semitones", {{"type", "integer"}, {"minimum", -127}, {"maximum", 127}}},
+						{"allMaps", booleanSchema}, {"start", {{"type", "integer"}, {"minimum", 0}, {"maximum", 127}}},
 						{"keys", {{"type", "string"}, {"enum", {"all", "white", "black"}}}},
 						{"skipFirst", booleanSchema}},
 					{"map", "action"}),
