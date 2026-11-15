@@ -208,6 +208,22 @@ namespace
 				return found;
 		return nullptr;
 	}
+
+	// Steps until the views have read the tempo event at 100 BPM that the test added, so that a slow read (under
+	// sanitizers) doesn't count as a frame's build of a time context (#1662). Each view builds one per answer: the
+	// event display, which the track list follows, the marker lines and the global lanes per project.get, the key
+	// editor and its controller lanes per the editor.get that their editor's project.get answer sends.
+	bool readTempoEvent(test::UiApp& app, const ui::EventDisplay& display)
+	{
+		return app.waitUntil(
+			[&app, &display]
+			{
+				const Json& tempo = display.project().at("tempo");
+				const ui::EngineBinding& binding = app.appUi().binding();
+				return !tempo.empty() && tempo.back().at("bpm") == 100.0 && binding.waiting("project.get") == 0 &&
+					binding.waiting("editor.get") == 0;
+			});
+	}
 }
 
 TEST_CASE("Current Tempo is the tempo at the cursor and changes the tempo event at or before it", "[unit]")
@@ -541,14 +557,7 @@ TEST_CASE("the track list watches the cursor while playing only when it has a Cu
 	const ui::EventDisplay& display = app.appUi().showProject();
 	app.call("project.set", {{"tempoTrackActive", true}});
 	app.call("tempo.add", {{"position", 2 * g_quarter}, {"bpm", 100.0}, {"ramp", false}});
-	// The UI has read the changes before playback, so that a slow read (under sanitizers) doesn't count as a frame's.
-	REQUIRE(app.waitUntil(
-		[&app, &display]
-		{
-			const Json& tempo = display.project().at("tempo");
-			return !tempo.empty() && tempo.back().at("bpm") == 100.0 &&
-				app.appUi().binding().waiting("project.get") == 0;
-		}));
+	REQUIRE(readTempoEvent(app, display));
 	app.call("audio.setDevice", {{"blockSize", 256}}); // the dummy device
 	app.call("audio.start");
 	const auto position = [&app] { return app.call("transport.get").at("position").get<int64_t>(); };
@@ -576,7 +585,7 @@ TEST_CASE("the track list watches the cursor while playing only when it has a Cu
 TEST_CASE("the track list's Current Tempo reads the display's time context, not one built per frame", "[ui]")
 {
 	test::UiApp app{{1024, 500}};
-	app.appUi().showProject();
+	const ui::EventDisplay& display = app.appUi().showProject();
 	const auto track = app.call("track.add", {{"type", "tempo"}}).at("track").at("id").get<uint64_t>();
 	const std::string row = "#track-list listitem[value=\"" + std::to_string(track) + "\"]";
 	const auto value = [&app, &row]
@@ -586,6 +595,7 @@ TEST_CASE("the track list's Current Tempo reads the display's time context, not 
 	};
 	app.call("project.set", {{"tempoTrackActive", true}});
 	app.call("tempo.add", {{"position", 2 * g_quarter}, {"bpm", 100.0}, {"ramp", false}});
+	REQUIRE(readTempoEvent(app, display));
 	REQUIRE(app.waitUntil([&value] { return value() == "120.000"; }));
 
 	// Playback carries the cursor over the tempo event; the frames that follow it read the context the display
