@@ -825,7 +825,6 @@ namespace gnubase::engine
 		ObjectId parent = 0;                // a folder track, or 0 at the top level
 		ObjectId channel = 0;               // 0 for folders without a group channel
 		std::vector<ObjectId> children;     // folders: the tracks inside, from top to bottom
-		bool groupEditing = false;          // folders: Group Editing mode (reference manual p. 274, #1579)
 		std::optional<AutoFades> autoFades; // audio tracks: settings of their own instead of the project's
 		std::string timeFormat;             // ruler tracks: one of g_rulerTimeFormats
 		bool enabled = true; // audio, instrument and MIDI tracks: a disabled one plays nothing and is silent
@@ -847,6 +846,8 @@ namespace gnubase::engine
 		// NOLINTNEXTLINE(readability-redundant-member-init): see above
 		std::vector<TrackVersion> versions = {};
 		int activeVersion = 1; // the ID of the active version
+		// Folders: Group Editing mode (reference manual p. 274, #1579). Last, so that Track{...} can leave it out.
+		bool groupEditing = false;
 	};
 
 	// Whether tracks of a type have versions: audio, instrument and MIDI tracks.
