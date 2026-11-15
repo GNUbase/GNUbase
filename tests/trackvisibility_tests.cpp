@@ -551,3 +551,84 @@ TEST_CASE("a configuration applied in a transaction hides the tracks that joined
 	CHECK(result.at("results").at(1).at("hidden") == sorted({folder, drums}));
 	CHECK(f.hidden() == sorted({folder, drums}));
 }
+
+// #1622: Add, Update and Rename Configuration send the list under a name the project may not have yet: a track hidden
+// on its own inside a hidden folder stays the configuration's when it leaves the folder, as it stays hidden.
+TEST_CASE("a new or renamed configuration keeps the tracks hidden on their own inside its folders", "[unit]")
+{
+	Fixture f;
+	const uint64_t folder = f.call("track.add", {{"type", "folder"}}).at("track").at("id").get<uint64_t>();
+	const uint64_t drums =
+		f.call("track.add", {{"type", "audio"}, {"parent", folder}, {"index", 0}}).at("track").at("id").get<uint64_t>();
+	const uint64_t other = f.track("audio").first;
+	f.call("trackVisibility.set", {{"hidden", {drums}}});
+	f.call("trackVisibility.set", {{"hidden", {folder, drums}}});
+	const Json both = sorted({folder, drums});
+	const auto moveDrums = [&](uint64_t parent)
+	{ f.call("track.move", {{"track", drums}, {"parent", parent}, {"index", 0}}); };
+
+	// Add Configuration, as the UI sends it.
+	f.call("trackVisibility.set",
+		{{"configurations", {{{"name", "Mix"}, {"hidden", both}}}}, {"configuration", "Mix"}, {"hidden", both}});
+	moveDrums(0);
+	CHECK(f.hidden() == both);
+	CHECK(f.visibility().at("configurations").at(0).at("hidden") == both);
+	CHECK(f.visibility().at("modified") == false);
+
+	// Rename Configuration of the active one, unmodified and modified.
+	moveDrums(folder);
+	f.call("trackVisibility.set",
+		{{"configurations", {{{"name", "Renamed"}, {"hidden", both}}}}, {"configuration", "Renamed"},
+			{"hidden", both}});
+	moveDrums(0);
+	CHECK(f.visibility().at("configurations").at(0).at("hidden") == both);
+	CHECK(f.visibility().at("modified") == false);
+	moveDrums(folder);
+	f.call("trackVisibility.set", {{"hidden", {other}}});
+	f.call("trackVisibility.set",
+		{{"configurations", {{{"name", "Again"}, {"hidden", both}}}}, {"configuration", "Again"}, {"hidden", {other}}});
+	moveDrums(0);
+	CHECK(f.call("trackVisibility.set", {{"configuration", "Again"}}).at("hidden") == both);
+
+	// Update Configuration takes the form of the tracks hidden now: drums only with the folder.
+	moveDrums(folder);
+	f.call("trackVisibility.set", {{"hidden", Json::array()}});
+	f.call("trackVisibility.set", {{"hidden", {folder}}});
+	f.call("trackVisibility.set", {{"configurations", {{{"name", "Again"}, {"hidden", both}}}}});
+	moveDrums(0);
+	CHECK(f.hidden() == Json{folder});
+	CHECK(f.visibility().at("configurations").at(0).at("hidden") == Json{folder});
+	CHECK(f.visibility().at("modified") == false);
+}
+
+// #1622: a trackVisibility.set in a transaction after a track edit that changes what the visibility hides announces
+// trackVisibility.changed once, with what the whole transaction left.
+TEST_CASE("a transaction announces the track visibility once", "[unit]")
+{
+	Fixture f;
+	std::mutex mutex;
+	std::vector<Json> changes;
+	const engine::Listener listener(f.engine,
+		[&](const engine::Event& event)
+		{
+			const std::scoped_lock lock(mutex);
+			if (event.name == "trackVisibility.changed")
+				changes.push_back(event.data);
+		});
+	const uint64_t folder = f.call("track.add", {{"type", "folder"}}).at("track").at("id").get<uint64_t>();
+	const uint64_t other = f.track("audio").first;
+	f.call("trackVisibility.set", {{"hidden", {folder}}});
+	{
+		const std::scoped_lock lock(mutex);
+		changes.clear();
+	}
+	const Json result = f.call("history.transaction",
+		{{"description", "Add and hide"},
+			{"commands",
+				{{{"command", "track.add"}, {"parameters", {{"type", "audio"}, {"parent", folder}, {"index", 0}}}},
+					{{"command", "trackVisibility.set"}, {"parameters", {{"hidden", {folder, other}}}}}}}});
+	const uint64_t drums = result.at("results").at(0).at("track").at("id").get<uint64_t>();
+	const std::scoped_lock lock(mutex);
+	REQUIRE(changes.size() == 1);
+	CHECK(changes[0].at("hidden") == sorted({folder, drums, other}));
+}

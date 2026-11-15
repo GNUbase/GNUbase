@@ -766,3 +766,22 @@ TEST_CASE("project rule presets: factory presets, and the user's kept in the set
 	}
 	CHECK(readJson(file).at("values").at("projectRules.presets").size() == 3); // Broken stays
 }
+
+// #1533, #1622: isHidden is set for the tracks the track visibility hides, those inside a hidden folder too, and no
+// longer for one that left the folder.
+TEST_CASE("project.findByRules finds the hidden tracks, those inside a hidden folder too", "[integration]")
+{
+	Fixture f;
+	using Ids = std::vector<ObjectId>;
+	const auto hidden = [&f]
+	{
+		return f.find({{"rules", rules({filter("property", "propertyIsSet", "isHidden")}, "select")}})
+			.at("tracks")
+			.get<Ids>();
+	};
+	CHECK(hidden().empty());
+	run(f.client, "trackVisibility.set", {{"hidden", {f.folder}}});
+	CHECK(hidden() == Ids{f.folder, f.vocals});
+	run(f.client, "track.move", {{"track", f.vocals}, {"parent", 0}, {"index", 0}});
+	CHECK(hidden() == Ids{f.folder});
+}
