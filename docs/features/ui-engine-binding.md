@@ -21,10 +21,10 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   widget's gesture, a drag, wheel turns or a held arrow key ([widgets.md](widgets.md)), as a `history.transaction`
   merged with the gesture's other steps of the same merge name into one undo step (`merge`, below; `what` without one).
   The steps of one `what` (`mixer 3 channel 5 volume`) go one at a time: while one is in flight the next waits, and a
-  newer step of the same gesture replaces the one waiting, so a fast drag sends its newest value whenever the engine has
-  answered instead of piling up commands. Steps of other gestures and steps without one (gesture 0) are never replaced.
-  A command sent with `send` that isn't a query sends the waiting steps first, so that an undo right after a drag undoes
-  all of it.
+  newer step of the same gesture and merge name replaces the one waiting, so a fast drag sends its newest value
+  whenever the engine has answered instead of piling up commands. Steps of other gestures and steps without one
+  (gesture 0) are never replaced. A command sent with `send` that isn't a query sends the waiting steps first, so that
+  an undo right after a drag undoes all of it.
 - **Controls ahead of the engine.** Views read the project again after each undo step, and an answer that the engine
   gave before it had a control's newest step is older than the control. `sending(what)` is true while a step of `what`
   is in flight or waiting; a view that shows an answer in its handler, such as the mixer, doesn't set the control then.
@@ -52,7 +52,10 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   `sendStep`'s `merge`, its last parameter, names the merge key instead of the step key, here by the selection's size
   and a hash of its ids, so a wheel gesture that goes on over the field while another event is selected is an undo step
   for each event; a newer step replaces only a waiting one of the same merge name, so the last step of each selection
-  reaches the engine. The velocity field of an in-place editor's notes does the same by note id (#1550). A value kept is
+  reaches the engine. The velocity field of an in-place editor's notes does the same by note id (#1550). A relative step
+  goes from each item's value as the field would show it, the one kept where the record has one, else the project's,
+  so a wheel turn on a wider selection moves the others by one, not by what the project still lacks of the first
+  one's kept value (#1632). A value kept is
   as old as the record unless the project was read since: a step sent while none of the record's is out and a project
   read after its last taken step is in starts what the record keeps afresh, so a value from before an undo doesn't show
   for an event selected after a step on another. A view showing what that update handed on still asks `sending` and
