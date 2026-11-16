@@ -26,8 +26,8 @@ namespace gnubase::ui
 	// stroke-color and stroke-width, and how colors that are user data show (#1312): own-fill-opacity (a number, 1 by
 	// default) is how opaque an event's body is in its own color; own-color-tint (none by default, or a color) is laid
 	// over an own color by its alpha for the event's outline and for a waveform, which otherwise use stroke-color and
-	// color; event-inset (a length, 0 by default) keeps events that far off their lane's top and bottom. ui::RmlUi
-	// does it when it starts, so every document has them.
+	// color; event-inset (a length, 0 by default) keeps events, and waveforms inside their padding, that far off their
+	// lane's top and bottom. ui::RmlUi does it when it starts, so every document has them.
 	void registerCanvas(RmlUi& rmlui);
 
 	// A stretch of a timeline, in the units of whoever fills the element: ticks, samples or seconds. The elements only

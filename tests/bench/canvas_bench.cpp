@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The canvas benchmark (#55): 10,000 events on 100 tracks under a ruler, in a window drawn through SDL_GPU with vsync
 // in the default theme, as the app draws, half of them in colors of their own (#1332), which the theme fills and tints.
-// Three phases: scrolling a zoomed-in view across and down, scrolling with
-// all 10,000 events in view, and zooming with all of them in view, which builds their geometry every frame. For each
-// it prints the frames per second against the display's refresh rate and the frames that came later than one
-// refresh. It needs a display and a GPU; build a Release configuration for meaningful numbers. Exit code 1 if a phase
-// fell behind the refresh rate.
+// Three phases: scrolling a zoomed-in view across and down, scrolling with all 10,000 events in view, and zooming
+// with all of them in view, which builds their geometry every frame. For each it prints the frames per second against
+// the display's refresh rate and the frames that came later than one refresh. It needs a display and a GPU; build a
+// Release configuration for meaningful numbers. Exit code 1 if a phase fell behind the refresh rate.
 //
 //   gnubase-canvas-bench [--seconds <per phase, default 3>]
 #include "ui/canvas.h"
