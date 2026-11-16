@@ -356,11 +356,11 @@ TEST_CASE("note.split cuts notes with their expression where it was, note.glue j
 		ContainsSubstring("must start after"));
 }
 
-TEST_CASE(
-	"glued after a split, a note loses only a point at the cut that repeated the value before it", "[integration]")
+TEST_CASE("glued after a split, a note loses only points at the cut that repeated the value before it", "[integration]")
 {
 	// Review of #1608: glue leaves out only the rest's points at its start that repeat what plays; one elsewhere that
 	// repeats the value before it, in the first part or later in the rest, stays a point through the split and glue.
+	// Review of #1676: at its start is within its first sample, so the point ten ticks after the cut goes too.
 	Setup setup;
 	Client& client = setup.client;
 	const ObjectId part = addPart(client, setup.track);
@@ -371,7 +371,7 @@ TEST_CASE(
 					{"expressions",
 						{point("tuning", 0, 0.0), point("tuning", g_beatTicks / 4, 0.0),
 							point("tuning", g_beatTicks / 2, 2.0), point("tuning", g_beatTicks, 2.0),
-							point("tuning", 3 * g_beatTicks / 2, 2.0)}}}}}})
+							point("tuning", g_beatTicks + 10, 2.0), point("tuning", 3 * g_beatTicks / 2, 2.0)}}}}}})
 						  .at("notes")
 						  .at(0);
 	const Json rest = run(client, "note.split", {{"part", part}, {"notes", {note.at("id")}}, {"position", g_beatTicks}})
