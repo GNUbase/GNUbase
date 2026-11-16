@@ -253,6 +253,12 @@ TEST_CASE("an own-color-tint outlines events with a color in stroke-width, also 
 	std::vector<float> ring = extent(vertices, tinted);
 	CHECK(ring[2] - ring[0] == 100.0F);
 	CHECK(ring[3] - ring[1] == 20.0F);
+	// The ring is stroke-width (2 pixels) wide: the event's body sits that far inside it on every side.
+	const std::vector<float> body = extent(vertices, green());
+	CHECK(body[0] - ring[0] == 2.0F);
+	CHECK(ring[2] - body[2] == 2.0F);
+	CHECK(body[1] - ring[1] == 2.0F);
+	CHECK(ring[3] - body[3] == 2.0F);
 
 	// An event reaching beyond the built frame (a view's width on each side: 1200 pixels) ends the drawn outline's
 	// width and a pixel outside it, so that outline stays out of view there.
@@ -419,8 +425,8 @@ TEST_CASE("a waveform keeps event-inset off its lane's edges inside its padding,
 	CHECK(drawn[3] == 69.0F);
 
 	// A lane no higher than twice the inset, as events drop their inset there, or one that would leave the waveform
-	// no pixel: the padding only.
-	for (const int height : {6, 7})
+	// no pixel: the padding only. Heights 6 and 7 are the first, 10 the second (content 6, area 0).
+	for (const int height : {6, 7, 10})
 	{
 		INFO(height);
 		wave.SetAttribute("style", "height: " + std::to_string(height) + "dp");
@@ -429,11 +435,17 @@ TEST_CASE("a waveform keeps event-inset off its lane's edges inside its padding,
 		CHECK(drawn[1] == content);
 		CHECK(drawn[3] == 2.0F * content);
 	}
+
+	// A lane that leaves exactly one pixel (content 7, minus the inset on both sides) keeps the inset.
+	wave.SetAttribute("style", "height: 11dp");
+	drawn = extent(fixture.draw(), green());
+	CHECK(drawn[1] == 10.0F);
+	CHECK(drawn[3] == 11.0F);
 }
 
 TEST_CASE("in the default theme a full-scale waveform stays inside its event's body", "[unit]")
 {
-	// The theme keeps events off their lanes' edges and pads waveforms by more (#1312).
+	// The theme keeps events off their lanes' edges, and waveforms off them by the same event-inset (#1312, #1332).
 	OneWindow fixture;
 	std::ifstream file(std::filesystem::path(GNUBASE_RESOURCES_DIR) / "themes" / "gnubase" / "theme.rcss");
 	REQUIRE(file);
