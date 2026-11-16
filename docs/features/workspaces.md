@@ -93,7 +93,8 @@ returns.
   `gnubase.ui.window`, `gnubase.ui.close`), which MCP clients use the same way. Close Windows with All closes every
   window but the project window; Close Windows is disabled while it would close none, such as with the project window
   selected. The list follows windows that open or close while the dialog is open, also one that opens right after
-  it. `ui_window` minimizes and restores through the window system (`WindowSystem::minimize`, `restore`).
+  it. `ui_window` minimizes and restores through the window system (`WindowSystem::minimize`, `restore`). Mode and
+  the buttons are one column as wide as a select, inside the dialog (#1788).
 
 ## Not yet
 
@@ -122,5 +123,6 @@ mode, which acts on a window's associated windows, and Reset Layout.
   when another client deletes the active global workspace, and the workspace again once it is back; the Windows
   dialog listing the project, markers and tempo track windows, following a window that opens, also right after the
   dialog, Close Windows disabled for the project window, activating and closing the
-  selected one, and closing all but the project window; the script console opened and closed by workspaces.
+  selected one, and closing all but the project window; its Mode select and buttons one column of one width inside
+  the dialog in every theme; the script console opened and closed by workspaces.
 - `tests/uitools_tests.cpp`: `ui_window` minimizing, restoring and activating a window, on the fake window system.
