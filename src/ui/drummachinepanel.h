@@ -94,6 +94,7 @@ namespace gnubase::ui
 		std::function<void(uint64_t track, const std::string& mode)> m_preset;
 		const std::string m_stepOwner;
 		Rml::ObserverPtr<Rml::Element> m_root;
+		Rml::ObserverPtr<Rml::Element> m_document; // the root's, which hears where the mouse button goes up
 		std::vector<Parameter> m_padParameters;    // pad 0's, from processor.list
 		std::vector<Parameter> m_globalParameters; // the drum machine's own
 		std::map<uint32_t, double> m_values;       // the channel's

@@ -2516,6 +2516,8 @@ namespace gnubase::app
 								else if (const std::string left = leftOut(result.value); !left.empty())
 									m_files.showNotice(
 										id, "Export Selected Tracks", "The tracks were exported without " + left + ".");
+								else if (const std::string missing = ui::missingMedia(result.value); !missing.empty())
+									m_files.showNotice(id, "Export Selected Tracks", missing);
 							});
 					});
 			}});

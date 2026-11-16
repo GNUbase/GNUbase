@@ -16,10 +16,11 @@ they are.
   or automation, and the project's busses, tempo, time signatures and fader top, and the media files of the samples
   that a sampler and drum pads play (p. 940), so that it keeps playing them when the project moves or goes; a file
   that is missing is referred to by its absolute path, as `project.save` does, so that the track can still be saved
-  (#1567). It isn't an undo step. A preset name must be a file name, as a template's must. MIDI tracks' presets keep
-  their MIDI channel and their patch (program and bank), or with `keep` `channel` or `patch` only one of them (p. 238):
-  the file has the other at its default and says which one it kept (the project's `presetKeeps`, in GNUbase's entry of
-  the file), so that loading the preset leaves the other as the track has it and new tracks from it have the default.
+  (#1567), and the result lists it (`missing`, #1614). It isn't an undo step. A preset name must be a file name, as a
+  template's must. MIDI tracks' presets keep their MIDI channel and their patch (program and bank), or with `keep`
+  `channel` or `patch` only one of them (p. 238): the file has the other at its default and says which one it kept (the
+  project's `presetKeeps`, in GNUbase's entry of the file), so that loading the preset leaves the other as the track has
+  it and new tracks from it have the default.
 - **Listing them.** `track.presets` lists the presets by name with their file and the types of their tracks, top to
   bottom, and of a preset that keeps only one of a MIDI track's channel and patch which one (`keeps`), which the Load
   dialog shows after its name ("Keys (Patch only)"). A file that isn't a readable DAWproject file is left out.
