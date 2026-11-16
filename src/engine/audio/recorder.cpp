@@ -275,6 +275,8 @@ namespace gnubase::engine
 		for (auto& entry : m_retrospective)
 		{
 			entry.second.recorded = entry.second.events.size();
+			entry.second.stoppedBefore = static_cast<size_t>(std::count_if(entry.second.events.begin(),
+				entry.second.events.end(), [](const RetrospectiveEvent& kept) { return kept.position < 0; }));
 			if (!entry.second.events.empty())
 				m_frameBase = std::max(m_frameBase, entry.second.events.back().deviceFrame + 1);
 		}
@@ -763,8 +765,9 @@ namespace gnubase::engine
 		m_midiBuilders.clear();
 		for (const MidiRecordTrack& track : m_midiCurrent.midiTracks)
 			m_midiBuilders[track.channel] = MidiTakeBuilder();
-		// The catch range: input that came just before recording started belongs to its start, unless a recording
-		// took it already. All that was kept so far is before this recording: the next one doesn't take it again.
+		// The catch range: input that came just before recording started belongs to its start, unless it came before
+		// or during an earlier recording of the track, whether that one took it or not. All that was kept so far is
+		// before this recording: the next one doesn't take it again.
 		for (const MidiRecordTrack& track : m_midiCurrent.midiTracks)
 		{
 			const auto found = m_retrospective.find(track.channel);
@@ -828,19 +831,32 @@ namespace gnubase::engine
 			return;
 		Retrospective& buffer = m_retrospective[input.channel];
 		const uint64_t frame = m_frameBase + deviceFrame + input.offset;
-		// Input after the buffer was inserted, or in stop mode after a pause or on the next device, starts it afresh.
+		// Input after the buffer was inserted starts it afresh, and so does input in stop mode while it holds input in
+		// stop mode, on the next device or after a pause since the last input, from playback or not: the insert places
+		// input in stop mode by its frames, which leave out the time the old device ran.
+		const auto stopped = [&buffer]
+		{
+			return std::any_of(buffer.events.begin(), buffer.events.end(),
+				[](const RetrospectiveEvent& kept) { return kept.position < 0; });
+		};
 		if (buffer.taken ||
-			(input.played < 0 && !buffer.events.empty() && buffer.events.back().position < 0 &&
-				(buffer.events.back().deviceFrame < m_frameBase ||
-					frame > buffer.events.back().deviceFrame + static_cast<uint64_t>(m_next.pauseFrames))))
+			(input.played < 0 &&
+				(buffer.stoppedBefore > 0 ||
+					(!buffer.events.empty() &&
+						frame > buffer.events.back().deviceFrame + static_cast<uint64_t>(m_next.pauseFrames) &&
+						stopped()))))
 		{
 			buffer.events.clear();
 			buffer.recorded = 0;
+			buffer.stoppedBefore = 0;
 		}
 		buffer.taken = false;
 		buffer.events.push_back({frame, input.played, input.event});
 		while (buffer.events.size() > m_next.retrospective)
 		{
+			if (buffer.events.front().position < 0 && buffer.events.front().deviceFrame < m_frameBase &&
+				buffer.stoppedBefore > 0)
+				--buffer.stoppedBefore;
 			buffer.events.pop_front();
 			if (buffer.recorded > 0)
 				--buffer.recorded;
