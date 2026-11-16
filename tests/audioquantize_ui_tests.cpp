@@ -511,24 +511,25 @@ TEST_CASE("Edit > Quantize on a selection range with Warp Quantize off logs the 
 	CHECK(f.positions(f.tracks[0]) == std::vector<int64_t>{2000});
 }
 
-TEST_CASE("Create Groove Quantize Preset on a selection range takes the first audio event it reaches", "[ui]")
+TEST_CASE("Create Groove Quantize Preset on a selection range takes the audio event it reaches", "[ui]")
 {
 	Fixture f;
-	// Another event of the second track's clip after the range: the groove is the one of the event at 2000 samples,
-	// starting there (#1672).
+	// Another event of the second track's clip, two quarters long, later than the one at 2000 samples and with a
+	// higher id: a range over it only makes the groove of it, starting there with its three hitpoints, not of the
+	// event at 2000 samples (#1672, #1723).
 	f.app.call("audioEvent.add",
-		{{"track", f.tracks[1]}, {"clip", f.clips[1]}, {"position", 200000}, {"offset", 0}, {"length", g_quarter}});
+		{{"track", f.tracks[1]}, {"clip", f.clips[1]}, {"position", 200000}, {"offset", 0}, {"length", 2 * g_quarter}});
 	REQUIRE(f.app.waitUntil([&] { return f.display.project().at("audioEvents").size() == 3; }));
 	f.display.setTool(ui::Tool::RangeSelection);
-	f.display.setRange(ui::RangeSelection{12000, 60000, {f.tracks[1]}});
+	f.display.setRange(ui::RangeSelection{190000, 260000, {f.tracks[1]}});
 	f.app.keys().run("edit.createGrooveQuantize", Json::object(), f.app.main(), nullptr);
 	CHECK(f.app.waitUntil(
 		[&]
 		{
 			const Json settings = f.settings();
 			const Json groove = settings.value("groove", Json());
-			return groove.is_object() && groove.at("points").size() == 4 &&
-				settings.value("origin", int64_t{0}) == time::g_ticksPerQuarter / 12;
+			return groove.is_object() && groove.at("points").size() == 3 &&
+				settings.value("origin", int64_t{0}) == time::g_ticksPerQuarter * 200000 / g_quarter;
 		}));
 }
 

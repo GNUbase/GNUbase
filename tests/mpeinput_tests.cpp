@@ -15,6 +15,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -27,6 +28,7 @@
 #include <vector>
 
 using namespace gnubase::engine;
+namespace plugin = gnubase::plugin;
 using Catch::Matchers::ContainsSubstring;
 using Type = graph::ProcessEvent::Type;
 
@@ -277,14 +279,18 @@ TEST_CASE("without Use for Tuning the notes' pitch bend stays pitch bend", "[uni
 		Lines{"bend 1", "on 1 60", "bend 1", "pressure 1 60 " + unit(30)});
 }
 
-TEST_CASE("an MPE setup reads its JSON with defaults and packs into 32 bits", "[unit]")
+TEST_CASE("an MPE setup reads its JSON with defaults and packs into 64 bits", "[unit]")
 {
 	const midi::MpeSetup defaults;
 	CHECK(defaults.toJson() == Json::parse(R"({"mode": "off", "channels": 15, "firstChannel": 1, "pitchRange": 48,
-		"tuning": true, "initialX": "off", "initialY": "off"})"));
+		"tuning": true, "initialX": "off", "initialY": "off", "xMessage": "pitchBend", "pressureMessage": "aftertouch",
+		"yMessage": "cc74", "xExpression": "tuning", "pressureExpression": "pressure",
+		"yExpression": "brightness"})"));
 	CHECK(midi::MpeSetup::fromJson(Json::object()) == defaults);
 	const midi::MpeSetup setup = midi::MpeSetup::fromJson(Json::parse(R"({"mode": "rotation", "channels": 16,
-		"firstChannel": 16, "pitchRange": 96, "tuning": false, "initialX": "center", "initialY": "max"})"));
+		"firstChannel": 16, "pitchRange": 96, "tuning": false, "initialX": "center", "initialY": "max",
+		"xMessage": "cc127", "pressureMessage": "cc0", "yMessage": "pitchBend", "xExpression": "pan",
+		"pressureExpression": "none", "yExpression": "volume"})"));
 	CHECK(setup.mode == midi::MpeSetup::Mode::Rotation);
 	CHECK(setup.channels == 16);
 	CHECK(setup.firstChannel == 16);
@@ -292,6 +298,10 @@ TEST_CASE("an MPE setup reads its JSON with defaults and packs into 32 bits", "[
 	CHECK_FALSE(setup.tuning);
 	CHECK(setup.initialX == midi::MpeSetup::Initial::Center);
 	CHECK(setup.initialY == midi::MpeSetup::Initial::Max);
+	CHECK(setup.messages == std::array<uint8_t, 3>{127, 0, midi::MpeSetup::g_pitchBend});
+	CHECK(setup.expression(midi::MpeSetup::X) == plugin::NoteExpression::Pan);
+	CHECK_FALSE(setup.expression(midi::MpeSetup::Pressure).has_value());
+	CHECK(setup.expression(midi::MpeSetup::Y) == plugin::NoteExpression::Volume);
 	const midi::MpeSetup unpacked = midi::MpeSetup::unpack(setup.pack());
 	CHECK(unpacked.toJson() == setup.toJson());
 	CHECK(midi::MpeSetup::unpack(defaults.pack()).toJson() == defaults.toJson());
@@ -303,6 +313,89 @@ TEST_CASE("an MPE setup reads its JSON with defaults and packs into 32 bits", "[
 	CHECK(midi::MpeSetup::fromJson({{"mode", "upper"}, {"channels", 16}}).channels == 15);
 	CHECK(midi::MpeSetup::fromJson({{"mode", "rotation"}, {"channels", 16}}).channels == 16);
 	CHECK(midi::MpeSetup::fromJson({{"channels", 16}}).channels == 16);
+	// Use for Tuning sets X's assignment to tuning; without it, X's tuning is none.
+	CHECK(midi::MpeSetup::fromJson({{"xExpression", "pan"}}).toJson().at("xExpression") == "tuning");
+	CHECK(midi::MpeSetup::fromJson({{"tuning", false}}).toJson().at("xExpression") == "none");
+	CHECK(midi::MpeSetup::fromJson({{"tuning", false}, {"xExpression", "pan"}}).toJson().at("xExpression") == "pan");
+	// What it doesn't know keeps the default given, such as a detected device's preset.
+	midi::MpeSetup preset;
+	preset.mode = midi::MpeSetup::Mode::Upper;
+	preset.messages.at(midi::MpeSetup::Y) = 1;
+	const midi::MpeSetup fromPreset =
+		midi::MpeSetup::fromJson({{"yMessage", "cc999"}, {"pressureExpression", "loud"}}, preset);
+	CHECK(fromPreset.mode == midi::MpeSetup::Mode::Upper);
+	CHECK(fromPreset.messages.at(midi::MpeSetup::Y) == 1);
+	CHECK(fromPreset.expression(midi::MpeSetup::Pressure) == plugin::NoteExpression::Pressure);
+}
+
+TEST_CASE("each dimension comes from its MIDI Message and plays its Note Expression Assignment", "[unit]")
+{
+	midi::MpeSetup setup;
+	setup.mode = midi::MpeSetup::Mode::Lower;
+	setup.pitchRange = 24;
+	// Pressure from CC 11, Y from aftertouch, X from CC 1, which is tuning by the pitch range from its center.
+	setup.messages = {1, 11, midi::MpeSetup::g_aftertouch};
+	midi::MpeInput input;
+	CHECK(through(input, setup,
+			  {event(Type::NoteOn, 1, 60), event(Type::Controller, 1, 11, 40), event(Type::ChannelPressure, 1, 0, 50),
+				  event(Type::Controller, 1, 1, 96), event(Type::Controller, 1, 74, 30),
+				  event(Type::PitchBend, 1, 0, 80)}) ==
+		Lines{"on 1 60", "pressure 1 60 " + unit(40), "brightness 1 60 " + unit(50),
+			"tuning 1 60 " + std::to_string(milli(midi::bendToSemitones(midi::controllerFromMidi1(96), 24))), "cc 1 74",
+			"bend 1"});
+
+	// Other expressions: pressure plays volume (0-4), Y nothing, so CC 74 passes; X without Use for Tuning plays pan.
+	setup = midi::MpeSetup();
+	setup.mode = midi::MpeSetup::Mode::Lower;
+	setup.tuning = false;
+	setup.expressions = {plugin::NoteExpression::Pan, plugin::NoteExpression::Volume, std::nullopt};
+	input.reset();
+	CHECK(through(input, setup,
+			  {event(Type::NoteOn, 2, 62), event(Type::ChannelPressure, 2, 0, 127), event(Type::Controller, 2, 74, 30),
+				  event(Type::PitchBend, 2, 0, 0)}) == Lines{"on 2 62", "volume 2 62 4000", "cc 2 74", "pan 2 62 0"});
+	// Without Use for Tuning X never plays tuning: the pitch bend stays pitch bend.
+	setup.expressions.at(midi::MpeSetup::X) = plugin::NoteExpression::Tuning;
+	CHECK(through(input, setup, {event(Type::PitchBend, 2, 0, 80)}) == Lines{"bend 2"});
+
+	// Two dimensions of one message both play, and Send Initial Value starts each at what its message would carry.
+	setup = midi::MpeSetup();
+	setup.mode = midi::MpeSetup::Mode::Lower;
+	setup.messages.at(midi::MpeSetup::Pressure) = 74;
+	setup.initialY = midi::MpeSetup::Initial::Max;
+	input.reset();
+	CHECK(through(input, setup, {event(Type::NoteOn, 1, 60), event(Type::Controller, 1, 74, 30)}) ==
+		Lines{"on 1 60", "brightness 1 60 1000", "pressure 1 60 " + unit(30), "brightness 1 60 " + unit(30)});
+}
+
+TEST_CASE("known MPE input devices are detected by their port's name", "[unit]")
+{
+	const midi::MpeDevice* linn = midi::detectMpeDevice("LinnStrument MIDI");
+	REQUIRE(linn != nullptr);
+	CHECK(std::string(linn->name) == "LinnStrument");
+	CHECK(linn->setup.mode == midi::MpeSetup::Mode::Lower);
+	CHECK(linn->setup.pitchRange == 48);
+	REQUIRE(midi::detectMpeDevice("Seaboard BLOCK M") != nullptr);
+	CHECK(std::string(midi::detectMpeDevice("Seaboard BLOCK M")->name) == "Seaboard");
+	CHECK(midi::detectMpeDevice("Keys") == nullptr);
+}
+
+TEST_CASE("an MPE input checks for room for all the points a message adds", "[unit]")
+{
+	midi::MpeSetup setup;
+	setup.mode = midi::MpeSetup::Mode::Lower;
+	midi::MpeInput input;
+	graph::EventBuffer out(1024);
+	const graph::ProcessEvent pressure = event(Type::ChannelPressure, 1, 0, 40);
+	CHECK(input.maxEvents(pressure) == 4);
+	for (uint8_t key = 0; key < 10; ++key)
+		input.process(setup, event(Type::NoteOn, 1, key), out);
+	input.process(setup, event(Type::NoteOff, 1, 0), out);
+	// Ten notes, one of them fading: a point each for each dimension of the message, and a new note's.
+	CHECK(input.maxEvents(pressure) == 34);
+	const size_t before = out.size();
+	input.process(setup, pressure, out);
+	CHECK(out.size() - before <= input.maxEvents(pressure));
+	CHECK(input.maxEvents(event(Type::ChannelPressure, 2, 0, 40)) == 4);
 }
 
 namespace
@@ -453,6 +546,80 @@ TEST_CASE("midi.setPort sets an input's MPE setup, which midi.ports lists and mi
 		ContainsSubstring("mode"));
 	CHECK_THAT(reject(client, "midi.setPort", {{"id", "MPE"}, {"input", true}, {"mpe", {{"initialX", "max"}}}}),
 		ContainsSubstring("initialX"));
+
+	// The MIDI Message and Note Expression Assignment of each dimension.
+	const Json assigned = run(client, "midi.setPort",
+		{{"id", "MPE"}, {"input", true},
+			{"mpe", {{"pressureMessage", "cc11"}, {"yMessage", "aftertouch"}, {"yExpression", "volume"}}}});
+	CHECK(assigned.at("mpe").at("pressureMessage") == "cc11");
+	CHECK(assigned.at("mpe").at("yMessage") == "aftertouch");
+	CHECK(assigned.at("mpe").at("yExpression") == "volume");
+	CHECK(assigned.at("mpe").at("xExpression") == "tuning");
+	// Use for Tuning off: X's tuning is none.
+	CHECK(run(client, "midi.setPort", {{"id", "MPE"}, {"input", true}, {"mpe", {{"tuning", false}}}})
+			  .at("mpe")
+			  .at("xExpression") == "none");
+	for (const char* message : {"cc128", "cc", "pitch", "cc074"})
+		CHECK_THAT(reject(client, "midi.setPort", {{"id", "MPE"}, {"input", true}, {"mpe", {{"xMessage", message}}}}),
+			ContainsSubstring("xMessage"));
+	CHECK_THAT(reject(client, "midi.setPort",
+				   {{"id", "MPE"}, {"input", true}, {"mpe", {{"pressureExpression", "polyPressure"}}}}),
+		ContainsSubstring("pressureExpression"));
+}
+
+TEST_CASE("a known MPE device's input is detected and starts with the device's preset settings", "[integration]")
+{
+	auto dummy = std::make_unique<gnubase::midi::DummyBackend>();
+	dummy->addLoopback("LinnStrument MIDI");
+	Setup setup(std::move(dummy));
+	Client& client = setup.client;
+	const Json ports = run(client, "midi.ports");
+	const Json linn = port(ports, "LinnStrument MIDI", true);
+	CHECK(linn.at("mpeDevice") == "LinnStrument");
+	CHECK(linn.at("mpe").at("mode") == "lower");
+	CHECK_FALSE(port(ports, "Keys", true).contains("mpeDevice"));
+	CHECK_FALSE(port(ports, "LinnStrument MIDI", false).contains("mpeDevice")); // outputs have none
+
+	// Its preset plays: the pitch bend on channel 2 is its note's tuning, which comes before its note-on as an MPE
+	// sender's initial bend.
+	run(client, "audio.render", {{"frames", 64}});
+	run(client, "midi.capture", {{"start", true}});
+	const std::unique_ptr<gnubase::midi::Output> device = setup.backend.openOutput("LinnStrument MIDI");
+	setup.play(*device, {{0x91, 60, 100}, {0xE1, 0, 96}});
+	setup.play(*device, {{0x81, 60, 0}});
+	CHECK(captured(client) == std::vector<std::vector<int64_t>>{{0xE1, 0, 96}, {0x91, 60, 100}, {0x81, 60, 0}});
+
+	// What a call leaves out stays as the preset has it. The setting keeps what differs from the preset: off too.
+	CHECK(run(client, "midi.setPort", {{"id", "LinnStrument MIDI"}, {"input", true}, {"mpe", {{"pitchRange", 24}}}})
+			  .at("mpe")
+			  .at("mode") == "lower");
+	run(client, "midi.setPort", {{"id", "LinnStrument MIDI"}, {"input", true}, {"mpe", {{"mode", "off"}}}});
+	CHECK(port(run(client, "midi.ports"), "LinnStrument MIDI", true).at("mpe").at("mode") == "off");
+	const midi::MpeDevice* known = midi::detectMpeDevice("LinnStrument");
+	REQUIRE(known != nullptr);
+	run(client, "midi.setPort", {{"id", "LinnStrument MIDI"}, {"input", true}, {"mpe", known->setup.toJson()}});
+	CHECK(run(client, "settings.get", {{"key", "midi.portSettings"}}).at("value") == Json::object());
+}
+
+TEST_CASE("midi.activity takes the MIDI input that arrived and announces it", "[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	run(client, "midi.activity");
+	CHECK(run(client, "midi.activity").at("received").empty());
+	setup.play(*setup.mpe, {{0x91, 60, 100}, {0xD1, 40}});
+	setup.play(*setup.keys, {{0xB0, 1, 64}});
+	const Json activity = run(client, "midi.activity");
+	CHECK(activity.at("dropped") == 0);
+	CHECK(activity.at("received") == Json::parse(R"([{"backend": "dummy", "id": "MPE", "bytes": [145, 60, 100]},
+		{"backend": "dummy", "id": "MPE", "bytes": [209, 40]}, {"backend": "dummy", "id": "Keys",
+		"bytes": [176, 1, 64]}])"));
+	CHECK(waitFor(client, "midi.activity") == activity);
+	// Each message once; no event without input. The runs stay out of the command log.
+	CHECK(run(client, "midi.activity").at("received").empty());
+	const Json log = run(client, "engine.commandLog");
+	for (const Json& entry : log.at("commands"))
+		CHECK(entry.at("command") != "midi.activity");
 }
 
 TEST_CASE("an MPE port's input plays to the instrument as per-note expression, another port's as MIDI", "[integration]")
@@ -663,19 +830,77 @@ TEST_CASE("a changed MPE setup starts the port's state afresh, and the note that
 	CHECK(captured(client).empty());
 }
 
+namespace
+{
+	// A MIDI track on MIDI channel 5 (4) that transposes by an octave and plays the setup's instrument,
+	// record-enabled in its place, and a capture started.
+	void midiTrackOnChannel5(Setup& setup)
+	{
+		Client& client = setup.client;
+		const auto midi = run(client, "track.add", {{"type", "midi"}}).at("channel").at("id").get<ObjectId>();
+		run(client, "channel.set", {{"channel", setup.channel}, {"recordEnable", false}});
+		run(client, "channel.set",
+			{{"channel", midi}, {"output", setup.channel}, {"midiChannel", 4}, {"recordEnable", true},
+				{"modifiers", {{"transpose", 12}}}});
+		run(client, "audio.render", {{"frames", 64}});
+		run(client, "midi.capture", {{"start", true}});
+	}
+}
+
 TEST_CASE("an MPE note's expression reaches the instrument after its note-off, while it fades", "[integration]")
 {
 	Setup setup;
 	Client& client = setup.client;
 	run(client, "midi.setPort", {{"id", "MPE"}, {"input", true}, {"mpe", {{"mode", "lower"}, {"pitchRange", 24}}}});
-	run(client, "channel.set", {{"channel", setup.channel}, {"modifiers", {{"transpose", 12}}}});
-	run(client, "audio.render", {{"frames", 64}});
-	run(client, "midi.capture", {{"start", true}});
-	// On the note that plays: the track transposes it.
+	midiTrackOnChannel5(setup);
+	// On the note that plays, transposed and on the track's MIDI channel: the bend comes on that channel, not the
+	// key's.
 	setup.play(*setup.mpe, {{0x91, 60, 100}});
 	setup.play(*setup.mpe, {{0x81, 60, 0}});
 	setup.play(*setup.mpe, {{0xE1, 0, 96}});
-	CHECK(captured(client) == std::vector<std::vector<int64_t>>{{0x91, 72, 100}, {0x81, 72, 0}, {0xE1, 0, 80}});
+	CHECK(captured(client) == std::vector<std::vector<int64_t>>{{0x94, 72, 100}, {0x84, 72, 0}, {0xE4, 0, 80}});
+}
+
+TEST_CASE("a released MPE key's expression stops when another key starts its note again", "[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	run(client, "midi.setPort", {{"id", "MPE"}, {"input", true}, {"mpe", {{"mode", "lower"}, {"pitchRange", 24}}}});
+	midiTrackOnChannel5(setup);
+	// Key 60 on channel 2 and on channel 3 play the same note on the track's channel: the second note-on ends the
+	// first key's release, so its pressure reaches nothing, while the second key's does.
+	setup.play(*setup.mpe, {{0x91, 60, 100}});
+	setup.play(*setup.mpe, {{0x81, 60, 0}});
+	setup.play(*setup.mpe, {{0x92, 60, 100}});
+	setup.play(*setup.mpe, {{0xD1, 40}});
+	setup.play(*setup.mpe, {{0xD2, 50}});
+	CHECK(captured(client) ==
+		std::vector<std::vector<int64_t>>{{0x94, 72, 100}, {0x84, 72, 0}, {0x94, 72, 100}, {0xD4, 50}});
+}
+
+TEST_CASE("midi.inject with an MPE setup waits for room for all of a message's points", "[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	run(client, "audio.render", {{"frames", 64}});
+	// 120 notes on channel 2, then pressure 7 times: a point for each of them each time, more than a block's input
+	// holds.
+	Json messages = Json::array();
+	for (int key = 0; key < 120; ++key)
+		messages.push_back({{"position", 0}, {"bytes", {0x91, key, 100}}});
+	for (int value = 1; value <= 7; ++value)
+		messages.push_back({{"position", 0}, {"bytes", {0xD1, value * 10}}});
+	run(client, "midi.capture", {{"start", true}});
+	run(client, "midi.inject",
+		{{"channel", setup.channel}, {"messages", messages}, {"mpe", {{"mode", "lower"}, {"pitchRange", 24}}}});
+	setup.render(256);
+	// Nothing is lost: the last pressure reaches every note, in a later block.
+	const Json capture = run(client, "midi.capture");
+	size_t last = 0;
+	for (const Json& each : capture.at("captured"))
+		if (each.at("bytes") == Json::array({0xD1, 70}))
+			++last;
+	CHECK(last == 120);
 }
 
 TEST_CASE("an MPE key's expression is dropped where its note doesn't play", "[integration]")
@@ -709,15 +934,23 @@ TEST_CASE("an MPE key's expression is dropped where its note doesn't play", "[in
 	setup.play(*setup.mpe, {{0xE1, 0, 96}, {0xD1, 40}, {0xA1, 60, 30}});
 	setup.play(*setup.mpe, {{0x81, 60, 0}});
 	setup.play(*setup.mpe, {{0xE1, 0, 80}});
+	// A note on channel 3 that plays (soft, another pitch): its expression arrives.
+	setup.play(*setup.mpe, {{0x92, 62, 30}});
+	setup.play(*setup.mpe, {{0xD2, 50}});
+	bool arrived = false;
 	for (const std::vector<int64_t>& message : captured(client))
 	{
 		INFO(message.at(0));
+		arrived = arrived || message == std::vector<int64_t>{0xD2, 50};
+		if ((message.at(0) & 0x0F) != 1)
+			continue;
 		const int64_t status = message.at(0) & 0xF0;
 		CHECK(status != 0xE0);
 		CHECK(status != 0xD0);
 		CHECK(status != 0xA0);
 		CHECK(status != 0x90);
 	}
+	CHECK(arrived);
 }
 
 TEST_CASE("an MPE key that was held before the track got the input plays no expression", "[integration]")

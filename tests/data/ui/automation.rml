@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- For the UI automation tools (#58): a button that opens the rename dialog (automation-dialog.rml), a search field,
-     a list that scrolls, a hidden element, and a handle to drag onto a target. -->
+     a list that scrolls, a hidden element, a handle to drag onto a target and a drop-down list. -->
 <rml>
 <head>
 	<title>Automation</title>
@@ -16,6 +16,7 @@
 		#hidden { display: none; }
 		#handle { position: absolute; left: 250dp; top: 10dp; width: 40dp; height: 40dp; drag: drag-drop; }
 		#target { position: absolute; left: 250dp; top: 100dp; width: 80dp; height: 80dp; }
+		#sound { display: inline-block; position: absolute; left: 350dp; top: 10dp; width: 100dp; height: 20dp; }
 	</style>
 </head>
 <body>
@@ -31,5 +32,9 @@
 	<p id="hidden">Not shown</p>
 	<div id="handle"/>
 	<div id="target"/>
+	<select id="sound">
+		<option value="piano">Grand  piano</option>
+		<option value="pad" selected>Warm pad</option>
+	</select>
 </body>
 </rml>

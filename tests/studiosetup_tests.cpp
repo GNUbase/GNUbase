@@ -5,16 +5,18 @@
 #include "uiapp.h"
 
 #include "platform/audio/dummydevice.h"
+#include "platform/hosttime.h"
 #include "platform/midi/dummyport.h"
 #include "ui/automation.h"
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
-#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
+#include <cstdint>
 #include <cstdlib>
 #include <memory>
 #include <optional>
@@ -145,14 +147,7 @@ namespace
 	// The text of the dialog's drop-down list's selected option.
 	std::string selected(test::UiApp& app, const std::string& id)
 	{
-		Rml::Element* element = nullptr;
-		for (int i = 0; element == nullptr && i < app.main().context().GetNumDocuments(); ++i)
-			element = app.main().context().GetDocument(i)->GetElementById(id);
-		auto* select = dynamic_cast<Rml::ElementFormControlSelect*>(element);
-		REQUIRE(select != nullptr);
-		const Rml::Element* option = select->GetOption(select->GetSelection());
-		REQUIRE(option != nullptr);
-		return option->GetInnerRML();
+		return test::selectedOption(app, "#" + id);
 	}
 
 	bool open(test::UiApp& app)
@@ -275,7 +270,95 @@ TEST_CASE("the studio setup dialog's Note Expression Input page sets up a MIDI i
 	click(app, "#ok");
 	CHECK(closed(app));
 	CHECK(port(app.call("midi.ports"), "Keys", true).at("mpe") == Json::parse(R"({"mode": "rotation", "channels": 15,
-		"firstChannel": 2, "pitchRange": 24, "tuning": false, "initialX": "off", "initialY": "center"})"));
+		"firstChannel": 2, "pitchRange": 24, "tuning": false, "initialX": "off", "initialY": "center",
+		"xMessage": "pitchBend", "pressureMessage": "aftertouch", "yMessage": "cc74", "xExpression": "none",
+		"pressureExpression": "pressure", "yExpression": "brightness"})"));
+}
+
+TEST_CASE("the Note Expression Input page sets each dimension's MIDI Message and Note Expression Assignment", "[ui]")
+{
+	test::UiApp app({900, 640}, keyboard());
+	openDialog(app);
+	click(app, "#devices-mpe");
+	const std::string fields = ".mpe-port.shown ";
+	CHECK(element(app, fields + "select.mpe-pressure-message").at("value") == "aftertouch");
+	CHECK(element(app, fields + "select.mpe-y-message").at("value") == "cc74");
+	// With Use for Tuning, X plays tuning: its assignment can't change.
+	CHECK(element(app, fields + "select.mpe-x-expression").at("value") == "tuning");
+	CHECK(element(app, fields + "select.mpe-x-expression").at("attributes").contains("disabled"));
+	choose(app, fields + "select.mpe-pressure-message", -13); // CC 11, after Aftertouch, Pitchbend and CC 0 to 10
+	CHECK(element(app, fields + "select.mpe-pressure-message").at("value") == "cc11");
+	choose(app, fields + "select.mpe-y-expression", 5); // Volume, five above Brightness
+	CHECK(element(app, fields + "select.mpe-y-expression").at("value") == "volume");
+	// Off, X plays none and can be another expression; Tuning turns it on again.
+	click(app, fields + "input.mpe-tuning");
+	CHECK(element(app, fields + "select.mpe-x-expression").at("value") == "none");
+	CHECK_FALSE(element(app, fields + "select.mpe-x-expression").at("attributes").contains("disabled"));
+	choose(app, fields + "select.mpe-x-expression", -2); // Pan, below None and Volume
+	CHECK(element(app, fields + "select.mpe-x-expression").at("value") == "pan");
+	click(app, "#apply");
+	Json mpe = port(app.call("midi.ports"), "Keys", true).at("mpe");
+	CHECK(mpe.at("pressureMessage") == "cc11");
+	CHECK(mpe.at("yExpression") == "volume");
+	CHECK(mpe.at("tuning") == false);
+	CHECK(mpe.at("xExpression") == "pan");
+	choose(app, fields + "select.mpe-x-expression", -1); // Tuning, below Pan
+	CHECK(element(app, fields + "input.mpe-tuning").at("attributes").contains("checked"));
+	CHECK(element(app, fields + "select.mpe-x-expression").at("attributes").contains("disabled"));
+	click(app, "#ok");
+	CHECK(closed(app));
+	mpe = port(app.call("midi.ports"), "Keys", true).at("mpe");
+	CHECK(mpe.at("tuning") == true);
+	CHECK(mpe.at("xExpression") == "tuning");
+}
+
+TEST_CASE("a detected MPE device has a page, and the MIDI Activity display shows its input", "[ui]")
+{
+	auto backend = std::make_unique<midi::DummyBackend>();
+	backend->addLoopback("Keys");
+	backend->addLoopback("LinnStrument MIDI");
+	midi::DummyBackend& dummy = *backend;
+	std::vector<std::unique_ptr<midi::Backend>> backends;
+	backends.push_back(std::move(backend));
+	test::UiApp app({900, 640}, std::move(backends));
+	openDialog(app);
+	// Its page, named after the device, is the Note Expression Input page with its input, with its preset.
+	const Json item = element(app, ".devices-mpe-device");
+	CHECK(item.at("text") == "LinnStrument");
+	click(app, ".devices-mpe-device");
+	CHECK(element(app, "#page-mpe").at("visible") == true);
+	CHECK(selected(app, "mpe-input") == "LinnStrument MIDI");
+	const std::string fields = ".mpe-port.shown ";
+	CHECK(element(app, fields + ".mpe-device").at("text") == "LinnStrument");
+	CHECK(element(app, fields + "select.mpe-mode").at("value") == "lower");
+
+	// The device plays: its messages show, the newest last, as midi.activity announces them.
+	const std::unique_ptr<midi::Output> device = dummy.openOutput("LinnStrument MIDI");
+	for (const std::vector<uint8_t>& bytes :
+		std::vector<std::vector<uint8_t>>{{0x91, 60, 100}, {0xE1, 0, 64}, {0xB1, 74, 30}})
+	{
+		audio::MidiMessage message;
+		message.size = static_cast<uint8_t>(bytes.size());
+		std::copy(bytes.begin(), bytes.end(), message.bytes.begin());
+		device->send(message, hostTime() - 1000000000);
+	}
+	// Offline the engine doesn't run midi.activity itself.
+	if (!app.call("audio.get").at("running").get<bool>())
+	{
+		app.call("audio.render", {{"frames", 128}});
+		app.call("midi.activity");
+	}
+	const std::string activity = fields + ".mpe-activity";
+	CHECK(app.waitUntil([&app, &activity] { return elements(app, activity + " .mpe-message").size() == 3; }));
+	const Json lines = elements(app, activity + " .mpe-message");
+	REQUIRE(lines.size() == 3);
+	CHECK(lines[0].at("text") == "Ch 2 Note On 60 100");
+	CHECK(lines[1].at("text") == "Ch 2 Pitchbend 8192");
+	CHECK(lines[2].at("text") == "Ch 2 CC 74 30");
+	// Another input's activity shows on its own fields.
+	choose(app, "#mpe-input", 1);
+	CHECK(selected(app, "mpe-input") == "Keys");
+	CHECK(elements(app, activity + " .mpe-message").empty());
 }
 
 TEST_CASE("the Note Expression Input page keeps each MIDI input's edits, and its input after Apply", "[ui]")

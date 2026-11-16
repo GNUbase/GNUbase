@@ -41,10 +41,16 @@ Each command is one undo step and changes nothing if it fails; `range.copy` chan
   sample goes with the part, and one on the downbeat of a part that starts in the end sample stays with that part, also
   when Delete Time moves it back; inserting silence there moves it later with the part. A terminator stays where its
   tick is: an edge on it would fill the gap it starts. Delete Time closes the gap by the range's length in ticks, as
-  the events after it move, but the curve after the range goes on no earlier than the last point that stays before it
-  and not before the project's start: with the end edge on a point in its sample, the range's length could put that
-  point up to half a sample before the start tick, before a terminator that stays there or before tick 0. Then the
-  points after the range move back by less than the events, by less than a sample.
+  the events after it move, so the points after the range stay with their events. With the end edge on a point in its
+  sample, that length puts the point, and the part on its downbeat, up to half a sample before the start tick, half a
+  sample at the end's tempo: at a slower tempo at the start that can be more than a sample there. A point that stays
+  before the range but lies after where the curve after it goes on, a terminator just before the start tick or a point
+  in the sample before the range's, moves onto that joint, ahead of the curve that goes on there, so that no gap
+  swallows what comes after the range and nothing passes what stays. Events don't move onto the joint: one that lands
+  there can pass an event that stays just before the range in ticks. From sample 0, tick 0, or with a faster tempo at
+  the end from a sample just after it, the length would put such a part, its point or an event of an audio part cut in
+  that sample before tick 0: there everything after the range, events, points and transpose events, moves back by less,
+  by the ticks that put the first of it on tick 0, and keeps its distances in ticks.
 - **The clipboard** is the engine's, so MCP, Lua and the UI share it; it isn't part of the project or of undo. It keeps
   copies of the events, parts and points, so cutting and deleting the originals doesn't change it. A new or opened
   project empties it, since it holds the old project's track and clip ids. `range.paste` goes
@@ -79,10 +85,14 @@ Each command is one undo step and changes nothing if it fails; `range.copy` chan
   to the range's own start, keeps the bar's tick. Not at position 0, the project's start, which is tick 0 exactly:
   there the first lands on tick 0. The automation on musical tracks moves by the same shift as the events, so a point
   on a part's downbeat stays on it, and nothing lands before tick 0: where the range's automation starts before the
-  first event, at a point in the start sample or at the start's tick, at position 0 its first point lands on tick 0
-  and the events as many ticks after it. `range.paste` lands the same way at its `position`, and so does what
-  `arranger.flatten` pastes. Not yet: a `position` in ticks, so that a drag that snaps to a bar lands on the bar's own
-  tick.
+  first event, at a point in the start sample or at the start's tick, at position 0 the events land as without it and
+  what of the automation would land before tick 0 lands on tick 0, in its order, so that a part on a bar lands on
+  tick 0 and the curve goes on from there as the last of those points shapes it, the one on the part's downbeat if it
+  has one. No event lands before tick 0 either, where one lies before the first that starts in the range's start sample:
+  pasted at another tempo than it was copied at, where it no longer lies in that sample, or an event of an audio part
+  cut in the sample it starts in, which stays whole in the piece after the cut, starting before it. Then the earliest of
+  them lands on tick 0. `range.paste` lands the same way at its `position`, and so does what `arranger.flatten` pastes.
+  Not yet: a `position` in ticks, so that a drag that snaps to a bar lands on the bar's own tick (#1785).
 - **Global copy** copies every track between the locators: the events, parts and automation. Markers, the tempo and
   the signatures stay where they are.
 
@@ -129,14 +139,26 @@ line's range fields, the range in the editors (they come with their tickets), an
   on the second part's tick, and no piece left behind; at such tempos two parts on two tracks on the first and the last
   tick of the range's start sample, with modulation points on both ticks, and the piece of a third track's part cut
   there, the first of them in ticks landing at the position and the others and the points as many ticks after it as
-  before, moved, copied and pasted; parts on two bars cut and pasted where they were and moved to the range's own
-  start, keeping their bars' ticks; `range.delete` up to the sample the next part starts in, with and without Delete
-  Time, `range.insertSilence` from that sample and `range.crop` to that part's own samples, leaving it whole with the
-  note and the modulation point on its downbeat; `range.delete` from the sample a terminator lies in, before the
-  tick nearest to it, leaving the lane as it was; moving, copying and pasting to position 0 from the sample of a part
-  on a bar, the part landing on tick 0, and with a modulation point in that sample before the part's tick the point
-  landing there and the part as many ticks after it; and Delete Time with its end edge on a point before the end tick,
-  the whole lane compared: after a terminator a tick before the start tick, from sample 0 without points before tick
-  0, and with a faster tempo at the end after a point just before the range's start sample.
+  before, moved, copied and pasted, and the points in that sample gone from where they were after moving, cutting and
+  deleting the range; parts on two bars cut and pasted where they were and moved to the range's own start, keeping their
+  bars' ticks; `range.delete` up to the sample the next part starts in, with and without Delete Time,
+  `range.insertSilence` from that sample and `range.crop` to that part's own samples, leaving it whole with the note and
+  the modulation point on its downbeat; `range.delete` from the sample a terminator lies in, before the tick nearest to
+  it, leaving the lane as it was; moving, copying and pasting to position 0 from the sample of a part on a bar, the part
+  landing on tick 0, also with a modulation point in that sample before the part's tick or a lane whose copy starts at
+  the range's start tick before it, those points landing on tick 0 too and the part's downbeat point last there; pasting
+  to position 0 at a slower tempo than the copy's, the part landing on tick 0; moving to position 0 from, and Delete
+  Time from sample 0 up to, the sample an audio part's event on a bar starts in, before the tick nearest to it, the
+  event landing on tick 0 and the part's piece as many ticks after it as before; an audio part trimmed at its start with
+  its take hidden a bar before it, Delete Time and moving it refused where they would put the take before the project
+  start, and closing and landing by the whole length where they don't; `arranger.flatten` of a chain whose first event
+  starts on a bar, the part on that bar keeping the bar's tick; and Delete Time with its end edge on a point before the
+  end tick, the parts after the range and the whole lane compared: past a terminator a tick before the start tick, which
+  moves onto the joint; from sample 0, with and without a lane and also as Cut Time, the part on the downbeat, the point
+  on it and a transpose event landing on tick 0 and the next part on the next bar, and without the part a transpose
+  event alone landing on tick 0 and a lane's point alone keeping the next part and the point on its downbeat together on
+  the next bar; from sample 1 with a faster tempo at the end, the part and its point landing on tick 0 where the length
+  would put them before it; and with a faster tempo at the end past a point just before the range's start sample, which
+  moves onto the joint.
 - `tests/eventediting_tests.cpp` (fake window system, real engine): the commands exist; split, Delete Time, cut and
   paste on a selection range, which stays; paste at the cursor without a range, selecting what it pasted.
