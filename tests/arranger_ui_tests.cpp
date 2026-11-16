@@ -231,6 +231,26 @@ TEST_CASE("the draw tool draws arranger events over others, snapped to their edg
 	CHECK(window.events()[1].at("end") == 6 * g_quarter);
 }
 
+TEST_CASE("a click just after a bar line draws an arranger event that holds it, whatever its start snaps to", "[ui]")
+{
+	// With the snap type Events, a click's start can snap back over a bar line to an arranger event's edge: the event
+	// drawn still ends at the bar line after the click, not the one after its start (#1696).
+	Window window;
+	window.app.call("snap.set", {{"type", "events"}});
+	const double near = 3.0 * window.display.view().scale; // 3 dp in seconds, within the magnets' reach
+	const auto edge = (16 * g_quarter) - std::llround(near * 2.0 * static_cast<double>(g_quarter)); // 8 s - near
+	window.app.call("arranger.add", {{"position", 12 * g_quarter}, {"end", edge}});
+	REQUIRE(window.app.waitUntil([&] { return window.shown(".arranger-lane-event") == 1; }));
+	REQUIRE(window.app.waitUntil([&] { return !window.hasClass(".arranger-lane-row", "hidden"); }));
+	window.display.setTool(ui::Tool::Draw);
+
+	window.app.ui().click(std::nullopt, {"", 0, window.at(8.0 + near)}, ui::MouseButton::Left, 1, {});
+	REQUIRE(window.app.waitUntil([&] { return window.events().size() == 2; }));
+	const Json drawn = window.events()[1];
+	CHECK(std::abs(drawn.at("position").get<int64_t>() - edge) < g_quarter / 16);
+	CHECK(drawn.at("end") == 20 * g_quarter);
+}
+
 TEST_CASE("the arranger track's lane says why the engine refused a draw", "[ui]")
 {
 	// #1597: the lane reports refused edits as the event display's own edits do.

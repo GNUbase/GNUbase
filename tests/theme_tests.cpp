@@ -599,6 +599,26 @@ TEST_CASE("every theme marks the arranger editor's row that is playing", "[unit]
 	}
 }
 
+TEST_CASE("every theme draws the arranger event being drawn as an outline", "[unit]")
+{
+	// The arranger track's lane (docs/features/arranger.md) shows the event being drawn as an
+	// .arranger-lane-event.drawing while the button is down: without a fill, so that it doesn't look like an event the
+	// engine has (#1696). The rule lives in the generated style sheets (tools/skin/generate.py).
+	for (const char* theme : g_themes)
+	{
+		INFO("theme " << theme);
+		std::string drawing;
+		for (const auto& [selector, declarations] : rules(gnubase::test::readText(themesDir() / theme / "theme.rcss")))
+		{
+			const size_t first = selector.find_first_not_of(" \t");
+			const std::string name = selector.substr(first, selector.find_last_not_of(" \t\r") + 1 - first);
+			if (name == ".arranger-lane-row .arranger-lane-event.drawing")
+				drawing = declarations;
+		}
+		CHECK(drawing.find("background-color: transparent") != std::string::npos);
+	}
+}
+
 TEST_CASE(
 	"only the default theme tints events and keeps them off their lanes' edges; no theme pads waveforms", "[unit]")
 {
