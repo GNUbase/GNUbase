@@ -237,7 +237,7 @@ TEST_CASE(
 	};
 	// The lane with the keyboard focus, which the themes frame inside its header (articulation lanes take it on a
 	// click).
-	const ui::Window* editor = f.app.shell().find(*f.window);
+	const ui::Window* editor = f.window ? f.app.shell().find(*f.window) : nullptr;
 	REQUIRE(editor != nullptr);
 	Rml::Element* focused = nullptr;
 	for (int i = 0; i < editor->context().GetNumDocuments() && focused == nullptr; ++i)
