@@ -2691,9 +2691,3 @@ colorpicker valuefield
 {
 	width: 84dp;
 }
-
-/* Tracks whose render input is locked until its background job ends. */
-#track-list listitem.rendering .track-name
-{
-	font-style: italic;
-}

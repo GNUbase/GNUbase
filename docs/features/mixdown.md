@@ -87,3 +87,10 @@ job's completed `result` has the same `{files}` shape as the former synchronous 
 `tests/renderinplace_tests.cpp` also checks that a second client can edit and remove an exported track while the job is
 held, without changing its audio, and that exports take no track locks. `tests/mixdown_ui_tests.cpp` drives the real
 export dialog, the render progress and Cancel through the automation API.
+
+Private background renders retain only the selected channels or busses and their upstream audio and MIDI dependencies.
+Routing indices are remapped within that snapshot; unrelated plugins and sampler reads are left out. A slot that was
+active in the live engine must become active in the private renderer too, or the job fails rather than silently
+exporting without that plugin. `tests/renderinplace_tests.cpp` checks that a group export instantiates its upstream
+plugin without unrelated slots, and that a private plugin failure fails freeze and render in place without changing
+history or leaving tracks locked.

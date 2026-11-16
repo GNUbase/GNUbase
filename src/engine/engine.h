@@ -3,6 +3,7 @@
 
 #include "engine/clock.h"
 #include "engine/jobs/jobs.h"
+#include "engine/plugins/slotinstances.h"
 #include "engine/schema.h"
 #include "platform/audio/device.h"
 #include "platform/midi/port.h"
@@ -272,6 +273,8 @@ namespace gnubase::engine
 		// For tests: reads the samplers' samples asked for from now on with read instead of processors::sharedSample,
 		// e.g. to hold a read back (AudioEngine::setSampleReader). Any thread.
 		void setSampleReader(std::function<std::shared_ptr<const processors::Sample>(const std::string& path)> read);
+		// Substitute the private render's plugin factory for tests; set before issuing render commands.
+		void setRenderPluginFactory(plugins::SlotInstances::Factory factory);
 		// For tests: how long an offline render waits for the samplers' samples before it logs a warning and waits
 		// again, 30 s unless set, 20 rounds at most before it fails (AudioEngine::setOfflineSampleWait). Any thread.
 		void setOfflineSampleWait(std::chrono::milliseconds wait);

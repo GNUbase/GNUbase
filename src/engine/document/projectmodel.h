@@ -243,7 +243,8 @@ namespace gnubase::engine
 		// name.
 		Project loadTemplate(const std::string& name) const;
 		// Records what changed since before as a step; one with a merge key joins the last step if that has the key.
-		void record(std::string action, const Project& before, CommandContext& context, std::string merge = {});
+		void record(std::string action, const Project& before, ProjectChange change, CommandContext& context,
+			std::string merge = {});
 		Json undoOrRedo(CommandContext& context, Direction direction);
 		Json transaction(Project& project, CommandContext& context);
 		Json join(CommandContext& context);
@@ -252,7 +253,9 @@ namespace gnubase::engine
 
 		struct TrackRender;
 		static Json renderInput(const Project& project, const TrackRender& render);
-		void checkRenderLocks(const Project& project) const;
+		void checkRenderLocks(const Project& project, const std::vector<const ProjectChange*>& changes) const;
+		static bool affectsRender(const ProjectChange& change, const TrackRender& render);
+		std::string renderAction(uint64_t token) const;
 		void checkRenderMove(ObjectId track) const;
 		Json startTrackRender(Engine& engine, const std::shared_ptr<TrackRender>& render, CommandContext& context);
 		void endTrackRender(uint64_t token, CommandContext& context);

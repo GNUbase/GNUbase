@@ -893,6 +893,7 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
                                   "border-bottom-color": c["border"]}),
         (".track-list listitem.disabled", {"color": c["textMuted"]}),
         (".track-list listitem.frozen", {"color": c["textMuted"]}),
+        (".track-list listitem.rendering .track-name", {"font-style": "italic"}),
         (".track-list .drop-line", {"background-color": c["accent"]}),
         (".track-list .track-controls input.current-tempo, .track-list .track-controls select.tempo-type",
          {"font-size": f"{sizes['small']}dp"}),

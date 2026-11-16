@@ -669,3 +669,19 @@ TEST_CASE("the shared style sheets leave font sizes to the themes", "[unit]")
 		gnubase::test::readText(std::filesystem::path(GNUBASE_RESOURCES_DIR) / "styles" / "base.rcss");
 	CHECK(base.find("font-size") == std::string::npos);
 }
+
+TEST_CASE("rendering track appearance belongs to each theme", "[unit]")
+{
+	const std::string base =
+		gnubase::test::readText(std::filesystem::path(GNUBASE_RESOURCES_DIR) / "styles" / "base.rcss");
+	CHECK(base.find("listitem.rendering") == std::string::npos);
+	for (const char* theme : g_themes)
+	{
+		INFO(theme);
+		const auto sheet = rules(gnubase::test::readText(themesDir() / theme / "theme.rcss"));
+		const auto found = std::find_if(sheet.begin(), sheet.end(),
+			[](const auto& rule) { return rule.first.find("listitem.rendering .track-name") != std::string::npos; });
+		REQUIRE(found != sheet.end());
+		CHECK(found->second.find("font-style: italic") != std::string::npos);
+	}
+}

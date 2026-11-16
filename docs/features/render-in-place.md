@@ -12,18 +12,21 @@ its request, takes a render snapshot and locks the affected tracks before return
 on the job thread; the command thread remains available to every client. The lock protects rendered input, including the
 source track, its inserts, channel settings, intersecting audio events, clips and media, MIDI parts and tracks routed to
 a rendered instrument. Commands that change protected input fail atomically with "being rendered", including
-transactions and undo/redo. Other tracks and audio events outside the rendered range remain editable. A track being
-rendered cannot be deleted or moved, and replacing the project is refused until its track jobs end. Read-only queries
-and saving remain available.
+transactions and undo/redo. Other tracks and audio events outside the rendered range remain editable, as do track
+version names and channel input, MIDI input and input-transformer settings, which only affect live input. The lock check
+reuses the edit or undo step's object difference and compares render input only when a relevant object or project-wide
+render setting changes. A track being rendered cannot be deleted or moved, and replacing the project is refused until
+its track jobs end. Read-only queries and saving remain available.
 
 On completion the job posts its project edit to the command thread: freezing the sources or adding all rendered tracks
-and applying the source-track option is one undo step, after any edits made elsewhere while it ran. The render lock is
-temporary state, outside the project file and undo history. Completion, failure and cancellation release it; failure and
-cancellation also remove the files made by the job. `track.renderLocks` reports active locks and job ids;
-`track.renderingChanged` announces `{tracks, job, rendering}`. The UI follows these through the engine API, styles track
-rows with `.rendering` in RCSS, and shows nonmodal progress with Cancel. Closing progress also cancels its job, using
-the backup progress lifecycle. A track job owns its prepared work and sample leases until it exits, so engine shutdown
-joins it and releases those leases before destroying the live audio engine's sample loader.
+and applying the source-track option is one undo step, named "Freeze" or "Render in place", after any edits made
+elsewhere while it ran. The render lock is temporary state, outside the project file and undo history. Completion,
+failure and cancellation release it; failure and cancellation also remove the files made by the job. `track.renderLocks`
+reports active locks and job ids; `track.renderingChanged` announces `{tracks, job, rendering}`. The UI follows these
+through the engine API, styles track rows with `.rendering` in each generated theme's RCSS, and shows nonmodal progress
+with Cancel. Closing progress also cancels its job, using the backup progress lifecycle. A track job owns its prepared
+work and sample leases until it exits, so engine shutdown joins it and releases those leases before destroying the live
+audio engine's sample loader.
 
 `track.freeze` and `track.renderInPlace` are command version 2. Their names and parameters stay, but they return `{job}`
 immediately. The completed job's `result` keeps the former synchronous result: `{tracks}` for freeze, `{tracks, media,
@@ -147,3 +150,8 @@ the rendering state class, progress and Cancel for all three background render c
 A shutdown regression in `tests/renderinplace_tests.cpp` stops command posting during an active multi-track freeze or
 render in place, checking that the job releases sample leases before the live loader is destroyed and removes its
 partial files.
+
+The follow-up regressions in `tests/renderinplace_tests.cpp` check the completed undo names, version renaming and live
+input changes during a render, and refusal of undo and redo that would change a locked track's pre gain, preserving both
+project and history. They also check that newly routed MIDI and newly inserted plugins remain protected.
+`tests/theme_tests.cpp` checks the rendering-state style in every generated theme.
