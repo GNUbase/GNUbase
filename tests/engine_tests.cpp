@@ -510,6 +510,35 @@ TEST_CASE("a NaN is outside every minimum and maximum", "[unit]")
 			CHECK(!validate(number, {{"type", "number"}, {bound, 0}}).empty());
 }
 
+TEST_CASE("infinities report the bound on their side or require a finite number", "[unit]")
+{
+	const double infinity = std::numeric_limits<double>::infinity();
+	for (const auto& [lower, message] :
+		{std::pair{"minimum", "scale must be at least 0"}, std::pair{"exclusiveMinimum", "scale must be more than 0"}})
+	{
+		const Json schema = {{lower, 0}};
+		CHECK(validate(-infinity, schema, "scale") == message);
+		CHECK(validate(infinity, schema, "scale") == "scale must be a finite number");
+		for (const auto& [upper, upperMessage] : {std::pair{"maximum", "scale must be at most 1"},
+				 std::pair{"exclusiveMaximum", "scale must be less than 1"}})
+		{
+			Json range = schema;
+			range[upper] = 1;
+			CHECK(validate(infinity, range, "scale") == upperMessage);
+			CHECK(validate(-infinity, range, "scale") == message);
+		}
+	}
+	for (const auto& [upper, message] :
+		{std::pair{"maximum", "scale must be at most 1"}, std::pair{"exclusiveMaximum", "scale must be less than 1"}})
+	{
+		const Json schema = {{upper, 1}};
+		CHECK(validate(infinity, schema, "scale") == message);
+		CHECK(validate(-infinity, schema, "scale") == "scale must be a finite number");
+	}
+	CHECK(validate(infinity, {{"type", "number"}}, "scale").empty());
+	CHECK(validate(-infinity, {{"type", "number"}}, "scale").empty());
+}
+
 TEST_CASE("schema references describe every enforced bound", "[unit]")
 {
 	CHECK(schemaType(Json::parse(R"({"type":"string","minLength":1,"maxLength":3})")) ==

@@ -103,17 +103,22 @@ namespace gnubase::engine
 			// Written so that a NaN, which an in-process client such as Lua can send, is outside the range: every
 			// comparison with it is false (#1131).
 			if (const auto minimum = schema.find("minimum");
-				minimum != schema.end() && (!std::isfinite(number) || number < minimum->get<double>()))
+				minimum != schema.end() && !(number >= minimum->get<double>()))
 				return name + " must be at least " + minimum->dump();
 			if (const auto maximum = schema.find("maximum");
-				maximum != schema.end() && (!std::isfinite(number) || number > maximum->get<double>()))
+				maximum != schema.end() && !(number <= maximum->get<double>()))
 				return name + " must be at most " + maximum->dump();
 			if (const auto minimum = schema.find("exclusiveMinimum");
-				minimum != schema.end() && (!std::isfinite(number) || number <= minimum->get<double>()))
+				minimum != schema.end() && !(number > minimum->get<double>()))
 				return name + " must be more than " + minimum->dump();
 			if (const auto maximum = schema.find("exclusiveMaximum");
-				maximum != schema.end() && (!std::isfinite(number) || number >= maximum->get<double>()))
+				maximum != schema.end() && !(number < maximum->get<double>()))
 				return name + " must be less than " + maximum->dump();
+			// An infinity can satisfy a one-sided range, but bounded numbers must still be finite (#1228).
+			if (!std::isfinite(number) &&
+				(schema.contains("minimum") || schema.contains("maximum") || schema.contains("exclusiveMinimum") ||
+					schema.contains("exclusiveMaximum")))
+				return name + " must be a finite number";
 		}
 		if (value.is_array())
 		{

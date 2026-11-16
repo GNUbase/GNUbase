@@ -5,9 +5,10 @@ The shared engine validator checks the constraints listed in `src/engine/schema.
 `minProperties` themselves so they can explain which change is needed. Pattern matching is bounded and regex
 compilation or matching errors become validation errors, including when settings are loaded.
 
-Every numeric bound rejects NaN and infinities, including exclusive bounds. Unbounded numbers retain their existing
-behavior. Bounds compare as doubles; schemas do not place integer bounds near the precision limit of a double.
-The generated Lua reference and MCP catalogue show string lengths, array sizes and inclusive and exclusive bounds.
+Numeric bounds reject NaN and infinities. Infinities report the bound on their side; if the schema only bounds the other
+side, validation requires a finite number. Unbounded numbers retain their existing behavior. Bounds compare as doubles;
+schemas do not place integer bounds near the precision limit of a double. The generated Lua reference and MCP catalogue
+show string lengths, array sizes and inclusive and exclusive bounds.
 
 Tests guard the engine, settings and MCP UI tool schemas against unknown keywords, invalid keyword types and
 patterns without a safe length limit. Synthetic bad schemas test the guards themselves. Command regressions cover
@@ -21,5 +22,7 @@ Lengths count UTF-8 code points, not bytes. As before, stray continuation bytes 
 a byte limit also bounds pattern inputs. Settings values rejected by a schema use the setting's default as a whole,
 and modifying that setting subsequently writes the default-based value. This retains the store's existing policy.
 
-Checks: `engine_tests.cpp`, `uitools_tests.cpp`, `scripting_tests.cpp`, `inplaceeditor_tests.cpp`, and the mixdown,
-render-in-place, channel-settings and playback command tests.
+Checks: `engine_tests.cpp` covers exact infinity error messages for all four bounds and one-sided ranges.
+`tracklayout_tests.cpp` checks the command's height-bound messages. Other coverage is in `uitools_tests.cpp`,
+`scripting_tests.cpp`, `inplaceeditor_tests.cpp`, and the mixdown, render-in-place, channel-settings and playback command
+tests.
