@@ -8,8 +8,9 @@
 <head>
 	<title>Key Commands</title>
 	<style>
-		/* The dialog stays inside the window: its rows between the title and the message row scroll when the window is
-		   too short for them, so the buttons stay in view. */
+		/* The dialog stays inside the window: it is at most 85% of the window's height (vh, a size relative to the
+		   window, which dp can't say), and its rows between the title and the message row scroll when that is too short
+		   for them, so the buttons stay in view. */
 		dialog
 		{
 			display: flex;
@@ -17,6 +18,11 @@
 			width: 900dp;
 			box-sizing: border-box;
 			max-height: 85vh;
+		}
+
+		.dialog-titlebar, .footer
+		{
+			flex-shrink: 0;
 		}
 
 		#keycommands-body
@@ -969,7 +975,7 @@
 				</div>
 			</div>
 		</div>
-		<div class="row">
+		<div class="row footer">
 			<div id="keycommands-message"/>
 			<button id="keycommands-apply" onclick="KeyCommands.apply(document)">Apply</button>
 			<button id="keycommands-cancel" result="cancel">Cancel</button>

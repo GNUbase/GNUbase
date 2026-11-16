@@ -11,7 +11,11 @@
 #include "ui/enginebinding.h"
 #include "ui/keycommands.h"
 
+#include <RmlUi/Core/ComputedValues.h>
+#include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/ElementDocument.h>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
@@ -827,6 +831,16 @@ namespace
 		return element(app, selector).at("box");
 	}
 
+	// The element of RmlUi's tree with this id, in any document of the main window.
+	Rml::Element* rmlElement(test::UiApp& app, const std::string& id)
+	{
+		Rml::Context& context = app.main().context();
+		for (int i = 0; i < context.GetNumDocuments(); ++i)
+			if (Rml::Element* found = context.GetDocument(i)->GetElementById(id))
+				return found;
+		return nullptr;
+	}
+
 	double bottom(const Json& box)
 	{
 		return box.at("y").get<double>() + box.at("height").get<double>();
@@ -864,17 +878,20 @@ TEST_CASE("a long file path in the key commands message stays inside the dialog 
 	REQUIRE(closed(app));
 }
 
-TEST_CASE("the key commands dialog's buttons stay inside a 1024x600 window with the macros and a long error", "[ui]")
+TEST_CASE("the key commands dialog's buttons stay inside the window with the macros and a long error", "[ui]")
 {
-	test::UiApp app({1024, 600});
+	const auto [width, height] = GENERATE(std::pair{1024, 600}, std::pair{1000, 760}, std::pair{1280, 720});
+	INFO("window " << width << "x" << height);
+	test::UiApp app({width, height});
 	app.appUi().showProject();
 	app.shell().showOsFileDialogs(false);
 	const test::TempDir dir;
 	openDialog(app);
 	click(app, "#keycommands-show-macros");
 	exportInto(app, blockedExport(dir));
-	CHECK(boxOf(app, "#key-commands").at("y").get<double>() >= 0.0);
-	CHECK(bottom(boxOf(app, "#key-commands")) <= 600.0);
+	const Json dialog = boxOf(app, "#key-commands");
+	CHECK(dialog.at("y").get<double>() >= 0.0);
+	CHECK(bottom(dialog) <= height);
 	// A long error takes no more than its cap, and scrolls.
 	CHECK(boxOf(app, "#keycommands-message").at("height").get<double>() <= 66.0);
 	for (const char* selector : {"#keycommands-apply", "#keycommands-cancel", "#keycommands-ok"})
@@ -882,9 +899,26 @@ TEST_CASE("the key commands dialog's buttons stay inside a 1024x600 window with 
 		const Json box = boxOf(app, selector);
 		INFO(selector);
 		CHECK(box.at("y").get<double>() >= 0.0);
-		CHECK(bottom(box) <= 600.0);
-		CHECK(right(box) <= 1024.0);
+		CHECK(bottom(box) <= height);
+		CHECK(right(box) <= width);
 	}
+	// The dialog is capped at 85% of the window, so with the macros and a long error its body scrolls, above the
+	// buttons.
+	Rml::Element* body = rmlElement(app, "keycommands-body");
+	REQUIRE(body != nullptr);
+	CHECK(body->GetScrollHeight() > body->GetClientHeight());
+	click(app, "#keycommands-cancel");
+	REQUIRE(closed(app));
+}
+
+TEST_CASE("the key commands message wraps at spaces and breaks only a word that doesn't fit a line", "[ui]")
+{
+	test::UiApp app({1000, 760});
+	app.appUi().showProject();
+	openDialog(app);
+	Rml::Element* message = rmlElement(app, "keycommands-message");
+	REQUIRE(message != nullptr);
+	CHECK(message->GetComputedValues().word_break() == Rml::Style::WordBreak::BreakWord);
 	click(app, "#keycommands-cancel");
 	REQUIRE(closed(app));
 }

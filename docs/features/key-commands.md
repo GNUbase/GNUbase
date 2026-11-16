@@ -185,9 +185,9 @@ user settings ([settings.md](settings.md)), so MCP and Lua change them with `set
   `keyCommands.export` and `keyCommands.import` clears it too when the command worked, which is what clears it when
   these commands run through MCP or Lua, without the dialog's buttons. The message wraps at spaces and breaks only a
   word that doesn't fit a line of its own, such as a long file path, inside its box, off the buttons; it is at most
-  about three lines tall and scrolls beyond that. The dialog is at most 85% of the window's height: when the window is
-  too short for all of it (the macros shown in a 1024x600 window), the rows above the message row scroll and the
-  buttons stay in view.
+  66 dp tall and scrolls beyond that. The dialog is at most 85% of the window's height, and moves back inside the
+  window when it grows past its edge: when the window is too short for all of it (the macros shown in a 1024x600
+  window), the rows above the message row scroll and the buttons stay in view.
 - The app reads both settings when it starts and follows `settings.changed`.
 
 ## The dialog
