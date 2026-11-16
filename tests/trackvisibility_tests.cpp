@@ -632,3 +632,89 @@ TEST_CASE("a transaction announces the track visibility once", "[unit]")
 	REQUIRE(changes.size() == 1);
 	CHECK(changes[0].at("hidden") == sorted({folder, drums, other}));
 }
+
+// #1694: one trackVisibility.set that drops the active configuration and adds several gives none of them the active
+// one's tracks hidden on their own: only the one new name that replaces it is its rename.
+TEST_CASE("only the one configuration that replaces the active one takes its own hidden tracks", "[unit]")
+{
+	Fixture f;
+	const uint64_t folder = f.call("track.add", {{"type", "folder"}}).at("track").at("id").get<uint64_t>();
+	const uint64_t drums =
+		f.call("track.add", {{"type", "audio"}, {"parent", folder}, {"index", 0}}).at("track").at("id").get<uint64_t>();
+	const uint64_t other = f.track("audio").first;
+	const Json both = sorted({folder, drums});
+	f.call("trackVisibility.set", {{"hidden", {drums}}});
+	f.call("trackVisibility.set", {{"hidden", both}});
+	f.call("trackVisibility.set",
+		{{"configurations", {{{"name", "Mix"}, {"hidden", both}}}}, {"configuration", "Mix"}, {"hidden", both}});
+	f.call("trackVisibility.set", {{"hidden", {other}}});
+
+	f.call("trackVisibility.set",
+		{{"configurations", {{{"name", "One"}, {"hidden", both}}, {{"name", "Two"}, {"hidden", both}}}}});
+	f.call("track.move", {{"track", drums}, {"parent", 0}, {"index", 0}});
+	CHECK(f.visibility().at("configurations") ==
+		Json{{{"name", "One"}, {"hidden", Json{folder}}}, {{"name", "Two"}, {"hidden", Json{folder}}}});
+}
+
+// #1694: Add Configuration sends the active one, unmodified, while it makes the new one active: the active one keeps
+// its own form, so a track it hid only with its folder, though hidden holds it on its own, leaves it with the folder,
+// and it shows as modified again then. Update Configuration takes the form of hidden.
+TEST_CASE("adding a configuration leaves the active one's tracks as they were", "[unit]")
+{
+	Fixture f;
+	const uint64_t folder = f.call("track.add", {{"type", "folder"}}).at("track").at("id").get<uint64_t>();
+	const uint64_t drums =
+		f.call("track.add", {{"type", "audio"}, {"parent", folder}, {"index", 0}}).at("track").at("id").get<uint64_t>();
+	const Json both = sorted({folder, drums});
+	f.call("trackVisibility.set", {{"hidden", {drums}}});
+	f.call("trackVisibility.set", {{"hidden", both}});
+	f.call("trackVisibility.set",
+		{{"configurations", {{{"name", "Band"}, {"hidden", {folder}}}}}, {"configuration", "Band"}, {"hidden", both}});
+	REQUIRE(f.visibility().at("modified") == false);
+
+	// Add Configuration, as the UI sends it.
+	f.call("trackVisibility.set",
+		{{"configurations", {{{"name", "Band"}, {"hidden", both}}, {{"name", "Mix"}, {"hidden", both}}}},
+			{"configuration", "Mix"}, {"hidden", both}});
+	f.call("track.move", {{"track", drums}, {"parent", 0}, {"index", 0}});
+	CHECK(f.hidden() == both);
+	CHECK(f.visibility().at("configurations") ==
+		Json{{{"name", "Band"}, {"hidden", Json{folder}}}, {{"name", "Mix"}, {"hidden", both}}});
+	CHECK(f.visibility().at("modified") == false);
+	CHECK(f.call("trackVisibility.set", {{"configuration", "Band"}}).at("hidden") == Json{folder});
+}
+
+// #1622, #1694: a file saved before #1533 holds the tracks inside hidden folders in hidden and the configurations as
+// tracks hidden on their own, and they load that way: such a track stays hidden when it leaves the folder, until the
+// folder is shown and hidden again.
+TEST_CASE("a track inside a hidden folder from a file from before stays hidden when it leaves the folder", "[unit]")
+{
+	Fixture f;
+	const uint64_t folder = f.call("track.add", {{"type", "folder"}}).at("track").at("id").get<uint64_t>();
+	const uint64_t guitar =
+		f.call("track.add", {{"type", "audio"}, {"parent", folder}, {"index", 0}}).at("track").at("id").get<uint64_t>();
+	const test::TempDir dir;
+	const std::string file = (dir.path() / "before.dawproject").u8string();
+	f.call("project.save", {{"path", file}});
+	std::map<std::string, std::string> entries = test::readZip(file);
+	Json extension = Json::parse(entries.at("gnubase.json"));
+	const Json both = sorted({folder, guitar});
+	extension.at("project")["trackVisibility"] = {{"hidden", both}, {"sync", ""},
+		{"configurations", {{{"name", "Band"}, {"hidden", both}}}}, {"configuration", "Band"}};
+	entries["gnubase.json"] = extension.dump();
+	test::writeZip(file, entries);
+
+	f.call("project.load", {{"path", file}});
+	const auto moveGuitar = [&](uint64_t parent)
+	{ f.call("track.move", {{"track", guitar}, {"parent", parent}, {"index", 0}}); };
+	moveGuitar(0);
+	CHECK(f.hidden() == both);
+	CHECK(f.visibility().at("configurations").at(0).at("hidden") == both);
+	CHECK(f.visibility().at("modified") == false);
+
+	moveGuitar(folder);
+	f.call("trackVisibility.set", {{"hidden", Json::array()}});
+	f.call("trackVisibility.set", {{"hidden", {folder}}});
+	moveGuitar(0);
+	CHECK(f.hidden() == Json{folder});
+}

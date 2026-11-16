@@ -424,9 +424,16 @@ TEST_CASE("a missing media file is referred to by its path, and loading extracts
 	std::filesystem::remove(std::filesystem::u8path(audio));
 	run(client, "project.load", {{"path", file}, {"mediaFolder", utf8(dir.path() / "other")}});
 	std::filesystem::remove_all(dir.path() / "other");
-	run(client, "project.save", {{"path", file}});
+	// The result lists it, for the UI to say that the file has no copy of it (#1614).
+	CHECK(run(client, "project.save", {{"path", file}}).at("missing") ==
+		Json::array({utf8(dir.path() / "other" / "audio" / "take.wav")}));
 	run(client, "project.load", {{"path", file}, {"mediaFolder", media}});
 	CHECK(run(client, "project.get").at("media")[0].at("path") == utf8(dir.path() / "other" / "audio" / "take.wav"));
+	CHECK(run(client, "project.save", {{"path", file}, {"embedMedia", false}}).at("missing").empty());
+	const Json exported = run(client, "track.export",
+		{{"tracks", Json::array({run(client, "project.get").at("audioEvents")[0].at("track")})},
+			{"path", utf8(dir.path() / "tracks.dawproject")}});
+	CHECK(exported.at("missing").size() == 1);
 }
 
 TEST_CASE("projects saved on two threads at the same time both load", "[integration]")

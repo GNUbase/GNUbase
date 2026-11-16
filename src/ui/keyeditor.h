@@ -18,6 +18,7 @@
 
 namespace Rml
 {
+	class Context;
 	class Element;
 }
 
@@ -78,10 +79,12 @@ namespace gnubase::ui
 		// (#131, ui/inplaceeditor.h) is the project window's timeline. Without one it fits the parts' range.
 		void setTimeRange(std::optional<std::pair<int64_t, int64_t>> range);
 
-		// Builds the notes' expression lines again when a pixel has other ticks than they were built with, as after
-		// the editor's first layout and when its window or zone changes its width (#1671). True when it did, so that
-		// the window updates again (Shell::afterUpdate).
-		bool fitLines();
+		// After the update of a window's context, if the editor is in it: builds the notes' expression lines again
+		// when a pixel has other ticks than they were built with, as after the editor's first layout and when its
+		// window or zone changes its width (#1671). Lines that an update laid out with their own ticks only for a
+		// quarter more or fewer (#1716), others for any other ticks (#1768). True when it built them, so that the
+		// window updates again (Shell::afterUpdate).
+		bool fitLines(const Rml::Context& updated);
 
 		// Scrolls the note display so that the pitch is in the middle; false before the display has its size. The
 		// display scrolls to the middle of its notes, or to middle C, when it first has a size, unless it was
@@ -190,6 +193,11 @@ namespace gnubase::ui
 		void placeExpression();
 		// The ticks of a pixel of the note display, or 0 before its layout.
 		int64_t ticksPerPixel() const;
+		// Whether the notes' expression lines or the expression editor show, whose lines fitLines fits.
+		bool linesShown() const;
+		// fitLines on the note display's box as it is: laidOut when its window's update has just laid it out, which
+		// keeps the lines; not when placeItems() places what render() built, maybe for a box of an earlier layout.
+		bool refitLines(bool laidOut);
 		void renderInfo();
 		// Per-note expression (#1512, pp. 1303-1313): the steps of a note's points of the type, as lines at their
 		// values in percent of a span of ticks that starts offset ticks before the note. Steps narrower than minimum
@@ -319,6 +327,7 @@ namespace gnubase::ui
 		int64_t m_paintFrom = 0;                        // the range it swept, project ticks
 		int64_t m_paintTo = -1;
 		int64_t m_linesPixel = -1;          // the ticks per pixel the notes' expression lines were built with
+		bool m_linesKept = false;           // an update laid the notes' lines out with those ticks (refitLines)
 		bool m_toolboxOnRightClick = false; // ui.toolboxOnRightClick
 		bool m_toolboxKnown = false;        // changed since it was asked for
 		std::vector<Subscription> m_subscriptions;
