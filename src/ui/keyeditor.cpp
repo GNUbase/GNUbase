@@ -984,6 +984,7 @@ namespace gnubase::ui
 		if (Rml::Element* cursor = root->QuerySelector(".key-editor-step-cursor");
 			cursor != nullptr && m_view.value("stepInput", false))
 			place(*cursor, m_view.value("stepPosition", int64_t{0}), 0, -1);
+		placeDragged(); // a move or resize going on keeps its notes where the mouse took them
 		placeExpression();
 	}
 
@@ -1781,6 +1782,7 @@ namespace gnubase::ui
 		if (pressed != nullptr && !pressed->editable)
 			pressed = nullptr;
 		m_pressed.reset();
+		m_draggedTo.reset();
 		if (pressed != nullptr)
 			m_pressed = *pressed;
 		const auto ticks = m_pressedAt.first;
@@ -2049,8 +2051,20 @@ namespace gnubase::ui
 			}
 			return;
 		}
-		if (!m_pressed || m_gesture == Gesture::Erase)
+		if (m_gesture == Gesture::Erase)
 			return;
+		m_draggedTo = std::make_pair(ticks, pitch);
+		placeDragged();
+	}
+
+	void KeyEditor::placeDragged()
+	{
+		const bool resize = m_gesture == Gesture::ResizeStart || m_gesture == Gesture::ResizeEnd;
+		const Rml::Element* notes =
+			m_root.get() != nullptr ? m_root.get()->QuerySelector(".key-editor-notes") : nullptr;
+		if (notes == nullptr || !m_pressed || !m_draggedTo || (m_gesture != Gesture::Move && !resize))
+			return;
+		const auto [ticks, pitch] = *m_draggedTo;
 		const int rows = m_gesture == Gesture::Move
 			? m_rowOf.at(static_cast<size_t>(pitch)) - m_rowOf.at(static_cast<size_t>(m_pressedAt.second))
 			: 0;
