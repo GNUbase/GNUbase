@@ -346,7 +346,7 @@ namespace gnubase::engine
 				require(messages.size() <= MidiTap::g_size, "at most 4096 messages at a time");
 				const bool drumSounds = parameters.value("drumSounds", false);
 				const bool direct = parameters.value("direct", false);
-				const uint32_t mpe =
+				const uint64_t mpe =
 					parameters.contains("mpe") ? midi::MpeSetup::fromJson(parameters.at("mpe")).pack() : 0;
 				std::vector<MidiTap::Message> injected;
 				injected.reserve(messages.size());
