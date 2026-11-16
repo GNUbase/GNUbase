@@ -1483,6 +1483,20 @@ TEST_CASE("an insert above the divider that goes while its key is held ends the 
 	{
 		sequencer.setSequence(withInsert("chordGenerator"));
 	}
+	SECTION("the divider moved down, so that the insert below it moves above")
+	{
+		// It never saw the key's note-on: the chord ends through the count of the inserts above the divider alone.
+		auto moved = withInsert("chordGenerator");
+		moved->inserts.divider = 1;
+		moved->inserts.slots[1].effect = "transformer";
+		sequencer.setSequence(std::move(moved));
+		follow(playBlock(sequencer, {}, -1, &recorded), held);
+		REQUIRE(recorded == chord);
+		auto down = withInsert("chordGenerator");
+		down->inserts.divider = 2;
+		down->inserts.slots[1].effect = "transformer";
+		sequencer.setSequence(std::move(down));
+	}
 	// The chord ends where the track plays and where it records, and the track holds none of its notes.
 	follow(playBlock(sequencer, {}, -1, &recorded), held);
 	CHECK(recorded.empty());
@@ -1492,6 +1506,32 @@ TEST_CASE("an insert above the divider that goes while its key is held ends the 
 	follow(playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOff, 7, 60)}, -1, &recorded), held);
 	CHECK(recorded.empty());
 	CHECK(held.empty());
+	effects->idle = true;
+	CHECK(effects->violations == 0);
+}
+
+TEST_CASE("a key pressed in the block in which the last insert above the divider goes sounds, though it plays a pitch "
+		  "of the chord that ends",
+	"[unit]")
+{
+	auto effects = std::make_shared<TestEffects>();
+	MidiSequencer sequencer(effects);
+	sequencer.prepareFor(48000.0, 128);
+	auto sequence = withInsert("chordGenerator");
+	sequence->inserts.divider = 1;
+	sequencer.setSequence(std::move(sequence));
+	effects->idle = false;
+	std::vector<int> held;
+	std::vector<int> recorded;
+	follow(playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOn, 5, 60)}, -1, &recorded), held);
+	const std::vector<int> chord = recorded;
+	REQUIRE(chord.size() > 1);
+	const int pitch = chord[0] != 60 ? chord[0] : chord[1];
+	// Late input comes at offset 0, as the chord's note-offs do: they go first, and the new key sounds.
+	sequencer.setSequence(withInsert(""));
+	follow(playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOn, 0, pitch)}, -1, &recorded), held);
+	CHECK(recorded == std::vector<int>{pitch});
+	CHECK(held == std::vector<int>{pitch});
 	effects->idle = true;
 	CHECK(effects->violations == 0);
 }

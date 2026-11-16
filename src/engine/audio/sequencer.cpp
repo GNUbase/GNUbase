@@ -773,14 +773,20 @@ namespace gnubase::engine
 		}
 		// The notes the inserts above the divider played end in the track's input when one of them goes, so that the
 		// track records their note-offs: at once without inserts there any more, else after those, which are new
-		// (runInputEffects).
+		// (runInputEffects). At once, they come first at their offset: a key the block's input presses at offset 0,
+		// where late input comes, sounds although it plays a pitch that ends.
 		const bool inputGoes = sequence.inputCount != m_inputCount ||
 			!std::equal(
 				inserts.begin(), inserts.begin() + static_cast<std::ptrdiff_t>(m_inputCount), m_inserts.begin());
 		if (sequence.inputCount == 0)
+		{
+			m_input.nextSource();
 			endHeld(m_inputPlayed, m_input, false);
+		}
 		else
+		{
 			m_inputGo = inputGoes;
+		}
 		m_inputCount = sequence.inputCount;
 		m_inserts = inserts;
 		m_insertCount = insertCount;
