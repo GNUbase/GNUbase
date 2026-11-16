@@ -482,9 +482,12 @@ TEST_CASE("a frozen track stays frozen in the project file", "[integration]")
 
 	SECTION("referring to it where it was, if it isn't there")
 	{
+		// The result lists it once for the tracks that play it, as it does missing media files (#1736).
+		run(project.client, "track.duplicate", {{"track", audio.track}});
 		fs::remove(fs::u8path(freeze.at("path").get<std::string>()));
 		const fs::path file = project.folder.path() / "missing.dawproject";
-		run(project.client, "project.save", {{"path", file.u8string()}});
+		CHECK(run(project.client, "project.save", {{"path", file.u8string()}}).at("missing") ==
+			Json::array({freeze.at("path")}));
 		run(project.client, "project.load", {{"path", file.u8string()}});
 		CHECK(project.track(audio.track).at("frozen") == freeze);
 	}

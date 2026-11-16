@@ -1245,7 +1245,10 @@ TEST_CASE("a track preset shares the project's file, keeps the files it extracte
 		return run(client, "clip.add", {{"media", media.at("media").at("id")}}).at("clip").at("id");
 	};
 	const auto save = [&](const Json& sampler, const std::string& name)
-	{ run(client, "track.savePreset", {{"tracks", Json::array({sampler.at("track").at("id")})}, {"name", name}}); };
+	{
+		return run(
+			client, "track.savePreset", {{"tracks", Json::array({sampler.at("track").at("id")})}, {"name", name}});
+	};
 	// Loads the preset onto a new sampler track and returns the media file it plays.
 	const auto load = [&](const std::string& name)
 	{
@@ -1289,12 +1292,14 @@ TEST_CASE("a track preset shares the project's file, keeps the files it extracte
 		fs::u8path(load("DC").at("path").get<std::string>()), fs::u8path(later.at("path").get<std::string>())));
 
 	// A sample whose file is missing doesn't keep the track from being saved: the preset refers to the file where it
-	// was.
+	// was, and the result lists it (#1736).
 	run(client, "project.new");
 	const fs::path gone = fs::absolute(settings.path() / "c" / "gone.wav").lexically_normal();
 	const Json missing = run(client, "sampler.create", {{"clip", clipOf(gone, 0.5f, 480)}});
 	fs::remove(gone);
-	save(missing, "Gone");
+	const Json saved = save(missing, "Gone");
+	REQUIRE(saved.at("missing").size() == 1);
+	CHECK(fs::u8path(saved.at("missing")[0].get<std::string>()) == gone);
 	run(client, "project.new");
 	CHECK(fs::u8path(load("Gone").at("path").get<std::string>()) == gone);
 }
