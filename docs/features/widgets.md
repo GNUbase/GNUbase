@@ -155,7 +155,8 @@ class such as `.tooltip` gives it the theme's look.
 
 `<dialog>` is a dialog in a document of its own, which the app loads and shows, usually modal
 (`ElementDocument::Show(Rml::ModalFlag::Modal)`). It opens in the middle of the window, and dragging its
-`.dialog-titlebar` moves it. Escape closes it with the result `cancel`, or first an open drop-down list; Enter clicks
+`.dialog-titlebar` moves it. A dialog that grows later (rows that show, a longer message) and
+would pass the window's edge moves back inside it. Escape closes it with the result `cancel`, or first an open drop-down list; Enter clicks
 its `button.primary`, also from a text field and a value field with `autofocus`, but not from a multi-line text field
 or another value field being edited, and not when the focused control takes Enter itself: a button clicks itself, a
 drop-down list opens and closes, another value field starts editing. A click on an element with a `result` attribute
