@@ -166,3 +166,7 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   for an event that no C++ view takes. `tests/engine_tests.cpp` checks the command log and the clients' wake-up,
   `tests/shell_tests.cpp` the step tasks, the frame rate, and that posted work and file dialog answers, the OS's and
   automation's, draw.
+
+Each value step first sends older steps waiting under other keys, including the last waiting step of another view's gesture. This also holds when returning to a view whose earlier step is still in flight. Switching from a mixer fader to the inspector therefore leaves the engine at the inspector's newer value, with the completed drag before it in undo history. A control's ongoing drag still coalesces its own pending steps.
+
+Answered step records already go away after a successful project read newer than their last answer and a following update, once no read is outstanding. This also bounds the keys from repeatedly opened views; no record with a waiting command or answer is erased. Tests cover repeated view owners, ordering and undo across views with the engine held, and panners following another mixer's drag.

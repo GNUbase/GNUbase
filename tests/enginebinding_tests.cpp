@@ -151,11 +151,11 @@ TEST_CASE("the steps of one control go one at a time, the newest of a gesture re
 	CHECK(read("volume") == -10.0);
 	CHECK(position() == before + 1); // one undo step
 
-	// Steps without a gesture are steps of their own: none is replaced. Another control's don't wait for them.
+	// Steps without a gesture are steps of their own: none is replaced. Starting another control flushes them first.
 	for (int step = 1; step <= 3; ++step)
 		binding.sendStep(0, "volume", "Change Volume", set("volume", -20.0 - step));
 	binding.sendStep(0, "pan", "Change Pan", set("pan", 0.5));
-	CHECK(binding.waiting("history.transaction") == 2);
+	CHECK(binding.waiting("history.transaction") == 4);
 	updateUntil(binding, [&binding] { return !binding.sending("volume") && !binding.sending("pan"); });
 	CHECK(read("volume") == -23.0);
 	CHECK(read("pan") == 0.5);
@@ -879,4 +879,72 @@ TEST_CASE("awaiting what is held waits for the awaited answers only, not for oth
 	CHECK(binding.holding());
 	CHECK(binding.settle(std::chrono::seconds(10)));
 	CHECK(ran);
+}
+
+TEST_CASE("a view's value step follows the previous view's waiting step", "[unit]")
+{
+	engine::Engine engine;
+	ui::EngineBinding binding(engine);
+	engine::Client client(engine);
+	const Json channel = client.call("track.add", {{"type", "audio"}}).value.at("channel").at("id");
+	const auto set = [&channel](double value)
+	{
+		return Json::array(
+			{Json{{"command", "channel.set"}, {"parameters", {{"channel", channel}, {"volume", value}}}}});
+	};
+	const auto volume = [&]
+	{ return client.call("project.get").value.at("channels").at(0).at("volume").get<double>(); };
+	const auto position = [&] { return client.call("history.get").value.at("position").get<int64_t>(); };
+	const double initial = volume();
+	const int64_t before = position();
+	const std::string first = binding.stepOwner("mixer") + "channel volume";
+	const std::string second = binding.stepOwner("inspector") + "channel volume";
+	bool returning = false;
+	SECTION("the next view has no step in flight")
+	{
+	}
+	SECTION("switching back while the next view's earlier step is still in flight")
+	{
+		returning = true;
+		binding.sendStep(3, second, "Earlier second view", set(-10.0));
+	}
+	binding.sendStep(1, first, "First view", set(-1.0));
+	binding.sendStep(1, first, "First view", set(-2.0));
+	binding.sendStep(2, second, "Second view", set(-3.0));
+	REQUIRE(binding.settle(std::chrono::seconds(5)));
+	CHECK(volume() == -3.0);
+	CHECK(position() == before + (returning ? 3 : 2));
+	REQUIRE(client.call("history.undo").ok());
+	CHECK(volume() == -2.0);
+	REQUIRE(client.call("history.undo").ok());
+	CHECK(volume() == (returning ? -10.0 : initial));
+	if (returning)
+	{
+		REQUIRE(client.call("history.undo").ok());
+		CHECK(volume() == initial);
+	}
+}
+
+TEST_CASE("answered steps of repeated view owners are discarded after a fresh project read", "[unit]")
+{
+	engine::Engine engine;
+	ui::EngineBinding binding(engine);
+	engine::Client client(engine);
+	const Json channel = client.call("track.add", {{"type", "audio"}}).value.at("channel").at("id");
+	std::vector<std::string> closed;
+	for (int view = 0; view < 20; ++view)
+	{
+		const std::string key = binding.stepOwner("mixer") + "channel volume";
+		binding.sendStep(1, key, "View volume",
+			Json::array(
+				{Json{{"command", "channel.set"}, {"parameters", {{"channel", channel}, {"volume", -view - 1}}}}}));
+		updateUntil(binding, [&] { return !binding.sending(key); });
+		CHECK(binding.ahead(key, 0));
+		binding.send("project.get");
+		updateUntil(binding, [&] { return binding.waiting("project.get") == 0; });
+		binding.update();
+		closed.push_back(key);
+		for (const auto& owner : closed)
+			CHECK(!binding.ahead(owner, 0));
+	}
 }
