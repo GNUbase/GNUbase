@@ -1871,3 +1871,35 @@ TEST_CASE("the lower zone's key editor at its default size gives the note displa
 		CHECK(bottom(".controller-lanes-footer") <= bottom(".key-editor") + 0.5);
 	}
 }
+
+TEST_CASE("the editor window's key editor and the in-place editor keep their controller lanes' height", "[ui]")
+{
+	// The lanes give way only in a low editor (#1775): in the editor window of 1200 x 800 dp the note display has its
+	// 40% and more, and the lane its 64 dp. The in-place editor keeps the lane's height also with its toolbar and info
+	// line shown, where the note display gets what is left.
+	Fixture f;
+	f.app.setDpRatio(1.0F);
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".controller-lane").size() == 1; }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const auto height = [&f](const std::string& selector) { return f.box(selector).at("height").get<double>(); };
+	CHECK(height(".key-editor-body") >= (0.4 * height(".key-editor")) - 0.5);
+	CHECK(height(".controller-lane") >= 63.5);
+
+	f.app.call("editor.close", {{"editor", "window"}});
+	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().editorWindow() == nullptr; }));
+	f.app.appUi().showProject();
+	f.window = f.app.main().id();
+	f.app.call("editor.inPlace", {{"tracks", {f.track}}, {"open", true}});
+	const std::string editor = ".in-place-editor[track=\"" + std::to_string(f.track) + "\"]";
+	f.app.call("editor.set", {{"editor", "inPlace:" + std::to_string(f.track)}, {"lanes", {{{"type", "velocity"}}}}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(editor + " .controller-lane").size() == 1; }));
+	REQUIRE(
+		f.app.waitUntil([&] { return f.elements(editor + " .in-place-toolbar-toggle").at(0).at("visible") == true; }));
+	f.click(of(editor + " .in-place-toolbar-toggle"));
+	REQUIRE(f.app.waitUntil([&] { return f.has(editor, "toolbar-shown"); }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(height(editor + " .controller-lane") >= 63.5);
+	CHECK(height(editor + " .controller-lane-list") >= 63.5);
+}
