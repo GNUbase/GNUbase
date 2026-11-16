@@ -64,8 +64,12 @@ namespace gnubase::engine::dsp
 		m_predelay.buffer.assign(frames(std::ceil(g_maxPredelaySeconds * sampleRate)) + 3, 0.0f);
 		m_longest = m_predelay.buffer.size();
 		for (const Channel& channel : m_channels)
+		{
 			for (const Comb& comb : channel.combs)
 				m_longest = std::max(m_longest, comb.line.buffer.size());
+			for (const Allpass& allpass : channel.allpasses)
+				m_longest = std::max(m_longest, allpass.buffer.size());
+		}
 		m_predelayFrames.setTime(g_glideSeconds, sampleRate);
 		m_glide.setTime(g_glideSeconds, sampleRate);
 		m_wet.setTime(g_smoothingSeconds, sampleRate);

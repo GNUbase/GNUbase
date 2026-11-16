@@ -13,6 +13,7 @@
 #include <pugixml.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -56,6 +57,22 @@ namespace
 	std::string utf8(const std::filesystem::path& path)
 	{
 		return path.u8string();
+	}
+
+	// Waits until the peak worker is done with every media file before a test removes one: it writes peak files next
+	// to them, and Windows can't remove a folder it is writing into.
+	void settlePeaks(Client& client)
+	{
+		const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+		for (;;)
+		{
+			const Json statuses = run(client, "media.peakStatus").at("media");
+			if (std::none_of(statuses.begin(), statuses.end(), [](const Json& status)
+					{ return status.at("status") == "pending" || status.at("status") == "generating"; }))
+				return;
+			REQUIRE(std::chrono::steady_clock::now() < until);
+			std::this_thread::sleep_for(std::chrono::milliseconds(5));
+		}
 	}
 
 	void writeWav(const std::string& path, double sampleRate, int channels, size_t frames)
@@ -421,12 +438,21 @@ TEST_CASE("a missing media file is referred to by its path, and loading extracts
 	CHECK(run(client, "project.get").at("media")[0].at("path") == utf8(dir.path() / "media" / "audio" / "2-take.wav"));
 
 	// Saved while its media file is missing, the project refers to the file where it was.
+	settlePeaks(client);
 	std::filesystem::remove(std::filesystem::u8path(audio));
 	run(client, "project.load", {{"path", file}, {"mediaFolder", utf8(dir.path() / "other")}});
+	settlePeaks(client);
 	std::filesystem::remove_all(dir.path() / "other");
-	run(client, "project.save", {{"path", file}});
+	// The result lists it, for the UI to say that the file has no copy of it (#1614).
+	CHECK(run(client, "project.save", {{"path", file}}).at("missing") ==
+		Json::array({utf8(dir.path() / "other" / "audio" / "take.wav")}));
 	run(client, "project.load", {{"path", file}, {"mediaFolder", media}});
 	CHECK(run(client, "project.get").at("media")[0].at("path") == utf8(dir.path() / "other" / "audio" / "take.wav"));
+	CHECK(run(client, "project.save", {{"path", file}, {"embedMedia", false}}).at("missing").empty());
+	const Json exported = run(client, "track.export",
+		{{"tracks", Json::array({run(client, "project.get").at("audioEvents")[0].at("track")})},
+			{"path", utf8(dir.path() / "tracks.dawproject")}});
+	CHECK(exported.at("missing").size() == 1);
 }
 
 TEST_CASE("projects saved on two threads at the same time both load", "[integration]")

@@ -332,6 +332,7 @@ namespace gnubase::engine
 	MidiSequencer::MidiSequencer(std::shared_ptr<plugin::Factory> effects)
 		: m_factory(effects ? std::move(effects) : builtinEffects()),
 		  m_sequence(std::make_unique<const MidiSequence>()), m_input(graph::g_maxEventsPerBlock),
+		  m_direct(graph::g_maxEventsPerBlock),
 		  m_stripChase(std::make_shared<graph::EventBuffer>(graph::g_maxEventsPerBlock))
 	{
 		m_inputTo.fill(static_cast<uint16_t>(g_notes));
@@ -571,6 +572,8 @@ namespace gnubase::engine
 			else if (!sequence.effects.empty())
 				m_effectEvents.add(event);
 		}
+		context.eventsOut.nextSource();
+		context.eventsOut.merge(m_direct);
 		context.eventsOut.nextSource();
 		if (sequence.sendBuffers)
 			for (graph::EventBuffer& buffer : m_sendOut)
@@ -921,6 +924,7 @@ namespace gnubase::engine
 				if (selected.channel < 0 && to != m_inputSlotChannel)
 					selectSlot(sequence.articulations, m_inputSlot, to, 0, out, true);
 			}
+			moveAddOns(sequence.articulations, sequence.inputChannel, 0, out);
 		}
 		for (graph::ProcessEvent event : m_input)
 		{
@@ -1364,7 +1368,8 @@ namespace gnubase::engine
 			return false;
 		// An add-on slot (#1113) sends its on events besides the selected slot, on the channel the notes play on, as
 		// the notes' add-ons go in playback, and ends the add-on slots on of its groups (#1667); without latch it ends
-		// where the key is released, on the channel its on events went to.
+		// where the key is released, on the channel its on events went to. Pressed again on another channel while it
+		// is on, it goes off there first (#1718).
 		if (found->addOn)
 		{
 			size_t at = 0;
@@ -1381,20 +1386,25 @@ namespace gnubase::engine
 				return true;
 			}
 			endAddOns(map, *found, event.offset, out);
-			// The channel the notes play on: the selected slot's on events', else the default slot's own or the given.
-			uint8_t to = channel;
-			if (m_inputSlot >= 0)
-				to = m_inputSlotChannel;
-			else if (map.slots.front().channel >= 0)
-				to = static_cast<uint8_t>(map.slots.front().channel);
-			if (!on && m_inputAddOnCount < m_inputAddOns.size())
-				m_inputAddOns[m_inputAddOnCount++] = {slot, to};
+			const uint8_t to = notesChannel(map, channel);
+			const InputAddOn added{slot, to, static_cast<uint8_t>(event.channel % 16)};
+			if (on)
+			{
+				if (m_inputAddOns[at].channel != to)
+					sendSlotEvents(*found, true, m_inputAddOns[at].channel, event.offset, out);
+				m_inputAddOns[at] = added;
+			}
+			else if (m_inputAddOnCount < m_inputAddOns.size())
+			{
+				m_inputAddOns[m_inputAddOnCount++] = added;
+			}
 			sendSlotEvents(*found, false, to, event.offset, out);
 			return true;
 		}
 		if (event.type == Type::NoteOff)
 		{
-			// Without latch the default slot comes back where the key is released, unless another came since.
+			// Without latch the default slot comes back where the key is released, unless another came since. It ends
+			// no add-on slot: one whose key is still held keeps its groups, as in a recording (#1718).
 			if (slot == m_inputSlotHeld)
 			{
 				m_inputSlotHeld = -1;
@@ -1429,6 +1439,31 @@ namespace gnubase::engine
 		}
 	}
 
+	uint8_t MidiSequencer::notesChannel(const ArticulationMap& map, uint8_t channel) const noexcept
+	{
+		if (m_inputSlot >= 0)
+			return m_inputSlotChannel;
+		if (!map.slots.empty() && map.slots.front().channel >= 0)
+			return static_cast<uint8_t>(map.slots.front().channel);
+		return channel;
+	}
+
+	void MidiSequencer::moveAddOns(
+		const ArticulationMap& map, int track, uint32_t offset, graph::EventBuffer& out) noexcept
+	{
+		for (size_t i = 0; i < m_inputAddOnCount; ++i)
+		{
+			InputAddOn& addOn = m_inputAddOns[i];
+			const auto index = static_cast<size_t>(addOn.slot);
+			const uint8_t to = notesChannel(map, track >= 0 ? static_cast<uint8_t>(track) : addOn.trigger);
+			if (index >= map.slots.size() || to == addOn.channel)
+				continue;
+			sendSlotEvents(map.slots[index], true, addOn.channel, offset, out);
+			addOn.channel = to;
+			sendSlotEvents(map.slots[index], false, to, offset, out);
+		}
+	}
+
 	void MidiSequencer::takeSlot(const MidiSequencer& track) noexcept
 	{
 		m_tookSlot = true;
@@ -1456,6 +1491,7 @@ namespace gnubase::engine
 		m_inputSlotChannel =
 			next.channel >= 0 ? static_cast<uint8_t>(next.channel) : static_cast<uint8_t>(channel % 16);
 		sendSlotEvents(next, false, m_inputSlotChannel, offset, out);
+		moveAddOns(map, -1, offset, out); // to the selected slot's channel, whatever the track's is
 	}
 
 	void MidiSequencer::sendSlotEvents(

@@ -9,6 +9,7 @@
 #include "engine/audiofile/audiofile.h"
 #include "engine/document/document.h"
 #include "engine/engine.h"
+#include "platform/process.h"
 #include "platform/rt/workerpool.h"
 
 #ifdef _WIN32
@@ -27,8 +28,8 @@
 #include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -59,9 +60,8 @@ namespace
 	struct Options
 	{
 		bool quick = false;
-		std::string only;    // a case name, or all
-		std::string json;    // where to write the results, or nowhere
-		std::string program; // this program, which transposedEvents starts again for each render
+		std::string only; // a case name, or all
+		std::string json; // where to write the results, or nowhere
 	};
 
 	// A project of instrument tracks, each playing chords of the test synth for the whole render.
@@ -244,26 +244,27 @@ namespace
 		return {seconds / took.count(), (static_cast<double>(after) - static_cast<double>(before)) / (1024.0 * 1024.0)};
 	}
 
+	// The folder of the transposedEvents run with this process id in the temp folder, with the audio file that its
+	// renders play ("transposed.wav", and the peaks the engine makes of it) and a render's result ("result.json").
+	// The id keeps runs at once apart, and the renders' arguments to numbers, which Windows would otherwise hand them
+	// in the ANSI code page.
+	std::filesystem::path transposedFolder(uint32_t run)
+	{
+		return std::filesystem::temp_directory_path() / ("gnubase-bench-" + std::to_string(run));
+	}
+
 	// renderTransposed in a process of its own, this program started with --render-transposed, so that no render
 	// reuses memory that an earlier one freed without the process growing, which its megabytes would then miss.
-	Transposed renderTransposedAlone(
-		const Options& options, int tracks, double seconds, const std::string& file, bool follow)
+	Transposed renderTransposedAlone(int tracks, double seconds, bool follow)
 	{
-		const std::filesystem::path out =
-			std::filesystem::temp_directory_path() / "gnubase-bench-transposed-result.json";
-		const auto quoted = [](const std::string& text) { return '"' + text + '"'; };
-		const std::string line =
-			quoted(std::filesystem::absolute(std::filesystem::u8path(options.program)).u8string()) +
-			" --render-transposed " + std::to_string(tracks) + " " + std::to_string(seconds) + " " + quoted(file) +
-			(follow ? " 1 " : " 0 ") + quoted(out.u8string());
-#ifdef _WIN32
-		const std::string command = quoted(line); // cmd /c takes away the outer quotes
-#else
-		const std::string& command = line;
-#endif
-		// NOLINTNEXTLINE(bugprone-command-processor): it starts this program again, with arguments of its own
-		if (std::system(command.c_str()) != 0)
+		const uint32_t run = gnubase::platform::currentProcessId();
+		gnubase::platform::ChildProcess render =
+			gnubase::platform::ChildProcess::start(gnubase::platform::currentExecutablePath(),
+				{"--render-transposed", std::to_string(tracks), std::to_string(seconds), follow ? "1" : "0",
+					std::to_string(run)});
+		if (render.wait(std::chrono::hours(1)) != 0)
 			throw std::runtime_error("transposedEvents: the render in a process of its own failed");
+		const std::filesystem::path out = transposedFolder(run) / "result.json";
 		Json result;
 		std::ifstream(out) >> result;
 		std::error_code ignored;
@@ -276,7 +277,9 @@ namespace
 	Json transposedEvents(const Options& options)
 	{
 		const double seconds = options.quick ? 1.0 : 4.0;
-		const std::filesystem::path file = std::filesystem::temp_directory_path() / "gnubase-bench-transposed.wav";
+		const std::filesystem::path folder = transposedFolder(gnubase::platform::currentProcessId());
+		std::filesystem::create_directories(folder);
+		const std::filesystem::path file = folder / "transposed.wav";
 		{
 			gnubase::engine::WriteOptions format;
 			format.sampleFormat = gnubase::engine::SampleFormat::Float32;
@@ -292,8 +295,8 @@ namespace
 		Json results = Json::array();
 		for (const int count : {16, 64})
 		{
-			const Transposed plain = renderTransposedAlone(options, count, seconds, file.u8string(), false);
-			const Transposed shifted = renderTransposedAlone(options, count, seconds, file.u8string(), true);
+			const Transposed plain = renderTransposedAlone(count, seconds, false);
+			const Transposed shifted = renderTransposedAlone(count, seconds, true);
 			const double perEvent = (shifted.megabytes - plain.megabytes) / count;
 			std::printf("transposedEvents  events %3d  as they are %8.2fx real time  following the root key %8.2fx "
 						"real time  %6.2f MB more per event\n",
@@ -302,7 +305,7 @@ namespace
 				{"transposedRealTimeFactor", shifted.speed}, {"megabytesPerTransposedEvent", perEvent}});
 		}
 		std::error_code ignored;
-		std::filesystem::remove(file, ignored);
+		std::filesystem::remove_all(folder, ignored);
 		return results;
 	}
 
@@ -322,13 +325,15 @@ namespace
 	int benchmark(int argc, char** argv)
 	{
 		Options options;
-		options.program = argv[0];
-		// One render of transposedEvents (renderTransposedAlone): tracks, seconds, file, follow (0 or 1), result file.
-		if (argc == 7 && std::string(argv[1]) == "--render-transposed")
+		// One render of transposedEvents (renderTransposedAlone): tracks, seconds, follow (0 or 1) and the run's
+		// process id, which names its folder (transposedFolder).
+		if (argc == 6 && std::string(argv[1]) == "--render-transposed")
 		{
-			const Transposed rendered =
-				renderTransposed(std::stoi(argv[2]), std::stod(argv[3]), argv[4], std::string(argv[5]) == "1");
-			std::ofstream(argv[6]) << Json{{"speed", rendered.speed}, {"megabytes", rendered.megabytes}}.dump();
+			const auto run = static_cast<uint32_t>(std::stoul(argv[5]));
+			const Transposed rendered = renderTransposed(std::stoi(argv[2]), std::stod(argv[3]),
+				(transposedFolder(run) / "transposed.wav").u8string(), std::string(argv[4]) == "1");
+			std::ofstream(transposedFolder(run) / "result.json")
+				<< Json{{"speed", rendered.speed}, {"megabytes", rendered.megabytes}}.dump();
 			return 0;
 		}
 		for (int i = 1; i < argc; ++i)
