@@ -1370,9 +1370,13 @@ TEST_CASE(
 	CHECK(std::abs(points().at(2).at("value").get<double>() - 0.1) <= 0.05);
 	CHECK(std::abs(points().back().at("value").get<double>() - 0.9) <= 0.05);
 	CHECK(!f.has(".key-expression-editor", "off"));
+	// Once the editor shows the drag, and then the undo: it reads the project one read at a time, so that the step
+	// counts below can't be met by an older read, and the erase below goes to the points the note has (#1784).
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-expression-area .key-expression-step").size() >= 4; }));
 	// One undo step brings back the points before the drag.
 	f.app.call("history.undo");
 	REQUIRE(f.app.waitUntil([&] { return points().size() == 2; }));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-expression-area .key-expression-step").size() == 2; }));
 	f.app.call("history.redo");
 	REQUIRE(f.app.waitUntil([&] { return points().size() >= 4; }));
 	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-expression-area .key-expression-step").size() >= 4; }));
@@ -1464,6 +1468,13 @@ TEST_CASE("the expression editor opens on the double-clicked note and edits the 
 				Json::array({{{"part", f.part}, {"note", first}}, {{"part", otherPart}, {"note", middle}},
 					{{"part", f.part}, {"note", last}}})}});
 	REQUIRE(f.app.waitUntil([&] { return f.selection().size() == 3; }));
+	// Once the editor has the view too: before, the double click would select or delete the note it is on.
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			return f.elements(".key-note.selected").size() == 3 &&
+				f.has(".key-input[setting=expressionDoubleClick]", "checked");
+		}));
 	f.app.shell().step(std::chrono::milliseconds(0));
 
 	// A double click on a selected note opens the editor on all of them (reference manual p. 1308): from the first
@@ -1505,18 +1516,25 @@ TEST_CASE("the expression editor opens on the double-clicked note and edits the 
 		REQUIRE(points(part, id).size() == 1);
 		CHECK(near(points(part, id).at(0).at("value"), -24.0, 2.0));
 	}
+	// The editor reads the project after each change, one read at a time. Until it shows the drag, it may still show
+	// the read from before it, whose one point looks like the one the undo leaves; the drag's read could then come
+	// right before the erase below, which would find no point at the mouse and delete none (#1784).
+	const std::string steps = ".key-expression-area .key-expression-step";
+	REQUIRE(f.app.waitUntil([&] { return f.elements(steps).size() == 3; }));
 	// The notes of both parts change in one undo step.
 	f.app.call("history.undo");
 	REQUIRE(f.app.waitUntil([&] { return points(f.part, last).empty(); }));
 	CHECK(points(f.part, first).empty());
 	REQUIRE(points(otherPart, middle).size() == 1);
 	CHECK(near(points(otherPart, middle).at(0).at("value"), 24.0, 2.0));
-	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-expression-area .key-expression-step").size() == 1; }));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(steps).size() == 1; }));
 
 	// The erase tool's click deletes the point within a few dp of it.
 	f.tool("erase");
 	f.click(area(0.5, 0.5));
 	REQUIRE(f.app.waitUntil([&] { return points(otherPart, middle).empty(); }));
+	// Once the editor shows it: until then its copy of the note has the point, which the draw below would send back.
+	REQUIRE(f.app.waitUntil([&] { return f.elements(steps).empty(); }));
 	// Volume goes from 0 to 4.
 	f.app.call("editor.set", {{"editor", "window"}, {"expressionType", "volume"}});
 	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-expression-type").at(0).at("text") == "Volume"; }));
