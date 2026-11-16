@@ -790,6 +790,8 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
                                                      "background-color": c["accent"] + "40",
                                                      "border-width": f"{widths['hairline']}dp",
                                                      "border-color": c["accent"]}),
+        # and the one being drawn as an outline only, unlike the events the engine has (#1696)
+        (".arranger-lane-row .arranger-lane-event.drawing", {"background-color": "transparent"}),
         # The chord pads (docs/features/chord-pads.md): pads with their chord, degree and remote key, the selected,
         # triggered, locked and reference pads, the adaptive voicing reference indicator (a square in the reference
         # frame's color) and the adaptive voicing indicator (a dot), and the chord assistant's suggestions by how well
