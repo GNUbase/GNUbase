@@ -19,12 +19,14 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
-#include <initializer_list>
+#include <iterator>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -282,6 +284,7 @@ TEST_CASE(
 			<button id="icon-menu" class="icon-only" menu="value-menu">C</button></div>
 		<div class="strip transport"><div class="transport-section"><button id="locate">L</button>
 			<button id="start" class="icon-only checked">S</button><button id="record" class="icon-only checked">R</button>
+			<button id="tapping" class="tapping">Tap</button><button id="suspended" class="suspended">Click</button>
 			<valuefield id="tempo"/><textdisplay id="signature" class="display"/></div>
 			<menu class="setup-pane"><button id="bar-pane">Save Preset</button></menu></div>
 		<div class="transport toolbar"><div class="transport-section"><button id="panel-locate">L</button></div>
@@ -303,7 +306,7 @@ TEST_CASE(
 		fake.shell.step(milliseconds(0));
 	};
 	// The decorator in a state, set by pseudo-classes, which are cleared afterwards.
-	const auto in = [&](const char* id, std::initializer_list<const char*> states)
+	const auto in = [&](const char* id, const std::vector<const char*>& states)
 	{
 		Rml::Element* button = element(id);
 		for (const char* state : states)
@@ -357,6 +360,20 @@ TEST_CASE(
 		// A menu button that shows a value: a field, pressed under the mouse button, dimmed when disabled.
 		CHECK_THAT(in("value", {"hover", "active"}), ContainsSubstring("pressed.svg"));
 		CHECK_THAT(in("value-off", {"disabled"}), ContainsSubstring("disabled.svg"));
+		// Also when checked, as every disabled bar button (#1711).
+		CHECK_THAT(in("value-checked", {"disabled"}), ContainsSubstring("disabled.svg"));
+		{
+			Rml::Element* checked = element("tool-checked");
+			Rml::Element* plain = element("tool");
+			checked->SetPseudoClass("disabled", true);
+			plain->SetPseudoClass("disabled", true);
+			update();
+			CHECK(decorator(*checked) == decorator(*plain));
+			CHECK(checked->GetComputedValues().color() == plain->GetComputedValues().color());
+			CHECK(checked->GetComputedValues().background_color() == plain->GetComputedValues().background_color());
+			checked->SetPseudoClass("disabled", false);
+			plain->SetPseudoClass("disabled", false);
+		}
 		if (flat)
 		{
 			CHECK_THAT(in("value", {"hover", "active"}), ContainsSubstring("dropdown-button-pressed.svg"));
@@ -369,22 +386,28 @@ TEST_CASE(
 			}
 		}
 
-		// The focus ring over every state of a bar button.
+		// The focus ring over every state of a bar button and the tempo (#1711): the ring first, which RmlUi draws on
+		// top, over the skin of the same state without the focus. A hovered button shows the skin without the hover,
+		// since the rings' rules come after the hover rules (tools/skin/generate.py).
 		const std::vector<std::pair<const char*, std::vector<const char*>>> focused{{"tool", {}}, {"tool", {"hover"}},
 			{"tool-checked", {}}, {"value", {}}, {"value", {"hover"}}, {"value-checked", {}}, {"icon-menu", {"hover"}},
-			{"start", {}}, {"record", {}}, {"locate", {"hover"}}};
+			{"start", {}}, {"record", {}}, {"tapping", {}}, {"suspended", {}}, {"locate", {"hover"}}, {"tempo", {}}};
 		for (const auto& [id, states] : focused)
 		{
 			INFO(id << " " << states.size() << " states");
+			std::vector<const char*> under;
+			std::copy_if(states.begin(), states.end(), std::back_inserter(under),
+				[](const char* state) { return std::string_view(state) != "hover"; });
+			std::string skin = in(id, under);
+			if (skin == "none")
+				skin.clear();
 			std::vector<const char*> with = states;
 			with.push_back("focus-visible");
-			Rml::Element* button = element(id);
-			for (const char* state : with)
-				button->SetPseudoClass(state, true);
-			update();
-			CHECK_THAT(decorator(*button), ContainsSubstring("focus-ring.svg"));
-			for (const char* state : with)
-				button->SetPseudoClass(state, false);
+			const std::string ringed = in(id, with);
+			INFO("without the focus: " << skin << ", with: " << ringed);
+			const size_t end = ringed.find("), ");
+			CHECK_THAT(ringed.substr(0, end), ContainsSubstring("focus-ring.svg"));
+			CHECK(skin == (end == std::string::npos ? std::string() : ringed.substr(end + 3)));
 		}
 
 		// The tempo is plain digits in the transport bar, as the time displays and the signature.
