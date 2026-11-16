@@ -527,6 +527,75 @@ TEST_CASE("input in stop mode on the next audio device starts the retrospective 
 	CHECK(notesOf(parts[0]) == std::vector<std::vector<int64_t>>{{0, g_beatTicks, 62}});
 }
 
+TEST_CASE("input in stop mode starts the retrospective buffer afresh also with input during playback in between",
+	"[integration]")
+{
+	// Stop mode, playback, then stop mode again on the next device, before or after the playback, or on the same
+	// device after a pause of over 30 s (reference manual p. 354).
+	const int next = GENERATE(0, 1, 2); // the device changes before the playback, after it, or not at all
+	Setup setup(4096);
+	Client& client = setup.client;
+	run(client, "settings.set", {{"key", "midi.snapPartsToBars"}, {"value", false}});
+	run(client, "channel.set", {{"channel", setup.channel}, {"recordEnable", false}});
+	const auto now = [&client] { return run(client, "audio.get").at("position").get<int64_t>(); };
+	const auto play = [&]
+	{
+		const int64_t from = now();
+		run(client, "transport.locate", {{"position", 8 * g_beat}});
+		run(client, "transport.play");
+		setup.inject({message(from + g_beat, {0x90, 64, 100}), message(from + (2 * g_beat), {0x80, 64, 0})});
+		run(client, "audio.render", {{"frames", 3 * g_beat}});
+		run(client, "transport.stop");
+		run(client, "audio.render", {{"frames", 4096}});
+	};
+	const auto setDevice = [&client]
+	{ run(client, "audio.setDevice", {{"blockSize", 4096}, {"inputChannels", 0}, {"captureSeconds", 1}}); };
+	run(client, "audio.render", {{"frames", 20480}});
+	setup.inject({message(20500, {0x90, 60, 100}), message(20600, {0x80, 60, 0})});
+	run(client, "audio.render", {{"frames", 4096}});
+	if (next == 0)
+		setDevice();
+	play();
+	if (next == 1)
+		setDevice();
+	if (next == 2)
+		run(client, "audio.render", {{"frames", 62 * g_beat}}); // 31 s
+	const int64_t from = now();
+	setup.inject({message(from + 1000, {0x90, 62, 100}), message(from + 1000 + g_beat, {0x80, 62, 0})});
+	run(client, "audio.render", {{"frames", 1000 + (2 * g_beat)}});
+	run(client, "transport.locate", {{"position", 2 * g_beat}});
+	run(client, "audio.render", {{"frames", 4096}});
+	run(client, "midi.insertRetrospective", {{"track", setup.track}});
+	const std::vector<Json> parts = setup.parts();
+	REQUIRE(parts.size() == 1);
+	CHECK(parts[0].at("position") == 2 * g_beatTicks);
+	CHECK(notesOf(parts[0]) == std::vector<std::vector<int64_t>>{{0, g_beatTicks, 62}});
+}
+
+TEST_CASE("input in stop mode after a pause keeps what the buffer holds from playback alone", "[integration]")
+{
+	// The pause starts the buffer afresh only after input in stop mode (reference manual p. 354).
+	Setup setup(4096);
+	Client& client = setup.client;
+	run(client, "settings.set", {{"key", "midi.snapPartsToBars"}, {"value", false}});
+	run(client, "channel.set", {{"channel", setup.channel}, {"recordEnable", false}});
+	run(client, "transport.locate", {{"position", 8 * g_beat}});
+	run(client, "transport.play");
+	setup.inject({message(g_beat, {0x90, 64, 100}), message(2 * g_beat, {0x80, 64, 0})});
+	run(client, "audio.render", {{"frames", 3 * g_beat}});
+	run(client, "transport.stop");
+	run(client, "audio.render", {{"frames", 62 * g_beat}}); // 31 s
+	const int64_t from = run(client, "audio.get").at("position").get<int64_t>();
+	setup.inject({message(from + 1000, {0x90, 62, 100}), message(from + 1000 + g_beat, {0x80, 62, 0})});
+	run(client, "audio.render", {{"frames", 1000 + (2 * g_beat)}});
+	run(client, "transport.locate", {{"position", 2 * g_beat}});
+	run(client, "audio.render", {{"frames", 4096}});
+	run(client, "midi.insertRetrospective", {{"track", setup.track}});
+	const std::vector<Json> parts = setup.parts();
+	REQUIRE(parts.size() == 1);
+	CHECK(notesOf(parts[0]).size() == 2);
+}
+
 TEST_CASE("drum sounds auditioned with midi.inject drumSounds are neither recorded nor kept", "[integration]")
 {
 	// The drum editor auditions a sound (reference manual p. 1236), which is no MIDI input. With the I-notes of the

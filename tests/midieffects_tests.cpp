@@ -1217,6 +1217,7 @@ TEST_CASE("an effect that fails a block passes its events on as they came, and t
 	REQUIRE(off.size() == 1);
 	CHECK(off[0].type == ProcessEvent::Type::NoteOff);
 	effects->idle = true;
+	CHECK(effects->violations == 0);
 	const std::string text = logged(file);
 	CHECK_THAT(text, ContainsSubstring("chordGenerator in MIDI insert 1 failed"));
 	// Once while it fails, not every block.
@@ -1240,6 +1241,7 @@ TEST_CASE("an insert that starts to fail ends the notes it played, which would h
 	follow(playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOff, 7, 60)}), held);
 	CHECK(held.empty());
 	effects->idle = true;
+	CHECK(effects->violations == 0);
 }
 
 TEST_CASE("a send that starts to fail ends its notes and plays nothing while it fails", "[unit]")
@@ -1268,6 +1270,7 @@ TEST_CASE("a send that starts to fail ends its notes and plays nothing while it 
 		held);
 	CHECK(held.empty());
 	effects->idle = true;
+	CHECK(effects->violations == 0);
 }
 
 TEST_CASE("the effects after an insert that starts to fail start afresh, so that its chord's arpeggios end", "[unit]")
@@ -1300,6 +1303,7 @@ TEST_CASE("the effects after an insert that starts to fail start afresh, so that
 	CHECK(held.empty());
 	CHECK(sent.empty());
 	effects->idle = true;
+	CHECK(effects->violations == 0);
 }
 
 TEST_CASE(
@@ -1326,6 +1330,7 @@ TEST_CASE(
 	follow(playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOff, 7, 62)}), held);
 	CHECK(held.empty());
 	effects->idle = true;
+	CHECK(effects->violations == 0);
 }
 
 TEST_CASE("an effect that processes again after failing ends the notes that passed it meanwhile", "[unit]")
@@ -1348,6 +1353,7 @@ TEST_CASE("an effect that processes again after failing ends the notes that pass
 	CHECK(playBlocks(sequencer, 200, held) == 0);
 	CHECK(held.empty());
 	effects->idle = true;
+	CHECK(effects->violations == 0);
 }
 
 TEST_CASE("an insert above the divider that starts to fail ends the notes it played in what the track records, not "
@@ -1381,6 +1387,7 @@ TEST_CASE("an insert above the divider that starts to fail ends the notes it pla
 	CHECK(recorded.empty());
 	CHECK(held == std::vector<int>{48});
 	effects->idle = true;
+	CHECK(effects->violations == 0);
 }
 
 TEST_CASE("a send to another instrument track that starts to fail ends its notes there", "[unit]")
@@ -1407,6 +1414,126 @@ TEST_CASE("a send to another instrument track that starts to fail ends its notes
 	follow(playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOn, 5, 62)}), held);
 	CHECK(noteOns(sequencer.sendOutput(1)) == 0);
 	effects->idle = true;
+	CHECK(effects->violations == 0);
+}
+
+TEST_CASE(
+	"the effects after a chord generator that processes again start afresh, so that its key's arpeggios end", "[unit]")
+{
+	auto effects = std::make_shared<TestEffects>();
+	effects->only = "builtin:chordGenerator";
+	MidiSequencer sequencer(effects);
+	sequencer.prepareFor(48000.0, 128);
+	auto sequence = withInsert("chordGenerator");
+	sequence->inserts.slots[1].effect = "arpeggiator";
+	// Sends after the inserts, to the track's output and to another instrument track.
+	sequence->sends.slots[0].effect = "arpeggiator";
+	sequence->sends.slots[1].effect = "arpeggiator";
+	sequence->sendOutputs[1] = 7;
+	sequencer.setSequence(std::move(sequence));
+	effects->idle = false;
+	effects->failing = true;
+	std::vector<int> held;
+	std::vector<int> sent;
+	// The key passes the failing chord generator as it came, and the arpeggiators after it step through it.
+	follow(playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOn, 5, 60)}), held);
+	follow(sequencer.sendOutput(1), sent);
+	CHECK(playBlocks(sequencer, 200, held, &sent) > 0);
+	// It processes again, started afresh without the key: the arpeggiators after it start afresh too.
+	effects->failing = false;
+	playBlocks(sequencer, 1, held, &sent);
+	CHECK(held.empty());
+	CHECK(sent.empty());
+	CHECK(playBlocks(sequencer, 200, held, &sent) == 0);
+	follow(playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOff, 7, 60)}), held);
+	CHECK(playBlocks(sequencer, 200, held, &sent) == 0);
+	CHECK(held.empty());
+	CHECK(sent.empty());
+	effects->idle = true;
+	CHECK(effects->violations == 0);
+}
+
+TEST_CASE("an insert above the divider that goes while its key is held ends the notes it played in what the track "
+		  "records",
+	"[unit]")
+{
+	auto effects = std::make_shared<TestEffects>();
+	MidiSequencer sequencer(effects);
+	sequencer.prepareFor(48000.0, 128);
+	auto sequence = withInsert("chordGenerator");
+	sequence->inserts.divider = 1;
+	sequencer.setSequence(std::move(sequence));
+	effects->idle = false;
+	std::vector<int> held;
+	std::vector<int> recorded;
+	follow(playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOn, 5, 60)}, -1, &recorded), held);
+	const std::vector<int> chord = recorded;
+	REQUIRE(chord.size() > 1);
+	SECTION("removed")
+	{
+		sequencer.setSequence(withInsert(""));
+	}
+	SECTION("replaced by another insert above the divider")
+	{
+		auto replaced = withInsert("transformer");
+		replaced->inserts.divider = 1;
+		sequencer.setSequence(std::move(replaced));
+	}
+	SECTION("moved below the divider")
+	{
+		sequencer.setSequence(withInsert("chordGenerator"));
+	}
+	SECTION("the divider moved down, so that the insert below it moves above")
+	{
+		// It never saw the key's note-on: the chord ends through the count of the inserts above the divider alone.
+		auto moved = withInsert("chordGenerator");
+		moved->inserts.divider = 1;
+		moved->inserts.slots[1].effect = "transformer";
+		sequencer.setSequence(std::move(moved));
+		follow(playBlock(sequencer, {}, -1, &recorded), held);
+		REQUIRE(recorded == chord);
+		auto down = withInsert("chordGenerator");
+		down->inserts.divider = 2;
+		down->inserts.slots[1].effect = "transformer";
+		sequencer.setSequence(std::move(down));
+	}
+	// The chord ends where the track plays and where it records, and the track holds none of its notes.
+	follow(playBlock(sequencer, {}, -1, &recorded), held);
+	CHECK(recorded.empty());
+	CHECK(held.empty());
+	for (const int note : chord)
+		CHECK(!sequencer.holds(static_cast<uint16_t>(note)));
+	follow(playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOff, 7, 60)}, -1, &recorded), held);
+	CHECK(recorded.empty());
+	CHECK(held.empty());
+	effects->idle = true;
+	CHECK(effects->violations == 0);
+}
+
+TEST_CASE("a key pressed in the block in which the last insert above the divider goes sounds, though it plays a pitch "
+		  "of the chord that ends",
+	"[unit]")
+{
+	auto effects = std::make_shared<TestEffects>();
+	MidiSequencer sequencer(effects);
+	sequencer.prepareFor(48000.0, 128);
+	auto sequence = withInsert("chordGenerator");
+	sequence->inserts.divider = 1;
+	sequencer.setSequence(std::move(sequence));
+	effects->idle = false;
+	std::vector<int> held;
+	std::vector<int> recorded;
+	follow(playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOn, 5, 60)}, -1, &recorded), held);
+	const std::vector<int> chord = recorded;
+	REQUIRE(chord.size() > 1);
+	const int pitch = chord[0] != 60 ? chord[0] : chord[1];
+	// Late input comes at offset 0, as the chord's note-offs do: they go first, and the new key sounds.
+	sequencer.setSequence(withInsert(""));
+	follow(playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOn, 0, pitch)}, -1, &recorded), held);
+	CHECK(recorded == std::vector<int>{pitch});
+	CHECK(held == std::vector<int>{pitch});
+	effects->idle = true;
+	CHECK(effects->violations == 0);
 }
 
 TEST_CASE("events that don't fit an effect's event lists are dropped, and the log says so", "[unit]")

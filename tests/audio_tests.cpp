@@ -5,6 +5,7 @@
 #include "platform/log.h"
 #include "platform/midi/dummyport.h"
 #include "platform/rt/realtime.h"
+#include "testutils/heldjob.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -100,6 +101,14 @@ namespace
 		const Result result = client.call(command, std::move(parameters));
 		INFO(command << " failed: " << result.error);
 		REQUIRE(result.ok());
+		if (result.value.contains("job") &&
+			(command == "track.freeze" || command == "track.renderInPlace" || command == "mixdown.export"))
+		{
+			const Json job = gnubase::test::waitForJob(client, result.value.at("job").at("id").get<uint64_t>());
+			INFO(job.dump());
+			REQUIRE(job.at("state") == "done");
+			return job.at("result");
+		}
 		return result.value;
 	}
 
@@ -1402,7 +1411,9 @@ TEST_CASE("midi.ports lists the MIDI ports and keeps their settings while they a
 			{"visible", true}, {"inAllInputs", true}, {"present", true}, {"open", true}, {"midi2", false},
 			{"mpe",
 				{{"mode", "off"}, {"channels", 15}, {"firstChannel", 1}, {"pitchRange", 48}, {"tuning", true},
-					{"initialX", "off"}, {"initialY", "off"}}}});
+					{"initialX", "off"}, {"initialY", "off"}, {"xMessage", "pitchBend"},
+					{"pressureMessage", "aftertouch"}, {"yMessage", "cc74"}, {"xExpression", "none"},
+					{"pressureExpression", "pressure"}, {"yExpression", "brightness"}}}});
 	CHECK(ports[1].at("input") == false);
 	CHECK(ports[1].at("open") == false); // outputs open once something sends to them
 

@@ -632,6 +632,10 @@
 		border-width: 1dp;
 		border-color: #10dff2;
 	}
+	.arranger-lane-row .arranger-lane-event.drawing
+	{
+		background-color: transparent;
+	}
 	.chord-pad
 	{
 		color: #f1f4ff;
@@ -805,6 +809,10 @@
 	.track-list listitem.frozen
 	{
 		color: #aeb7d0;
+	}
+	.track-list listitem.rendering .track-name
+	{
+		font-style: italic;
 	}
 	.track-list .drop-line
 	{
@@ -1055,6 +1063,10 @@
 	{
 		background-color: #aeb7d0;
 	}
+	.articulation-item.muted
+	{
+		background-color: #6a7189;
+	}
 	.articulation-item.selected
 	{
 		background-color: #e12ad8;
@@ -1063,10 +1075,10 @@
 	{
 		background-color: #3f4559;
 	}
-	.controller-lane.keyboard-focus .controller-lane-header
+	.controller-lane-frame
 	{
-		border-left-width: 2dp;
-		border-left-color: #10dff2;
+		border-width: 2dp;
+		border-color: #10dff2;
 	}
 	.ape-display
 	{
@@ -1712,6 +1724,7 @@
 	{
 		color: #f1f4ff;
 		font-weight: 600;
+		font-size: 15dp;
 	}
 	tabset tabs
 	{
@@ -1768,6 +1781,40 @@
 	.track-list listitem.selected
 	{
 		decorator: svg-ninepatch(list-item-selected.svg, 6 6 6 6);
+	}
+	.track-list .track-color
+	{
+		width: 5dp;
+	}
+	.track-list .track-name, .track-list .track-name-field, .track-list .track-versions-toggle, .track-list .track-controls
+	{
+		position: relative;
+	}
+	.track-list listitem > .tree-toggle
+	{
+		position: relative;
+		z-index: 1;
+	}
+	.track-list .track-name
+	{
+		font-weight: 500;
+	}
+	.track-list listitem[type=folder] .track-color[color]
+	{
+		width: auto;
+		right: 0;
+		decorator: svg-ninepatch(track-row-folder.svg, 3 3 3 7);
+	}
+	.track-list listitem.selected .track-color[color]
+	{
+		width: auto;
+		right: 0;
+		border-radius: 5dp;
+		decorator: svg-ninepatch(track-row-selected.svg, 6 6 6 11);
+	}
+	.track-list .track-controls button[control=record]:not(.checked) svg.icon
+	{
+		image-color: #ff5270;
 	}
 	.inspector-section button.section-header
 	{

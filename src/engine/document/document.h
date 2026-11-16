@@ -707,6 +707,8 @@ namespace gnubase::engine
 		double velocityVariance = 0.0; // -1 to 1, how far playback varies the velocity, up or down (#128)
 		// The attributes of the track's articulation map that the note has, by name (#175)
 		std::vector<std::string> articulations;
+		// Those of its attributes that are muted (#1684, reference manual p. 1289): they select no sound slot.
+		std::vector<std::string> mutedArticulations;
 		std::vector<ExpressionPoint> expressions; // its per-note expression (#176), sorted by position
 	};
 
@@ -747,6 +749,7 @@ namespace gnubase::engine
 		uint8_t channel = 0;       // 0-15
 		std::vector<uint8_t> data; // SysEx
 		std::string articulation;  // Articulation
+		bool muted = false;        // Articulation: muted (#1684, p. 1289), it selects no sound slot
 	};
 
 	// Holds notes and controllers on an instrument or MIDI track. Notes and controllers outside it are not played.
@@ -1646,7 +1649,8 @@ namespace gnubase::engine
 		// The metronome and count-in (#101). Settings, not part of undo.
 		metronome::MetronomeSettings metronome;
 
-		ObjectId newId() { return nextId++; }
+		// Reserves the last signed integer for nextId; throws when Lua could no longer receive a positive id.
+		ObjectId newId();
 
 		// Every track id from top to bottom, folders before the tracks they contain.
 		std::vector<ObjectId> trackOrder() const;
@@ -1924,15 +1928,15 @@ namespace gnubase::engine
 	inline bool operator==(const Note& a, const Note& b)
 	{
 		return std::tie(a.id, a.position, a.length, a.pitch, a.velocity, a.channel, a.releaseVelocity, a.origin,
-				   a.probability, a.velocityVariance, a.articulations, a.expressions) ==
+				   a.probability, a.velocityVariance, a.articulations, a.mutedArticulations, a.expressions) ==
 			std::tie(b.id, b.position, b.length, b.pitch, b.velocity, b.channel, b.releaseVelocity, b.origin,
-				b.probability, b.velocityVariance, b.articulations, b.expressions);
+				b.probability, b.velocityVariance, b.articulations, b.mutedArticulations, b.expressions);
 	}
 
 	inline bool operator==(const Controller& a, const Controller& b)
 	{
-		return std::tie(a.id, a.position, a.type, a.number, a.value, a.channel, a.data, a.articulation) ==
-			std::tie(b.id, b.position, b.type, b.number, b.value, b.channel, b.data, b.articulation);
+		return std::tie(a.id, a.position, a.type, a.number, a.value, a.channel, a.data, a.articulation, a.muted) ==
+			std::tie(b.id, b.position, b.type, b.number, b.value, b.channel, b.data, b.articulation, b.muted);
 	}
 
 	// A MIDI part's own properties, without its notes and controllers.

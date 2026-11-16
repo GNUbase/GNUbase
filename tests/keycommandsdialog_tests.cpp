@@ -84,18 +84,10 @@ namespace
 		return element(app, selector).value("text", std::string());
 	}
 
-	// Scrolls the element into view first, as a user would: in a short window, as on CI's macOS runner (684 pixels
-	// tall), the dialog's body scrolls.
+	// The click scrolls the element into view first, as a user would: in a short window, as on CI's macOS runner (684
+	// pixels tall), the dialog's body scrolls.
 	void click(test::UiApp& app, const std::string& selector, const Strings& modifiers = {})
 	{
-		Rml::Context& context = app.main().context();
-		for (int i = 0; i < context.GetNumDocuments(); ++i)
-			if (Rml::Element* found = context.GetDocument(i)->QuerySelector(selector))
-			{
-				found->ScrollIntoView({Rml::ScrollAlignment::Nearest, Rml::ScrollAlignment::Nearest,
-					Rml::ScrollBehavior::Instant, Rml::ScrollParentage::All});
-				break;
-			}
 		app.ui().click(std::nullopt, {selector, 0, std::nullopt}, ui::MouseButton::Left, 1, modifiers);
 		app.shell().step(std::chrono::milliseconds(0));
 	}

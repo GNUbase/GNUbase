@@ -17,7 +17,9 @@
 #include "ui/keycommands.h"
 #include "ui/timeformat.h"
 #include "ui/transport.h"
+#include "ui/transportpanelfit.h"
 
+#include <RmlUi/Core/ComputedValues.h>
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/ElementUtilities.h>
@@ -30,6 +32,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <future>
 #include <limits>
@@ -37,6 +40,8 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -203,7 +208,7 @@ TEST_CASE("Space starts and stops playback after a click on a toolbar or transpo
 TEST_CASE("a narrow window cuts off the transport bar's last sections instead of drawing them over each other", "[ui]")
 {
 	test::UiApp app({1024, 700});
-	showBar(app, 1.0F); // about 1220 dp of sections in 1024 dp
+	showBar(app, 1.0F); // about 1240 dp of sections in 1024 dp
 	Rml::Context& context = app.main().context();
 	Rml::Element* bar = nullptr;
 	for (int i = 0; i < context.GetNumDocuments(); ++i)
@@ -605,11 +610,209 @@ TEST_CASE("Reset All in its setup pane makes a transport panel the user sized fo
 	recordWidths(app, widths, std::chrono::milliseconds(300));
 	CHECK(panelWidth(app) == sized.width); // sized by the user
 
-	app.appUi().docking().resetSections("transportPanel", "transport");
+	// As the user does: Reset All in the setup pane that a right click on a section of the panel opens.
+	app.ui().click(id, at("[section=click]"), ui::MouseButton::Right, 1, {});
+	click(app, "#transport-setup [setup-reset]", id);
 	REQUIRE(app.waitUntil([&] { return panelWidth(app) == fitted; }, std::chrono::seconds(2)));
 	// And it follows from there: wider for a wider project.
 	wideProject(app);
 	REQUIRE(app.waitUntil([&] { return panelWidth(app) > fitted; }, std::chrono::seconds(2)));
+}
+
+namespace
+{
+	// The transport panel's fit (ui/transportpanelfit.h) on the fake window system, with a monitor 1920 points wide
+	// at a scale of 1, and a panel of two sections of 300 dp, until the second one's class makes it wider: wide
+	// 600 dp, wider 900 dp, and huge 2500 dp, wider than the monitor.
+	struct FakePanel
+	{
+		engine::Engine engine;
+		test::FakeUi ui{{{1, "Monitor", {0, 0, 1920, 1080}, {0, 0, 1920, 1040}, 1.0F}}};
+		ui::WindowId main = ui.shell.open({}).id();
+		ui::EngineBinding binding{engine, [this] { ui.shell.wake(); }};
+		ui::Docking docking{
+			engine, binding, ui.shell, std::filesystem::path(GNUBASE_RESOURCES_DIR) / "ui" / "panel-window.rml"};
+		ui::TransportPanelFit fit{ui.shell, docking};
+		ui::Window* panel = nullptr;
+		Rml::Element* second = nullptr;
+
+		// Opens a new panel as the app does, 1100 points wide in the middle of the monitor, and fits it at once; with
+		// its sections hidden, which the class shown on the body shows, if not shown.
+		void open(bool shown = true, int width = 1100)
+		{
+			ui::WindowSpec spec;
+			spec.size = {width, 48};
+			panel = &ui.shell.open(spec);
+			Rml::ElementDocument* document = panel->context().LoadDocumentFromMemory(R"(<rml><head><style>
+				body { position: absolute; left: 0; top: 0; right: 0; bottom: 0; }
+				.transport-section { position: absolute; top: 0; width: 300dp; height: 20dp; display: none; }
+				body.shown .transport-section { display: block; }
+				#second { left: 300dp; }
+				#second.wide { width: 600dp; }
+				#second.wider { width: 900dp; }
+				#second.huge { width: 2500dp; }
+				</style></head><body><div class="transport-section"></div><div class="transport-section" id="second">
+				</div></body></rml>)");
+			REQUIRE(document != nullptr);
+			document->Show();
+			document->SetClass("shown", shown);
+			second = document->GetElementById("second");
+			fit.open(*panel, *document, true);
+		}
+		// The second section takes another width, as a display of the controls does with its text, and the shell
+		// steps.
+		void resize(const std::string& width)
+		{
+			second->SetClassNames("transport-section " + width);
+			panel->context().RequestNextUpdate(0);
+			step();
+		}
+		void step() { ui.shell.step(std::chrono::milliseconds(0)); }
+		ui::Rect bounds() const { return ui.shell.bounds(panel->id()); }
+		// A panel of that width in the middle of the monitor.
+		ui::Rect centred(int width) const { return ui::centred({width, 48}, ui.shell.displays().front()); }
+	};
+}
+
+TEST_CASE(
+	"a new transport panel is centred for what it shows also where the window system moves windows later", "[unit]")
+{
+	// As SDL's on X11, the window system moves the panel only after the first fit looked at its bounds again (#1701).
+	FakePanel fake;
+	fake.ui.windows.setBoundsLater(true);
+	fake.open();
+	CHECK(fake.bounds() == fake.centred(1100));
+	fake.ui.windows.applyBounds();
+	fake.step();
+	REQUIRE(fake.bounds() == fake.centred(600));
+
+	// The controls show the project, which is wider: centred again, where the first fit put it.
+	fake.second->SetClass("wide", true);
+	fake.fit.follow();
+	fake.step();
+	fake.ui.windows.applyBounds();
+	fake.step();
+	CHECK(fake.bounds() == fake.centred(900));
+}
+
+TEST_CASE("a new transport panel is centred for what it shows also before the window system moved it", "[unit]")
+{
+	// The controls show the project before the window system gave the panel the first fit's bounds (#1765).
+	FakePanel fake;
+	fake.ui.windows.setBoundsLater(true);
+	fake.open();
+	REQUIRE(fake.bounds() == fake.centred(1100));
+	fake.second->SetClass("wide", true);
+	fake.fit.follow();
+	fake.step();
+	CHECK(fake.bounds() == fake.centred(1100));
+	fake.ui.windows.applyBounds();
+	fake.step();
+	CHECK(fake.bounds() == fake.centred(900));
+}
+
+TEST_CASE("a new transport panel whose first fit found no sections is centred where it opened, not where the last one "
+		  "was",
+	"[unit]")
+{
+	// The panel before was fitted in the middle of the monitor, which then got smaller.
+	FakePanel fake;
+	fake.open();
+	REQUIRE(fake.bounds() == fake.centred(600));
+	fake.ui.windows.setDisplays({{1, "Monitor", {0, 0, 1600, 900}, {0, 0, 1600, 860}, 1.0F}});
+	fake.step();
+
+	// A new one, as wide as the fit before, shows no sections at first: nothing to fit (#1765).
+	fake.open(false, 600);
+	REQUIRE(fake.bounds() == fake.centred(600));
+	fake.panel->context().GetDocument(0)->SetClass("shown", true);
+	fake.second->SetClass("wide", true);
+	fake.fit.follow();
+	fake.step();
+	CHECK(fake.bounds() == fake.centred(900));
+}
+
+TEST_CASE("the shell leaves a transport panel's fit alone once it is gone", "[unit]")
+{
+	static_assert(
+		!std::is_copy_constructible_v<ui::TransportPanelFit> && !std::is_move_constructible_v<ui::TransportPanelFit>);
+	FakePanel fake;
+	fake.open();
+	const ui::Rect fitted = fake.bounds();
+	{
+		ui::TransportPanelFit gone{fake.ui.shell, fake.docking};
+		gone.open(*fake.panel, *fake.panel->context().GetDocument(0), false);
+		gone.follow();
+	}
+	// Its tasks stay with the shell, which updates the panel and finds other monitors: they do nothing now (#1765).
+	fake.second->SetClass("wide", true);
+	fake.panel->context().RequestNextUpdate(0);
+	fake.step();
+	fake.ui.windows.setDisplays({{1, "Monitor", {0, 0, 1600, 900}, {0, 0, 1600, 860}, 1.0F}});
+	fake.step();
+	CHECK(fake.bounds() == fitted);
+}
+
+TEST_CASE(
+	"a transport panel follows its sections while the window system hasn't given it the last fit's width", "[unit]")
+{
+	FakePanel fake;
+	fake.open();
+	fake.fit.follow();
+	fake.step();
+	REQUIRE(fake.bounds().width == 600);
+
+	// The window keeps its width for a while after each fit, and the sections get wider twice meanwhile.
+	fake.ui.windows.setBoundsLater(true);
+	fake.resize("wide");
+	CHECK(fake.bounds().width == 600);
+	fake.resize("wider");
+	CHECK(fake.bounds().width == 600);
+	fake.ui.windows.applyBounds();
+	fake.step();
+	CHECK(fake.bounds().width == 1200);
+	CHECK(fake.docking.fittedWidth("transportPanel") == 1200);
+}
+
+TEST_CASE("an open transport panel asks for the monitors only when its sections or its bounds change", "[unit]")
+{
+	FakePanel fake;
+	fake.open();
+	fake.fit.follow();
+	fake.step();
+	REQUIRE(fake.bounds().width == 600);
+
+	// In every frame while the transport runs, the panel's context updates with the same sections.
+	const int asked = fake.ui.windows.displaysAsked();
+	constexpr int frames = 40;
+	for (int frame = 0; frame < frames; ++frame)
+	{
+		fake.panel->context().RequestNextUpdate(0);
+		fake.step();
+	}
+	// The docking system looks for moved windows twice a second, which asks for them too.
+	CHECK(fake.ui.windows.displaysAsked() - asked < frames / 4);
+
+	const int unchanged = fake.ui.windows.displaysAsked();
+	fake.resize("wide");
+	CHECK(fake.ui.windows.displaysAsked() > unchanged);
+	CHECK(fake.bounds().width == 900);
+}
+
+TEST_CASE("a transport panel as wide as its monitor gets narrower with the monitor's usable area", "[unit]")
+{
+	FakePanel fake;
+	fake.open();
+	fake.second->SetClass("huge", true);
+	fake.fit.follow();
+	fake.step();
+	REQUIRE(fake.bounds().width == 1920);
+
+	// Another resolution: the panel is still within reach, so the shell leaves it where it is, and it fits again.
+	fake.ui.windows.setDisplays({{1, "Monitor", {0, 0, 1600, 900}, {0, 0, 1600, 860}, 1.0F}});
+	fake.step();
+	CHECK(fake.bounds().width == 1600);
+	CHECK(fake.docking.fittedWidth("transportPanel") == 1600);
 }
 
 TEST_CASE("the transport bar goes to markers, the project's ends and the selection", "[ui]")
@@ -792,6 +995,19 @@ TEST_CASE("the time displays keep their width while the cursor moves, and their 
 			app.call("settings.set", {{"key", "ui.theme"}, {"value", theme}});
 			// The shell applies the setting in a task, and a name it has no theme for would keep the default (#1424).
 			REQUIRE(app.waitUntil([&app, theme] { return app.shell().theme() == theme; }));
+			app.shell().step(std::chrono::milliseconds(0));
+			// The default theme's primary display is larger than the secondary, the others' as large (#1342).
+			const float primarySize = rml("primary-time")->GetComputedValues().font_size();
+			const float secondarySize = rml("secondary-time")->GetComputedValues().font_size();
+			if (std::string_view(theme) == "gnubase")
+				CHECK(primarySize > secondarySize);
+			else
+				CHECK(primarySize == secondarySize);
+			// The cursor's displays are as high as the transport's other displays, the larger primary display higher.
+			const float height = rml("signature")->GetOffsetHeight();
+			CHECK(rml("left-locator")->GetOffsetHeight() == height);
+			CHECK(rml("secondary-time")->GetOffsetHeight() == height);
+			CHECK(rml("primary-time")->GetOffsetHeight() >= height);
 			for (const auto& [name, widest] : formats)
 			{
 				INFO("format " << name);
@@ -833,12 +1049,15 @@ TEST_CASE("the time displays keep their width while the cursor moves, and their 
 						first = now;
 					measured = true;
 					CHECK(now == first);
-					// The text, measured in the display's font, fits its content box.
+					// The text, measured in the display's font, fits its content box, its line too: the box's height
+					// follows the font size (#1342).
 					for (const char* id : {"primary-time", "secondary-time"})
 					{
 						Rml::Element* display = rml(id);
+						const Rml::Vector2f content = display->GetBox().GetSize(Rml::BoxArea::Content);
 						CHECK(static_cast<float>(Rml::ElementUtilities::GetStringWidth(display, text)) <=
-							display->GetBox().GetSize(Rml::BoxArea::Content).x + 0.5F);
+							content.x + 0.5F);
+						CHECK(display->GetLineHeight() <= content.y + 0.5F);
 					}
 				}
 				CHECK(longest == widest.second); // the widest text the width holds was shown

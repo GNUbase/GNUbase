@@ -338,9 +338,14 @@ TEST_CASE("the info line's own values don't change a MIDI part and an audio even
 	REQUIRE(window.app.waitUntil(
 		[&] { return !window.element("#info-line select[field=rootKey]").value("value", std::string()).empty(); }));
 	CHECK_FALSE(window.app.waitUntil([&] { return keys() != "G C"; }, std::chrono::milliseconds(500)));
-	// Nor after an undo, which shows them again.
-	window.call("audioEvent.set", {{"event", event}, {"transpose", 3}});
+	// Nor when the key it shows changes, or after an undo, which shows the old one again (#1748).
+	const auto shown = [&window]
+	{ return window.element("#info-line select[field=rootKey]").value("value", std::string()); };
+	window.call("midiPart.set", {{"part", part}, {"rootKey", "A"}});
+	REQUIRE(window.app.waitUntil([&] { return shown() == "A"; }));
+	CHECK_FALSE(window.app.waitUntil([&] { return keys() != "A C"; }, std::chrono::milliseconds(500)));
 	window.call("history.undo");
+	REQUIRE(window.app.waitUntil([&] { return shown() == "G"; }));
 	CHECK_FALSE(window.app.waitUntil([&] { return keys() != "G C"; }, std::chrono::milliseconds(500)));
 }
 
@@ -464,10 +469,23 @@ TEST_CASE("dragging a transpose event moves it to the nearest bar", "[ui]")
 	const double x = box.at("x").get<double>() + (box.at("width").get<double>() / 2.0);
 	const double y = box.at("y").get<double>() + (box.at("height").get<double>() / 2.0);
 	const double across = 1.2 / window.display.view().scale * 0.5; // pixels, at a dp ratio of 0.5
-	window.app.ui().drag(std::nullopt, {".transpose-event", 0, std::nullopt},
-		{"", 0, ui::Point{static_cast<int>(std::lround(x + across)), static_cast<int>(std::lround(y))}});
-	CHECK(window.app.waitUntil(
-		[&] { return window.call("transpose.get").at("events").at(0).at("position") == 4 * g_quarter; }));
+	const double bar = 2.0 / window.display.view().scale * 0.5;    // pixels
+	const ui::Point to{static_cast<int>(std::lround(x + across)), static_cast<int>(std::lround(y))};
+	const auto followed = [&]
+	{
+		return std::abs(window.element(".transpose-event").at("box").at("x").get<double>() -
+				   (box.at("x").get<double>() + bar)) < 2.0;
+	};
+	const auto position = [&window] { return window.call("transpose.get").at("events").at(0).at("position"); };
+	// While the button is down, the event follows the mouse to the nearest bar; the release moves it (#1696).
+	window.app.ui().press(std::nullopt, {".transpose-event", 0, std::nullopt}, ui::MouseButton::Left);
+	window.app.ui().move(std::nullopt, {"", 0, to});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(window.app.waitUntil(followed));
+	CHECK(position() == 0);
+	window.app.ui().release(std::nullopt, {"", 0, to}, ui::MouseButton::Left);
+	REQUIRE(window.app.waitUntil([&] { return position() == 4 * g_quarter; }));
+	CHECK(followed());
 }
 
 TEST_CASE("a double click on a transpose event opens its value for typing", "[ui]")

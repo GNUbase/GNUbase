@@ -23,7 +23,7 @@ are by attributes, which `TransportControls` follows:
 | Click | Activate Metronome Click | `transport.toggle` `metronome` |
 
 The sections keep the width of their controls. A window too narrow for all of them, such as the transport bar of a
-project window under about 1220 dp wide, cuts off the last sections at its right edge instead of drawing sections over
+project window under about 1240 dp wide, cuts off the last sections at its right edge instead of drawing sections over
 each other. The locator buttons L, R and Sel take their letters' width rather than a text button's 64 dp, so all
 sections fit 1280 dp, a 1920-pixel display at 150 % (#1450).
 
@@ -51,20 +51,21 @@ sections fit 1280 dp, a 1920-pixel display at 150 % (#1450).
   panel the cursor's displays take the width of their format's widest text from it (`base.rcss`, in em of the display
   font, whose digits are all as wide, with room for RmlUi cutting the font size to whole pixels and FreeType rounding
   the advances), so the controls beside them stay in place while the transport runs, locates or scrubs; a format change
-  may change it (#1335). The widths hold every position from bar -999 to 9999 in any signature, every position under 100
-  hours in seconds, timecode and user frames, and 11 digits of samples (under 48 hours at 384 kHz): the longest project
-  from the latest start time (#1379). The locators and the signature keep the widths they have, since they don't move
-  with the cursor; the tempo field follows the cursor in tempo track mode, also while playing, and keeps its width as
-  every `valuefield` does (80 dp). The time display window fills its window. They are `<textdisplay>`s
-  ([widgets.md](widgets.md)): a double click edits one, and Enter takes what was typed in its format (`ui::parseTime`):
-  "3.2" is bar 3, beat 2, "1:30" a minute and a half, "5:12" five seconds and twelve frames; what is left out counts
-  from the start. A minus before the bar number types a position before bar 1, which a negative bar offset shows:
-  "-3.1.1.0" with a bar offset of -4 ([project-setup.md](project-setup.md)); lengths take none. Text that isn't a
-  position changes nothing, and neither does leaving a display without typing. A position or length that ends past the
-  largest project position (`time::g_maxPosition`, 2^48 samples) goes there, as `transport.locate` `by` stops there, and
-  timecode hours past 2147483647 aren't a position (#457). The event display, info line and marker window use the same
-  bound when they turn typed or dragged times into positions. Typing the position a display shows locates to it: onto
-  the display's tick when the cursor was between ticks, and back to it during playback.
+  may change it (#1335). Their content is one line of their font high, at least 16 dp, so a theme may give the primary
+  display a larger font, as the default theme does (#1342). The widths hold every position from bar -999 to 9999 in any
+  signature, every position under 100 hours in seconds, timecode and user frames, and 11 digits of samples (under 48
+  hours at 384 kHz): the longest project from the latest start time (#1379). The locators and the signature keep the
+  widths they have, since they don't move with the cursor; the tempo field follows the cursor in tempo track mode, also
+  while playing, and keeps its width as every `valuefield` does (80 dp). The time display window fills its window. They
+  are `<textdisplay>`s ([widgets.md](widgets.md)): a double click edits one, and Enter takes what was typed in its
+  format (`ui::parseTime`): "3.2" is bar 3, beat 2, "1:30" a minute and a half, "5:12" five seconds and twelve frames;
+  what is left out counts from the start. A minus before the bar number types a position before bar 1, which a negative
+  bar offset shows: "-3.1.1.0" with a bar offset of -4 ([project-setup.md](project-setup.md)); lengths take none. Text
+  that isn't a position changes nothing, and neither does leaving a display without typing. A position or length that
+  ends past the largest project position (`time::g_maxPosition`, 2^48 samples) goes there, as `transport.locate` `by`
+  stops there, and timecode hours past 2147483647 aren't a position (#457). The event display, info line and marker
+  window use the same bound when they turn typed or dragged times into positions. Typing the position a display shows
+  locates to it: onto the display's tick when the cursor was between ticks, and back to it during playback.
 - **The locator range** shows the length from the left to the right locator: in bars and beats counted from zero,
   "1.1.0.0" for a bar and a beat, in the other formats as a time (`ui::formatLength`). A length typed moves the right
   locator.
@@ -109,11 +110,18 @@ the same pane for its own sections (Set up Transport Panel, p. 295). Both are ke
   were, also a width set right before the window's close button, since a close request saves the bounds before the
   window goes. A panel that opens with bounds follows only once its controls show the project, when the engine
   answered their first queries (`ui::TransportControls::onShown`), so it isn't fitted to their defaults first; a new
-  one is fitted to the defaults at once and then once more, again centred, for what they show (#1612). Reset All in
-  the panel's setup pane makes a panel the user sized, or one with bounds from before #1527, follow its sections
-  again. The fit (`ui::fitWidth`, `src/ui/displays.h`) keeps an open panel on its monitor, moved left only as far as
-  the monitor's right edge needs; it asks for the monitors only when the sections' width or the window's bounds
-  changed since it last looked, not in every frame while the transport runs.
+  one is fitted to the defaults at once and then once more, again centred, for what they show (#1612), also where the
+  window system moves windows later, such as SDL's on X11, and the panel is still where it was or already where the
+  first fit asked for (#1701); one whose first fit found nothing to fit is centred where it opened, and only this
+  opening counts, not where a panel before it was (#1765). Reset All in the panel's setup pane makes a panel the user
+  sized, or one with bounds from before #1527, follow its sections again. `ui::TransportPanelFit`
+  (`src/ui/transportpanelfit.h`) fits the panel, with `ui::fitWidth` (`src/ui/displays.h`), which keeps an open panel on
+  its monitor, moved left only as far as the monitor's right edge needs; it asks for the monitors only when the
+  sections' width or the window's bounds changed since it last looked, not in every frame while the transport runs, and
+  when the monitors change (`ui::Shell::onDisplaysChanged`), so that a panel as wide as its monitor's usable area gets
+  narrower with it, at another resolution or with the taskbar moved to the side (#1701). The shell keeps these tasks,
+  which do nothing once the fit is gone (#1765). Its unit tests run on the fake window system
+  (`tests/testutils/fakeui.h`), which can size windows later and counts how often the monitors were asked for.
 - **Time display window** (pp. 312–313): `window.timeDisplay` shows and hides `resources/ui/time-display.rml`, the
   project cursor in large digits, in the format of the slot `timeDisplay`, which its context menu picks. The main
   menu's Studio menu will run it. The context menu also has Show Beat Count Only (`timeDisplay.beatCountOnly`): the

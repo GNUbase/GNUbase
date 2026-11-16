@@ -541,12 +541,12 @@ namespace gnubase::ui
 		double start = m_display.snapped(from, std::nullopt, others);
 		if (std::abs(dx) < g_dragStart)
 		{
-			// A click: from where it snaps, or the grid line at or before it if that is after it, so that the event
-			// holds the point clicked, up to the next bar line.
+			// A click: from where it snaps, or the grid line at or before it if that is after it, up to the bar line
+			// after the point clicked, so that the event holds it also when its start snapped back over a bar line.
 			if (start > from)
 				start = m_display.gridLineBefore(from);
 			const TimeContext& time = m_display.time();
-			const time::Ticks ticks = time.tempo.toTicks(start);
+			const time::Ticks ticks = time.tempo.toTicks(from);
 			return {start, time.tempo.toSeconds(time.signatures.barStart(time.signatures.toBarsBeats(ticks).bar + 1))};
 		}
 		const double end = m_display.snapped(from + (dx * m_display.view().scale), std::nullopt, others);

@@ -122,6 +122,16 @@ namespace gnubase::ui
 				  autoSaveWorks();
 				  readLocation();
 			  })),
+		  m_jobStarted(binding.on("job.started",
+			  [this](const engine::Event& event)
+			  {
+				  const Json job = event.data.at("job");
+				  const std::string kind = job.at("kind").get<std::string>();
+				  if (kind != "track.freeze" && kind != "track.renderInPlace" && kind != "mixdown.export")
+					  return;
+				  if (const Window* main = mainWindow())
+					  backupStarted(main->id(), engine::Result{0, {{"job", job}}, {}});
+			  })),
 		  m_jobProgress(binding.on("job.progress",
 			  [this](const engine::Event& event)
 			  {
@@ -131,9 +141,11 @@ namespace gnubase::ui
 					  : nullptr;
 				  if (dialog == nullptr)
 					  return;
-				  if (Rml::Element* bar = dialog->GetElementById("backup-progress"))
+				  if (Rml::Element* bar =
+						  dialog->GetElementById(backup->second.rendering ? "render-progress" : "backup-progress"))
 					  bar->SetAttribute("value", event.data.at("progress").get<double>());
-				  if (Rml::Element* file = dialog->GetElementById("backup-progress-file"))
+				  if (Rml::Element* file = dialog->GetElementById(
+						  backup->second.rendering ? "render-progress-file" : "backup-progress-file"))
 					  file->SetInnerRML(Rml::StringUtilities::EncodeRml(event.data.at("detail").get<std::string>()));
 			  })),
 		  m_jobFinished(
@@ -375,6 +387,7 @@ namespace gnubase::ui
 		const auto id = job.at("id").get<uint64_t>();
 		Backup& backup = m_backups[id];
 		backup.window = window;
+		backup.rendering = job.at("kind") != "project.backup";
 		// The progress isn't one of the dialogs that take turns (openDialog): while the backup runs, the other project
 		// dialogs still open, over it, and quitting closes them, not the backup (#1001). Each window shows one backup's
 		// progress at a time, so that a backup asked for in another window meanwhile shows its own (#1109). Closed
@@ -383,11 +396,18 @@ namespace gnubase::ui
 		// comes.
 		const bool showing = std::any_of(m_backups.begin(), m_backups.end(),
 			[window](const auto& other) { return other.second.window == window && other.second.progress; });
-		if (Rml::ElementDocument* dialog = showing ? nullptr : loadDialog(window, "backup-progress.rml"))
+		if (Rml::ElementDocument* dialog = showing && !backup.rendering
+				? nullptr
+				: loadDialog(window, backup.rendering ? "render-progress.rml" : "backup-progress.rml"))
 		{
 			backup.progress = dialog->GetObserverPtr();
+			if (backup.rendering)
+			{
+				dialog->Show(Rml::ModalFlag::None);
+				dialog->SetAttribute("job", id);
+			}
 			dialog->AddEventListener(Rml::EventId::Unload, this);
-			if (Rml::Element* bar = dialog->GetElementById("backup-progress"))
+			if (Rml::Element* bar = dialog->GetElementById(backup.rendering ? "render-progress" : "backup-progress"))
 				bar->SetAttribute("value", job.at("progress").get<double>());
 		}
 		// The job may have ended before its command's result came: job.get tells.
@@ -426,6 +446,8 @@ namespace gnubase::ui
 		}
 		if (state != "done")
 			return; // cancelled: as the user asked
+		if (job.at("kind") != "project.backup")
+			return;
 		const Json& result = job.at("result");
 		std::string problems;
 		if (const Json& missing = result.at("missing"); !missing.empty())

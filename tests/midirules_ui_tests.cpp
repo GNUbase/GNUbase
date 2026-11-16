@@ -8,10 +8,6 @@
 #include "ui/tracklist.h"
 #include "uiapp.h"
 
-#include <RmlUi/Core/Context.h>
-#include <RmlUi/Core/Element.h>
-#include <RmlUi/Core/ElementDocument.h>
-#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
@@ -60,19 +56,15 @@ namespace
 			return found.empty() ? std::string() : found[0].value("text", std::string());
 		}
 
-		// Whether a drop-down list offers an option, whose options aren't in the DOM that the UI tools see.
+		// Whether a drop-down list offers an option.
 		bool offers(const std::string& selector, const std::string& value) { return optionIndex(selector, value) >= 0; }
 		// The index of a drop-down list's option, -1 if it has none with that value.
 		int optionIndex(const std::string& selector, const std::string& value)
 		{
-			Rml::Element* element = nullptr;
-			for (int i = 0; element == nullptr && i < app.main().context().GetNumDocuments(); ++i)
-				element = app.main().context().GetDocument(i)->QuerySelector(selector);
-			auto* select = dynamic_cast<Rml::ElementFormControlSelect*>(element);
-			REQUIRE(select != nullptr);
-			for (int i = 0; i < select->GetNumOptions(); ++i)
-				if (select->GetOption(i)->GetAttribute<Rml::String>("value", "") == value)
-					return i;
+			const Json options = test::selectOptions(app, selector);
+			for (size_t i = 0; i < options.size(); ++i)
+				if (options[i].at("value") == value)
+					return static_cast<int>(i);
 			return -1;
 		}
 		std::string value(const std::string& selector)

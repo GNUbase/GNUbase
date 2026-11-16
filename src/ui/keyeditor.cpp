@@ -49,7 +49,7 @@ namespace gnubase::ui
 		// dp: the drum editor's Adapt to Zoom (p. 1227) snaps to the finest note value at least this wide
 		constexpr double g_minGridWidth = 12.0;
 
-		constexpr std::array<std::pair<KeyTool, const char*>, 7> g_tools = {{
+		constexpr std::array<std::pair<KeyTool, const char*>, 8> g_tools = {{
 			{KeyTool::ObjectSelection, "objectSelection"},
 			{KeyTool::Draw, "draw"},
 			{KeyTool::Line, "line"},
@@ -57,11 +57,12 @@ namespace gnubase::ui
 			{KeyTool::Trim, "trim"},
 			{KeyTool::Split, "split"},
 			{KeyTool::Glue, "glue"},
+			{KeyTool::Mute, "mute"},
 		}};
-		constexpr std::array<const char*, 7> g_toolTitles = {
-			"Object Selection", "Draw", "Line", "Erase", "Trim", "Split", "Glue"};
-		constexpr std::array<const char*, 7> g_toolLabels = {
-			"Select", "Draw", "Line", "Erase", "Trim", "Split", "Glue"};
+		constexpr std::array<const char*, 8> g_toolTitles = {
+			"Object Selection", "Draw", "Line", "Erase", "Trim", "Split", "Glue", "Mute"};
+		constexpr std::array<const char*, 8> g_toolLabels = {
+			"Select", "Draw", "Line", "Erase", "Trim", "Split", "Glue", "Mute"};
 		// The line tool's modes (p. 1186), its menu's.
 		constexpr std::array<std::pair<const char*, const char*>, 6> g_lineModes = {{
 			{"line", "Line"},
@@ -990,7 +991,13 @@ namespace gnubase::ui
 	bool KeyEditor::fitLines(const Rml::Context& updated)
 	{
 		const Rml::Element* root = m_root.get();
-		return root != nullptr && root->GetContext() == &updated && refitLines(true);
+		if (root == nullptr || root->GetContext() != &updated)
+			return false;
+		// The first scroll, if show() came before the layout and nothing has rendered the editor again since.
+		const bool unscrolled = !m_scrolled;
+		scrollToNotes();
+		const bool refit = refitLines(true);
+		return refit || (unscrolled && m_scrolled);
 	}
 
 	bool KeyEditor::linesShown() const
@@ -1887,6 +1894,7 @@ namespace gnubase::ui
 			return;
 		}
 		case KeyTool::Line: // only on the controller lanes
+		case KeyTool::Mute: // only on the Articulations lane: notes have no mute yet (#679)
 			return;
 		case KeyTool::Glue:
 		{

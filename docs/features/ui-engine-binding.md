@@ -34,34 +34,33 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   last step's `history.changed` comes after that step's result, so the view shows the engine's value then. A refused
   step changes nothing, so the project read before it shows again. Values that other clients change (MCP, Lua,
   automation) show at once while no step of the control is under way; during a drag the widget itself keeps the drag's
-  value until it ends. Each view begins its `what`s with a name of its own, `stepOwner(view)` (`mixer 3 `,
-  `inspector 7 `), so only the view whose control sends waits: the other mixers and the inspector that show the same
-  channel follow each step the engine took, also during the drag. A control's steps leave nothing behind: the record of
-  them goes away in the `update` after the one that handed on a project read (`project.get`) sent after its last taken
-  step, such as the one after that step's `history.changed`, once no other project read is out (#746), so a session
-  keeps no entry for every channel and parameter a gesture touched. A failed read is none, as the view that sent it
-  still shows its older one (#1370). Until then a view may have no read newer than the control, and one that shows an
-  older read again, such as the inspector after a track change, shows the value that the control sent last (#1305).
-  `sendStep`'s `shown`, after `done`, is that value, and the record keeps it: `shown(what, read)` returns it while the
-  control is ahead of `read`, and it goes with the record (#1471). A view that shows several channels or events in the
-  same control asks for the one it shows, so back on a dragged track the field shows the drag's value, not the other
-  track's (#1421): the inspector's, the sampler panel's and the drum machine panel's step keys name the channel. The
-  info line's step key names only the field, and a step keeps the value of each event it changes, by id, merged into
-  what the record keeps (a JSON merge patch): another event selected meanwhile shows its own value, and each dragged
-  event the drag's, also alone after the drag changed it with others. Its undo steps still name the selection:
-  `sendStep`'s `merge`, its last parameter, names the merge key instead of the step key, here by the selection's size
-  and a hash of its ids, so a wheel gesture that goes on over the field while another event is selected is an undo step
-  for each event; a newer step replaces only a waiting one of the same merge name, so the last step of each selection
-  reaches the engine. The velocity field of an in-place editor's notes does the same by note id (#1550). A relative step
-  goes from each item's value as the field would show it, the one kept where the record has one, else the project's,
-  so a wheel turn on a wider selection moves the others by one, not by what the project still lacks of the first
-  one's kept value (#1632). A value kept is
-  as old as the record unless the project was read since: a step sent while none of the record's is out and a project
-  read after its last taken step is in starts what the record keeps afresh, so a value from before an undo doesn't show
-  for an event selected after a step on another. A view showing what that update handed on still asks `sending` and
-  `ahead` about it, and a later gesture makes the record again. The records go only while some view reads the project,
-  as the event display does: a binding without one keeps them all for the session, and a view that asks `ahead` about
-  another query's answer than `project.get`'s may find the record gone before that query answers again.
+  value until it ends. Each view begins its `what`s with a name of its own, `stepOwner(view)` (`mixer 3 `, `inspector 7
+  `), so only the view whose control sends waits: the other mixers and the inspector that show the same channel follow
+  each step the engine took, also during the drag. A control's steps leave nothing behind: the record of them goes away
+  in the `update` after the one that handed on a project read (`project.get`) sent after its last taken step, such as
+  the one after that step's `history.changed`, once no other project read is out (#746), so a session keeps no entry for
+  every channel and parameter a gesture touched. A failed read is none, as the view that sent it still shows its older
+  one (#1370). Until then a view may have no read newer than the control, and one that shows an older read again, such
+  as the inspector after a track change, shows the value that the control sent last (#1305). `sendStep`'s `shown`, after
+  `done`, is that value, and the record keeps it: `shown(what, read)` returns it while the control is ahead of `read`,
+  and it goes with the record (#1471). A view that shows several channels or events in the same control asks for the one
+  it shows, so back on a dragged track the field shows the drag's value, not the other track's (#1421): the inspector's,
+  the sampler panel's and the drum machine panel's step keys name the channel. The info line's step key names only the
+  field, and a step keeps the value of each event it changes, by id, merged into what the record keeps (a JSON merge
+  patch): another event selected meanwhile shows its own value, and each dragged event the drag's, also alone after the
+  drag changed it with others. Its undo steps still name the selection: `sendStep`'s `merge`, its last parameter, names
+  the merge key instead of the step key, here by the selection's size and a hash of its ids, so a wheel gesture that
+  goes on over the field while another event is selected is an undo step for each event; a newer step replaces only a
+  waiting one of the same merge name, so the last step of each selection reaches the engine. The velocity field of an
+  in-place editor's notes does the same by note id (#1550). A relative step goes from each item's value as the field
+  would show it, the one kept where the record has one, else the project's, so a wheel turn on a wider selection moves
+  the others by one, not by what the project still lacks of the first one's kept value (#1632). A value kept is as old
+  as the record unless the project was read since: a step sent while none of the record's is out and a project read
+  after its last taken step is in starts what the record keeps afresh, so a value from before an undo doesn't show for
+  an event selected after a step on another. A view showing what that update handed on still asks `sending` and `ahead`
+  about it, and a later gesture makes the record again. The records go only while some view reads the project, as the
+  event display does: a binding without one keeps them all for the session, and a view that asks `ahead` about another
+  query's answer than `project.get`'s may find the record gone before that query answers again.
 - **Events.** `on(name, handler)` calls `handler` with every event of that name, from whichever client caused it: a
   change made through MCP, Lua or another window reaches the UI the same way as the UI's own. The returned
   `Subscription` ends the handler when it goes, so a view that closes stops listening; subscriptions must not outlive
@@ -166,3 +165,7 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   for an event that no C++ view takes. `tests/engine_tests.cpp` checks the command log and the clients' wake-up,
   `tests/shell_tests.cpp` the step tasks, the frame rate, and that posted work and file dialog answers, the OS's and
   automation's, draw.
+
+Each value step first sends older steps waiting under other keys, including the last waiting step of another view's gesture. This also holds when returning to a view whose earlier step is still in flight. Switching from a mixer fader to the inspector therefore leaves the engine at the inspector's newer value, with the completed drag before it in undo history. A control's ongoing drag still coalesces its own pending steps.
+
+Answered step records already go away after a successful project read newer than their last answer and a following update, once no read is outstanding. This also bounds the keys from repeatedly opened views; no record with a waiting command or answer is erased. Tests cover repeated view owners, ordering and undo across views with the engine held, and panners following another mixer's drag.

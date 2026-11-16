@@ -23,9 +23,10 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
   without adding `.dawproject`, so that a script or MCP client gets the file it named; Save As in the UI adds the
   extension (see the File menu below). A media file that is missing is referred to by its absolute path instead of going
   into the file (#1567), so that a save over the file that had the last copy of its audio leaves only that path:
-  `project.save`, `project.saveNewVersion`, `track.export` and `track.savePreset` list such files (`missing`), and the
-  UI's Save, Save As, Save New Version and Export Selected Tracks say so in a dialog (#1614). One that the file system
-  can't say is there, such as in a folder without permission, isn't missing: the save fails. Projects may be saved on
+  `project.save`, `project.saveNewVersion`, `track.export` and `track.savePreset` list such files (`missing`), and a
+  frozen track's freeze file that is missing after them (#1736). The UI's Save, Save As, Save New Version, Export
+  Selected Tracks and the track preset dialog's Save say so (#1614, #1736). One that the file system can't say is
+  there, such as in a folder without permission, isn't missing: the save fails. Projects may be saved on
   several threads at once, as backup jobs run beside each other and beside a save ([backup.md](backup.md)), each writing
   its own file without a lock: the ZIP entries have no time stamps (miniz is built with `MINIZ_NO_TIME`), since miniz
   takes them from `localtime()`, whose result is one static struct outside Windows. Their date and time fields hold
@@ -223,3 +224,5 @@ quit question: the error makes way for it, an auto save failing while it is open
 the next failure after Cancel. `tests/uitools_tests.cpp` checks `ui_file_dialog` and `ui_close`,
 `tests/lua/ui/dialog.lua` the unsaved changes question through `gnubase.ui.close`, and `tests/widgets_tests.cpp`
 `ui::closeDialog`. `tests/clock_tests.cpp` checks the clock's ticks and `advance` on their own.
+
+Project object ids stay within Lua's positive integer range. A load refuses ids at or above 9223372036854775807, or a next-id counter above it, with a clear error; the last signed integer is reserved for that counter. Allocation also refuses to pass that limit, so a project cannot create ids that scripts would receive as negative values.

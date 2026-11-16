@@ -204,6 +204,19 @@ namespace
 			return found.empty() ? std::string() : found.at(0).at("attributes").value("value", std::string());
 		}
 
+		// Waits until the editor shows the grid type with this label and the sound with this snap. The engine has a
+		// change at once, the editor some steps later: the view with editor.changed, the drum map with the project it
+		// reads after history.changed. A drumstick gesture before that goes by the old grid (#1791).
+		void shows(const std::string& gridType, int pitch, const std::string& snap)
+		{
+			REQUIRE(app.waitUntil(
+				[&]
+				{
+					return elements("#drum-grid-type").at(0).value("text", "") == gridType &&
+						value(sound(pitch) + " .drum-sound-snap") == snap;
+				}));
+		}
+
 		test::UiApp app{{1200, 800}};
 		std::optional<ui::WindowId> window;
 		uint64_t track = 0;
@@ -633,6 +646,7 @@ TEST_CASE("with the grid type Use Snap from Drum Map the drumstick snaps to the 
 	f.click(of("#drum-grid-menu menuitem[grid-type=drumMap]"));
 	REQUIRE(
 		f.app.waitUntil([&] { return f.app.call("editor.get", {{"editor", "window"}}).at("gridType") == "drumMap"; }));
+	f.shows("Drum Map Snap", 36, "1/8");
 	f.click(of(".key-tool[key-tool=draw]"));
 	// A drag over 3.5 sixteenths: a note at every eighth, the first where the click falls in its eighth.
 	f.app.ui().drag(f.window, f.at(0.3, 36), f.at(3.5, 36));
@@ -655,8 +669,7 @@ TEST_CASE("with Alt the drumstick inserts with the length and the snap of the so
 	Fixture f;
 	f.app.call("drumMap.set", {{"map", f.map}, {"sounds", Json::array({{{"pitch", 37}, {"snap", "1/8"}}})}});
 	f.app.call("editor.set", {{"editor", "window"}, {"lengthQuantize", "drumMap"}, {"gridType", "drumMap"}});
-	REQUIRE(
-		f.app.waitUntil([&] { return f.app.call("editor.get", {{"editor", "window"}}).at("gridType") == "drumMap"; }));
+	f.shows("Drum Map Snap", 37, "1/8");
 	f.scroll(36);
 	f.click(of(".key-tool[key-tool=draw]"));
 	// From the bass drum's sixteenths down to the side stick's eighths, over 3.5 sixteenths: two eighths.
@@ -1132,6 +1145,54 @@ TEST_CASE("Show Drum Sounds in Use by Instrument shows the sounds of a drum trac
 	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-sound").size() == 128; }));
 	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note").size() == 2; }));
 	CHECK(f.elements(padless).size() == 1);
+}
+
+TEST_CASE("with Show Drum Sounds in Use by Instrument the drum editor opens scrolled to the listed notes", "[ui]")
+{
+	// The first scroll goes to the middle of the rows of the notes the list shows, not to a note of a sound it hides.
+	Fixture f;
+	f.app.call("editor.set", {{"editor", "window"}, {"pitchVisibility", true}, {"visibleSounds", "inUse"}});
+	f.app.call("editor.close", {{"editor", "window"}});
+	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().editorWindow() == nullptr; }));
+
+	// A drum track whose map plays the sounds 28-127 on the kick's pad: 100 rows, more than the window shows, the
+	// first of them at the top before it scrolls. The sounds below have no pad.
+	const Json drums = f.app.call("drum.create");
+	f.app.call("track.set", {{"track", drums.at("track").at("id")}, {"drumMap", f.map}});
+	Json sounds = Json::array();
+	for (int pitch = 28; pitch < 128; ++pitch)
+		sounds.push_back({{"pitch", pitch}, {"oNote", 36}});
+	f.app.call("drumMap.set", {{"map", f.map}, {"sounds", sounds}});
+	const auto part =
+		f.app.call("midiPart.add", {{"track", drums.at("track").at("id")}, {"position", 0}, {"length", g_bar}})
+			.at("part")
+			.at("id");
+	const Json added = f.app.call("note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", 0}, {"length", g_sixteenth}, {"pitch", 127}, {"velocity", 0.5}},
+					{{"position", g_quarter}, {"length", g_sixteenth}, {"pitch", 0}, {"velocity", 0.5}}}}});
+	const std::string listed =
+		".key-note[note=\"" + std::to_string(added.at("notes").at(0).at("id").get<uint64_t>()) + "\"]";
+	f.app.call("editor.open", {{"editor", "window"}, {"parts", Json::array({part})}, {"content", "drum"}});
+	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().editorWindow() != nullptr; }));
+	f.window = f.app.appUi().editorWindowId();
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".drum-sound").size() == 100; }));
+	// Without scrollToPitch: the listed note is inside the note display's visible box.
+	CHECK(f.app.waitUntil(
+		[&]
+		{
+			const Json bodies = f.elements(".key-editor-body");
+			const Json found = f.elements(listed);
+			if (bodies.empty() || found.empty())
+				return false;
+			const Json body = bodies.at(0).at("box");
+			const double top = body.at("y").get<double>();
+			const double y = found.at(0).at("box").at("y").get<double>();
+			return y >= top &&
+				y + found.at(0).at("box").at("height").get<double>() <= top + body.at("height").get<double>();
+		}));
+	CHECK(f.elements(".key-note").size() == 1);
 }
 
 TEST_CASE("with drum sound names the key editor's notes line up with their velocity bars and parts", "[ui]")

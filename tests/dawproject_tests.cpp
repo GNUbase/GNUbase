@@ -5,6 +5,7 @@
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
 #include "engine/time/tempomap.h"
+#include "testutils/heldjob.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -29,6 +30,7 @@ using namespace gnubase::engine;
 namespace test = gnubase::test;
 using Catch::Matchers::ContainsSubstring;
 using gnubase::test::readZip;
+using gnubase::test::settlePeaks;
 using gnubase::test::writeZip;
 using gnubase::time::g_ticksPerQuarter;
 
@@ -57,22 +59,6 @@ namespace
 	std::string utf8(const std::filesystem::path& path)
 	{
 		return path.u8string();
-	}
-
-	// Waits until the peak worker is done with every media file before a test removes one: it writes peak files next
-	// to them, and Windows can't remove a folder it is writing into.
-	void settlePeaks(Client& client)
-	{
-		const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(20);
-		for (;;)
-		{
-			const Json statuses = run(client, "media.peakStatus").at("media");
-			if (std::none_of(statuses.begin(), statuses.end(), [](const Json& status)
-					{ return status.at("status") == "pending" || status.at("status") == "generating"; }))
-				return;
-			REQUIRE(std::chrono::steady_clock::now() < until);
-			std::this_thread::sleep_for(std::chrono::milliseconds(5));
-		}
 	}
 
 	void writeWav(const std::string& path, double sampleRate, int channels, size_t frames)
@@ -446,6 +432,9 @@ TEST_CASE("a missing media file is referred to by its path, and loading extracts
 	// The result lists it, for the UI to say that the file has no copy of it (#1614).
 	CHECK(run(client, "project.save", {{"path", file}}).at("missing") ==
 		Json::array({utf8(dir.path() / "other" / "audio" / "take.wav")}));
+	// So does a new version's (#1736).
+	CHECK(run(client, "project.saveNewVersion").at("missing") ==
+		Json::array({utf8(dir.path() / "other" / "audio" / "take.wav")}));
 	run(client, "project.load", {{"path", file}, {"mediaFolder", media}});
 	CHECK(run(client, "project.get").at("media")[0].at("path") == utf8(dir.path() / "other" / "audio" / "take.wav"));
 	CHECK(run(client, "project.save", {{"path", file}, {"embedMedia", false}}).at("missing").empty());
@@ -454,6 +443,40 @@ TEST_CASE("a missing media file is referred to by its path, and loading extracts
 			{"path", utf8(dir.path() / "tracks.dawproject")}});
 	CHECK(exported.at("missing").size() == 1);
 }
+
+#ifndef _WIN32
+// Not on Windows, where a folder's permissions don't keep its files from being found.
+TEST_CASE("a save fails on a media file that the file system can't say is there", "[integration]")
+{
+	// It isn't missing, so the save doesn't refer to it instead of having it: it fails and leaves the file as it was
+	// (#1614, #1736).
+	namespace fs = std::filesystem;
+	const test::TempDir dir;
+	const fs::path locked = dir.path() / "locked";
+	fs::create_directories(locked);
+	writeWav(utf8(locked / "take.wav"), 44100.0, 1, 4410);
+	Engine engine;
+	Client client(engine);
+	run(client, "media.add", {{"path", utf8(locked / "take.wav")}});
+	settlePeaks(client);
+	const std::string file = utf8(dir.path() / "song.dawproject");
+	run(client, "project.save", {{"path", file}, {"embedMedia", false}});
+	const auto size = fs::file_size(fs::u8path(file));
+	fs::permissions(locked, fs::perms::none);
+	std::error_code error;
+	if (fs::exists(locked / "take.wav", error) || !error)
+	{
+		fs::permissions(locked, fs::perms::owner_all);
+		SKIP("the folder can be searched here anyway, e.g. by root");
+	}
+	const Result failed = client.call("project.save", Json::object());
+	fs::permissions(locked, fs::perms::owner_all); // before a check can end the test, so that the folder can go
+	CHECK(!failed.ok());
+	CHECK_THAT(failed.error, ContainsSubstring("take.wav"));
+	CHECK(fs::file_size(fs::u8path(file)) == size);
+	CHECK(!fs::exists(fs::u8path(file + ".saving")));
+}
+#endif
 
 TEST_CASE("projects saved on two threads at the same time both load", "[integration]")
 {

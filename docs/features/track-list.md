@@ -97,7 +97,7 @@ sends engine commands, so whatever another client changes shows at once.
     listview.tracks[multiple]     the list view (widgets.md), scrolled with the event display
       listitem[value=<id>][level][type]   a tree row per track; .selected, .disabled, .renaming, .versions
         .tree-indent, .tree-toggle        from the list view, by level
-        .track-color                      the track's color strip, attribute color (colors.md)
+        .track-color                      the track's color strip, attribute color only with a color (colors.md)
         .track-name, input.track-name-field   .track-version in the name while ui.showVersionName
         .track-versions-toggle            .versions rows: the arrow that opens the Track Versions pop-up menu
                                           #track-versions-menu (track-versions.md)
@@ -121,6 +121,17 @@ sends engine commands, so whatever another client changes shows at once.
   track's height shows. In a row too narrow for both, such as deep in folders or in a narrow track list, the name gives
   way; what still doesn't fit is hidden at the row's right. The dialog keeps what the setting has that it doesn't know,
   such as another type's width from a later GNUbase.
+- **Track colors** (#1314). Code gives a track's `.track-color` strip its color as `background-color` and, only
+  while the track has one, the attribute `color`; the themes do the rest. The default theme, after the mockup
+  (`art/mockups/main-window.webp`), draws the strip as a 5 dp bar at the row's left edge, tints a folder's row in its
+  color and lights the selected row in its track's color with an outline in it: the strip stretches across the row,
+  and a nine-patch skin in the row's color (`track-row-folder`, `track-row-selected`) lets the color through. The
+  strip is positioned, so it paints over the row's background; the name, its field, the versions arrow and the
+  controls are positioned too and come after it, so they paint over it, and the folder's toggle, which comes before
+  it, is lifted with `z-index: 1`. No row is a stacking context of its own: one would keep a drop-down list in the
+  controls under the rows below it. A track without a color keeps the theme's selection. The default theme's names
+  are medium weight and Record Enable's icon is in the record color while it is off. The other themes keep the 4 dp
+  strip.
 - **Rows and lanes.** The event display has a lane per track that isn't hidden, each as high as its track
   (`EventDisplay::trackHeight`, `g_trackHeight` (40 dp) until set, 20 to 400 dp, times vertical zoom), and tells the
   track list when its lanes or view change (`onLayout`). The list sets each row's height from its lane and moves the
@@ -291,5 +302,8 @@ data blocks and Move Selected Tracks to New Folder are in [folder-tracks.md](fol
   folders; a drag that ends where it started, also after another client gave the track another height meanwhile, and
   one that stays at the limit sending nothing; a drag whose release never came ending with the next press; a failed
   set (a track removed meanwhile, a folded folder removed meanwhile) showing the project's heights and folded
-  folders again; and a folded folder that undo brings back being folded in the list, also when the list took the
-  engine's layout meanwhile.
+  folders again; a folded folder that undo brings back being folded in the list, also when the list took the
+  engine's layout meanwhile; and the default theme's rows in their tracks' colors (the golden image
+  `track-list-rows`), at dp ratios 1 and 2, a row's MIDI Channel list open over the rows below it for the mouse, the
+  strip back to a bar when the selected track's color is removed, and the 4 dp strip in the other themes and the
+  default theme's look again after switching back.

@@ -13,7 +13,9 @@
 #include "engine/audio/sequencer.h"
 #include "engine/audio/transport.h"
 #include "engine/graph/graph.h"
+#include "engine/jobs/jobs.h"
 #include "engine/metronome/metronome.h"
+#include "engine/plugins/slotinstances.h"
 #include "engine/processors/midieffects.h"
 #include "engine/processors/sampler.h"
 #include "engine/schema.h"
@@ -36,6 +38,7 @@
 #include <set>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace gnubase::engine
@@ -97,6 +100,7 @@ namespace gnubase::engine
 		// audio.analyze, audio.compare and audio.record are in analysiscommands.cpp, midi.inject and midi.capture in
 		// miditap.cpp.
 		void registerCommands(Engine& engine);
+		Jobs::Work mixdownWork(const Json& parameters, const Json& project);
 
 		// Command thread: the user setting audio.stopAfterPunchOut, for the transport.
 		void setStopAfterPunchOut(bool stop);
@@ -110,6 +114,10 @@ namespace gnubase::engine
 		void setChase(const MidiChase& chase);
 		// Any thread: reads the samplers' samples asked for from now on with read (SampleLoader::setRead).
 		void setSampleReader(SampleLoader::Read read);
+		void setRenderPluginFactory(plugins::SlotInstances::Factory factory)
+		{
+			m_renderPluginFactory = std::move(factory);
+		}
 		// Any thread: how long an offline render waits for the samplers' samples before it logs a warning and waits
 		// again (30 s), 20 rounds at most before it fails.
 		void setOfflineSampleWait(std::chrono::milliseconds wait) { m_offlineSampleWait = wait; }
@@ -221,6 +229,7 @@ namespace gnubase::engine
 			uint64_t generation = 0; // the first program that has it
 		};
 
+		Json mixdown(const Json& parameters, const Json& project, bool quick, JobContext* job);
 		void rebuild();
 		// audio.setDevice: opens the device, starts it if asked or if the one it replaces ran, falls back to the dummy
 		// device and saves the choice as the user's if asked (start, fallBackToDummy, remember).
@@ -574,6 +583,9 @@ namespace gnubase::engine
 
 		// Reads the samplers' samples (#1122). Last, so that it stops first: it posts audio.updateSamples.
 		std::atomic<bool> m_updatingSamples{false}; // an audio.updateSamples it posted hasn't started yet
+		SampleLoader* m_renderSamples = nullptr;    // render jobs share immutable sample reads, never processors
+		JobContext* m_renderJob = nullptr;
+		plugins::SlotInstances::Factory m_renderPluginFactory;
 		SampleLoader m_sampleLoader{[this] { postSampleUpdate(); }};
 	};
 }

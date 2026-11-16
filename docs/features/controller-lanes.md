@@ -46,7 +46,10 @@ key editor's tools edit; lane presets, the line tool's modes and Auto Select Con
 
 `ui::ControllerLanes` (`src/ui/controllerlanes.h`) fills the key editor's `.controller-lanes`, below the note display
 and on its time axis. It shows the project and the view as the key editor hands them on and sends `editor.set`,
-`note.*` and `controller.*`; edits of several parts or commands go in one `history.transaction`.
+`note.*` and `controller.*`; edits of several parts or commands go in one `history.transaction`. In a low editor, such
+as the lower zone's at its default size, the lanes give way before the note display: the note display starts from 40% of
+the editor, the lanes shrink down to their footer and their list scrolls (#1775). In the in-place editor, as high as its
+track, the lanes keep their height.
 
 ```
 .controller-lanes                     .lanes-hidden while showLanes is off
@@ -56,11 +59,12 @@ and on its time axis. It shows the project and the view as the key editor hands 
                                       to add, and Remove This Lane of that one (p. 1261)
         button.controller-lane-type   the lane's name, opens #controller-lane-menu (the lane's type, Select All
                                       Events on Lane, Remove This Lane, Apply and Reset MIDI Play Probability and
-                                      Velocity Variance)
+                                      Velocity Variance); as wide as the header inside its frame (#1774)
       .controller-lane-area[lane]     .controller-bar[part][note] per note (note lanes), .controller-step[part]
                                       [controller] per event, as wide as until the next one; .selected, .inactive
   .controller-lanes-footer            in an in-place editor a double click on the strip, not on its buttons,
-                                      closes the editor (p. 1261, in-place-editor.md)
+                                      closes the editor (p. 1261, in-place-editor.md); its buttons are as high
+                                      as it, 22 dp (#1774)
     #controller-lane-create           Create Controller Lane, menu #controller-create-menu: the lane types,
                                       named controllers and all 128 in Continuous Controllers; Show Used
                                       Controllers, Show Velocity Lane Only, Show/Hide Controller Lanes
@@ -120,14 +124,15 @@ editor's lanes.
   back through `midi.capture`; `controller.line` refusing positions at or past the part's end, also on a linear track, and
   lines of more than 65536 events; `note.apply` in a shared copy; the views' lanes, `showLanes`,
   `controllerSelection` and Auto Select Controllers; `soundSlotsLane` and `collapsedGroups`.
-- `tests/controllerlanes_ui_tests.cpp` drives the app with `ui::Automation`: velocity bars at their notes, dragged,
-  painted and drawn with the line tool; a lane from the Create Controller Lane menu, events drawn, painted, selected,
-  dragged and erased; the line tool's line, square, parabola, sine, triangle and Paint modes from its menu, which shows
-  only after the second click; Ctrl painting only where the mouse went; poly pressure lanes taking the selected note's
-  pitch and program change lanes; Show Used Controllers, a lane's type, Select All Events on Lane, Remove This Lane,
-  play probability drawn, applied and reset, Apply and Reset MIDI Velocity Variance over two parts as one undo step,
-  Show/Hide and Show Velocity Lane Only; a right click below a lane's name adding a lane and removing that one; the line
-  tool and painting on a lane whose events are on another channel; drags released outside the lanes and never released;
-  Auto Select Controllers with a note moved; a preset saved with Add Preset, loaded and removed with Remove Preset;
-  events drawn on a lane playing back; a step that another event now starts with losing its width (#1580).
-  `tests/uithemes_tests.cpp`: every theme draws play probability and velocity variance bars dashed.
+- `tests/controllerlanes_ui_tests.cpp` drives the app with `ui::Automation`: the lane-type buttons inside their headers
+  and the footer's buttons inside the footer in every theme, also with the keyboard focus' frame; velocity bars at their
+  notes, dragged, painted and drawn with the line tool; a lane from the Create Controller Lane menu, events drawn,
+  painted, selected, dragged and erased; the line tool's line, square, parabola, sine, triangle and Paint modes from its
+  menu, which shows only after the second click; Ctrl painting only where the mouse went; poly pressure lanes taking the
+  selected note's pitch and program change lanes; Show Used Controllers, a lane's type, Select All Events on Lane,
+  Remove This Lane, play probability drawn, applied and reset, Apply and Reset MIDI Velocity Variance over two parts as
+  one undo step, Show/Hide and Show Velocity Lane Only; a right click below a lane's name adding a lane and removing
+  that one; the line tool and painting on a lane whose events are on another channel; drags released outside the lanes
+  and never released; Auto Select Controllers with a note moved; a preset saved with Add Preset, loaded and removed with
+  Remove Preset; events drawn on a lane playing back; a step that another event now starts with losing its width
+  (#1580). `tests/uithemes_tests.cpp`: every theme draws play probability and velocity variance bars dashed.

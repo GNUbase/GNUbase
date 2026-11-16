@@ -40,6 +40,7 @@ namespace gnubase::ui
 		Split,
 		Glue,
 		Line, // on the controller lanes, in its mode (#128)
+		Mute, // on the Articulations lane (#1684); notes have no mute yet (#679)
 	};
 
 	// Fills an element of a MidiEditor with the key editor: its toolbar (tools, the transpose palette, step and MIDI
@@ -83,7 +84,8 @@ namespace gnubase::ui
 		// when a pixel has other ticks than they were built with, as after the editor's first layout and when its
 		// window or zone changes its width (#1671). Lines that an update laid out with their own ticks only for a
 		// quarter more or fewer (#1716), others for any other ticks (#1768). True when it built them, so that the
-		// window updates again (Shell::afterUpdate).
+		// window updates again (Shell::afterUpdate). The first scroll to the notes waits for that layout too, and
+		// is true when it scrolled.
 		bool fitLines(const Rml::Context& updated);
 
 		// Scrolls the note display so that the pitch is in the middle; false before the display has its size. The

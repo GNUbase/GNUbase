@@ -28,11 +28,11 @@ and activating versions across tracks.
   that go and come, and `track.changed`. A track a command leaves alone keeps storing no version of its own:
   `trackVersion.activate` on a track without that ID and `trackVersion.remove` on a track with a single version skip it,
   so it stays out of the undo step and out of what the commands return; a track whose only version is named v1 again
-  stores none either. The project rules' `hasTrackVersion` ([project-rules.md](project-rules.md), p. 1434) finds the
-  tracks with more than one version, not one that stores only its first, as a new imported track does for the ID it
-  shares (#1629). A duplicated version's shared copies are a group of their own, with note and controller ids of their
-  own that they share with each other and with nothing else: two versions never play together, so a group across them
-  is none, and the first switch would take it apart.
+  stores none either. The project rules' `hasTrackVersion` ([project-rules.md](project-rules.md), pp. 1434-1435) finds
+  the tracks with more than one version, which the track version indicator marks (p. 232), not one that stores only its
+  first, as a new imported track does for the ID it shares (#1629). A duplicated version's shared copies are a group of
+  their own, with note and controller ids of their own that they share with each other and with nothing else: two
+  versions never play together, so a group across them is none, and the first switch would take it apart.
 - **`project.get` and the project file.** Each such track has `versions` (`[{id, name}]`) and `activeVersion`;
   `versionContents` lists what the inactive versions hold (`[{track, version, audioEvents, audioParts, midiParts}]`),
   which GNUbase's entry of the DAWproject file keeps. Other applications see the active versions only. Ids loaded go
@@ -59,13 +59,18 @@ and activating versions across tracks.
   `forEveryAudioEvent` is its audio events alone. A new time base (`rebaseTrack`), a new sample rate
   (`changeSampleRate`), a tempo change (`tempoChanged`, both its retiming and its separating of shared copies),
   resampled media (`rescaleUses`), Set Root Key for Unassigned Events (`transpose.assignRootKey`) and renamed or
-  removed articulations (`followArticulations`) go through them, so none of them can miss an inactive version.
+  removed articulations (`followArticulations`) go through them, so none of them can miss an inactive version. So do
+  three walks that only read: where the content ends for `midiFile.import`, the media sample rates per track of
+  `track.importSources` (`mediaSampleRatesByTrack`) and the highest id of a loaded project; the next walk over inactive
+  versions takes the visitor too, not a loop of its own.
 
 Tests: `tests/trackversions_tests.cpp` renders a track whose new version is empty and whose first one plays again once
 activated, across two tracks with one ID, and checks duplicating, names, deleting, common IDs, undo, the project file,
 `track.duplicate`, a new time base, the pool, resampled media relinking, tempo changes, the shared copies of a version
-that a tempo change retimes apart, the shared copies a version keeps, the group of its own that a duplicated version's
-shared copies get, and the tracks a command skips.
+that a tempo change retimes apart, an inactive version's group that a tempo change splits into sets of several copies
+(the largest keeps the group and its note ids, the other shares new ids in a new group), a tempo change that splits a
+playing group and an inactive one at once, with `midiPart.changed` for the playing copies only, the shared copies a
+version keeps, the group of its own that a duplicated version's shared copies get, and the tracks a command skips.
 
 ## UI
 

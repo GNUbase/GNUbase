@@ -2160,8 +2160,10 @@ namespace gnubase::engine
 		// Frozen tracks' freeze files go with the media files: into the file, or else referred to relative to the file
 		// if they are in its folder, so that they move with it. Files from before "frozen" have only the paths in the
 		// project. One that isn't there to embed is referred to by its absolute path: a relative one could name an
-		// embedded file, as the file's entries are looked up in any case.
+		// embedded file, as the file's entries are looked up in any case. Such files are missing as media files are,
+		// and one that the file system can't say is there is embedded, so that reading it fails the save (#1736).
 		Json frozen = Json::object();
+		std::set<std::string> missingFreezes;
 		// Each file goes in once, under a name that no other one has, also in another case: they are extracted into
 		// one folder. Where the file system folds a letter's case that this folding doesn't (a non-ASCII one on
 		// Windows and macOS), the extraction keeps the entries apart (Importer::freeTarget).
@@ -2173,10 +2175,11 @@ namespace gnubase::engine
 				continue;
 			std::string stored = referencePath(track.frozen->path, fileFolder);
 			std::error_code error;
-			if (options.embedMedia && !std::filesystem::is_regular_file(pathOf(track.frozen->path), error))
+			if (options.embedMedia && !std::filesystem::exists(pathOf(track.frozen->path), error) && !error)
 			{
 				const std::filesystem::path absolute = std::filesystem::absolute(pathOf(track.frozen->path), error);
 				stored = error ? track.frozen->path : absolute.lexically_normal().u8string();
+				missingFreezes.insert(track.frozen->path);
 			}
 			else if (options.embedMedia)
 			{
@@ -2239,7 +2242,9 @@ namespace gnubase::engine
 			std::filesystem::remove(pathOf(temporary), ignored);
 			throw DawProjectError("can't save " + path + ": " + error.message());
 		}
-		return exporter.missing();
+		std::vector<std::string> missing = exporter.missing();
+		missing.insert(missing.end(), missingFreezes.begin(), missingFreezes.end());
+		return missing;
 	}
 
 	Project loadDawProject(const std::string& path, const std::string& mediaFolder, bool extractMedia)
@@ -2293,6 +2298,12 @@ namespace gnubase::engine
 				if (entry.second.warp.musical && entry.second.warp.tempo <= 0.0)
 					entry.second.warp.tempo = definitionTempo(project, entry.second);
 			return project;
+		}
+		catch (const std::overflow_error&)
+		{
+			// An unsupported id range must fail the load, rather than silently lose native data through the XML
+			// fallback.
+			throw;
 		}
 		catch (const std::exception&)
 		{

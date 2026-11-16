@@ -327,8 +327,8 @@ namespace gnubase::engine
 		graph::EventBuffer& input() noexcept { return m_input; }
 		// Audio thread: an event of midi.inject's into input through an MPE setup (midi::MpeSetup::pack), as from a
 		// port with it: the track keeps the state of the notes' channels while the setup stays. False, adding nothing,
-		// if input has no room for a note-on and its initial values.
-		bool injectMpe(uint32_t setup, const graph::ProcessEvent& event) noexcept;
+		// if input has no room for all that the event adds (midi::MpeInput::maxEvents).
+		bool injectMpe(uint64_t setup, const graph::ProcessEvent& event) noexcept;
 
 		// Audio thread: the notes played straight to the track's instrument in this block (midi.inject direct, #1614),
 		// as they are: neither its input's mapping and modifiers nor its MIDI effects change them, and they aren't its
@@ -362,8 +362,10 @@ namespace gnubase::engine
 		void endHeld(std::array<bool, g_notes>& held, graph::EventBuffer& out, bool shared) noexcept;
 		// When the sequence is new: ends the notes that the effects that go played, at the track's output unless one
 		// that stays holds them too, and at the instrument tracks the sends played to. The inserts' output counts as
-		// gone when any insert is new or gone, as the effects that arrive didn't see the note-ons. A new instance
-		// takes the values its slot's automation sent last (m_automated), which the lanes don't send again.
+		// gone when any insert is new or gone, as the effects that arrive didn't see the note-ons. When an insert above
+		// the divider goes, the notes the inserts there played (m_inputPlayed) end in the track's input too, where the
+		// track records them. A new instance takes the values its slot's automation sent last (m_automated), which the
+		// lanes don't send again.
 		void takeEffects(const MidiSequence& sequence, graph::EventBuffer& out) noexcept;
 		// Remembers the values the automation sends the effects' parameters in the block (m_automated).
 		void remember(const MidiSequence& sequence, const graph::EventBuffer& events) noexcept;
@@ -479,7 +481,7 @@ namespace gnubase::engine
 		uint64_t m_inputSlotsSerial = 0; // the MidiSequence::slotsSerial they belong to
 		// midi.inject's MPE input (injectMpe) and the setup it is for.
 		midi::MpeInput m_injectedMpe;
-		uint32_t m_injectedMpeSetup = 0;
+		uint64_t m_injectedMpeSetup = 0;
 		int8_t m_inputSlotTrack = -1;   // the MidiSequence::inputChannel they belong to
 		uint8_t m_inputSlotTrigger = 0; // the channel of the trigger that selected the slot
 		bool m_tookSlot = false;        // a sequencer for sends before the modifiers: takeSlot ran
@@ -538,6 +540,8 @@ namespace gnubase::engine
 		// highest serial that played.
 		std::array<uint64_t, midi::g_effectSlots> m_inserts{};
 		size_t m_insertCount = 0;
+		size_t m_inputCount = 0; // of them above the divider
+		bool m_inputGo = false;  // one of those went: runInputEffects ends the notes they played (m_inputPlayed)
 		std::array<uint64_t, midi::g_effectSlots> m_sends{};
 		std::array<bool, midi::g_effectSlots> m_sendElsewhere{}; // those sends played to another instrument track
 		uint64_t m_newest = 0;

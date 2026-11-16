@@ -623,8 +623,9 @@ namespace gnubase::engine
 		// The notes they played end where the track records and plays, ahead of the parts' notes, which never
 		// passed them, and the inserts below the divider get the note-offs.
 		m_input.clear();
-		if (changes)
+		if (changes || m_inputGo)
 			endHeld(m_inputPlayed, m_input, false);
+		m_inputGo = false;
 		m_input.merge(*played);
 		holdNotes(m_input, m_inputPlayed);
 	}
@@ -770,13 +771,28 @@ namespace gnubase::engine
 						m_sendOut[slot].add(noteEvent(graph::ProcessEvent::Type::NoteOff, index, 0));
 			m_sendHeld[slot].fill(false);
 		}
+		// The notes the inserts above the divider played end in the track's input when one of them goes, so that the
+		// track records their note-offs: at once without inserts there any more, else after those, which are new
+		// (runInputEffects). At once, they come first at their offset: a key the block's input presses at offset 0,
+		// where late input comes, sounds although it plays a pitch that ends.
+		const bool inputGoes = sequence.inputCount != m_inputCount ||
+			!std::equal(
+				inserts.begin(), inserts.begin() + static_cast<std::ptrdiff_t>(m_inputCount), m_inserts.begin());
+		if (sequence.inputCount == 0)
+		{
+			m_input.nextSource();
+			endHeld(m_inputPlayed, m_input, false);
+		}
+		else
+		{
+			m_inputGo = inputGoes;
+		}
+		m_inputCount = sequence.inputCount;
 		m_inserts = inserts;
 		m_insertCount = insertCount;
 		m_sends = sends;
 		m_sendElsewhere = elsewhere;
 		m_effects = !sequence.effects.empty();
-		if (sequence.inputCount == 0)
-			m_inputPlayed.fill(false);
 	}
 
 	void MidiSequencer::remember(const MidiSequence& sequence, const graph::EventBuffer& events) noexcept
@@ -1301,7 +1317,14 @@ namespace gnubase::engine
 				m_inputKeys[before] == 0)
 				ends = before;
 			if (m_inputTo[from] != g_notes)
+			{
 				++m_inputKeys[m_inputTo[from]];
+				// The released keys of other channels whose note this one starts again lose it, as their release has
+				// ended: their expression would change the new note (#1685).
+				for (size_t key = 0; key < g_notes; ++key)
+					if (key != from && !m_inputDown[key] && m_inputTo[key] == m_inputTo[from])
+						m_inputTo[key] = static_cast<uint16_t>(g_notes);
+			}
 			m_inputDown[from] = true;
 		}
 		// A note-off of a key that isn't held, e.g. since before the track got the input, passes as it came.
@@ -1326,15 +1349,16 @@ namespace gnubase::engine
 		return true;
 	}
 
-	bool MidiSequencer::injectMpe(uint32_t setup, const graph::ProcessEvent& event) noexcept
+	bool MidiSequencer::injectMpe(uint64_t setup, const graph::ProcessEvent& event) noexcept
 	{
-		if (m_input.size() + 4 > m_input.capacity())
-			return false;
 		if (setup != m_injectedMpeSetup)
 		{
 			m_injectedMpeSetup = setup;
 			m_injectedMpe.reset();
 		}
+		// Room for all it adds, one point per note of the channel: else the event waits for the next block (#1685).
+		if (m_input.size() + m_injectedMpe.maxEvents(event) > m_input.capacity())
+			return false;
 		m_injectedMpe.process(midi::MpeSetup::unpack(setup), event, m_input);
 		return true;
 	}

@@ -560,12 +560,16 @@ valuefield.editing .valuefield-text
    14 characters for bars and beats, every position from bar -999 to 9999 in any signature (-999.99.16.119); 12 for
    seconds and 11 for timecode and user frames, every position under 100 hours (99:59:59.999, 99:59:59:29); 11 for
    samples, every position under 48 hours at 384 kHz. That holds the longest project (24 hours) from the latest start
-   time (under 24 hours). Later positions may not fit. */
+   time (under 24 hours). Later positions may not fit. Their content is one line high, which follows the font size
+   too, so that a theme may give the primary display a larger font (#1342), and at least 16 dp, so that at the
+   displays' size they are as high as the transport's other displays. */
 .transport textdisplay[time=position]
 {
 	box-sizing: content-box;
 	min-width: 0;
-	height: 16dp;
+	height: 1.2em;
+	min-height: 16dp;
+	line-height: 1.2em;
 }
 
 .transport textdisplay[time=position].format-barsBeats

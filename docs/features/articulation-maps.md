@@ -59,6 +59,12 @@ removed).
   instead (p. 1289). Directions are part of the part's controller events, so they move, copy, split, glue and undo
   with them; they play nothing themselves and MIDI files and DAWproject leave them out. Attributes are the notes'
   `articulations` (`note.add`, `note.set`), by name. Names that aren't the map's articulations play nothing (p. 1291).
+- **Muted articulations** (#1684, p. 1289). A direction with `muted` (`controller.add`, `controller.set`; only
+  articulation events have it) and the attributes in a note's `mutedArticulations` (`note.add`, `note.set`: only
+  attributes the note has, and an attribute that goes is no longer muted) are muted: they select no sound slot, so
+  they play no output events and change no note, as if they weren't there. A muted direction ends no direction before
+  it, and Merge MIDI in Loop doesn't take it as in effect, though it copies it, muted. Renaming an attribute renames its
+  mute too. `project.get` lists them only where they are muted, and the project saves them.
 - **Playback** (`src/engine/document/rendersnapshot.cpp`). Each note of a track with a map plays a sound slot
   (`midi::soundSlots`): of each group, its attribute or else the direction in effect at its start; the slot with
   exactly those articulations, else the slot that has those of the more important groups, then the fewest others,
@@ -194,7 +200,10 @@ removed).
   the map follows (`.articulation-row[articulation-row]`, its name beside it in the lane's header): directions
   (`.articulation-item.direction[part][controller]`) last until the next direction of their group or the part's end, a
   reset (`.reset`) is as wide as the style makes it (p. 1290); attributes (`.articulation-item.attribute[part][note]`)
-  are on their notes, as long as them. Directions and attributes whose names aren't the map's don't show (p. 1291). With
+  are on their notes, as long as them. Directions and attributes whose names aren't the map's don't show (p. 1291).
+  Muted ones have the state class `.muted`, which the themes show in gray (#1684, p. 1289); the key editor's mute tool
+  mutes the direction or attribute clicked (`controller.set` `muted`, `note.set` `mutedArticulations`), or unmutes it,
+  one undo step each. With
   the draw tool a click in a direction's row adds it on the quantize grid (Ctrl: off it) to the part there
   (`controller.add`), but not where the row's direction already starts, in an attribute's row to the notes that sound
   there and started last, in place of their attribute of the same group (`note.set`); a click on a direction or
@@ -210,14 +219,20 @@ removed).
   draw tool adds nothing in a collapsed row, which has no articulation of its own; it and the erase tool remove the
   directions and attributes there.
 - **Selecting and deleting** (#1580, pp. 1289-1290). With the object selection tool a click selects the direction
-  (`controllerSelection`) or the attribute pressed with its note (`selection`), and nothing else; Shift or Ctrl (Cmd)
-  adds or removes it, a click beside them deselects. A note stays selected while one of its attributes is; a note
-  selected elsewhere has all its attributes selected (#1658). A press on the lane gives it the keyboard focus (on the
-  lanes' root, as the lane's elements can go with the next render), which its state class `.keyboard-focus` shows (p.
-  100, #1658) until the root loses the focus: Delete or Backspace then removes its selected directions and attributes
+  (`controllerSelection`) or the attribute pressed with its note (`selection`, the entry's `articulations` naming the
+  attributes selected of it, #1688), and nothing else; Shift or Ctrl (Cmd) adds or removes it, a click beside them
+  deselects. A note stays selected while one of its attributes is; a note selected elsewhere, an entry without
+  `articulations`, has all its attributes selected (#1658), and Shift on one of them removes it from them, so that the
+  note stays selected with the others (#1688). As the attribute selection is the editor view's, `editor.get` shows it,
+  Lua and MCP select single attributes with `editor.set`, and a new selection of the note elsewhere selects all its
+  attributes again. A press on the lane gives it the keyboard focus (on the lanes' root, as the lane's elements can go
+  with the next render), which its state class `.focused` shows, a frame the themes draw over the whole lane
+  (`.controller-lane-frame`, taking no room, so that the area lines up with the other lanes'), as around the docking
+  zone with the focus (p. 100, #1658, #1688), until the root loses the focus: Delete or Backspace then removes its selected directions and attributes
   (`controller.remove`, `note.set`, one undo step), not the notes, as the reference does (p. 1289). With the object
   selection tool an arrow in a direction's upper left corner (`.articulation-menu-arrow`, shown while the mouse is over
-  the direction or it is selected) opens its event pop-up menu (`#controller-articulation-menu`, p. 1290, #1658), as a
+  the direction or it is selected; beside a reset, which is narrower than it, so that a press on the reset selects
+  it, #1688) opens its event pop-up menu (`#controller-articulation-menu`, p. 1290, #1658), as a
   right click on it does; Reset, checked on a reset, makes it a reset or a direction again (`controller.set` `reset`).
   A direction of a part that isn't editable has neither.
 - **Articulations field** (p. 1290): the key and drum editors' info line shows the first selected note's attributes,
@@ -234,7 +249,8 @@ removed).
   direction's name in the Attributes column, without a channel; a note's Attributes column has its attributes. Both can
   be typed there. A warning sign follows the column where a direction or one of a note's attributes isn't the track's
   map's (#1580, p. 1291). A click on the column opens its pop-up menu (`#list-articulations-menu`) under it, a right
-  click at the mouse (#1658): for a note the map's attributes, one chosen toggling on the note in place of its group's,
+  click at the mouse (#1658); a click on another row's cell opens it for that row, and a cell whose text is edited
+  (`.editing`) doesn't open it (#1688): for a note the map's attributes, one chosen toggling on the note in place of its group's,
   for a direction the map's directions, one chosen renaming it. Its checked items stay checked while the list editor
   renders.
 - **Empty lists from Lua.** Lua has no empty list apart from an empty table, which becomes a JSON object: where a
@@ -243,8 +259,8 @@ removed).
 
 ## Not yet
 
-The mute tool's muted articulations (p. 1289), as the key editor has no mute tool and notes and controller events no
-mute yet; the project window's info line for the in-place editor's notes; playback techniques, aliases and fallbacks,
+The mute tool on notes and on controller events other than directions, which have no mute yet (#679); the
+project window's info line for the in-place editor's notes; playback techniques, aliases and fallbacks,
 symbols, categories and Add Custom Articulation, articulation combinations beyond one per group; a slot's length for
 the notes played into a track, which aren't known to end yet; Sound Slot event colors, which wait for the MIDI
 editors' event colors menu (p. 1133, [colors.md](colors.md)); the slot actions Rename and Reset Color (the slots'
@@ -287,8 +303,13 @@ presets; importing the reference's own files and other applications' maps.
   reset, and no arrows for the other tools; the warning sign in the info line and the list editor; the info line's and
   the list editor's pop-up menus, the list editor's opening on a click and keeping its checks while it renders. Two more
   (#1658): an attribute deleted while the note's other one stays, Shift adding and removing an attribute of a selected
-  note, all attributes of a note selected elsewhere, and the lane's `.keyboard-focus` while it has the keyboard focus;
-  the info line's pop-up menu changing only the selected notes of tracks with the first one's map.
+  note, all attributes of a note selected elsewhere, and the lane's `.focused` while it has the keyboard focus;
+  the info line's pop-up menu changing only the selected notes of tracks with the first one's map, also of a track
+  with another map. The last ones (#1684, #1688): the mute tool muting and unmuting a direction and an attribute,
+  `.muted`, and the slots the notes play then; the attribute selection in `editor.get` and `editor.set`, a new
+  selection of the note selecting all its attributes, Shift removing one of all, Delete with the lane's frame; a press
+  on a reset selecting it and its arrow beside it; the list editor's menu opening for another row's cell and not while
+  a cell is edited.
   `tests/scripting_tests.cpp` checks empty Lua tables as lists and `gnubase.off`.
 - `tests/articulationmaps_tests.cpp`: maps added, copied, changed and removed with their errors and undo, a track's map;
   directions and attributes; playback through the slots' output events and MIDI modifiers, the closest slot and resets;
@@ -302,6 +323,9 @@ presets; importing the reference's own files and other applications' maps.
   of three parts, the middle one with a part of its own, and over several parts onto a new track with the map, with
   resets only where a direction of their group is in effect, on one track and in the lane two tracks share (a reset
   where the second track's part starts while the first's direction is in effect, none once that direction was reset);
+  muted directions and attributes selecting no slot, refused on other events and on attributes the note doesn't
+  have, and going with their attribute; saved and loaded, renamed with the map and not in effect in Merge MIDI in Loop
+  (#1684); the selection's `articulations` (#1688);
   the slots a map and a part as `project.get` lists them choose (the sound slots lane's) and
   `articulationMap.soundSlots`, and the `articulations` lane type, which
   `controller.line` refuses; track presets and track import with the map; remote triggers played into a track

@@ -291,8 +291,8 @@ namespace gnubase::ui
 		m_to = std::max(to, from + 1);
 		m_parts.clear();
 		m_partIndex.clear();
-		const std::set<std::pair<uint64_t, uint64_t>> previous = std::move(m_noteSelection);
 		m_noteSelection.clear();
+		m_attributeSelection.clear();
 		m_controllerSelection.clear();
 		m_lanes.clear();
 		m_maps.clear();
@@ -331,13 +331,14 @@ namespace gnubase::ui
 					}
 				}
 			for (const Json& selected : m_view.value("selection", Json::array()))
-				m_noteSelection.emplace(selected.at("part").get<uint64_t>(), selected.at("note").get<uint64_t>());
-			// The attributes pressed of notes that were selected and are no longer go; a note pressed on the lane
-			// may not be selected yet.
-			for (auto each = m_attributeSelection.begin(); each != m_attributeSelection.end();)
-				each = previous.count(each->first) == 0 || m_noteSelection.count(each->first) != 0
-					? std::next(each)
-					: m_attributeSelection.erase(each);
+			{
+				const std::pair<uint64_t, uint64_t> note{
+					selected.at("part").get<uint64_t>(), selected.at("note").get<uint64_t>()};
+				m_noteSelection.insert(note);
+				// The attributes selected of it on the lane, where not all are (#1688).
+				if (const auto names = selected.find("articulations"); names != selected.end())
+					m_attributeSelection[note] = names->get<std::set<std::string>>();
+			}
 			for (const Json& selected : m_view.value("controllerSelection", Json::array()))
 				m_controllerSelection.emplace(
 					selected.at("part").get<uint64_t>(), selected.at("controller").get<uint64_t>());
@@ -447,7 +448,11 @@ namespace gnubase::ui
 			rml += index;
 			rml += R"(" lane-kind=")";
 			rml += lane.type;
-			rml += R"("><div class="controller-lane-header" contextmenu="controller-lane-context-menu)";
+			rml += R"(">)";
+			// The Articulations lane's header and area in a row of their own, under the lane's frame (#1688)
+			if (lane.type == "articulations")
+				rml += R"(<div class="controller-lane-row">)";
+			rml += R"(<div class="controller-lane-header" contextmenu="controller-lane-context-menu)";
 			rml += m_menuSuffix;
 			rml += R"("><button class="controller-lane-type" lane-menu=")";
 			rml += index;
@@ -488,7 +493,8 @@ namespace gnubase::ui
 				rml += R"(</div></div><div class="controller-lane-area" lane=")" + index + R"(">)";
 				m_items.emplace_back();
 				rml += articulationArea(m_items.back());
-				rml += "</div></div>";
+				// The frame the themes draw while the lane has the keyboard focus, over the lane without taking room
+				rml += R"(</div></div><div class="controller-lane-frame"/></div>)";
 				continue;
 			}
 			rml += R"(</div><div class="controller-lane-area" lane=")";
@@ -1336,14 +1342,15 @@ namespace gnubase::ui
 
 	std::string ControllerLanes::articulationArea(std::vector<Item>& items) const
 	{
-		const auto element = [this](const char* classes, const Item& item, const char* key, size_t row)
+		const auto element = [this](const char* classes, const Item& item, const char* key, size_t row, bool muted)
 		{
 			// The object selection tool's arrow in a direction's upper left corner opens its event pop-up menu (p.
 			// 1290).
 			const bool arrow = std::string(key) == "controller" && item.editable && m_tool == "objectSelection";
 			return std::string(R"(<div class=")") + classes + (item.selected ? " selected" : "") +
-				(item.editable ? "" : " inactive") + R"(" part=")" + std::to_string(item.part) + R"(" )" + key +
-				R"(=")" + std::to_string(item.id) + R"(" articulation-row=")" + std::to_string(row) + R"(")" +
+				(item.editable ? "" : " inactive") + (muted ? " muted" : "") + R"(" part=")" +
+				std::to_string(item.part) + R"(" )" + key + R"(=")" + std::to_string(item.id) +
+				R"(" articulation-row=")" + std::to_string(row) + R"(")" +
 				(std::string(key) == "controller" && item.editable
 						? R"( contextmenu="controller-articulation-menu)" + m_menuSuffix + R"(")"
 						: std::string()) +
@@ -1421,7 +1428,10 @@ namespace gnubase::ui
 						const int64_t start = part.start + note.at("position").get<int64_t>();
 						items.push_back({part.id, id, start, start + note.at("length").get<int64_t>(), 0.0, 0,
 							part.editable, attributeSelected(part.id, id, name), std::string()});
-						rml += element("articulation-item attribute", items.back(), "note", row) + end;
+						const auto muted = note.value("mutedArticulations", std::vector<std::string>());
+						rml += element("articulation-item attribute", items.back(), "note", row,
+								   std::find(muted.begin(), muted.end(), name) != muted.end()) +
+							end;
 					}
 					continue;
 				}
@@ -1450,7 +1460,7 @@ namespace gnubase::ui
 					items.push_back({part.id, id, start, until, 0.0, 0, part.editable,
 						m_controllerSelection.count({part.id, id}) != 0, std::string()});
 					rml += element(reset ? "articulation-item direction reset" : "articulation-item direction",
-							   items.back(), "controller", row) +
+							   items.back(), "controller", row, event.value("muted", false)) +
 						end;
 				}
 			}
@@ -1501,6 +1511,11 @@ namespace gnubase::ui
 		if (m_tool == "objectSelection")
 		{
 			selectArticulation(item, event.GetParameter("shift_key", 0) != 0 || m_snapOff);
+			return;
+		}
+		if (m_tool == "mute")
+		{
+			muteArticulation(item);
 			return;
 		}
 		if (row == nullptr || (m_tool != "draw" && m_tool != "erase"))
@@ -1598,56 +1613,113 @@ namespace gnubase::ui
 	}
 
 	// The object selection tool on the lane (p. 1289): a click selects the direction pressed, or the note of the
-	// attribute pressed, and nothing else; Shift or Ctrl (Cmd) adds or removes it. A click beside them deselects.
+	// attribute pressed with that attribute (the selection entry's articulations, #1688), and nothing else; Shift or
+	// Ctrl (Cmd) adds or removes it. A click beside them deselects.
 	void ControllerLanes::selectArticulation(const Rml::Element* item, bool add)
 	{
 		Json notes = add ? m_view.value("selection", Json::array()) : Json::array();
 		Json controllers = add ? m_view.value("controllerSelection", Json::array()) : Json::array();
-		if (!add)
-			m_attributeSelection.clear();
-		if (item != nullptr)
+		if (item == nullptr)
 		{
-			const uint64_t part = idAttribute(*item, "part");
-			const auto found = m_partIndex.find(part);
-			if (found == m_partIndex.end() || !m_parts[found->second].editable)
-				return;
-			const bool direction = item->HasAttribute("controller");
-			const char* key = direction ? "controller" : "note";
-			const Json pressed = {{"part", part}, {key, idAttribute(*item, key)}};
-			Json& selection = direction ? controllers : notes;
-			Json kept = Json::array();
-			for (const Json& each : selection)
-				if (each.at("part") != pressed.at("part") || each.at(key) != pressed.at(key))
-					kept.push_back(each);
-			bool selected = !add || kept.size() == selection.size();
-			// The attribute pressed (p. 1289): Shift adds or removes it, and its note stays selected while one of its
-			// attributes is. A note selected elsewhere has all its attributes selected.
-			const Json* map = laneMap();
-			const auto row = static_cast<size_t>(std::stoul(attribute(*item, "articulation-row")));
-			if (!direction && map != nullptr && row < map->at("articulations").size())
-			{
-				const std::string name = map->at("articulations").at(row).at("name").get<std::string>();
-				const std::pair<uint64_t, uint64_t> note{part, pressed.at("note").get<uint64_t>()};
-				const auto names = m_attributeSelection.find(note);
-				if (selected)
-					m_attributeSelection[note] = {name};
-				else if (names != m_attributeSelection.end() && names->second.erase(name) == 0)
-					selected = names->second.insert(name).second;
-				else if (names != m_attributeSelection.end() && !names->second.empty())
-					selected = true;
-				if (!selected)
-					m_attributeSelection.erase(note);
-			}
-			if (selected)
-				kept.push_back(pressed);
-			selection = std::move(kept);
-		}
-		else if (add)
-		{
+			if (!add)
+				setView({{"selection", notes}, {"controllerSelection", controllers}});
 			return;
 		}
+		const uint64_t part = idAttribute(*item, "part");
+		const auto found = m_partIndex.find(part);
+		if (found == m_partIndex.end() || !m_parts[found->second].editable)
+			return;
+		if (item->HasAttribute("controller"))
+		{
+			const uint64_t id = idAttribute(*item, "controller");
+			const auto selected = std::find_if(controllers.begin(), controllers.end(),
+				[&](const Json& each) { return each.at("part") == part && each.at("controller") == id; });
+			if (selected != controllers.end())
+				controllers.erase(selected);
+			else
+				controllers.push_back({{"part", part}, {"controller", id}});
+			setView({{"selection", notes}, {"controllerSelection", controllers}});
+			return;
+		}
+		// The attribute pressed (p. 1289): Shift adds or removes it, and its note stays selected while one of its
+		// attributes is. A note selected elsewhere has all its attributes selected: Shift removes the one pressed from
+		// them (#1688).
+		const Json* map = laneMap();
+		const auto row = static_cast<size_t>(std::stoul(attribute(*item, "articulation-row")));
+		if (map == nullptr || row >= map->at("articulations").size())
+			return;
+		const std::string name = map->at("articulations").at(row).at("name").get<std::string>();
+		const uint64_t id = idAttribute(*item, "note");
+		const auto entry = std::find_if(notes.begin(), notes.end(),
+			[&](const Json& each) { return each.at("part") == part && each.at("note") == id; });
+		if (entry == notes.end())
+		{
+			notes.push_back({{"part", part}, {"note", id}, {"articulations", {name}}});
+		}
+		else
+		{
+			std::set<std::string> names;
+			if (entry->contains("articulations"))
+				names = entry->at("articulations").get<std::set<std::string>>();
+			else
+				for (const Json& note : m_parts[found->second].json.at("notes"))
+					if (note.at("id") == id)
+						for (const std::string& each : note.value("articulations", std::vector<std::string>()))
+							if (const Json* articulation = articulationOf(*map, each);
+								articulation != nullptr && articulation->at("type") == "attribute")
+								names.insert(each);
+			if (names.erase(name) == 0)
+				names.insert(name);
+			if (names.empty())
+				notes.erase(entry);
+			else
+				(*entry)["articulations"] = names;
+		}
 		setView({{"selection", notes}, {"controllerSelection", controllers}});
-		render(); // the selection of the note can stay as it is, and the lane show another of its attributes
+	}
+
+	// The mute tool on the lane (#1684, p. 1289): a click on a direction or an attribute mutes it, or unmutes it.
+	void ControllerLanes::muteArticulation(const Rml::Element* item)
+	{
+		const Json* map = laneMap();
+		const auto found = item != nullptr ? m_partIndex.find(idAttribute(*item, "part")) : m_partIndex.end();
+		if (map == nullptr || found == m_partIndex.end() || !m_parts[found->second].editable)
+			return;
+		const Part& part = m_parts[found->second];
+		if (item->HasAttribute("controller"))
+		{
+			const uint64_t id = idAttribute(*item, "controller");
+			for (const Json& event : part.json.at("controllers"))
+				if (event.at("id") == id)
+				{
+					const bool mutes = !event.value("muted", false);
+					const Json change = {{"id", id}, {"muted", mutes}};
+					edit(mutes ? "Mute Articulation" : "Unmute Articulation",
+						Json::array({{{"command", "controller.set"},
+							{"parameters", {{"part", part.id}, {"controllers", Json::array({change})}}}}}));
+				}
+			return;
+		}
+		const auto row = static_cast<size_t>(std::stoul(attribute(*item, "articulation-row")));
+		if (row >= map->at("articulations").size())
+			return;
+		const std::string name = map->at("articulations").at(row).at("name").get<std::string>();
+		const uint64_t id = idAttribute(*item, "note");
+		for (const Json& note : part.json.at("notes"))
+			if (note.at("id") == id)
+			{
+				auto muted = note.value("mutedArticulations", std::vector<std::string>());
+				const auto was = std::find(muted.begin(), muted.end(), name);
+				const bool mutes = was == muted.end();
+				if (mutes)
+					muted.push_back(name);
+				else
+					muted.erase(was);
+				const Json change = {{"id", id}, {"mutedArticulations", muted}};
+				edit(mutes ? "Mute Articulation" : "Unmute Articulation",
+					Json::array({{{"command", "note.set"},
+						{"parameters", {{"part", part.id}, {"notes", Json::array({change})}}}}}));
+			}
 	}
 
 	bool ControllerLanes::attributeSelected(uint64_t part, uint64_t note, const std::string& name) const
@@ -1706,8 +1778,8 @@ namespace gnubase::ui
 		{
 			Rml::Element* lane = list->GetChild(i);
 			const bool focused = m_keyLane && *m_keyLane == static_cast<size_t>(i);
-			if (lane->IsClassSet("keyboard-focus") != focused)
-				lane->SetClass("keyboard-focus", focused);
+			if (lane->IsClassSet("focused") != focused)
+				lane->SetClass("focused", focused);
 		}
 	}
 

@@ -785,6 +785,8 @@ namespace gnubase::engine
 			json["velocityVariance"] = note.velocityVariance;
 		if (!note.articulations.empty())
 			json["articulations"] = note.articulations;
+		if (!note.mutedArticulations.empty())
+			json["mutedArticulations"] = note.mutedArticulations;
 		if (!note.expressions.empty())
 		{
 			Json& points = json["expressions"] = Json::array();
@@ -821,6 +823,8 @@ namespace gnubase::engine
 		case ControllerType::Articulation:
 			json["articulation"] = controller.articulation;
 			json["reset"] = controller.value != 0;
+			if (controller.muted)
+				json["muted"] = true;
 			return json;
 		}
 		json["channel"] = controller.channel;
@@ -842,6 +846,7 @@ namespace gnubase::engine
 		{
 			controller.articulation = json.value("articulation", std::string());
 			controller.value = json.value("reset", false) ? 1 : 0;
+			controller.muted = json.value("muted", false);
 		}
 		else if (type == ControllerType::Program)
 		{
@@ -2600,7 +2605,8 @@ namespace gnubase::engine
 						timingFrom(n.at("origin").at("original")), timingFrom(n.at("origin").at("quantized"))};
 				note.probability = std::clamp(n.value("probability", 1.0), 0.0, 1.0);
 				note.velocityVariance = std::clamp(n.value("velocityVariance", 0.0), -1.0, 1.0);
-				note.articulations = n.value("articulations", std::vector<std::string>()); // before #175 none
+				note.articulations = n.value("articulations", std::vector<std::string>());           // before #175 none
+				note.mutedArticulations = n.value("mutedArticulations", std::vector<std::string>()); // #1684
 				note.expressions =
 					expressionsFromJson(n.value("expressions", Json::array()), noteName + " expressions", true);
 				part.notes[note.id] = note;
@@ -2871,7 +2877,13 @@ namespace gnubase::engine
 		for (const std::vector<ChordEvent>* events : {&project.chords.events, &project.chords.scales})
 			for (const ChordEvent& event : *events)
 				see(event.id);
-		project.nextId = std::max(json.value("nextId", ObjectId{0}), highest + 1);
+		// Lua's integers are signed. Reject files whose ids (or next allocation) would silently become negative in
+		// scripts, and check before highest + 1 can overflow. Reserve the last signed integer for the counter.
+		const auto luaLimit = static_cast<ObjectId>(std::numeric_limits<int64_t>::max());
+		const ObjectId nextId = json.value("nextId", ObjectId{0});
+		if (highest >= luaLimit || nextId > luaLimit)
+			throw std::overflow_error("project object ids exceed Lua's integer range");
+		project.nextId = std::max(nextId, highest + 1);
 		for (ArrangerChain& chain : project.arranger.chains)
 			if (chain.id == 0)
 				chain.id = project.newId();

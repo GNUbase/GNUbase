@@ -630,6 +630,10 @@
 		border-width: 1dp;
 		border-color: #0969da;
 	}
+	.arranger-lane-row .arranger-lane-event.drawing
+	{
+		background-color: transparent;
+	}
 	.chord-pad
 	{
 		color: #17202d;
@@ -803,6 +807,10 @@
 	.track-list listitem.frozen
 	{
 		color: #566273;
+	}
+	.track-list listitem.rendering .track-name
+	{
+		font-style: italic;
 	}
 	.track-list .drop-line
 	{
@@ -1053,6 +1061,10 @@
 	{
 		background-color: #566273;
 	}
+	.articulation-item.muted
+	{
+		background-color: #9ea6b1;
+	}
 	.articulation-item.selected
 	{
 		background-color: #6554c0;
@@ -1061,10 +1073,10 @@
 	{
 		background-color: #ccd0d5;
 	}
-	.controller-lane.keyboard-focus .controller-lane-header
+	.controller-lane-frame
 	{
-		border-left-width: 2dp;
-		border-left-color: #0969da;
+		border-width: 2dp;
+		border-color: #0969da;
 	}
 	.ape-display
 	{
@@ -1724,6 +1736,27 @@
 	{
 	}
 	.track-list listitem.selected
+	{
+	}
+	.track-list .track-color
+	{
+	}
+	.track-list .track-name, .track-list .track-name-field, .track-list .track-versions-toggle, .track-list .track-controls
+	{
+	}
+	.track-list listitem > .tree-toggle
+	{
+	}
+	.track-list .track-name
+	{
+	}
+	.track-list listitem[type=folder] .track-color[color]
+	{
+	}
+	.track-list listitem.selected .track-color[color]
+	{
+	}
+	.track-list .track-controls button[control=record]:not(.checked) svg.icon
 	{
 	}
 	.inspector-section button.section-header

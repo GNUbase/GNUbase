@@ -89,6 +89,7 @@ namespace gnubase::ui
 		{
 			WindowId window = 0;
 			Rml::ObserverPtr<Rml::Element> progress;
+			bool rendering = false;
 		};
 
 		void ProcessEvent(Rml::Event& event) override;
@@ -173,6 +174,7 @@ namespace gnubase::ui
 		std::string m_file; // the project's file (project.location), empty for none
 		Subscription m_saved;
 		Subscription m_reset;
+		Subscription m_jobStarted;
 		Subscription m_jobProgress;
 		Subscription m_jobFinished;
 		Subscription m_autoSaveFailed;
