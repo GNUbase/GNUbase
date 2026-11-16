@@ -28,6 +28,11 @@ namespace Rml
 // Project handling in the UI (#77). docs/features/project-files.md describes it.
 namespace gnubase::ui
 {
+	// What a save's result (project.save, track.export and the like) says of the media files that were missing, which
+	// the file refers to where they were instead of having them in it (#1614): a message for the user, or empty if
+	// none was.
+	std::string missingMedia(const engine::Json& result);
+
 	// The File menu's project commands as UI commands with the reference's keys: file.new (the start screen),
 	// file.open, file.save, file.saveAs, file.saveNewVersion, file.saveTemplate, file.backup and file.revert, plus
 	// file.quit. They ask through the OS's file dialogs (Shell::showFileDialog) and GNUbase's own (the documents
@@ -105,7 +110,7 @@ namespace gnubase::ui
 		// Asks the engine for the project's file (project.location).
 		void readLocation();
 		// A command's done that shows its error in a dialog in the window if it failed (project-error.rml), so that a
-		// failed save isn't taken for done.
+		// failed save isn't taken for done, and which media files a save found missing (missingMedia).
 		std::function<void(const engine::Result&)> reportFailure(Window& window);
 		// Shows the error in project-error.rml in the window once the event that asked is done. A failed auto save's
 		// error (autoSave) takes the place of an earlier one's but doesn't open over any other modal dialog in the

@@ -410,6 +410,8 @@ namespace gnubase::ui
 			root.AddEventListener(event, this);
 		document->AddEventListener(Rml::EventId::Mouseup, this);
 		document->AddEventListener(Rml::EventId::Mouseout, this);
+		// In the capture phase: a press anywhere in the document ends a lost gesture before anything hears it.
+		document->AddEventListener(Rml::EventId::Mousedown, this, true);
 		m_document = document->GetObserverPtr();
 		setTool(KeyTool::ObjectSelection);
 
@@ -466,6 +468,7 @@ namespace gnubase::ui
 		{
 			document->RemoveEventListener(Rml::EventId::Mouseup, this);
 			document->RemoveEventListener(Rml::EventId::Mouseout, this);
+			document->RemoveEventListener(Rml::EventId::Mousedown, this, true);
 		}
 		if (Rml::Element* root = m_root.get())
 			for (const Rml::EventId event : g_rootEvents)
@@ -737,8 +740,15 @@ namespace gnubase::ui
 		// Show Note Expression Data (p. 1303): the notes' expression over them.
 		// Not in the drum editor, which has neither its button nor the expression editor (#1671).
 		const bool expression = !m_drum && m_view.value("showExpression", false);
-		if (linesOff(ticksPerPixel(), m_linesPixel))
-			m_linesPixel = ticksPerPixel();
+		// The lines take the ticks per pixel of the last layout, which the window's next one may change: lines that
+		// no layout has kept yet are built for every other ticks per pixel (refitLines).
+		const int64_t ticks = ticksPerPixel();
+		m_linesKept = m_linesKept && expression;
+		if (m_linesKept ? linesOff(ticks, m_linesPixel) : ticks != m_linesPixel)
+		{
+			m_linesPixel = ticks;
+			m_linesKept = false;
+		}
 		const int64_t pixel = m_linesPixel;
 		std::string rml;
 		for (const Note& note : m_notes)
@@ -939,7 +949,7 @@ namespace gnubase::ui
 		Rml::Element* root = m_root.get();
 		if (root == nullptr)
 			return;
-		if (fitLines()) // which places the items
+		if (refitLines(false)) // which places the items
 			return;
 		Rml::ElementList shown;
 		root->QuerySelectorAll(shown, ".editor-part");
@@ -977,18 +987,37 @@ namespace gnubase::ui
 		placeExpression();
 	}
 
-	bool KeyEditor::fitLines()
+	bool KeyEditor::fitLines(const Rml::Context& updated)
+	{
+		const Rml::Element* root = m_root.get();
+		return root != nullptr && root->GetContext() == &updated && refitLines(true);
+	}
+
+	bool KeyEditor::linesShown() const
+	{
+		return m_expressionOpen || (!m_drum && m_view.value("showExpression", false));
+	}
+
+	bool KeyEditor::refitLines(bool laidOut)
 	{
 		// The expression lines join the steps narrower than a pixel: built again when a pixel has other ticks, as the
-		// in-place editor's range has after its first layout and as the project window zooms (#1671). Only when it has
-		// a quarter more or fewer: a scroll across a tempo change changes the in-place editor's ticks per pixel a
-		// little on nearly every frame (#1716). Not during a gesture, whose elements a rebuild would free; the next
-		// placement after it catches up.
-		const bool shown = m_expressionOpen || (!m_drum && m_view.value("showExpression", false));
-		if (m_root.get() == nullptr || m_gesture != Gesture::None || !shown || !linesOff(ticksPerPixel(), m_linesPixel))
+		// in-place editor's range has after its first layout and as the project window zooms (#1671). Not during a
+		// gesture, whose elements a rebuild would free; the next placement after it catches up.
+		if (m_root.get() == nullptr || m_gesture != Gesture::None || !linesShown())
 			return false;
-		render();
-		return true;
+		// Lines that the window's update laid out with the ticks they were built for are built again only when a pixel
+		// has a quarter more or fewer: a scroll across a tempo change changes the in-place editor's ticks per pixel a
+		// little on nearly every frame (#1716). The notes' lines before that for any other ticks: render() builds them
+		// for the box of the last layout, which need not be the window's. Docking::attach lays the editor window out
+		// before the left zone has its size, with the notes about a tenth wider, and lines built for that box stayed
+		// (#1768).
+		const bool lines = !m_drum && m_view.value("showExpression", false); // not only the expression editor's
+		const int64_t ticks = ticksPerPixel();
+		const bool off = (m_linesKept || !lines) ? linesOff(ticks, m_linesPixel) : ticks != m_linesPixel;
+		if (off)
+			render();
+		m_linesKept = lines && (m_linesKept || (laidOut && ticks > 0));
+		return off;
 	}
 
 	void KeyEditor::placeExpression()
@@ -1595,11 +1624,18 @@ namespace gnubase::ui
 		switch (event.GetId())
 		{
 		case Rml::EventId::Mousedown:
-			if (event.GetParameter("button", 0) == 0)
+			if (event.GetParameter("button", 0) != 0)
+				break;
+			if (event.GetCurrentElement() == m_document.get())
 			{
-				press(event);
-				dragDuringGesture();
+				// A gesture whose release never came, as when the window lost the focus before the mouse moved, ends
+				// without its effect at the next press anywhere in the document, before the press reaches its target.
+				// The drawn note it takes out stays alive in m_removedDrawn, also when it is the press's target.
+				cancelGesture();
+				break;
 			}
+			press(event);
+			dragDuringGesture();
 			break;
 		case Rml::EventId::Mousemove:
 			drag(event);
@@ -1617,13 +1653,19 @@ namespace gnubase::ui
 			if (Rml::Element* velocity = m_root.get()->QuerySelector(".key-editor-velocity"))
 				velocity->SetClass("off", true);
 			if (event.GetCurrentElement() == m_root.get())
+			{
 				release(event);
+				dragDuringGesture();
+			}
 			break;
 		case Rml::EventId::Dragend:
 			// After the mouseup, if there was one: a gesture still going on was released outside the editor, also
 			// outside the window, where no element hears the mouseup.
 			if (m_gesture != Gesture::None)
+			{
 				releaseOutside(event);
+				dragDuringGesture();
+			}
 			break;
 		case Rml::EventId::Mouseout:
 			// The mouse leaving the window ends the pitch too: the button going up out there sends no mouseup.
@@ -1655,8 +1697,7 @@ namespace gnubase::ui
 
 	void KeyEditor::press(Rml::Event& event)
 	{
-		// A gesture whose release never came, as when the window lost the focus before the mouse moved, ends here.
-		cancelGesture();
+		// The document's mousedown in the capture phase (ProcessEvent) has ended a gesture whose release never came.
 		Rml::Element* root = m_root.get();
 		Rml::Element* target = event.GetTargetElement();
 		// The keyboard's left part (p. 1261): a press plays the pitch under it as a key does, and a drag zooms the
@@ -2237,6 +2278,7 @@ namespace gnubase::ui
 			velocity->SetClass("off", true);
 		m_pressed.reset();
 		placeItems();
+		dragDuringGesture();
 	}
 
 	void KeyEditor::dragDuringGesture()
@@ -2247,8 +2289,9 @@ namespace gnubase::ui
 			return;
 		root->SetClass("in-gesture", on);
 		// RmlUi looks for the drag element right after the press's mousedown and double click, from the computed
-		// values.
-		if (Rml::ElementDocument* owner = root->GetOwnerDocument())
+		// values. Off, the next frame updates them: a press that comes before only finds the grid or the keyboard's
+		// left part as its drag element when it is on them, where a drag without a gesture does nothing.
+		if (Rml::ElementDocument* owner = root->GetOwnerDocument(); owner != nullptr && on)
 			owner->UpdateDocument();
 	}
 
