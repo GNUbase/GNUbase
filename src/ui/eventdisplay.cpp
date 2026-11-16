@@ -277,7 +277,10 @@ namespace gnubase::ui
 						return;
 					if (result.ok() && m_displayKnown.count(name) == 0) // newer changes win
 						takeDisplayPreference(name, result.value.at("value"));
-					if (m_displayAsked > 0 && --m_displayAsked == 0)
+					if (m_displayAsked == 0)
+						return;
+					--m_displayAsked;
+					if (m_displayAsked == 0)
 						showDisplayPreferences();
 				});
 		m_binding.send("settings.get", {{"key", "ui.folderData"}},

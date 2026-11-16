@@ -61,7 +61,7 @@ namespace gnubase::ui
 		waves.reserve(events.size());
 		for (const Event& event : events)
 		{
-			Wave wave{event, nullptr, {}, false, false};
+			Wave wave{event, nullptr, {}, false, false, std::nullopt};
 			if (const auto found = old.find({event.id, count[event.id]++}); found != old.end())
 			{
 				// The element shows what it has until the new columns are in, and a question in flight stays the

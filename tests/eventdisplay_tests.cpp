@@ -341,7 +341,7 @@ TEST_CASE("audio events show their waveforms from the engine's waveform overview
 	REQUIRE(fixture.waitUntil([&]
 		{ return waveforms(fixture.document).size() == 1 && same(waveforms(fixture.document)[0]->channels(), fine); }));
 	// Scrolling within what it built draws it again without building it.
-	ui::Waveform& back = *waveforms(fixture.document)[0];
+	const ui::Waveform& back = *waveforms(fixture.document)[0];
 	for (int i = 0; i < 3; ++i)
 		fixture.step();
 	const uint64_t built = back.builds();
