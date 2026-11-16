@@ -1750,6 +1750,27 @@
 	.track-list listitem.selected
 	{
 	}
+	.track-list .track-color
+	{
+	}
+	.track-list .track-name, .track-list .track-name-field, .track-list .track-versions-toggle, .track-list .track-controls
+	{
+	}
+	.track-list listitem > .tree-toggle
+	{
+	}
+	.track-list .track-name
+	{
+	}
+	.track-list listitem[type=folder] .track-color[color]
+	{
+	}
+	.track-list listitem.selected .track-color[color]
+	{
+	}
+	.track-list .track-controls button[control=record]:not(.checked) svg.icon
+	{
+	}
 	.inspector-section button.section-header
 	{
 		decorator: svg-ninepatch(disclosure-open.svg, 6 6 6 6);

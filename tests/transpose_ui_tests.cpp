@@ -338,9 +338,14 @@ TEST_CASE("the info line's own values don't change a MIDI part and an audio even
 	REQUIRE(window.app.waitUntil(
 		[&] { return !window.element("#info-line select[field=rootKey]").value("value", std::string()).empty(); }));
 	CHECK_FALSE(window.app.waitUntil([&] { return keys() != "G C"; }, std::chrono::milliseconds(500)));
-	// Nor after an undo, which shows them again.
-	window.call("audioEvent.set", {{"event", event}, {"transpose", 3}});
+	// Nor when the key it shows changes, or after an undo, which shows the old one again (#1748).
+	const auto shown = [&window]
+	{ return window.element("#info-line select[field=rootKey]").value("value", std::string()); };
+	window.call("midiPart.set", {{"part", part}, {"rootKey", "A"}});
+	REQUIRE(window.app.waitUntil([&] { return shown() == "A"; }));
+	CHECK_FALSE(window.app.waitUntil([&] { return keys() != "A C"; }, std::chrono::milliseconds(500)));
 	window.call("history.undo");
+	REQUIRE(window.app.waitUntil([&] { return shown() == "G"; }));
 	CHECK_FALSE(window.app.waitUntil([&] { return keys() != "G C"; }, std::chrono::milliseconds(500)));
 }
 
