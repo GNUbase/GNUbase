@@ -128,8 +128,11 @@ chord track's music theory ([chord-track.md](chord-track.md)).
   its pad, each chord modifier key and, while listening, each note (`MidiPorts::PadEvent`); the audio engine's cue
   thread posts them as `chordPads.remoteInput`, and offline `audio.render` runs it when it is done. It announces the
   pads with `chordPads.triggered` (`remote` true), so they light up (p. 1355); a key that goes up ends the pad it
-  triggered, also when the remote's input or range changed meanwhile (#1708). It records their chords on the chord track
-  as above.
+  triggered, also when the remote's input or range changed meanwhile (#1708), and also when it played no notes, such as
+  with the selected player muted or as the sections mode's pad key (#1740). Each triggered and released event names the
+  pad the audio thread lit (`pad`), so a range that `chordPads.set` moves before the command thread gets the event
+  changes neither the pad that lights nor the chord recorded, and a key whose pad `padCount` removed meanwhile no
+  longer counts as down for the chord modifiers. It records their chords on the chord track as above.
 - **Chord modifiers** (p. 1387): with `modifiers`, the keys of `modifierKeys` (previous and next voicing, fewer and more
   tensions, transpose down and up; C2 to F2 by default) play nothing and change the pads whose remote keys are down,
   or else the pad triggered last, and with no pad's key down play that pad while they are down. The reference changes
@@ -289,6 +292,8 @@ and goes again with that rest's undo; a pad assigned anew while a control is awa
 changed meanwhile, the tensions control's way back in steps and after undo, and `chordPads.modify` `without`; what the
 remote keys hold ended when the remote's input changes, with the pads they lit off, also with the range changed in the
 same call and by a range change while a key is down, the sections mode's pad key that latched a chord before off once,
+a pad lit with the selected player muted and the sections mode's pad keys going off with their keys, a key whose pad
+`padCount` removed while it was down no longer down for the chord modifiers, and `chordPads.remoteInput`'s `pad`,
 and no pad for a section key among the remote keys; Snap Playback after a jump back and after a cycle's jump inside a
 block, on its own and through the audio engine; a player's track removed with its track and checked in a file; a user
 preset with its player mode and pattern; chords recorded on the record-enabled chord track from the mouse and the remote
