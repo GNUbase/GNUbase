@@ -137,3 +137,5 @@ has none yet).
   `notes` and `controllers`.
 - `tests/inspector_tests.cpp`: the project window's info line showing and editing the notes an in-place editor has
   selected (inspector.md).
+
+Editor names use the track id's decimal spelling without leading zeros. Tests cover ids near Lua's signed integer limit; project loads refuse oversized ids before an editor can announce a name that scripts cannot use (project-files.md).

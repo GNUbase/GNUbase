@@ -45,7 +45,6 @@ namespace gnubase::engine
 				if (std::find(tracks.begin(), tracks.end(), id) == tracks.end())
 					tracks.push_back(id);
 			}
-			require(!tracks.empty(), "tracks must not be empty");
 			return tracks;
 		}
 
@@ -179,7 +178,6 @@ namespace gnubase::engine
 				TrackVersion version;
 				version.id = id;
 				version.name = context.parameters().value("name", newVersionName(track));
-				require(!version.name.empty(), "name must not be empty");
 				stash(project, track, context);
 				if (duplicate)
 				{
@@ -198,7 +196,6 @@ namespace gnubase::engine
 		Json renameVersions(Project& project, CommandContext& context)
 		{
 			const std::string name = context.parameters().at("name").get<std::string>();
-			require(!name.empty(), "name must not be empty");
 			const std::vector<ObjectId> tracks = tracksOf(project, context.parameters());
 			for (const ObjectId id : tracks)
 			{
@@ -345,6 +342,9 @@ namespace gnubase::engine
 			event.front = 0;
 			const auto from = ids.find(event.crossfade.from);
 			event.crossfade.from = from == ids.end() ? 0 : from->second;
+			// The copies' slices reset into the copy of their event (#1668).
+			const auto sliced = ids.find(event.slicedFrom);
+			event.slicedFrom = sliced == ids.end() ? 0 : sliced->second;
 			const auto part = parts.find(event.part);
 			event.part = part == parts.end() ? 0 : part->second;
 		}

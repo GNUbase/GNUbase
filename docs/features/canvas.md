@@ -78,7 +78,9 @@ phase falls behind the refresh rate:
 3. zooming with all 10,000 events in view, which builds every event every frame.
 
 On a 180 Hz display (Release build, Direct3D 12, a desktop GPU of 2023 and a 16-core desktop CPU, 2026-10-30), every
-phase keeps up with the display, including zooming, which builds all 10,000 events every frame:
+phase keeps up with the display, including zooming, which builds all 10,000 events every frame. These numbers were
+measured before the benchmark drew half of its events in colors of their own (#1332), so they don't cover the
+colored events' extra fills and outlines; run it again to get current ones:
 
 | Phase | Frames per second | Frames later than 1.5 refreshes | Builds |
 |---|---|---|---|

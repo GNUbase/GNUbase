@@ -29,6 +29,7 @@ namespace gnubase::engine
 			uint64_t position = 0;
 			audio::MidiMessage message; // its offset is ignored
 			bool drumSound = false;     // injected notes: the key is a drum sound's pitch (midi.inject drumSounds)
+			bool direct = false;        // injected: straight to the instrument as it is (midi.inject direct)
 			uint64_t mpe = 0;           // injected: the MPE setup they play through (midi::MpeSetup::pack), 0 for none
 		};
 

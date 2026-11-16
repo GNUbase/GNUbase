@@ -503,6 +503,10 @@ namespace gnubase::engine
 				if (event.track != track.id)
 					return;
 				event.position = time::rebase(event.position, base, project.tempo, project.sampleRate);
+				// The Reset of the Slice Rules puts the event back there, also after a save and a load (#1672).
+				if (event.sliceOrigin)
+					event.sliceOrigin->timing.position =
+						time::rebase(event.sliceOrigin->timing.position, base, project.tempo, project.sampleRate);
 				if (plays)
 					context.emit("audioEvent.changed", {{"event", toJson(event)}});
 			},
@@ -1614,6 +1618,9 @@ namespace gnubase::engine
 				event.track = copy.id;
 				const auto from = events.find(event.crossfade.from);
 				event.crossfade.from = from == events.end() ? 0 : from->second;
+				// The copies' slices reset into the copy of their event, not into the original track's (#1668).
+				const auto sliced = events.find(event.slicedFrom);
+				event.slicedFrom = sliced == events.end() ? 0 : sliced->second;
 				const auto part = audioParts.find(event.part);
 				event.part = part == audioParts.end() ? 0 : part->second;
 				project.audioEvents[event.id] = event;
@@ -4013,10 +4020,11 @@ namespace gnubase::engine
 				"Saves the project as a DAWproject file: as path, which is then the project's file (save as), or "
 				"without path to the project's file (save). Media files and frozen tracks' freeze files are copied "
 				"into it unless embedMedia is false; then the file refers to them where they are, relative to itself "
-				"if they are in its folder. One that is missing is referred to by its absolute path. The file becomes "
-				"the first of the recent "
+				"if they are in its folder. One that is missing is referred to by its absolute path, so that the file "
+				"has no copy of it: the result lists them (missing). The file becomes the first of the recent "
 				"projects (project.recent).",
-				objectSchema({{"path", stringSchema}, {"embedMedia", booleanSchema}}), noResult, false},
+				objectSchema({{"path", stringSchema}, {"embedMedia", booleanSchema}}),
+				objectSchema({{"missing", {{"type", "array"}, {"items", stringSchema}}}}, {"missing"}), false},
 			[this](CommandContext& context)
 			{
 				const Json& parameters = context.parameters();
@@ -4025,16 +4033,17 @@ namespace gnubase::engine
 				require(
 					parameters.contains("path") || !m_file.empty(), "the project has no file yet: save it with a path");
 				const std::string path = parameters.value("path", m_file);
+				std::vector<std::string> missing;
 				try
 				{
-					saveDawProject(m_project, path, options);
+					missing = saveDawProject(m_project, path, options);
 				}
 				catch (const std::exception& error)
 				{
 					throw CommandError(error.what());
 				}
 				saved(std::filesystem::absolute(std::filesystem::u8path(path)).u8string(), context);
-				return Json::object();
+				return Json{{"missing", missing}};
 			});
 		addControl(engine,
 			{"project.load", 1,

@@ -136,14 +136,15 @@ namespace gnubase::engine
 		}
 
 		// The output events of a track's sound slots (#175, reference manual p. 1270), across its parts in the order
-		// the notes play in, earlier by their slots' Attack Compensation (#1491, #1113): where a note's slot differs
-		// from the last one the track sent, the off events of that one, on the channel its notes played on, and the on
-		// events of the new one, on the channel of the note. Key switches play for a sample, ending a sample before the
-		// note starts, or by the slot's Separation (p. 1271) earlier, with its controller and program changes (#1667),
-		// but after the start of the note before, which would play the slot otherwise; a jump after them sends them
-		// again (MidiSequencer::chaseNotes). The controller and program changes are the track's (g_soundSlotPart), not
-		// the part's of the note, so a chase limited to parts finds them where a part continues the slot of another.
-		// Add-on slots go on the channel of the notes that play them and follow them to another channel.
+		// the notes play in, earlier by their slots' Attack Compensation (#1491, #1113): where a note's slot or
+		// channel differs from the last one the track sent, the off events of that one, on the channel its notes played
+		// on, and the on events of the new one, on the channel of the note. Key switches play for a sample, ending a
+		// sample before the note starts, or by the slot's Separation (p. 1271) earlier, with its controller and program
+		// changes (#1667), but after the start of the note before, which would play the slot otherwise; a jump after
+		// them sends them again (MidiSequencer::chaseNotes). The controller and program changes are the track's
+		// (g_soundSlotPart), not the part's of the note, so a chase limited to parts finds them where a part continues
+		// the slot of another. Add-on slots go on the channel of the notes that play them and follow them to another
+		// channel.
 		void addOutputEvents(const Project& project, std::vector<SlotNote>& notes, RenderChannel& channel)
 		{
 			std::stable_sort(notes.begin(), notes.end(), [](const SlotNote& a, const SlotNote& b)
@@ -178,7 +179,8 @@ namespace gnubase::engine
 								on, {}, g_soundSlotPart});
 					}
 				};
-				if (previous == nullptr || note.slot != previous->slot)
+				// A slot that stays follows the notes to another channel of their own, as the add-ons do (#1718).
+				if (previous == nullptr || note.slot != previous->slot || note.channel != previous->channel)
 				{
 					if (previous != nullptr)
 						send(*previous->slot, true, previous->channel);

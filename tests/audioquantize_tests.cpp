@@ -1049,6 +1049,16 @@ TEST_CASE(
 		CHECK(byId(client, "audioEvents", second).at("position") == before.at(1).at(0));
 	}
 
+	SECTION("without the event the piece was split from, the neighbour's crossfade ends")
+	{
+		// Only an event that ended where the piece starts is the piece before it (#1642): not the copy of the loop
+		// elsewhere on the track, and not the neighbour, which plays the piece's clip frames too.
+		run(client, "event.remove", {{"events", {first}}});
+		const Json reset = run(client, "quantize.reset", {{"events", {right}}});
+		CHECK(reset.at("removed") == Json::array({right}));
+		CHECK(!crossfadeOf(client, second).is_object());
+	}
+
 	SECTION("a project saved with the piece")
 	{
 		// The piece's original has a length of 0 in the file.
@@ -1391,6 +1401,34 @@ TEST_CASE("Quantizing again after Nudge Crossfade Right leaves the nudged slices
 	CHECK(eventsOn(client, loop.track) == before);
 }
 
+TEST_CASE("Quantizing again after Nudge Crossfade leaves the nudged slices of a musical track where they are",
+	"[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	// As on a linear track, but the slices' starts are in ticks at 97 BPM: quantizing again moves the result by how
+	// far the offset moved through samples and back into ticks (#1634), which must not take a slice a tick away.
+	run(client, "project.set", {{"tempo", 97.0}});
+	const std::vector<int64_t> played{6200, 31700, 59300, 89900};
+	const Loop loop = addLoop(client, dir, "loop", clicks(played, 5 * g_quarter), 0, "musical");
+	setHitpoints(client, loop.clip, played);
+	const Json events = run(client, "quantize.slice", {{"events", {loop.event}}}).at("events");
+	const std::vector<std::vector<int64_t>> before = eventsOn(client, loop.track);
+	run(client, "quantize.set", {{"preset", "1/8"}});
+	run(client, "quantize.apply", {{"events", events}});
+	run(client, "quantize.crossfade", {{"events", events}, {"length", 2.0}});
+	for (const double amount : {1.0, 1.0, -3.0})
+		run(client, "quantize.nudgeCrossfade", {{"events", events}, {"amount", amount}});
+	const std::vector<std::vector<int64_t>> nudged = eventsOn(client, loop.track);
+	REQUIRE(nudged != before);
+
+	run(client, "quantize.apply", {{"events", events}});
+	CHECK(eventsOn(client, loop.track) == nudged);
+	run(client, "quantize.reset", {{"events", events}});
+	CHECK(eventsOn(client, loop.track) == before);
+}
+
 TEST_CASE("Create Groove Quantize Preset makes a preset of an audio event's hitpoints", "[integration]")
 {
 	const test::TempDir dir;
@@ -1550,6 +1588,103 @@ TEST_CASE(
 			std::vector<std::vector<int64_t>>{{time::g_ticksPerQuarter / 12, 0, 4 * g_quarter}}); // 2000 samples
 		CHECK(byId(client, "audioEvents", loop.event).at("fadeOut") == fadeOut);
 	}
+
+	SECTION("a track switched to musical time and back since slicing, saved and loaded in between")
+	{
+		// The origin changes its time base with the event's (#1672), so the file keeps it.
+		run(client, "track.set", {{"track", loop.track}, {"timeBase", "musical"}});
+		const std::string file = (dir.path() / "switched.dawproject").u8string();
+		run(client, "project.save", {{"path", file}, {"embedMedia", false}});
+		run(client, "project.new");
+		run(client, "project.load", {{"path", file}});
+		CHECK(run(client, "quantize.resetSlices", {{"events", sliced}}).at("events") == Json::array({loop.event}));
+		CHECK(eventsOn(client, loop.track) ==
+			std::vector<std::vector<int64_t>>{{time::g_ticksPerQuarter / 12, 0, 4 * g_quarter}});
+		run(client, "history.undo");
+		run(client, "track.set", {{"track", loop.track}, {"timeBase", "linear"}});
+		run(client, "quantize.resetSlices", {{"events", sliced}});
+		CHECK(eventsOn(client, loop.track) == std::vector<std::vector<int64_t>>{{2000, 0, 4 * g_quarter}});
+	}
+
+	SECTION("the event and its slices moved onto a musical track, saved and loaded in between")
+	{
+		// The origin goes into the musical track's time base with the event (#1672), so the file keeps it.
+		const ObjectId musical = run(client, "track.add", {{"type", "audio"}, {"timeBase", "musical"}, {"channels", 1}})
+									 .at("track")
+									 .at("id")
+									 .get<ObjectId>();
+		run(client, "event.move", {{"events", sliced}, {"delta", 0}, {"track", musical}});
+		const std::string file = (dir.path() / "moved.dawproject").u8string();
+		run(client, "project.save", {{"path", file}, {"embedMedia", false}});
+		run(client, "project.new");
+		run(client, "project.load", {{"path", file}});
+		CHECK(run(client, "quantize.resetSlices", {{"events", sliced}}).at("events") == Json::array({loop.event}));
+		CHECK(eventsOn(client, musical) ==
+			std::vector<std::vector<int64_t>>{{time::g_ticksPerQuarter / 12, 0, 4 * g_quarter}}); // 2000 samples
+	}
+}
+
+TEST_CASE("Copies of slices have no slice origin of their own, but a duplicated track's slices do", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	const std::vector<int64_t> played{6200, 25600, 47300, 72800};
+	const Loop loop = addLoop(client, dir, "loop", clicks(played, 4 * g_quarter));
+	setHitpoints(client, loop.clip, played);
+	const Json sliced = run(client, "quantize.slice", {{"events", {loop.event}}}).at("events");
+	REQUIRE(sliced.size() == 5);
+	const std::vector<std::vector<int64_t>> slices = eventsOn(client, loop.track);
+	const std::vector<std::vector<int64_t>> whole{{0, 0, 4 * g_quarter}};
+
+	SECTION("a copy of the first slice and of another one are the user's own (#1668)")
+	{
+		const Json copies = run(client, "event.duplicate", {{"events", {loop.event, sliced.at(2)}}}).at("events");
+		REQUIRE(copies.size() == 2);
+		for (const Json& copy : copies)
+		{
+			const Json event = byId(client, "audioEvents", copy.get<ObjectId>());
+			CHECK(!event.contains("sliceOrigin"));
+			CHECK(!event.contains("slicedFrom"));
+		}
+		CHECK(run(client, "quantize.resetSlices", {{"events", copies}}).at("events").empty());
+		run(client, "quantize.resetSlices", {{"events", sliced}});
+		std::vector<std::vector<int64_t>> left = eventsOn(client, loop.track);
+		CHECK(left.size() == 3); // the event, whole again, and the two copies
+		CHECK(left.at(0) == whole.at(0));
+	}
+
+	SECTION("a duplicated track resets its own slices")
+	{
+		const ObjectId copy =
+			run(client, "track.duplicate", {{"track", loop.track}}).at("track").at("id").get<ObjectId>();
+		Json copied = Json::array();
+		const Json project = run(client, "project.get");
+		for (const Json& event : project.at("audioEvents"))
+			if (event.at("track") == copy)
+				copied.push_back(event.at("id"));
+		REQUIRE(copied.size() == 5);
+		const Json result = run(client, "quantize.resetSlices", {{"events", Json::array({copied.at(3)})}});
+		CHECK(result.at("removed").size() == 4);
+		CHECK(eventsOn(client, copy) == whole);
+		CHECK(eventsOn(client, loop.track) == slices);
+	}
+
+	SECTION("a duplicated version resets its own slices (#1668)")
+	{
+		run(client, "trackVersion.duplicate", {{"tracks", {loop.track}}});
+		Json copied = Json::array();
+		const Json project = run(client, "project.get");
+		for (const Json& event : project.at("audioEvents"))
+			if (event.at("track") == loop.track)
+				copied.push_back(event.at("id"));
+		REQUIRE(copied.size() == 5);
+		for (const Json& id : copied)
+			REQUIRE(std::find(sliced.begin(), sliced.end(), id) == sliced.end());
+		const Json result = run(client, "quantize.resetSlices", {{"events", Json::array({copied.at(3)})}});
+		CHECK(result.at("removed").size() == 4);
+		CHECK(eventsOn(client, loop.track) == whole);
+	}
 }
 
 TEST_CASE("Reset of the Warp Marker Creation Rules removes the markers Create made", "[integration]")
@@ -1598,6 +1733,33 @@ TEST_CASE("Reset of the Warp Marker Creation Rules removes the markers Create ma
 		run(client, "event.set", {{"events", {a.event}}, {"lock", true}});
 		CHECK(run(client, "quantize.resetWarpMarkers", {{"events", {a.event}}}).at("clips").empty());
 		CHECK(markersOf(client, a.clip).size() == 3);
+	}
+
+	SECTION("a marker the user adds where a removed one was made is the user's own (#1668)")
+	{
+		const auto check = [&]()
+		{
+			run(client, "clip.addWarpMarker", {{"clip", a.clip}, {"position", 25600}});
+			CHECK(run(client, "quantize.resetWarpMarkers", {{"events", {a.event}}}).at("clips").empty());
+			CHECK(markersOf(client, a.clip).size() == 2);
+		};
+		SECTION("removed one by one")
+		{
+			run(client, "clip.removeWarpMarkers", {{"clip", a.clip}, {"positions", {1000, 25600}}});
+			check();
+		}
+		SECTION("all removed")
+		{
+			run(client, "clip.removeWarpMarkers", {{"clip", a.clip}});
+			run(client, "clip.addWarpMarker", {{"clip", a.clip}, {"position", 40000}});
+			check();
+		}
+		SECTION("unstretched")
+		{
+			run(client, "event.unstretch", {{"events", {a.event}}});
+			run(client, "clip.addWarpMarker", {{"clip", a.clip}, {"position", 40000}});
+			check();
+		}
 	}
 }
 

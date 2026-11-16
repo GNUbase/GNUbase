@@ -6,6 +6,7 @@
 #include "engine/engine.h"
 #include "mcp/server.h"
 #include "testutils/fakeui.h"
+#include "testutils/schemaguards.h"
 #include "testutils/slowframe.h"
 #include "ui/fonts.h"
 #include "ui/renderer.h"
@@ -208,8 +209,18 @@ TEST_CASE("the UI tools are listed, those that only read marked read-only", "[un
 						   .at("result")
 						   .at("tools");
 	Json readOnly = Json::object();
+	std::vector<std::string> unbounded;
+	std::vector<std::string> unchecked;
+	int patterns = 0;
 	for (const Json& tool : tools)
+	{
+		const auto name = tool.at("name").get<std::string>();
+		test::countPatterns(tool.at("inputSchema"), patterns, unbounded, name);
+		test::uncheckedKeywords(tool.at("inputSchema"), unchecked, name);
 		readOnly[tool.at("name").get<std::string>()] = tool.at("annotations").at("readOnlyHint");
+	}
+	CHECK(unbounded.empty());
+	CHECK(unchecked.empty());
 	for (const char* name : {"ui_windows", "ui_dom", "ui_screenshot", "ui_wait"})
 		CHECK(readOnly.value(name, false));
 	for (const char* name : {"ui_move", "ui_click", "ui_drag", "ui_drop", "ui_wheel", "ui_key", "ui_text", "ui_close",

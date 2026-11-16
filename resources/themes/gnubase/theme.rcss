@@ -1712,6 +1712,7 @@
 	{
 		color: #f1f4ff;
 		font-weight: 600;
+		font-size: 15dp;
 	}
 	tabset tabs
 	{

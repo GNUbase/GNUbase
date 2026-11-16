@@ -10,6 +10,7 @@
 #include <cctype>
 #include <cmath>
 #include <filesystem>
+#include <iterator>
 #include <map>
 #include <set>
 #include <sstream>
@@ -427,6 +428,16 @@ TEST_CASE("the default theme's bars, tabs and inspector headers are flat, the ot
 				std::find_if(found.rbegin(), found.rend(), [&name](const auto& rule) { return rule.first == name; });
 			return at == found.rend() ? std::string() : at->second;
 		};
+		// A disabled menu button looks disabled also when checked, as every disabled bar button does (#1711): its rule
+		// has the checked one's specificity and comes after it.
+		const auto position = [&found](const std::string& name)
+		{
+			const auto at =
+				std::find_if(found.rbegin(), found.rend(), [&name](const auto& rule) { return rule.first == name; });
+			REQUIRE(at != found.rend());
+			return std::distance(at, found.rend());
+		};
+		CHECK(position(bars("[menu]", ":disabled")) > position(bars(".checked[menu]", "")));
 		const auto file = [&dir](const char* asset) { return gnubase::test::readText(dir / asset); };
 		const nlohmann::json tokens = readJson(dir / "tokens.json");
 		const auto token = [&tokens](const char* name) { return tokens.at(name).get<std::string>(); };
@@ -443,13 +454,15 @@ TEST_CASE("the default theme's bars, tabs and inspector headers are flat, the ot
 			CHECK(value(last(bars("", ":hover")), "background-color").rfind('#', 0) == 0);
 			CHECK(value(last(bars(".checked", "")), "color") == token("accent"));
 			// Start in the accent, filled while playing; Record in the danger color, filled while recording; the
-			// primary time display bold.
+			// primary time display bold and in the titles' size (#1342).
 			CHECK(value(last(".transport #start svg.icon"), "image-color") == token("accent"));
 			CHECK(value(last(".transport button#start.checked"), "background-color") == token("accent"));
 			CHECK(value(last(".transport #record svg.icon"), "image-color") == token("danger"));
 			CHECK(value(last(".transport button#record.checked"), "background-color") == token("danger"));
 			CHECK(value(last(".transport .primary-time"), "font-weight") == "600");
 			CHECK(value(last(".transport .primary-time"), "color") == token("text"));
+			CHECK(value(last(".transport .primary-time"), "font-size") ==
+				std::to_string(tokens.at("fontSizes").at("title").get<int>()) + "dp");
 			// Zones as rounded panels on the surface.
 			CHECK(!value(last(".docking [zone]"), "border-radius").empty());
 			CHECK(value(last(".docking [zone]"), "background-color") == token("surface"));
@@ -534,6 +547,8 @@ TEST_CASE("the default theme's bars, tabs and inspector headers are flat, the ot
 			CHECK(file("dropdown-button-hover.svg") == file("button-hover.svg"));
 			CHECK(file("dropdown-button-pressed.svg") == file("button-pressed.svg"));
 			CHECK(file("dropdown-button-disabled.svg") == file("button-disabled.svg"));
+			// The primary time display in the displays' size, as before.
+			CHECK(value(last(".transport .primary-time"), "font-size").empty());
 			// The tempo keeps the displays' skin.
 			CHECK(value(last(".transport .transport-section valuefield"), "decorator") ==
 				value(last(".display, valuefield"), "decorator"));

@@ -429,6 +429,7 @@ namespace gnubase::ui
 		m_laneTakes.clear();
 		m_events.clear();
 		m_independent.clear();
+		m_audioSpans.clear();
 		m_mutedPieces.clear();
 		m_fades.clear();
 		readAutomation(project);
@@ -593,6 +594,7 @@ namespace gnubase::ui
 				length = played->get<double>() / m_time.sampleRate;
 			const double waveRate =
 				played != event.end() && length > 0.0 ? event.at("length").get<double>() / length : rate;
+			m_audioSpans[event.at("id").get<uint64_t>()] = {track, start, start + length};
 			const bool independent = event.value("globalTranspose", std::string()) == "independent"; // #1368
 			if (const auto part = audioParts.find(event.value("part", uint64_t{0})); part != audioParts.end())
 			{
@@ -1030,15 +1032,11 @@ namespace gnubase::ui
 			return;
 		const double scale = m_view.scale > 0.0 ? m_view.scale : g_minScale;
 		const auto seconds = [this](int64_t samples) { return static_cast<double>(samples) / m_time.sampleRate; };
-		bool apart = true;
-		for (size_t i = 1; i < m_cuttingPositions.size(); ++i)
-			apart =
-				apart && (seconds(m_cuttingPositions[i]) - seconds(m_cuttingPositions[i - 1])) / scale >= g_cutDistance;
 		std::vector<double> lines;
-		if (apart)
-			for (const int64_t position : m_cuttingPositions)
-				if (const double x = (seconds(position) - m_view.start) / scale; x >= 0.0 && x <= width())
-					lines.push_back(x);
+		for (const int64_t position : m_cuttingPositions)
+			if (const double x = (seconds(position) - m_view.start) / scale;
+				x >= 0.0 && x <= width() && (lines.empty() || x - lines.back() >= g_cutDistance))
+				lines.push_back(x);
 		if (lines.size() != m_cutsShown)
 		{
 			std::string rml;

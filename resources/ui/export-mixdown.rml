@@ -179,7 +179,9 @@
 				parameters.normalize = tonumber(valueOf(document, "mixdown-peak")) or 0
 			end
 			local problem
-			if #channels == 0 then
+			if parameters.name == "" then
+				problem = "Enter a name for the exported file"
+			elseif #channels == 0 then
 				problem = "Choose a channel to export"
 			else
 				local ok, failure = pcall(gnubase.mixdown.export, parameters)

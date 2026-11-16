@@ -154,7 +154,7 @@ namespace gnubase::engine
 	// MIDI input that a track's retrospective buffer kept (midi.insertRetrospective).
 	struct RetrospectiveEvent
 	{
-		uint64_t deviceFrame = 0;
+		uint64_t deviceFrame = 0;    // counted on across audio devices, which each count from 0
 		time::Samples position = -1; // where the transport played it, or -1 in stop mode
 		graph::ProcessEvent event;   // its offset is unused
 	};
@@ -248,9 +248,8 @@ namespace gnubase::engine
 		{
 			std::deque<RetrospectiveEvent> events;
 			bool taken = false; // retrospective() returned it: the next input starts afresh
-			// Its first events went into a recording (caught at its start, or a track that only monitors while the
-			// chord track records) or came through another audio device: the catch range of the next one leaves them
-			// out.
+			// Its first events came before or during a recording of the track, whether that one took them or not, or
+			// through another audio device: the catch range of the next one leaves them out.
 			size_t recorded = 0;
 		};
 
@@ -348,6 +347,7 @@ namespace gnubase::engine
 		Json m_pendingMidi = Json::array();
 		RecordSetup m_pendingMidiSetup;
 		std::map<ObjectId, Retrospective> m_retrospective; // by channel
+		uint64_t m_frameBase = 0; // added to the device frames kept: the device's first frame is after all kept before
 
 		std::thread m_thread;
 	};

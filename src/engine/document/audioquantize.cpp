@@ -642,7 +642,8 @@ namespace gnubase::engine
 				// A locked event is protected from being edited (p. 276): the event and its slices stay.
 				if (locked)
 					continue;
-				// The origin keeps the time base it was sliced in: the track's may have changed since.
+				// The origin changes its time base with the track's (rebaseTrack), but the event may have moved onto
+				// a track of the other one since.
 				const SliceOrigin origin = *event.sliceOrigin;
 				event.position =
 					time::rebase(origin.timing.position, event.position.base, project.tempo, project.sampleRate);

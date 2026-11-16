@@ -5,12 +5,21 @@
 
 #include <algorithm>
 #include <cctype>
+#include <limits>
 #include <map>
 #include <set>
+#include <stdexcept>
 #include <utility>
 
 namespace gnubase::engine
 {
+	ObjectId Project::newId()
+	{
+		if (nextId >= static_cast<ObjectId>(std::numeric_limits<int64_t>::max()))
+			throw std::overflow_error("project object ids exceed Lua's integer range");
+		return nextId++;
+	}
+
 	namespace
 	{
 		void appendTracks(const Project& project, const std::vector<ObjectId>& tracks, std::vector<ObjectId>& order)
