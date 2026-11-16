@@ -40,7 +40,6 @@ namespace
 	}
 
 	// Opens a drop-down list, moves that many options down from the selected one (up when negative) and closes it.
-	// Its options aren't in the DOM that the UI tools see.
 	void choose(test::UiApp& app, const std::string& select, int down)
 	{
 		click(app, select);
