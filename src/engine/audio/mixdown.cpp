@@ -453,7 +453,8 @@ namespace gnubase::engine
 					first = std::min(first.value_or(note.start), note.start);
 			}
 			const time::Samples end = projectEnd();
-			require(first.has_value() && end > *first, "the project has no events to export");
+			if (!first || end <= *first)
+				throw CommandError("the project has no events to export");
 			FileFormat format;
 			format.sampleRate = snapshot.sampleRate;
 			format.overwrite = true;
@@ -496,7 +497,8 @@ namespace gnubase::engine
 			for (size_t i = 0; i < objects.size(); ++i)
 			{
 				const std::optional<std::string> found = nameOf(project, objects[i]);
-				require(found.has_value(), "there is no bus or channel " + std::to_string(objects[i]));
+				if (!found)
+					throw CommandError("there is no bus or channel " + std::to_string(objects[i]));
 				targets[i].object = objects[i];
 				targets[i].name = *found;
 				targets[i].path = claim(folder, objects.size() == 1 ? name : name + " - " + targets[i].name,
