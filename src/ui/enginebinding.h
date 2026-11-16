@@ -89,18 +89,19 @@ namespace gnubase::ui
 
 		// Sends document commands ({"command", "parameters"} each) as a step of a value widget's gesture (the
 		// "gesture" parameter of its change event, ui/widgets.h): a history.transaction named description whose merge
-		// key is what the gesture changes (e.g. "channel 5 volume") and the gesture, so that a drag, wheel turns or a
-		// held arrow key are one undo step. With gesture 0 the commands are a step of their own.
-		// The steps of one thing go one at a time (#716): while one is in flight the next waits, and a newer step of
-		// the same gesture replaces the one waiting, so that a fast drag sends its newest value whenever the engine
-		// has answered instead of piling up commands. done runs for every step sent; a step replaced before it was
-		// sent is dropped with its done.
-		// shown, unless null, is what the control shows once the engine took the step, kept with the record of what's
-		// steps for shown(): an object's members are merged into what the record keeps (a JSON merge patch), e.g. one
-		// per event that the step changes, anything else replaces it. A step sent while none of what's is out and a
-		// project read after the last one that the engine took is in starts what the record keeps afresh (#1550).
-		// merge, unless empty, names the merge key instead of what, for steps whose record what is shared by things
-		// that undo apart, such as the info line's fields for each selection of events.
+		// key is what the gesture changes (e.g. "mixer 3 channel 5 volume") and the gesture, so that a drag, wheel
+		// turns or a held arrow key are one undo step. With gesture 0 the commands are a step of their own. The steps
+		// of one thing go one at a time (#716): while one is in flight the next waits, and a newer step of the same
+		// gesture replaces the one waiting, so that a fast drag sends its newest value whenever the engine has answered
+		// instead of piling up commands. done runs for every step sent; a step replaced before it was sent is dropped
+		// with its done. A step sends other keys' older waiting steps first, including other views' steps, so switching
+		// controls keeps their input and undo order. shown, unless null, is what the control shows
+		// once the engine took the step, kept with the record of what's steps for shown(): an object's members are
+		// merged into what the record keeps (a JSON merge patch), e.g. one per event that the step changes, anything
+		// else replaces it. A step sent while none of what's is out and a project read after the last one that the
+		// engine took is in starts what the record keeps afresh (#1550). merge, unless empty, names the merge key
+		// instead of what, for steps whose record what is shared by things that undo apart, such as the info line's
+		// fields for each selection of events.
 		void sendStep(int gesture, const std::string& what, std::string description, engine::Json commands,
 			std::function<void(const engine::Result&)> done = {}, const engine::Json& shown = nullptr,
 			const std::string& merge = {});
@@ -236,7 +237,7 @@ namespace gnubase::ui
 		bool dispatch(const engine::Event& event);
 		// Draws the element's window in the shell's step (Rml::Context::RequestNextUpdate).
 		static void redraw(Rml::Element* shows);
-		void sendWaitingSteps(const std::string& before);
+		void sendWaitingSteps(const std::string& before, const std::string* except = nullptr);
 		engine::RequestId transmit(std::string command, engine::Json parameters,
 			std::function<void(const engine::Result&)> done, bool quiet, bool awaited = false);
 		void sendNextStep(const std::string& what);
