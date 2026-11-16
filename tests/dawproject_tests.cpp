@@ -5,6 +5,7 @@
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
 #include "engine/time/tempomap.h"
+#include "testutils/heldjob.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -29,6 +30,7 @@ using namespace gnubase::engine;
 namespace test = gnubase::test;
 using Catch::Matchers::ContainsSubstring;
 using gnubase::test::readZip;
+using gnubase::test::settlePeaks;
 using gnubase::test::writeZip;
 using gnubase::time::g_ticksPerQuarter;
 
@@ -57,22 +59,6 @@ namespace
 	std::string utf8(const std::filesystem::path& path)
 	{
 		return path.u8string();
-	}
-
-	// Waits until the peak worker is done with every media file before a test removes one: it writes peak files next
-	// to them, and Windows can't remove a folder it is writing into.
-	void settlePeaks(Client& client)
-	{
-		const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(20);
-		for (;;)
-		{
-			const Json statuses = run(client, "media.peakStatus").at("media");
-			if (std::none_of(statuses.begin(), statuses.end(), [](const Json& status)
-					{ return status.at("status") == "pending" || status.at("status") == "generating"; }))
-				return;
-			REQUIRE(std::chrono::steady_clock::now() < until);
-			std::this_thread::sleep_for(std::chrono::milliseconds(5));
-		}
 	}
 
 	void writeWav(const std::string& path, double sampleRate, int channels, size_t frames)
