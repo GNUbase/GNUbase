@@ -379,6 +379,9 @@ namespace gnubase::ui
 		Json configurations = m_visibility.at("configurations");
 		if (m_renaming)
 		{
+			// The name left as it is: trackVisibility.set would take it as Update Configuration (#1759).
+			if (m_visibility.at("configuration") == name)
+				return;
 			for (Json& configuration : configurations)
 				if (configuration.at("name") == m_visibility.at("configuration"))
 					configuration["name"] = name;
