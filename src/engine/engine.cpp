@@ -4,6 +4,7 @@
 #include "engine/audio/audioengine.h"
 #include "engine/document/channelformat.h"
 #include "engine/document/projectmodel.h"
+#include "engine/document/serialize.h"
 #include "engine/jobs/jobs.h"
 #include "engine/media/backup.h"
 #include "engine/midi/devices.h"
@@ -228,6 +229,21 @@ namespace gnubase::engine
 		// If the destructor stops the engine meanwhile, the request is queued anyway: harmless, since the command
 		// thread fails the requests it didn't run when it stops.
 		m_clock.start(g_autoSaveCheck, [this] { post("project.autoSave", {{"due", true}}); });
+	}
+
+	Jobs::Work Engine::prepareMixdown(const Json& parameters)
+	{
+		return m_audio->mixdownWork(parameters, toJson(m_project->project()));
+	}
+
+	Json Engine::startJob(std::string kind, Jobs::Work work)
+	{
+		return {{"job", m_jobs->start(std::move(kind), std::move(work))}};
+	}
+
+	bool Engine::jobCancelled(JobId job) const
+	{
+		return m_jobs->cancelled(job);
 	}
 
 	Engine::~Engine()
@@ -474,6 +490,7 @@ namespace gnubase::engine
 	{
 		CommandContext context(request.parameters);
 		context.m_engine = this;
+		context.m_internal = request.sender == nullptr;
 		Result result;
 		result.request = request.id;
 		std::vector<std::shared_ptr<detail::Mailbox>> clients;

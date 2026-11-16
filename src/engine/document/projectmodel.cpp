@@ -3605,11 +3605,42 @@ namespace gnubase::engine
 				[this, handler = std::move(handler)](CommandContext& context) { return handler(m_project, context); });
 			return;
 		}
+		if (info.name == "track.move")
+		{
+			handler = [this, move = std::move(handler)](Project& project, CommandContext& context)
+			{
+				const ObjectId id = context.parameters().at("track").get<ObjectId>();
+				checkRenderMove(id);
+				Json result = move(project, context);
+				m_movingTracks.push_back(id);
+				return result;
+			};
+		}
+
 		if (!action.empty())
 			m_edits[info.name] = {info, handler};
 		engine.registerCommand(std::move(info),
 			[this, action = std::move(action), handler = std::move(handler)](CommandContext& context)
 			{
+				std::vector<ObjectId> previousMoves = std::move(m_movingTracks);
+				m_movingTracks.clear();
+				struct ResetMoves
+				{
+					std::vector<ObjectId>& current;
+					std::vector<ObjectId>& previous;
+					~ResetMoves() { current = std::move(previous); }
+				};
+				const ResetMoves resetMoves{m_movingTracks, previousMoves};
+				const uint64_t applying = m_applyingRender;
+				if (action == "Render tracks")
+					m_applyingRender = context.parameters().at("token").get<uint64_t>();
+				struct ResetRender
+				{
+					uint64_t& value;
+					uint64_t before;
+					~ResetRender() { value = before; }
+				};
+				const ResetRender resetRender{m_applyingRender, applying};
 				Project before = m_project;
 				const bool followsEvents = m_automationFollowsEvents; // automation.set in a transaction changes it
 				Json result;
@@ -3621,6 +3652,7 @@ namespace gnubase::engine
 					syncSharedParts(before.midiParts, m_project, context);
 					midi::adoptPatterns(m_project, context);
 					followTrackFolders(m_project, context, before);
+					checkRenderLocks(m_project);
 				}
 				catch (...)
 				{
@@ -3635,6 +3667,8 @@ namespace gnubase::engine
 				else
 					record(action, before, context);
 				publish();
+				if (m_applyingRender != 0)
+					endTrackRender(m_applyingRender, context);
 				return result;
 			});
 	}
@@ -3698,16 +3732,24 @@ namespace gnubase::engine
 				change.stepPositionAfter.reset();
 			}
 			if (change.empty())
+			{
 				m_history.removeLast();
+			}
 			else
-				m_history.step(steps.size() - 1).change = std::move(change);
+			{
+				HistoryStep& step = m_history.step(steps.size() - 1);
+				step.change = std::move(change);
+				step.movedTracks.insert(step.movedTracks.end(), m_movingTracks.begin(), m_movingTracks.end());
+			}
 			announceHistory(context);
 			return;
 		}
 		ProjectChange change = difference(before, m_project);
 		if (change.empty())
 			return;
-		m_history.record({std::move(action), now(), {}, std::move(change), std::move(merge)});
+		HistoryStep step{std::move(action), now(), {}, std::move(change), std::move(merge)};
+		step.movedTracks = m_movingTracks;
+		m_history.record(std::move(step));
 		announceHistory(context);
 	}
 
@@ -3750,6 +3792,20 @@ namespace gnubase::engine
 		require(available > 0, undo ? "nothing to undo" : "nothing to redo");
 		require(static_cast<size_t>(steps) <= available,
 			"only " + std::to_string(available) + (undo ? " steps can be undone" : " steps can be redone"));
+		if (!m_trackRenders.empty())
+		{
+			Project candidate = m_project;
+			for (int64_t i = 0; i < steps; ++i)
+			{
+				const size_t index = undo ? m_history.position() - 1 - static_cast<size_t>(i)
+										  : m_history.position() + static_cast<size_t>(i);
+				for (const ObjectId track : m_history.steps()[index].movedTracks)
+					checkRenderMove(track);
+				apply(candidate, m_history.steps()[index].change, direction);
+			}
+			checkRenderLocks(candidate);
+		}
+
 		const std::string timeFormat = m_project.setup.timeFormat;
 		// Only what announceWarpedEvents reads: a copy of the whole project made undo slow in large projects (#1266).
 		Project before;
@@ -3874,6 +3930,10 @@ namespace gnubase::engine
 		if (!change.empty())
 			joined =
 				HistoryStep{context.parameters().at("action").get<std::string>(), now(), {}, std::move(change), {}};
+		if (joined)
+			for (size_t i = first; i < position; ++i)
+				joined->movedTracks.insert(
+					joined->movedTracks.end(), steps[i].movedTracks.begin(), steps[i].movedTracks.end());
 		m_history.join(first, std::move(joined));
 		announceHistory(context);
 		return {{"steps", position - first}};

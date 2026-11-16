@@ -5,6 +5,7 @@
 #include "platform/log.h"
 #include "platform/midi/dummyport.h"
 #include "platform/rt/realtime.h"
+#include "testutils/heldjob.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -100,6 +101,14 @@ namespace
 		const Result result = client.call(command, std::move(parameters));
 		INFO(command << " failed: " << result.error);
 		REQUIRE(result.ok());
+		if (result.value.contains("job") &&
+			(command == "track.freeze" || command == "track.renderInPlace" || command == "mixdown.export"))
+		{
+			const Json job = gnubase::test::waitForJob(client, result.value.at("job").at("id").get<uint64_t>());
+			INFO(job.dump());
+			REQUIRE(job.at("state") == "done");
+			return job.at("result");
+		}
 		return result.value;
 	}
 

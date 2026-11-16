@@ -81,6 +81,7 @@ namespace gnubase::engine
 
 		// The JSON schema of a job as job.get shows it, for the results of commands that start one.
 		static Json schema();
+		bool cancelled(JobId job) const;
 
 		// job.get, job.list and job.cancel.
 		void registerCommands(Engine& engine);

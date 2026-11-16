@@ -9,8 +9,11 @@
 #include "engine/document/rendersnapshot.h"
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
+#include "engine/jobs/jobs.h"
 #include "engine/media/backup.h"
 #include "engine/time/tempomap.h"
+#include <atomic>
+#include <set>
 
 #include <algorithm>
 #include <cmath>
@@ -32,6 +35,29 @@ namespace gnubase::engine
 			if (!condition)
 				throw CommandError(message);
 		}
+
+		class RenderProgress final : public JobContext
+		{
+		public:
+			RenderProgress(JobContext& job, size_t index, size_t count)
+				: m_job(job), m_index(static_cast<double>(index)), m_count(static_cast<double>(count))
+			{
+			}
+			bool cancelled() const override { return m_job.cancelled(); }
+			void progress(double fraction, const std::string& detail) override
+			{
+				m_job.progress((m_index + fraction) / m_count, detail);
+			}
+			Json command(std::string name, Json parameters) override
+			{
+				return m_job.command(std::move(name), std::move(parameters));
+			}
+
+		private:
+			JobContext& m_job;
+			double m_index;
+			double m_count;
+		};
 
 		// Where what plays on a channel starts and ends, in the project's samples: its events and notes, and on an
 		// instrument channel the notes of the MIDI channels that play it.
@@ -96,15 +122,6 @@ namespace gnubase::engine
 			return track.name.empty() ? "Track " + std::to_string(track.id) : track.name;
 		}
 
-		// Renders a channel's [start, end) from point into a 32-bit float WAV file in folder; returns the file.
-		Json renderChannel(CommandContext& context, const fs::path& folder, const std::string& name, ObjectId channel,
-			time::Samples start, time::Samples end, const char* point, double tail, const std::string& sampleFormat)
-		{
-			const Json result = context.call("mixdown.export",
-				{{"folder", folder.u8string()}, {"name", name}, {"channels", {channel}}, {"start", start}, {"end", end},
-					{"point", point}, {"tail", tail}, {"sampleFormat", sampleFormat}});
-			return result.at("files").at(0);
-		}
 	}
 
 	bool lockedByFreeze(const Project& project, const Channel& channel)
@@ -123,6 +140,250 @@ namespace gnubase::engine
 		return output != project.channels.end() && frozen(output->second.track);
 	}
 
+	struct ProjectModel::TrackRender
+	{
+		Json parameters;
+		bool freeze = false;
+		std::vector<ObjectId> tracks;
+		std::vector<ObjectId> lockedTracks;
+		std::vector<time::Samples> starts;
+		std::vector<time::Samples> ends;
+		std::vector<Jobs::Work> work;
+		std::vector<Json> files;
+		Json input;
+		uint64_t job = 0;
+		std::atomic<bool> ready{false};
+	};
+
+	Json ProjectModel::renderInput(const Project& project, const TrackRender& render)
+	{
+		const auto snapshot = compile(project, 0);
+		const Json whole = toJson(project);
+		Json input = Json::object();
+		const bool preFader = render.freeze ||
+			render.parameters.value("processing", std::string("channelSettings")) != "completeSignalPath";
+		for (const char* key : {"sampleRate", "tempo", "panLaw", "rootKey", "transpose", "autoFades"})
+			if (whole.contains(key))
+				input[key] = whole.at(key);
+		std::set<ObjectId> tracks;
+		std::map<ObjectId, std::set<size_t>> ranges;
+		for (size_t i = 0; i < render.tracks.size(); ++i)
+		{
+			const auto track = project.trackById.find(render.tracks[i]);
+			if (track == project.trackById.end())
+				return nullptr;
+			tracks.insert(track->first);
+			ranges[track->first].insert(i);
+			// MIDI outputs and MIDI sends can feed a rendered instrument from another track.
+			for (const auto& channel : snapshot->channels)
+			{
+				bool feeds = channel.type == TrackType::Midi && channel.output.kind == RenderTarget::Kind::Channel &&
+					snapshot->channels.at(static_cast<size_t>(channel.output.index)).id == track->second.channel;
+				for (const int output : channel.midiSendOutputs)
+					if (output >= 0 && snapshot->channels.at(static_cast<size_t>(output)).id == track->second.channel)
+						feeds = true;
+				if (feeds)
+				{
+					tracks.insert(channel.track);
+					ranges[channel.track].insert(i);
+				}
+			}
+		}
+
+		for (const ObjectId id : tracks)
+		{
+			const Track& track = project.trackById.at(id);
+			Json value = toJson(track);
+			for (const char* key : {"name", "color", "picture", "gmNames", "groupEditing"})
+				value.erase(key);
+			input["tracks"].push_back(value);
+			Json channel = toJson(project.channels.at(track.channel));
+			for (const char* key : {"notes", "listen", "monitor", "recordEnable"})
+				channel.erase(key);
+			if (preFader && track.type != TrackType::Midi)
+				for (const char* key : {"volume", "pan", "panner", "panLeft", "panRight", "panBypass", "sends", "mute",
+						 "solo", "soloDefeat"})
+					channel.erase(key);
+			if (render.freeze)
+			{
+				channel.erase("eq");
+				channel.erase("strip");
+			}
+			input["channels"].push_back(channel);
+			for (const ObjectId slot : project.channels.at(track.channel).slots)
+				input["slots"].push_back(toJson(project.slots.at(slot)));
+			for (const auto& [laneId, lane] : project.automation)
+				if (lane.track == id)
+				{
+					const auto type = lane.target.type;
+					const bool fader = type == AutomationTargetType::Volume || type == AutomationTargetType::Pan ||
+						type == AutomationTargetType::PanLeft || type == AutomationTargetType::PanRight ||
+						type == AutomationTargetType::Mute;
+					if (!preFader || track.type == TrackType::Midi || !fader)
+						input["automation"].push_back(toJson(lane));
+				}
+		}
+		std::set<ObjectId> maps;
+		std::set<ObjectId> articulations;
+		std::set<ObjectId> patterns;
+		for (const auto id : tracks)
+		{
+			maps.insert(project.trackById.at(id).drumMap);
+			articulations.insert(project.trackById.at(id).articulationMap);
+		}
+		for (const auto& [id, part] : project.midiParts)
+			if (tracks.count(part.track) != 0 && part.pattern != 0)
+				patterns.insert(part.pattern);
+		for (const auto& [key, ids] : std::vector<std::pair<std::string, std::set<ObjectId>>>{
+				 {"drumMaps", maps}, {"articulationMaps", articulations}, {"patterns", patterns}})
+			for (const auto& item : whole.at(key))
+				if (ids.count(item.at("id").get<ObjectId>()) != 0)
+					input[key].push_back(item);
+		std::set<ObjectId> events;
+		for (const auto& channel : snapshot->channels)
+			if (tracks.count(channel.track) != 0)
+				for (const auto& event : channel.audioEvents)
+				{
+					const auto& media = snapshot->media.at(static_cast<size_t>(event.media));
+					const auto length = static_cast<time::Samples>(
+						std::llround(static_cast<double>(event.length) * snapshot->sampleRate / media.sampleRate));
+					for (const size_t i : ranges.at(channel.track))
+						if (event.start < render.ends[i] && event.start + length > render.starts[i])
+							events.insert(event.id);
+				}
+		for (const ObjectId id : events)
+		{
+			const auto found = project.audioEvents.find(id);
+			if (found == project.audioEvents.end())
+				continue; // the synthetic event of a frozen track
+			const AudioEvent& event = found->second;
+			input["events"].push_back(toJson(event));
+			if (event.part != 0)
+				input["audioParts"].push_back(toJson(project.audioParts.at(event.part)));
+			const Clip& clip = project.clips.at(event.clip);
+			input["clips"].push_back(toJson(clip));
+			input["media"].push_back(toJson(project.media.at(clip.media)));
+		}
+		for (const auto& [id, part] : project.midiParts)
+			if (tracks.count(part.track) != 0)
+			{
+				const auto start =
+					time::rebase(part.position, time::TimeBase::Linear, project.tempo, project.sampleRate).value;
+				auto finish = part.position;
+				finish.value += part.length;
+				const auto end = time::rebase(finish, time::TimeBase::Linear, project.tempo, project.sampleRate).value;
+				for (const size_t i : ranges.at(part.track))
+					if (start < render.ends[i] && end > render.starts[i])
+					{
+						input["parts"].push_back(toJson(part));
+						break;
+					}
+			}
+		return input;
+	}
+
+	void ProjectModel::checkRenderMove(ObjectId track) const
+	{
+		for (const auto& [token, render] : m_trackRenders)
+			for (const ObjectId id : render->lockedTracks)
+			{
+				ObjectId parent = id;
+				while (parent != 0)
+				{
+					if (parent == track)
+						throw CommandError("the track is being rendered");
+					parent = m_project.trackById.at(parent).parent;
+				}
+			}
+	}
+
+	void ProjectModel::checkRenderLocks(const Project& project) const
+	{
+		for (const auto& [token, render] : m_trackRenders)
+			if (token != m_applyingRender && renderInput(project, *render) != render->input)
+				throw CommandError("the affected track or range is being rendered");
+	}
+
+	void ProjectModel::endTrackRender(uint64_t token, CommandContext& context)
+	{
+		const auto found = m_trackRenders.find(token);
+		if (found == m_trackRenders.end())
+			return;
+		context.emit("track.renderingChanged",
+			{{"tracks", found->second->lockedTracks}, {"job", found->second->job}, {"rendering", false}});
+		m_trackRenders.erase(found);
+	}
+
+	Json ProjectModel::startTrackRender(
+		Engine& engine, const std::shared_ptr<TrackRender>& render, CommandContext& context)
+	{
+		for (const auto& [token, pending] : m_trackRenders)
+			for (const ObjectId id : render->tracks)
+				require(std::find(pending->tracks.begin(), pending->tracks.end(), id) == pending->tracks.end(),
+					"the track is being rendered");
+		const uint64_t token = ++m_nextRender;
+		render->input = renderInput(m_project, *render);
+		for (const auto& track : render->input.at("tracks"))
+			render->lockedTracks.push_back(track.at("id").get<ObjectId>());
+		m_trackRenders[token] = render;
+		Json started;
+		try
+		{
+			started = engine.startJob(render->freeze ? "track.freeze" : "track.renderInPlace",
+				[render, token](JobContext& job)
+				{
+					// The work owns sample leases: release them on this thread before engine shutdown destroys
+					// the audio engine, even when the stopped command thread cannot remove the pending render.
+					const std::vector<Jobs::Work> work = std::move(render->work);
+					std::vector<std::string> written;
+					try
+					{
+						for (size_t i = 0; i < work.size(); ++i)
+						{
+							job.checkCancelled();
+							RenderProgress progress(job, i, work.size());
+							Json file = work[i](progress).at("files").at(0);
+							written.push_back(file.at("path").get<std::string>());
+							render->files.push_back(std::move(file));
+						}
+						job.checkCancelled();
+						render->ready.store(true, std::memory_order_release);
+						return job.command("track.finishRender", {{"token", token}});
+					}
+					catch (...)
+					{
+						removeFiles(written);
+						try
+						{
+							job.command("track.endRender", {{"token", token}});
+						}
+						catch (...)
+						{
+							if (!job.cancelled())
+								throw; // shutdown can leave no command thread to unlock
+						}
+						if (job.cancelled())
+							throw JobCancelled();
+						throw;
+					}
+				});
+			render->job = started.at("job").at("id").get<uint64_t>();
+			if (context.call("job.get", {{"job", render->job}}).at("job").at("state") != "running")
+			{
+				m_trackRenders.erase(token); // starting the job thread failed
+				return started;
+			}
+		}
+		catch (...)
+		{
+			m_trackRenders.erase(token);
+			throw;
+		}
+		context.emit(
+			"track.renderingChanged", {{"tracks", render->lockedTracks}, {"job", render->job}, {"rendering", true}});
+		return started;
+	}
+
 	void ProjectModel::registerRenderCommands(Engine& engine)
 	{
 		const Json integer = {{"type", "integer"}};
@@ -137,8 +398,8 @@ namespace gnubase::engine
 				"Freeze";
 		};
 
-		addEdit(engine,
-			{"track.freeze", 1,
+		engine.registerCommand(
+			{"track.freeze", 2,
 				"Freezes audio and instrument tracks (reference manual pp. 219-220): renders what each plays after its "
 				"plugin slots, before the strip's other sections (the instrument, the events, the pre section and the "
 				"inserts), offline from the project's start to the end of its last event or note, with up to tail "
@@ -150,14 +411,14 @@ namespace gnubase::engine
 				"automation. Its monitor and record enable buttons go off, and those of the MIDI tracks that play it, "
 				"and can't be turned on while it is frozen (see channel.set). Renders as mixdown.export does, and is "
 				"refused when it is, for a frozen or disabled track and for one with nothing to play. One undo step. "
-				"Returns the tracks.",
+				"Returns a cancellable background job; its result holds the tracks. Affected tracks are locked until "
+				"the job applies the freeze as one undo step, fails or is cancelled.",
 				{{"type", "object"}, {"additionalProperties", false}, {"properties", {{"tracks", ids}, {"tail", tail}}},
 					{"required", {"tracks"}}},
-				{{"type", "object"}, {"properties", {{"tracks", {{"type", "array"}}}}}, {"required", {"tracks"}}},
-				false},
-			"Freeze",
-			[this, freezeFolder](Project& project, CommandContext& context)
+				{{"type", "object"}, {"properties", {{"job", Jobs::schema()}}}, {"required", {"job"}}}, false},
+			[this, freezeFolder, &engine](CommandContext& context)
 			{
+				const Project& project = m_project;
 				const Json& parameters = context.parameters();
 				const std::vector<ObjectId> tracks = trackList(parameters);
 				const double seconds = parameters.value("tail", 30.0);
@@ -171,43 +432,21 @@ namespace gnubase::engine
 					spans.push_back(spanOf(snapshot, track.channel));
 					require(spans.back().start.has_value(), track.name + " has nothing to freeze");
 				}
-				std::vector<std::string> written;
-				std::vector<Json> files;
-				try
-				{
-					for (size_t i = 0; i < tracks.size(); ++i)
-					{
-						const Track& track = project.trackById.at(tracks[i]);
-						files.push_back(renderChannel(context, freezeFolder(), fileNameOf(track), track.channel, 0,
-							spans[i].end, "inserts", seconds, "float32"));
-						written.push_back(files.back().at("path").get<std::string>());
-					}
-				}
-				catch (...)
-				{
-					removeFiles(written);
-					throw;
-				}
-				Json result = Json::array();
+				auto render = std::make_shared<TrackRender>();
+				render->parameters = parameters;
+				render->freeze = true;
+				render->tracks = tracks;
 				for (size_t i = 0; i < tracks.size(); ++i)
 				{
-					Track& track = project.trackById.at(tracks[i]);
-					const Channel& channel = project.channels.at(track.channel);
-					track.frozen = Freeze{files[i].at("path").get<std::string>(), project.sampleRate,
-						channelCount(channel.format), files[i].at("frames").get<time::Samples>()};
-					result.push_back(toJson(track));
-					context.emit("track.changed", {{"track", result.back()}});
+					const Track& track = project.trackById.at(tracks[i]);
+					render->starts.push_back(0);
+					render->ends.push_back(spans[i].end);
+					render->work.push_back(engine.prepareMixdown({{"folder", freezeFolder().u8string()},
+						{"name", fileNameOf(track)}, {"channels", {track.channel}}, {"start", 0}, {"end", spans[i].end},
+						{"point", "inserts"}, {"tail", seconds}, {"sampleFormat", "float32"}}));
 				}
-				// The buttons the freezes lock (lockedByFreeze) go off.
-				for (auto& [id, channel] : project.channels)
-					if ((channel.monitor || channel.recordEnable) && lockedByFreeze(project, channel))
-					{
-						channel.monitor = channel.recordEnable = false;
-						context.emit("channel.changed", {{"channel", toJson(channel)}});
-					}
-				return Json{{"tracks", std::move(result)}};
+				return startTrackRender(engine, render, context);
 			});
-
 		addEdit(engine,
 			{"track.unfreeze", 1,
 				"Unfreezes frozen tracks: they play their events, instrument and plugin slots again. Their freeze "
@@ -237,8 +476,8 @@ namespace gnubase::engine
 			});
 
 		const Json processing = {{"type", "string"}, {"enum", {"dry", "channelSettings", "completeSignalPath"}}};
-		addEdit(engine,
-			{"track.renderInPlace", 1,
+		engine.registerCommand(
+			{"track.renderInPlace", 2,
 				"Renders audio and instrument tracks in place (reference manual pp. 1471-1477): what each plays from "
 				"start to end, in project samples (a range selection; default: from the start of its first event or "
 				"note to the end of its last), with up to tail seconds more (0 to 60, default 0) that end after the "
@@ -254,7 +493,9 @@ namespace gnubase::engine
 				"tracks rendered. Renders as mixdown.export does, and is refused when it is, for a disabled track, "
 				"with dry for a frozen track (its freeze file is already through the slots that dry copies), and "
 				"with completeSignalPath for a silent track: muted, or silenced by another track's solo. One undo "
-				"step. Returns the new tracks, media files and events, in the order of tracks.",
+				"step when the background job finishes. Returns a cancellable job whose result holds the new tracks, "
+				"media "
+				"files and events, in order. Affected tracks and rendered events are locked until it ends.",
 				{{"type", "object"}, {"additionalProperties", false},
 					{"properties",
 						{{"tracks", ids}, {"start", {{"type", "integer"}, {"minimum", 0}}},
@@ -264,12 +505,10 @@ namespace gnubase::engine
 							{"sourceTracks", {{"type", "string"}, {"enum", {"keep", "mute", "disable", "remove"}}}},
 							{"name", {{"type", "string"}, {"minLength", 1}}}}},
 					{"required", {"tracks"}}},
-				{{"type", "object"}, {"properties", {{"tracks", ids}, {"media", ids}, {"events", ids}}},
-					{"required", {"tracks", "media", "events"}}},
-				false},
-			"Render in place",
-			[this](Project& project, CommandContext& context)
+				{{"type", "object"}, {"properties", {{"job", Jobs::schema()}}}, {"required", {"job"}}}, false},
+			[this, &engine](CommandContext& context)
 			{
+				const Project& project = m_project;
 				const Json& parameters = context.parameters();
 				const std::vector<ObjectId> tracks = trackList(parameters);
 				require(parameters.contains("start") == parameters.contains("end"), "give both start and end, or none");
@@ -302,114 +541,184 @@ namespace gnubase::engine
 				}
 				const fs::path folder =
 					m_file.empty() ? unsavedMediaFolder(m_settingsDirectory) : mediaFolderFor(fs::u8path(m_file));
+				auto render = std::make_shared<TrackRender>();
+				render->parameters = parameters;
+				render->tracks = tracks;
+				for (size_t i = 0; i < tracks.size(); ++i)
+				{
+					const Track& track = project.trackById.at(tracks[i]);
+					render->starts.push_back(*spans[i].start);
+					render->ends.push_back(spans[i].end);
+					render->work.push_back(engine.prepareMixdown(
+						{{"folder", folder.u8string()}, {"name", parameters.value("name", fileNameOf(track))},
+							{"channels", {track.channel}}, {"start", *spans[i].start}, {"end", spans[i].end},
+							{"point", point}, {"tail", parameters.value("tail", 0.0)},
+							{"sampleFormat", parameters.value("sampleFormat", std::string("float32"))}}));
+				}
+				return startTrackRender(engine, render, context);
+			});
+
+		const Json tokenSchema = {{"type", "object"}, {"properties", {{"token", integer}}}, {"required", {"token"}},
+			{"additionalProperties", false}};
+		engine.registerCommand(
+			{"track.endRender", 1, "Releases a background render's track locks after failure or cancellation.",
+				tokenSchema, {{"type", "object"}}, false},
+			[this](CommandContext& context)
+			{
+				require(context.internal(), "only a render job can release its tracks");
+				endTrackRender(context.parameters().at("token").get<uint64_t>(), context);
+				return Json::object();
+			});
+		engine.registerCommand({"track.renderLocks", 1, "The tracks locked by background rendering, with each job id.",
+								   CommandInfo{}.parameters,
+								   Json::parse(R"({"type":"object","properties":{"locks":{"type":"array","items":{
+					"type":"object","properties":{"tracks":{"type":"array","items":{"type":"integer"}},
+					"job":{"type":"integer"}},"required":["tracks","job"]}}},"required":["locks"]})"),
+								   true},
+			[this](CommandContext&)
+			{
+				Json locks = Json::array();
+				for (const auto& [token, render] : m_trackRenders)
+					locks.push_back({{"tracks", render->lockedTracks}, {"job", render->job}});
+				return Json{{"locks", std::move(locks)}};
+			});
+		// The completion is an ordinary document edit: rollback, events and undo stay on the command thread.
+		addEdit(engine,
+			{"track.finishRender", 1,
+				"Applies a prepared background track render as one undo step; only its engine job may call it.",
+				tokenSchema,
+				{{"type", "object"}, {"properties", {{"tracks", {{"type", "array"}}}, {"media", ids}, {"events", ids}}},
+					{"required", {"tracks"}}},
+				false},
+			"Render tracks",
+			[this, &engine](Project& project, CommandContext& context)
+			{
+				require(context.internal(), "only a render job can apply its result");
+				const uint64_t token = context.parameters().at("token").get<uint64_t>();
+				const auto found = m_trackRenders.find(token);
+				require(found != m_trackRenders.end(), "there is no pending track render");
+				const auto render = found->second;
+				require(render->ready.load(std::memory_order_acquire), "the render is not ready");
+				const Json& parameters = render->parameters;
+				const auto& tracks = render->tracks;
+				const auto& files = render->files;
+				// job.cancel and completion are ordered by the command thread.
+				require(!engine.jobCancelled(render->job), "render cancelled");
+				if (render->freeze)
+				{
+					Json result = Json::array();
+					for (size_t i = 0; i < tracks.size(); ++i)
+					{
+						Track& track = project.trackById.at(tracks[i]);
+						const Channel& channel = project.channels.at(track.channel);
+						track.frozen = Freeze{files[i].at("path").get<std::string>(), project.sampleRate,
+							channelCount(channel.format), files[i].at("frames").get<time::Samples>()};
+						result.push_back(toJson(track));
+						context.emit("track.changed", {{"track", result.back()}});
+					}
+					// The buttons the freezes lock (lockedByFreeze) go off.
+					for (auto& [id, channel] : project.channels)
+						if ((channel.monitor || channel.recordEnable) && lockedByFreeze(project, channel))
+						{
+							channel.monitor = channel.recordEnable = false;
+							context.emit("channel.changed", {{"channel", toJson(channel)}});
+						}
+					return Json{{"tracks", std::move(result)}};
+				}
+				const std::string mode = parameters.value("processing", std::string("channelSettings"));
+				std::vector<Span> spans;
+				std::vector<std::string> written;
+				for (size_t i = 0; i < tracks.size(); ++i)
+				{
+					spans.push_back({render->starts[i], render->ends[i]});
+					written.push_back(files[i].at("path").get<std::string>());
+				}
 				const auto run = [this, &project, &context](const char* command, const Json& commandParameters)
 				{
 					CommandContext inner(commandParameters, &context);
 					return m_edits.at(command).handler(project, inner);
 				};
-
-				std::vector<std::string> written;
 				Json added = Json::array();
 				Json media = Json::array();
 				Json events = Json::array();
-				try
+
+				for (size_t i = 0; i < tracks.size(); ++i)
 				{
-					std::vector<Json> files;
-					for (size_t i = 0; i < tracks.size(); ++i)
-					{
-						const Track& track = project.trackById.at(tracks[i]);
-						files.push_back(renderChannel(context, folder, parameters.value("name", fileNameOf(track)),
-							track.channel, *spans[i].start, spans[i].end, point, parameters.value("tail", 0.0),
-							parameters.value("sampleFormat", std::string("float32"))));
-						written.push_back(files.back().at("path").get<std::string>());
-					}
-					for (size_t i = 0; i < tracks.size(); ++i)
-					{
-						const Track& source = project.trackById.at(tracks[i]);
-						const Channel from = project.channels.at(source.channel);
-						const std::vector<ObjectId>& siblings =
-							source.parent == 0 ? project.tracks : project.trackById.at(source.parent).children;
-						const Json mediaFile = run("media.add", {{"path", written[i]}}).at("media");
-						Json trackParameters = {{"type", "audio"}, {"name", source.name + " (Rendered)"},
-							{"timeBase", timeBaseName(source.timeBase)}, {"parent", source.parent},
-							{"index",
-								std::distance(
-									siblings.begin(), std::find(siblings.begin(), siblings.end(), source.id)) +
-									1}};
-						if (mode == "completeSignalPath")
-							trackParameters["channels"] = mediaFile.at("channels");
-						else
-							trackParameters["format"] = formatName(from.format);
-						if (from.output != 0)
-							trackParameters["output"] = from.output;
-						const auto track = run("track.add", trackParameters).at("track").at("id").get<ObjectId>();
-						const auto clip =
-							run("clip.add", {{"media", mediaFile.at("id")}}).at("clip").at("id").get<ObjectId>();
-						const time::Position at = time::rebase({time::TimeBase::Linear, *spans[i].start},
-							project.trackById.at(track).timeBase, project.tempo, project.sampleRate);
-						const Json event =
-							run("audioEvent.add", {{"track", track}, {"clip", clip}, {"position", at.value}})
-								.at("event")
-								.at("id");
-						// The render holds the global transposition: as recorded events (#1368, reference manual
-						// p. 420), it follows the project root key, or with transpose events is independent of it.
-						const bool transposed = !project.transpose.events.empty();
-						if (transposed || project.rootKey >= 0)
-							run("audioEvent.set",
-								{{"event", event},
-									{"rootKey", transposed ? std::string() : rootKeyName(project.rootKey)},
-									{"globalTranspose", transposed ? "independent" : "follow"}});
-						events.push_back(event);
-						added.push_back(track);
-						media.push_back(mediaFile.at("id"));
+					const Track& source = project.trackById.at(tracks[i]);
+					const Channel from = project.channels.at(source.channel);
+					const std::vector<ObjectId>& siblings =
+						source.parent == 0 ? project.tracks : project.trackById.at(source.parent).children;
+					const Json mediaFile = run("media.add", {{"path", written[i]}}).at("media");
+					Json trackParameters = {{"type", "audio"}, {"name", source.name + " (Rendered)"},
+						{"timeBase", timeBaseName(source.timeBase)}, {"parent", source.parent},
+						{"index",
+							std::distance(siblings.begin(), std::find(siblings.begin(), siblings.end(), source.id)) +
+								1}};
+					if (mode == "completeSignalPath")
+						trackParameters["channels"] = mediaFile.at("channels");
+					else
+						trackParameters["format"] = formatName(from.format);
+					if (from.output != 0)
+						trackParameters["output"] = from.output;
+					const auto track = run("track.add", trackParameters).at("track").at("id").get<ObjectId>();
+					const auto clip =
+						run("clip.add", {{"media", mediaFile.at("id")}}).at("clip").at("id").get<ObjectId>();
+					const time::Position at = time::rebase({time::TimeBase::Linear, *spans[i].start},
+						project.trackById.at(track).timeBase, project.tempo, project.sampleRate);
+					const Json event = run("audioEvent.add", {{"track", track}, {"clip", clip}, {"position", at.value}})
+										   .at("event")
+										   .at("id");
+					// The render holds the global transposition: as recorded events (#1368, reference manual
+					// p. 420), it follows the project root key, or with transpose events is independent of it.
+					const bool transposed = !project.transpose.events.empty();
+					if (transposed || project.rootKey >= 0)
+						run("audioEvent.set",
+							{{"event", event}, {"rootKey", transposed ? std::string() : rootKeyName(project.rootKey)},
+								{"globalTranspose", transposed ? "independent" : "follow"}});
+					events.push_back(event);
+					added.push_back(track);
+					media.push_back(mediaFile.at("id"));
 
-						// The settings that weren't rendered.
-						Channel& channel = project.channels.at(project.trackById.at(track).channel);
-						if (mode != "completeSignalPath")
-						{
-							channel.sends = from.sends;
-							channel.volume = from.volume;
-							channel.pan = from.pan;
-							channel.panner = from.panner;
-							channel.panLeft = from.panLeft;
-							channel.panRight = from.panRight;
-							channel.panBypass = from.panBypass;
-						}
-						std::vector<ObjectId> slots;
-						if (mode == "dry")
-						{
-							channel.sections = from.sections;
-							for (const ObjectId id : from.slots)
-							{
-								Slot slot = project.slots.at(id);
-								slot.id = project.newId();
-								slot.channel = channel.id;
-								channel.slots.push_back(slot.id);
-								slots.push_back(slot.id);
-								project.slots[slot.id] = std::move(slot);
-							}
-						}
-						context.emit("channel.changed", {{"channel", toJson(channel)}});
-						for (const ObjectId slot : slots)
-							context.emit("plugin.added", {{"slot", describeSlot(project, slot)}});
-					}
-
-					const std::string sources = parameters.value("sourceTracks", std::string("keep"));
-					for (const ObjectId id : tracks)
+					// The settings that weren't rendered.
+					Channel& channel = project.channels.at(project.trackById.at(track).channel);
+					if (mode != "completeSignalPath")
 					{
-						if (sources == "mute")
-							run("channel.set", {{"channel", project.trackById.at(id).channel}, {"mute", true}});
-						else if (sources == "disable")
-							run("track.set", {{"track", id}, {"enabled", false}});
-						else if (sources == "remove")
-							run("track.remove", {{"track", id}});
+						channel.sends = from.sends;
+						channel.volume = from.volume;
+						channel.pan = from.pan;
+						channel.panner = from.panner;
+						channel.panLeft = from.panLeft;
+						channel.panRight = from.panRight;
+						channel.panBypass = from.panBypass;
 					}
+					std::vector<ObjectId> slots;
+					if (mode == "dry")
+					{
+						channel.sections = from.sections;
+						for (const ObjectId id : from.slots)
+						{
+							Slot slot = project.slots.at(id);
+							slot.id = project.newId();
+							slot.channel = channel.id;
+							channel.slots.push_back(slot.id);
+							slots.push_back(slot.id);
+							project.slots[slot.id] = std::move(slot);
+						}
+					}
+					context.emit("channel.changed", {{"channel", toJson(channel)}});
+					for (const ObjectId slot : slots)
+						context.emit("plugin.added", {{"slot", describeSlot(project, slot)}});
 				}
-				catch (...)
+
+				const std::string sources = parameters.value("sourceTracks", std::string("keep"));
+				for (const ObjectId id : tracks)
 				{
-					// The step doesn't happen, so its files go too.
-					removeFiles(written);
-					throw;
+					if (sources == "mute")
+						run("channel.set", {{"channel", project.trackById.at(id).channel}, {"mute", true}});
+					else if (sources == "disable")
+						run("track.set", {{"track", id}, {"enabled", false}});
+					else if (sources == "remove")
+						run("track.remove", {{"track", id}});
 				}
 				return Json{{"tracks", std::move(added)}, {"media", std::move(media)}, {"events", std::move(events)}};
 			});

@@ -4,6 +4,7 @@
 #include "engine/audiofile/resampler.h"
 #include "engine/document/document.h"
 #include "engine/engine.h"
+#include "testutils/heldjob.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -30,17 +31,31 @@ namespace
 
 	Json run(Client& client, const std::string& command, Json parameters = Json::object())
 	{
-		// An export renders the whole project before it answers, which under sanitizers on a busy runner takes longer
-		// than the client's default 10 s.
+		// Quick export remains synchronous and can take longer than the client's default 10 s under sanitizers.
 		const Result result = client.call(command, std::move(parameters), std::chrono::seconds(60));
 		INFO(command << " failed: " << result.error);
 		REQUIRE(result.ok());
+		if (result.value.contains("job") &&
+			(command == "track.freeze" || command == "track.renderInPlace" || command == "mixdown.export"))
+		{
+			const Json job = gnubase::test::waitForJob(client, result.value.at("job").at("id").get<uint64_t>());
+			INFO(job.dump());
+			REQUIRE(job.at("state") == "done");
+			return job.at("result");
+		}
 		return result.value;
 	}
 
 	std::string reject(Client& client, const std::string& command, Json parameters)
 	{
 		const Result result = client.call(command, std::move(parameters));
+		if (result.ok() && result.value.contains("job"))
+		{
+			const Json job = gnubase::test::waitForJob(client, result.value.at("job").at("id").get<uint64_t>());
+			INFO(job.dump());
+			REQUIRE(job.at("state") == "failed");
+			return job.at("error").get<std::string>();
+		}
 		INFO(command << " succeeded: " << result.value.dump());
 		REQUIRE(!result.ok());
 		return result.error;
@@ -390,4 +405,20 @@ TEST_CASE("a quick export keeps the tail of effects", "[integration][slow]")
 	CHECK(frames < 4800 + (30 * 48000));
 	const Read read = readFile(path.u8string());
 	CHECK(std::max(std::abs(read.samples[read.samples.size() - 2]), std::abs(read.samples.back())) > 0.0f);
+}
+
+TEST_CASE("cancelling a background overwrite export keeps the existing file", "[integration]")
+{
+	Session project;
+	project.addTrack("Ramp", 0);
+	const fs::path path = project.folder.path() / "mix.wav";
+	gnubase::test::writeWav(path, {{0.75f, -0.75f, 0.5f, -0.5f}, 2, 48000});
+	const auto before = readFile(path.u8string()).samples;
+	const Json finished = gnubase::test::whileHeld(project.engine, project.client, "mixdown.export",
+		{{"folder", project.folder.path().u8string()}, {"name", "mix"}, {"conflicts", "overwrite"}, {"start", 0},
+			{"end", 6000}},
+		[&](uint64_t job) { run(project.client, "job.cancel", {{"job", job}}); });
+	CHECK(finished.at("state") == "cancelled");
+	CHECK(readFile(path.u8string()).samples == before);
+	CHECK(std::distance(fs::directory_iterator(project.folder.path()), fs::directory_iterator()) == 1);
 }
