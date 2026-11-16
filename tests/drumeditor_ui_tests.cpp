@@ -204,6 +204,19 @@ namespace
 			return found.empty() ? std::string() : found.at(0).at("attributes").value("value", std::string());
 		}
 
+		// Waits until the editor shows the grid type with this label and the sound with this snap. The engine has a
+		// change at once, the editor some steps later: the view with editor.changed, the drum map with the project it
+		// reads after history.changed. A drumstick gesture before that goes by the old grid (#1791).
+		void shows(const std::string& gridType, int pitch, const std::string& snap)
+		{
+			REQUIRE(app.waitUntil(
+				[&]
+				{
+					return elements("#drum-grid-type").at(0).value("text", "") == gridType &&
+						value(sound(pitch) + " .drum-sound-snap") == snap;
+				}));
+		}
+
 		test::UiApp app{{1200, 800}};
 		std::optional<ui::WindowId> window;
 		uint64_t track = 0;
@@ -633,6 +646,7 @@ TEST_CASE("with the grid type Use Snap from Drum Map the drumstick snaps to the 
 	f.click(of("#drum-grid-menu menuitem[grid-type=drumMap]"));
 	REQUIRE(
 		f.app.waitUntil([&] { return f.app.call("editor.get", {{"editor", "window"}}).at("gridType") == "drumMap"; }));
+	f.shows("Drum Map Snap", 36, "1/8");
 	f.click(of(".key-tool[key-tool=draw]"));
 	// A drag over 3.5 sixteenths: a note at every eighth, the first where the click falls in its eighth.
 	f.app.ui().drag(f.window, f.at(0.3, 36), f.at(3.5, 36));
@@ -655,8 +669,7 @@ TEST_CASE("with Alt the drumstick inserts with the length and the snap of the so
 	Fixture f;
 	f.app.call("drumMap.set", {{"map", f.map}, {"sounds", Json::array({{{"pitch", 37}, {"snap", "1/8"}}})}});
 	f.app.call("editor.set", {{"editor", "window"}, {"lengthQuantize", "drumMap"}, {"gridType", "drumMap"}});
-	REQUIRE(
-		f.app.waitUntil([&] { return f.app.call("editor.get", {{"editor", "window"}}).at("gridType") == "drumMap"; }));
+	f.shows("Drum Map Snap", 37, "1/8");
 	f.scroll(36);
 	f.click(of(".key-tool[key-tool=draw]"));
 	// From the bass drum's sixteenths down to the side stick's eighths, over 3.5 sixteenths: two eighths.

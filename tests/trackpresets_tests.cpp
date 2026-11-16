@@ -14,7 +14,6 @@
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
-#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
@@ -134,18 +133,12 @@ namespace
 		app.shell().step(std::chrono::milliseconds(0));
 	}
 
-	// The texts of a drop-down list's options, which aren't in the DOM that the UI tools see.
+	// The texts of a drop-down list's options.
 	std::vector<std::string> options(test::UiApp& app, const std::string& selector)
 	{
-		Rml::Element* element = nullptr;
-		for (int i = 0; element == nullptr && i < app.main().context().GetNumDocuments(); ++i)
-			element = app.main().context().GetDocument(i)->QuerySelector(selector);
-		auto* list = dynamic_cast<Rml::ElementFormControlSelect*>(element);
-		REQUIRE(list != nullptr);
 		std::vector<std::string> texts;
-		texts.reserve(static_cast<size_t>(list->GetNumOptions()));
-		for (int i = 0; i < list->GetNumOptions(); ++i)
-			texts.push_back(list->GetOption(i)->GetInnerRML());
+		for (const Json& option : test::selectOptions(app, selector))
+			texts.push_back(option.at("text").get<std::string>());
 		return texts;
 	}
 
@@ -292,6 +285,10 @@ TEST_CASE("a MIDI track's preset keeps its channel or its patch, which loading i
 	run(client, "track.savePreset", {{"tracks", {strings.track}}, {"name", "Patch"}, {"keep", "patch"}});
 	CHECK_THAT(reject(client, "track.savePreset", {{"tracks", {strings.track}}, {"name", "Both"}, {"keep", "both"}}),
 		ContainsSubstring("keep"));
+	// keep is about MIDI tracks: tracks without one have nothing to keep it of.
+	const Added vocals = add(client, {{"type", "audio"}, {"name", "Vocals"}});
+	CHECK_THAT(reject(client, "track.savePreset", {{"tracks", {vocals.track}}, {"name", "Vox"}, {"keep", "patch"}}),
+		ContainsSubstring("MIDI track"));
 	// track.presets says which one a preset keeps.
 	const Json presets = run(client, "track.presets").at("presets");
 	REQUIRE(presets.size() == 2);
@@ -2108,9 +2105,10 @@ TEST_CASE("the track preset dialog saves, loads and adds track presets", "[ui]")
 	click(app, "#preset-confirm");
 	REQUIRE(app.waitUntil([&app] { return !shown(app, "#track-preset-dialog"); }));
 	// Load says what it keeps.
+	app.call("track.savePreset", {{"tracks", {midi.at("track").at("id")}}, {"name", "Lead"}, {"keep", "channel"}});
 	app.keys().run("track.loadTrackPreset", Json::object(), app.main(), nullptr);
 	REQUIRE(app.waitUntil([&app] { return shown(app, "#track-preset-dialog"); }));
-	CHECK(options(app, "#preset-list") == std::vector<std::string>{"Keys (Patch only)"});
+	CHECK(options(app, "#preset-list") == std::vector<std::string>{"Keys (Patch only)", "Lead (Channel only)"});
 	click(app, "#track-preset-dialog button[result=cancel]");
 	app.call("channel.set", {{"channel", midi.at("channel").at("id")}, {"program", 10}, {"midiChannel", 3}});
 	app.call("track.loadPreset", {{"tracks", {midi.at("track").at("id")}}, {"name", "Keys"}});

@@ -10,7 +10,6 @@
 
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/ElementDocument.h>
-#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
@@ -109,14 +108,10 @@ namespace
 		app.call("media.add", {{"path", path.u8string()}, {"sampleRate", 48000.0}, {"channels", 1}, {"length", 48000}});
 	}
 
-	// How many options the first drop-down list that matches has: they aren't in the DOM that the UI tools see.
-	int options(test::UiApp& app, const std::string& selector)
+	// How many options the first drop-down list that matches has.
+	size_t options(test::UiApp& app, const std::string& selector)
 	{
-		Rml::Element* element = nullptr;
-		for (int i = 0; element == nullptr && i < app.main().context().GetNumDocuments(); ++i)
-			element = app.main().context().GetDocument(i)->QuerySelector(selector);
-		auto* select = dynamic_cast<Rml::ElementFormControlSelect*>(element);
-		return select != nullptr ? select->GetNumOptions() : -1;
+		return test::selectOptions(app, selector).size();
 	}
 
 	void openPool(test::UiApp& app, size_t rowCount)

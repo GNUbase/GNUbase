@@ -927,6 +927,15 @@ TEST_CASE("a resize released outside the key editor ends without its effect", "[
 	f.drag(f.at(3.95, 60), f.at(6, 60));
 	REQUIRE(f.app.waitUntil([&] { return f.note(ids[0]).at("length") == 6 * g_sixteenth; }));
 	CHECK_FALSE(f.has(".key-editor", "in-gesture"));
+	// The note keeps the resize's preview until the engine's change arrives, so settle() alone can pass before it, and
+	// the change arriving during the next resize puts the note back at its length. The info line shows the editor's
+	// notes: once it has the new end, the change has arrived.
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			return f.elements(".key-editor-info textdisplay[field=end]").at(0).at("attributes").at("value") ==
+				"1.2.3.0";
+		}));
 	f.settle();
 	const double before = width();
 	// At the note's end to the right, then released over the editor window's toolbar: the note keeps its length.
@@ -1505,7 +1514,9 @@ TEST_CASE("the expression editor opens on the double-clicked note and edits the 
 		REQUIRE(points(part, id).size() == 1);
 		CHECK(near(points(part, id).at(0).at("value"), -24.0, 2.0));
 	}
-	// The notes of both parts change in one undo step.
+	// The notes of both parts change in one undo step. The editor shows the drag's points first: until then it shows
+	// the click's one point, as after the undo, and the erase below would go by the drag's points and delete none.
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-expression-area .key-expression-step").size() == 3; }));
 	f.app.call("history.undo");
 	REQUIRE(f.app.waitUntil([&] { return points(f.part, last).empty(); }));
 	CHECK(points(f.part, first).empty());
@@ -1517,6 +1528,8 @@ TEST_CASE("the expression editor opens on the double-clicked note and edits the 
 	f.tool("erase");
 	f.click(area(0.5, 0.5));
 	REQUIRE(f.app.waitUntil([&] { return points(otherPart, middle).empty(); }));
+	// The editor shows it, else the volume drawn below would bring the erased point back.
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-expression-area .key-expression-step").empty(); }));
 	// Volume goes from 0 to 4.
 	f.app.call("editor.set", {{"editor", "window"}, {"expressionType", "volume"}});
 	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-expression-type").at(0).at("text") == "Volume"; }));
