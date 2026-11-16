@@ -1646,7 +1646,8 @@ namespace gnubase::engine
 		// The metronome and count-in (#101). Settings, not part of undo.
 		metronome::MetronomeSettings metronome;
 
-		ObjectId newId() { return nextId++; }
+		// Reserves the last signed integer for nextId; throws when Lua could no longer receive a positive id.
+		ObjectId newId();
 
 		// Every track id from top to bottom, folders before the tracks they contain.
 		std::vector<ObjectId> trackOrder() const;

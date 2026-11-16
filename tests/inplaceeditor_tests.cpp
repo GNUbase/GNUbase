@@ -5,13 +5,16 @@
 #include "engine/dawproject/dawproject.h"
 #include "engine/document/document.h"
 #include "engine/engine.h"
+#include "scripting/runtime.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <limits>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -206,10 +209,9 @@ TEST_CASE("the in-place editor refuses tracks without notes and changing its par
 	CHECK(f.view(empty).at("parts") == Json::array());
 }
 
-TEST_CASE("a track whose id has 20 digits has an in-place editor", "[integration]")
+TEST_CASE("a track whose id approaches Lua's integer limit has an in-place editor", "[integration]")
 {
-	// Track ids come from the project file, so they may take all 64 bits: 10^19 and more have 20 digits, which
-	// editor.inPlace announces and editor.get, editor.set and editor.close take (#1159).
+	// Keep large ids exact in editor names while leaving space for the project's new objects.
 	const test::TempDir dir;
 	const std::string file = (dir.path() / "large-ids.dawproject").u8string();
 	{
@@ -217,16 +219,28 @@ TEST_CASE("a track whose id has 20 digits has an in-place editor", "[integration
 		f.call("project.save", {{"path", file}});
 	}
 	engine::Project project = engine::loadDawProject(file, (dir.path() / "media").u8string());
-	project.nextId = 10'000'000'000'000'000'000ULL;
+	project.nextId = 9'000'000'000'000'000'000ULL;
 	engine::saveDawProject(project, file, engine::DawProjectSaveOptions());
 
 	Fixture f;
 	f.call("project.load", {{"path", file}});
 	const uint64_t midi = f.track("midi");
-	REQUIRE(midi >= 10'000'000'000'000'000'000ULL);
+	REQUIRE(midi >= 9'000'000'000'000'000'000ULL);
 	const uint64_t part = f.part(midi, 0);
 	const std::string name = Fixture::name(midi);
-	REQUIRE(name.size() == 28);
+	REQUIRE(name.size() == 27);
+	std::ostringstream output;
+	scripting::Runtime lua(f.engine, scripting::Trust::Trusted, output);
+	const auto failure = lua.run("local track = gnubase.project.get().tracks[1].id\n"
+								 "assert(math.type(track) == 'integer' and track == " +
+			std::to_string(midi) +
+			")\n"
+			"gnubase.editor.inPlace{tracks = {track}, open = true}\n"
+			"assert(gnubase.editor.get{editor = 'inPlace:' .. track}.open)\n"
+			"gnubase.editor.close{editor = 'inPlace:' .. track}",
+		"large-id.lua");
+	INFO(failure.value_or(""));
+	REQUIRE(!failure.has_value());
 
 	std::mutex mutex;
 	std::vector<std::string> announced;
@@ -243,6 +257,43 @@ TEST_CASE("a track whose id has 20 digits has an in-place editor", "[integration
 	CHECK_FALSE(f.call("editor.close", {{"editor", name}}).at("open").get<bool>());
 	const std::scoped_lock lock(mutex);
 	CHECK(std::find(announced.begin(), announced.end(), name) != announced.end());
+}
+
+TEST_CASE("project loads refuse ids that cannot reach Lua as positive integers", "[integration]")
+{
+	const test::TempDir dir;
+	const std::string file = (dir.path() / "large-ids.dawproject").u8string();
+	Fixture f;
+	f.track("midi");
+	f.call("project.save", {{"path", file}});
+	const auto original = test::readZip(file);
+	for (const uint64_t id : {9'223'372'036'854'775'808ULL, 18'446'744'073'709'551'615ULL})
+	{
+		for (const bool counter : {false, true})
+		{
+			auto entries = original;
+			Json extension = Json::parse(entries.at("gnubase.json"));
+			Json& project = extension.at("project");
+			if (counter)
+				project["nextId"] = id;
+			else
+				project.at("tracks").at(0)["id"] = id;
+			entries["gnubase.json"] = extension.dump();
+			test::writeZip(file, entries);
+			CAPTURE(id, counter);
+			CHECK_THAT(f.fails("project.load", {{"path", file}}), ContainsSubstring("Lua's integer range"));
+		}
+	}
+}
+
+TEST_CASE("object id allocation stops before exceeding Lua's integer range", "[unit]")
+{
+	engine::Project project;
+	const auto limit = static_cast<uint64_t>(std::numeric_limits<int64_t>::max());
+	project.nextId = limit - 1;
+	CHECK(project.newId() == limit - 1);
+	CHECK_THROWS_WITH(project.newId(), ContainsSubstring("Lua's integer range"));
+	CHECK(project.nextId == limit);
 }
 
 TEST_CASE("a removed track's in-place editor closes, and a new project closes them all", "[unit]")

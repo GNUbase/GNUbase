@@ -5,6 +5,7 @@ add_library(gnubase-testutils STATIC
 	testutils/goldenimage.cpp testutils/goldenimage.h
 	testutils/heldjob.cpp testutils/heldjob.h
 	testutils/library.h
+	testutils/schemaguards.h
 	testutils/slowframe.h
 	testutils/stopandjoin.h
 	testutils/testutils.cpp testutils/testutils.h)

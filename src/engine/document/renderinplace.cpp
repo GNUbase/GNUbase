@@ -82,6 +82,7 @@ namespace gnubase::engine
 		std::vector<ObjectId> trackList(const Json& parameters)
 		{
 			auto ids = parameters.at("tracks").get<std::vector<ObjectId>>();
+			// Kept here too: render helpers also run handlers directly, without the command schema validator.
 			require(!ids.empty(), "tracks must not be empty");
 			std::vector<ObjectId> sorted = ids;
 			std::sort(sorted.begin(), sorted.end());
