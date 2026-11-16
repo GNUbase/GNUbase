@@ -1741,11 +1741,23 @@ TEST_CASE("File > Export > Selected Tracks and File > Import > Tracks go through
 	const ObjectId folder =
 		app.call("track.add", {{"type", "folder"}, {"name", "Band"}}).at("track").at("id").get<ObjectId>();
 	app.call("track.add", {{"type", "vca"}, {"name", "Faders"}, {"parent", folder}});
+	// A track in it plays a media file that is missing, which the notice names too (#1736).
+	const ObjectId drums = app.call("track.add", {{"type", "audio"}, {"name", "Drums"}, {"parent", folder}})
+							   .at("track")
+							   .at("id")
+							   .get<ObjectId>();
+	const Json gone = app.call("media.add",
+		{{"path", (dir.path() / "gone.wav").u8string()}, {"sampleRate", 48000.0}, {"channels", 2}, {"length", 10}});
+	const Json clip = app.call("clip.add", {{"media", gone.at("media").at("id")}});
+	app.call("audioEvent.add",
+		{{"track", drums}, {"clip", clip.at("clip").at("id")}, {"position", 0}, {"offset", 0}, {"length", 10}});
 	app.call("project.save", {{"path", (dir.path() / "song.dawproject").u8string()}});
 	select(app, {folder});
 	app.keys().run("file.exportTracks", Json::object(), app.main(), nullptr);
 	answer(app, dir.path() / "band.dawproject");
-	CHECK_THAT(error("Export Selected Tracks"), ContainsSubstring("Faders"));
+	const std::string notice = error("Export Selected Tracks");
+	CHECK_THAT(notice, ContainsSubstring("Faders"));
+	CHECK_THAT(notice, ContainsSubstring("gone.wav"));
 	// The dialog shows the tracks that can't be imported.
 	importTracks(dir.path() / "song.dawproject");
 	CHECK_THAT(text("#import-tracks"), ContainsSubstring("Faders (can't be imported yet)"));
@@ -2055,6 +2067,7 @@ TEST_CASE(
 TEST_CASE("the track preset dialog saves, loads and adds track presets", "[ui]")
 {
 	test::UiApp app{{1000, 700}};
+	const test::TempDir dir;
 	app.appUi().showProject();
 	for (const char* command : {"project.addTrackFromPreset", "track.saveTrackPreset", "track.loadTrackPreset"})
 		CHECK(app.ui()
@@ -2110,6 +2123,29 @@ TEST_CASE("the track preset dialog saves, loads and adds track presets", "[ui]")
 	app.keys().run("track.loadTrackPreset", Json::object(), app.main(), nullptr);
 	click(app, "#preset-confirm");
 	REQUIRE(app.waitUntil([&app] { return channelOf(app.call("project.get"), "Other").at("volume") == -6.0; }));
+
+	// Save names the media files that are missing, which the preset refers to where they were (#1736); OK then closes
+	// the dialog.
+	const fs::path gone = fs::absolute(dir.path() / "gone.wav").lexically_normal();
+	const Json media =
+		app.call("media.add", {{"path", gone.u8string()}, {"sampleRate", 48000.0}, {"channels", 1}, {"length", 10}});
+	const Json sampler = app.call("sampler.create",
+		{{"clip", app.call("clip.add", {{"media", media.at("media").at("id")}}).at("clip").at("id")}});
+	select(app, {sampler.at("track").at("id").get<ObjectId>()});
+	app.keys().run("track.saveTrackPreset", Json::object(), app.main(), nullptr);
+	click(app, "#preset-name");
+	app.ui().text(std::nullopt, "Lost");
+	click(app, "#preset-confirm");
+	const auto message = [&app]
+	{ return app.ui().dom(std::nullopt, "#preset-message", 0).at("elements")[0].at("text").get<std::string>(); };
+	REQUIRE(app.waitUntil([&message] { return message().find("gone.wav") != std::string::npos; }));
+	CHECK(shown(app, "#track-preset-dialog"));
+	CHECK(app.call("track.presets").at("presets").size() == 3);
+	click(app, "#preset-confirm");
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#track-preset-dialog"); }));
+	CHECK(app.call("track.presets").at("presets").size() == 3);
+	app.call("track.remove", {{"track", sampler.at("track").at("id")}});
+	select(app, {other.at("track").at("id").get<ObjectId>()});
 
 	// Add adds the first preset listed, Keys.
 	app.keys().run("project.addTrackFromPreset", Json::object(), app.main(), nullptr);

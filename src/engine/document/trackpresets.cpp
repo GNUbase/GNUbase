@@ -1195,7 +1195,8 @@ namespace gnubase::engine
 				"clips into the pool unless it has the same ones, their files shared with the project's that have the "
 				"same audio, and the lanes of a drum track's patterns take the "
 				"pads' names. Emits track.changed, channel.changed, plugin.removed, plugin.added, media.added, "
-				"clip.added and pattern.changed.",
+				"poolFolder.added (a drum pad's clips go into the pool folder Drum Machine), clip.added and "
+				"pattern.changed.",
 				objectSchema({{"tracks", idsSchema}, {"name", stringSchema}}, {"tracks", "name"}), tracksResult, false},
 			"Load track preset",
 			[&model, &engine](Project& project, CommandContext& context)
@@ -1390,8 +1391,9 @@ namespace gnubase::engine
 				"other channels go to the tracks the project had with the same name and type, outputs to busses to its "
 				"busses with the same name or else the main output. Linear positions from a file at another sample "
 				"rate are rescaled to keep their time, as project.set does; faders, send levels and volume automation "
-				"above the project's fader top come down to it. Clips come into the pool's top folder unless the "
-				"project has the same clip already, as after importing the file before: then the tracks share it, and "
+				"above the project's fader top come down to it. Clips come into the pool's top folder, a drum "
+				"machine pad's into the folder Drum Machine, unless the project has the same clip already, as after "
+				"importing the file before: then the tracks share it, and "
 				"clips of the file that are the same become one; media files the project has, at the same path or "
 				"with the same audio, are shared too. Media files embedded in the file are extracted next to "
 				"it, as project.load does; media.prepareArchive and media.conform with the media it returns copy and "

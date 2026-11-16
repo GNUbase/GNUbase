@@ -2518,12 +2518,18 @@ namespace gnubase::app
 							[this, id](const engine::Result& result)
 							{
 								if (!result.ok())
+								{
 									m_files.showError(id, result.error);
-								else if (const std::string left = leftOut(result.value); !left.empty())
-									m_files.showNotice(
-										id, "Export Selected Tracks", "The tracks were exported without " + left + ".");
-								else if (const std::string missing = ui::missingMedia(result.value); !missing.empty())
-									m_files.showNotice(id, "Export Selected Tracks", missing);
+									return;
+								}
+								// The tracks left out and the media files missing, both if both (#1736).
+								std::string notice;
+								if (const std::string left = leftOut(result.value); !left.empty())
+									notice = "The tracks were exported without " + left + ".";
+								if (const std::string missing = ui::missingMedia(result.value); !missing.empty())
+									notice += (notice.empty() ? "" : " ") + missing;
+								if (!notice.empty())
+									m_files.showNotice(id, "Export Selected Tracks", notice);
 							});
 					});
 			}});
