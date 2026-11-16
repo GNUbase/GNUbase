@@ -18,11 +18,12 @@ mixers whose channel visibility follows the tracks'.
   `trackVisibility.get` returns changed, as when a hidden track goes, and the mixers that follow sync, hiding the
   channel of a track that joined a hidden folder or a group channel a hidden folder gets (`followTrackFolders`, #1475,
   #1539). A transaction whose track edits change what the visibility it left hides announces it once, with what it left,
-  however many `trackVisibility.set` it has (#1622, #1759); otherwise each `trackVisibility.set` in it announces it on
-  its own, and the track edits don't: a `track.add` into a hidden folder followed by two `trackVisibility.set`, the last
-  showing every track, announces it twice. Hidden tracks play as usual. `Project::trackVisibility` itself, and
-  `trackVisibility` in `project.get`, hold the stored form, the folder without the tracks it hides: readers go through
-  `hiddenTracks` or `trackVisibility.get`, which add them.
+  however many `trackVisibility.set` and `mixer.set` (on the lower zone's mixer or the synced mixer window, when it
+  changes the hidden tracks) it has (#1622, #1759, #1809); otherwise each of them announces it on its own, and the
+  track edits don't: a `track.add` into a hidden folder followed by two `trackVisibility.set`, the last showing every
+  track, announces it twice. Hidden tracks play as usual. `Project::trackVisibility` itself, and `trackVisibility` in
+  `project.get`, hold the stored form, the folder without the tracks it hides: readers go through `hiddenTracks` or
+  `trackVisibility.get`, which add them.
 - `sync`: the mixer window (`window1` to `window4`) whose channel visibility follows the tracks', or empty (Sync
   Visibility of Project and Mixer, p. 82): one window at a time. The lower zone's mixer (`lower`) always follows
   (p. 81).

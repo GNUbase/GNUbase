@@ -684,6 +684,59 @@ TEST_CASE("a transaction announces the track visibility once only when its track
 	CHECK(twice[1].at("hidden") == Json::array());
 }
 
+// #1809: a mixer.set on the lower zone's mixer that changes the hidden tracks announces trackVisibility.changed on
+// its own; after a track edit that changes what the visibility hides, the transaction announces it once.
+TEST_CASE("a mixer.set announces the track visibility in a transaction as the docs say", "[unit]")
+{
+	Fixture f;
+	std::mutex mutex;
+	std::vector<Json> changes;
+	const engine::Listener listener(f.engine,
+		[&](const engine::Event& event)
+		{
+			const std::scoped_lock lock(mutex);
+			if (event.name == "trackVisibility.changed")
+				changes.push_back(event.data);
+		});
+	const uint64_t folder = f.call("track.add", {{"type", "folder"}}).at("track").at("id").get<uint64_t>();
+	const auto [a, aChannel] = f.track("audio");
+	const auto [b, bChannel] = f.track("audio");
+	f.call("trackVisibility.set", {{"hidden", {folder}}});
+	const auto announced = [&]
+	{
+		const std::scoped_lock lock(mutex);
+		std::vector<Json> result;
+		std::swap(result, changes);
+		return result;
+	};
+	announced();
+
+	// No track edit: each mixer.set announces it on its own.
+	f.call("history.transaction",
+		{{"description", "Hide two"},
+			{"commands",
+				{{{"command", "mixer.set"}, {"parameters", {{"mixer", "lower"}, {"hidden", {aChannel}}}}},
+					{{"command", "mixer.set"},
+						{"parameters", {{"mixer", "lower"}, {"hidden", sorted({aChannel, bChannel})}}}}}}});
+	const std::vector<Json> twice = announced();
+	REQUIRE(twice.size() == 2);
+	CHECK(twice[0].at("hidden") == sorted({folder, a}));
+	CHECK(twice[1].at("hidden") == sorted({folder, a, b}));
+
+	// A track edit into the hidden folder changes what the visibility hides: once, with what the transaction left.
+	f.call("mixer.set", {{"mixer", "lower"}, {"hidden", std::vector<uint64_t>{}}});
+	announced();
+	const Json result = f.call("history.transaction",
+		{{"description", "Add and hide"},
+			{"commands",
+				{{{"command", "track.add"}, {"parameters", {{"type", "audio"}, {"parent", folder}, {"index", 0}}}},
+					{{"command", "mixer.set"}, {"parameters", {{"mixer", "lower"}, {"hidden", {aChannel}}}}}}}});
+	const uint64_t drums = result.at("results").at(0).at("track").at("id").get<uint64_t>();
+	const std::vector<Json> once = announced();
+	REQUIRE(once.size() == 1);
+	CHECK(once[0].at("hidden") == sorted({folder, drums, a}));
+}
+
 // #1694: one trackVisibility.set that drops the active configuration and adds several gives none of them the active
 // one's tracks hidden on their own: only the one new name that replaces it is its rename.
 TEST_CASE("only the one configuration that replaces the active one takes its own hidden tracks", "[unit]")
