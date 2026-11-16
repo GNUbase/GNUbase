@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The arranger events on the arranger track's lane in the project window (#1393, docs/features/arranger.md, reference
 // manual pp. 404-405), driven with ui::Automation as MCP's UI tools drive them: shown with their names and lengths,
-// drawn with the draw tool, moved, renamed and erased.
+// drawn with the draw tool, moved, renamed and erased; and the global tracks' lanes' reads of the project.
 #include "uiapp.h"
 
 #include "engine/engine.h"
 #include "engine/time/tempomap.h"
 #include "ui/automation.h"
+#include "ui/enginebinding.h"
 #include "ui/eventdisplay.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -14,8 +15,10 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <functional>
 #include <optional>
 #include <string>
+#include <tuple>
 
 using namespace gnubase;
 using engine::Json;
@@ -265,4 +268,101 @@ TEST_CASE("the arranger track's lane says why the engine refused a draw", "[ui]"
 	CHECK(window.element("#edit-refused").value("text", std::string()).find("sample") != std::string::npos);
 	CHECK(window.events().empty());
 	CHECK(window.shown(".arranger-lane-event") == 0);
+}
+
+namespace
+{
+	// How many project.get the UI sends while edit runs and until the event display's project passes done and no
+	// project.get is out.
+	size_t reads(Window& window, const std::function<void()>& edit, const std::function<bool(const Json&)>& done)
+	{
+		ui::EngineBinding& binding = window.app.appUi().binding();
+		REQUIRE(window.app.waitUntil([&] { return binding.waiting("project.get") == 0; }));
+		size_t count = 0;
+		const ui::Subscription counted = binding.onResult("project.get", [&count](const engine::Result&) { ++count; });
+		edit();
+		REQUIRE(window.app.waitUntil(
+			[&] { return done(window.display.project()) && binding.waiting("project.get") == 0; }));
+		return count;
+	}
+
+	// The position of the event of that id in a section of the project ("transpose", "chords" or "arranger").
+	Json position(const Json& project, const char* section, const Json& id)
+	{
+		if (project.is_object())
+			for (const Json& event : project.at(section).at("events"))
+				if (event.at("id") == id)
+					return event.at("position");
+		return nullptr;
+	}
+}
+
+TEST_CASE("an edit on a global track's lane sends no project.get of its own", "[ui]")
+{
+	// #1757: the lanes show the project that the event display reads, so a move or a draw on them sends as many
+	// project.get as the same command sent through the UI's binding, which only the other views' reads answer.
+	Window window;
+	window.app.call("track.add", {{"type", "transpose"}});
+	window.app.call("track.add", {{"type", "chord"}});
+	const Json transpose = window.app.call("transpose.add", {{"position", 0}, {"value", 3}}).at("event").at("id");
+	const Json chord = window.app.call("chord.add", {{"position", 0}, {"chord", "C"}}).at("event").at("id");
+	const Json arranger =
+		window.app.call("arranger.add", {{"position", 0}, {"end", 4 * g_quarter}}).at("event").at("id");
+	REQUIRE(window.app.waitUntil(
+		[&]
+		{
+			return window.shown(".transpose-event") == 1 && window.shown(".chord-event") == 1 &&
+				window.shown(".arranger-lane-event") == 1 && !window.hasClass(".arranger-lane-row", "hidden");
+		}));
+	window.display.setTool(ui::Tool::ObjectSelection);
+	ui::EngineBinding& binding = window.app.appUi().binding();
+	const double bar = 2.0 / window.display.view().scale * g_ratio; // pixels
+	// Drags the event that selector finds by a bar to the right.
+	const auto drag = [&](const std::string& selector)
+	{
+		const Json box = window.box(selector);
+		const double x = box.at("x").get<double>() + (box.at("width").get<double>() / 2.0);
+		const int y = static_cast<int>(std::lround(box.at("y").get<double>() + (box.at("height").get<double>() / 2.0)));
+		window.app.ui().drag(std::nullopt, {"", 0, ui::Point{static_cast<int>(std::lround(x)), y}},
+			{"", 0, ui::Point{static_cast<int>(std::lround(x + bar)), y}});
+	};
+
+	for (const auto& [selector, section, id] :
+		{std::tuple{".transpose-event", "transpose", transpose}, std::tuple{".chord-event", "chords", chord}})
+	{
+		INFO(section);
+		const std::string command = std::string(section) == "chords" ? "chord.set" : "transpose.set";
+		const size_t moved = reads(
+			window, [&, selector = selector] { drag(selector); }, [&, section = section, id = id](const Json& project)
+			{ return position(project, section, id) == 4 * g_quarter; });
+		const size_t sent = reads(
+			window,
+			[&, id = id] { binding.send(command, {{"events", {{{"event", id}, {"position", 8 * g_quarter}}}}}); },
+			[&, section = section, id = id](const Json& project)
+			{ return position(project, section, id) == 8 * g_quarter; });
+		CHECK(moved == sent);
+	}
+
+	// The arranger track's lane: a move, and a draw.
+	const size_t moved = reads(
+		window, [&] { window.app.ui().drag(std::nullopt, {"", 0, window.at(1.0)}, {"", 0, window.at(3.0)}); },
+		[&](const Json& project) { return position(project, "arranger", arranger) == 4 * g_quarter; });
+	const size_t set = reads(
+		window, [&] { binding.send("arranger.set", {{"event", arranger}, {"position", 8 * g_quarter}}); },
+		[&](const Json& project) { return position(project, "arranger", arranger) == 8 * g_quarter; });
+	CHECK(moved == set);
+	window.display.setTool(ui::Tool::Draw);
+	const auto events = [](size_t count)
+	{
+		return [count](const Json& project)
+		{ return project.is_object() && project.at("arranger").at("events").size() == count; };
+	};
+	const size_t drawn = reads(
+		window, [&] { window.app.ui().drag(std::nullopt, {"", 0, window.at(6.3)}, {"", 0, window.at(7.8)}); },
+		events(2));
+	const size_t added = reads(
+		window, [&] { binding.send("arranger.add", {{"position", 16 * g_quarter}, {"end", 20 * g_quarter}}); },
+		events(3));
+	CHECK(drawn == added);
+	CHECK(window.events()[1].at("position") == 12 * g_quarter);
 }
