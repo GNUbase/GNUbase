@@ -1793,7 +1793,7 @@ TEST_CASE(
 	test::UiApp app({1000, 680});
 	app.appUi().showProject();
 	app.setDpRatio(1.0F);
-	const auto add = [&app](Json parameters)
+	const auto add = [&app](const Json& parameters)
 	{ return app.call("track.add", parameters).at("track").at("id").get<uint64_t>(); };
 	const uint64_t folder = add({{"type", "folder"}, {"name", "Band"}, {"color", "#3a6ff0"}});
 	const uint64_t drums = add({{"type", "midi"}, {"name", "Drums"}, {"color", "#e12ad8"}, {"parent", folder}});
