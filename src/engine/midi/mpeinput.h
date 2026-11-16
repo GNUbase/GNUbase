@@ -53,18 +53,19 @@ namespace gnubase::engine::midi
 		int channels = 15;    // the notes' channels: a zone's member channels (at most 15) or the used channels (16)
 		int firstChannel = 1; // channel rotation's first channel, 1-16; the used ones end at 16
 		int pitchRange = 48;  // of the notes' pitch bend, in semitones, 1-96; tuning's range from any message
-		bool tuning = true;   // Use for Tuning: X is the notes' tuning, else X plays its assignment but tuning
+		bool tuning = true;   // Use for Tuning: X plays the notes' tuning over its own assignment, else that
 		Initial initialX = Initial::Off; // Horizontal/X: off or center
 		Initial initialY = Initial::Off; // Vertical/Y
 		// Per dimension, the MIDI message it comes from and the note expression it plays (Note Expression
-		// Assignment); none passes the message as it is.
+		// Assignment); none passes the message as it is. X's is its own, which it keeps while Use for Tuning
+		// overrides it (#1749), and never tuning.
 		std::array<uint8_t, 3> messages = {g_pitchBend, g_aftertouch, 74};
 		std::array<std::optional<plugin::NoteExpression>, 3> expressions = {
-			plugin::NoteExpression::Tuning, plugin::NoteExpression::Pressure, plugin::NoteExpression::Brightness};
+			std::nullopt, plugin::NoteExpression::Pressure, plugin::NoteExpression::Brightness};
 
 		// From an mpe value as midi.setPort and midi.portSettings have it; what it lacks keeps its default (or
-		// defaults'), and a zone's channels are at most 15. With Use for Tuning X plays tuning; without it, X's
-		// assignment is never tuning (none instead).
+		// defaults'), and a zone's channels are at most 15. X's own assignment tuning, which Use for Tuning is, is
+		// none.
 		static MpeSetup fromJson(const Json& json, const MpeSetup& defaults);
 		static MpeSetup fromJson(const Json& json) { return fromJson(json, MpeSetup()); }
 		Json toJson() const;

@@ -257,9 +257,14 @@ namespace gnubase::engine
 				const Received received{slot, block.position + message.offset, message};
 				if (!m_monitor.tryPush(received))
 					m_monitorDropped.fetch_add(1, std::memory_order_relaxed);
-				if (!m_activity.tryPush(received))
-					m_activityDropped.fetch_add(1, std::memory_order_relaxed);
-				m_activityCount.fetch_add(1, std::memory_order_relaxed);
+				// Only while someone listens, and without system real-time messages (clock, active sensing), which
+				// some devices send all the time.
+				if (m_activityListen.load(std::memory_order_relaxed) && message.bytes[0] < 0xF8)
+				{
+					if (!m_activity.tryPush(received))
+						m_activityDropped.fetch_add(1, std::memory_order_relaxed);
+					m_activityCount.fetch_add(1, std::memory_order_relaxed);
+				}
 			});
 	}
 
@@ -583,6 +588,15 @@ namespace gnubase::engine
 			changes.erase(name);
 		if (changes.contains("mpe"))
 		{
+			// Tuning for X is Use for Tuning, as on the page: X keeps its own assignment underneath (#1749).
+			Json& call = changes.at("mpe");
+			if (call.value("xExpression", std::string()) == "tuning")
+			{
+				if (!call.value("tuning", true))
+					throw CommandError("xExpression tuning is Use for Tuning, which tuning false turns off");
+				call["tuning"] = true;
+				call.erase("xExpression");
+			}
 			// What the call leaves out stays, or is the detected device's preset; members of a later GNUbase's stay
 			// too.
 			Json mpe = setting(port).value("mpe", preset(port).toJson());
@@ -622,6 +636,24 @@ namespace gnubase::engine
 			});
 
 		engine.registerCommand(
+			{"midi.activityListen", 1,
+				"Whether what the open MIDI inputs receive goes to midi.activity, which the engine then runs itself "
+				"as input arrives: the Note Expression Input page turns it on while it is open (#1749). Off by "
+				"default; turning it on starts afresh, without what came before.",
+				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["on"],
+					"properties": {"on": {"type": "boolean"}}})"),
+				Json::object(), false},
+			[this](CommandContext& context)
+			{
+				listOnce();
+				const bool on = context.parameters().at("on").get<bool>();
+				if (on && !m_activityListen.load(std::memory_order_relaxed))
+					dropActivity();
+				m_activityListen.store(on, std::memory_order_relaxed);
+				return Json::object();
+			});
+
+		engine.registerCommand(
 			{"midi.ports", 1,
 				"The MIDI ports of every MIDI backend, inputs and outputs: backend, id, system name, the name they are "
 				"shown as (showAs), whether they are visible, whether an input belongs to all MIDI inputs, an "
@@ -651,8 +683,9 @@ namespace gnubase::engine
 				"pitchBend, aftertouch (channel pressure) or cc0 to cc127, by default pitchBend, aftertouch and cc74; "
 				"xExpression, pressureExpression and yExpression (Note Expression Assignment), the note expression "
 				"each plays (volume, pan, tuning, vibrato, expression, brightness, pressure) or none, which passes "
-				"the message as it is, by default tuning, pressure and brightness; with tuning X plays tuning, "
-				"without it X plays anything but tuning (none instead). On the notes' channels the dimensions' "
+				"the message as it is, by default none (X), pressure and brightness; with tuning X plays tuning "
+				"over its own assignment, which it plays again without it, and xExpression tuning turns tuning "
+				"on (with tuning false it is rejected), keeping X's own. On the notes' channels the dimensions' "
 				"messages are the expression of the notes that sound there, as per-note expression, live and in "
 				"recordings (docs/features/note-expression.md). An input whose name is a known MPE device's "
 				"(mpeDevice in midi.ports) has the device's preset settings until a call changes them. The settings "
@@ -716,11 +749,13 @@ namespace gnubase::engine
 			});
 		engine.registerCommand(
 			{"midi.activity", 1,
-				"Takes the MIDI input that the open inputs received since the last run, at most 256 messages, each "
-				"with its port (backend and id) and its bytes, and announces it as the event midi.activity unless "
-				"there is none: the Note Expression Input page's MIDI Activity display (reference manual p. 1298) "
-				"shows it. The engine runs it itself, at most ten times a second, while input arrives and an audio "
-				"device processes blocks; its runs stay out of engine.commandLog. dropped counts what didn't fit. "
+				"Takes the MIDI input that the open inputs received since the last run while midi.activityListen "
+				"was on, at most 256 messages without system real-time messages (0xF8 to 0xFF), each with its port "
+				"(backend and id) and its bytes, and announces it as the event midi.activity unless there is none: "
+				"the Note Expression Input page's MIDI Activity display (reference manual p. 1298) shows it. The "
+				"engine runs it itself, at most ten times a second, while input arrives and an audio device "
+				"processes blocks; its runs stay out of engine.commandLog. What was received before a device "
+				"started is dropped then. dropped counts what didn't fit. "
 				"midi.monitor, which keeps the input's positions, takes its own copy.",
 				CommandInfo{}.parameters,
 				Json::parse(R"({"type": "object", "properties": {"received": {"type": "array"},

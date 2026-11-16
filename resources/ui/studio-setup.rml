@@ -397,8 +397,9 @@
 							mpe.tuning)) ..
 						field("Pitch Range", '<input type="text" class="mpe-pitch-range" value="' .. mpe.pitchRange ..
 							'"/>') ..
-						field("Horizontal/X Note Expression", named("mpe-x-expression", mpeExpressions, mpe.xExpression,
-							' onchange="StudioSetup.mpeXExpressionChanged(element)"' .. (mpe.tuning and " disabled" or ""))) ..
+						field("Horizontal/X Note Expression", named("mpe-x-expression", mpeExpressions,
+							mpe.tuning and "tuning" or mpe.xExpression, ' own="' .. mpe.xExpression ..
+							'" onchange="StudioSetup.mpeXExpressionChanged(element)"' .. (mpe.tuning and " disabled" or ""))) ..
 						field("Vertical/Y MIDI Message", named("mpe-y-message", mpeMessages, mpe.yMessage)) ..
 						field("Vertical/Y Initial Value", named("mpe-initial-y", initialsY, mpe.initialY)) ..
 						field("Vertical/Y Note Expression", named("mpe-y-expression", mpeExpressions, mpe.yExpression)) ..
@@ -464,6 +465,7 @@
 			if not setup.subscribed then
 				setup.subscribed = true
 				gnubase.on("midi.activity", setup.activityArrived)
+				gnubase.midi.activityListen({on = true})
 			end
 			report(document, {})
 		end
@@ -499,6 +501,7 @@
 			setup.document = nil
 			if setup.subscribed then
 				gnubase.off("midi.activity", setup.activityArrived)
+				gnubase.midi.activityListen({on = false})
 				setup.subscribed = false
 			end
 		end
@@ -512,7 +515,7 @@
 		end
 
 		-- Use for Tuning sets X's Note Expression Assignment to tuning (reference manual p. 1297), which it keeps
-		-- while on; off, X plays anything but tuning.
+		-- while on; off, X plays its own assignment again (the select's own attribute, #1749).
 		function setup.mpeTuningChanged(element)
 			local fieldElement = element.parent_node
 			local x = fieldElement and fieldElement.parent_node and
@@ -522,13 +525,14 @@
 			end
 			if checked(element) then
 				if valueOf(x) ~= "tuning" then
+					x:SetAttribute("own", valueOf(x))
 					x:SetAttribute("value", "tuning")
 				end
 				x:SetAttribute("disabled", "")
 			else
 				x:RemoveAttribute("disabled")
 				if valueOf(x) == "tuning" then
-					x:SetAttribute("value", "none")
+					x:SetAttribute("value", x:GetAttribute("own") or "none")
 				end
 			end
 		end
@@ -538,7 +542,9 @@
 			local fieldElement = element.parent_node
 			local tuning = fieldElement and fieldElement.parent_node and
 				fieldElement.parent_node:QuerySelector("input.mpe-tuning")
-			if tuning ~= nil and valueOf(element) == "tuning" and not checked(tuning) then
+			if valueOf(element) ~= "tuning" then
+				element:SetAttribute("own", valueOf(element))
+			elseif tuning ~= nil and not checked(tuning) then
 				tuning:SetAttribute("checked", "")
 			end
 		end
@@ -686,6 +692,10 @@
 						pitchRange = pitchRange, tuning = checked(fields:QuerySelector("input.mpe-tuning"))}
 					for name, class in pairs(mpeSelects) do
 						mpe[name] = valueOf(fields:QuerySelector("select." .. class))
+					end
+					-- Under Use for Tuning, X's own assignment.
+					if mpe.tuning then
+						mpe.xExpression = fields:QuerySelector("select.mpe-x-expression"):GetAttribute("own") or "none"
 					end
 					local changed = false
 					for name, value in pairs(mpe) do
