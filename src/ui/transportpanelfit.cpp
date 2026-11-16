@@ -21,13 +21,19 @@ namespace gnubase::ui
 
 	TransportPanelFit::TransportPanelFit(Shell& shell, Docking& docking) : m_shell(shell), m_docking(docking)
 	{
-		m_shell.afterUpdate([this](Window& window)
-			{ return window.id() == m_window && m_follows && fit(window, std::exchange(m_centre, false)); });
+		m_shell.afterUpdate(
+			[this, alive = std::weak_ptr<bool>(m_alive)](Window& window)
+			{
+				return !alive.expired() && window.id() == m_window && m_follows &&
+					fit(window, std::exchange(m_centre, false));
+			});
 		// The shell moves only windows that are out of reach: a panel as wide as its monitor's usable area gets
 		// narrower with it, e.g. at another resolution or with the taskbar moved to the side.
 		m_shell.onDisplaysChanged(
-			[this]
+			[this, alive = std::weak_ptr<bool>(m_alive)]
 			{
+				if (alive.expired())
+					return;
 				m_measured = 0;
 				if (const Window* window = shown())
 					window->context().RequestNextUpdate(0);
@@ -43,6 +49,9 @@ namespace gnubase::ui
 		m_opensCentred = centre;
 		m_centre = false;
 		m_measured = 0;
+		// Only this opening counts for where it is centred again: where it opened, until a fit asks for other bounds.
+		m_measuredBounds = m_shell.bounds(window.id());
+		m_asked = {};
 		if (centre)
 			fit(window, true);
 	}

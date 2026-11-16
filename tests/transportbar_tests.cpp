@@ -41,6 +41,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -635,15 +636,17 @@ namespace
 		ui::Window* panel = nullptr;
 		Rml::Element* second = nullptr;
 
-		// Opens a new panel as the app does, 1100 points wide in the middle of the monitor, and fits it at once.
-		void open()
+		// Opens a new panel as the app does, 1100 points wide in the middle of the monitor, and fits it at once; with
+		// its sections hidden, which the class shown on the body shows, if not shown.
+		void open(bool shown = true, int width = 1100)
 		{
 			ui::WindowSpec spec;
-			spec.size = {1100, 48};
+			spec.size = {width, 48};
 			panel = &ui.shell.open(spec);
 			Rml::ElementDocument* document = panel->context().LoadDocumentFromMemory(R"(<rml><head><style>
 				body { position: absolute; left: 0; top: 0; right: 0; bottom: 0; }
-				.transport-section { position: absolute; top: 0; width: 300dp; height: 20dp; }
+				.transport-section { position: absolute; top: 0; width: 300dp; height: 20dp; display: none; }
+				body.shown .transport-section { display: block; }
 				#second { left: 300dp; }
 				#second.wide { width: 600dp; }
 				#second.wider { width: 900dp; }
@@ -652,6 +655,7 @@ namespace
 				</div></body></rml>)");
 			REQUIRE(document != nullptr);
 			document->Show();
+			document->SetClass("shown", shown);
 			second = document->GetElementById("second");
 			fit.open(*panel, *document, true);
 		}
@@ -689,6 +693,64 @@ TEST_CASE(
 	fake.ui.windows.applyBounds();
 	fake.step();
 	CHECK(fake.bounds() == fake.centred(900));
+}
+
+TEST_CASE("a new transport panel is centred for what it shows also before the window system moved it", "[unit]")
+{
+	// The controls show the project before the window system gave the panel the first fit's bounds (#1765).
+	FakePanel fake;
+	fake.ui.windows.setBoundsLater(true);
+	fake.open();
+	REQUIRE(fake.bounds() == fake.centred(1100));
+	fake.second->SetClass("wide", true);
+	fake.fit.follow();
+	fake.step();
+	CHECK(fake.bounds() == fake.centred(1100));
+	fake.ui.windows.applyBounds();
+	fake.step();
+	CHECK(fake.bounds() == fake.centred(900));
+}
+
+TEST_CASE("a new transport panel whose first fit found no sections is centred where it opened, not where the last one "
+		  "was",
+	"[unit]")
+{
+	// The panel before was fitted in the middle of the monitor, which then got smaller.
+	FakePanel fake;
+	fake.open();
+	REQUIRE(fake.bounds() == fake.centred(600));
+	fake.ui.windows.setDisplays({{1, "Monitor", {0, 0, 1600, 900}, {0, 0, 1600, 860}, 1.0F}});
+	fake.step();
+
+	// A new one, as wide as the fit before, shows no sections at first: nothing to fit (#1765).
+	fake.open(false, 600);
+	REQUIRE(fake.bounds() == fake.centred(600));
+	fake.panel->context().GetDocument(0)->SetClass("shown", true);
+	fake.second->SetClass("wide", true);
+	fake.fit.follow();
+	fake.step();
+	CHECK(fake.bounds() == fake.centred(900));
+}
+
+TEST_CASE("the shell leaves a transport panel's fit alone once it is gone", "[unit]")
+{
+	static_assert(
+		!std::is_copy_constructible_v<ui::TransportPanelFit> && !std::is_move_constructible_v<ui::TransportPanelFit>);
+	FakePanel fake;
+	fake.open();
+	const ui::Rect fitted = fake.bounds();
+	{
+		ui::TransportPanelFit gone{fake.ui.shell, fake.docking};
+		gone.open(*fake.panel, *fake.panel->context().GetDocument(0), false);
+		gone.follow();
+	}
+	// Its tasks stay with the shell, which updates the panel and finds other monitors: they do nothing now (#1765).
+	fake.second->SetClass("wide", true);
+	fake.panel->context().RequestNextUpdate(0);
+	fake.step();
+	fake.ui.windows.setDisplays({{1, "Monitor", {0, 0, 1600, 900}, {0, 0, 1600, 860}, 1.0F}});
+	fake.step();
+	CHECK(fake.bounds() == fitted);
 }
 
 TEST_CASE(

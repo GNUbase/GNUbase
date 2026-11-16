@@ -6,6 +6,8 @@
 
 #include <RmlUi/Core/Element.h>
 
+#include <memory>
+
 namespace gnubase::ui
 {
 	class Docking;
@@ -20,7 +22,13 @@ namespace gnubase::ui
 	class TransportPanelFit
 	{
 	public:
+		// The shell keeps the tasks it hands it, which do nothing once it is gone (#1765).
 		TransportPanelFit(Shell& shell, Docking& docking);
+		TransportPanelFit(const TransportPanelFit&) = delete;
+		TransportPanelFit& operator=(const TransportPanelFit&) = delete;
+		TransportPanelFit(TransportPanelFit&&) = delete;
+		TransportPanelFit& operator=(TransportPanelFit&&) = delete;
+		~TransportPanelFit() = default;
 
 		// The panel opened in window, with its sections inside sections. One that opened without bounds (centre) is
 		// fitted to them at once, in the middle of the primary monitor, so that a panel closed before its controls
@@ -50,12 +58,13 @@ namespace gnubase::ui
 		bool m_follows = false;
 		bool m_opensCentred = false;
 		bool m_centre = false;
-		// Where the shown sections ended and the window's bounds when the panel last looked at them: unchanged, it
-		// asks for no monitors. The monitors changing forget them.
+		// Where the shown sections ended and the window's bounds when the panel last looked at them, or where it
+		// opened: unchanged, it asks for no monitors. The monitors changing forget where the sections ended.
 		float m_measured = 0;
 		Rect m_measuredBounds;
 		// The bounds the last fit asked for, which a window system that moves windows later, such as X11's, gives the
 		// window only after the fit looked at its bounds again.
 		Rect m_asked;
+		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for the shell's tasks
 	};
 }
