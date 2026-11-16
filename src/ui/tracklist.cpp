@@ -42,7 +42,7 @@ namespace gnubase::ui
 		constexpr double g_dragThreshold = 4.0; // dp a press moves before it drags
 		constexpr double g_width = 120.0;       // dp where neither ui.trackWidths nor its default has a width
 		constexpr double g_toggleSize = 16.0;   // dp of Show/Hide Automation, in a row's lower left corner
-		constexpr double g_toggleGap = 2.0;     // dp between it and the row's edges: the selection frame, the separator
+		constexpr double g_toggleGap = 2.0;     // dp at least between it and the row's top and lower edges (#1773)
 
 		constexpr std::array<Rml::EventId, 5> g_rootEvents = {Rml::EventId::Mousedown, Rml::EventId::Dblclick,
 			Rml::EventId::Click, Rml::EventId::Mousescroll, Rml::EventId::Change};
@@ -1333,8 +1333,10 @@ namespace gnubase::ui
 		while (first < end && automation[first] == 0)
 			++first;
 		setClass(*toggle, "checked", m_display.automationShown(track));
-		// In the lower left corner, clear of the row's lower edge; in the lowest rows as low as the top's gap allows.
-		toggle->SetProperty(Rml::PropertyId::Top, dp(std::max(g_toggleGap, own - g_toggleSize - g_toggleGap)));
+		// In the lower left corner above the edge that sizes the track, so that the selection frame and the separator
+		// stay whole; in rows too low for that (20 dp, the lowest), the gap's width above the lower edge.
+		const double above = own - g_toggleSize - g_edge;
+		toggle->SetProperty(Rml::PropertyId::Top, dp(above >= g_toggleGap ? above : own - g_toggleSize - g_toggleGap));
 		rows->SetProperty(Rml::PropertyId::Top, dp(tops[first] - tops[lane]));
 		// A row per automation track: its parameter, which opens the parameter selector, Read and Append.
 		std::string rml;

@@ -280,7 +280,8 @@ TEST_CASE("automation tracks show and hide below their track, and the parameter 
 TEST_CASE("Show/Hide Automation lies in its track's lower left corner, inside the row, at every track height", "[ui]")
 {
 	// #1773: the button ended on the row's last pixel, over the selection frame and the separator to the next row, and
-	// was 24 dp wide although its rule gives it 16.
+	// was 24 dp wide although its rule gives it 16. It stays left of the name, clear of the row's lower edge, and above
+	// the 4 dp at that edge that size the track wherever the row has room for both.
 	Automation f;
 	const auto box = [&f](const std::string& selector)
 	{
@@ -288,31 +289,52 @@ TEST_CASE("Show/Hide Automation lies in its track's lower left corner, inside th
 		REQUIRE(found.size() == 1);
 		return found[0].at("box");
 	};
+	const auto right = [](const Json& box) { return box.at("x").get<int>() + box.at("width").get<int>(); };
 	const auto bottom = [](const Json& box) { return box.at("y").get<int>() + box.at("height").get<int>(); };
+	const auto meet = [&](const Json& a, const Json& b)
+	{
+		return a.at("x").get<int>() < right(b) && b.at("x").get<int>() < right(a) && a.at("y").get<int>() < bottom(b) &&
+			b.at("y").get<int>() < bottom(a);
+	};
 	const std::string toggle = row(f.track) + " .automation-toggle";
-	for (const double height : {ui::g_minTrackHeight, ui::g_trackHeight, 64.0, 120.0})
+	const auto place = [&](double height)
+	{
+		f.display.setTrackHeight(f.track, height);
+		f.app.shell().step(std::chrono::milliseconds(0));
+	};
+	for (const double height : {ui::g_minTrackHeight, 30.0, ui::g_trackHeight, 64.0, 120.0})
 	{
 		INFO("track height " << height);
-		f.display.setTrackHeight(f.track, height);
+		place(height);
 		REQUIRE(f.app.waitUntil([&] { return box(row(f.track)).at("height").get<double>() == height; }));
-		f.app.shell().step(std::chrono::milliseconds(0));
 		const Json own = box(row(f.track));
 		const Json button = box(toggle);
+		INFO("row " << own.dump() << ", button " << button.dump());
 		CHECK(button.at("width").get<int>() == 16);
 		CHECK(button.at("height").get<int>() == 16);
-		CHECK(button.at("x").get<int>() > own.at("x").get<int>());
-		CHECK(button.at("y").get<int>() > own.at("y").get<int>());
+		CHECK(button.at("x").get<int>() >= own.at("x").get<int>() + 4); // the row's padding
+		CHECK(button.at("y").get<int>() >= own.at("y").get<int>() + 2);
 		CHECK(bottom(button) <= bottom(own) - 2); // the frame and the separator stay whole
-		// Its own line where the row has room for one below the name.
-		if (height >= ui::g_trackHeight)
-			CHECK(button.at("y").get<int>() >= bottom(box(row(f.track) + " .track-controls")));
+		if (height >= 22.0)                       // room for the button above the 4 dp that size the track
+			CHECK(bottom(button) <= bottom(own) - 4);
+		CHECK(!meet(button, box(row(f.track) + " .track-name")));
+		CHECK(!meet(button, box(row(f.track) + " .track-controls")));
 	}
 	// With the automation tracks shown, it stays in the track's own part, above the first automation row.
-	f.display.setTrackHeight(f.track, ui::g_trackHeight);
 	f.show();
-	REQUIRE(f.app.waitUntil([&] { return elements(f.app, row(f.track) + " .automation-row").size() == 1; }));
-	f.app.shell().step(std::chrono::milliseconds(0));
-	CHECK(bottom(box(toggle)) <= box(row(f.track) + " .automation-row").at("y").get<int>() - 2);
+	for (const double height : {ui::g_minTrackHeight, ui::g_trackHeight, 64.0})
+	{
+		INFO("track height " << height);
+		place(height);
+		REQUIRE(f.app.waitUntil([&] { return elements(f.app, row(f.track) + " .automation-row").size() == 1; }));
+		REQUIRE(f.app.waitUntil(
+			[&]
+			{
+				return box(row(f.track) + " .automation-row").at("y").get<int>() ==
+					box(row(f.track)).at("y").get<int>() + static_cast<int>(height);
+			}));
+		CHECK(bottom(box(toggle)) <= box(row(f.track) + " .automation-row").at("y").get<int>() - 2);
+	}
 }
 
 TEST_CASE("the draw, line and erase tools draw automation, and the static value line shows without it", "[ui]")
