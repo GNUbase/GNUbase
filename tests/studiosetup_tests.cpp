@@ -16,11 +16,13 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <memory>
 #include <optional>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -307,9 +309,20 @@ TEST_CASE("the Note Expression Input page sets each dimension's MIDI Message and
 	CHECK(element(app, fields + "select.mpe-x-expression").at("attributes").contains("disabled"));
 	click(app, "#ok");
 	CHECK(closed(app));
+	// X keeps Pan as its own assignment under Use for Tuning (#1749), which it plays again with Use for Tuning off.
 	mpe = port(app.call("midi.ports"), "Keys", true).at("mpe");
 	CHECK(mpe.at("tuning") == true);
-	CHECK(mpe.at("xExpression") == "tuning");
+	CHECK(mpe.at("xExpression") == "pan");
+	openDialog(app);
+	click(app, "#devices-mpe");
+	CHECK(element(app, fields + "select.mpe-x-expression").at("value") == "tuning");
+	click(app, fields + "input.mpe-tuning");
+	CHECK(element(app, fields + "select.mpe-x-expression").at("value") == "pan");
+	click(app, "#ok");
+	CHECK(closed(app));
+	mpe = port(app.call("midi.ports"), "Keys", true).at("mpe");
+	CHECK(mpe.at("tuning") == false);
+	CHECK(mpe.at("xExpression") == "pan");
 }
 
 TEST_CASE("a detected MPE device has a page, and the MIDI Activity display shows its input", "[ui]")
@@ -359,6 +372,19 @@ TEST_CASE("a detected MPE device has a page, and the MIDI Activity display shows
 	choose(app, "#mpe-input", 1);
 	CHECK(selected(app, "mpe-input") == "Keys");
 	CHECK(elements(app, activity + " .mpe-message").empty());
+
+	// Closed, the page stops listening (midi.activityListen): input is no activity then (#1749).
+	click(app, "#cancel");
+	CHECK(closed(app));
+	audio::MidiMessage message;
+	message.size = 3;
+	message.bytes = {0x91, 62, 100};
+	device->send(message, hostTime() - 1000000000);
+	if (!app.call("audio.get").at("running").get<bool>())
+		app.call("audio.render", {{"frames", 128}});
+	else
+		std::this_thread::sleep_for(std::chrono::milliseconds(300));
+	CHECK(app.call("midi.activity").at("received").empty());
 }
 
 TEST_CASE("the Note Expression Input page keeps each MIDI input's edits, and its input after Apply", "[ui]")

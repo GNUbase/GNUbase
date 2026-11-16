@@ -154,7 +154,8 @@ namespace gnubase::engine::midi
 			setup.expressions.at(i) = assignmentAt(
 				named(json, g_expressionMembers.at(i), g_assignments, assignmentIndex(defaults.expressions.at(i))));
 		}
-		setup.expressions.at(X) = setup.expression(X);
+		if (setup.expressions.at(X) == plugin::NoteExpression::Tuning)
+			setup.expressions.at(X) = std::nullopt;
 		return setup;
 	}
 
@@ -227,7 +228,7 @@ namespace gnubase::engine::midi
 		const std::optional<plugin::NoteExpression> assigned = expressions.at(dimension);
 		if (dimension != X)
 			return assigned;
-		// Use for Tuning sets X's assignment to tuning (p. 1297); without it X plays anything but tuning.
+		// Use for Tuning sets X's assignment to tuning (p. 1297) over X's own, which is never tuning.
 		if (tuning)
 			return plugin::NoteExpression::Tuning;
 		return assigned == plugin::NoteExpression::Tuning ? std::nullopt : assigned;

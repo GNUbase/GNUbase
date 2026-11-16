@@ -4,6 +4,7 @@
 #include "engine/engine.h"
 #include "engine/midi/controllerlanes.h"
 #include "engine/midi/devices.h"
+#include "engine/midi/mpeinput.h"
 #include "platform/files.h"
 
 #include <algorithm>
@@ -21,6 +22,17 @@ namespace gnubase::engine::settings
 		Json pathOrNull(const std::filesystem::path& path)
 		{
 			return path.empty() ? Json(nullptr) : Json(path.u8string());
+		}
+
+		// midi.portSettings' mpe: every member that midi.setPort takes, by its type only, so that a later GNUbase's
+		// values stay.
+		Json mpeSettingSchema()
+		{
+			const Json mpe = midi::mpeSchema();
+			Json properties = Json::object();
+			for (const auto& member : mpe.at("properties").items())
+				properties[member.key()] = {{"type", member.value().at("type")}};
+			return {{"type", "object"}, {"properties", std::move(properties)}};
 		}
 
 		// The setting as text for command descriptions: "`ui.scale` (number, 0.5 to 4, default 1.0): The UI scale".
@@ -584,25 +596,16 @@ namespace gnubase::engine::settings
 				{"midi.portSettings",
 					"The MIDI ports' settings (midi.setPort), by backend/in or out/port id, also for ports that aren't "
 					"connected: the name shown (showAs), whether it is visible, and for inputs whether it belongs to "
-					"all MIDI inputs (inAllInputs) and its MPE input (mpe). Ports without an entry show their system "
-					"name, are visible, belong to all MIDI inputs and have no MPE input. Members of an entry that this "
-					"GNUbase doesn't know, from a later one, stay.",
+					"all MIDI inputs (inAllInputs) and its MPE input (mpe, what differs from its defaults). Ports "
+					"without an entry show their system name, are visible, belong to all MIDI inputs and have no MPE "
+					"input, but for a detected MPE device's input (mpeDevice in midi.ports), which has the device's "
+					"preset. Members of an entry that this GNUbase doesn't know, from a later one, stay.",
 					Json{{"type", "object"},
 						{"additionalProperties",
 							{{"type", "object"},
 								{"properties",
 									{{"showAs", {{"type", "string"}}}, {"visible", {{"type", "boolean"}}},
-										{"inAllInputs", {{"type", "boolean"}}},
-										{"mpe",
-											{{"type", "object"},
-												{"properties",
-													{{"mode", {{"type", "string"}}},
-														{"channels", {{"type", "integer"}}},
-														{"firstChannel", {{"type", "integer"}}},
-														{"pitchRange", {{"type", "integer"}}},
-														{"tuning", {{"type", "boolean"}}},
-														{"initialX", {{"type", "string"}}},
-														{"initialY", {{"type", "string"}}}}}}}}}}}},
+										{"inAllInputs", {{"type", "boolean"}}}, {"mpe", mpeSettingSchema()}}}}}},
 					Json::object()},
 				{"midi.recordCatchRange",
 					"MIDI record catch range in ms, 0 to 1000: MIDI input that comes this long before a recording "

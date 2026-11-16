@@ -45,8 +45,8 @@ namespace gnubase::engine
 		MidiPorts(const MidiPorts&) = delete;
 		MidiPorts& operator=(const MidiPorts&) = delete;
 
-		// Registers midi.ports, midi.setPort, midi.refresh, midi.monitor and midi.activity. When a backend's ports
-		// change, the engine refreshes them on its own.
+		// Registers midi.padListen, midi.activityListen, midi.ports, midi.setPort, midi.refresh, midi.monitor and
+		// midi.activity. When a backend's ports change, the engine refreshes them on its own.
 		void registerCommands(Engine& engine);
 
 		// Lists the ports again, opens new and returning visible inputs, closes the others. True if anything changed.
@@ -110,8 +110,13 @@ namespace gnubase::engine
 		// midi.activity when it changed.
 		uint64_t activity() const { return m_activityCount.load(std::memory_order_relaxed); }
 
-		// Drops the input that waits for the audio thread. Only while no audio thread takes.
-		void clear() { m_queue.clear(); }
+		// Drops the input that waits for the audio thread, and what midi.activity hasn't taken yet. Only while no
+		// audio thread takes, on the command thread.
+		void clear()
+		{
+			m_queue.clear();
+			dropActivity();
+		}
 
 		// Inputs that can be open at once.
 		static constexpr size_t g_maxInputs = 256;
@@ -174,6 +179,16 @@ namespace gnubase::engine
 		rt::SpscQueue<Received> m_activity; // what the inputs received, for midi.activity
 		std::atomic<uint64_t> m_activityCount{0};
 		std::atomic<size_t> m_activityDropped{0};
+		std::atomic<bool> m_activityListen{false}; // midi.activityListen
+		// Command thread: empties m_activity.
+		void dropActivity()
+		{
+			Received entry;
+			while (m_activity.tryPop(entry))
+			{
+			}
+			m_activityDropped.store(0, std::memory_order_relaxed);
+		}
 		// Audio thread: the pitches each remote key's note-on played, until its note-off.
 		std::array<midi::PadVoices, ChordPadKeys::g_maxPlayers> m_padVoices; // per player
 		// The sections player mode: the pad key that is down or was last, whether it is down, and the velocity of
