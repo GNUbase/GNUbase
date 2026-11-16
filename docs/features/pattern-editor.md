@@ -115,13 +115,15 @@ part's pattern.
 - **Step selection tool** (pp. 924-926): a click selects a step, with Shift more, with Ctrl (Cmd) one on or off; a
   click on an empty cell deselects; a double click adds or removes a step; Delete and Backspace delete the selected
   steps; Alt draws as the draw tool does. The selection loses the steps the pattern shown no longer has, after a mode
-  switch, a shorter Number of Steps, an undo or a script (#1615).
+  switch, a shorter Number of Steps, an undo or a script (#1615), and another part or pattern shown starts without one
+  (#1693).
 - **Edit functions** (pp. 903, 910): Tie joins adjacent steps, Split cuts tied steps into single ones, of the selected
   steps or else of all; Double Length repeats the steps of the lanes that follow the pattern's length, Double
   Resolution doubles the steps' indexes and lengths of the lanes that follow its resolution, and the lengths of those
   of their own length, so that every lane plays as before: one that can't double keeps the resolution it had as its
   own, and lanes of their own length (Double Length) or resolution (Double Resolution) stay as they are; one of its
-  own resolution that follows the pattern's length gets the length it had as its own.
+  own resolution that follows the pattern's length gets the length it had as its own. The selected steps that Double
+  Resolution moves stay selected where they go (#1693).
 - **Parameter lane** (pp. 928-929): a click or drag in it sets the chosen parameter of the selected lane's steps, as
   high as the mouse is.
 - A gesture edits a copy of the pattern and changes only the steps' classes while it goes on, so that its mouseup
@@ -178,7 +180,7 @@ content that other applications read, which have the parts' own notes.
   Resolution and Double Length with lanes of their own length and resolution, a gesture right after Double Length, a
   mode switch and a shorter Number of Steps with a project read before them, a click on a step right after a mode switch
   and a shorter Number of Steps, a mute, a double click, Delete and a project read before it while a mode switch is out,
-  a selection whose steps a script or a mode switch took, selecting, deleting and double-clicking steps, Tie and Split,
-  mute, the parameter lane's velocity and probability, the toolbar's menus and Double Length, Add Lane and melodic mode;
-  New Melodic Pattern for a plain part, the pattern menu choosing, duplicating and converting; Open Pattern Editor and
-  the Edit menu's entries.
+  a selection whose steps a script or a mode switch took, one that doesn't go along to another pattern and one that
+  Double Resolution moves, selecting, deleting and double-clicking steps, Tie and Split, mute, the parameter lane's
+  velocity and probability, the toolbar's menus and Double Length, Add Lane and melodic mode; New Melodic Pattern for a
+  plain part, the pattern menu choosing, duplicating and converting; Open Pattern Editor and the Edit menu's entries.
