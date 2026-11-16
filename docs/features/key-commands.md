@@ -27,8 +27,9 @@ it up in `app::AppUi`.
   digits, F1 to F24, the named keys (Enter, Escape, Tab, Backspace, Delete, Insert, Home, End, PageUp, PageDown, the
   arrows Up, Down, Left, Right, Space), the punctuation keys `. , - +`, `Alt` on its own (with Alt held, as the
   keyboard sends it, so that MCP's `ui_key` can press it to open the menu bar, [main-menu.md](main-menu.md)), and the
-  keypad's own keys Num0 to Num9, NumEnter, `Num*`, `Num/`, `Num+`, `Num-` and `Num.`, which the reference uses for the transport. Letters and
-  punctuation follow the keyboard layout (SDL's key codes); digits are digits on French layouts too.
+  keypad's own keys Num0 to Num9, NumEnter, `Num*`, `Num/`, `Num+`, `Num-` and `Num.`, which the reference uses for
+  the transport. Letters and punctuation follow the keyboard layout (SDL's key codes); digits are digits on French
+  layouts too.
 - **Per platform.** `Mod` is the platform's command key: Cmd on macOS, Ctrl on Windows and Linux, the reference's
   "Ctrl/Cmd". `Ctrl` is the Control key everywhere, for the reference's few bindings with a real Ctrl on macOS; `Alt`
   is Option on macOS, `Meta` (or `Cmd`) the Command, Windows or Super key. `ui::keyName` writes keys as the platform
@@ -37,9 +38,9 @@ it up in `app::AppUi`.
 - **Elements first.** RmlUi gets every key first, at the focused element, from where it bubbles up. An element that
   uses a key stops its propagation: a text field keeps the keys typed into it, and also the arrow keys without
   modifiers that it can't use at its first or last line or character, which RmlUi lets through to move the focus
-  (`nav`): where they move it nowhere, `KeyCommands::press` runs no command for them. A focused button is clicked by Space
-  and Enter (not a toolbar or transport button, [widgets.md](widgets.md)), a focused knob, fader or slider turns with
-  the arrow keys, menus and dialogs keep their keys, Tab moves the focus: between the zones of a docking window
+  (`nav`): where they move it nowhere, `KeyCommands::press` runs no command for them. A focused button is clicked by
+  Space and Enter (not a toolbar or transport button, [widgets.md](widgets.md)), a focused knob, fader or slider turns
+  with the arrow keys, menus and dialogs keep their keys, Tab moves the focus: between the zones of a docking window
   ([docking.md](docking.md)), and between controls in text fields and dialogs. A key command runs only for a key that
   no element
   used: where `Rml::Context::ProcessKeyDown` says so, `SdlWindowSystem` passes the key on with its input event, and
@@ -180,8 +181,13 @@ user settings ([settings.md](settings.md)), so MCP and Lua change them with `set
   command `keyCommands.exportAssignments`, p. 1560) writes an HTML table of every command and the keys that run it now
   (`KeyCommands::assignments`), which the user saves where they choose. Why an export or import failed shows in the
   dialog's message, or, without the dialog, in an error dialog titled after the command. Export and Import clear the
-  message when they start, so an error of an earlier try doesn't stay after a retry that worked; the message breaks a
-  long file path inside its box, off the buttons.
+  message when they start, so an error of an earlier try doesn't stay after a retry that worked. The result callback of
+  `keyCommands.export` and `keyCommands.import` clears it too when the command worked, which is what clears it when
+  these commands run through MCP or Lua, without the dialog's buttons. The message wraps at spaces and breaks only a
+  word that doesn't fit a line of its own, such as a long file path, inside its box, off the buttons; it is at most
+  about three lines tall and scrolls beyond that. The dialog is at most 85% of the window's height: when the window is
+  too short for all of it (the macros shown in a 1024x600 window), the rows above the message row scroll and the
+  buttons stay in view.
 - The app reads both settings when it starts and follows `settings.changed`.
 
 ## The dialog

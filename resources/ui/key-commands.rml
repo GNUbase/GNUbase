@@ -8,9 +8,22 @@
 <head>
 	<title>Key Commands</title>
 	<style>
+		/* The dialog stays inside the window: its rows between the title and the message row scroll when the window is
+		   too short for them, so the buttons stay in view. */
 		dialog
 		{
+			display: flex;
+			flex-direction: column;
 			width: 900dp;
+			box-sizing: border-box;
+			max-height: 85vh;
+		}
+
+		#keycommands-body
+		{
+			flex: 1 1 auto;
+			min-height: 0;
+			overflow-y: auto;
 		}
 
 		.row
@@ -131,9 +144,11 @@
 		#keycommands-message
 		{
 			flex: 1;
-			/* An error carries whole file paths, which have no space to wrap at: break them inside the box. */
-			word-break: break-all;
-			overflow: hidden;
+			/* An error carries whole file paths, which have no space to wrap at: a word that doesn't fit a line of its
+			   own breaks inside the box, the other words wrap at their spaces. A very long error scrolls. */
+			word-break: break-word;
+			max-height: 66dp;
+			overflow-y: auto;
 		}
 	</style>
 	<script>
@@ -893,63 +908,65 @@
 <body onload="KeyCommands.open(document)" onunload="KeyCommands.closed()">
 	<dialog id="key-commands">
 		<div class="dialog-titlebar">Key Commands</div>
-		<div class="row">
-			<button id="keycommands-expand" onclick="KeyCommands.expand(document, true)">Expand All</button>
-			<button id="keycommands-collapse" onclick="KeyCommands.expand(document, false)">Collapse All</button>
-			<input type="checkbox" id="keycommands-press-key" onchange="KeyCommands.pressKey(document)"/>
-			<span>Press Key</span>
-			<input type="text" id="keycommands-search" value="" onchange="KeyCommands.searchChanged(document)"/>
-			<div id="keycommands-key-search" class="field" onkeydown="KeyCommands.searchKey(document, event)">Press a key</div>
-			<button id="keycommands-reset-search" onclick="KeyCommands.resetSearch(document)">Reset Search</button>
-			<select id="keycommands-filter" onchange="KeyCommands.filterChanged(document)">
-				<option value="all" selected>All</option>
-				<option value="assigned">Assigned</option>
-				<option value="customized">Customized</option>
-				<option value="unassigned">Unassigned</option>
-			</select>
-		</div>
-		<div class="row">
-			<span>Presets</span>
-			<span id="keycommands-presets"/>
-			<input type="text" id="keycommands-preset-name" value=""/>
-			<button id="keycommands-save-preset" onclick="KeyCommands.savePreset(document)">Save</button>
-			<button id="keycommands-delete-preset" onclick="KeyCommands.deletePreset(document)">Delete</button>
-			<button id="keycommands-import" onclick="KeyCommands.importFile(document)">Import...</button>
-			<button id="keycommands-export" onclick="KeyCommands.exportFile(document)">Export...</button>
-		</div>
-		<div class="content">
-			<listview id="keycommands-list" onchange="KeyCommands.choose(document)"/>
-			<div class="side">
-				<span>Keys</span>
-				<listview id="keycommands-keys"/>
-				<div id="keycommands-assign" class="field" onkeydown="KeyCommands.assignKey(document, event)">Click here and press a key to assign it</div>
-				<button id="keycommands-remove" onclick="KeyCommands.removeKey(document)">Remove Key Command</button>
-				<button id="keycommands-reset" onclick="KeyCommands.resetKey(document)">Reset Key Command</button>
-				<div id="keycommands-description"/>
+		<div id="keycommands-body">
+			<div class="row">
+				<button id="keycommands-expand" onclick="KeyCommands.expand(document, true)">Expand All</button>
+				<button id="keycommands-collapse" onclick="KeyCommands.expand(document, false)">Collapse All</button>
+				<input type="checkbox" id="keycommands-press-key" onchange="KeyCommands.pressKey(document)"/>
+				<span>Press Key</span>
+				<input type="text" id="keycommands-search" value="" onchange="KeyCommands.searchChanged(document)"/>
+				<div id="keycommands-key-search" class="field" onkeydown="KeyCommands.searchKey(document, event)">Press a key</div>
+				<button id="keycommands-reset-search" onclick="KeyCommands.resetSearch(document)">Reset Search</button>
+				<select id="keycommands-filter" onchange="KeyCommands.filterChanged(document)">
+					<option value="all" selected>All</option>
+					<option value="assigned">Assigned</option>
+					<option value="customized">Customized</option>
+					<option value="unassigned">Unassigned</option>
+				</select>
 			</div>
-		</div>
-		<div class="row">
-			<input type="checkbox" id="keycommands-show-macros" onchange="KeyCommands.showMacros(document)"/>
-			<span>Macros</span>
-			<button id="keycommands-defaults" onclick="KeyCommands.defaults(document)">Defaults</button>
-			<button id="keycommands-clear-all" onclick="KeyCommands.clearAll(document)">Clear All</button>
-		</div>
-		<div id="keycommands-macros-section">
-			<listview id="keycommands-macros" onchange="KeyCommands.chooseMacro(document)"/>
-			<div class="buttons">
-				<input type="text" id="keycommands-macro-name" value=""/>
-				<button id="keycommands-rename-macro" onclick="KeyCommands.renameMacro(document)">Rename Macro</button>
-				<button id="keycommands-new-macro" onclick="KeyCommands.newMacro(document)">New Macro</button>
-				<button id="keycommands-duplicate-macro" onclick="KeyCommands.duplicateMacro(document)">Duplicate Macro</button>
-				<button id="keycommands-delete-macro" onclick="KeyCommands.deleteMacro(document)">Delete Macro</button>
+			<div class="row">
+				<span>Presets</span>
+				<span id="keycommands-presets"/>
+				<input type="text" id="keycommands-preset-name" value=""/>
+				<button id="keycommands-save-preset" onclick="KeyCommands.savePreset(document)">Save</button>
+				<button id="keycommands-delete-preset" onclick="KeyCommands.deletePreset(document)">Delete</button>
+				<button id="keycommands-import" onclick="KeyCommands.importFile(document)">Import...</button>
+				<button id="keycommands-export" onclick="KeyCommands.exportFile(document)">Export...</button>
 			</div>
-			<listview id="keycommands-macro-commands" onchange="KeyCommands.chooseStep(document)"/>
-			<div class="buttons">
-				<button id="keycommands-add-command" onclick="KeyCommands.addCommand(document)">Add Command</button>
-				<button id="keycommands-remove-command" onclick="KeyCommands.removeCommand(document)">Remove Command</button>
-				<button id="keycommands-command-up" onclick="KeyCommands.moveCommand(document, -1)">Move Up</button>
-				<button id="keycommands-command-down" onclick="KeyCommands.moveCommand(document, 1)">Move Down</button>
-				<button id="keycommands-run-macro" onclick="KeyCommands.runMacro(document)">Run Macro</button>
+			<div class="content">
+				<listview id="keycommands-list" onchange="KeyCommands.choose(document)"/>
+				<div class="side">
+					<span>Keys</span>
+					<listview id="keycommands-keys"/>
+					<div id="keycommands-assign" class="field" onkeydown="KeyCommands.assignKey(document, event)">Click here and press a key to assign it</div>
+					<button id="keycommands-remove" onclick="KeyCommands.removeKey(document)">Remove Key Command</button>
+					<button id="keycommands-reset" onclick="KeyCommands.resetKey(document)">Reset Key Command</button>
+					<div id="keycommands-description"/>
+				</div>
+			</div>
+			<div class="row">
+				<input type="checkbox" id="keycommands-show-macros" onchange="KeyCommands.showMacros(document)"/>
+				<span>Macros</span>
+				<button id="keycommands-defaults" onclick="KeyCommands.defaults(document)">Defaults</button>
+				<button id="keycommands-clear-all" onclick="KeyCommands.clearAll(document)">Clear All</button>
+			</div>
+			<div id="keycommands-macros-section">
+				<listview id="keycommands-macros" onchange="KeyCommands.chooseMacro(document)"/>
+				<div class="buttons">
+					<input type="text" id="keycommands-macro-name" value=""/>
+					<button id="keycommands-rename-macro" onclick="KeyCommands.renameMacro(document)">Rename Macro</button>
+					<button id="keycommands-new-macro" onclick="KeyCommands.newMacro(document)">New Macro</button>
+					<button id="keycommands-duplicate-macro" onclick="KeyCommands.duplicateMacro(document)">Duplicate Macro</button>
+					<button id="keycommands-delete-macro" onclick="KeyCommands.deleteMacro(document)">Delete Macro</button>
+				</div>
+				<listview id="keycommands-macro-commands" onchange="KeyCommands.chooseStep(document)"/>
+				<div class="buttons">
+					<button id="keycommands-add-command" onclick="KeyCommands.addCommand(document)">Add Command</button>
+					<button id="keycommands-remove-command" onclick="KeyCommands.removeCommand(document)">Remove Command</button>
+					<button id="keycommands-command-up" onclick="KeyCommands.moveCommand(document, -1)">Move Up</button>
+					<button id="keycommands-command-down" onclick="KeyCommands.moveCommand(document, 1)">Move Down</button>
+					<button id="keycommands-run-macro" onclick="KeyCommands.runMacro(document)">Run Macro</button>
+				</div>
 			</div>
 		</div>
 		<div class="row">

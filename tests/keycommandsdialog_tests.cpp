@@ -802,31 +802,89 @@ TEST_CASE("a key commands file command that worked takes another message away", 
 	REQUIRE(closed(app));
 }
 
+namespace
+{
+	// A file that is in the way of an export: a name without a space, which can't wrap at a word, in a path that is no
+	// folder, so that the export fails with an error that carries the whole path.
+	std::filesystem::path blockedExport(const test::TempDir& dir)
+	{
+		const std::filesystem::path blocker = dir.path() / std::string(120, 'k');
+		std::ofstream(blocker) << "not a folder";
+		return blocker / "Studio.json";
+	}
+
+	// Clicks Export and answers its file dialog with the file; the message shows what the export said.
+	void exportInto(test::UiApp& app, const std::filesystem::path& file)
+	{
+		click(app, "#keycommands-export");
+		REQUIRE(app.waitUntil([&app] { return !app.shell().fileDialogs().empty(); }));
+		app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, {file});
+		REQUIRE(app.waitUntil([&app] { return !text(app, "#keycommands-message").empty(); }));
+	}
+
+	Json boxOf(test::UiApp& app, const std::string& selector)
+	{
+		return element(app, selector).at("box");
+	}
+
+	double bottom(const Json& box)
+	{
+		return box.at("y").get<double>() + box.at("height").get<double>();
+	}
+
+	double right(const Json& box)
+	{
+		return box.at("x").get<double>() + box.at("width").get<double>();
+	}
+}
+
 TEST_CASE("a long file path in the key commands message stays inside the dialog and off the buttons", "[ui]")
 {
 	test::UiApp app({1000, 760});
 	app.appUi().showProject();
 	app.shell().showOsFileDialogs(false);
 	const test::TempDir dir;
-	// A name without a space, which can't wrap at a word, for the file that is in the way.
-	const std::filesystem::path blocker = dir.path() / std::string(120, 'k');
-	std::ofstream(blocker) << "not a folder";
 	openDialog(app);
-	click(app, "#keycommands-export");
-	REQUIRE(app.waitUntil([&app] { return !app.shell().fileDialogs().empty(); }));
-	app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, {blocker / "Studio.json"});
+	// The row's height with a message of one line: Save without a preset name.
+	click(app, "#keycommands-save-preset");
 	REQUIRE(app.waitUntil([&app] { return !text(app, "#keycommands-message").empty(); }));
-	const auto box = [&app](const std::string& selector) { return element(app, selector).at("box"); };
-	const auto right = [](const Json& b) { return b.at("x").get<double>() + b.at("width").get<double>(); };
-	const Json message = box("#keycommands-message");
-	const Json dialog = box("#key-commands");
-	const Json apply = box("#keycommands-apply");
-	// The path is broken into lines inside the message (an unbroken one ran on as a two-line row, past the buttons).
-	CHECK(message.at("height").get<double>() > 45.0); // more than two lines of the dialog's text
+	const double oneLine = boxOf(app, "#keycommands-message").at("height").get<double>();
+	REQUIRE(oneLine > 0.0);
+	exportInto(app, blockedExport(dir));
+	const Json message = boxOf(app, "#keycommands-message");
+	const Json dialog = boxOf(app, "#key-commands");
+	const Json apply = boxOf(app, "#keycommands-apply");
+	// The path is broken into lines inside the message (an unbroken one ran on as a one-line row, past the buttons).
+	CHECK(message.at("height").get<double>() > 2.0 * oneLine);
 	CHECK(message.at("x").get<double>() >= dialog.at("x").get<double>());
 	CHECK(right(message) <= apply.at("x").get<double>());
 	CHECK(right(apply) <= right(dialog));
-	CHECK(right(box("#keycommands-ok")) <= right(dialog));
+	CHECK(right(boxOf(app, "#keycommands-ok")) <= right(dialog));
+	click(app, "#keycommands-cancel");
+	REQUIRE(closed(app));
+}
+
+TEST_CASE("the key commands dialog's buttons stay inside a 1024x600 window with the macros and a long error", "[ui]")
+{
+	test::UiApp app({1024, 600});
+	app.appUi().showProject();
+	app.shell().showOsFileDialogs(false);
+	const test::TempDir dir;
+	openDialog(app);
+	click(app, "#keycommands-show-macros");
+	exportInto(app, blockedExport(dir));
+	CHECK(boxOf(app, "#key-commands").at("y").get<double>() >= 0.0);
+	CHECK(bottom(boxOf(app, "#key-commands")) <= 600.0);
+	// A long error takes no more than its cap, and scrolls.
+	CHECK(boxOf(app, "#keycommands-message").at("height").get<double>() <= 66.0);
+	for (const char* selector : {"#keycommands-apply", "#keycommands-cancel", "#keycommands-ok"})
+	{
+		const Json box = boxOf(app, selector);
+		INFO(selector);
+		CHECK(box.at("y").get<double>() >= 0.0);
+		CHECK(bottom(box) <= 600.0);
+		CHECK(right(box) <= 1024.0);
+	}
 	click(app, "#keycommands-cancel");
 	REQUIRE(closed(app));
 }

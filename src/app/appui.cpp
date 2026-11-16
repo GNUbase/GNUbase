@@ -1316,7 +1316,7 @@ namespace gnubase::app
 			? document->GetElementById("keycommands-message")
 			: nullptr;
 		if (message != nullptr)
-			message->SetInnerRML(error.empty() ? std::string() : Rml::StringUtilities::EncodeRml(error));
+			message->SetInnerRML(Rml::StringUtilities::EncodeRml(error));
 		else if (!error.empty())
 			m_files.showNotice(window, title, error);
 	}
@@ -1349,16 +1349,16 @@ namespace gnubase::app
 							if (result.files.empty())
 								return;
 							const std::filesystem::path& file = result.files.front();
-							const auto failed = [this, id, title](const engine::Result& done)
+							const auto finished = [this, id, title](const engine::Result& done)
 							{
 								// A command that worked takes the message of an earlier failure away.
 								showKeyCommandsError(id, title, done.ok() ? std::string() : done.error);
 							};
 							if (exporting)
-								m_binding.send("keyCommands.export", {{"path", file.u8string()}}, failed);
+								m_binding.send("keyCommands.export", {{"path", file.u8string()}}, finished);
 							else
 								m_binding.send("keyCommands.import",
-									{{"path", file.u8string()}, {"name", file.stem().u8string()}}, failed);
+									{{"path", file.u8string()}, {"name", file.stem().u8string()}}, finished);
 						});
 				}});
 		// File > Export > Key Command Assignments (reference manual p. 1560): an HTML list of every key that runs a
