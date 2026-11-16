@@ -9,9 +9,6 @@
 #include "platform/midi/dummyport.h"
 #include "ui/automation.h"
 
-#include <RmlUi/Core/Context.h>
-#include <RmlUi/Core/Element.h>
-#include <RmlUi/Core/ElementDocument.h>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
@@ -137,7 +134,7 @@ namespace
 	}
 
 	// Opens a drop-down list, picks the option that many above the selected one with the arrow key (below it if
-	// negative), and closes it. Its options aren't in the DOM that the UI tools see.
+	// negative), and closes it.
 	void choose(test::UiApp& app, const std::string& select, int up)
 	{
 		click(app, select);

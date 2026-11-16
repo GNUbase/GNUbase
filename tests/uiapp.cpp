@@ -260,9 +260,9 @@ namespace gnubase::test
 		return std::stod(found.at(0).at("attributes").at("value").get<std::string>());
 	}
 
-	engine::Json selectOptions(UiApp& app, const std::string& selector)
+	engine::Json selectOptions(UiApp& app, const std::string& selector, std::optional<ui::WindowId> window)
 	{
-		return app.ui().dom(std::nullopt, selector, 0).at("elements").at(0).at("options");
+		return app.ui().dom(window, selector, 0).at("elements").at(0).at("options");
 	}
 
 	std::string selectedOption(UiApp& app, const std::string& selector)

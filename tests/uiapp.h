@@ -135,9 +135,11 @@ namespace gnubase::test
 	// The value attribute of a value control (a fader, a knob, a value field) as a number.
 	double controlValue(UiApp& app, std::optional<ui::WindowId> window, const std::string& selector);
 
-	// The options of the first drop-down list that the selector matches in the main window, as the UI tools' DOM has
-	// them: each its value, text and whether it's selected. A JSON error while none matches, which waitUntil waits out.
-	engine::Json selectOptions(UiApp& app, const std::string& selector);
+	// The options of the first drop-down list that the selector matches in the window (the main window by default), as
+	// the UI tools' DOM has them: each its value, text and whether it's selected. A JSON error while none matches,
+	// which waitUntil waits out.
+	engine::Json selectOptions(
+		UiApp& app, const std::string& selector, std::optional<ui::WindowId> window = std::nullopt);
 
 	// The text of that drop-down list's selected option, empty if none is.
 	std::string selectedOption(UiApp& app, const std::string& selector);

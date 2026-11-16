@@ -9,9 +9,6 @@
 #include "ui/eventdisplay.h"
 #include "ui/tracklist.h"
 
-#include <RmlUi/Core/Context.h>
-#include <RmlUi/Core/Element.h>
-#include <RmlUi/Core/ElementDocument.h>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
@@ -47,8 +44,7 @@ namespace
 		app.shell().step(std::chrono::milliseconds(0));
 	}
 
-	// Opens a drop-down list, moves the selection down that many options with the arrow key, and closes it. Its
-	// options aren't in the DOM that the UI tools see.
+	// Opens a drop-down list, moves the selection down that many options with the arrow key, and closes it.
 	void choose(test::UiApp& app, const std::string& select, int down)
 	{
 		click(app, select);
