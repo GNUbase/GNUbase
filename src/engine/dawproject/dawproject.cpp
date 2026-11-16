@@ -2294,6 +2294,12 @@ namespace gnubase::engine
 					entry.second.warp.tempo = definitionTempo(project, entry.second);
 			return project;
 		}
+		catch (const std::overflow_error&)
+		{
+			// An unsupported id range must fail the load, rather than silently lose native data through the XML
+			// fallback.
+			throw;
+		}
 		catch (const std::exception&)
 		{
 			return fromXml; // a damaged extension entry: project.xml still describes the project

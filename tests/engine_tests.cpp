@@ -4,6 +4,7 @@
 #include "engine/schematext.h"
 #include "engine/settings/store.h"
 #include "engine/settings/usersettings.h"
+#include "testutils/schemaguards.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
@@ -26,6 +27,8 @@
 
 using namespace gnubase::engine;
 using Catch::Matchers::ContainsSubstring;
+using gnubase::test::countPatterns;
+using gnubase::test::uncheckedKeywords;
 
 namespace
 {
@@ -456,34 +459,6 @@ namespace
 		return schemas;
 	}
 
-	// Counts the string schemas with a pattern in a schema and everything below it, and the ones without a maxLength
-	// of at most g_patternMaxLength.
-	void countPatterns(const Json& schema, int& patterns, std::vector<std::string>& unbounded, const std::string& where)
-	{
-		if (schema.is_object())
-		{
-			if (const auto pattern = schema.find("pattern"); pattern != schema.end() && pattern->is_string())
-			{
-				++patterns;
-				// Within the ceiling, so that the references show the limit validate checks.
-				if (const auto maxLength = schema.find("maxLength"); maxLength == schema.end() ||
-					!maxLength->is_number_integer() || *maxLength < 0 || maxLength->get<size_t>() > g_patternMaxLength)
-					unbounded.push_back(where);
-			}
-			for (const auto& [key, item] : schema.items())
-			{
-				std::string path = where;
-				path += '.';
-				path += key;
-				countPatterns(item, patterns, unbounded, path);
-			}
-		}
-		else if (schema.is_array())
-		{
-			for (const Json& item : schema)
-				countPatterns(item, patterns, unbounded, where);
-		}
-	}
 }
 
 TEST_CASE("every pattern in a command's or setting's schema comes with a maxLength within the ceiling", "[unit]")
@@ -523,11 +498,65 @@ TEST_CASE("numbers are checked against the schema's minimum and maximum", "[unit
 TEST_CASE("a NaN is outside every minimum and maximum", "[unit]")
 {
 	const double nan = std::numeric_limits<double>::quiet_NaN();
+	CHECK(validate(nan, Json::parse(R"({"exclusiveMinimum": 0})")) == "parameters must be more than 0");
+	CHECK(validate(nan, Json::parse(R"({"exclusiveMaximum": 1})")) == "parameters must be less than 1");
 	CHECK(validate(nan, Json::parse(R"({"type": "number", "minimum": 0.5, "maximum": 4})"), "scale") ==
 		"scale must be at least 0.5");
 	CHECK(validate(nan, Json::parse(R"({"type": "number", "minimum": 0.5})"), "scale") == "scale must be at least 0.5");
 	CHECK(validate(nan, Json::parse(R"({"type": "number", "maximum": 4})"), "scale") == "scale must be at most 4");
 	CHECK(validate(nan, Json::parse(R"({"type": "number"})"), "scale").empty()); // no bounds, nothing to break
+	for (const double number : {nan, std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity()})
+		for (const char* bound : {"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"})
+			CHECK(!validate(number, {{"type", "number"}, {bound, 0}}).empty());
+}
+
+TEST_CASE("infinities report the bound on their side or require a finite number", "[unit]")
+{
+	const double infinity = std::numeric_limits<double>::infinity();
+	for (const auto& [lower, message] :
+		{std::pair{"minimum", "scale must be at least 0"}, std::pair{"exclusiveMinimum", "scale must be more than 0"}})
+	{
+		const Json schema = {{lower, 0}};
+		CHECK(validate(-infinity, schema, "scale") == message);
+		CHECK(validate(infinity, schema, "scale") == "scale must be a finite number");
+		for (const auto& [upper, upperMessage] : {std::pair{"maximum", "scale must be at most 1"},
+				 std::pair{"exclusiveMaximum", "scale must be less than 1"}})
+		{
+			Json range = schema;
+			range[upper] = 1;
+			CHECK(validate(infinity, range, "scale") == upperMessage);
+			CHECK(validate(-infinity, range, "scale") == message);
+		}
+	}
+	for (const auto& [upper, message] :
+		{std::pair{"maximum", "scale must be at most 1"}, std::pair{"exclusiveMaximum", "scale must be less than 1"}})
+	{
+		const Json schema = {{upper, 1}};
+		CHECK(validate(infinity, schema, "scale") == message);
+		CHECK(validate(-infinity, schema, "scale") == "scale must be a finite number");
+	}
+	CHECK(validate(infinity, {{"type", "number"}}, "scale").empty());
+	CHECK(validate(-infinity, {{"type", "number"}}, "scale").empty());
+}
+
+TEST_CASE("schema references describe every enforced bound", "[unit]")
+{
+	CHECK(schemaType(Json::parse(R"({"type":"string","minLength":1,"maxLength":3})")) ==
+		"string of at most 3 characters, at least 1 character");
+	CHECK(schemaType(Json::parse(R"({"type":"array","items":{"type":"integer"},"minItems":1,"maxItems":4})")) ==
+		"array of integer, at least 1 item, at most 4 items");
+	CHECK(schemaType(Json::parse(R"({"type":"number","minimum":0,"maximum":1})")) == "number, at least 0, at most 1");
+	CHECK(schemaType(Json::parse(R"({"type":"number","exclusiveMinimum":0,"exclusiveMaximum":1})")) ==
+		"number, more than 0, less than 1");
+	CHECK(schemaType(Json::parse(R"({"type":"string","enum":["a","b"],"minLength":1})")) ==
+		"one of \"a\" | \"b\", at least 1 character");
+}
+
+TEST_CASE("invalid schema patterns return a validation error", "[unit]")
+{
+	CHECK_THAT(validate("abc", Json::parse(R"({"type":"string","pattern":"("})")),
+		ContainsSubstring("invalid schema pattern"));
+	CHECK(validate("abc", {{"type", "string"}, {"maxLength", std::numeric_limits<size_t>::max()}}).empty());
 }
 
 TEST_CASE("the schema's minLength, minItems, maxItems and exclusive bounds are checked", "[unit]")
@@ -562,57 +591,6 @@ TEST_CASE("the schema's minLength, minItems, maxItems and exclusive bounds are c
 	CHECK(validate("big", Json::parse(R"({"exclusiveMinimum": 1})")).empty()); // only numbers
 }
 
-namespace
-{
-	// The keywords of the schemas in a schema and below it that validate neither checks nor knowingly leaves alone,
-	// and the ones whose value validate can't use: lengths and counts are integers of at least 0, bounds numbers
-	// (exclusiveMinimum as a number, not draft 4's boolean).
-	void uncheckedKeywords(const Json& schema, std::vector<std::string>& found, const std::string& where)
-	{
-		static const std::vector<std::string> counts = {"minLength", "maxLength", "minItems", "maxItems"};
-		static const std::vector<std::string> bounds = {"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"};
-		// What validate checks, what only describes, and minProperties, which needsOne leaves to the command.
-		static const std::vector<std::string> known = {"type", "properties", "required", "additionalProperties",
-			"items", "enum", "pattern", "minLength", "maxLength", "minItems", "maxItems", "minimum", "maximum",
-			"exclusiveMinimum", "exclusiveMaximum", "description", "minProperties"};
-		if (!schema.is_object())
-			return;
-		for (const auto& [key, item] : schema.items())
-		{
-			std::string path = where;
-			path += '.';
-			path += key;
-			const bool isCount = std::find(counts.begin(), counts.end(), key) != counts.end();
-			const bool isBound = std::find(bounds.begin(), bounds.end(), key) != bounds.end();
-			if (std::find(known.begin(), known.end(), key) == known.end())
-			{
-				found.push_back(path);
-			}
-			else if ((isCount && (!item.is_number_integer() || item < 0)) || (isBound && !item.is_number()))
-			{
-				std::string value = path;
-				value += ' ';
-				value += item.dump();
-				found.push_back(value);
-			}
-			if (key == "properties" && item.is_object())
-			{
-				for (const auto& [property, propertySchema] : item.items())
-				{
-					std::string member = path;
-					member += '.';
-					member += property;
-					uncheckedKeywords(propertySchema, found, member);
-				}
-			}
-			else if (key == "items" || key == "additionalProperties")
-			{
-				uncheckedKeywords(item, found, path);
-			}
-		}
-	}
-}
-
 TEST_CASE("every keyword in a command's or setting's schema is one validate checks", "[unit]")
 {
 	// MCP clients and Lua scripts rely on what a schema declares, so a keyword validate doesn't know would be a
@@ -622,4 +600,24 @@ TEST_CASE("every keyword in a command's or setting's schema is one validate chec
 	for (const auto& [where, schema] : checkedSchemas(engine))
 		uncheckedKeywords(schema, unchecked, where);
 	CHECK(unchecked == std::vector<std::string>());
+}
+
+TEST_CASE("schema guards detect unbounded patterns and unsupported keywords", "[unit]")
+{
+	for (const Json& schema : {Json{{"pattern", "a"}}, Json{{"pattern", "a"}, {"maxLength", 65}}})
+	{
+		int patterns = 0;
+		std::vector<std::string> unbounded;
+		countPatterns(schema, patterns, unbounded, "test");
+		CHECK(patterns == 1);
+		CHECK(unbounded == std::vector<std::string>{"test"});
+	}
+	for (const Json& schema : {Json{{"format", "uri"}}, Json{{"anyOf", Json::array()}}, Json{{"minItems", -1}},
+			 Json{{"minItems", 1.5}}, Json{{"exclusiveMinimum", true}}})
+	{
+		std::vector<std::string> unchecked;
+		uncheckedKeywords(schema, unchecked, "test");
+		CAPTURE(schema);
+		CHECK(unchecked.size() == 1);
+	}
 }

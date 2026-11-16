@@ -108,6 +108,19 @@ TEST_CASE("values travel between Lua tables and JSON", "[unit]")
 		lua.run("gnubase.fake.echo{f = print}", "function.lua").value_or(""), ContainsSubstring("can't be sent"));
 }
 
+TEST_CASE("Lua cannot scrub with zero, negative or non-finite seconds", "[unit]")
+{
+	Engine engine;
+	std::ostringstream output;
+	Runtime lua(engine, Trust::Trusted, output);
+	run(lua, R"(
+		for _, seconds in ipairs({0, -1, 0/0, math.huge, -math.huge}) do
+			local ok, message = pcall(gnubase.audition.scrub, {media = 1, position = 0, seconds = seconds})
+			assert(not ok and message:find("parameters.seconds", 1, true), message)
+		end
+	)");
+}
+
 TEST_CASE("an empty Lua table is an empty list where a command takes a list", "[unit]")
 {
 	Engine engine;
