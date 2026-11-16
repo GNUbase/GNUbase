@@ -8,6 +8,8 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
+#include <utility>
 #include <vector>
 
 namespace Rml
@@ -76,6 +78,8 @@ namespace gnubase::ui
 			Question asked;              // the latest question, in flight or answered
 			bool pending = false;        // asked is in flight
 			bool stale = false;          // the file's peaks changed since asked
+			// Where the element was put, in dp: set again only when it moves, as a set property builds it again.
+			std::optional<std::pair<double, double>> placed; // top and height
 		};
 
 		void update(Wave& wave);

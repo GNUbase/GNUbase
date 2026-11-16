@@ -44,13 +44,13 @@ namespace gnubase::ui
 		constexpr double g_dragZoomDistance = 40.0; // dp dragged in the ruler to zoom by a factor of 2
 		constexpr double g_overviewEdge = 4.0;      // dp either side of the overview rectangle's edges
 
-		// What the display listens to in its root element and in its document.
 		// The event display's preferences (reference manual pp. 1603-1604, 1607; #1313).
 		constexpr std::array<const char*, 10> g_displayKeys = {"ui.showEventNames", "ui.hideTruncatedEventNames",
 			"ui.highlightSelectedEventBorders", "ui.eventOpacity", "ui.smallestTrackHeightForData",
 			"ui.smallestTrackHeightForName", "ui.waveformBrightness", "ui.partDataMode", "ui.showControllers",
 			"ui.noteBrightness"};
 
+		// What the display listens to in its root element and in its document.
 		constexpr std::array<Rml::EventId, 6> g_rootEvents = {Rml::EventId::Mousedown, Rml::EventId::Mousemove,
 			Rml::EventId::Mouseover, Rml::EventId::Mouseout, Rml::EventId::Mousescroll, Rml::EventId::Dblclick};
 		constexpr std::array<Rml::EventId, 7> g_documentEvents = {Rml::EventId::Mousemove, Rml::EventId::Mouseup,
@@ -267,14 +267,18 @@ namespace gnubase::ui
 					showPresets();
 				}
 			});
+		// Shown once all have answered, not once each.
+		m_displayAsked = g_displayKeys.size();
 		for (const char* key : g_displayKeys)
 			m_binding.send("settings.get", {{"key", key}},
 				[this, alive, name = std::string(key)](const engine::Result& result)
 				{
-					if (alive.expired() || !result.ok() || m_displayKnown.count(name) != 0) // newer changes win
+					if (alive.expired())
 						return;
-					takeDisplayPreference(name, result.value.at("value"));
-					showDisplayPreferences();
+					if (result.ok() && m_displayKnown.count(name) == 0) // newer changes win
+						takeDisplayPreference(name, result.value.at("value"));
+					if (m_displayAsked > 0 && --m_displayAsked == 0)
+						showDisplayPreferences();
 				});
 		m_binding.send("settings.get", {{"key", "ui.folderData"}},
 			[this, alive](const engine::Result& result)
@@ -1234,7 +1238,9 @@ namespace gnubase::ui
 			return;
 		// Highlight Borders of Selected Events: a state for the style sheets to show.
 		m_root->SetClass("highlight-selected-borders", m_display.highlightBorders);
-		m_lanes->SetAttribute("body-opacity", m_display.eventOpacity / 100.0);
+		// Event Opacity: the events' bodies, also selected and muted ones and folders' data blocks.
+		for (EventLanes* lanes : {m_lanes, m_mutedLanes, m_selectedLanes, m_folderLanes})
+			lanes->SetAttribute("body-opacity", m_display.eventOpacity / 100.0);
 		if (m_display.hideTruncated)
 			m_names->SetAttribute("hide-truncated", true);
 		else

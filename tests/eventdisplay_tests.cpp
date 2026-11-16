@@ -340,6 +340,19 @@ TEST_CASE("audio events show their waveforms from the engine's waveform overview
 	fixture.display.scrollTo(1.0);
 	REQUIRE(fixture.waitUntil([&]
 		{ return waveforms(fixture.document).size() == 1 && same(waveforms(fixture.document)[0]->channels(), fine); }));
+	// Scrolling within what it built draws it again without building it.
+	ui::Waveform& back = *waveforms(fixture.document)[0];
+	for (int i = 0; i < 3; ++i)
+		fixture.step();
+	const uint64_t built = back.builds();
+	fixture.display.scrollTo(1.0);
+	fixture.step();
+	CHECK(back.builds() == built);
+	fixture.display.scrollTo(1.05);
+	fixture.step();
+	CHECK(back.builds() == built);
+	fixture.display.scrollTo(1.0);
+	fixture.step();
 
 	// Waveform Brightness draws them brighter; lanes lower than Smallest Track Height to Show Data show none
 	// (reference manual p. 1604, #1313).
@@ -1051,6 +1064,11 @@ TEST_CASE("events show their names and MIDI parts their notes and controllers, a
 				{"ui.highlightSelectedEventBorders", true}}}});
 	Rml::Element& lanes = fixture.element("event-lanes.events");
 	REQUIRE(fixture.waitUntil([&] { return lanes.GetAttribute<double>("body-opacity", 1.0) == Approx(0.4); }));
+	for (const char* overlay : {"event-lanes.selected-events", "event-lanes.muted-events", "event-lanes.folder-data"})
+	{
+		INFO(overlay);
+		CHECK(fixture.element(overlay).GetAttribute<double>("body-opacity", 1.0) == Approx(0.4));
+	}
 	CHECK(contents->GetAttribute<double>("brightness", 0.0) == Approx(0.8));
 	CHECK(names->HasAttribute("hide-truncated"));
 	CHECK(fixture.element("#display").IsClassSet("highlight-selected-borders"));

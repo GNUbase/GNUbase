@@ -859,6 +859,7 @@ namespace gnubase::ui
 		};
 		DisplayPreferences m_display;
 		std::set<std::string> m_displayKnown; // those settings.changed gave, which an earlier settings.get doesn't undo
+		size_t m_displayAsked = 0;            // the settings.get answers still to come when the display opens
 		Rml::Element* m_crossVertical = nullptr;
 		Rml::Element* m_crossHorizontal = nullptr;
 		Rml::Element* m_cursorLine = nullptr;

@@ -767,6 +767,9 @@ TEST_CASE("part contents show notes as lines over the part's pitch range, contro
 	notes = extent(fixture.draw(), Colour(255, 255, 255, 255));
 	CHECK(notes[1] == 125.0F);
 	CHECK(notes[3] == 135.0F);
+	// A controller at the part's end ends there too.
+	contents.setLanes({{60.0F, {{1000.0, 2000.0, {}, {{2995.0, 1.0}}}}}});
+	CHECK(extent(fixture.draw(), blue()) == std::vector<float>{699.0F, 145.0F, 700.0F, 160.0F});
 	// Notes outside the part's box don't show past it.
 	contents.setLanes({{60.0F, {{1000.0, 500.0, {{1400.0, 1000.0, 60}}, {}}}}});
 	notes = extent(fixture.draw(), Colour(255, 255, 255, 255));

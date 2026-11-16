@@ -82,7 +82,9 @@ follows `settings.changed`:
 
 The display keeps the names and contents of each lane in seconds, read with the events from `project.get` (notes and
 controllers at their ticks from the part's start, through the tempo map), and gives the canvases those of the lanes
-high enough for them. Automation lanes show neither. Open: Append Clip Name to Event Name (audio events have no names
+high enough for them. Automation lanes show neither. An audio event partly behind another one shows its name at the
+start of each piece of it that shows, as the lane shows those pieces. Event Opacity applies to the bodies of every
+event the display draws: selected and muted ones and folders' data blocks too. Open: Append Clip Name to Event Name (audio events have no names
 of their own yet), the part data modes Scores and Drums, and Controller Brightness.
 
 ## Ruler and time formats

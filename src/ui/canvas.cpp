@@ -602,7 +602,9 @@ namespace gnubase::ui
 					[](const Controller& item, double position) { return item.position < position; });
 				for (auto item = controller; item != part->controllers.end() && item->position < right; ++item)
 				{
-					const float x = frame.x(item->position);
+					// Inside the part: a bar at its end ends there too.
+					const float x =
+						std::max(frame.x(left), std::min(frame.x(item->position), frame.x(right) - barWidth));
 					const float high = std::max(
 						1.0F, std::round(static_cast<float>(std::clamp(item->value, 0.0, 1.0)) * height / 4.0F));
 					quad(mesh, x, y1 - high, x + barWidth, y1, bars);
