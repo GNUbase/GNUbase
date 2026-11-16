@@ -712,6 +712,9 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         ("event-lanes", {"color": mix(c["surfaceRaised"], c["accent"], .35), "stroke-color": c["accent"],
                          "stroke-width": f"{widths['hairline']}dp"}),
         ("waveform", {"color": c["accent"]}),
+        ("event-names", {"color": c["text"], "font-size": f"{sizes['small']}dp"}),
+        ("part-contents", {"color": c["text"], "stroke-color": c["textMuted"],
+                           "stroke-width": f"{widths['hairline']}dp"}),
         ("curve", {"stroke-color": c["accent2"], "stroke-width": f"{widths['focus']}dp"}),
         ("ruler", {"color": c["textMuted"], "stroke-color": c["border"], "stroke-width": f"{widths['hairline']}dp",
                    "font-size": f"{sizes['small']}dp"}),
@@ -724,6 +727,8 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
          {"event-inset": event_look["inset"]}),
         (".event-display event-lanes.events", event_look["lanes"]),
         (".event-display .waveforms waveform", {"own-color-tint": event_look["tint"], "event-inset": event_look["inset"]}),
+        # Names of events and MIDI parts' contents (#1313), off the lanes' edges as the events are
+        (".event-display event-names, .event-display part-contents", {"event-inset": event_look["inset"]}),
         (".event-display .overview", {"background-color": c["surface"]}),
         (".event-display .overview event-lanes", {"color": mix(c["surface"], c["accent"], .45),
                                                   "stroke-color": "transparent"}),
@@ -733,6 +738,9 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".event-display event-lanes.muted-events", {"color": mix(c["surface"], c["textMuted"], .25),
                                                      "stroke-color": mix(c["background"], c["textMuted"], .5)}),
         (".event-display event-lanes.selected-events", event_look["selected"]),
+        # Highlight Borders of Selected Events (reference manual p. 1604, #1313): a wider outline in a signal color
+        (".event-display.highlight-selected-borders event-lanes.selected-events",
+         {"stroke-color": c["danger"], "stroke-width": f"{widths['focus']}dp"}),
         # Fades (docs/features/fades.md): fade lines over the waveforms, and the selected events' fade handles
         (".event-display fade-lines", {"color": c["text"], "stroke-color": c["text"],
                                        "stroke-width": f"{widths['hairline']}dp"}),

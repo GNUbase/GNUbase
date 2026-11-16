@@ -437,6 +437,17 @@
 	{
 		color: #10dff2;
 	}
+	event-names
+	{
+		color: #f1f4ff;
+		font-size: 11dp;
+	}
+	part-contents
+	{
+		color: #f1f4ff;
+		stroke-color: #aeb7d0;
+		stroke-width: 1dp;
+	}
 	curve
 	{
 		stroke-color: #e12ad8;
@@ -469,6 +480,10 @@
 		own-color-tint: #ffffff59;
 		event-inset: 2dp;
 	}
+	.event-display event-names, .event-display part-contents
+	{
+		event-inset: 2dp;
+	}
 	.event-display .overview
 	{
 		background-color: #101426;
@@ -493,6 +508,11 @@
 	{
 		color: #f1f4ff29;
 		stroke-color: #f1f4ff;
+	}
+	.event-display.highlight-selected-borders event-lanes.selected-events
+	{
+		stroke-color: #ff5270;
+		stroke-width: 2dp;
 	}
 	.event-display fade-lines
 	{

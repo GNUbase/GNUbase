@@ -49,6 +49,8 @@ namespace gnubase::ui
 			double width = 0.0;           // of the lanes, in dp
 			double height = 0.0;
 			float dpRatio = 1.0F;
+			double minimumHeight = 0.0; // dp: lower lanes show no waveforms (Smallest Track Height to Show Data, #1313)
+			double brightness = 0.5;    // the waveforms' (Waveform Brightness, #1313)
 		};
 
 		EventWaveforms(EngineBinding& binding, Rml::Element& container);

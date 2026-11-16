@@ -106,8 +106,8 @@ namespace gnubase::ui
 		const bool laneShown = wave.event.lane + 1 < view.laneTops.size();
 		const double laneTop = laneShown ? view.laneTops[wave.event.lane] : 0.0;
 		const double laneHeight = laneShown ? view.laneTops[wave.event.lane + 1] - laneTop : 0.0;
-		if (!laneShown || !(visible > 0.0) || !(to > from) || laneTop + laneHeight <= view.top - view.height ||
-			laneTop >= view.top + (2.0 * view.height))
+		if (!laneShown || laneHeight < view.minimumHeight || !(visible > 0.0) || !(to > from) ||
+			laneTop + laneHeight <= view.top - view.height || laneTop >= view.top + (2.0 * view.height))
 		{
 			if (wave.element != nullptr)
 				m_container->RemoveChild(std::exchange(wave.element, nullptr));
@@ -125,6 +125,7 @@ namespace gnubase::ui
 		wave.element->SetAttribute("media", static_cast<int64_t>(wave.event.media)); // for the UI tools
 		wave.element->SetAttribute("start", view.start);
 		wave.element->SetAttribute("scale", view.scale);
+		wave.element->SetAttribute("brightness", view.brightness);
 		wave.element->SetProperty(Rml::PropertyId::Top, dp(laneTop - view.top));
 		wave.element->SetProperty(Rml::PropertyId::Height, dp(laneHeight));
 		if (!wave.pending && (wave.stale || !covers(wave, wave.asked)))

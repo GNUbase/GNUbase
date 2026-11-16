@@ -506,6 +506,11 @@ namespace gnubase::ui
 		void showProject();
 		void loadProject(const engine::Json& project);
 		void setFolderMode(const std::string& mode); // ui.folderData
+		// The event display's preferences (#1313): takes one, and shows them all.
+		void takeDisplayPreference(const std::string& key, const engine::Json& value);
+		void showDisplayPreferences();
+		// The names and MIDI part contents for the lanes as high as they are now, as the preferences say.
+		void showNamesAndContents(const std::vector<EventLanes::Lane>& lanes);
 		void setTreatMutedAudioLikeDeleted(bool on); // editing.treatMutedAudioLikeDeleted
 		void setLanes();
 		void followTransport(const engine::Json& status);
@@ -830,6 +835,30 @@ namespace gnubase::ui
 		Rml::Element* m_area = nullptr;
 		EventLanes* m_lanes = nullptr;
 		std::unique_ptr<EventWaveforms> m_waveforms; // over the lanes
+		PartContents* m_contents = nullptr;          // MIDI parts' notes and controllers, over the lanes (#1313)
+		EventNames* m_names = nullptr;               // the names of events and parts, over what they hold (#1313)
+		// By lane, as m_tracks: the names of the events and parts each shows, and its MIDI parts' contents, in seconds.
+		std::vector<EventNames::Lane> m_trackNames;
+		std::vector<PartContents::Lane> m_trackContents;
+		// What the names and contents were last shown for: the lanes' heights; empty when they must be shown again.
+		std::vector<float> m_contentsHeights;
+		// The event display's preferences (reference manual pp. 1603-1604, 1607; #1313), as the user settings have
+		// them.
+		struct DisplayPreferences
+		{
+			bool names = true;                  // ui.showEventNames
+			bool hideTruncated = false;         // ui.hideTruncatedEventNames
+			bool highlightBorders = false;      // ui.highlightSelectedEventBorders
+			int eventOpacity = 100;             // ui.eventOpacity, percent
+			int dataHeight = 20;                // ui.smallestTrackHeightForData, dp
+			int nameHeight = 28;                // ui.smallestTrackHeightForName, dp
+			int waveformBrightness = 50;        // ui.waveformBrightness, percent
+			std::string partDataMode = "lines"; // ui.partDataMode
+			bool controllers = true;            // ui.showControllers
+			int noteBrightness = 50;            // ui.noteBrightness, percent
+		};
+		DisplayPreferences m_display;
+		std::set<std::string> m_displayKnown; // those settings.changed gave, which an earlier settings.get doesn't undo
 		Rml::Element* m_crossVertical = nullptr;
 		Rml::Element* m_crossHorizontal = nullptr;
 		Rml::Element* m_cursorLine = nullptr;

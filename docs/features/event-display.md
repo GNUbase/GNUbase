@@ -27,6 +27,8 @@ changed. The app shows it in the main zone of the project window (`resources/ui/
       event-lanes.muted-events  muted events again, over them (parts-and-events.md)
       event-lanes.selected-events  selected events again, over those
       .waveforms                a waveform per audio event near the view (peaks.md)
+      part-contents.part-contents  MIDI parts' notes and controllers
+      event-names.event-names   the names of events and parts
       fade-lines.fades          fade and volume lines, the selected audio events' handles (fades.md, volume-curves.md)
       .cross-hair-vertical, .cross-hair-horizontal
     .project-cursor             across the ruler and the lanes
@@ -58,6 +60,30 @@ attributes show the view to MCP's `ui_dom`.
   seconds over the lanes, and the log has it too (#1367). The global tracks' lanes (`ui::GlobalEventLane`,
   [transpose.md](transpose.md), [arranger.md](arranger.md)) show the reasons of their refused edits there too
   (`EventDisplay::showRefusal`), and read the project from the display's answer instead of asking for it again.
+
+## Names, part contents and preferences
+
+The Event Display pages of the preferences (reference manual pp. 1603-1604, 1607; #1313; [preferences.md](
+preferences.md)) are user settings, so `settings.set`, MCP and Lua change them as the dialog does, and the display
+follows `settings.changed`:
+
+| Setting | Default | Shows |
+|---|---|---|
+| `ui.showEventNames` | on | each event's and part's name at its top left (`<event-names>`); an audio event has none of its own and shows its clip's |
+| `ui.hideTruncatedEventNames` | off | names too long for their event are left out instead of cut |
+| `ui.highlightSelectedEventBorders` | off | the class `highlight-selected-borders` on `.event-display`: the themes outline selected events wider, in their signal color |
+| `ui.eventOpacity` | 100 % | how opaque the events' bodies are (`body-opacity` of `event-lanes.events`) |
+| `ui.smallestTrackHeightForData` | 20 dp | lanes lower than this, as high as they are now with vertical zoom, show no waveforms and no part contents |
+| `ui.smallestTrackHeightForName` | 28 dp | lanes lower than this show no names |
+| `ui.waveformBrightness` | 50 % | the waveforms' `brightness` |
+| `ui.partDataMode` | Lines | MIDI parts show their notes as lines (`<part-contents>`), or nothing with Off |
+| `ui.showControllers` | on | MIDI parts show their controllers, pitch bend and pressure as bars under the notes |
+| `ui.noteBrightness` | 50 % | the notes' `brightness` |
+
+The display keeps the names and contents of each lane in seconds, read with the events from `project.get` (notes and
+controllers at their ticks from the part's start, through the tempo map), and gives the canvases those of the lanes
+high enough for them. Automation lanes show neither. Open: Append Clip Name to Event Name (audio events have no names
+of their own yet), the part data modes Scores and Drums, and Controller Brightness.
 
 ## Ruler and time formats
 
@@ -145,7 +171,13 @@ tempo changes, comes with the tempo track (#155).
   following changes and undo from another client; zoom around the cursor, its history, zoom full and zoom to a
   stretch; vertical zoom; scrolling and zooming with the wheel and modifiers; the ruler's click and drag; the overview
   line's drag, click and edge; auto-scroll in both modes, suspended and off, while the dummy device plays; zoom
-  presets through the user settings; the cross-hair cursor; the time format; the command ids.
+  presets through the user settings; the cross-hair cursor; the time format; the command ids; the names of events
+  and parts and MIDI parts' notes and controllers in seconds, as each event display preference and the lanes' heights
+  say, and the waveforms' brightness and smallest height (#1313).
+- `tests/canvas_tests.cpp`: `<event-names>` at their events' top left, cut, hidden when truncated and only near the
+  view; `<part-contents>` over the part's pitch range, clipped to the part, with controllers as bars; brightness and
+  body opacity.
+- `tests/preferences_tests.cpp`, `tests/lua/settings.lua`: the preferences' defaults and limits, on their pages.
 - `tests/uiapp_tests.cpp` shows the project window in the app's own window through SDL_GPU: the cursor's box 150 dp
   from the lanes as MCP's `ui_dom` reports it, a golden image (`tests/golden/ui/event-display.png`), and zooming with
   Ctrl and the wheel through the UI tools. It drives the menus with clicks, keys and text as MCP's UI tools do: the

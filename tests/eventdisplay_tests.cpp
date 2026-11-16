@@ -341,6 +341,17 @@ TEST_CASE("audio events show their waveforms from the engine's waveform overview
 	REQUIRE(fixture.waitUntil([&]
 		{ return waveforms(fixture.document).size() == 1 && same(waveforms(fixture.document)[0]->channels(), fine); }));
 
+	// Waveform Brightness draws them brighter; lanes lower than Smallest Track Height to Show Data show none
+	// (reference manual p. 1604, #1313).
+	CHECK(waveforms(fixture.document)[0]->GetAttribute<double>("brightness", 0.0) == Approx(0.5));
+	fixture.call("settings.set", {{"key", "ui.waveformBrightness"}, {"value", 80}});
+	REQUIRE(fixture.waitUntil(
+		[&] { return waveforms(fixture.document)[0]->GetAttribute<double>("brightness", 0.0) == Approx(0.8); }));
+	fixture.call("settings.set", {{"key", "ui.smallestTrackHeightForData"}, {"value", 41}});
+	REQUIRE(fixture.waitUntil([&] { return waveforms(fixture.document).empty(); }));
+	fixture.call("settings.set", {{"values", {{"ui.waveformBrightness", 50}, {"ui.smallestTrackHeightForData", 20}}}});
+	REQUIRE(fixture.waitUntil([&] { return waveforms(fixture.document).size() == 1; }));
+
 	// Removing the event removes its waveform, through any client.
 	fixture.call("history.undo");
 	REQUIRE(fixture.waitUntil([&] { return waveforms(fixture.document).empty(); }));
@@ -957,6 +968,103 @@ TEST_CASE("the cross-hair cursor follows the mouse over the event lanes", "[unit
 	fixture.automation.move(std::nullopt, fixture.lanesAt(321, 45));
 	fixture.step();
 	CHECK(!vertical.IsVisible());
+}
+
+TEST_CASE("events show their names and MIDI parts their notes and controllers, as the preferences say", "[unit]")
+{
+	// Show Event Names, Smallest Track Height to Show Name and to Show Data, Part Data Mode and Show Controllers
+	// (reference manual pp. 1603-1604, 1607; #1313).
+	Fixture fixture;
+	fixture.addEvents();
+	const Json project = fixture.call("project.get");
+	const Json part = project.at("midiParts").at(0).at("id");
+	const auto midi = project.at("tracks").at(1).at("id").get<uint64_t>();
+	const std::string clip = project.at("clips").at(0).at("name").get<std::string>();
+	CHECK(!clip.empty());
+	fixture.call("event.set", {{"events", {part}}, {"name", "Keys"}});
+	fixture.call("note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", 0}, {"length", g_quarter}, {"pitch", 60}, {"velocity", 0.5}},
+					{{"position", g_quarter}, {"length", g_quarter}, {"pitch", 64}, {"velocity", 0.5}}}}});
+	fixture.call("controller.add",
+		{{"part", part}, {"controllers", {{{"position", g_quarter}, {"type", "pitchBend"}, {"value", 0.75}}}}});
+	auto* names = dynamic_cast<ui::EventNames*>(&fixture.element(".event-area event-names"));
+	auto* contents = dynamic_cast<ui::PartContents*>(&fixture.element(".event-area part-contents"));
+	REQUIRE(names != nullptr);
+	REQUIRE(contents != nullptr);
+	const auto shown = [&]
+	{
+		return names->lanes().size() == 2 && names->lanes()[1].names.size() == 1 &&
+			names->lanes()[1].names[0].text == "Keys" && contents->lanes().size() == 2 &&
+			contents->lanes()[1].parts.size() == 1 && contents->lanes()[1].parts[0].notes.size() == 2 &&
+			contents->lanes()[1].parts[0].controllers.size() == 1;
+	};
+	REQUIRE(fixture.waitUntil(shown));
+
+	// An audio event shows its clip's name, a part its own; both where they are, on lanes as high as the events'.
+	REQUIRE(names->lanes()[0].names.size() == 1);
+	CHECK(names->lanes()[0].names[0].text == clip);
+	CHECK(names->lanes()[0].names[0].start == Approx(2.0));
+	CHECK(names->lanes()[0].names[0].length == Approx(0.5));
+	CHECK(names->lanes()[1].names[0].start == Approx(1.0));
+	CHECK(names->lanes()[1].names[0].length == Approx(2.0));
+	CHECK(names->lanes()[0].height == Approx(ui::g_trackHeight));
+	CHECK(contents->lanes()[1].height == Approx(ui::g_trackHeight));
+	// The part's notes and controllers in seconds: a quarter is half a second at 120 BPM.
+	CHECK(contents->lanes()[0].parts.empty());
+	const ui::PartContents::Part& held = contents->lanes()[1].parts[0];
+	CHECK(held.start == Approx(1.0));
+	CHECK(held.length == Approx(2.0));
+	CHECK(held.notes[0].start == Approx(1.0));
+	CHECK(held.notes[0].length == Approx(0.5));
+	CHECK(held.notes[0].pitch == 60);
+	CHECK(held.notes[1].start == Approx(1.5));
+	CHECK(held.notes[1].pitch == 64);
+	CHECK(held.controllers[0].position == Approx(1.5));
+	CHECK(held.controllers[0].value == Approx(0.75));
+
+	// Lanes lower than the smallest heights show no names, then no data; a higher track shows them again.
+	fixture.call("settings.set", {{"key", "ui.smallestTrackHeightForName"}, {"value", 41}});
+	REQUIRE(fixture.waitUntil([&] { return names->lanes()[1].names.empty(); }));
+	CHECK(names->lanes()[0].names.empty());
+	CHECK(contents->lanes()[1].parts.size() == 1);
+	fixture.call("settings.set", {{"key", "ui.smallestTrackHeightForData"}, {"value", 41}});
+	REQUIRE(fixture.waitUntil([&] { return contents->lanes()[1].parts.empty(); }));
+	fixture.display.setTrackHeights({midi}, 60.0);
+	REQUIRE(fixture.waitUntil(shown));
+	CHECK(names->lanes()[0].names.empty()); // the audio track is still 40 dp high
+
+	// Without Show Event Names no names, without Show Controllers no controllers, with Part Data Mode Off no data.
+	fixture.call("settings.set", {{"values", {{"ui.showEventNames", false}, {"ui.showControllers", false}}}});
+	REQUIRE(fixture.waitUntil([&] { return names->lanes()[1].names.empty(); }));
+	REQUIRE(contents->lanes()[1].parts.size() == 1);
+	CHECK(contents->lanes()[1].parts[0].controllers.empty());
+	CHECK(contents->lanes()[1].parts[0].notes.size() == 2);
+	fixture.call("settings.set", {{"key", "ui.partDataMode"}, {"value", "off"}});
+	REQUIRE(fixture.waitUntil([&] { return contents->lanes()[1].parts.empty(); }));
+
+	// The others reach the canvases' attributes and a state of the event display for the style sheets.
+	fixture.call("settings.set",
+		{{"values",
+			{{"ui.eventOpacity", 40}, {"ui.noteBrightness", 80}, {"ui.hideTruncatedEventNames", true},
+				{"ui.highlightSelectedEventBorders", true}}}});
+	Rml::Element& lanes = fixture.element("event-lanes.events");
+	REQUIRE(fixture.waitUntil([&] { return lanes.GetAttribute<double>("body-opacity", 1.0) == Approx(0.4); }));
+	CHECK(contents->GetAttribute<double>("brightness", 0.0) == Approx(0.8));
+	CHECK(names->HasAttribute("hide-truncated"));
+	CHECK(fixture.element("#display").IsClassSet("highlight-selected-borders"));
+
+	// Back to the defaults, which a newly opened event display starts with.
+	fixture.call("settings.set",
+		{{"values",
+			{{"ui.showEventNames", true}, {"ui.showControllers", true}, {"ui.partDataMode", "lines"},
+				{"ui.smallestTrackHeightForName", 28}, {"ui.smallestTrackHeightForData", 20}, {"ui.eventOpacity", 100},
+				{"ui.noteBrightness", 50}, {"ui.hideTruncatedEventNames", false},
+				{"ui.highlightSelectedEventBorders", false}}}});
+	REQUIRE(fixture.waitUntil([&] { return !fixture.element("#display").IsClassSet("highlight-selected-borders"); }));
+	CHECK(!names->HasAttribute("hide-truncated"));
+	CHECK(lanes.GetAttribute<double>("body-opacity", 0.0) == Approx(1.0));
 }
 
 TEST_CASE("the ruler shows the chosen time format", "[unit]")
