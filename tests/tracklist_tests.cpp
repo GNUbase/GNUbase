@@ -1893,12 +1893,14 @@ TEST_CASE(
 		const Rml::Vector2f to = from + element.GetBox().GetSize(Rml::BoxArea::Border);
 		return point.x >= from.x && point.x < to.x && point.y >= from.y && point.y < to.y;
 	};
-	// Steps of the shell may close the list again (Linux CI): it stays open while the test looks at it.
+	// It stays open while the test looks at it. RmlUi lays an open list out when it draws it, and the shell doesn't
+	// draw a hidden window on every step everywhere (Linux CI): a screenshot draws it.
 	const auto keepOpen = [&]
 	{
 		if (!select->IsSelectBoxVisible())
 			select->ShowSelectBox();
-		context.Update(); // the open list laid out
+		context.Update();
+		app.screenshot("rows-select-open", {200, 200});
 	};
 	const auto overAnotherRow = [&]() -> Rml::Element*
 	{
