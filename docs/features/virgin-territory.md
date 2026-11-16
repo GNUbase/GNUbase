@@ -34,7 +34,7 @@ plugin's parameter as the user sets it. The lanes and their playback are in [aut
   stopped there, like a lane that doesn't read; the value after a gap is always sent. A lane side by side with others
   of its controller on a MIDI track set to a channel (`PlayedLane::shared`, [mixer.md](mixer.md)) is the exception:
   the value its last point left stands in the gap after it, and a locate there sends it if no other lane's point lies
-  later.
+  later, nor at the same position on a lane after it (the last lane wins a tie).
 - **Range edits** (`range.delete`, `range.cut`, `range.copy`, `range.paste`, `range.insertSilence`, in
   `eventedits.cpp`) keep the gaps: an edge in a gap gets no point with a value, but a terminator or nothing. With
   virgin territory `range.delete` makes the range a gap (p. 881): the point at its start is a terminator, and across
