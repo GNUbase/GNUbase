@@ -1896,7 +1896,7 @@ TEST_CASE(
 	const auto overAnotherRow = [&]() -> Rml::Element*
 	{
 		context.Update(); // the open list laid out
-		Rml::Element* rows = drumsRow->GetParentNode();
+		const Rml::Element* rows = drumsRow->GetParentNode();
 		for (int i = 0; i < select->GetNumOptions(); ++i)
 		{
 			const Rml::Vector2f middle = middleOf(*select->GetOption(i));
