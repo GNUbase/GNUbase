@@ -1824,14 +1824,15 @@ TEST_CASE("the lower zone's key editor at its default size gives the note displa
 	"[ui]")
 {
 	// The lower zone at its default 240 dp, with the Velocity lane and the footer below the note display: the lanes
-	// give way first, down to their footer, and their list scrolls, so that the note display is the larger part of the
-	// editor; in a lower zone of 400 dp the lanes keep their whole height (#1775). The window is 1600 x 1200 dp, so
-	// that the toolbar is one row at both ratios.
+	// give way first, down to their footer, and their list scrolls (#1775). The window is 1024 x 768 pixels, as large
+	// as CI's Linux screen lets it be: at a dp ratio of 1 the toolbar is one row, the note display the larger part of
+	// the editor, and in a lower zone of 400 dp the lanes keep their whole height; at 2, 512 x 384 dp, the toolbar
+	// wraps and leaves less than the note display's 40% and the lanes, so the lanes are down to their footer.
 	for (const float ratio : {1.0F, 2.0F})
 	{
 		INFO("dp ratio " << ratio);
 		const auto px = [ratio](double dp) { return dp * ratio; };
-		Fixture f({static_cast<int>(px(1600)), static_cast<int>(px(1200))});
+		Fixture f({1024, 768});
 		f.app.call("editor.close", {{"editor", "window"}});
 		REQUIRE(f.app.waitUntil([&] { return f.app.appUi().editorWindow() == nullptr; }));
 		f.app.setDpRatio(ratio);
@@ -1852,16 +1853,25 @@ TEST_CASE("the lower zone's key editor at its default size gives the note displa
 			f.app.shell().step(std::chrono::milliseconds(0));
 		};
 		settle();
-		REQUIRE(height(".key-editor-toolbar") <= px(48) + 0.5);
 		const double editor = height(".key-editor");
 		const double body = height(".key-editor-body");
 		const double lanes = height(".controller-lanes");
-		INFO("editor " << editor << ", note display " << body << ", controller lanes " << lanes);
-		CHECK(body >= editor / 3);
-		CHECK(body > lanes);
+		const double room =
+			editor - height(".key-editor-toolbar") - height(".key-editor-info") - height(".editor-parts");
+		INFO("editor " << editor << ", note display " << body << ", controller lanes " << lanes << ", room " << room);
+		// The note display has its 40%, or the lanes are down to their footer and it has the rest.
+		CHECK(std::abs(body + lanes - room) <= 1.0);
+		CHECK(((body >= (0.4 * editor) - 1.0) || (lanes <= px(22) + 0.5)));
 		// The footer stays whole inside the editor.
 		CHECK(height(".controller-lanes-footer") >= px(22) - 0.5);
 		CHECK(bottom(".controller-lanes-footer") <= bottom(".key-editor") + 0.5);
+		if (ratio > 1.0F)
+		{
+			CHECK(lanes <= px(22) + 0.5);
+			continue;
+		}
+		CHECK(body >= editor / 3);
+		CHECK(body > lanes);
 
 		f.app.appUi().docking().setSize("project", "lower", 400.0);
 		REQUIRE(f.app.waitUntil([&] { return height(".key-editor") > editor + px(100); }));
