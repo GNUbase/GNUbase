@@ -1686,6 +1686,25 @@ namespace gnubase::engine
 				ticks(project, {time::TimeBase::Linear, to}) - ticks(project, {time::TimeBase::Linear, from})};
 		}
 
+		// The earliest tick an event or part on a musical track starts at, as a shift in ticks moves it: its own start,
+		// or that of an event in an audio part that starts before the part, as a part cut in the sample one of its
+		// events starts in, before the cut's tick, keeps that event whole after the cut. None on a linear track.
+		std::optional<time::Ticks> earliestTick(const Project& project, const Item& item)
+		{
+			std::optional<time::Ticks> earliest;
+			const auto take = [&earliest](const time::Position& position)
+			{
+				if (position.base == time::TimeBase::Musical)
+					earliest = std::min(earliest.value_or(position.value), position.value);
+			};
+			take(item.position());
+			if (item.audioPart != nullptr)
+				for (const auto& [id, event] : project.audioEvents)
+					if (event.part == item.audioPart->id)
+						take(event.position);
+			return earliest;
+		}
+
 		// The gap by which the items of a range that starts at from (ticks) land in a range that starts at at (project
 		// samples): gap, the one between the two, unless an item on a musical track starts where the range starts in
 		// samples and the gap doesn't put the first of those in ticks in at's sample. Then every musical item, on every
@@ -1697,19 +1716,27 @@ namespace gnubase::engine
 		// after it, and it lands on tick 0. The automation that lands with the items moves by the same gap, also where
 		// it starts before the first of them, at a point that the range's start edge takes from its sample or at the
 		// edge's own tick (automationEdge): at position 0 what of it would land before tick 0 lands on tick 0
-		// (pasteAutomation), so that a part on a bar lands on tick 0 as without automation (#1646).
+		// (pasteAutomation), so that a part on a bar lands on tick 0 as without automation (#1646). And no event lands
+		// before tick 0, where one lies before from in ticks but not in its sample: pasted at another tempo than it was
+		// copied at, a clip at a lower sample rate that a cut at the start doesn't cut, or an event in an audio part
+		// cut in the sample it starts in (earliestTick). Then the earliest of them lands on tick 0.
 		Gap landing(const Project& project, const std::vector<Item>& items, Gap gap, time::Ticks from, time::Samples at)
 		{
 			const time::Samples start = samples(project, {time::TimeBase::Musical, from});
 			std::optional<time::Ticks> first;
+			std::optional<time::Ticks> earliest;
 			for (const Item& item : items)
 			{
 				const time::Position& position = item.position();
 				if (position.base == time::TimeBase::Musical && samples(project, position) == start)
 					first = std::min(first.value_or(position.value), position.value);
+				if (const std::optional<time::Ticks> tick = earliestTick(project, item))
+					earliest = std::min(earliest.value_or(*tick), *tick);
 			}
 			if (first && (at == 0 || samples(project, {time::TimeBase::Musical, *first + gap.ticks}) != at))
 				gap.ticks = ticks(project, {time::TimeBase::Linear, at}) - *first;
+			if (earliest && *earliest + gap.ticks < 0)
+				gap.ticks = -*earliest;
 			return gap;
 		}
 
@@ -2146,11 +2173,11 @@ namespace gnubase::engine
 
 		// The gap Delete Time closes: the range's length, but in ticks no more than puts the first of what moves back
 		// on tick 0. From sample 0, tick 0, the length in ticks would put what lies in the end sample before the end's
-		// tick, a part on a bar there, the point on its downbeat that the end edge takes (automationEdge) or a
-		// transpose event, before tick 0, and the move would be refused. Then everything after the range moves back by
-		// less, by the ticks that put the first of it on tick 0, and keeps its distances in ticks (#1646). That takes a
-		// range from sample 0, or with a faster tempo at the end from a sample just after it; elsewhere it holds
-		// anyway.
+		// tick, a part on a bar there or an event in an audio part (earliestTick), the point on its downbeat that the
+		// end edge takes (automationEdge) or a transpose event, before tick 0, and the move would be refused. Then
+		// everything after the range moves back by less, by the ticks that put the first of it on tick 0, and keeps its
+		// distances in ticks (#1646). That takes a range from sample 0, or with a faster tempo at the end from a sample
+		// just after it; elsewhere it holds anyway.
 		Gap closing(Project& project, const Range& range)
 		{
 			Gap gap = gapOf(project, range.start, range.end);
@@ -2160,8 +2187,11 @@ namespace gnubase::engine
 					gap.ticks = std::min(gap.ticks, position.value);
 			};
 			for (const Item& item : itemsOn(project, range.tracks, false))
-				if (after(project, item, range.end))
-					noEarlier(item.position());
+			{
+				const std::optional<time::Ticks> tick = earliestTick(project, item);
+				if (tick && after(project, item, range.end))
+					noEarlier({time::TimeBase::Musical, *tick});
+			}
 			for (const auto& [id, lane] : project.automation)
 				if (contains(range.tracks, lane.track) &&
 					project.trackById.at(lane.track).timeBase == time::TimeBase::Musical)
