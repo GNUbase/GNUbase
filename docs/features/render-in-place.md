@@ -22,7 +22,8 @@ temporary state, outside the project file and undo history. Completion, failure 
 cancellation also remove the files made by the job. `track.renderLocks` reports active locks and job ids;
 `track.renderingChanged` announces `{tracks, job, rendering}`. The UI follows these through the engine API, styles track
 rows with `.rendering` in RCSS, and shows nonmodal progress with Cancel. Closing progress also cancels its job, using
-the backup progress lifecycle.
+the backup progress lifecycle. A track job owns its prepared work and sample leases until it exits, so engine shutdown
+joins it and releases those leases before destroying the live audio engine's sample loader.
 
 `track.freeze` and `track.renderInPlace` are command version 2. Their names and parameters stay, but they return `{job}`
 immediately. The completed job's `result` keeps the former synchronous result: `{tracks}` for freeze, `{tracks, media,
@@ -141,3 +142,7 @@ unrelated edits and events outside the range succeed, completion adds one undo s
 without a project change. The mixdown snapshot test edits and removes the exported source while the job runs and
 compares the result with the starting audio. `tests/mixdown_ui_tests.cpp` uses the real app's automation API to check
 the rendering state class, progress and Cancel for all three background render commands.
+
+A shutdown regression in `tests/renderinplace_tests.cpp` stops command posting during an active multi-track freeze or
+render in place, checking that the job releases sample leases before the live loader is destroyed and removes its
+partial files.

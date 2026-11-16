@@ -14,10 +14,12 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <future>
 #include <memory>
 #include <optional>
 #include <string>
@@ -1151,4 +1153,64 @@ TEST_CASE("undo cannot move a rendering track but can undo a move elsewhere", "[
 		});
 	INFO(finished.dump());
 	REQUIRE(finished.at("state") == "done");
+}
+
+TEST_CASE("engine shutdown releases running track renders before the sample loader", "[integration]")
+{
+	const std::string command = GENERATE(std::string("track.freeze"), std::string("track.renderInPlace"));
+	const gnubase::test::TempDir folder;
+	const fs::path path = folder.path() / "sample.wav";
+	gnubase::test::writeWav(path, {std::vector<float>(12000, 0.25f), 2, 48000});
+	std::promise<void> rendering;
+	const auto atProgress = rendering.get_future();
+	std::atomic<bool> stopped{false};
+	auto engine = std::make_unique<Engine>();
+	Engine* renderingEngine = engine.get();
+	{
+		Client client(*engine);
+		run(client, "audio.setDevice", {{"blockSize", 64}, {"captureSeconds", 0}});
+		run(client, "project.save", {{"path", (folder.path() / "project.dawproject").u8string()}});
+		const Json media = run(client, "media.add", {{"path", path.u8string()}}).at("media");
+		const Json clip = run(client, "clip.add", {{"media", media.at("id")}}).at("clip").at("id");
+		const Json sampler = run(client, "sampler.create").at("track").at("id");
+		run(client, "sampler.load", {{"track", sampler}, {"clip", clip}});
+		const Json part = run(
+			client, "midiPart.add", {{"track", sampler}, {"position", 0}, {"length", gnubase::time::g_ticksPerQuarter}})
+							  .at("part")
+							  .at("id");
+		run(client, "note.add",
+			{{"part", part},
+				{"notes",
+					{{{"position", 0}, {"length", gnubase::time::g_ticksPerQuarter}, {"pitch", 60},
+						{"velocity", 0.8}}}}});
+		const Json audio = run(client, "track.add", {{"type", "audio"}}).at("track").at("id");
+		run(client, "audioEvent.add", {{"track", audio}, {"clip", clip}, {"position", 0}});
+
+		engine->setJobProgressHook(
+			[&, renderingEngine](uint64_t, const std::string&)
+			{
+				rendering.set_value();
+				// Keep the render past its first block until shutdown refuses command posting. Its cleanup then
+				// cannot remove the TrackRender from the project, including the second, unstarted work function.
+				for (;;)
+				{
+					const auto reply = std::make_shared<std::promise<Result>>();
+					auto result = reply->get_future();
+					renderingEngine->post("engine.version", Json::object(),
+						[reply](Result value) { reply->set_value(std::move(value)); });
+					if (!result.get().ok())
+					{
+						stopped = true;
+						throw JobCancelled();
+					}
+				}
+			});
+		const Result started = client.call(command, {{"tracks", {sampler, audio}}, {"tail", 0}});
+		REQUIRE(started.ok());
+		REQUIRE(atProgress.wait_for(std::chrono::seconds(30)) == std::future_status::ready);
+	}
+	engine.reset();
+	CHECK(stopped.load());
+	const fs::path output = folder.path() / (command == "track.freeze" ? "Freeze" : "Audio");
+	CHECK(fs::directory_iterator(output) == fs::directory_iterator());
 }

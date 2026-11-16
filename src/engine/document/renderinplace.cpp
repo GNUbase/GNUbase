@@ -332,14 +332,17 @@ namespace gnubase::engine
 			started = engine.startJob(render->freeze ? "track.freeze" : "track.renderInPlace",
 				[render, token](JobContext& job)
 				{
+					// The work owns sample leases: release them on this thread before engine shutdown destroys
+					// the audio engine, even when the stopped command thread cannot remove the pending render.
+					const std::vector<Jobs::Work> work = std::move(render->work);
 					std::vector<std::string> written;
 					try
 					{
-						for (size_t i = 0; i < render->work.size(); ++i)
+						for (size_t i = 0; i < work.size(); ++i)
 						{
 							job.checkCancelled();
-							RenderProgress progress(job, i, render->work.size());
-							Json file = render->work[i](progress).at("files").at(0);
+							RenderProgress progress(job, i, work.size());
+							Json file = work[i](progress).at("files").at(0);
 							written.push_back(file.at("path").get<std::string>());
 							render->files.push_back(std::move(file));
 						}
