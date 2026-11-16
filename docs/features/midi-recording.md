@@ -57,9 +57,10 @@ undo step.
   retrospective buffer on the disk thread, which keeps the last `midi.retrospectiveEvents` events (10000 by default; 0
   keeps none). `midi.insertRetrospective` inserts a track's buffer as one part through `recording.add` in the new parts
   mode, without chord events (`chordEvents` false): input from playback where it played, input from stop mode at the
-  project cursor with its timing. Input after an insert, or in stop mode after a pause of over 30 seconds or on the
-  next audio device, starts the buffer afresh: the recorder counts the buffers' frames on across devices, as each
-  device counts its own from 0. `midi.clearRetrospective` empties one track's buffer or all of them.
+  project cursor with its timing. Input after an insert starts the buffer afresh, and so does input in stop mode while
+  the buffer holds input in stop mode, when it comes over 30 seconds after the last input, from playback or not, or on
+  the next audio device: the recorder counts the buffers' frames on across devices, as each device counts its own from
+  0, which leaves out how long the old device ran. `midi.clearRetrospective` empties one track's buffer or all of them.
 
 ## Not yet
 
