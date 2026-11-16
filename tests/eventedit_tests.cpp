@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <string>
 #include <tuple>
@@ -2033,9 +2034,10 @@ TEST_CASE("range.move, its copy and range.paste to position 0 land the first in 
 	"[unit]")
 {
 	// A part on a bar can lie before the tick nearest to its sample. The gap from the range's start tick to position 0
-	// would put it before tick 0, in the sample 0 it rounds to, and the edit would be refused (#1331). A modulation
-	// point in the start sample before the part's tick is what starts there first: it lands on tick 0, and the part as
-	// many ticks after it as before.
+	// would put it before tick 0, in the sample 0 it rounds to, and the edit would be refused (#1331). The part lands
+	// on tick 0, also with automation that starts before it in the start sample, a modulation point there or the
+	// point at the range's start tick that a lane without one gets (#1646): that lands on tick 0 too, and the part's
+	// downbeat point after it, so that the curve goes on from tick 0 as the downbeat point shapes it.
 	for (const double bpm : {97.3, 133.7})
 	{
 		Fixture f;
@@ -2057,19 +2059,26 @@ TEST_CASE("range.move, its copy and range.paste to position 0 land the first in 
 			move["position"] = 0;
 			Json copy = move;
 			copy["copy"] = true;
-			// Moves, copies and pastes the range to position 0 and checks where the part lands, and with a lane the
-			// point with a value on tick 0 and none before it.
-			const auto check = [&](int64_t tick, int64_t lane, double value)
+			// Moves, copies and pastes the range to position 0 and checks that the part lands on tick 0, and with a
+			// lane the point with a value on tick 0, the last there with last, and none before it.
+			const auto check = [&](int64_t lane, double value, std::optional<double> last = std::nullopt)
 			{
 				const auto landed = [&](const Json& events)
 				{
 					REQUIRE(events.size() == 1);
-					CHECK(f.midi(events.at(0)).at("position") == tick);
+					CHECK(f.midi(events.at(0)).at("position") == 0);
 					if (lane != 0)
 					{
 						CHECK(f.hasPoint(lane, 0, value));
+						double atZero = -1.0;
 						for (const auto& point : f.points(lane))
+						{
 							CHECK(std::get<0>(point) >= 0);
+							if (std::get<0>(point) == 0)
+								atZero = std::get<1>(point);
+						}
+						if (last)
+							CHECK(atZero == *last);
 					}
 				};
 				landed(f.call("range.move", move).at("events"));
@@ -2080,7 +2089,7 @@ TEST_CASE("range.move, its copy and range.paste to position 0 land the first in 
 				landed(f.call("range.paste", {{"position", 0}}).at("events"));
 				f.call("history.undo");
 			};
-			check(0, 0, 0.0);
+			check(0, 0.0);
 			const int64_t lowest = f.sampleEdge(probe, downbeat, -1);
 			if (lowest < downbeat)
 			{
@@ -2092,13 +2101,13 @@ TEST_CASE("range.move, its copy and range.paste to position 0 land the first in 
 				f.call("automationPoint.add",
 					{{"lane", lane},
 						{"points",
-							{{{"position", lowest}, {"value", 1.0}},
+							{{{"position", lowest}, {"value", 1.0}}, {{"position", downbeat}, {"value", 0.75}},
 								{{"position", downbeat + g_quarter}, {"value", 0.0}}}}});
-				check(downbeat - lowest, lane, 1.0);
+				check(lane, 1.0, 0.75);
 				f.call("automationLane.remove", {{"lane", lane}});
 			}
 			// A lane without a point in the start sample: the copy starts with a point at the range's start tick, which
-			// can lie before the part's. That point lands on tick 0 then.
+			// can lie before the part's. That point lands on tick 0 then, with the part.
 			const int64_t edge = f.tickAt(probe, from);
 			if (edge < downbeat)
 			{
@@ -2109,7 +2118,7 @@ TEST_CASE("range.move, its copy and range.paste to position 0 land the first in 
 						.get<int64_t>();
 				f.call("automationPoint.add",
 					{{"lane", lane}, {"points", {{{"position", downbeat + g_quarter}, {"value", 0.5}}}}});
-				check(downbeat - edge, lane, 0.5);
+				check(lane, 0.5);
 				f.call("automationLane.remove", {{"lane", lane}});
 			}
 			f.call("event.remove", {{"events", {part}}});
@@ -2117,13 +2126,30 @@ TEST_CASE("range.move, its copy and range.paste to position 0 land the first in 
 	}
 }
 
-TEST_CASE("Delete Time joins the curve after the range after the points that stay before it", "[unit]")
+TEST_CASE("Delete Time moves the points after the range back with the events, and what stays after the joint onto it",
+	"[unit]")
 {
-	// With the range's end edge on a point in the end sample before the end tick, the range's length in ticks would
-	// move that point to before the range's start tick (#1331): before a terminator that stays there, whose gap would
-	// swallow it, before tick 0, or with a faster tempo at the end past points before the range's start sample. The
-	// joint is then at the point that stays, or at 0.
+	// With the range's end edge on a point in the end sample before the end tick, the range's length in ticks moves
+	// that point and the part on its downbeat to before the range's start tick (#1331), by up to half a sample at the
+	// end's tempo: past a terminator that stays there, or with a faster tempo at the end past a point before the
+	// range's start sample. The points after the range move back with the events all the same, and the points that
+	// stay before the range but lie after the joint move onto it (#1646). From sample 0, tick 0, the length would put
+	// them before tick 0: there everything after the range moves back by less, by what puts the first of it on tick 0.
 	using Point = std::tuple<int64_t, double, bool>;
+	const auto addPart = [](Fixture& f, int64_t track, int64_t position)
+	{
+		return f.call("midiPart.add", {{"track", track}, {"position", position}, {"length", g_bar}})
+			.at("part")
+			.at("id")
+			.get<int64_t>();
+	};
+	const auto addLane = [](Fixture& f, int64_t track)
+	{
+		return f.call("automationLane.add", {{"track", track}, {"target", {{"type", "controller"}, {"number", 1}}}})
+			.at("lane")
+			.at("id")
+			.get<int64_t>();
+	};
 	SECTION("a terminator a tick before the range's start tick")
 	{
 		Fixture f;
@@ -2140,31 +2166,33 @@ TEST_CASE("Delete Time joins the curve after the range after the points that sta
 			const int64_t downbeat = (bar + 1) * g_bar;
 			const int64_t until = f.sampleOf(probe, downbeat);
 			// The part's downbeat point lies more ticks before the end tick than the terminator before the start tick.
-			if (f.tickAt(probe, until) - downbeat <= 1)
+			const int64_t distance = f.tickAt(probe, until) - downbeat;
+			if (distance <= 1)
 				continue;
 			++hits;
-			const Json part = f.call("midiPart.add", {{"track", midi}, {"position", downbeat}, {"length", g_bar}})
-								  .at("part")
-								  .at("id");
-			const auto lane =
-				f.call("automationLane.add", {{"track", midi}, {"target", {{"type", "controller"}, {"number", 1}}}})
-					.at("lane")
-					.at("id")
-					.get<int64_t>();
+			const int64_t part = addPart(f, midi, downbeat);
+			const int64_t later = addPart(f, midi, downbeat + g_bar);
+			const int64_t lane = addLane(f, midi);
 			f.call("automationPoint.add",
 				{{"lane", lane},
 					{"points",
 						{{{"position", 0}, {"value", 0.5}},
 							{{"position", start - 1}, {"value", 0.25}, {"terminator", true}},
 							{{"position", downbeat}, {"value", 1.0}},
-							{{"position", downbeat + g_quarter}, {"value", 0.0}}}}});
+							{{"position", downbeat + g_quarter}, {"value", 0.0}},
+							{{"position", downbeat + g_bar}, {"value", 0.75}}}}});
 			f.call("range.delete", {{"start", from}, {"end", until}, {"tracks", {midi}}, {"time", true}});
-			const std::vector<Point> expected = {
-				{0, 0.5, false}, {start - 1, 0.25, true}, {start - 1, 1.0, false}, {start - 1 + g_quarter, 0.0, false}};
+			// The part lands the distance before the start tick, the terminator moves onto it there, and the part's
+			// downbeat point and the points after it land with the parts.
+			const int64_t joint = start - distance;
+			CHECK(f.midi(part).at("position") == joint);
+			CHECK(f.midi(later).at("position") == joint + g_bar);
+			const std::vector<Point> expected = {{0, 0.5, false}, {joint, 0.25, true}, {joint, 1.0, false},
+				{joint + g_quarter, 0.0, false}, {joint + g_bar, 0.75, false}};
 			CHECK(f.points(lane) == expected);
 			f.call("history.undo");
 			f.call("automationLane.remove", {{"lane", lane}});
-			f.call("event.remove", {{"events", {part}}});
+			f.call("event.remove", {{"events", {part, later}}});
 		}
 		CHECK(hits > 0);
 	}
@@ -2175,6 +2203,7 @@ TEST_CASE("Delete Time joins the curve after the range after the points that sta
 		f.call("tempo.add", {{"position", 0}, {"bpm", 97.3}, {"ramp", false}});
 		const int64_t midi = f.track("midi");
 		const int64_t probe = f.track("midi");
+		const int64_t transpose = f.track("transpose");
 		int hits = 0;
 		for (int64_t bar = 1; bar < 40; ++bar)
 		{
@@ -2184,21 +2213,37 @@ TEST_CASE("Delete Time joins the curve after the range after the points that sta
 			if (f.tickAt(probe, until) <= downbeat)
 				continue;
 			++hits;
-			const auto lane =
-				f.call("automationLane.add", {{"track", midi}, {"target", {{"type", "controller"}, {"number", 1}}}})
-					.at("lane")
-					.at("id")
-					.get<int64_t>();
+			// What starts on the downbeat, a part, its point and a transpose event, lands on tick 0, and what comes
+			// later as many ticks after it as before, with a lane and without one.
+			const int64_t part = addPart(f, midi, downbeat);
+			const int64_t later = addPart(f, midi, downbeat + g_bar);
+			const Json event = f.call("transpose.add", {{"position", downbeat}, {"value", 3}}).at("event").at("id");
+			const Json range = {{"start", 0}, {"end", until}, {"tracks", {midi, transpose}}, {"time", true}};
+			const auto landed = [&]
+			{
+				CHECK(f.midi(part).at("position") == 0);
+				CHECK(f.midi(later).at("position") == g_bar);
+				const Json events = f.call("transpose.get").at("events");
+				REQUIRE(events.size() == 1);
+				CHECK(events.at(0).at("position") == 0);
+			};
+			f.call("range.delete", range);
+			landed();
+			f.call("history.undo");
+			const int64_t lane = addLane(f, midi);
 			f.call("automationPoint.add",
 				{{"lane", lane},
 					{"points",
 						{{{"position", downbeat}, {"value", 1.0}},
 							{{"position", downbeat + g_quarter}, {"value", 0.0}}}}});
-			f.call("range.delete", {{"start", 0}, {"end", until}, {"tracks", {midi}}, {"time", true}});
+			f.call("range.delete", range);
+			landed();
 			const std::vector<Point> expected = {{0, 1.0, false}, {0, 1.0, false}, {g_quarter, 0.0, false}};
 			CHECK(f.points(lane) == expected);
 			f.call("history.undo");
 			f.call("automationLane.remove", {{"lane", lane}});
+			f.call("event.remove", {{"events", {part, later}}});
+			f.call("transpose.remove", {{"events", {event}}});
 		}
 		CHECK(hits > 0);
 	}
@@ -2223,30 +2268,32 @@ TEST_CASE("Delete Time joins the curve after the range after the points that sta
 			// The first tick of the end sample, more ticks before the end tick than the point before the range lies
 			// before the start tick.
 			const int64_t first = f.sampleEdge(probe, end, -1);
-			if (f.tickAt(probe, until) - first <= start - before)
+			const int64_t distance = f.tickAt(probe, until) - first;
+			if (distance <= start - before)
 				continue;
 			++hits;
-			const auto lane =
-				f.call("automationLane.add", {{"track", midi}, {"target", {{"type", "controller"}, {"number", 1}}}})
-					.at("lane")
-					.at("id")
-					.get<int64_t>();
+			const int64_t part = addPart(f, midi, first);
+			const int64_t lane = addLane(f, midi);
 			f.call("automationPoint.add",
 				{{"lane", lane},
 					{"points",
 						{{{"position", before}, {"value", 0.25}}, {{"position", first}, {"value", 1.0}},
 							{{"position", first + g_quarter}, {"value", 0.0}}}}});
 			f.call("range.delete", {{"start", from}, {"end", until}, {"tracks", {midi}}, {"time", true}});
-			// The point before the range stays first, then the value the curve arrived at the start with and the
-			// point after the range at the joint, on it, and the curve goes on from there.
+			// The part lands the distance before the start tick, the point before the range moves onto it there, then
+			// come the value the curve arrived at the start with and the part's downbeat point, and the curve goes on
+			// with the part.
+			const int64_t joint = start - distance;
+			CHECK(f.midi(part).at("position") == joint);
 			const std::vector<Point> points = f.points(lane);
 			REQUIRE(points.size() == 4);
-			CHECK(points[0] == Point{before, 0.25, false});
-			CHECK(std::get<0>(points[1]) == before);
-			CHECK(points[2] == Point{before, 1.0, false});
-			CHECK(points[3] == Point{before + g_quarter, 0.0, false});
+			CHECK(points[0] == Point{joint, 0.25, false});
+			CHECK(std::get<0>(points[1]) == joint);
+			CHECK(points[2] == Point{joint, 1.0, false});
+			CHECK(points[3] == Point{joint + g_quarter, 0.0, false});
 			f.call("history.undo");
 			f.call("automationLane.remove", {{"lane", lane}});
+			f.call("event.remove", {{"events", {part}}});
 		}
 		CHECK(hits > 0);
 	}
