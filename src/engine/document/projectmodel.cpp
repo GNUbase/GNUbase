@@ -3629,7 +3629,8 @@ namespace gnubase::engine
 					std::vector<ObjectId>& current;
 					std::vector<ObjectId>& previous;
 					~ResetMoves() { current = std::move(previous); }
-				} resetMoves{m_movingTracks, previousMoves};
+				};
+				const ResetMoves resetMoves{m_movingTracks, previousMoves};
 				const uint64_t applying = m_applyingRender;
 				if (action == "Render tracks")
 					m_applyingRender = context.parameters().at("token").get<uint64_t>();
@@ -3638,7 +3639,8 @@ namespace gnubase::engine
 					uint64_t& value;
 					uint64_t before;
 					~ResetRender() { value = before; }
-				} resetRender{m_applyingRender, applying};
+				};
+				const ResetRender resetRender{m_applyingRender, applying};
 				Project before = m_project;
 				const bool followsEvents = m_automationFollowsEvents; // automation.set in a transaction changes it
 				Json result;
@@ -3730,7 +3732,9 @@ namespace gnubase::engine
 				change.stepPositionAfter.reset();
 			}
 			if (change.empty())
+			{
 				m_history.removeLast();
+			}
 			else
 			{
 				HistoryStep& step = m_history.step(steps.size() - 1);

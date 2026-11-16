@@ -314,7 +314,8 @@ namespace gnubase::engine
 		m_trackRenders.erase(found);
 	}
 
-	Json ProjectModel::startTrackRender(Engine& engine, std::shared_ptr<TrackRender> render, CommandContext& context)
+	Json ProjectModel::startTrackRender(
+		Engine& engine, const std::shared_ptr<TrackRender>& render, CommandContext& context)
 	{
 		for (const auto& [token, pending] : m_trackRenders)
 			for (const ObjectId id : render->tracks)
@@ -355,6 +356,8 @@ namespace gnubase::engine
 						}
 						catch (...)
 						{
+							if (!job.cancelled())
+								throw; // shutdown can leave no command thread to unlock
 						}
 						if (job.cancelled())
 							throw JobCancelled();

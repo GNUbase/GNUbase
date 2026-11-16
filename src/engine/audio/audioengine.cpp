@@ -909,7 +909,7 @@ namespace gnubase::engine
 							loaded.clear();
 						}
 						if (sample != loaded)
-							(m_renderSamples ? *m_renderSamples : m_sampleLoader).request(sample);
+							(m_renderSamples != nullptr ? *m_renderSamples : m_sampleLoader).request(sample);
 					}
 				}
 				instrument.samples = channel.samples;
@@ -978,7 +978,7 @@ namespace gnubase::engine
 				if (instrument.loaded[slot] == path)
 					continue;
 				if (std::shared_ptr<const processors::Sample> sample =
-						(m_renderSamples ? *m_renderSamples : m_sampleLoader).sample(path))
+						(m_renderSamples != nullptr ? *m_renderSamples : m_sampleLoader).sample(path))
 				{
 					instrument.player->setSample(slot, std::move(sample));
 					instrument.loaded[slot] = path;
@@ -989,7 +989,7 @@ namespace gnubase::engine
 				}
 			}
 		}
-		if (!m_renderSamples)
+		if (m_renderSamples == nullptr)
 			m_sampleLoader.keepOnly(waiting);
 		return waiting;
 	}
@@ -1005,12 +1005,12 @@ namespace gnubase::engine
 		const auto deadline = std::chrono::steady_clock::now() + timeout;
 		do
 		{
-			if (m_renderJob)
+			if (m_renderJob != nullptr)
 				m_renderJob->checkCancelled();
 			const auto remaining =
 				std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
-			const auto chunk = m_renderJob ? std::min(remaining, std::chrono::milliseconds(50)) : remaining;
-			if ((m_renderSamples ? *m_renderSamples : m_sampleLoader).waitUntilRead(chunk, updateSamples()))
+			const auto chunk = m_renderJob != nullptr ? std::min(remaining, std::chrono::milliseconds(50)) : remaining;
+			if ((m_renderSamples != nullptr ? *m_renderSamples : m_sampleLoader).waitUntilRead(chunk, updateSamples()))
 				break;
 		} while (std::chrono::steady_clock::now() < deadline);
 		return updateSamples();

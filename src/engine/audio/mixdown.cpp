@@ -56,6 +56,14 @@ namespace gnubase::engine
 			bool overwrite = false;
 		};
 
+		struct PreparedMixdown
+		{
+			RenderSnapshot snapshot;
+			Json project;
+			Json settings;
+			Json parameters;
+		};
+
 		// A bus or channel being exported.
 		struct Target
 		{
@@ -189,10 +197,10 @@ namespace gnubase::engine
 				pointers[c] = planar.data() + (c * g_chunk);
 			for (int64_t done = 0; done < frames;)
 			{
-				if (job)
+				if (job != nullptr)
 				{
 					job->checkCancelled();
-					job->progress(0.8 + 0.19 * static_cast<double>(done) / static_cast<double>(frames), target.name);
+					job->progress(0.8 + (0.19 * static_cast<double>(done) / static_cast<double>(frames)), target.name);
 				}
 				const size_t read =
 					reader->read(interleaved.data(), std::min<size_t>(g_chunk, static_cast<size_t>(frames - done)));
@@ -215,7 +223,7 @@ namespace gnubase::engine
 				done += static_cast<int64_t>(read);
 			}
 			writer->close();
-			if (job)
+			if (job != nullptr)
 				job->checkCancelled();
 		}
 
@@ -368,7 +376,7 @@ namespace gnubase::engine
 					render(total,
 						[&](uint32_t frames)
 						{
-							if (job)
+							if (job != nullptr)
 							{
 								job->checkCancelled();
 								job->progress(
@@ -410,9 +418,9 @@ namespace gnubase::engine
 					files.push_back({{"channel", target.object}, {"name", target.name},
 						{"path", fs::absolute(target.path).u8string()}, {"frames", frames}});
 				}
-				if (job)
+				if (job != nullptr)
 					job->checkCancelled();
-				for (Target& target : targets)
+				for (const Target& target : targets)
 				{
 					// Once publication begins this job completes; cancellation is checked before it.
 					if (format.overwrite || target.created)
@@ -478,7 +486,7 @@ namespace gnubase::engine
 					if (bus.mainMix)
 						objects.push_back(bus.id);
 			require(!objects.empty(), "there is no main mix; give channels");
-			const std::set<ObjectId> unique(objects.begin(), objects.end());
+			const const std::set<ObjectId> unique(objects.begin(), objects.end());
 			require(unique.size() == objects.size(), "channels names a channel twice");
 
 			const fs::path folder = fs::u8path(parameters.at("folder").get<std::string>());
@@ -526,7 +534,7 @@ namespace gnubase::engine
 	{
 		require(m_device != nullptr && m_programs, "there is no audio device; set one with audio.setDevice");
 		require(!m_transport.recording() && !m_transport.countingIn(), "stop recording first");
-		const RenderSnapshot snapshot = m_snapshots.latest();
+		const RenderSnapshot& snapshot = m_snapshots.latest();
 		require(m_device->format().sampleRate == snapshot.sampleRate,
 			"the device runs at " + std::to_string(std::lround(m_device->format().sampleRate)) +
 				" Hz, not at the project sample rate of " + std::to_string(std::lround(snapshot.sampleRate)) + " Hz");
@@ -545,7 +553,7 @@ namespace gnubase::engine
 				if (bus.mainMix)
 					objects.push_back(bus.id);
 		require(!objects.empty(), "there is no main mix; give channels");
-		std::set<ObjectId> unique(objects.begin(), objects.end());
+		const std::set<ObjectId> unique(objects.begin(), objects.end());
 		require(unique.size() == objects.size(), "channels names a channel twice");
 		for (const auto object : objects)
 		{
@@ -554,7 +562,11 @@ namespace gnubase::engine
 			require(node >= 0 && m_programs->latest().graph.outputChannels(node) > 0, "channel has no audio");
 		}
 		request["channels"] = objects;
-		const Json values = m_settings.values();
+		const auto prepared = std::make_shared<PreparedMixdown>();
+		prepared->snapshot = snapshot;
+		prepared->project = project;
+		prepared->settings = m_settings.values();
+		prepared->parameters = request;
 		std::set<std::string> paths;
 		for (const auto& channel : snapshot.channels)
 			for (const auto& path : channel.samples)
@@ -566,14 +578,13 @@ namespace gnubase::engine
 		const MidiChase chase = m_chase;
 		const uint32_t blockSize = m_device->format().blockSize;
 		plugins::HostManager* hosts = &m_engine->pluginHosts();
-		return
-			[snapshot, project, values, request, blockSize, hosts, samples, lease, sampleWait, chase](JobContext& job)
+		return [prepared, blockSize, hosts, samples, lease, sampleWait, chase](JobContext& job)
 		{
 			(void)lease; // keeps this snapshot's sample reads alive through completion
 			job.checkCancelled();
-			rt::SnapshotPublisher<RenderSnapshot> snapshots(std::make_unique<RenderSnapshot>(snapshot));
+			rt::SnapshotPublisher<RenderSnapshot> snapshots(std::make_unique<RenderSnapshot>(prepared->snapshot));
 			settings::Store settings(settings::userFormat());
-			settings.set(values);
+			settings.set(prepared->settings);
 			std::vector<std::unique_ptr<audio::Backend>> backends;
 			backends.push_back(std::make_unique<audio::DummyBackend>());
 			AudioEngine renderer(snapshots, settings, std::move(backends), {});
@@ -584,13 +595,13 @@ namespace gnubase::engine
 			renderer.m_multiProcessing = false;
 			renderer.m_threads = 1;
 			renderer.m_slots = std::make_unique<plugins::SlotInstances>(*hosts, [] {}, [](uint64_t) { return true; });
-			renderer.setDevice({{"blockSize", blockSize}, {"sampleRate", snapshot.sampleRate}, {"captureSeconds", 0},
-				{"inputChannels", 0}});
+			renderer.setDevice({{"blockSize", blockSize}, {"sampleRate", prepared->snapshot.sampleRate},
+				{"captureSeconds", 0}, {"inputChannels", 0}});
 			// Wait on the plugin job queue, then publish their ready processors in this render's graph.
 			hosts->run([] {}).get();
 			job.checkCancelled();
 			renderer.rebuild();
-			return renderer.mixdown(request, project, false, &job);
+			return renderer.mixdown(prepared->parameters, prepared->project, false, &job);
 		};
 	}
 

@@ -129,7 +129,7 @@ namespace gnubase::ui
 				  const std::string kind = job.at("kind").get<std::string>();
 				  if (kind != "track.freeze" && kind != "track.renderInPlace" && kind != "mixdown.export")
 					  return;
-				  if (Window* main = mainWindow())
+				  if (const Window* main = mainWindow())
 					  backupStarted(main->id(), engine::Result{0, {{"job", job}}, {}});
 			  })),
 		  m_jobProgress(binding.on("job.progress",

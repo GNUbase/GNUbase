@@ -150,7 +150,7 @@ namespace gnubase::engine
 		}
 		bool unchanged() const { return m_unchanged; }
 		// Engine-posted work can finish its own jobs; clients cannot invoke those completion handlers.
-		bool internal() const { return m_outer ? m_outer->internal() : m_internal; }
+		bool internal() const { return m_outer != nullptr ? m_outer->internal() : m_internal; }
 
 		// If the command fails, leaves the failure out of engine.commandLog and the error log: for a command that the
 		// engine runs on its own and whose failure was reported already, such as a due auto save that fails again.

@@ -120,6 +120,7 @@ namespace gnubase::engine
 		ProjectChange change;
 		std::string merge; // a transaction's merge key: later transactions with the same key join this step
 		uint64_t id = 0;   // given by History::record, growing with each step
+		// NOLINTNEXTLINE(readability-redundant-member-init): aggregate callers may omit this field, also with GCC
 		std::vector<ObjectId> movedTracks{}; // explicit track moves, including moves within one folder
 	};
 
