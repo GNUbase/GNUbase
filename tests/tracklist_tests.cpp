@@ -1893,9 +1893,16 @@ TEST_CASE(
 		const Rml::Vector2f to = from + element.GetBox().GetSize(Rml::BoxArea::Border);
 		return point.x >= from.x && point.x < to.x && point.y >= from.y && point.y < to.y;
 	};
+	// Steps of the shell may close the list again (Linux CI): it stays open while the test looks at it.
+	const auto keepOpen = [&]
+	{
+		if (!select->IsSelectBoxVisible())
+			select->ShowSelectBox();
+		context.Update(); // the open list laid out
+	};
 	const auto overAnotherRow = [&]() -> Rml::Element*
 	{
-		context.Update(); // the open list laid out
+		keepOpen();
 		const Rml::Element* rows = drumsRow->GetParentNode();
 		for (int i = 0; i < select->GetNumOptions(); ++i)
 		{
@@ -1916,11 +1923,13 @@ TEST_CASE(
 			option = overAnotherRow();
 			return option != nullptr;
 		});
-	INFO("options " << select->GetNumOptions() << ", the row at " << drumsRow->GetAbsoluteOffset().y << " "
-					<< drumsRow->GetBox().GetSize().y << " px high, the first option at "
-					<< (select->GetNumOptions() > 0 ? select->GetOption(0)->GetAbsoluteOffset().y : -1.0F));
+	INFO("list open " << select->IsSelectBoxVisible() << ", options " << select->GetNumOptions() << ", the row at "
+					  << drumsRow->GetAbsoluteOffset().y << " " << drumsRow->GetBox().GetSize().y
+					  << " px high, the first option at "
+					  << (select->GetNumOptions() > 0 ? select->GetOption(0)->GetAbsoluteOffset().y : -1.0F));
 	REQUIRE(found);
 	REQUIRE(option != nullptr);
+	keepOpen();
 	const Rml::Vector2f middle = middleOf(*option);
 	const Rml::Element* hit = context.GetElementAtPoint(middle);
 	while (hit != nullptr && hit != option)
