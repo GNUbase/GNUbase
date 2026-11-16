@@ -205,7 +205,7 @@ TEST_CASE("Space starts and stops playback after a click on a toolbar or transpo
 TEST_CASE("a narrow window cuts off the transport bar's last sections instead of drawing them over each other", "[ui]")
 {
 	test::UiApp app({1024, 700});
-	showBar(app, 1.0F); // about 1220 dp of sections in 1024 dp
+	showBar(app, 1.0F); // about 1240 dp of sections in 1024 dp
 	Rml::Context& context = app.main().context();
 	Rml::Element* bar = nullptr;
 	for (int i = 0; i < context.GetNumDocuments(); ++i)
@@ -802,6 +802,11 @@ TEST_CASE("the time displays keep their width while the cursor moves, and their 
 				CHECK(primarySize > secondarySize);
 			else
 				CHECK(primarySize == secondarySize);
+			// The cursor's displays are as high as the transport's other displays, the larger primary display higher.
+			const float height = rml("signature")->GetOffsetHeight();
+			CHECK(rml("left-locator")->GetOffsetHeight() == height);
+			CHECK(rml("secondary-time")->GetOffsetHeight() == height);
+			CHECK(rml("primary-time")->GetOffsetHeight() >= height);
 			for (const auto& [name, widest] : formats)
 			{
 				INFO("format " << name);

@@ -362,6 +362,18 @@ TEST_CASE(
 		CHECK_THAT(in("value-off", {"disabled"}), ContainsSubstring("disabled.svg"));
 		// Also when checked, as every disabled bar button (#1711).
 		CHECK_THAT(in("value-checked", {"disabled"}), ContainsSubstring("disabled.svg"));
+		{
+			Rml::Element* checked = element("tool-checked");
+			Rml::Element* plain = element("tool");
+			checked->SetPseudoClass("disabled", true);
+			plain->SetPseudoClass("disabled", true);
+			update();
+			CHECK(decorator(*checked) == decorator(*plain));
+			CHECK(checked->GetComputedValues().color() == plain->GetComputedValues().color());
+			CHECK(checked->GetComputedValues().background_color() == plain->GetComputedValues().background_color());
+			checked->SetPseudoClass("disabled", false);
+			plain->SetPseudoClass("disabled", false);
+		}
 		if (flat)
 		{
 			CHECK_THAT(in("value", {"hover", "active"}), ContainsSubstring("dropdown-button-pressed.svg"));
