@@ -486,7 +486,7 @@ namespace gnubase::engine
 					if (bus.mainMix)
 						objects.push_back(bus.id);
 			require(!objects.empty(), "there is no main mix; give channels");
-			const const std::set<ObjectId> unique(objects.begin(), objects.end());
+			const std::set<ObjectId> unique(objects.begin(), objects.end());
 			require(unique.size() == objects.size(), "channels names a channel twice");
 
 			const fs::path folder = fs::u8path(parameters.at("folder").get<std::string>());
