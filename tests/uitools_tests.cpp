@@ -379,6 +379,23 @@ TEST_CASE(
 	CHECK(list->GetScrollTop() == 40.0F);
 	CHECK(fixture.call("ui_move", {{"selector", "li"}, {"index", 0}}).at("element").at("text") == "Drums");
 	CHECK(list->GetScrollTop() == 0.0F);
+
+	// A drag within the list onto an item scrolled away: the list scrolls, and the button goes down on Bass where it is
+	// then, not on Keys, which took Bass's place.
+	Recorder recorder;
+	fixture.main->AddEventListener(Rml::EventId::Dragstart, &recorder);
+	fixture.main->AddEventListener(Rml::EventId::Dragdrop, &recorder);
+	CHECK(fixture.call("ui_drag", {{"from", {{"selector", "#bass"}}}, {"to", {{"selector", "#vocals"}}}})
+			  .at("element")
+			  .at("id") == "vocals");
+	CHECK(list->GetScrollTop() == 20.0F);
+	CHECK(recorder.events.at("dragstart").at("target") == "bass");
+	CHECK(recorder.events.at("dragdrop").at("target") == "vocals");
+	// Drums and Guitar can't both be in view: an error, and no input.
+	recorder.events = Json::object();
+	CHECK_THAT(fixture.fail("ui_drag", {{"from", {{"selector", "#drums"}}}, {"to", {{"selector", "#guitar"}}}}),
+		ContainsSubstring("#drums and the other end of the drag can't both be in view"));
+	CHECK(recorder.events.empty());
 }
 
 TEST_CASE("ui_click with action down holds the button across other tool calls until action up", "[unit]")

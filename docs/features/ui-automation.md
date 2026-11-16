@@ -30,7 +30,9 @@ elements, and mouse and keyboard input. [mcp.md](../mcp.md#ui-tools) is the guid
 - **Input.** A click moves the mouse to the centre of the element, or to the point, and presses and releases the button;
   an element whose centre its scrolling containers hide is scrolled into view first, just far enough, as a user would
   scroll to it (#1781), so the click lands on it rather than on what is in its place; this goes for every input that
-  aims at an element (move, click, press, release, drag, wheel, drop);
+  aims at an element (move, click, press, release, drag, wheel, drop). A drag takes both its ends where they are once
+  both are scrolled into view, so scrolling to the end can't move the start from under the mouse, and fails when they
+  can't both be in view, e.g. two items of a list further apart than it shows;
   a double click is two clicks, which RmlUi recognises by their timing, with the UI updated between them as frames would
   be, so a first click that opens a field leaves the second to the field. RmlUi's clock stands still for them, so they
   are one double click however long those frames take in a slow build or on a busy machine; elements that time double
