@@ -413,6 +413,29 @@ TEST_CASE("the selection drops the steps that the pattern no longer has", "[ui]"
 	CHECK(f.lane(60).at("steps").at(0).at("length") == 2);
 }
 
+TEST_CASE("the selection doesn't go along to another pattern", "[ui]")
+{
+	Fixture f;
+	const Json two = Json::array({{{"index", 0}}, {{"index", 1}}});
+	f.app.call("pattern.set", {{"pattern", f.pattern}, {"lanes", {{{"pitch", 36}, {"steps", two}}}}});
+	const uint64_t other = f.app.call("pattern.add", {{"track", f.track}}).at("pattern").at("id").get<uint64_t>();
+	f.app.call("pattern.set", {{"pattern", other}, {"lanes", {{{"pitch", 36}, {"steps", two}}}}});
+	REQUIRE(f.app.waitUntil([&] { return f.has(cell(36, 1), "on"); }));
+	f.click(of(".pattern-tool[pattern-tool=select]"));
+	f.click(of(cell(36, 0)));
+	REQUIRE(f.has(cell(36, 0), "selected"));
+	// The part plays the other pattern, which has a step at the same cell: it isn't selected (#1693).
+	f.click(of("#pattern-select"));
+	f.click(of("#pattern-menu menuitem[pattern-id=\"" + std::to_string(other) + "\"]"));
+	REQUIRE(f.app.waitUntil([&] { return f.text("#pattern-select") == "Pattern 2"; }));
+	REQUIRE(f.has(cell(36, 0), "on"));
+	CHECK_FALSE(f.has(cell(36, 0), "selected"));
+	// Tie ties all steps, not the selected ones of the pattern before.
+	f.click(of("#pattern-tie"));
+	REQUIRE(f.app.waitUntil([&] { return f.patternJson(other).at("lanes").at(0).at("steps").size() == 1; }));
+	CHECK(f.patternJson(other).at("lanes").at(0).at("steps").at(0).at("length") == 2);
+}
+
 TEST_CASE("a shorter Number of Steps edits the pattern as the engine has it, after its answer only", "[ui]")
 {
 	Fixture f;
@@ -505,6 +528,34 @@ TEST_CASE("Double Step Resolution and Double Length leave the lanes' rhythms as 
 	CHECK(f.steps(36) == std::vector<int>{2, 34});
 	CHECK(f.steps(38) == std::vector<int>{2});
 	CHECK(f.lane(46).at("length") == 100);
+}
+
+TEST_CASE("Double Step Resolution moves the selection along with the steps", "[ui]")
+{
+	Fixture f;
+	f.app.call("pattern.set",
+		{{"pattern", f.pattern},
+			{"lanes",
+				{{{"pitch", 36}, {"steps", {{{"index", 1}}, {{"index", 2}}}}},
+					{{"pitch", 38}, {"resolution", "1/8"}, {"steps", {{{"index", 2}}}}}}}});
+	REQUIRE(f.app.waitUntil([&] { return f.has(cell(38, 2), "on"); }));
+	f.settle();
+	f.click(of(".pattern-tool[pattern-tool=select]"));
+	f.click(of(cell(36, 2)));
+	f.click(of(cell(38, 2)), 1, {"shift"});
+	REQUIRE(f.has(cell(36, 2), "selected"));
+	// The selected step goes to 4 and stays selected; the one from 1 at 2 isn't. The lane of its own resolution
+	// keeps its steps and their selection (#1693).
+	f.click(of("#pattern-double-resolution"));
+	REQUIRE(f.app.waitUntil([&] { return f.steps(36) == std::vector<int>{2, 4}; }));
+	f.settle();
+	CHECK(f.has(cell(36, 4), "selected"));
+	CHECK_FALSE(f.has(cell(36, 2), "selected"));
+	CHECK(f.has(cell(38, 2), "selected"));
+	f.app.ui().key(f.window, "Delete");
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.steps(36) == std::vector<int>{2}; }));
+	CHECK(f.steps(38).empty());
 }
 
 TEST_CASE("the step selection tool selects and deletes steps, and the edit functions tie and split them", "[ui]")

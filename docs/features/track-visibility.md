@@ -17,7 +17,8 @@ mixers whose channel visibility follows the tracks'.
   was hidden on its own before (#1533). After every edit and undo step, `trackVisibility.changed` goes out when what
   `trackVisibility.get` returns changed, as when a hidden track goes, and the mixers that follow sync, hiding the
   channel of a track that joined a hidden folder or a group channel a hidden folder gets (`followTrackFolders`, #1475,
-  #1539). Hidden tracks play as usual. `Project::trackVisibility` itself, and `trackVisibility` in `project.get`, hold
+  #1539). A transaction with a track edit and a `trackVisibility.set` announces it once, with what the transaction
+  left; each `trackVisibility.set` in it announces it on its own (#1622). Hidden tracks play as usual. `Project::trackVisibility` itself, and `trackVisibility` in `project.get`, hold
   the stored form, the folder without the tracks it hides: readers go through `hiddenTracks` or `trackVisibility.get`,
   which add them.
 - `sync`: the mixer window (`window1` to `window4`) whose channel visibility follows the tracks', or empty (Sync
@@ -29,12 +30,15 @@ mixers whose channel visibility follows the tracks'.
   `configuration` makes one active and, without `hidden`, hides its tracks, with those inside its folders now, also in
   a transaction after a `track.add` or `track.move` (#1539). Folders are kept as in `hidden`: a track hidden on its own
   inside a hidden folder stays in the configuration when it leaves the folder. Which tracks are hidden on their own
-  comes from the configuration of the same name; the active one, or one with a new name, given the tracks hidden now,
-  as Add, Update and Rename Configuration send them, takes it from `hidden`, and one with a new name and other tracks,
-  the active one renamed while modified, from the active one (#1622). A configuration keeps the ids of removed tracks,
-  applied too, so undoing the removal brings the track back into it, hidden: after undo and redo steps,
-  `trackVisibility.changed` goes out when what `trackVisibility.get` returns changed, once for a transaction, and the
-  mixers that follow sync in any case (#1475, #1622).
+  comes from the configuration of the same name. The one new name in a list without the active one is its rename, as
+  Rename Configuration sends it, and takes them from the active one; of several new names, none does (#1694). Any
+  other new name takes them from `hidden` when given the tracks hidden now, as Add Configuration sends it, and keeps
+  folders only otherwise. The active one given the tracks hidden now, in a call that doesn't make another one active,
+  as Update Configuration sends it, takes them from `hidden` too. Add Configuration also sends the active one,
+  unchanged, which keeps its own then: a track it hides only with its folder still leaves it with the folder, though
+  `hidden` holds it on its own (#1622, #1694). A configuration keeps the ids of removed tracks, applied too, so
+  undoing the removal brings the track back into it, hidden: after undo and redo steps, `trackVisibility.changed` goes
+  out when what `trackVisibility.get` returns changed, and the mixers that follow sync in any case (#1475, #1622).
 
 **Following the mixers.** In a mixer that follows, a track's channel is hidden while the track is (`syncMixers`), and
 `mixer.set` on such a mixer hides and shows the tracks of its track channels (`followMixer`, called from `mixer.set` in
@@ -116,7 +120,9 @@ dividing the track list, whose upper part the sync leaves alone.
   (#1533); a hidden folder's new group channel hidden in the lower zone's mixer, a removed hidden track announced, and a
   configuration applied in a transaction after a `track.add` into its folder (#1539); a configuration added, updated or
   renamed keeping the tracks hidden on their own inside its folders, and a transaction announcing the visibility once
-  (#1622); the values from a file checked as the command checks them, the lower zone's mixer hiding the channels of the
+  (#1622); only the one new name that replaces the active one taking its tracks hidden on their own, the active one
+  keeping its own when a configuration is added, and a file from before #1533 whose track inside a hidden folder stays
+  hidden when it leaves the folder (#1694); the values from a file checked as the command checks them, the lower zone's mixer hiding the channels of the
   tracks that joined from their folders; the lower zone's mixer and the synced window following both ways, busses and
   tracks without a channel keeping their state, one window at a time; configurations added, applied, modified, updated,
   renamed and deleted, names checked, gone tracks left out.

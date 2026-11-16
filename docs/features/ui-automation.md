@@ -1,8 +1,8 @@
 # UI automation
 
-MCP clients, UI tests ([ui-tests.md](ui-tests.md)) and Lua ([ui-lua.md](ui-lua.md)) read GNUbase's UI back and drive it as a user would
-(#58): its windows and documents, the DOM with each element's box, screenshots of windows or single elements, and mouse
-and keyboard input. [mcp.md](../mcp.md#ui-tools) is the guide for agents.
+MCP clients, UI tests ([ui-tests.md](ui-tests.md)) and Lua ([ui-lua.md](ui-lua.md)) read GNUbase's UI back and drive it
+as a user would (#58): its windows and documents, the DOM with each element's box, screenshots of windows or single
+elements, and mouse and keyboard input. [mcp.md](../mcp.md#ui-tools) is the guide for agents.
 
 - **Interface.** `ui::Automation` (`src/ui/automation.h`) does the work, on the UI thread. It reads windows, documents
   and elements as JSON and gives input to a window's RmlUi context, the way `SdlWindowSystem` delivers the user's, so

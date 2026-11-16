@@ -1206,7 +1206,9 @@ TEST_CASE("a sampler's track preset brings its sample, embedded in the preset, i
 	const std::unique_ptr<AudioFileReader> reader = AudioFileReader::open(extracted.u8string());
 	CHECK(loadOnto(empty) == extracted);
 	CHECK(loadOnto(synth) == extracted);
-	CHECK(fs::last_write_time(extracted) == written);
+	// Compared outside CHECK: libc++'s file clock counts in __int128, which Catch2 can't print.
+	const bool untouched = fs::last_write_time(extracted) == written;
+	CHECK(untouched);
 	std::vector<float> samples(static_cast<size_t>(1000 * reader->info().channels));
 	CHECK(reader->read(samples.data(), 1000) == 480);
 }

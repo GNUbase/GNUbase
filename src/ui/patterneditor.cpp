@@ -205,7 +205,11 @@ namespace gnubase::ui
 		if (m_pattern.is_object() && lane(m_lane) == nullptr)
 			m_lane = m_pattern.at("lanes").empty() ? -1 : m_pattern.at("lanes").at(0).at("pitch").get<int>();
 		// The selection keeps only the steps the pattern shown has: a mode switch, a shorter Number of Steps, an undo
-		// or a script may have taken some (#1615).
+		// or a script may have taken some (#1615). Another part or pattern shown starts without one (#1693).
+		const std::pair<uint64_t, uint64_t> shown{m_part, pattern};
+		if (shown != m_shown)
+			m_selection.clear();
+		m_shown = shown;
 		for (auto it = m_selection.begin(); it != m_selection.end();)
 			it = step(it->first, it->second) == nullptr ? m_selection.erase(it) : std::next(it);
 		render();
@@ -528,6 +532,7 @@ namespace gnubase::ui
 			changes["resolution"] = engine::midi::toString(*value);
 		}
 		Json lanes = m_pattern.at("lanes");
+		std::set<int> doubled; // the pitches of the lanes whose steps' indexes double
 		for (Json& each : lanes)
 		{
 			const int own = each.value("length", 0);
@@ -544,6 +549,8 @@ namespace gnubase::ui
 				each["resolution"] = m_pattern.at("resolution");
 				continue;
 			}
+			if (resolution)
+				doubled.insert(each.at("pitch").get<int>());
 			Json steps = Json::array();
 			for (const Json& one : each.at("steps"))
 			{
@@ -564,6 +571,11 @@ namespace gnubase::ui
 			each["steps"] = std::move(steps);
 		}
 		changes["lanes"] = std::move(lanes);
+		// The selected steps move, and the selection goes along (#1693).
+		std::set<std::pair<int, int>> selection;
+		for (const auto& [pitch, index] : m_selection)
+			selection.insert({pitch, doubled.count(pitch) != 0 ? index * 2 : index});
+		m_selection = std::move(selection);
 		sendLanes(resolution ? "Double Step Resolution" : "Double Length", std::move(changes));
 	}
 

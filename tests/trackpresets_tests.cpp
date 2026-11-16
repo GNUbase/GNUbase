@@ -2208,7 +2208,9 @@ TEST_CASE("track.import and project.load leave an extracted media file as it is 
 		const fs::file_time_type written = fs::last_write_time(extracted) - std::chrono::hours(1);
 		fs::last_write_time(extracted, written);
 		CHECK(load() == extracted);
-		CHECK(fs::last_write_time(extracted) == written);
+		// Compared outside CHECK: libc++'s file clock counts in __int128, which Catch2 can't print.
+		const bool untouched = fs::last_write_time(extracted) == written;
+		CHECK(untouched);
 
 		// A file of the entry's size with other content stays, as a project may play it, and the entry goes beside it:
 		// the CRC-32 tells them apart, not the size.
