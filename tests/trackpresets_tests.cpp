@@ -2138,10 +2138,10 @@ TEST_CASE("the track preset dialog saves, loads and adds track presets", "[ui]")
 	{ return app.ui().dom(std::nullopt, "#preset-message", 0).at("elements")[0].at("text").get<std::string>(); };
 	REQUIRE(app.waitUntil([&message] { return message().find("gone.wav") != std::string::npos; }));
 	CHECK(shown(app, "#track-preset-dialog"));
-	CHECK(app.call("track.presets").at("presets").size() == 3);
+	CHECK(app.call("track.presets").at("presets").size() == 4);
 	click(app, "#preset-confirm");
 	REQUIRE(app.waitUntil([&app] { return !shown(app, "#track-preset-dialog"); }));
-	CHECK(app.call("track.presets").at("presets").size() == 3);
+	CHECK(app.call("track.presets").at("presets").size() == 4);
 	app.call("track.remove", {{"track", sampler.at("track").at("id")}});
 	select(app, {other.at("track").at("id").get<ObjectId>()});
 
