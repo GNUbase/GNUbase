@@ -633,8 +633,59 @@ TEST_CASE("a transaction announces the track visibility once", "[unit]")
 	CHECK(changes[0].at("hidden") == sorted({folder, drums, other}));
 }
 
-// #1809: a mixer.set on the lower zone's mixer that hides a channel announces trackVisibility.changed on its own, and
-// once with what the transaction left when a track edit comes before it.
+// #1759: once however many trackVisibility.set the transaction has, while its track edits change what the visibility
+// it left hides; otherwise each trackVisibility.set in it announces it on its own, and the track edits don't.
+TEST_CASE("a transaction announces the track visibility once only when its track edits change what it hides", "[unit]")
+{
+	Fixture f;
+	std::mutex mutex;
+	std::vector<Json> changes;
+	const engine::Listener listener(f.engine,
+		[&](const engine::Event& event)
+		{
+			const std::scoped_lock lock(mutex);
+			if (event.name == "trackVisibility.changed")
+				changes.push_back(event.data);
+		});
+	const uint64_t folder = f.call("track.add", {{"type", "folder"}}).at("track").at("id").get<uint64_t>();
+	const uint64_t other = f.track("audio").first;
+	f.call("trackVisibility.set", {{"hidden", {folder}}});
+	const auto announced = [&]
+	{
+		const std::scoped_lock lock(mutex);
+		std::vector<Json> result;
+		std::swap(result, changes);
+		return result;
+	};
+	const Json addIntoFolder = {
+		{"command", "track.add"}, {"parameters", {{"type", "audio"}, {"parent", folder}, {"index", 0}}}};
+	announced();
+
+	// The folder hidden in the end, with the track that joined it: once, with what the transaction left.
+	const Json result = f.call("history.transaction",
+		{{"description", "Add and hide twice"},
+			{"commands",
+				{addIntoFolder, {{"command", "trackVisibility.set"}, {"parameters", {{"hidden", {other}}}}},
+					{{"command", "trackVisibility.set"}, {"parameters", {{"hidden", {folder}}}}}}}});
+	const uint64_t drums = result.at("results").at(0).at("track").at("id").get<uint64_t>();
+	const std::vector<Json> once = announced();
+	REQUIRE(once.size() == 1);
+	CHECK(once[0].at("hidden") == sorted({folder, drums}));
+
+	// Every track shown in the end: each trackVisibility.set announces it, the track edit doesn't.
+	f.call("history.transaction",
+		{{"description", "Add and show"},
+			{"commands",
+				{addIntoFolder, {{"command", "trackVisibility.set"}, {"parameters", {{"hidden", {other}}}}},
+					{{"command", "trackVisibility.set"}, {"parameters", {{"hidden", Json::array()}}}}}}});
+	const std::vector<Json> twice = announced();
+	REQUIRE(twice.size() == 2);
+	CHECK(twice[0].at("hidden") == Json{other});
+	CHECK(twice[1].at("hidden") == Json::array());
+}
+
+// #1809: a mixer.set on the lower zone's mixer that changes the hidden tracks announces trackVisibility.changed on
+// its own; after a track edit that changes what the visibility hides, the transaction announces it once.
 TEST_CASE("a mixer.set announces the track visibility in a transaction as the docs say", "[unit]")
 {
 	Fixture f;
@@ -647,38 +698,43 @@ TEST_CASE("a mixer.set announces the track visibility in a transaction as the do
 			if (event.name == "trackVisibility.changed")
 				changes.push_back(event.data);
 		});
+	const uint64_t folder = f.call("track.add", {{"type", "folder"}}).at("track").at("id").get<uint64_t>();
 	const auto [a, aChannel] = f.track("audio");
 	const auto [b, bChannel] = f.track("audio");
-	const auto clear = [&]
+	f.call("trackVisibility.set", {{"hidden", {folder}}});
+	const auto announced = [&]
 	{
 		const std::scoped_lock lock(mutex);
-		changes.clear();
+		std::vector<Json> result;
+		std::swap(result, changes);
+		return result;
 	};
-	clear();
+	announced();
 
+	// No track edit: each mixer.set announces it on its own.
 	f.call("history.transaction",
 		{{"description", "Hide two"},
 			{"commands",
 				{{{"command", "mixer.set"}, {"parameters", {{"mixer", "lower"}, {"hidden", {aChannel}}}}},
 					{{"command", "mixer.set"},
 						{"parameters", {{"mixer", "lower"}, {"hidden", sorted({aChannel, bChannel})}}}}}}});
-	{
-		const std::scoped_lock lock(mutex);
-		REQUIRE(changes.size() == 2);
-		CHECK(changes[0].at("hidden") == sorted({a}));
-		CHECK(changes[1].at("hidden") == sorted({a, b}));
-	}
+	const std::vector<Json> twice = announced();
+	REQUIRE(twice.size() == 2);
+	CHECK(twice[0].at("hidden") == sorted({folder, a}));
+	CHECK(twice[1].at("hidden") == sorted({folder, a, b}));
 
+	// A track edit into the hidden folder changes what the visibility hides: once, with what the transaction left.
 	f.call("mixer.set", {{"mixer", "lower"}, {"hidden", std::vector<uint64_t>{}}});
-	clear();
-	f.call("history.transaction",
+	announced();
+	const Json result = f.call("history.transaction",
 		{{"description", "Add and hide"},
 			{"commands",
-				{{{"command", "track.add"}, {"parameters", {{"type", "audio"}}}},
+				{{{"command", "track.add"}, {"parameters", {{"type", "audio"}, {"parent", folder}, {"index", 0}}}},
 					{{"command", "mixer.set"}, {"parameters", {{"mixer", "lower"}, {"hidden", {aChannel}}}}}}}});
-	const std::scoped_lock lock(mutex);
-	REQUIRE(changes.size() == 1);
-	CHECK(changes[0].at("hidden") == sorted({a}));
+	const uint64_t drums = result.at("results").at(0).at("track").at("id").get<uint64_t>();
+	const std::vector<Json> once = announced();
+	REQUIRE(once.size() == 1);
+	CHECK(once[0].at("hidden") == sorted({folder, drums, a}));
 }
 
 // #1694: one trackVisibility.set that drops the active configuration and adds several gives none of them the active

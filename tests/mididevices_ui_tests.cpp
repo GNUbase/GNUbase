@@ -12,7 +12,6 @@
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
-#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
@@ -61,14 +60,7 @@ namespace
 	// The text of a drop-down list's selected option.
 	std::string selected(test::UiApp& app, const std::string& selector)
 	{
-		Rml::Element* element = nullptr;
-		for (int i = 0; element == nullptr && i < app.main().context().GetNumDocuments(); ++i)
-			element = app.main().context().GetDocument(i)->QuerySelector(selector);
-		auto* select = dynamic_cast<Rml::ElementFormControlSelect*>(element);
-		REQUIRE(select != nullptr);
-		const Rml::Element* option = select->GetOption(select->GetSelection());
-		REQUIRE(option != nullptr);
-		return option->GetInnerRML();
+		return test::selectedOption(app, selector);
 	}
 
 	Json channel(test::UiApp& app)

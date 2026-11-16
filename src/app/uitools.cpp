@@ -180,7 +180,8 @@ namespace gnubase::app
 		tools.push_back({"ui_dom",
 			"Reads a window's DOM (RmlUi documents): its documents, or with selector the elements that the CSS "
 			"selector matches (like querySelectorAll), each as a tree of elements with tag, id, classes, other "
-			"attributes, a form control's value, pseudo-classes such as hover, focus or checked, whether it's visible, "
+			"attributes, a form control's value, a drop-down list's options (value, text and whether it's selected), "
+			"pseudo-classes such as hover, focus or checked, whether it's visible, "
 			"its border box in the window's pixels and its children, depth levels deep. Text is a child {\"text\": "
 			"...}; an element whose children are left out has its text instead. Use depth 0 to get just the elements.",
 			object({{"window", windowProperty()},

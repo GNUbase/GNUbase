@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- The studio setup dialog (#79, docs/features/studio-setup.md): the audio system, the audio device with its ports,
-     the MIDI ports and the MIDI inputs' MPE setup, each a page that the devices list on the left selects. app::AppUi opens it (the UI command
+     the MIDI ports and the MIDI inputs' MPE setup, each a page that the devices list on the left selects, and a page
+     for each detected MPE input device (#1674). app::AppUi opens it (the UI command
      window.studioSetup). Its Lua reads everything from the engine when the dialog loads and after Apply, and changes
      it only through engine commands: Apply and OK send what the pages changed, Cancel drops it. -->
 <rml>
@@ -110,6 +111,23 @@
 		.mpe-port input.text
 		{
 			width: 60dp;
+		}
+
+		.mpe-port .field .label
+		{
+			width: 200dp;
+		}
+
+		/* The MIDI Activity display: the input's last messages, the newest at the bottom. */
+		.mpe-activity
+		{
+			height: 112dp;
+			margin-left: 200dp;
+		}
+
+		.mpe-message
+		{
+			height: 14dp;
 		}
 
 		.row
@@ -293,6 +311,20 @@
 			{"rotation", "Channel Rotation"}}
 		local initialsX = {{"off", "Off"}, {"center", "Center (64)"}}
 		local initialsY = {{"off", "Off"}, {"min", "Min (0)"}, {"center", "Center (64)"}, {"max", "Max (127)"}}
+		-- A dimension's MIDI Message (#1674): aftertouch, pitch bend or a controller.
+		local mpeMessages = {{"aftertouch", "Aftertouch"}, {"pitchBend", "Pitchbend"}}
+		for number = 0, 127 do
+			mpeMessages[#mpeMessages + 1] = {"cc" .. number, "CC " .. number .. (number == 74 and " (Brightness)" or "")}
+		end
+		-- Its Note Expression Assignment.
+		local mpeExpressions = {{"none", "None"}, {"volume", "Volume"}, {"pan", "Pan"}, {"tuning", "Tuning"},
+			{"vibrato", "Vibrato"}, {"expression", "Expression"}, {"brightness", "Brightness"}, {"pressure", "Pressure"}}
+		-- The members of mpe that the page edits with a select, by its class.
+		local mpeSelects = {mode = "mpe-mode", initialX = "mpe-initial-x", initialY = "mpe-initial-y",
+			xMessage = "mpe-x-message", pressureMessage = "mpe-pressure-message", yMessage = "mpe-y-message",
+			xExpression = "mpe-x-expression", pressureExpression = "mpe-pressure-expression",
+			yExpression = "mpe-y-expression"}
+		local activityLines = 8 -- the messages the MIDI Activity display shows
 
 		local function named(class, values, current, extra)
 			local options = {}
@@ -314,6 +346,31 @@
 			return port.backend .. "/" .. port.id
 		end
 
+		-- A MIDI message as the MIDI Activity display shows it: its channel, its kind and its values.
+		local function describe(bytes)
+			local status, channel = bytes[1] & 0xF0, (bytes[1] & 0x0F) + 1
+			local first, second = bytes[2] or 0, bytes[3] or 0
+			local kinds = {[0x80] = "Note Off " .. first .. " " .. second, [0x90] = "Note On " .. first .. " " .. second,
+				[0xA0] = "Poly Pressure " .. first .. " " .. second, [0xB0] = "CC " .. first .. " " .. second,
+				[0xC0] = "Program " .. first, [0xD0] = "Aftertouch " .. first,
+				[0xE0] = "Pitchbend " .. (first + (second << 7))}
+			if status == 0x90 and second == 0 then
+				status = 0x80
+			end
+			if kinds[status] == nil then
+				return "System " .. string.format("%02X", bytes[1])
+			end
+			return "Ch " .. channel .. " " .. kinds[status]
+		end
+
+		local function activityRml(key)
+			local lines = {}
+			for _, line in ipairs((setup.activity or {})[key] or {}) do
+				lines[#lines + 1] = '<div class="mpe-message">' .. escape(line) .. "</div>"
+			end
+			return table.concat(lines)
+		end
+
 		local function mpePage(ports)
 			local shownKey = nil
 			for _, port in ipairs(ports) do
@@ -329,16 +386,29 @@
 					inputs[#inputs + 1] = option(index, port.showAs, shown)
 					fields[#fields + 1] = '<div class="mpe-port' .. (shown and " shown" or "") .. '" index="' .. index ..
 						'">' ..
+						(port.mpeDevice and field("Detected Device", '<span class="mpe-device">' ..
+							escape(port.mpeDevice) .. "</span>") or "") ..
+						field("Pressure MIDI Message", named("mpe-pressure-message", mpeMessages, mpe.pressureMessage)) ..
+						field("Pressure Note Expression", named("mpe-pressure-expression", mpeExpressions,
+							mpe.pressureExpression)) ..
+						field("Horizontal/X MIDI Message", named("mpe-x-message", mpeMessages, mpe.xMessage)) ..
+						field("Horizontal/X Initial Value", named("mpe-initial-x", initialsX, mpe.initialX)) ..
+						field("Use for Tuning", checkbox('class="mpe-tuning" onchange="StudioSetup.mpeTuningChanged(element)"',
+							mpe.tuning)) ..
+						field("Pitch Range", '<input type="text" class="mpe-pitch-range" value="' .. mpe.pitchRange ..
+							'"/>') ..
+						field("Horizontal/X Note Expression", named("mpe-x-expression", mpeExpressions, mpe.xExpression,
+							' onchange="StudioSetup.mpeXExpressionChanged(element)"' .. (mpe.tuning and " disabled" or ""))) ..
+						field("Vertical/Y MIDI Message", named("mpe-y-message", mpeMessages, mpe.yMessage)) ..
+						field("Vertical/Y Initial Value", named("mpe-initial-y", initialsY, mpe.initialY)) ..
+						field("Vertical/Y Note Expression", named("mpe-y-expression", mpeExpressions, mpe.yExpression)) ..
 						field("Multi-Channel Input Mode", named("mpe-mode", mpeModes, mpe.mode,
 							' onchange="StudioSetup.mpeModeChanged(element)"')) ..
 						field("Used Channels", numbered("mpe-channels", 16, mpe.channels)) ..
 						field("First Channel", numbered("mpe-first-channel", 16, mpe.firstChannel,
 							mpe.mode ~= "rotation")) ..
-						field("Pitch Range", '<input type="text" class="mpe-pitch-range" value="' .. mpe.pitchRange ..
-							'"/>') ..
-						field("Use for Tuning", checkbox('class="mpe-tuning"', mpe.tuning)) ..
-						field("Horizontal/X Initial Value", named("mpe-initial-x", initialsX, mpe.initialX)) ..
-						field("Vertical/Y Initial Value", named("mpe-initial-y", initialsY, mpe.initialY)) .. "</div>"
+						field("MIDI Activity", "") ..
+						'<div class="mpe-activity">' .. activityRml(portKey(port)) .. "</div></div>"
 				end
 			end
 			if #inputs == 0 then
@@ -377,7 +447,60 @@
 			document:GetElementById("page-device").inner_rml = audioDevicePage(setup.status, setup.audioPorts)
 			document:GetElementById("page-midi").inner_rml = midiPage(setup.midiPorts)
 			document:GetElementById("page-mpe").inner_rml = mpePage(setup.midiPorts)
+			-- A page for each detected MPE input device, named after it, after the Note Expression Input page.
+			local list = document:GetElementById("studio-devices")
+			for _, item in ipairs(document:QuerySelectorAll(".devices-mpe-device")) do
+				list:RemoveChild(item)
+			end
+			for index, port in ipairs(setup.midiPorts) do
+				if port.input and port.mpeDevice then
+					local item = list:AppendChild(document:CreateElement("listitem"))
+					item:SetClass("devices-mpe-device", true)
+					item:SetAttribute("value", "mpe" .. index)
+					item.inner_rml = escape(port.mpeDevice)
+				end
+			end
+			setup.document = document
+			if not setup.subscribed then
+				setup.subscribed = true
+				gnubase.on("midi.activity", setup.activityArrived)
+			end
 			report(document, {})
+		end
+
+		-- The MIDI Activity display: the inputs' messages (the event midi.activity), each input's last ones.
+		function setup.activityArrived(event)
+			setup.activity = setup.activity or {}
+			local changed = {}
+			for _, received in ipairs(event.data.received) do
+				local key = received.backend .. "/" .. received.id
+				local lines = setup.activity[key] or {}
+				lines[#lines + 1] = describe(received.bytes)
+				if #lines > activityLines then
+					table.remove(lines, 1)
+				end
+				setup.activity[key] = lines
+				changed[key] = true
+			end
+			local document = setup.document
+			if document == nil then
+				return
+			end
+			for _, fields in ipairs(document:QuerySelectorAll(".mpe-port")) do
+				local key = portKey(setup.midiPorts[tonumber(fields:GetAttribute("index"))])
+				if changed[key] then
+					fields:QuerySelector(".mpe-activity").inner_rml = activityRml(key)
+				end
+			end
+		end
+
+		-- The handler goes with the document: the next one that opens loads this script again.
+		function setup.close()
+			setup.document = nil
+			if setup.subscribed then
+				gnubase.off("midi.activity", setup.activityArrived)
+				setup.subscribed = false
+			end
 		end
 
 		-- Shows the selected MIDI input's MPE setup.
@@ -385,6 +508,38 @@
 			setup.mpeShown = portKey(setup.midiPorts[tonumber(index)])
 			for _, fields in ipairs(document:QuerySelectorAll(".mpe-port")) do
 				fields:SetClass("shown", fields:GetAttribute("index") == tostring(index))
+			end
+		end
+
+		-- Use for Tuning sets X's Note Expression Assignment to tuning (reference manual p. 1297), which it keeps
+		-- while on; off, X plays anything but tuning.
+		function setup.mpeTuningChanged(element)
+			local fieldElement = element.parent_node
+			local x = fieldElement and fieldElement.parent_node and
+				fieldElement.parent_node:QuerySelector("select.mpe-x-expression")
+			if x == nil then
+				return
+			end
+			if checked(element) then
+				if valueOf(x) ~= "tuning" then
+					x:SetAttribute("value", "tuning")
+				end
+				x:SetAttribute("disabled", "")
+			else
+				x:RemoveAttribute("disabled")
+				if valueOf(x) == "tuning" then
+					x:SetAttribute("value", "none")
+				end
+			end
+		end
+
+		-- Tuning chosen for X is Use for Tuning.
+		function setup.mpeXExpressionChanged(element)
+			local fieldElement = element.parent_node
+			local tuning = fieldElement and fieldElement.parent_node and
+				fieldElement.parent_node:QuerySelector("input.mpe-tuning")
+			if tuning ~= nil and valueOf(element) == "tuning" and not checked(tuning) then
+				tuning:SetAttribute("checked", "")
 			end
 		end
 
@@ -402,8 +557,15 @@
 			end
 		end
 
-		-- Shows the page that the devices list selects.
+		-- Shows the page that the devices list selects. A detected MPE device's ("mpe" and its port's index) is the
+		-- Note Expression Input page with its input.
 		function setup.show(document, page)
+			local device = tonumber(page:match("^mpe(%d+)$"))
+			if device ~= nil then
+				page = "mpe"
+				document:GetElementById("mpe-input"):SetAttribute("value", tostring(device))
+				setup.showMpeInput(document, device)
+			end
 			for _, name in ipairs{"system", "device", "midi", "mpe"} do
 				document:GetElementById("page-" .. name):SetClass("shown", name == page)
 			end
@@ -519,12 +681,12 @@
 				if pitchRange == nil or pitchRange < 1 or pitchRange > 96 then
 					errors[#errors + 1] = "Pitch Range must be a whole number of semitones from 1 to 96"
 				else
-					local mpe = {mode = valueOf(fields:QuerySelector("select.mpe-mode")),
-						channels = math.tointeger(tonumber(valueOf(fields:QuerySelector("select.mpe-channels")))),
+					local mpe = {channels = math.tointeger(tonumber(valueOf(fields:QuerySelector("select.mpe-channels")))),
 						firstChannel = math.tointeger(tonumber(valueOf(fields:QuerySelector("select.mpe-first-channel")))),
-						pitchRange = pitchRange, tuning = checked(fields:QuerySelector("input.mpe-tuning")),
-						initialX = valueOf(fields:QuerySelector("select.mpe-initial-x")),
-						initialY = valueOf(fields:QuerySelector("select.mpe-initial-y"))}
+						pitchRange = pitchRange, tuning = checked(fields:QuerySelector("input.mpe-tuning"))}
+					for name, class in pairs(mpeSelects) do
+						mpe[name] = valueOf(fields:QuerySelector("select." .. class))
+					end
 					local changed = false
 					for name, value in pairs(mpe) do
 						changed = changed or port.mpe[name] ~= value
@@ -577,7 +739,7 @@
 		end
 	</script>
 </head>
-<body onload="StudioSetup.load(document)">
+<body onload="StudioSetup.load(document)" onunload="StudioSetup.close()">
 	<dialog id="studio-setup">
 		<div class="dialog-titlebar">Studio Setup</div>
 		<div class="content">

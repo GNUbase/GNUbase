@@ -386,8 +386,23 @@ TEST_CASE("the configuration name dialog stays open for a name that is taken or 
 	REQUIRE(app.waitUntil([&] { return configurations().size() == 2; }));
 	REQUIRE(app.waitUntil([&] { return !dialogOpen(); }));
 
-	// Rename Configuration to the other's name stays open too; to its own it closes and changes nothing.
+	// Rename Configuration to the other's name stays open too; to its own it closes and changes nothing, not even which
+	// tracks the active one hides on their own inside its folders, as Update Configuration would (#1759): Two hides
+	// Drums only with its folder, though hidden holds Drums on its own.
 	REQUIRE(app.waitUntil([&] { return configurations().at(1).at("name") == "Two"; }));
+	const uint64_t folder = app.call("track.add", {{"type", "folder"}}).at("track").at("id").get<uint64_t>();
+	const uint64_t drums = app.call("track.add", {{"type", "audio"}, {"parent", folder}, {"index", 0}})
+							   .at("track")
+							   .at("id")
+							   .get<uint64_t>();
+	Json both = {folder, drums};
+	std::sort(both.begin(), both.end());
+	app.call("trackVisibility.set", {{"hidden", {drums}}});
+	app.call("trackVisibility.set", {{"hidden", both}});
+	app.call("trackVisibility.set",
+		{{"configurations", {{{"name", "One"}, {"hidden", Json::array()}}, {{"name", "Two"}, {"hidden", {folder}}}}},
+			{"configuration", "Two"}, {"hidden", both}});
+	REQUIRE(app.call("trackVisibility.get").at("modified") == false);
 	choose("menuitem[visibility-configuration=rename]");
 	REQUIRE(app.waitUntil(dialogOpen));
 	app.ui().key(std::nullopt, "Mod+A");
@@ -410,6 +425,8 @@ TEST_CASE("the configuration name dialog stays open for a name that is taken or 
 	app.ui().key(std::nullopt, "Escape");
 	REQUIRE(app.waitUntil([&] { return !dialogOpen(); }));
 	CHECK(configurations().size() == 2);
+	app.call("track.move", {{"track", drums}, {"parent", 0}, {"index", 0}});
+	CHECK(configurations().at(1).at("hidden") == Json{folder});
 }
 
 // #906: the Track page indents tracks by their folder level, however deep the folders nest.

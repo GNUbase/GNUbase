@@ -463,13 +463,14 @@ namespace gnubase::engine::midi
 		void resetAudio(ProjectModel& model, Project& project, CommandContext& context, Json& result)
 		{
 			const std::vector<ObjectId> events = audioTargets(project, context.parameters());
-			// Where each event of a target's clip plays before resetting, in project samples and in clip frames, to
-			// find the piece before a removed one.
+			// Where each event of a target's clip plays before resetting, in project samples and in clip frames, and
+			// the event it crossfades from, to find the piece before a removed one.
 			struct Played
 			{
 				EventSpan span;
 				time::Samples from = 0;
 				time::Samples to = 0;
+				ObjectId crossfadeFrom = 0;
 			};
 			std::set<ObjectId> targetClips;
 			for (const ObjectId id : events)
@@ -477,7 +478,8 @@ namespace gnubase::engine::midi
 			std::map<ObjectId, Played> played;
 			for (const auto& [id, event] : project.audioEvents)
 				if (targetClips.count(event.clip) != 0)
-					played[id] = {eventSpan(project, event), event.offset, event.offset + event.length};
+					played[id] = {
+						eventSpan(project, event), event.offset, event.offset + event.length, event.crossfade.from};
 			Json moved = Json::array();
 			Json removed = Json::array();
 			Json clips = Json::array();
@@ -510,10 +512,11 @@ namespace gnubase::engine::midi
 				{ return std::find(removed.begin(), removed.end(), Json(id)) != removed.end(); };
 				// The piece before a removed one: of the events of its track and clip but follower, whose crossfade
 				// from it is followed, those that played its clip frames up to where it starts, or past it into a
-				// crossfade, the one that ended where it starts (within a sample, the rounding of a musical
-				// position), as the event it was split from did. Not just any that plays those frames: the follower
-				// stretched back over them by the Crossfade step, or another copy of the clip elsewhere on the track,
-				// play them too, and with the event it was split from gone or trimmed by hand there is none (#1642).
+				// crossfade, the one the piece crossfaded from, which grew into it by the Crossfade step (#1723), else
+				// the one that ended where it starts (within a sample, the rounding of a musical position), as the
+				// event it was split from did. Not just any that plays those frames: the follower stretched back over
+				// them by the Crossfade step, or another copy of the clip elsewhere on the track, play them too, and
+				// with the event it was split from gone or trimmed by hand there is none (#1642).
 				// It is the whole original again, or removed too and then has one of its own; its clip frames come
 				// before the piece's, so the chain ends. 0 without one.
 				const auto pieceBefore = [&](ObjectId id, ObjectId follower)
@@ -527,7 +530,8 @@ namespace gnubase::engine::midi
 						for (const auto& [otherId, other] : played)
 						{
 							const AudioEvent& event = project.audioEvents.at(otherId);
-							const time::Samples distance = std::abs(other.span.end - where.span.start);
+							const time::Samples distance =
+								otherId == where.crossfadeFrom ? 0 : std::abs(other.span.end - where.span.start);
 							if (otherId != piece.id && otherId != follower && event.track == piece.track &&
 								event.clip == piece.clip && other.from < where.from && other.to >= where.from &&
 								distance <= 1 && (id == 0 || distance < nearest))

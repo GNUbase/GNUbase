@@ -37,7 +37,10 @@ how each state looks (CLAUDE.md, "UI conventions"). The code is in `src/ui/theme
   drop-down fields with an arrow, pressed a step toward the accent and dimmed when disabled (#1342), tabs are names over
   an accent line, zones are rounded panels over the window's background, the zone with the keyboard focus framed by a
   hairline in the accent, the event display's lanes are on the panels' surface with the track list a step lighter, track
-  list rows are raised, a selected list item is tinted and outlined in the second accent, inspector section headers are
+  list rows are raised with the track's color a bar at their left edge, a folder's row tinted and the selected row
+  lit and outlined in its track's color, names in medium weight and Record Enable's icon in the record color (#1314,
+  [track-list.md](track-list.md)), a selected list item is tinted and outlined in the second accent, inspector section
+  headers are
   bold names on a tile after a disclosure arrow, value and text fields and drop-down lists are raised fields lighter
   than their panel, without the accent line, mute, solo and record buttons are filled boxes, mixer channel strips are
   raised panels with light fader caps over thin slots, whose round ends don't stretch, and knobs without the fixed
@@ -107,16 +110,17 @@ The theme styles RmlUi's controls by their tags and states, and GNUbase's contai
   theme falls back to the default.
 - `tests/svg_tests.cpp`: a 9-slice skin keeps its corners at their size at 100, 150 and 200 %, and is rasterized once
   per scale for any number of widgets of any size; decorators find their files next to the style sheet.
-- `tests/theme_tests.cpp`: every theme's style sheet uses all its skins and styles the same widgets and states as the
-  others, draws the focus ring on every focusable widget in each of its states, gives the key editor's piano keyboard
+- `tests/theme_tests.cpp`: every theme's style sheet uses all its skins but those its manifest marks `unused`, the
+  flat look's own (#1314), and none of those, styles the same widgets and states as the others, draws the focus ring
+  on every focusable widget in each of its states, gives the key editor's piano keyboard
   white keys lighter than its black keys, gives mixer strip names text with WCAG's 4.5:1 contrast on any track color,
   dims the audio part editor's events that their part hides entirely, and the high contrast theme meets WCAG's
   contrast ratios. The default theme's bar buttons, tabs and inspector headers are flat, the other themes' framed,
   their arrow skins the plain button's, and no bar rule reaches toggle or primary buttons; the disabled menu button's
   rule comes after the checked one's; the default theme's primary time display is in the titles' size; its lanes
   and track list are off the window's background, the other themes' lanes on it, and its mixer strips and transport
-  displays follow the mockup; the zone with the focus is framed in the accent, and the fader slot's round ends lie in
-  the skin's corners.
+  displays follow the mockup; the zone with the focus is framed in the accent, and the fader slot's round ends and
+  the selected track list row's rounded corners lie in the skins' corners.
 - `tests/stylerules_tests.cpp`: C++ and Lua code (`src`, `resources`, `tests/lua`) never sets a style property other
   than geometry from data (position, size, transform), and documents and shared style sheets never name a theme.
 - `tests/window_tests.cpp`: a page of widgets (`tests/data/ui/widgets.rml`) in every theme, and in the default theme

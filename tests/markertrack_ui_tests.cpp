@@ -19,7 +19,6 @@
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
-#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -640,14 +639,10 @@ namespace
 		return !app.ui().dom(std::nullopt, selector, 0).at("elements").empty();
 	}
 
-	// How many items a drop-down list has, its name among them: its options aren't in the DOM that the UI tools see.
-	int options(test::UiApp& app, const std::string& selector)
+	// How many items a drop-down list has, its name among them.
+	size_t options(test::UiApp& app, const std::string& selector)
 	{
-		Rml::Element* element = nullptr;
-		for (int i = 0; element == nullptr && i < app.main().context().GetNumDocuments(); ++i)
-			element = app.main().context().GetDocument(i)->QuerySelector(selector);
-		auto* select = dynamic_cast<Rml::ElementFormControlSelect*>(element);
-		return select != nullptr ? select->GetNumOptions() : -1;
+		return test::selectOptions(app, selector).size();
 	}
 }
 

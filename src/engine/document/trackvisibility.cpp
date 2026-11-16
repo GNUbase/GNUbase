@@ -282,9 +282,10 @@ namespace gnubase::engine
 			{"trackVisibility.set", 1,
 				"Changes what the project window hides; what isn't given stays. " + text +
 					" configurations replaces the list; names are unique and not empty. Without the active one in it, "
-					"none is active. configuration makes one active and, without hidden, hides its tracks. A setting, "
-					"not an undo step, saved "
-					"with the project. Emits trackVisibility.changed, and mixer.changed for the mixers that follow.",
+					"none is active; the one new name in such a list is its rename and takes the tracks the active one "
+					"hides on their own inside its folders. configuration makes one active and, without hidden, hides "
+					"its tracks. A setting, not an undo step, saved with the project. Emits trackVisibility.changed, "
+					"and mixer.changed for the mixers that follow.",
 				{{"type", "object"},
 					{"properties",
 						{{"hidden", idsSchema}, {"sync", syncSchema}, {"configurations", configurationsSchema},

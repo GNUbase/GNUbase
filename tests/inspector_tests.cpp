@@ -27,6 +27,7 @@
 #include <chrono>
 #include <cmath>
 #include <functional>
+#include <map>
 #include <optional>
 #include <string>
 #include <tuple>
@@ -1480,7 +1481,7 @@ TEST_CASE(
 }
 
 TEST_CASE("the info line shows another event's own volume while a dragged one's last step is out, and back on the "
-		  "dragged one the drag's",
+		  "dragged one, alone or with the other, the drag's",
 	"[ui]")
 {
 	test::CommandHolds holds; // declared before the window: its engine's command thread waits in hold()
@@ -1554,26 +1555,49 @@ TEST_CASE("the info line shows another event's own volume while a dragged one's 
 	CHECK(window.shows(field, "3")); // its own, not the dragged event's
 	REQUIRE(binding.waiting("project.get") != 0);
 
-	// Back on the dragged event, asked for after the last step. A third hold keeps the project read after the last
-	// step out: the display shows the read after the first one, and the field where the drag left it, not the other
-	// event's volume (#1421).
-	window.display.select({dragged});
-	window.app.shell().step(std::chrono::milliseconds(0));
-	REQUIRE(binding.waiting("event.get") != 0);
-	holder.send("test.hold");
-	holds.release(2);
-	REQUIRE(holds.waitEntered(3));
-	CHECK(window.app.waitUntil([&] { return drag.value() == Catch::Approx(value).margin(1e-5); }));
-	REQUIRE(binding.waiting("history.transaction") == 0);
-	REQUIRE(binding.waiting("project.get") != 0);
-	REQUIRE(shown() != Catch::Approx(value).margin(1e-5));
+	// Back on the dragged event, alone or with the other one, asked for after the last step. A third hold keeps the
+	// project read after the last step out: the display shows the read after the first one, and the field where the
+	// drag left it, not the other event's volume (#1421).
+	const auto heldBehindLastStep = [&](std::vector<uint64_t> events)
+	{
+		window.display.select(std::move(events));
+		window.app.shell().step(std::chrono::milliseconds(0));
+		REQUIRE(binding.waiting("event.get") != 0);
+		holder.send("test.hold");
+		holds.release(2);
+		REQUIRE(holds.waitEntered(3));
+		CHECK(window.app.waitUntil([&] { return drag.value() == Catch::Approx(value).margin(1e-5); }));
+		REQUIRE(binding.waiting("history.transaction") == 0);
+		REQUIRE(binding.waiting("project.get") != 0);
+		REQUIRE(shown() != Catch::Approx(value).margin(1e-5));
+	};
+	const auto volume = [&](uint64_t event) { return window.find("audioEvents", event).at("volume").get<double>(); };
 
-	// The read after the last step agrees with it, and so does the engine.
-	holds.release(3);
-	REQUIRE(window.app.waitUntil([&] { return shown() == Catch::Approx(value).margin(1e-5); }));
-	CHECK(drag.value() == Catch::Approx(value).margin(1e-5));
-	CHECK(window.find("audioEvents", dragged).at("volume") == Catch::Approx(value).margin(1e-5));
-	CHECK(window.find("audioEvents", other).at("volume") == 3.0);
+	SECTION("alone")
+	{
+		heldBehindLastStep({dragged});
+
+		// The read after the last step agrees with it, and so does the engine.
+		holds.release(3);
+		REQUIRE(window.app.waitUntil([&] { return shown() == Catch::Approx(value).margin(1e-5); }));
+		CHECK(drag.value() == Catch::Approx(value).margin(1e-5));
+		CHECK(volume(dragged) == Catch::Approx(value).margin(1e-5));
+		CHECK(volume(other) == 3.0);
+	}
+
+	SECTION("with the other event, one wheel turn moves each by the turn's step from what it shows (#1632)")
+	{
+		heldBehindLastStep({dragged, other});
+		window.app.ui().wheel(std::nullopt, {field, 0, std::nullopt}, 0.0F, 1.0F);
+		const double turn = drag.value() - value;
+		REQUIRE(turn != Catch::Approx(0.0).margin(1e-5));
+
+		// From where the drag left the dragged event, not from the project's older value: the other event moves by
+		// the turn alone, not also by what the project still lacks of the dragged event's volume.
+		holds.release(3);
+		REQUIRE(window.app.waitUntil([&] { return volume(dragged) == Catch::Approx(value + turn).margin(1e-4); }));
+		CHECK(window.app.waitUntil([&] { return volume(other) == Catch::Approx(3.0 + turn).margin(1e-4); }));
+	}
 }
 
 TEST_CASE("the info line shows another part's own transpose while a dragged selection's last step is out, and one "
