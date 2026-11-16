@@ -633,6 +633,54 @@ TEST_CASE("a transaction announces the track visibility once", "[unit]")
 	CHECK(changes[0].at("hidden") == sorted({folder, drums, other}));
 }
 
+// #1809: a mixer.set on the lower zone's mixer that hides a channel announces trackVisibility.changed on its own, and
+// once with what the transaction left when a track edit comes before it.
+TEST_CASE("a mixer.set announces the track visibility in a transaction as the docs say", "[unit]")
+{
+	Fixture f;
+	std::mutex mutex;
+	std::vector<Json> changes;
+	const engine::Listener listener(f.engine,
+		[&](const engine::Event& event)
+		{
+			const std::scoped_lock lock(mutex);
+			if (event.name == "trackVisibility.changed")
+				changes.push_back(event.data);
+		});
+	const auto [a, aChannel] = f.track("audio");
+	const auto [b, bChannel] = f.track("audio");
+	const auto clear = [&]
+	{
+		const std::scoped_lock lock(mutex);
+		changes.clear();
+	};
+	clear();
+
+	f.call("history.transaction",
+		{{"description", "Hide two"},
+			{"commands",
+				{{{"command", "mixer.set"}, {"parameters", {{"mixer", "lower"}, {"hidden", {aChannel}}}}},
+					{{"command", "mixer.set"},
+						{"parameters", {{"mixer", "lower"}, {"hidden", sorted({aChannel, bChannel})}}}}}}});
+	{
+		const std::scoped_lock lock(mutex);
+		REQUIRE(changes.size() == 2);
+		CHECK(changes[0].at("hidden") == sorted({a}));
+		CHECK(changes[1].at("hidden") == sorted({a, b}));
+	}
+
+	f.call("mixer.set", {{"mixer", "lower"}, {"hidden", std::vector<uint64_t>{}}});
+	clear();
+	f.call("history.transaction",
+		{{"description", "Add and hide"},
+			{"commands",
+				{{{"command", "track.add"}, {"parameters", {{"type", "audio"}}}},
+					{{"command", "mixer.set"}, {"parameters", {{"mixer", "lower"}, {"hidden", {aChannel}}}}}}}});
+	const std::scoped_lock lock(mutex);
+	REQUIRE(changes.size() == 1);
+	CHECK(changes[0].at("hidden") == sorted({a}));
+}
+
 // #1694: one trackVisibility.set that drops the active configuration and adds several gives none of them the active
 // one's tracks hidden on their own: only the one new name that replaces it is its rename.
 TEST_CASE("only the one configuration that replaces the active one takes its own hidden tracks", "[unit]")
