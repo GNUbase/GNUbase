@@ -142,6 +142,7 @@ add_executable(gnubase-tests
 	mpeinput_tests.cpp
 	multicore_tests.cpp
 	noteexpression_tests.cpp
+	noteexpression_ui_tests.cpp
 	onscreenkeyboard_tests.cpp
 	parameter_tests.cpp
 	patterneditor_ui_tests.cpp

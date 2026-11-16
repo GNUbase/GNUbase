@@ -210,11 +210,15 @@ namespace gnubase::ui
 		std::pair<int64_t, int64_t> expressionSpan() const;
 		// The draw tool's points or the erase tool's sweep at the mouse in the expression editor.
 		void paint(const Rml::Event& event);
-		// Ends its gesture: the selected notes get their points as it changed them.
+		// Ends its gesture: the selected notes it reached get the points it drew in the range it swept, as
+		// note.replaceExpression, which keeps the others as the engine has them (#1795).
 		void endExpression();
 		// A note's points as the gesture in the expression editor changes them: the swept range's points of the
 		// type replaced by those drawn there.
 		engine::Json edited(const Note& note) const;
+		// The points the gesture drew on a note, {position, value} each from the note's start: one where the value
+		// changes, not one per mouse position (#1655).
+		engine::Json drawn(const Note& note) const;
 		void scrollToNotes(); // the first scroll, to the middle of the notes, until one succeeds (m_scrolled)
 		// The drum editor's: the active track's drum map, the rows' order from it, and the sound list and Map menu.
 		const engine::Json* activeMap() const;

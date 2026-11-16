@@ -18,7 +18,12 @@ plugin API's common expressions (`plugin::NoteExpression`, [plugin-api.md](../pl
 | `vibrato`, `expression`, `brightness`, `pressure` | 0-1 |
 
 `note.add` and `note.set` take them (`note.set` replaces a note's points), `project.get` lists them with each note
-that has any, and they are saved in the project's GNUbase entry. A project whose file has points out of range loads
+that has any, and they are saved in the project's GNUbase entry. `note.replaceExpression` replaces only the points of
+one expression in a span of each note it names, from `from` to `to` (ticks from the note's start, both included), with
+the points it gives there, and keeps the note's other points as the project has them (#1795): an edit that a client
+makes before it has seen its last one keeps that one. Its points end up sorted by position, a new one after the old
+ones at its position; it is one undo step, and changes that leave every note's points as they were change nothing,
+so the project doesn't count as modified. A project whose file has points out of range loads
 with them clamped, as the notes' other values, and without points of expressions it doesn't know.
 
 **Cutting and resizing.** Splitting a part with `splitNotes` (`event.split`) leaves the first piece of a cut note its
@@ -116,7 +121,7 @@ input transformer, `tests/vst3_adapter_tests.cpp` a released note's expression i
 ## In the key editor
 
 The key editor (#1512, pp. 1303, 1308-1311, [key-editor.md](key-editor.md)) shows and edits the notes' expression
-through `note.set` only. Its view has three settings, which `editor.set` changes and `editor.get` reports:
+through `note.replaceExpression` only. Its view has three settings, which `editor.set` changes and `editor.get` reports:
 `showExpression` (Show Note Expression Data), `expressionDoubleClick` (Double-Click Opens Note Expression Editor), both
 off by default and toggled by toolbar buttons, and `expressionType`, the expression the editor edits, `tuning` at
 first.
@@ -149,7 +154,11 @@ first.
   Shift, tuning goes in semitone steps (Vertical Snap). The erase tool deletes the points of the expression it is
   dragged over, a click those within a few dp: it is GNUbase's own, standing in until points can be selected and deleted
   with Edit > Delete as the reference manual does (pp. 1310-1311). An edit reaches every selected note at the time where
-  it happens, each note's points from its own start, and is one undo step. A gesture follows the mouse outside the
+  it happens, each note's points from its own start, and is one undo step. It sends each note the gesture reached only
+  the range it swept and the points it drew there, not the note's whole list: the editor reads the whole project after
+  every change and shows the reads in order, so an edit made before the read of the one before it arrived starts from
+  the project as it was before that one, and the whole list would send that one's points back (#1795). A note goes
+  also when the editor's copy has no points in the range, as the edit before may have drawn one there. A gesture follows the mouse outside the
   window and ends where the button goes up, with what it drew. A press elsewhere in the note display closes the editor,
   and so does a selection without notes. The `.key-expression-step` lines, in the editor and over the notes, take no
   mouse events: a client of the UI tools that clicks one reaches its note or `.key-expression-area`.
@@ -168,6 +177,12 @@ a quarter, also on the box of the layout before, built for the narrower width. `
 checks the draw tool on a line of the editor in an in-place editor and a dense note's lines a pixel each after its
 layout and as the project window zooms, `tests/drumeditor_ui_tests.cpp` that the drum editor has neither the buttons,
 the overlay nor the editor, and `tests/keyeditor_tests.cpp` the three settings as view state.
+`tests/noteexpression_ui_tests.cpp` makes four edits before the UI hands on any answer of the engine, an erase of a
+point, two draws and an erase of the last point drawn, and checks that the engine keeps all of them, as four undo steps
+(#1795); `tests/noteexpression_tests.cpp` checks `note.replaceExpression`: the span with both ends, the other
+expressions and the points outside it kept, the order, edits made from the same state all kept, a note named twice,
+one undo step, a change of nothing leaving the project unmodified, its refusals changing nothing and the shared copies
+following it.
 
 ## Not yet
 
