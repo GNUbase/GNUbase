@@ -28,9 +28,6 @@ namespace gnubase::engine
 		using processors::g_drumPadStride;
 		using Layer = DrumMachine::Layer;
 
-		// The pool folder of the samples that drum.loadPad brings into the pool (reference manual p. 980).
-		constexpr const char* g_poolFolder = "Drum Machine";
-
 		void require(bool condition, const std::string& message)
 		{
 			if (!condition)
@@ -156,6 +153,21 @@ namespace gnubase::engine
 		}
 	}
 
+	ObjectId drumPoolFolder(Project& project, CommandContext* context)
+	{
+		constexpr const char* name = "Drum Machine";
+		for (const auto& [id, each] : project.poolFolders)
+			if (each.parent == 0 && each.name == name)
+				return id;
+		PoolFolder folder;
+		folder.id = project.newId();
+		folder.name = name;
+		project.poolFolders[folder.id] = folder;
+		if (context != nullptr)
+			context->emit("poolFolder.added", {{"folder", toJson(folder)}});
+		return folder.id;
+	}
+
 	const Channel* drumChannelOf(const Project& project, ObjectId track)
 	{
 		const auto found = project.trackById.find(track);
@@ -216,8 +228,9 @@ namespace gnubase::engine
 				"the pool folder Drum Machine, which is made if the pool has none (p. 980). The pad then plays the "
 				"sample (its instrument parameter is Sample) from its start to its end, shares of the clip; its "
 				"other settings go back to their defaults, unless keepSettings keeps them (Apply Hot Swap, p. 941). "
-				"Lanes of the track's drum patterns that play the pad take its name. Emits channel.changed. Returns "
-				"the track and its channel.",
+				"Lanes of the track's drum patterns that play the pad take its name. Emits channel.changed, and for "
+				"a file media.added, clip.added, clip.changed and, when it makes the folder, poolFolder.added. "
+				"Returns the track and its channel.",
 				objectSchema({{"track", integer}, {"pad", pad}, {"event", integer}, {"clip", integer},
 								 {"path", {{"type", "string"}}}, {"start", integer}, {"end", integer},
 								 {"keepSettings", {{"type", "boolean"}}}},
@@ -232,15 +245,7 @@ namespace gnubase::engine
 				// A file's clip goes into the pool's Drum Machine folder, made when the first one comes (p. 980).
 				if (context.parameters().contains("path"))
 				{
-					ObjectId folder = 0;
-					for (const auto& [id, each] : project.poolFolders)
-						if (each.parent == 0 && each.name == g_poolFolder)
-							folder = id;
-					if (folder == 0)
-						folder = model.runEdit("poolFolder.add", project, {{"name", g_poolFolder}}, context)
-									 .at("folder")
-									 .at("id")
-									 .get<ObjectId>();
+					const ObjectId folder = drumPoolFolder(project, &context);
 					model.runEdit("clip.set", project, {{"clip", parameters.at("clip")}, {"folder", folder}}, context);
 				}
 				const SampleSection section = sampleSection(project, parameters);

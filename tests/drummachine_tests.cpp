@@ -894,3 +894,65 @@ TEST_CASE(
 			CHECK(padOf(channel, 41).at("name") == "Shaker");
 		}
 }
+
+TEST_CASE("a copy's sound and the pads' clips in the pool folder Drum Machine go along with saves, presets and imports",
+	"[integration]")
+{
+	// #1614: a copy of a synth pad goes by the sound it was copied from in the project file and in a track preset, and
+	// the clips that a preset or an import brings for pads come into the pool folder Drum Machine (p. 980), as a
+	// file loaded onto a pad does.
+	Session session;
+	Client& client = session.client;
+	const auto track = run(client, "drum.create").at("track").at("id").get<ObjectId>();
+	run(client, "drum.copyPad", {{"track", track}, {"pad", 36}, {"to", 40}});
+	run(client, "drum.loadPad", {{"track", track}, {"pad", 41}, {"clip", session.clip}});
+	const auto drums = [&]
+	{
+		const Json project = run(client, "project.get");
+		for (const Json& channel : project.at("channels"))
+			if (channel.at("instrument") == "drumMachine")
+				return channel;
+		return Json();
+	};
+	// The pool folder of the clip that pad 41 of the drum track plays.
+	const auto folderOfPad = [&]
+	{
+		const Json pool = run(client, "pool.get");
+		for (const Json& clip : pool.at("clips"))
+			if (clip.at("id") == padOf(drums(), 41).at("sample"))
+				for (const Json& folder : pool.at("folders"))
+					if (folder.at("id") == clip.at("folder"))
+						return folder.at("name").get<std::string>() + (folder.at("parent") == 0 ? "" : " inside");
+		return std::string();
+	};
+	const fs::path file = session.folder.path() / "drums.dawproject";
+	run(client, "project.save", {{"path", file.u8string()}});
+	run(client, "track.savePreset", {{"tracks", Json::array({track})}, {"name", "Kit"}});
+	run(client, "project.new");
+	run(client, "project.load", {{"path", file.u8string()}});
+	CHECK(padOf(drums(), 40).at("sound") == 36);
+
+	// A preset loaded onto a drum track of a new project, and the tracks of a preset added to one.
+	run(client, "project.new");
+	const auto kit = run(client, "drum.create", {{"kit", false}}).at("track").at("id").get<ObjectId>();
+	run(client, "track.loadPreset", {{"tracks", Json::array({kit})}, {"name", "Kit"}});
+	CHECK(padOf(drums(), 40).at("sound") == 36);
+	CHECK(folderOfPad() == "Drum Machine");
+	run(client, "project.new");
+	run(client, "track.addFromPreset", {{"name", "Kit"}});
+	CHECK(padOf(drums(), 40).at("sound") == 36);
+	CHECK(folderOfPad() == "Drum Machine");
+
+	// A drum track imported from the project file.
+	run(client, "project.new");
+	run(client, "track.import", {{"path", file.u8string()}});
+	CHECK(padOf(drums(), 40).at("sound") == 36);
+	CHECK(folderOfPad() == "Drum Machine");
+	// A project that has the folder gets no second one.
+	run(client, "track.import", {{"path", file.u8string()}});
+	int folders = 0;
+	const Json pool = run(client, "pool.get");
+	for (const Json& folder : pool.at("folders"))
+		folders += folder.at("name") == "Drum Machine" ? 1 : 0;
+	CHECK(folders == 1);
+}
