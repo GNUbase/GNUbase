@@ -40,12 +40,13 @@ the project or its undo history.
   its track's lane and those of the track's other automation tracks. `EventDisplay::laneAutomation()` names its
   automation lane per display lane (0 for a track's own), and `laneTracks()` its track. The track list's row reaches
   down over them; the track's height still drags at its own lane's lower edge.
-- **Showing and hiding** (p. 880): Show/Hide Automation in a track's lower left corner, or the track list's context
-  menu (Show/Hide Automation for the selected tracks, Show All Used Automation, Hide All Automation;
-  `track.toggleAutomationSelected`, `track.showUsedAutomation`, `track.hideAllAutomation`). Showing a track's
-  automation shows its lanes with points, or else its first lane, or else adds a lane for its first parameter (volume
-  on tracks with audio). Append Automation Track shows the next parameter in `automationLane.targets`' order that no
-  automation track shows, adding its lane if the track has none. New lanes don't read until a tool draws on them.
+- **Showing and hiding** (p. 880): Show/Hide Automation in a track's lower left corner, 16 dp square and 2 dp clear of
+  the row's edges, so the selection frame and the separator to the next row stay whole (#1773), or the track list's
+  context menu (Show/Hide Automation for the selected tracks, Show All Used Automation, Hide All Automation;
+  `track.toggleAutomationSelected`, `track.showUsedAutomation`, `track.hideAllAutomation`). Showing a track's automation
+  shows its lanes with points, or else its first lane, or else adds a lane for its first parameter (volume on tracks
+  with audio). Append Automation Track shows the next parameter in `automationLane.targets`' order that no automation
+  track shows, adding its lane if the track has none. New lanes don't read until a tool draws on them.
 - **Parameter selector** (p. 880): the parameter's name opens a menu with a search field, which narrows the track's
   parameters to those whose name has the text in any case; Remove Parameter (`automationLane.remove`, p. 878),
   Remove Unused Parameters (the track's lanes without points, p. 880), and on a plugin's lane Show Only Automation
@@ -94,13 +95,13 @@ info line ([virgin-territory.md](virgin-territory.md)), and automation of the ch
 ## Checks
 
 - `tests/parameter_tests.cpp`: `automationLane.targets` on audio, MIDI, instrument and marker tracks, with lanes.
-- `tests/automationtracks_tests.cpp` drives the app's project window with `ui::Automation`: showing a track's
-  automation adds its first lane, level with its row, with the static value line; Append Automation Track; the
-  parameter selector with its search, picking a parameter in one undo step, Remove Parameter and Remove Unused
-  Parameters; hiding, Show All Used Automation, Hide All Automation and the selected tracks' command; the draw tool's
-  click and curve, the line tool's line, square, sine, triangle and parabola, nothing on a step curve, the erase tool,
-  and reading off with the static value line; selecting points with clicks, Ctrl and a rectangle, the event editor's
-  vertical scaling and moving, moving points by a drag, Delete, and selecting events deselecting points; the curve's
-  terminators and virgin territory following `automation.set`.
+- `tests/automationtracks_tests.cpp` drives the app's project window with `ui::Automation`: showing a track's automation
+  adds its first lane, level with its row, with the static value line; Show/Hide Automation inside its track's own part
+  of the row at every track height; Append Automation Track; the parameter selector with its search, picking a parameter
+  in one undo step, Remove Parameter and Remove Unused Parameters; hiding, Show All Used Automation, Hide All Automation
+  and the selected tracks' command; the draw tool's click and curve, the line tool's line, square, sine, triangle and
+  parabola, nothing on a step curve, the erase tool, and reading off with the static value line; selecting points with
+  clicks, Ctrl and a rectangle, the event editor's vertical scaling and moving, moving points by a drag, Delete, and
+  selecting events deselecting points; the curve's terminators and virgin territory following `automation.set`.
 - `tests/canvas_tests.cpp`: a curve's lines with a terminator in the middle and at the end, with virgin territory,
   and scrolled to start after a terminator.

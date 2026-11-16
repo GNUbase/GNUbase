@@ -277,6 +277,44 @@ TEST_CASE("automation tracks show and hide below their track, and the parameter 
 	REQUIRE(f.app.waitUntil([&] { return f.app.call("automationLane.list", {{"track", other}}).at("lanes").empty(); }));
 }
 
+TEST_CASE("Show/Hide Automation lies in its track's lower left corner, inside the row, at every track height", "[ui]")
+{
+	// #1773: the button ended on the row's last pixel, over the selection frame and the separator to the next row, and
+	// was 24 dp wide although its rule gives it 16.
+	Automation f;
+	const auto box = [&f](const std::string& selector)
+	{
+		const Json found = elements(f.app, selector);
+		REQUIRE(found.size() == 1);
+		return found[0].at("box");
+	};
+	const auto bottom = [](const Json& box) { return box.at("y").get<int>() + box.at("height").get<int>(); };
+	const std::string toggle = row(f.track) + " .automation-toggle";
+	for (const double height : {ui::g_minTrackHeight, ui::g_trackHeight, 64.0, 120.0})
+	{
+		INFO("track height " << height);
+		f.display.setTrackHeight(f.track, height);
+		REQUIRE(f.app.waitUntil([&] { return box(row(f.track)).at("height").get<double>() == height; }));
+		f.app.shell().step(std::chrono::milliseconds(0));
+		const Json own = box(row(f.track));
+		const Json button = box(toggle);
+		CHECK(button.at("width").get<int>() == 16);
+		CHECK(button.at("height").get<int>() == 16);
+		CHECK(button.at("x").get<int>() > own.at("x").get<int>());
+		CHECK(button.at("y").get<int>() > own.at("y").get<int>());
+		CHECK(bottom(button) <= bottom(own) - 2); // the frame and the separator stay whole
+		// Its own line where the row has room for one below the name.
+		if (height >= ui::g_trackHeight)
+			CHECK(button.at("y").get<int>() >= bottom(box(row(f.track) + " .track-controls")));
+	}
+	// With the automation tracks shown, it stays in the track's own part, above the first automation row.
+	f.display.setTrackHeight(f.track, ui::g_trackHeight);
+	f.show();
+	REQUIRE(f.app.waitUntil([&] { return elements(f.app, row(f.track) + " .automation-row").size() == 1; }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(bottom(box(toggle)) <= box(row(f.track) + " .automation-row").at("y").get<int>() - 2);
+}
+
 TEST_CASE("the draw, line and erase tools draw automation, and the static value line shows without it", "[ui]")
 {
 	Automation f;

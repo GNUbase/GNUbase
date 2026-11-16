@@ -1753,6 +1753,7 @@ meter .meter-peak
 {
 	position: absolute;
 	left: 6dp;
+	min-width: 16dp; /* not an icon-only button's 24 dp */
 	width: 16dp;
 	height: 16dp;
 	padding: 0;
