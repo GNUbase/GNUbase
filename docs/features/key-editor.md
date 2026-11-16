@@ -194,4 +194,7 @@ menu.
   between the limits, from the height a style sheet gives them, also after a style change at a zoom and back at 1, the
   keyboard as high as the rows of any height, nothing zoomed or scrolled without a row height to scale and no height
   left on the rows for a later style, the zoom snapping to 1 near it, and scrolling the note display, while a click
-  there zooms nothing, and a click and a drag there leaving a note an earlier press selected and the history alone.
+  there zooms nothing, and a click and a drag there leaving a note an earlier press selected and the history alone; the
+  lower zone's key editor at its default size giving the note display more room than the controller lanes, at dp ratios
+  1 and 2, and the lanes whole in a lower zone of 400 dp; the editor window's lane keeping its 64 dp and the note
+  display its 40%, and the in-place editor's lanes keeping their height with its toolbar shown.
