@@ -96,6 +96,18 @@ namespace gnubase::ui
 		}
 	}
 
+	std::string missingMedia(const Json& result)
+	{
+		const auto found = result.find("missing");
+		if (found == result.end() || !found->is_array() || found->empty())
+			return {};
+		std::string files;
+		for (const Json& path : *found)
+			files += (files.empty() ? "" : ", ") + path.get<std::string>();
+		return "The file was saved without the media files that are missing; it refers to them where they were: " +
+			files + ".";
+	}
+
 	ProjectFiles::ProjectFiles(KeyCommands& keys, EngineBinding& binding, Shell& shell, std::filesystem::path folder)
 		: m_binding(binding), m_shell(shell), m_folder(std::move(folder)),
 		  m_saved(binding.on("project.saved",
@@ -590,6 +602,8 @@ namespace gnubase::ui
 		{
 			if (!result.ok())
 				showError(id, result.error);
+			else if (const std::string missing = missingMedia(result.value); !missing.empty())
+				showNotice(id, "Missing Media Files", missing);
 		};
 	}
 
