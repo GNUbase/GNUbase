@@ -927,6 +927,15 @@ TEST_CASE("a resize released outside the key editor ends without its effect", "[
 	f.drag(f.at(3.95, 60), f.at(6, 60));
 	REQUIRE(f.app.waitUntil([&] { return f.note(ids[0]).at("length") == 6 * g_sixteenth; }));
 	CHECK_FALSE(f.has(".key-editor", "in-gesture"));
+	// The note keeps the resize's preview until the engine's change arrives, so settle() alone can pass before it, and
+	// the change arriving during the next resize puts the note back at its length. The info line shows the editor's
+	// notes: once it has the new end, the change has arrived.
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			return f.elements(".key-editor-info textdisplay[field=end]").at(0).at("attributes").at("value") ==
+				"1.2.3.0";
+		}));
 	f.settle();
 	const double before = width();
 	// At the note's end to the right, then released over the editor window's toolbar: the note keeps its length.
