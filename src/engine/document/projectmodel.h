@@ -154,10 +154,17 @@ namespace gnubase::engine
 			m_project.quantizePreset = std::move(name);
 			publish();
 		}
-		// Sets Project::soloNotes, for the editor views (editors.cpp): Solo Instrument changes what plays, not the
-		// project, so it publishes a render snapshot but leaves the project as saved and auto saved as it was. Only on
-		// the command thread.
-		void setSoloNotes(std::vector<std::pair<ObjectId, ObjectId>> notes);
+		// What Project::soloNotes is, from the editor views (editors.cpp) and the project now. Every render snapshot
+		// takes it, so that a change of the project that hides selected notes (Show Drum Sounds in Use by Instrument)
+		// stops soloing their sounds too.
+		void setSoloNotesSource(std::function<std::vector<std::pair<ObjectId, ObjectId>>()> source)
+		{
+			m_soloNotesSource = std::move(source);
+		}
+		// Sets Project::soloNotes from the source, for the editor views when they change: Solo Instrument changes
+		// what plays, not the project, so it publishes a render snapshot but leaves the project as saved and auto
+		// saved as it was. Only on the command thread.
+		void updateSoloNotes();
 		// Sets Project::workspaces, for the workspace commands (#163), which aren't edits either: the project file
 		// saves the project workspaces and the active one, so a change advances the revision as setQuantizePreset's
 		// does. Only on the command thread.
@@ -282,6 +289,7 @@ namespace gnubase::engine
 		std::function<void(CommandContext& context)> m_chordPadsOpened;
 		// what automation.copy copied, for automation.paste
 		std::optional<AutomationClipboard> m_automationClipboard;
+		std::function<std::vector<std::pair<ObjectId, ObjectId>>()> m_soloNotesSource;
 		rt::SnapshotPublisher<RenderSnapshot> m_snapshots;
 	};
 }

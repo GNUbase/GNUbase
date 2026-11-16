@@ -991,7 +991,13 @@ namespace gnubase::ui
 	bool KeyEditor::fitLines(const Rml::Context& updated)
 	{
 		const Rml::Element* root = m_root.get();
-		return root != nullptr && root->GetContext() == &updated && refitLines(true);
+		if (root == nullptr || root->GetContext() != &updated)
+			return false;
+		// The first scroll, if show() came before the layout and nothing has rendered the editor again since.
+		const bool unscrolled = !m_scrolled;
+		scrollToNotes();
+		const bool refit = refitLines(true);
+		return refit || (unscrolled && m_scrolled);
 	}
 
 	bool KeyEditor::linesShown() const
