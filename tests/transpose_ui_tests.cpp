@@ -282,12 +282,66 @@ TEST_CASE("the info line sets the root key and Global Transpose of an audio part
 	REQUIRE(window.app.waitUntil(
 		[&] { return window.element("#info-line select[field=rootKey]").value("value", std::string()) == "*"; }));
 	CHECK(window.element("#info-line button[field=globalTranspose]").value("text", std::string()).empty());
+	// Its title names no value either (#1719).
+	CHECK(window.element("#info-line button[field=globalTranspose]").at("attributes").value("title", "") ==
+		"Global Transpose");
 	CHECK_FALSE(window.hasClass("#info-line button[field=globalTranspose]", "checked"));
 	CHECK_FALSE(marked()); // only one of them is Independent
 	window.click("#info-line select[field=rootKey]");
 	window.app.ui().key(std::nullopt, "Down");
 	window.click("#info-line select[field=rootKey]");
 	CHECK(window.app.waitUntil([&] { return keys() == std::vector<std::string>{" follow", " independent"}; }));
+}
+
+TEST_CASE("the info line's own values don't change a MIDI part and an audio event selected together", "[ui]")
+{
+	Window window;
+	const gnubase::test::TempDir dir;
+	test::Audio audio;
+	audio.samples.assign(48000, 0.0F);
+	const auto file = dir.path() / "silence.wav";
+	test::writeWav(file, audio);
+	const auto midi = window.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	const auto part = window.call("midiPart.add", {{"track", midi}, {"position", 0}, {"length", 4 * g_quarter}})
+						  .at("part")
+						  .at("id")
+						  .get<uint64_t>();
+	window.call("midiPart.set", {{"part", part}, {"rootKey", "G"}});
+	const auto track = window.call("track.add", {{"type", "audio"}, {"channels", 1}}).at("track").at("id");
+	const auto media = window.call("media.add", {{"path", file.u8string()}}).at("media").at("id");
+	const auto clip = window.call("clip.add", {{"media", media}}).at("clip").at("id");
+	const auto event =
+		window.call("audioEvent.add", {{"track", track}, {"clip", clip}, {"position", 0}, {"length", 48000}})
+			.at("event")
+			.at("id")
+			.get<uint64_t>();
+	window.call("audioEvent.set", {{"event", event}, {"rootKey", "C"}});
+	const auto keys = [&window, part, event]
+	{
+		std::string result = window.part(part).value("rootKey", std::string("?"));
+		const Json project = window.call("project.get");
+		for (const Json& each : project.at("audioEvents"))
+			if (each.at("id") == event)
+				result += " " + each.at("rootKey").get<std::string>();
+		return result;
+	};
+	REQUIRE(keys() == "G C");
+	REQUIRE(window.app.waitUntil(
+		[&]
+		{
+			const Json project = window.display.project();
+			return project.at("midiParts").size() == 1 && project.at("audioEvents").size() == 1;
+		}));
+	// The info line shows the first one's key, which a change of its list while it shows them doesn't give the other
+	// one (#1719).
+	window.display.select({part, event});
+	REQUIRE(window.app.waitUntil(
+		[&] { return !window.element("#info-line select[field=rootKey]").value("value", std::string()).empty(); }));
+	CHECK_FALSE(window.app.waitUntil([&] { return keys() != "G C"; }, std::chrono::milliseconds(500)));
+	// Nor after an undo, which shows them again.
+	window.call("audioEvent.set", {{"event", event}, {"transpose", 3}});
+	window.call("history.undo");
+	CHECK_FALSE(window.app.waitUntil([&] { return keys() != "G C"; }, std::chrono::milliseconds(500)));
 }
 
 TEST_CASE("the event display says why the engine refused a glue of parts that follow transpose differently", "[ui]")

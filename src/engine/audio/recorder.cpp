@@ -270,9 +270,14 @@ namespace gnubase::engine
 		m_filled.reset();
 		m_history.assign(static_cast<size_t>(m_next.preRecordFrames) * static_cast<size_t>(m_channels), 0.0f);
 		m_historyFrames = 0;
-		// The next device counts its frames from 0 again: what was kept so far is no input just before its recordings.
+		// The next device counts its frames from 0 again: what was kept so far is no input just before its recordings,
+		// and its frames are counted on after it.
 		for (auto& entry : m_retrospective)
+		{
 			entry.second.recorded = entry.second.events.size();
+			if (!entry.second.events.empty())
+				m_frameBase = std::max(m_frameBase, entry.second.events.back().deviceFrame + 1);
+		}
 		if (maxFrames == 0)
 			return;
 		const uint32_t count = std::max(g_minChunks, g_queuedFrames / maxFrames);
@@ -766,11 +771,12 @@ namespace gnubase::engine
 			if (found == m_retrospective.end())
 				continue;
 			Retrospective& buffer = found->second;
+			const uint64_t start = m_frameBase + chunk.deviceFrame;
 			if (m_midiCurrent.catchFrames > 0)
 				for (auto kept = buffer.events.begin() + static_cast<std::ptrdiff_t>(buffer.recorded);
 					kept != buffer.events.end(); ++kept)
-					if (kept->deviceFrame < chunk.deviceFrame &&
-						kept->deviceFrame + static_cast<uint64_t>(m_midiCurrent.catchFrames) >= chunk.deviceFrame &&
+					if (kept->deviceFrame < start &&
+						kept->deviceFrame + static_cast<uint64_t>(m_midiCurrent.catchFrames) >= start &&
 						m_midiCurrent.midiFilter.records(kept->event))
 						m_midiBuilders[track.channel].add(chunk.position, kept->event);
 			buffer.recorded = buffer.events.size();
@@ -821,11 +827,12 @@ namespace gnubase::engine
 		if (m_next.retrospective == 0)
 			return;
 		Retrospective& buffer = m_retrospective[input.channel];
-		const uint64_t frame = deviceFrame + input.offset;
-		// Input after the buffer was inserted, or in stop mode after a pause, starts it afresh.
+		const uint64_t frame = m_frameBase + deviceFrame + input.offset;
+		// Input after the buffer was inserted, or in stop mode after a pause or on the next device, starts it afresh.
 		if (buffer.taken ||
 			(input.played < 0 && !buffer.events.empty() && buffer.events.back().position < 0 &&
-				frame > buffer.events.back().deviceFrame + static_cast<uint64_t>(m_next.pauseFrames)))
+				(buffer.events.back().deviceFrame < m_frameBase ||
+					frame > buffer.events.back().deviceFrame + static_cast<uint64_t>(m_next.pauseFrames))))
 		{
 			buffer.events.clear();
 			buffer.recorded = 0;

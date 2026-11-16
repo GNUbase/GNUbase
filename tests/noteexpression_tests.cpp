@@ -356,6 +356,34 @@ TEST_CASE("note.split cuts notes with their expression where it was, note.glue j
 		ContainsSubstring("must start after"));
 }
 
+TEST_CASE(
+	"glued after a split, a note loses only a point at the cut that repeated the value before it", "[integration]")
+{
+	// Review of #1608: glue leaves out only the rest's points at its start that repeat what plays; one elsewhere that
+	// repeats the value before it, in the first part or later in the rest, stays a point through the split and glue.
+	Setup setup;
+	Client& client = setup.client;
+	const ObjectId part = addPart(client, setup.track);
+	const Json note = run(client, "note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", 0}, {"length", 2 * g_beatTicks}, {"pitch", 60}, {"velocity", 0.5},
+					{"expressions",
+						{point("tuning", 0, 0.0), point("tuning", g_beatTicks / 4, 0.0),
+							point("tuning", g_beatTicks / 2, 2.0), point("tuning", g_beatTicks, 2.0),
+							point("tuning", 3 * g_beatTicks / 2, 2.0)}}}}}})
+						  .at("notes")
+						  .at(0);
+	const Json rest = run(client, "note.split", {{"part", part}, {"notes", {note.at("id")}}, {"position", g_beatTicks}})
+						  .at("notes")
+						  .at(0);
+	const Json glued =
+		run(client, "note.glue", {{"part", part}, {"note", note.at("id")}, {"next", rest.at("id")}}).at("note");
+	CHECK(pointsOf(glued) ==
+		Points{{"tuning", 0, 0}, {"tuning", g_beatTicks / 4, 0}, {"tuning", g_beatTicks / 2, 2000},
+			{"tuning", 3 * g_beatTicks / 2, 2000}});
+}
+
 TEST_CASE("a note.split that cuts nothing leaves the project unmodified", "[integration]")
 {
 	// Review of #1480: no revision, so no modified project without an undo step to take it back.

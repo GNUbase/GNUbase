@@ -37,8 +37,8 @@ MPE's initial values for tuning, pressure and brightness, as playback gives them
 `defaultExpression`, serves both), unity gain for volume and the center for pan. Vibrato and expression have no default
 (the plugin decides), so they keep their value. A point there whose value already plays is left out, so that the
 expression editor shows no point that changes nothing: glued again after a split, the note has the expression it had
-before, without the points in it that changed nothing (one that repeated the value before it exactly at the cut doesn't
-come back). The reference manual's glue keeps the first note's properties (p. 1215), and expression is no property but
+before, without a point exactly at the cut that only repeated the value before it (a point elsewhere that repeats the
+value before it stays one). The reference manual's glue keeps the first note's properties (p. 1215), and expression is no property but
 what the note plays over time.
 
 **MPE input** (pp. 1295-1298, #1514). Each MIDI input port has its own MPE setup, `mpe` in `midi.setPort` and
@@ -126,14 +126,19 @@ first.
   from the box's bottom to its top: tuning from -48 to 48 semitones, MPE's pitch range (values beyond show at the edge),
   volume from 0 to 4 and the others from 0 to 1. A step narrower than a pixel of the note display joins the next ones
   until it is as wide, at the last one's value, so that a recorded note with a point every few milliseconds is a line
-  per pixel at most, not hundreds of elements (#1671); the lines are built again when a pixel has other ticks: after
-  an editor's first layout, as the editor window or the lower zone resizes and as the project window zooms. The drum editor shows no overlay, as it has
-  neither the buttons nor the expression editor, also with Show Note Length.
+  per pixel at most, not hundreds of elements (#1671). The lines are built again when a pixel has a quarter more or
+  fewer ticks than they were built with: after an editor's first layout, as the editor window or the lower zone
+  resizes and as the project window zooms, but not on every frame of a scroll across a tempo change, which changes the
+  in-place editor's ticks per pixel a little (#1716). The drum editor shows no overlay, as it has neither the buttons
+  nor the expression editor, also with Show Note Length.
 - **Expression editor** (pp. 1308-1311). With Double-Click Opens Note Expression Editor a double click on a note with
   the object selection tool opens the editor instead of deleting the note: on the note, or on the selected notes if it
   is one of them. It lies over the note display from the first selected note's start to the last one's end, centered on
   the row of the note double-clicked and kept inside the note display at the top and bottom rows, never narrower than
-  its button, and it stays there as the pitches zoom; it shows their points of the chosen expression the same way. Its
+  its button, and it stays there as the pitches zoom; it shows their points of the chosen expression the same way. On
+  notes narrower than its button it spreads their time over its whole width, so that its lines no longer lie over the
+  notes' time behind it and join their steps by the note display's coarser pixels, and at the note display's right
+  edge it moves left to stay inside (#1713). Its
   button at the top left is Parameter Selection, a menu of the seven expressions. In it the draw tool draws a point
   where it clicks, and a drag draws points along the way where the value changes (not one per mouse position), replacing
   those of the expression in the range it went over; at the right edge it draws at the last note's last tick. With

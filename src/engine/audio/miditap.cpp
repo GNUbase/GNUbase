@@ -434,9 +434,9 @@ namespace gnubase::engine
 				"setting midi.retrospectiveEvents, by default 10000 events), as one MIDI part, through recording.add "
 				"with the new parts mode and the user settings midi.snapPartsToBars and midi.recordFilter. What "
 				"came during playback goes where it played; what came in stop mode goes at the project cursor, with "
-				"its timing. Input after a pause of over 30 s in stop mode starts the buffer afresh, and so does "
-				"input after an insert. It is no recording of the chord track: it makes no chord events. Returns what "
-				"recording.add returns.",
+				"its timing. Input in stop mode after a pause of over 30 s or on the next audio device starts the "
+				"buffer afresh, and so does input after an insert. It is no recording of the chord track: it makes no "
+				"chord events. Returns what recording.add returns.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["track"],
 					"properties": {"track": {"type": "integer"}}})"),
 				Json::parse(R"({"type": "object", "properties": {"parts": {"type": "array"}},

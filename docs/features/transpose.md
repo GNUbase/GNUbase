@@ -30,7 +30,8 @@ transpose events and controls, and MIDI parts and audio events that follow it or
 - **The pool's Key column** (#1555, p. 417): `clip.set` `rootKey` gives every audio event that plays the clip that
   root key, also those in inactive track versions; `pool.get` gives each clip `rootKey`, the root key its audio events
   share (`""` when they have none or differ), `rootKeysDiffer` (they differ) and `audioEvents`, how many play it
-  (#1644). The audio file stays as it is.
+  (#1644). The audio file stays as it is. `clip.set` refuses a `rootKey` for a clip that no audio event plays, which
+  has nowhere to keep it (#1719).
 - **Audio parts** (#1555, p. 417) have no root key or Global Transpose of their own: their events play by theirs.
   The info line shows those of a selected audio part's first event by position, or an empty value where its events
   differ (#1644), and sets them on all its events.
@@ -80,7 +81,8 @@ What following the root key costs, `gnubase-bench --case transposedEvents` ([per
 its own. One Release run on Windows with 32 hardware threads, on a machine that other builds kept busy (#1644): as they
 are 2.8 times faster than real time for 16 and 64 events, following the root key 0.99 times for 16 and 0.33 times for
 64, and 2.4 and 2.3 MB more per shifted event. A project that shifts many events at once is bound by their stretchers
-on the disk threads, which offline rendering waits for.
+on the disk threads, which offline rendering waits for; a measurement on an idle machine, and cheaper stretchers if it
+holds, are #1735.
 
 ## UI
 
@@ -90,7 +92,9 @@ on the disk threads, which offline rendering waits for.
   audio part's events ([inspector.md](inspector.md)). Its Transpose field, a MIDI part's or an audio event's own
   (-24 to 24 for audio events), shows what the project root key adds in brackets after it (p. 420), such as `(+2)`
   for a part in C in a project in D, from `rootKeyTranspose`. Its Global Transpose button reads the value it holds
-  (p. 421): Follow, or Independent while it is checked.
+  (p. 421): Follow, or Independent while it is checked; its title says so too, and only "Global Transpose" while an
+  audio part's events differ (#1719). The values it shows aren't edits: changes that its lists send while it shows
+  them are left out, so that the first selected item's key doesn't reach the others (#1719).
 - **Independent parts and audio events** show an icon (`part-independent.svg`) in their upper right corner in the
   event display (p. 421): a `.part-mark.independent` with attribute `part` in the display's `.part-marks`. An audio
   part shows it when all its events are Independent (#1644).
@@ -128,7 +132,7 @@ in inactive track versions with the tracks it announces, and glue; recorded even
 saving and loading. An audio event's own Transpose with the root key step, Independent and the octave range, its range
 and `rootKeyTranspose`; no media entry of its own for an event that nothing can shift; glue refusing events with
 different Transposes; the pool's Key column (`clip.set` `rootKey`) over the events of a clip, inactive track versions
-included, and what `pool.get` shows when they differ and for a clip without events.
+included, and what `pool.get` shows when they differ and for a clip without events, whose root key `clip.set` refuses.
 `tests/renderinplace_tests.cpp`: a rendered event under a transpose event Independent with an empty pitch map, and one
 without transpose events in the project root key, following it, with a pitch map that a later root key shifts.
 `tests/warp_tests.cpp`: `dsp::WarpReader` shifting a sine an octave up from a point of its pitch map, also after a seek,
@@ -140,13 +144,15 @@ Transpose (its button reading Follow or Independent) for parts and audio events 
 Independent parts and audio events, the reason of a refused glue in `#edit-refused`, drawing, typing, dragging,
 double-clicking and erasing transpose events on the lane, the track list's controls and its context menu's Set Root Key
 for Unassigned Events, an audio event's own Transpose with the root key step in brackets, and an audio part's events'
-Root Key and Global Transpose, empty when they differ, with the mark when all of them are Independent.
+Root Key and Global Transpose, empty when they differ (the button's title too), with the mark when all of them are
+Independent; a MIDI part and an audio event in different keys selected together keeping their keys, also after an
+undo.
 `tests/poolpanel_tests.cpp`: the pool's Key column, its options filled once it is used, differing keys cleared with
 "-", and disabled for a clip without audio events.
 
 ## Not yet
 
-Ready-made events tagged as drums or effects set to Independent (p. 421), which waits for media files to have tags
-(the media browser, #196); the pool's View/Attributes menu that hides the Key column; live MIDI input through the
-transpose track; Indicate Transpositions in the key editor; the transpose track's controls in the track controls dialog;
-selecting several transpose events and the Delete key.
+Ready-made events tagged as drums or effects set to Independent (p. 421), which waits for media files to have tags (the
+media browser, #196), and the pool's View/Attributes menu that switches the Key column on (p. 417): both #1735; live
+MIDI input through the transpose track; Indicate Transpositions in the key editor; the transpose track's controls in the
+track controls dialog; selecting several transpose events and the Delete key.

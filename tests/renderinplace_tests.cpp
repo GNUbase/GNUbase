@@ -877,13 +877,16 @@ TEST_CASE("a rendered event without transpose events gets the project root key a
 	const Json result =
 		run(project.client, "track.renderInPlace", {{"tracks", {mono.track}}, {"sourceTracks", "mute"}});
 	const auto rendered = result.at("events").at(0).get<ObjectId>();
+	bool found = false;
 	const Json state = run(project.client, "project.get");
 	for (const Json& event : state.at("audioEvents"))
 		if (event.at("id") == rendered)
 		{
+			found = true;
 			CHECK(event.at("rootKey") == "D");
 			CHECK(event.at("globalTranspose") == "follow");
 		}
+	CHECK(found);
 	using Pitch = std::vector<dsp::PitchPoint>;
 	const auto pitch = [&project, rendered]() -> std::optional<Pitch>
 	{

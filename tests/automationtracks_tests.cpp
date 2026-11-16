@@ -193,9 +193,25 @@ TEST_CASE("automation tracks show and hide below their track, and the parameter 
 	// The fader's five and the 41 of the channel strip's sections.
 	CHECK(elements(f.app, "#automation-parameter-menu menuitem.automation-target").size() == 5 + 41);
 	CHECK(elements(f.app, "#automation-parameter-menu menuitem.checked").at(0).value("text", "") == "Pan");
+	// The selector is taller than the window and opens at its top, where it stays while the search narrows it and
+	// when the search text goes again (#1665): it doesn't jump under its button.
+	const auto top = [&f]
+	{
+		f.app.shell().step(std::chrono::milliseconds(0));
+		f.app.shell().step(std::chrono::milliseconds(0)); // the update in which a resized menu moves
+		return elements(f.app, "#automation-parameter-menu").at(0).at("box").at("y").get<int>();
+	};
+	const int opened = top();
 	f.click("#automation-parameter-menu .automation-search");
 	f.app.ui().text(std::nullopt, "LEFT");
-	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(top() == opened);
+	CHECK(elements(f.app, "#automation-parameter-menu menuitem.automation-target:not(.hidden)").size() == 1);
+	for (int i = 0; i < 4; ++i)
+		f.app.ui().key(std::nullopt, "Backspace");
+	CHECK(top() == opened);
+	CHECK(elements(f.app, "#automation-parameter-menu menuitem.automation-target:not(.hidden)").size() == 5 + 41);
+	f.app.ui().text(std::nullopt, "LEFT");
+	CHECK(top() == opened);
 	CHECK(elements(f.app, "#automation-parameter-menu menuitem.automation-target:not(.hidden)").size() == 1);
 	// The keys skip the parameters that the search hides: Shift+Tab from the search field and Up from the first item
 	// go round to the last shown one, and Tab from there round to the search field (#524).

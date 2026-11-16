@@ -14,6 +14,7 @@
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/Input.h>
@@ -2154,4 +2155,30 @@ TEST_CASE(
 	model.changed("color");
 	CHECK(app.waitUntil([&number] { return number(6) == 255.0F && number(1) == 240.0F; }));
 	CHECK(looksLike(app, "#picker .color-new", {0, 0, 255}));
+}
+
+TEST_CASE("a fill of a drop-down list from the change that its own fill sends is dropped", "[ui]")
+{
+	test::UiApp app;
+	Rml::ElementDocument& document = app.show("buttons.rml");
+	Rml::ElementPtr created = document.CreateElement("div");
+	created->SetInnerRML(R"(<select id="first"/><select id="second"/>)");
+	document.AppendChild(std::move(created));
+	auto& first = *rmlui_dynamic_cast<Rml::ElementFormControlSelect*>(document.GetElementById("first"));
+	auto& second = *rmlui_dynamic_cast<Rml::ElementFormControlSelect*>(document.GetElementById("second"));
+	// The change that the first fill's selection sends fills the other list, then the first one again: the fill of
+	// the other list in between doesn't let the second fill of the first one in (#1719).
+	ui::widgets::Listener refill(
+		[&first, &second](Rml::Event&)
+		{
+			ui::widgets::fill(second, {{"x", "X"}}, "x");
+			ui::widgets::fill(first, {{"z", "Z"}}, "z");
+		});
+	first.AddEventListener(Rml::EventId::Change, &refill);
+	ui::widgets::fill(first, {{"a", "A"}, {"b", "B"}}, "b");
+	first.RemoveEventListener(Rml::EventId::Change, &refill);
+	CHECK(first.GetNumOptions() == 2);
+	CHECK(first.GetValue() == "b");
+	CHECK(second.GetNumOptions() == 1);
+	CHECK(second.GetValue() == "x");
 }

@@ -112,7 +112,7 @@ namespace gnubase::ui
 			using Rml::Element::Element;
 
 			// Opens the menu at a point in the window's pixels, inside the window. Items that come or go while it is
-			// open keep it inside the window (OnResize).
+			// open keep it inside the window (OnUpdate).
 			void open(Rml::Vector2f at)
 			{
 				addArrows(*this);
@@ -164,7 +164,7 @@ namespace gnubase::ui
 			}
 
 			// Input came after the menu opened: the items that the opening input filled in are laid out and place the
-			// menu from where it opened, and from now on it stays where it is while it fits (OnResize).
+			// menu from where it opened, and from now on it stays where it is while it fits (OnUpdate).
 			void settle()
 			{
 				if (!m_settling || !m_at)
@@ -641,12 +641,21 @@ namespace gnubase::ui
 			}
 
 		protected:
-			// The first layout puts the dialog in the middle of the window.
+			// The first layout puts the dialog in the middle of the window. A dialog that grows later (rows that
+			// show, a message that gets longer) grows down and to the right from where it is, so a layout that
+			// takes it past the window's edge moves it back inside.
 			void OnResize() override
 			{
 				Rml::Element::OnResize();
-				if (m_placed || GetContext() == nullptr)
+				if (GetContext() == nullptr)
 					return;
+				if (m_placed)
+				{
+					const Rml::Vector2f at = GetAbsoluteOffset(Rml::BoxArea::Border);
+					if (const Rml::Vector2f kept = inside(*this, at); kept != at)
+						moveTo(*this, kept);
+					return;
+				}
 				m_placed = true;
 				const Rml::Vector2f window(GetContext()->GetDimensions());
 				moveTo(*this, ((window - GetBox().GetSize(Rml::BoxArea::Border)) * 0.5F).Round());
