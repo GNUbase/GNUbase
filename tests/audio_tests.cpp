@@ -1411,7 +1411,9 @@ TEST_CASE("midi.ports lists the MIDI ports and keeps their settings while they a
 			{"visible", true}, {"inAllInputs", true}, {"present", true}, {"open", true}, {"midi2", false},
 			{"mpe",
 				{{"mode", "off"}, {"channels", 15}, {"firstChannel", 1}, {"pitchRange", 48}, {"tuning", true},
-					{"initialX", "off"}, {"initialY", "off"}}}});
+					{"initialX", "off"}, {"initialY", "off"}, {"xMessage", "pitchBend"},
+					{"pressureMessage", "aftertouch"}, {"yMessage", "cc74"}, {"xExpression", "tuning"},
+					{"pressureExpression", "pressure"}, {"yExpression", "brightness"}}}});
 	CHECK(ports[1].at("input") == false);
 	CHECK(ports[1].at("open") == false); // outputs open once something sends to them
 

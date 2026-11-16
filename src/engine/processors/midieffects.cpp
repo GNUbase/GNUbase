@@ -616,6 +616,19 @@ namespace gnubase::engine::processors
 		const uint16_t to = emit && changed.type == Type::NoteOn ? indexOf(changed) : g_none;
 		const Held previous = held;
 		held = {to, pass, true, true};
+		// The released notes whose note this one starts again lose it, as their release has ended: their expression
+		// would change the new note (#1685).
+		for (size_t other = 0; other < m_held.size(); ++other)
+		{
+			Held& released = m_held.at(other);
+			if (other == index || released.down || !released.played)
+				continue;
+			const auto starts = [&](uint16_t note) { return (pass && note == index) || (to != g_none && note == to); };
+			if (released.passed && starts(static_cast<uint16_t>(other)))
+				released.passed = false;
+			if (released.to != g_none && starts(released.to))
+				released.to = g_none;
+		}
 		// Played again before its note-off: ends what the earlier one started and this one doesn't, and plays again
 		// what both do.
 		for (const uint16_t note : {index, previous.to != index ? previous.to : g_none})
