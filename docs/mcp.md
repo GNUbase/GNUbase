@@ -2,8 +2,8 @@
 
 GNUbase has a built-in [Model Context Protocol](https://modelcontextprotocol.io) server, so AI agents such as Claude Code can use everything the engine can do: create projects, add tracks and notes, play, render and measure audio, and run Lua.
 
-- **Tools come from the engine's command registry.** Every engine command is a tool, named with `_` instead of `.` (`track.add` is `track_add`), with the command's parameter schema as its input schema and its result schema as its output schema. A command that only reads is marked read-only (`readOnlyHint`). The [tool catalogue](#tool-catalogue) at the end lists them all; the registry itself is `engine_commands`.
-- **`script_run`** runs Lua code with the same API (the Lua API reference, [api-reference.md](api-reference.md)) in a sandbox, for work that takes many steps or for test cases written with `gnubase.test`.
+- **Tools come from the engine's command registry.** Every engine command is a tool, named with `_` instead of `.` (`track.add` is `track_add`), with the command's parameter schema as its input schema and its result schema as its output schema. A command that only reads is marked read-only (`readOnlyHint`). The generated tool catalogue lists them all ([Tool catalogue](#tool-catalogue)); the registry itself is `engine_commands`.
+- **`script_run`** runs Lua code with the same API (the [Lua API reference](https://gnubase.github.io/GNUbase/lua.html), [api-reference.md](api-reference.md)) in a sandbox, for work that takes many steps or for test cases written with `gnubase.test`.
 - **UI tools:** with its UI, GNUbase also lets agents read the UI back and use it: windows, the DOM, screenshots, mouse and keyboard (`ui_dom`, `ui_click`, ...). See [UI tools](#ui-tools).
 - **Events:** `events_take` returns what changed in the engine since the last call, such as `track.added` or `history.changed`, whoever changed it: this client, other MCP clients, Lua scripts or the UI. See [Events](#events).
 - **Resources:** queries without required parameters can also be read as resources, `gnubase://<command>`, e.g. `gnubase://project.get`.
@@ -232,4 +232,4 @@ The MCP server gives a client the same power over GNUbase as the person using it
 
 ## Tool catalogue
 
-Every tool by area, its engine command, whether it only reads, its arguments and its result are in the generated MCP tool catalogue, `mcp-tools.md` ([API references](api-reference.md)). A running server lists the same with `tools/list`.
+Every tool by area, its engine command, whether it only reads, its arguments and its result are in the generated MCP tool catalogue: [main's on the web](https://gnubase.github.io/GNUbase/mcp-tools.html), or `mcp-tools.md` from your build ([API references](api-reference.md)). A running server lists the same with `tools/list`.
