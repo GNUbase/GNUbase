@@ -1818,3 +1818,56 @@ TEST_CASE("the expression editor stays centered on its note as the pitches zoom"
 		CHECK(centered());
 	}
 }
+
+TEST_CASE("the lower zone's key editor at its default size gives the note display more room than the controller lanes, "
+		  "at dp ratios 1 and 2",
+	"[ui]")
+{
+	// The lower zone at its default 240 dp, with the Velocity lane and the footer below the note display: the lanes
+	// give way first, down to their footer, and their list scrolls, so that the note display is the larger part of the
+	// editor; in a lower zone of 400 dp the lanes keep their whole height (#1775). The window is 1600 x 1200 dp, so
+	// that the toolbar is one row at both ratios.
+	for (const float ratio : {1.0F, 2.0F})
+	{
+		INFO("dp ratio " << ratio);
+		const auto px = [ratio](double dp) { return dp * ratio; };
+		Fixture f({static_cast<int>(px(1600)), static_cast<int>(px(1200))});
+		f.app.call("editor.close", {{"editor", "window"}});
+		REQUIRE(f.app.waitUntil([&] { return f.app.appUi().editorWindow() == nullptr; }));
+		f.app.setDpRatio(ratio);
+		f.app.appUi().showProject();
+		f.window = f.app.main().id();
+		f.app.call("editor.open", {{"editor", "lower"}, {"parts", Json::array({f.part})}});
+		REQUIRE(f.app.waitUntil([&] { return f.elements("#lower-zone .controller-lane").size() == 1; }));
+		const auto box = [&f](const std::string& selector) { return f.box("#lower-zone " + selector); };
+		const auto height = [&box](const std::string& selector) { return box(selector).at("height").get<double>(); };
+		const auto bottom = [&box](const std::string& selector)
+		{
+			const Json found = box(selector);
+			return found.at("y").get<double>() + found.at("height").get<double>();
+		};
+		const auto settle = [&f]
+		{
+			f.app.shell().step(std::chrono::milliseconds(0));
+			f.app.shell().step(std::chrono::milliseconds(0));
+		};
+		settle();
+		REQUIRE(height(".key-editor-toolbar") <= px(48) + 0.5);
+		const double editor = height(".key-editor");
+		const double body = height(".key-editor-body");
+		const double lanes = height(".controller-lanes");
+		INFO("editor " << editor << ", note display " << body << ", controller lanes " << lanes);
+		CHECK(body >= editor / 3);
+		CHECK(body > lanes);
+		// The footer stays whole inside the editor.
+		CHECK(height(".controller-lanes-footer") >= px(22) - 0.5);
+		CHECK(bottom(".controller-lanes-footer") <= bottom(".key-editor") + 0.5);
+
+		f.app.appUi().docking().setSize("project", "lower", 400.0);
+		REQUIRE(f.app.waitUntil([&] { return height(".key-editor") > editor + px(100); }));
+		settle();
+		CHECK(height(".controller-lane") >= px(64) - 0.5);
+		CHECK(height(".controller-lane-list") >= px(64) - 0.5);
+		CHECK(bottom(".controller-lanes-footer") <= bottom(".key-editor") + 0.5);
+	}
+}
