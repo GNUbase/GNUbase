@@ -2182,3 +2182,30 @@ TEST_CASE("a fill of a drop-down list from the change that its own fill sends is
 	CHECK(second.GetNumOptions() == 1);
 	CHECK(second.GetValue() == "x");
 }
+
+TEST_CASE(
+	"a fill of a drop-down list from a change that a fill of another list sends during its own is dropped", "[ui]")
+{
+	test::UiApp app;
+	Rml::ElementDocument& document = app.show("buttons.rml");
+	Rml::ElementPtr created = document.CreateElement("div");
+	created->SetInnerRML(R"(<select id="first"/><select id="second"/>)");
+	document.AppendChild(std::move(created));
+	auto& first = *rmlui_dynamic_cast<Rml::ElementFormControlSelect*>(document.GetElementById("first"));
+	auto& second = *rmlui_dynamic_cast<Rml::ElementFormControlSelect*>(document.GetElementById("second"));
+	ui::widgets::fill(first, {{"p", "P"}}, "p");
+	// The first list's change fills the second one, whose change fills the first one again, while the first fill
+	// still has the old option to remove: that fill is dropped two levels deep too, so the first fill doesn't remove
+	// its options and leave the list without a selection (#1748).
+	ui::widgets::Listener fillSecond([&second](Rml::Event&) { ui::widgets::fill(second, {{"x", "X"}}, "x"); });
+	ui::widgets::Listener fillFirst([&first](Rml::Event&) { ui::widgets::fill(first, {{"z", "Z"}}, "z"); });
+	first.AddEventListener(Rml::EventId::Change, &fillSecond);
+	second.AddEventListener(Rml::EventId::Change, &fillFirst);
+	ui::widgets::fill(first, {{"a", "A"}, {"b", "B"}}, "b");
+	first.RemoveEventListener(Rml::EventId::Change, &fillSecond);
+	second.RemoveEventListener(Rml::EventId::Change, &fillFirst);
+	CHECK(first.GetNumOptions() == 2);
+	CHECK(first.GetValue() == "b");
+	CHECK(second.GetNumOptions() == 1);
+	CHECK(second.GetValue() == "x");
+}
