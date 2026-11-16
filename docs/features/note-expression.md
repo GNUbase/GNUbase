@@ -129,7 +129,11 @@ first.
   per pixel at most, not hundreds of elements (#1671). The lines are built again when a pixel has a quarter more or
   fewer ticks than they were built with: after an editor's first layout, as the editor window or the lower zone
   resizes and as the project window zooms, but not on every frame of a scroll across a tempo change, which changes the
-  in-place editor's ticks per pixel a little (#1716). The drum editor shows no overlay, as it has neither the buttons
+  in-place editor's ticks per pixel a little (#1716). The quarter counts once the window's update has laid the lines
+  out with the ticks they were built for; before that, as when the lines first show, they are built again for any
+  other ticks. They are built for the box the last layout gave the notes, which need not be the window's: the editor
+  window's first layout, before the left zone has its size, gives the notes about a tenth more room (#1768). Each
+  editor's lines follow the update of its own window. The drum editor shows no overlay, as it has neither the buttons
   nor the expression editor, also with Show Note Length.
 - **Expression editor** (pp. 1308-1311). With Double-Click Opens Note Expression Editor a double click on a note with
   the object selection tool opens the editor instead of deleting the note: on the note, or on the selected notes if it
@@ -158,7 +162,9 @@ click deletes the note. With several selected notes of two parts they check the 
 of them over their span, centered on the note clicked, an edit reaching each note at its time, a drag leaving a point
 where the value changes, one undo step for both parts, Vertical Snap and the editor closing when the selection empties;
 the editor centered on its note while the pitches zoom; on the top row the editor inside the note display and wider than
-its button, and a draw released outside the window. `tests/inplaceeditor_ui_tests.cpp` checks the draw tool on a line of
+its button, and a draw released outside the window; a dense note's lines a pixel each after the window's layout and a
+resize, a resize by less than a quarter keeping them, and lines that first show after the window narrowed by less than
+a quarter, also on the box of the layout before, built for the narrower width. `tests/inplaceeditor_ui_tests.cpp` checks the draw tool on a line of
 the editor in an in-place editor and a dense note's lines a pixel each after its layout and as the project window zooms,
 `tests/drumeditor_ui_tests.cpp` that the drum editor has neither the buttons, the overlay nor the editor, and
 `tests/keyeditor_tests.cpp` the three settings as view state.

@@ -1229,14 +1229,20 @@ namespace gnubase::app
 		}
 		m_shell.eachStep([this] { return m_winding.step(); });
 		// The MIDI editors render before their layout and keep their width when their window or zone resizes: their
-		// expression lines follow the width the update gave them (#1671). The in-place editors' setTimeRange does so.
+		// expression lines follow the width the update of their own window gave them (#1671), not the box another
+		// window's update finds before theirs is laid out again (#1768). The in-place editors' setTimeRange does so as
+		// the project window scrolls and zooms.
 		m_shell.afterUpdate(
-			[this](ui::Window&)
+			[this](ui::Window& window)
 			{
 				bool changed = false;
 				for (ui::MidiEditor* editor : {editorWindow(), lowerZoneEditor()})
 					if (ui::KeyEditor* keys = editor != nullptr ? editor->keyEditor() : nullptr)
-						changed = keys->fitLines() || changed;
+						changed = keys->fitLines(window.context()) || changed;
+				if (m_inPlace)
+					for (const uint64_t track : m_inPlace->tracks())
+						if (ui::KeyEditor* keys = m_inPlace->keyEditor(track))
+							changed = keys->fitLines(window.context()) || changed;
 				return changed;
 			});
 		// The transport panel follows its sections whenever an update may have changed their width (#1527), once its
