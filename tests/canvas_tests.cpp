@@ -683,7 +683,7 @@ TEST_CASE("a waveform's brightness dims it or lightens it toward white", "[unit]
 	wave.setPeaks({0.0, 400.0}, {peaks});
 	CHECK(count(fixture.draw(), green()) == 4);
 	wave.SetAttribute("brightness", 1.0);
-	std::vector<Rml::Vertex> vertices = fixture.draw();
+	const std::vector<Rml::Vertex> vertices = fixture.draw();
 	CHECK(count(vertices, green()) == 0);
 	CHECK(count(vertices, Colour(255, 255, 255, 255)) == 4);
 	wave.SetAttribute("brightness", 0.0);
@@ -727,6 +727,7 @@ TEST_CASE("event names show at their events' top left, cut to fit or left out", 
 
 	// Of a thousand names, only those around the view are built: the view is 4000 units wide.
 	std::vector<ui::EventNames::Name> many;
+	many.reserve(1000);
 	for (int i = 0; i < 1000; ++i)
 		many.push_back({i * 1000.0, 900.0, "x"});
 	names.setLanes({{40.0F, many}});
