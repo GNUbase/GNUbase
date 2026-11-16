@@ -5,7 +5,7 @@ Two references are generated from the code and are not in the repository, so tha
 - **Lua API** (`lua.md`): every engine command as a Lua function, the events, running scripts and the `gnubase.test` framework, written by `scripting::reference` (`src/scripting/reference.cpp`) from the command registry.
 - **MCP tool catalogue** (`mcp-tools.md`): every MCP tool by area, its engine command, its arguments and its result, and the resources, written by `mcp::catalogue` (`src/mcp/catalogue.cpp`) from what the server lists. [mcp.md](mcp.md) is the guide that goes with it.
 
-The references of `main` are on the web: the [Lua API](https://gnubase.github.io/GNUbase/lua.html) and the [MCP tool catalogue](https://gnubase.github.io/GNUbase/mcp-tools.html). CI publishes them with GitHub Pages after every push to `main`.
+The references of `main` are on the web: the [Lua API](https://gnubase.github.io/GNUbase/lua.html) and the [MCP tool catalogue](https://gnubase.github.io/GNUbase/mcp-tools.html). CI publishes them with GitHub Pages after every push to `main` whose build passes, so a failed run leaves the last good ones online.
 
 The unit tests write both files into `docs/` of the build folder, e.g. `build/<preset>/docs/`. Add the configuration you built, e.g. `-C Release` after the README's Release build, as the test presets run Debug otherwise:
 

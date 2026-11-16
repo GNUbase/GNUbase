@@ -257,7 +257,7 @@ jobs:
           source: api-pages/source
           destination: api-pages/site
       - name: Upload API reference pages
-        if: ${{ !cancelled() && github.event_name == 'push' && matrix.name == 'linux-x64-gcc' }}
+        if: ${{ github.event_name == 'push' && matrix.name == 'linux-x64-gcc' }}
         uses: actions/upload-pages-artifact@v5
         with:
           path: api-pages/site
@@ -289,7 +289,7 @@ jobs:
   # be read without a build or a GitHub sign-in. Needs the repository's Pages source set to GitHub Actions.
   publish-api-reference:
     needs: build
-    if: ${{ !cancelled() && github.event_name == 'push' }}
+    if: ${{ github.event_name == 'push' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
