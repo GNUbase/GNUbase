@@ -143,8 +143,8 @@ Independent parts and audio events, the reason of a refused glue in `#edit-refus
 double-clicking and erasing transpose events on the lane, the track list's controls and its context menu's Set Root Key
 for Unassigned Events, an audio event's own Transpose with the root key step in brackets, and an audio part's events'
 Root Key and Global Transpose, empty when they differ (the button's title too), with the mark when all of them are
-Independent; a MIDI part and an audio event in different keys selected together keeping their keys, also after an
-undo.
+Independent; a MIDI part and an audio event in different keys selected together keeping their keys, also when the
+key shown changes and after its undo.
 `tests/poolpanel_tests.cpp`: the pool's Key column, its options filled once it is used, differing keys cleared with
 "-", and disabled for a clip without audio events.
 
