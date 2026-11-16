@@ -286,7 +286,7 @@ TEST_CASE("a track color that isn't #rrggbb counts as no color on the track's mi
 
 TEST_CASE("the lower zone's mixer in the default theme looks as its golden image", "[ui]")
 {
-	test::UiApp app({1000, 700}); // CI's screens are 1024 pixels wide
+	test::UiApp app({1000, 680}); // CI's screens are 1024 pixels wide, and macOS opens windows at most 684 tall
 	app.appUi().showProject();
 	app.setDpRatio(1.0F);
 	// Strips with dark and bright track colors, one without, a group, and the busses; a muted and a soloed channel.
@@ -311,7 +311,7 @@ TEST_CASE("the lower zone's mixer in the default theme looks as its golden image
 
 	// The strips only, from the first one's left edge to the last one's right edge, so that changes elsewhere in the
 	// window or the zone, or its width, don't touch this image.
-	const ui::Image window = app.screenshot("lower-zone-mixer-window", {1000, 700});
+	const ui::Image window = app.screenshot("lower-zone-mixer-window", {1000, 680});
 	const Json shown = elements(app, std::nullopt, "#lower-zone .mixer-channel");
 	REQUIRE(shown.size() == 6);
 	const Json first = shown.front().at("box");

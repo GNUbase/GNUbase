@@ -349,7 +349,7 @@ TEST_CASE(
 {
 	// #1342: the default theme's flat bars, the transport bar's buttons and plain displays, the inspector's section
 	// headers, and the left zone beside the main zone as rounded panels with the window's background between them.
-	test::UiApp app({1000, 700}); // CI's screens are 1024 pixels wide
+	test::UiApp app({1000, 680}); // CI's screens are 1024 pixels wide, and macOS opens windows at most 684 tall
 	app.appUi().showProject();
 	app.setDpRatio(1.0F);
 	app.call("project.set", {{"length", 60.0}});
@@ -370,7 +370,7 @@ TEST_CASE(
 				visible(app, ".inspector-section[section=basics] button.section-header");
 		}));
 	app.shell().step(std::chrono::milliseconds(0));
-	test::UiApp::checkGolden("default-theme-window", app.screenshot("default-theme-window", {1000, 700}));
+	test::UiApp::checkGolden("default-theme-window", app.screenshot("default-theme-window", {1000, 680}));
 	CHECK(app.shownSections("toolbar") ==
 		std::vector<std::string>{"tools", "autoScroll", "zoomPresets", "snap", "gridType", "quantize", "zones"});
 	CHECK(app.shownSections("transport-bar") ==
