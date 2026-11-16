@@ -9,8 +9,11 @@
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/ElementText.h>
+#include <RmlUi/Core/ElementUtilities.h>
 #include <RmlUi/Core/Elements/ElementFormControl.h>
 #include <RmlUi/Core/Input.h>
+#include <RmlUi/Core/Rectangle.h>
+#include <RmlUi/Core/ScrollTypes.h>
 #include <RmlUi/Core/StringUtilities.h>
 
 #include <algorithm>
@@ -191,7 +194,18 @@ namespace gnubase::ui
 				return *target.point;
 			if (target.selector.empty())
 				throw std::invalid_argument("needs a selector or x and y");
-			const Rect bounds = box(targetElement(window, target));
+			Rml::Element& element = targetElement(window, target);
+			Rect bounds = box(element);
+			// As a user would, scroll a target whose centre its scrolling containers hide into view first, so the
+			// input lands on it rather than on what is in its place. A visible centre scrolls nothing.
+			Rml::Rectanglei clip;
+			if (Rml::ElementUtilities::GetClippingRegion(&element, clip) &&
+				!clip.Contains({bounds.x + (bounds.width / 2), bounds.y + (bounds.height / 2)}))
+			{
+				element.ScrollIntoView({Rml::ScrollAlignment::Nearest, Rml::ScrollAlignment::Nearest,
+					Rml::ScrollBehavior::Instant, Rml::ScrollParentage::All});
+				bounds = box(element);
+			}
 			return {bounds.x + (bounds.width / 2), bounds.y + (bounds.height / 2)};
 		}
 

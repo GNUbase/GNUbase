@@ -56,7 +56,9 @@ namespace gnubase::app
 			return {{"window", windowProperty()},
 				{"selector",
 					{{"type", "string"},
-						{"description", "A CSS selector; the mouse goes to the centre of the element it matches."}}},
+						{"description",
+							"A CSS selector; the mouse goes to the centre of the element it matches, scrolled into "
+							"view first if a scrolling container hides it."}}},
 				{"index",
 					{{"type", "integer"}, {"minimum", 0},
 						{"description", "Which of the elements the selector matches; 0, the first, if left out."}}},

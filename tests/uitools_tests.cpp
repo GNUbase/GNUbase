@@ -365,6 +365,22 @@ TEST_CASE("ui_move hovers, ui_wheel scrolls and ui_drag drops one element on ano
 	CHECK(recorder.events.at("dragdrop").at("target") == "target");
 }
 
+TEST_CASE(
+	"UI tools scroll a target in a scrolled-away part of its container into view first, as a user would", "[unit]")
+{
+	Fixture fixture;
+	Rml::Element* list = fixture.main->GetElementById("items");
+	// Drums is in view: nothing scrolls.
+	CHECK(fixture.call("ui_click", {{"selector", "li"}, {"index", 0}}).at("element").at("text") == "Drums");
+	CHECK(list->GetScrollTop() == 0.0F);
+	// Guitar is below the list's visible part: the list scrolls just so far that it is in view, and Guitar gets the
+	// click, not what is below the list.
+	CHECK(fixture.call("ui_click", {{"selector", "li"}, {"index", 4}}).at("element").at("text") == "Guitar");
+	CHECK(list->GetScrollTop() == 40.0F);
+	CHECK(fixture.call("ui_move", {{"selector", "li"}, {"index", 0}}).at("element").at("text") == "Drums");
+	CHECK(list->GetScrollTop() == 0.0F);
+}
+
 TEST_CASE("ui_click with action down holds the button across other tool calls until action up", "[unit]")
 {
 	Fixture fixture;
