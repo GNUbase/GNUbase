@@ -361,7 +361,7 @@ namespace gnubase::engine
 		for (const auto& [token, render] : m_trackRenders)
 			if (token != m_applyingRender &&
 				std::any_of(changes.begin(), changes.end(),
-					[&render](const auto* change) { return affectsRender(*change, *render); }) &&
+					[render = render.get()](const auto* change) { return affectsRender(*change, *render); }) &&
 				renderInput(project, *render) != render->input)
 				throw CommandError("the affected track or range is being rendered");
 	}

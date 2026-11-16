@@ -1050,7 +1050,9 @@ TEST_CASE("render locks allow version names and live input settings", "[integrat
 		{
 			run(session.client, "trackVersion.set", {{"tracks", {source.track}}, {"name", "Renamed while rendering"}});
 			if (audio)
+			{
 				run(session.client, "channel.set", {{"channel", source.channel}, {"input", input}});
+			}
 			else
 			{
 				run(session.client, "channel.set", {{"channel", source.channel}, {"midiInput", "none"}});

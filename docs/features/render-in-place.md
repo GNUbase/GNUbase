@@ -153,4 +153,5 @@ partial files.
 
 The follow-up regressions in `tests/renderinplace_tests.cpp` check the completed undo names, version renaming and live
 input changes during a render, and refusal of undo and redo that would change a locked track's pre gain, preserving both
-project and history. `tests/theme_tests.cpp` checks the rendering-state style in every generated theme.
+project and history. They also check that newly routed MIDI and newly inserted plugins remain protected.
+`tests/theme_tests.cpp` checks the rendering-state style in every generated theme.
