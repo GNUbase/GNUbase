@@ -164,10 +164,10 @@ where the value changes, one undo step for both parts, Vertical Snap and the edi
 the editor centered on its note while the pitches zoom; on the top row the editor inside the note display and wider than
 its button, and a draw released outside the window; a dense note's lines a pixel each after the window's layout and a
 resize, a resize by less than a quarter keeping them, and lines that first show after the window narrowed by less than
-a quarter, also on the box of the layout before, built for the narrower width. `tests/inplaceeditor_ui_tests.cpp` checks the draw tool on a line of
-the editor in an in-place editor and a dense note's lines a pixel each after its layout and as the project window zooms,
-`tests/drumeditor_ui_tests.cpp` that the drum editor has neither the buttons, the overlay nor the editor, and
-`tests/keyeditor_tests.cpp` the three settings as view state.
+a quarter, also on the box of the layout before, built for the narrower width. `tests/inplaceeditor_ui_tests.cpp`
+checks the draw tool on a line of the editor in an in-place editor and a dense note's lines a pixel each after its
+layout and as the project window zooms, `tests/drumeditor_ui_tests.cpp` that the drum editor has neither the buttons,
+the overlay nor the editor, and `tests/keyeditor_tests.cpp` the three settings as view state.
 
 ## Not yet
 
