@@ -1752,7 +1752,8 @@ meter .meter-peak
 .track-list .automation-toggle
 {
 	position: absolute;
-	left: 6dp;
+	left: 4dp; /* the row's padding, left of the name, which it is level with in the lowest rows */
+	min-width: 16dp; /* not an icon-only button's 24 dp */
 	width: 16dp;
 	height: 16dp;
 	padding: 0;
