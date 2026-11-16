@@ -7,6 +7,9 @@
 #include "ui/automation.h"
 #include "uiapp.h"
 
+#include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/ElementDocument.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -212,6 +215,55 @@ TEST_CASE("the velocity lane shows the notes' velocities as bars that the tools 
 	REQUIRE(f.app.waitUntil([&] { return f.note(ids[0]).at("velocity").get<double>() < 0.05; }));
 	CHECK(f.note(ids[1]).at("velocity").get<double>() == Approx(0.25).margin(0.03));
 	CHECK(f.note(ids[3]).at("velocity").get<double>() == Approx(0.75).margin(0.03));
+}
+
+TEST_CASE(
+	"the lanes' buttons lie inside their header and the footer, in every theme and with the keyboard focus", "[ui]")
+{
+	// #1774: a button's 64 dp minimum width made the lane-type button wider than its 48 dp header, which cut it off,
+	// and the footer's buttons were 2 dp higher than the footer.
+	Fixture f;
+	f.choose("#controller-lane-create", R"(#controller-create-menu menuitem[lane-type="controller"][lane-number="1"])");
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".controller-lane-type").size() == 2; }));
+	const auto right = [](const Json& box) { return box.at("x").get<int>() + box.at("width").get<int>(); };
+	const auto bottom = [](const Json& box) { return box.at("y").get<int>() + box.at("height").get<int>(); };
+	const auto inside = [&](const Json& inner, const Json& outer)
+	{
+		INFO(inner.dump() << " in " << outer.dump());
+		CHECK(inner.at("x").get<int>() >= outer.at("x").get<int>());
+		CHECK(inner.at("y").get<int>() >= outer.at("y").get<int>());
+		CHECK(right(inner) <= right(outer));
+		CHECK(bottom(inner) <= bottom(outer));
+	};
+	// The lane with the keyboard focus, which the themes frame inside its header (articulation lanes take it on a
+	// click).
+	const ui::Window* editor = f.app.shell().find(*f.window);
+	REQUIRE(editor != nullptr);
+	Rml::Element* focused = nullptr;
+	for (int i = 0; i < editor->context().GetNumDocuments() && focused == nullptr; ++i)
+		focused = editor->context().GetDocument(i)->QuerySelector(".controller-lane");
+	REQUIRE(focused != nullptr);
+	for (const char* theme : {"gnubase", "dark", "light", "high-contrast"})
+	{
+		INFO("theme " << theme);
+		f.app.call("settings.set", {{"key", "ui.theme"}, {"value", theme}});
+		REQUIRE(f.app.waitUntil([&f, theme] { return f.app.shell().theme() == theme; }));
+		for (const bool focus : {false, true})
+		{
+			INFO("keyboard focus " << focus);
+			focused->SetClass("keyboard-focus", focus);
+			f.app.shell().step(std::chrono::milliseconds(0));
+			const Json headers = f.elements(".controller-lane-header");
+			const Json types = f.elements(".controller-lane-type");
+			REQUIRE(headers.size() == 2);
+			REQUIRE(types.size() == 2);
+			for (size_t lane = 0; lane < 2; ++lane)
+				inside(types.at(lane).at("box"), headers.at(lane).at("box"));
+			const Json footer = f.box(".controller-lanes-footer");
+			inside(f.box("#controller-lane-create"), footer);
+			inside(f.box("#controller-lane-setup"), footer);
+		}
+	}
 }
 
 TEST_CASE("controller lanes come from the menus and the tools add, select, change and erase events", "[ui]")
