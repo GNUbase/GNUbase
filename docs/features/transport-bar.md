@@ -112,13 +112,15 @@ the same pane for its own sections (Set up Transport Panel, p. 295). Both are ke
   answered their first queries (`ui::TransportControls::onShown`), so it isn't fitted to their defaults first; a new
   one is fitted to the defaults at once and then once more, again centred, for what they show (#1612), also where the
   window system moves windows later, such as SDL's on X11, and the panel is still where it was or already where the
-  first fit asked for (#1701). Reset All in the panel's setup pane makes a panel the user sized, or one with bounds
-  from before #1527, follow its sections again. `ui::TransportPanelFit` (`src/ui/transportpanelfit.h`) fits the
-  panel, with `ui::fitWidth` (`src/ui/displays.h`), which keeps an open panel on its monitor, moved left only as far
-  as the monitor's right edge needs; it asks for the monitors only when the sections' width or the window's bounds
-  changed since it last looked, not in every frame while the transport runs, and when the monitors change
-  (`ui::Shell::onDisplaysChanged`), so that a panel as wide as its monitor's usable area gets narrower with it, at
-  another resolution or with the taskbar moved to the side (#1701). Its unit tests run on the fake window system
+  first fit asked for (#1701); one whose first fit found nothing to fit is centred where it opened, and only this
+  opening counts, not where a panel before it was (#1765). Reset All in the panel's setup pane makes a panel the user
+  sized, or one with bounds from before #1527, follow its sections again. `ui::TransportPanelFit`
+  (`src/ui/transportpanelfit.h`) fits the panel, with `ui::fitWidth` (`src/ui/displays.h`), which keeps an open panel on
+  its monitor, moved left only as far as the monitor's right edge needs; it asks for the monitors only when the
+  sections' width or the window's bounds changed since it last looked, not in every frame while the transport runs, and
+  when the monitors change (`ui::Shell::onDisplaysChanged`), so that a panel as wide as its monitor's usable area gets
+  narrower with it, at another resolution or with the taskbar moved to the side (#1701). The shell keeps these tasks,
+  which do nothing once the fit is gone (#1765). Its unit tests run on the fake window system
   (`tests/testutils/fakeui.h`), which can size windows later and counts how often the monitors were asked for.
 - **Time display window** (pp. 312–313): `window.timeDisplay` shows and hides `resources/ui/time-display.rml`, the
   project cursor in large digits, in the format of the slot `timeDisplay`, which its context menu picks. The main
