@@ -202,3 +202,7 @@ of 10 marker tracks; `tests/markers_ui_tests.cpp` the File menu's items through 
 
 Not yet: cutting a range that covers a cycle marker whole or reaches out of it (#1190); hiding columns;
 marker lines in the key editor; locking marker tracks; importing markers from wave files.
+
+CSV files preserve empty marker tracks with a Type Track row: Track Number, Track and Time Base identify the track, and all marker fields are empty. Such rows do not add to the returned marker count. The importer also detects semicolon-separated headers and accepts decimal commas for Position and End in those sheets; comma-separated files retain decimal points. Quoting, embedded separators, quotes and line ends keep their usual CSV meaning.
+
+When a type 1 MIDI file has marker-only tracks but no merged markers, import into a project without marker tracks first creates an empty active marker track for the tempo track's empty role. Separate populated marker tracks stay separate on the next export. An existing active marker track is retained; type 0 files still merge all markers. Tests cover byte-identical re-export, undo and redo with a new or existing empty active marker track.

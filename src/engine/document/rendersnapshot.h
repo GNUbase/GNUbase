@@ -116,7 +116,7 @@ namespace gnubase::engine
 
 	// RenderController::part of a sound slot's output events (#175): they are the track's, whichever part's note sent
 	// them, so a chase limited to the parts under the position takes them too (#1521).
-	constexpr int32_t g_soundSlotPart = -2;
+	inline constexpr int32_t g_soundSlotPart = -2;
 
 	struct RenderController
 	{

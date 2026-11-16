@@ -178,9 +178,24 @@ namespace gnubase::ui
 		// The tracks whose in-place editors are open (#131, ui/inplaceeditor.h): they are at least g_inPlaceHeight
 		// high, for the editor over their lane.
 		void setInPlaceTracks(std::set<uint64_t> tracks);
+		// The quantize panel's cutting positions (#1579, reference manual p. 378): a .cutting-position line over the
+		// event lanes where Slice would cut, at each of the project samples, by position. Each line shows that is
+		// at least g_cutDistance dp after the one shown before it (#1668), so that a flam zoomed out keeps the others.
+		void setCuttingPositions(std::vector<int64_t> positions);
+		const std::vector<int64_t>& cuttingPositions() const { return m_cuttingPositions; }
 		// The project as project.get last returned it, or null before the first answer; loads() counts the answers,
 		// and read() is when the binding handed the last one on (EngineBinding::handed).
 		const engine::Json& project() const { return m_project; }
+		// Where each audio event of the project plays, in seconds, as the project window shows it: from its position
+		// in its track's time base to where its warp puts its end (playedLength), or else as long as its clip frames
+		// at its media's rate. An event in an audio part by its own span, also where the part cuts it off.
+		struct AudioEventSpan
+		{
+			uint64_t track = 0;
+			double start = 0.0;
+			double end = 0.0;
+		};
+		const std::map<uint64_t, AudioEventSpan>& audioEventSpans() const { return m_audioSpans; }
 		uint64_t loads() const { return m_loads; }
 		uint64_t read() const { return m_read; }
 		// The tempo map and signatures of project(), read once per answer.
@@ -249,8 +264,17 @@ namespace gnubase::ui
 		// whose buttons #snap-type and #grid-type show the choice, and a toggle button #snap-zero-crossing.
 		const engine::SnapSettings& snap() const { return m_snap; }
 		// Where a point dragged to seconds snaps to, in seconds, from where it was (for grid relative), as the
-		// display's own drags snap: e.g. markers on the marker track (ui/markers.h).
-		double snapped(double seconds, std::optional<double> from = std::nullopt) const;
+		// display's own drags snap: e.g. markers on the marker track (ui/markers.h). The magnets (samples) attract as
+		// the events' edges do, e.g. the other arranger events' edges for one on the arranger track's lane.
+		double snapped(double seconds, std::optional<double> from = std::nullopt,
+			const std::vector<time::Samples>& magnets = {}) const;
+		// The grid line at or before seconds, in seconds: where a click draws an arranger event from when snapping
+		// would put it after the click (ui/transposetrack.h).
+		double gridLineBefore(double seconds) const;
+		// Why the engine refused an edit of events, such as a glue of parts that follow global transpose differently,
+		// in the notification #edit-refused for a moment (#1367), or of the global tracks' events
+		// (ui/transposetrack.h); logged too.
+		void showRefusal(const std::string& error);
 
 		// The default tool modifiers (reference manual p. 1601) of the tools that GNUbase has, by action, which the
 		// user setting ui.toolModifiers overrides one by one.
@@ -593,11 +617,19 @@ namespace gnubase::ui
 		// Sends an event.* command for the selection; with selectResult, the events it returns become the selection.
 		void edit(const std::string& command, engine::Json parameters, bool selectResult = false);
 		void selectWhere(const std::function<bool(const Shown&)>& selected);
+		// Group Editing of folder tracks (#1579, reference manual p. 274): each track's outermost folder with Group
+		// Editing on, for the tracks that have one; the events and parts with those of their folder's other tracks
+		// that have the same start, end and lane; and a range's tracks with the other tracks of their folders, in the
+		// project's order.
+		std::map<uint64_t, uint64_t> editGroups() const;
+		std::vector<uint64_t> withEditGroups(std::vector<uint64_t> events) const;
+		std::vector<uint64_t> withEditGroupTracks(const std::vector<uint64_t>& tracks) const;
 		int64_t samples(double seconds) const;
 		// Snapping (eventediting.cpp): where a point at seconds goes, from where it was for grid relative; the
 		// selection's edges and snap points don't attract.
 		engine::SnapGrid snapGrid() const;
-		time::Position snapAt(double seconds, std::optional<double> from) const;
+		time::Position snapAt(
+			double seconds, std::optional<double> from, const std::vector<time::Samples>& magnets = {}) const;
 		// The distance from seconds to a snapped position as event.move and event.resize take it: ticks when the grid
 		// is musical and every selected event is on a musical track, else samples. Also in seconds.
 		std::pair<engine::Json, double> shiftTo(const time::Position& to, double from, bool moving = false) const;
@@ -706,9 +738,6 @@ namespace gnubase::ui
 		void showContextMenus();
 		// The notification for a tool chosen with a key command.
 		void notify(const std::string& text);
-		// Why the engine refused an edit of events, such as a glue of parts that follow global transpose differently,
-		// in the notification #edit-refused for a moment (#1367); logged too.
-		void showRefusal(const std::string& error);
 		// Whether the pressed modifiers, or the keys, are the ones the user setting ui.toolModifiers gives the action.
 		bool modifiers(const char* action) const { return modifiers(action, m_pressed); }
 		bool modifiers(const char* action, const std::string& keys) const;
@@ -741,10 +770,11 @@ namespace gnubase::ui
 		// in the same undo step.
 		void addLane(uint64_t track, const engine::Json& target, engine::Json before = engine::Json::array(),
 			std::optional<size_t> at = std::nullopt);
-		void reload();              // the lanes again, from the project as it was last read
-		void showAutomationLanes(); // the curves, after the lanes changed
-		void placeAutomation();     // where they are, after the view changed
-		void placePartMarks();      // the marks of parts excluded from global transpose, after the view changed
+		void reload();                // the lanes again, from the project as it was last read
+		void showAutomationLanes();   // the curves, after the lanes changed
+		void placeAutomation();       // where they are, after the view changed
+		void placePartMarks();        // the marks of parts excluded from global transpose, after the view changed
+		void placeCuttingPositions(); // setCuttingPositions' lines, after the view changed
 		// The automation lane of a display lane, or null for a track's own lane.
 		const AutomationView* automationAt(size_t lane) const;
 		double automationValue(size_t lane, double y) const; // y dp in the event lanes, as a display value
@@ -836,7 +866,11 @@ namespace gnubase::ui
 		// shown that is excluded from global transpose (#168, #1368, reference manual p. 421).
 		Rml::Element* m_partMarks = nullptr;
 		std::set<uint64_t> m_independent;
-		std::string m_partMarksRml;             // what m_partMarks holds
+		std::map<uint64_t, AudioEventSpan> m_audioSpans;
+		std::string m_partMarksRml;     // what m_partMarks holds
+		Rml::Element* m_cuts = nullptr; // the .cutting-position lines
+		std::vector<int64_t> m_cuttingPositions;
+		size_t m_cutsShown = 0;                 // lines in m_cuts
 		std::map<uint64_t, AudioFades> m_fades; // by audio event
 		std::vector<EventLanes::Lane> m_folderData;
 		std::string m_folderMode = "always"; // ui.folderData
@@ -954,6 +988,7 @@ namespace gnubase::ui
 		Rml::Element* m_rootKeyButton = nullptr; // the Project Root Key (#168)
 		Rml::Element* m_rootKeyMenu = nullptr;
 		Rml::ObserverPtr<Rml::Element> m_dialog; // the dialog document open now
+		bool m_dialogForObjects = false;         // whether it is for objects of the project, which project.reset closes
 		// What the Tempo Detection dialog analyzes, and how its buttons changed the result.
 		struct TempoDetection
 		{

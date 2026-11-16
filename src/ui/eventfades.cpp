@@ -271,6 +271,7 @@ namespace gnubase::ui
 			dialog->SetAttribute(name, value);
 		dialog->Show(Rml::ModalFlag::Modal);
 		m_dialog = dialog->GetObserverPtr();
+		m_dialogForObjects = !attributes.empty(); // events, or from and to
 	}
 
 	void EventDisplay::addFadeActions()

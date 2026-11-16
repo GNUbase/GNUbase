@@ -494,7 +494,11 @@ namespace gnubase::engine
 			for (size_t index = 0; index < tracks.size(); ++index)
 			{
 				const Track& track = project.trackById.at(tracks[index]);
-				for (const Marker* marker : markersOf(project, track.id))
+				const auto markers = markersOf(project, track.id);
+				if (markers.empty())
+					text += csvRow({std::to_string(index + 1), track.name,
+						track.timeBase == time::TimeBase::Musical ? "Musical" : "Linear", "Track", "", "", "", "", ""});
+				for (const Marker* marker : markers)
 				{
 					const bool cycle = marker->type == MarkerType::Cycle;
 					text += csvRow({std::to_string(index + 1), track.name,
@@ -513,7 +517,7 @@ namespace gnubase::engine
 		}
 
 		// A CSV file's records (RFC 4180), the header first; also with LF line ends and a byte order mark.
-		std::vector<std::vector<std::string>> csvRecords(const std::string& text)
+		std::vector<std::vector<std::string>> csvRecords(const std::string& text, char separator)
 		{
 			std::vector<std::vector<std::string>> records;
 			std::vector<std::string> record;
@@ -550,7 +554,7 @@ namespace gnubase::engine
 				started = true;
 				if (c == '"')
 					quoted = true;
-				else if (c == ',')
+				else if (c == separator)
 					record.push_back(std::exchange(field, {}));
 				else
 					field += c;
@@ -577,8 +581,11 @@ namespace gnubase::engine
 		}
 
 		// A time in beats or seconds as ticks or samples.
-		int64_t fromCsvTime(const Project& project, time::TimeBase base, const std::string& text, const char* column)
+		int64_t fromCsvTime(
+			const Project& project, time::TimeBase base, std::string text, const char* column, bool decimalComma)
 		{
+			if (decimalComma)
+				std::replace(text.begin(), text.end(), ',', '.');
 			const Json value = Json::parse(text, nullptr, false);
 			require(value.is_number(), std::string(column) + " must be a number");
 			const double scaled = value.get<double>() * timeScale(project, base);
@@ -598,7 +605,7 @@ namespace gnubase::engine
 
 		// Adds the marker in a row to its track, with the columns by their header.
 		void readCsvRow(const Project& project, const std::map<std::string, size_t>& columns,
-			const std::vector<std::string>& record, size_t row, std::vector<CsvTrack>& tracks)
+			const std::vector<std::string>& record, size_t row, std::vector<CsvTrack>& tracks, bool decimalComma)
 		{
 			const auto field = [&columns, &record](const char* column)
 			{
@@ -625,15 +632,21 @@ namespace gnubase::engine
 			require(track->name == name, "the markers of a track must have one Track name");
 
 			const std::string type = lowered(trimmed(field("type")));
+			if (type == "track")
+			{
+				for (const char* column : {"id", "position", "end", "description", "color"})
+					require(trimmed(field(column)).empty(), "a Track row has no marker fields");
+				return;
+			}
 			require(type.empty() || type == "position" || type == "cycle", "Type must be Position or Cycle");
 			Json marker = {{"type", type == "cycle" ? "cycle" : "position"},
-				{"position", fromCsvTime(project, base, trimmed(field("position")), "Position")},
+				{"position", fromCsvTime(project, base, trimmed(field("position")), "Position", decimalComma)},
 				{"name", field("description")}};
 			if (type == "cycle")
 			{
 				const std::string end = trimmed(field("end"));
 				require(!end.empty(), "a cycle marker needs an End");
-				marker["end"] = fromCsvTime(project, base, end, "End");
+				marker["end"] = fromCsvTime(project, base, end, "End", decimalComma);
 			}
 			if (const std::string number = trimmed(field("id")); !number.empty())
 			{
@@ -650,8 +663,14 @@ namespace gnubase::engine
 		{
 			std::ifstream in(std::filesystem::u8path(path), std::ios::binary);
 			require(static_cast<bool>(in), "can't open " + path);
-			const std::vector<std::vector<std::string>> records =
-				csvRecords({std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()});
+			const std::string text{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+			auto records = csvRecords(text, ',');
+			// Choose the separator by the Position header, not punctuation in a quoted description or column name.
+			const bool decimalComma = !records.empty() &&
+				std::none_of(records[0].begin(), records[0].end(),
+					[](const std::string& column) { return lowered(trimmed(column)) == "position"; });
+			if (decimalComma)
+				records = csvRecords(text, ';');
 
 			// Columns by their header, in any order; others are left out.
 			std::map<std::string, size_t> columns;
@@ -668,7 +687,7 @@ namespace gnubase::engine
 					continue;
 				try
 				{
-					readCsvRow(project, columns, record, row + 1, tracks);
+					readCsvRow(project, columns, record, row + 1, tracks, decimalComma);
 				}
 				catch (const CommandError& error)
 				{
@@ -849,7 +868,8 @@ namespace gnubase::engine
 				"Exports marker tracks (tracks, default all of them) into a CSV file at path, which marker.import "
 				"reads: a header row with the columns Track Number, Track, Time Base, Type, ID, Position, End, "
 				"Description and Color, then a row per marker, the tracks in track order and their markers in "
-				"timeline order. Track Number numbers the tracks in the file, 1 on. Positions and ends are in beats "
+				"timeline order. An empty track has a Type Track row with empty marker fields. Track Number "
+				"numbers the tracks in the file, 1 on. Positions and ends are in beats "
 				"(quarter notes) on musical tracks and in seconds on linear ones. Returns the number of markers.",
 				objectSchema({{"path", stringSchema}, {"tracks", {{"type", "array"}, {"items", idSchema}}}}, {"path"}),
 				{{"type", "object"}, {"properties", {{"markers", integerSchema}}}, {"required", {"markers"}}}, true},
@@ -859,7 +879,9 @@ namespace gnubase::engine
 				"Imports a CSV file of markers, such as marker.export writes: each track in it becomes a new marker "
 				"track at the top, in file order, with its time base and its markers' types, ids, positions, ends, "
 				"descriptions and colors. Columns are found by their header, in any order; only Position is "
-				"required. Rows with the same Track Number are one track, rows without one those with the same Track "
+				"required. Semicolon-separated sheets may use decimal commas for times. A Type Track row with "
+				"empty marker fields preserves an empty track. Rows with the same Track Number are one track, "
+				"rows without one those with the same Track "
 				"name, and without either all markers go on one track; the rows of a track have one Track name and "
 				"one Time Base. Without Time Base a track is musical, without Type markers are position markers and "
 				"without an ID they get the first free number. The active marker track stays active, or the first new "

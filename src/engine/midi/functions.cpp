@@ -922,21 +922,27 @@ namespace gnubase::engine::midi
 			return a.rootKey == b.rootKey && a.independent == b.independent;
 		}
 
-		// The global transpose a part with the setting plays at a position, as compilePart adds it.
+		// The transposition a part plays its notes with at a position, its own transpose included, as compilePart adds
+		// it: Keep Transpose in Octave Range folds the two as one sum (#896, #1453).
+		int playedAt(const Project& project, const MidiPart& part, Ticks at)
+		{
+			return globalTranspose(project, part, project.tempo.toSamples(at, project.sampleRate));
+		}
+
+		// The global transpose a part with the setting and no transpose of its own plays at a position.
 		int globalAt(const Project& project, const GlobalSetting& setting, Ticks at)
 		{
 			MidiPart probe;
 			probe.rootKey = setting.rootKey;
 			probe.independent = setting.independent;
-			return globalTranspose(project, probe, project.tempo.toSamples(at, project.sampleRate));
+			return playedAt(project, probe, at);
 		}
 
-		// The semitones a part transposes a note at a position by, against a part with another global setting: its
-		// transpose and the difference in global transpose.
+		// The semitones a part transposes a note at a position by, against a part with another global setting and no
+		// transpose of its own: the difference of what the two play their notes with.
 		int semitonesAgainst(const Project& project, const MidiPart& part, const GlobalSetting& other, Ticks at)
 		{
-			return part.transpose + globalAt(project, {part.rootKey, part.independent}, at) -
-				globalAt(project, other, at);
+			return playedAt(project, part, at) - globalAt(project, other, at);
 		}
 
 		// The root key and Global Transpose setting (#954) of a part made from source parts: the one they all share,
@@ -1108,7 +1114,7 @@ namespace gnubase::engine::midi
 		{
 			Note note;           // as its track plays it, at its place in the project
 			uint64_t seed;       // its part's and its own id, as playback draws them
-			Modifiers modifiers; // its track's and part's, without the global transposition
+			Modifiers modifiers; // its track's with Include Inserts, and its part's velocity only
 			const MidiPart* source;
 			Ticks sourceAt;     // where it is stored in its part, as playback sees the global transposition there
 			uint8_t ownPitch;   // the pitch it is stored with, which a destination's map prefers
@@ -1144,7 +1150,6 @@ namespace gnubase::engine::midi
 			const TrackPitches sourcePitches(project, part.track);
 			const ArticulationMap* articulations = articulationMapOf(project, part.track);
 			Modifiers modifiers = settings.includeInserts ? trackModifiers(project, part.track) : Modifiers();
-			modifiers.transpose += part.transpose;
 			modifiers.velocityShift += part.velocity;
 			// Playback resolves directions per part (#175): a reset of each group where a part starts in the range
 			// keeps the directions of the parts before it from its notes, if one is in effect there (below).
@@ -1290,13 +1295,10 @@ namespace gnubase::engine::midi
 			Modifiers transposed = candidate.modifiers;
 			transposed.velocityShift -= setting.velocity;
 			int newGlobal = 0;
-			if (pitchKept)
+			if (!pitchKept)
 			{
-				transposed.transpose -= source.transpose;
-			}
-			else
-			{
-				transposed.transpose += globalAt(project, {source.rootKey, source.independent}, candidate.sourceAt);
+				// What the source part plays the note with, its transpose folded in.
+				transposed.transpose += playedAt(project, source, candidate.sourceAt);
 				newGlobal = globalAt(project, setting.global, copy.position);
 			}
 			if (settings.includeInserts)
@@ -1560,7 +1562,8 @@ namespace gnubase::engine::midi
 					trackFor[key] = addMidiTrack(project, source.name + " " + suffixOf(key), source.parent, ++index,
 						instrument, source.timeBase);
 					// The track's MIDI modifiers, so that the new parts play as the part did; by channel each new
-					// track set to its channel (reference manual p. 1122), by pitch to the track's.
+					// track set to the channel it holds (reference manual p. 1122), which it plays on also where the
+					// track played every channel on its own, by pitch to the track's.
 					Channel& added = project.channels.at(project.trackById.at(trackFor[key]).channel);
 					added.modifiers = project.channels.at(source.channel).modifiers;
 					added.midiChannel = by == DissolveBy::Channel ? std::optional<int>(key) : trackChannel;

@@ -38,6 +38,17 @@ namespace
 		return backends;
 	}
 
+	// Two keyboards: Keys and Pads.
+	std::vector<std::unique_ptr<midi::Backend>> keyboards()
+	{
+		auto backend = std::make_unique<midi::DummyBackend>();
+		backend->addLoopback("Keys");
+		backend->addLoopback("Pads");
+		std::vector<std::unique_ptr<midi::Backend>> backends;
+		backends.push_back(std::move(backend));
+		return backends;
+	}
+
 	// An audio interface without hardware, fake-1: it runs like the dummy device and lists two clock sources, none of
 	// them current, as some ASIO drivers report them.
 	audio::DeviceInfo fakeInfo()
@@ -265,6 +276,38 @@ TEST_CASE("the studio setup dialog's Note Expression Input page sets up a MIDI i
 	CHECK(closed(app));
 	CHECK(port(app.call("midi.ports"), "Keys", true).at("mpe") == Json::parse(R"({"mode": "rotation", "channels": 15,
 		"firstChannel": 2, "pitchRange": 24, "tuning": false, "initialX": "off", "initialY": "center"})"));
+}
+
+TEST_CASE("the Note Expression Input page keeps each MIDI input's edits, and its input after Apply", "[ui]")
+{
+	test::UiApp app({900, 640}, keyboards());
+	openDialog(app);
+	click(app, "#devices-mpe");
+	CHECK(selected(app, "mpe-input") == "Keys");
+	const std::string fields = ".mpe-port.shown ";
+	choose(app, fields + "select.mpe-mode", -1);     // MPE Mode, Lower Zone
+	choose(app, fields + "select.mpe-channels", -1); // 16, one more than a zone has
+	choose(app, "#mpe-input", -1);
+	CHECK(selected(app, "mpe-input") == "Pads");
+	CHECK(element(app, fields + "select.mpe-mode").at("value") == "off");
+	choose(app, fields + "select.mpe-mode", -2); // MPE Mode, Upper Zone
+	// Back on Keys, its edit is still there.
+	choose(app, "#mpe-input", 1);
+	CHECK(selected(app, "mpe-input") == "Keys");
+	CHECK(element(app, fields + "select.mpe-mode").at("value") == "lower");
+	choose(app, "#mpe-input", -1);
+
+	// Apply sends both; the page shows what the engine has, still of the input selected.
+	click(app, "#apply");
+	CHECK(open(app));
+	CHECK(port(app.call("midi.ports"), "Keys", true).at("mpe").at("mode") == "lower");
+	CHECK(port(app.call("midi.ports"), "Pads", true).at("mpe").at("mode") == "upper");
+	CHECK(selected(app, "mpe-input") == "Pads");
+	CHECK(element(app, fields + "select.mpe-mode").at("value") == "upper");
+	// The zone got the 15 member channels it can have.
+	CHECK(port(app.call("midi.ports"), "Keys", true).at("mpe").at("channels") == 15);
+	choose(app, "#mpe-input", 1);
+	CHECK(element(app, fields + "select.mpe-channels").at("value") == "15");
 }
 
 TEST_CASE("the studio setup dialog's Cancel drops the changes, Apply sends them and stays open", "[ui]")

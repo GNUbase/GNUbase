@@ -492,7 +492,12 @@ namespace gnubase::ui
 				}
 			});
 		requestPresets();
-		m_subscriptions.push_back(m_binding.on("project.reset", [this](const engine::Event&) { request(); }));
+		m_subscriptions.push_back(m_binding.on("project.reset",
+			[this](const engine::Event&)
+			{
+				m_patternError.clear(); // another project's pattern (#1571)
+				request();
+			}));
 		request();
 	}
 
@@ -548,6 +553,16 @@ namespace gnubase::ui
 		Rml::Element* list = find("chord-pads-pads");
 		if (list == nullptr)
 			return;
+		// Why a pattern wasn't set goes once the pattern changes another way: a preset, undo, MCP or Lua (#1571).
+		const auto patternOf = [](const Json& from)
+		{
+			Json result = from.is_object() ? from.value("pattern", Json()) : Json();
+			if (result.is_object())
+				result.erase("seconds");
+			return result;
+		};
+		if (patternOf(m_pads) != patternOf(pads))
+			m_patternError.clear();
 		m_pads = pads;
 		if (m_rootKeysSending == 0)
 			m_rootKeySent.reset(); // the pads have the key the wheel sent last

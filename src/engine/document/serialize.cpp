@@ -558,7 +558,8 @@ namespace gnubase::engine
 			{"color", colorJson(track.color)}, {"timeBase", timeBaseName(track.timeBase)}, {"parent", track.parent},
 			{"channel", track.channel}, {"autoFades", track.autoFades ? toJson(*track.autoFades) : Json(nullptr)},
 			{"enabled", track.enabled}, {"picture", track.picture}, {"frozen", nullptr}, {"drumMap", track.drumMap},
-			{"articulationMap", track.articulationMap}};
+			{"articulationMap", track.articulationMap}, {"gmNames", track.gmNames},
+			{"groupEditing", track.groupEditing}};
 		if (track.frozen)
 			json["frozen"] = {{"path", track.frozen->path}, {"sampleRate", track.frozen->sampleRate},
 				{"channels", track.frozen->channels}, {"length", track.frozen->length}};
@@ -704,6 +705,8 @@ namespace gnubase::engine
 		if (warp.quantizeOrigin)
 			json["quantizeOrigin"] = {{"original", markersJson(warp.quantizeOrigin->original)},
 				{"quantized", markersJson(warp.quantizeOrigin->quantized)}};
+		if (!warp.created.empty())
+			json["created"] = warp.created;
 		return json;
 	}
 
@@ -726,6 +729,7 @@ namespace gnubase::engine
 		if (const auto origin = json.find("quantizeOrigin"); origin != json.end()) // files from before #145
 			warp.quantizeOrigin =
 				WarpQuantizeOrigin{markersFrom(origin->at("original")), markersFrom(origin->at("quantized"))};
+		warp.created = json.value("created", std::vector<time::Samples>()); // files from before #1579
 		return warp;
 	}
 
@@ -742,7 +746,8 @@ namespace gnubase::engine
 			{"crossfade", toJson(event.crossfade)}, {"snapPoint", event.snapPoint ? Json(*event.snapPoint) : Json()},
 			{"color", colorJson(event.color)}, {"part", event.part}, {"lane", event.lane},
 			{"volumeCurve", toJson(event.volumeCurve)}, {"front", event.front}, {"rank", event.rank},
-			{"rootKey", rootKeyName(event.rootKey)}, {"globalTranspose", event.independent ? "independent" : "follow"}};
+			{"rootKey", rootKeyName(event.rootKey)}, {"globalTranspose", event.independent ? "independent" : "follow"},
+			{"transpose", event.transpose}};
 		// Only an origin in the event's time base still counts (#145): one from before the track's time base changed
 		// is gone, as the event isn't where quantizing put it.
 		if (const auto& origin = event.quantizeOrigin; origin &&
@@ -750,6 +755,12 @@ namespace gnubase::engine
 			origin->quantized.position.base == event.position.base)
 			json["quantizeOrigin"] = {
 				{"original", eventTimingJson(origin->original)}, {"quantized", eventTimingJson(origin->quantized)}};
+		if (const auto& origin = event.sliceOrigin; origin && origin->timing.position.base == event.position.base)
+			json["sliceOrigin"] = {{"timing", eventTimingJson(origin->timing)},
+				{"snapPoint", origin->snapPoint ? Json(*origin->snapPoint) : Json()},
+				{"fadeOut", toJson(origin->fadeOut)}};
+		if (event.slicedFrom != 0)
+			json["slicedFrom"] = event.slicedFrom;
 		return json;
 	}
 
@@ -1273,6 +1284,8 @@ namespace gnubase::engine
 			{"trackLayout", toJson(project.trackLayout)}, {"metronome", metronome::toJson(project.metronome)},
 			{"workspaces", toJson(project.workspaces)}};
 		json.update(toJson(project.setup));
+		if (!project.presetKeeps.empty())
+			json["presetKeeps"] = project.presetKeeps;
 		// What the inactive track versions hold (#165).
 		Json versionContents = Json::array();
 		for (const ObjectId id : project.trackOrder())
@@ -2201,9 +2214,11 @@ namespace gnubase::engine
 			track.channel = item.at("channel").get<ObjectId>();
 			// Files from before disabled tracks have every track enabled; only some types can be disabled.
 			track.enabled = !canDisable(track.type) || item.value("enabled", true);
-			track.picture = item.value("picture", std::string());                    // files from before #106 have none
-			track.drumMap = item.value("drumMap", ObjectId{0});                      // and before #129 none
-			track.articulationMap = item.value("articulationMap", ObjectId{0});      // and before #175 none
+			track.picture = item.value("picture", std::string());               // files from before #106 have none
+			track.drumMap = item.value("drumMap", ObjectId{0});                 // and before #129 none
+			track.articulationMap = item.value("articulationMap", ObjectId{0}); // and before #175 none
+			track.gmNames = item.value("gmNames", false);                       // and before #1493 No Names
+			track.groupEditing = track.type == TrackType::Folder && item.value("groupEditing", false); // #1579
 			if (const Json frozen = item.value("frozen", Json()); !frozen.is_null()) // and before #116 none
 			{
 				track.frozen = Freeze{frozen.at("path").get<std::string>(), frozen.at("sampleRate").get<double>(),
@@ -2499,9 +2514,18 @@ namespace gnubase::engine
 			// nor from before #1368 a root key and Global Transpose
 			event.rootKey = rootKeyFromName(item.value("rootKey", std::string())).value_or(-1);
 			event.independent = item.value("globalTranspose", std::string("follow")) == "independent";
+			event.transpose = std::clamp(item.value("transpose", 0), -24, 24); // nor from before #1555 a Transpose
 			if (const auto origin = item.find("quantizeOrigin"); origin != item.end()) // files from before #145
 				event.quantizeOrigin = EventQuantizeOrigin{
 					eventTimingFrom(origin->at("original"), event), eventTimingFrom(origin->at("quantized"), event)};
+			if (const auto origin = item.find("sliceOrigin"); origin != item.end()) // files from before #1579
+			{
+				event.sliceOrigin = SliceOrigin{eventTimingFrom(origin->at("timing"), event), std::nullopt,
+					fadeFromJson(origin->value("fadeOut", Json::object()))};
+				if (const Json snap = origin->value("snapPoint", Json()); !snap.is_null())
+					event.sliceOrigin->snapPoint = snap.get<time::Samples>();
+			}
+			event.slicedFrom = item.value("slicedFrom", ObjectId{0});
 			return event;
 		};
 		for (const Json& item : json.at("audioEvents"))
@@ -2747,6 +2771,9 @@ namespace gnubase::engine
 			if (project.patterns.count(part.pattern) == 0)
 				part.pattern = 0;
 		project.virginTerritory = json.value("virginTerritory", false); // files from before #124 have none
+		// Track presets that keep both, and projects, have none.
+		if (const Json keeps = json.value("presetKeeps", Json()); keeps == "channel" || keeps == "patch")
+			project.presetKeeps = keeps.get<std::string>();
 		// Files from before quantizing have neither.
 		if (json.contains("quantize"))
 			project.quantize = midi::quantizeSettingsFromJson(json.at("quantize"));
@@ -2802,43 +2829,25 @@ namespace gnubase::engine
 			see(id);
 		for (const auto& [id, folder] : project.poolFolders)
 			see(id);
-		for (const auto& [id, event] : project.audioEvents)
-		{
-			see(id);
-			see(event.front);
-		}
-		for (const auto& [id, part] : project.audioParts)
-			see(id);
-
-		for (const auto& [id, part] : project.midiParts)
-		{
-			see(id);
-			for (const auto& [noteId, note] : part.notes)
-				see(noteId);
-			for (const auto& [controllerId, controller] : part.controllers)
-				see(controllerId);
-		}
+		// The events and parts of the inactive track versions too.
+		forEveryEventAndPart(
+			project,
+			[&see](const AudioEvent& event, bool)
+			{
+				see(event.id);
+				see(event.front);
+			},
+			[&see](const AudioPart& part, bool) { see(part.id); },
+			[&see](const MidiPart& part, bool)
+			{
+				see(part.id);
+				for (const auto& [noteId, note] : part.notes)
+					see(noteId);
+				for (const auto& [controllerId, controller] : part.controllers)
+					see(controllerId);
+			});
 		for (const auto& [id, marker] : project.markers)
 			see(id);
-		for (const auto& [id, track] : project.trackById)
-			for (const TrackVersion& version : track.versions)
-			{
-				for (const AudioEvent& event : version.audioEvents)
-				{
-					see(event.id);
-					see(event.front);
-				}
-				for (const AudioPart& part : version.audioParts)
-					see(part.id);
-				for (const MidiPart& part : version.midiParts)
-				{
-					see(part.id);
-					for (const auto& [noteId, note] : part.notes)
-						see(noteId);
-					for (const auto& [controllerId, controller] : part.controllers)
-						see(controllerId);
-				}
-			}
 		for (const auto& [id, group] : project.linkGroups)
 			see(id);
 		for (const auto& [id, map] : project.drumMaps)

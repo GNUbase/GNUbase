@@ -43,7 +43,8 @@ chord track's music theory ([chord-track.md](chord-track.md)).
   on its pad. `chordPads.fromChordTrack` assigns the chord track's chords, each once, in their order.
 - **Pad modifiers** (pp. 1351-1352): `chordPads.modify` transposes the chosen pads, adds or takes away tensions (the
   type's ladder: major maj7, or 7 on the key's fifth degree, then 9 and 13; minor 7, 9, 11; the others 7) and steps
-  through their voicings. Locked and unassigned pads stay as they are.
+  through their voicings; `without` takes away the tensions it names, after the others, and a name that is no tension is
+  an error, as an unknown chord is for `chordPads.assign`. Locked and unassigned pads stay as they are.
 - **Root key** (pp. 1362-1365): `chordPads.set` `rootKey` changes the degrees only; with `transposePads` the assigned
   unlocked pads move with it, the nearer way.
 - **Presets** (pp. 1370-1371): `chordPads.loadPreset` loads the scale-based presets major (Ionian), minor (Aeolian),
@@ -92,9 +93,12 @@ chord track's music theory ([chord-track.md](chord-track.md)).
   the sections going after the pad's key goes up; `mutedSections` play nothing. The audio thread plays them for each
   playing player (`MidiPorts::playSection`). A section key released while `chordPads.listen` listens, or on the remote's
   input before another became it, is up: the remote keys' note-offs end what they play while it listens, and the keys
-  held go when the remote's input changes. `playerKeys` are Select/Mute Player's keys: the previous and the next player,
-  and mute or unmute the selected one (`chordPads.setPlayer` `muted`; a muted player plays nothing). Pads triggered with
-  the mouse play their whole chord in this mode.
+  held go when the remote's input changes. What the former input's keys hold ends then too, chords and sections alike,
+  since their note-offs no longer come from the remote's input (#1571), and the pads whose keys were down are off, this
+  mode's pad key too, once also when it still holds a chord it latched before the player mode changed (#1708), but not a
+  pad whose remote key is a section key, which played no chord of it (#1652). `playerKeys` are Select/Mute Player's
+  keys: the previous and the next player, and mute or unmute the selected one (`chordPads.setPlayer` `muted`; a muted
+  player plays nothing). Pads triggered with the mouse play their whole chord in this mode.
 - **Snap Playback to Musical Grid** (p. 1349): with `snapPlayback`, while the transport plays, the pads' note-ons wait
   for the next position of the quantize grid (`quantize.set`) on the audio thread (`midi::PadSnap`), and a note-off
   waits with its note-on, so a chord released before the grid position ends right after it starts. When the transport
@@ -120,11 +124,12 @@ chord track's music theory ([chord-track.md](chord-track.md)).
   Filter Notes settings in `ChordPadKeys`, and play into the pads' buffer, so Chord Pad Output Mode routes them.
   `remotePort` picks the MIDI input the remote keys come from (p. 1386, its `midi.portSettings` key; the port's
   `chordPadPortHash` reaches the audio thread), also one outside all MIDI inputs; empty is all MIDI inputs.
-- **What the remote keys did** reaches the command thread: the audio thread queues each key that triggered or
-  released its pad, each chord modifier key and, while listening, each note (`MidiPorts::PadEvent`); the audio
-  engine's cue thread posts them as `chordPads.remoteInput`, and offline `audio.render` runs it when it is done. It
-  announces the pads with `chordPads.triggered` (`remote` true), so they light up (p. 1355), and records their chords
-  on the chord track as above.
+- **What the remote keys did** reaches the command thread: the audio thread queues each key that triggered or released
+  its pad, each chord modifier key and, while listening, each note (`MidiPorts::PadEvent`); the audio engine's cue
+  thread posts them as `chordPads.remoteInput`, and offline `audio.render` runs it when it is done. It announces the
+  pads with `chordPads.triggered` (`remote` true), so they light up (p. 1355); a key that goes up ends the pad it
+  triggered, also when the remote's input or range changed meanwhile (#1708). It records their chords on the chord track
+  as above.
 - **Chord modifiers** (p. 1387): with `modifiers`, the keys of `modifierKeys` (previous and next voicing, fewer and more
   tensions, transpose down and up; C2 to F2 by default) play nothing and change the pads whose remote keys are down,
   or else the pad triggered last, and with no pad's key down play that pad while they are down. The reference changes
@@ -140,7 +145,13 @@ chord track's music theory ([chord-track.md](chord-track.md)).
   so is how far each pad followed: a pad with tensions takes fewer more, a voicing near the limit of 12 inversions
   fewer inversions, and on the way back each goes no further than it went and loses exactly the tensions the control
   added (`chordPads.modify` `without`), not its own, so a control at rest leaves the pads as they were
-  (`ControlSteps`).
+  (`ChordPadRemote::ControlSteps`). A pad whose chord changed another way than by the pad modifiers since, such as by
+  `chordPads.assign`, starts again: the way back leaves it as it is (the history steps since the controls' last one
+  say which). At rest, how far each pad followed and the tensions the control added start again, so that the next
+  gesture moves every pad as far, and once the voicings control rests (not the other two), the pads it turned adaptive
+  voicing off for have it again with their voicing, as part of the same undo step, so that they follow the reference
+  pad again (#1571, #1574). The commands are registered by topic, in functions that stay below clang-tidy's function
+  size limit (#1585).
 - **Assign from MIDI Input and MIDI Learn** (pp. 1360, 1388): `chordPads.listen` `assign` (a pad) takes the next notes
   from the MIDI inputs, which play as they are meanwhile, and once they are all released assigns their chord
   (`chordPads.assign` `pitches`); `learn` `range` takes the next two keys as the remote range, `learn` with a
@@ -194,28 +205,28 @@ Player Settings (the players, Add Player of a type, rename by Enter, Delete, and
 guitar player or the Octave Offset of a basic one, and the player's track), Player Mode (Plain Chords or Pattern; for
 Pattern a preset, From Selected Part, which makes the event display's selected MIDI part the pattern, Import from MIDI
 Loop, which asks for a MIDI file in a file dialog, Velocity from MIDI Keyboard and what pattern is loaded, or why the
-last pattern wasn't set, such as a loop without 3 to 5 voices; for Plain Chords and Sections Overlaps and Filter Notes),
-Remote Settings (the MIDI Input, Latch Chords, MIDI Learn of the range, Activate Chord Modifiers and their keys, and
-what moves all pads' voicings, tensions and transposition), Player Remote (the sections mode's Play Mode, Latch Chord
-Pads, Spread, the section and subsection keys, offsets and sections, the section mutes and the Select/Mute Player keys)
-and Display (`ui.chordPads`: the primary and secondary chord symbols, note names, roman numerals or Nashville numbers;
-the keyboard layout, where the pads on black keys are `.black-key`, with Number of Pads (`chordPads.set` `padCount`) and
-Start Note (`startNote`, the first pad's key in the layout; the remote range stays as it is, which may need adjusting
-after a layout change, p. 1391), or the grid with its columns and Number of Rows (as many pads as the rows of the
-columns hold); Show List Assistant Colors, Show Voicing Indicators and Show Pattern Play Progress, a bar along a playing
-pad's bottom, `.chord-pad-progress`, that runs through the pattern in the seconds it lasts at the project's tempo,
-`chordPads.get` `pattern.seconds`). The extended toolbar has Select All, Open Chord Editor, Remove Assignment, Transpose
-Down/Up, Fewer/More Tensions, Previous/Next Voicing, Lock, Adaptive Voicing, Adaptive Voicing Reference and Assign from
-MIDI Input, on the selected pads; a pad modifier button plays the first selected pad's new chord while it is down (p.
-1351); Lock and Adaptive Voicing on several pads are one undo step (`history.transaction`). Each pad (`.chord-pad`)
-shows its primary and secondary chord symbols, its remote key and its voicing (`.chord-pad-voicing`, p. 1353), with the
-state classes `.selected`, `.triggered` (also when a remote key plays it), `.unassigned`, `.locked`, `.adaptive`,
-`.reference`, `.listening` (the red frame of Assign from MIDI Input, p. 1354) and the List assistant's `.level-0` to
-`.level-2` after the first selected pad's chord while the display settings show them; in its upper right corner
-(`.chord-pad-indicators`) the adaptive voicing reference indicator (`.chord-pad-reference`) shows, besides the reference
-pad's frame color, followed by the adaptive voicing indicator (`.chord-pad-adaptive`) or the padlock (`.chord-pad-lock`)
-(pp. 1353-1354). A toolbar value the engine refuses, such as a remote start above the end, goes back to the one the pads
-have.
+last pattern wasn't set, such as a loop without 3 to 5 voices, until the pattern changes or another project opens; for
+Plain Chords and Sections Overlaps and Filter Notes), Remote Settings (the MIDI Input, Latch Chords, MIDI Learn of the
+range, Activate Chord Modifiers and their keys, and what moves all pads' voicings, tensions and transposition), Player
+Remote (the sections mode's Play Mode, Latch Chord Pads, Spread, the section and subsection keys, offsets and sections,
+the section mutes and the Select/Mute Player keys) and Display (`ui.chordPads`: the primary and secondary chord symbols,
+note names, roman numerals or Nashville numbers; the keyboard layout, where the pads on black keys are `.black-key`,
+with Number of Pads (`chordPads.set` `padCount`) and Start Note (`startNote`, the first pad's key in the layout; the
+remote range stays as it is, which may need adjusting after a layout change, p. 1391), or the grid with its columns and
+Number of Rows (as many pads as the rows of the columns hold); Show List Assistant Colors, Show Voicing Indicators and
+Show Pattern Play Progress, a bar along a playing pad's bottom, `.chord-pad-progress`, that runs through the pattern in
+the seconds it lasts at the project's tempo, `chordPads.get` `pattern.seconds`). The extended toolbar has Select All,
+Open Chord Editor, Remove Assignment, Transpose Down/Up, Fewer/More Tensions, Previous/Next Voicing, Lock, Adaptive
+Voicing, Adaptive Voicing Reference and Assign from MIDI Input, on the selected pads; a pad modifier button plays the
+first selected pad's new chord while it is down (p. 1351); Lock and Adaptive Voicing on several pads are one undo step
+(`history.transaction`). Each pad (`.chord-pad`) shows its primary and secondary chord symbols, its remote key and its
+voicing (`.chord-pad-voicing`, p. 1353), with the state classes `.selected`, `.triggered` (also when a remote key plays
+it), `.unassigned`, `.locked`, `.adaptive`, `.reference`, `.listening` (the red frame of Assign from MIDI Input, p.
+1354) and the List assistant's `.level-0` to `.level-2` after the first selected pad's chord while the display settings
+show them; in its upper right corner (`.chord-pad-indicators`) the adaptive voicing reference indicator
+(`.chord-pad-reference`) shows, besides the reference pad's frame color, followed by the adaptive voicing indicator
+(`.chord-pad-adaptive`) or the padlock (`.chord-pad-lock`) (pp. 1353-1354). A toolbar value the engine refuses, such as
+a remote start above the end, goes back to the one the pads have.
 
 - A press on a pad selects it (Ctrl adds or removes it) and plays it until the button goes up, also outside the panel;
   with step input on it also inserts its chord. Released over another pad, it swaps the two; with Alt it copies onto it.
@@ -273,14 +284,20 @@ undo step and the next move after undo going from where the pads are; Assign fro
 Player Remote Control tab's keys and of the controls, ended by another project; the sections mode's combination with
 several section keys and Overlaps between the sections of two pads; section keys released while listening or on the
 remote's input before; a pad with tensions and one near the voicing's limit back as before after a control's move, and
-pitch bend below its middle; Snap Playback after a jump back and after a cycle's jump inside a block; a player's track
-removed with its track and checked in a file; a user preset with its player mode and pattern; chords recorded on the
-record-enabled chord track from the mouse and the remote keys; step input with Move Insert Mode, at a bar's start, over
-a chord that is there and moved by bars, also on a chord track in linear time base at a tempo whose bars start between
-samples and with Move Insert across a tempo change, `stepBars` of any size and a step position past the longest
-project's end, cursor moves without undo steps and steps undone with their chord, moved events, chord track and
-position, the step range at 8 kHz and in a project at 100 Hz and Move Insert refused for a far event, and pads onto the
-chord track and a MIDI track; a file with no pads or a reference below -1; and saving and loading.
+pitch bend below its middle, with a reference pad whose adaptive voicing comes back at the voicings control's rest only
+and goes again with that rest's undo; a pad assigned anew while a control is away from its rest and one a pad modifier
+changed meanwhile, the tensions control's way back in steps and after undo, and `chordPads.modify` `without`; what the
+remote keys hold ended when the remote's input changes, with the pads they lit off, also with the range changed in the
+same call and by a range change while a key is down, the sections mode's pad key that latched a chord before off once,
+and no pad for a section key among the remote keys; Snap Playback after a jump back and after a cycle's jump inside a
+block, on its own and through the audio engine; a player's track removed with its track and checked in a file; a user
+preset with its player mode and pattern; chords recorded on the record-enabled chord track from the mouse and the remote
+keys; step input with Move Insert Mode, at a bar's start, over a chord that is there and moved by bars, also on a chord
+track in linear time base at a tempo whose bars start between samples and with Move Insert across a tempo change,
+`stepBars` of any size and a step position past the longest project's end, cursor moves without undo steps and steps
+undone with their chord, moved events, chord track and position, the step range at 8 kHz and in a project at 100 Hz and
+Move Insert refused for a far event, and pads onto the chord track and a MIDI track; a file with no pads or a reference
+below -1; and saving and loading.
 `tests/keycommandsdialog_tests.cpp`: the key commands don't list `chordPads.trigger` without parameters.
 `tests/inspector_tests.cpp`: the Inspector's Input Routing of an instrument track choosing the chord pads.
 `tests/rtcheck_tests.cpp`: the remote keys for two players with Filter Notes, the chord modifiers and a control,
@@ -302,8 +319,9 @@ pads' key commands; a pad modifier button playing the pad while it is down, the 
 and hovered key, a pad lit by a remote key, a suggestion dropped onto a pad, the List assistant's colors and Assign from
 MIDI Input's frame, a drop location's frame, the assistant's hint kept for a pad without a chord selected before an
 answer came, every MIDI Learn button, the section keys on the keyboard, Number of Pads, Start Note apart from the remote
-range and Number of Rows, and Import from MIDI Loop with why a loop without 3 to 5 voices was refused; a pad dropped
-onto an instrument track's lane and onto the chord track; and the step input cursor in the event display.
+range and Number of Rows, and Import from MIDI Loop with why a loop without 3 to 5 voices was refused, gone once the
+pattern changes through the engine and with another project; a pad dropped onto an instrument track's lane and onto the
+chord track; and the step input cursor in the event display.
 
 ## Not yet
 

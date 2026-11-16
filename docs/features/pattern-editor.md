@@ -114,7 +114,8 @@ part's pattern.
   new pitch from the position clicked, all of them at the tie's start.
 - **Step selection tool** (pp. 924-926): a click selects a step, with Shift more, with Ctrl (Cmd) one on or off; a
   click on an empty cell deselects; a double click adds or removes a step; Delete and Backspace delete the selected
-  steps; Alt draws as the draw tool does.
+  steps; Alt draws as the draw tool does. The selection loses the steps the pattern shown no longer has, after a mode
+  switch, a shorter Number of Steps, an undo or a script (#1615).
 - **Edit functions** (pp. 903, 910): Tie joins adjacent steps, Split cuts tied steps into single ones, of the selected
   steps or else of all; Double Length repeats the steps of the lanes that follow the pattern's length, Double
   Resolution doubles the steps' indexes and lengths of the lanes that follow its resolution, and the lengths of those
@@ -134,8 +135,10 @@ part's pattern.
   the length and resolution they sent while that project shows (#1410). The mode buttons and the toolbar's menus send a
   `pattern.set` without lanes. A mode switch changes the lanes in the engine (between drum and melodic mode it clears
   them, to mono mode it keeps one step at each position), and so does a shorter Number of Steps, which drops steps:
-  after those the editor takes no edit of the steps until the answer, and shows the pattern it returns until a project
-  read after it comes (#1410). `ui::MidiEditor` tells it when it read the project (`EngineBinding::handed`).
+  after those the editor takes no edit of the lanes until the answer (no gesture, double click, Delete, mute, solo, lane
+  or edit function), and shows the pattern it returns until a project read after it comes (#1410); a project read
+  before it that comes while it is out shows as it is (#1532). `ui::MidiEditor` tells it when it read the project
+  (`EngineBinding::handed`).
 - **Commands** (Edit menu, `app::AppUi`): `editor.openPattern` (Open Pattern Editor) opens the selected MIDI parts in
   the editor window's pattern editor; `pattern.loadPreset` and `pattern.savePreset` (Load and Save Pattern Preset...)
   load a preset into, and save the patterns of, the editor's active track through the OS's file dialogs.
@@ -172,8 +175,10 @@ content that other applications read, which have the parts' own notes.
 - `tests/patterneditor_ui_tests.cpp` drives the app with `ui::Automation`: the lanes of a drum pattern, the draw tool's
   click and drag with undo, a drag that the project changes under, on its lane and another, and one that is refused, a
   project read before the last `pattern.set` shown with and without a gesture going on, mono mode over a tie, Double
-  Resolution and Double Length with lanes of their own length and resolution, a gesture right after Double Length and a
-  mode switch with a project read before them, selecting, deleting and double-clicking steps, Tie and Split, mute, the
-  parameter lane's velocity and probability, the toolbar's menus and Double Length, Add Lane and melodic mode; New
-  Melodic Pattern for a plain part, the pattern menu choosing, duplicating and converting; Open Pattern Editor and the
-  Edit menu's entries.
+  Resolution and Double Length with lanes of their own length and resolution, a gesture right after Double Length, a
+  mode switch and a shorter Number of Steps with a project read before them, a click on a step right after a mode switch
+  and a shorter Number of Steps, a mute, a double click, Delete and a project read before it while a mode switch is out,
+  a selection whose steps a script or a mode switch took, selecting, deleting and double-clicking steps, Tie and Split,
+  mute, the parameter lane's velocity and probability, the toolbar's menus and Double Length, Add Lane and melodic mode;
+  New Melodic Pattern for a plain part, the pattern menu choosing, duplicating and converting; Open Pattern Editor and
+  the Edit menu's entries.

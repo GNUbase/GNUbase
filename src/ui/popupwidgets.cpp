@@ -20,7 +20,9 @@
 #include <algorithm>
 #include <array>
 #include <memory>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace gnubase::ui
@@ -109,11 +111,14 @@ namespace gnubase::ui
 		public:
 			using Rml::Element::Element;
 
-			// Opens the menu at a point in the window's pixels, inside the window.
+			// Opens the menu at a point in the window's pixels, inside the window. Items that come or go while it is
+			// open keep it inside the window (OnUpdate).
 			void open(Rml::Vector2f at)
 			{
 				addArrows(*this);
 				SetClass("open", true);
+				m_at = at;
+				m_settling = true;
 				moveTo(*this, at);
 				GetOwnerDocument()->UpdateDocument(); // for the menu's size
 				moveTo(*this, inside(*this, at));
@@ -132,6 +137,7 @@ namespace gnubase::ui
 			void close()
 			{
 				SetClass("open", false);
+				m_at.reset();
 				Rml::ElementList open;
 				QuerySelectorAll(open, "menu.open");
 				for (Rml::Element* submenu : open)
@@ -155,6 +161,17 @@ namespace gnubase::ui
 					if (GetChild(i) != &item)
 						if (Menu* submenu = submenuOf(*GetChild(i)))
 							submenu->close();
+			}
+
+			// Input came after the menu opened: the items that the opening input filled in are laid out and place the
+			// menu from where it opened, and from now on it stays where it is while it fits (OnUpdate).
+			void settle()
+			{
+				if (!m_settling || !m_at)
+					return;
+				GetOwnerDocument()->UpdateDocument();
+				m_settling = false;
+				m_at = inside(*this, *m_at);
 			}
 
 			// Focuses the first item that isn't disabled, for a menu that keys opened; false if there is none.
@@ -184,6 +201,33 @@ namespace gnubase::ui
 						return;
 					event.StopPropagation(); // the keys stay in the open menu
 				}
+			}
+
+		protected:
+			// An open menu whose size changed moves inside the window again: from where it opened for the items that
+			// the opening input filled in, as a lane's context menu's for the lane's type, so that one that shrinks
+			// goes back to the mouse; after the next input (settle) from where it is, so that one whose search leaves
+			// items out doesn't jump. The layout tries sizes before the one it ends with, so the menu moves in the next
+			// update, which it asks for.
+			void OnResize() override
+			{
+				Rml::Element::OnResize();
+				if (m_at && IsClassSet("open") && GetContext() != nullptr)
+				{
+					m_resized = true;
+					GetContext()->RequestNextUpdate(0.0);
+				}
+			}
+
+			void OnUpdate() override
+			{
+				Rml::Element::OnUpdate();
+				if (!std::exchange(m_resized, false) || !m_at || !IsClassSet("open"))
+					return;
+				const Rml::Vector2f at = inside(*this, *m_at);
+				if (!m_settling)
+					m_at = at;
+				moveTo(*this, at);
 			}
 
 		private:
@@ -340,6 +384,11 @@ namespace gnubase::ui
 				items[static_cast<size_t>(index)]->Focus(true);
 				return true;
 			}
+
+			// Where open() opened the menu and, once it settled, where it is; until it closes.
+			std::optional<Rml::Vector2f> m_at;
+			bool m_settling = false; // no input came since it opened
+			bool m_resized = false;  // since the last update
 		};
 
 		Menu* menuOf(const Rml::Element& button)
@@ -444,7 +493,10 @@ namespace gnubase::ui
 				Rml::Element::OnResize();
 				if (IsClassSet("shown"))
 					if (const Rml::Vector2f at = inside(*this, m_at); at != m_at)
+					{
 						moveTo(*this, at);
+						GetContext()->RequestNextUpdate(0.0); // the layout sets its place for the next update
+					}
 			}
 
 		private:
@@ -589,12 +641,21 @@ namespace gnubase::ui
 			}
 
 		protected:
-			// The first layout puts the dialog in the middle of the window.
+			// The first layout puts the dialog in the middle of the window. A dialog that grows later (rows that
+			// show, a message that gets longer) grows down and to the right from where it is, so a layout that
+			// takes it past the window's edge moves it back inside.
 			void OnResize() override
 			{
 				Rml::Element::OnResize();
-				if (m_placed || GetContext() == nullptr)
+				if (GetContext() == nullptr)
 					return;
+				if (m_placed)
+				{
+					const Rml::Vector2f at = GetAbsoluteOffset(Rml::BoxArea::Border);
+					if (const Rml::Vector2f kept = inside(*this, at); kept != at)
+						moveTo(*this, kept);
+					return;
+				}
 				m_placed = true;
 				const Rml::Vector2f window(GetContext()->GetDimensions());
 				moveTo(*this, ((window - GetBox().GetSize(Rml::BoxArea::Border)) * 0.5F).Round());
@@ -657,6 +718,10 @@ namespace gnubase::ui
 				const Rml::Vector2f mouse(event.GetParameter("mouse_x", 0.0F), event.GetParameter("mouse_y", 0.0F));
 				Tooltip* tooltip = tooltipOf(*document);
 				const auto key = event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN);
+				if (event == Rml::EventId::Mousedown || event == Rml::EventId::Mouseup ||
+					event == Rml::EventId::Keydown)
+					for (Menu* menu : openMenus(*document))
+						menu->settle(); // input after the menu opened, e.g. a press's release or a key for its search
 				switch (event.GetId())
 				{
 				case Rml::EventId::Mouseover:

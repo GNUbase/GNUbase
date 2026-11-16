@@ -913,6 +913,9 @@ TEST_CASE(
 	{
 		window.click("#chord-pads-learn-" + target);
 		REQUIRE(window.app.waitUntil([&] { return pads().at("listening") == Json{{"learn", target}}; }));
+		// And the panel heard of it, as the command's event comes before its result: the toggle button lights at the
+		// click already, and a click before the event would ask the panel's last target for listening again.
+		REQUIRE(window.app.waitUntil([&] { return window.app.appUi().binding().waiting("chordPads.listen") == 0; }));
 		CHECK(window.app.waitUntil([&] { return window.hasClass("#chord-pads-learn-" + target, "checked"); }));
 	};
 	window.click("#chord-pads-pane-remote-button");
@@ -1005,4 +1008,23 @@ TEST_CASE(
 	REQUIRE(window.app.waitUntil([&] { return window.app.shell().fileDialogs().size() == 1; }));
 	window.app.shell().answerFileDialog(window.app.shell().fileDialogs().begin()->first, {loop});
 	CHECK(window.app.waitUntil([&] { return window.text("#chord-pads-pattern-info") == "Loop (3 voices)"; }));
+
+	// Why it wasn't changed goes once the pattern changes another way, and with another project (#1571).
+	const auto refuse = [&]
+	{
+		window.click("#chord-pads-importLoop");
+		REQUIRE(window.app.waitUntil([&] { return window.app.shell().fileDialogs().size() == 1; }));
+		window.app.shell().answerFileDialog(window.app.shell().fileDialogs().begin()->first, {two});
+		REQUIRE(window.app.waitUntil(
+			[&] { return window.text("#chord-pads-pattern-info").find("3 to 5 voices") != std::string::npos; }));
+	};
+	refuse();
+	window.call("chordPads.setPattern", {{"preset", "eighths"}});
+	CHECK(window.app.waitUntil([&] { return window.text("#chord-pads-pattern-info") == "eighths (4 voices)"; }));
+	window.call("project.new");
+	window.call("chordPads.set", {{"mode", "pattern"}});
+	REQUIRE(window.app.waitUntil([&] { return window.visible("#chord-pads-importLoop"); }));
+	refuse();
+	window.call("project.new");
+	CHECK(window.app.waitUntil([&] { return window.text("#chord-pads-pattern-info") == "No pattern"; }));
 }

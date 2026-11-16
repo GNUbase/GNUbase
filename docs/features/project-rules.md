@@ -16,7 +16,7 @@ holds named rules, as the MIDI rules have one ([midi-rules.md](midi-rules.md)).
     not set: is muted (a track's channel, a part, an event), is selected and parent is selected (by the ids the command
     is given as `selected`: the project window's selection of tracks, parts, events and markers), is empty (tracks
     without events, parts or markers, folders without tracks, parts without notes, controllers or events), is hidden
-    (track visibility), has track version, follows chord track and is disabled. Brackets and and/or work as in the MIDI rules,
+    (track visibility), has track version (tracks with more than one version), follows chord track and is disabled. Brackets and and/or work as in the MIDI rules,
     through the same reader (`midi::evaluateLines`).
   - **Functions:** delete, transform, select and deselect. Select and deselect change nothing: the UI selects what was
     found, or deselects everything.

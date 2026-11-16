@@ -131,8 +131,9 @@ sends engine commands, so whatever another client changes shows at once.
   (every automation lane of the track reads, or with a click none does; disabled without lanes), `timeBase`
   (musical or linear, `.checked` when linear) and on MIDI tracks `midiChannel` (MIDI Channel, p. 349), a drop-down list
   of Any and 1 to 16 that sends `channel.set` `midiChannel` as the inspector's does ([mixer.md](mixer.md)). A click
-  sends `channel.set`, `automationLane.set` in one transaction, or `track.set`. Folders without a group channel and
-  signature tracks show none. The tempo track's controls are `tempoTrack`, Activate Tempo Track (`project.set`
+  sends `channel.set`, `automationLane.set` in one transaction, or `track.set`. Folders show Group Editing
+  (`groupEditing`, [folder-tracks.md](folder-tracks.md)), and those without a group channel nothing else; signature
+  tracks show none. The tempo track's controls are `tempoTrack`, Activate Tempo Track (`project.set`
   `tempoTrackActive`), `currentTempo`, Current Tempo, a text field
   with the tempo at the project cursor, following it during playback, that takes a tempo typed with Enter, and
   `tempoType`, Type of New Tempo Points, a drop-down list for `editing.tempoType`

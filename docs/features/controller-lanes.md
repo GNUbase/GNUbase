@@ -36,6 +36,7 @@ key editor's tools edit; lane presets, the line tool's modes and Auto Select Con
 |---|---|---|
 | `lanes` | From the top, each `{type, number}`: `velocity`, `offVelocity`, `probability`, `velocityVariance`, or controller events: `controller` (number: the controller), `pitchBend`, `channelPressure`, `polyPressure` (number: the pitch), `program`; or `articulations`, the Articulations lane ([articulation-maps.md](articulation-maps.md)). Default: a velocity lane | pp. 1157-1163 |
 | `showLanes` | Whether the controller display shows the lanes (Show/Hide Controller Lanes) | p. 1162 |
+| `soundSlotsLane`, `collapsedGroups` | The Articulations lane's: whether it shows its sound slots lane, and the groups of its map, by index, collapsed into one row each ([articulation-maps.md](articulation-maps.md)) | pp. 1287-1288 |
 | `autoSelectControllers` | Selecting notes selects the controller events from their start to their end | p. 1188 |
 | `controllerSelection` | The selected controller events, each `{part, controller}`, of the editable parts; removed ones leave it, closing the editor clears it | p. 1188 |
 
@@ -118,7 +119,7 @@ editor's lanes.
   lanes for velocities, off velocities, probabilities and variances, named notes and undo; events it draws playing
   back through `midi.capture`; `controller.line` refusing positions at or past the part's end, also on a linear track, and
   lines of more than 65536 events; `note.apply` in a shared copy; the views' lanes, `showLanes`,
-  `controllerSelection` and Auto Select Controllers.
+  `controllerSelection` and Auto Select Controllers; `soundSlotsLane` and `collapsedGroups`.
 - `tests/controllerlanes_ui_tests.cpp` drives the app with `ui::Automation`: velocity bars at their notes, dragged,
   painted and drawn with the line tool; a lane from the Create Controller Lane menu, events drawn, painted, selected,
   dragged and erased; the line tool's line, square, parabola, sine, triangle and Paint modes from its menu, which shows
@@ -128,5 +129,5 @@ editor's lanes.
   Show/Hide and Show Velocity Lane Only; a right click below a lane's name adding a lane and removing that one; the line
   tool and painting on a lane whose events are on another channel; drags released outside the lanes and never released;
   Auto Select Controllers with a note moved; a preset saved with Add Preset, loaded and removed with Remove Preset;
-  events drawn on a lane playing back.
+  events drawn on a lane playing back; a step that another event now starts with losing its width (#1580).
   `tests/uithemes_tests.cpp`: every theme draws play probability and velocity variance bars dashed.

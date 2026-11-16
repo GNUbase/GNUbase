@@ -137,6 +137,11 @@ namespace gnubase::ui
 		// Other keys' older steps go first, even when returning to a control with an earlier step still in flight.
 		// Leave this key's own queue alone so an ongoing gesture keeps coalescing its waiting value.
 		sendWaitingSteps({}, &what);
+		// While no step of the record is out and a project read after its last taken one is in, the project has what
+		// it kept, and a change from elsewhere since, such as an undo, may have changed that: the record keeps only
+		// the new step's then, not an older value of another event until the record goes (#1550).
+		if (steps.inFlight.empty() && steps.waiting.empty() && steps.taken < m_projectRead)
+			steps.shown = nullptr;
 		if (!shown.is_null())
 			steps.shown.merge_patch(shown);
 		if (!step.merge.empty() && !steps.waiting.empty() && steps.waiting.back().merge == step.merge)

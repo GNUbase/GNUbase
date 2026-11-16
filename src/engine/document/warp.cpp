@@ -394,17 +394,22 @@ namespace gnubase::engine
 	{
 		if (clip.warp.tempo > 0.0)
 			return clip.warp.tempo;
-		// Inactive track versions' events count too: they play the clip as soon as their version is active (#1461).
-		std::optional<time::Ticks> first;
-		forEveryAudioEvent(project,
-			[&](const AudioEvent& event)
+		// The events that play decide, so that they play as before. Without one, inactive track versions' events do:
+		// they play the clip as soon as their version is active (#1461, #1534).
+		std::optional<time::Ticks> playing;
+		std::optional<time::Ticks> inactive;
+		forEveryEventAndPart(
+			project,
+			[&](const AudioEvent& event, bool plays)
 			{
 				if (event.clip != clip.id)
 					return;
 				const time::Ticks at = time::toTicks(event.position, project.tempo, project.sampleRate);
+				std::optional<time::Ticks>& first = plays ? playing : inactive;
 				first = std::min(first.value_or(at), at);
-			});
-		return project.tempo.bpmAt(first.value_or(0));
+			},
+			[](const AudioPart&, bool) {}, [](const MidiPart&, bool) {});
+		return project.tempo.bpmAt(playing.value_or(inactive.value_or(0)));
 	}
 
 	double warpedOffset(const Project& project, const AudioEvent& event, double frame)
@@ -490,7 +495,8 @@ namespace gnubase::engine
 				{"markers", markersSchema}, {"preset", preset},
 				{"quantizeOrigin",
 					objectSchema(
-						{{"original", markersSchema}, {"quantized", markersSchema}}, {"original", "quantized"})}},
+						{{"original", markersSchema}, {"quantized", markersSchema}}, {"original", "quantized"})},
+				{"created", ids}},
 			{"musical", "tempo", "beatsPerBar", "gridStart", "beats", "markers", "preset"});
 		const Json resultSchema = objectSchema({{"clip", integer}, {"warp", warpSchema}}, {"clip", "warp"});
 		const std::string warpText =
@@ -500,7 +506,8 @@ namespace gnubase::engine
 			"than the tempo would, each at a clip frame), its free warp markers (each plays the audio at its "
 			"position where the clip frame target would play without it) and preset, the time stretch algorithm of "
 			"real-time warping; after warp quantizing also quantizeOrigin, the markers before it (original) and as it "
-			"left them (quantized). Emits clip.changed. Returns the clip's id and its warp.";
+			"left them (quantized), and created, the positions of the markers quantize.createWarpMarkers made. Emits "
+			"clip.changed. Returns the clip's id and its warp.";
 		const std::string markerRules =
 			"Markers can't pass each other, and no section between two of them, or one and the clip's start or end, "
 			"may play more than 4 times or less than a quarter as long, the real-time stretcher's range; a section "
@@ -511,7 +518,8 @@ namespace gnubase::engine
 				"Changes a clip's musical mode and definition (the Definition and Warp sections of the sample "
 				"editor, the pool's Musical Mode column, reference manual pp. 616, 648-650): musical turns musical "
 				"mode on or off, which in a clip without a tempo takes the project's at the start of its first event "
-				"so that nothing changes until the tempo does; tempo (1-999 BPM); bars and beats, its length from the "
+				"on the active track versions, or without one there on an inactive version, so that nothing changes "
+				"until the tempo does; tempo (1-999 BPM); bars and beats, its length from the "
 				"grid start to its end in bars and quarters, which sets the tempo that makes it that long; "
 				"beatsPerBar (1-64); gridStart (a clip frame; the edited beats move with it); preset (the algorithm "
 				"preset of real-time warping). What isn't given stays. " +
@@ -763,11 +771,18 @@ namespace gnubase::engine
 			{
 				const Json& parameters = context.parameters();
 				Clip& clip = clipOf(project, parameters);
+				// A marker the user adds at the frame of a removed one that quantize.createWarpMarkers made is the
+				// user's own: the Reset of the Warp Marker Creation Rules leaves it (#1668).
+				std::vector<time::Samples>& created = clip.warp.created;
 				if (!parameters.contains("positions"))
+				{
 					clip.warp.markers.clear();
+					created.clear();
+				}
 				for (const Json& position : parameters.value("positions", Json::array()))
 				{
 					const WarpMarker& marker = markerAt(clip.warp, position.get<time::Samples>());
+					created.erase(std::remove(created.begin(), created.end(), marker.position), created.end());
 					clip.warp.markers.erase(clip.warp.markers.begin() + (&marker - clip.warp.markers.data()));
 				}
 				return warpResult(clip, context);
@@ -791,6 +806,7 @@ namespace gnubase::engine
 						continue;
 					clip.warp.musical = false;
 					clip.warp.markers.clear();
+					clip.warp.created.clear();
 					context.emit("clip.changed", {{"clip", toJson(clip)}});
 					clips.push_back(clip.id);
 				}

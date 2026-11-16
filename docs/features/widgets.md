@@ -94,8 +94,15 @@ attributes, through a data model or directly.
   a right click on an element whose `contextmenu` attribute names it: the nearest one with the attribute, so an empty
   `contextmenu` keeps the menu of an element around it from opening on a control. With a modifier key held (Ctrl,
   Alt, Shift or Cmd), the menu that its `modifiercontextmenu` attribute names opens instead, if it has the attribute,
-  as the event display's and the key editor's toolboxes do ([tools.md](tools.md)); an empty one opens none. It opens inside the window, moved left or up where it would
-  stick out. Put menus straight into the body, so that no container clips them.
+  as the event display's and the key editor's toolboxes do ([tools.md](tools.md)); an empty one opens none. It opens
+  inside the window, moved left or up where it would stick out. Put menus straight into the body, so that no container
+  clips them.
+- An open menu whose items come or go moves inside the window again (#1580, #1665). Until the next press, release or
+  key, it is placed from where it opened, as if the items had been there then: those that the opening click fills in,
+  as the Articulations lane's context menu and the list editor's pop-up menus do, so that a menu that shrinks goes back
+  to the mouse. After that it stays where it is while it fits and moves only as far as it must, so that a menu whose
+  search field leaves items out doesn't jump. Each move asks for the next update, which shows the menu there; a
+  tooltip that moves inside the window once it has its text does the same.
 - A click on an item is a click on that item, for the document to handle, and closes the menu. Escape and a click
   outside close it too. A `disabled` item gets `:disabled` and ignores clicks; `type="toggle"` makes an item checkable,
   as for buttons.
@@ -148,7 +155,8 @@ class such as `.tooltip` gives it the theme's look.
 
 `<dialog>` is a dialog in a document of its own, which the app loads and shows, usually modal
 (`ElementDocument::Show(Rml::ModalFlag::Modal)`). It opens in the middle of the window, and dragging its
-`.dialog-titlebar` moves it. Escape closes it with the result `cancel`, or first an open drop-down list; Enter clicks
+`.dialog-titlebar` moves it. A dialog that grows later (rows that show, a longer message) and
+would pass the window's edge moves back inside it. Escape closes it with the result `cancel`, or first an open drop-down list; Enter clicks
 its `button.primary`, also from a text field and a value field with `autofocus`, but not from a multi-line text field
 or another value field being edited, and not when the focused control takes Enter itself: a button clicks itself, a
 drop-down list opens and closes, another value field starts editing. A click on an element with a `result` attribute
@@ -255,3 +263,5 @@ Down skips a collapsed parent's children, Right and Left expand and collapse, an
 Ctrl-click extend the rebuilt selection; Shift-click with `shiftdeselects` deselects a selected row; a drag held past a view's edge scrolls it with `dragscroll` only; splitters
 move the boundary in a row and in a column, never below nothing. The color picker picks from its field, its hue strip
 and its numbers, draws the old and the new color, and follows its data.
+`widgets::fill` drops a fill of a drop-down list from the change that its own fill sends, also with a fill of another
+list in between, so the list keeps the options of the fill that sent it (#1719).

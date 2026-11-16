@@ -46,6 +46,25 @@
 	text-align: left;
 }
 
+/* Its button that opens the pop-up menu of the track's map's attributes (p. 1290). */
+.key-editor-info button.articulation-menu
+{
+	padding: 0 2dp;
+	margin-left: 2dp;
+}
+
+/* Its warning sign, for attributes the track's articulation map doesn't have (.unknown, p. 1291). */
+.key-editor-info svg.articulation-warning
+{
+	display: none;
+	margin-left: 2dp;
+}
+
+.key-editor-info .info-field.unknown svg.articulation-warning
+{
+	display: block;
+}
+
 .key-editor .editor-parts
 {
 	flex-shrink: 0;
@@ -69,24 +88,41 @@
 	overflow: hidden;
 }
 
+/* A line that may wrap is as high as its highest item, the grid, where a single line would be as high as the view: the
+   keyboard stretches to it. */
 .key-editor-body
 {
 	flex: 1 1 0;
 	display: flex;
 	flex-direction: row;
+	flex-wrap: wrap;
+	align-content: flex-start;
 	align-items: flex-start;
 	overflow-y: auto;
 	min-height: 0;
 }
 
-/* The piano keyboard as high as the grid's 128 rows of 10dp. Code places each key's top and height: a black key on
-   its pitch's row, the white keys in equal shares of their octave. */
+/* The piano keyboard, as high as the grid's rows. Code places each key's top and height: a black key on its pitch's
+   row, the white keys in equal shares of their octave. */
 .key-editor-keys
 {
 	position: relative;
 	flex-shrink: 0;
 	width: 48dp;
-	height: 1280dp;
+	align-self: stretch;
+}
+
+/* With drum sound names (a drum map's or a name list's, reference manual p. 1239) the keys name their sounds: the
+   keyboard is wider, and the parts and the controller lanes start where the grid does. */
+.key-editor.named-keys .key-editor-keys,
+.key-editor.named-keys .controller-lane-header
+{
+	width: 128dp;
+}
+
+.key-editor.named-keys .editor-parts
+{
+	margin-left: 128dp;
 }
 
 .key-editor-grid
@@ -95,7 +131,7 @@
 	flex: 1 1 0;
 }
 
-/* The row height: .key-editor-keys is 128 of them high. */
+/* The row height, the only one: the keyboard is as high as the rows, and the pitch zoom scales it. */
 .key-editor-row
 {
 	display: block;
@@ -135,6 +171,15 @@
 	height: 100%;
 	width: 12dp;
 	cursor: move;
+}
+
+/* While a gesture goes on, the grid and the keyboard's left part are RmlUi drag elements: their drag events come
+   wherever the mouse is, also outside the window, and their dragend comes when the button goes up, also out there,
+   where the document gets no mouseup. Only then: RmlUi doesn't scroll on a touch move during a drag. */
+.key-editor.in-gesture .key-editor-grid,
+.key-editor.in-gesture .key-editor-keys-zoom
+{
+	drag: drag;
 }
 
 .key-editor-notes
@@ -181,19 +226,70 @@
 	display: none;
 }
 
+/* Per-note expression (reference manual pp. 1303-1313, docs/features/note-expression.md). Code places each step of an
+   expression, from one point to the next, in percent of its note or of the expression editor: a line at its value.
+   The expression editor lies over the note display on the selected notes' time, which code centers on the row of the
+   note double-clicked and keeps inside the note display; its parameter button sits at its top left, and the area
+   below is where the draw and erase tools edit. */
+.key-expression-step
+{
+	position: absolute;
+	height: 0;
+	pointer-events: none; /* the note or the expression editor's area takes the mouse */
+}
+
+.key-expression-editor
+{
+	position: absolute;
+	height: 96dp;
+	min-width: 72dp; /* wider than Parameter Selection on a short note */
+	box-sizing: border-box;
+	display: flex;
+	flex-direction: column;
+}
+
+.key-expression-editor.off
+{
+	display: none;
+}
+
+.key-expression-type
+{
+	flex-shrink: 0;
+	align-self: flex-start;
+	height: 18dp;
+	font-size: 9dp;
+}
+
+.key-expression-area
+{
+	position: relative;
+	flex: 1 1 0;
+}
+
 /* The drum editor (#129, docs/features/drum-editor.md): the drum sound list instead of the keyboard, a row per
    sound with its pitch, mute button, name, snap, I-note, O-note, channel and output; taller rows; the notes as diamonds at
-   their start, which code places by their left edge. */
+   their start, which code places by their left edge. The parts and the controller lanes start where the grid does. */
 .drum-editor .editor-parts
 {
 	margin-left: 360dp;
 }
 
-/* The drum sounds stack in the list's flow, unlike the piano keys code places. */
+.drum-editor .controller-lane-header
+{
+	width: 360dp;
+}
+
+/* The drum sounds stack in the list's flow, unlike the piano keys code places, beside the grid however narrow. */
+.drum-editor .key-editor-body
+{
+	flex-wrap: nowrap;
+}
+
 .drum-editor .key-editor-keys
 {
 	width: 360dp;
-	height: auto;
+	align-self: flex-start;
 }
 
 .drum-editor .key-editor-row, .key-editor-key.drum-sound
@@ -244,6 +340,15 @@
 	flex: 1 1 0;
 	margin-left: 4dp;
 	text-align: left;
+}
+
+/* A name list's names, without a drum map: not edited. */
+.drum-sound span.drum-sound-name
+{
+	flex: 1 1 0;
+	margin-left: 4dp;
+	overflow: hidden;
+	white-space: nowrap;
 }
 
 .drum-sound textdisplay.drum-sound-field

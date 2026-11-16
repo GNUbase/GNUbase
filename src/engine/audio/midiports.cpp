@@ -175,11 +175,38 @@ namespace gnubase::engine
 	void MidiPorts::take(const audio::DeviceBlock& block, double sampleRate, graph::EventBuffer& allInputs,
 		PadBuffers& pads, const ChordPadKeys& padKeys) noexcept
 	{
-		// The section keys down on the remote's input before another became it go up with it (#1447).
+		// The keys down on the remote's input before another became it go up with it (#1447), and what they hold ends:
+		// their note-offs come from an input that is no longer the remote's (#1571).
 		if (padKeys.portHash != m_sectionHeldPort)
 		{
 			m_sectionHeldPort = padKeys.portHash;
 			m_sectionHeld.fill(0);
+			// The sections mode's pad key that was down is up, so its pad is no longer lit (#1652), once: not again for
+			// a chord the key latched before the player mode changed (#1708).
+			const int padDown = m_sectionPadDown ? m_sectionPad : -1;
+			if (padDown >= 0)
+				m_padEvents.tryPush(PadEvent{PadEvent::Kind::Released, static_cast<uint8_t>(padDown), 0});
+			m_sectionPadDown = false;
+			for (size_t key = 0; key < midi::PadVoices::g_triggers; ++key)
+			{
+				bool held = false;
+				for (size_t player = 0; player < m_padVoices.size(); ++player)
+				{
+					held = held || m_padVoices.at(player).holds(key);
+					m_padVoices.at(player).off(key,
+						[&buffer = pads.at(player)](bool, uint8_t pitch, uint8_t, uint8_t channel)
+						{
+							audio::MidiMessage note;
+							note.size = 3;
+							note.bytes = {static_cast<uint8_t>(0x80 | channel), pitch, 0};
+							buffer.add(note);
+						});
+				}
+				// Only a pad key's chord was a pad's: a section key's notes are none (#1652).
+				if (held && m_sectionPadOf.at(key) == 0 && static_cast<int>(key) != padDown)
+					m_padEvents.tryPush(PadEvent{PadEvent::Kind::Released, static_cast<uint8_t>(key), 0});
+			}
+			m_sectionPadOf.fill(0);
 		}
 		m_queue.take(block.time, sampleRate, block.frames,
 			[this, &block, &allInputs, &pads, &padKeys](int slot, const audio::MidiMessage& message)

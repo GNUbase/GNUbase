@@ -522,8 +522,8 @@ namespace gnubase::engine::plugins
 		// Logged once while it lasts, so that a steady overload doesn't fill the logger's queue.
 		const size_t dropped = m_eventsIn.dropped() + m_eventsOut.dropped();
 		if (dropped > 0 && !m_dropping)
-			logging::warning("The plugin {} dropped events that didn't fit its event lists: {} in a block, and isn't "
-							 "logged again until a block drops none",
+			logging::warning("The plugin {} dropped events that didn't fit its event lists: {} in a block; its drops "
+							 "aren't logged again until a block drops none",
 				m_plugin->descriptor().id, dropped);
 		m_dropping = dropped > 0;
 

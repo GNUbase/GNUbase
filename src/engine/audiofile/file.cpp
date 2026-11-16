@@ -117,8 +117,10 @@ namespace gnubase::engine::detail
 
 	bool replaceFile(const std::string& from, const std::string& to)
 	{
+		const auto fromPath = std::filesystem::u8path(from);
+		const auto toPath = std::filesystem::u8path(to);
 		std::error_code error;
-		std::filesystem::rename(from, to, error);
+		std::filesystem::rename(fromPath, toPath, error);
 		if (!error)
 		{
 			g_lastReplacePath = ReplacePath::Rename;
@@ -127,7 +129,7 @@ namespace gnubase::engine::detail
 #ifdef _WIN32
 		// The classic rename can't replace a file another handle has open; the POSIX-semantic one may (see
 		// posixReplace).
-		const bool replaced = posixReplace(std::filesystem::u8path(from), std::filesystem::u8path(to));
+		const bool replaced = posixReplace(fromPath, toPath);
 		if (replaced)
 			g_lastReplacePath = ReplacePath::PosixRename;
 		return replaced;
@@ -144,23 +146,26 @@ namespace gnubase::engine::detail
 
 	bool replaceFileMovingAside(const std::string& from, const std::string& to, const std::string& aside)
 	{
+		const auto fromPath = std::filesystem::u8path(from);
+		const auto toPath = std::filesystem::u8path(to);
+		const auto asidePath = std::filesystem::u8path(aside);
 		std::error_code error;
-		std::filesystem::rename(to, aside, error);
+		std::filesystem::rename(toPath, asidePath, error);
 		if (error)
 		{
 			setErrno(error);
 			return false;
 		}
-		std::filesystem::rename(from, to, error);
+		std::filesystem::rename(fromPath, toPath, error);
 		if (error)
 		{
 			// The new file didn't arrive: put the old one back, so a failed replacement leaves it in place.
 			std::error_code ignored;
-			std::filesystem::rename(aside, to, ignored);
+			std::filesystem::rename(asidePath, toPath, ignored);
 			setErrno(error);
 			return false;
 		}
-		std::filesystem::remove(aside, error); // if this fails, a cleanup of stale temporaries ends the aside
+		std::filesystem::remove(asidePath, error); // if this fails, a cleanup of stale temporaries ends the aside
 		g_lastReplacePath = ReplacePath::Aside;
 		return true;
 	}

@@ -176,6 +176,9 @@ namespace gnubase::ui
 		// The controls a track type can have.
 		bool applies(const std::string& control, const std::string& type, bool hasChannel)
 		{
+			// Group Editing (reference manual pp. 196, 274), with or without a group channel.
+			if (control == "groupEditing")
+				return type == "folder";
 			if (type == "ruler" || rulerControl(control))
 				return type == "ruler" && rulerControl(control);
 			if (type == "marker" || markerControl(control))
@@ -236,7 +239,7 @@ namespace gnubase::ui
 				{"chordRecord", {"Record Enable", R"(<svg class="icon" src="../icons/track-record-arm.svg"/>)"}},
 				{"chordMute", {"Mute Chord Track", "M"}}, {"showScales", {"Show Scales", "S"}},
 				{"addPositionMarker", {"Add Position Marker", "+"}}, {"addCycleMarker", {"Add Cycle Marker", "[+]"}},
-				{"activateMarkerTrack", {"Activate Track", "A"}}};
+				{"activateMarkerTrack", {"Activate Track", "A"}}, {"groupEditing", {"Group Editing", "G"}}};
 			const auto& [title, content] = looks.at(control);
 			return R"(<button class="toggle )" + control + R"(" control=")" + control + R"(" title=")" + title +
 				R"(">)" + content + "</button>";
@@ -692,6 +695,11 @@ namespace gnubase::ui
 				if (m_drag == Drag::Height)
 					m_drag = Drag::None;
 				m_dragTracks.clear();
+				// Remove Tracks' question and the chord dialogs are for the old project's tracks or parts: OK would act
+				// on whatever has those ids in the new one (#1586).
+				for (const Rml::ObserverPtr<Rml::Element>* open : {&m_removeDialog, &m_chordDialog})
+					if (auto* dialog = dynamic_cast<Rml::ElementDocument*>(open->get()))
+						closeDialog(*dialog, "cancel");
 				readVisibility();
 				readLayout(true);
 			}));
@@ -1138,6 +1146,8 @@ namespace gnubase::ui
 					on = project.value("tempoTrackActive", false);
 				else if (name == "timeOffsetOn")
 					on = track.value("timeOffsetOn", false);
+				else if (name == "groupEditing")
+					on = track.value("groupEditing", false);
 				else if (name == "activateMarkerTrack")
 					on = markers.active == row.id;
 				else if (transposeControl(name))
@@ -1849,10 +1859,10 @@ namespace gnubase::ui
 			m_binding.send("chord.setTrack", {{key, !project.at("chords").value(key, false)}});
 			return;
 		}
-		if (name == "timeOffsetOn")
+		if (name == "timeOffsetOn" || name == "groupEditing")
 		{
 			const Json& track = project.at("tracks").at(m_index.at(row.id));
-			m_binding.send("track.set", {{"track", row.id}, {"timeOffsetOn", !track.value("timeOffsetOn", false)}});
+			m_binding.send("track.set", {{"track", row.id}, {name, !track.value(name, false)}});
 			return;
 		}
 		if (name == "setTimeOffset")

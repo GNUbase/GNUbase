@@ -25,7 +25,8 @@ namespace gnubase::engine
 	void checkMarkers(ClipWarp& warp, time::Samples length, const std::vector<WarpMarker>& unchanged);
 
 	// The clip's tempo in musical mode: its own, or without one the project's at the start of the first event that
-	// plays it, on any track version (at the project start without one).
+	// plays it on the active track versions, without one there on an inactive version (at the project start without
+	// any).
 	double definitionTempo(const Project& project, const Clip& clip);
 
 	// How many project samples after an audio event's start the clip frame plays: through the clip's warp markers,

@@ -363,6 +363,75 @@ TEST_CASE("Set Root Key for Unassigned Events reaches the parts of inactive trac
 	CHECK(song.partJson().at("rootKey") == "E");
 }
 
+TEST_CASE("Set Root Key for Unassigned Events reaches the audio events of inactive versions and announces their tracks",
+	"[integration]")
+{
+	AudioSong song;
+	const ObjectId second = run(song.client, "audioEvent.add",
+		{{"track", song.audioTrack}, {"clip", song.clip}, {"position", 48000}, {"offset", 0}, {"length", 48000}})
+								.at("event")
+								.at("id")
+								.get<ObjectId>();
+	// A MIDI track whose part has a root key of its own already.
+	const ObjectId keyed = run(song.client, "track.add", {{"type", "midi"}}).at("track").at("id").get<ObjectId>();
+	const ObjectId keyedPart =
+		run(song.client, "midiPart.add", {{"track", keyed}, {"position", 0}, {"length", g_beatTicks}})
+			.at("part")
+			.at("id")
+			.get<ObjectId>();
+	run(song.client, "midiPart.set", {{"part", keyedPart}, {"rootKey", "A"}});
+	// A MIDI track whose part has none.
+	const ObjectId unkeyed = run(song.client, "track.add", {{"type", "midi"}}).at("track").at("id").get<ObjectId>();
+	const ObjectId unkeyedPart =
+		run(song.client, "midiPart.add", {{"track", unkeyed}, {"position", 0}, {"length", g_beatTicks}})
+			.at("part")
+			.at("id")
+			.get<ObjectId>();
+	run(song.client, "project.set", {{"rootKey", "E"}});
+	// The audio track's two events and both MIDI tracks' parts go into inactive versions; the song's MIDI part plays
+	// on.
+	run(song.client, "trackVersion.add", {{"tracks", {song.audioTrack, keyed, unkeyed}}});
+	REQUIRE(run(song.client, "project.get").at("audioEvents").empty());
+	while (song.client.poll())
+	{
+	}
+
+	// One track.changed for the audio track and one for the unkeyed track, whose stashed events and part got the root
+	// key, in id order, none for the keyed track; the playing part is announced as changed, the stashed events and
+	// part aren't.
+	run(song.client, "transpose.assignRootKey");
+	std::vector<ObjectId> tracks;
+	std::vector<ObjectId> parts;
+	std::vector<ObjectId> events;
+	while (const auto message = song.client.poll())
+		if (const auto* event = std::get_if<Event>(&*message); event != nullptr)
+		{
+			if (event->name == "track.changed")
+				tracks.push_back(event->data.at("track").at("id").get<ObjectId>());
+			else if (event->name == "midiPart.changed")
+				parts.push_back(event->data.at("part").at("id").get<ObjectId>());
+			else if (event->name == "audioEvent.changed")
+				events.push_back(event->data.at("event").at("id").get<ObjectId>());
+		}
+	CHECK(tracks == std::vector<ObjectId>{song.audioTrack, unkeyed});
+	CHECK(parts == std::vector<ObjectId>{song.part});
+	CHECK(events.empty());
+
+	// Activating the stashed versions brings the events and the unkeyed part back with the project root key, the
+	// keyed part with its own.
+	run(song.client, "trackVersion.activate", {{"tracks", {song.audioTrack, keyed, unkeyed}}, {"version", 1}});
+	CHECK(song.eventJson().at("rootKey") == "E");
+	CHECK(song.eventJson(second).at("rootKey") == "E");
+	const Json project = run(song.client, "project.get");
+	bool unkeyedBack = false;
+	for (const Json& part : project.at("midiParts"))
+	{
+		CHECK(part.at("rootKey") == (part.at("id") == keyedPart ? "A" : "E"));
+		unkeyedBack = unkeyedBack || part.at("id") == unkeyedPart;
+	}
+	CHECK(unkeyedBack);
+}
+
 TEST_CASE("audio events follow the root key and the transpose track with their pitch", "[integration]")
 {
 	AudioSong song;
@@ -452,7 +521,8 @@ TEST_CASE("an audio event's root key and Global Transpose are saved with the pro
 	const gnubase::test::TempDir dir;
 	const std::string path = (dir.path() / "Song.dawproject").u8string();
 	AudioSong song;
-	run(song.client, "audioEvent.set", {{"event", song.event}, {"rootKey", "F#"}, {"globalTranspose", "independent"}});
+	run(song.client, "audioEvent.set",
+		{{"event", song.event}, {"rootKey", "F#"}, {"globalTranspose", "independent"}, {"transpose", -7}});
 	run(song.client, "project.save", {{"path", path}});
 	Engine engine;
 	Client client{engine};
@@ -460,6 +530,137 @@ TEST_CASE("an audio event's root key and Global Transpose are saved with the pro
 	const Json loaded = run(client, "project.get").at("audioEvents")[0];
 	CHECK(loaded.at("rootKey") == "F#");
 	CHECK(loaded.at("globalTranspose") == "independent");
+	CHECK(loaded.at("transpose") == -7);
+}
+
+TEST_CASE("an audio event's own Transpose adds to global transposition, also while Independent", "[integration]")
+{
+	AudioSong song;
+	CHECK(song.eventJson().at("transpose") == 0);
+	CHECK(song.eventJson().at("rootKeyTranspose") == 0);
+	// Its own Transpose shifts it without a root key (#1555, reference manual p. 420).
+	run(song.client, "audioEvent.set", {{"event", song.event}, {"transpose", 3}});
+	CHECK(song.eventJson().at("transpose") == 3);
+	CHECK(song.pitch() == Pitch{{0.0, 3.0}});
+	// The step the project root key adds goes on top of it; project.get gives it as for MIDI parts.
+	run(song.client, "project.set", {{"rootKey", "D"}});
+	run(song.client, "audioEvent.set", {{"event", song.event}, {"rootKey", "C"}});
+	CHECK(song.eventJson().at("rootKeyTranspose") == 2);
+	CHECK(song.pitch() == Pitch{{0.0, 5.0}});
+	// Independent: only its own Transpose.
+	run(song.client, "audioEvent.set", {{"event", song.event}, {"globalTranspose", "independent"}});
+	CHECK(song.eventJson().at("rootKeyTranspose") == 0);
+	CHECK(song.pitch() == Pitch{{0.0, 3.0}});
+	run(song.client, "history.undo");
+	// Keep Transpose in Octave Range folds the whole sum: 12 + 2 plays 2.
+	run(song.client, "audioEvent.set", {{"event", song.event}, {"transpose", 12}});
+	run(song.client, "track.add", {{"type", "transpose"}});
+	run(song.client, "transpose.setTrack", {{"keepInOctave", true}});
+	CHECK(song.pitch() == Pitch{{0.0, 2.0}});
+	// Splits keep it; the stretcher's real-time range bounds it.
+	run(song.client, "event.split", {{"events", {song.event}}, {"positions", {12000}}});
+	const Json split = run(song.client, "project.get");
+	for (const Json& event : split.at("audioEvents"))
+		CHECK(event.at("transpose") == 12);
+	reject(song.client, "audioEvent.set", {{"event", song.event}, {"transpose", 25}});
+	reject(song.client, "audioEvent.set", {{"event", song.event}, {"transpose", -25}});
+}
+
+TEST_CASE("an audio event that nothing shifts plays its file as it is", "[integration]")
+{
+	AudioSong song;
+	// No root key step, no transpose events and no Transpose of its own: no pitch map, no media entry of its own.
+	run(song.client, "project.set", {{"rootKey", "D"}});
+	const auto ownMedia = [&song]
+	{
+		const auto snapshot = song.engine.renderSnapshots().acquire();
+		return std::any_of(snapshot.media.begin(), snapshot.media.end(),
+			[&song](const RenderMedia& media) { return media.id == song.event; });
+	};
+	CHECK(!ownMedia());
+	run(song.client, "audioEvent.set", {{"event", song.event}, {"rootKey", "D"}});
+	CHECK(!ownMedia());
+	run(song.client, "audioEvent.set", {{"event", song.event}, {"transpose", -2}});
+	CHECK(ownMedia());
+	// Independent with transpose events: only its own Transpose counts.
+	run(song.client, "transpose.add", {{"position", 0}, {"value", 4}});
+	run(song.client, "audioEvent.set", {{"event", song.event}, {"transpose", 0}, {"globalTranspose", "independent"}});
+	CHECK(!ownMedia());
+}
+
+TEST_CASE("audio events that transpose differently by their own Transpose don't glue", "[integration]")
+{
+	AudioSong song;
+	run(song.client, "event.split", {{"events", {song.event}}, {"positions", {24000}}});
+	std::vector<ObjectId> pieces;
+	const Json split = run(song.client, "project.get");
+	for (const Json& event : split.at("audioEvents"))
+		pieces.push_back(event.at("id").get<ObjectId>());
+	REQUIRE(pieces.size() == 2);
+	run(song.client, "audioEvent.set", {{"event", pieces[1]}, {"transpose", 2}});
+	CHECK(reject(song.client, "event.glue", {{"events", pieces}}).find("transpose differently") != std::string::npos);
+	run(song.client, "audioEvent.set", {{"event", pieces[0]}, {"transpose", 2}});
+	run(song.client, "event.glue", {{"events", pieces}});
+	const Json glued = run(song.client, "project.get").at("audioEvents");
+	REQUIRE(glued.size() == 1);
+	CHECK(glued[0].at("transpose") == 2);
+}
+
+TEST_CASE("the pool's Key column sets the root key of every audio event of a clip", "[integration]")
+{
+	AudioSong song;
+	const auto clipJson = [&song]
+	{
+		const Json pool = run(song.client, "pool.get");
+		for (const Json& clip : pool.at("clips"))
+			if (clip.at("id") == song.clip)
+				return clip;
+		return Json::object();
+	};
+	const auto clipKey = [&clipJson] { return clipJson().value("rootKey", std::string("no clip")); };
+	CHECK(clipKey() == "");
+	CHECK(clipJson().at("audioEvents") == 1);
+	CHECK(clipJson().at("rootKeysDiffer") == false);
+	// A clip that no audio event plays has nowhere to keep a key (#1644).
+	const Json media = clipJson().at("media");
+	const ObjectId unplayed = run(song.client, "clip.add", {{"media", media}}).at("clip").at("id").get<ObjectId>();
+	bool found = false;
+	const Json pool = run(song.client, "pool.get");
+	for (const Json& clip : pool.at("clips"))
+		if (clip.at("id") == unplayed)
+		{
+			found = true;
+			CHECK(clip.at("audioEvents") == 0);
+		}
+	CHECK(found);
+	// clip.set refuses its root key, as the pool's list for it is disabled (#1719).
+	CHECK(reject(song.client, "clip.set", {{"clip", unplayed}, {"rootKey", "A"}}).find("no audio event") !=
+		std::string::npos);
+	CHECK(reject(song.client, "clip.set", {{"clip", unplayed}, {"rootKey", ""}}).find("no audio event") !=
+		std::string::npos);
+	// A second event of the clip, stashed in an inactive track version (reference manual p. 417).
+	run(song.client, "trackVersion.add", {{"tracks", {song.audioTrack}}});
+	run(song.client, "audioEvent.add",
+		{{"track", song.audioTrack}, {"clip", song.clip}, {"position", 0}, {"offset", 0}, {"length", 24000}});
+	run(song.client, "clip.set", {{"clip", song.clip}, {"rootKey", "A"}});
+	CHECK(clipKey() == "A");
+	const ObjectId other = run(song.client, "project.get").at("audioEvents")[0].at("id").get<ObjectId>();
+	CHECK(song.eventJson(other).at("rootKey") == "A");
+	run(song.client, "trackVersion.activate", {{"tracks", {song.audioTrack}}, {"version", 1}});
+	CHECK(song.eventJson().at("rootKey") == "A");
+	CHECK(clipJson().at("audioEvents") == 2);
+	// Events of the clip in different keys: no key, and rootKeysDiffer says why (#1644).
+	run(song.client, "audioEvent.set", {{"event", song.event}, {"rootKey", "B"}});
+	CHECK(clipKey() == "");
+	CHECK(clipJson().at("rootKeysDiffer") == true);
+	run(song.client, "history.undo");
+	CHECK(clipKey() == "A");
+	CHECK(clipJson().at("rootKeysDiffer") == false);
+	// One undo step; the audio file stays as it is.
+	run(song.client, "history.undo"); // the version activated
+	run(song.client, "history.undo"); // the clip's root key
+	CHECK(song.eventJson(other).at("rootKey") == "");
+	reject(song.client, "clip.set", {{"clip", song.clip}, {"rootKey", "H"}});
 }
 
 TEST_CASE("Delete Time and Insert Silence move the transpose events with the music", "[integration]")

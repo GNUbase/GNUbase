@@ -5,6 +5,7 @@
 #include "engine/document/rendersnapshot.h"
 #include "engine/graph/processor.h"
 #include "engine/midi/effects.h"
+#include "engine/midi/mpeinput.h"
 #include "engine/processors/builtinplugin.h"
 #include "engine/processors/midieffects.h"
 #include "platform/rt/snapshotpublisher.h"
@@ -61,7 +62,8 @@ namespace gnubase::engine
 	};
 
 	// Command thread: the chase index of a track's controller events (sorted by position, each with the index of its
-	// part in parts) and MIDI parts (sorted by start).
+	// part in parts, or g_soundSlotPart for a sound slot's output events, which go to ChaseTrack::slots) and MIDI parts
+	// (sorted by start).
 	ChaseTrack makeChaseTrack(const std::vector<RenderController>& controllers, const std::vector<RenderPart>& parts);
 
 	// Command thread: the kinds of controller events (ChaseLane::kind) that a MIDI channel's own values and automation
@@ -114,6 +116,8 @@ namespace gnubase::engine
 		// Audio thread: one block, after it starts processing if it hasn't yet. Error while it isn't active or
 		// doesn't start.
 		plugin::ProcessStatus process(const plugin::Process& process) noexcept;
+		// Audio thread: forgets the past (plugin::Plugin::reset), the notes it holds too, if it processes.
+		void startAfresh() noexcept;
 
 	private:
 		void deactivate();
@@ -248,8 +252,8 @@ namespace gnubase::engine
 		// What is chased by itself: a control change per channel and number, a program and a pitch bend per channel.
 		static constexpr size_t g_chased = g_notes + (size_t{16} * 2);
 
-		// effects makes the MIDI effects' plugins by "builtin:" and the effect's id; nullptr: a
-		// processors::BuiltinFactory, made with the first effect.
+		// effects makes the MIDI effects' plugins by "builtin:" and the effect's id; nullptr: the
+		// processors::BuiltinFactory every sequencer shares.
 		explicit MidiSequencer(std::shared_ptr<plugin::Factory> effects = nullptr);
 
 		// Command thread: what to play from the next block on. Indexes the notes for chasing, and makes the MIDI
@@ -321,6 +325,10 @@ namespace gnubase::engine
 		// playing, and the notes play with the selected slot's MIDI modifiers before the track's (#175). The audio
 		// engine fills them before the graph processes a block.
 		graph::EventBuffer& input() noexcept { return m_input; }
+		// Audio thread: an event of midi.inject's into input through an MPE setup (midi::MpeSetup::pack), as from a
+		// port with it: the track keeps the state of the notes' channels while the setup stays. False, adding nothing,
+		// if input has no room for a note-on and its initial values.
+		bool injectMpe(uint32_t setup, const graph::ProcessEvent& event) noexcept;
 
 	protected:
 		void prepare(double sampleRate, uint32_t maxFrames) override;
@@ -332,14 +340,18 @@ namespace gnubase::engine
 		// Runs an effect on in, with the parameter events of its automation (m_effectEvents), into to. Logs the events
 		// its event lists drop as it starts to drop them. In a block the effect fails, an insert passes in on as it is,
 		// as a third-party effect that fails would otherwise swallow the block's note-offs, and a send plays nothing,
-		// as the inserts' notes play already. Returns true as the effect starts to fail, which it logs: then the notes
-		// its slot holds end, as those it played itself get no note-off.
+		// as the inserts' notes play already. An effect that failed its last block is reset before it processes, so
+		// that it doesn't play on the notes whose note-offs passed it meanwhile. Returns true as the effect starts to
+		// fail, which it logs, and as it processes again: then the notes its slot holds end, as those it played
+		// itself get no note-off, and the effects after it start afresh (reset), as they hold the notes it played
+		// before or passed on meanwhile.
 		bool runEffect(const RunningEffect& running, const graph::EventBuffer& in, graph::EventBuffer& to,
 			uint32_t frames, const graph::TransportBlock& transport) noexcept;
-		// Runs the effects below the divider on the events in m_own and adds what they play to out. insertsFail: an
-		// insert above the divider started to fail in the block.
-		void runEffects(const MidiSequence& sequence, const graph::ProcessContext& context, graph::EventBuffer& out,
-			bool insertsFail) noexcept;
+		// Runs the inserts above the divider on m_input, which then holds what they play.
+		void runInputEffects(const MidiSequence& sequence, const graph::ProcessContext& context) noexcept;
+		// Runs the effects below the divider on the events in m_own and adds what they play to out.
+		void runEffects(
+			const MidiSequence& sequence, const graph::ProcessContext& context, graph::EventBuffer& out) noexcept;
 		// Ends the notes held holds, at offset 0 in out, unless another of the effects' outputs to the track's output
 		// holds them too (shared), and forgets them.
 		void endHeld(std::array<bool, g_notes>& held, graph::EventBuffer& out, bool shared) noexcept;
@@ -359,14 +371,35 @@ namespace gnubase::engine
 		// ends with the last of their note-offs (Live Input moves keys onto one note).
 		bool modifyInput(
 			const MidiSequence& sequence, int64_t position, graph::ProcessEvent& event, uint16_t& ends) noexcept;
+		// A note-on on the channel of its input: the keys there that aren't held lose the note their expression went
+		// to, which has faded as far as MPE is concerned.
+		void forgetReleased(uint8_t channel) noexcept;
 		// Remote triggers on its input (#175, reference manual pp. 1263, 1268): whether the event is one of the
 		// articulation map's, which selects its sound slot instead of playing. A new slot sends the off events of the
 		// one before, then its own on events.
 		bool triggerSlot(
 			const MidiSequence& sequence, const graph::ProcessEvent& event, graph::EventBuffer& out) noexcept;
+		// Audio thread, of the sequencer for sends before the modifiers once it plays (MidiSequence::pre): takes the
+		// sound slot that the track's sequencer's remote triggers selected, which its own triggers select from then on.
+		// It is made anew whenever such sends start to play, after triggers that it didn't get.
+		void takeSlot(const MidiSequencer& track) noexcept;
 		// again sends the off and on events of the slot that is selected, as for a new one.
 		void selectSlot(const ArticulationMap& map, int slot, uint8_t channel, uint32_t offset, graph::EventBuffer& out,
 			bool again = false) noexcept;
+		// Ends the add-on slots on (m_inputAddOns) that have an articulation of a group of slot, but slot itself: their
+		// off events on the channel their on events went to (#1667).
+		void endAddOns(
+			const ArticulationMap& map, const SoundSlot& slot, uint32_t offset, graph::EventBuffer& out) noexcept;
+		// The channel the notes played into the track play on: the selected slot's, else the default slot's own, else
+		// channel (the track's or the trigger's).
+		uint8_t notesChannel(const ArticulationMap& map, uint8_t channel) const noexcept;
+		// The add-on slots on follow the notes to another channel: their off events on the channel their on events
+		// went to, their on events on the new one (#1718). track is the track's MIDI channel, -1 for none: then each
+		// goes by the channel of the trigger that turned it on.
+		void moveAddOns(const ArticulationMap& map, int track, uint32_t offset, graph::EventBuffer& out) noexcept;
+		// A slot's on or off output events, on channel.
+		static void sendSlotEvents(
+			const SoundSlot& slot, bool off, uint8_t channel, uint32_t offset, graph::EventBuffer& out) noexcept;
 		void play(
 			const MidiSequence& sequence, const graph::TransportSegment& segment, graph::EventBuffer& out) noexcept;
 		// Each returns false if the event buffer was full; then the note didn't start or end (though noteOn may have
@@ -424,7 +457,10 @@ namespace gnubase::engine
 		graph::EventBuffer m_input;
 		std::shared_ptr<graph::EventBuffer> m_stripChase; // see stripChase
 		std::array<bool, g_notes> m_inputHeld{};          // notes its input sent a note-on for and no note-off since
-		// Where each note of its input went after the modifiers, as channel * 128 + pitch; g_notes: left out.
+		// Notes the inserts above the divider played a note-on for and no note-off since, before the modifiers.
+		std::array<bool, g_notes> m_inputPlayed{};
+		// Where each note of its input went after the modifiers, as channel * 128 + pitch; g_notes: left out, or no
+		// note-on came. It stays after the note-off, for the note's expression while it fades (forgetReleased).
 		std::array<uint16_t, g_notes> m_inputTo{};
 		std::array<bool, g_notes> m_inputDown{};     // the keys of its input, as channel * 128 + pitch, that are held
 		std::array<uint16_t, g_notes> m_inputKeys{}; // how many held keys play each note, as channel * 128 + pitch
@@ -435,9 +471,24 @@ namespace gnubase::engine
 		uint8_t m_inputSlotChannel = 0;
 		int m_inputSlotHeld = -1;
 		uint64_t m_inputSlotsSerial = 0; // the MidiSequence::slotsSerial they belong to
-		int8_t m_inputSlotTrack = -1;    // the MidiSequence::inputChannel they belong to
-		uint8_t m_inputSlotTrigger = 0;  // the channel of the trigger that selected the slot
-		uint64_t m_instrument = 0;       // playOn: where its notes went in the graph that runs
+		// midi.inject's MPE input (injectMpe) and the setup it is for.
+		midi::MpeInput m_injectedMpe;
+		uint32_t m_injectedMpeSetup = 0;
+		int8_t m_inputSlotTrack = -1;   // the MidiSequence::inputChannel they belong to
+		uint8_t m_inputSlotTrigger = 0; // the channel of the trigger that selected the slot
+		bool m_tookSlot = false;        // a sequencer for sends before the modifiers: takeSlot ran
+		// The add-on slots its input's remote triggers turned on and nothing turned off yet, by index, with the
+		// channel their on events went to (#1667) and that of their trigger (#1718). ponytail: at most 16 at once, one
+		// per group as a rule; one more sends no off events.
+		struct InputAddOn
+		{
+			int slot = -1;
+			uint8_t channel = 0;
+			uint8_t trigger = 0;
+		};
+		std::array<InputAddOn, 16> m_inputAddOns{};
+		size_t m_inputAddOnCount = 0;
+		uint64_t m_instrument = 0; // playOn: where its notes went in the graph that runs
 
 		// Command thread: the effect in each slot, the inserts' then the sends', while it plays.
 		struct SlotEffect

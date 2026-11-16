@@ -7,9 +7,11 @@
 #include "ui/docking.h"
 #include "ui/keyeditor.h"
 #include "ui/midieditor.h"
+#include "ui/rmlui.h"
 #include "uiapp.h"
 
 #include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Factory.h>
 #include <RmlUi/Core/StyleSheetContainer.h>
@@ -458,35 +460,128 @@ TEST_CASE("dragging the keyboard's left part zooms the pitches and scrolls the n
 	CHECK(std::abs(f.box(".key-editor-row").at("height").get<double>() - 40.0) <= 0.5);
 }
 
+namespace
+{
+	// Adds the style sheet to the key editor's document, as a theme or another style change would.
+	void restyle(Fixture& f, const std::string& rcss)
+	{
+		ui::Window* window = f.app.shell().find(f.app.appUi().editorWindowId());
+		REQUIRE(window != nullptr);
+		Rml::Context& context = window->context();
+		Rml::ElementDocument* document = nullptr;
+		for (int i = 0; i < context.GetNumDocuments(); ++i)
+			if (context.GetDocument(i)->QuerySelector(".key-editor-rows") != nullptr)
+				document = context.GetDocument(i);
+		REQUIRE(document != nullptr);
+		auto style = Rml::MakeShared<Rml::StyleSheetContainer>();
+		style->MergeStyleSheetContainer(*document->GetStyleSheetContainer());
+		style->MergeStyleSheetContainer(*Rml::Factory::InstanceStyleSheetString(rcss));
+		document->SetStyleSheetContainer(std::move(style));
+		f.app.shell().step(std::chrono::milliseconds(0));
+	}
+
+	double rowHeight(Fixture& f)
+	{
+		return f.box(".key-editor-row").at("height").get<double>();
+	}
+
+	double keyboardHeight(Fixture& f)
+	{
+		return f.box(".key-editor-keys").at("height").get<double>();
+	}
+
+	// A drag on the keyboard's left part, dx px to the right.
+	void zoomDrag(Fixture& f, int dx)
+	{
+		const int left = f.box(".key-editor-keys").at("x").get<int>() + 4;
+		const int high = f.box(".key-editor-body").at("y").get<int>() + 150;
+		f.drag({"", 0, ui::Point{left, high}}, {"", 0, ui::Point{left + dx, high}});
+	}
+}
+
 TEST_CASE("the keyboard's zoom scales the rows' height that the style sheet gives them", "[ui]")
 {
-	// A theme or style change that gives the rows another height is what the zoom scales (#1369).
+	// A theme or style change that gives the rows another height is what the zoom scales (#1369), and the keyboard
+	// is as high as the rows without a height of its own (#1547).
 	Fixture f({1024, 600});
 	f.app.setDpRatio(1.0F);
 	f.add({{0, 60, g_quarter}});
-	ui::Window* window = f.app.shell().find(f.app.appUi().editorWindowId());
-	REQUIRE(window != nullptr);
-	Rml::Context& context = window->context();
-	Rml::ElementDocument* document = nullptr;
-	for (int i = 0; i < context.GetNumDocuments(); ++i)
-		if (context.GetDocument(i)->QuerySelector(".key-editor-rows") != nullptr)
-			document = context.GetDocument(i);
-	REQUIRE(document != nullptr);
-	auto style = Rml::MakeShared<Rml::StyleSheetContainer>();
-	style->MergeStyleSheetContainer(*document->GetStyleSheetContainer());
-	style->MergeStyleSheetContainer(*Rml::Factory::InstanceStyleSheetString(
-		".key-editor-rows .key-editor-row { height: 14dp; } .key-editor-body .key-editor-keys { height: 1792dp; }"));
-	document->SetStyleSheetContainer(std::move(style));
+	restyle(f, ".key-editor-rows .key-editor-row { height: 14dp; }");
 	f.scroll(127);
-	CHECK(std::abs(f.box(".key-editor-row").at("height").get<double>() - 14.0) <= 0.5);
+	CHECK(std::abs(rowHeight(f) - 14.0) <= 0.5);
+	CHECK(std::abs(keyboardHeight(f) - (128 * 14.0)) <= 1);
 
 	// A drag 100 px to the right doubles the rows' height.
-	const Json keyboard = f.box(".key-editor-keys");
-	const int left = keyboard.at("x").get<int>() + 4;
-	const int high = f.box(".key-editor-body").at("y").get<int>() + 150;
-	f.drag({"", 0, ui::Point{left, high}}, {"", 0, ui::Point{left + 100, high}});
-	CHECK(std::abs(f.box(".key-editor-row").at("height").get<double>() - 28.0) <= 0.5);
-	CHECK(std::abs(f.box(".key-editor-keys").at("height").get<double>() - (128 * 28.0)) <= 1);
+	zoomDrag(f, 100);
+	CHECK(std::abs(rowHeight(f) - 28.0) <= 0.5);
+	CHECK(std::abs(keyboardHeight(f) - (128 * 28.0)) <= 1);
+}
+
+TEST_CASE("a zoomed key editor follows a style change to the rows' height", "[ui]")
+{
+	// The zoom scales the height the style sheet gives the rows, not the one it gave them itself (#1547).
+	Fixture f({1024, 600});
+	f.app.setDpRatio(1.0F);
+	f.add({{0, 60, g_quarter}});
+	f.scroll(127);
+	zoomDrag(f, 100);
+	CHECK(std::abs(rowHeight(f) - 20.0) <= 0.5);
+
+	// At that zoom the next press on the keyboard's left part scales the new height, a click or a drag.
+	restyle(f, ".key-editor-rows .key-editor-row { height: 14dp; }");
+	const int left = f.box(".key-editor-keys").at("x").get<int>() + 4;
+	f.click({"", 0, ui::Point{left, f.box(".key-editor-body").at("y").get<int>() + 150}});
+	CHECK(std::abs(rowHeight(f) - 28.0) <= 0.5);
+	CHECK(std::abs(keyboardHeight(f) - (128 * 28.0)) <= 1);
+
+	// Back at zoom 1 the rows have the style sheet's height and follow its next change at once.
+	zoomDrag(f, -100);
+	CHECK(std::abs(rowHeight(f) - 14.0) <= 0.5);
+	restyle(f, ".key-editor-body .key-editor-rows .key-editor-row { height: 12dp; }");
+	CHECK(std::abs(rowHeight(f) - 12.0) <= 0.5);
+	CHECK(std::abs(keyboardHeight(f) - (128 * 12.0)) <= 1);
+}
+
+TEST_CASE("the keyboard's zoom zooms nothing when the style sheet gives the rows no length", "[ui]")
+{
+	// Rows sized by their content or a minimum, not a height, have nothing to scale: the zoom leaves them and the
+	// keyboard as they are (#1547).
+	Fixture f({1024, 600});
+	f.app.setDpRatio(1.0F);
+	f.add({{0, 60, g_quarter}});
+	restyle(f, ".key-editor-rows .key-editor-row { height: auto; min-height: 10dp; }");
+	f.scroll(60); // away from the top, where a zoom would move the pitches in view
+	const double top = f.box(".key-editor-key[pitch=\"60\"]").at("y").get<double>();
+	CHECK(std::abs(rowHeight(f) - 10.0) <= 0.5);
+	zoomDrag(f, 100);
+	CHECK(std::abs(rowHeight(f) - 10.0) <= 0.5);
+	CHECK(std::abs(keyboardHeight(f) - 1280.0) <= 1);
+	CHECK(std::abs(f.box(".key-editor-key[pitch=\"60\"]").at("y").get<double>() - top) <= 1);
+
+	// The rows keep no height of the zoom's: a later style's length applies at once (#1627).
+	restyle(f, ".key-editor-body .key-editor-rows .key-editor-row { height: 12dp; min-height: 0; }");
+	CHECK(std::abs(rowHeight(f) - 12.0) <= 0.5);
+	CHECK(std::abs(keyboardHeight(f) - (128 * 12.0)) <= 1);
+}
+
+TEST_CASE("the keyboard's zoom snaps to 1 near it, and the rows follow a style change at once again", "[ui]")
+{
+	// A drag back rarely lands on exactly the zoom it started from; near 1 the zoom is 1, so the zoom's heights go
+	// and a theme or style change reaches the rows without a press on the keyboard (#1627).
+	Fixture f({1024, 600});
+	f.app.setDpRatio(1.0F);
+	f.add({{0, 60, g_quarter}});
+	f.scroll(127);
+	zoomDrag(f, 100);
+	CHECK(std::abs(rowHeight(f) - 20.0) <= 0.5);
+	zoomDrag(f, -97); // 3 dp short of zoom 1
+	CHECK(std::abs(rowHeight(f) - 10.0) <= 0.5);
+	restyle(f, ".key-editor-body .key-editor-rows .key-editor-row { height: 12dp; }");
+	CHECK(std::abs(rowHeight(f) - 12.0) <= 0.5);
+
+	// Further away it zooms as before.
+	zoomDrag(f, 20);
+	CHECK(std::abs(rowHeight(f) - (12.0 * std::exp2(0.2))) <= 0.5);
 }
 
 TEST_CASE("a click and a drag on the keyboard's left part leave the selected notes and the history alone", "[ui]")
@@ -636,7 +731,7 @@ TEST_CASE("the object selection tool selects, moves, resizes, inserts and delete
 	const std::vector<uint64_t> ids = f.add({{0, 60, g_quarter}, {g_quarter, 62, g_quarter}});
 	// A click selects, Ctrl and a click adds, a click in the empty grid deselects (p. 1211).
 	f.click(of(noteSelector(ids[0])));
-	REQUIRE(f.app.waitUntil([&] { return f.selection() == std::vector<uint64_t>{ids[0]}; }));
+	REQUIRE(f.app.waitUntil([&] { return f.has(noteSelector(ids[0]), "selected"); }));
 	f.click(of(noteSelector(ids[1])), 1, {"ctrl"});
 	REQUIRE(f.app.waitUntil([&] { return f.selection().size() == 2; }));
 	f.click(f.at(12.5, 70));
@@ -687,6 +782,80 @@ TEST_CASE("the draw tool draws notes of the length quantize's length or a multip
 	f.settle();
 	CHECK(f.partNotes()[1].at("position") == 2 * g_quarter);
 	CHECK(f.partNotes()[1].at("length") == 6 * g_sixteenth);
+}
+
+TEST_CASE("a move released outside the key editor ends without its effect, a draw released there draws", "[ui]")
+{
+	Fixture f;
+	const std::vector<uint64_t> ids = f.add({{0, 60, g_sixteenth}});
+	const auto x = [&] { return f.box(noteSelector(ids[0])).at("x").get<double>(); };
+	const double before = x();
+	// A move of the note released over the editor window's toolbar, outside the key editor, ends there with the note
+	// where it was: back over the editor it doesn't follow the mouse, and a click on the parts' row above the grid
+	// moves nothing.
+	f.app.ui().press(f.window, f.at(0.5, 60), ui::MouseButton::Left);
+	REQUIRE(f.app.waitUntil([&] { return f.selection() == std::vector<uint64_t>{ids[0]}; }));
+	f.app.ui().move(f.window, f.at(6.0, 60));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.app.ui().move(f.window, f.at(6.5, 60));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return std::abs(x() - before) > 1.5; }));
+	f.app.ui().release(f.window, of("#editor-keep-contents"), ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return std::abs(x() - before) <= 1.5; }));
+	f.app.ui().move(f.window, f.at(8.5, 60));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(std::abs(x() - before) <= 1.5);
+	f.click(of(".editor-parts"));
+	CHECK_FALSE(f.app.waitUntil([&] { return f.note(ids[0]).at("position") != 0; }, std::chrono::milliseconds(300)));
+	CHECK(f.note(ids[0]).at("pitch") == 60);
+	// The draw tool's drag released above the editor draws as one released in it: from 8 sixteenths over three and a
+	// half, a note of four.
+	f.tool("draw");
+	const ui::Point later = f.at(11.5, 64).point.value_or(ui::Point{});
+	f.drag(f.at(8.3, 64), {"", 0, ui::Point{later.x, f.box(".key-editor").at("y").get<int>() - 4}});
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 2; }));
+	CHECK(f.partNotes()[1].at("position") == 8 * g_sixteenth);
+	CHECK(f.partNotes()[1].at("length") == 4 * g_sixteenth);
+	CHECK(f.partNotes()[1].at("pitch") == 64);
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note.drawing").empty(); }));
+}
+
+TEST_CASE("a draw whose release was lost ends without its effect at a press on the drawn note", "[ui]")
+{
+	Fixture f;
+	f.scroll(64);
+	f.tool("draw");
+	ui::Window* window = f.app.shell().find(f.app.appUi().editorWindowId());
+	REQUIRE(window != nullptr);
+	Rml::Context& context = window->context();
+	// The mouse leaves the window before it moves, as when the window loses the focus: no drag starts, so the button
+	// going up out there ends nothing, and the drawn note stays where it was pressed.
+	f.app.ui().press(f.window, f.at(4.3, 64), ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	context.ProcessMouseLeave();
+	context.ProcessMouseButtonUp(0, 0);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.elements(".key-note.drawing").size() == 1);
+	const Json drawn = f.box(".key-note.drawing");
+	const ui::Point on{
+		static_cast<int>(std::lround(drawn.at("x").get<double>() + (drawn.at("width").get<double>() / 2))),
+		static_cast<int>(std::lround(drawn.at("y").get<double>() + (drawn.at("height").get<double>() / 2)))};
+	// The next press goes to the drawn note and ends the draw, which takes the note out while the press still has it
+	// as its target; the press draws nothing either.
+	const Rml::Element* hit = context.GetElementAtPoint({static_cast<float>(on.x), static_cast<float>(on.y)});
+	REQUIRE(hit != nullptr);
+	REQUIRE(hit->IsClassSet("drawing"));
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	clock->advance(1.0); // no double click with the press before
+	f.app.ui().press(f.window, {"", 0, on}, ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(f.elements(".key-note.drawing").empty());
+	f.app.ui().release(f.window, {"", 0, on}, ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK_FALSE(f.app.waitUntil([&] { return !f.partNotes().empty(); }, std::chrono::milliseconds(300)));
+	CHECK(f.elements(".key-note.drawing").empty());
 }
 
 TEST_CASE("the draw tool follows a quantize grid changed in the project window", "[ui]")
@@ -947,4 +1116,535 @@ TEST_CASE("the inspector's Chord Editing section shows and changes the chord of 
 	REQUIRE(f.app.waitUntil([&] { return f.note(ids[0]).at("pitch") == 72; }));
 	f.settle();
 	CHECK(f.elements(".editor-chord-type").at(0).value("text", "") == "Cm");
+}
+
+TEST_CASE("Show Note Expression Data shows the notes' expression over them", "[ui]")
+{
+	Fixture f;
+	const std::vector<uint64_t> ids = f.add({{0, 60, 2 * g_quarter}, {2 * g_quarter, 62, g_quarter}});
+	const auto point = [](const char* type, int64_t position, double value)
+	{ return Json{{"type", type}, {"position", position}, {"value", value}}; };
+	f.app.call("note.set",
+		{{"part", f.part},
+			{"notes",
+				Json::array({{{"id", ids[0]},
+								 {"expressions",
+									 Json::array({point("tuning", 0, 0.0), point("tuning", g_quarter, 24.0),
+										 point("pressure", g_quarter, 1.0)})}},
+					{{"id", ids[1]},
+						{"expressions", Json::array({point("volume", 0, 3.0), point("tuning", 0, 60.0)})}}})}});
+	f.settle();
+	const std::string steps = noteSelector(ids[0]) + " .key-expression-step";
+	CHECK(f.elements(steps).empty()); // off by default (reference manual p. 1303)
+	f.click(of(".key-input[setting=showExpression]"));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(steps).size() == 3; }));
+	CHECK(f.view().at("showExpression") == true);
+	CHECK(f.has(".key-input[setting=showExpression]", "checked"));
+	// Each point is a line from it to the next one at its value: tuning in MPE's range of 48 semitones each way, the
+	// others 0 to 1, from the note's bottom to its top.
+	const Json note = f.box(noteSelector(ids[0]));
+	const auto near = [](const Json& value, double expected)
+	{ return std::abs(value.get<double>() - expected) <= 2.0; };
+	const double x = note.at("x").get<double>();
+	const double y = note.at("y").get<double>();
+	const double width = note.at("width").get<double>();
+	const double height = note.at("height").get<double>();
+	const Json shown = f.elements(steps);
+	CHECK(near(shown.at(0).at("box").at("x"), x));
+	CHECK(near(shown.at(0).at("box").at("width"), width / 2));
+	CHECK(near(shown.at(0).at("box").at("y"), y + (height / 2)));
+	CHECK(near(shown.at(1).at("box").at("x"), x + (width / 2)));
+	CHECK(near(shown.at(1).at("box").at("y"), y + (height / 4)));
+	CHECK(near(shown.at(2).at("box").at("x"), x + (width / 2))); // pressure
+	CHECK(near(shown.at(2).at("box").at("y"), y));
+	// Volume goes from 0 to 4, and tuning beyond 48 semitones shows at the edge.
+	const Json second = f.box(noteSelector(ids[1]));
+	const Json other = f.elements(noteSelector(ids[1]) + " .key-expression-step");
+	REQUIRE(other.size() == 2);
+	CHECK(near(other.at(0).at("box").at("y"),
+		second.at("y").get<double>() + (second.at("height").get<double>() / 4))); // volume 3
+	CHECK(near(other.at(1).at("box").at("y"), second.at("y").get<double>()));     // tuning 60
+	f.click(of(".key-input[setting=showExpression]"));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(steps).empty(); }));
+}
+
+TEST_CASE(
+	"a double click opens the note expression editor, where the draw tool draws points and the erase tool deletes "
+	"them",
+	"[ui]")
+{
+	Fixture f;
+	const std::vector<uint64_t> ids = f.add({{0, 60, 2 * g_quarter}, {3 * g_quarter, 64, g_quarter}});
+	f.settle();
+	f.click(of(".key-input[setting=expressionDoubleClick]"));
+	REQUIRE(f.app.waitUntil([&] { return f.has(".key-input[setting=expressionDoubleClick]", "checked"); }));
+	CHECK(f.has(".key-expression-editor", "off"));
+	// With Double-Click Opens Note Expression Editor a double click opens it on the note instead of deleting it
+	// (reference manual p. 1308), over the note's time, with tuning chosen.
+	f.click(of(noteSelector(ids[0])), 2);
+	REQUIRE(f.app.waitUntil([&] { return !f.has(".key-expression-editor", "off"); }));
+	CHECK(f.partNotes().size() == 2);
+	CHECK(f.selection() == std::vector<uint64_t>{ids[0]});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const Json editor = f.box(".key-expression-editor");
+	const Json note = f.box(noteSelector(ids[0]));
+	CHECK(std::abs(editor.at("x").get<double>() - note.at("x").get<double>()) <= 1.5);
+	CHECK(std::abs(editor.at("width").get<double>() - note.at("width").get<double>()) <= 1.5);
+	CHECK(f.elements(".key-expression-type").at(0).at("text") == "Tuning");
+
+	// Parameter Selection chooses the expression (p. 1309).
+	f.click(of(".key-expression-type"));
+	f.click(of("#key-expression-menu > menuitem[expression-type=pressure]"));
+	REQUIRE(f.app.waitUntil([&] { return f.view().at("expressionType") == "pressure"; }));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-expression-type").at(0).at("text") == "Pressure"; }));
+
+	// A point in the editor's area: x and y in parts of its width and height from the top left.
+	const auto area = [&f](double x, double y)
+	{
+		const Json box = f.box(".key-expression-area");
+		return ui::Target{"", 0,
+			ui::Point{static_cast<int>(std::lround(box.at("x").get<double>() + (x * box.at("width").get<double>()))),
+				static_cast<int>(std::lround(box.at("y").get<double>() + (y * box.at("height").get<double>())))}};
+	};
+	const auto points = [&f, &ids]
+	{
+		const Json found = f.note(ids[0]);
+		return found.is_null() ? Json::array() : found.value("expressions", Json::array());
+	};
+	// The draw tool draws a point where it clicks (p. 1311), its value from the area's height.
+	f.tool("draw");
+	f.click(area(0.25, 0.25));
+	REQUIRE(f.app.waitUntil([&] { return points().size() == 1; }));
+	CHECK(points().at(0).at("type") == "pressure");
+	CHECK(std::abs(points().at(0).at("position").get<double>() - (g_quarter / 2.0)) <= g_sixteenth / 4.0);
+	CHECK(std::abs(points().at(0).at("value").get<double>() - 0.75) <= 0.05);
+	// The editor shows it once the note has it.
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-expression-area .key-expression-step").size() == 1; }));
+	// A click a few pixels to the right, on the line drawn from that point, draws one there too.
+	// After the frame a line that took mouse events would be the next press's target; the lines take none.
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const ui::Point first = area(0.25, 0.25).point.value_or(ui::Point{});
+	f.click(ui::Target{"", 0, ui::Point{first.x + 6, first.y}});
+	REQUIRE(f.app.waitUntil([&] { return points().size() == 2; }));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-expression-area .key-expression-step").size() == 2; }));
+	// A drag draws the points along the way, replacing those there, and stays with the expression editor.
+	f.drag(area(0.5, 0.9), area(0.75, 0.1));
+	REQUIRE(f.app.waitUntil([&] { return points().size() >= 4; }));
+	CHECK(std::abs(points().at(2).at("value").get<double>() - 0.1) <= 0.05);
+	CHECK(std::abs(points().back().at("value").get<double>() - 0.9) <= 0.05);
+	CHECK(!f.has(".key-expression-editor", "off"));
+	// One undo step brings back the points before the drag.
+	f.app.call("history.undo");
+	REQUIRE(f.app.waitUntil([&] { return points().size() == 2; }));
+	f.app.call("history.redo");
+	REQUIRE(f.app.waitUntil([&] { return points().size() >= 4; }));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-expression-area .key-expression-step").size() >= 4; }));
+	// The erase tool deletes the points it is dragged over, of the chosen expression only.
+	f.app.call("note.set",
+		{{"part", f.part},
+			{"notes",
+				Json::array({{{"id", ids[0]},
+					{"expressions",
+						Json::array({{{"type", "tuning"}, {"position", 0}, {"value", 2.0}},
+							{{"type", "pressure"}, {"position", g_quarter / 2}, {"value", 0.5}},
+							{{"type", "pressure"}, {"position", g_quarter}, {"value", 0.5}}})}}})}});
+	REQUIRE(f.app.waitUntil([&] { return points().size() == 3; }));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-expression-area .key-expression-step").size() == 2; }));
+	f.tool("erase");
+	f.drag(area(0.2, 0.5), area(0.95, 0.5));
+	REQUIRE(f.app.waitUntil([&] { return points().size() == 1; }));
+	CHECK(points().at(0).at("type") == "tuning");
+
+	// A click in the note display outside it closes it and changes nothing else.
+	f.click(f.at(12.5, 70));
+	REQUIRE(f.app.waitUntil([&] { return f.has(".key-expression-editor", "off"); }));
+	CHECK(f.selection() == std::vector<uint64_t>{ids[0]});
+	CHECK(f.partNotes().size() == 2);
+	// Without the setting a double click deletes the note as before.
+	f.click(of(".key-input[setting=expressionDoubleClick]"));
+	REQUIRE(f.app.waitUntil([&] { return !f.has(".key-input[setting=expressionDoubleClick]", "checked"); }));
+	f.tool("objectSelection");
+	f.click(of(noteSelector(ids[1])), 2);
+	REQUIRE(f.app.waitUntil([&] { return f.note(ids[1]).is_null(); }));
+	CHECK(f.has(".key-expression-editor", "off"));
+}
+
+TEST_CASE("the expression editor opens on the double-clicked note and edits the selected notes of two parts at their "
+		  "times, in one undo step",
+	"[ui]")
+{
+	Fixture f;
+	// A second track's part over the same bar, open in the editor with the first one.
+	const uint64_t other = f.app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	const uint64_t otherPart =
+		f.app.call("midiPart.add", {{"track", other}, {"position", 0}, {"length", g_bar}, {"name", "Other"}})
+			.at("part")
+			.at("id")
+			.get<uint64_t>();
+	const auto add = [&f](uint64_t part, int64_t position, int pitch)
+	{
+		return f.app
+			.call("note.add",
+				{{"part", part},
+					{"notes",
+						Json::array(
+							{{{"position", position}, {"length", g_quarter}, {"pitch", pitch}, {"velocity", 0.5}}})}})
+			.at("notes")
+			.at(0)
+			.at("id")
+			.get<uint64_t>();
+	};
+	const uint64_t first = add(f.part, 0, 60);
+	const uint64_t middle = add(otherPart, g_quarter, 56);
+	const uint64_t last = add(f.part, 2 * g_quarter, 64);
+	f.app.call("editor.open", {{"editor", "window"}, {"parts", Json::array({f.part, otherPart})}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note").size() == 3; }));
+	f.scroll(60);
+	const auto selector = [](uint64_t part, uint64_t id)
+	{ return ".key-note[part=\"" + std::to_string(part) + "\"][note=\"" + std::to_string(id) + "\"]"; };
+	// Laid out: each note a quarter of the bar wide.
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const Json shown = f.elements(".key-note");
+			const double quarter = f.box(".key-editor-grid").at("width").get<double>() / 4;
+			return std::all_of(shown.begin(), shown.end(),
+				[&](const Json& note) { return std::abs(note.at("box").at("width").get<double>() - quarter) <= 1.5; });
+		}));
+	const auto points = [&f](uint64_t part, uint64_t id)
+	{
+		const Json project = f.app.call("project.get");
+		for (const Json& each : project.at("midiParts"))
+			if (each.at("id") == part)
+				for (const Json& note : each.at("notes"))
+					if (note.at("id") == id)
+						return note.value("expressions", Json::array());
+		return Json::array();
+	};
+	f.app.call("editor.set",
+		{{"editor", "window"}, {"expressionDoubleClick", true},
+			{"selection",
+				Json::array({{{"part", f.part}, {"note", first}}, {{"part", otherPart}, {"note", middle}},
+					{{"part", f.part}, {"note", last}}})}});
+	REQUIRE(f.app.waitUntil([&] { return f.selection().size() == 3; }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+
+	// A double click on a selected note opens the editor on all of them (reference manual p. 1308): from the first
+	// one's start to the last one's end, centered on the note clicked.
+	f.click(of(selector(f.part, last)), 2);
+	REQUIRE(f.app.waitUntil([&] { return !f.has(".key-expression-editor", "off"); }));
+	CHECK(f.selection().size() == 3);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const Json editor = f.box(".key-expression-editor");
+	const Json grid = f.box(".key-editor-grid");
+	const Json clicked = f.box(selector(f.part, last));
+	CHECK(std::abs(editor.at("x").get<double>() - grid.at("x").get<double>()) <= 1.5);
+	CHECK(std::abs(editor.at("width").get<double>() - (grid.at("width").get<double>() * 3 / 4)) <= 1.5);
+	CHECK(std::abs(editor.at("y").get<double>() + (editor.at("height").get<double>() / 2) -
+			  (clicked.at("y").get<double>() + (clicked.at("height").get<double>() / 2))) <= 1.5);
+
+	const auto area = [&f](double x, double y)
+	{
+		const Json box = f.box(".key-expression-area");
+		return ui::Target{"", 0,
+			ui::Point{static_cast<int>(std::lround(box.at("x").get<double>() + (x * box.at("width").get<double>()))),
+				static_cast<int>(std::lround(box.at("y").get<double>() + (y * box.at("height").get<double>())))}};
+	};
+	const auto near = [](const Json& value, double expected, double tolerance)
+	{ return std::abs(value.get<double>() - expected) <= tolerance; };
+	// A click reaches the note at its time only, at its position from that note's start.
+	f.tool("draw");
+	f.click(area(0.5, 0.25));
+	REQUIRE(f.app.waitUntil([&] { return points(otherPart, middle).size() == 1; }));
+	CHECK(near(points(otherPart, middle).at(0).at("position"), g_quarter / 2.0, g_sixteenth / 4.0));
+	CHECK(near(points(otherPart, middle).at(0).at("value"), 24.0, 2.0));
+	CHECK(points(f.part, first).empty());
+	CHECK(points(f.part, last).empty());
+	// A drag over all three at one height gives each note one point: the mouse's other positions change no value.
+	f.drag(area(0.02, 0.75), area(0.98, 0.75));
+	REQUIRE(f.app.waitUntil([&] { return points(f.part, last).size() == 1; }));
+	for (const auto& [part, id] : {std::pair{f.part, first}, std::pair{otherPart, middle}, std::pair{f.part, last}})
+	{
+		REQUIRE(points(part, id).size() == 1);
+		CHECK(near(points(part, id).at(0).at("value"), -24.0, 2.0));
+	}
+	// The notes of both parts change in one undo step.
+	f.app.call("history.undo");
+	REQUIRE(f.app.waitUntil([&] { return points(f.part, last).empty(); }));
+	CHECK(points(f.part, first).empty());
+	REQUIRE(points(otherPart, middle).size() == 1);
+	CHECK(near(points(otherPart, middle).at(0).at("value"), 24.0, 2.0));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-expression-area .key-expression-step").size() == 1; }));
+
+	// The erase tool's click deletes the point within a few dp of it.
+	f.tool("erase");
+	f.click(area(0.5, 0.5));
+	REQUIRE(f.app.waitUntil([&] { return points(otherPart, middle).empty(); }));
+	// Volume goes from 0 to 4.
+	f.app.call("editor.set", {{"editor", "window"}, {"expressionType", "volume"}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-expression-type").at(0).at("text") == "Volume"; }));
+	f.tool("draw");
+	f.click(area(0.5, 0.25));
+	REQUIRE(f.app.waitUntil([&] { return points(otherPart, middle).size() == 1; }));
+	CHECK(points(otherPart, middle).at(0).at("type") == "volume");
+	CHECK(near(points(otherPart, middle).at(0).at("value"), 3.0, 0.1));
+	// With Shift tuning goes in semitone steps (Vertical Snap, p. 1309).
+	f.app.call("editor.set", {{"editor", "window"}, {"expressionType", "tuning"}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-expression-type").at(0).at("text") == "Tuning"; }));
+	f.click(area(0.75, 0.3), 1, {"shift"});
+	REQUIRE(f.app.waitUntil([&] { return points(f.part, last).size() == 1; }));
+	const double snapped = points(f.part, last).at(0).at("value").get<double>();
+	CHECK(snapped == std::round(snapped));
+	CHECK(std::abs(snapped - 19.0) <= 2.0);
+
+	// A selection without notes closes it.
+	f.app.call("editor.set", {{"editor", "window"}, {"selection", Json::array()}});
+	REQUIRE(f.app.waitUntil([&] { return f.has(".key-expression-editor", "off"); }));
+}
+
+TEST_CASE("the expression editor stays in the note display, is never narrower than its button, and its draw ends "
+		  "where the button goes up outside the window",
+	"[ui]")
+{
+	Fixture f;
+	// A short note on the top row.
+	const std::vector<uint64_t> ids = f.add({{0, 127, g_sixteenth / 2}});
+	f.settle();
+	f.app.call("editor.set", {{"editor", "window"}, {"expressionDoubleClick", true}});
+	REQUIRE(f.app.waitUntil([&] { return f.has(".key-input[setting=expressionDoubleClick]", "checked"); }));
+	f.click(of(noteSelector(ids[0])), 2);
+	REQUIRE(f.app.waitUntil([&] { return !f.has(".key-expression-editor", "off"); }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const Json editor = f.box(".key-expression-editor");
+	const Json grid = f.box(".key-editor-grid");
+	CHECK(editor.at("y").get<double>() >= grid.at("y").get<double>() - 0.5);
+	CHECK(editor.at("y").get<double>() + editor.at("height").get<double>() <=
+		grid.at("y").get<double>() + grid.at("height").get<double>() + 0.5);
+	CHECK(editor.at("width").get<double>() >= f.box(".key-expression-type").at("width").get<double>());
+	CHECK(editor.at("width").get<double>() > f.box(noteSelector(ids[0])).at("width").get<double>());
+
+	// A draw released outside the window, where no mouseup arrives, ends at the drag's end, with what it drew.
+	const auto points = [&f, &ids]
+	{
+		const Json found = f.note(ids[0]);
+		return found.is_null() ? Json::array() : found.value("expressions", Json::array());
+	};
+	f.tool("draw");
+	const Json area = f.box(".key-expression-area");
+	f.app.ui().press(f.window,
+		ui::Target{"", 0,
+			ui::Point{static_cast<int>(std::lround(area.at("x").get<double>() + (area.at("width").get<double>() / 2))),
+				static_cast<int>(std::lround(area.at("y").get<double>() + (area.at("height").get<double>() / 2)))}},
+		ui::MouseButton::Left, {});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	ui::Window* window = f.app.shell().find(f.app.appUi().editorWindowId());
+	REQUIRE(window != nullptr);
+	Rml::Context& context = window->context();
+	context.ProcessMouseMove(-50, -50, 0);
+	context.ProcessMouseLeave();
+	context.ProcessMouseButtonUp(0, 0);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return !points().empty(); }));
+	const Json drawn = points();
+	// The mouse back over the editor with the button up draws nothing, and a click outside it only closes it.
+	f.app.ui().move(f.window, f.at(1, 127), {});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.click(f.at(12.5, 127));
+	REQUIRE(f.app.waitUntil([&] { return f.has(".key-expression-editor", "off"); }));
+	f.settle();
+	CHECK(points() == drawn);
+	f.app.call("history.undo");
+	REQUIRE(f.app.waitUntil([&] { return points().empty(); }));
+}
+
+TEST_CASE("the expression editor on a short note at the end of the bottom row stays in the note display and draws at "
+		  "the note's last tick at its right edge",
+	"[ui]")
+{
+	Fixture f;
+	const int64_t length = g_sixteenth; // on the quantize grid, which a click on a note snaps it to
+	const std::vector<uint64_t> ids = f.add({{g_bar - length, 0, length}});
+	f.settle();
+	f.app.call("editor.set", {{"editor", "window"}, {"expressionDoubleClick", true}});
+	REQUIRE(f.app.waitUntil([&] { return f.has(".key-input[setting=expressionDoubleClick]", "checked"); }));
+	f.click(of(noteSelector(ids[0])), 2);
+	REQUIRE(f.app.waitUntil([&] { return !f.has(".key-expression-editor", "off"); }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	// As wide as its button, which is wider than the note: it ends at the note display's right edge, not past it, and
+	// stays above its bottom row.
+	const Json editor = f.box(".key-expression-editor");
+	const Json grid = f.box(".key-editor-grid");
+	CHECK(editor.at("width").get<double>() > f.box(noteSelector(ids[0])).at("width").get<double>());
+	CHECK(editor.at("x").get<double>() + editor.at("width").get<double>() <=
+		grid.at("x").get<double>() + grid.at("width").get<double>() + 0.5);
+	CHECK(editor.at("y").get<double>() + editor.at("height").get<double>() <=
+		grid.at("y").get<double>() + grid.at("height").get<double>() + 0.5);
+
+	// A draw that ends at the right edge leaves its last point at the note's last tick, where it still plays.
+	f.tool("draw");
+	const Json area = f.box(".key-expression-area");
+	const auto point = [&area](double x, double y)
+	{
+		return ui::Target{"", 0,
+			ui::Point{static_cast<int>(std::ceil(area.at("x").get<double>() + (x * area.at("width").get<double>()))),
+				static_cast<int>(std::lround(area.at("y").get<double>() + (y * area.at("height").get<double>())))}};
+	};
+	f.drag(point(0.5, 0.75), point(1.0, 0.25));
+	REQUIRE(f.app.waitUntil([&] { return !f.note(ids[0]).value("expressions", Json::array()).empty(); }));
+	const Json points = f.note(ids[0]).at("expressions");
+	CHECK(points.back().at("position") == length - 1);
+	CHECK(std::abs(points.back().at("value").get<double>() - 24.0) <= 2.0);
+}
+
+TEST_CASE("the note expression lines join the steps narrower than a pixel", "[ui]")
+{
+	// A recorded MPE note has a point every few milliseconds (#1671): the overlay and the expression editor draw a
+	// line per pixel at most, not one per point.
+	Fixture f;
+	const std::vector<uint64_t> ids = f.add({{0, 60, 2 * g_quarter}});
+	Json points = Json::array();
+	constexpr int count = 2000;
+	for (int i = 0; i < count; ++i)
+		points.push_back(
+			{{"type", "tuning"}, {"position", 2 * g_quarter * i / count}, {"value", i % 2 == 0 ? 10.0 : -10.0}});
+	f.app.call("note.set", {{"part", f.part}, {"notes", Json::array({{{"id", ids[0]}, {"expressions", points}}})}});
+	f.app.call("editor.set", {{"editor", "window"}, {"showExpression", true}, {"expressionDoubleClick", true}});
+	const std::string steps = noteSelector(ids[0]) + " .key-expression-step";
+	REQUIRE(f.app.waitUntil([&] { return !f.elements(steps).empty(); }));
+	f.settle();
+	const double width = f.box(noteSelector(ids[0])).at("width").get<double>();
+	REQUIRE(width < count / 2.0);
+	CHECK(static_cast<double>(f.elements(steps).size()) <= width + 2);
+	CHECK(static_cast<double>(f.elements(steps).size()) >= width / 2);
+	f.click(of(noteSelector(ids[0])), 2);
+	REQUIRE(f.app.waitUntil([&] { return !f.has(".key-expression-editor", "off"); }));
+	REQUIRE(f.app.waitUntil([&] { return !f.elements(".key-expression-area .key-expression-step").empty(); }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const double area = f.box(".key-expression-area").at("width").get<double>();
+	CHECK(static_cast<double>(f.elements(".key-expression-area .key-expression-step").size()) <= area + 2);
+}
+
+TEST_CASE(
+	"the key editor window joins a dense note's expression steps by its pixels after its layout and a resize", "[ui]")
+{
+	// The window renders its notes before its first layout, when a pixel has no ticks yet: opened on a recorded MPE
+	// note with Show Note Expression Data already on, and resized, it builds the lines again for its width (#1671).
+	Fixture f;
+	const std::vector<uint64_t> ids = f.add({{0, 60, 2 * g_quarter}});
+	Json points = Json::array();
+	constexpr int count = 2000;
+	for (int i = 0; i < count; ++i)
+		points.push_back(
+			{{"type", "tuning"}, {"position", 2 * g_quarter * i / count}, {"value", i % 2 == 0 ? 10.0 : -10.0}});
+	f.app.call("note.set", {{"part", f.part}, {"notes", Json::array({{{"id", ids[0]}, {"expressions", points}}})}});
+	f.app.call("editor.set", {{"editor", "window"}, {"showExpression", true}});
+	f.app.call("editor.close", {{"editor", "window"}});
+	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().editorWindow() == nullptr; }));
+	f.app.call("editor.open", {{"editor", "window"}, {"parts", Json::array({f.part})}});
+	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().editorWindow() != nullptr; }));
+	f.window = f.app.appUi().editorWindowId();
+	const std::string steps = noteSelector(ids[0]) + " .key-expression-step";
+	REQUIRE(f.app.waitUntil([&] { return !f.elements(steps).empty(); }));
+	const auto perPixel = [&f, &steps, &ids]
+	{
+		f.app.shell().step(std::chrono::milliseconds(0));
+		const double width = f.box(noteSelector(ids[0])).at("width").get<double>();
+		const auto shown = static_cast<double>(f.elements(steps).size());
+		INFO("width " << width << ", lines " << shown);
+		CHECK(width < count / 4.0);
+		CHECK(shown <= width + 2);
+		CHECK(shown >= width * 0.8);
+		return width;
+	};
+	const double before = perPixel();
+	const ui::WindowId window = f.app.appUi().editorWindowId();
+	const ui::Rect bounds = f.app.shell().bounds(window);
+	// A pixel with a fifth more ticks keeps the lines: they are built again only when it has a quarter more or fewer
+	// (#1716), not on every frame of a scroll across a tempo change in the project window's in-place editor. The note
+	// is half the note display wide.
+	const size_t lines = f.elements(steps).size();
+	const int narrower = bounds.width - static_cast<int>(std::lround(before * 2 / 6));
+	f.app.shell().setBounds(window, {bounds.x, bounds.y, narrower, bounds.height});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const double width = f.box(noteSelector(ids[0])).at("width").get<double>();
+	REQUIRE(width < before * 0.88);
+	REQUIRE(width > before * 0.8);
+	CHECK(f.elements(steps).size() == lines);
+	f.app.shell().setBounds(window, {bounds.x, bounds.y, bounds.width / 2, bounds.height});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(perPixel() < before * 0.8);
+}
+
+TEST_CASE("the lower zone's key editor joins a dense note's expression steps by its pixels after its layout and as the "
+		  "main window narrows",
+	"[ui]")
+{
+	// The app's update task fits the lines of the lower zone's key editor too, which renders before its layout (#1724).
+	Fixture f;
+	const std::vector<uint64_t> ids = f.add({{0, 60, 2 * g_quarter}});
+	Json points = Json::array();
+	constexpr int count = 4000;
+	for (int i = 0; i < count; ++i)
+		points.push_back(
+			{{"type", "tuning"}, {"position", 2 * g_quarter * i / count}, {"value", i % 2 == 0 ? 10.0 : -10.0}});
+	f.app.call("note.set", {{"part", f.part}, {"notes", Json::array({{{"id", ids[0]}, {"expressions", points}}})}});
+	f.app.call("editor.close", {{"editor", "window"}});
+	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().editorWindow() == nullptr; }));
+	f.app.appUi().showProject();
+	f.app.appUi().docking().setSize("project", "lower", 400.0);
+	f.window = f.app.main().id();
+	f.app.call("editor.open", {{"editor", "lower"}, {"parts", Json::array({f.part})}});
+	f.app.call("editor.set", {{"editor", "lower"}, {"showExpression", true}});
+	const std::string steps = noteSelector(ids[0]) + " .key-expression-step";
+	REQUIRE(f.app.waitUntil([&] { return !f.elements(steps).empty(); }));
+	const auto perPixel = [&f, &steps, &ids]
+	{
+		f.app.shell().step(std::chrono::milliseconds(0));
+		const double width = f.box(noteSelector(ids[0])).at("width").get<double>();
+		const auto shown = static_cast<double>(f.elements(steps).size());
+		INFO("width " << width << ", lines " << shown);
+		CHECK(width < count / 4.0);
+		CHECK(shown <= width + 2);
+		CHECK(shown >= width * 0.8);
+		return width;
+	};
+	const double before = perPixel();
+	const ui::Rect bounds = f.app.shell().bounds(f.app.main().id());
+	f.app.shell().setBounds(f.app.main().id(), {bounds.x, bounds.y, bounds.width / 2, bounds.height});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(perPixel() < before * 0.8);
+}
+
+TEST_CASE("the expression editor stays centered on its note as the pitches zoom", "[ui]")
+{
+	Fixture f({1024, 600});
+	f.app.setDpRatio(1.0F);
+	const std::vector<uint64_t> ids = f.add({{0, 60, g_quarter}});
+	f.scroll(60);
+	f.app.call("editor.set", {{"editor", "window"}, {"expressionDoubleClick", true}});
+	REQUIRE(f.app.waitUntil([&] { return f.has(".key-input[setting=expressionDoubleClick]", "checked"); }));
+	f.click(of(noteSelector(ids[0])), 2);
+	REQUIRE(f.app.waitUntil([&] { return !f.has(".key-expression-editor", "off"); }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const auto centered = [&f, &ids]
+	{
+		const Json editor = f.box(".key-expression-editor");
+		const Json note = f.box(noteSelector(ids[0]));
+		return std::abs(editor.at("y").get<double>() + (editor.at("height").get<double>() / 2) -
+				   (note.at("y").get<double>() + (note.at("height").get<double>() / 2))) <= 1.5;
+	};
+	CHECK(centered());
+	const Json keyboard = f.box(".key-editor-keys");
+	const int left = keyboard.at("x").get<int>() + 4; // the keyboard's left 12 dp, where a drag zooms (p. 1261)
+	const int row = f.box(".key-editor-body").at("y").get<int>() + 150;
+	const auto at = [](int x, int y) { return ui::Target{"", 0, ui::Point{x, y}}; };
+	// From 1 to 2, to 4 and back to 1: the editor keeps its height and stays on the note's row.
+	for (const auto& [dx, height] : {std::pair{100, 20.0}, std::pair{100, 40.0}, std::pair{-200, 10.0}})
+	{
+		f.drag(at(left, row), at(left + dx, row));
+		f.app.shell().step(std::chrono::milliseconds(0));
+		REQUIRE(std::abs(f.box(".key-editor-row").at("height").get<double>() - height) <= 0.5);
+		CHECK(!f.has(".key-expression-editor", "off"));
+		CHECK(centered());
+	}
 }

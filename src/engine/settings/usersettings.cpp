@@ -797,7 +797,7 @@ namespace gnubase::engine::settings
 					"to Project Cursor Position), and for the transpose track transposeMute (Mute Transpose Events), "
 					"keepInOctave (Keep Transpose in Octave Range) and transposeLock (Lock), for the chord track "
 					"chordRecord (Record Enable), chordMute (Mute Chord Track), chordAudition (Select Track for "
-					"Auditioning) and showScales (Show Scales). "
+					"Auditioning) and showScales (Show Scales), and for folders groupEditing (Group Editing). "
 					"Mute and solo always show on tracks with a channel; a type left out shows none.",
 					Json{{"type", "object"},
 						{"additionalProperties",
@@ -810,12 +810,12 @@ namespace gnubase::engine::settings
 												"timeOffset", "setTimeOffset", "transposeMute", "keepInOctave",
 												"transposeLock", "chordRecord", "chordMute", "chordAudition",
 												"showScales", "addPositionMarker", "addCycleMarker",
-												"activateMarkerTrack", "markerLocate", "markerCycle",
-												"markerZoom"}}}}}}},
+												"activateMarkerTrack", "markerLocate", "markerCycle", "markerZoom",
+												"groupEditing"}}}}}}},
 					Json{{"audio", {"mute", "solo", "record", "monitor", "read"}},
 						{"instrument", {"mute", "solo", "record", "monitor", "read"}},
 						{"midi", {"mute", "solo", "record", "monitor", "read"}}, {"group", {"mute", "solo", "read"}},
-						{"effect", {"mute", "solo", "read"}}, {"folder", {"mute", "solo", "read"}},
+						{"effect", {"mute", "solo", "read"}}, {"folder", {"mute", "solo", "read", "groupEditing"}},
 						{"marker",
 							{"addPositionMarker", "addCycleMarker", "activateMarkerTrack", "markerLocate",
 								"markerCycle", "markerZoom"}},

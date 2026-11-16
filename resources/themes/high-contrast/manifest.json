@@ -333,6 +333,28 @@
         "bottom": 6
       }
     },
+    "dropdown-button-pressed": {
+      "file": "dropdown-button-pressed.svg",
+      "width": 24,
+      "height": 24,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
+    "dropdown-button-disabled": {
+      "file": "dropdown-button-disabled.svg",
+      "width": 24,
+      "height": 24,
+      "slice": {
+        "left": 6,
+        "top": 6,
+        "right": 6,
+        "bottom": 6
+      }
+    },
     "disclosure-open": {
       "file": "disclosure-open.svg",
       "width": 24,

@@ -1359,6 +1359,41 @@ TEST_CASE("a jump limited to parts chases the sound slot that a part continues f
 	CHECK(controllersPlayed(song.client) == ControllerBytes{{0xB0, 32, 64}});
 }
 
+TEST_CASE(
+	"a MIDI track heard again with the chase limited to parts chases the sound slot a part continues", "[integration]")
+{
+	// As above on the MIDI track, which was disabled while playback went from part A into part B: heard again, it
+	// gets A's controller 32 at 64, as B continues A's slot (#1521, #1600).
+	Song song(64);
+	const Json map = run(song.client, "articulationMap.add",
+		{{"name", "Strings"}, {"articulations", {{{"name", "Staccato"}, {"type", "attribute"}, {"group", 0}}}},
+			{"slots",
+				{{{"name", "Arco"}},
+					{{"name", "Staccato"}, {"articulations", {"Staccato"}},
+						{"outputs", {{{"status", "controller"}, {"data1", 32}, {"data2", 64}}}}}}}});
+	run(song.client, "track.set", {{"track", song.midi}, {"articulationMap", map.at("map").at("id")}});
+	run(song.client, "settings.set", {{"key", "midi.chaseBeyondParts"}, {"value", false}});
+	for (const int64_t start : {48000, 50000})
+	{
+		const ObjectId part = idOf(run(song.client, "midiPart.add",
+									   {{"track", song.midi}, {"position", ticks(start)}, {"length", ticks(2000)}}),
+			"part");
+		run(song.client, "note.add",
+			{{"part", part},
+				{"notes",
+					{{{"position", 0}, {"length", ticks(1000)}, {"pitch", 60}, {"velocity", 0.8},
+						{"articulations", {"Staccato"}}}}}});
+	}
+	run(song.client, "midi.capture", {{"start", true}});
+	run(song.client, "track.set", {{"track", song.midi}, {"enabled", false}});
+	run(song.client, "transport.locate", {{"position", 47000}});
+	run(song.client, "transport.play");
+	run(song.client, "audio.render", {{"frames", 3500}});
+	run(song.client, "midi.capture");
+	run(song.client, "track.set", {{"track", song.midi}, {"enabled", true}});
+	CHECK(controllersPlayed(song.client, false) == ControllerBytes{{0xB0, 32, 64}});
+}
+
 TEST_CASE("the chase settings are user settings", "[integration]")
 {
 	Engine engine;

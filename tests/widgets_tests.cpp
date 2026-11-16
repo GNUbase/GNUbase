@@ -14,6 +14,7 @@
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/Input.h>
@@ -654,6 +655,60 @@ TEST_CASE("context menus open at the mouse on a right click, inside the window, 
 	CHECK_FALSE(visible(app, "#track-menu"));
 }
 
+TEST_CASE("an open menu whose items change moves inside the window, from where it opened until input came", "[ui]")
+{
+	// #1665: the items that the opening press changes, as a lane's context menu's for the lane's type, place the menu
+	// as if they had been there when it opened: one that shrinks goes back to the mouse. After the next input it stays
+	// where it is while it fits, as a menu whose search leaves items out, and moves only as far as it must when it
+	// grows. Each move asks for the update that shows the menu there.
+	test::UiApp app;
+	Rml::ElementDocument& document = app.show("popups.rml");
+	Rml::Context& context = *document.GetContext();
+	Rml::Element& gone = *document.GetElementById("gone");
+	Rml::Element& menu = *document.GetElementById("track-menu");
+	const auto top = [&menu] { return menu.GetAbsoluteOffset(Rml::BoxArea::Border).y; };
+
+	// The menu's height without and with the item.
+	const auto height = [&app]
+	{
+		app.ui().click(std::nullopt, at("#track"), ui::MouseButton::Right, 1, {});
+		const int shown = element(app, "#track-menu").at("box").at("height").get<int>();
+		app.ui().key(std::nullopt, "Escape");
+		return shown;
+	};
+	const int shorter = height();
+	gone.SetClass("hidden", false);
+	const int taller = height();
+	REQUIRE(taller > shorter + 5);
+
+	// A press where the shorter menu fits under the mouse and the taller one doesn't: the press hides the item.
+	ui::widgets::Listener press([&gone](Rml::Event& /*event*/) { gone.SetClass("hidden", true); });
+	Rml::Element& low = *document.GetElementById("low");
+	low.AddEventListener(Rml::EventId::Mousedown, &press);
+	const int bottom = windowSize(app).height;
+	const int y = bottom - shorter - 5;
+	context.ProcessMouseMove(20, y, 0);
+	context.ProcessMouseButtonDown(1, 0);
+	low.RemoveEventListener(Rml::EventId::Mousedown, &press);
+	context.Update();
+	CHECK(context.GetNextUpdateDelay() == 0.0);
+	context.Update();
+	CHECK(top() == Catch::Approx(y));
+	context.ProcessMouseButtonUp(1, 0);
+
+	// After that input: grown, it moves up as far as it must; shrunk again, it stays.
+	gone.SetClass("hidden", false);
+	context.Update();
+	CHECK(context.GetNextUpdateDelay() == 0.0);
+	context.Update();
+	CHECK(top() == Catch::Approx(bottom - taller));
+	gone.SetClass("hidden", true);
+	context.Update();
+	context.Update();
+	CHECK(top() == Catch::Approx(bottom - taller));
+	CHECK(insideWindow(app, "#track-menu"));
+}
+
 TEST_CASE("a right click with a modifier key opens the element's modifier context menu if it has one", "[ui]")
 {
 	test::UiApp app;
@@ -1073,6 +1128,25 @@ TEST_CASE("tooltips show an element's title once the mouse rests on it", "[ui]")
 	CHECK(app.waitUntil([&app] { return insideWindow(app, "tooltip"); }));
 	click(app, "#corner");
 	CHECK_FALSE(visible(app, "tooltip"));
+}
+
+TEST_CASE("a tooltip that moves inside the window asks for the update that shows it there", "[ui]")
+{
+	// #1665: it moves once laid out with its text; the frames come by themselves, without the UI tools' updates.
+	test::UiApp app;
+	Rml::ElementDocument& document = app.show("popups.rml");
+	Rml::Element& tooltip = *document.QuerySelector("tooltip");
+	const ui::Size window = windowSize(app);
+	app.ui().move(std::nullopt, at("#corner"));
+	REQUIRE(app.waitUntil([&tooltip] { return tooltip.IsClassSet("shown"); }));
+	CHECK(app.waitUntil(
+		[&tooltip, window]
+		{
+			const Rml::Vector2f end =
+				tooltip.GetAbsoluteOffset(Rml::BoxArea::Border) + tooltip.GetBox().GetSize(Rml::BoxArea::Border);
+			return end.x <= static_cast<float>(window.width) && end.y <= static_cast<float>(window.height);
+		},
+		std::chrono::seconds(1)));
 }
 
 TEST_CASE("a tooltip doesn't outlive the element it belongs to", "[ui][slow]")
@@ -2081,4 +2155,30 @@ TEST_CASE(
 	model.changed("color");
 	CHECK(app.waitUntil([&number] { return number(6) == 255.0F && number(1) == 240.0F; }));
 	CHECK(looksLike(app, "#picker .color-new", {0, 0, 255}));
+}
+
+TEST_CASE("a fill of a drop-down list from the change that its own fill sends is dropped", "[ui]")
+{
+	test::UiApp app;
+	Rml::ElementDocument& document = app.show("buttons.rml");
+	Rml::ElementPtr created = document.CreateElement("div");
+	created->SetInnerRML(R"(<select id="first"/><select id="second"/>)");
+	document.AppendChild(std::move(created));
+	auto& first = *rmlui_dynamic_cast<Rml::ElementFormControlSelect*>(document.GetElementById("first"));
+	auto& second = *rmlui_dynamic_cast<Rml::ElementFormControlSelect*>(document.GetElementById("second"));
+	// The change that the first fill's selection sends fills the other list, then the first one again: the fill of
+	// the other list in between doesn't let the second fill of the first one in (#1719).
+	ui::widgets::Listener refill(
+		[&first, &second](Rml::Event&)
+		{
+			ui::widgets::fill(second, {{"x", "X"}}, "x");
+			ui::widgets::fill(first, {{"z", "Z"}}, "z");
+		});
+	first.AddEventListener(Rml::EventId::Change, &refill);
+	ui::widgets::fill(first, {{"a", "A"}, {"b", "B"}}, "b");
+	first.RemoveEventListener(Rml::EventId::Change, &refill);
+	CHECK(first.GetNumOptions() == 2);
+	CHECK(first.GetValue() == "b");
+	CHECK(second.GetNumOptions() == 1);
+	CHECK(second.GetValue() == "x");
 }

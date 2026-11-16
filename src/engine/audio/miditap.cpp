@@ -6,6 +6,7 @@
 #include "engine/audio/audioengine.h"
 #include "engine/engine.h"
 #include "engine/midi/midivalues.h"
+#include "engine/midi/mpeinput.h"
 #include "engine/settings/usersettings.h"
 #include "platform/midi/port.h"
 #include "plugin/events.h"
@@ -212,8 +213,11 @@ namespace gnubase::engine
 					message.position > position ? static_cast<uint32_t>(message.position - position) : 0;
 				graph::ProcessEvent event = toEvent(message.message, offset);
 				event.drumSound = message.drumSound;
-				wait =
-					found != sequencers.end() && found->first == message.channel && !found->second->input().add(event);
+				if (found != sequencers.end() && found->first == message.channel)
+				{
+					MidiSequencer& sequencer = *found->second;
+					wait = message.mpe != 0 ? !sequencer.injectMpe(message.mpe, event) : !sequencer.input().add(event);
+				}
 			}
 			if (wait)
 				m_waiting[kept++] = message;
@@ -301,14 +305,24 @@ namespace gnubase::engine
 				"drumSounds: on a track with a drum map, the notes' keys are drum sounds' pitches, not I-notes: they "
 				"play their sounds as the track's notes do but are neither recorded nor kept for "
 				"midi.insertRetrospective (the "
-				"drum editor auditions sounds so; reference manual p. 1236). midi.capture returns what instruments "
+				"drum editor auditions sounds so; reference manual p. 1236). mpe: the messages play through this MPE "
+				"input setup (midi.setPort mpe; what it leaves out has its default), as a MIDI input port with it "
+				"plays them: on the notes' channels pitch bend, channel pressure and CC 74 reach the track as its "
+				"notes' per-note expression (docs/features/note-expression.md). The track keeps the state of those "
+				"channels from one call to the next while the setup stays. midi.capture returns what instruments "
 				"played.",
-				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["channel", "messages"],
-					"properties": {"channel": {"type": "integer"}, "drumSounds": {"type": "boolean"},
-					"messages": {"type": "array", "items": {
-						"type": "object", "additionalProperties": false, "required": ["position", "bytes"],
-						"properties": {"position": {"type": "integer", "minimum": 0}, "bytes": {"type": "array",
-							"items": {"type": "integer", "minimum": 0, "maximum": 255}}}}}}})"),
+				[]
+				{
+					Json schema = Json::parse(R"({"type": "object", "additionalProperties": false,
+						"required": ["channel", "messages"],
+						"properties": {"channel": {"type": "integer"}, "drumSounds": {"type": "boolean"},
+						"messages": {"type": "array", "items": {
+							"type": "object", "additionalProperties": false, "required": ["position", "bytes"],
+							"properties": {"position": {"type": "integer", "minimum": 0}, "bytes": {"type": "array",
+								"items": {"type": "integer", "minimum": 0, "maximum": 255}}}}}}})");
+					schema["properties"]["mpe"] = midi::mpeSchema();
+					return schema;
+				}(),
 				Json::object(), false},
 			[this](CommandContext& context)
 			{
@@ -320,12 +334,15 @@ namespace gnubase::engine
 				const Json& messages = parameters.at("messages");
 				require(messages.size() <= MidiTap::g_size, "at most 4096 messages at a time");
 				const bool drumSounds = parameters.value("drumSounds", false);
+				const uint32_t mpe =
+					parameters.contains("mpe") ? midi::MpeSetup::fromJson(parameters.at("mpe")).pack() : 0;
 				std::vector<MidiTap::Message> injected;
 				injected.reserve(messages.size());
 				for (size_t i = 0; i < messages.size(); ++i)
 				{
 					injected.push_back({channel, messages[i].at("position").get<uint64_t>(),
-						channelMessage(messages[i].at("bytes"), "messages[" + std::to_string(i) + "]: "), drumSounds});
+						channelMessage(messages[i].at("bytes"), "messages[" + std::to_string(i) + "]: "), drumSounds,
+						mpe});
 				}
 				require(m_tap.inject(injected),
 					"too many MIDI messages wait for the audio device; none were injected, try again later");
@@ -417,9 +434,9 @@ namespace gnubase::engine
 				"setting midi.retrospectiveEvents, by default 10000 events), as one MIDI part, through recording.add "
 				"with the new parts mode and the user settings midi.snapPartsToBars and midi.recordFilter. What "
 				"came during playback goes where it played; what came in stop mode goes at the project cursor, with "
-				"its timing. Input after a pause of over 30 s in stop mode starts the buffer afresh, and so does "
-				"input after an insert. It is no recording of the chord track: it makes no chord events. Returns what "
-				"recording.add returns.",
+				"its timing. Input in stop mode after a pause of over 30 s or on the next audio device starts the "
+				"buffer afresh, and so does input after an insert. It is no recording of the chord track: it makes no "
+				"chord events. Returns what recording.add returns.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["track"],
 					"properties": {"track": {"type": "integer"}}})"),
 				Json::parse(R"({"type": "object", "properties": {"parts": {"type": "array"}},

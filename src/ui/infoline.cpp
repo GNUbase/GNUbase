@@ -21,6 +21,7 @@
 #include <string>
 #include <tuple>
 #include <utility>
+#include <vector>
 
 namespace gnubase::ui
 {
@@ -66,7 +67,8 @@ namespace gnubase::ui
 			R"(<div class="info-field" info-field="lock" section="lock" label="Lock">)"
 			R"(<button type="toggle" field="lock")"
 			R"( title="Lock">Lock</button></div>)"
-			// A MIDI part's transpose and velocity (p. 1107), added to the track's MIDI modifiers.
+			// A MIDI part's transpose and velocity (p. 1107), added to the track's MIDI modifiers; an audio event's
+			// transpose (p. 420, #1555), within the time stretcher's real-time range.
 			R"(<div class="info-field" info-field="transpose" section="transpose" label="Transpose">)"
 			R"(<span class="info-label">Transpose</span>)"
 			R"(<valuefield field="transpose" min="-127" max="127" default="0" step="1" decimals="0"/>)"
@@ -89,12 +91,11 @@ namespace gnubase::ui
 			R"(<button type="toggle" field="globalTranspose")"
 			R"( title="Global Transpose: Follow">Follow</button></div>)";
 
-		// The root keys, as midiPart.set and audioEvent.set take them.
-		const widgets::Options& rootKeys()
+		// The transpose a selected event or part can have either way: a MIDI part's -127 to 127, an audio event's
+		// -24 to 24, the time stretcher's real-time range (#1555).
+		int limitOf(const engine::Json& event)
 		{
-			static const widgets::Options keys = {{"", "-"}, {"C", "C"}, {"C#", "C#"}, {"D", "D"}, {"D#", "D#"},
-				{"E", "E"}, {"F", "F"}, {"F#", "F#"}, {"G", "G"}, {"G#", "G#"}, {"A", "A"}, {"A#", "A#"}, {"B", "B"}};
-			return keys;
+			return event.at("kind") == "audio" ? 24 : 127;
 		}
 
 		void setClass(Rml::Element& element, const char* name, bool set)
@@ -133,10 +134,21 @@ namespace gnubase::ui
 
 		// What a field's gesture changes, as EngineBinding::sendStep names it: the info line's step owner, what the
 		// field edits (the selected "events" or an in-place editor's "notes") and the field. The steps of the events'
-		// fields keep the value that each event they change shows, by its id, with their record (#1471).
+		// fields keep the value that each event they change shows, by its id, with their record (#1471), and so do the
+		// steps of the notes' velocity (#1550).
 		std::string stepKey(const std::string& owner, const char* edits, const std::string& field)
 		{
 			return owner + edits + " " + field;
+		}
+
+		// The merge key of a field's undo steps: the step key and the selection, by its size and a hash of its ids,
+		// so that a gesture that goes on over the field while another selection shows is an undo step for each.
+		std::string mergeName(const std::string& key, const std::vector<uint64_t>& ids)
+		{
+			std::string selection;
+			for (const uint64_t id : ids)
+				selection += std::to_string(id) + " ";
+			return key + " " + std::to_string(ids.size()) + " " + std::to_string(std::hash<std::string>{}(selection));
 		}
 	}
 
@@ -298,6 +310,19 @@ namespace gnubase::ui
 			});
 	}
 
+	const widgets::Options& rootKeyOptions(bool differ)
+	{
+		static const widgets::Options keys = {{"", "-"}, {"C", "C"}, {"C#", "C#"}, {"D", "D"}, {"D#", "D#"}, {"E", "E"},
+			{"F", "F"}, {"F#", "F#"}, {"G", "G"}, {"G#", "G#"}, {"A", "A"}, {"A#", "A#"}, {"B", "B"}};
+		static const widgets::Options differing = [&]
+		{
+			widgets::Options all = {{g_differentRootKeys, ""}};
+			all.insert(all.end(), keys.begin(), keys.end());
+			return all;
+		}();
+		return differ ? differing : keys;
+	}
+
 	double InfoLine::volumeOf(uint64_t event) const
 	{
 		const Json& project = m_display.project();
@@ -309,15 +334,24 @@ namespace gnubase::ui
 		return 0.0;
 	}
 
-	int InfoLine::partValue(uint64_t part, const char* key) const
+	int InfoLine::partValue(const Json& event, const char* key) const
 	{
+		const Json* item = transposableOf(event);
+		return item != nullptr ? item->value(key, 0) : 0;
+	}
+
+	std::vector<const engine::Json*> InfoLine::eventsOf(uint64_t part) const
+	{
+		std::vector<const Json*> events;
 		const Json& project = m_display.project();
-		if (!project.is_object())
-			return 0;
-		for (const Json& midi : project.at("midiParts"))
-			if (midi.at("id") == part)
-				return midi.value(key, 0);
-		return 0;
+		if (project.is_object())
+			for (const Json& audio : project.at("audioEvents"))
+				if (audio.value("part", uint64_t{0}) == part)
+					events.push_back(&audio);
+		// The first one is the one the user sees first.
+		std::stable_sort(events.begin(), events.end(),
+			[](const Json* a, const Json* b) { return a->at("position") < b->at("position"); });
+		return events;
 	}
 
 	const engine::Json* InfoLine::transposableOf(const Json& event) const
@@ -326,6 +360,11 @@ namespace gnubase::ui
 		const auto kind = event.at("kind").get<std::string>();
 		if (kind == "midi")
 			return partOf(event.at("id").get<uint64_t>());
+		if (kind == "audioPart")
+		{
+			const std::vector<const Json*> events = eventsOf(event.at("id").get<uint64_t>());
+			return events.empty() ? nullptr : events.front();
+		}
 		if (kind != "audio" || !project.is_object())
 			return nullptr;
 		for (const Json& audio : project.at("audioEvents"))
@@ -345,16 +384,33 @@ namespace gnubase::ui
 		return nullptr;
 	}
 
-	std::string InfoLine::fieldValue(const std::string& field, uint64_t event, std::string value) const
+	std::string InfoLine::fieldValue(
+		const char* edits, const std::string& field, uint64_t item, std::string value) const
 	{
-		const Json* shown = m_binding.shown(stepKey(m_stepOwner, "events", field), m_display.read());
-		const std::string id = std::to_string(event);
+		const Json* shown = m_binding.shown(stepKey(m_stepOwner, edits, field), m_display.read());
+		const std::string id = std::to_string(item);
 		if (shown != nullptr && shown->contains(id))
 			return shown->at(id).get<std::string>();
 		return value;
 	}
 
+	double InfoLine::fieldNumber(const char* edits, const std::string& field, uint64_t item, double value) const
+	{
+		const std::optional<float> kept = widgets::parse(fieldValue(edits, field, item, std::string()));
+		return kept ? static_cast<double>(*kept) : value;
+	}
+
+	// The changes that setting the fields sends aren't the user's: with several items selected, the first one's value
+	// would reach the others (#1719).
 	void InfoLine::show()
+	{
+		const bool showing = m_showing;
+		m_showing = true;
+		showFields();
+		m_showing = showing;
+	}
+
+	void InfoLine::showFields()
 	{
 		if (!m_root)
 			return;
@@ -401,24 +457,30 @@ namespace gnubase::ui
 			setClass(*volume, "unavailable", !audio);
 		if (Rml::Element* volume = root.QuerySelector("valuefield[field=volume]"); volume != nullptr && audio)
 			setValue(*volume,
-				fieldValue("volume", first.at("id").get<uint64_t>(),
+				fieldValue("events", "volume", first.at("id").get<uint64_t>(),
 					widgets::format(static_cast<float>(volumeOf(first.at("id").get<uint64_t>())))));
 		for (const char* field : {"mute", "lock"})
 			if (Rml::Element* button = root.QuerySelector("button[field=" + std::string(field) + "]"))
 				setFlag(*button, "checked", first.at(field).get<bool>());
-		// A MIDI part's transpose and velocity.
+		// A MIDI part's transpose and velocity, an audio event's transpose (#1555).
 		const bool midi = first.at("kind") == "midi";
 		for (const char* field : {"transpose", "velocity"})
 		{
+			const bool has = midi || (audio && std::string(field) == "transpose");
 			if (Rml::Element* shown = root.QuerySelector("[info-field=" + std::string(field) + "]"))
-				setClass(*shown, "unavailable", !midi);
-			if (Rml::Element* value = root.QuerySelector("valuefield[field=" + std::string(field) + "]");
-				value != nullptr && midi)
-				setValue(*value,
-					fieldValue(field, first.at("id").get<uint64_t>(),
-						widgets::format(static_cast<float>(partValue(first.at("id").get<uint64_t>(), field)))));
+				setClass(*shown, "unavailable", !has);
+			Rml::Element* value = root.QuerySelector("valuefield[field=" + std::string(field) + "]");
+			if (value == nullptr || !has)
+				continue;
+			const std::string limit = std::to_string(limitOf(first));
+			for (const auto& [attribute, bound] : {std::pair{"min", "-" + limit}, std::pair{"max", limit}})
+				if (value->GetAttribute<Rml::String>(attribute, "") != bound)
+					value->SetAttribute(attribute, bound);
+			setValue(*value,
+				fieldValue("events", field, first.at("id").get<uint64_t>(),
+					widgets::format(static_cast<float>(partValue(first, field)))));
 		}
-		// A MIDI part's or an audio event's root key and Global Transpose (#1368).
+		// A MIDI part's or an audio event's root key and Global Transpose (#1368), an audio part's events' (#1555).
 		const Json* part = transposableOf(first);
 		for (const char* field : {"rootKey", "globalTranspose"})
 			if (Rml::Element* shown = root.QuerySelector("[info-field=" + std::string(field) + "]"))
@@ -434,15 +496,33 @@ namespace gnubase::ui
 			if (step->GetInnerRML() != text)
 				step->SetInnerRML(text);
 		}
+		// An audio part's events whose root keys or Global Transpose differ show an empty value (#1644).
+		const std::vector<const Json*> events =
+			first.at("kind") == "audioPart" ? eventsOf(first.at("id").get<uint64_t>()) : std::vector<const Json*>();
+		const auto differ = [&events, part](const char* field)
+		{
+			return std::any_of(events.begin(), events.end(), [&](const Json* event)
+				{ return event->value(field, std::string()) != part->value(field, std::string()); });
+		};
 		if (Rml::Element* key = root.QuerySelector("select[field=rootKey]"))
-			widgets::fill(*key, rootKeys(), part->value("rootKey", std::string()));
+		{
+			const bool different = differ("rootKey");
+			widgets::fill(*key, rootKeyOptions(different),
+				different ? std::string(g_differentRootKeys) : part->value("rootKey", std::string()));
+		}
 		if (Rml::Element* button = root.QuerySelector("button[field=globalTranspose]"))
 		{
-			const bool independent = part->value("globalTranspose", std::string()) == "independent";
+			const bool different = differ("globalTranspose");
+			const bool independent = !different && part->value("globalTranspose", std::string()) == "independent";
 			setFlag(*button, "checked", independent);
 			// The button reads the value it holds (p. 421): Independent while checked, else Follow.
-			setText(button, independent ? "Independent" : "Follow");
-			const Rml::String title = independent ? "Global Transpose: Independent" : "Global Transpose: Follow";
+			std::string text = independent ? "Independent" : "Follow";
+			if (different)
+				text.clear();
+			setText(button, text.c_str());
+			Rml::String title = independent ? "Global Transpose: Independent" : "Global Transpose: Follow";
+			if (different)
+				title = "Global Transpose";
 			if (button->GetAttribute<Rml::String>("title", "") != title)
 				button->SetAttribute("title", title);
 		}
@@ -465,7 +545,7 @@ namespace gnubase::ui
 			return;
 		}
 		// A display's, a value field's or a button's change, not that of the text field inside a display.
-		if (target == nullptr || !target->HasAttribute("field") || !shows() || m_dropping)
+		if (target == nullptr || !target->HasAttribute("field") || !shows() || m_dropping || m_showing)
 			return;
 		const auto field = target->GetAttribute<Rml::String>("field", "");
 		m_absolute = m_absoluteTake && m_absoluteTake->first == field;
@@ -621,10 +701,10 @@ namespace gnubase::ui
 		for (const char* field : {"name", "volume", "mute", "lock", "transpose", "rootKey", "globalTranspose"})
 			if (Rml::Element* shown = root.QuerySelector("[info-field=" + std::string(field) + "]"))
 				setClass(*shown, "unavailable", true);
-		// Not while the project is older than the field's own steps (#716).
-		if (Rml::Element* velocity = root.QuerySelector("valuefield[field=velocity]");
-			velocity != nullptr && !m_binding.ahead(stepKey(m_stepOwner, "notes", "velocity"), m_display.read()))
-			setValue(*velocity, widgets::format(static_cast<float>(std::lround(first.velocity * g_maxVelocity))));
+		if (Rml::Element* velocity = root.QuerySelector("valuefield[field=velocity]"))
+			setValue(*velocity,
+				fieldValue("notes", "velocity", first.id,
+					widgets::format(static_cast<float>(std::lround(first.velocity * g_maxVelocity)))));
 	}
 
 	// The notes an in-place editor's selection names, from the display's project, by start, then pitch, as the key
@@ -730,7 +810,7 @@ namespace gnubase::ui
 		else if (field == "velocity")
 		{
 			typed = std::lround(number);
-			delta = *typed - std::lround(first.velocity * g_maxVelocity);
+			delta = *typed - std::lround(fieldNumber("notes", field, first.id, first.velocity * g_maxVelocity));
 		}
 		else if (field == "releaseVelocity" || field == "channel")
 		{
@@ -767,6 +847,7 @@ namespace gnubase::ui
 				if (const Json* part = partOf(note.part))
 					starts[note.part] = partStart(*part);
 		std::map<uint64_t, Json> changes;
+		Json shown = Json::object(); // what the velocity field shows for each note changed
 		for (const Note& note : m_notes)
 		{
 			const auto start = starts.find(note.part);
@@ -794,10 +875,16 @@ namespace gnubase::ui
 			}
 			else if (field == "velocity" || field == "releaseVelocity")
 			{
-				const double base = field == "velocity" ? note.velocity : note.releaseVelocity;
+				// Each note's velocity from what the field would show for it while the project is behind (#1632).
+				const double base = field == "velocity"
+					? fieldNumber("notes", field, note.id, note.velocity * g_maxVelocity) / g_maxVelocity
+					: note.releaseVelocity;
 				const double value = m_absolute ? (static_cast<double>(*typed) / g_maxVelocity)
 												: base + (static_cast<double>(*delta) / g_maxVelocity);
 				change[field] = std::clamp(value, 0.0, 1.0);
+				if (field == "velocity")
+					shown[std::to_string(note.id)] =
+						widgets::format(static_cast<float>(std::lround(change[field].get<double>() * g_maxVelocity)));
 			}
 			else if (field == "channel")
 			{
@@ -816,13 +903,20 @@ namespace gnubase::ui
 		const std::map<std::string, std::string> labels = {{"releaseVelocity", "Off Velocity"}};
 		std::string label = labels.count(field) != 0 ? labels.at(field) : field;
 		label.front() = static_cast<char>(std::toupper(static_cast<unsigned char>(label.front())));
-		// A drag, wheel turns or a held arrow key on the velocity: one undo step.
-		m_binding.sendStep(gesture, stepKey(m_stepOwner, "notes", field), "Change " + label, std::move(commands),
+		// A drag, wheel turns or a held arrow key on the velocity: one undo step for each selection, as for the events.
+		std::vector<uint64_t> ids;
+		ids.reserve(m_notes.size());
+		for (const Note& note : m_notes)
+			ids.push_back(note.id);
+		const std::string key = stepKey(m_stepOwner, "notes", field);
+		m_binding.sendStep(
+			gesture, key, "Change " + label, std::move(commands),
 			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
 				if (!alive.expired() && !result.ok())
 					m_loads = 0; // refused: the next update shows the notes as they are again
-			});
+			},
+			shown, mergeName(key, ids));
 	}
 
 	void InfoLine::edit(const std::string& field, const std::string& text, float number, int gesture)
@@ -894,13 +988,14 @@ namespace gnubase::ui
 		}
 		else if (field == "volume")
 		{
-			const double change = number - volumeOf(first.at("id").get<uint64_t>());
+			// Each event's volume from what the field would show for it while the project is behind (#1632).
+			const auto base = [this](uint64_t id) { return fieldNumber("events", "volume", id, volumeOf(id)); };
+			const double change = number - base(first.at("id").get<uint64_t>());
 			for (const Json& event : m_events)
 				if (event.at("kind") == "audio")
 				{
 					const uint64_t id = event.at("id").get<uint64_t>();
-					const double volume =
-						std::clamp(m_absolute ? number : volumeOf(id) + change, g_minVolume, g_maxVolume);
+					const double volume = std::clamp(m_absolute ? number : base(id) + change, g_minVolume, g_maxVolume);
 					commands.push_back(
 						{{"command", "audioEvent.set"}, {"parameters", {{"event", id}, {"volume", volume}}}});
 					shown[std::to_string(id)] = widgets::format(static_cast<float>(volume));
@@ -908,22 +1003,36 @@ namespace gnubase::ui
 		}
 		else if (field == "transpose" || field == "velocity")
 		{
-			// Relative to the first part's value, or with Ctrl+Enter the same for all; each from -127 to 127.
+			// Relative to the first one's value, or with Ctrl+Enter the same for all: a MIDI part's from -127 to 127,
+			// an audio event's transpose from -24 to 24 (#1555).
 			const auto typed = static_cast<int>(std::lround(number));
-			const int change = typed - partValue(first.at("id").get<uint64_t>(), field.c_str());
+			// Each one's value from what the field would show for it while the project is behind (#1632).
+			const auto shownOf = [this, &field](const Json& event)
+			{
+				return static_cast<int>(std::lround(fieldNumber("events", field, event.at("id").get<uint64_t>(),
+					static_cast<double>(partValue(event, field.c_str())))));
+			};
+			const int change = typed - shownOf(first);
 			for (const Json& event : m_events)
-				if (event.at("kind") == "midi")
-				{
-					const uint64_t id = event.at("id").get<uint64_t>();
-					const int own = partValue(id, field.c_str());
-					const int value = std::clamp(m_absolute ? typed : own + change, -127, 127);
-					// During a gesture the project may not have its earlier steps yet: a drag back to where it
-					// started still sends that value.
-					if (value != own || gesture != 0)
-						commands.push_back(
-							{{"command", "midiPart.set"}, {"parameters", {{"part", id}, {field, value}}}});
-					shown[std::to_string(id)] = widgets::format(static_cast<float>(value));
-				}
+			{
+				const bool midi = event.at("kind") == "midi";
+				if (!midi && (event.at("kind") != "audio" || field != "transpose"))
+					continue;
+				const uint64_t id = event.at("id").get<uint64_t>();
+				const int own = shownOf(event);
+				const int limit = limitOf(event);
+				const int value = std::clamp(m_absolute ? typed : own + change, -limit, limit);
+				// During a gesture the project may not have its earlier steps yet: a drag back to where it
+				// started still sends that value.
+				if (value != own || gesture != 0)
+					commands.push_back({{"command", midi ? "midiPart.set" : "audioEvent.set"},
+						{"parameters", {{midi ? "part" : "event", id}, {field, value}}}});
+				shown[std::to_string(id)] = widgets::format(static_cast<float>(value));
+			}
+		}
+		else if (field == "rootKey" && text == g_differentRootKeys)
+		{
+			// The events' root keys differ, as shown: nothing chosen.
 		}
 		else if (field == "rootKey" || field == "globalTranspose")
 		{
@@ -933,10 +1042,20 @@ namespace gnubase::ui
 			{
 				const bool midi = event.at("kind") == "midi";
 				const auto id = event.at("id").get<uint64_t>();
-				if (const Json* item = transposableOf(event);
+				if (event.at("kind") == "audioPart")
+				{
+					// An audio part has no root key of its own: its events get it (#1555).
+					for (const Json* audio : eventsOf(id))
+						if (audio->value(field, std::string()) != value)
+							commands.push_back({{"command", "audioEvent.set"},
+								{"parameters", {{"event", audio->at("id")}, {field, value}}}});
+				}
+				else if (const Json* item = transposableOf(event);
 					item != nullptr && item->value(field, std::string()) != value)
+				{
 					commands.push_back({{"command", midi ? "midiPart.set" : "audioEvent.set"},
 						{"parameters", {{midi ? "part" : "event", id}, {field, value}}}});
+				}
 			}
 		}
 		else if (field == "mute" || field == "lock")
@@ -953,11 +1072,7 @@ namespace gnubase::ui
 		std::string label = labels.count(field) != 0 ? labels.at(field) : field;
 		label.front() = static_cast<char>(std::toupper(static_cast<unsigned char>(label.front())));
 		// A drag, wheel turns or a held arrow key on the volume: one undo step, for each selection of its own, also
-		// when another one shows during the gesture: the merge key names the selection by its size and a hash of its
-		// ids.
-		std::string selection;
-		for (const uint64_t id : ids)
-			selection += std::to_string(id) + " ";
+		// when another one shows during the gesture (mergeName).
 		const std::string key = stepKey(m_stepOwner, "events", field);
 		m_binding.sendStep(
 			gesture, key, "Change " + label, std::move(commands),
@@ -966,6 +1081,6 @@ namespace gnubase::ui
 				if (!alive.expired() && !result.ok())
 					m_loads = 0; // refused: the next update shows the events as they are again
 			},
-			shown, key + " " + std::to_string(ids.size()) + " " + std::to_string(std::hash<std::string>{}(selection)));
+			shown, mergeName(key, ids));
 	}
 }
