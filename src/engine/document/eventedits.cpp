@@ -1687,8 +1687,10 @@ namespace gnubase::engine
 		}
 
 		// The earliest tick an event or part on a musical track starts at, as a shift in ticks moves it: its own start,
-		// or that of an event in an audio part that starts before the part, as a part cut in the sample one of its
-		// events starts in, before the cut's tick, keeps that event whole after the cut. None on a linear track.
+		// or that of an event of an audio part that starts in the part's start sample before it, as a part cut in the
+		// sample one of its events starts in, before the cut's tick, keeps that event whole after the cut. Not an event
+		// that resizing the part's start hid before it, which can lie bars before it: an edit that would move that one
+		// before the project start is refused, as the part's own start would be. None on a linear track.
 		std::optional<time::Ticks> earliestTick(const Project& project, const Item& item)
 		{
 			std::optional<time::Ticks> earliest;
@@ -1699,9 +1701,12 @@ namespace gnubase::engine
 			};
 			take(item.position());
 			if (item.audioPart != nullptr)
+			{
+				const time::Samples start = samples(project, item.position());
 				for (const auto& [id, event] : project.audioEvents)
-					if (event.part == item.audioPart->id)
+					if (event.part == item.audioPart->id && samples(project, event.position) == start)
 						take(event.position);
+			}
 			return earliest;
 		}
 
@@ -1717,9 +1722,10 @@ namespace gnubase::engine
 		// it starts before the first of them, at a point that the range's start edge takes from its sample or at the
 		// edge's own tick (automationEdge): at position 0 what of it would land before tick 0 lands on tick 0
 		// (pasteAutomation), so that a part on a bar lands on tick 0 as without automation (#1646). And no event lands
-		// before tick 0, where one lies before from in ticks but not in its sample: pasted at another tempo than it was
-		// copied at, a clip at a lower sample rate that a cut at the start doesn't cut, or an event in an audio part
-		// cut in the sample it starts in (earliestTick). Then the earliest of them lands on tick 0.
+		// before tick 0 where one lies before the first: pasted at another tempo than it was copied at, where it no
+		// longer lies in the start sample, a clip at a lower sample rate that a cut at the start doesn't cut, or an
+		// event of an audio part cut in the sample it starts in, before the piece (earliestTick). Then the earliest of
+		// them lands on tick 0.
 		Gap landing(const Project& project, const std::vector<Item>& items, Gap gap, time::Ticks from, time::Samples at)
 		{
 			const time::Samples start = samples(project, {time::TimeBase::Musical, from});

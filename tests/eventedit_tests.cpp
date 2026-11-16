@@ -163,6 +163,18 @@ namespace
 			return list;
 		}
 
+		// The ids of an automation lane's points.
+		std::set<int64_t> pointIds(int64_t lane)
+		{
+			std::set<int64_t> ids;
+			const Json lanes = call("automationLane.list").at("lanes");
+			for (const Json& each : lanes)
+				if (each.at("id") == lane)
+					for (const Json& point : each.at("points"))
+						ids.insert(point.at("id").get<int64_t>());
+			return ids;
+		}
+
 		// Whether an automation lane has a point at a position with a value.
 		bool hasPoint(int64_t lane, int64_t position, double value)
 		{
@@ -1840,10 +1852,30 @@ TEST_CASE("range.move and range.paste land the first in ticks of what starts in 
 			};
 			const Json range = {
 				{"start", start(first)}, {"end", start(first) + 40000}, {"tracks", {midi, near, across}}};
+			// The points in the start sample, before the range's start tick or not, are in the range: moving, cutting
+			// and deleting it takes them out of the lane where they were (#1646). Of the lane's own points only the
+			// one at 0, before the range, stays; a cut that kept the old start edge would leave the one on the
+			// sample's first tick.
+			const std::set<int64_t> own = f.pointIds(lane);
+			const auto taken = [&f, &own, lane]
+			{
+				size_t staying = 0;
+				for (const int64_t id : f.pointIds(lane))
+					staying += own.count(id);
+				return staying == 1;
+			};
 			Json move = range;
 			move["position"] = at;
 			check(f.call("range.move", move).at("events"));
+			CHECK(taken());
 			f.call("history.undo");
+			for (const char* command : {"range.cut", "range.delete"})
+			{
+				INFO(command);
+				f.call(command, range);
+				CHECK(taken());
+				f.call("history.undo");
+			}
 			Json copy = move;
 			copy["copy"] = true;
 			check(f.call("range.move", copy).at("events"));
@@ -2233,6 +2265,85 @@ TEST_CASE("range.move to position 0 and Delete Time from sample 0 land the event
 	CHECK(hits > 0);
 }
 
+TEST_CASE("Range edits move an audio part by its own start, not by an event hidden before it", "[unit]")
+{
+	// event.resize from the start in normal mode hides an audio part's events before its new start, bars before it.
+	// Only an event in the part's start sample, which a cut there leaves whole, counts where the part lands and how far
+	// Delete Time closes (#1646): an edit that would put a hidden event before the project start is refused, as the
+	// part's own start would be, rather than closing or landing by less.
+	Fixture f;
+	const int64_t audio = f.track("audio");
+	const int64_t probe = f.track("midi");
+	const Json media =
+		f.call("media.add", {{"path", "take.wav"}, {"sampleRate", 48000}, {"channels", 1}, {"length", 20 * g_second}})
+			.at("media");
+	const Json clip = f.call("clip.add", {{"media", media.at("id")}}).at("clip").at("id");
+	// A take from bar 1 to bar 8 in a part trimmed to start at bar 6.
+	const Json take =
+		f.call("audioEvent.add",
+			 {{"track", audio}, {"clip", clip}, {"position", g_bar}, {"offset", 0}, {"length", 14 * g_second}})
+			.at("event")
+			.at("id");
+	const Json part = f.call("event.toPart", {{"events", {take}}}).at("events").at(0);
+	f.call("event.resize", {{"events", {part}}, {"edge", "start"}, {"ticks", 5 * g_bar}});
+	const auto partAt = [&f]
+	{
+		const Json parts = f.call("project.get").at("audioParts");
+		REQUIRE(parts.size() == 1);
+		return parts.at(0).at("position").get<int64_t>();
+	};
+	REQUIRE(partAt() == 6 * g_bar);
+	const auto bar = [&f, probe](int64_t number) { return f.sampleOf(probe, number * g_bar); };
+	// Delete Time of two bars before the part would move the take a bar before the project start.
+	CHECK_THAT(f.fails("range.delete", {{"start", bar(3)}, {"end", bar(5)}, {"tracks", {audio}}, {"time", true}}),
+		ContainsSubstring("before the project start"));
+	// Moving the part three bars back would too.
+	const Json range = {{"start", bar(6)}, {"end", bar(10)}, {"tracks", {audio}}};
+	Json move = range;
+	move["position"] = bar(3);
+	CHECK_THAT(f.fails("range.move", move), ContainsSubstring("before the project start"));
+	CHECK(partAt() == 6 * g_bar);
+	// A bar back the take lands on tick 0 and the part a whole bar earlier; Delete Time of a bar too.
+	move["position"] = bar(5);
+	f.call("range.move", move);
+	CHECK(partAt() == 5 * g_bar);
+	f.call("history.undo");
+	f.call("range.delete", {{"start", bar(3)}, {"end", bar(4)}, {"tracks", {audio}}, {"time", true}});
+	CHECK(partAt() == 5 * g_bar);
+}
+
+TEST_CASE("arranger.flatten leaves a part on the bar where the chain's first event starts on the bar's tick", "[unit]")
+{
+	// At 97.3 BPM bars lie between samples. Flatten pastes the first section where it was copied, from the sample of
+	// the bar its arranger event starts on, so the part on that bar keeps the bar's tick (#1331, #1646): landed on the
+	// tick nearest to the sample, it would move off the bar at about half the bars.
+	Fixture f;
+	f.call("project.set", {{"tempoTrackActive", true}});
+	f.call("tempo.add", {{"position", 0}, {"bpm", 97.3}, {"ramp", false}});
+	const int64_t midi = f.track("midi");
+	f.track("arranger");
+	for (int64_t bar = 1; bar < 40; ++bar)
+	{
+		INFO("bar " << bar);
+		const Json part =
+			f.call("midiPart.add", {{"track", midi}, {"position", bar * g_bar}, {"length", g_bar}}).at("part").at("id");
+		const Json event =
+			f.call("arranger.add", {{"position", bar * g_bar}, {"end", (bar + 1) * g_bar}}).at("event").at("id");
+		f.call("arranger.setChain", {{"steps", {{{"event", event}, {"repeats", 2}}}}});
+		f.call("arranger.flatten", {{"keepTrack", true}});
+		std::vector<int64_t> positions;
+		const Json parts = f.call("project.get").at("midiParts");
+		for (const Json& each : parts)
+			positions.push_back(each.at("position").get<int64_t>());
+		std::sort(positions.begin(), positions.end());
+		REQUIRE(positions.size() == 2);
+		CHECK(positions[0] == bar * g_bar);
+		f.call("history.undo");
+		f.call("arranger.remove", {{"events", {event}}});
+		f.call("event.remove", {{"events", {part}}});
+	}
+}
+
 TEST_CASE("Delete Time moves the points after the range back with the events, and what stays after the joint onto it",
 	"[unit]")
 {
@@ -2354,8 +2465,29 @@ TEST_CASE("Delete Time moves the points after the range back with the events, an
 				f.call("history.undo");
 			}
 			f.call("automationLane.remove", {{"lane", lane}});
-			f.call("event.remove", {{"events", {part, later}}});
+			// Without the part on the downbeat, the transpose event there alone, and a lane's point there alone, keep
+			// what comes after the range together: the transpose event lands on tick 0, and the next part with the
+			// point on its downbeat on the next bar.
+			f.call("event.remove", {{"events", {part}}});
+			f.call("range.delete", range);
+			CHECK(f.midi(later).at("position") == g_bar);
+			const Json alone = f.call("transpose.get").at("events");
+			REQUIRE(alone.size() == 1);
+			CHECK(alone.at(0).at("position") == 0);
+			f.call("history.undo");
 			f.call("transpose.remove", {{"events", {event}}});
+			const int64_t other = addLane(f, midi);
+			f.call("automationPoint.add",
+				{{"lane", other},
+					{"points",
+						{{{"position", downbeat}, {"value", 1.0}},
+							{{"position", downbeat + g_bar}, {"value", 0.75}}}}});
+			f.call("range.delete", {{"start", 0}, {"end", until}, {"tracks", {midi}}, {"time", true}});
+			CHECK(f.midi(later).at("position") == g_bar);
+			CHECK(f.hasPoint(other, g_bar, 0.75));
+			f.call("history.undo");
+			f.call("automationLane.remove", {{"lane", other}});
+			f.call("event.remove", {{"events", {later}}});
 		}
 		CHECK(hits > 0);
 	}
