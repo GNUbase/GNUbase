@@ -740,8 +740,15 @@ namespace gnubase::ui
 		// Show Note Expression Data (p. 1303): the notes' expression over them.
 		// Not in the drum editor, which has neither its button nor the expression editor (#1671).
 		const bool expression = !m_drum && m_view.value("showExpression", false);
-		if (linesOff(ticksPerPixel(), m_linesPixel))
-			m_linesPixel = ticksPerPixel();
+		// The lines take the ticks per pixel of the last layout, which the window's next one may change: lines that
+		// no layout has kept yet are built for every other ticks per pixel (refitLines).
+		const int64_t ticks = ticksPerPixel();
+		m_linesKept = m_linesKept && expression;
+		if (m_linesKept ? linesOff(ticks, m_linesPixel) : ticks != m_linesPixel)
+		{
+			m_linesPixel = ticks;
+			m_linesKept = false;
+		}
 		const int64_t pixel = m_linesPixel;
 		std::string rml;
 		for (const Note& note : m_notes)
@@ -942,7 +949,7 @@ namespace gnubase::ui
 		Rml::Element* root = m_root.get();
 		if (root == nullptr)
 			return;
-		if (fitLines()) // which places the items
+		if (refitLines(false)) // which places the items
 			return;
 		Rml::ElementList shown;
 		root->QuerySelectorAll(shown, ".editor-part");
@@ -980,18 +987,37 @@ namespace gnubase::ui
 		placeExpression();
 	}
 
-	bool KeyEditor::fitLines()
+	bool KeyEditor::fitLines(const Rml::Context& updated)
+	{
+		const Rml::Element* root = m_root.get();
+		return root != nullptr && root->GetContext() == &updated && refitLines(true);
+	}
+
+	bool KeyEditor::linesShown() const
+	{
+		return m_expressionOpen || (!m_drum && m_view.value("showExpression", false));
+	}
+
+	bool KeyEditor::refitLines(bool laidOut)
 	{
 		// The expression lines join the steps narrower than a pixel: built again when a pixel has other ticks, as the
-		// in-place editor's range has after its first layout and as the project window zooms (#1671). Only when it has
-		// a quarter more or fewer: a scroll across a tempo change changes the in-place editor's ticks per pixel a
-		// little on nearly every frame (#1716). Not during a gesture, whose elements a rebuild would free; the next
-		// placement after it catches up.
-		const bool shown = m_expressionOpen || (!m_drum && m_view.value("showExpression", false));
-		if (m_root.get() == nullptr || m_gesture != Gesture::None || !shown || !linesOff(ticksPerPixel(), m_linesPixel))
+		// in-place editor's range has after its first layout and as the project window zooms (#1671). Not during a
+		// gesture, whose elements a rebuild would free; the next placement after it catches up.
+		if (m_root.get() == nullptr || m_gesture != Gesture::None || !linesShown())
 			return false;
-		render();
-		return true;
+		// Lines that the window's update laid out with the ticks they were built for are built again only when a pixel
+		// has a quarter more or fewer: a scroll across a tempo change changes the in-place editor's ticks per pixel a
+		// little on nearly every frame (#1716). The notes' lines before that for any other ticks: render() builds them
+		// for the box of the last layout, which need not be the window's. Docking::attach lays the editor window out
+		// before the left zone has its size, with the notes about a tenth wider, and lines built for that box stayed
+		// (#1768).
+		const bool lines = !m_drum && m_view.value("showExpression", false); // not only the expression editor's
+		const int64_t ticks = ticksPerPixel();
+		const bool off = (m_linesKept || !lines) ? linesOff(ticks, m_linesPixel) : ticks != m_linesPixel;
+		if (off)
+			render();
+		m_linesKept = lines && (m_linesKept || (laidOut && ticks > 0));
+		return off;
 	}
 
 	void KeyEditor::placeExpression()

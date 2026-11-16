@@ -45,6 +45,17 @@ namespace
 		return ".key-note[note=\"" + std::to_string(id) + "\"]";
 	}
 
+	// A recorded MPE note's tuning, a point every few milliseconds (#1671): count points over the note's length, one
+	// at 10 semitones, the next at -10.
+	Json densePoints(int count, int64_t length)
+	{
+		Json points = Json::array();
+		for (int i = 0; i < count; ++i)
+			points.push_back(
+				{{"type", "tuning"}, {"position", length * i / count}, {"value", i % 2 == 0 ? 10.0 : -10.0}});
+		return points;
+	}
+
 	// A MIDI track (or a track of the type) with a one-bar part at the project start, open in the editor window.
 	struct Fixture
 	{
@@ -123,6 +134,26 @@ namespace
 		}
 
 		Json view() { return app.call("editor.get", {{"editor", "window"}}); }
+
+		// Waits until a note with at least four expression points per pixel shows one line per pixel at most, and
+		// lines for four in five pixels at least, as the lines built for the width it has now (#1671; a line joined
+		// for fewer pixels spans several). Returns the note's width.
+		double linesFit(uint64_t id)
+		{
+			const std::string steps = noteSelector(id) + " .key-expression-step";
+			double width = 0.0;
+			double shown = 0.0;
+			const bool fit = app.waitUntil(
+				[&]
+				{
+					width = box(noteSelector(id)).at("width").get<double>();
+					shown = static_cast<double>(elements(steps).size());
+					return shown <= width + 2 && shown >= width * 0.8;
+				});
+			INFO("width " << width << ", lines " << shown);
+			CHECK(fit);
+			return width;
+		}
 
 		// Waits until the display shows the part's notes as the engine has them, each at its time and pitch.
 		void settle()
@@ -1620,14 +1651,23 @@ TEST_CASE("the note expression lines join the steps narrower than a pixel", "[ui
 	f.settle();
 	const double width = f.box(noteSelector(ids[0])).at("width").get<double>();
 	REQUIRE(width < count / 2.0);
-	CHECK(static_cast<double>(f.elements(steps).size()) <= width + 2);
-	CHECK(static_cast<double>(f.elements(steps).size()) >= width / 2);
+	// The lines for that width, once the window has laid them out.
+	const auto lines = [&f, &steps] { return static_cast<double>(f.elements(steps).size()); };
+	CHECK(f.app.waitUntil([&] { return lines() <= width + 2; }));
+	CHECK(lines() >= width / 2);
 	f.click(of(noteSelector(ids[0])), 2);
 	REQUIRE(f.app.waitUntil([&] { return !f.has(".key-expression-editor", "off"); }));
-	REQUIRE(f.app.waitUntil([&] { return !f.elements(".key-expression-area .key-expression-step").empty(); }));
-	f.app.shell().step(std::chrono::milliseconds(0));
-	const double area = f.box(".key-expression-area").at("width").get<double>();
-	CHECK(static_cast<double>(f.elements(".key-expression-area .key-expression-step").size()) <= area + 2);
+	const std::string editorSteps = ".key-expression-area .key-expression-step";
+	double area = 0.0;
+	CHECK(f.app.waitUntil(
+		[&]
+		{
+			area = f.box(".key-expression-area").at("width").get<double>();
+			const Json shown = f.elements(editorSteps);
+			return !shown.empty() && static_cast<double>(shown.size()) <= area + 2;
+		}));
+	INFO("area " << area << ", lines " << f.elements(editorSteps).size());
+	CHECK(static_cast<double>(f.elements(editorSteps).size()) <= area + 2);
 }
 
 TEST_CASE(
@@ -1651,34 +1691,68 @@ TEST_CASE(
 	f.window = f.app.appUi().editorWindowId();
 	const std::string steps = noteSelector(ids[0]) + " .key-expression-step";
 	REQUIRE(f.app.waitUntil([&] { return !f.elements(steps).empty(); }));
-	const auto perPixel = [&f, &steps, &ids]
-	{
-		f.app.shell().step(std::chrono::milliseconds(0));
-		const double width = f.box(noteSelector(ids[0])).at("width").get<double>();
-		const auto shown = static_cast<double>(f.elements(steps).size());
-		INFO("width " << width << ", lines " << shown);
-		CHECK(width < count / 4.0);
-		CHECK(shown <= width + 2);
-		CHECK(shown >= width * 0.8);
-		return width;
-	};
-	const double before = perPixel();
+	const auto noteWidth = [&f, &ids] { return f.box(noteSelector(ids[0])).at("width").get<double>(); };
+	const double before = f.linesFit(ids[0]);
+	CHECK(before < count / 4.0);
 	const ui::WindowId window = f.app.appUi().editorWindowId();
 	const ui::Rect bounds = f.app.shell().bounds(window);
-	// A pixel with a fifth more ticks keeps the lines: they are built again only when it has a quarter more or fewer
-	// (#1716), not on every frame of a scroll across a tempo change in the project window's in-place editor. The note
-	// is half the note display wide.
+	// A pixel with a fifth more ticks keeps the lines the window has laid out: they are built again only when it has
+	// a quarter more or fewer (#1716), not on every frame of a scroll across a tempo change in the project window's
+	// in-place editor. The note is half the note display wide.
 	const size_t lines = f.elements(steps).size();
 	const int narrower = bounds.width - static_cast<int>(std::lround(before * 2 / 6));
+	const ui::Window* shown = f.app.shell().find(window);
+	REQUIRE(shown != nullptr);
+	const uint64_t frames = shown->frames();
 	f.app.shell().setBounds(window, {bounds.x, bounds.y, narrower, bounds.height});
-	f.app.shell().step(std::chrono::milliseconds(0));
-	const double width = f.box(noteSelector(ids[0])).at("width").get<double>();
-	REQUIRE(width < before * 0.88);
-	REQUIRE(width > before * 0.8);
+	// Drawn narrower: the window's update has fitted the lines to that layout.
+	REQUIRE(f.app.waitUntil([&] { return shown->frames() > frames && noteWidth() < before * 0.88; }));
+	REQUIRE(noteWidth() > before * 0.8);
 	CHECK(f.elements(steps).size() == lines);
 	f.app.shell().setBounds(window, {bounds.x, bounds.y, bounds.width / 2, bounds.height});
-	f.app.shell().step(std::chrono::milliseconds(0));
-	CHECK(perPixel() < before * 0.8);
+	REQUIRE(f.app.waitUntil([&] { return noteWidth() < before * 0.8; }));
+	f.linesFit(ids[0]);
+}
+
+TEST_CASE("the key editor window builds a dense note's expression lines that show for the width of its next layout, "
+		  "also when it is less than a quarter narrower than the one before",
+	"[ui]")
+{
+	// The editor window is laid out first by Docking::attach, before the left zone has its size: the notes are about
+	// a tenth wider then. Lines built for that box stayed, more lines than pixels, as the window's own layout gives a
+	// pixel less than a quarter more ticks (#1768). Lines the window has not laid out yet are built again for any
+	// other width.
+	Fixture f;
+	const std::vector<uint64_t> ids = f.add({{0, 60, 2 * g_quarter}});
+	f.app.call("note.set",
+		{{"part", f.part},
+			{"notes", Json::array({{{"id", ids[0]}, {"expressions", densePoints(2000, 2 * g_quarter)}}})}});
+	f.settle();
+	const auto noteWidth = [&f, &ids] { return f.box(noteSelector(ids[0])).at("width").get<double>(); };
+	const double before = noteWidth();
+	// A sixth narrower, a fifth more ticks per pixel. The note is half the note display wide.
+	const ui::WindowId window = f.app.appUi().editorWindowId();
+	const ui::Rect bounds = f.app.shell().bounds(window);
+	f.app.shell().setBounds(
+		window, {bounds.x, bounds.y, bounds.width - static_cast<int>(std::lround(before * 2 / 6)), bounds.height});
+	SECTION("Show Note Expression Data once the window is laid out")
+	{
+		REQUIRE(f.app.waitUntil([&] { return noteWidth() < before * 0.88; }));
+		f.app.call("editor.set", {{"editor", "window"}, {"showExpression", true}});
+	}
+	SECTION("Show Note Expression Data before, on the box of the layout before")
+	{
+		f.app.call("editor.set", {{"editor", "window"}, {"showExpression", true}});
+		ui::MidiEditor* editor = f.app.appUi().editorWindow();
+		REQUIRE(editor != nullptr);
+		ui::KeyEditor* keys = editor->keyEditor();
+		REQUIRE(keys != nullptr);
+		// As the engine's answers right after Docking::attach: no layout since the window narrowed.
+		keys->show(f.app.call("project.get"), f.view());
+	}
+	const double width = f.linesFit(ids[0]);
+	CHECK(width < before * 0.88);
+	CHECK(width > before * 0.8);
 }
 
 TEST_CASE("the lower zone's key editor joins a dense note's expression steps by its pixels after its layout and as the "
@@ -1703,22 +1777,12 @@ TEST_CASE("the lower zone's key editor joins a dense note's expression steps by 
 	f.app.call("editor.set", {{"editor", "lower"}, {"showExpression", true}});
 	const std::string steps = noteSelector(ids[0]) + " .key-expression-step";
 	REQUIRE(f.app.waitUntil([&] { return !f.elements(steps).empty(); }));
-	const auto perPixel = [&f, &steps, &ids]
-	{
-		f.app.shell().step(std::chrono::milliseconds(0));
-		const double width = f.box(noteSelector(ids[0])).at("width").get<double>();
-		const auto shown = static_cast<double>(f.elements(steps).size());
-		INFO("width " << width << ", lines " << shown);
-		CHECK(width < count / 4.0);
-		CHECK(shown <= width + 2);
-		CHECK(shown >= width * 0.8);
-		return width;
-	};
-	const double before = perPixel();
+	const double before = f.linesFit(ids[0]);
+	CHECK(before < count / 4.0);
 	const ui::Rect bounds = f.app.shell().bounds(f.app.main().id());
 	f.app.shell().setBounds(f.app.main().id(), {bounds.x, bounds.y, bounds.width / 2, bounds.height});
-	f.app.shell().step(std::chrono::milliseconds(0));
-	CHECK(perPixel() < before * 0.8);
+	REQUIRE(f.app.waitUntil([&] { return f.box(noteSelector(ids[0])).at("width").get<double>() < before * 0.8; }));
+	f.linesFit(ids[0]);
 }
 
 TEST_CASE("the expression editor stays centered on its note as the pitches zoom", "[ui]")
