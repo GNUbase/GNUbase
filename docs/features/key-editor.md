@@ -92,8 +92,9 @@ the edits of several parts go in one `history.transaction`.
 ```
 
 The note display fits the shown parts' range into its width; each pitch is a row of the height `keyeditor.rcss` gives
-it, highest at the top, and it first scrolls to the middle of the notes. Code places the notes, parts and the cursor
-in percent of the grid. Positions snap to the project's quantize grid; Ctrl (Cmd) turns snapping off.
+it, highest at the top, and it first scrolls to the middle of the notes, after the first layout that gives the note
+display its size (`fitLines`, after its window's update). Code places the notes, parts and the cursor in percent of the
+grid. Positions snap to the project's quantize grid; Ctrl (Cmd) turns snapping off.
 
 The keyboard beside the grid is a piano keyboard (p. 1204), as high as the grid's rows. Each black key is exactly its
 pitch's row and narrower than the white keys, drawn over them at the left. The 7 white keys of an octave span the
