@@ -67,7 +67,9 @@ namespace gnubase::ui
 		KeyEditor(KeyEditor&&) = delete;
 		KeyEditor& operator=(KeyEditor&&) = delete;
 
-		void show(const engine::Json& project, const engine::Json& view);
+		// read is EngineBinding::handed() when the answer that brought project was handed on, or 0 if unknown, which
+		// counts as older than every edit: the expression editor asks whether its last edit is in the project (#1795).
+		void show(const engine::Json& project, const engine::Json& view, uint64_t read = 0);
 
 		KeyTool tool() const { return m_tool; }
 		bool drum() const { return m_drum; }
@@ -262,8 +264,13 @@ namespace gnubase::ui
 
 		void select(std::vector<std::pair<uint64_t, uint64_t>> notes);
 		void setView(engine::Json parameters);
-		// Sends note.* commands, each {command, parameters}: one alone, several in a history.transaction.
-		void edit(const std::string& description, engine::Json commands);
+		// Sends note.* commands, each {command, parameters}: one alone, several in a history.transaction. done, unless
+		// empty, runs with the result.
+		void edit(const std::string& description, engine::Json commands,
+			std::function<void(const engine::Result&)> done = {});
+		// Whether the project shown may lack the last edit that the expression editor sent: it is out, or was answered
+		// after the read of the project shown.
+		bool expressionBehind() const;
 		// Notes of the pitch at the starts, each of the length.
 		// At the view's insert velocity unless one is given.
 		void addNotes(const Part& part, const std::vector<int64_t>& starts, int64_t length, int pitch,
@@ -330,6 +337,9 @@ namespace gnubase::ui
 		std::map<int64_t, double> m_painted;            // the draw tool's points in it, project ticks
 		int64_t m_paintFrom = 0;                        // the range it swept, project ticks
 		int64_t m_paintTo = -1;
+		uint64_t m_read = 0;                // show()'s read
+		uint64_t m_expressionEdits = 0;     // the expression editor's edits sent
+		uint64_t m_expressionAnswered = 0;  // EngineBinding::handed() when the last one was answered, 0 while it is out
 		int64_t m_linesPixel = -1;          // the ticks per pixel the notes' expression lines were built with
 		bool m_linesKept = false;           // an update laid the notes' lines out with those ticks (refitLines)
 		bool m_toolboxOnRightClick = false; // ui.toolboxOnRightClick

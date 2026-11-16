@@ -526,8 +526,9 @@ namespace gnubase::ui
 			m_lanes->setTool(keyToolName(tool), m_lineMode);
 	}
 
-	void KeyEditor::show(const Json& project, const Json& view)
+	void KeyEditor::show(const Json& project, const Json& view, uint64_t read)
 	{
+		m_read = read;
 		m_project = project;
 		m_view = view;
 		m_parts.clear();
@@ -1398,14 +1399,20 @@ namespace gnubase::ui
 		m_binding.send("editor.set", std::move(parameters));
 	}
 
-	void KeyEditor::edit(const std::string& description, Json commands)
+	void KeyEditor::edit(const std::string& description, Json commands, std::function<void(const engine::Result&)> done)
 	{
 		if (commands.empty())
 			return;
 		if (commands.size() == 1)
-			m_binding.send(commands[0].at("command").get<std::string>(), commands[0].at("parameters"));
+			m_binding.send(commands[0].at("command").get<std::string>(), commands[0].at("parameters"), std::move(done));
 		else
-			m_binding.send("history.transaction", {{"description", description}, {"commands", std::move(commands)}});
+			m_binding.send("history.transaction", {{"description", description}, {"commands", std::move(commands)}},
+				std::move(done));
+	}
+
+	bool KeyEditor::expressionBehind() const
+	{
+		return m_expressionEdits > 0 && (m_expressionAnswered == 0 || m_read < m_expressionAnswered);
 	}
 
 	void KeyEditor::addNotes(
@@ -2128,12 +2135,15 @@ namespace gnubase::ui
 		// Every selected note the gesture reached gets the points it drew in the range it swept, in one undo step. Only
 		// those go to the engine, not the note's whole list from this copy of the project: the copy can be a read
 		// older than the last edit, made before that edit's read arrived, and would send that edit's points back
-		// (#1795). So a note goes also when this copy has no points there, as one drawn by that edit may be.
+		// (#1795). While the copy may lack the last edit, a note the gesture reached goes also when the copy has no
+		// change there, as that edit may have drawn a point there; else such an edit changes nothing and stays here,
+		// so that it doesn't count as a change of the project, which a history.transaction of several parts would.
 		m_gesture = Gesture::None;
 		const std::string type = m_view.value("expressionType", std::string("tuning"));
+		const bool behind = expressionBehind();
 		std::map<uint64_t, Json> changes;
 		for (const Note* note : selectedNotes())
-			if ((m_paintFrom < note->start + note->length && m_paintTo >= note->start) ||
+			if ((behind && m_paintFrom < note->start + note->length && m_paintTo >= note->start) ||
 				edited(*note) != note->expressions)
 			{
 				Json change = noteChange(note->id);
@@ -2148,7 +2158,16 @@ namespace gnubase::ui
 		for (auto& [part, items] : changes)
 			commands.push_back({{"command", "note.replaceExpression"},
 				{"parameters", {{"part", part}, {"type", type}, {"notes", items}}}});
-		edit(m_tool == KeyTool::Erase ? "Delete Note Expression" : "Draw Note Expression", std::move(commands));
+		if (commands.empty())
+			return;
+		const uint64_t sent = ++m_expressionEdits;
+		m_expressionAnswered = 0;
+		edit(m_tool == KeyTool::Erase ? "Delete Note Expression" : "Draw Note Expression", std::move(commands),
+			[this, alive = std::weak_ptr<bool>(m_alive), sent](const engine::Result&)
+			{
+				if (!alive.expired() && sent == m_expressionEdits) // not one that another edit went after
+					m_expressionAnswered = m_binding.handed();
+			});
 	}
 
 	void KeyEditor::release(Rml::Event& event)
