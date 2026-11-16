@@ -632,6 +632,10 @@
 		border-width: 1dp;
 		border-color: #10dff2;
 	}
+	.arranger-lane-row .arranger-lane-event.drawing
+	{
+		background-color: transparent;
+	}
 	.chord-pad
 	{
 		color: #f1f4ff;
@@ -1712,6 +1716,7 @@
 	{
 		color: #f1f4ff;
 		font-weight: 600;
+		font-size: 15dp;
 	}
 	tabset tabs
 	{

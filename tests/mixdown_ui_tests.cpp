@@ -108,6 +108,10 @@ TEST_CASE("File > Export > Audio Mixdown exports the checked channels over the l
 	REQUIRE(open(app));
 
 	click(app, "#mixdown-channel-" + std::to_string(channel));
+	type(app, "#mixdown-name", "");
+	click(app, "#mixdown-export");
+	CHECK_THAT(element(app, "#mixdown-message").value("text", std::string()), ContainsSubstring("Enter a name"));
+	REQUIRE(open(app));
 	type(app, "#mixdown-name", "take");
 	type(app, "#mixdown-folder", (dir.path() / "out").u8string());
 	choose(app, "#mixdown-format", 2); // FLAC, in 24 bits

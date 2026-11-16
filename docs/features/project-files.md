@@ -21,15 +21,19 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
 - **Save, Save As.** `project.save` with `path` saves the project as that file, which is then its file; without `path`
   it saves to the project's file and fails for a project that has none. The engine saves under the path as it is,
   without adding `.dawproject`, so that a script or MCP client gets the file it named; Save As in the UI adds the
-  extension (see the File menu below). Projects may be saved on several threads at once, as backup jobs run beside
-  each other and beside a save ([backup.md](backup.md)), each writing its own file without a lock: the ZIP entries
-  have no time stamps (miniz is built with `MINIZ_NO_TIME`), since miniz takes them from `localtime()`, whose result
-  is one static struct outside Windows. Their date and time fields hold zero, which is no date (month 0, day 0):
-  ZIP readers open such files without complaint, but archive tools list the entries as 1980-00-00, 30 Nov 1979 or
-  without a date, and give that date to the files they extract. Stamping the save time again would take a miniz that
-  uses `localtime_r` (a patch in `ext/patches` or a fork), as `mz_zip_writer_add_mem_ex_v2`'s `last_modified` goes
-  through `localtime()` too (#1425; `projects saved on two threads at the same time both load` in
-  `tests/dawproject_tests.cpp`, which the tsan job runs).
+  extension (see the File menu below). A media file that is missing is referred to by its absolute path instead of going
+  into the file (#1567), so that a save over the file that had the last copy of its audio leaves only that path:
+  `project.save`, `project.saveNewVersion`, `track.export` and `track.savePreset` list such files (`missing`), and the
+  UI's Save, Save As, Save New Version and Export Selected Tracks say so in a dialog (#1614). One that the file system
+  can't say is there, such as in a folder without permission, isn't missing: the save fails. Projects may be saved on
+  several threads at once, as backup jobs run beside each other and beside a save ([backup.md](backup.md)), each writing
+  its own file without a lock: the ZIP entries have no time stamps (miniz is built with `MINIZ_NO_TIME`), since miniz
+  takes them from `localtime()`, whose result is one static struct outside Windows. Their date and time fields hold
+  zero, which is no date (month 0, day 0): ZIP readers open such files without complaint, but archive tools list the
+  entries as 1980-00-00, 30 Nov 1979 or without a date, and give that date to the files they extract. Stamping the save
+  time again would take a miniz that uses `localtime_r` (a patch in `ext/patches` or a fork), as
+  `mz_zip_writer_add_mem_ex_v2`'s `last_modified` goes through `localtime()` too (#1425; `projects saved on two threads
+  at the same time both load` in `tests/dawproject_tests.cpp`, which the tsan job runs).
 - **Save New Version.** `project.saveNewVersion` saves the project next to its file with the next number, as the
   reference does: `Song-01.dawproject` after `Song.dawproject`, and after `Song-02` the number after the highest
   `Song-NN` in the folder. The project goes on with the new file; the earlier versions stay. Numbers of more than nine
@@ -219,3 +223,5 @@ quit question: the error makes way for it, an auto save failing while it is open
 the next failure after Cancel. `tests/uitools_tests.cpp` checks `ui_file_dialog` and `ui_close`,
 `tests/lua/ui/dialog.lua` the unsaved changes question through `gnubase.ui.close`, and `tests/widgets_tests.cpp`
 `ui::closeDialog`. `tests/clock_tests.cpp` checks the clock's ticks and `advance` on their own.
+
+Project object ids stay within Lua's positive integer range. A load refuses ids at or above 9223372036854775807, or a next-id counter above it, with a clear error; the last signed integer is reserved for that counter. Allocation also refuses to pass that limit, so a project cannot create ids that scripts would receive as negative values.

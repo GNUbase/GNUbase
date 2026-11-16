@@ -38,9 +38,11 @@
 	overflow: hidden;
 }
 
+/* As wide as the header inside its frame, not a text button's 64 dp, which the header would cut off (#1774). */
 .controller-lane-type
 {
-	width: 48dp;
+	min-width: 0;
+	width: 100%;
 	padding: 2dp;
 	font-size: 8dp;
 	white-space: normal;
@@ -175,4 +177,13 @@
 	display: flex;
 	flex-direction: row;
 	height: 22dp;
+}
+
+/* As high as the footer, not a button's 24 dp, which would reach past it onto what is below; the footer keeps the note
+   display's room in an in-place editor (#1774). */
+.controller-lanes-footer button
+{
+	height: 22dp;
+	padding-top: 3dp;
+	padding-bottom: 3dp;
 }

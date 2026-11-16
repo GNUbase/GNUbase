@@ -490,12 +490,13 @@ namespace gnubase::engine
 			{
 				// Embedded files keep their names, made unique where two would collide. A file that isn't there to
 				// embed is referred to by its absolute path, as a freeze file is (saveDawProject), so that a project or
-				// a track preset with a missing file can still be saved (#1567).
+				// a track preset with a missing file can still be saved (#1567). One that the file system can't say is
+				// there, such as in a folder without permission, is embedded, and reading it fails the save (#1614).
 				std::set<std::string> taken;
 				for (const auto& [id, media] : project.media)
 				{
 					std::error_code error;
-					if (embed && !std::filesystem::exists(pathOf(media.path), error))
+					if (embed && !std::filesystem::exists(pathOf(media.path), error) && !error)
 					{
 						const std::filesystem::path absolute = std::filesystem::absolute(pathOf(media.path), error);
 						m_mediaPaths[id] = error ? media.path : absolute.lexically_normal().u8string();
@@ -521,6 +522,16 @@ namespace gnubase::engine
 
 			// Whether the file goes into the file, rather than being referred to where it is.
 			bool embedded(ObjectId media) const { return m_embed && m_referenced.count(media) == 0; }
+
+			// The paths of the media files that were to be embedded but are referred to, as they are missing.
+			std::vector<std::string> missing() const
+			{
+				std::vector<std::string> paths;
+				paths.reserve(m_referenced.size());
+				for (const ObjectId id : m_referenced)
+					paths.push_back(m_project.media.at(id).path);
+				return paths;
+			}
 
 			std::string projectXml()
 			{
@@ -2133,7 +2144,8 @@ namespace gnubase::engine
 		};
 	}
 
-	void saveDawProject(const Project& project, const std::string& path, const DawProjectSaveOptions& options)
+	std::vector<std::string> saveDawProject(
+		const Project& project, const std::string& path, const DawProjectSaveOptions& options)
 	{
 		const std::filesystem::path fileFolder =
 			std::filesystem::absolute(pathOf(path)).parent_path().lexically_normal();
@@ -2227,6 +2239,7 @@ namespace gnubase::engine
 			std::filesystem::remove(pathOf(temporary), ignored);
 			throw DawProjectError("can't save " + path + ": " + error.message());
 		}
+		return exporter.missing();
 	}
 
 	Project loadDawProject(const std::string& path, const std::string& mediaFolder, bool extractMedia)
@@ -2280,6 +2293,12 @@ namespace gnubase::engine
 				if (entry.second.warp.musical && entry.second.warp.tempo <= 0.0)
 					entry.second.warp.tempo = definitionTempo(project, entry.second);
 			return project;
+		}
+		catch (const std::overflow_error&)
+		{
+			// An unsupported id range must fail the load, rather than silently lose native data through the XML
+			// fallback.
+			throw;
 		}
 		catch (const std::exception&)
 		{

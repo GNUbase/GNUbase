@@ -28,6 +28,10 @@ namespace gnubase::engine
 	// emitting pattern.changed.
 	void syncDrumLanes(Project& project, const Channel& channel, CommandContext& context, int pad = -1);
 
+	// The pool folder Drum Machine at the pool's top, where the pads' samples go (reference manual p. 980), made if the
+	// pool has none; emitting poolFolder.added then, with a context.
+	ObjectId drumPoolFolder(Project& project, CommandContext* context);
+
 	// The drum machine's channel of a drum track, or nullptr for any other track.
 	const Channel* drumChannelOf(const Project& project, ObjectId track);
 }

@@ -11,7 +11,11 @@
 #include "ui/enginebinding.h"
 #include "ui/keycommands.h"
 
+#include <RmlUi/Core/ComputedValues.h>
+#include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/ElementDocument.h>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
@@ -80,8 +84,18 @@ namespace
 		return element(app, selector).value("text", std::string());
 	}
 
+	// Scrolls the element into view first, as a user would: in a short window, as on CI's macOS runner (684 pixels
+	// tall), the dialog's body scrolls.
 	void click(test::UiApp& app, const std::string& selector, const Strings& modifiers = {})
 	{
+		Rml::Context& context = app.main().context();
+		for (int i = 0; i < context.GetNumDocuments(); ++i)
+			if (Rml::Element* found = context.GetDocument(i)->QuerySelector(selector))
+			{
+				found->ScrollIntoView({Rml::ScrollAlignment::Nearest, Rml::ScrollAlignment::Nearest,
+					Rml::ScrollBehavior::Instant, Rml::ScrollParentage::All});
+				break;
+			}
 		app.ui().click(std::nullopt, {selector, 0, std::nullopt}, ui::MouseButton::Left, 1, modifiers);
 		app.shell().step(std::chrono::milliseconds(0));
 	}
@@ -477,7 +491,7 @@ TEST_CASE("the key commands dialog finds, assigns, removes and resets keys", "[u
 
 TEST_CASE("the key commands dialog sets up macros", "[ui]")
 {
-	test::UiApp app({1000, 760});
+	test::UiApp app({1000, 684});
 	app.appUi().showProject();
 	openDialog(app);
 	click(app, "#keycommands-show-macros");
@@ -802,31 +816,119 @@ TEST_CASE("a key commands file command that worked takes another message away", 
 	REQUIRE(closed(app));
 }
 
+namespace
+{
+	// A file that is in the way of an export: a name without a space, which can't wrap at a word, in a path that is no
+	// folder, so that the export fails with an error that carries the whole path.
+	std::filesystem::path blockedExport(const test::TempDir& dir)
+	{
+		const std::filesystem::path blocker = dir.path() / std::string(120, 'k');
+		std::ofstream(blocker) << "not a folder";
+		return blocker / "Studio.json";
+	}
+
+	// Clicks Export and answers its file dialog with the file; the message shows what the export said.
+	void exportInto(test::UiApp& app, const std::filesystem::path& file)
+	{
+		click(app, "#keycommands-export");
+		REQUIRE(app.waitUntil([&app] { return !app.shell().fileDialogs().empty(); }));
+		app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, {file});
+		REQUIRE(app.waitUntil([&app] { return !text(app, "#keycommands-message").empty(); }));
+	}
+
+	Json boxOf(test::UiApp& app, const std::string& selector)
+	{
+		return element(app, selector).at("box");
+	}
+
+	// The element of RmlUi's tree with this id, in any document of the main window.
+	Rml::Element* rmlElement(test::UiApp& app, const std::string& id)
+	{
+		Rml::Context& context = app.main().context();
+		for (int i = 0; i < context.GetNumDocuments(); ++i)
+			if (Rml::Element* found = context.GetDocument(i)->GetElementById(id))
+				return found;
+		return nullptr;
+	}
+
+	double bottom(const Json& box)
+	{
+		return box.at("y").get<double>() + box.at("height").get<double>();
+	}
+
+	double right(const Json& box)
+	{
+		return box.at("x").get<double>() + box.at("width").get<double>();
+	}
+}
+
 TEST_CASE("a long file path in the key commands message stays inside the dialog and off the buttons", "[ui]")
 {
 	test::UiApp app({1000, 760});
 	app.appUi().showProject();
 	app.shell().showOsFileDialogs(false);
 	const test::TempDir dir;
-	// A name without a space, which can't wrap at a word, for the file that is in the way.
-	const std::filesystem::path blocker = dir.path() / std::string(120, 'k');
-	std::ofstream(blocker) << "not a folder";
 	openDialog(app);
-	click(app, "#keycommands-export");
-	REQUIRE(app.waitUntil([&app] { return !app.shell().fileDialogs().empty(); }));
-	app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, {blocker / "Studio.json"});
+	// The row's height with a message of one line: Save without a preset name.
+	click(app, "#keycommands-save-preset");
 	REQUIRE(app.waitUntil([&app] { return !text(app, "#keycommands-message").empty(); }));
-	const auto box = [&app](const std::string& selector) { return element(app, selector).at("box"); };
-	const auto right = [](const Json& b) { return b.at("x").get<double>() + b.at("width").get<double>(); };
-	const Json message = box("#keycommands-message");
-	const Json dialog = box("#key-commands");
-	const Json apply = box("#keycommands-apply");
-	// The path is broken into lines inside the message (an unbroken one ran on as a two-line row, past the buttons).
-	CHECK(message.at("height").get<double>() > 45.0); // more than two lines of the dialog's text
+	const double oneLine = boxOf(app, "#keycommands-message").at("height").get<double>();
+	REQUIRE(oneLine > 0.0);
+	exportInto(app, blockedExport(dir));
+	const Json message = boxOf(app, "#keycommands-message");
+	const Json dialog = boxOf(app, "#key-commands");
+	const Json apply = boxOf(app, "#keycommands-apply");
+	// The path is broken into lines inside the message (an unbroken one ran on as a one-line row, past the buttons).
+	CHECK(message.at("height").get<double>() > 2.0 * oneLine);
 	CHECK(message.at("x").get<double>() >= dialog.at("x").get<double>());
 	CHECK(right(message) <= apply.at("x").get<double>());
 	CHECK(right(apply) <= right(dialog));
-	CHECK(right(box("#keycommands-ok")) <= right(dialog));
+	CHECK(right(boxOf(app, "#keycommands-ok")) <= right(dialog));
+	click(app, "#keycommands-cancel");
+	REQUIRE(closed(app));
+}
+
+TEST_CASE("the key commands dialog's buttons stay inside the window with the macros and a long error", "[ui]")
+{
+	const auto [width, height] = GENERATE(std::pair{1024, 600}, std::pair{1000, 760}, std::pair{1280, 720});
+	INFO("window " << width << "x" << height);
+	test::UiApp app({width, height});
+	app.appUi().showProject();
+	app.shell().showOsFileDialogs(false);
+	const test::TempDir dir;
+	openDialog(app);
+	click(app, "#keycommands-show-macros");
+	exportInto(app, blockedExport(dir));
+	const Json dialog = boxOf(app, "#key-commands");
+	CHECK(dialog.at("y").get<double>() >= 0.0);
+	CHECK(bottom(dialog) <= height);
+	// A long error takes no more than its cap, and scrolls.
+	CHECK(boxOf(app, "#keycommands-message").at("height").get<double>() <= 66.0);
+	for (const char* selector : {"#keycommands-apply", "#keycommands-cancel", "#keycommands-ok"})
+	{
+		const Json box = boxOf(app, selector);
+		INFO(selector);
+		CHECK(box.at("y").get<double>() >= 0.0);
+		CHECK(bottom(box) <= height);
+		CHECK(right(box) <= width);
+	}
+	// The dialog is capped at 85% of the window, so with the macros and a long error its body scrolls, above the
+	// buttons.
+	Rml::Element* body = rmlElement(app, "keycommands-body");
+	REQUIRE(body != nullptr);
+	CHECK(body->GetScrollHeight() > body->GetClientHeight());
+	click(app, "#keycommands-cancel");
+	REQUIRE(closed(app));
+}
+
+TEST_CASE("the key commands message wraps at spaces and breaks only a word that doesn't fit a line", "[ui]")
+{
+	test::UiApp app({1000, 760});
+	app.appUi().showProject();
+	openDialog(app);
+	Rml::Element* message = rmlElement(app, "keycommands-message");
+	REQUIRE(message != nullptr);
+	CHECK(message->GetComputedValues().word_break() == Rml::Style::WordBreak::BreakWord);
 	click(app, "#keycommands-cancel");
 	REQUIRE(closed(app));
 }

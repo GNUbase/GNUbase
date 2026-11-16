@@ -630,6 +630,10 @@
 		border-width: 1dp;
 		border-color: #0969da;
 	}
+	.arranger-lane-row .arranger-lane-event.drawing
+	{
+		background-color: transparent;
+	}
 	.chord-pad
 	{
 		color: #17202d;

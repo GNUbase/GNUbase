@@ -74,3 +74,5 @@ Mixdown dialog and Quick Audio Export. The offline rendering it builds on is `au
 - A progress bar with Cancel, which needs the export as a job (`src/engine/jobs`) instead of one long command;
   Keep Dialog Open; a folder chooser and recent paths; Show in Explorer/Finder, and opening the folder after a quick
   export; channel search and syncing the selection with the mixer.
+
+Empty output names are refused by both mixdown.export and track.renderInPlace. The export dialog asks for a name before sending an empty Name field. Command tests cover both refusals, and the dialog test keeps the dialog open until a name is entered.

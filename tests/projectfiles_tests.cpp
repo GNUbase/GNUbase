@@ -874,6 +874,24 @@ TEST_CASE("File > Save As, Save and Save New Version save the project through fi
 	CHECK(fs::is_regular_file(dir.path() / "NUL.dawproject"));
 }
 
+TEST_CASE("a save that refers to missing media files instead of having them in it says so", "[ui]")
+{
+	// #1614: the file keeps no copy of a file that is gone, which the user learns.
+	test::UiApp app({900, 640});
+	app.appUi().showProject();
+	const test::TempDir dir;
+	const fs::path gone = dir.path() / "gone.wav";
+	app.call("media.add", {{"path", utf8(gone)}, {"sampleRate", 48000.0}, {"channels", 2}, {"length", 10}});
+	fileMenu(app, "file.saveAs");
+	answer(app, {dir.path() / "Song.dawproject"});
+	REQUIRE(app.waitUntil([&app] { return shown(app, "#project-error-dialog"); }));
+	CHECK_THAT(
+		elements(app, "#project-error-message").at(0).at("text").get<std::string>(), ContainsSubstring("gone.wav"));
+	CHECK(fs::is_regular_file(dir.path() / "Song.dawproject"));
+	click(app, "#project-error-dialog button[result=ok]");
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#project-error-dialog"); }));
+}
+
 TEST_CASE("a save or backup that fails shows its error", "[ui]")
 {
 	test::UiApp app({900, 640});

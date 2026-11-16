@@ -349,11 +349,15 @@ TEST_CASE(
 {
 	// #1342: the default theme's flat bars, the transport bar's buttons and plain displays, the inspector's section
 	// headers, and the left zone beside the main zone as rounded panels with the window's background between them.
-	test::UiApp app({1000, 700}); // CI's screens are 1024 pixels wide
+	// Without the locators, the locator range and the punch points, the transport bar's other sections fit the image,
+	// the plain tempo and the signature too (#1711).
+	test::UiApp app({1000, 680}); // CI's screens are 1024 pixels wide, and macOS opens windows at most 684 tall
 	app.appUi().showProject();
 	app.setDpRatio(1.0F);
 	app.call("project.set", {{"length", 60.0}});
 	app.appUi().docking().setVisible("project", "transportBar", true);
+	for (const char* section : {"locators", "locatorRange", "punchPoints"})
+		app.appUi().docking().setSectionHidden("project", "transport", section, true);
 	app.ui().key(std::nullopt, "Mod+Alt+L");
 	const uint64_t guitar = app.call("track.add", {{"type", "audio"}, {"name", "Guitar"}, {"color", "#e12ad8"}})
 								.at("track")
@@ -370,12 +374,15 @@ TEST_CASE(
 				visible(app, ".inspector-section[section=basics] button.section-header");
 		}));
 	app.shell().step(std::chrono::milliseconds(0));
-	test::UiApp::checkGolden("default-theme-window", app.screenshot("default-theme-window", {1000, 700}));
+	test::UiApp::checkGolden("default-theme-window", app.screenshot("default-theme-window", {1000, 680}));
 	CHECK(app.shownSections("toolbar") ==
 		std::vector<std::string>{"tools", "autoScroll", "zoomPresets", "snap", "gridType", "quantize", "zones"});
 	CHECK(app.shownSections("transport-bar") ==
-		std::vector<std::string>{
-			"locators", "locatorRange", "punchPoints", "transportControls", "timeDisplays", "tempoSignature", "click"});
+		std::vector<std::string>{"transportControls", "timeDisplays", "tempoSignature", "click"});
+	const Json bar = element(app, "#transport-bar").at("box");
+	const Json click = element(app, "#transport-bar [section=click]").at("box");
+	CHECK(
+		click.at("x").get<int>() + click.at("width").get<int>() <= bar.at("x").get<int>() + bar.at("width").get<int>());
 }
 
 TEST_CASE("the project cursor and the cross-hair cursor are drawn only inside the event display's time area", "[ui]")

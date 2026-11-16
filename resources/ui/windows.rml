@@ -28,9 +28,18 @@
 			margin-right: 8dp;
 		}
 
+		/* As wide as a select, which the buttons fill too: one column inside the dialog (#1788). */
+		.actions
+		{
+			flex-shrink: 0;
+			width: 160dp;
+		}
+
 		.actions button, .actions select
 		{
 			display: block;
+			box-sizing: border-box;
+			width: 100%;
 			margin-bottom: 4dp;
 		}
 

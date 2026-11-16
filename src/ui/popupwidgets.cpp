@@ -641,12 +641,21 @@ namespace gnubase::ui
 			}
 
 		protected:
-			// The first layout puts the dialog in the middle of the window.
+			// The first layout puts the dialog in the middle of the window. A dialog that grows later (rows that
+			// show, a message that gets longer) grows down and to the right from where it is, so a layout that
+			// takes it past the window's edge moves it back inside.
 			void OnResize() override
 			{
 				Rml::Element::OnResize();
-				if (m_placed || GetContext() == nullptr)
+				if (GetContext() == nullptr)
 					return;
+				if (m_placed)
+				{
+					const Rml::Vector2f at = GetAbsoluteOffset(Rml::BoxArea::Border);
+					if (const Rml::Vector2f kept = inside(*this, at); kept != at)
+						moveTo(*this, kept);
+					return;
+				}
 				m_placed = true;
 				const Rml::Vector2f window(GetContext()->GetDimensions());
 				moveTo(*this, ((window - GetBox().GetSize(Rml::BoxArea::Border)) * 0.5F).Round());

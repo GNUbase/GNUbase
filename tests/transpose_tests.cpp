@@ -624,10 +624,20 @@ TEST_CASE("the pool's Key column sets the root key of every audio event of a cli
 	// A clip that no audio event plays has nowhere to keep a key (#1644).
 	const Json media = clipJson().at("media");
 	const ObjectId unplayed = run(song.client, "clip.add", {{"media", media}}).at("clip").at("id").get<ObjectId>();
+	bool found = false;
 	const Json pool = run(song.client, "pool.get");
 	for (const Json& clip : pool.at("clips"))
 		if (clip.at("id") == unplayed)
+		{
+			found = true;
 			CHECK(clip.at("audioEvents") == 0);
+		}
+	CHECK(found);
+	// clip.set refuses its root key, as the pool's list for it is disabled (#1719).
+	CHECK(reject(song.client, "clip.set", {{"clip", unplayed}, {"rootKey", "A"}}).find("no audio event") !=
+		std::string::npos);
+	CHECK(reject(song.client, "clip.set", {{"clip", unplayed}, {"rootKey", ""}}).find("no audio event") !=
+		std::string::npos);
 	// A second event of the clip, stashed in an inactive track version (reference manual p. 417).
 	run(song.client, "trackVersion.add", {{"tracks", {song.audioTrack}}});
 	run(song.client, "audioEvent.add",

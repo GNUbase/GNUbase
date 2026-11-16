@@ -707,7 +707,8 @@ namespace gnubase::engine
 				"Renames a clip or moves it into a pool folder (0: the pool's Audio folder). The file keeps its name. "
 				"rootKey (\"\" for none, C, C# and so on to B) is the pool's Key column (reference manual p. 417): "
 				"every audio event that plays the clip gets it as its root key (audioEvent.set rootKey), also those "
-				"that inactive track versions hold; the audio file stays as it is.",
+				"that inactive track versions hold; the audio file stays as it is. Refused for a clip that no audio "
+				"event plays, which has nowhere to keep a root key (pool.get audioEvents 0).",
 				objectSchema({{"clip", integer}, {"name", string}, {"folder", integer},
 								 {"rootKey", Json{{"type", "string"}, {"enum", rootKeyNames()}}}},
 					{"clip"}),
@@ -725,6 +726,10 @@ namespace gnubase::engine
 					const std::optional<int> found = rootKeyFromName(name);
 					require(found.has_value(), "unknown root key " + name);
 					const int key = found.value_or(-1);
+					bool played = false;
+					forEveryAudioEvent(
+						project, [&](const AudioEvent& event) { played = played || event.clip == clip.id; });
+					require(played, "no audio event plays clip " + std::to_string(clip.id) + ", so it has no root key");
 					// Those of inactive track versions lie inside their track, which is announced as changed.
 					std::set<ObjectId> tracks;
 					forEveryAudioEvent(project,

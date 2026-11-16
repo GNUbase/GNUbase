@@ -92,7 +92,9 @@ removed).
   (`midi::addOnSlots`): where the add-ons differ from those of the note before, the off events of those that end and
   the on events of those that start go after the slot's own, on the channel of the note, the off events on the channel
   the on events went to; where the notes go to another channel (a slot's `channel`), an add-on that stays goes off
-  there and on again on the new channel (#1667). An add-on slot's own MIDI modifiers do nothing: the notes play with
+  there and on again on the new channel (#1667). One rule for both: on a track without a MIDI channel, where the notes
+  keep their own channels, a slot that stays follows them too, its off events on the channel it went to and its on
+  events on the note's (#1718). An add-on slot's own MIDI modifiers do nothing: the notes play with
   those of their slot, and the setup shows none for it. The sound slots lane and `articulationMap.soundSlots`
   show the slot, not the add-ons. Attack Compensation starts a note earlier by its slot's `attack`, with its end, its
   expression and its slot's output events; its slot's `separation` sends the output events, key switches, controller
@@ -109,7 +111,13 @@ removed).
   track, it sends its on events on the channel the notes play on (the selected slot's), and without latch its off
   events where the key is released, on the channel its on events went to, and leaves the selected slot as it is; its
   trigger, and that of a slot that isn't an add-on with an articulation of its groups, sends the off events of an
-  add-on slot of its groups that is on, also with latch (#1667).
+  add-on slot of its groups that is on, also with latch (#1667). An add-on slot that is on follows the notes to another
+  channel as in playback: where another slot with a channel of its own is selected, the default slot comes back on
+  another, the MIDI track is set to another channel (back to Any: the channel of its trigger), or its key is pressed
+  again on another channel, its off events go to the channel its on events went to and its on events to the new one
+  (#1718). Without latch, the default slot coming back where a key is released ends no add-on slot: one whose key is
+  still held keeps its groups, in the track and in a recording, where the default slot's directions leave those groups
+  alone, also where it has an articulation of them (#1718).
 - **Remote triggers** (pp. 1263, 1268, 1282). In what a recording brings to a track with a map (`recording.add`), the
   notes whose pitch is a slot's trigger (Key Switch), or the program changes whose program is one (Program Change),
   aren't recorded; they select their slot instead: a direction for each group that has directions, the slot's own or
@@ -300,7 +308,8 @@ presets; importing the reference's own files and other applications' maps.
   (`midi.inject`, `midi.capture`), the default slot after another map or other slots but not after a slot's new name or
   color, and a held key's note-off once it is a trigger. `tests/midipatches_tests.cpp` plays them into a MIDI track set
   to a channel: key switches with latch, the selected slot going out again when the track's channel changes, the default
-  slot coming back on the track's channel where a trigger key is released without latch, and program change triggers.
+  slot coming back on the track's channel where a trigger key is released without latch, program change triggers, and
+  an add-on slot following the track to another channel, back to Any and to a slot's own channel (#1718).
   Its last test cases (#1113): add-on slots' output events besides the slot of the other groups, and the
   default slot refused as one; Attack Compensation, Separation and the pitch and velocity ranges, with a range refused;
   slots changing in the order the notes play with Attack Compensation;
@@ -311,8 +320,11 @@ presets; importing the reference's own files and other applications' maps.
   an add-on slot's trigger played into a track (`midi.inject`); remote triggers in a recording also check one recorded
   with latch before another slot's trigger and without latch while another slot's key is held, with its attribute on
   the notes, a slot with an articulation of their groups taking their place, a second add-on slot of their group
-  replacing them, and add-on slots triggered by program changes; add-on slots played into a track with latch, ended
-  by another of their group and by a slot with an articulation of it, on the selected slot's channel.
+  replacing them, add-on slots triggered by program changes, and the default slot coming back without latch leaving
+  the groups of an add-on slot whose key is still held alone; add-on slots played into a track with latch, ended by
+  another of their group and by a slot with an articulation of it, on the selected slot's channel, pressed again on
+  another channel, and following the notes to the default slot's channel where it comes back; a slot following the
+  notes to their own channels in playback, as its add-ons do (#1718).
   `tests/midi_tests.cpp` and `tests/sequencing_tests.cpp` check the chased key switches, and
   `tests/sequencing_tests.cpp` a jump with the chase limited to parts into a part that continues the slot of the part
   before it (#1521), and a MIDI track heard again there after it was disabled (#1600); `tests/midi_tests.cpp` the

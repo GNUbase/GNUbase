@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/drummachinepanel.h"
 
+#include "platform/log.h"
 #include "ui/rmlui.h"
 #include "ui/widgetutils.h"
 
@@ -14,6 +15,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <exception>
 #include <sstream>
 #include <utility>
 
@@ -23,8 +25,11 @@ namespace gnubase::ui
 
 	namespace
 	{
-		constexpr std::array<Rml::EventId, 4> g_events = {
-			Rml::EventId::Click, Rml::EventId::Change, Rml::EventId::Mousedown, Rml::EventId::Mouseup};
+		constexpr std::array<Rml::EventId, 3> g_events = {
+			Rml::EventId::Click, Rml::EventId::Change, Rml::EventId::Mousedown};
+		// On the document: a pad's note ends where the button goes up, also outside the panel, and when the mouse
+		// leaves the window, where the button going up sends nothing (#1614).
+		constexpr std::array<Rml::EventId, 2> g_documentEvents = {Rml::EventId::Mouseup, Rml::EventId::Mouseout};
 
 		constexpr int g_pads = 128;
 		constexpr int g_padsPerGroup = 16;
@@ -154,6 +159,12 @@ namespace gnubase::ui
 			element.AddEventListener(id, this);
 		element.AddEventListener(Rml::EventId::Blur, this, true); // blur doesn't bubble
 		element.AddEventListener(m_dropEvent, this);
+		if (Rml::ElementDocument* document = element.GetOwnerDocument())
+		{
+			for (const Rml::EventId id : g_documentEvents)
+				document->AddEventListener(id, this);
+			m_document = document->GetObserverPtr();
+		}
 		m_binding.send("processor.list", Json::object(),
 			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
@@ -165,6 +176,19 @@ namespace gnubase::ui
 
 	DrumMachinePanel::~DrumMachinePanel()
 	{
+		// A pad held while the panel goes ends its note, however it goes: its window closed, docked again, the lower
+		// zone's panel switched. Sending may throw, which a destructor must not pass on.
+		try
+		{
+			sound(-1);
+		}
+		catch (const std::exception& error)
+		{
+			logging::warning("The drum machine panel cannot end the note of its pad: {}", error.what());
+		}
+		if (Rml::Element* document = m_document.get())
+			for (const Rml::EventId id : g_documentEvents)
+				document->RemoveEventListener(id, this);
 		if (Rml::Element* root = m_root.get())
 		{
 			for (const Rml::EventId id : g_events)
@@ -174,15 +198,16 @@ namespace gnubase::ui
 		}
 	}
 
-	// Ends the note of the pad that sounds and plays pad, unless it is negative: into the track's channel as if from
-	// its MIDI input (midi.inject), as the drum editor auditions sounds, so that a drum map's pitches play their pads.
-	// Without an audio device nothing sounds, which is no error to report.
+	// Ends the note of the pad that sounds and plays pad, unless it is negative: straight to the track's drum machine
+	// (midi.inject direct), so that it plays the pad itself at velocity 127 (p. 942), whatever the track's drum map,
+	// MIDI modifiers and MIDI effects would make of the note (#1614). Without an audio device nothing sounds, which is
+	// no error to report.
 	void DrumMachinePanel::sound(int pad)
 	{
 		const auto inject = [this](uint64_t channel, int note, bool on)
 		{
 			m_binding.send("midi.inject",
-				{{"channel", channel}, {"drumSounds", true},
+				{{"channel", channel}, {"direct", true},
 					{"messages", Json::array({{{"position", 0}, {"bytes", {on ? 0x90 : 0x80, note, on ? 127 : 0}}}})}},
 				[](const engine::Result&) {});
 		};
@@ -424,8 +449,15 @@ namespace gnubase::ui
 		}
 		if (Rml::Element* select = find("drum-pad-color"))
 		{
+			// A color the set doesn't have, from a track preset of another project or a set edited since, shows as an
+			// option of its own (#1614).
 			const auto color = m_colors.find(m_pad);
-			widgets::fill(*select, m_colorSet, color != m_colors.end() ? color->second : std::string());
+			const std::string shown = color != m_colors.end() ? color->second : std::string();
+			widgets::Options options = m_colorSet;
+			if (std::none_of(
+					options.begin(), options.end(), [&shown](const auto& option) { return option.first == shown; }))
+				options.emplace_back(shown, shown);
+			widgets::fill(*select, options, shown);
 		}
 		setChecked(find("drum-bypass"), value(g_globals + 1) >= 0.5);
 		if (Rml::Element* paste = find("drum-paste");
@@ -526,8 +558,11 @@ namespace gnubase::ui
 			return;
 		}
 		case Rml::EventId::Mouseup:
-			// ponytail: a button released outside the panel ends the note with the next press there.
 			sound(-1);
+			return;
+		case Rml::EventId::Mouseout:
+			if (target == m_document.get()) // the mouse left the window
+				sound(-1);
 			return;
 		case Rml::EventId::Click:
 		{

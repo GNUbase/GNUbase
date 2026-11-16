@@ -925,6 +925,10 @@ TEST_CASE("scrubbing a media file plays its frames and leaves the cursor alone",
 	song.addTrack(2);
 	const ObjectId media = idOf(run(song.client, "media.add", {{"path", writeRamp(dir, "mono", 1, 4000)}}), "media");
 	const Json transport = run(song.client, "transport.get");
+	for (const double seconds : {0.0, -0.01})
+		CHECK_THAT(
+			song.client.call("audition.scrub", {{"media", media}, {"position", 1000}, {"seconds", seconds}}).error,
+			ContainsSubstring("parameters.seconds must be more than 0"));
 
 	// No event plays the file. 480 frames back in 0.01 seconds play backwards at normal speed.
 	CHECK(run(song.client, "audition.scrub", {{"media", media}, {"position", 1000}}) ==
