@@ -144,6 +144,12 @@ namespace gnubase::engine
 		m_progressHook = std::move(hook);
 	}
 
+	bool Jobs::cancelled(JobId job) const
+	{
+		const std::scoped_lock lock(m_mutex);
+		return m_jobs.at(job)->cancel.load(std::memory_order_relaxed);
+	}
+
 	Json Jobs::schema()
 	{
 		return {{"type", "object"},

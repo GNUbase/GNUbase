@@ -897,7 +897,7 @@ namespace gnubase::engine
 							loaded.clear();
 						}
 						if (sample != loaded)
-							m_sampleLoader.request(sample);
+							(m_renderSamples ? *m_renderSamples : m_sampleLoader).request(sample);
 					}
 				}
 				instrument.samples = channel.samples;
@@ -965,7 +965,8 @@ namespace gnubase::engine
 				const std::string& path = instrument.samples[slot];
 				if (instrument.loaded[slot] == path)
 					continue;
-				if (std::shared_ptr<const processors::Sample> sample = m_sampleLoader.sample(path))
+				if (std::shared_ptr<const processors::Sample> sample =
+						(m_renderSamples ? *m_renderSamples : m_sampleLoader).sample(path))
 				{
 					instrument.player->setSample(slot, std::move(sample));
 					instrument.loaded[slot] = path;
@@ -976,7 +977,8 @@ namespace gnubase::engine
 				}
 			}
 		}
-		m_sampleLoader.keepOnly(waiting);
+		if (!m_renderSamples)
+			m_sampleLoader.keepOnly(waiting);
 		return waiting;
 	}
 
@@ -988,7 +990,17 @@ namespace gnubase::engine
 	std::set<std::string> AudioEngine::waitForSamples(std::chrono::milliseconds timeout)
 	{
 		// Only for the files that samplers wait for, not for one being read that none wants any more.
-		m_sampleLoader.waitUntilRead(timeout, updateSamples());
+		const auto deadline = std::chrono::steady_clock::now() + timeout;
+		do
+		{
+			if (m_renderJob)
+				m_renderJob->checkCancelled();
+			const auto remaining =
+				std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+			const auto chunk = m_renderJob ? std::min(remaining, std::chrono::milliseconds(50)) : remaining;
+			if ((m_renderSamples ? *m_renderSamples : m_sampleLoader).waitUntilRead(chunk, updateSamples()))
+				break;
+		} while (std::chrono::steady_clock::now() < deadline);
 		return updateSamples();
 	}
 

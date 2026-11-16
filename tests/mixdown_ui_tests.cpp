@@ -5,10 +5,12 @@
 
 #include "engine/audiofile/audiofile.h"
 #include "engine/engine.h"
+#include "testutils/heldjob.h"
 #include "testutils/testutils.h"
 #include "ui/automation.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <chrono>
@@ -117,6 +119,7 @@ TEST_CASE("File > Export > Audio Mixdown exports the checked channels over the l
 	choose(app, "#mixdown-format", 2); // FLAC, in 24 bits
 	click(app, "#mixdown-export");
 	REQUIRE(app.waitUntil([&app] { return !open(app); }));
+	REQUIRE(app.waitUntil([&] { return std::filesystem::exists(dir.path() / "out" / "take.flac"); }));
 
 	const std::unique_ptr<engine::AudioFileReader> reader =
 		engine::AudioFileReader::open((dir.path() / "out" / "take.flac").u8string());
@@ -140,4 +143,47 @@ TEST_CASE("File > Export > Quick Audio Export writes the whole project into the 
 	const std::unique_ptr<engine::AudioFileReader> reader = engine::AudioFileReader::open(file.u8string());
 	CHECK(reader->info().frames == 4800);
 	CHECK(reader->info().sampleFormat == engine::SampleFormat::Int24);
+}
+
+TEST_CASE("background render progress can cancel and track rows show their render lock", "[ui]")
+{
+	test::UiApp app({1000, 700});
+	app.appUi().showProject();
+	const test::TempDir dir;
+	const uint64_t channel = addTrack(app, dir);
+	uint64_t track = 0;
+	const Json project = app.call("project.get");
+	for (const Json& item : project.at("tracks"))
+		if (item.at("channel") == channel)
+			track = item.at("id").get<uint64_t>();
+	REQUIRE(track != 0);
+	const std::string command =
+		GENERATE(std::string("track.freeze"), std::string("track.renderInPlace"), std::string("mixdown.export"));
+	test::HeldJob held(app.engine(), command);
+	Json parameters = {{"tracks", {track}}, {"tail", 0}};
+	if (command == "mixdown.export")
+		parameters = {{"folder", dir.path().u8string()}, {"name", "mix"}, {"start", 0}, {"end", 4800}};
+	const Json job = app.call(command, parameters).at("job");
+	REQUIRE(held.waitUntilHeld());
+	REQUIRE(app.waitUntil([&] { return !elements(app, "#render-progress-dialog").empty(); }));
+	const std::string locked = "#track-list listitem.rendering[value=\"" + std::to_string(track) + "\"]";
+	if (command != "mixdown.export")
+	{
+		const bool shown = app.waitUntil([&] { return !elements(app, locked).empty(); });
+		INFO(elements(app, "#track-list listitem").dump());
+		INFO(app.call("track.renderLocks").dump());
+		REQUIRE(shown);
+	}
+	click(app, "#render-progress-dialog button");
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			return app.call("job.get", {{"job", job.at("id")}}).at("job").at("state") == "running" &&
+				elements(app, "#render-progress-dialog").empty();
+		}));
+	CHECK(held.release());
+	REQUIRE(app.waitUntil(
+		[&] { return app.call("job.get", {{"job", job.at("id")}}).at("job").at("state") == "cancelled"; }));
+	REQUIRE(app.waitUntil([&] { return elements(app, locked).empty(); }));
+	app.call("track.remove", {{"track", track}});
 }

@@ -239,6 +239,17 @@ namespace gnubase::engine
 		void announceHistory(CommandContext& context) const;
 		void publish();
 
+		struct TrackRender;
+		static Json renderInput(const Project& project, const TrackRender& render);
+		void checkRenderLocks(const Project& project) const;
+		void checkRenderMove(ObjectId track) const;
+		Json startTrackRender(Engine& engine, std::shared_ptr<TrackRender> render, CommandContext& context);
+		void endTrackRender(uint64_t token, CommandContext& context);
+		std::map<uint64_t, std::shared_ptr<TrackRender>> m_trackRenders;
+		uint64_t m_nextRender = 0;
+		uint64_t m_applyingRender = 0;
+		std::vector<ObjectId> m_movingTracks; // explicit moves made by the command being recorded
+
 		struct Edit
 		{
 			CommandInfo info;

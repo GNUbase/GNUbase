@@ -3,7 +3,7 @@
      it with File > Export > Audio Mixdown (the UI command file.exportMixdown). Its Lua lists the output busses and the
      audio, instrument, group and effect channels, the main mix checked, and on Export sends mixdown.export for the
      checked ones over the locator range, with the name, folder and file format chosen; the dialog closes unless the
-     export failed, whose reason it shows. The export holds the UI until it is done. -->
+     export failed, whose reason it shows. The background job shows progress with Cancel while editing remains available. -->
 <rml>
 <head>
 	<title>Export Audio Mixdown</title>

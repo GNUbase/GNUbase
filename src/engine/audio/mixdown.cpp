@@ -9,7 +9,11 @@
 #include "engine/document/rendersnapshot.h"
 #include "engine/dsp/dither.h"
 #include "engine/engine.h"
+#include "engine/jobs/jobs.h"
+#include "engine/media/backup.h"
+#include "engine/plugins/hostmanager.h"
 #include "engine/plugins/slotinstances.h"
+#include "engine/settings/usersettings.h"
 
 #include <algorithm>
 #include <array>
@@ -61,6 +65,7 @@ namespace gnubase::engine
 			int channels = 0;
 			fs::path path;
 			fs::path part;
+			fs::path ready;
 			std::unique_ptr<Resampler> resampler;
 			std::unique_ptr<AudioFileWriter> writer; // of the part file
 			std::vector<float> block;                // interleaved
@@ -158,7 +163,7 @@ namespace gnubase::engine
 		}
 
 		// Second pass: the part file into the target's file, at gain, dithered, at most frames frames.
-		void finish(const Target& target, const FileFormat& format, int64_t frames)
+		void finish(Target& target, const FileFormat& format, int64_t frames, JobContext* job)
 		{
 			const std::unique_ptr<AudioFileReader> reader = AudioFileReader::open(target.part.u8string());
 			WriteOptions options;
@@ -166,7 +171,9 @@ namespace gnubase::engine
 			options.sampleFormat = format.sampleFormat;
 			options.sampleRate = format.sampleRate;
 			options.channels = target.channels;
-			const std::unique_ptr<AudioFileWriter> writer = AudioFileWriter::create(target.path.u8string(), options);
+			target.ready =
+				createFreeFile(target.path.parent_path(), fs::u8path(target.path.filename().u8string() + ".writing"));
+			const std::unique_ptr<AudioFileWriter> writer = AudioFileWriter::create(target.ready.u8string(), options);
 			const float gain = format.normalize && target.peak > 0.0f
 				? static_cast<float>(std::pow(10.0, *format.normalize / 20.0) / target.peak)
 				: 1.0f;
@@ -182,6 +189,11 @@ namespace gnubase::engine
 				pointers[c] = planar.data() + (c * g_chunk);
 			for (int64_t done = 0; done < frames;)
 			{
+				if (job)
+				{
+					job->checkCancelled();
+					job->progress(0.8 + 0.19 * static_cast<double>(done) / static_cast<double>(frames), target.name);
+				}
 				const size_t read =
 					reader->read(interleaved.data(), std::min<size_t>(g_chunk, static_cast<size_t>(frames - done)));
 				if (read == 0)
@@ -203,6 +215,8 @@ namespace gnubase::engine
 				done += static_cast<int64_t>(read);
 			}
 			writer->close();
+			if (job)
+				job->checkCancelled();
 		}
 
 		// Removes the part files and, unless the export is done, the files it wrote.
@@ -220,6 +234,7 @@ namespace gnubase::engine
 				{
 					target.writer.reset(); // closes a part file that is still open
 					fs::remove(target.part, error);
+					fs::remove(target.ready, error);
 					if (!done && target.created)
 						fs::remove(target.path, error);
 				}
@@ -227,12 +242,12 @@ namespace gnubase::engine
 		};
 	}
 
-	void AudioEngine::registerMixdownCommands(Engine& engine)
+	Json AudioEngine::mixdown(const Json& parameters, const Json& project, bool quick, JobContext* job)
 	{
 		// Renders [start, end) and tail frames more of the targets, which have objects and paths, into their files:
 		// what they output, or with point, what their channel's strip has there (render in place and freeze). The
 		// transport, its settings and the device are as before afterwards.
-		const auto exportRange = [this](CommandContext& context, std::vector<Target>& targets, time::Samples start,
+		const auto exportRange = [this, job](CommandContext& context, std::vector<Target>& targets, time::Samples start,
 									 time::Samples end, time::Samples tail, const FileFormat& format,
 									 std::optional<RenderPoint> point)
 		{
@@ -268,7 +283,8 @@ namespace gnubase::engine
 			{
 				for (Target& target : targets)
 				{
-					target.part = fs::u8path(target.path.u8string() + ".part");
+					target.part = createFreeFile(
+						target.path.parent_path(), fs::u8path(target.path.filename().u8string() + ".part"));
 					WriteOptions options;
 					options.sampleFormat = SampleFormat::Float32;
 					options.sampleRate = format.sampleRate;
@@ -347,9 +363,18 @@ namespace gnubase::engine
 					sent(m_transport.locate(start));
 					play();
 					const graph::CompiledGraph& graph = m_programs->latest().graph;
-					render(static_cast<uint64_t>(end - start + tail),
+					uint64_t done = 0;
+					const auto total = static_cast<uint64_t>(end - start + tail);
+					render(total,
 						[&](uint32_t frames)
 						{
+							if (job)
+							{
+								job->checkCancelled();
+								job->progress(
+									0.8 * static_cast<double>(done) / static_cast<double>(total), "Rendering audio");
+							}
+							done += frames;
 							for (Target& target : targets)
 							{
 								const auto channels = static_cast<size_t>(target.channels);
@@ -381,11 +406,23 @@ namespace gnubase::engine
 					target.writer->close();
 					target.writer.reset();
 					const int64_t frames = tail > 0 ? std::max(length, target.audible) : target.frames;
-					target.created = true;
-					finish(target, format, frames);
+					finish(target, format, frames, job);
 					files.push_back({{"channel", target.object}, {"name", target.name},
 						{"path", fs::absolute(target.path).u8string()}, {"frames", frames}});
 				}
+				if (job)
+					job->checkCancelled();
+				for (Target& target : targets)
+				{
+					// Once publication begins this job completes; cancellation is checked before it.
+					if (format.overwrite || target.created)
+					{
+						std::error_code error;
+						fs::remove(target.path, error);
+					}
+					fs::rename(target.ready, target.path);
+				}
+
 				cleanup.done = true;
 				return Json{{"files", std::move(files)}};
 			}
@@ -395,12 +432,172 @@ namespace gnubase::engine
 			}
 		};
 
-		const Json filesSchema = Json::parse(R"({"type": "object", "required": ["files"], "properties": {
-			"files": {"type": "array", "items": {"type": "object", "required": ["channel", "name", "path", "frames"],
-				"properties": {"channel": {"type": "integer"}, "name": {"type": "string"}, "path": {"type": "string"},
-				"frames": {"type": "integer"}}}}}})");
+		CommandContext context(parameters);
+		if (quick)
+		{
+			const RenderSnapshot& snapshot = m_snapshots.latest();
+			std::optional<time::Samples> first;
+			for (const RenderChannel& channel : snapshot.channels)
+			{
+				for (const RenderAudioEvent& event : channel.audioEvents)
+					first = std::min(first.value_or(event.start), event.start);
+				for (const RenderNote& note : channel.notes)
+					first = std::min(first.value_or(note.start), note.start);
+			}
+			const time::Samples end = projectEnd();
+			require(first.has_value() && end > *first, "the project has no events to export");
+			FileFormat format;
+			format.sampleRate = snapshot.sampleRate;
+			format.overwrite = true;
+			std::vector<Target> targets(1);
+			for (const RenderBus& bus : snapshot.busses)
+				if (bus.mainMix)
+					targets[0].object = bus.id;
+			require(targets[0].object != 0, "there is no main mix");
+			targets[0].name = "Main Mix";
+			targets[0].path = fs::u8path(parameters.at("path").get<std::string>());
+			std::error_code error;
+			if (targets[0].path.has_parent_path())
+				fs::create_directories(targets[0].path.parent_path(), error);
+			const Json result = exportRange(context, targets, *first, end,
+				static_cast<time::Samples>(std::llround(g_maxTailSeconds * snapshot.sampleRate)), format, std::nullopt);
+			const Json& file = result.at("files").at(0);
+			return Json{{"path", file.at("path")}, {"frames", file.at("frames")}};
+		}
+		{
+			const RenderSnapshot& snapshot = m_snapshots.latest();
+			const FileFormat format = formatFrom(parameters, snapshot.sampleRate);
+			const time::Samples start = parameters.value("start", m_transport.settings().left);
+			const time::Samples end = parameters.value("end", m_transport.settings().right);
+			require(end > start, "the range is empty: end must be after start");
+			std::vector<ObjectId> objects;
+			if (const auto channels = parameters.find("channels"); channels != parameters.end())
+				objects = channels->get<std::vector<ObjectId>>();
+			else
+				for (const RenderBus& bus : snapshot.busses)
+					if (bus.mainMix)
+						objects.push_back(bus.id);
+			require(!objects.empty(), "there is no main mix; give channels");
+			const std::set<ObjectId> unique(objects.begin(), objects.end());
+			require(unique.size() == objects.size(), "channels names a channel twice");
+
+			const fs::path folder = fs::u8path(parameters.at("folder").get<std::string>());
+			const std::string name = parameters.at("name").get<std::string>();
+			std::vector<Target> targets(objects.size());
+			std::set<fs::path> taken;
+			for (size_t i = 0; i < objects.size(); ++i)
+			{
+				const std::optional<std::string> found = nameOf(project, objects[i]);
+				require(found.has_value(), "there is no bus or channel " + std::to_string(objects[i]));
+				targets[i].object = objects[i];
+				targets[i].name = *found;
+				targets[i].path = claim(folder, objects.size() == 1 ? name : name + " - " + targets[i].name,
+					extensionOf(format.format), format.overwrite, taken);
+				taken.insert(targets[i].path);
+			}
+			std::optional<RenderPoint> point;
+			const std::string from = parameters.value("point", std::string("output"));
+			if (from == "source")
+				point = RenderPoint::Source;
+			else if (from == "inserts")
+				point = RenderPoint::Inserts;
+			else if (from == "strip")
+				point = RenderPoint::Strip;
+			const auto tail =
+				static_cast<time::Samples>(std::llround(parameters.value("tail", 0.0) * snapshot.sampleRate));
+			std::error_code error;
+			fs::create_directories(folder, error);
+			require(!error, "can't create the folder " + folder.u8string() + ": " + error.message());
+			Cleanup reserved{targets};
+			for (Target& target : targets)
+			{
+				if (!format.overwrite)
+				{
+					target.path = createFreeFile(folder, target.path.filename());
+					target.created = true;
+				}
+			}
+			Json result = exportRange(context, targets, start, end, tail, format, point);
+			reserved.done = true;
+			return result;
+		}
+	}
+	Jobs::Work AudioEngine::mixdownWork(const Json& parameters, const Json& project)
+	{
+		require(m_device != nullptr && m_programs, "there is no audio device; set one with audio.setDevice");
+		require(!m_transport.recording() && !m_transport.countingIn(), "stop recording first");
+		const RenderSnapshot snapshot = m_snapshots.latest();
+		require(m_device->format().sampleRate == snapshot.sampleRate,
+			"the device runs at " + std::to_string(std::lround(m_device->format().sampleRate)) +
+				" Hz, not at the project sample rate of " + std::to_string(std::lround(snapshot.sampleRate)) + " Hz");
+		const FileFormat format = formatFrom(parameters, snapshot.sampleRate);
+		(void)format;
+		Json request = parameters;
+		request["start"] = parameters.value("start", m_transport.settings().left);
+		request["end"] = parameters.value("end", m_transport.settings().right);
+		require(request.at("end").get<int64_t>() > request.at("start").get<int64_t>(),
+			"the range is empty: end must be after start");
+		std::vector<ObjectId> objects;
+		if (request.contains("channels"))
+			objects = request.at("channels").get<std::vector<ObjectId>>();
+		else
+			for (const auto& bus : snapshot.busses)
+				if (bus.mainMix)
+					objects.push_back(bus.id);
+		require(!objects.empty(), "there is no main mix; give channels");
+		std::set<ObjectId> unique(objects.begin(), objects.end());
+		require(unique.size() == objects.size(), "channels names a channel twice");
+		for (const auto object : objects)
+		{
+			require(nameOf(project, object).has_value(), "there is no bus or channel " + std::to_string(object));
+			const int node = m_programs->latest().graph.find(object);
+			require(node >= 0 && m_programs->latest().graph.outputChannels(node) > 0, "channel has no audio");
+		}
+		request["channels"] = objects;
+		const Json values = m_settings.values();
+		std::set<std::string> paths;
+		for (const auto& channel : snapshot.channels)
+			for (const auto& path : channel.samples)
+				if (!path.empty())
+					paths.insert(path);
+		SampleLoader* samples = &m_sampleLoader;
+		const auto lease = std::make_shared<SampleLoader::Lease>(*samples, std::move(paths));
+		const auto sampleWait = m_offlineSampleWait.load();
+		const MidiChase chase = m_chase;
+		const uint32_t blockSize = m_device->format().blockSize;
+		plugins::HostManager* hosts = &m_engine->pluginHosts();
+		return
+			[snapshot, project, values, request, blockSize, hosts, samples, lease, sampleWait, chase](JobContext& job)
+		{
+			(void)lease; // keeps this snapshot's sample reads alive through completion
+			job.checkCancelled();
+			rt::SnapshotPublisher<RenderSnapshot> snapshots(std::make_unique<RenderSnapshot>(snapshot));
+			settings::Store settings(settings::userFormat());
+			settings.set(values);
+			std::vector<std::unique_ptr<audio::Backend>> backends;
+			backends.push_back(std::make_unique<audio::DummyBackend>());
+			AudioEngine renderer(snapshots, settings, std::move(backends), {});
+			renderer.m_renderSamples = samples;
+			renderer.m_renderJob = &job;
+			renderer.setOfflineSampleWait(sampleWait);
+			renderer.setChase(chase);
+			renderer.m_multiProcessing = false;
+			renderer.m_threads = 1;
+			renderer.m_slots = std::make_unique<plugins::SlotInstances>(*hosts, [] {}, [](uint64_t) { return true; });
+			renderer.setDevice({{"blockSize", blockSize}, {"sampleRate", snapshot.sampleRate}, {"captureSeconds", 0},
+				{"inputChannels", 0}});
+			// Wait on the plugin job queue, then publish their ready processors in this render's graph.
+			hosts->run([] {}).get();
+			job.checkCancelled();
+			renderer.rebuild();
+			return renderer.mixdown(request, project, false, &job);
+		};
+	}
+
+	void AudioEngine::registerMixdownCommands(Engine& engine)
+	{
 		engine.registerCommand(
-			{"mixdown.export", 1,
+			{"mixdown.export", 2,
 				"Exports an audio mixdown (reference manual pp. 1479-1502): renders the range from start to end, in "
 				"project samples (default: the left to the right locator), offline as transport.locate, "
 				"transport.play and audio.render would, without cycle, pre-roll and click, and writes what each of "
@@ -417,9 +614,13 @@ namespace gnubase::engine
 				"the slots, before the strip's other sections; strip is after those, before the fader. tail renders "
 				"up to that many seconds (0 to 60) after end, ending after the last sample a 24-bit file doesn't hold "
 				"as silence. The transport and its settings are as before afterwards; a device "
-				"that runs stops meanwhile, and plugins render in offline mode. Refused while the device runs at "
+				"continues running, and separate plugin instances render in offline mode. Refused while the device "
+				"runs at "
 				"another sample rate than the project. Returns the files written, each with its channel, name, "
-				"absolute path and frames.",
+				"absolute path and frames in the job result. Returns a cancellable job immediately; progress and "
+				"completion "
+				"are job.progress and job.finished events. Rendering uses a private starting snapshot and leaves "
+				"playback running.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["folder", "name"],
 					"properties": {"folder": {"type": "string"}, "name": {"type": "string", "minLength": 1},
 					"channels": {"type": "array", "items": {"type": "integer"}},
@@ -430,55 +631,11 @@ namespace gnubase::engine
 					"conflicts": {"type": "string", "enum": ["unique", "overwrite"]},
 											"point": {"type": "string", "enum": ["output", "strip", "inserts", "source"]},
 											"tail": {"type": "number", "minimum": 0, "maximum": 60}}})"),
-				filesSchema, false},
-			[this, exportRange](CommandContext& context)
+				{{"type", "object"}, {"properties", {{"job", Jobs::schema()}}}, {"required", {"job"}}}, false},
+			[this, &engine](CommandContext& context)
 			{
-				const Json& parameters = context.parameters();
-				const RenderSnapshot& snapshot = m_snapshots.latest();
-				const FileFormat format = formatFrom(parameters, snapshot.sampleRate);
-				const time::Samples start = parameters.value("start", m_transport.settings().left);
-				const time::Samples end = parameters.value("end", m_transport.settings().right);
-				require(end > start, "the range is empty: end must be after start");
-				std::vector<ObjectId> objects;
-				if (const auto channels = parameters.find("channels"); channels != parameters.end())
-					objects = channels->get<std::vector<ObjectId>>();
-				else
-					for (const RenderBus& bus : snapshot.busses)
-						if (bus.mainMix)
-							objects.push_back(bus.id);
-				require(!objects.empty(), "there is no main mix; give channels");
-				const std::set<ObjectId> unique(objects.begin(), objects.end());
-				require(unique.size() == objects.size(), "channels names a channel twice");
-
-				const Json project = context.call("project.get");
-				const fs::path folder = fs::u8path(parameters.at("folder").get<std::string>());
-				const std::string name = parameters.at("name").get<std::string>();
-				std::vector<Target> targets(objects.size());
-				std::set<fs::path> taken;
-				for (size_t i = 0; i < objects.size(); ++i)
-				{
-					const std::optional<std::string> found = nameOf(project, objects[i]);
-					require(found.has_value(), "there is no bus or channel " + std::to_string(objects[i]));
-					targets[i].object = objects[i];
-					targets[i].name = *found;
-					targets[i].path = claim(folder, objects.size() == 1 ? name : name + " - " + targets[i].name,
-						extensionOf(format.format), format.overwrite, taken);
-					taken.insert(targets[i].path);
-				}
-				std::optional<RenderPoint> point;
-				const std::string from = parameters.value("point", std::string("output"));
-				if (from == "source")
-					point = RenderPoint::Source;
-				else if (from == "inserts")
-					point = RenderPoint::Inserts;
-				else if (from == "strip")
-					point = RenderPoint::Strip;
-				const auto tail =
-					static_cast<time::Samples>(std::llround(parameters.value("tail", 0.0) * snapshot.sampleRate));
-				std::error_code error;
-				fs::create_directories(folder, error);
-				require(!error, "can't create the folder " + folder.u8string() + ": " + error.message());
-				return exportRange(context, targets, start, end, tail, format, point);
+				return engine.startJob(
+					"mixdown.export", mixdownWork(context.parameters(), context.call("project.get")));
 			});
 		engine.registerCommand(
 			{"mixdown.quickExport", 1,
@@ -492,37 +649,13 @@ namespace gnubase::engine
 				Json::parse(R"({"type": "object", "required": ["path", "frames"], "properties": {
 					"path": {"type": "string"}, "frames": {"type": "integer"}}})"),
 				false},
-			[this, exportRange](CommandContext& context)
+			[this](CommandContext& context)
 			{
-				const RenderSnapshot& snapshot = m_snapshots.latest();
-				std::optional<time::Samples> first;
-				for (const RenderChannel& channel : snapshot.channels)
-				{
-					for (const RenderAudioEvent& event : channel.audioEvents)
-						first = std::min(first.value_or(event.start), event.start);
-					for (const RenderNote& note : channel.notes)
-						first = std::min(first.value_or(note.start), note.start);
-				}
-				const time::Samples end = projectEnd();
-				require(first.has_value() && end > *first, "the project has no events to export");
-				FileFormat format;
-				format.sampleRate = snapshot.sampleRate;
-				format.overwrite = true;
-				std::vector<Target> targets(1);
-				for (const RenderBus& bus : snapshot.busses)
-					if (bus.mainMix)
-						targets[0].object = bus.id;
-				require(targets[0].object != 0, "there is no main mix");
-				targets[0].name = "Main Mix";
-				targets[0].path = fs::u8path(context.parameters().at("path").get<std::string>());
-				std::error_code error;
-				if (targets[0].path.has_parent_path())
-					fs::create_directories(targets[0].path.parent_path(), error);
-				const Json result = exportRange(context, targets, *first, end,
-					static_cast<time::Samples>(std::llround(g_maxTailSeconds * snapshot.sampleRate)), format,
-					std::nullopt);
-				const Json& file = result.at("files").at(0);
-				return Json{{"path", file.at("path")}, {"frames", file.at("frames")}};
+				const bool playing = m_transport.playing();
+				Json result = mixdown(context.parameters(), context.call("project.get"), true, nullptr);
+				if (playing)
+					context.emit("transport.changed", transportStatus());
+				return result;
 			});
 	}
 }

@@ -1,17 +1,42 @@
 # Render in place and freeze
 
-Rendering tracks into audio files that play on the timeline (#116, reference manual pp. 219-220, 1471-1477): render
-in place puts what a track plays onto a new audio track, freeze plays a rendered file instead of a track's
-instrument and plugins. Both render with the offline renderer of the mixdown export ([mixdown.md](mixdown.md)), so a
-file is bit-identical to `mixdown.export` of the same channel and range.
+Rendering tracks into audio files that play on the timeline (#116, reference manual pp. 219-220, 1471-1477): render in
+place puts what a track plays onto a new audio track, freeze plays a rendered file instead of a track's instrument and
+plugins. Both render with the offline renderer of the mixdown export ([mixdown.md](mixdown.md)), so a file is
+bit-identical to `mixdown.export` of the same channel and range.
+
+## Background jobs and track locks
+
+Freeze and render in place use the same background jobs as backups and media conforming (#1794). Each command validates
+its request, takes a render snapshot and locks the affected tracks before returning `{job}`. The private renderer works
+on the job thread; the command thread remains available to every client. The lock protects rendered input, including the
+source track, its inserts, channel settings, intersecting audio events, clips and media, MIDI parts and tracks routed to
+a rendered instrument. Commands that change protected input fail atomically with "being rendered", including
+transactions and undo/redo. Other tracks and audio events outside the rendered range remain editable. A track being
+rendered cannot be deleted or moved, and replacing the project is refused until its track jobs end. Read-only queries
+and saving remain available.
+
+On completion the job posts its project edit to the command thread: freezing the sources or adding all rendered tracks
+and applying the source-track option is one undo step, after any edits made elsewhere while it ran. The render lock is
+temporary state, outside the project file and undo history. Completion, failure and cancellation release it; failure and
+cancellation also remove the files made by the job. `track.renderLocks` reports active locks and job ids;
+`track.renderingChanged` announces `{tracks, job, rendering}`. The UI follows these through the engine API, styles track
+rows with `.rendering` in RCSS, and shows nonmodal progress with Cancel. Closing progress also cancels its job, using
+the backup progress lifecycle.
+
+`track.freeze` and `track.renderInPlace` are command version 2. Their names and parameters stay, but they return `{job}`
+immediately. The completed job's `result` keeps the former synchronous result: `{tracks}` for freeze, `{tracks, media,
+events}` for render in place. Lua and MCP callers obtain it through `job.get` or `job.finished`; `job.cancel` requests
+cancellation. `track.unfreeze` retains its synchronous result. The job-starting commands cannot be nested in
+`history.transaction`; each job applies its own single undo step when it completes.
 
 ## Render points
 
-`mixdown.export`'s `point` renders channels from inside their strip instead of after the fader and panner
-(`output`, the default). The channel's strip (`ChannelStrip`) copies its audio at that point into a buffer of the
-render (`PreFaderTap`) in every block, which the export reads after the block: `AudioEngine::m_renderTaps` names
-the channels and points while the export renders, and the graph is built again with them before and without them
-after. Nothing changes on the audio thread otherwise, and no graph but the export's has a tap.
+`mixdown.export`'s `point` renders channels from inside their strip instead of after the fader and panner (`output`, the
+default). The channel's strip (`ChannelStrip`) copies its audio at that point into a buffer of the render
+(`PreFaderTap`) in every block, which the export reads after the block: `AudioEngine::m_renderTaps` names the channels
+and points while the export renders, and the graph is built again with them before and without them after. Nothing
+changes on the audio thread otherwise, and no graph but the export's has a tap.
 
 - `source`: what plays on the channel (its events or instrument, the automation), before the pre section and the
   plugin slots: in the strip that runs the source, the source node's on a channel with slots.
@@ -19,8 +44,8 @@ after. Nothing changes on the audio thread otherwise, and no graph but the expor
 - `strip`: after those, before the fader: where pre-fader sends take the audio.
 
 Files from a point are in the channel's format, so a mono track gives a mono file; from `output`, in the format the
-panner makes. `tail` renders up to that many seconds after the range, as quick export does: the file ends after the
-last sample a 24-bit file doesn't hold as silence, or at the range's end.
+panner makes. `tail` renders up to that many seconds after the range, as quick export does: the file ends after the last
+sample a 24-bit file doesn't hold as silence, or at the range's end.
 
 ## Freeze
 
@@ -67,8 +92,8 @@ last sample a 24-bit file doesn't hold as silence, or at the range's end.
 ## Render in place
 
 **`track.renderInPlace`** renders each audio and instrument track into a WAV file (32-bit float by default) in the
-project's media folder, named after the track or `name`, and puts it as one event (As One Event, p. 1472) on a new
-audio track below the track, named after it with "(Rendered)", in its folder, time base and output. One undo step.
+project's media folder, named after the track or `name`, and puts it as one event (As One Event, p. 1472) on a new audio
+track below the track, named after it with "(Rendered)", in its folder, time base and output. One undo step.
 
 - The range is `start` to `end` (a range selection, p. 1474), or from the start of the track's first event or note
   to the end of its last; `tail` adds seconds after it (default 0).
@@ -107,3 +132,12 @@ audio track below the track, named after it with "(Rendered)", in its folder, ti
 - Plugin delay compensation (#71): a freeze file rendered at `inserts` holds its slots' latency, so once latency is
   compensated it has to play earlier by the latency of the slots it replaces.
 - A frozen track's pre section and cut filters glide from their old settings over the first block after freezing.
+
+## Tests
+
+`tests/renderinplace_tests.cpp` checks the rendered audio, source options, freeze persistence, unfreeze and undo. Its
+background-job tests hold jobs at progress while another client edits: protected edits and transactions are refused,
+unrelated edits and events outside the range succeed, completion adds one undo step, and cancellation or failure unlocks
+without a project change. The mixdown snapshot test edits and removes the exported source while the job runs and
+compares the result with the starting audio. `tests/mixdown_ui_tests.cpp` uses the real app's automation API to check
+the rendering state class, progress and Cancel for all three background render commands.
