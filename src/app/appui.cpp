@@ -24,7 +24,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cmath>
 #include <fstream>
 #include <memory>
 #include <optional>
@@ -288,7 +287,7 @@ namespace gnubase::app
 			{"signature", "enter.signature", "Edits the time signature in the transport bar.", "Shift+C"},
 		}};
 
-		// A new transport panel's size until it takes the width of its shown sections (AppUi::fitSections), and the
+		// A new transport panel's size until it takes the width of its shown sections (ui::TransportPanelFit), and the
 		// one it keeps without a display or without a shown section.
 		constexpr ui::Size g_transportPanelSize{1100, 48};
 		// The time display window at each of its sizes (ui.timeDisplay); the theme sizes its digits to fit.
@@ -1245,28 +1244,12 @@ namespace gnubase::app
 							changed = keys->fitLines(window.context()) || changed;
 				return changed;
 			});
-		// The transport panel follows its sections whenever an update may have changed their width (#1527), once its
-		// controls show the project (#1612).
-		m_shell.afterUpdate(
-			[this](ui::Window& window)
-			{
-				TransportWindow& panel = m_transportPanel;
-				return window.id() == panel.window && panel.follows &&
-					fitSections(window, std::exchange(panel.centre, false));
-			});
-		// Reset All in its setup pane fits a panel that the user sized, or one with bounds from before #1527, again:
-		// it follows its sections from the width it has (#1612).
+		// Reset All in its setup pane makes the transport panel follow its sections again (#1612).
 		m_docking.onReset(
 			[this](const std::string& window, const std::string&)
 			{
-				if (window != "transportPanel")
-					return;
-				if (const ui::Window* panel = m_transportPanel.shown(m_shell))
-				{
-					m_transportPanel.measured = 0;
-					m_docking.setFittedWidth("transportPanel", m_shell.bounds(panel->id()).width);
-					panel->context().RequestNextUpdate(0);
-				}
+				if (window == "transportPanel")
+					m_panelFit.reset();
 			});
 		// The time display window's context menu (reference manual p. 313).
 		m_keys.add({"timeDisplay.beatCountOnly",
@@ -1553,25 +1536,10 @@ namespace gnubase::app
 		if (root == controls)
 		{
 			m_docking.attach("transportPanel", *document);
-			// A new panel is fitted to the controls' defaults at once, so that a panel closed before the engine
-			// answered their queries doesn't keep the unfitted width in ui.layout. Once they show the project, their
-			// displays grow with their text, and the panel follows (#1474, #1527): from then on, so that one with
-			// fitted bounds doesn't take the defaults' width first, and a new one centred for what they show (#1612).
-			shown.sections = controls->GetObserverPtr();
-			shown.unfitted = 0;
-			shown.follows = false;
-			shown.measured = 0;
-			if (!spec.bounds)
-				fitSections(window, true);
-			shown.controls->onShown(
-				[this, centre = !spec.bounds]
-				{
-					TransportWindow& panel = m_transportPanel;
-					panel.follows = true;
-					panel.centre = centre;
-					if (const ui::Window* shownWindow = panel.shown(m_shell))
-						shownWindow->context().RequestNextUpdate(0);
-				});
+			// Once the controls show the project, their displays grow with their text, and the panel follows (#1474,
+			// #1527, #1612).
+			m_panelFit.open(window, *controls, !spec.bounds);
+			shown.controls->onShown([this] { m_panelFit.follow(); });
 		}
 		else
 		{
@@ -1587,63 +1555,6 @@ namespace gnubase::app
 					m_shell.setBounds(id, bounds);
 				});
 		}
-	}
-
-	bool AppUi::fitSections(ui::Window& window, bool centre)
-	{
-		TransportWindow& panel = m_transportPanel;
-		Rml::Element* controls = panel.sections.get();
-		const ui::Size pixels = window.pixelSize();
-		if (controls == nullptr || pixels.width <= 0)
-			return false;
-		const ui::Rect bounds = m_shell.bounds(window.id());
-		const std::optional<int> fitted = m_docking.fittedWidth("transportPanel");
-		// Once it follows, a new panel is centred again only where it opened, and sized by the user it isn't fitted.
-		const bool opening = centre && !panel.follows;
-		centre = centre && (opening || bounds.position() == panel.measuredBounds.position());
-		if (!opening)
-		{
-			if (!fitted || (bounds.width != *fitted && bounds.width != panel.unfitted))
-				return false; // sized by the user, or by a layout from before #1527
-			if (bounds.width == *fitted)
-				panel.unfitted = 0;
-		}
-		else
-		{
-			window.context().Update(); // a new document
-		}
-		float right = 0;
-		Rml::ElementList sections;
-		controls->QuerySelectorAll(sections, ".transport-section");
-		for (Rml::Element* section : sections)
-			if (section->IsVisible())
-				right = std::max(right,
-					section->GetAbsoluteLeft() + section->GetOffsetWidth() +
-						section->GetBox().GetEdge(Rml::BoxArea::Margin, Rml::BoxEdge::Right));
-		// Unchanged since the last look, e.g. in every frame while the transport runs: no monitors asked for.
-		if (right <= 0 || (!centre && right == panel.measured && bounds == panel.measuredBounds))
-			return false;
-		panel.measured = right;
-		panel.measuredBounds = bounds;
-		const std::vector<ui::Display> displays = m_shell.displays();
-		if (displays.empty())
-			return false;
-		const ui::Rect fit = ui::fitWidth(bounds,
-			static_cast<int>(std::ceil(right * static_cast<float>(bounds.width) / static_cast<float>(pixels.width))),
-			displays, centre);
-		if (!centre && fit.width == fitted)
-			return false;
-		const int width = fit.width;
-		m_shell.setBounds(window.id(), fit);
-		// A window system that sizes windows later has the old width meanwhile; one that gave the window a width of
-		// its own, such as a minimum, keeps that as the fit's.
-		const int now = m_shell.bounds(window.id()).width;
-		const bool applied = now != bounds.width || now == width;
-		panel.unfitted = applied ? 0 : bounds.width;
-		m_docking.setFittedWidth("transportPanel", applied ? now : width);
-		m_docking.saveWindows(); // so that a panel closed at once comes back as wide, in one save with the width
-		panel.measuredBounds = m_shell.bounds(window.id());
-		return true;
 	}
 
 	void AppUi::toggleTransportPanel()

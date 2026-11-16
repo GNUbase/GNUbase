@@ -172,6 +172,7 @@ namespace gnubase::ui
 			case SDL_EVENT_DISPLAY_DESKTOP_MODE_CHANGED:
 			case SDL_EVENT_DISPLAY_CURRENT_MODE_CHANGED:
 			case SDL_EVENT_DISPLAY_CONTENT_SCALE_CHANGED:
+			case SDL_EVENT_DISPLAY_USABLE_BOUNDS_CHANGED: // e.g. a taskbar moved to another edge
 				return WindowEventKind::DisplaysChanged;
 			default:
 				return std::nullopt;

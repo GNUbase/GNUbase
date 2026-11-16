@@ -455,6 +455,25 @@ TEST_CASE("another thread wakes SDL's event loop while it waits", "[ui]")
 	CHECK(std::chrono::steady_clock::now() - started < std::chrono::seconds(5));
 }
 
+TEST_CASE("a change of a monitor's usable area, as when the taskbar moves, reaches the shell", "[ui]")
+{
+#ifdef __linux__
+	test::useTestDisplay();
+#endif
+	ui::SdlWindowSystem windows;
+	SDL_Event usable{};
+	usable.type = SDL_EVENT_DISPLAY_USABLE_BOUNDS_CHANGED;
+	usable.display.displayID = SDL_GetPrimaryDisplay();
+	push(usable);
+	// Events from earlier tests may come first.
+	std::optional<ui::WindowEvent> event;
+	do
+		event = windows.nextEvent(std::chrono::seconds(1));
+	while (event && event->kind != ui::WindowEventKind::DisplaysChanged);
+	REQUIRE(event.has_value());
+	CHECK(event.value_or(ui::WindowEvent{ui::WindowEventKind::Quit}).kind == ui::WindowEventKind::DisplaysChanged);
+}
+
 TEST_CASE("effects at a window's edges draw as in a context of the window's size", "[ui]")
 {
 	// A context can be larger than the frame it draws, e.g. for a frame while its window shrinks. A box shadow wider
