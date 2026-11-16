@@ -10,7 +10,7 @@
 		button { display: block; position: absolute; left: 10dp; top: 10dp; width: 120dp; height: 30dp; }
 		#search { display: block; position: absolute; left: 10dp; top: 50dp; width: 200dp; height: 20dp; }
 		#items { position: absolute; left: 10dp; top: 80dp; width: 200dp; height: 60dp; overflow-y: auto; }
-		li { height: 20dp; }
+		li { height: 20dp; drag: drag-drop; }
 		scrollbarvertical { width: 10dp; }
 		scrollbarvertical sliderbar { min-height: 10dp; }
 		#hidden { display: none; }
@@ -23,11 +23,11 @@
 	<button id="open" class="primary wide" title="Opens the rename dialog">Rename track</button>
 	<input type="text" id="search"/>
 	<ul id="items">
-		<li class="item">Drums</li>
-		<li class="item selected">Bass</li>
-		<li class="item">Keys</li>
-		<li class="item">Vocals</li>
-		<li class="item">Guitar</li>
+		<li class="item" id="drums">Drums</li>
+		<li class="item selected" id="bass">Bass</li>
+		<li class="item" id="keys">Keys</li>
+		<li class="item" id="vocals">Vocals</li>
+		<li class="item" id="guitar">Guitar</li>
 	</ul>
 	<p id="hidden">Not shown</p>
 	<div id="handle"/>

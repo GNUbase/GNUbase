@@ -56,7 +56,9 @@ namespace gnubase::app
 			return {{"window", windowProperty()},
 				{"selector",
 					{{"type", "string"},
-						{"description", "A CSS selector; the mouse goes to the centre of the element it matches."}}},
+						{"description",
+							"A CSS selector; the mouse goes to the centre of the element it matches, scrolled into "
+							"view first if a scrolling container hides it."}}},
 				{"index",
 					{{"type", "integer"}, {"minimum", 0},
 						{"description", "Which of the elements the selector matches; 0, the first, if left out."}}},
@@ -277,7 +279,9 @@ namespace gnubase::app
 		to["description"] = "Where to release it, the same way.";
 		tools.push_back({"ui_drag",
 			"Drags with the left button from one element or point to another and drops there, e.g. a fader's cap, "
-			"finer with shift held. Returns the element under the mouse at the end.",
+			"finer with shift held; fails when its ends can't both be scrolled into view. Returns the element under "
+			"the "
+			"mouse at the end.",
 			object({{"window", windowProperty()}, {"from", std::move(from)}, {"to", std::move(to)},
 					   {"modifiers", modifiersProperty("Keys held while dragging.")}},
 				{"from", "to"}),

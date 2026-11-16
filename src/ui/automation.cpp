@@ -9,9 +9,12 @@
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/ElementText.h>
+#include <RmlUi/Core/ElementUtilities.h>
 #include <RmlUi/Core/Elements/ElementFormControl.h>
 #include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <RmlUi/Core/Input.h>
+#include <RmlUi/Core/Rectangle.h>
+#include <RmlUi/Core/ScrollTypes.h>
 #include <RmlUi/Core/StringUtilities.h>
 
 #include <algorithm>
@@ -200,13 +203,29 @@ namespace gnubase::ui
 			return chosen;
 		}
 
-		Point targetPoint(Window& window, const Target& target)
+		// The target's point, or the centre of its element as it is now. As a user would, an element whose centre its
+		// scrolling containers hide is scrolled into view first, so the input lands on it rather than on what is in its
+		// place; a visible centre scrolls nothing. With scroll false a hidden centre is an error instead: the other end
+		// of a drag scrolled it out of view.
+		Point targetPoint(Window& window, const Target& target, bool scroll = true)
 		{
 			if (target.point)
 				return *target.point;
 			if (target.selector.empty())
 				throw std::invalid_argument("needs a selector or x and y");
-			const Rect bounds = box(targetElement(window, target));
+			Rml::Element& element = targetElement(window, target);
+			Rect bounds = box(element);
+			Rml::Rectanglei clip;
+			if (Rml::ElementUtilities::GetClippingRegion(&element, clip) &&
+				!clip.Contains({bounds.x + (bounds.width / 2), bounds.y + (bounds.height / 2)}))
+			{
+				if (!scroll)
+					throw std::invalid_argument(
+						target.selector + " and the other end of the drag can't both be in view");
+				element.ScrollIntoView({Rml::ScrollAlignment::Nearest, Rml::ScrollAlignment::Nearest,
+					Rml::ScrollBehavior::Instant, Rml::ScrollParentage::All});
+				bounds = box(element);
+			}
 			return {bounds.x + (bounds.width / 2), bounds.y + (bounds.height / 2)};
 		}
 
@@ -373,8 +392,10 @@ namespace gnubase::ui
 		std::optional<WindowId> window, const Target& from, const Target& to, const std::vector<std::string>& modifiers)
 	{
 		Window& shown = resolve(window);
-		const Point start = targetPoint(shown, from);
+		targetPoint(shown, from); // scrolls the start into view
 		const Point end = targetPoint(shown, to);
+		// Scrolling the end into view can move the start, e.g. within one list: where it is now, if still in view.
+		const Point start = targetPoint(shown, from, false);
 		const int state = modifierState(modifiers);
 		Rml::Context& context = updated(shown);
 		context.ProcessMouseMove(start.x, start.y, state);

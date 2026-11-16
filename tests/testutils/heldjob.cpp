@@ -11,6 +11,7 @@
 #include <optional>
 #include <set>
 #include <stdexcept>
+#include <thread>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -162,6 +163,20 @@ namespace gnubase::test
 		INFO("job " << job << " didn't finish");
 		REQUIRE(!finished.is_null());
 		return finished;
+	}
+
+	void settlePeaks(engine::Client& client)
+	{
+		const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+		for (;;)
+		{
+			const engine::Json statuses = run(client, "media.peakStatus", engine::Json::object()).at("media");
+			if (std::none_of(statuses.begin(), statuses.end(), [](const engine::Json& status)
+					{ return status.at("status") == "pending" || status.at("status") == "generating"; }))
+				return;
+			REQUIRE(std::chrono::steady_clock::now() < until);
+			std::this_thread::sleep_for(std::chrono::milliseconds(5));
+		}
 	}
 
 	engine::Json whileHeld(engine::Engine& engine, engine::Client& client, const std::string& command,
