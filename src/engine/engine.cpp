@@ -380,6 +380,11 @@ namespace gnubase::engine
 		m_audio->setSampleReader(std::move(read));
 	}
 
+	void Engine::setRenderPluginFactory(plugins::SlotInstances::Factory factory)
+	{
+		m_audio->setRenderPluginFactory(std::move(factory));
+	}
+
 	void Engine::setOfflineSampleWait(std::chrono::milliseconds wait)
 	{
 		m_audio->setOfflineSampleWait(wait);

@@ -21,6 +21,7 @@
 #include <iterator>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -151,6 +152,7 @@ namespace gnubase::engine
 		std::vector<Jobs::Work> work;
 		std::vector<Json> files;
 		Json input;
+		std::set<ObjectId> inputObjects;
 		uint64_t job = 0;
 		std::atomic<bool> ready{false};
 	};
@@ -194,11 +196,12 @@ namespace gnubase::engine
 		{
 			const Track& track = project.trackById.at(id);
 			Json value = toJson(track);
-			for (const char* key : {"name", "color", "picture", "gmNames", "groupEditing"})
+			for (const char* key : {"name", "color", "picture", "gmNames", "groupEditing", "versions", "activeVersion"})
 				value.erase(key);
 			input["tracks"].push_back(value);
 			Json channel = toJson(project.channels.at(track.channel));
-			for (const char* key : {"notes", "listen", "monitor", "recordEnable"})
+			for (const char* key :
+				{"notes", "listen", "monitor", "recordEnable", "input", "midiInput", "inputTransformer"})
 				channel.erase(key);
 			if (preFader && track.type != TrackType::Midi)
 				for (const char* key : {"volume", "pan", "panner", "panLeft", "panRight", "panBypass", "sends", "mute",
@@ -297,10 +300,69 @@ namespace gnubase::engine
 			}
 	}
 
-	void ProjectModel::checkRenderLocks(const Project& project) const
+	bool ProjectModel::affectsRender(const ProjectChange& change, const TrackRender& render)
+	{
+		if (change.settingsBefore && change.settingsAfter)
+		{
+			const auto& before = *change.settingsBefore;
+			const auto& after = *change.settingsAfter;
+			if (std::tie(before.sampleRate, before.tempo, before.panLaw, before.rootKey, before.transpose,
+					before.autoFades) !=
+				std::tie(after.sampleRate, after.tempo, after.panLaw, after.rootKey, after.transpose, after.autoFades))
+				return true;
+		}
+		const auto known = [&render](const auto& changes)
+		{
+			return std::any_of(changes.begin(), changes.end(),
+				[&render](const auto& object) { return render.inputObjects.count(object.id) != 0; });
+		};
+		if (known(change.tracks) || known(change.channels) || known(change.slots) || known(change.audioEvents) ||
+			known(change.audioParts) || known(change.midiParts) || known(change.automation) || known(change.clips) ||
+			known(change.media) || known(change.drumMaps) || known(change.articulationMaps) || known(change.patterns))
+			return true;
+		// New objects are not in the starting input. Check their owners on either side, including rerouting a MIDI
+		// track into the rendered instrument. An event outside the range can still pass the detailed comparison.
+		const auto onTrack = [&render](const auto& changes)
+		{
+			for (const auto& change : changes)
+				for (const auto* value : {&change.before, &change.after})
+					if (*value && render.inputObjects.count((*value)->track) != 0)
+						return true;
+			return false;
+		};
+		if (onTrack(change.audioEvents) || onTrack(change.audioParts) || onTrack(change.midiParts) ||
+			onTrack(change.automation))
+			return true;
+		for (const auto& slot : change.slots)
+			for (const auto* value : {&slot.before, &slot.after})
+				if (*value && render.inputObjects.count((*value)->channel) != 0)
+					return true;
+		for (const auto& channel : change.channels)
+			for (const auto* value : {&channel.before, &channel.after})
+				if (*value)
+				{
+					if (render.inputObjects.count((*value)->track) != 0 ||
+						render.inputObjects.count((*value)->output) != 0)
+						return true;
+					for (const auto& send : (*value)->midiSends.slots)
+						if (render.inputObjects.count(send.output) != 0)
+							return true;
+				}
+		return false;
+	}
+
+	std::string ProjectModel::renderAction(uint64_t token) const
+	{
+		return m_trackRenders.at(token)->freeze ? "Freeze" : "Render in place";
+	}
+
+	void ProjectModel::checkRenderLocks(const Project& project, const std::vector<const ProjectChange*>& changes) const
 	{
 		for (const auto& [token, render] : m_trackRenders)
-			if (token != m_applyingRender && renderInput(project, *render) != render->input)
+			if (token != m_applyingRender &&
+				std::any_of(changes.begin(), changes.end(),
+					[&render](const auto* change) { return affectsRender(*change, *render); }) &&
+				renderInput(project, *render) != render->input)
 				throw CommandError("the affected track or range is being rendered");
 	}
 
@@ -323,6 +385,11 @@ namespace gnubase::engine
 					"the track is being rendered");
 		const uint64_t token = ++m_nextRender;
 		render->input = renderInput(m_project, *render);
+		for (const auto& value : render->input)
+			if (value.is_array())
+				for (const auto& object : value)
+					if (object.is_object() && object.contains("id"))
+						render->inputObjects.insert(object.at("id").get<ObjectId>());
 		for (const auto& track : render->input.at("tracks"))
 			render->lockedTracks.push_back(track.at("id").get<ObjectId>());
 		m_trackRenders[token] = render;

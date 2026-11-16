@@ -3619,8 +3619,9 @@ namespace gnubase::engine
 
 		if (!action.empty())
 			m_edits[info.name] = {info, handler};
+		const bool finishesRender = info.name == "track.finishRender";
 		engine.registerCommand(std::move(info),
-			[this, action = std::move(action), handler = std::move(handler)](CommandContext& context)
+			[this, action = std::move(action), handler = std::move(handler), finishesRender](CommandContext& context)
 			{
 				std::vector<ObjectId> previousMoves = std::move(m_movingTracks);
 				m_movingTracks.clear();
@@ -3632,7 +3633,7 @@ namespace gnubase::engine
 				};
 				const ResetMoves resetMoves{m_movingTracks, previousMoves};
 				const uint64_t applying = m_applyingRender;
-				if (action == "Render tracks")
+				if (finishesRender)
 					m_applyingRender = context.parameters().at("token").get<uint64_t>();
 				struct ResetRender
 				{
@@ -3644,6 +3645,7 @@ namespace gnubase::engine
 				Project before = m_project;
 				const bool followsEvents = m_automationFollowsEvents; // automation.set in a transaction changes it
 				Json result;
+				ProjectChange change;
 				try
 				{
 					result = handler(m_project, context);
@@ -3652,7 +3654,8 @@ namespace gnubase::engine
 					syncSharedParts(before.midiParts, m_project, context);
 					midi::adoptPatterns(m_project, context);
 					followTrackFolders(m_project, context, before);
-					checkRenderLocks(m_project);
+					change = difference(before, m_project);
+					checkRenderLocks(m_project, {&change});
 				}
 				catch (...)
 				{
@@ -3662,10 +3665,11 @@ namespace gnubase::engine
 				}
 				announceWarpedEvents(before, m_project, context);
 				if (action.empty()) // a transaction
-					record(context.parameters().at("description").get<std::string>(), before, context,
-						context.parameters().value("merge", std::string()));
+					record(context.parameters().at("description").get<std::string>(), before, std::move(change),
+						context, context.parameters().value("merge", std::string()));
 				else
-					record(action, before, context);
+					record(
+						finishesRender ? renderAction(m_applyingRender) : action, before, std::move(change), context);
 				publish();
 				if (m_applyingRender != 0)
 					endTrackRender(m_applyingRender, context);
@@ -3694,7 +3698,8 @@ namespace gnubase::engine
 		engine.registerCommand(std::move(info), std::move(handler));
 	}
 
-	void ProjectModel::record(std::string action, const Project& before, CommandContext& context, std::string merge)
+	void ProjectModel::record(
+		std::string action, const Project& before, ProjectChange change, CommandContext& context, std::string merge)
 	{
 		const std::vector<HistoryStep>& steps = m_history.steps();
 		if (!merge.empty() && !steps.empty() && m_history.position() == steps.size() && steps.back().merge == merge)
@@ -3702,7 +3707,7 @@ namespace gnubase::engine
 			// The step joins the last one: what changed since before that one.
 			Project start = before;
 			apply(start, steps.back().change, Direction::Undo);
-			ProjectChange change = difference(start, m_project);
+			change = difference(start, m_project);
 			// Compose only format edits, excluding display choices made between the gesture's commands.
 			change.timeFormatBefore = steps.back().change.timeFormatBefore;
 			change.timeFormatAfter = steps.back().change.timeFormatAfter;
@@ -3744,7 +3749,6 @@ namespace gnubase::engine
 			announceHistory(context);
 			return;
 		}
-		ProjectChange change = difference(before, m_project);
 		if (change.empty())
 			return;
 		HistoryStep step{std::move(action), now(), {}, std::move(change), std::move(merge)};
@@ -3795,15 +3799,18 @@ namespace gnubase::engine
 		if (!m_trackRenders.empty())
 		{
 			Project candidate = m_project;
+			std::vector<const ProjectChange*> changes;
 			for (int64_t i = 0; i < steps; ++i)
 			{
 				const size_t index = undo ? m_history.position() - 1 - static_cast<size_t>(i)
 										  : m_history.position() + static_cast<size_t>(i);
 				for (const ObjectId track : m_history.steps()[index].movedTracks)
 					checkRenderMove(track);
-				apply(candidate, m_history.steps()[index].change, direction);
+				const ProjectChange& change = m_history.steps()[index].change;
+				apply(candidate, change, direction);
+				changes.push_back(&change);
 			}
-			checkRenderLocks(candidate);
+			checkRenderLocks(candidate, changes);
 		}
 
 		const std::string timeFormat = m_project.setup.timeFormat;

@@ -6,6 +6,7 @@
 #include "engine/document/document.h"
 #include "engine/document/rendersnapshot.h"
 #include "engine/engine.h"
+#include "engine/processors/builtinplugin.h"
 #include "testutils/heldjob.h"
 #include "testutils/testutils.h"
 
@@ -1025,6 +1026,108 @@ TEST_CASE("background renders lock their tracks and let another client edit else
 	run(remote, "channel.set", {{"channel", source.channel}, {"volume", -3}});
 }
 
+TEST_CASE("background track renders name their completed undo step", "[integration]")
+{
+	Session session;
+	const auto source = session.addTrack("Source");
+	const bool freeze = GENERATE(true, false);
+	run(session.client, freeze ? "track.freeze" : "track.renderInPlace", {{"tracks", {source.track}}, {"tail", 0}});
+	CHECK(
+		run(session.client, "history.get").at("steps").back().at("action") == (freeze ? "Freeze" : "Render in place"));
+}
+
+TEST_CASE("render locks allow version names and live input settings", "[integration]")
+{
+	Session session;
+	const bool audio = GENERATE(false, true);
+	const auto source = audio ? session.addTrack("Source") : session.addSynth();
+	const Json input =
+		run(session.client, "bus.add", {{"direction", "input"}, {"format", "stereo"}}).at("bus").at("id");
+	const std::string command = GENERATE(std::string("track.freeze"), std::string("track.renderInPlace"));
+	const Json finished = gnubase::test::whileHeld(session.engine, session.client, command,
+		{{"tracks", {source.track}}, {"tail", 0}},
+		[&](uint64_t)
+		{
+			run(session.client, "trackVersion.set", {{"tracks", {source.track}}, {"name", "Renamed while rendering"}});
+			if (audio)
+				run(session.client, "channel.set", {{"channel", source.channel}, {"input", input}});
+			else
+			{
+				run(session.client, "channel.set", {{"channel", source.channel}, {"midiInput", "none"}});
+				run(session.client, "channel.set",
+					{{"channel", source.channel}, {"inputTransformer", {{"mode", "track"}}}});
+			}
+			run(session.client, "history.undo");
+			run(session.client, "history.redo");
+		});
+	INFO(finished.dump());
+	REQUIRE(finished.at("state") == "done");
+}
+
+TEST_CASE("undo and redo cannot change a rendering track's audio input", "[integration]")
+{
+	Session session;
+	const auto source = session.addTrack("Source");
+	const bool redo = GENERATE(false, true);
+	const std::string command = GENERATE(std::string("track.freeze"), std::string("track.renderInPlace"));
+	run(session.client, "channel.set", {{"channel", source.channel}, {"pre", {{"gain", -6}}}});
+	if (redo)
+		run(session.client, "history.undo");
+	const Json before = run(session.client, "history.get");
+	const Json project = run(session.client, "project.get");
+	const Json finished =
+		gnubase::test::whileHeld(session.engine, session.client, command, {{"tracks", {source.track}}, {"tail", 0}},
+			[&](uint64_t)
+			{
+				CHECK_THAT(reject(session.client, redo ? "history.redo" : "history.undo", Json::object()),
+					ContainsSubstring("being rendered"));
+				CHECK(run(session.client, "history.get") == before);
+				CHECK(run(session.client, "project.get") == project);
+			});
+	INFO(finished.dump());
+	REQUIRE(finished.at("state") == "done");
+}
+
+TEST_CASE("private renders instantiate only selected channels and their audio dependencies", "[integration]")
+{
+	Session session;
+	const auto source = session.addTrack("Source");
+	const auto unrelated = session.addTrack("Unrelated");
+	const Json group = run(session.client, "track.add", {{"type", "group"}, {"name", "Group"}});
+	const ObjectId groupChannel = group.at("channel").at("id").get<ObjectId>();
+	run(session.client, "channel.set", {{"channel", source.channel}, {"output", groupChannel}});
+	session.insertGain(source.channel, -6);
+	run(session.client, "plugin.insert", {{"channel", unrelated.channel}, {"plugin", "builtin:gainPan"}});
+	session.activate({unrelated.channel});
+	const auto made = std::make_shared<std::atomic<int>>(0);
+	session.engine.setRenderPluginFactory(
+		[made](const std::string& plugin, uint32_t channels, gnubase::plugin::Host& host)
+		{
+			++*made;
+			return processors::BuiltinFactory(channels).create(plugin, host);
+		});
+	const Json result = run(session.client, "mixdown.export",
+		{{"folder", session.folder.path().u8string()}, {"name", "Group"}, {"channels", {groupChannel}}, {"start", 0},
+			{"end", 7000}, {"sampleFormat", "float32"}});
+	CHECK(made->load() == 1);
+	CHECK(peakOf(samplesOf(result.at("files").at(0).at("path").get<std::string>())) > 0.1f);
+}
+
+TEST_CASE("a private render fails if a live active plugin cannot be instantiated", "[integration]")
+{
+	Session session;
+	const auto source = session.addTrack("Source");
+	session.insertGain(source.channel, -6);
+	session.engine.setRenderPluginFactory(
+		[](const std::string&, uint32_t, gnubase::plugin::Host&) -> std::unique_ptr<gnubase::plugin::Plugin>
+		{ return nullptr; });
+	const std::string command = GENERATE(std::string("track.freeze"), std::string("track.renderInPlace"));
+	const Json history = run(session.client, "history.get");
+	CHECK_THAT(reject(session.client, command, {{"tracks", {source.track}}, {"tail", 0}}), ContainsSubstring("plugin"));
+	CHECK(run(session.client, "history.get") == history);
+	CHECK(run(session.client, "track.renderLocks").at("locks").empty());
+}
+
 TEST_CASE("cancelling a background track render unlocks without an undo step or files", "[integration]")
 {
 	Session session;
@@ -1125,10 +1228,17 @@ TEST_CASE("a background instrument render locks the MIDI tracks feeding it", "[i
 		run(session.client, "track.add", {{"type", "midi"}, {"timeBase", "linear"}, {"output", synth.channel}});
 	const auto track = midi.at("track").at("id");
 	const auto channel = midi.at("channel").at("id");
+	const Json unrelated = run(session.client, "track.add", {{"type", "midi"}, {"output", 0}}).at("channel").at("id");
 	const Json finished = gnubase::test::whileHeld(session.engine, session.client, "track.freeze",
 		{{"tracks", {synth.track}}, {"tail", 0}},
 		[&](uint64_t)
 		{
+			// Newly routed inputs and newly inserted slots have no id in the render's starting input.
+			CHECK_THAT(reject(session.client, "channel.set", {{"channel", unrelated}, {"output", synth.channel}}),
+				ContainsSubstring("being rendered"));
+			CHECK_THAT(
+				reject(session.client, "plugin.insert", {{"channel", synth.channel}, {"plugin", "builtin:gainPan"}}),
+				ContainsSubstring("being rendered"));
 			CHECK_THAT(reject(session.client, "track.remove", {{"track", track}}), ContainsSubstring("being rendered"));
 			CHECK_THAT(reject(session.client, "channel.set", {{"channel", channel}, {"output", 0}}),
 				ContainsSubstring("being rendered"));

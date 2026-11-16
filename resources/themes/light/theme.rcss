@@ -808,6 +808,10 @@
 	{
 		color: #566273;
 	}
+	.track-list listitem.rendering .track-name
+	{
+		font-style: italic;
+	}
 	.track-list .drop-line
 	{
 		background-color: #0969da;

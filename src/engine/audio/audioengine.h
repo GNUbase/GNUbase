@@ -15,6 +15,7 @@
 #include "engine/graph/graph.h"
 #include "engine/jobs/jobs.h"
 #include "engine/metronome/metronome.h"
+#include "engine/plugins/slotinstances.h"
 #include "engine/processors/midieffects.h"
 #include "engine/processors/sampler.h"
 #include "engine/schema.h"
@@ -37,6 +38,7 @@
 #include <set>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace gnubase::engine
@@ -112,6 +114,10 @@ namespace gnubase::engine
 		void setChase(const MidiChase& chase);
 		// Any thread: reads the samplers' samples asked for from now on with read (SampleLoader::setRead).
 		void setSampleReader(SampleLoader::Read read);
+		void setRenderPluginFactory(plugins::SlotInstances::Factory factory)
+		{
+			m_renderPluginFactory = std::move(factory);
+		}
 		// Any thread: how long an offline render waits for the samplers' samples before it logs a warning and waits
 		// again (30 s), 20 rounds at most before it fails.
 		void setOfflineSampleWait(std::chrono::milliseconds wait) { m_offlineSampleWait = wait; }
@@ -579,6 +585,7 @@ namespace gnubase::engine
 		std::atomic<bool> m_updatingSamples{false}; // an audio.updateSamples it posted hasn't started yet
 		SampleLoader* m_renderSamples = nullptr;    // render jobs share immutable sample reads, never processors
 		JobContext* m_renderJob = nullptr;
+		plugins::SlotInstances::Factory m_renderPluginFactory;
 		SampleLoader m_sampleLoader{[this] { postSampleUpdate(); }};
 	};
 }

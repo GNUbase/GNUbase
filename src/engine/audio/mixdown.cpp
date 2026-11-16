@@ -62,7 +62,101 @@ namespace gnubase::engine
 			Json project;
 			Json settings;
 			Json parameters;
+			std::set<ObjectId> activeSlots;
 		};
+
+		// Keep the upstream closure of the selected outputs, including sends, MIDI routes and child busses.
+		// Formats and panners are already compiled, so removing a downstream destination cannot change them.
+		RenderSnapshot renderSnapshot(const RenderSnapshot& snapshot, const std::vector<ObjectId>& targets)
+		{
+			const graph::GraphDesc graph = graph::describe(snapshot);
+			std::vector<std::vector<int>> inputs(graph.nodes.size());
+			for (const auto* edges : {&graph.audio, &graph.events})
+				for (const auto& edge : *edges)
+					inputs.at(static_cast<size_t>(edge.to)).push_back(edge.from);
+			std::vector<bool> needed(graph.nodes.size(), false);
+			std::vector<size_t> pending;
+			for (size_t i = 0; i < snapshot.busses.size() + snapshot.channels.size(); ++i)
+				if (std::find(targets.begin(), targets.end(), graph.nodes[i].object) != targets.end())
+					pending.push_back(i);
+			std::set<ObjectId> objects;
+			while (!pending.empty())
+			{
+				const size_t node = pending.back();
+				pending.pop_back();
+				if (needed[node])
+					continue;
+				needed[node] = true;
+				objects.insert(graph.nodes[node].object);
+				for (const int input : inputs[node])
+					pending.push_back(static_cast<size_t>(input));
+			}
+			RenderSnapshot result;
+			result.revision = snapshot.revision;
+			result.opened = snapshot.opened;
+			result.sampleRate = snapshot.sampleRate;
+			result.tempo = snapshot.tempo;
+			result.signatures = snapshot.signatures;
+			result.metronome = snapshot.metronome;
+			result.panLaw = snapshot.panLaw;
+			result.maxVolume = snapshot.maxVolume;
+			result.recordBitDepth = snapshot.recordBitDepth;
+			result.arranger = snapshot.arranger;
+			result.chordPadKeys = snapshot.chordPadKeys;
+			std::vector<int> busses(snapshot.busses.size(), -1);
+			std::vector<int> channels(snapshot.channels.size(), -1);
+			std::vector<int> media(snapshot.media.size(), -1);
+			for (size_t i = 0; i < snapshot.busses.size(); ++i)
+				if (objects.count(snapshot.busses[i].id) != 0)
+				{
+					busses[i] = static_cast<int>(result.busses.size());
+					result.busses.push_back(snapshot.busses[i]);
+				}
+			for (size_t i = 0; i < snapshot.channels.size(); ++i)
+				if (objects.count(snapshot.channels[i].id) != 0)
+				{
+					channels[i] = static_cast<int>(result.channels.size());
+					result.channels.push_back(snapshot.channels[i]);
+				}
+			for (auto& bus : result.busses)
+				if (bus.parent >= 0)
+					bus.parent = busses.at(static_cast<size_t>(bus.parent));
+			for (auto& channel : result.channels)
+			{
+				if (channel.input >= 0)
+					channel.input = busses.at(static_cast<size_t>(channel.input));
+				if (channel.output.kind != RenderTarget::Kind::None)
+				{
+					const auto& indices = channel.output.kind == RenderTarget::Kind::Bus ? busses : channels;
+					channel.output.index = indices.at(static_cast<size_t>(channel.output.index));
+					if (channel.output.index < 0)
+						channel.output.kind = RenderTarget::Kind::None;
+				}
+				for (size_t i = 0; i < channel.midiSendOutputs.size(); ++i)
+					if (int& output = channel.midiSendOutputs[i]; output >= 0)
+					{
+						output = channels.at(static_cast<size_t>(output));
+						if (output < 0)
+							channel.midiSends.slots[i].on = false; // never reroute an omitted send to the main output
+					}
+				for (auto& send : channel.sends)
+					send.destination = channels.at(static_cast<size_t>(send.destination));
+				channel.sends.erase(std::remove_if(channel.sends.begin(), channel.sends.end(),
+										[](const RenderSend& send) { return send.destination < 0; }),
+					channel.sends.end());
+				for (auto& event : channel.audioEvents)
+				{
+					int& index = media.at(static_cast<size_t>(event.media));
+					if (index < 0)
+					{
+						index = static_cast<int>(result.media.size());
+						result.media.push_back(snapshot.media.at(static_cast<size_t>(event.media)));
+					}
+					event.media = index;
+				}
+			}
+			return result;
+		}
 
 		// A bus or channel being exported.
 		struct Target
@@ -565,22 +659,27 @@ namespace gnubase::engine
 		}
 		request["channels"] = objects;
 		const auto prepared = std::make_shared<PreparedMixdown>();
-		prepared->snapshot = snapshot;
+		prepared->snapshot = renderSnapshot(snapshot, objects);
 		prepared->project = project;
 		prepared->settings = m_settings.values();
 		prepared->parameters = request;
 		std::set<std::string> paths;
-		for (const auto& channel : snapshot.channels)
+		for (const auto& channel : prepared->snapshot.channels)
 			for (const auto& path : channel.samples)
 				if (!path.empty())
 					paths.insert(path);
+		for (const auto& channel : prepared->snapshot.channels)
+			for (const auto& slot : channel.slots)
+				if (m_slots && m_slots->status(slot.id) == "active")
+					prepared->activeSlots.insert(slot.id);
 		SampleLoader* samples = &m_sampleLoader;
 		const auto lease = std::make_shared<SampleLoader::Lease>(*samples, std::move(paths));
 		const auto sampleWait = m_offlineSampleWait.load();
+		const auto factory = m_renderPluginFactory;
 		const MidiChase chase = m_chase;
 		const uint32_t blockSize = m_device->format().blockSize;
 		plugins::HostManager* hosts = &m_engine->pluginHosts();
-		return [prepared, blockSize, hosts, samples, lease, sampleWait, chase](JobContext& job)
+		return [prepared, blockSize, hosts, samples, lease, sampleWait, chase, factory](JobContext& job)
 		{
 			(void)lease; // keeps this snapshot's sample reads alive through completion
 			job.checkCancelled();
@@ -596,13 +695,17 @@ namespace gnubase::engine
 			renderer.setChase(chase);
 			renderer.m_multiProcessing = false;
 			renderer.m_threads = 1;
-			renderer.m_slots = std::make_unique<plugins::SlotInstances>(*hosts, [] {}, [](uint64_t) { return true; });
+			renderer.m_slots =
+				std::make_unique<plugins::SlotInstances>(*hosts, [] {}, [](uint64_t) { return true; }, factory);
 			renderer.setDevice({{"blockSize", blockSize}, {"sampleRate", prepared->snapshot.sampleRate},
 				{"captureSeconds", 0}, {"inputChannels", 0}});
 			// Wait on the plugin job queue, then publish their ready processors in this render's graph.
 			hosts->run([] {}).get();
 			job.checkCancelled();
 			renderer.rebuild();
+			for (const ObjectId slot : prepared->activeSlots)
+				require(renderer.m_slots->status(slot) == "active",
+					"render plugin slot " + std::to_string(slot) + " could not be activated");
 			return renderer.mixdown(prepared->parameters, prepared->project, false, &job);
 		};
 	}
