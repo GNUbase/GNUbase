@@ -1153,6 +1153,40 @@ TEST_CASE(
 	}
 }
 
+TEST_CASE(
+	"Reset Quantize moves a crossfade from a piece it removes to the event crossfading into the piece", "[integration]")
+{
+	const test::TempDir dir;
+	engine::Engine engine;
+	engine::Client client(engine);
+	// As in the test before, with the crossfade nudged right a few times, so that the piece split off at the end of
+	// the first's original is longer than a crossfade. The Crossfade step on the first and the piece makes the first
+	// grow into the piece: it ends past the piece's start by the crossfade's length, and the piece's crossfade comes
+	// from it. Removing the piece, the second's crossfade from it goes to the first, the whole original again, rather
+	// than ending with the piece (#1723).
+	const Track loop = addTrack(client, dir, "loop", clicks({1000}, 4 * g_quarter));
+	const ObjectId first = loop.add(client, 1000, 0, 20000);
+	const ObjectId second = loop.add(client, 19000, 18000, 30000);
+	run(client, "crossfade.set", {{"from", first}, {"to", second}, {"mode", "equalPower"}});
+	run(client, "quantize.set", {{"preset", "1/4"}});
+	const Json events = Json::array({first, second});
+	run(client, "quantize.apply", {{"events", events}});
+	run(client, "quantize.crossfade", {{"events", events}});
+	run(client, "quantize.nudgeCrossfade", {{"events", {second}}, {"amount", 4.0}});
+	const auto right =
+		run(client, "event.split", {{"events", {first}}, {"positions", {20000}}}).at("events").at(0).get<ObjectId>();
+	REQUIRE(crossfadeOf(client, second).at("from") == right);
+	run(client, "quantize.crossfade", {{"events", {first, right}}});
+	REQUIRE(crossfadeOf(client, right).at("from") == first);
+	REQUIRE(byId(client, "audioEvents", first).at("length").get<int64_t>() > 20001);
+
+	CHECK(run(client, "quantize.reset", {{"events", {first, right}}}).at("removed") == Json::array({right}));
+	CHECK(eventsOn(client, loop.track).at(0) == std::vector<int64_t>{1000, 0, 20000});
+	const Json kept = crossfadeOf(client, second);
+	REQUIRE(kept.is_object());
+	CHECK(kept.at("from") == first);
+}
+
 TEST_CASE("Reset Quantize leaves locked audio events as they are", "[integration]")
 {
 	const test::TempDir dir;

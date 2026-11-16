@@ -791,6 +791,38 @@ TEST_CASE("a note's expression follows the note the input transformer made of it
 	}
 }
 
+TEST_CASE("the input transformer drops a released key's expression once another key starts its note", "[unit]")
+{
+	using graph::ProcessEvent;
+	processors::InputTransformerProcessor processor(16);
+	// Every note on channel 3 (2): keys of channels 1 and 2 play the same note.
+	const std::vector<LogicalRules> modules = {logicalRulesFromJson(
+		rules({filter("type", "equal", "note")}, "transform", {action("channel", "setFixed", 3)}))};
+	const auto played = [&processor, &modules](ProcessEvent::Type type, uint8_t channel)
+	{
+		graph::EventBuffer events(16);
+		ProcessEvent e;
+		e.type = type;
+		e.channel = channel;
+		e.key = 60;
+		e.velocity = 40000;
+		e.parameterValue = 1.0;
+		events.add(e);
+		processor.process(events, modules);
+		std::vector<int> channels;
+		for (const ProcessEvent& each : events)
+			channels.push_back(each.channel);
+		return channels;
+	};
+	CHECK(played(ProcessEvent::Type::NoteOn, 0) == std::vector<int>{2});
+	CHECK(played(ProcessEvent::Type::NoteOff, 0) == std::vector<int>{2});
+	CHECK(played(ProcessEvent::Type::NoteExpression, 0) == std::vector<int>{2}); // while it fades
+	CHECK(played(ProcessEvent::Type::NoteOn, 1) == std::vector<int>{2});
+	// The first key's release has ended: its expression would change the new note.
+	CHECK(played(ProcessEvent::Type::NoteExpression, 0).empty());
+	CHECK(played(ProcessEvent::Type::NoteExpression, 1) == std::vector<int>{2});
+}
+
 TEST_CASE("input transformers change what a track's MIDI input plays", "[integration]")
 {
 	LiveFixture f;
