@@ -123,7 +123,8 @@ part's pattern.
   of their own length, so that every lane plays as before: one that can't double keeps the resolution it had as its
   own, and lanes of their own length (Double Length) or resolution (Double Resolution) stay as they are; one of its
   own resolution that follows the pattern's length gets the length it had as its own. The selected steps that Double
-  Resolution moves stay selected where they go (#1693).
+  Resolution moves stay selected where they go (#1693); its undo, or any other Step Resolution than the toolbar's,
+  clears the selection, since the steps move back without it (#1753).
 - **Parameter lane** (pp. 928-929): a click or drag in it sets the chosen parameter of the selected lane's steps, as
   high as the mouse is.
 - A gesture edits a copy of the pattern and changes only the steps' classes while it goes on, so that its mouseup
@@ -180,7 +181,8 @@ content that other applications read, which have the parts' own notes.
   Resolution and Double Length with lanes of their own length and resolution, a gesture right after Double Length, a
   mode switch and a shorter Number of Steps with a project read before them, a click on a step right after a mode switch
   and a shorter Number of Steps, a mute, a double click, Delete and a project read before it while a mode switch is out,
-  a selection whose steps a script or a mode switch took, one that doesn't go along to another pattern and one that
-  Double Resolution moves, selecting, deleting and double-clicking steps, Tie and Split, mute, the parameter lane's
+  a selection whose steps a script or a mode switch took, one that doesn't go along to another pattern or another
+  part of the same pattern, one that Double Resolution moves and its undo clears, one that the toolbar's Step
+  Resolution keeps, selecting, deleting and double-clicking steps, Tie and Split, mute, the parameter lane's
   velocity and probability, the toolbar's menus and Double Length, Add Lane and melodic mode; New Melodic Pattern for a
   plain part, the pattern menu choosing, duplicating and converting; Open Pattern Editor and the Edit menu's entries.
