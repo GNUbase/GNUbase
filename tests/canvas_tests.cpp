@@ -425,7 +425,7 @@ TEST_CASE("a waveform keeps event-inset off its lane's edges inside its padding,
 	CHECK(drawn[3] == 69.0F);
 
 	// A lane no higher than twice the inset, as events drop their inset there, or one that would leave the waveform
-	// no pixel: the padding only. Heights 6 and 7 are the first, 10 the second (content 6, area 0).
+	// no pixel: the padding only. Heights 6 and 7 leave content of 2 and 3, 10 leaves content 6 and area 0.
 	for (const int height : {6, 7, 10})
 	{
 		INFO(height);
