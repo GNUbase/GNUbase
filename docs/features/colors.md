@@ -31,7 +31,8 @@ its track's.
 ## In the project window
 
 - **Track list** ([track-list.md](track-list.md)): each row's `.track-color` strip, at its left edge, has the track's
-  color as `background-color` and in its attribute `color` (empty for the default color, which shows nothing).
+  color as `background-color` and in its attribute `color` (neither for the default color, which shows nothing; the
+  themes select strips with a color by the attribute, #1314).
 - **Event display** ([event-display.md](event-display.md)): `<event-lanes>` fills each event and part with its own
   color, or else its track's, and with the style sheet's `color` when neither has one (`TimeSpan::color`,
   [canvas.md](canvas.md)); folder data blocks and the overview line show the same colors. Muted and selected events
