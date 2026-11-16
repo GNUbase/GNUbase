@@ -1037,7 +1037,9 @@ namespace gnubase::engine
 			}
 		};
 
-		std::set<int> held;  // the pads whose remote keys are down
+		// The remote keys down, each with the pad it triggered: it ends that pad also after the remote's input or range
+		// changed (#1708).
+		std::map<int, int> held;
 		int last = -1;       // the pad triggered last, which the chord modifiers change when none is held
 		int auditioned = -1; // the pad a chord modifier's key plays while it is down, or -1
 		// How far the controls moved all pads' voicings, tensions and transposition, after each history step a
@@ -2456,7 +2458,8 @@ namespace gnubase::engine
 				"What the chord pads' remote keys did, as the audio engine reports it from the MIDI inputs (#1089): "
 				"each of events has a kind and a key (a MIDI note) and velocity (0 for a note-off): triggered (the key "
 				"triggered its pad, which chordPads.triggered announces with remote true, and while the transport "
-				"records a record-enabled chord track records its chord), released (the key ended its pad's chord), "
+				"records a record-enabled chord track records its chord), released (the key ended the chord of the pad "
+				"it triggered, also after the remote's input or range changed), "
 				"modifier (a chord modifier's key, chordPads.set modifierKeys: it changes the pads whose keys are "
 				"down, else the one triggered last), note (a note while chordPads.listen listens), player (a key of "
 				"Select/Mute Player), control (what moves all pads: key 0 voicings, 1 tensions, 2 transposition, "
@@ -2483,19 +2486,22 @@ namespace gnubase::engine
 					const auto kind = event.at("kind").get<std::string>();
 					const int key = event.at("key").get<int>();
 					const int velocity = event.value("velocity", 0);
-					const int pad = key - pads.remoteStart;
-					const bool isPad = pad >= 0 && pad < static_cast<int>(pads.pads.size()) && key <= pads.remoteEnd;
+					const auto down = state.held.find(key);
+					const bool on = kind == "triggered";
+					const bool known = !on && down != state.held.end(); // a key that went up ends the pad it triggered
+					const int pad = known ? down->second : key - pads.remoteStart;
+					const bool isPad =
+						pad >= 0 && pad < static_cast<int>(pads.pads.size()) && (known || key <= pads.remoteEnd);
 					if ((kind == "triggered" || kind == "released") && isPad)
 					{
-						const bool on = kind == "triggered";
 						if (on)
 						{
-							state.held.insert(pad);
+							state.held[key] = pad;
 							state.last = pad;
 						}
-						else
+						else if (known)
 						{
-							state.held.erase(pad);
+							state.held.erase(down);
 						}
 						const auto index = static_cast<size_t>(pad);
 						context.emit("chordPads.triggered",
@@ -2517,7 +2523,11 @@ namespace gnubase::engine
 						size_t which = 0;
 						while (which < pads.modifierKeys.size() && pads.modifierKeys.at(which) != key)
 							++which;
-						std::vector<int> targets(state.held.begin(), state.held.end());
+						std::set<int> heldPads;
+						for (const auto& each : state.held)
+							if (each.second < static_cast<int>(pads.pads.size()))
+								heldPads.insert(each.second);
+						std::vector<int> targets(heldPads.begin(), heldPads.end());
 						if (targets.empty() && state.last >= 0 && state.last < static_cast<int>(pads.pads.size()))
 							targets.push_back(state.last);
 						if (which == pads.modifierKeys.size() || targets.empty())

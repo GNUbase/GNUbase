@@ -106,7 +106,8 @@ namespace gnubase::ui
 				same = option->GetAttribute<Rml::String>("value", "") == options[static_cast<size_t>(i)].first &&
 					option->GetInnerRML() == Rml::StringUtilities::EncodeRml(options[static_cast<size_t>(i)].second);
 			}
-			// A change that the selection below sends may fill the list again: that one waits for this one.
+			// A change that the selection below sends may fill the same list again: that fill is dropped, and the list
+			// keeps this one's options. A fill of another list in between has its own turn and hands the guard back.
 			static const Rml::Element* filling = nullptr;
 			if (filling == &element)
 				return;
@@ -115,6 +116,7 @@ namespace gnubase::ui
 				// The new options come before the old ones go, with the value selected among them, so that the list
 				// doesn't lose its selection in between: that would send a change to "", which a list of root keys
 				// takes for a choice of none (#1644).
+				const Rml::Element* const outer = filling;
 				filling = &element;
 				const int old = select->GetNumOptions();
 				int chosen = -1;
@@ -128,7 +130,7 @@ namespace gnubase::ui
 					select->SetSelection(chosen);
 				for (int i = 0; i < old; ++i)
 					select->Remove(0);
-				filling = nullptr;
+				filling = outer;
 			}
 			if (select->GetValue() != value)
 				select->SetValue(value);

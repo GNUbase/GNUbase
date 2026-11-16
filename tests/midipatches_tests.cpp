@@ -459,6 +459,40 @@ TEST_CASE("a MIDI track's channel plays its sound slots' output events, and a sl
 		CHECK(play({{0xC1, 38}, {0x91, 60, 100}, {0x81, 60, 0}, {0xC1, 9}}) ==
 			Bytes{{0xB2, 32}, {0x92, 60}, {0x82, 60}, {0xC2, 9}});
 	}
+	SECTION("add-on slots played into the track follow its channel")
+	{
+		// E1 turns the add-on Mute on: controller 33 at 127, back to 0 when it ends (#1718).
+		Json slots = run(track.client, "project.get").at("articulationMaps").at(0).at("slots");
+		slots.push_back({{"name", "Mute"}, {"addOn", true}, {"articulations", {"Staccato"}}, {"trigger", 40},
+			{"outputs",
+				{{{"status", "controller"}, {"data1", 33}, {"data2", 127}},
+					{{"status", "controller"}, {"data1", 33}, {"data2", 0}, {"off", true}}}}});
+		run(track.client, "articulationMap.set", {{"map", map}, {"slots", slots}});
+		track.set({{"monitor", true}});
+		track.played();
+		const auto play = [&](const Bytes& messages)
+		{
+			Json injected = Json::array();
+			for (const std::vector<int>& bytes : messages)
+				injected.push_back({{"position", 0}, {"bytes", bytes}});
+			run(track.client, "midi.inject", {{"channel", track.channel}, {"messages", injected}});
+			return track.played();
+		};
+		// On the track's channel with the default slot; the track goes to channel 3: off on channel 5, on there.
+		CHECK(play({{0x91, 40, 100}, {0x81, 40, 0}}) == Bytes{{0xB4, 33, 127}});
+		track.set({{"midiChannel", 2}});
+		CHECK(track.played() == Bytes{{0xB4, 33, 0}, {0xB2, 33, 127}});
+		// Back to Any: on the channel of the trigger that turned it on, 2.
+		track.set({{"midiChannel", nullptr}});
+		CHECK(track.played() == Bytes{{0xB2, 33, 0}, {0xB1, 33, 127}});
+		track.set({{"midiChannel", 4}});
+		CHECK(track.played() == Bytes{{0xB1, 33, 0}, {0xB4, 33, 127}});
+		// C#1 selects Pizzicato on its own channel 7: Mute goes there with the notes, and stays there when the track
+		// goes to another channel.
+		CHECK(heads(play({{0x91, 37, 100}, {0x81, 37, 0}})) == Bytes{{0x96, 25}, {0x86, 25}, {0xB4, 33}, {0xB6, 33}});
+		track.set({{"midiChannel", 3}});
+		CHECK(track.played().empty());
+	}
 }
 
 TEST_CASE("a send before the MIDI modifiers gets the notes played into the track on its MIDI channel", "[integration]")

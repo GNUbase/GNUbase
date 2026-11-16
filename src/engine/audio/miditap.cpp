@@ -195,7 +195,10 @@ namespace gnubase::engine
 	void MidiTap::deliver(uint64_t position, uint32_t frames, const Sequencers& sequencers) noexcept
 	{
 		for (const auto& entry : sequencers)
+		{
 			entry.second->input().clear();
+			entry.second->direct().clear();
+		}
 		while (m_waitingCount < m_waiting.size() && m_injected.tryPop(m_waiting[m_waitingCount]))
 			++m_waitingCount;
 
@@ -216,7 +219,11 @@ namespace gnubase::engine
 				if (found != sequencers.end() && found->first == message.channel)
 				{
 					MidiSequencer& sequencer = *found->second;
-					wait = message.mpe != 0 ? !sequencer.injectMpe(message.mpe, event) : !sequencer.input().add(event);
+					if (message.direct)
+						wait = !sequencer.direct().add(event);
+					else
+						wait =
+							message.mpe != 0 ? !sequencer.injectMpe(message.mpe, event) : !sequencer.input().add(event);
 				}
 			}
 			if (wait)
@@ -305,7 +312,10 @@ namespace gnubase::engine
 				"drumSounds: on a track with a drum map, the notes' keys are drum sounds' pitches, not I-notes: they "
 				"play their sounds as the track's notes do but are neither recorded nor kept for "
 				"midi.insertRetrospective (the "
-				"drum editor auditions sounds so; reference manual p. 1236). mpe: the messages play through this MPE "
+				"drum editor auditions sounds so; reference manual p. 1236). direct: the messages go straight to the "
+				"track's instrument as they are, past its drum map, Live Input, its input transformer, its MIDI "
+				"modifiers and its MIDI effects, and aren't recorded either (the drum machine panel plays a pad so, "
+				"p. 942). mpe: the messages play through this MPE "
 				"input setup (midi.setPort mpe; what it leaves out has its default), as a MIDI input port with it "
 				"plays them: on the notes' channels pitch bend, channel pressure and CC 74 reach the track as its "
 				"notes' per-note expression (docs/features/note-expression.md). The track keeps the state of those "
@@ -316,6 +326,7 @@ namespace gnubase::engine
 					Json schema = Json::parse(R"({"type": "object", "additionalProperties": false,
 						"required": ["channel", "messages"],
 						"properties": {"channel": {"type": "integer"}, "drumSounds": {"type": "boolean"},
+						"direct": {"type": "boolean"},
 						"messages": {"type": "array", "items": {
 							"type": "object", "additionalProperties": false, "required": ["position", "bytes"],
 							"properties": {"position": {"type": "integer", "minimum": 0}, "bytes": {"type": "array",
@@ -334,6 +345,7 @@ namespace gnubase::engine
 				const Json& messages = parameters.at("messages");
 				require(messages.size() <= MidiTap::g_size, "at most 4096 messages at a time");
 				const bool drumSounds = parameters.value("drumSounds", false);
+				const bool direct = parameters.value("direct", false);
 				const uint32_t mpe =
 					parameters.contains("mpe") ? midi::MpeSetup::fromJson(parameters.at("mpe")).pack() : 0;
 				std::vector<MidiTap::Message> injected;
@@ -342,7 +354,7 @@ namespace gnubase::engine
 				{
 					injected.push_back({channel, messages[i].at("position").get<uint64_t>(),
 						channelMessage(messages[i].at("bytes"), "messages[" + std::to_string(i) + "]: "), drumSounds,
-						mpe});
+						direct, mpe});
 				}
 				require(m_tap.inject(injected),
 					"too many MIDI messages wait for the audio device; none were injected, try again later");
@@ -434,9 +446,9 @@ namespace gnubase::engine
 				"setting midi.retrospectiveEvents, by default 10000 events), as one MIDI part, through recording.add "
 				"with the new parts mode and the user settings midi.snapPartsToBars and midi.recordFilter. What "
 				"came during playback goes where it played; what came in stop mode goes at the project cursor, with "
-				"its timing. Input after a pause of over 30 s in stop mode starts the buffer afresh, and so does "
-				"input after an insert. It is no recording of the chord track: it makes no chord events. Returns what "
-				"recording.add returns.",
+				"its timing. Input in stop mode after a pause of over 30 s or on the next audio device starts the "
+				"buffer afresh, and so does input after an insert. It is no recording of the chord track: it makes no "
+				"chord events. Returns what recording.add returns.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["track"],
 					"properties": {"track": {"type": "integer"}}})"),
 				Json::parse(R"({"type": "object", "properties": {"parts": {"type": "array"}},

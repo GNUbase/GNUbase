@@ -43,9 +43,9 @@ undo step.
   overlaps.
 - **Preferences.** User settings: `midi.snapPartsToBars` (on by default) makes recorded parts start and end at whole
   bars (p. 1616); `midi.recordCatchRange` (ms, 0 by default) records input that came that long before recording started
-  at its start, unless a recording took it already: caught at an earlier recording's start, or recorded by a track that
-  only monitors while the chord track records. Input from before the audio device was set again is left out, as the
-  new device counts its frames from 0 (p. 1616);
+  at its start, unless it came before or during an earlier recording of the track, whether that one caught it or not
+  (outside its catch range, left out by the record filter, with a catch range of 0, or to a track that only monitors
+  while the chord track records). Input from before the audio device was set again is left out too (p. 1616);
   `midi.recordFilter` leaves message types (notes, controllers, pitch bend, channel and poly pressure, program changes),
   MIDI channels and controller numbers out of recordings, while they still play (MIDI Filter, Record, Channels and
   Controller, p. 1613).
@@ -57,8 +57,9 @@ undo step.
   retrospective buffer on the disk thread, which keeps the last `midi.retrospectiveEvents` events (10000 by default; 0
   keeps none). `midi.insertRetrospective` inserts a track's buffer as one part through `recording.add` in the new parts
   mode, without chord events (`chordEvents` false): input from playback where it played, input from stop mode at the
-  project cursor with its timing. Input after an insert, or in stop mode after a pause of over 30 seconds, starts the
-  buffer afresh. `midi.clearRetrospective` empties one track's buffer or all of them.
+  project cursor with its timing. Input after an insert, or in stop mode after a pause of over 30 seconds or on the
+  next audio device, starts the buffer afresh: the recorder counts the buffers' frames on across devices, as each
+  device counts its own from 0. `midi.clearRetrospective` empties one track's buffer or all of them.
 
 ## Not yet
 

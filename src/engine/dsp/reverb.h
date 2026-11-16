@@ -126,6 +126,6 @@ namespace gnubase::engine::dsp
 		// Frames processed since the last reset, at most m_longest: every line wrote that many samples from its start,
 		// so reset only clears those (#1595).
 		size_t m_written = 0;
-		size_t m_longest = 0; // the longest line's size
+		size_t m_longest = 0; // the longest line's size: predelay, combs and allpasses
 	};
 }

@@ -327,6 +327,19 @@ TEST_CASE("the main menu follows what a click's listeners changed before it runs
 		document->RemoveEventListener(Rml::EventId::Click, &enabler);
 		fake.shell.onInputHandled({});
 	}
+
+	// A capture phase listener of the document added after the menu runs before the menu's listener, which looks for
+	// the item in the target phase or later: that click runs the command.
+	enabled = false;
+	{
+		const ui::MainMenu menu(keys, window, *document);
+		document->AddEventListener(Rml::EventId::Click, &enabler, true);
+		REQUIRE(item->HasAttribute("disabled"));
+		click();
+		CHECK(runs == 4);
+		CHECK(!item->HasAttribute("disabled"));
+		document->RemoveEventListener(Rml::EventId::Click, &enabler, true);
+	}
 	document->Close();
 }
 

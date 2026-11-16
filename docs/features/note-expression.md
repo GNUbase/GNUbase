@@ -126,14 +126,23 @@ first.
   from the box's bottom to its top: tuning from -48 to 48 semitones, MPE's pitch range (values beyond show at the edge),
   volume from 0 to 4 and the others from 0 to 1. A step narrower than a pixel of the note display joins the next ones
   until it is as wide, at the last one's value, so that a recorded note with a point every few milliseconds is a line
-  per pixel at most, not hundreds of elements (#1671); the lines are built again when a pixel has other ticks: after
-  an editor's first layout, as the editor window or the lower zone resizes and as the project window zooms. The drum editor shows no overlay, as it has
-  neither the buttons nor the expression editor, also with Show Note Length.
+  per pixel at most, not hundreds of elements (#1671). The lines are built again when a pixel has a quarter more or
+  fewer ticks than they were built with: after an editor's first layout, as the editor window or the lower zone
+  resizes and as the project window zooms, but not on every frame of a scroll across a tempo change, which changes the
+  in-place editor's ticks per pixel a little (#1716). The quarter counts once the window's update has laid the lines
+  out with the ticks they were built for; before that, as when the lines first show, they are built again for any
+  other ticks. They are built for the box the last layout gave the notes, which need not be the window's: the editor
+  window's first layout, before the left zone has its size, gives the notes about a tenth more room (#1768). Each
+  editor's lines follow the update of its own window. The drum editor shows no overlay, as it has neither the buttons
+  nor the expression editor, also with Show Note Length.
 - **Expression editor** (pp. 1308-1311). With Double-Click Opens Note Expression Editor a double click on a note with
   the object selection tool opens the editor instead of deleting the note: on the note, or on the selected notes if it
   is one of them. It lies over the note display from the first selected note's start to the last one's end, centered on
   the row of the note double-clicked and kept inside the note display at the top and bottom rows, never narrower than
-  its button, and it stays there as the pitches zoom; it shows their points of the chosen expression the same way. Its
+  its button, and it stays there as the pitches zoom; it shows their points of the chosen expression the same way. On
+  notes narrower than its button it spreads their time over its whole width, so that its lines no longer lie over the
+  notes' time behind it and join their steps by the note display's coarser pixels, and at the note display's right
+  edge it moves left to stay inside (#1713). Its
   button at the top left is Parameter Selection, a menu of the seven expressions. In it the draw tool draws a point
   where it clicks, and a drag draws points along the way where the value changes (not one per mouse position), replacing
   those of the expression in the range it went over; at the right edge it draws at the last note's last tick. With
@@ -153,10 +162,12 @@ click deletes the note. With several selected notes of two parts they check the 
 of them over their span, centered on the note clicked, an edit reaching each note at its time, a drag leaving a point
 where the value changes, one undo step for both parts, Vertical Snap and the editor closing when the selection empties;
 the editor centered on its note while the pitches zoom; on the top row the editor inside the note display and wider than
-its button, and a draw released outside the window. `tests/inplaceeditor_ui_tests.cpp` checks the draw tool on a line of
-the editor in an in-place editor and a dense note's lines a pixel each after its layout and as the project window zooms,
-`tests/drumeditor_ui_tests.cpp` that the drum editor has neither the buttons, the overlay nor the editor, and
-`tests/keyeditor_tests.cpp` the three settings as view state.
+its button, and a draw released outside the window; a dense note's lines a pixel each after the window's layout and a
+resize, a resize by less than a quarter keeping them, and lines that first show after the window narrowed by less than
+a quarter, also on the box of the layout before, built for the narrower width. `tests/inplaceeditor_ui_tests.cpp`
+checks the draw tool on a line of the editor in an in-place editor and a dense note's lines a pixel each after its
+layout and as the project window zooms, `tests/drumeditor_ui_tests.cpp` that the drum editor has neither the buttons,
+the overlay nor the editor, and `tests/keyeditor_tests.cpp` the three settings as view state.
 
 ## Not yet
 
