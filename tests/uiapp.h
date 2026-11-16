@@ -96,8 +96,9 @@ namespace gnubase::test
 		static void checkGolden(const std::string& name, const ui::Image& image);
 
 		// The sections the main window shows in the container with this id, such as "toolbar", in their order: those
-		// neither hidden nor out of room (docs/features/docking.md). A golden image's tolerance can hide a whole
-		// toolbar button, so tests with goldens of the project window check these too (#1342).
+		// neither hidden nor out of room (docs/features/docking.md). A section cut off at the edge of a container that
+		// doesn't fit its sections to its width, such as the transport bar, counts as shown. A golden image's tolerance
+		// can hide a whole toolbar button, so tests with goldens of the project window check these too (#1342).
 		std::vector<std::string> shownSections(const std::string& container);
 
 	private:

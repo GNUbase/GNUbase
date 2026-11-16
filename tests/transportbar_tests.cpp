@@ -18,6 +18,7 @@
 #include "ui/timeformat.h"
 #include "ui/transport.h"
 
+#include <RmlUi/Core/ComputedValues.h>
 #include <RmlUi/Core/Context.h>
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/ElementUtilities.h>
@@ -37,6 +38,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -792,6 +794,14 @@ TEST_CASE("the time displays keep their width while the cursor moves, and their 
 			app.call("settings.set", {{"key", "ui.theme"}, {"value", theme}});
 			// The shell applies the setting in a task, and a name it has no theme for would keep the default (#1424).
 			REQUIRE(app.waitUntil([&app, theme] { return app.shell().theme() == theme; }));
+			app.shell().step(std::chrono::milliseconds(0));
+			// The default theme's primary display is larger than the secondary, the others' as large (#1342).
+			const float primarySize = rml("primary-time")->GetComputedValues().font_size();
+			const float secondarySize = rml("secondary-time")->GetComputedValues().font_size();
+			if (std::string_view(theme) == "gnubase")
+				CHECK(primarySize > secondarySize);
+			else
+				CHECK(primarySize == secondarySize);
 			for (const auto& [name, widest] : formats)
 			{
 				INFO("format " << name);
@@ -833,12 +843,15 @@ TEST_CASE("the time displays keep their width while the cursor moves, and their 
 						first = now;
 					measured = true;
 					CHECK(now == first);
-					// The text, measured in the display's font, fits its content box.
+					// The text, measured in the display's font, fits its content box, its line too: the box's height
+					// follows the font size (#1342).
 					for (const char* id : {"primary-time", "secondary-time"})
 					{
 						Rml::Element* display = rml(id);
+						const Rml::Vector2f content = display->GetBox().GetSize(Rml::BoxArea::Content);
 						CHECK(static_cast<float>(Rml::ElementUtilities::GetStringWidth(display, text)) <=
-							display->GetBox().GetSize(Rml::BoxArea::Content).x + 0.5F);
+							content.x + 0.5F);
+						CHECK(display->GetLineHeight() <= content.y + 0.5F);
 					}
 				}
 				CHECK(longest == widest.second); // the widest text the width holds was shown

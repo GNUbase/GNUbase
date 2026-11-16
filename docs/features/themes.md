@@ -32,7 +32,8 @@ how each state looks (CLAUDE.md, "UI conventions"). The code is in `src/ui/theme
 - **Flat widgets.** The default theme follows the mockup `art/mockups/main-window.webp` (#1311, #1328); the elements and
   layout stay as they are. Its toolbar and transport buttons have no frame: muted until the mouse is over them, a soft
   fill under it, the accent when checked, Start in the accent and Record in the danger color, as the track list's record
-  toggle; the primary time display is bold. The menu bar and toolbars are in the window's dark tone. Menu buttons that
+  toggle; the primary time display is bold and in the titles' size, the position displays' height following their font
+  size (#1342). The menu bar and toolbars are in the window's dark tone. Menu buttons that
   show a value look like drop-down fields with an arrow, pressed a step toward the accent and dimmed when disabled
   (#1342), tabs are names over an accent line, zones are rounded panels over the window's background, the zone with the
   keyboard focus framed by a hairline in the accent, the event display's lanes are on the panels' surface with the track
@@ -47,7 +48,9 @@ how each state looks (CLAUDE.md, "UI conventions"). The code is in `src/ui/theme
   (`:not(.toggle):not(.primary)`), which keep their skins, and reach the transport's sections (`.transport-section`),
   not the setup pane that comes into the transport bar and the transport panel with them: it keeps framed buttons, as
   every setup pane (#1342). Each bar rule that gives a skin gets a `:focus-visible` twin with the focus ring over it, as
-  the general rules do.
+  the general rules do; a hovered bar button with the focus shows the ring over its skin without the hover, since the
+  twins come after the hover rules. A disabled bar button looks disabled also when it is checked, a menu button that
+  shows a value too, in every theme: in the framed themes such a menu button showed the checked skin before (#1711).
 - **Every document gets them.** While a `ui::Themes` exists, every document RmlUi loads gets the shared style sheets
   and every theme's style sheet ahead of its own style (an RmlUi plugin, on document load). Documents name neither a
   theme nor a shared style sheet, and their own rules, which only lay out, come last. Live reload in Debug builds picks
@@ -95,7 +98,8 @@ The theme styles RmlUi's controls by their tags and states, and GNUbase's contai
   own last, and changed style sheets apply when documents load again. In every theme the bars' look reaches the
   sections' buttons of toolbars, the transport bar and the transport panel, not the transport's setup pane, which
   looks like the one outside a bar in each state; menu buttons that show a value look pressed and disabled; every bar
-  button shows the focus ring in its states; and the tempo looks like the transport's displays (#1342).
+  button and the tempo show the focus ring over the skin of their state, and a checked menu button looks disabled when
+  it is; and the tempo looks like the transport's displays (#1342, #1711).
 - `tests/shell_tests.cpp`: a theme applies in every window, also in windows opened later, without loading documents
   again; work posted from another thread runs on the UI thread in the next step.
 - `tests/uisettings_tests.cpp`: `ui.theme` and `ui.scale` apply at start and follow `settings.set`, and an unknown
@@ -107,7 +111,8 @@ The theme styles RmlUi's controls by their tags and states, and GNUbase's contai
   white keys lighter than its black keys, gives mixer strip names text with WCAG's 4.5:1 contrast on any track color,
   dims the audio part editor's events that their part hides entirely, and the high contrast theme meets WCAG's
   contrast ratios. The default theme's bar buttons, tabs and inspector headers are flat, the other themes' framed,
-  their arrow skins the plain button's, and no bar rule reaches toggle or primary buttons; the default theme's lanes
+  their arrow skins the plain button's, and no bar rule reaches toggle or primary buttons; the disabled menu button's
+  rule comes after the checked one's; the default theme's primary time display is in the titles' size; its lanes
   and track list are off the window's background, the other themes' lanes on it, and its mixer strips and transport
   displays follow the mockup; the zone with the focus is framed in the accent, and the fader slot's round ends lie in
   the skin's corners.
@@ -117,6 +122,8 @@ The theme styles RmlUi's controls by their tags and states, and GNUbase's contai
   at dp ratio 2, compared with golden images on every platform; switching back to a theme gives the same pixels. Its
   toolbar holds bar buttons: plain, checked, disabled and one that shows a value.
 - `tests/uiapp_tests.cpp`: the project window in the default theme with the transport bar, the inspector's sections
-  and the left zone beside the main zone (`default-theme-window.png`). This test and the other goldens of the project
+  and the left zone beside the main zone (`default-theme-window.png`), the transport bar without the locators, the
+  locator range and the punch points, so that its other sections, the tempo and signature too, fit the image (#1711).
+  This test and the other goldens of the project
   window (`event-display.png`, `event-colors.png`, `ruler-tracks.png`) also check which toolbar sections show, since a
   golden image's tolerance can hide a whole button (#1342).
