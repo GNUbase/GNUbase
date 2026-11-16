@@ -1156,7 +1156,10 @@ TEST_CASE("track.import of a track without versions onto one leaves it without v
 				{"destinations", {{{"source", source}, {"track", piano.track}}}}});
 	};
 	// Replacing the track's parts or adding to them keeps it at its one version, which isn't track versions for the
-	// project rules (#1629); a new version is.
+	// project rules (#1629); a new version is. These checks see what the project rules see, not whether the track
+	// stores a version list (mergeTrack): that list isn't observable through the engine API, since project.get,
+	// track.changed and the project file show a track that stores only its untouched first version as one that stores
+	// none (versionsOf), loading drops such a list, and hasTrackVersion needs two versions.
 	for (const std::string existing : {"replace", "add"})
 	{
 		INFO(existing);

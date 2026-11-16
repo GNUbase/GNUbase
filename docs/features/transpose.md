@@ -16,10 +16,12 @@ transpose events and controls, and MIDI parts and audio events that follow it or
   follow global transpose differently, by their root key or Global Transpose: the glued part keeps the first one's
   setting, so the others' notes would play at another pitch.
 - **An audio event's root key and Global Transpose** (#1368, pp. 415-416, 421): `audioEvent.set` `rootKey` and
-  `globalTranspose`, as a part's, in the event's JSON, saved with the project, kept by splits and copies; the audio
-  file stays as it is. `transpose.assignRootKey` gives audio events without a root key the project's too, also those
-  in inactive track versions, and `event.glue` refuses audio events that continue each other in their clip but follow
-  global transpose differently, as it refuses such parts.
+  `globalTranspose`, as a part's, in the event's JSON, saved with the project, kept by splits and copies; the audio file
+  stays as it is. `transpose.assignRootKey` gives audio events without a root key the project's too, also those in
+  inactive track versions. For the stashed parts and audio events it announces one `track.changed` for each track whose
+  stashed events or parts got the root key, and no `midiPart.changed` or `audioEvent.changed`, since nothing shows them.
+  `event.glue` refuses audio events that continue each other in their clip but follow global transpose differently, as
+  it refuses such parts.
 - **An audio event's own Transpose** (#1555, p. 420): `audioEvent.set` `transpose`, -24 to 24 semitones (the time
   stretcher's real-time range), in the event's JSON, saved with the project, kept by splits and copies. It adds to
   global transposition as a MIDI part's transpose does, also while the event is Independent, and Keep Transpose in
@@ -125,12 +127,12 @@ keeping the sound of parts the option folds differently, Set Root Key for Unassi
 versions), Delete Time and Insert Silence moving the events, Delete Time carrying the transposition at the range's end
 to the cut and nothing when an event is at the end or none in the range, recorded parts with and without transpose
 events, and saving and loading. For audio events: the pitch map of the render snapshot for the root key, transpose
-events, a muted track, the octave range and Independent, with undo and splits; Set Root Key for Unassigned Events and
-glue; recorded events with and without transpose events; saving and loading. An audio event's own Transpose with the
-root key step, Independent and the octave range, its range and `rootKeyTranspose`; no media entry of its own for an
-event that nothing can shift; glue refusing events with different Transposes; the pool's Key column (`clip.set`
-`rootKey`) over the events of a clip, inactive track versions included, and what `pool.get` shows when they differ
-and for a clip without events, whose root key `clip.set` refuses.
+events, a muted track, the octave range and Independent, with undo and splits; Set Root Key for Unassigned Events, also
+in inactive track versions with the tracks it announces, and glue; recorded events with and without transpose events;
+saving and loading. An audio event's own Transpose with the root key step, Independent and the octave range, its range
+and `rootKeyTranspose`; no media entry of its own for an event that nothing can shift; glue refusing events with
+different Transposes; the pool's Key column (`clip.set` `rootKey`) over the events of a clip, inactive track versions
+included, and what `pool.get` shows when they differ and for a clip without events, whose root key `clip.set` refuses.
 `tests/renderinplace_tests.cpp`: a rendered event under a transpose event Independent with an empty pitch map, and one
 without transpose events in the project root key, following it, with a pitch map that a later root key shifts.
 `tests/warp_tests.cpp`: `dsp::WarpReader` shifting a sine an octave up from a point of its pitch map, also after a seek,

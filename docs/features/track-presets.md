@@ -103,17 +103,17 @@ they are.
   manual's note on Events and Parts says; the tracks imported onto get their new versions together), and its other
   versions after the track's, versions that share an ID in the file sharing a new one in the project, and a version
   named as one of the track's getting the next free `vN` name (a source with only its first version, with `replace`
-  or `add`, leaves the track storing no version of its own, #1629); with `settings` its channel settings, inserts, routing
-  and drum and articulation maps, the track's plugins going with their automation; with `automation` its automation in
-  place of the track's, and without it, once events or settings are imported onto the track, the track loses its
-  automation (the note on Automation, p. 204). The IDs of the file's versions become new ones, one for each ID of the
-  file, on the new tracks too, including the implicit first version of a track without a version list, so that none
-  of them falls into a version group the project has of its own; the new
-  version of a track imported onto gets the ID its source's active version has, so that the tracks imported onto get
-  one ID when the versions their sources played shared one in the file, and the versions that shared one there keep
-  playing together here when they didn't (p. 233). What played or sent into the copy's channel, such as another
-  imported track, goes into the track's. Its events, parts, versions and automation take the track's time base. A
-  source goes onto one track, and not one inside a listed folder, which brings it along.
+  or `add`, leaves the track storing no version of its own, #1629); with `settings` its channel settings, inserts,
+  routing and drum and articulation maps, the track's plugins going with their automation; with `automation` its
+  automation in place of the track's, and without it, once events or settings are imported onto the track, the track
+  loses its automation (the note on Automation, p. 204). The IDs of the file's versions become new ones, one for each ID
+  of the file, on the new tracks too, including the implicit first version of a track without a version list, so that
+  none of them falls into a version group the project has of its own; the new version of a track imported onto gets the
+  ID its source's active version has, so that the tracks imported onto get one ID when the versions their sources played
+  shared one in the file, and the versions that shared one there keep playing together here when they didn't (p. 233).
+  What played or sent into the copy's channel, such as another imported track, goes into the track's. Its events, parts,
+  versions and automation take the track's time base. A source goes onto one track, and not one inside a listed folder,
+  which brings it along.
 - **Where the events go** (Import Position, p. 204). `position` `absolute` (the default) puts them at the timecode
   they had in the file, so they move by the difference of the project start times (project setup's start); `relative`
   keeps them as far from the project start as from the file's; `cursor` puts them as far from the project cursor. That
