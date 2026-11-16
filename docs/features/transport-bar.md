@@ -23,7 +23,7 @@ are by attributes, which `TransportControls` follows:
 | Click | Activate Metronome Click | `transport.toggle` `metronome` |
 
 The sections keep the width of their controls. A window too narrow for all of them, such as the transport bar of a
-project window under about 1220 dp wide, cuts off the last sections at its right edge instead of drawing sections over
+project window under about 1240 dp wide, cuts off the last sections at its right edge instead of drawing sections over
 each other. The locator buttons L, R and Sel take their letters' width rather than a text button's 64 dp, so all
 sections fit 1280 dp, a 1920-pixel display at 150 % (#1450).
 
@@ -51,20 +51,21 @@ sections fit 1280 dp, a 1920-pixel display at 150 % (#1450).
   panel the cursor's displays take the width of their format's widest text from it (`base.rcss`, in em of the display
   font, whose digits are all as wide, with room for RmlUi cutting the font size to whole pixels and FreeType rounding
   the advances), so the controls beside them stay in place while the transport runs, locates or scrubs; a format change
-  may change it (#1335). The widths hold every position from bar -999 to 9999 in any signature, every position under 100
-  hours in seconds, timecode and user frames, and 11 digits of samples (under 48 hours at 384 kHz): the longest project
-  from the latest start time (#1379). The locators and the signature keep the widths they have, since they don't move
-  with the cursor; the tempo field follows the cursor in tempo track mode, also while playing, and keeps its width as
-  every `valuefield` does (80 dp). The time display window fills its window. They are `<textdisplay>`s
-  ([widgets.md](widgets.md)): a double click edits one, and Enter takes what was typed in its format (`ui::parseTime`):
-  "3.2" is bar 3, beat 2, "1:30" a minute and a half, "5:12" five seconds and twelve frames; what is left out counts
-  from the start. A minus before the bar number types a position before bar 1, which a negative bar offset shows:
-  "-3.1.1.0" with a bar offset of -4 ([project-setup.md](project-setup.md)); lengths take none. Text that isn't a
-  position changes nothing, and neither does leaving a display without typing. A position or length that ends past the
-  largest project position (`time::g_maxPosition`, 2^48 samples) goes there, as `transport.locate` `by` stops there, and
-  timecode hours past 2147483647 aren't a position (#457). The event display, info line and marker window use the same
-  bound when they turn typed or dragged times into positions. Typing the position a display shows locates to it: onto
-  the display's tick when the cursor was between ticks, and back to it during playback.
+  may change it (#1335). Their content is one line of their font high, at least 16 dp, so a theme may give the primary
+  display a larger font, as the default theme does (#1342). The widths hold every position from bar -999 to 9999 in any
+  signature, every position under 100 hours in seconds, timecode and user frames, and 11 digits of samples (under 48
+  hours at 384 kHz): the longest project from the latest start time (#1379). The locators and the signature keep the
+  widths they have, since they don't move with the cursor; the tempo field follows the cursor in tempo track mode, also
+  while playing, and keeps its width as every `valuefield` does (80 dp). The time display window fills its window. They
+  are `<textdisplay>`s ([widgets.md](widgets.md)): a double click edits one, and Enter takes what was typed in its
+  format (`ui::parseTime`): "3.2" is bar 3, beat 2, "1:30" a minute and a half, "5:12" five seconds and twelve frames;
+  what is left out counts from the start. A minus before the bar number types a position before bar 1, which a negative
+  bar offset shows: "-3.1.1.0" with a bar offset of -4 ([project-setup.md](project-setup.md)); lengths take none. Text
+  that isn't a position changes nothing, and neither does leaving a display without typing. A position or length that
+  ends past the largest project position (`time::g_maxPosition`, 2^48 samples) goes there, as `transport.locate` `by`
+  stops there, and timecode hours past 2147483647 aren't a position (#457). The event display, info line and marker
+  window use the same bound when they turn typed or dragged times into positions. Typing the position a display shows
+  locates to it: onto the display's tick when the cursor was between ticks, and back to it during playback.
 - **The locator range** shows the length from the left to the right locator: in bars and beats counted from zero,
   "1.1.0.0" for a bar and a beat, in the other formats as a time (`ui::formatLength`). A length typed moves the right
   locator.

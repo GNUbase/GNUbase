@@ -501,8 +501,9 @@ def flat_rules(theme: dict, skin, on_accent: str) -> list:
         (".transport button#record.checked", {"decorator": "none", "background-color": record},
          {"decorator": skin("button-checked")}),
         (".transport #record.checked svg.icon", {"image-color": "#ffffff"}, {"image-color": c["text"]}),
-        # The primary time display bold; at the body's size, since the position displays' height is fixed (#1335)
-        (".transport .primary-time", {"color": c["text"], "font-weight": "600"}, {}),
+        # The primary time display bold and in the titles' size; the position displays' height follows it (#1342)
+        (".transport .primary-time", {"color": c["text"], "font-weight": "600",
+                                      "font-size": f"{theme['fontSizes']['title']}dp"}, {}),
         # Tabs: no boxes, the selected one's name bright over an accent line
         ("tabset tabs", {"decorator": "none", "background-color": c["surface"]}, {"decorator": skin("tabbar")}),
         ("tabset tab", {"decorator": "none", "color": c["textMuted"], "border-bottom-width": "2dp",
@@ -1176,8 +1177,7 @@ def with_focus_rings(rules: list, ring: str) -> list:
     """The rules, then for each that gives a FOCUSABLE widget a skin its :focus-visible twin with the ring.
 
     The twins come after the rules (flat_rules, which follow them, add their own), so the ring also shows on a hovered
-    widget. The ring is the first decorator, because RmlUi
-    draws the first one on top.
+    widget. The ring is the first decorator, because RmlUi draws the first one on top.
     """
     twins = []
     for selector, declarations in rules:
