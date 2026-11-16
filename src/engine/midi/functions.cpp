@@ -1208,8 +1208,8 @@ namespace gnubase::engine::midi
 				// Of each group of the track's articulation map, the direction in effect where the range starts, so
 				// that the notes play the same sound slot (#175), also without includeChase. Playback resolves
 				// directions per part, so only from a part that still plays there.
-				int group = -1;
-				if (controller.type == ControllerType::Articulation && articulations != nullptr &&
+				int group = -1; // a muted direction (#1684) is none
+				if (controller.type == ControllerType::Articulation && !controller.muted && articulations != nullptr &&
 					sampleOf(partTo) > settings.start)
 					for (const Articulation& each : articulations->articulations)
 						if (each.name == controller.articulation)

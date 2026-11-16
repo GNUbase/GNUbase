@@ -116,9 +116,10 @@ namespace gnubase::ui
 		const engine::Json* laneMap() const;
 		// A press on the Articulations lane: the object selection tool selects the direction or the attribute pressed
 		// with its note, the draw tool adds the row's articulation where it is pressed or removes the one pressed, the
-		// erase tool removes it. The lane takes the keyboard focus.
+		// erase tool removes it, the mute tool mutes or unmutes it (#1684). The lane takes the keyboard focus.
 		void pressArticulation(Rml::Event& event);
 		void selectArticulation(const Rml::Element* item, bool add);
+		void muteArticulation(const Rml::Element* item);
 		// Whether a note's attribute shows selected on the lane: its note is selected, and the attribute is one pressed
 		// on the lane, or none of the note's was.
 		bool attributeSelected(uint64_t part, uint64_t note, const std::string& name) const;
@@ -129,7 +130,7 @@ namespace gnubase::ui
 		void directionMenu(const Rml::Element* direction);
 		// The Articulations lane's controls: collapseGroups, expandGroups and soundSlots (pp. 1287-1288).
 		void articulationControl(const std::string& action);
-		// The state class .keyboard-focus of the lane that has the keyboard focus (p. 100).
+		// The state class .focused of the lane that has the keyboard focus (p. 100), which the themes frame.
 		void showKeyLane();
 		// The groups of the lane's map collapsed into a row each (p. 1287), by index.
 		std::set<int> collapsedGroups() const;
@@ -188,7 +189,8 @@ namespace gnubase::ui
 		// The direction whose event pop-up menu opened on the Articulations lane: its part and id.
 		std::optional<std::pair<uint64_t, uint64_t>> m_menuDirection;
 		std::optional<size_t> m_keyLane; // the Articulations lane that has the keyboard focus
-		// The attributes pressed on the Articulations lane, by part and note: what Delete removes of a selected note.
+		// The view's attributes selected on the Articulations lane, by part and note (its selection's articulations,
+		// #1688): what Delete removes of a selected note. A selected note without them has all selected.
 		std::map<std::pair<uint64_t, uint64_t>, std::set<std::string>> m_attributeSelection;
 		Rml::ObserverPtr<Rml::Element> m_dialog;
 		std::shared_ptr<bool> m_alive = std::make_shared<bool>(true); // for answers that come after it's gone

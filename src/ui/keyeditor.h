@@ -40,6 +40,7 @@ namespace gnubase::ui
 		Split,
 		Glue,
 		Line, // on the controller lanes, in its mode (#128)
+		Mute, // on the Articulations lane (#1684); notes have no mute yet (#679)
 	};
 
 	// Fills an element of a MidiEditor with the key editor: its toolbar (tools, the transpose palette, step and MIDI

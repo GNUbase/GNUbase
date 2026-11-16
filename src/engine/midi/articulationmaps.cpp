@@ -275,10 +275,10 @@ namespace gnubase::engine::midi
 				++it;
 			}
 			Json notes = Json::array();
-			for (auto& [id, note] : part.notes)
+			const auto renameAll = [&renamed](const std::vector<std::string>& names)
 			{
 				std::vector<std::string> kept;
-				for (const std::string& name : note.articulations)
+				for (const std::string& name : names)
 				{
 					const auto found = renamed.find(name);
 					if (found == renamed.end())
@@ -286,9 +286,16 @@ namespace gnubase::engine::midi
 					else if (!found->second.empty())
 						kept.push_back(found->second);
 				}
-				if (kept == note.articulations)
+				return kept;
+			};
+			for (auto& [id, note] : part.notes)
+			{
+				std::vector<std::string> kept = renameAll(note.articulations);
+				std::vector<std::string> muted = renameAll(note.mutedArticulations); // #1684
+				if (kept == note.articulations && muted == note.mutedArticulations)
 					continue;
 				note.articulations = std::move(kept);
+				note.mutedArticulations = std::move(muted);
 				notes.push_back(toJson(note));
 			}
 			if (context == nullptr)
@@ -543,12 +550,12 @@ namespace gnubase::engine::midi
 	namespace
 	{
 		// Calls each(note, active) for each note of a part by start, with the articulation of each group in effect
-		// for it: its attribute, else the direction in effect where it starts.
+		// for it: its attribute, else the direction in effect where it starts. Muted ones are none (#1684, p. 1289).
 		template <typename Each> void forEachNote(const ArticulationMap& map, const MidiPart& part, Each each)
 		{
 			std::vector<const Controller*> directions;
 			for (const auto& [id, controller] : part.controllers)
-				if (controller.type == ControllerType::Articulation)
+				if (controller.type == ControllerType::Articulation && !controller.muted)
 					directions.push_back(&controller);
 			std::stable_sort(directions.begin(), directions.end(),
 				[](const Controller* a, const Controller* b) { return a->position < b->position; });
@@ -573,8 +580,10 @@ namespace gnubase::engine::midi
 				}
 				Active active = directed;
 				for (const std::string& name : note->articulations)
-					if (const Articulation* articulation = findArticulation(map, name);
-						articulation != nullptr && articulation->type == ArticulationType::Attribute)
+					if (const Articulation* articulation = findArticulation(map, name); articulation != nullptr &&
+						articulation->type == ArticulationType::Attribute &&
+						std::find(note->mutedArticulations.begin(), note->mutedArticulations.end(), name) ==
+							note->mutedArticulations.end())
 						active.at(static_cast<size_t>(articulation->group)) = articulation;
 				each(*note, active);
 			}
@@ -621,6 +630,7 @@ namespace gnubase::engine::midi
 			note.id = json.at("id").get<ObjectId>();
 			note.position = json.at("position").get<time::Ticks>();
 			note.articulations = json.value("articulations", std::vector<std::string>());
+			note.mutedArticulations = json.value("mutedArticulations", std::vector<std::string>());
 			parsed.notes[note.id] = std::move(note);
 		}
 		for (const Json& json : part.value("controllers", Json::array()))

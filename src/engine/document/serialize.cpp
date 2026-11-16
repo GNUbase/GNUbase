@@ -785,6 +785,8 @@ namespace gnubase::engine
 			json["velocityVariance"] = note.velocityVariance;
 		if (!note.articulations.empty())
 			json["articulations"] = note.articulations;
+		if (!note.mutedArticulations.empty())
+			json["mutedArticulations"] = note.mutedArticulations;
 		if (!note.expressions.empty())
 		{
 			Json& points = json["expressions"] = Json::array();
@@ -821,6 +823,8 @@ namespace gnubase::engine
 		case ControllerType::Articulation:
 			json["articulation"] = controller.articulation;
 			json["reset"] = controller.value != 0;
+			if (controller.muted)
+				json["muted"] = true;
 			return json;
 		}
 		json["channel"] = controller.channel;
@@ -842,6 +846,7 @@ namespace gnubase::engine
 		{
 			controller.articulation = json.value("articulation", std::string());
 			controller.value = json.value("reset", false) ? 1 : 0;
+			controller.muted = json.value("muted", false);
 		}
 		else if (type == ControllerType::Program)
 		{
@@ -2600,7 +2605,8 @@ namespace gnubase::engine
 						timingFrom(n.at("origin").at("original")), timingFrom(n.at("origin").at("quantized"))};
 				note.probability = std::clamp(n.value("probability", 1.0), 0.0, 1.0);
 				note.velocityVariance = std::clamp(n.value("velocityVariance", 0.0), -1.0, 1.0);
-				note.articulations = n.value("articulations", std::vector<std::string>()); // before #175 none
+				note.articulations = n.value("articulations", std::vector<std::string>());           // before #175 none
+				note.mutedArticulations = n.value("mutedArticulations", std::vector<std::string>()); // #1684
 				note.expressions =
 					expressionsFromJson(n.value("expressions", Json::array()), noteName + " expressions", true);
 				part.notes[note.id] = note;

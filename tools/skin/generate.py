@@ -995,11 +995,12 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".articulation-item.direction", {"background-color": mix(c["surfaceRaised"], c["accent"], .3)}),
         (".articulation-item.attribute", {"background-color": mix(c["surfaceRaised"], c["accent"], .6)}),
         (".articulation-item.reset", {"background-color": c["textMuted"]}),
+        # Muted ones gray (#1684, p. 1289), under the selection's color
+        (".articulation-item.muted", {"background-color": mix(c["surfaceRaised"], c["textMuted"], .55)}),
         (".articulation-item.selected", {"background-color": c["accent2"]}),
         (".articulation-item.inactive", {"background-color": mix(c["surface"], c["textMuted"], .3)}),
-        # The lane with the keyboard focus (#1658, p. 100), framed on the left of its header in the accent
-        (".controller-lane.keyboard-focus .controller-lane-header", {"border-left-width": f"{widths['focus']}dp",
-                                                                     "border-left-color": c["accent"]}),
+        # The lane with the keyboard focus (#1658, #1688, p. 100) framed in the accent, as the docking zones are
+        (".controller-lane-frame", {"border-width": f"{widths['focus']}dp", "border-color": c["accent"]}),
         # The audio part editor (docs/features/audio-part-editor.md): lines between the lanes, the events, selected
         # ones in the second accent, and muted ones, those outside the part editing mode and those their part hides
         # entirely dimmed

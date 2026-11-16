@@ -1057,6 +1057,10 @@
 	{
 		background-color: #566273;
 	}
+	.articulation-item.muted
+	{
+		background-color: #9ea6b1;
+	}
 	.articulation-item.selected
 	{
 		background-color: #6554c0;
@@ -1065,10 +1069,10 @@
 	{
 		background-color: #ccd0d5;
 	}
-	.controller-lane.keyboard-focus .controller-lane-header
+	.controller-lane-frame
 	{
-		border-left-width: 2dp;
-		border-left-color: #0969da;
+		border-width: 2dp;
+		border-color: #0969da;
 	}
 	.ape-display
 	{
