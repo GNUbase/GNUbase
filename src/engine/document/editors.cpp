@@ -431,14 +431,15 @@ namespace gnubase::engine
 			return view;
 		}
 
-		// Solo Instrument (p. 1223): the selected notes of the open drum editors that have it on. The render snapshot
-		// solos them on the tracks with a drum map, also one assigned after they were selected.
+		// Solo Instrument (p. 1223): the selected notes of the open drum editors that have it on, as editor.get has
+		// them now. The render snapshot solos them on the tracks with a drum map, also one assigned after they were
+		// selected.
 		std::vector<std::pair<ObjectId, ObjectId>> soloNotes(const Views& views, const ProjectModel& model)
 		{
 			std::vector<std::pair<ObjectId, ObjectId>> notes;
-			for (const auto& [name, view] : views)
-				if (view.project == model.openedRevision() && view.open && view.content == "drum" &&
-					view.soloInstrument)
+			for (const auto& stored : views)
+				if (const EditorView view = current(views, model, stored.first);
+					view.open && view.content == "drum" && view.soloInstrument)
 					notes.insert(notes.end(), view.selection.begin(), view.selection.end());
 			std::sort(notes.begin(), notes.end());
 			notes.erase(std::unique(notes.begin(), notes.end()), notes.end());
@@ -565,6 +566,7 @@ namespace gnubase::engine
 	void registerEditorCommands(ProjectModel& model, Engine& engine)
 	{
 		auto views = std::make_shared<Views>();
+		model.setSoloNotesSource([views, &model] { return soloNotes(*views, model); });
 		// The names, so that MCP clients and Lua see them: lower, window or inPlace:<track> (#131). At most inPlace:
 		// and the 20 digits of a 64-bit track id, so that the pattern never has to match a long string (#1059, #1159).
 		const Json editorSchema = {
@@ -688,7 +690,7 @@ namespace gnubase::engine
 			stored.project = model.openedRevision();
 			dropUneditable(model.project(), stored);
 			Json result = viewJson(model.project(), editor, stored);
-			model.setSoloNotes(soloNotes(*views, model));
+			model.updateSoloNotes();
 			context.emit("editor.changed", result);
 			return result;
 		};

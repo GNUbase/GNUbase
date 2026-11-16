@@ -57,9 +57,11 @@ They emit `drumMap.added`, `drumMap.changed` and `drumMap.removed` with the map 
   I-notes, and the recorder would record those events.
 - **Solo Instrument** (p. 1223): while a drum editor is open with `soloInstrument` on, of the tracks with a map that
   its selected notes are on only the notes of the selected notes' sounds play; with no note selected every sound
-  plays. The editor views set `Project::soloNotes` (`ProjectModel::setSoloNotes`), the selected notes, which the render
-  snapshot turns into the soloed pitches of each track with a map, so a selected note moved to another sound solos
-  that one, and a map assigned to the track afterwards solos its selected notes' sounds. The notes it silences select
+  plays. The editor views give `Project::soloNotes` (`ProjectModel::setSoloNotesSource`), the selected notes as
+  `editor.get` has them, which every render snapshot takes and turns into the soloed pitches of each track with a map,
+  so a selected note moved to another sound solos that one, a map assigned to the track afterwards solos its selected
+  notes' sounds, and a selected note whose sound Show Drum Sounds in Use by Instrument hides after a change of the pads
+  or the map no longer solos it. The notes it silences select
   no sound slot of an articulation map either. It changes what plays, not the project: no undo step, not saved, and
   the project stays as saved, though `project.revision` advances. Playback only; what is played live still plays
   every sound. Render in place, freeze and export render what plays, so while it is on they take only the soloed
@@ -197,7 +199,8 @@ Type, Technique); importing the reference's own drum map files.
   giving a shared I-note to the first sound by pitch as `inputPitch` does; step input and recording through the I-notes
   with Drum-Map Link; O-Note Conversion; the drum editor content, its view settings and parts of a track with a map
   opening in it unless the preference is off; Solo Instrument playing only the selected notes' sounds, following a
-  selected note to another sound, leaving a saved project unmodified, soloing on a map assigned after it went on, and
+  selected note to another sound, leaving a saved project unmodified, soloing on a map assigned after it went on, no
+  longer soloing a selected note whose pad a reset takes out of the sounds in use and soloing it again on undo, and
   not for nothing selected, another content, a closed editor, a track without a map or with it off; `visibleSounds` and
   the grid type `zoom`, refusing other values; `soundsInUse` null without a drum machine, a drum track's kit, and a MIDI
   track's sounds through its map's O-notes to the drum track it plays to, and the selection leaving out the notes of the
@@ -227,7 +230,8 @@ Type, Technique); importing the reference's own drum map files.
   Sounds with Events listing and gridding only the notes' sounds, the notes on their rows and the drumstick inserting on
   one, Solo Instrument's button, disabled and unlit without a map, and the Names menu's GM Default naming the list's
   sounds without a map and the key editor's keys; Show Drum Sounds in Use by Instrument disabled without a drum machine
-  and listing a drum track's kit, hiding the notes of the other sounds from the note display and the velocity lane and
+  and listing a drum track's kit, the editor opening scrolled to the rows of the notes the list shows, not to a note of
+  a sound it hides, hiding the notes of the other sounds from the note display and the velocity lane and
   the transposition palette leaving them as they were; Adapt to Zoom snapping the drumstick to the note value that the
   grid's width chooses, its notes as long as the quantize grid's value; named keys, and the drum editor's sound list,
   lining up the notes with their velocity bars and parts.

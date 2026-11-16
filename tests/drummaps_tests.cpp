@@ -732,6 +732,46 @@ TEST_CASE("Show Drum Sounds in Use by Instrument has the sounds whose pads the d
 		Json::array({shown}));
 }
 
+TEST_CASE("Solo Instrument follows the sounds in use when the instrument's pads change", "[unit]")
+{
+	// p. 1234: a selected note whose sound Show Drum Sounds in Use by Instrument hides leaves the selection, also when
+	// the pads change after it was selected, and then no longer solos its sound.
+	Fixture f;
+	const auto drums = f.call("drum.create").at("track").at("id").get<uint64_t>();
+	f.call("track.set", {{"track", drums}, {"drumMap", f.gm()}});
+	const auto part = f.call("midiPart.add", {{"track", drums}, {"position", 0}, {"length", g_bar}})
+						  .at("part")
+						  .at("id")
+						  .get<uint64_t>();
+	const Json added = f.call("note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", 0}, {"length", 60}, {"pitch", 36}, {"velocity", 0.5}},
+					{{"position", 120}, {"length", 60}, {"pitch", 38}, {"velocity", 0.5}}}}});
+	const Json snare = {{"part", part}, {"note", added.at("notes").at(1).at("id")}};
+	const auto pitches = [&]
+	{
+		std::vector<int> played;
+		for (const engine::RenderChannel& channel : f.engine.renderSnapshots().acquire().channels)
+			if (channel.track == drums)
+				for (const engine::RenderNote& note : channel.notes)
+					played.push_back(note.pitch);
+		return played;
+	};
+	f.call("editor.open", {{"editor", "window"}, {"parts", {part}}, {"content", "drum"}});
+	f.call("editor.set",
+		{{"editor", "window"}, {"pitchVisibility", true}, {"visibleSounds", "inUse"}, {"selection", {snare}},
+			{"soloInstrument", true}});
+	CHECK(pitches() == std::vector<int>{38});
+
+	f.call("drum.resetPad", {{"track", drums}, {"pad", 38}}); // the snare's pad plays nothing now
+	CHECK(f.call("editor.get", {{"editor", "window"}}).at("selection") == Json::array());
+	CHECK(pitches() == std::vector<int>{36, 38});
+	f.call("history.undo"); // its pad back, the note is selected again
+	CHECK(f.call("editor.get", {{"editor", "window"}}).at("selection") == Json::array({snare}));
+	CHECK(pitches() == std::vector<int>{38});
+}
+
 TEST_CASE("the editor view names the active track's drum sounds", "[unit]")
 {
 	// p. 1239: the names the editors show, so that an MCP or Lua client has them too.

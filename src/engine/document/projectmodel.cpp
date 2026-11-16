@@ -3721,11 +3721,10 @@ namespace gnubase::engine
 				{"redo", position < steps.size() ? Json(steps[position].action) : Json(nullptr)}});
 	}
 
-	void ProjectModel::setSoloNotes(std::vector<std::pair<ObjectId, ObjectId>> notes)
+	void ProjectModel::updateSoloNotes()
 	{
-		if (notes == m_project.soloNotes)
+		if (!m_soloNotesSource || m_soloNotesSource() == m_project.soloNotes)
 			return;
-		m_project.soloNotes = std::move(notes);
 		const bool saved = m_savedRevision == m_revision;
 		const bool autoSaved = m_autoSavedRevision == m_revision;
 		publish();
@@ -3737,6 +3736,8 @@ namespace gnubase::engine
 
 	void ProjectModel::publish()
 	{
+		if (m_soloNotesSource)
+			m_project.soloNotes = m_soloNotesSource();
 		m_snapshots.publish(compile(m_project, ++m_revision, &m_snapshots.latest(), m_openedRevision));
 	}
 
@@ -5048,9 +5049,10 @@ namespace gnubase::engine
 				"A number that grows with every change of the project: every edit, undo and redo, and loading or "
 				"starting a project. quantize.savePreset, quantize.renamePreset, quantize.removePreset and "
 				"quantize.extractGroove also advance it when they change the quantize preset saved with the project, "
-				"without an undo step, and so does the drum editor's Solo Instrument (editor.set soloInstrument, and "
-				"the selection while it is on) when it changes what plays, without a change of the project: modified "
-				"stays as it was. project.load with revision loads only if it hasn't changed. modified says "
+				"without an undo step, and so does the drum editor's Solo Instrument (editor.set soloInstrument) when "
+				"the selected notes it solos change: it goes on or off with notes selected, or the selection changes "
+				"while it is on, even if what plays stays the same. Neither changes the project: modified stays as "
+				"it was. project.load with revision loads only if it hasn't changed. modified says "
 				"whether the project changed since it was last saved, loaded or started; undoing back to the saved "
 				"state still counts as a change. project identifies the open project: the revision at which it was "
 				"loaded or started, so it changes only when another project is opened.",
