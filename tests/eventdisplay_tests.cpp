@@ -983,6 +983,72 @@ TEST_CASE("the cross-hair cursor follows the mouse over the event lanes", "[unit
 	CHECK(!vertical.IsVisible());
 }
 
+TEST_CASE("an event display opens with the event display preferences stored before it", "[unit]")
+{
+	// #1313: a user who turned names off sees none at the next start. A second display opens in the same document
+	// after the preferences changed.
+	const test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "take.wav";
+	test::Audio audio;
+	audio.channels = 1;
+	for (int frame = 0; frame < 48000; ++frame)
+		audio.samples.push_back(0.5F * static_cast<float>(std::sin(frame / 50.0)));
+	test::writeWav(file, audio);
+	Fixture fixture;
+	const Json track = fixture.call("track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track");
+	const Json media = fixture.call("media.add", {{"path", file.u8string()}}).at("media");
+	const Json clip = fixture.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	fixture.call(
+		"audioEvent.add", {{"track", track.at("id")}, {"clip", clip.at("id")}, {"position", 48000}, {"length", 48000}});
+	const Json midi = fixture.call("track.add", {{"type", "midi"}}).at("track");
+	const Json part =
+		fixture.call("midiPart.add", {{"track", midi.at("id")}, {"position", 0}, {"length", 4 * g_quarter}})
+			.at("part")
+			.at("id");
+	fixture.call("note.add",
+		{{"part", part}, {"notes", {{{"position", 0}, {"length", g_quarter}, {"pitch", 60}, {"velocity", 0.5}}}}});
+	fixture.call("settings.set",
+		{{"values",
+			{{"ui.showEventNames", false}, {"ui.partDataMode", "off"}, {"ui.eventOpacity", 40},
+				{"ui.waveformBrightness", 80}}}});
+	// The change is announced before the second display opens: it reads what's stored.
+	REQUIRE(fixture.waitUntil([&fixture]
+		{ return fixture.element("event-lanes.events").GetAttribute<double>("body-opacity", 1.0) == Approx(0.4); }));
+	for (int i = 0; i < 5; ++i)
+		fixture.step();
+
+	Rml::Element* root = fixture.document.AppendChild(fixture.document.CreateElement("div"));
+	root->SetClass("event-display", true);
+	root->SetAttribute("style", "position: absolute; left: 0; top: 0; right: 0; bottom: 0;");
+	const ui::EventDisplay opened{fixture.engine, fixture.binding, *root};
+	const auto* lanes = dynamic_cast<ui::EventLanes*>(root->QuerySelector("event-lanes.events"));
+	const auto* names = dynamic_cast<ui::EventNames*>(root->QuerySelector(".event-area event-names"));
+	const auto* contents = dynamic_cast<ui::PartContents*>(root->QuerySelector(".event-area part-contents"));
+	REQUIRE(lanes != nullptr);
+	REQUIRE(names != nullptr);
+	REQUIRE(contents != nullptr);
+	const auto wave = [root] { return dynamic_cast<ui::Waveform*>(root->QuerySelector(".waveforms waveform")); };
+	REQUIRE(fixture.waitUntil(
+		[&]
+		{
+			return lanes->lanes().size() == 2 && !lanes->lanes()[1].events.empty() &&
+				lanes->GetAttribute<double>("body-opacity", 1.0) == Approx(0.4) && wave() != nullptr &&
+				wave()->GetAttribute<double>("brightness", 0.0) == Approx(0.8);
+		}));
+	// Lanes 40 dp high would show both names and notes with the defaults.
+	REQUIRE(names->lanes().size() == 2);
+	REQUIRE(contents->lanes().size() == 2);
+	CHECK(names->lanes()[0].names.empty());
+	CHECK(names->lanes()[1].names.empty());
+	CHECK(contents->lanes()[1].parts.empty());
+
+	fixture.call("settings.set",
+		{{"values",
+			{{"ui.showEventNames", true}, {"ui.partDataMode", "lines"}, {"ui.eventOpacity", 100},
+				{"ui.waveformBrightness", 50}}}});
+	REQUIRE(fixture.waitUntil([&] { return names->lanes()[1].names.size() == 1; }));
+}
+
 TEST_CASE("events show their names and MIDI parts their notes and controllers, as the preferences say", "[unit]")
 {
 	// Show Event Names, Smallest Track Height to Show Name and to Show Data, Part Data Mode and Show Controllers

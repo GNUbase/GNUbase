@@ -736,6 +736,41 @@ TEST_CASE("event names show at their events' top left, cut to fit or left out", 
 	CHECK(count(vertices, white) <= 4 * 13);
 }
 
+TEST_CASE("part contents build only the parts, notes and controllers around the view", "[unit]")
+{
+	// Like the other canvas elements (#1313): the view is 4000 units wide, a build covers a view either side of it.
+	OneWindow fixture;
+	fixture.show("part-contents { width: 400dp; height: 100dp; color: #ff0000; stroke-color: #0000ff; "
+				 "stroke-width: 1dp; }",
+		R"(<part-contents id="contents" scale="10"/>)");
+	auto& contents = fixture.element<ui::PartContents>("contents");
+	// A thousand parts with a note and a controller each.
+	std::vector<ui::PartContents::Part> parts;
+	parts.reserve(1000);
+	for (int i = 0; i < 1000; ++i)
+		parts.push_back({i * 1000.0, 900.0, {{i * 1000.0, 100.0, 60}}, {{i * 1000.0, 1.0}}});
+	contents.setLanes({{60.0F, parts}});
+	std::vector<Rml::Vertex> vertices = fixture.draw();
+	CHECK(count(vertices, red()) >= 4 * 4);
+	CHECK(count(vertices, red()) <= 4 * 13);
+	CHECK(count(vertices, blue()) <= 4 * 13);
+	// One long part with ten thousand notes and controllers, a note every 100 units.
+	ui::PartContents::Part part{0.0, 1000000.0, {}, {}};
+	part.notes.reserve(10000);
+	part.controllers.reserve(10000);
+	for (int i = 0; i < 10000; ++i)
+	{
+		part.notes.push_back({i * 100.0, 50.0, 60 + (i % 12)});
+		part.controllers.push_back({i * 100.0, 0.5});
+	}
+	contents.setLanes({{60.0F, {part}}});
+	vertices = fixture.draw();
+	CHECK(count(vertices, red()) >= 4 * 40);
+	CHECK(count(vertices, red()) <= 4 * 130);
+	CHECK(count(vertices, blue()) >= 4 * 40);
+	CHECK(count(vertices, blue()) <= 4 * 130);
+}
+
 TEST_CASE("part contents show notes as lines over the part's pitch range, controllers as bars", "[unit]")
 {
 	// Part Data Mode Lines, Show Controllers and Note Brightness (reference manual p. 1607, #1313).
