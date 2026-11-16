@@ -133,10 +133,13 @@ selects and deselects no notes.
   the mouse is, also outside the window, where the platform captures the mouse while the button is held and nothing is
   hovered, and its dragend comes where the button goes up, with the modifier keys held then. The draw tool's and the
   drumstick's drags, the expression editor's draw and erase and the drag on the keyboard's left part follow the mouse
-  out there and end at the release as in the editor; the drumstick's delete drag deletes up to it. A move or resize released outside the editor ends without
-  its effect, except onto another in-place editor's grid ([in-place-editor.md](in-place-editor.md)). A gesture whose
-  release never comes, as when the window loses the focus before the mouse moved, ends without its effect at the next
-  press in the editor. Only during a gesture: RmlUi doesn't scroll on a touch move during a drag.
+  out there and end at the release as in the editor; the drumstick's delete drag deletes up to it. A move or resize
+  released outside the editor ends without its effect, except onto another in-place editor's grid
+  ([in-place-editor.md](in-place-editor.md)). A gesture whose release never comes, as when the window loses the focus
+  before the mouse moved, ends without its effect at the next press anywhere in the editor's window (the document's
+  mousedown in the capture phase), before the press reaches its target: until then the notes it moves or draws follow
+  the mouse over the editor. The class goes when the gesture ends, as RmlUi doesn't scroll on a touch move during a
+  drag.
 - **Info line** (p. 1199). Start, end and length in bars and beats, the pitch as a name such as C3 (typing a number
   works too), velocities 0-127, the channel 1-16 and the Articulations, the attributes of the track's articulation
   map that the note has, names separated by commas ([articulation-maps.md](articulation-maps.md)). A value typed

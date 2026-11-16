@@ -410,6 +410,8 @@ namespace gnubase::ui
 			root.AddEventListener(event, this);
 		document->AddEventListener(Rml::EventId::Mouseup, this);
 		document->AddEventListener(Rml::EventId::Mouseout, this);
+		// In the capture phase: a press anywhere in the document ends a lost gesture before anything hears it.
+		document->AddEventListener(Rml::EventId::Mousedown, this, true);
 		m_document = document->GetObserverPtr();
 		setTool(KeyTool::ObjectSelection);
 
@@ -466,6 +468,7 @@ namespace gnubase::ui
 		{
 			document->RemoveEventListener(Rml::EventId::Mouseup, this);
 			document->RemoveEventListener(Rml::EventId::Mouseout, this);
+			document->RemoveEventListener(Rml::EventId::Mousedown, this, true);
 		}
 		if (Rml::Element* root = m_root.get())
 			for (const Rml::EventId event : g_rootEvents)
@@ -1595,11 +1598,18 @@ namespace gnubase::ui
 		switch (event.GetId())
 		{
 		case Rml::EventId::Mousedown:
-			if (event.GetParameter("button", 0) == 0)
+			if (event.GetParameter("button", 0) != 0)
+				break;
+			if (event.GetCurrentElement() == m_document.get())
 			{
-				press(event);
-				dragDuringGesture();
+				// A gesture whose release never came, as when the window lost the focus before the mouse moved, ends
+				// without its effect at the next press anywhere in the document, before the press reaches its target.
+				// The drawn note it takes out stays alive in m_removedDrawn, also when it is the press's target.
+				cancelGesture();
+				break;
 			}
+			press(event);
+			dragDuringGesture();
 			break;
 		case Rml::EventId::Mousemove:
 			drag(event);
@@ -1617,13 +1627,19 @@ namespace gnubase::ui
 			if (Rml::Element* velocity = m_root.get()->QuerySelector(".key-editor-velocity"))
 				velocity->SetClass("off", true);
 			if (event.GetCurrentElement() == m_root.get())
+			{
 				release(event);
+				dragDuringGesture();
+			}
 			break;
 		case Rml::EventId::Dragend:
 			// After the mouseup, if there was one: a gesture still going on was released outside the editor, also
 			// outside the window, where no element hears the mouseup.
 			if (m_gesture != Gesture::None)
+			{
 				releaseOutside(event);
+				dragDuringGesture();
+			}
 			break;
 		case Rml::EventId::Mouseout:
 			// The mouse leaving the window ends the pitch too: the button going up out there sends no mouseup.
@@ -1655,8 +1671,7 @@ namespace gnubase::ui
 
 	void KeyEditor::press(Rml::Event& event)
 	{
-		// A gesture whose release never came, as when the window lost the focus before the mouse moved, ends here.
-		cancelGesture();
+		// The document's mousedown in the capture phase (ProcessEvent) has ended a gesture whose release never came.
 		Rml::Element* root = m_root.get();
 		Rml::Element* target = event.GetTargetElement();
 		// The keyboard's left part (p. 1261): a press plays the pitch under it as a key does, and a drag zooms the
@@ -2237,6 +2252,7 @@ namespace gnubase::ui
 			velocity->SetClass("off", true);
 		m_pressed.reset();
 		placeItems();
+		dragDuringGesture();
 	}
 
 	void KeyEditor::dragDuringGesture()
@@ -2247,8 +2263,9 @@ namespace gnubase::ui
 			return;
 		root->SetClass("in-gesture", on);
 		// RmlUi looks for the drag element right after the press's mousedown and double click, from the computed
-		// values.
-		if (Rml::ElementDocument* owner = root->GetOwnerDocument())
+		// values. Off, the next frame updates them: a press that comes before only finds the grid or the keyboard's
+		// left part as its drag element when it is on them, where a drag without a gesture does nothing.
+		if (Rml::ElementDocument* owner = root->GetOwnerDocument(); owner != nullptr && on)
 			owner->UpdateDocument();
 	}
 

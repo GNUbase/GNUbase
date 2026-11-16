@@ -858,6 +858,112 @@ TEST_CASE("a draw whose release was lost ends without its effect at a press on t
 	CHECK(f.elements(".key-note.drawing").empty());
 }
 
+TEST_CASE("a move whose release was lost ends without its effect at a press outside the key editor", "[ui]")
+{
+	Fixture f;
+	const std::vector<uint64_t> ids = f.add({{0, 60, g_sixteenth}});
+	ui::Window* window = f.app.shell().find(f.app.appUi().editorWindowId());
+	REQUIRE(window != nullptr);
+	Rml::Context& context = window->context();
+	// The mouse leaves the window before it moves, as when the window loses the focus: no drag starts, so the button
+	// going up out there ends nothing, and the grid stays a drag element.
+	f.app.ui().press(f.window, f.at(0.5, 60), ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	context.ProcessMouseLeave();
+	context.ProcessMouseButtonUp(0, 0);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.has(".key-editor", "in-gesture"));
+	// The next press, on the editor window's toolbar outside the key editor, ends the move: the grid is no drag element
+	// any more, and the button going up over the grid after a move there moves nothing.
+	f.app.ui().press(f.window, of("#editor-keep-contents"), ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK_FALSE(f.has(".key-editor", "in-gesture"));
+	f.app.ui().move(f.window, f.at(6.5, 62));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.app.ui().release(f.window, f.at(6.5, 62), ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK_FALSE(f.app.waitUntil([&] { return f.note(ids[0]).at("position") != 0; }, std::chrono::milliseconds(300)));
+	CHECK(f.note(ids[0]).at("pitch") == 60);
+	f.settle();
+}
+
+TEST_CASE("a resize released outside the key editor ends without its effect", "[ui]")
+{
+	Fixture f;
+	const std::vector<uint64_t> ids = f.add({{0, 60, g_quarter}});
+	const auto width = [&] { return f.box(noteSelector(ids[0])).at("width").get<double>(); };
+	// A resize in the editor ends with the release: the grid is a drag element only while it goes on.
+	f.drag(f.at(3.95, 60), f.at(6, 60));
+	REQUIRE(f.app.waitUntil([&] { return f.note(ids[0]).at("length") == 6 * g_sixteenth; }));
+	CHECK_FALSE(f.has(".key-editor", "in-gesture"));
+	f.settle();
+	const double before = width();
+	// At the note's end to the right, then released over the editor window's toolbar: the note keeps its length.
+	auto* clock = dynamic_cast<ui::SystemInterface*>(Rml::GetSystemInterface());
+	REQUIRE(clock != nullptr);
+	clock->advance(1.0); // no double click with the press before
+	f.app.ui().press(f.window, f.at(5.95, 60), ui::MouseButton::Left);
+	f.app.ui().move(f.window, f.at(8.5, 60));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.app.ui().move(f.window, f.at(9.5, 60));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return width() > before + 10; }));
+	f.app.ui().release(f.window, of("#editor-keep-contents"), ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return std::abs(width() - before) <= 1.5; }));
+	CHECK_FALSE(f.has(".key-editor", "in-gesture"));
+	CHECK_FALSE(f.app.waitUntil(
+		[&] { return f.note(ids[0]).at("length") != 6 * g_sixteenth; }, std::chrono::milliseconds(300)));
+}
+
+TEST_CASE("the key editor's draw and the drag on the keyboard's left part go on past the window's edge until the "
+		  "button goes up",
+	"[ui]")
+{
+	Fixture f({1024, 600});
+	f.app.setDpRatio(1.0F);
+	f.scroll(64);
+	f.tool("draw");
+	ui::Window* window = f.app.shell().find(f.app.appUi().editorWindowId());
+	REQUIRE(window != nullptr);
+	Rml::Context& context = window->context();
+	// To the right over 3.5 sixteenths, then 40 px past the window's right edge, where the platform captures the mouse
+	// while the button is held and nothing is hovered: released there, the note reaches the sixteenth out there.
+	const Json grid = f.box(".key-editor-grid");
+	f.app.ui().press(f.window, f.at(0.3, 64), ui::MouseButton::Left);
+	f.app.ui().move(f.window, f.at(3.5, 64));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const int y = f.at(3.5, 64).point.value_or(ui::Point{}).y;
+	const int out = context.GetDimensions().x + 40;
+	context.ProcessMouseMove(out, y, 0);
+	context.ProcessMouseButtonUp(0, 0);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.partNotes().size() == 1; }));
+	const double sixteenths = (out - grid.at("x").get<double>()) / grid.at("width").get<double>() * 16.0;
+	CHECK(f.partNotes()[0].at("position") == 0);
+	CHECK(f.partNotes()[0].at("length") == static_cast<int64_t>(std::ceil(sixteenths)) * g_sixteenth);
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note.drawing").empty(); }));
+	CHECK_FALSE(f.has(".key-editor", "in-gesture"));
+
+	// The keyboard's left part dragged 60 px past the window's left edge zooms out by as much as in the window.
+	const int left = f.box(".key-editor-keys").at("x").get<int>() + 4;
+	const int high = f.box(".key-editor-body").at("y").get<int>() + 150;
+	REQUIRE(std::abs(f.box(".key-editor-row").at("height").get<double>() - 10.0) <= 0.5);
+	f.app.ui().press(f.window, {"", 0, ui::Point{left, high}}, ui::MouseButton::Left);
+	f.app.ui().move(f.window, {"", 0, ui::Point{left - 4, high}});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	context.ProcessMouseMove(-60, high, 0);
+	context.ProcessMouseButtonUp(0, 0);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const double zoomed = 10.0 * std::exp2((-60.0 - left) / 100.0);
+	CHECK(std::abs(f.box(".key-editor-row").at("height").get<double>() - std::max(zoomed, 2.5)) <= 0.5);
+	CHECK_FALSE(f.has(".key-editor", "in-gesture"));
+	// Back in the window with the button up, the mouse zooms no more.
+	f.app.ui().move(f.window, {"", 0, ui::Point{left + 200, high}});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(std::abs(f.box(".key-editor-row").at("height").get<double>() - std::max(zoomed, 2.5)) <= 0.5);
+}
+
 TEST_CASE("the draw tool follows a quantize grid changed in the project window", "[ui]")
 {
 	Fixture f;
