@@ -183,8 +183,9 @@ layout and as the project window zooms, `tests/drumeditor_ui_tests.cpp` that the
 the overlay nor the editor, and `tests/keyeditor_tests.cpp` the three settings as view state.
 `tests/noteexpression_ui_tests.cpp` makes four edits on notes of two parts before the UI hands on any answer of the
 engine, an erase of a point, two draws and an erase of the last point drawn, and checks that the engine keeps all of
-them, as four undo steps, and that an erase where there is nothing to erase then leaves the project unmodified
-(#1795); `tests/noteexpression_tests.cpp` checks `note.replaceExpression`: the span with both ends, the other
+them, as four undo steps, and that an erase where there is nothing to erase then leaves the project unmodified; and
+that an erase made after a draw was answered, while the editor still shows the project read before it, deletes the
+point drawn (#1795); `tests/noteexpression_tests.cpp` checks `note.replaceExpression`: the span with both ends, the other
 expressions and the points outside it kept, the order, edits made from the same state all kept, a note named twice,
 one undo step, a change of nothing leaving the project unmodified, its refusals changing nothing and the shared copies
 following it.

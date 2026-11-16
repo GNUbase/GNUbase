@@ -172,3 +172,28 @@ TEST_CASE("expression edits made before the project read of the last one arrived
 	CHECK(f.points(0) == Json::array({f.tuning}));
 	CHECK(f.points(1) == Json::array());
 }
+
+TEST_CASE(
+	"an expression edit made after the last one was answered, but before the read after it is shown, keeps it", "[ui]")
+{
+	// #1795, review of #1821: the engine's answer to an edit and its history.changed come in one step, the project read
+	// and the view that show it in the steps after. An edit in between starts from the project before the last one.
+	Fixture f;
+	const Json old = f.app.call("project.get");
+	const Json view = f.app.call("editor.get", {{"editor", "window"}});
+	// A point drawn on both notes, answered and shown.
+	f.keys().setTool(ui::KeyTool::Draw);
+	f.click(0.6, 0.25);
+	f.app.call("engine.version");
+	REQUIRE(f.points(1).size() == 1);
+	REQUIRE(f.app.waitUntil([&] { return f.lines() == 3; }));
+	// The editor shows the project as it was before the draw, read before the draw was answered, as it does until the
+	// read after the answer arrives. An erase where the point is must delete it, also where this copy has no point.
+	f.keys().show(old, view, 0);
+	REQUIRE(f.lines() == 1);
+	f.keys().setTool(ui::KeyTool::Erase);
+	f.click(0.6, 0.5);
+	f.app.call("engine.version");
+	CHECK(f.points(0) == Json::array({f.tuning}));
+	CHECK(f.points(1) == Json::array());
+}
