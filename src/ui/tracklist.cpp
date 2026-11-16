@@ -1046,11 +1046,17 @@ namespace gnubase::ui
 				const std::string value = color.is_string() ? color.get<std::string>() : std::string();
 				if (strip->GetAttribute<Rml::String>("color", "") != value)
 				{
-					strip->SetAttribute("color", value);
+					// Only a strip with a color has the attribute, which the themes select (#1314).
 					if (value.empty())
+					{
+						strip->RemoveAttribute("color");
 						strip->RemoveProperty("background-color");
+					}
 					else
+					{
+						strip->SetAttribute("color", value);
 						strip->SetProperty("background-color", value);
+					}
 				}
 			}
 			// The name, unless it's being typed.

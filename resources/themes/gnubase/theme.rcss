@@ -1774,6 +1774,40 @@
 	{
 		decorator: svg-ninepatch(list-item-selected.svg, 6 6 6 6);
 	}
+	.track-list .track-color
+	{
+		width: 5dp;
+	}
+	.track-list .track-name, .track-list .track-name-field, .track-list .track-versions-toggle, .track-list .track-controls
+	{
+		position: relative;
+	}
+	.track-list listitem > .tree-toggle
+	{
+		position: relative;
+		z-index: 1;
+	}
+	.track-list .track-name
+	{
+		font-weight: 500;
+	}
+	.track-list listitem[type=folder] .track-color[color]
+	{
+		width: auto;
+		right: 0;
+		decorator: svg-ninepatch(track-row-folder.svg, 3 3 3 7);
+	}
+	.track-list listitem.selected .track-color[color]
+	{
+		width: auto;
+		right: 0;
+		border-radius: 5dp;
+		decorator: svg-ninepatch(track-row-selected.svg, 6 6 6 11);
+	}
+	.track-list .track-controls button[control=record]:not(.checked) svg.icon
+	{
+		image-color: #ff5270;
+	}
 	.inspector-section button.section-header
 	{
 		decorator: svg-ninepatch(disclosure-open.svg, 6 6 6 20);
