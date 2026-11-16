@@ -1875,15 +1875,53 @@ TEST_CASE(
 	app.ui().click(std::nullopt, {channel, 0, std::nullopt}, ui::MouseButton::Left, 1, {});
 	settle();
 	REQUIRE(select->IsSelectBoxVisible());
-	const Json drumsRow = box(row(drums));
-	const double below = drumsRow.at("y").get<double>() + drumsRow.at("height").get<double>() + 10;
+	// An option over another row, measured in the context's pixels as hit testing is; the list opens below the select,
+	// or above it where the window has no room below.
+	Rml::Element* drumsRow = select;
+	while (drumsRow != nullptr && drumsRow->GetTagName() != "listitem")
+		drumsRow = drumsRow->GetParentNode();
+	REQUIRE(drumsRow != nullptr);
+	REQUIRE(drumsRow->GetParentNode() != nullptr);
+	const auto middleOf = [](Rml::Element& element)
+	{
+		return element.GetAbsoluteOffset(Rml::BoxArea::Border) +
+			(element.GetBox().GetSize(Rml::BoxArea::Border) / 2.0F);
+	};
+	const auto inside = [](Rml::Element& element, Rml::Vector2f point)
+	{
+		const Rml::Vector2f from = element.GetAbsoluteOffset(Rml::BoxArea::Border);
+		const Rml::Vector2f to = from + element.GetBox().GetSize(Rml::BoxArea::Border);
+		return point.x >= from.x && point.x < to.x && point.y >= from.y && point.y < to.y;
+	};
+	const auto overAnotherRow = [&]() -> Rml::Element*
+	{
+		context.Update(); // the open list laid out
+		Rml::Element* rows = drumsRow->GetParentNode();
+		for (int i = 0; i < select->GetNumOptions(); ++i)
+		{
+			const Rml::Vector2f middle = middleOf(*select->GetOption(i));
+			for (int r = 0; r < rows->GetNumChildren(); ++r)
+			{
+				Rml::Element* other = rows->GetChild(r);
+				if (other != drumsRow && other->GetTagName() == "listitem" && inside(*other, middle))
+					return select->GetOption(i);
+			}
+		}
+		return nullptr;
+	};
 	Rml::Element* option = nullptr;
-	for (int i = 0; option == nullptr && i < select->GetNumOptions(); ++i)
-		if (select->GetOption(i)->GetAbsoluteOffset(Rml::BoxArea::Border).y >= below)
-			option = select->GetOption(i);
+	const bool found = app.waitUntil(
+		[&]
+		{
+			option = overAnotherRow();
+			return option != nullptr;
+		});
+	INFO("options " << select->GetNumOptions() << ", the row at " << drumsRow->GetAbsoluteOffset().y << " "
+					<< drumsRow->GetBox().GetSize().y << " px high, the first option at "
+					<< (select->GetNumOptions() > 0 ? select->GetOption(0)->GetAbsoluteOffset().y : -1.0F));
+	REQUIRE(found);
 	REQUIRE(option != nullptr);
-	const Rml::Vector2f middle =
-		option->GetAbsoluteOffset(Rml::BoxArea::Border) + (option->GetBox().GetSize(Rml::BoxArea::Border) / 2.0F);
+	const Rml::Vector2f middle = middleOf(*option);
 	const Rml::Element* hit = context.GetElementAtPoint(middle);
 	while (hit != nullptr && hit != option)
 		hit = hit->GetParentNode();
