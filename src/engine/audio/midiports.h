@@ -96,9 +96,12 @@ namespace gnubase::engine
 				// is velocity), for MIDI Learn of what moves all pads.
 				ControlInput,
 			};
+			static constexpr uint8_t g_noPad = 255;
 			Kind kind = Kind::Note;
 			uint8_t key = 0;
 			uint8_t velocity = 0; // 0 for a note-off
+			// Triggered and Released: the pad the key lit as the audio thread played it (#1740), else g_noPad.
+			uint8_t pad = g_noPad;
 		};
 		// One thread, the audio engine's cue thread: the next event the audio thread found. False if there is none.
 		bool takePadEvent(PadEvent& event) { return m_padEvents.tryPop(event); }
@@ -175,6 +178,12 @@ namespace gnubase::engine
 		uint64_t m_sectionHeldPort = 0; // the remote's input (ChordPadKeys::portHash) the keys are down on
 		// Per key, 1 + the pad whose section it plays, else 0: the sections of one pad don't overlap each other.
 		std::array<uint8_t, 128> m_sectionPadOf{};
+		// Per key, 1 + the pad it lit and hasn't put out yet, else 0: it puts it out also when it held no notes, such
+		// as with the selected player muted (#1740).
+		std::array<uint8_t, 128> m_padLit{};
+		// Audio thread: tells the command thread that the key lit its pad, or that it put out the pad it lit, if any.
+		void tellTriggered(size_t key, uint8_t pad, uint8_t velocity) noexcept;
+		void tellReleased(size_t key) noexcept;
 		// The sections player mode's keys: a section or subsection key's notes for the pad that plays them.
 		bool playSection(const audio::MidiMessage& message, const ChordPadKeys& keys, PadBuffers& pads) noexcept;
 		rt::SpscQueue<PadEvent> m_padEvents{512};

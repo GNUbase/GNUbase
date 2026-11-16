@@ -424,8 +424,13 @@ namespace gnubase::engine
 		Json events;
 		MidiPorts::PadEvent event;
 		while (m_midi.takePadEvent(event))
-			events.push_back({{"kind", kinds.at(static_cast<size_t>(event.kind))}, {"key", event.key},
-				{"velocity", event.velocity}});
+		{
+			Json each = {
+				{"kind", kinds.at(static_cast<size_t>(event.kind))}, {"key", event.key}, {"velocity", event.velocity}};
+			if (event.pad != MidiPorts::PadEvent::g_noPad)
+				each["pad"] = event.pad;
+			events.push_back(std::move(each));
+		}
 		return events;
 	}
 

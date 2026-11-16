@@ -668,7 +668,6 @@ TEST_CASE("a MIDI input's notes on the remote keys trigger the pads while the re
 
 namespace
 {
-	// A rig with two MIDI inputs, Keys and Other, and the pads' remote on.
 	using Lit = std::vector<std::pair<int, bool>>; // chordPads.triggered's pad and on
 
 	// The pads chordPads.triggered lit and put out, up to the pad index going on or off.
@@ -685,6 +684,7 @@ namespace
 		return seen;
 	}
 
+	// A rig with two MIDI inputs, Keys and Other, and the pads' remote on.
 	struct RemoteRig
 	{
 		RemoteRig() : rig(backends())
@@ -1154,9 +1154,11 @@ TEST_CASE("Select/Mute Player's remote keys select the previous and next player 
 	CHECK(remote.until([&] { return run(client, "chordPads.get").at("player") == 0; }));
 	remote.send(0x90, 72, 90);
 	CHECK(remote.until([&] { return run(client, "chordPads.get").at("players")[0].at("muted") == true; }));
-	// A muted player plays nothing.
+	// A muted player plays nothing, and its pad still goes off with the key (#1740).
 	run(client, "audio.render", {{"frames", 64}});
 	CHECK(remote.send(0x90, 36, 90).empty());
+	remote.send(0x80, 36, 0);
+	CHECK(litUpTo(client, 0, false) == Lit{{0, true}, {0, false}});
 }
 
 TEST_CASE("the pattern player repeats its pattern on the held chord's voices", "[unit]")
@@ -2110,6 +2112,57 @@ TEST_CASE(
 	run(client, "audio.render", {{"frames", 64}});
 	remote.send(0x90, 37, 90, true);
 	CHECK(litUpTo(client, 1, true) == Lit{{0, true}, {0, true}, {0, false}, {1, true}});
+}
+
+TEST_CASE("a remote key puts out the pad it lit when it holds no notes, also in the sections mode", "[integration]")
+{
+	// #1740: in the sections mode a pad key holds no notes, so another pad key pressed meanwhile left it lit.
+	RemoteRig remote;
+	Client& client = remote.rig.client;
+	run(client, "chordPads.set", {{"mode", "sections"}});
+	run(client, "audio.render", {{"frames", 64}});
+	remote.send(0x90, 36, 90);
+	remote.send(0x90, 37, 90);
+	remote.send(0x80, 36, 0);
+	remote.send(0x80, 37, 0);
+	CHECK(litUpTo(client, 1, false) == Lit{{0, true}, {1, true}, {0, false}, {1, false}});
+}
+
+TEST_CASE("a remote key whose pad is gone no longer counts as down for the chord modifiers", "[integration]")
+{
+	// #1740: with no pad's key down, a chord modifier's key plays the pad it changed (reference manual p. 1387).
+	RemoteRig remote;
+	Client& client = remote.rig.client;
+	run(client, "chordPads.set", {{"modifiers", true}, {"modifierKeys", {{"transposeUp", 55}}}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(!remote.send(0x90, 42, 90).empty());
+	run(client, "chordPads.set", {{"padCount", 4}});
+	run(client, "audio.render", {{"frames", 64}});
+	CHECK(!remote.send(0x80, 42, 0).empty());
+	CHECK(remote.send(0x90, 36, 90).size() == 4);
+	CHECK(remote.send(0x80, 36, 0).size() == 4);
+	CHECK(remote.send(0x90, 55, 90).empty());
+	CHECK(remote.until([&] { return pad(client, 0).at("chord") == "C#"; }));
+	CHECK(remote.until([&] { return remote.rig.played().size() == 4; }));
+}
+
+TEST_CASE("chordPads.remoteInput takes the pad a key lit from the event, whatever the range is now", "[unit]")
+{
+	// #1740: a key the audio thread played before chordPads.set moved the range lights the pad it played.
+	Engine engine;
+	Client client(engine);
+	run(client, "chordPads.set", {{"remoteStart", 40}, {"remoteEnd", 51}});
+	run(client, "chordPads.remoteInput",
+		{{"events", {{{"kind", "triggered"}, {"key", 38}, {"velocity", 90}, {"pad", 2}}}}});
+	const Json lit = waitFor(client, "chordPads.triggered");
+	REQUIRE(lit.is_object());
+	CHECK(lit.at("pad") == 2);
+	CHECK(lit.at("on") == true);
+	run(client, "chordPads.remoteInput", {{"events", {{{"kind", "released"}, {"key", 38}, {"pad", 2}}}}});
+	const Json off = waitFor(client, "chordPads.triggered");
+	REQUIRE(off.is_object());
+	CHECK(off.at("pad") == 2);
+	CHECK(off.at("on") == false);
 }
 
 TEST_CASE("with Snap Playback the audio engine places the pads' notes by the transport's segments", "[integration]")

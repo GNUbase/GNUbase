@@ -181,18 +181,11 @@ namespace gnubase::engine
 		{
 			m_sectionHeldPort = padKeys.portHash;
 			m_sectionHeld.fill(0);
-			// The sections mode's pad key that was down is up, so its pad is no longer lit (#1652), once: not again for
-			// a chord the key latched before the player mode changed (#1708).
-			const int padDown = m_sectionPadDown ? m_sectionPad : -1;
-			if (padDown >= 0)
-				m_padEvents.tryPush(PadEvent{PadEvent::Kind::Released, static_cast<uint8_t>(padDown), 0});
 			m_sectionPadDown = false;
 			for (size_t key = 0; key < midi::PadVoices::g_triggers; ++key)
 			{
-				bool held = false;
 				for (size_t player = 0; player < m_padVoices.size(); ++player)
 				{
-					held = held || m_padVoices.at(player).holds(key);
 					m_padVoices.at(player).off(key,
 						[&buffer = pads.at(player)](bool, uint8_t pitch, uint8_t, uint8_t channel)
 						{
@@ -202,9 +195,9 @@ namespace gnubase::engine
 							buffer.add(note);
 						});
 				}
-				// Only a pad key's chord was a pad's: a section key's notes are none (#1652).
-				if (held && m_sectionPadOf.at(key) == 0 && static_cast<int>(key) != padDown)
-					m_padEvents.tryPush(PadEvent{PadEvent::Kind::Released, static_cast<uint8_t>(key), 0});
+				// The pad each key lit goes off, once (#1652, #1708), also with no notes held (#1740); a section key
+				// lights none.
+				tellReleased(key);
 			}
 			m_sectionPadOf.fill(0);
 		}
@@ -332,20 +325,30 @@ namespace gnubase::engine
 				if (!off)
 					m_sectionHeld.at(key) = message.bytes[2];
 				if (off)
+				{
 					offAll();
+					tellReleased(key); // a pad it lit before the player mode changed
+				}
 				else
+				{
 					playSection(message, keys, pads);
+				}
 				return true;
 			}
 			if (keys.counts.at(keys.selected).at(key) > 0 || (off && static_cast<int>(key) == m_sectionPad))
 			{
+				// A chord the key held or latched before the player mode changed ends. A pad key holds no notes here:
+				// it puts out its pad with its note-off (#1740), also when another pad key came meanwhile.
 				if (off)
-					offAll(); // a chord the key held or latched before the player mode changed
+				{
+					offAll();
+					tellReleased(key);
+				}
 				if (!off)
 				{
 					m_sectionPad = static_cast<int>(key);
 					m_sectionPadDown = true;
-					tell(PadEvent::Kind::Triggered, message.bytes[2]);
+					tellTriggered(key, static_cast<uint8_t>(key - keys.start), message.bytes[2]);
 					// Combination: section keys pressed first start with the pad key (p. 1384).
 					if (keys.sectionPlay == 2)
 						for (size_t held = 0; held < m_sectionHeld.size(); ++held)
@@ -361,7 +364,6 @@ namespace gnubase::engine
 				else if (static_cast<int>(key) == m_sectionPad)
 				{
 					m_sectionPadDown = false;
-					tell(PadEvent::Kind::Released, 0);
 					// Without Latch Chord Pads, the sections end with the pad key.
 					if (!keys.latchPads)
 						for (const uint8_t each : keys.sectionKeys)
@@ -387,11 +389,14 @@ namespace gnubase::engine
 		if (off)
 		{
 			if (!holds())
+			{
+				tellReleased(key); // a pad it lit with nothing to play, such as with the selected player muted (#1740)
 				return filtered;
+			}
 			if (!keys.latch)
 			{
 				offAll();
-				tell(PadEvent::Kind::Released, 0);
+				tellReleased(key);
 			}
 			return true;
 		}
@@ -400,7 +405,7 @@ namespace gnubase::engine
 		if (keys.latch && holds())
 		{
 			offAll();
-			tell(PadEvent::Kind::Released, 0);
+			tellReleased(key);
 			return true;
 		}
 		if (!keys.active || keys.counts.at(keys.selected).at(key) == 0)
@@ -410,8 +415,24 @@ namespace gnubase::engine
 			if (plays(player) && keys.counts.at(player).at(key) > 0)
 				m_padVoices.at(player).on(key, keys.pitches.at(player).at(key).data(), keys.counts.at(player).at(key),
 					message.bytes[2], keys.overlap, emitTo(player));
-		tell(PadEvent::Kind::Triggered, message.bytes[2]);
+		tellTriggered(key, static_cast<uint8_t>(key - keys.start), message.bytes[2]);
 		return true;
+	}
+
+	void MidiPorts::tellTriggered(size_t key, uint8_t pad, uint8_t velocity) noexcept
+	{
+		m_padLit.at(key) = static_cast<uint8_t>(pad + 1);
+		m_padEvents.tryPush(PadEvent{PadEvent::Kind::Triggered, static_cast<uint8_t>(key), velocity, pad});
+	}
+
+	void MidiPorts::tellReleased(size_t key) noexcept
+	{
+		const uint8_t lit = m_padLit.at(key);
+		if (lit == 0)
+			return;
+		m_padLit.at(key) = 0;
+		m_padEvents.tryPush(
+			PadEvent{PadEvent::Kind::Released, static_cast<uint8_t>(key), 0, static_cast<uint8_t>(lit - 1)});
 	}
 
 	bool MidiPorts::playSection(const audio::MidiMessage& message, const ChordPadKeys& keys, PadBuffers& pads) noexcept
