@@ -446,15 +446,24 @@ namespace gnubase::ui
 			root.AddEventListener(id, this);
 		root.AddEventListener(Rml::EventId::Blur, this, true); // the notepad's, which doesn't bubble
 
-		// Every change to the project is an undo step or a new project.
+		// Every change to the project is an undo step or a new project. A step that changed only channels, such as each
+		// step of a fader drag, needs no read: their channel.changed brings them (#1881).
 		for (const char* event : {"history.changed", "project.reset"})
 			m_subscriptions.push_back(m_binding.on(event,
-				[this, reset = std::string(event) == "project.reset"](const engine::Event&)
+				[this, reset = std::string(event) == "project.reset"](const engine::Event& changed)
 				{
+					if (changedOnly(changed, {"channel.changed"}))
+						return;
 					requestProject();
 					if (reset)
 						requestView();
 				}));
+		m_subscriptions.push_back(m_binding.on("channel.changed",
+			[this](const engine::Event& event)
+			{
+				if (const Json* channel = takeChannel(m_project, event))
+					showChannel(channel->at("id").get<uint64_t>());
+			}));
 		m_subscriptions.push_back(m_binding.on("mixer.changed",
 			[this](const engine::Event& event)
 			{
@@ -544,7 +553,7 @@ namespace gnubase::ui
 		showVisibilityList();
 	}
 
-	// ponytail: reads the whole project after every change, as the event display does.
+	// ponytail: reads the whole project after every change but the channels' (#1881), as the event display does.
 	void Mixer::requestProject()
 	{
 		if (m_loading)
@@ -570,12 +579,17 @@ namespace gnubase::ui
 			});
 	}
 
-	std::function<void(const engine::Result&)> Mixer::whenRefused()
+	std::function<void(const engine::Result&)> Mixer::whenAnswered(std::string what, uint64_t channel)
 	{
-		return [this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+		return
+			[this, alive = std::weak_ptr<bool>(m_alive), what = std::move(what), channel](const engine::Result& result)
 		{
-			if (!alive.expired() && !result.ok())
+			if (alive.expired())
+				return;
+			if (!result.ok())
 				requestProject();
+			else if (!m_binding.sending(what))
+				showChannel(channel);
 		};
 	}
 
@@ -621,6 +635,18 @@ namespace gnubase::ui
 
 		if (Rml::Element* filter = m_filter.get())
 			filter->SetClass("checked", !m_hiddenTypes.empty()); // the button shows that a type is hidden
+		showStates();
+		if (Rml::Element* menu = m_menus.front().get())
+			for (const auto& [type, label] : g_types)
+				if (Rml::Element* item = menu->QuerySelector(std::string("[channel-type=") + type + "]"))
+					setChecked(*item, m_hiddenTypes.count(type) == 0);
+		showVisibilityList();
+		if (Rml::Context* context = strips->GetContext())
+			context->RequestNextUpdate(0);
+	}
+
+	void Mixer::showStates()
+	{
 		// The Deactivate All buttons light up while any channel has their state.
 		for (const auto& [state, label] : g_states)
 		{
@@ -635,13 +661,22 @@ namespace gnubase::ui
 					(std::string(state) == "solo" && channel.value("soloDefeat", false));
 			button->SetClass("checked", any);
 		}
-		if (Rml::Element* menu = m_menus.front().get())
-			for (const auto& [type, label] : g_types)
-				if (Rml::Element* item = menu->QuerySelector(std::string("[channel-type=") + type + "]"))
-					setChecked(*item, m_hiddenTypes.count(type) == 0);
-		showVisibilityList();
-		if (Rml::Context* context = strips->GetContext())
-			context->RequestNextUpdate(0);
+	}
+
+	void Mixer::showChannel(uint64_t id)
+	{
+		// What depends on one channel's JSON: its strip, the Deactivate All buttons and Go to Output; the other strips
+		// take only names and types from it, which are the tracks' (mixerChannels).
+		const auto strip = m_stripOf.find(id);
+		const auto channel = std::find_if(
+			m_channels.begin(), m_channels.end(), [id](const MixerChannel& each) { return each.id == id; });
+		if (strip != m_stripOf.end() && channel != m_channels.end())
+			updateStrip(*strip->second, *channel);
+		showStates();
+		if (m_kind == MixerKind::ChannelSettings)
+			showSettingsToolbar();
+		if (const Rml::Element* strips = m_strips.get(); strips != nullptr && strips->GetContext() != nullptr)
+			strips->GetContext()->RequestNextUpdate(0);
 	}
 
 	void Mixer::buildStrips(const std::vector<const MixerChannel*>& strips)
@@ -1005,11 +1040,11 @@ namespace gnubase::ui
 				{
 					const float volume = event.GetParameter("value", 0.0F);
 					showVolume(*target); // with the fader, ahead of the engine
-					m_binding.sendStep(event.GetParameter("gesture", 0), stepKey(m_stepOwner, channel->id, "volume"),
-						"Change Volume",
+					std::string what = stepKey(m_stepOwner, channel->id, "volume");
+					m_binding.sendStep(event.GetParameter("gesture", 0), what, "Change Volume",
 						Json::array({Json{{"command", "channel.set"},
 							{"parameters", {{"channel", channel->id}, {"volume", volume}}}}}),
-						whenRefused());
+						whenAnswered(what, channel->id));
 				}
 			}
 			else if (target->HasAttribute("param") && !m_updating)
@@ -1043,10 +1078,10 @@ namespace gnubase::ui
 					// A knob's or a value field's drag, wheel turns or held arrow key: one undo step.
 					Json parameters = paramChange(param, given->Get<double>());
 					parameters["channel"] = channel->id;
-					m_binding.sendStep(event.GetParameter("gesture", 0), stepKey(m_stepOwner, channel->id, param),
-						"Change " + attribute(*target, "title"),
+					std::string what = stepKey(m_stepOwner, channel->id, param);
+					m_binding.sendStep(event.GetParameter("gesture", 0), what, "Change " + attribute(*target, "title"),
 						Json::array({Json{{"command", "channel.set"}, {"parameters", std::move(parameters)}}}),
-						whenRefused());
+						whenAnswered(what, channel->id));
 				}
 			}
 			break;

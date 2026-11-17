@@ -248,7 +248,10 @@ namespace gnubase::engine
 		Json undoOrRedo(CommandContext& context, Direction direction);
 		Json transaction(Project& project, CommandContext& context);
 		Json join(CommandContext& context);
-		void announceHistory(CommandContext& context) const;
+		// Emits history.changed; for a step that a command made or joined (step), with the names of the events the
+		// command announced, which describe the step's change, so that clients that follow them needn't read the
+		// project.
+		void announceHistory(CommandContext& context, bool step = false) const;
 		void publish();
 
 		struct TrackRender;

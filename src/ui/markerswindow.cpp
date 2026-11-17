@@ -168,8 +168,14 @@ namespace gnubase::ui
 		for (const Rml::EventId id : g_events)
 			document.AddEventListener(id, this);
 		document.AddEventListener(Rml::EventId::Blur, this, true); // blur doesn't bubble
+		// Not after a step that changed only channels, which it doesn't show (#1881).
 		for (const char* event : {"history.changed", "project.reset"})
-			m_subscriptions.push_back(m_binding.on(event, [this](const engine::Event&) { requestProject(); }));
+			m_subscriptions.push_back(m_binding.on(event,
+				[this](const engine::Event& changed)
+				{
+					if (!changedOnly(changed, {"channel.changed"}))
+						requestProject();
+				}));
 		m_subscriptions.push_back(m_binding.on("project.changed",
 			[this](const engine::Event& event)
 			{

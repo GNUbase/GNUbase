@@ -101,10 +101,10 @@ the pool and conforming files to the project's sample rate. The engine commands 
   length) and Path. The Key list is empty when the events' root keys differ, where "-" clears them, and disabled for
   a clip that no audio event plays; it holds only the key it shows until it gets the focus, when it gets all 13, so
   that a pool of thousands of clips doesn't hold 13 options for each (#1644). Rows have the state classes `.folder`
-  or `.clip`, and clips `.missing` and `.unused`. It follows `history.changed` and `project.saved`, so changes from
-  MCP, Lua or undo show, but reads the pool only while it shows (`Docking::showing`, [docking.md](docking.md)):
-  behind another tab or in a hidden zone it notes that the pool changed, and `AppUi`'s step reads it once the panel
-  shows again.
+  or `.clip`, and clips `.missing` and `.unused`. It follows `history.changed` (but for a step that changed only
+  channels, #1881) and `project.saved`, so changes from MCP, Lua or undo show, but reads the pool only while it shows
+  (`Docking::showing`, [docking.md](docking.md)): behind another tab or in a hidden zone it notes that the pool
+  changed, and `AppUi`'s step reads it once the panel shows again.
 - **Messages.** `#pool-message` says what the last pool command did: how many missing files Find Missing Files found,
   what Remove Unused Media and Remove Missing Files removed, how many files Conform Files converted, or why one
   failed, with the state class `.error`, which the themes color as danger. The app hears the results of

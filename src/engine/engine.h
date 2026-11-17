@@ -132,6 +132,10 @@ namespace gnubase::engine
 		// can announce its final state once instead of the states it passed through.
 		void discardEvents(const std::string& name);
 
+		// The names of the events this command announced so far, inner commands' included, each once, in the order
+		// they were first announced. Empty inside another command, which may announce more after it.
+		std::vector<std::string> eventNames() const;
+
 		// Leaves the command out of engine.commandLog: for a command that the engine runs on its own and that changed
 		// nothing, such as a try to open a lost audio device again. Inside another command, the outer one decides.
 		void leaveOutOfLog()

@@ -183,8 +183,9 @@ namespace gnubase::ui
 		// at least g_cutDistance dp after the one shown before it (#1668), so that a flam zoomed out keeps the others.
 		void setCuttingPositions(std::vector<int64_t> positions);
 		const std::vector<int64_t>& cuttingPositions() const { return m_cuttingPositions; }
-		// The project as project.get last returned it, or null before the first answer; loads() counts the answers,
-		// and read() is when the binding handed the last one on (EngineBinding::handed).
+		// The project as project.get last returned it, with the channels that channel.changed brought since, or null
+		// before the first answer; loads() counts the answers and those channels, and read() is when the binding handed
+		// the last of them on (EngineBinding::handed).
 		const engine::Json& project() const { return m_project; }
 		// Where each audio event of the project plays, in seconds, as the project window shows it: from its position
 		// in its track's time base to where its warp puts its end (playedLength), or else as long as its clip frames
@@ -208,7 +209,7 @@ namespace gnubase::ui
 		// and parts of the tracks inside a folder's lane, by the user setting ui.folderData (always, never, or
 		// hideWhenExpanded: while the folder is folded); empty for the other lanes.
 		const std::vector<EventLanes::Lane>& folderData() const { return m_folderData; }
-		// Called after the lanes or the view changed.
+		// Called after the lanes, the view or a channel (channel.changed, #1881) changed.
 		void onLayout(std::function<void()> listener) { m_layoutListener = std::move(listener); }
 		// Called for a double click below the tracks instead of adding a MIDI track, e.g. by the track list, which
 		// adds a track like the selected one (docs/features/add-track.md).

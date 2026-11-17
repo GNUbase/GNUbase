@@ -139,7 +139,13 @@ namespace gnubase::ui
 
 	PoolPanel::PoolPanel(EngineBinding& binding, Rml::Element& element, Run run, std::function<bool()> shown)
 		: m_binding(binding), m_run(std::move(run)), m_shown(std::move(shown)),
-		  m_changed(binding.on("history.changed", [this](const engine::Event&) { poolChanged(); })),
+		  // Not after a step that changed only channels, which the pool doesn't show (#1881).
+		  m_changed(binding.on("history.changed",
+			  [this](const engine::Event& changed)
+			  {
+				  if (!changedOnly(changed, {"channel.changed"}))
+					  poolChanged();
+			  })),
 		  m_saved(binding.on("project.saved", [this](const engine::Event&) { poolChanged(); })),
 		  m_jobProgress(binding.on("job.progress",
 			  [this](const engine::Event& event)

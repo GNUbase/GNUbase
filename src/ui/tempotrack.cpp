@@ -538,8 +538,14 @@ namespace gnubase::ui
 				if (!alive.expired())
 					place();
 			});
+		// Not after a step that changed only channels, which it doesn't show (#1881).
 		for (const char* event : {"history.changed", "project.reset"})
-			m_subscriptions.push_back(m_binding.on(event, [this](const engine::Event&) { requestProject(); }));
+			m_subscriptions.push_back(m_binding.on(event,
+				[this](const engine::Event& changed)
+				{
+					if (!changedOnly(changed, {"channel.changed"}))
+						requestProject();
+				}));
 		requestProject();
 	}
 
@@ -620,8 +626,14 @@ namespace gnubase::ui
 		for (const Rml::EventId id :
 			{Rml::EventId::Click, Rml::EventId::Change, Rml::EventId::Keydown, Rml::EventId::Resize})
 			document.AddEventListener(id, this);
+		// Not after a step that changed only channels, which it doesn't show (#1881).
 		for (const char* event : {"history.changed", "project.reset"})
-			m_subscriptions.push_back(m_binding.on(event, [this](const engine::Event&) { requestProject(); }));
+			m_subscriptions.push_back(m_binding.on(event,
+				[this](const engine::Event& changed)
+				{
+					if (!changedOnly(changed, {"channel.changed"}))
+						requestProject();
+				}));
 		m_subscriptions.push_back(
 			m_binding.on("transport.changed", [this](const engine::Event& event) { followTransport(event.data); }));
 		m_subscriptions.push_back(m_binding.on("settings.changed",

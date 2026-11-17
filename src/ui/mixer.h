@@ -114,10 +114,15 @@ namespace gnubase::ui
 	private:
 		void ProcessEvent(Rml::Event& event) override;
 		void requestProject();
-		// For the steps of a gesture: a refused one reads the project, so the control shows the engine's value again.
-		std::function<void(const engine::Result&)> whenRefused();
+		// For the steps of a gesture of what on a channel: once the last one is answered, the strip shows the engine's
+		// value, which the step's channel.changed brought; a refused one reads the project, so the control shows the
+		// engine's value again.
+		std::function<void(const engine::Result&)> whenAnswered(std::string what, uint64_t channel);
 		void requestView();
 		void show();
+		// One channel's JSON changed in m_project: its strip and what else shows it, not every strip (#1881).
+		void showChannel(uint64_t id);
+		void showStates();
 		void buildStrips(const std::vector<const MixerChannel*>& strips);
 		void updateStrip(Rml::Element& strip, const MixerChannel& channel);
 		void showVisibilityList();

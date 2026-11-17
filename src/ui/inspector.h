@@ -82,7 +82,8 @@ namespace gnubase::ui
 		// What a command does when it is done: if it was refused, the next update shows the channel again.
 		std::function<void(const engine::Result&)> whenRefused();
 		// Sends a value field's change as a step of its gesture (EngineBinding::sendStep) under key, with the value
-		// that the field shows (shown), which the binding keeps with the step's record.
+		// that the field shows (shown), which the binding keeps with the step's record. Once the last step is answered,
+		// refused or not, the next update shows the channel again.
 		void sendFieldStep(
 			int gesture, const std::string& key, float shown, std::string description, engine::Json commands);
 		// What a value field shows for the project's value: while the project is older than the field's own steps for

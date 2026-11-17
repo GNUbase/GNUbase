@@ -515,8 +515,14 @@ namespace gnubase::ui
 					  m_inPlace.erase(track);
 				  m_stale = true;
 			  })),
-		  // An undo or redo brings back or removes tracks with their open in-place editors, without an editor.changed.
-		  m_historyChanged(binding.on("history.changed", [this](const engine::Event&) { readInPlace(); }))
+		  // An undo or redo brings back or removes tracks with their open in-place editors, without an editor.changed;
+		  // a step that changed only channels changes none (#1881).
+		  m_historyChanged(binding.on("history.changed",
+			  [this](const engine::Event& changed)
+			  {
+				  if (!changedOnly(changed, {"channel.changed"}))
+					  readInPlace();
+			  }))
 	{
 		root.SetClass("inspector", true);
 		// Set up Sections from an empty area (p. 167), in the project window's document; the controls have none.
@@ -1561,8 +1567,16 @@ namespace gnubase::ui
 	void Inspector::sendFieldStep(
 		int gesture, const std::string& key, float shown, std::string description, Json commands)
 	{
+		// Once the last step is answered, the field shows the engine's value: no project read follows a step that
+		// changed only the channel, whose channel.changed the event display's project took meanwhile (#1881).
 		m_binding.sendStep(
-			gesture, key, std::move(description), std::move(commands), whenRefused(), widgets::format(shown));
+			gesture, key, std::move(description), std::move(commands),
+			[this, alive = std::weak_ptr<bool>(m_alive), key](const engine::Result&)
+			{
+				if (!alive.expired() && !m_binding.sending(key))
+					m_stale = true;
+			},
+			widgets::format(shown));
 	}
 
 	std::string Inspector::fieldValue(const std::string& key, std::string value) const

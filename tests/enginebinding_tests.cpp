@@ -948,3 +948,68 @@ TEST_CASE("answered steps of repeated view owners are discarded after a fresh pr
 			CHECK(!binding.ahead(owner, 0));
 	}
 }
+
+TEST_CASE(
+	"a view that takes a step's events into what it shows is not behind the step from its first event on", "[unit]")
+{
+	engine::Engine engine;
+	ui::EngineBinding binding(engine);
+	engine::Client client(engine);
+	const Json first = client.call("track.add", {{"type", "audio"}}).value.at("channel").at("id");
+	const Json second = client.call("track.add", {{"type", "audio"}}).value.at("channel").at("id");
+	const auto set = [](const Json& channel, double volume)
+	{
+		return Json::array(
+			{Json{{"command", "channel.set"}, {"parameters", {{"channel", channel}, {"volume", volume}}}}});
+	};
+	// A view keeping the project, as the mixer and the event display do: the channels that channel.changed brings,
+	// with handed() then, and whether the history.changed after them needs a read.
+	Json project;
+	uint64_t taken = 0;
+	Json before; // the channel as the view had it
+	std::optional<bool> reads;
+	const ui::Subscription channels = binding.on("channel.changed",
+		[&](const engine::Event& event)
+		{
+			if (ui::takeChannel(project, event, &before) != nullptr)
+				taken = binding.handed();
+		});
+	const ui::Subscription history = binding.on("history.changed",
+		[&reads](const engine::Event& event) { reads = !ui::changedOnly(event, {"channel.changed"}); });
+	binding.send("project.get", Json::object(), [&project](const engine::Result& result) { project = result.value; });
+	updateUntil(binding, [&project] { return project.is_object(); });
+
+	// A fader drag's step: the view has it with the step's channel.changed, before the answer, so the control isn't
+	// ahead of that, and nothing needs a read.
+	binding.sendStep(5, "volume", "Change Volume", set(first, -6.0));
+	updateUntil(binding, [&binding] { return !binding.sending("volume"); });
+	REQUIRE(taken != 0);
+	CHECK(project.at("channels").at(0).at("volume") == -6.0);
+	CHECK(project.at("channels").at(1).at("volume") == 0.0);
+	CHECK(before.at("id") == first);
+	CHECK(before.at("volume") == 0.0);
+	CHECK(reads == std::optional<bool>(false));
+	CHECK(!binding.ahead("volume", taken));
+	CHECK(binding.ahead("volume", taken - 1));
+
+	// A channel the view doesn't know, as in a project read before the channel was added, isn't taken.
+	Json old = Json{{"channels", Json::array()}};
+	CHECK(ui::takeChannel(old, engine::Event{"channel.changed", {{"channel", {{"id", first}}}}, 0}) == nullptr);
+	CHECK(ui::takeChannel(old, engine::Event{"channel.changed", Json::object(), 0}) == nullptr);
+
+	// Another client's change of more than channels needs a read, and so does an undo, which names no events.
+	reads.reset();
+	client.call("track.set", {{"track", project.at("tracks").at(1).at("id")}, {"name", "Vox"}});
+	updateUntil(binding, [&reads] { return reads.has_value(); });
+	CHECK(*reads);
+	reads.reset();
+	client.call("history.undo");
+	updateUntil(binding, [&reads] { return reads.has_value(); });
+	CHECK(*reads);
+	// A step that changed another channel only needs none either.
+	reads.reset();
+	client.call("channel.set", {{"channel", second}, {"pan", 0.5}});
+	updateUntil(binding, [&reads] { return reads.has_value(); });
+	CHECK(!*reads);
+	CHECK(project.at("channels").at(1).at("pan") == 0.5);
+}

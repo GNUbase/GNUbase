@@ -4,6 +4,7 @@
 #include "testutils/commandholds.h"
 #include "ui/automation.h"
 #include "ui/docking.h"
+#include "ui/enginebinding.h"
 #include "ui/keycommands.h"
 #include "ui/mixer.h"
 #include "ui/renderer.h"
@@ -1030,9 +1031,9 @@ TEST_CASE("a strip made again while its fader's step is in flight shows the engi
 
 	// The new fader has no value of its own, so it shows the engine's volume as the mixer's project has it, right
 	// away, instead of the widget's default of 0 until the step in flight is answered (the HasAttribute exceptions
-	// in Mixer::updateStrip).
+	// in Mixer::updateStrip). The project has the first step's volume from its channel.changed (#1881).
 	REQUIRE(app.waitUntil([&] { return elements(app, window, fader).size() == 1; }));
-	CHECK(valueOf(app, window, fader) == -12.0);
+	CHECK(valueOf(app, window, fader) == Catch::Approx(-12.1).margin(1e-4));
 
 	// Once the slow query is through, the fader follows the answered step and the engine and the control agree.
 	REQUIRE(app.waitUntil([&] { return valueOf(app, window, fader) == Catch::Approx(-12.2).margin(1e-4); }));
@@ -1087,4 +1088,151 @@ TEST_CASE("an inspector wheel turn follows a released mixer's waiting fader step
 		}));
 	app.call("history.undo");
 	CHECK(channelJson(app, guitar.channel).at("volume") == Catch::Approx(dragged).margin(1e-4));
+}
+
+namespace
+{
+	// A drag of a strip control by moves of a pixel, each answered by the engine before the next, as when the mouse
+	// moves once a frame: down and up again in a zigzag 20 pixels deep, ending 20 pixels down. Counts the project reads
+	// that the UI's views sent meanwhile, and how long each move took until the UI had handed on what the engine
+	// answered and drawn it.
+	struct Drag
+	{
+		size_t reads = 0;
+		std::vector<double> milliseconds; // per move
+		double value = 0.0;               // the control's when the drag ended
+	};
+
+	Drag drag(test::UiApp& app, Window window, const std::string& selector, int moves)
+	{
+		ui::EngineBinding& binding = app.appUi().binding();
+		const auto settled = [&binding]
+		{ return binding.waiting("history.transaction") == 0 && binding.waiting("project.get") == 0; };
+		REQUIRE(app.waitUntil(settled));
+		Drag result;
+		const ui::Subscription reads =
+			binding.onResult("project.get", [&result](const engine::Result&) { ++result.reads; });
+		Rml::Context& context = app.shell().find(window.value_or(0))->context();
+		const Json box = element(app, window, selector).at("box");
+		const int x = box.at("x").get<int>() + (box.at("width").get<int>() / 2);
+		const int y = box.at("y").get<int>() + (box.at("height").get<int>() / 2);
+		context.ProcessMouseMove(x, y, 0);
+		context.ProcessMouseButtonDown(0, 0);
+		for (int move = 0; move < moves; ++move)
+		{
+			const int phase = move % 40;
+			const auto start = std::chrono::steady_clock::now();
+			context.ProcessMouseMove(x, y + 1 + (phase < 20 ? phase : 40 - phase), 0);
+			do
+			{
+				app.shell().step(std::chrono::milliseconds(0));
+			} while (!settled());
+			result.milliseconds.push_back(
+				std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
+		}
+		result.value = valueOf(app, window, selector);
+		context.ProcessMouseButtonUp(0, 0);
+		REQUIRE(app.waitUntil(settled));
+		return result;
+	}
+
+	// Adds audio tracks, the first called Guitar, and an effect track for their sends.
+	Added addTracks(test::UiApp& app, int count)
+	{
+		const Added guitar = addTrack(app, "audio", "Guitar");
+		addTrack(app, "effect", "Reverb");
+		for (int track = 1; track < count; ++track)
+			addTrack(app, "audio", "Track " + std::to_string(track + 1));
+		return guitar;
+	}
+}
+
+TEST_CASE("a fader, panner or send drag follows the mouse without reading the project, in one undo step", "[ui]")
+{
+	// Every view read the whole project after each step of a drag, which lagged behind the mouse in large projects
+	// (#1881): the views take channel.changed instead, and read only after other changes.
+	test::UiApp app({1024, 600});
+	app.appUi().showProject();
+	app.appUi().docking().open("inspector");
+	const Added guitar = addTracks(app, 16);
+	app.appUi().trackList()->select({guitar.track});
+	const Window window = openMixer(app, 1);
+	const Window main = std::nullopt;
+	const std::string fader = strip(guitar.channel) + " fader";
+	const std::string field = ".inspector valuefield[control=volume]";
+	REQUIRE(
+		app.waitUntil([&] { return elements(app, window, fader).size() == 1 && valueOf(app, main, field) == 0.0; }));
+	const auto channel = [&] { return channelJson(app, guitar.channel); };
+	const int64_t position = historyPosition(app);
+
+	SECTION("the fader")
+	{
+		const Drag dragged = drag(app, window, fader, 100);
+		CHECK(dragged.reads <= 1);
+		CHECK(dragged.value < 0.0);
+		// The fader, its dB text, the inspector and the engine end at the same value, in one undo step.
+		CHECK(channel().at("volume") == Catch::Approx(dragged.value).margin(0.001));
+		const auto text = [&]
+		{ return element(app, window, strip(guitar.channel) + " .mixer-volume").at("text").get<std::string>(); };
+		CHECK(std::stod(text()) == Catch::Approx(dragged.value).margin(0.051));
+		CHECK(valueOf(app, main, field) == Catch::Approx(dragged.value).margin(0.051));
+		CHECK(historyPosition(app) == position + 1);
+		app.call("history.undo");
+		REQUIRE(app.waitUntil([&] { return valueOf(app, window, fader) == 0.0 && valueOf(app, main, field) == 0.0; }));
+		CHECK(text() == "0.0");
+		CHECK(channel().at("volume") == 0.0);
+	}
+
+	SECTION("the panner")
+	{
+		const std::string pan = strip(guitar.channel) + " [param=pan]";
+		const Drag dragged = drag(app, window, pan, 100);
+		CHECK(dragged.reads <= 1);
+		CHECK(dragged.value != 0.0);
+		CHECK(channel().at("pan") == Catch::Approx(dragged.value).margin(1e-4));
+		CHECK(historyPosition(app) == position + 1);
+		app.call("history.undo");
+		REQUIRE(app.waitUntil([&] { return valueOf(app, window, pan) == 0.0; }));
+		CHECK(channel().at("pan") == 0.0);
+	}
+
+	SECTION("a send's level")
+	{
+		showSends(app, window, guitar.channel);
+		const std::string knob = strip(guitar.channel) + " [param=\"sends.1.level\"]";
+		const double before = valueOf(app, window, knob);
+		const Drag dragged = drag(app, window, knob, 100);
+		CHECK(dragged.reads <= 1);
+		CHECK(dragged.value < before);
+		CHECK(channel().at("sends")[0].at("level") == Catch::Approx(dragged.value).margin(0.001));
+		CHECK(historyPosition(app) == position + 1);
+		app.call("history.undo");
+		REQUIRE(app.waitUntil([&] { return valueOf(app, window, knob) == before; }));
+		CHECK(channel().at("sends")[0].at("level") == before);
+	}
+}
+
+TEST_CASE("a fader drag in a project of 64 tracks reports its time per move", "[ui][slow]")
+{
+	// A benchmark: the time from a move of the mouse to the UI having drawn the engine's answer, so that a regression
+	// shows in the test output (#1881). The engine answers each move before the next.
+	test::UiApp app({1024, 600});
+	app.appUi().showProject();
+	app.appUi().docking().open("inspector");
+	const Added guitar = addTracks(app, 64);
+	app.appUi().trackList()->select({guitar.track});
+	const Window window = openMixer(app, 1);
+	const std::string fader = strip(guitar.channel) + " fader";
+	REQUIRE(app.waitUntil([&] { return elements(app, window, fader).size() == 1; }, std::chrono::seconds(60)));
+	Drag dragged = drag(app, window, fader, 100);
+	CHECK(dragged.reads <= 1);
+	std::vector<double>& times = dragged.milliseconds;
+	std::sort(times.begin(), times.end());
+	double sum = 0.0;
+	for (const double time : times)
+		sum += time;
+	WARN("A fader drag in a project of 64 tracks, mixer and project window open: "
+		<< sum / static_cast<double>(times.size()) << " ms per move on average, " << times[times.size() / 2]
+		<< " ms median, " << times[(times.size() * 9) / 10] << " ms at the 90th percentile; " << dragged.reads
+		<< " project reads");
 }
