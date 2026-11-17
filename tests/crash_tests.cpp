@@ -25,11 +25,14 @@ TEST_CASE("a crash is recorded in the log", "[integration]")
 	const std::string how = GENERATE(as<std::string>{}, "segv", "abort");
 	CAPTURE(how);
 	const gnubase::test::TempDir dir;
-	CHECK(crash(dir.path(), how) != 0);
+	const int code = crash(dir.path(), how);
+	CHECK(code != 0);
 	const std::string log = gnubase::test::readText(dir.path() / "crash.log");
 	CHECK_THAT(log, ContainsSubstring("about to crash"));
 	CHECK_THAT(log, ContainsSubstring("Crash: "));
 #ifdef _WIN32
 	CHECK(!gnubase::test::readText(dir.path() / "crash.dmp").empty());
+	// The process ends with the code it would have without the handler: the exception's, or abort's 3.
+	CHECK(static_cast<unsigned>(code) == (how == "segv" ? 0xC0000005U : 3U));
 #endif
 }
