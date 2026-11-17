@@ -1192,9 +1192,16 @@ namespace gnubase::ui
 					on = !lanes.empty() && std::all_of(lanes.begin(), lanes.end(), [](bool read) { return read; });
 				else
 					on = channel != nullptr && channel->value(name, false);
+				bool defeated = channel != nullptr && channel->value("soloDefeat", false);
+				// A click whose command is out shows what it sent: this read may be from before it (#1852).
+				if (const auto clicked = m_clicked.find({row.id, name}); clicked != m_clicked.end())
+				{
+					on = clicked->second.checked;
+					defeated = clicked->second.defeated;
+				}
 				setClass(*button, "checked", on);
 				if (name == "solo")
-					setClass(*button, "defeated", channel != nullptr && channel->value("soloDefeat", false));
+					setClass(*button, "defeated", defeated);
 				// Read needs automation lanes to read.
 				const bool disabled = name == "read" && lanes.empty();
 				if (disabled != button->HasAttribute("disabled"))
@@ -1715,7 +1722,7 @@ namespace gnubase::ui
 				if (element->HasAttribute("control"))
 				{
 					if (const Row* row = rowOf(element); row != nullptr && !element->HasAttribute("disabled"))
-						control(*row, element->GetAttribute<Rml::String>("control", ""),
+						control(*element, *row, element->GetAttribute<Rml::String>("control", ""),
 							held(event, "ctrl_key") || held(event, "meta_key"), held(event, "alt_key"),
 							held(event, "shift_key"));
 					break;
@@ -1835,7 +1842,8 @@ namespace gnubase::ui
 		showTempo();
 	}
 
-	void TrackList::control(const Row& row, const std::string& name, bool exclusive, bool defeat, bool shift)
+	void TrackList::control(
+		Rml::Element& button, const Row& row, const std::string& name, bool exclusive, bool defeat, bool shift)
 	{
 		if (name == "currentTempo" || name == "tempoType" || name == "midiChannel" || markerMenu(name))
 			return; // fields and lists, which change
@@ -1855,75 +1863,101 @@ namespace gnubase::ui
 				});
 			return;
 		}
+		if (name == "setTimeOffset")
+		{
+			m_binding.send("track.set", {{"track", row.id}, {"timeOffset", "cursor"}});
+			return;
+		}
+		if (name == "timeFormat" || name == "timeOffset" || name == "chordAudition")
+			return; // they change with what is chosen or typed
+		// The switches. Each goes from what its button shows, which is what the user saw and the engine's state unless
+		// an earlier click's command is still out, and shows what it sends at once (#1852).
+		const bool on = button.IsClassSet("checked");
 		if (name == "activateMarkerTrack")
 		{
-			m_binding.send("marker.activateTrack", {{"track", row.id}});
+			m_binding.send("marker.activateTrack", {{"track", row.id}}, clicked(button, row.id, name, true));
 			return;
 		}
 		const Json& project = m_display.project();
 		if (name == "read")
 		{
 			// Every automation lane of the track reads, or none does.
-			bool all = true;
-			std::vector<uint64_t> lanes;
+			Json commands = Json::array();
 			for (const Json& lane : project.at("automation"))
 				if (lane.at("track") == row.id)
-				{
-					lanes.push_back(lane.at("id").get<uint64_t>());
-					all = all && lane.at("read").get<bool>();
-				}
-			Json commands = Json::array();
-			for (const uint64_t lane : lanes)
-				commands.push_back(
-					{{"command", "automationLane.set"}, {"parameters", {{"lane", lane}, {"read", !all}}}});
-			transaction("Read Automation", std::move(commands));
+					commands.push_back(
+						{{"command", "automationLane.set"}, {"parameters", {{"lane", lane.at("id")}, {"read", !on}}}});
+			if (!commands.empty())
+				transaction("Read Automation", std::move(commands), clicked(button, row.id, name, !on));
 			return;
 		}
 		if (name == "tempoTrack")
 		{
-			m_binding.send("project.set", {{"tempoTrackActive", !project.value("tempoTrackActive", false)}});
+			m_binding.send("project.set", {{"tempoTrackActive", !on}}, clicked(button, row.id, name, !on));
 			return;
 		}
 		if (transposeControl(name))
 		{
-			const std::string key = transposeKey(name);
-			m_binding.send("transpose.setTrack", {{key, !project.at("transpose").value(key, false)}});
+			m_binding.send("transpose.setTrack", {{transposeKey(name), !on}}, clicked(button, row.id, name, !on));
 			return;
 		}
-		if (chordControl(name) && name != "chordAudition")
+		if (chordControl(name))
 		{
-			const std::string key = chordKey(name);
-			m_binding.send("chord.setTrack", {{key, !project.at("chords").value(key, false)}});
+			m_binding.send("chord.setTrack", {{chordKey(name), !on}}, clicked(button, row.id, name, !on));
 			return;
 		}
 		if (name == "timeOffsetOn" || name == "groupEditing")
 		{
-			const Json& track = project.at("tracks").at(m_index.at(row.id));
-			m_binding.send("track.set", {{"track", row.id}, {name, !track.value(name, false)}});
+			m_binding.send("track.set", {{"track", row.id}, {name, !on}}, clicked(button, row.id, name, !on));
 			return;
 		}
-		if (name == "setTimeOffset")
-		{
-			m_binding.send("track.set", {{"track", row.id}, {"timeOffset", "cursor"}});
-			return;
-		}
-		if (name == "timeFormat" || name == "timeOffset")
-			return; // they change with what is chosen or typed
 		if (name == "timeBase")
 		{
-			const Json& track = project.at("tracks").at(m_index.at(row.id));
-			m_binding.send("track.set",
-				{{"track", row.id}, {"timeBase", track.at("timeBase") == "linear" ? "musical" : "linear"}});
+			// Checked when linear.
+			m_binding.send("track.set", {{"track", row.id}, {"timeBase", on ? "musical" : "linear"}},
+				clicked(button, row.id, name, !on));
 			return;
 		}
-		const Json* channel = channelOf(row);
-		if (channel == nullptr)
+		if (channelOf(row) == nullptr)
 			return;
+		if (name == "solo")
+		{
+			const bool defeated = button.IsClassSet("defeated");
+			Json parameters = soloClick({{"solo", on}, {"soloDefeat", defeated}}, exclusive, defeat);
+			const bool solo = parameters.value("solo", on);
+			const bool soloDefeat = parameters.value("soloDefeat", defeated);
+			parameters["channel"] = row.channel;
+			m_binding.send("channel.set", std::move(parameters), clicked(button, row.id, name, solo, soloDefeat));
+			return;
+		}
 		const std::string key = name == "record" ? "recordEnable" : name;
-		Json parameters =
-			key == "solo" ? soloClick(*channel, exclusive, defeat) : Json{{key, !channel->value(key, false)}};
-		parameters["channel"] = row.channel;
-		m_binding.send("channel.set", std::move(parameters));
+		m_binding.send("channel.set", {{"channel", row.channel}, {key, !on}}, clicked(button, row.id, name, !on));
+	}
+
+	std::function<void(const engine::Result&)> TrackList::clicked(
+		Rml::Element& button, uint64_t track, const std::string& name, bool checked, bool defeated)
+	{
+		setClass(button, "checked", checked);
+		if (name == "solo")
+			setClass(button, "defeated", defeated);
+		Clicked& click = m_clicked[{track, name}];
+		++click.out;
+		click.checked = checked;
+		click.defeated = defeated;
+		return [this, alive = std::weak_ptr<bool>(m_alive), key = std::make_pair(track, name)](
+				   const engine::Result& result)
+		{
+			if (alive.expired())
+				return;
+			// The read after a command the engine took shows what it made of it: the project reads come in the order
+			// they were sent, so one answered after this result has it.
+			if (const auto found = m_clicked.find(key); found != m_clicked.end() && --found->second.out <= 0)
+				m_clicked.erase(found);
+			if (result.ok())
+				return;
+			logging::warning("The track list's {} on track {} failed: {}", key.second, key.first, result.error);
+			showState(); // a refused command changed nothing, so no read follows it: the engine's state again
+		};
 	}
 
 	void TrackList::markerChange(Rml::Element& control, const std::string& value)
@@ -1991,11 +2025,13 @@ namespace gnubase::ui
 			control.SetAttribute("value", format ? formatTime(*format, offsetSeconds(track, time), time) : "");
 	}
 
-	void TrackList::transaction(const std::string& description, Json commands)
+	void TrackList::transaction(
+		const std::string& description, Json commands, std::function<void(const engine::Result&)> done)
 	{
 		if (commands.empty())
 			return;
-		m_binding.send("history.transaction", {{"description", description}, {"commands", std::move(commands)}});
+		m_binding.send(
+			"history.transaction", {{"description", description}, {"commands", std::move(commands)}}, std::move(done));
 	}
 
 	void TrackList::removeSelected()

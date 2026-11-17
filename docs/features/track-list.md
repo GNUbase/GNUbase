@@ -142,7 +142,12 @@ sends engine commands, so whatever another client changes shows at once.
   (every automation lane of the track reads, or with a click none does; disabled without lanes), `timeBase`
   (musical or linear, `.checked` when linear) and on MIDI tracks `midiChannel` (MIDI Channel, p. 349), a drop-down list
   of Any and 1 to 16 that sends `channel.set` `midiChannel` as the inspector's does ([mixer.md](mixer.md)). A click
-  sends `channel.set`, `automationLane.set` in one transaction, or `track.set`. Folders show Group Editing
+  sends `channel.set`, `automationLane.set` in one transaction, or `track.set`. A switch's click goes from what its
+  button shows and shows what it sends at once (`.checked`, solo's `.defeated`), as the inspector's toggles do, and
+  doesn't wait for the project read after the command (#1852): while the command is out, the rows keep the button as
+  clicked, so a read from before it doesn't take the click back, and a second quick click switches back. The read
+  after the command shows what the engine made of it, such as the other channels' solo after an exclusive solo; a
+  refused command, which no read follows, shows the engine's state again at once. Folders show Group Editing
   (`groupEditing`, [folder-tracks.md](folder-tracks.md)), and those without a group channel nothing else; signature
   tracks show none. The tempo track's controls are `tempoTrack`, Activate Tempo Track (`project.set`
   `tempoTrackActive`), `currentTempo`, Current Tempo, a text field
@@ -280,7 +285,10 @@ data blocks and Move Selected Tracks to New Folder are in [folder-tracks.md](fol
   revision and the events alone; `trackLayoutFromJson` with heights that aren't finite. `tests/engine_tests.cpp`: a
   NaN outside every minimum and maximum.
 - `tests/tracklist_tests.cpp` drives the app's project window with `ui::Automation`: rows level with the lanes and
-  each type's controls; every control's button and the engine's state both ways; selection with clicks, modifiers,
+  each type's controls; every control's button and the engine's state both ways; Mute, Solo and solo defeat shown at
+  the click while the engine is held, kept against a read from before the clicks, two quick clicks switching back, an
+  exclusive solo turning the other's off and a refused Record Enable on a frozen track showing off again (#1852);
+  selection with clicks, modifiers,
   Shift-click deselecting, the arrow keys and the key commands; Up, Down and Alt+F2 pressed with the focus in the
   event display and in the list, selecting the first part on the new track or keeping the parts selected on an
   empty one, Shift+Up in the list, and `ui.upDownSelectsTracksOnly`; the warning before removing tracks that aren't
