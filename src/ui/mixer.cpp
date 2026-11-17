@@ -1040,7 +1040,7 @@ namespace gnubase::ui
 				{
 					const float volume = event.GetParameter("value", 0.0F);
 					showVolume(*target); // with the fader, ahead of the engine
-					std::string what = stepKey(m_stepOwner, channel->id, "volume");
+					const std::string what = stepKey(m_stepOwner, channel->id, "volume");
 					m_binding.sendStep(event.GetParameter("gesture", 0), what, "Change Volume",
 						Json::array({Json{{"command", "channel.set"},
 							{"parameters", {{"channel", channel->id}, {"volume", volume}}}}}),
@@ -1078,7 +1078,7 @@ namespace gnubase::ui
 					// A knob's or a value field's drag, wheel turns or held arrow key: one undo step.
 					Json parameters = paramChange(param, given->Get<double>());
 					parameters["channel"] = channel->id;
-					std::string what = stepKey(m_stepOwner, channel->id, param);
+					const std::string what = stepKey(m_stepOwner, channel->id, param);
 					m_binding.sendStep(event.GetParameter("gesture", 0), what, "Change " + attribute(*target, "title"),
 						Json::array({Json{{"command", "channel.set"}, {"parameters", std::move(parameters)}}}),
 						whenAnswered(what, channel->id));

@@ -3793,8 +3793,9 @@ namespace gnubase::engine
 			{"redo", position < steps.size() ? Json(steps[position].action) : Json(nullptr)}};
 		// Only where the events tell the whole change: not inside another command, which may announce more after it
 		// (eventNames is empty there), nor for undo and redo, which put back what the steps recorded.
-		if (std::vector<std::string> events = step ? context.eventNames() : std::vector<std::string>(); !events.empty())
-			data["events"] = std::move(events);
+		if (const std::vector<std::string> events = step ? context.eventNames() : std::vector<std::string>();
+			!events.empty())
+			data["events"] = events;
 		context.emit("history.changed", std::move(data));
 	}
 

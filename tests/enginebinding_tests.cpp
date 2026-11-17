@@ -1001,15 +1001,15 @@ TEST_CASE(
 	reads.reset();
 	client.call("track.set", {{"track", project.at("tracks").at(1).at("id")}, {"name", "Vox"}});
 	updateUntil(binding, [&reads] { return reads.has_value(); });
-	CHECK(*reads);
+	CHECK(reads == std::optional<bool>(true));
 	reads.reset();
 	client.call("history.undo");
 	updateUntil(binding, [&reads] { return reads.has_value(); });
-	CHECK(*reads);
+	CHECK(reads == std::optional<bool>(true));
 	// A step that changed another channel only needs none either.
 	reads.reset();
 	client.call("channel.set", {{"channel", second}, {"pan", 0.5}});
 	updateUntil(binding, [&reads] { return reads.has_value(); });
-	CHECK(!*reads);
+	CHECK(reads == std::optional<bool>(false));
 	CHECK(project.at("channels").at(1).at("pan") == 0.5);
 }
