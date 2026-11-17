@@ -74,15 +74,18 @@ events. The UI is one more client of the engine API, next to MCP and Lua, so it 
   and `changedOnly(event, names)` tells whether they are all of those names. After a step that changed only channels,
   `changedOnly(event, {"channel.changed"})`, no view reads: the mixer and the event display take each channel that
   `channel.changed` brings into the project they read (`takeChannel`, in place, as `project.get` shows channels the same
-  way), and the mixer updates only that channel's strip. The event display counts it as a load, so the views that show
-  its project, the track list, the inspector and the sampler and drum machine panels, show it too; it lays out the
-  track list again only when more than the channel's levels changed (volume, pan, MIDI volume and pan, sends), which
-  the track list doesn't show. The edit history panel reads `history.get` after each step quietly (`sendQuietly`) and
-  draws only its own window, so the answer doesn't draw every window again. The other views
-  that read the project after each step (markers, tempo and signature tracks, transport, track visibility, the MIDI and
-  sample editors, the pool) show no channel and skip it; so does the inspector's read of the in-place editors. A view
-  whose step was answered shows the engine's value then, since no read follows. The records of the controls' steps
-  still go only after a project read, so they stay until the next change that isn't only channels'.
+  way), and the mixer updates only that channel's strip. The event display counts it in `loads()`, so the views that
+  show channels from its project, the track list, the inspector and the sampler and drum machine panels, show it too,
+  but not in `answers()`, which the views that show no channel go by (the info line, the in-place editors, the ruler and
+  transpose tracks), and `read()` moves on with it only while no `project.get` is out, since the project still lacks the
+  steps that read is for; it lays out the track list again only when more than the channel's levels and sends changed
+  (volume, pan, MIDI volume and pan, sends), which the track list doesn't show. The edit history panel reads
+  `history.get` after each step quietly (`sendQuietly`) and draws only its own window, so the answer doesn't draw every
+  window again. The other views that read the project after each step (markers, tempo and signature tracks, transport,
+  track visibility, the MIDI and sample editors, the pool) show no channel and skip it; so does the inspector's read of
+  the in-place editors. A view whose step was answered shows the engine's value then, since no read follows. The records
+  of the controls' steps still go only after a project read, so they stay until the next change that isn't only
+  channels'.
 - **Waking the UI.** The UI thread sleeps until something happens (docs/architecture.md, "UI shell"). When the
   binding's client queues a result or an event, the engine's thread calls `Shell::wake`, which pushes a wake-up event
   into SDL's event queue; more messages before the next update don't wake it again, so a burst of events can't fill

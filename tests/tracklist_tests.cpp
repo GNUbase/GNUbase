@@ -244,8 +244,9 @@ TEST_CASE("the track list's buttons show their click at once, also against a pro
 	};
 
 	// A change from another client, whose history.changed waits in the binding until the shell steps: the read that
-	// the display sends for it then queues behind a hold, and the clicks' commands behind a second one.
-	tracks.app.call("channel.set", {{"channel", otherChannel}, {"volume", -6.0}});
+	// the display sends for it then queues behind a hold, and the clicks' commands behind a second one. A track's, as
+	// a channel's alone comes with its channel.changed, without a read (#1881).
+	tracks.app.call("track.set", {{"track", other}, {"name", "Bass 2"}});
 	holder.send("test.hold");
 	REQUIRE(holds.waitEntered(1));
 	tracks.app.shell().step(std::chrono::milliseconds(0));
@@ -275,7 +276,7 @@ TEST_CASE("the track list's buttons show their click at once, also against a pro
 	holds.release(1);
 	REQUIRE(holds.waitEntered(2));
 	REQUIRE(tracks.app.waitUntil([&] { return binding.waiting("project.get") == 0; }));
-	REQUIRE(shown(otherChannel).at("volume").get<double>() == Approx(-6.0));
+	REQUIRE(tracks.display.project().at("tracks").at(1).at("name") == "Bass 2");
 	REQUIRE(shown(audioChannel).at("mute") == false);
 	CHECK(checked(audio, "mute"));
 	CHECK(checked(audio, "solo"));
@@ -344,7 +345,8 @@ TEST_CASE("the track list's buttons end with what the engine made of the click, 
 	CHECK(tracks.channel(audio).at("solo") == true);
 
 	// A frozen track can't record: the click shows Record Enable until the engine refuses it, then the engine's off,
-	// with no project read after it. A Mute the engine took meanwhile stays until the read after it comes.
+	// with no project read after it. A Mute the engine took meanwhile shows with its channel.changed, also without a
+	// read (#1881).
 	const std::chrono::seconds rendering(60);
 	tracks.app.call("track.freeze", {{"tracks", {synth}}});
 	REQUIRE(
@@ -358,9 +360,7 @@ TEST_CASE("the track list's buttons end with what the engine made of the click, 
 	tracks.click(row(synth) + " button.record");
 	CHECK(checked(audio, "mute"));
 	CHECK(checked(synth, "record"));
-	holder.send("test.hold"); // the read after the mute waits behind it
 	holds.release(2);
-	REQUIRE(holds.waitEntered(3));
 	REQUIRE(tracks.app.waitUntil([&] { return binding.waiting("channel.set") == 0; }));
 	CHECK(!checked(synth, "record"));
 	CHECK(checked(audio, "mute"));
@@ -371,11 +371,8 @@ TEST_CASE("the track list's buttons end with what the engine made of the click, 
 				return channel.at("mute").get<bool>();
 		return false;
 	};
-	CHECK(!shownMute());
-	holds.release(3);
-	REQUIRE(tracks.app.waitUntil(shownMute));
-	CHECK(checked(audio, "mute"));
-	CHECK(!checked(synth, "record"));
+	CHECK(shownMute());
+	CHECK(binding.waiting("project.get") == 0);
 	CHECK(tracks.channel(synth).at("recordEnable") == false);
 }
 

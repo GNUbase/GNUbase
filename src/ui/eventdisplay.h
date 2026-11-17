@@ -184,8 +184,9 @@ namespace gnubase::ui
 		void setCuttingPositions(std::vector<int64_t> positions);
 		const std::vector<int64_t>& cuttingPositions() const { return m_cuttingPositions; }
 		// The project as project.get last returned it, with the channels that channel.changed brought since, or null
-		// before the first answer; loads() counts the answers and those channels, and read() is when the binding handed
-		// the last of them on (EngineBinding::handed).
+		// before the first answer; loads() counts the answers and those channels, answers() only the answers, for the
+		// views that show no channel (#1881), and read() is when the binding handed the last of them on
+		// (EngineBinding::handed), a channel only while no answer is out, which may be older than it.
 		const engine::Json& project() const { return m_project; }
 		// Where each audio event of the project plays, in seconds, as the project window shows it: from its position
 		// in its track's time base to where its warp puts its end (playedLength), or else as long as its clip frames
@@ -198,6 +199,7 @@ namespace gnubase::ui
 		};
 		const std::map<uint64_t, AudioEventSpan>& audioEventSpans() const { return m_audioSpans; }
 		uint64_t loads() const { return m_loads; }
+		uint64_t answers() const { return m_answers; }
 		uint64_t read() const { return m_read; }
 		// The tempo map and signatures of project(), read once per answer.
 		const TimeContext& time() const { return m_time; }
@@ -881,6 +883,7 @@ namespace gnubase::ui
 		std::set<uint64_t> m_hidden;
 		engine::Json m_project;
 		uint64_t m_loads = 0;
+		uint64_t m_answers = 0;
 		uint64_t m_read = 0;
 		std::function<void()> m_layoutListener;
 		std::function<void()> m_addTrack;     // onAddTrack

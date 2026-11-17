@@ -47,7 +47,7 @@ namespace gnubase::ui
 			{
 				if (alive.expired())
 					return;
-				if (m_display.loads() != m_loads)
+				if (m_display.answers() != m_loads)
 					build();
 				place();
 			});
@@ -65,7 +65,7 @@ namespace gnubase::ui
 	// ponytail: builds every ruler again for each answer of project.get, as the display reads the whole project.
 	void RulerLanes::build()
 	{
-		m_loads = m_display.loads();
+		m_loads = m_display.answers();
 		const Json& project = m_display.project();
 		if (!project.is_object())
 			return;

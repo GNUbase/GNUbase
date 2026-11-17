@@ -94,8 +94,8 @@ namespace gnubase::ui
 			return {static_cast<float>(value), Rml::Unit::DP};
 		}
 
-		// Whether a channel changed only in its levels, as each step of a fader, panner or send drag changes them,
-		// which neither the lanes nor the track list show (#1881).
+		// Whether a channel changed only in its levels or sends, as each step of a fader, panner or send drag changes
+		// them, which neither the lanes nor the track list show (#1881).
 		bool levelsOnly(const Json& before, const Json& after)
 		{
 			if (!before.is_object() || !after.is_object() || before.size() != after.size())
@@ -196,7 +196,10 @@ namespace gnubase::ui
 				if (after == nullptr)
 					return;
 				++m_loads;
-				m_read = m_binding.handed();
+				// A read that is out may come from before a step that came before this channel: the project isn't
+				// as new as this channel until it is in.
+				if (!m_loading)
+					m_read = m_binding.handed();
 				// What the lanes show doesn't change with a channel, the track list's controls may.
 				if (m_layoutListener && !levelsOnly(before, *after))
 					m_layoutListener();
@@ -436,6 +439,7 @@ namespace gnubase::ui
 				{
 					m_project = result.value;
 					++m_loads;
+					++m_answers;
 					m_read = m_binding.handed();
 					// Settings, not undo steps: only a fresh answer has them, not m_project shown again later.
 					takeSnap(m_project.at("snap"));

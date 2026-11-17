@@ -5,6 +5,7 @@
 #include "ui/automation.h"
 #include "ui/docking.h"
 #include "ui/enginebinding.h"
+#include "ui/eventdisplay.h"
 #include "ui/keycommands.h"
 #include "ui/mixer.h"
 #include "ui/renderer.h"
@@ -1098,7 +1099,8 @@ namespace
 	// answered and drawn it.
 	struct Drag
 	{
-		size_t reads = 0;
+		size_t reads = 0;   // project.get
+		size_t queries = 0; // what the views showing no channel ask after a project read: editor.inPlace, event.get
 		std::vector<double> milliseconds; // per move
 		double value = 0.0;               // the control's when the drag ended
 	};
@@ -1112,6 +1114,9 @@ namespace
 		Drag result;
 		const ui::Subscription reads =
 			binding.onResult("project.get", [&result](const engine::Result&) { ++result.reads; });
+		std::vector<ui::Subscription> queries;
+		for (const char* query : {"editor.inPlace", "editor.get", "event.get"})
+			queries.push_back(binding.onResult(query, [&result](const engine::Result&) { ++result.queries; }));
 		Rml::Context& context = app.shell().find(window.value_or(0))->context();
 		const Json box = element(app, window, selector).at("box");
 		const int x = box.at("x").get<int>() + (box.at("width").get<int>() / 2);
@@ -1152,9 +1157,14 @@ TEST_CASE("a fader, panner or send drag follows the mouse without reading the pr
 	// Every view read the whole project after each step of a drag, which lagged behind the mouse in large projects
 	// (#1881): the views take channel.changed instead, and read only after other changes.
 	test::UiApp app({1024, 600});
-	app.appUi().showProject();
+	ui::EventDisplay& display = app.appUi().showProject();
 	app.appUi().docking().open("inspector");
 	const Added guitar = addTracks(app, 16);
+	// A selected part, which the info line shows (event.get) after each project read.
+	const Added keys = addTrack(app, "midi", "Keys");
+	const Json part = app.call("midiPart.add", {{"track", keys.track}, {"position", 0}, {"length", 1920}}).at("part");
+	REQUIRE(app.waitUntil([&] { return display.project().at("midiParts").size() == 1; }));
+	display.select({part.at("id").get<uint64_t>()});
 	app.appUi().trackList()->select({guitar.track});
 	const Window window = openMixer(app, 1);
 	const Window main = std::nullopt;
@@ -1169,6 +1179,7 @@ TEST_CASE("a fader, panner or send drag follows the mouse without reading the pr
 	{
 		const Drag dragged = drag(app, window, fader, 100);
 		CHECK(dragged.reads <= 1);
+		CHECK(dragged.queries <= 2);
 		CHECK(dragged.value < 0.0);
 		// The fader, its dB text, the inspector and the engine end at the same value, in one undo step.
 		CHECK(channel().at("volume") == Catch::Approx(dragged.value).margin(0.001));
@@ -1181,6 +1192,25 @@ TEST_CASE("a fader, panner or send drag follows the mouse without reading the pr
 		REQUIRE(app.waitUntil([&] { return valueOf(app, window, fader) == 0.0 && valueOf(app, main, field) == 0.0; }));
 		CHECK(text() == "0.0");
 		CHECK(channel().at("volume") == 0.0);
+
+		// A step that changes more than a channel still has those views ask, so the counts above see them.
+		size_t asked = 0;
+		const ui::Subscription inPlace =
+			app.appUi().binding().onResult("editor.inPlace", [&asked](const engine::Result&) { ++asked; });
+		app.call("track.set", {{"track", guitar.track}, {"name", "Lead"}});
+		CHECK(app.waitUntil([&asked] { return asked != 0; }));
+	}
+
+	SECTION("the inspector's volume field")
+	{
+		const Drag dragged = drag(app, main, field, 100);
+		CHECK(dragged.reads <= 1);
+		CHECK(dragged.queries <= 2);
+		CHECK(dragged.value != 0.0);
+		CHECK(channel().at("volume") == Catch::Approx(dragged.value).margin(0.051));
+		REQUIRE(
+			app.waitUntil([&] { return valueOf(app, window, fader) == Catch::Approx(dragged.value).margin(0.051); }));
+		CHECK(historyPosition(app) == position + 1);
 	}
 
 	SECTION("the panner")
@@ -1188,6 +1218,7 @@ TEST_CASE("a fader, panner or send drag follows the mouse without reading the pr
 		const std::string pan = strip(guitar.channel) + " [param=pan]";
 		const Drag dragged = drag(app, window, pan, 100);
 		CHECK(dragged.reads <= 1);
+		CHECK(dragged.queries <= 2);
 		CHECK(dragged.value != 0.0);
 		CHECK(channel().at("pan") == Catch::Approx(dragged.value).margin(1e-4));
 		CHECK(historyPosition(app) == position + 1);
@@ -1203,6 +1234,7 @@ TEST_CASE("a fader, panner or send drag follows the mouse without reading the pr
 		const double before = valueOf(app, window, knob);
 		const Drag dragged = drag(app, window, knob, 100);
 		CHECK(dragged.reads <= 1);
+		CHECK(dragged.queries <= 2);
 		CHECK(dragged.value < before);
 		CHECK(channel().at("sends")[0].at("level") == Catch::Approx(dragged.value).margin(0.001));
 		CHECK(historyPosition(app) == position + 1);
