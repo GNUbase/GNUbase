@@ -239,8 +239,9 @@ namespace gnubase::ui
 						return;
 					}
 					// A control that opens a menu, such as the track versions arrow, leaves the selection as it is:
-					// its menu works on the rows that are selected.
-					if (part->HasAttribute("menu"))
+					// its menu works on the rows that are selected. So does a control with keepselection, such as the
+					// track list's Mute, which works on its own row.
+					if (part->HasAttribute("menu") || part->HasAttribute("keepselection"))
 						return;
 				}
 				const bool multiple = HasAttribute("multiple");

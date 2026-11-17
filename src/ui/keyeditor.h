@@ -136,6 +136,9 @@ namespace gnubase::ui
 		void ProcessEvent(Rml::Event& event) override;
 		void press(Rml::Event& event);
 		void drag(Rml::Event& event);
+		// The selected notes where a move or resize has taken them, at m_draggedTo: after every mouse move, and when
+		// the display shows the project again during the gesture (#1789).
+		void placeDragged();
 		void release(Rml::Event& event);
 		void doubleClick(Rml::Event& event);
 		// The drag on the keyboard's left part (p. 1261): to the right or left it zooms the pitches vertically, up or
@@ -313,9 +316,10 @@ namespace gnubase::ui
 
 		Gesture m_gesture = Gesture::None;
 		std::pair<double, int> m_pressedAt;
-		float m_pressedX = 0.0F;       // the mouse's x at the press, in pixels
-		float m_pressedY = 0.0F;       // the mouse's y at the press, in pixels
-		std::optional<Note> m_pressed; // the note pressed, as it was
+		float m_pressedX = 0.0F;                           // the mouse's x at the press, in pixels
+		float m_pressedY = 0.0F;                           // the mouse's y at the press, in pixels
+		std::optional<Note> m_pressed;                     // the note pressed, as it was
+		std::optional<std::pair<double, int>> m_draggedTo; // a move's or resize's ticks and pitch at the last move
 		bool m_snapOff = false;
 		float m_pitchZoom = 1.0F;               // the pitch rows' scale, which the keyboard's left part drags (p. 1261)
 		float m_zoomStart = 1.0F;               // m_pitchZoom at the press

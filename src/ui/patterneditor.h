@@ -11,6 +11,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -108,9 +109,9 @@ namespace gnubase::ui
 		uint64_t m_part = 0;
 		std::string m_tool = "draw";
 		std::string m_parameter = "velocity";
-		int m_lane = -1;                           // the selected lane's pitch
-		std::set<std::pair<int, int>> m_selection; // the selected steps: pitch and index
-		std::pair<uint64_t, uint64_t> m_shown;     // the part and pattern load() showed last
+		int m_lane = -1;                                     // the selected lane's pitch
+		std::set<std::pair<int, int>> m_selection;           // the selected steps: pitch and index
+		std::tuple<uint64_t, uint64_t, std::string> m_shown; // the part, pattern and Step Resolution load() showed last
 		Gesture m_gesture = Gesture::None;
 		bool m_changed = false;  // by the gesture going on
 		bool m_stale = false;    // the project changed while it went on
