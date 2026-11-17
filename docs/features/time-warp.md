@@ -32,9 +32,10 @@ signature events ([signature-track.md](signature-track.md)) and the clips' warp 
 - **Set Definition from Tempo** makes a clip's definition grid the project's quarters from the one at or before the
   clip's start to its end, each edited onto the clip frame where the event plays it now (`ClipWarp::beats`), and its
   tempo the project's after the last one. In musical mode the event then plays as before, and follows the tempo from
-  then on, including an event that starts between quarters. Beat 0 can precede the clip's first frame. Selected
-  events sharing a clip get independent clips, so each placement gets its own definition and unselected events
-  keep theirs. A clip in musical mode already is refused; where an event plays a clip frame is taken unwarped.
+  then on, including an event that starts between quarters. Beat 0 can precede the clip's first frame. Selected events
+  of one clip that play its frame 0 at the same time keep sharing it and its definition; other placements get copies
+  with their own definitions. The original stays with unselected references, or else with the first placement. A clip in
+  musical mode already is refused; where an event plays a clip frame is taken unwarped.
 - **Pasted warp markers** go where the source event plays the marker's frames unwarped, into the frames that the
   destination event plays then; those outside the destination event or passing one of its clip's markers are left
   out, and its markers stay. Each destination clip is visited once, using its first event in the request.
@@ -78,12 +79,11 @@ time formats; Write Definition to Audio Files.
 ## Tests
 
 `tests/timewarp_tests.cpp`: time warp in both grid modes, with a later tempo event and its limits; Process Tempo by
-length and end, from the locators and with a ramp across the range's end; every Process Bars type and its errors;
-Set Definition from Tempo playing as before and following a tempo change, for the events' tracks or all, with off-beat
+length and end, from the locators and with a ramp across the range's end; every Process Bars type and its errors; Set
+Definition from Tempo playing as before and following a tempo change, for the events' tracks or all, with off-beat
 starts and shared clips copied by placement, keeping split pieces together, with sampler tracks and inactive track
-versions; pasting warp markers once per clip, keeping those there,
-and undo; Free Warp through musical mode, existing markers and trimmed events. `tests/timewarp_ui_tests.cpp`:
-the tool's toolbar button and second-click modes,
-Warp Grid and Free Warp drags on plain and warped clips, its modes in the context menu, the Process Tempo and
-Process Bars dialogs, and Audio > Advanced's Set Definition from Tempo and Copy and Paste Warp Markers.
+versions; pasting warp markers once per clip, keeping those there, and undo; Free Warp through musical mode, existing
+markers and trimmed events. `tests/timewarp_ui_tests.cpp`: the tool's toolbar button and second-click modes, Warp Grid
+and Free Warp drags on plain and warped clips, its modes in the context menu, the Process Tempo and Process Bars
+dialogs, and Audio > Advanced's Set Definition from Tempo and Copy and Paste Warp Markers.
 `tests/eventediting_tests.cpp`: Free Warp's drag on a stretched musical-mode event.
