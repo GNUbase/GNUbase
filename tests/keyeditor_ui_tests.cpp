@@ -948,12 +948,22 @@ TEST_CASE("a resize released outside the key editor ends without its effect", "[
 	f.app.ui().move(f.window, f.at(9.5, 60));
 	f.app.shell().step(std::chrono::milliseconds(0));
 	REQUIRE(f.app.waitUntil([&] { return width() > before + 10; }));
+	// The display shown again during the resize, as when the engine's answers to the last edit come in only now, still
+	// shows the note where the mouse takes it, although the mouse doesn't move (#1789).
+	f.app.call("note.add",
+		{{"part", f.part},
+			{"notes",
+				Json::array(
+					{{{"position", 12 * g_sixteenth}, {"length", g_sixteenth}, {"pitch", 64}, {"velocity", 0.5}}})}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-note").size() == 2; }));
+	CHECK(width() > before + 10);
 	f.app.ui().release(f.window, of("#editor-keep-contents"), ui::MouseButton::Left);
 	f.app.shell().step(std::chrono::milliseconds(0));
 	REQUIRE(f.app.waitUntil([&] { return std::abs(width() - before) <= 1.5; }));
 	CHECK_FALSE(f.has(".key-editor", "in-gesture"));
 	CHECK_FALSE(f.app.waitUntil(
 		[&] { return f.note(ids[0]).at("length") != 6 * g_sixteenth; }, std::chrono::milliseconds(300)));
+	f.settle();
 }
 
 TEST_CASE("the key editor's draw and the drag on the keyboard's left part go on past the window's edge until the "
