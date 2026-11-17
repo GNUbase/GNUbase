@@ -98,6 +98,10 @@ namespace gnubase::ui
 		static bool modifies(const std::string& name);
 		std::vector<int> selected() const;
 		void send(const std::string& command, engine::Json parameters);
+		void listen(engine::Json parameters); // chordPads.listen
+		// What the panel shows it listens for: what it asked for last while the engine hasn't answered it, else what
+		// the engine said.
+		const engine::Json& listening() const { return m_listenSent ? *m_listenSent : m_listening; }
 		Rml::Element* find(const std::string& id) const;
 
 		EngineBinding& m_binding;
@@ -125,7 +129,9 @@ namespace gnubase::ui
 		int m_keyLow = 24;
 		int m_keyCount = 73;
 		std::optional<std::array<float, 4>> m_keyDrag;
-		engine::Json m_listening;                   // what chordPads.listen listens for, or null
+		engine::Json m_listening;                   // what chordPads.listen listens for, or null, as its event said
+		std::optional<engine::Json> m_listenSent;   // what the last chordPads.listen sent asks for, until answered
+		int m_listensSending = 0;                   // the chordPads.listen commands the engine hasn't answered yet
 		std::map<int, std::vector<int>> m_sounding; // the pitches each pad plays (-1: an audition)
 		int m_hovered = -1;                         // the pad under the mouse
 		int m_auditionPad = -1;         // the pad that a pad modifier button's press plays until the button goes up
