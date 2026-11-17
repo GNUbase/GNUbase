@@ -1571,6 +1571,7 @@ namespace gnubase::ui
 		// changed only the channel, whose channel.changed the event display's project took meanwhile (#1881).
 		m_binding.sendStep(
 			gesture, key, std::move(description), std::move(commands),
+			// NOLINTNEXTLINE(bugprone-exception-escape): only MSVC's std::string; out of memory only
 			[this, alive = std::weak_ptr<bool>(m_alive), key](const engine::Result&)
 			{
 				if (!alive.expired() && !m_binding.sending(key))
