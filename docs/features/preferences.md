@@ -27,7 +27,7 @@ presets to preferences and clients can tell them from the settings that have a p
   runs in (`app::AppUi::openPreferences`): Edit > Preferences... runs it. The manual names no key for it, so it has
   none. Running it while the dialog is open brings it to the front.
 - **Pages.** A tree on the left, in the reference's order, with the pages that have preferences in GNUbase; a page
-  whose own preferences GNUbase doesn't have yet (Event Display) only holds the pages under it. Each preference is a
+  whose own preferences GNUbase doesn't have yet would only hold the pages under it. Each preference is a
   check box, a drop-down list or a number field, from its setting's schema, labelled as in the manual:
   - Editing: Display Warning before Deleting Non-Empty Tracks (`ui.removeTracksWarning`), Default Track Time Type
     (`editing.defaultTimeBase`), Use Up/Down Navigation Commands for Selecting Tracks only
@@ -44,8 +44,13 @@ presets to preferences and clients can tell them from the settings that have a p
     (`ui.toolboxOnRightClick`), Show Notification when Switching Tool Mode with Key Command
     (`ui.toolSwitchNotification`). Zoom: Zoom Tool Standard Mode: Horizontal Zooming Only (`ui.zoomToolHorizontalOnly`,
     [tools.md](tools.md)).
-  - Event Display - Folders: Show Data on Folder Tracks (`ui.folderData`), Apply Color of Folder Track Automatically
-    (`editing.applyFolderColor`). Markers: Show Marker Lines (`ui.markerLines`).
+  - Event Display: Show Event Names (`ui.showEventNames`), Hide Truncated Event Names (`ui.hideTruncatedEventNames`),
+    Highlight Borders of Selected Events (`ui.highlightSelectedEventBorders`), Event Opacity (`ui.eventOpacity`),
+    Smallest Track Height to Show Data and to Show Name (`ui.smallestTrackHeightForData`,
+    `ui.smallestTrackHeightForName`; [event-display.md](event-display.md)). Audio: Waveform Brightness
+    (`ui.waveformBrightness`). Folders: Show Data on Folder Tracks (`ui.folderData`), Apply Color of Folder Track
+    Automatically (`editing.applyFolderColor`). MIDI: Part Data Mode (`ui.partDataMode`), Show Controllers
+    (`ui.showControllers`), Note Brightness (`ui.noteBrightness`). Markers: Show Marker Lines (`ui.markerLines`).
   - General: Auto Save, Auto Save Interval, Maximum Number of Auto Save Files (`project.autoSave*`).
   - MIDI: Chase Events for notes, controllers, program changes and pitch bend, and Chase not limited to Part
     Boundaries (`midi.chase*`). MIDI Filter: the Record section's message types, the channels and the controllers
