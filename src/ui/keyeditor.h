@@ -307,7 +307,8 @@ namespace gnubase::ui
 		std::vector<Part> m_parts;
 		std::vector<Note> m_notes;
 		std::vector<std::pair<uint64_t, uint64_t>> m_selection;
-		int64_t m_from = 0; // the notes' time axis, project ticks
+		int m_selectionsOut = 0; // select()'s editor.set commands not answered yet: show() keeps m_selection then
+		int64_t m_from = 0;      // the notes' time axis, project ticks
 		int64_t m_to = 1;
 		std::optional<std::pair<int64_t, int64_t>> m_range; // setTimeRange's
 		bool m_scrolled = false;

@@ -534,7 +534,6 @@ namespace gnubase::ui
 		m_view = view;
 		m_parts.clear();
 		m_notes.clear();
-		m_selection.clear();
 		if (!m_project.contains("tracks") || !m_view.contains("parts"))
 			return;
 		const TimeContext time = projectTime(m_project);
@@ -562,8 +561,15 @@ namespace gnubase::ui
 						note.value("articulations", std::vector<std::string>()),
 						note.value("expressions", Json::array())});
 			}
-		for (const Json& selected : m_view.value("selection", Json::array()))
-			m_selection.emplace_back(selected.at("part").get<uint64_t>(), selected.at("note").get<uint64_t>());
+		// While a selection that select() sent is unanswered, the view can be older than it, such as the editor.changed
+		// of the selection before: the notes stay as the mouse selected them, so that a move right after a click moves
+		// those (#1817). The view after the answer has the selection sent, or a newer one.
+		if (m_selectionsOut == 0)
+		{
+			m_selection.clear();
+			for (const Json& selected : m_view.value("selection", Json::array()))
+				m_selection.emplace_back(selected.at("part").get<uint64_t>(), selected.at("note").get<uint64_t>());
+		}
 		m_from = 0;
 		m_to = 1;
 		if (!m_parts.empty())
@@ -1398,7 +1404,15 @@ namespace gnubase::ui
 		for (const auto& [part, note] : m_selection)
 			selection.push_back({{"part", part}, {"note", note}});
 		render(); // at once; editor.changed confirms it
-		setView({{"selection", selection}});
+		++m_selectionsOut;
+		m_binding.send("editor.set", {{"editor", m_name}, {"selection", selection}},
+			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (!result.ok())
+					logging::warning("The key editor cannot select notes: {}", result.error);
+				if (!alive.expired())
+					--m_selectionsOut;
+			});
 	}
 
 	void KeyEditor::setView(Json parameters)

@@ -142,7 +142,10 @@ selects and deselects no notes.
   mousedown in the capture phase), before the press reaches its target: until then the notes it moves or draws follow
   the mouse over the editor. The class goes when the gesture ends, as RmlUi doesn't scroll on a touch move during a
   drag. The display shown again while a move or resize goes on, as when the engine's answers to an earlier edit come
-  in, keeps the notes where the mouse took them, also when the mouse holds still (#1789).
+  in, keeps the notes where the mouse took them, also when the mouse holds still (#1789). A click that selects shows
+  its selection at once, and the views that come in before the engine answered it, which can be older, such as the
+  editor.changed of the selection before, leave it as it is: a drag right after the click moves the notes it selected
+  (#1817).
 - **Info line** (p. 1199). Start, end and length in bars and beats, the pitch as a name such as C3 (typing a number
   works too), velocities 0-127, the channel 1-16 and the Articulations, the attributes of the track's articulation
   map that the note has, names separated by commas ([articulation-maps.md](articulation-maps.md)). A value typed
@@ -186,7 +189,8 @@ menu.
   key playing their pitches on the track's instrument until the mouse is released, also outside the editor, leaving the
   selected notes as they were, and a held key's pitch ending when the editor switches to the drum editor, closes through
   the engine API or has its window closed, and when the lower zone's Editor panel in a window of its own has that window
-  closed or is docked again; the object selection tool selecting, deselecting, moving, resizing, inserting and deleting;
+  closed or is docked again; the object selection tool selecting, deselecting, moving, resizing, inserting and deleting,
+  and a view older than a click that deselects leaving the notes deselected, so a drag right after it moves one note;
   the draw tool with Quantize Link and an eighth from the Length Quantize menu; a move released outside the editor
   ending without its effect, the note not following the mouse back and a later click moving nothing, and a draw
   released there drawing; a resize released there ending without its effect, its note keeping the length the mouse
