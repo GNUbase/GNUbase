@@ -48,12 +48,13 @@ namespace gnubase::logging::detail
 		LPTOP_LEVEL_EXCEPTION_FILTER g_previousFilter = nullptr;
 		_crt_signal_t g_previousAbortHandler = SIG_DFL;
 
-		// The minidump is written by a thread that waits for a crash from the start (#1849): MiniDumpWriteDump
-		// suspends the other threads, and a lock one of them holds can keep it from ever returning, so the crashed
-		// thread waits for the dump only so long. Then it ends the process with TerminateProcess, not with
-		// ExitProcess, which a return from the filter or abort's _exit leads to: that ends the other threads wherever
-		// they are and then runs the DLLs' detach code, where the C runtime flushes the streams and waits forever for
-		// the lock of one a thread was writing to.
+		// The minidump is written by a thread that waits for a crash from the start, and the crashed thread ends the
+		// process with TerminateProcess once the dump is written or after g_dumpTimeoutMs (#1849). It used to write the
+		// dump itself and then let the process end through the filter's return or abort's _exit, which runs the DLLs'
+		// detach code after ending the other threads wherever they were: the C runtime's clean-up there can block on a
+		// lock one of them held. TerminateProcess runs no code of the process. The timeout covers a dump thread that
+		// doesn't get to run; a MiniDumpWriteDump that blocks while it has the other threads suspended, the waiting
+		// crashed thread among them, isn't bounded by it. The first crash is the one the dump shows.
 		constexpr DWORD g_dumpTimeoutMs = 30000;
 		HANDLE g_dumpThread = nullptr;
 		HANDLE g_crashed = nullptr; // set by the crashed thread, or by uninstallCrashHandler to end the dump thread
@@ -61,6 +62,7 @@ namespace gnubase::logging::detail
 		EXCEPTION_POINTERS* g_exception = nullptr;
 		DWORD g_crashedThread = 0;
 		bool g_uninstalling = false;
+		LONG g_crashing = 0; // 1 once a thread crashed
 
 		void writeMinidump() noexcept
 		{
@@ -85,14 +87,19 @@ namespace gnubase::logging::detail
 
 		[[noreturn]] void endCrashed(EXCEPTION_POINTERS* exception, UINT exitCode) noexcept
 		{
-			g_exception = exception;
-			g_crashedThread = GetCurrentThreadId();
+			const bool first = InterlockedCompareExchange(&g_crashing, 1, 0) == 0;
+			if (first)
+			{
+				g_exception = exception;
+				g_crashedThread = GetCurrentThreadId();
+			}
 			if (g_dumpThread != nullptr)
 			{
-				SetEvent(g_crashed);
+				if (first)
+					SetEvent(g_crashed);
 				WaitForSingleObject(g_dumped, g_dumpTimeoutMs);
 			}
-			else
+			else if (first)
 				writeMinidump();
 			TerminateProcess(GetCurrentProcess(), exitCode);
 			std::_Exit(static_cast<int>(exitCode)); // not reached
@@ -162,6 +169,7 @@ namespace gnubase::logging::detail
 		if (g_dumpThread == nullptr)
 		{
 			g_uninstalling = false;
+			g_crashing = 0;
 			g_crashed = CreateEventW(nullptr, TRUE, FALSE, nullptr);
 			g_dumped = CreateEventW(nullptr, TRUE, FALSE, nullptr);
 			if (g_crashed != nullptr && g_dumped != nullptr)
