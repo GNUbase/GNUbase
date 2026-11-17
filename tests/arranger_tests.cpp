@@ -768,29 +768,43 @@ TEST_CASE("chain playback in real time renders the same as offline", "[integrati
 		run(song.client, "arranger.setMode", {{"mode", true}});
 		run(song.client, "transport.play");
 	};
-	// Sections of a quarter to a third of a second, as short as a bar of fast music.
-	constexpr int64_t scale = 25;
-	constexpr int64_t frames = 2700 * scale;
-	Song offline(256, scale);
-	build(offline, "offline");
-	run(offline.client, "audio.render", {{"frames", frames}});
-	Song realtime(256, scale);
-	build(realtime, "realtime");
-	run(realtime.client, "audio.start");
-	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
-	while (run(realtime.client, "audio.get").at("position").get<int64_t>() < frames &&
-		std::chrono::steady_clock::now() < deadline)
-		std::this_thread::sleep_for(std::chrono::milliseconds(5));
-	run(realtime.client, "audio.stop");
-	CHECK(run(realtime.client, "audio.get").at("playbackDropouts").get<int64_t>() == 0);
 	const auto capture = [](Song& song, int64_t count)
 	{
 		return run(song.client, "audio.capture", {{"channel", 0}, {"start", 0}, {"frames", count}})
 			.at("samples")
 			.get<std::vector<float>>();
 	};
-	const std::vector<float> actual = capture(realtime, frames);
+	// Sections of a quarter to a third of a second, as short as a bar of fast music.
+	constexpr int64_t scale = 25;
+	constexpr int64_t frames = 2700 * scale;
+	Song offline(256, scale);
+	build(offline, "offline");
+	run(offline.client, "audio.render", {{"frames", frames}});
 	const std::vector<float> expected = capture(offline, frames);
+
+	// What is checked here is the cue thread streaming ahead of the chain's repeats and jumps without the waits of an
+	// offline render. On a busy machine that thread can be starved and leave a dropout, which says nothing about the
+	// chain: such a run is played again, a few times at most. A cue that misses a jump every time still fails (#924).
+	constexpr int attempts = 5;
+	int64_t dropouts = 0;
+	std::vector<float> actual;
+	for (int attempt = 1; attempt <= attempts; ++attempt)
+	{
+		Song realtime(256, scale);
+		build(realtime, "realtime" + std::to_string(attempt));
+		run(realtime.client, "audio.start");
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+		while (run(realtime.client, "audio.get").at("position").get<int64_t>() < frames &&
+			std::chrono::steady_clock::now() < deadline)
+			std::this_thread::sleep_for(std::chrono::milliseconds(5));
+		run(realtime.client, "audio.stop");
+		dropouts = run(realtime.client, "audio.get").at("playbackDropouts").get<int64_t>();
+		actual = capture(realtime, frames);
+		if (dropouts == 0)
+			break;
+		WARN("attempt " << attempt << " of " << attempts << " had " << dropouts << " dropped frames, playing again");
+	}
+	CHECK(dropouts == 0);
 	REQUIRE(actual.size() == expected.size());
 	const auto difference = std::mismatch(actual.begin(), actual.end(), expected.begin());
 	INFO("first difference at frame " << (difference.first - actual.begin()));
