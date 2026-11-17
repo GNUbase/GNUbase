@@ -262,9 +262,10 @@ TEST_CASE("the project window shows events and the project cursor where the engi
 	CHECK(lanes.at("attributes").at("scale") == "0.01");
 	CHECK(element(".project-cursor").at("box").at("x").get<int>() - lanes.at("box").at("x").get<int>() == 150);
 	test::UiApp::checkGolden("event-display", app.screenshot("event-display", {800, 300}));
-	// The toolbar sections the image shows, which its tolerance could hide a button of (#1342).
+	// The toolbar sections the image shows, which its tolerance could hide a button of (#1342). At 800 dp the time warp
+	// button leaves no room for the grid type.
 	CHECK(app.shownSections("toolbar") ==
-		std::vector<std::string>{"tools", "autoScroll", "zoomPresets", "snap", "gridType", "zones"});
+		std::vector<std::string>{"tools", "autoScroll", "zoomPresets", "snap", "zones"});
 
 	// Ctrl and the mouse wheel zoom in around the mouse, through the UI tools.
 	const ui::Target over{
@@ -405,7 +406,7 @@ TEST_CASE(
 	app.shell().step(std::chrono::milliseconds(0));
 	test::UiApp::checkGolden("event-colors", app.screenshot("event-colors", {800, 300}));
 	CHECK(app.shownSections("toolbar") ==
-		std::vector<std::string>{"tools", "autoScroll", "zoomPresets", "snap", "gridType", "zones"});
+		std::vector<std::string>{"tools", "autoScroll", "zoomPresets", "snap", "zones"});
 }
 
 TEST_CASE(
@@ -440,7 +441,7 @@ TEST_CASE(
 	app.shell().step(std::chrono::milliseconds(0));
 	test::UiApp::checkGolden("default-theme-window", app.screenshot("default-theme-window", {1000, 680}));
 	CHECK(app.shownSections("toolbar") ==
-		std::vector<std::string>{"tools", "autoScroll", "zoomPresets", "snap", "gridType", "quantize", "zones"});
+		std::vector<std::string>{"tools", "autoScroll", "zoomPresets", "snap", "gridType", "zones"});
 	CHECK(app.shownSections("transport-bar") ==
 		std::vector<std::string>{"transportControls", "timeDisplays", "tempoSignature", "click"});
 	const Json bar = element(app, "#transport-bar").at("box");

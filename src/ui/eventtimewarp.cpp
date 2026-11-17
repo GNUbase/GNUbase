@@ -3,8 +3,6 @@
 // display (#159, docs/features/time-warp.md, reference manual pp. 1463-1468). The dialogs' Lua sends their commands.
 #include "ui/eventdisplay.h"
 
-#include <algorithm>
-#include <cmath>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -50,23 +48,17 @@ namespace gnubase::ui
 	}
 
 	// Warp Grid: the musical position pressed, snapped, plays where the mouse is released (tempo.warp). Free Warp: a
-	// warp marker where the pressed audio event is pressed, moved to where it is released (clip.addWarpMarker).
+	// warp marker where the pressed audio event is pressed, moved to where it is released (audioEvent.addWarpMarker).
 	void EventDisplay::timeWarpUp(double x)
 	{
 		const double pressTime = m_view.start + (m_pressX * m_view.scale);
 		const double releaseTime = m_view.start + (x * m_view.scale);
 		if (m_warpMode == WarpMode::Free)
 		{
-			const auto fades = m_fades.find(m_dragEvent);
-			const auto shown = std::find_if(
-				m_events.begin(), m_events.end(), [this](const Shown& each) { return each.id == m_dragEvent; });
-			if (fades == m_fades.end() || shown == m_events.end())
+			if (m_fades.count(m_dragEvent) == 0)
 				return;
-			const AudioFades& event = fades->second;
-			const auto frame = [&event, &shown](double seconds)
-			{ return event.offset + std::llround((seconds - shown->start) * event.timeRate); };
-			edit("clip.addWarpMarker",
-				{{"clip", event.clip}, {"position", frame(pressTime)}, {"target", frame(releaseTime)}});
+			edit("audioEvent.addWarpMarker",
+				{{"event", m_dragEvent}, {"position", samples(pressTime)}, {"to", samples(releaseTime)}});
 			return;
 		}
 		if (!m_dragMoved)
