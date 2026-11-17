@@ -13,6 +13,7 @@
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <memory>
@@ -119,7 +120,15 @@ TEST_CASE("File > Export > Audio Mixdown exports the checked channels over the l
 	choose(app, "#mixdown-format", 2); // FLAC, in 24 bits
 	click(app, "#mixdown-export");
 	REQUIRE(app.waitUntil([&app] { return !open(app); }));
-	REQUIRE(app.waitUntil([&] { return std::filesystem::exists(dir.path() / "out" / "take.flac"); }));
+	// The export renders as a background job, which holds the file's name with an empty file until it ends (#1794).
+	REQUIRE(app.waitUntil(
+		[&app]
+		{
+			const Json jobs = app.call("job.list").at("jobs");
+			return !jobs.empty() &&
+				std::none_of(jobs.begin(), jobs.end(), [](const Json& job) { return job.at("state") == "running"; });
+		}));
+	REQUIRE(std::filesystem::exists(dir.path() / "out" / "take.flac"));
 
 	const std::unique_ptr<engine::AudioFileReader> reader =
 		engine::AudioFileReader::open((dir.path() / "out" / "take.flac").u8string());

@@ -232,8 +232,8 @@ TEST_CASE(
 		CHECK(right(inner) <= right(outer));
 		CHECK(bottom(inner) <= bottom(outer));
 	};
-	// The lane with the keyboard focus, which the themes frame inside its header: the Articulations lane takes it on a
-	// click, and needs the track's articulation map.
+	// The lane with the keyboard focus, which the themes frame over the lane (.focused): the Articulations lane takes
+	// it on a click, and needs the track's articulation map.
 	const Json map = f.app.call("articulationMap.add",
 		{{"name", "Strings"}, {"articulations", {{{"name", "Arco"}, {"type", "direction"}, {"group", 0}}}},
 			{"slots", {{{"name", "Arco"}}}}});
@@ -255,8 +255,8 @@ TEST_CASE(
 			// A click on the Articulations lane gives it the keyboard focus, as in the app; a click on the toolbar's
 			// spare space takes it away. The frame must be there when the boxes are read.
 			f.click(focus ? of(row) : f.spare());
-			REQUIRE(f.app.waitUntil(
-				[&] { return f.elements(".controller-lane.keyboard-focus").size() == (focus ? 1U : 0U); }));
+			REQUIRE(
+				f.app.waitUntil([&] { return f.elements(".controller-lane.focused").size() == (focus ? 1U : 0U); }));
 			const Json headers = f.elements(".controller-lane-header");
 			const Json types = f.elements(".controller-lane-type");
 			REQUIRE(headers.size() == 3);
