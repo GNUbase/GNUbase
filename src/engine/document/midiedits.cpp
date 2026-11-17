@@ -14,6 +14,7 @@
 #include <cmath>
 #include <cstdint>
 #include <iterator>
+#include <map>
 #include <optional>
 #include <string>
 #include <utility>
@@ -114,6 +115,69 @@ namespace gnubase::engine
 			{
 				part.notes[note.id] = note;
 				result.push_back(toJson(note));
+			}
+			context.emit("note.changed", {{"part", part.id}, {"notes", result}});
+			return {{"notes", result}};
+		}
+
+		// The key editor's expression editor (#1512, #1795): each change replaces the note's points of one expression
+		// from `from` to `to` with its points, so that an edit sent before the client saw the last one keeps it.
+		Json replaceExpression(Project& project, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			MidiPart& part = findPart(project, parameters);
+			const auto type = parameters.at("type").get<std::string>();
+			const Json& items = parameters.at("notes");
+			std::map<ObjectId, Note> notes; // as the changes so far leave them, also a note named twice
+			std::vector<ObjectId> order;
+			for (size_t i = 0; i < items.size(); ++i)
+			{
+				const Json& item = items[i];
+				const std::string name = "notes[" + std::to_string(i) + "]";
+				const Note& current = changed(part.notes, item, name, "note");
+				const auto from = item.at("from").get<time::Ticks>();
+				const auto to = item.at("to").get<time::Ticks>();
+				require(to >= from, name + ".to must not be before its from");
+				Json points = Json::array();
+				for (size_t j = 0; j < item.at("points").size(); ++j)
+				{
+					const Json& each = item.at("points")[j];
+					const auto position = each.at("position").get<time::Ticks>();
+					require(position >= from && position <= to,
+						name + ".points[" + std::to_string(j) + "].position must be from " + std::to_string(from) +
+							" to " + std::to_string(to));
+					points.push_back({{"type", type}, {"position", position}, {"value", each.at("value")}});
+				}
+				const std::vector<ExpressionPoint> added = expressionsFromJson(points, name + ".points");
+				auto [found, inserted] = notes.try_emplace(current.id, current);
+				if (inserted)
+					order.push_back(current.id);
+				std::vector<ExpressionPoint>& expressions = found->second.expressions;
+				expressions.erase(std::remove_if(expressions.begin(), expressions.end(),
+									  [&](const ExpressionPoint& point)
+									  {
+										  return g_expressionNames.at(static_cast<size_t>(point.type)) == type &&
+											  point.position >= from && point.position <= to;
+									  }),
+					expressions.end());
+				expressions.insert(expressions.end(), added.begin(), added.end());
+				std::stable_sort(expressions.begin(), expressions.end(),
+					[](const ExpressionPoint& a, const ExpressionPoint& b) { return a.position < b.position; });
+			}
+			// Changed only once every item is valid, and only the notes whose points changed.
+			Json result = Json::array();
+			for (const ObjectId id : order)
+			{
+				Note& note = part.notes.at(id);
+				if (notes.at(id).expressions == note.expressions)
+					continue;
+				note.expressions = std::move(notes.at(id).expressions);
+				result.push_back(toJson(note));
+			}
+			if (result.empty())
+			{
+				context.markUnchanged(); // no change, so no modified project without an undo step
+				return {{"notes", result}};
 			}
 			context.emit("note.changed", {{"part", part.id}, {"notes", result}});
 			return {{"notes", result}};
@@ -474,6 +538,41 @@ namespace gnubase::engine
 						{"expressions", expressionsSchema()}}),
 				resultSchema("notes"), false},
 			setNotes);
+		const Json span = {{"type", "object"}, {"additionalProperties", false},
+			{"required", {"id", "from", "to", "points"}},
+			{"properties",
+				{{"id", integer},
+					{"from",
+						{{"type", "integer"},
+							{"description",
+								"where the span starts, in ticks from the note's start, as the points' positions"}}},
+					{"to",
+						{{"type", "integer"},
+							{"description", "where the span ends, included, in ticks from the note's start"}}},
+					{"points",
+						{{"type", "array"},
+							{"items",
+								{{"type", "object"}, {"additionalProperties", false},
+									{"required", {"position", "value"}},
+									{"properties", {{"position", integer}, {"value", number}}}}}}}}}};
+		add(engine,
+			{"note.replaceExpression", 1,
+				"Replaces the points of one expression of notes of a MIDI part in a span, as the key editor's "
+				"expression editor draws or erases them: each change names a note by id, and its points of type from "
+				"from to to (in ticks from the note's start, both included) give way to the change's points, "
+				"{position, value} each, within the span and in the expression's range (see note.add). The note's "
+				"other points stay, so an edit made before its sender saw the last one keeps that one. The points "
+				"end up sorted by position, a new one after the old ones at its position. A note named twice gets "
+				"both changes in order. Refuses, changing nothing, a part or a note that doesn't exist, a span whose "
+				"to is before its from and points outside it or out of range. Changes that leave every note's "
+				"points as they were change nothing, and the project doesn't count as modified. The changes are one "
+				"undo step. Returns the notes whose points changed.",
+				{{"type", "object"}, {"additionalProperties", false}, {"required", {"part", "type", "notes"}},
+					{"properties",
+						{{"part", integer}, {"type", {{"type", "string"}, {"enum", g_expressionNames}}},
+							{"notes", {{"type", "array"}, {"items", span}}}}}},
+				resultSchema("notes"), false},
+			replaceExpression);
 		const Json noteMove = {{"type", "object"}, {"additionalProperties", false},
 			{"required", {"part", "notes", "target"}},
 			{"properties",

@@ -275,6 +275,70 @@ TEST_CASE("the project window shows events and the project cursor where the engi
 	CHECK(element(".project-cursor").at("box").at("x").get<int>() - lanes.at("box").at("x").get<int>() == 150);
 }
 
+TEST_CASE("the project window shows events' names and MIDI parts' notes and controllers at each track's height", "[ui]")
+{
+	// #1313 (reference manual pp. 1603-1604, 1607): names from Smallest Track Height to Show Name (28 dp), part
+	// contents from Smallest Track Height to Show Data (20 dp), the notes over each part's pitch range.
+	test::UiApp app({800, 300});
+	ui::EventDisplay& display = app.appUi().showProject();
+	app.setDpRatio(1.0F);
+	app.call("project.set", {{"length", 60.0}});
+	const test::TempDir dir;
+	test::Audio take;
+	take.channels = 1;
+	take.sampleRate = 48000;
+	take.samples.resize(96000);
+	for (size_t i = 0; i < take.samples.size(); ++i)
+		take.samples[i] =
+			static_cast<float>(0.5 * std::sin(2.0 * 3.14159265358979 * 220.0 * static_cast<double>(i) / 48000.0));
+	const std::filesystem::path file = dir.path() / "Vocals.wav";
+	test::writeWav(file, take);
+	const Json audio = app.call("track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track");
+	const Json media = app.call("media.add", {{"path", file.u8string()}}).at("media");
+	const Json clip = app.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	app.call(
+		"audioEvent.add", {{"track", audio.at("id")}, {"clip", clip.at("id")}, {"position", 24000}, {"length", 96000}});
+	// The same part on three MIDI tracks, 20, 40 and 80 dp high: a rising line of notes and a pitch bend under it.
+	std::vector<uint64_t> tracks;
+	for (const char* name : {"Low", "Keys", "Tall"})
+	{
+		const auto track = app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+		tracks.push_back(track);
+		const Json part =
+			app.call("midiPart.add",
+				   {{"track", track}, {"position", 0}, {"length", 8 * time::g_ticksPerQuarter}, {"name", name}})
+				.at("part")
+				.at("id");
+		Json notes = Json::array();
+		for (int i = 0; i < 8; ++i)
+			notes.push_back({{"position", i * time::g_ticksPerQuarter}, {"length", time::g_ticksPerQuarter / 2},
+				{"pitch", 60 + (i * 2)}, {"velocity", 0.8}});
+		app.call("note.add", {{"part", part}, {"notes", notes}});
+		Json bends = Json::array();
+		for (int i = 0; i < 16; ++i)
+			bends.push_back({{"position", i * time::g_ticksPerQuarter / 2}, {"type", "pitchBend"},
+				{"value", static_cast<double>(i) / 15.0}});
+		app.call("controller.add", {{"part", part}, {"controllers", bends}});
+	}
+	display.setTrackHeights({tracks[0]}, 20.0);
+	display.setTrackHeights({tracks[2]}, 80.0);
+	Rml::ElementDocument& document = *app.main().context().GetDocument(0);
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			auto* names = dynamic_cast<ui::EventNames*>(document.QuerySelector(".event-area event-names"));
+			auto* contents = dynamic_cast<ui::PartContents*>(document.QuerySelector(".event-area part-contents"));
+			auto* wave = dynamic_cast<ui::Waveform*>(document.QuerySelector(".waveforms waveform"));
+			return names != nullptr && contents != nullptr && names->lanes().size() == 4 &&
+				contents->lanes().size() == 4 && names->lanes()[0].names.size() == 1 &&
+				names->lanes()[1].names.empty() && names->lanes()[3].names.size() == 1 &&
+				contents->lanes()[1].parts.size() == 1 && contents->lanes()[3].parts.size() == 1 &&
+				contents->lanes()[3].parts[0].controllers.size() == 16 && wave != nullptr && !wave->channels().empty();
+		}));
+	app.shell().step(std::chrono::milliseconds(0));
+	test::UiApp::checkGolden("event-names-contents", app.screenshot("event-names-contents", {800, 300}));
+}
+
 TEST_CASE(
 	"the project window shows events in their colors, and colored ones selected and muted, as the theme says", "[ui]")
 {

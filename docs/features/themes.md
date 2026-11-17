@@ -94,7 +94,9 @@ The theme styles RmlUi's controls by their tags and states, and GNUbase's contai
   `color` and the canvas properties `stroke-color`, `stroke-width`, `own-fill-opacity`, `own-color-tint` and
   `event-inset`.
 - **Event display** ([event-display.md](event-display.md)): `.event-display` with `.overview`, `.overview-view`,
-  `.project-cursor`, `.cross-hair-vertical` and `.cross-hair-horizontal`.
+  `.project-cursor`, `.cross-hair-vertical` and `.cross-hair-horizontal`; `event-names` and `part-contents` in it, and
+  `.event-display.highlight-selected-borders event-lanes.selected-events` for Highlight Borders of Selected Events
+  (#1313).
 
 ## Checks
 
