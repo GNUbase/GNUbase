@@ -2,12 +2,14 @@
 // The track list (#81, docs/features/track-list.md) in the app's project window, driven with ui::Automation as MCP's
 // UI tools drive it: every control changes the engine's project, every change from elsewhere shows, and tracks are
 // selected, renamed, moved, sized, folded, duplicated, disabled and removed.
+#include "testutils/commandholds.h"
 #include "uiapp.h"
 
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
 #include "engine/time/tempomap.h"
 #include "ui/automation.h"
+#include "ui/enginebinding.h"
 #include "ui/eventdisplay.h"
 #include "ui/tracklist.h"
 
@@ -196,6 +198,185 @@ TEST_CASE("the track list shows a row per track, and its controls change the tra
 			return tracks.app.call("automationLane.list", {{"track", instrument}}).at("lanes")[0].at("read") == false;
 		}));
 	CHECK(lane.at("lane").at("read") == true);
+}
+
+// #1852: a row button shows what its click sends at once, as the inspector's toggles do, and keeps showing it while
+// the command is out: a project read from before the command doesn't take it back.
+TEST_CASE("the track list's buttons show their click at once, also against a project read from before it", "[ui]")
+{
+	test::CommandHolds holds; // declared before the app: its engine's command thread waits in hold()
+	Tracks tracks;
+	const test::ReleaseHolds releaseHolds{holds};
+	tracks.app.engine().registerCommand(
+		{"test.hold", 1, "Waits for the test to release it.", engine::CommandInfo{}.parameters, Json::object(), false},
+		[&holds](engine::CommandContext&) { return holds.hold(); });
+	engine::Client holder(tracks.app.engine(), "holder");
+	ui::EngineBinding& binding = tracks.app.appUi().binding();
+	const uint64_t audio = tracks.add({{"type", "audio"}, {"name", "Vox"}});
+	const uint64_t other = tracks.add({{"type", "audio"}, {"name", "Bass"}});
+	tracks.rows(2);
+	const Json audioChannel = tracks.channel(audio).at("id");
+	const Json otherChannel = tracks.channel(other).at("id");
+	const auto checked = [&tracks](uint64_t track, const char* control, const char* state = "checked")
+	{ return hasClass(elements(tracks.app, row(track) + " button." + control).at(0), state); };
+	// The audio track's automation shown, a volume lane with a point, with its own Read on.
+	const Json lane =
+		tracks.app.call("automationLane.add", {{"track", audio}, {"target", {{"type", "volume"}}}}).at("lane").at("id");
+	tracks.app.call("automationPoint.add", {{"lane", lane}, {"points", {{{"position", 0}, {"value", -6.0}}}}});
+	REQUIRE(tracks.app.waitUntil([&] { return checked(audio, "read"); })); // the list has read the lane
+	tracks.click(row(audio) + " .automation-toggle");
+	const std::string laneRead = row(audio) + " .automation-read";
+	const auto laneReads = [&tracks, &laneRead]
+	{
+		const Json found = elements(tracks.app, laneRead);
+		return found.size() == 1 && hasClass(found.at(0), "checked");
+	};
+	REQUIRE(tracks.app.waitUntil(laneReads));
+	tracks.list.select({audio});
+	// The channel in the project that the list shows.
+	const auto shown = [&tracks](const Json& channel)
+	{
+		const Json& channels = tracks.display.project().at("channels");
+		const auto found = std::find_if(
+			channels.begin(), channels.end(), [&channel](const Json& each) { return each.at("id") == channel; });
+		REQUIRE(found != channels.end());
+		return *found;
+	};
+
+	// A change from another client, whose history.changed waits in the binding until the shell steps: the read that
+	// the display sends for it then queues behind a hold, and the clicks' commands behind a second one.
+	tracks.app.call("channel.set", {{"channel", otherChannel}, {"volume", -6.0}});
+	holder.send("test.hold");
+	REQUIRE(holds.waitEntered(1));
+	tracks.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(binding.waiting("project.get") != 0);
+	holder.send("test.hold");
+
+	// Each click shows at once, while the engine has none of them.
+	tracks.click(row(audio) + " button.mute");
+	CHECK(checked(audio, "mute"));
+	tracks.click(row(audio) + " button.solo");
+	CHECK(checked(audio, "solo"));
+	tracks.click(row(other) + " button.solo", {"alt"}); // solo defeat
+	CHECK(checked(other, "solo", "defeated"));
+	CHECK(!checked(other, "solo"));
+	// A second click goes from what the first one shows, not from the project read before it.
+	tracks.click(row(other) + " button.mute");
+	CHECK(checked(other, "mute"));
+	tracks.click(row(other) + " button.mute");
+	CHECK(!checked(other, "mute"));
+	CHECK(binding.waiting("channel.set") == 5);
+	tracks.click(laneRead);
+	CHECK(!laneReads());
+	// The clicks left the track selection as it was: the buttons work on their own rows.
+	CHECK(tracks.list.selection() == std::vector<uint64_t>{audio});
+
+	// The read from before the clicks comes in: the buttons stay as clicked.
+	holds.release(1);
+	REQUIRE(holds.waitEntered(2));
+	REQUIRE(tracks.app.waitUntil([&] { return binding.waiting("project.get") == 0; }));
+	REQUIRE(shown(otherChannel).at("volume").get<double>() == Approx(-6.0));
+	REQUIRE(shown(audioChannel).at("mute") == false);
+	CHECK(checked(audio, "mute"));
+	CHECK(checked(audio, "solo"));
+	CHECK(checked(other, "solo", "defeated"));
+	CHECK(!checked(other, "mute"));
+	CHECK(!laneReads());
+
+	// The engine takes them, and the reads after them agree.
+	holds.release(2);
+	REQUIRE(tracks.app.waitUntil(
+		[&]
+		{
+			return binding.waiting("channel.set") == 0 && binding.waiting("project.get") == 0 &&
+				shown(audioChannel).at("mute") == true && shown(otherChannel).at("soloDefeat") == true;
+		}));
+	const Json audioNow = tracks.channel(audio);
+	const Json otherNow = tracks.channel(other);
+	CHECK(audioNow.at("mute") == true);
+	CHECK(audioNow.at("solo") == true);
+	CHECK(otherNow.at("soloDefeat") == true);
+	CHECK(otherNow.at("mute") == false);
+	CHECK(checked(audio, "mute"));
+	CHECK(checked(audio, "solo"));
+	CHECK(checked(other, "solo", "defeated"));
+	CHECK(!checked(other, "mute"));
+	REQUIRE(tracks.app.waitUntil([&] { return binding.waiting("automationLane.set") == 0; }));
+	CHECK(tracks.app.call("automationLane.list", {{"track", audio}}).at("lanes")[0].at("read") == false);
+	CHECK(!laneReads());
+}
+
+// #1852: what the engine makes of a click wins over what the click showed: an exclusive solo turns the other
+// channels' solo off, and a refused command shows the engine's state again, with no project read after it.
+TEST_CASE("the track list's buttons end with what the engine made of the click, also when it refuses it", "[ui]")
+{
+	test::CommandHolds holds; // declared before the app: its engine's command thread waits in hold()
+	Tracks tracks;
+	const test::ReleaseHolds releaseHolds{holds};
+	tracks.app.engine().registerCommand(
+		{"test.hold", 1, "Waits for the test to release it.", engine::CommandInfo{}.parameters, Json::object(), false},
+		[&holds](engine::CommandContext&) { return holds.hold(); });
+	engine::Client holder(tracks.app.engine(), "holder");
+	tracks.app.call("audio.setDevice", {{"blockSize", 64}, {"inputChannels", 0}});
+	const uint64_t audio = tracks.add({{"type", "audio"}});
+	const uint64_t other = tracks.add({{"type", "audio"}});
+	const uint64_t synth =
+		tracks.add({{"type", "instrument"}, {"instrument", "testSynth"}, {"timeBase", "linear"}, {"name", "Synth"}});
+	const Json part = tracks.app.call("midiPart.add", {{"track", synth}, {"position", 0}, {"length", 4800}});
+	tracks.app.call("note.add",
+		{{"part", part.at("part").at("id")},
+			{"notes", {{{"position", 0}, {"length", 4800}, {"pitch", 60}, {"velocity", 0.8}}}}});
+	tracks.app.call("channel.set", {{"channel", tracks.channel(other).at("id")}, {"solo", true}});
+	tracks.rows(3);
+	const auto checked = [&tracks](uint64_t track, const char* control)
+	{ return hasClass(elements(tracks.app, row(track) + " button." + control).at(0), "checked"); };
+	REQUIRE(tracks.app.waitUntil([&] { return checked(other, "solo"); }));
+
+	// Exclusive solo (Ctrl): the clicked button shows at once, the other channel's solo goes off with the engine.
+	holder.send("test.hold");
+	REQUIRE(holds.waitEntered(1));
+	tracks.click(row(audio) + " button.solo", {"ctrl"});
+	CHECK(checked(audio, "solo"));
+	holds.release(1);
+	REQUIRE(tracks.app.waitUntil([&] { return !checked(other, "solo"); }));
+	CHECK(checked(audio, "solo"));
+	CHECK(tracks.channel(other).at("solo") == false);
+	CHECK(tracks.channel(audio).at("solo") == true);
+
+	// A frozen track can't record: the click shows Record Enable until the engine refuses it, then the engine's off,
+	// with no project read after it. A Mute the engine took meanwhile stays until the read after it comes.
+	const std::chrono::seconds rendering(60);
+	tracks.app.call("track.freeze", {{"tracks", {synth}}});
+	REQUIRE(
+		tracks.app.waitUntil([&] { return hasClass(elements(tracks.app, row(synth)).at(0), "frozen"); }, rendering));
+	ui::EngineBinding& binding = tracks.app.appUi().binding();
+	const Json audioChannel = tracks.channel(audio).at("id");
+	REQUIRE(tracks.app.waitUntil([&] { return binding.waiting("project.get") == 0; }));
+	holder.send("test.hold");
+	REQUIRE(holds.waitEntered(2));
+	tracks.click(row(audio) + " button.mute");
+	tracks.click(row(synth) + " button.record");
+	CHECK(checked(audio, "mute"));
+	CHECK(checked(synth, "record"));
+	holder.send("test.hold"); // the read after the mute waits behind it
+	holds.release(2);
+	REQUIRE(holds.waitEntered(3));
+	REQUIRE(tracks.app.waitUntil([&] { return binding.waiting("channel.set") == 0; }));
+	CHECK(!checked(synth, "record"));
+	CHECK(checked(audio, "mute"));
+	const auto shownMute = [&tracks, &audioChannel]
+	{
+		for (const Json& channel : tracks.display.project().at("channels"))
+			if (channel.at("id") == audioChannel)
+				return channel.at("mute").get<bool>();
+		return false;
+	};
+	CHECK(!shownMute());
+	holds.release(3);
+	REQUIRE(tracks.app.waitUntil(shownMute));
+	CHECK(checked(audio, "mute"));
+	CHECK(!checked(synth, "record"));
+	CHECK(tracks.channel(synth).at("recordEnable") == false);
 }
 
 TEST_CASE("tracks are selected with clicks and the arrow keys, renamed with a double click and moved by a drag", "[ui]")

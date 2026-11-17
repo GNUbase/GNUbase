@@ -566,8 +566,7 @@ namespace gnubase::engine
 				"now, and turns musical mode on, so that they play as before and follow tempo changes from then on. "
 				"The events' tracks, or with allTracks every track, become musical first, keeping their time. A clip "
 				"in musical mode already is refused. Events of one clip that play its frame 0 at the same time, such "
-				"as "
-				"the pieces of a split recording, keep sharing it; at another placement they get a copy of the clip "
+				"as the pieces of a split recording, keep sharing it; at another placement they get a copy of the clip "
 				"with a definition of its own. The clip stays with the references to it that aren't given, or else "
 				"with the first placement. Repeated event ids are ignored. Returns the clips.",
 				objectSchema({{"events", ids}, {"allTracks", boolean}}, {"events"}),
