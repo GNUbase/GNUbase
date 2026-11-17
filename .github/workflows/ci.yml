@@ -325,9 +325,10 @@ jobs:
       matrix:
         include:
           # tests: how many tests run at a time. At four, sanitized exports, freezes and analyses kept the engine busy
-          # past its client's 10 s reply limit on slow runners; at two, tsan's tests took 19 min instead of about 40.
-          - { name: asan-ubsan, sanitizers: "address,undefined", cache: 1300M, tests: 2 }
-          - { name: tsan, sanitizers: thread, cache: 1G, tests: 2 }
+          # past its client's 10 s reply limit on slow runners. Three leaves one of the runner's four cores for the
+          # tests' own threads; at two, the jobs took 50 to 80 min in Nov 2026.
+          - { name: asan-ubsan, sanitizers: "address,undefined", cache: 1300M, tests: 3 }
+          - { name: tsan, sanitizers: thread, cache: 1G, tests: 3 }
     env:
       CCACHE_MAXSIZE: ${{ matrix.cache }}
       ASAN_OPTIONS: detect_leaks=1
