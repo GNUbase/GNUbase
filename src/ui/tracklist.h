@@ -162,9 +162,17 @@ namespace gnubase::ui
 		Rml::Element* rowElement(uint64_t track) const;
 		const engine::Json* channelOf(const Row& row) const;
 		std::vector<std::string> controlsOf(const Row& row) const;
-		// A click on a track control; solo takes Ctrl (exclusive) and Alt (solo defeat), see soloClick.
-		void control(
-			const Row& row, const std::string& name, bool exclusive = false, bool defeat = false, bool shift = false);
+		// A click on a track control, the button that was clicked; solo takes Ctrl (exclusive) and Alt (solo defeat),
+		// see soloClick. A switch goes from what its button shows and shows what it sends at once (#1852).
+		void control(Rml::Element& button, const Row& row, const std::string& name, bool exclusive = false,
+			bool defeat = false, bool shift = false);
+		struct Clicked; // below, with m_clicked
+		// Shows a switch's click on its button, keeps it there while its command is out, and returns the command's
+		// done: a refused command shows the engine's state again.
+		std::function<void(const engine::Result&)> clicked(
+			Rml::Element& button, uint64_t track, const std::string& name, bool checked, bool defeated = false);
+		// The click a switch shows instead of the display's project, or null once the project has caught up with it.
+		const Clicked* click(uint64_t track, const std::string& name) const;
 		// A marker chosen in a marker track's Locate, Cycle or Zoom list.
 		void markerChange(Rml::Element& control, const std::string& value);
 		// A ruler track's time format chosen or time offset typed (reference manual p. 159).
@@ -211,8 +219,9 @@ namespace gnubase::ui
 		// Map to Chord Track (map-to-chord-track.rml) for MIDI parts.
 		void openChordDialog(const char* file, std::vector<uint64_t> parts);
 		void closedChordDialog(Rml::Event& event);
-		// Runs the commands as one undo step.
-		void transaction(const std::string& description, engine::Json commands);
+		// Runs the commands as one undo step; done, if any, gets its result.
+		void transaction(const std::string& description, engine::Json commands,
+			std::function<void(const engine::Result&)> done = {});
 		// Track versions (docs/features/track-versions.md): the selected audio, instrument and MIDI tracks, and the
 		// first one's versions in the Project menu's Track Versions, where a click activates one on them.
 		std::vector<uint64_t> versioned() const;
@@ -275,6 +284,18 @@ namespace gnubase::ui
 		std::set<uint64_t> m_dragTracks;          // the tracks whose heights it set; empty unless m_drag is Height
 		uint64_t m_dropParent = 0;                // where a move drops
 		uint64_t m_dropBefore = 0;
+
+		// What the rows' switches show while their commands are out (#1852), by track (or automation lane) and control:
+		// a project read from before a command doesn't take its click back. A click stays until the display has a read
+		// that was handed on after its last command's answer, which shows what the engine made of it.
+		struct Clicked
+		{
+			int out = 0;           // its commands not answered yet
+			uint64_t answered = 0; // when the last one's answer was handed on (EngineBinding::handed)
+			bool checked = false;
+			bool defeated = false; // solo defeat
+		};
+		std::map<std::pair<uint64_t, std::string>, Clicked> m_clicked;
 
 		std::map<std::string, std::function<void()>> m_actions;
 		std::function<void(uint64_t, bool)> m_onMarker;
