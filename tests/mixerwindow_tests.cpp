@@ -1117,7 +1117,7 @@ namespace
 		std::vector<ui::Subscription> queries;
 		for (const char* query : {"editor.inPlace", "editor.get", "event.get"})
 			queries.push_back(binding.onResult(query, [&result](const engine::Result&) { ++result.queries; }));
-		Rml::Context& context = app.shell().find(window.value_or(0))->context();
+		Rml::Context& context = window ? app.shell().find(*window)->context() : app.main().context();
 		const Json box = element(app, window, selector).at("box");
 		const int x = box.at("x").get<int>() + (box.at("width").get<int>() / 2);
 		const int y = box.at("y").get<int>() + (box.at("height").get<int>() / 2);
