@@ -98,21 +98,7 @@ namespace
 			return run(client, "clip.add", {{"media", added.at("id")}}).at("clip").at("id").get<uint64_t>();
 		}
 
-		// Waits until the peak worker is done with every media file before a test moves or removes one: Windows
-		// can't while the worker has it open.
-		void settle()
-		{
-			const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(20);
-			for (;;)
-			{
-				const Json statuses = run(client, "media.peakStatus").at("media");
-				if (std::none_of(statuses.begin(), statuses.end(), [](const Json& status)
-						{ return status.at("status") == "pending" || status.at("status") == "generating"; }))
-					return;
-				REQUIRE(std::chrono::steady_clock::now() < until);
-				std::this_thread::sleep_for(std::chrono::milliseconds(5));
-			}
-		}
+		void settle() { gnubase::test::settlePeaks(client); }
 
 		uint64_t mediaOf(uint64_t clip)
 		{

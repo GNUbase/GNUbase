@@ -8,6 +8,7 @@
 #include "engine/processors/sampler.h"
 #include "engine/time/tempomap.h"
 #include "platform/log.h"
+#include "testutils/heldjob.h"
 #include "testutils/stopandjoin.h"
 #include "testutils/testutils.h"
 
@@ -898,12 +899,27 @@ namespace
 		const Result result = client.call(command, std::move(parameters));
 		INFO(command << " failed: " << result.error);
 		REQUIRE(result.ok());
+		if (result.value.contains("job") &&
+			(command == "track.freeze" || command == "track.renderInPlace" || command == "mixdown.export"))
+		{
+			const Json job = gnubase::test::waitForJob(client, result.value.at("job").at("id").get<uint64_t>());
+			INFO(job.dump());
+			REQUIRE(job.at("state") == "done");
+			return job.at("result");
+		}
 		return result.value;
 	}
 
 	std::string reject(Client& client, const std::string& command, Json parameters)
 	{
 		const Result result = client.call(command, std::move(parameters));
+		if (result.ok() && result.value.contains("job"))
+		{
+			const Json job = gnubase::test::waitForJob(client, result.value.at("job").at("id").get<uint64_t>());
+			INFO(job.dump());
+			REQUIRE(job.at("state") == "failed");
+			return job.at("error").get<std::string>();
+		}
 		INFO(command << " succeeded: " << result.value.dump());
 		REQUIRE(!result.ok());
 		return result.error;
@@ -1229,7 +1245,10 @@ TEST_CASE("a track preset shares the project's file, keeps the files it extracte
 		return run(client, "clip.add", {{"media", media.at("media").at("id")}}).at("clip").at("id");
 	};
 	const auto save = [&](const Json& sampler, const std::string& name)
-	{ run(client, "track.savePreset", {{"tracks", Json::array({sampler.at("track").at("id")})}, {"name", name}}); };
+	{
+		return run(
+			client, "track.savePreset", {{"tracks", Json::array({sampler.at("track").at("id")})}, {"name", name}});
+	};
 	// Loads the preset onto a new sampler track and returns the media file it plays.
 	const auto load = [&](const std::string& name)
 	{
@@ -1273,12 +1292,14 @@ TEST_CASE("a track preset shares the project's file, keeps the files it extracte
 		fs::u8path(load("DC").at("path").get<std::string>()), fs::u8path(later.at("path").get<std::string>())));
 
 	// A sample whose file is missing doesn't keep the track from being saved: the preset refers to the file where it
-	// was.
+	// was, and the result lists it (#1736).
 	run(client, "project.new");
 	const fs::path gone = fs::absolute(settings.path() / "c" / "gone.wav").lexically_normal();
 	const Json missing = run(client, "sampler.create", {{"clip", clipOf(gone, 0.5f, 480)}});
 	fs::remove(gone);
-	save(missing, "Gone");
+	const Json saved = save(missing, "Gone");
+	REQUIRE(saved.at("missing").size() == 1);
+	CHECK(fs::u8path(saved.at("missing")[0].get<std::string>()) == gone);
 	run(client, "project.new");
 	CHECK(fs::u8path(load("Gone").at("path").get<std::string>()) == gone);
 }
@@ -1890,4 +1911,25 @@ TEST_CASE("an offline render waits for a sample whose file takes long to read", 
 	CHECK(std::none_of(
 		log.begin(), log.end(), [](const Json& entry) { return entry.at("command") == "audio.updateSamples"; }));
 	CHECK(std::any_of(log.begin(), log.end(), [](const Json& entry) { return entry.at("command") == "sampler.load"; }));
+}
+
+TEST_CASE("cancelling a background export does not wait for a sampler read", "[integration]")
+{
+	Session session;
+	Client& client = session.client;
+	const auto track = run(client, "sampler.create").at("track").at("id").get<ObjectId>();
+	addNotes(client, track, {{60, 0, 1}});
+	HeldRead held(session.engine, session.file);
+	run(client, "sampler.load", {{"track", track}, {"clip", session.clip}});
+	REQUIRE(held.reading());
+	const gnubase::test::TempDir out;
+	const Result started = client.call(
+		"mixdown.export", {{"folder", out.path().u8string()}, {"name", "mix"}, {"start", 0}, {"end", 4800}});
+	REQUIRE(started.ok());
+	const auto id = started.value.at("job").at("id").get<uint64_t>();
+	run(client, "job.cancel", {{"job", id}});
+	const Json finished = gnubase::test::waitForJob(client, id);
+	CHECK(finished.at("state") == "cancelled");
+	CHECK(fs::directory_iterator(out.path()) == fs::directory_iterator());
+	CHECK(held.reads().empty());
 }

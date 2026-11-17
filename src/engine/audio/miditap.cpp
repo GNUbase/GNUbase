@@ -315,7 +315,8 @@ namespace gnubase::engine
 				"drum editor auditions sounds so; reference manual p. 1236). direct: the messages go straight to the "
 				"track's instrument as they are, past its drum map, Live Input, its input transformer, its MIDI "
 				"modifiers and its MIDI effects, and aren't recorded either (the drum machine panel plays a pad so, "
-				"p. 942). mpe: the messages play through this MPE "
+				"p. 942); with drumSounds too, no drum map maps their keys, but the notes reach the instrument marked "
+				"as drum sounds' pitches. mpe: the messages play through this MPE "
 				"input setup (midi.setPort mpe; what it leaves out has its default), as a MIDI input port with it "
 				"plays them: on the notes' channels pitch bend, channel pressure and CC 74 reach the track as its "
 				"notes' per-note expression (docs/features/note-expression.md). The track keeps the state of those "
@@ -346,7 +347,7 @@ namespace gnubase::engine
 				require(messages.size() <= MidiTap::g_size, "at most 4096 messages at a time");
 				const bool drumSounds = parameters.value("drumSounds", false);
 				const bool direct = parameters.value("direct", false);
-				const uint32_t mpe =
+				const uint64_t mpe =
 					parameters.contains("mpe") ? midi::MpeSetup::fromJson(parameters.at("mpe")).pack() : 0;
 				std::vector<MidiTap::Message> injected;
 				injected.reserve(messages.size());
@@ -446,8 +447,9 @@ namespace gnubase::engine
 				"setting midi.retrospectiveEvents, by default 10000 events), as one MIDI part, through recording.add "
 				"with the new parts mode and the user settings midi.snapPartsToBars and midi.recordFilter. What "
 				"came during playback goes where it played; what came in stop mode goes at the project cursor, with "
-				"its timing. Input in stop mode after a pause of over 30 s or on the next audio device starts the "
-				"buffer afresh, and so does input after an insert. It is no recording of the chord track: it makes no "
+				"its timing. Input after an insert starts the buffer afresh, and so does input in stop mode while "
+				"the buffer holds input in stop mode, when it comes over 30 s after the last input, from playback or "
+				"not, or on the next audio device. It is no recording of the chord track: it makes no "
 				"chord events. Returns what recording.add returns.",
 				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["track"],
 					"properties": {"track": {"type": "integer"}}})"),

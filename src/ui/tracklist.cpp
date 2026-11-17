@@ -596,6 +596,32 @@ namespace gnubase::ui
 		if (m_versionsMenu != nullptr)
 			m_versionsMenu->AddEventListener(Rml::EventId::Click, this);
 
+		const auto renderState = [this](const Json& tracks, bool rendering, uint64_t job)
+		{
+			if (rendering)
+				m_renderJobs[job] = tracks.get<std::set<uint64_t>>();
+			else
+				m_renderJobs.erase(job);
+			m_rendering.clear();
+			for (const auto& [id, locked] : m_renderJobs)
+				m_rendering.insert(locked.begin(), locked.end());
+			showState();
+		};
+		m_subscriptions.push_back(m_binding.on("track.renderingChanged",
+			[renderState](const engine::Event& event)
+			{
+				renderState(event.data.at("tracks"), event.data.at("rendering").get<bool>(),
+					event.data.at("job").get<uint64_t>());
+			}));
+		m_binding.send("track.renderLocks", Json::object(),
+			[renderState, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
+			{
+				if (alive.expired() || !result.ok())
+					return;
+				for (const auto& lock : result.value.at("locks"))
+					renderState(lock.at("tracks"), true, lock.at("job").get<uint64_t>());
+			});
+
 		m_subscriptions.push_back(m_binding.on("settings.changed",
 			[this](const engine::Event& event)
 			{
@@ -1031,6 +1057,7 @@ namespace gnubase::ui
 			const Json& track = tracks[static_cast<size_t>(i)];
 			setClass(*element, "disabled", !track.at("enabled").get<bool>());
 			setClass(*element, "frozen", !track.value("frozen", Json()).is_null());
+			setClass(*element, "rendering", m_rendering.count(row.id) != 0);
 			const bool expanded = !folded(row.id);
 			if (expanded != element->HasAttribute("expanded"))
 			{
@@ -1046,11 +1073,17 @@ namespace gnubase::ui
 				const std::string value = color.is_string() ? color.get<std::string>() : std::string();
 				if (strip->GetAttribute<Rml::String>("color", "") != value)
 				{
-					strip->SetAttribute("color", value);
+					// Only a strip with a color has the attribute, which the themes select (#1314).
 					if (value.empty())
+					{
+						strip->RemoveAttribute("color");
 						strip->RemoveProperty("background-color");
+					}
 					else
+					{
+						strip->SetAttribute("color", value);
 						strip->SetProperty("background-color", value);
+					}
 				}
 			}
 			// The name, unless it's being typed.

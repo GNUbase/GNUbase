@@ -115,6 +115,7 @@ namespace gnubase::ui
 			// open keep it inside the window (OnUpdate).
 			void open(Rml::Vector2f at)
 			{
+				m_button.reset();
 				addArrows(*this);
 				SetClass("open", true);
 				m_at = at;
@@ -130,6 +131,14 @@ namespace gnubase::ui
 			{
 				open(button.GetAbsoluteOffset(Rml::BoxArea::Border) +
 					Rml::Vector2f(0.0F, button.GetBox().GetSize(Rml::BoxArea::Border).y));
+				m_button = button.GetObserverPtr();
+			}
+
+			// Whether the menu is open under the button: of the buttons that share a menu, such as the list editor's
+			// cells, a click on another one opens it under that one (#1688).
+			bool openedUnder(const Rml::Element& button) const
+			{
+				return IsClassSet("open") && m_button.get() == &button;
 			}
 
 			// Closes the menu and the submenus that keys opened in it. The focus doesn't stay on a hidden item: it goes
@@ -387,8 +396,9 @@ namespace gnubase::ui
 
 			// Where open() opened the menu and, once it settled, where it is; until it closes.
 			std::optional<Rml::Vector2f> m_at;
-			bool m_settling = false; // no input came since it opened
-			bool m_resized = false;  // since the last update
+			Rml::ObserverPtr<Rml::Element> m_button; // what it opened under
+			bool m_settling = false;                 // no input came since it opened
+			bool m_resized = false;                  // since the last update
 		};
 
 		Menu* menuOf(const Rml::Element& button)
@@ -788,10 +798,12 @@ namespace gnubase::ui
 						button != nullptr && !button->HasAttribute("disabled"))
 						if (Menu* menu = menuOf(*button))
 						{
-							if (menu->IsClassSet("open"))
-								menu->close();
-							else
+							// A click toggles the menu under its button. A text field being edited (.editing) keeps
+							// its clicks: it doesn't open the menu (#1688).
+							if (!menu->openedUnder(*button) && !button->IsClassSet("editing"))
 								menu->openUnder(*button);
+							else if (menu->IsClassSet("open"))
+								menu->close();
 						}
 					break;
 				case Rml::EventId::Keydown:

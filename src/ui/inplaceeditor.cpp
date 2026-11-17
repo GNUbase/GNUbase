@@ -176,7 +176,7 @@ namespace gnubase::ui
 			addPartControls(track, editor);
 			m_display.setInPlaceTracks(tracks());
 		}
-		editor.keys->show(m_display.project(), view);
+		editor.keys->show(m_display.project(), view, m_display.read());
 		showPartControls(editor);
 		place(track, editor);
 	}

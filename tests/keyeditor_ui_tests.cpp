@@ -927,6 +927,15 @@ TEST_CASE("a resize released outside the key editor ends without its effect", "[
 	f.drag(f.at(3.95, 60), f.at(6, 60));
 	REQUIRE(f.app.waitUntil([&] { return f.note(ids[0]).at("length") == 6 * g_sixteenth; }));
 	CHECK_FALSE(f.has(".key-editor", "in-gesture"));
+	// The note keeps the resize's preview until the engine's change arrives, so settle() alone can pass before it, and
+	// the change arriving during the next resize puts the note back at its length. The info line shows the editor's
+	// notes: once it has the new end, the change has arrived.
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			return f.elements(".key-editor-info textdisplay[field=end]").at(0).at("attributes").at("value") ==
+				"1.2.3.0";
+		}));
 	f.settle();
 	const double before = width();
 	// At the note's end to the right, then released over the editor window's toolbar: the note keeps its length.
@@ -1152,7 +1161,7 @@ TEST_CASE("a right click in the note display opens the toolbox, by the setting a
 	CHECK(!toolbox());
 	rightClick(f.at(8, 70), {"shift"});
 	REQUIRE(toolbox());
-	CHECK(f.elements("#key-editor-toolbox > menuitem").size() == 7);
+	CHECK(f.elements("#key-editor-toolbox > menuitem").size() == 8); // with the mute tool (#1684)
 	CHECK(f.elements("#key-editor-toolbox > menuitem[checked]").at(0).at("attributes").at("key-tool") ==
 		"objectSelection");
 	// A tool in it chooses the tool, as the toolbar does, and closes it.
@@ -1380,9 +1389,13 @@ TEST_CASE(
 	CHECK(std::abs(points().at(2).at("value").get<double>() - 0.1) <= 0.05);
 	CHECK(std::abs(points().back().at("value").get<double>() - 0.9) <= 0.05);
 	CHECK(!f.has(".key-expression-editor", "off"));
+	// Once the editor shows the drag, and then the undo: it reads the project one read at a time, so that the step
+	// counts below can't be met by an older read, and the erase below goes to the points the note has (#1784).
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-expression-area .key-expression-step").size() >= 4; }));
 	// One undo step brings back the points before the drag.
 	f.app.call("history.undo");
 	REQUIRE(f.app.waitUntil([&] { return points().size() == 2; }));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-expression-area .key-expression-step").size() == 2; }));
 	f.app.call("history.redo");
 	REQUIRE(f.app.waitUntil([&] { return points().size() >= 4; }));
 	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-expression-area .key-expression-step").size() >= 4; }));
@@ -1474,6 +1487,13 @@ TEST_CASE("the expression editor opens on the double-clicked note and edits the 
 				Json::array({{{"part", f.part}, {"note", first}}, {{"part", otherPart}, {"note", middle}},
 					{{"part", f.part}, {"note", last}}})}});
 	REQUIRE(f.app.waitUntil([&] { return f.selection().size() == 3; }));
+	// Once the editor has the view too: before, the double click would select or delete the note it is on.
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			return f.elements(".key-note.selected").size() == 3 &&
+				f.has(".key-input[setting=expressionDoubleClick]", "checked");
+		}));
 	f.app.shell().step(std::chrono::milliseconds(0));
 
 	// A double click on a selected note opens the editor on all of them (reference manual p. 1308): from the first
@@ -1515,18 +1535,25 @@ TEST_CASE("the expression editor opens on the double-clicked note and edits the 
 		REQUIRE(points(part, id).size() == 1);
 		CHECK(near(points(part, id).at(0).at("value"), -24.0, 2.0));
 	}
+	// The editor reads the project after each change, one read at a time. Until it shows the drag, it may still show
+	// the read from before it, whose one point looks like the one the undo leaves; the drag's read could then come
+	// right before the erase below, which would find no point at the mouse and delete none (#1784).
+	const std::string steps = ".key-expression-area .key-expression-step";
+	REQUIRE(f.app.waitUntil([&] { return f.elements(steps).size() == 3; }));
 	// The notes of both parts change in one undo step.
 	f.app.call("history.undo");
 	REQUIRE(f.app.waitUntil([&] { return points(f.part, last).empty(); }));
 	CHECK(points(f.part, first).empty());
 	REQUIRE(points(otherPart, middle).size() == 1);
 	CHECK(near(points(otherPart, middle).at(0).at("value"), 24.0, 2.0));
-	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-expression-area .key-expression-step").size() == 1; }));
+	REQUIRE(f.app.waitUntil([&] { return f.elements(steps).size() == 1; }));
 
 	// The erase tool's click deletes the point within a few dp of it.
 	f.tool("erase");
 	f.click(area(0.5, 0.5));
 	REQUIRE(f.app.waitUntil([&] { return points(otherPart, middle).empty(); }));
+	// Once the editor shows it: until then its copy of the note has the point, which the draw below would send back.
+	REQUIRE(f.app.waitUntil([&] { return f.elements(steps).empty(); }));
 	// Volume goes from 0 to 4.
 	f.app.call("editor.set", {{"editor", "window"}, {"expressionType", "volume"}});
 	REQUIRE(f.app.waitUntil([&] { return f.elements(".key-expression-type").at(0).at("text") == "Volume"; }));
@@ -1827,4 +1854,99 @@ TEST_CASE("the expression editor stays centered on its note as the pitches zoom"
 		CHECK(!f.has(".key-expression-editor", "off"));
 		CHECK(centered());
 	}
+}
+
+TEST_CASE("the lower zone's key editor at its default size gives the note display more room than the controller lanes, "
+		  "at dp ratios 1 and 2",
+	"[ui]")
+{
+	// The lower zone at its default 240 dp, with the Velocity lane and the footer below the note display: the lanes
+	// give way first, down to their footer, and their list scrolls (#1775). The window is 1024 x 768 pixels, as large
+	// as CI's Linux screen lets it be: at a dp ratio of 1 the toolbar is one row, the note display the larger part of
+	// the editor, and in a lower zone of 400 dp the lanes keep their whole height; at 2, 512 x 384 dp, the toolbar
+	// wraps and leaves less than the note display's 40% and the lanes, so the lanes are down to their footer.
+	for (const float ratio : {1.0F, 2.0F})
+	{
+		INFO("dp ratio " << ratio);
+		const auto px = [ratio](double dp) { return dp * ratio; };
+		Fixture f({1024, 768});
+		f.app.call("editor.close", {{"editor", "window"}});
+		REQUIRE(f.app.waitUntil([&] { return f.app.appUi().editorWindow() == nullptr; }));
+		f.app.setDpRatio(ratio);
+		f.app.appUi().showProject();
+		f.window = f.app.main().id();
+		f.app.call("editor.open", {{"editor", "lower"}, {"parts", Json::array({f.part})}});
+		REQUIRE(f.app.waitUntil([&] { return f.elements("#lower-zone .controller-lane").size() == 1; }));
+		const auto box = [&f](const std::string& selector) { return f.box("#lower-zone " + selector); };
+		const auto height = [&box](const std::string& selector) { return box(selector).at("height").get<double>(); };
+		const auto bottom = [&box](const std::string& selector)
+		{
+			const Json found = box(selector);
+			return found.at("y").get<double>() + found.at("height").get<double>();
+		};
+		const auto settle = [&f]
+		{
+			f.app.shell().step(std::chrono::milliseconds(0));
+			f.app.shell().step(std::chrono::milliseconds(0));
+		};
+		settle();
+		const double editor = height(".key-editor");
+		const double body = height(".key-editor-body");
+		const double lanes = height(".controller-lanes");
+		const double room =
+			editor - height(".key-editor-toolbar") - height(".key-editor-info") - height(".editor-parts");
+		INFO("editor " << editor << ", note display " << body << ", controller lanes " << lanes << ", room " << room);
+		// The note display has its 40%, or the lanes are down to their footer and it has the rest.
+		CHECK(std::abs(body + lanes - room) <= 1.0);
+		CHECK(((body >= (0.4 * editor) - 1.0) || (lanes <= px(22) + 0.5)));
+		// The footer stays whole inside the editor.
+		CHECK(height(".controller-lanes-footer") >= px(22) - 0.5);
+		CHECK(bottom(".controller-lanes-footer") <= bottom(".key-editor") + 0.5);
+		if (ratio > 1.0F)
+		{
+			CHECK(lanes <= px(22) + 0.5);
+			continue;
+		}
+		CHECK(body >= editor / 3);
+		CHECK(body > lanes);
+
+		f.app.appUi().docking().setSize("project", "lower", 400.0);
+		REQUIRE(f.app.waitUntil([&] { return height(".key-editor") > editor + px(100); }));
+		settle();
+		CHECK(height(".controller-lane") >= px(64) - 0.5);
+		CHECK(height(".controller-lane-list") >= px(64) - 0.5);
+		CHECK(bottom(".controller-lanes-footer") <= bottom(".key-editor") + 0.5);
+	}
+}
+
+TEST_CASE("the editor window's key editor and the in-place editor keep their controller lanes' height", "[ui]")
+{
+	// The lanes give way only in a low editor (#1775): in the editor window of 1200 x 800 dp the note display has its
+	// 40% and more, and the lane its 64 dp. The in-place editor keeps the lane's height also with its toolbar and info
+	// line shown, where the note display gets what is left.
+	Fixture f;
+	f.app.setDpRatio(1.0F);
+	REQUIRE(f.app.waitUntil([&] { return f.elements(".controller-lane").size() == 1; }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	const auto height = [&f](const std::string& selector) { return f.box(selector).at("height").get<double>(); };
+	CHECK(height(".key-editor-body") >= (0.4 * height(".key-editor")) - 0.5);
+	CHECK(height(".controller-lane") >= 63.5);
+
+	f.app.call("editor.close", {{"editor", "window"}});
+	REQUIRE(f.app.waitUntil([&] { return f.app.appUi().editorWindow() == nullptr; }));
+	f.app.appUi().showProject();
+	f.window = f.app.main().id();
+	f.app.call("editor.inPlace", {{"tracks", {f.track}}, {"open", true}});
+	const std::string editor = ".in-place-editor[track=\"" + std::to_string(f.track) + "\"]";
+	f.app.call("editor.set", {{"editor", "inPlace:" + std::to_string(f.track)}, {"lanes", {{{"type", "velocity"}}}}});
+	REQUIRE(f.app.waitUntil([&] { return f.elements(editor + " .controller-lane").size() == 1; }));
+	REQUIRE(
+		f.app.waitUntil([&] { return f.elements(editor + " .in-place-toolbar-toggle").at(0).at("visible") == true; }));
+	f.click(of(editor + " .in-place-toolbar-toggle"));
+	REQUIRE(f.app.waitUntil([&] { return f.has(editor, "toolbar-shown"); }));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(height(editor + " .controller-lane") >= 63.5);
+	CHECK(height(editor + " .controller-lane-list") >= 63.5);
 }

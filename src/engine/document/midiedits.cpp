@@ -14,6 +14,7 @@
 #include <cmath>
 #include <cstdint>
 #include <iterator>
+#include <map>
 #include <optional>
 #include <string>
 #include <utility>
@@ -103,6 +104,7 @@ namespace gnubase::engine
 				note.velocityVariance = item.value("velocityVariance", note.velocityVariance);
 				require(std::abs(note.velocityVariance) <= 1.0, name + ".velocityVariance must be -1 to 1");
 				note.articulations = item.value("articulations", note.articulations);
+				note.mutedArticulations = mutedArticulationsFrom(item, note, name);
 				if (item.contains("expressions"))
 					note.expressions = expressionsFromJson(item.at("expressions"), name + ".expressions");
 				notes.push_back(note);
@@ -113,6 +115,69 @@ namespace gnubase::engine
 			{
 				part.notes[note.id] = note;
 				result.push_back(toJson(note));
+			}
+			context.emit("note.changed", {{"part", part.id}, {"notes", result}});
+			return {{"notes", result}};
+		}
+
+		// The key editor's expression editor (#1512, #1795): each change replaces the note's points of one expression
+		// from `from` to `to` with its points, so that an edit sent before the client saw the last one keeps it.
+		Json replaceExpression(Project& project, CommandContext& context)
+		{
+			const Json& parameters = context.parameters();
+			MidiPart& part = findPart(project, parameters);
+			const auto type = parameters.at("type").get<std::string>();
+			const Json& items = parameters.at("notes");
+			std::map<ObjectId, Note> notes; // as the changes so far leave them, also a note named twice
+			std::vector<ObjectId> order;
+			for (size_t i = 0; i < items.size(); ++i)
+			{
+				const Json& item = items[i];
+				const std::string name = "notes[" + std::to_string(i) + "]";
+				const Note& current = changed(part.notes, item, name, "note");
+				const auto from = item.at("from").get<time::Ticks>();
+				const auto to = item.at("to").get<time::Ticks>();
+				require(to >= from, name + ".to must not be before its from");
+				Json points = Json::array();
+				for (size_t j = 0; j < item.at("points").size(); ++j)
+				{
+					const Json& each = item.at("points")[j];
+					const auto position = each.at("position").get<time::Ticks>();
+					require(position >= from && position <= to,
+						name + ".points[" + std::to_string(j) + "].position must be from " + std::to_string(from) +
+							" to " + std::to_string(to));
+					points.push_back({{"type", type}, {"position", position}, {"value", each.at("value")}});
+				}
+				const std::vector<ExpressionPoint> added = expressionsFromJson(points, name + ".points");
+				auto [found, inserted] = notes.try_emplace(current.id, current);
+				if (inserted)
+					order.push_back(current.id);
+				std::vector<ExpressionPoint>& expressions = found->second.expressions;
+				expressions.erase(std::remove_if(expressions.begin(), expressions.end(),
+									  [&](const ExpressionPoint& point)
+									  {
+										  return g_expressionNames.at(static_cast<size_t>(point.type)) == type &&
+											  point.position >= from && point.position <= to;
+									  }),
+					expressions.end());
+				expressions.insert(expressions.end(), added.begin(), added.end());
+				std::stable_sort(expressions.begin(), expressions.end(),
+					[](const ExpressionPoint& a, const ExpressionPoint& b) { return a.position < b.position; });
+			}
+			// Changed only once every item is valid, and only the notes whose points changed.
+			Json result = Json::array();
+			for (const ObjectId id : order)
+			{
+				Note& note = part.notes.at(id);
+				if (notes.at(id).expressions == note.expressions)
+					continue;
+				note.expressions = std::move(notes.at(id).expressions);
+				result.push_back(toJson(note));
+			}
+			if (result.empty())
+			{
+				context.markUnchanged(); // no change, so no modified project without an undo step
+				return {{"notes", result}};
 			}
 			context.emit("note.changed", {{"part", part.id}, {"notes", result}});
 			return {{"notes", result}};
@@ -390,7 +455,7 @@ namespace gnubase::engine
 			case ControllerType::SysEx:
 				return key == "data";
 			case ControllerType::Articulation:
-				return key == "articulation" || key == "reset";
+				return key == "articulation" || key == "reset" || key == "muted";
 			}
 			return false;
 		}
@@ -418,6 +483,9 @@ namespace gnubase::engine
 						require(field.key() == "id" || field.key() == "position" || field.key() == "type" ||
 								uses(*type, field.key()),
 							name + "." + field.key() + " doesn't apply to " + controllerTypeName(*type) + " events");
+				// A muted direction made another type isn't muted.
+				if (type != ControllerType::Articulation && !item.contains("muted"))
+					merged.erase("muted");
 				Controller controller = controllerFrom(merged, name);
 				controller.id = current.id;
 				controllers.push_back(std::move(controller));
@@ -456,7 +524,8 @@ namespace gnubase::engine
 			{"note.set", 1,
 				"Changes notes of a MIDI part: each change names a note by id and gives what changes, position and "
 				"length in ticks, pitch 0-127, velocity 0-1, release velocity 0-1, MIDI channel 0-15, play probability "
-				"0-1, velocity variance -1 to 1, articulations, the attributes it has, or expressions, which replace "
+				"0-1, velocity variance -1 to 1, articulations, the attributes it has, mutedArticulations, those of "
+				"them that are muted (an attribute that goes is no longer muted), or expressions, which replace "
 				"its expression points (see note.add). The points move with the note's start, but for a start that "
 				"moves while the end stays: then they stay where they are, and the values at the new start become "
 				"its initial ones. Returns the changed notes.",
@@ -465,9 +534,45 @@ namespace gnubase::engine
 						{"releaseVelocity", number}, {"channel", integer}, {"probability", number},
 						{"velocityVariance", number},
 						{"articulations", {{"type", "array"}, {"items", {{"type", "string"}}}}},
+						{"mutedArticulations", {{"type", "array"}, {"items", {{"type", "string"}}}}},
 						{"expressions", expressionsSchema()}}),
 				resultSchema("notes"), false},
 			setNotes);
+		const Json span = {{"type", "object"}, {"additionalProperties", false},
+			{"required", {"id", "from", "to", "points"}},
+			{"properties",
+				{{"id", integer},
+					{"from",
+						{{"type", "integer"},
+							{"description",
+								"where the span starts, in ticks from the note's start, as the points' positions"}}},
+					{"to",
+						{{"type", "integer"},
+							{"description", "where the span ends, included, in ticks from the note's start"}}},
+					{"points",
+						{{"type", "array"},
+							{"items",
+								{{"type", "object"}, {"additionalProperties", false},
+									{"required", {"position", "value"}},
+									{"properties", {{"position", integer}, {"value", number}}}}}}}}}};
+		add(engine,
+			{"note.replaceExpression", 1,
+				"Replaces the points of one expression of notes of a MIDI part in a span, as the key editor's "
+				"expression editor draws or erases them: each change names a note by id, and its points of type from "
+				"from to to (in ticks from the note's start, both included) give way to the change's points, "
+				"{position, value} each, within the span and in the expression's range (see note.add). The note's "
+				"other points stay, so an edit made before its sender saw the last one keeps that one. The points "
+				"end up sorted by position, a new one after the old ones at its position. A note named twice gets "
+				"both changes in order. Refuses, changing nothing, a part or a note that doesn't exist, a span whose "
+				"to is before its from and points outside it or out of range. Changes that leave every note's "
+				"points as they were change nothing, and the project doesn't count as modified. The changes are one "
+				"undo step. Returns the notes whose points changed.",
+				{{"type", "object"}, {"additionalProperties", false}, {"required", {"part", "type", "notes"}},
+					{"properties",
+						{{"part", integer}, {"type", {{"type", "string"}, {"enum", g_expressionNames}}},
+							{"notes", {{"type", "array"}, {"items", span}}}}}},
+				resultSchema("notes"), false},
+			replaceExpression);
 		const Json noteMove = {{"type", "object"}, {"additionalProperties", false},
 			{"required", {"part", "notes", "target"}},
 			{"properties",
@@ -507,7 +612,8 @@ namespace gnubase::engine
 			{"controller.set", 1,
 				"Changes controller events of a MIDI part: each change names a controller event by id and gives what "
 				"changes: position in ticks, type, and the fields of the type as controller.add takes them (number, "
-				"value, channel, bank, data, articulation, reset). A field the type doesn't have is an error, such as "
+				"value, channel, bank, data, articulation, reset, muted). A field the type doesn't have is an error, "
+				"such as "
 				"value on a program "
 				"change; a null bank removes it. A new type keeps the fields it shares with the old one and needs the "
 				"others. Returns the changed controller events.",
@@ -520,7 +626,8 @@ namespace gnubase::engine
 										"articulation"}}}},
 						{"number", integer}, {"value", number}, {"channel", integer},
 						{"bank", {{"type", {"integer", "null"}}}}, {"data", {{"type", "array"}, {"items", integer}}},
-						{"articulation", {{"type", "string"}}}, {"reset", {{"type", "boolean"}}}}),
+						{"articulation", {{"type", "string"}}}, {"reset", {{"type", "boolean"}}},
+						{"muted", {{"type", "boolean"}}}}),
 				resultSchema("controllers"), false},
 			setControllers);
 

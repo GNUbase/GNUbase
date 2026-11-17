@@ -33,6 +33,7 @@ namespace gnubase::engine
 		constexpr double g_maxCaptureSeconds = 600.0;
 		constexpr double g_cueSeconds = 2.0; // how far ahead the cue thread positions disk streams
 		constexpr auto g_cueInterval = std::chrono::milliseconds(5);
+		constexpr auto g_activityInterval = std::chrono::milliseconds(100); // between two midi.activity runs
 		// The longest pre-roll and post-roll: an hour at 768 kHz.
 		constexpr time::Samples g_maxRollAmount = time::Samples{3600} * 768000;
 		constexpr auto g_startWait = std::chrono::seconds(2);    // for the streams before playback starts or locates
@@ -294,6 +295,8 @@ namespace gnubase::engine
 			[this]
 			{
 				uint64_t changes = m_transport.changes();
+				uint64_t activity = m_midi.activity();
+				auto activityTaken = std::chrono::steady_clock::now();
 				while (m_cueing)
 				{
 					// The audio thread changed what it plays or records, maybe on its own: the command thread syncs.
@@ -305,6 +308,15 @@ namespace gnubase::engine
 					// What the chord pads' remote keys did goes to the command thread, which applies it (#1089).
 					if (Json events = padEvents(); !events.is_null() && m_engine != nullptr)
 						m_engine->post("chordPads.remoteInput", {{"events", std::move(events)}});
+					// MIDI input arrived: the command thread announces it (midi.activity), at most every
+					// g_activityInterval.
+					if (const auto now = std::chrono::steady_clock::now(); m_midi.activity() != activity &&
+						now - activityTaken >= g_activityInterval && m_engine != nullptr)
+					{
+						activity = m_midi.activity();
+						activityTaken = now;
+						m_engine->post("midi.activity");
+					}
 					Playback::Cue cue;
 					cue.window = static_cast<time::Samples>(g_cueSeconds * m_device->format().sampleRate);
 					{
@@ -424,8 +436,13 @@ namespace gnubase::engine
 		Json events;
 		MidiPorts::PadEvent event;
 		while (m_midi.takePadEvent(event))
-			events.push_back({{"kind", kinds.at(static_cast<size_t>(event.kind))}, {"key", event.key},
-				{"velocity", event.velocity}});
+		{
+			Json each = {
+				{"kind", kinds.at(static_cast<size_t>(event.kind))}, {"key", event.key}, {"velocity", event.velocity}};
+			if (event.pad != MidiPorts::PadEvent::g_noPad)
+				each["pad"] = event.pad;
+			events.push_back(std::move(each));
+		}
 		return events;
 	}
 
@@ -897,7 +914,7 @@ namespace gnubase::engine
 							loaded.clear();
 						}
 						if (sample != loaded)
-							m_sampleLoader.request(sample);
+							(m_renderSamples != nullptr ? *m_renderSamples : m_sampleLoader).request(sample);
 					}
 				}
 				instrument.samples = channel.samples;
@@ -965,7 +982,8 @@ namespace gnubase::engine
 				const std::string& path = instrument.samples[slot];
 				if (instrument.loaded[slot] == path)
 					continue;
-				if (std::shared_ptr<const processors::Sample> sample = m_sampleLoader.sample(path))
+				if (std::shared_ptr<const processors::Sample> sample =
+						(m_renderSamples != nullptr ? *m_renderSamples : m_sampleLoader).sample(path))
 				{
 					instrument.player->setSample(slot, std::move(sample));
 					instrument.loaded[slot] = path;
@@ -976,7 +994,8 @@ namespace gnubase::engine
 				}
 			}
 		}
-		m_sampleLoader.keepOnly(waiting);
+		if (m_renderSamples == nullptr)
+			m_sampleLoader.keepOnly(waiting);
 		return waiting;
 	}
 
@@ -988,7 +1007,17 @@ namespace gnubase::engine
 	std::set<std::string> AudioEngine::waitForSamples(std::chrono::milliseconds timeout)
 	{
 		// Only for the files that samplers wait for, not for one being read that none wants any more.
-		m_sampleLoader.waitUntilRead(timeout, updateSamples());
+		const auto deadline = std::chrono::steady_clock::now() + timeout;
+		do
+		{
+			if (m_renderJob != nullptr)
+				m_renderJob->checkCancelled();
+			const auto remaining =
+				std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+			const auto chunk = m_renderJob != nullptr ? std::min(remaining, std::chrono::milliseconds(50)) : remaining;
+			if ((m_renderSamples != nullptr ? *m_renderSamples : m_sampleLoader).waitUntilRead(chunk, updateSamples()))
+				break;
+		} while (std::chrono::steady_clock::now() < deadline);
 		return updateSamples();
 	}
 

@@ -51,7 +51,7 @@ zone's. It shows the project and the editor view as `MidiEditor` hands them on a
 the edits of several parts go in one `history.transaction`.
 
 ```
-.key-editor[tool=objectSelection|draw|line|erase|trim|split|glue]
+.key-editor[tool=objectSelection|draw|line|erase|trim|split|glue|mute]
   .toolbar.key-editor-toolbar
     button.key-tool[key-tool]         the tools; .checked for the current one; the chosen line tool opens
                                       #key-line-menu with its modes (controller-lanes.md)
@@ -92,8 +92,9 @@ the edits of several parts go in one `history.transaction`.
 ```
 
 The note display fits the shown parts' range into its width; each pitch is a row of the height `keyeditor.rcss` gives
-it, highest at the top, and it first scrolls to the middle of the notes. Code places the notes, parts and the cursor
-in percent of the grid. Positions snap to the project's quantize grid; Ctrl (Cmd) turns snapping off.
+it, highest at the top, and it first scrolls to the middle of the notes, after the first layout that gives the note
+display its size (`fitLines`, after its window's update). Code places the notes, parts and the cursor in percent of the
+grid. Positions snap to the project's quantize grid; Ctrl (Cmd) turns snapping off.
 
 The keyboard beside the grid is a piano keyboard (p. 1204), as high as the grid's rows. Each black key is exactly its
 pitch's row and narrower than the white keys, drawn over them at the left. The 7 white keys of an octave span the
@@ -127,6 +128,7 @@ selects and deselects no notes.
 | Trim | A click cuts off the note's end from the mouse on, with Alt its start up to the mouse | p. 1215 |
 | Split | A click splits the note at the snapped position; on a selected note, every selected note there (`note.split`: the rests keep the notes' values and their expression from the cut on; as with the notes that `event.split` cuts with `splitNotes`, both pieces lose their quantize origin, so `quantize.reset` no longer moves them) | p. 1215 |
 | Glue | A click glues the note to the next one of its pitch; the first one's values stay, the next one's expression joins its own (`note.glue`) | p. 1215 |
+| Mute | On the Articulations lane, a click mutes a direction or attribute, or unmutes it ([articulation-maps.md](articulation-maps.md), #1684); in the note display nothing yet, as notes have no mute (#679) | pp. 1193, 1289 |
 
 - **Gestures that leave the editor.** While a press in the note display or on the keyboard's left part goes on, the
   grid or the keyboard's left part is an RmlUi drag element (`.key-editor.in-gesture`): its drag events come wherever
@@ -158,8 +160,8 @@ selects and deselects no notes.
 ## Not yet
 
 Live MIDI keyboard input into `editor.input` (it waits for the MIDI recording input path, #97); Left and Right moving
-the step input cursor and lengthening a held chord; the Mute, Range Selection, Zoom and Time Warp tools (notes have no
-mute yet), and the Line tool in the note display (it draws on the controller lanes); the selection rectangle, the trim
+the step input cursor and lengthening a held chord; the Mute tool on notes (notes have no mute yet; it mutes the
+Articulations lane's articulations), the Range Selection, Zoom and Time Warp tools, and the Line tool in the note display (it draws on the controller lanes); the selection rectangle, the trim
 tool's drag across several notes and the draw tool's modifiers for velocity, pitch and position; key commands for the
 transpose palette and deleting; the nudge buttons, Solo Editor, Record in Editor, Acoustic Feedback, pitch visibility,
 the Scale Assistant, Indicate Transpositions, event colors, the status line and Set up Window Layout; horizontal zoom
@@ -196,4 +198,7 @@ menu.
   between the limits, from the height a style sheet gives them, also after a style change at a zoom and back at 1, the
   keyboard as high as the rows of any height, nothing zoomed or scrolled without a row height to scale and no height
   left on the rows for a later style, the zoom snapping to 1 near it, and scrolling the note display, while a click
-  there zooms nothing, and a click and a drag there leaving a note an earlier press selected and the history alone.
+  there zooms nothing, and a click and a drag there leaving a note an earlier press selected and the history alone; the
+  lower zone's key editor at its default size giving the note display more room than the controller lanes, at dp ratios
+  1 and 2, and the lanes whole in a lower zone of 400 dp; the editor window's lane keeping its 64 dp and the note
+  display its 40%, and the in-place editor's lanes keeping their height with its toolbar shown.

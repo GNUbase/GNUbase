@@ -23,9 +23,10 @@ and `projectfiles.cpp` (the rest); none of them is an undo step.
   without adding `.dawproject`, so that a script or MCP client gets the file it named; Save As in the UI adds the
   extension (see the File menu below). A media file that is missing is referred to by its absolute path instead of going
   into the file (#1567), so that a save over the file that had the last copy of its audio leaves only that path:
-  `project.save`, `project.saveNewVersion`, `track.export` and `track.savePreset` list such files (`missing`), and the
-  UI's Save, Save As, Save New Version and Export Selected Tracks say so in a dialog (#1614). One that the file system
-  can't say is there, such as in a folder without permission, isn't missing: the save fails. Projects may be saved on
+  `project.save`, `project.saveNewVersion`, `track.export` and `track.savePreset` list such files (`missing`), and a
+  frozen track's freeze file that is missing after them (#1736). The UI's Save, Save As, Save New Version, Export
+  Selected Tracks and the track preset dialog's Save say so (#1614, #1736). One that the file system can't say is
+  there, such as in a folder without permission, isn't missing: the save fails. Projects may be saved on
   several threads at once, as backup jobs run beside each other and beside a save ([backup.md](backup.md)), each writing
   its own file without a lock: the ZIP entries have no time stamps (miniz is built with `MINIZ_NO_TIME`), since miniz
   takes them from `localtime()`, whose result is one static struct outside Windows. Their date and time fields hold

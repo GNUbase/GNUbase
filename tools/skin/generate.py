@@ -133,8 +133,11 @@ NINE_NAMES = [
     "tabbar", "tab-normal", "tab-hover", "tab-active",
     "scrollbar-track-vertical", "scrollbar-track-horizontal", "scrollbar-thumb-vertical", "scrollbar-thumb-horizontal",
     "scrollbar-thumb-vertical-hover", "scrollbar-thumb-horizontal-hover", "slider-track", "slider-fill",
-    "fader-track", "meter-background",
+    "fader-track", "meter-background", "track-row-selected", "track-row-folder",
 ]
+
+# Skins only the flat look uses: every theme has them, and the framed themes' manifests mark them "unused".
+FLAT_ONLY = {"track-row-selected", "track-row-folder"}
 
 FIXED_NAMES = [
     "dropdown-arrow", "checkbox-off", "checkbox-on", "checkbox-mixed", "radio-off", "radio-on",
@@ -150,11 +153,15 @@ SIZES = {
     "list-item": (24, 20), "tabbar": (24, 24), "tab": (24, 24), "scrollbar-track-vertical": (10, 24),
     "scrollbar-track-horizontal": (24, 10), "scrollbar-thumb-vertical": (10, 24),
     "scrollbar-thumb-horizontal": (24, 10), "slider-track": (24, 8), "slider-fill": (24, 8),
-    "fader-track": (12, 32), "meter-background": (12, 32),
+    "fader-track": (12, 32), "meter-background": (12, 32), "track-row": (24, 20),
     "dropdown-arrow": (12, 8), "checkbox": (18, 18), "radio": (18, 18), "slider-thumb": (16, 16),
     "fader-cap": (22, 12), "knob-base": (40, 40), "knob-pointer": (40, 40), "meter-fill": (12, 96),
     "meter-peak": (12, 4), "splitter-grip-vertical": (8, 24), "splitter-grip-horizontal": (24, 8),
 }
+
+
+# The track list's color strip, dp wide in the default theme (#1314).
+STRIP = 5
 
 
 def key_for(name: str) -> str:
@@ -314,6 +321,19 @@ def nine_svg(name: str, theme: dict) -> tuple[int, int, str, dict]:
     elif name == "fader-track":
         bg = mix(c["background"], "#000000", .12); border = c["border"]; r = 4; inset = 2
         extra = f'<line x1="{w/2+.5}" y1="4" x2="{w/2+.5}" y2="{h-4}" stroke="{mix(c["border"], c["textMuted"], .3)}"/>'
+    elif name.startswith("track-row-"):
+        # Drawn over a track list row's color strip stretched across the row (#1314): the row's own color, mostly
+        # opaque, lets the track's color through as a tint, and leaves it whole in the strip at the left and, for the
+        # selected row, in a line around it.
+        selected = name.endswith("selected")
+        top = 1 if selected else 0
+        tint = .24 if selected else .2
+        radius = max(1, r - 1) if selected else 0
+        body = (f'<rect x="{STRIP}" y="{top}" width="{w - STRIP - top}" height="{h - 2 * top}" rx="{radius}" '
+                f'fill="{c["surfaceRaised"]}" fill-opacity="{1 - tint:g}"/>')
+        # The corners, the strip included, lie wholly inside the insets.
+        inset = max(3, top + radius + 1)
+        return w, h, svg_doc(w, h, body), {"left": STRIP + radius + 2, "top": inset, "right": inset, "bottom": inset}
     elif name == "meter-background":
         bg = mix(c["background"], "#000000", .18); border = c["border"]; r = 3; inset = 1
         extra = "".join(f'<line x1="2" y1="{y+.5}" x2="{w-2}" y2="{y+.5}" stroke="{c["border"]}" opacity=".45"/>' for y in range(7, h-2, 7))
@@ -506,6 +526,25 @@ def flat_rules(theme: dict, skin, on_accent: str) -> list:
         (".track-list listitem:hover", {"decorator": "none", "background-color": mix(row, c["text"], .04)},
          {}),
         (".track-list listitem.selected", {"decorator": skin("list-item-selected")}, {}),
+        # The color strip a bar at the row's left edge; a folder's row tinted in its color and the selected row lit in
+        # its track's color, outlined in it (#1314). The strip stretches across the row, and a skin in the row's
+        # color over it lets the track's color through. A track without a color keeps the selection above. The
+        # strip is positioned, so it paints over what flows in the row: what comes after it in the row is positioned
+        # too and paints over it in order, and the folder's toggle, which comes before it, is lifted above it. No
+        # row is a stacking context of its own, which would keep a drop-down list in the controls under the rows
+        # below it.
+        (".track-list .track-color", {"width": f"{STRIP}dp"}, {}),
+        (".track-list .track-name, .track-list .track-name-field, .track-list .track-versions-toggle, "
+         ".track-list .track-controls", {"position": "relative"}, {}),
+        (".track-list listitem > .tree-toggle", {"position": "relative", "z-index": "1"}, {}),
+        (".track-list .track-name", {"font-weight": "500"}, {}),
+        (".track-list listitem[type=folder] .track-color[color]",
+         {"width": "auto", "right": "0", "decorator": skin("track-row-folder")}, {}),
+        (".track-list listitem.selected .track-color[color]",
+         {"width": "auto", "right": "0", "border-radius": f"{r['control']}dp", "decorator": skin("track-row-selected")},
+         {}),
+        # Record Enable in the record color while it is off, as the transport's Record
+        (".track-list .track-controls button[control=record]:not(.checked) svg.icon", {"image-color": record}, {}),
         # Inspector sections: a bold name after a disclosure arrow, pointing down while the section is open
         (".inspector-section button.section-header",
          {"decorator": skin("disclosure-open"), "background-color": mix(c["surface"], c["surfaceRaised"], .8),
@@ -790,6 +829,8 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
                                                      "background-color": c["accent"] + "40",
                                                      "border-width": f"{widths['hairline']}dp",
                                                      "border-color": c["accent"]}),
+        # and the one being drawn as an outline only, unlike the events the engine has (#1696)
+        (".arranger-lane-row .arranger-lane-event.drawing", {"background-color": "transparent"}),
         # The chord pads (docs/features/chord-pads.md): pads with their chord, degree and remote key, the selected,
         # triggered, locked and reference pads, the adaptive voicing reference indicator (a square in the reference
         # frame's color) and the adaptive voicing indicator (a dot), and the chord assistant's suggestions by how well
@@ -852,6 +893,7 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
                                   "border-bottom-color": c["border"]}),
         (".track-list listitem.disabled", {"color": c["textMuted"]}),
         (".track-list listitem.frozen", {"color": c["textMuted"]}),
+        (".track-list listitem.rendering .track-name", {"font-style": "italic"}),
         (".track-list .drop-line", {"background-color": c["accent"]}),
         (".track-list .track-controls input.current-tempo, .track-list .track-controls select.tempo-type",
          {"font-size": f"{sizes['small']}dp"}),
@@ -954,11 +996,12 @@ def theme_rcss(name: str, theme: dict, manifest: dict) -> str:
         (".articulation-item.direction", {"background-color": mix(c["surfaceRaised"], c["accent"], .3)}),
         (".articulation-item.attribute", {"background-color": mix(c["surfaceRaised"], c["accent"], .6)}),
         (".articulation-item.reset", {"background-color": c["textMuted"]}),
+        # Muted ones gray (#1684, p. 1289), under the selection's color
+        (".articulation-item.muted", {"background-color": mix(c["surfaceRaised"], c["textMuted"], .55)}),
         (".articulation-item.selected", {"background-color": c["accent2"]}),
         (".articulation-item.inactive", {"background-color": mix(c["surface"], c["textMuted"], .3)}),
-        # The lane with the keyboard focus (#1658, p. 100), framed on the left of its header in the accent
-        (".controller-lane.keyboard-focus .controller-lane-header", {"border-left-width": f"{widths['focus']}dp",
-                                                                     "border-left-color": c["accent"]}),
+        # The lane with the keyboard focus (#1658, #1688, p. 100) framed in the accent, as the docking zones are
+        (".controller-lane-frame", {"border-width": f"{widths['focus']}dp", "border-color": c["accent"]}),
         # The audio part editor (docs/features/audio-part-editor.md): lines between the lanes, the events, selected
         # ones in the second accent, and muted ones, those outside the part editing mode and those their part hides
         # entirely dimmed
@@ -1159,6 +1202,8 @@ def write_theme(root: Path, name: str, theme: dict) -> dict:
         filename = asset + ".svg"
         (dest / filename).write_text(data, encoding="utf-8", newline="\n")
         assets[asset] = {"file": filename, "width": w, "height": h, "slice": slices}
+        if asset in FLAT_ONLY and not theme["flat"]:
+            assets[asset]["unused"] = True
     for asset in FIXED_NAMES:
         w, h, data = fixed_svg(asset, theme)
         filename = asset + ".svg"
@@ -1225,6 +1270,8 @@ Generated by `python tools/skin/generate.py resources/themes`. The generator is 
 ## Layout and naming
 
 Each theme (`gnubase`, `dark`, `light`, `high-contrast`) contains {count} SVG assets, `manifest.json`, `tokens.json`, and `theme.rcss`. Stateful assets use `<component>-<state>.svg`. Manifest dimensions and slice insets are dp at 1×. Fixed assets omit `slice`.
+
+A few skins belong to the flat look alone ({", ".join(f"`{n}`" for n in sorted(FLAT_ONLY))}): every theme has them, and the other themes' manifests mark them `"unused": true`, since their style sheets don't use them.
 
 The manifest's `theme` is the theme's id, the folder's name, which the user setting `ui.theme` stores; its `displayName` is what the UI shows for the theme, through `gnubase.ui.themes()`, so no document names a theme.
 

@@ -49,7 +49,7 @@ namespace gnubase::ui
 		// dp: the drum editor's Adapt to Zoom (p. 1227) snaps to the finest note value at least this wide
 		constexpr double g_minGridWidth = 12.0;
 
-		constexpr std::array<std::pair<KeyTool, const char*>, 7> g_tools = {{
+		constexpr std::array<std::pair<KeyTool, const char*>, 8> g_tools = {{
 			{KeyTool::ObjectSelection, "objectSelection"},
 			{KeyTool::Draw, "draw"},
 			{KeyTool::Line, "line"},
@@ -57,11 +57,12 @@ namespace gnubase::ui
 			{KeyTool::Trim, "trim"},
 			{KeyTool::Split, "split"},
 			{KeyTool::Glue, "glue"},
+			{KeyTool::Mute, "mute"},
 		}};
-		constexpr std::array<const char*, 7> g_toolTitles = {
-			"Object Selection", "Draw", "Line", "Erase", "Trim", "Split", "Glue"};
-		constexpr std::array<const char*, 7> g_toolLabels = {
-			"Select", "Draw", "Line", "Erase", "Trim", "Split", "Glue"};
+		constexpr std::array<const char*, 8> g_toolTitles = {
+			"Object Selection", "Draw", "Line", "Erase", "Trim", "Split", "Glue", "Mute"};
+		constexpr std::array<const char*, 8> g_toolLabels = {
+			"Select", "Draw", "Line", "Erase", "Trim", "Split", "Glue", "Mute"};
 		// The line tool's modes (p. 1186), its menu's.
 		constexpr std::array<std::pair<const char*, const char*>, 6> g_lineModes = {{
 			{"line", "Line"},
@@ -526,8 +527,9 @@ namespace gnubase::ui
 			m_lanes->setTool(keyToolName(tool), m_lineMode);
 	}
 
-	void KeyEditor::show(const Json& project, const Json& view)
+	void KeyEditor::show(const Json& project, const Json& view, uint64_t read)
 	{
+		m_read = read;
 		m_project = project;
 		m_view = view;
 		m_parts.clear();
@@ -991,7 +993,13 @@ namespace gnubase::ui
 	bool KeyEditor::fitLines(const Rml::Context& updated)
 	{
 		const Rml::Element* root = m_root.get();
-		return root != nullptr && root->GetContext() == &updated && refitLines(true);
+		if (root == nullptr || root->GetContext() != &updated)
+			return false;
+		// The first scroll, if show() came before the layout and nothing has rendered the editor again since.
+		const bool unscrolled = !m_scrolled;
+		scrollToNotes();
+		const bool refit = refitLines(true);
+		return refit || (unscrolled && m_scrolled);
 	}
 
 	bool KeyEditor::linesShown() const
@@ -1210,13 +1218,23 @@ namespace gnubase::ui
 			if (point.at("type") != type || at < m_paintFrom || at > m_paintTo)
 				points.push_back(point);
 		}
-		// A drag leaves a point only where the value changes, not one per mouse position (#1655).
+		for (Json point : drawn(note))
+		{
+			point["type"] = type;
+			points.push_back(std::move(point));
+		}
+		std::stable_sort(points.begin(), points.end(), [](const Json& a, const Json& b)
+			{ return a.at("position").get<int64_t>() < b.at("position").get<int64_t>(); });
+		return points;
+	}
+
+	Json KeyEditor::drawn(const Note& note) const
+	{
+		Json points = Json::array();
 		std::optional<double> previous;
 		for (const auto& [ticks, value] : m_painted)
 			if (ticks >= note.start && ticks < note.start + note.length && std::exchange(previous, value) != value)
-				points.push_back({{"type", type}, {"position", ticks - note.start}, {"value", value}});
-		std::stable_sort(points.begin(), points.end(), [](const Json& a, const Json& b)
-			{ return a.at("position").get<int64_t>() < b.at("position").get<int64_t>(); });
+				points.push_back({{"position", ticks - note.start}, {"value", value}});
 		return points;
 	}
 
@@ -1389,14 +1407,20 @@ namespace gnubase::ui
 		m_binding.send("editor.set", std::move(parameters));
 	}
 
-	void KeyEditor::edit(const std::string& description, Json commands)
+	void KeyEditor::edit(const std::string& description, Json commands, std::function<void(const engine::Result&)> done)
 	{
 		if (commands.empty())
 			return;
 		if (commands.size() == 1)
-			m_binding.send(commands[0].at("command").get<std::string>(), commands[0].at("parameters"));
+			m_binding.send(commands[0].at("command").get<std::string>(), commands[0].at("parameters"), std::move(done));
 		else
-			m_binding.send("history.transaction", {{"description", description}, {"commands", std::move(commands)}});
+			m_binding.send("history.transaction", {{"description", description}, {"commands", std::move(commands)}},
+				std::move(done));
+	}
+
+	bool KeyEditor::expressionBehind() const
+	{
+		return m_expressionEdits > 0 && (m_expressionAnswered == 0 || m_read < m_expressionAnswered);
 	}
 
 	void KeyEditor::addNotes(
@@ -1889,6 +1913,7 @@ namespace gnubase::ui
 			return;
 		}
 		case KeyTool::Line: // only on the controller lanes
+		case KeyTool::Mute: // only on the Articulations lane: notes have no mute yet (#679)
 			return;
 		case KeyTool::Glue:
 		{
@@ -2129,22 +2154,42 @@ namespace gnubase::ui
 
 	void KeyEditor::endExpression()
 	{
-		// Every selected note the gesture reached gets its points as it changed them, in one undo step.
+		// Every selected note the gesture reached gets the points it drew in the range it swept, in one undo step. Only
+		// those go to the engine, not the note's whole list from this copy of the project: the copy can be a read
+		// older than the last edit, made before that edit's read arrived, and would send that edit's points back
+		// (#1795). While the copy may lack the last edit, a note the gesture reached goes also when the copy has no
+		// change there, as that edit may have drawn a point there; else such an edit changes nothing and stays here,
+		// so that it doesn't count as a change of the project, which a history.transaction of several parts would.
 		m_gesture = Gesture::None;
+		const std::string type = m_view.value("expressionType", std::string("tuning"));
+		const bool behind = expressionBehind();
 		std::map<uint64_t, Json> changes;
 		for (const Note* note : selectedNotes())
-			if (Json points = edited(*note); points != note->expressions)
+			if ((behind && m_paintFrom < note->start + note->length && m_paintTo >= note->start) ||
+				edited(*note) != note->expressions)
 			{
 				Json change = noteChange(note->id);
-				change["expressions"] = std::move(points);
+				change["from"] = m_paintFrom - note->start;
+				change["to"] = m_paintTo - note->start;
+				change["points"] = drawn(*note);
 				changes[note->part].push_back(change);
 			}
 		m_painted.clear();
 		renderExpression(); // the notes as they are, until the engine's change shows the edit
 		Json commands = Json::array();
 		for (auto& [part, items] : changes)
-			commands.push_back({{"command", "note.set"}, {"parameters", {{"part", part}, {"notes", items}}}});
-		edit(m_tool == KeyTool::Erase ? "Delete Note Expression" : "Draw Note Expression", std::move(commands));
+			commands.push_back({{"command", "note.replaceExpression"},
+				{"parameters", {{"part", part}, {"type", type}, {"notes", items}}}});
+		if (commands.empty())
+			return;
+		const uint64_t sent = ++m_expressionEdits;
+		m_expressionAnswered = 0;
+		edit(m_tool == KeyTool::Erase ? "Delete Note Expression" : "Draw Note Expression", std::move(commands),
+			[this, alive = std::weak_ptr<bool>(m_alive), sent](const engine::Result&)
+			{
+				if (!alive.expired() && sent == m_expressionEdits) // not one that another edit went after
+					m_expressionAnswered = m_binding.handed();
+			});
 	}
 
 	void KeyEditor::release(Rml::Event& event)

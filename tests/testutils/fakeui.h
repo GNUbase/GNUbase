@@ -31,6 +31,14 @@ namespace gnubase::test
 		// windows whose monitor scale changed.
 		void setDisplays(std::vector<ui::Display> displays);
 
+		// While later, setBounds only keeps the bounds asked for until applyBounds moves and sizes the windows, as a
+		// window system that does so later does, such as SDL's on X11; meanwhile they keep their bounds.
+		void setBoundsLater(bool later) { m_boundsLater = later; }
+		void applyBounds();
+
+		// How often the monitors were asked for (displays()).
+		int displaysAsked() const { return m_displaysAsked; }
+
 		// Moves a window as the user would by dragging it.
 		void drag(ui::WindowId window, const ui::Rect& bounds);
 
@@ -63,7 +71,11 @@ namespace gnubase::test
 		Rml::Context* inputTarget(ui::WindowId window) const;
 		ui::WindowSpec spec(ui::WindowId window) const { return m_windows.at(window).spec; }
 
-		std::vector<ui::Display> displays() const override { return m_displays; }
+		std::vector<ui::Display> displays() const override
+		{
+			++m_displaysAsked;
+			return m_displays;
+		}
 		ui::WindowId createWindow(const ui::WindowSpec& spec) override;
 		void destroyWindow(ui::WindowId window) override;
 		ui::Rect bounds(ui::WindowId window) const override { return m_windows.at(window).bounds; }
@@ -123,6 +135,9 @@ namespace gnubase::test
 		std::map<uint64_t, ui::FileDialog> m_dialogs;
 		std::atomic<int> m_wakes{0};
 		std::atomic<int> m_pendingWakes{0};
+		bool m_boundsLater = false;
+		std::map<ui::WindowId, ui::Rect> m_laterBounds; // asked for while m_boundsLater
+		mutable int m_displaysAsked = 0;
 	};
 
 	// Draws nothing; counts what it was asked to do. Captures are blank images at the window's pixel size.

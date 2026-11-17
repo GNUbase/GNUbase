@@ -2459,7 +2459,9 @@ namespace gnubase::engine
 				"each of events has a kind and a key (a MIDI note) and velocity (0 for a note-off): triggered (the key "
 				"triggered its pad, which chordPads.triggered announces with remote true, and while the transport "
 				"records a record-enabled chord track records its chord), released (the key ended the chord of the pad "
-				"it triggered, also after the remote's input or range changed), "
+				"it triggered, also after the remote's input or range changed, or the pad it lit with no notes to "
+				"play), both with pad, the pad the key lit as the audio thread played it, whatever the range is now "
+				"(without it, the key's pad in the remote range), "
 				"modifier (a chord modifier's key, chordPads.set modifierKeys: it changes the pads whose keys are "
 				"down, else the one triggered last), note (a note while chordPads.listen listens), player (a key of "
 				"Select/Mute Player), control (what moves all pads: key 0 voicings, 1 tensions, 2 transposition, "
@@ -2473,7 +2475,8 @@ namespace gnubase::engine
 															   {"enum",
 																   {"triggered", "released", "modifier", "note",
 																	   "player", "control", "controlInput"}}}},
-														  {"key", integerSchema}, {"velocity", integerSchema}},
+														  {"key", integerSchema}, {"velocity", integerSchema},
+														  {"pad", integerSchema}},
 											 {"kind", "key"})}}}},
 					{"events"}),
 				objectSchema({}), false},
@@ -2489,19 +2492,22 @@ namespace gnubase::engine
 					const auto down = state.held.find(key);
 					const bool on = kind == "triggered";
 					const bool known = !on && down != state.held.end(); // a key that went up ends the pad it triggered
-					const int pad = known ? down->second : key - pads.remoteStart;
-					const bool isPad =
-						pad >= 0 && pad < static_cast<int>(pads.pads.size()) && (known || key <= pads.remoteEnd);
+					// The pad the audio thread lit, whatever the range is by now (#1740).
+					const bool reported = event.contains("pad");
+					int pad = known ? down->second : key - pads.remoteStart;
+					if (reported)
+						pad = event.at("pad").get<int>();
+					const bool isPad = pad >= 0 && pad < static_cast<int>(pads.pads.size()) &&
+						(known || reported || key <= pads.remoteEnd);
+					// A key that went up is up, also when its pad is gone meanwhile (#1740).
+					if (kind == "released" && known)
+						state.held.erase(down);
 					if ((kind == "triggered" || kind == "released") && isPad)
 					{
 						if (on)
 						{
 							state.held[key] = pad;
 							state.last = pad;
-						}
-						else if (known)
-						{
-							state.held.erase(down);
 						}
 						const auto index = static_cast<size_t>(pad);
 						context.emit("chordPads.triggered",

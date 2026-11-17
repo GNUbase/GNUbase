@@ -167,14 +167,61 @@ TEST_CASE("a chord event drags to the nearest bar and opens for typing on a doub
 	const double x = box.at("x").get<double>() + (box.at("width").get<double>() / 2.0);
 	const double y = box.at("y").get<double>() + (box.at("height").get<double>() / 2.0);
 	const double across = 1.2 / window.display.view().scale * 0.5; // pixels, at a dp ratio of 0.5
-	window.app.ui().drag(std::nullopt, {".chord-event", 0, std::nullopt},
-		{"", 0, ui::Point{static_cast<int>(std::lround(x + across)), static_cast<int>(std::lround(y))}});
+	const double bar = 2.0 / window.display.view().scale * 0.5;    // pixels
+	const ui::Point to{static_cast<int>(std::lround(x + across)), static_cast<int>(std::lround(y))};
+	const auto followed = [&]
+	{
+		return std::abs(window.element(".chord-event").at("box").at("x").get<double>() -
+				   (box.at("x").get<double>() + bar)) < 2.0;
+	};
+	// While the button is down, the event follows the mouse to the nearest bar; the release moves it (#1696).
+	window.app.ui().press(std::nullopt, {".chord-event", 0, std::nullopt}, ui::MouseButton::Left);
+	window.app.ui().move(std::nullopt, {"", 0, to});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(window.app.waitUntil(followed));
+	CHECK(window.events().at(0).at("position") == 0);
+	window.app.ui().release(std::nullopt, {"", 0, to}, ui::MouseButton::Left);
 	REQUIRE(window.app.waitUntil([&] { return window.events().at(0).at("position") == 4 * g_quarter; }));
+	CHECK(followed());
 
 	window.click(".chord-event", 2);
 	REQUIRE(window.app.waitUntil([&] { return window.hasClass(".chord-field", "shown"); }));
 	window.type("G7/B");
 	CHECK(window.app.waitUntil([&] { return window.events().at(0).at("chord") == "G7/B"; }));
+}
+
+TEST_CASE("with Show Scales, a scale event follows the mouse to the nearest bar and moves on the release", "[ui]")
+{
+	Window window;
+	window.call("track.add", {{"type", "chord"}});
+	window.call("chord.add", {{"position", 0}, {"scale", "D dorian"}});
+	window.call("chord.setTrack", {{"showScales", true}});
+	REQUIRE(window.app.waitUntil([&] { return window.elements(".scale-event").size() == 1; }));
+	window.display.setTool(ui::Tool::ObjectSelection);
+	// Three fifths of a bar (1.2 seconds at 120 BPM) to the right: onto the second bar's line.
+	const Json box = window.element(".scale-event").at("box");
+	const double x = box.at("x").get<double>() + (box.at("width").get<double>() / 2.0);
+	const double y = box.at("y").get<double>() + (box.at("height").get<double>() / 2.0);
+	const double across = 1.2 / window.display.view().scale * 0.5; // pixels, at a dp ratio of 0.5
+	const double bar = 2.0 / window.display.view().scale * 0.5;    // pixels
+	const ui::Point to{static_cast<int>(std::lround(x + across)), static_cast<int>(std::lround(y))};
+	const auto followed = [&]
+	{
+		return std::abs(window.element(".scale-event").at("box").at("x").get<double>() -
+				   (box.at("x").get<double>() + bar)) < 2.0;
+	};
+	const auto position = [&window] { return window.call("chord.get").at("scales").at(0).at("position"); };
+	// While the button is down, the event follows the mouse to the nearest bar, as chord events do; the release moves
+	// it (#1757).
+	window.app.ui().press(std::nullopt, {".scale-event", 0, std::nullopt}, ui::MouseButton::Left);
+	window.app.ui().move(std::nullopt, {"", 0, to});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(window.app.waitUntil(followed));
+	CHECK(position() == 0);
+	window.app.ui().release(std::nullopt, {"", 0, to}, ui::MouseButton::Left);
+	REQUIRE(window.app.waitUntil([&] { return position() == 4 * g_quarter; }));
+	CHECK(followed());
+	CHECK(window.call("chord.get").at("scales").at(0).at("scale") == "D dorian");
 }
 
 TEST_CASE("Project > Chord Track converts chords to MIDI and back, the Inspector sets Follow Chord Track", "[ui]")

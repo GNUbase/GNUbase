@@ -45,8 +45,8 @@ namespace gnubase::engine
 		MidiPorts(const MidiPorts&) = delete;
 		MidiPorts& operator=(const MidiPorts&) = delete;
 
-		// Registers midi.ports, midi.setPort, midi.refresh and midi.monitor. When a backend's ports change, the engine
-		// refreshes them on its own.
+		// Registers midi.padListen, midi.activityListen, midi.ports, midi.setPort, midi.refresh, midi.monitor and
+		// midi.activity. When a backend's ports change, the engine refreshes them on its own.
 		void registerCommands(Engine& engine);
 
 		// Lists the ports again, opens new and returning visible inputs, closes the others. True if anything changed.
@@ -96,9 +96,12 @@ namespace gnubase::engine
 				// is velocity), for MIDI Learn of what moves all pads.
 				ControlInput,
 			};
+			static constexpr uint8_t g_noPad = 255;
 			Kind kind = Kind::Note;
 			uint8_t key = 0;
 			uint8_t velocity = 0; // 0 for a note-off
+			// Triggered and Released: the pad the key lit as the audio thread played it (#1740), else g_noPad.
+			uint8_t pad = g_noPad;
 		};
 		// One thread, the audio engine's cue thread: the next event the audio thread found. False if there is none.
 		bool takePadEvent(PadEvent& event) { return m_padEvents.tryPop(event); }
@@ -106,8 +109,17 @@ namespace gnubase::engine
 		// key triggers a pad (Assign from MIDI Input, MIDI Learn: chordPads.listen).
 		void listenForPads(bool on) { m_padListen.store(on, std::memory_order_relaxed); }
 
-		// Drops the input that waits for the audio thread. Only while no audio thread takes.
-		void clear() { m_queue.clear(); }
+		// Any thread: how many messages the open inputs received so far. The audio engine's cue thread runs
+		// midi.activity when it changed.
+		uint64_t activity() const { return m_activityCount.load(std::memory_order_relaxed); }
+
+		// Drops the input that waits for the audio thread, and what midi.activity hasn't taken yet. Only while no
+		// audio thread takes, on the command thread.
+		void clear()
+		{
+			m_queue.clear();
+			dropActivity();
+		}
 
 		// Inputs that can be open at once.
 		static constexpr size_t g_maxInputs = 256;
@@ -145,7 +157,9 @@ namespace gnubase::engine
 		Json setting(const Port& port) const;                  // its entry there; empty while it has the defaults
 		bool visible(const Port& port) const { return setting(port).value("visible", true); }
 		bool inAllInputs(const Port& port) const { return port.info.input && setting(port).value("inAllInputs", true); }
+		// An input's MPE setup, and what it is until midi.setPort changes it: a detected device's preset settings.
 		midi::MpeSetup mpe(const Port& port) const;
+		static midi::MpeSetup preset(const Port& port);
 		// Audio thread: a message of the input slot (or the on-screen keyboard's) into allInputs, by the slot's MPE
 		// setup.
 		void addInput(int slot, const audio::MidiMessage& message, graph::EventBuffer& allInputs) noexcept;
@@ -161,10 +175,23 @@ namespace gnubase::engine
 		std::array<std::atomic<bool>, g_maxInputs> m_allInputs{};
 		// Per input slot, its port's MPE setup (midi::MpeSetup::pack); the audio thread's state of each, and the setup
 		// it was made for, which starts it afresh when the setup changes.
-		std::array<std::atomic<uint32_t>, g_maxInputs> m_mpeSetups{};
+		std::array<std::atomic<uint64_t>, g_maxInputs> m_mpeSetups{};
 		std::vector<midi::MpeInput> m_mpeInputs;
-		std::array<uint32_t, g_maxInputs> m_mpeApplied{};
+		std::array<uint64_t, g_maxInputs> m_mpeApplied{};
 		rt::SpscQueue<Received> m_monitor;
+		rt::SpscQueue<Received> m_activity; // what the inputs received, for midi.activity
+		std::atomic<uint64_t> m_activityCount{0};
+		std::atomic<size_t> m_activityDropped{0};
+		std::atomic<bool> m_activityListen{false}; // midi.activityListen
+		// Command thread: empties m_activity.
+		void dropActivity()
+		{
+			Received entry;
+			while (m_activity.tryPop(entry))
+			{
+			}
+			m_activityDropped.store(0, std::memory_order_relaxed);
+		}
 		// Audio thread: the pitches each remote key's note-on played, until its note-off.
 		std::array<midi::PadVoices, ChordPadKeys::g_maxPlayers> m_padVoices; // per player
 		// The sections player mode: the pad key that is down or was last, whether it is down, and the velocity of
@@ -175,6 +202,12 @@ namespace gnubase::engine
 		uint64_t m_sectionHeldPort = 0; // the remote's input (ChordPadKeys::portHash) the keys are down on
 		// Per key, 1 + the pad whose section it plays, else 0: the sections of one pad don't overlap each other.
 		std::array<uint8_t, 128> m_sectionPadOf{};
+		// Per key, 1 + the pad it lit and hasn't put out yet, else 0: it puts it out also when it held no notes, such
+		// as with the selected player muted (#1740).
+		std::array<uint8_t, 128> m_padLit{};
+		// Audio thread: tells the command thread that the key lit its pad, or that it put out the pad it lit, if any.
+		void tellTriggered(size_t key, uint8_t pad, uint8_t velocity) noexcept;
+		void tellReleased(size_t key) noexcept;
 		// The sections player mode's keys: a section or subsection key's notes for the pad that plays them.
 		bool playSection(const audio::MidiMessage& message, const ChordPadKeys& keys, PadBuffers& pads) noexcept;
 		rt::SpscQueue<PadEvent> m_padEvents{512};

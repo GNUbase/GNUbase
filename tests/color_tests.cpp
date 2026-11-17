@@ -303,10 +303,11 @@ TEST_CASE("the track list and the event display show track and event colors", "[
 	REQUIRE(
 		window.app.waitUntil([&] { return window.laneColors()[1] == std::vector<uint32_t>{0x00ff00ff, 0xff8000ff}; }));
 
-	// Back to the default color: the strip shows nothing of its own.
+	// Back to the default color: the strip shows nothing of its own, and loses the attribute that themes select
+	// (#1314).
 	window.app.call("track.set", {{"track", audio}, {"color", nullptr}});
 	REQUIRE(window.app.waitUntil(
-		[&] { return window.elements(strip).at(0).at("attributes").at("color").get<std::string>().empty(); }));
+		[&] { return !window.elements(strip).at(0).value("attributes", Json::object()).contains("color"); }));
 	CHECK(window.find(strip)->GetLocalProperty("background-color") == nullptr);
 }
 

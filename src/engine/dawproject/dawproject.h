@@ -26,8 +26,8 @@ namespace gnubase::engine
 
 	// project.xml gets everything DAWproject can describe. gnubase.json gets the whole project and a checksum of
 	// project.xml, so GNUbase gets back exactly what it saved: ids, input busses, time bases, MIDI tracks, exact
-	// sample positions. Returns the paths of the media files that are missing, which the file refers to where they were
-	// instead of embedding them (#1614). Throws DawProjectError or AudioFileError.
+	// sample positions. Returns the paths of the media files and then the freeze files that are missing, which the file
+	// refers to where they were instead of embedding them (#1614, #1736). Throws DawProjectError or AudioFileError.
 	std::vector<std::string> saveDawProject(
 		const Project& project, const std::string& path, const DawProjectSaveOptions& options);
 
