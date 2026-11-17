@@ -232,8 +232,8 @@ TEST_CASE(
 		CHECK(right(inner) <= right(outer));
 		CHECK(bottom(inner) <= bottom(outer));
 	};
-	// The lane with the keyboard focus, which the themes frame over the lane (.focused): the Articulations lane takes
-	// it on a click, and needs the track's articulation map.
+	// The lane with the keyboard focus, which the themes frame inside its header: the Articulations lane takes it on a
+	// click, and needs the track's articulation map.
 	const Json map = f.app.call("articulationMap.add",
 		{{"name", "Strings"}, {"articulations", {{{"name", "Arco"}, {"type", "direction"}, {"group", 0}}}},
 			{"slots", {{{"name", "Arco"}}}}});
