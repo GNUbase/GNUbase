@@ -291,11 +291,11 @@ namespace gnubase::engine
 	void AudioEngine::startCueing()
 	{
 		m_cueing = true;
+		// Taken before the device starts, not when the thread first runs, which may be after the audio thread changed
+		// them: such a change would never be announced (#1886).
 		m_cueThread = std::thread(
-			[this]
+			[this, changes = m_transport.changes(), activity = m_midi.activity()]() mutable
 			{
-				uint64_t changes = m_transport.changes();
-				uint64_t activity = m_midi.activity();
 				auto activityTaken = std::chrono::steady_clock::now();
 				while (m_cueing)
 				{
