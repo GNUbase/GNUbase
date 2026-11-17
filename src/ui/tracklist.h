@@ -166,10 +166,13 @@ namespace gnubase::ui
 		// see soloClick. A switch goes from what its button shows and shows what it sends at once (#1852).
 		void control(Rml::Element& button, const Row& row, const std::string& name, bool exclusive = false,
 			bool defeat = false, bool shift = false);
+		struct Clicked; // below, with m_clicked
 		// Shows a switch's click on its button, keeps it there while its command is out, and returns the command's
 		// done: a refused command shows the engine's state again.
 		std::function<void(const engine::Result&)> clicked(
 			Rml::Element& button, uint64_t track, const std::string& name, bool checked, bool defeated = false);
+		// The click a switch shows instead of the display's project, or null once the project has caught up with it.
+		const Clicked* click(uint64_t track, const std::string& name) const;
 		// A marker chosen in a marker track's Locate, Cycle or Zoom list.
 		void markerChange(Rml::Element& control, const std::string& value);
 		// A ruler track's time format chosen or time offset typed (reference manual p. 159).
@@ -282,11 +285,13 @@ namespace gnubase::ui
 		uint64_t m_dropParent = 0;                // where a move drops
 		uint64_t m_dropBefore = 0;
 
-		// What the rows' switches show while their commands are out (#1852), by track and control: a project read from
-		// before a command doesn't take its click back, and the read after it shows what the engine made of it.
+		// What the rows' switches show while their commands are out (#1852), by track (or automation lane) and control:
+		// a project read from before a command doesn't take its click back. A click stays until the display has a read
+		// that was handed on after its last command's answer, which shows what the engine made of it.
 		struct Clicked
 		{
-			int out = 0; // its commands not answered yet
+			int out = 0;           // its commands not answered yet
+			uint64_t answered = 0; // when the last one's answer was handed on (EngineBinding::handed)
 			bool checked = false;
 			bool defeated = false; // solo defeat
 		};

@@ -224,7 +224,7 @@ namespace gnubase::ui
 			if (control == "timeOffset")
 				return R"(<textdisplay class="display time-offset" control="timeOffset" title="Time Offset"/>)";
 			if (control == "setTimeOffset")
-				return R"(<button class="set-time-offset" control="setTimeOffset" )"
+				return R"(<button class="set-time-offset" control="setTimeOffset" keepselection="" )"
 					   R"(title="Set Time Offset to Project Cursor Position">C</button>)";
 			if (markerMenu(control))
 				return R"(<select class="marker-menu" control=")" + control + R"(" title=")" + markerMenuName(control) +
@@ -242,8 +242,10 @@ namespace gnubase::ui
 				{"addPositionMarker", {"Add Position Marker", "+"}}, {"addCycleMarker", {"Add Cycle Marker", "[+]"}},
 				{"activateMarkerTrack", {"Activate Track", "A"}}, {"groupEditing", {"Group Editing", "G"}}};
 			const auto& [title, content] = looks.at(control);
-			return R"(<button class="toggle )" + control + R"(" control=")" + control + R"(" title=")" + title +
-				R"(">)" + content + "</button>";
+			// A click on one leaves the track selection as it is (#1852): selecting the track on a click on its Solo is
+			// a preference (reference manual p. 1600, not yet), and its other buttons never select it.
+			return R"(<button class="toggle )" + control + R"(" control=")" + control +
+				R"(" keepselection="" title=")" + title + R"(">)" + content + "</button>";
 		}
 
 		bool held(const Rml::Event& event, const char* key)
@@ -718,6 +720,7 @@ namespace gnubase::ui
 			{
 				select({});
 				m_selectedLanes.clear();
+				m_clicked.clear(); // the old project's tracks' clicks, whose ids the new one's may have (#1852)
 				// A height drag under way was the old project's: its release sends nothing to the new one.
 				if (m_drag == Drag::Height)
 					m_drag = Drag::None;
@@ -1038,6 +1041,10 @@ namespace gnubase::ui
 		const Json& project = m_display.project();
 		if (!alive() || !project.is_object())
 			return;
+		// The clicks this project has caught up with, also those of tracks that went (#1852).
+		for (auto clicked = m_clicked.begin(); clicked != m_clicked.end();)
+			clicked = click(clicked->first.first, clicked->first.second) == nullptr ? m_clicked.erase(clicked)
+																					: std::next(clicked);
 		showVersions();
 		std::map<uint64_t, std::vector<bool>> reading; // each track's automation lanes, whether they read
 		for (const Json& lane : project.at("automation"))
@@ -1194,10 +1201,10 @@ namespace gnubase::ui
 					on = channel != nullptr && channel->value(name, false);
 				bool defeated = channel != nullptr && channel->value("soloDefeat", false);
 				// A click whose command is out shows what it sent: this read may be from before it (#1852).
-				if (const auto clicked = m_clicked.find({row.id, name}); clicked != m_clicked.end())
+				if (const Clicked* clicked = click(row.id, name))
 				{
-					on = clicked->second.checked;
-					defeated = clicked->second.defeated;
+					on = clicked->checked;
+					defeated = clicked->defeated;
 				}
 				setClass(*button, "checked", on);
 				if (name == "solo")
@@ -1406,7 +1413,10 @@ namespace gnubase::ui
 			setClass(*element, "selected", m_selectedLanes.count(automation[at]) != 0);
 			const Json* json = laneOf(automation[at]);
 			if (Rml::Element* read = element->QuerySelector(".automation-read"); read != nullptr && json != nullptr)
-				setClass(*read, "checked", json->at("read").get<bool>());
+			{
+				const Clicked* clicked = click(automation[at], "laneRead"); // #1852
+				setClass(*read, "checked", clicked != nullptr ? clicked->checked : json->at("read").get<bool>());
+			}
 		}
 	}
 
@@ -1693,9 +1703,14 @@ namespace gnubase::ui
 			}
 			if (Rml::Element* button = closest(target, "automation-read"))
 			{
+				// From what the button shows, which shows it at once (#1852).
 				if (const Json* lane = laneOf(automationLane(button)))
+				{
+					const bool read = !button->IsClassSet("checked");
+					const auto id = lane->at("id").get<uint64_t>();
 					m_binding.send(
-						"automationLane.set", {{"lane", lane->at("id")}, {"read", !lane->at("read").get<bool>()}});
+						"automationLane.set", {{"lane", id}, {"read", read}}, clicked(*button, id, "laneRead", read));
+				}
 				return;
 			}
 			if (Rml::Element* button = closest(target, "automation-append"))
@@ -1949,15 +1964,32 @@ namespace gnubase::ui
 		{
 			if (alive.expired())
 				return;
-			// The read after a command the engine took shows what it made of it: the project reads come in the order
-			// they were sent, so one answered after this result has it.
-			if (const auto found = m_clicked.find(key); found != m_clicked.end() && --found->second.out <= 0)
-				m_clicked.erase(found);
+			const auto found = m_clicked.find(key); // gone if another project came meanwhile
+			if (found != m_clicked.end())
+			{
+				// The engine answers in the order the commands came, so a project read handed on after this answer
+				// has what the engine made of the click (click()).
+				--found->second.out;
+				found->second.answered = m_binding.handed();
+			}
 			if (result.ok())
 				return;
-			logging::warning("The track list's {} on track {} failed: {}", key.second, key.first, result.error);
-			showState(); // a refused command changed nothing, so no read follows it: the engine's state again
+			logging::warning("The track list's {} on {} failed: {}", key.second, key.first, result.error);
+			// A refused command changed nothing, so no read follows it: the engine's state again, or what a later click
+			// of the same switch sent.
+			if (found != m_clicked.end() && found->second.out <= 0)
+				m_clicked.erase(found);
+			showState();
+			place(); // the automation lanes' Read
 		};
+	}
+
+	const TrackList::Clicked* TrackList::click(uint64_t track, const std::string& name) const
+	{
+		const auto found = m_clicked.find({track, name});
+		if (found == m_clicked.end() || (found->second.out <= 0 && m_display.read() > found->second.answered))
+			return nullptr;
+		return &found->second;
 	}
 
 	void TrackList::markerChange(Rml::Element& control, const std::string& value)

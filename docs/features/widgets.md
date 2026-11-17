@@ -196,7 +196,8 @@ rows are in the document's order. Each row has a `value` attribute (without comm
   when `data-for` reorders its items. Clicks and keys in a form control in a row, such as a text field, are the
   control's and don't change the selection, and neither does a click on a control that opens a menu (a `menu`
   attribute), such as the track list's track versions arrow ([track-versions.md](track-versions.md)), so that its menu
-  works on the rows that are selected.
+  works on the rows that are selected, nor one with a `keepselection` attribute, such as the track list's Mute, which
+  works on its own row.
 - **Scrolling while dragging.** With the `dragscroll` attribute, a drag of an element in the view (`drag: drag`)
   scrolls the view while the mouse is above or below it, by ten times as far as the mouse is past the edge each second,
   also while the mouse is held still. The drag's end, the button going up or the view losing the focus stop it. The
