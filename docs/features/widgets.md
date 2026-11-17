@@ -90,12 +90,21 @@ attributes, through a data model or directly.
 ## Menus and context menus
 
 - `<menu>` holds `<menuitem>`s and `<menuseparator>`s and stays hidden until it opens, with the state class `.open`:
-  under a button whose `menu` attribute names it by id (a second click on the button closes it), or at the mouse on
+  under a button whose `menu` attribute names it by id (a second click on the button closes it; a click on another
+  button with the same menu, such as another row's cell of the list editor, opens it under that one, and a text field
+  being edited, `.editing`, doesn't open it, #1688), or at the mouse on
   a right click on an element whose `contextmenu` attribute names it: the nearest one with the attribute, so an empty
   `contextmenu` keeps the menu of an element around it from opening on a control. With a modifier key held (Ctrl,
   Alt, Shift or Cmd), the menu that its `modifiercontextmenu` attribute names opens instead, if it has the attribute,
-  as the event display's and the key editor's toolboxes do ([tools.md](tools.md)); an empty one opens none. It opens inside the window, moved left or up where it would
-  stick out. Put menus straight into the body, so that no container clips them.
+  as the event display's and the key editor's toolboxes do ([tools.md](tools.md)); an empty one opens none. It opens
+  inside the window, moved left or up where it would stick out. Put menus straight into the body, so that no container
+  clips them.
+- An open menu whose items come or go moves inside the window again (#1580, #1665). Until the next press, release or
+  key, it is placed from where it opened, as if the items had been there then: those that the opening click fills in,
+  as the Articulations lane's context menu and the list editor's pop-up menus do, so that a menu that shrinks goes back
+  to the mouse. After that it stays where it is while it fits and moves only as far as it must, so that a menu whose
+  search field leaves items out doesn't jump. Each move asks for the next update, which shows the menu there; a
+  tooltip that moves inside the window once it has its text does the same.
 - A click on an item is a click on that item, for the document to handle, and closes the menu. Escape and a click
   outside close it too. A `disabled` item gets `:disabled` and ignores clicks; `type="toggle"` makes an item checkable,
   as for buttons.
@@ -129,9 +138,12 @@ window, with the state class `.shown`. It goes when the mouse moves to an elemen
 and on a click, a key or the wheel. The tooltip goes with its element: no tooltip comes when the element is removed
 while the mouse rests on it, and a shown one goes when its element is removed, as when a list under the mouse is
 rendered anew, or kept elsewhere instead of destroyed. A new element with a title in the removed one's place, under
-the resting mouse, gets its tooltip after the usual rest, without another mouse move. It goes too when the mouse moves
-from the element onto a part of an ancestor that no other element covers (the gap between a toolbar's buttons): RmlUi
-sends no Mouseover there, so the tooltip treats an element that has lost its `:hover` like one that is gone. Every
+the resting mouse, gets its tooltip after the usual rest, without another mouse move. When the mouse moves from the
+element onto a part of an ancestor that no other element covers (the gap between a toolbar's buttons), the tooltip goes
+and, if that ancestor has a title, its tooltip comes after the rest, though RmlUi sends no Mouseover there; the same
+happens when the element under the resting mouse is removed or kept elsewhere. The tooltip looks at the element under
+the mouse itself, and treats an element that has lost its `:hover` like one that is gone. An element whose Mouseover a
+listener stops gets no `:hover` from RmlUi, so no tooltip either; nothing in the app stops it. Every
 document gets its tooltip element when it loads; it lets the mouse through.
 
 ## Notifications
@@ -145,7 +157,8 @@ class such as `.tooltip` gives it the theme's look.
 
 `<dialog>` is a dialog in a document of its own, which the app loads and shows, usually modal
 (`ElementDocument::Show(Rml::ModalFlag::Modal)`). It opens in the middle of the window, and dragging its
-`.dialog-titlebar` moves it. Escape closes it with the result `cancel`, or first an open drop-down list; Enter clicks
+`.dialog-titlebar` moves it. A dialog that grows later (rows that show, a longer message) and
+would pass the window's edge moves back inside it. Escape closes it with the result `cancel`, or first an open drop-down list; Enter clicks
 its `button.primary`, also from a text field and a value field with `autofocus`, but not from a multi-line text field
 or another value field being edited, and not when the focused control takes Enter itself: a button clicks itself, a
 drop-down list opens and closes, another value field starts editing. A click on an element with a `result` attribute
@@ -170,18 +183,20 @@ The theme draws them; the widget library adds nothing.
 as the edit history's done and undone steps with a separator between them ([edit-history.md](edit-history.md)): its
 rows are in the document's order. Each row has a `value` attribute (without commas).
 
-- **Selection.** A click selects a row. With the `multiple` attribute, Ctrl-click (Cmd-click on macOS) adds or removes
-  a row and Shift-click selects the rows from the last one clicked; with `shiftdeselects` too, Shift-click on a
-  selected row deselects it, as in the track list ([track-list.md](track-list.md)). Up and Down move the selection, Shift extends it,
-  Page Up and Page Down move it by one row less than the view shows, Home and End go to the first and last row.
-  Selected rows have the state class `.selected`. The view's `value` attribute is the selected rows' values separated
-  by commas, and `change` sends it, so `data-value` binds the selection both ways, also when `data-for` makes the rows.
+- **Selection.** A click selects a row. With the `multiple` attribute, Ctrl-click (Cmd-click on macOS) adds or removes a
+  row and Shift-click selects the rows from the last one clicked; with `shiftdeselects` too, Shift-click on a selected
+  row deselects it, as in the track list ([track-list.md](track-list.md)). Up and Down move the selection, Shift extends
+  it, Page Up and Page Down move it by one row less than the view shows, Home and End go to the first and last row.
+  Selected rows have the state class `.selected`. The view's `value` attribute is the selected rows' values separated by
+  commas, and `change` sends it, so `data-value` binds the selection both ways, also when `data-for` makes the rows.
   Rows that code adds, removes or replaces with new elements, all of them or only some, keep the selection that the
   view's `value` gives, also with as many rows and the same value; the keys and Shift-click then go from the first
-  selected row. A click or a key before the next update finds the view caught up as well: with the new rows selected
-  and shaped as a tree, and with a `value` that code set. Not yet: a row that keeps its element but gets another
-  `value`, as when `data-for` reorders its items. Clicks and keys in a form control in a row, such as a text field,
-  are the control's and don't change the selection.
+  selected row. A click or a key before the next update finds the view caught up as well: with the new rows selected and
+  shaped as a tree, and with a `value` that code set. Not yet: a row that keeps its element but gets another `value`, as
+  when `data-for` reorders its items. Clicks and keys in a form control in a row, such as a text field, are the
+  control's and don't change the selection, and neither does a click on a control that opens a menu (a `menu`
+  attribute), such as the track list's track versions arrow ([track-versions.md](track-versions.md)), so that its menu
+  works on the rows that are selected.
 - **Scrolling while dragging.** With the `dragscroll` attribute, a drag of an element in the view (`drag: drag`)
   scrolls the view while the mouse is above or below it, by ten times as far as the mouse is past the edge each second,
   also while the mouse is held still. The drag's end, the button going up or the view losing the focus stop it. The
@@ -250,3 +265,6 @@ Down skips a collapsed parent's children, Right and Left expand and collapse, an
 Ctrl-click extend the rebuilt selection; Shift-click with `shiftdeselects` deselects a selected row; a drag held past a view's edge scrolls it with `dragscroll` only; splitters
 move the boundary in a row and in a column, never below nothing. The color picker picks from its field, its hue strip
 and its numbers, draws the old and the new color, and follows its data.
+`widgets::fill` drops a fill of a drop-down list from the change that its own fill sends, also with a fill of another
+list in between, so the list keeps the options of the fill that sent it (#1719), and also from the change of another
+list that its change fills, at any depth (#1748).

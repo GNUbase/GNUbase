@@ -11,11 +11,16 @@
 #include "ui/eventdisplay.h"
 #include "ui/tracklist.h"
 
+#include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
+#include <cstddef>
 #include <mutex>
 #include <optional>
 #include <set>
@@ -1312,6 +1317,30 @@ TEST_CASE("group and effect tracks can show Switch Time Base in the track list",
 	}
 }
 
+TEST_CASE("the track controls settings dialog offers MIDI Channel for MIDI tracks only", "[ui]")
+{
+	Tracks tracks;
+	const uint64_t midi = tracks.add({{"type", "midi"}});
+	tracks.rows(1);
+
+	// MIDI Channel is among the hidden controls of MIDI tracks (reference manual p. 349), not of audio tracks.
+	const auto open = [&tracks] { return !elements(tracks.app, "#track-controls-dialog").empty(); };
+	tracks.click("#track-controls-settings");
+	REQUIRE(tracks.app.waitUntil(open));
+	CHECK(elements(tracks.app, "#hidden-controls > [value=midiChannel]").empty()); // audio, the first type
+	tracks.click("#controls-types > [value=midi]");
+	tracks.click("#hidden-controls > [value=midiChannel]");
+	tracks.click("#controls-add");
+	CHECK(elements(tracks.app, "#visible-controls > [value=midiChannel]").size() == 1);
+	tracks.click("#controls-ok");
+	REQUIRE(tracks.app.waitUntil([&] { return !open(); }));
+
+	CHECK(
+		tracks.app.call("settings.get", {{"key", "ui.trackControls"}}).at("value").at("midi").back() == "midiChannel");
+	CHECK(tracks.app.waitUntil(
+		[&] { return elements(tracks.app, row(midi) + " select[control=midiChannel]").size() == 1; }));
+}
+
 TEST_CASE("the track controls settings dialog keeps the tempo track's controls and chooses them", "[ui]")
 {
 	Tracks tracks;
@@ -1750,4 +1779,191 @@ TEST_CASE("Freeze/Unfreeze Selected Tracks freezes and unfreezes them, Render in
 	REQUIRE(order.size() == 2);
 	CHECK(tracks.track(order[1]).at("name") == "Synth (Rendered)");
 	CHECK(tracks.track(order[1]).at("type") == "audio");
+}
+
+TEST_CASE(
+	"the default theme draws the rows in their tracks' colors: a strip, the selected row lit and outlined, folders "
+	"tinted",
+	"[ui]")
+{
+	// #1314, the mockup's track list (art/mockups/main-window.webp): the color strip a bar at the row's left edge, the
+	// selected row lit in its track's color with an outline in it, and folder rows tinted in the folder's color, all
+	// from the .track-color strip that code gives the track's color; a track without a color keeps the theme's
+	// selection. The other themes keep the 4 dp strip and their own selection.
+	test::UiApp app({1000, 680});
+	app.appUi().showProject();
+	app.setDpRatio(1.0F);
+	const auto add = [&app](const Json& parameters)
+	{ return app.call("track.add", parameters).at("track").at("id").get<uint64_t>(); };
+	const uint64_t folder = add({{"type", "folder"}, {"name", "Band"}, {"color", "#3a6ff0"}});
+	const uint64_t drums = add({{"type", "midi"}, {"name", "Drums"}, {"color", "#e12ad8"}, {"parent", folder}});
+	add({{"type", "audio"}, {"name", "Bass"}, {"color", "#24c1e0"}, {"parent", folder}});
+	const uint64_t lead = add({{"type", "midi"}, {"name", "Lead"}, {"color", "#8a4dff"}});
+	const uint64_t plain = add({{"type", "audio"}, {"name", "Vocals"}});
+	ui::TrackList& list = *app.appUi().trackList();
+	const auto row = [](uint64_t track) { return ".track-list listitem[value=\"" + std::to_string(track) + "\"]"; };
+	const auto box = [&app](const std::string& selector)
+	{
+		const Json found = app.ui().dom(std::nullopt, selector, 0).at("elements");
+		REQUIRE(found.size() == 1);
+		return found.at(0).at("box");
+	};
+	const auto width = [&box](const std::string& selector) { return box(selector).at("width").get<double>(); };
+	const auto settle = [&app]
+	{
+		app.shell().step(std::chrono::milliseconds(0));
+		app.shell().step(std::chrono::milliseconds(0));
+	};
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			list.select({lead}); // until the list has the track
+			return list.selection() == std::vector<uint64_t>{lead} &&
+				app.ui().dom(std::nullopt, ".track-list listitem", 0).at("elements").size() == 5;
+		}));
+	settle();
+
+	// The selected row and the folder's: the color over the whole row, under the name and the controls.
+	CHECK(std::abs(width(row(lead) + " .track-color") - width(row(lead))) <= 1.0);
+	CHECK(std::abs(width(row(folder) + " .track-color") - width(row(folder))) <= 1.0);
+	// The other rows: a bar at the left edge, a track without a color none.
+	const double strip = width(row(drums) + " .track-color");
+	CHECK(strip >= 4.0);
+	CHECK(strip <= 8.0);
+	const auto attributes = [&app, &row](uint64_t track)
+	{
+		return app.ui()
+			.dom(std::nullopt, row(track) + " .track-color", 0)
+			.at("elements")
+			.at(0)
+			.value("attributes", Json::object());
+	};
+	CHECK(!attributes(plain).contains("color"));
+
+	// The track list as it looks, cut from the window.
+	const ui::Image window = app.screenshot("track-list-rows-window", {1000, 680});
+	const Json area = box(".track-list .track-rows");
+	const int x = area.at("x").get<int>();
+	const int y = area.at("y").get<int>();
+	const int w = area.at("width").get<int>();
+	const int h = std::min(area.at("height").get<int>(), 5 * 44);
+	REQUIRE(x >= 0);
+	REQUIRE(y >= 0);
+	REQUIRE(x + w <= window.width);
+	REQUIRE(y + h <= window.height);
+	ui::Image rows{w, h, {}};
+	for (int line = y; line < y + h; ++line)
+	{
+		const auto begin = window.pixels.begin() + (((static_cast<std::ptrdiff_t>(line) * window.width) + x) * 4);
+		rows.pixels.insert(rows.pixels.end(), begin, begin + (static_cast<std::ptrdiff_t>(w) * 4));
+	}
+	test::UiApp::checkGolden("track-list-rows", rows);
+
+	// A drop-down list in a row's controls opens over the rows below it: no row keeps it under the next ones, for the
+	// eye or the mouse.
+	Json controls = app.call("settings.get", {{"key", "ui.trackControls"}}).at("value");
+	controls["midi"].push_back("midiChannel");
+	app.call("settings.set", {{"key", "ui.trackControls"}, {"value", controls}});
+	const std::string channel = row(drums) + " select[control=midiChannel]";
+	REQUIRE(app.waitUntil([&] { return app.ui().dom(std::nullopt, channel, 0).at("elements").size() == 1; }));
+	settle();
+	Rml::Context& context = app.main().context();
+	Rml::ElementFormControlSelect* select = nullptr;
+	for (int i = 0; select == nullptr && i < context.GetNumDocuments(); ++i)
+		select = dynamic_cast<Rml::ElementFormControlSelect*>(context.GetDocument(i)->QuerySelector(channel));
+	REQUIRE(select != nullptr);
+	app.ui().click(std::nullopt, {channel, 0, std::nullopt}, ui::MouseButton::Left, 1, {});
+	settle();
+	REQUIRE(select->IsSelectBoxVisible());
+	// An option over another row, measured in the context's pixels as hit testing is; the list opens below the select,
+	// or above it where the window has no room below.
+	Rml::Element* drumsRow = select;
+	while (drumsRow != nullptr && drumsRow->GetTagName() != "listitem")
+		drumsRow = drumsRow->GetParentNode();
+	REQUIRE(drumsRow != nullptr);
+	REQUIRE(drumsRow->GetParentNode() != nullptr);
+	const auto middleOf = [](Rml::Element& element)
+	{
+		return element.GetAbsoluteOffset(Rml::BoxArea::Border) +
+			(element.GetBox().GetSize(Rml::BoxArea::Border) / 2.0F);
+	};
+	const auto inside = [](Rml::Element& element, Rml::Vector2f point)
+	{
+		const Rml::Vector2f from = element.GetAbsoluteOffset(Rml::BoxArea::Border);
+		const Rml::Vector2f to = from + element.GetBox().GetSize(Rml::BoxArea::Border);
+		return point.x >= from.x && point.x < to.x && point.y >= from.y && point.y < to.y;
+	};
+	// It stays open while the test looks at it. RmlUi lays an open list out when it draws it, and the shell doesn't
+	// draw a hidden window on every step everywhere (Linux CI): a screenshot draws it.
+	const auto keepOpen = [&]
+	{
+		if (!select->IsSelectBoxVisible())
+			select->ShowSelectBox();
+		context.Update();
+		app.screenshot("rows-select-open", {200, 200});
+	};
+	const auto overAnotherRow = [&]() -> Rml::Element*
+	{
+		keepOpen();
+		const Rml::Element* rows = drumsRow->GetParentNode();
+		for (int i = 0; i < select->GetNumOptions(); ++i)
+		{
+			const Rml::Vector2f middle = middleOf(*select->GetOption(i));
+			for (int r = 0; r < rows->GetNumChildren(); ++r)
+			{
+				Rml::Element* other = rows->GetChild(r);
+				if (other != drumsRow && other->GetTagName() == "listitem" && inside(*other, middle))
+					return select->GetOption(i);
+			}
+		}
+		return nullptr;
+	};
+	Rml::Element* option = nullptr;
+	const bool found = app.waitUntil(
+		[&]
+		{
+			option = overAnotherRow();
+			return option != nullptr;
+		});
+	INFO("list open " << select->IsSelectBoxVisible() << ", options " << select->GetNumOptions() << ", the row at "
+					  << drumsRow->GetAbsoluteOffset().y << " " << drumsRow->GetBox().GetSize().y
+					  << " px high, the first option at "
+					  << (select->GetNumOptions() > 0 ? select->GetOption(0)->GetAbsoluteOffset().y : -1.0F));
+	REQUIRE(found);
+	REQUIRE(option != nullptr);
+	keepOpen();
+	const Rml::Vector2f middle = middleOf(*option);
+	const Rml::Element* hit = context.GetElementAtPoint(middle);
+	while (hit != nullptr && hit != option)
+		hit = hit->GetParentNode();
+	CHECK(hit == option);
+	select->CancelSelectBox();
+	settle();
+
+	// The other themes: the 4 dp strip on every row, also the selected one and the folder's; and back to the default
+	// theme's.
+	for (const char* theme : {"dark", "light", "high-contrast", "gnubase"})
+	{
+		INFO("theme " << theme);
+		app.call("settings.set", {{"key", "ui.theme"}, {"value", theme}});
+		REQUIRE(app.waitUntil([&app, theme] { return app.shell().theme() == theme; }));
+		settle();
+		const bool flat = std::string(theme) == "gnubase";
+		CHECK(std::abs(width(row(lead) + " .track-color") - (flat ? width(row(lead)) : 4.0)) <= 1.0);
+		CHECK(std::abs(width(row(folder) + " .track-color") - (flat ? width(row(folder)) : 4.0)) <= 1.0);
+	}
+
+	// At twice the dp ratio: the bar twice as wide, the selected row's color still across it.
+	app.setDpRatio(2.0F);
+	settle();
+	CHECK(std::abs(width(row(drums) + " .track-color") - (2 * strip)) <= 1.0);
+	CHECK(std::abs(width(row(lead) + " .track-color") - width(row(lead))) <= 1.0);
+	app.setDpRatio(1.0F);
+	settle();
+
+	// The selected track's color taken away: the theme's selection again, and a strip of no color.
+	app.call("track.set", {{"track", lead}, {"color", nullptr}});
+	REQUIRE(app.waitUntil([&] { return !attributes(lead).contains("color"); }));
+	settle();
+	CHECK(width(row(lead) + " .track-color") <= 8.0);
 }

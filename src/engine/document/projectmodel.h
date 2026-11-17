@@ -30,6 +30,10 @@ namespace gnubase::engine
 	// with messages that start with name, e.g. "controllers[0]".
 	Controller controllerFrom(const Json& item, const std::string& name);
 
+	// A note's muted attributes from note.add or note.set (#1684): item's mutedArticulations, else those of the note's
+	// that it still has; only its own attributes, each once. Throws CommandError with messages that start with name.
+	std::vector<std::string> mutedArticulationsFrom(const Json& item, const Note& note, const std::string& name);
+
 	// Automation follows events (projectmodel.cpp): moves the automation of a track from where an event or part was
 	// (from to end) to where it is now (to), if automation follows events.
 	void followAutomation(Project& project, ObjectId track, const time::Position& from, const time::Position& end,
@@ -116,6 +120,7 @@ namespace gnubase::engine
 	// command thread, the only thread that touches the document; every command that changes it records an undo step
 	// and publishes a new render snapshot for the audio thread.
 	class Jobs;
+	struct ChordPadRemote; // chordpads.cpp: what the remote's input and chordPads.listen keep
 
 	class ProjectModel
 	{
@@ -149,6 +154,17 @@ namespace gnubase::engine
 			m_project.quantizePreset = std::move(name);
 			publish();
 		}
+		// What Project::soloNotes is, from the editor views (editors.cpp) and the project now. Every render snapshot
+		// takes it, so that a change of the project that hides selected notes (Show Drum Sounds in Use by Instrument)
+		// stops soloing their sounds too.
+		void setSoloNotesSource(std::function<std::vector<std::pair<ObjectId, ObjectId>>()> source)
+		{
+			m_soloNotesSource = std::move(source);
+		}
+		// Sets Project::soloNotes from the source, for the editor views when they change: Solo Instrument changes
+		// what plays, not the project, so it publishes a render snapshot but leaves the project as saved and auto
+		// saved as it was. Only on the command thread.
+		void updateSoloNotes();
 		// Sets Project::workspaces, for the workspace commands (#163), which aren't edits either: the project file
 		// saves the project workspaces and the active one, so a change advances the revision as setQuantizePreset's
 		// does. Only on the command thread.
@@ -209,6 +225,11 @@ namespace gnubase::engine
 		void registerRangeEditCommands(Engine& engine); // eventedits.cpp: range.*, range editing (#88)
 		// projectfiles.cpp (#77): save new version, revert, auto save, recent projects and templates.
 		void registerProjectFileCommands(Engine& engine);
+		// chordpads.cpp, the rest of chordPads.* by topic (#1585): the pads' chords, patterns and presets; step input
+		// and pads dragged onto tracks; and what plays the pads: the mouse, the remote's input and chordPads.listen.
+		void registerChordPadEditCommands(Engine& engine);
+		void registerChordPadStepCommands(Engine& engine);
+		void registerChordPadPlayCommands(Engine& engine, const std::shared_ptr<ChordPadRemote>& remote);
 		// After the project was replaced by a new or loaded one (from file, or none): clears the undo history,
 		// announces project.reset, counts as saved and adds the file to the recent projects. An auto save (a .bak in
 		// an Auto Saves folder) opens without a file instead, as unsaved and not a recent project.
@@ -222,12 +243,26 @@ namespace gnubase::engine
 		// name.
 		Project loadTemplate(const std::string& name) const;
 		// Records what changed since before as a step; one with a merge key joins the last step if that has the key.
-		void record(std::string action, const Project& before, CommandContext& context, std::string merge = {});
+		void record(std::string action, const Project& before, ProjectChange change, CommandContext& context,
+			std::string merge = {});
 		Json undoOrRedo(CommandContext& context, Direction direction);
 		Json transaction(Project& project, CommandContext& context);
 		Json join(CommandContext& context);
 		void announceHistory(CommandContext& context) const;
 		void publish();
+
+		struct TrackRender;
+		static Json renderInput(const Project& project, const TrackRender& render);
+		void checkRenderLocks(const Project& project, const std::vector<const ProjectChange*>& changes) const;
+		static bool affectsRender(const ProjectChange& change, const TrackRender& render);
+		std::string renderAction(uint64_t token) const;
+		void checkRenderMove(ObjectId track) const;
+		Json startTrackRender(Engine& engine, const std::shared_ptr<TrackRender>& render, CommandContext& context);
+		void endTrackRender(uint64_t token, CommandContext& context);
+		std::map<uint64_t, std::shared_ptr<TrackRender>> m_trackRenders;
+		uint64_t m_nextRender = 0;
+		uint64_t m_applyingRender = 0;
+		std::vector<ObjectId> m_movingTracks; // explicit moves made by the command being recorded
 
 		struct Edit
 		{
@@ -253,8 +288,11 @@ namespace gnubase::engine
 		bool m_automationFollowsEvents = false;    // a setting, not part of the project
 		std::optional<RangeClipboard> m_clipboard; // range.copy and range.cut
 		std::function<std::string(ObjectId)> m_slotStatus;
+		// What the chord pads' remote keys and chordPads.listen keep about the project, cleared when another one opens.
+		std::function<void(CommandContext& context)> m_chordPadsOpened;
 		// what automation.copy copied, for automation.paste
 		std::optional<AutomationClipboard> m_automationClipboard;
+		std::function<std::vector<std::pair<ObjectId, ObjectId>>()> m_soloNotesSource;
 		rt::SnapshotPublisher<RenderSnapshot> m_snapshots;
 	};
 }

@@ -81,8 +81,7 @@ namespace
 			keys2 = addPart(app, keys, 3840, "Keys B");
 			keys1 = addPart(app, keys, 0, "Keys A");
 			bass1 = addPart(app, bass, 0, "Bass A");
-			REQUIRE(app.waitUntil(
-				[&] { return display.project().is_object() && display.project().at("midiParts").size() == 3; }));
+			REQUIRE(app.waitUntil([&] { return display.project().at("midiParts").size() == 3; }));
 		}
 
 		// Selects the events in the project window, then lets the editors follow.

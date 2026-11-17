@@ -9,10 +9,6 @@
 #include "ui/eventdisplay.h"
 #include "ui/tracklist.h"
 
-#include <RmlUi/Core/Context.h>
-#include <RmlUi/Core/Element.h>
-#include <RmlUi/Core/ElementDocument.h>
-#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
@@ -48,8 +44,7 @@ namespace
 		app.shell().step(std::chrono::milliseconds(0));
 	}
 
-	// Opens a drop-down list, moves the selection down that many options with the arrow key, and closes it. Its
-	// options aren't in the DOM that the UI tools see.
+	// Opens a drop-down list, moves the selection down that many options with the arrow key, and closes it.
 	void choose(test::UiApp& app, const std::string& select, int down)
 	{
 		click(app, select);
@@ -61,14 +56,7 @@ namespace
 	// The text of a drop-down list's selected option.
 	std::string selected(test::UiApp& app, const std::string& selector)
 	{
-		Rml::Element* element = nullptr;
-		for (int i = 0; element == nullptr && i < app.main().context().GetNumDocuments(); ++i)
-			element = app.main().context().GetDocument(i)->QuerySelector(selector);
-		auto* select = dynamic_cast<Rml::ElementFormControlSelect*>(element);
-		REQUIRE(select != nullptr);
-		const Rml::Element* option = select->GetOption(select->GetSelection());
-		REQUIRE(option != nullptr);
-		return option->GetInnerRML();
+		return test::selectedOption(app, selector);
 	}
 
 	Json channel(test::UiApp& app)
@@ -182,4 +170,57 @@ TEST_CASE("the MIDI device manager installs, shows and removes MIDI devices", "[
 	CHECK(devices(app).contains("Sound Module"));
 	click(app, "#close");
 	REQUIRE(app.waitUntil([&] { return elements(app, "#midi-devices").empty(); }));
+}
+
+TEST_CASE("the inspector chooses the MIDI channel a MIDI track's patch goes out on", "[ui]")
+{
+	test::UiApp app{{1200, 600}};
+	ui::EventDisplay& display = app.appUi().showProject();
+	app.setDpRatio(1.0F);
+	app.appUi().docking().open("inspector");
+	app.shell().step(std::chrono::milliseconds(0));
+	const uint64_t track = app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+	REQUIRE(app.waitUntil([&] { return display.project().at("tracks").size() == 1; }));
+	app.appUi().trackList()->select({track});
+	const auto shows = [&](const std::string& value)
+	{
+		return app.waitUntil(
+			[&] { return attribute(app, ".inspector select[control=midiChannel]", "value") == value; });
+	};
+	REQUIRE(shows("any"));
+	CHECK(selected(app, ".inspector select[control=midiChannel]") == "Any");
+
+	// Any, then channels 1 to 16.
+	choose(app, ".inspector select[control=midiChannel]", 10);
+	REQUIRE(app.waitUntil([&] { return channel(app).at("midiChannel") == 9; }));
+	REQUIRE(shows("9"));
+	CHECK(selected(app, ".inspector select[control=midiChannel]") == "10");
+	app.call("channel.set", {{"channel", channel(app).at("id")}, {"midiChannel", nullptr}});
+	CHECK(shows("any"));
+}
+
+TEST_CASE("the track list's MIDI channel control chooses the MIDI channel of a MIDI track", "[ui]")
+{
+	test::UiApp app{{1200, 600}};
+	ui::EventDisplay& display = app.appUi().showProject();
+	app.setDpRatio(1.0F);
+	app.call("settings.set",
+		{{"key", "ui.trackControls"},
+			{"value", {{"midi", {"mute", "solo", "midiChannel"}}, {"audio", {"mute", "midiChannel"}}}}});
+	app.call("track.add", {{"type", "midi"}});
+	app.call("track.add", {{"type", "audio"}});
+	REQUIRE(app.waitUntil([&] { return display.project().at("tracks").size() == 2; }));
+	const std::string list = ".track-list select[control=midiChannel]";
+	// MIDI tracks only: the audio track's row doesn't show it, although its controls name it.
+	REQUIRE(app.waitUntil([&] { return elements(app, ".track-list [control=mute]").size() == 2; }));
+	REQUIRE(app.waitUntil([&] { return elements(app, list).size() == 1; }));
+	REQUIRE(app.waitUntil([&] { return attribute(app, list, "value") == "any"; }));
+	CHECK(selected(app, list) == "Any");
+
+	choose(app, list, 3);
+	REQUIRE(app.waitUntil([&] { return channel(app).at("midiChannel") == 2; }));
+	CHECK(app.waitUntil([&] { return attribute(app, list, "value") == "2"; }));
+	CHECK(selected(app, list) == "3");
+	app.call("channel.set", {{"channel", channel(app).at("id")}, {"midiChannel", nullptr}});
+	CHECK(app.waitUntil([&] { return attribute(app, list, "value") == "any"; }));
 }

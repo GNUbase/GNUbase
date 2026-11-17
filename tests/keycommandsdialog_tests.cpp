@@ -5,12 +5,17 @@
 #include "uiapp.h"
 
 #include "engine/engine.h"
+#include "platform/files.h"
 #include "testutils/testutils.h"
 #include "ui/automation.h"
 #include "ui/enginebinding.h"
 #include "ui/keycommands.h"
 
+#include <RmlUi/Core/ComputedValues.h>
+#include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/ElementDocument.h>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
@@ -79,9 +84,18 @@ namespace
 		return element(app, selector).value("text", std::string());
 	}
 
+	// The click scrolls the element into view first, as a user would: in a short window, as on CI's macOS runner (684
+	// pixels tall), the dialog's body scrolls.
 	void click(test::UiApp& app, const std::string& selector, const Strings& modifiers = {})
 	{
 		app.ui().click(std::nullopt, {selector, 0, std::nullopt}, ui::MouseButton::Left, 1, modifiers);
+		app.shell().step(std::chrono::milliseconds(0));
+	}
+
+	// A double click, which RmlUi reports as a dblclick event (Automation::click holds its clock still for it).
+	void doubleClick(test::UiApp& app, const std::string& selector)
+	{
+		app.ui().click(std::nullopt, {selector, 0, std::nullopt}, ui::MouseButton::Left, 2, {});
 		app.shell().step(std::chrono::milliseconds(0));
 	}
 
@@ -174,6 +188,22 @@ namespace
 	{
 		click(app, "#keycommands-ok");
 		REQUIRE(closed(app));
+	}
+
+	// Clicks the confirmation dialog's OK button (confirm.rml), which Remove Key Command, Defaults and the tool
+	// modifiers' Assign open before they change anything.
+	void confirm(test::UiApp& app)
+	{
+		REQUIRE(app.waitUntil([&app] { return !elements(app, "#confirm-ok").empty(); }));
+		click(app, "#confirm-ok");
+	}
+
+	// Clicks the confirmation dialog's Cancel, which leaves everything as it was.
+	void cancelConfirm(test::UiApp& app)
+	{
+		REQUIRE(app.waitUntil([&app] { return !elements(app, "#confirm-cancel").empty(); }));
+		click(app, "#confirm-cancel");
+		REQUIRE(app.waitUntil([&app] { return elements(app, "#confirm-dialog").empty(); }));
 	}
 }
 
@@ -302,6 +332,18 @@ TEST_CASE("key commands presets and files are kept by the engine", "[unit]")
 	}
 	CHECK_THAT(reject(client, "keyCommands.import", {{"path", (dir.path() / "other.json").u8string()}, {"name", "X"}}),
 		ContainsSubstring("no key commands file"));
+	// A format or version of another type is the readable message, not the JSON library's type error.
+	{
+		std::ofstream format(dir.path() / "format.json");
+		format << R"({"format": 1, "version": 1})";
+		std::ofstream version(dir.path() / "version.json");
+		version << R"({"format": "gnubase.keyCommands", "version": "1"})";
+	}
+	CHECK_THAT(reject(client, "keyCommands.import", {{"path", (dir.path() / "format.json").u8string()}, {"name", "X"}}),
+		ContainsSubstring("no key commands file"));
+	CHECK_THAT(
+		reject(client, "keyCommands.import", {{"path", (dir.path() / "version.json").u8string()}, {"name", "X"}}),
+		ContainsSubstring("another version"));
 	CHECK_THAT(reject(client, "keyCommands.import", {{"path", (dir.path() / "none.json").u8string()}, {"name", "X"}}),
 		ContainsSubstring("can't read"));
 }
@@ -394,10 +436,14 @@ TEST_CASE("the key commands dialog finds, assigns, removes and resets keys", "[u
 	CHECK(std::find(unassigned.begin(), unassigned.end(), "history.undo") != unassigned.end());
 	choose(app, "#keycommands-filter", -3); // All
 
-	// Remove takes away the selected key, Reset brings back the defaults.
+	// Remove takes away the selected key, but asks first; Cancel keeps it. Reset brings back the defaults.
 	select(app, "transport.stop");
 	click(app, "#keycommands-keys listitem:last-child");
 	click(app, "#keycommands-remove");
+	cancelConfirm(app);
+	CHECK(shownKeys(app) == Strings{"Num0", shown("Mod+Shift+F12")});
+	click(app, "#keycommands-remove");
+	confirm(app);
 	CHECK(shownKeys(app) == Strings{"Num0"});
 	select(app, "history.undo");
 	click(app, "#keycommands-reset");
@@ -406,16 +452,30 @@ TEST_CASE("the key commands dialog finds, assigns, removes and resets keys", "[u
 	REQUIRE(app.waitUntil([&app] { return app.keys().keysFor("transport.stop") == Strings{"Num0"}; }));
 	CHECK(app.keys().keysFor("history.undo") == Strings{shown("Mod+Z")});
 
-	// Clear All removes every key, Defaults brings them all back; Cancel drops what changed.
+	// Clear All removes every key, also of an entry the dialog doesn't list (a command with parameters no default
+	// binding has); Defaults brings them back, but asks first, and Cancel drops what changed.
+	app.call("settings.set",
+		{{"values",
+			{{"ui.keyCommands",
+				Json::array({{{"command", "transport.locate"}, {"parameters", {{"target", "projectEnd"}}},
+					{"keys", {"F13"}}}})}}}});
+	REQUIRE(app.waitUntil(
+		[&app] { return app.keys().keysFor("transport.locate", {{"target", "projectEnd"}}) == Strings{"F13"}; }));
 	openDialog(app);
 	click(app, "#keycommands-clear-all");
 	select(app, "transport.toggle");
 	CHECK(shownKeys(app).empty());
-	click(app, "#keycommands-cancel");
-	REQUIRE(closed(app));
-	CHECK(app.keys().keysFor("transport.toggle") == Strings{"Space"});
+	ok(app);
+	// Clear All removed the unlisted entry's keys too.
+	REQUIRE(
+		app.waitUntil([&app] { return app.keys().keysFor("transport.locate", {{"target", "projectEnd"}}).empty(); }));
 	openDialog(app);
 	click(app, "#keycommands-defaults");
+	cancelConfirm(app);
+	select(app, "transport.toggle");
+	CHECK(shownKeys(app).empty()); // Cancel left it cleared
+	click(app, "#keycommands-defaults");
+	confirm(app);
 	ok(app);
 	CHECK(app.call("settings.get", {{"key", "ui.keyCommands"}}).at("value") == Json::array());
 	CHECK(app.waitUntil([&app] { return app.keys().keysFor("history.redo") == Strings{shown("Mod+Shift+Z")}; }));
@@ -423,7 +483,7 @@ TEST_CASE("the key commands dialog finds, assigns, removes and resets keys", "[u
 
 TEST_CASE("the key commands dialog sets up macros", "[ui]")
 {
-	test::UiApp app({1000, 760});
+	test::UiApp app({1000, 684});
 	app.appUi().showProject();
 	openDialog(app);
 	click(app, "#keycommands-show-macros");
@@ -497,6 +557,44 @@ TEST_CASE("the key commands dialog sets up macros", "[ui]")
 	REQUIRE(closed(app));
 }
 
+TEST_CASE("a macro is renamed by double-clicking it and pressing Return", "[ui]")
+{
+	// Reference manual p. 1558: double-click the macro, enter a name for it, and press Return to confirm it. Return is
+	// the dialog's OK, which commits the rename of the selected macro to the name in its field first.
+	test::UiApp app({1000, 760});
+	app.appUi().showProject();
+	openDialog(app);
+	click(app, "#keycommands-show-macros");
+	click(app, "#keycommands-new-macro"); // Macro 1, selected
+	REQUIRE(elements(app, "#keycommands-macros listitem").size() == 1);
+	// Double-clicking it focuses its name field; that the typed text lands there shows the double-click focused it.
+	doubleClick(app, "#keycommands-macros listitem");
+	CHECK(element(app, "#keycommands-macro-name").at("value") == "Macro 1");
+	app.ui().key(std::nullopt, "Mod+A");
+	app.ui().text(std::nullopt, "Restart");
+	press(app, "Enter"); // Return: the dialog's OK renames the macro and closes
+	REQUIRE(closed(app));
+	Json macros = app.call("settings.get", {{"key", "ui.macros"}}).at("value");
+	REQUIRE(macros.size() == 1);
+	CHECK(macros[0].at("name") == "Restart");
+
+	// A name another macro has is refused: Return leaves the dialog open with the message and renames nothing.
+	openDialog(app);
+	click(app, "#keycommands-show-macros");
+	click(app, "#keycommands-new-macro"); // Macro 1, selected, after Restart
+	doubleClick(app, "#keycommands-macros listitem:last-child");
+	app.ui().key(std::nullopt, "Mod+A");
+	app.ui().text(std::nullopt, "Restart"); // taken by the first macro
+	press(app, "Enter");
+	CHECK(open(app)); // refused, so the dialog stayed open
+	CHECK_THAT(text(app, "#keycommands-message"), ContainsSubstring("already"));
+	click(app, "#keycommands-cancel");
+	REQUIRE(closed(app));
+	macros = app.call("settings.get", {{"key", "ui.macros"}}).at("value");
+	REQUIRE(macros.size() == 1);
+	CHECK(macros[0].at("name") == "Restart"); // Cancel dropped the new macro
+}
+
 TEST_CASE("the key commands dialog saves, loads, deletes, exports and imports presets", "[ui]")
 {
 	test::UiApp app({1000, 760});
@@ -512,6 +610,7 @@ TEST_CASE("the key commands dialog saves, loads, deletes, exports and imports pr
 		Json({{"Mine", {{"keyCommands", mine}, {"macros", Json::array()}}}}));
 	CHECK(element(app, "#keycommands-preset").at("value") == "Mine");
 	click(app, "#keycommands-defaults");
+	confirm(app);
 	ok(app);
 	CHECK(app.call("settings.get", {{"key", "ui.keyCommands"}}).at("value") == Json::array());
 
@@ -547,22 +646,363 @@ TEST_CASE("the key commands dialog saves, loads, deletes, exports and imports pr
 	CHECK(closed(app));
 }
 
-TEST_CASE("tool modifiers are assigned by holding the keys and clicking Assign", "[ui]")
+TEST_CASE("File > Export > Key Command Assignments writes an HTML list of every key", "[ui]")
 {
-	// Reference manual p. 1574.
+	// Reference manual pp. 1559-1560: a file that lists all key command assignments, exported as .html.
+	test::UiApp app({1000, 760});
+	app.appUi().showProject();
+	app.shell().showOsFileDialogs(false);
+	// The menu item is there, and a customized key shows up as the platform writes it.
+	REQUIRE(elements(app, "menuitem[command=\"keyCommands.exportAssignments\"]").size() == 1);
+	app.call("settings.set",
+		{{"values", {{"ui.keyCommands", Json::array({{{"command", "transport.stop"}, {"keys", {"F11"}}}})}}}});
+	REQUIRE(app.waitUntil([&app] { return app.keys().keysFor("transport.stop") == Strings{"F11"}; }));
+
+	const test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "assignments";
+	app.keys().run("keyCommands.exportAssignments", Json::object(), app.main(), nullptr);
+	REQUIRE(app.waitUntil([&app] { return !app.shell().fileDialogs().empty(); }));
+	CHECK(app.shell().fileDialogs().begin()->second.kind == ui::FileDialogKind::Save);
+	app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, {file});
+	// A file without an extension gets .html.
+	const std::filesystem::path written = dir.path() / "assignments.html";
+	REQUIRE(app.waitUntil([&written] { return std::filesystem::exists(written); }));
+
+	const std::optional<std::string> html = files::readFile(written);
+	REQUIRE(html.has_value());
+	const std::string content = html.value_or(std::string());
+	CHECK_THAT(content, ContainsSubstring("<title>Key Command Assignments</title>"));
+	// Every assignment: the category, the command and the keys, including the customized one and a default.
+	CHECK_THAT(content, ContainsSubstring("<td>transport</td>"));
+	CHECK_THAT(content, ContainsSubstring("transport.stop"));
+	CHECK_THAT(content, ContainsSubstring("F11"));
+	CHECK_THAT(content, ContainsSubstring("Space")); // transport.toggle's default key
+	CHECK_THAT(content, ContainsSubstring("</html>"));
+	// Each assignment carries what the list shows and nothing else.
+	for (const Json& entry : app.keys().assignments())
+		CHECK(entry.size() == 3);
+}
+
+TEST_CASE("a key commands file or assignments list that can't be written or read tells the user why", "[ui]")
+{
+	test::UiApp app({1000, 760});
+	app.appUi().showProject();
+	app.shell().showOsFileDialogs(false);
+	const test::TempDir dir;
+	// A file where the folder to write into would be, so that nothing can be written under it.
+	const std::filesystem::path blocker = dir.path() / "blocker";
+	std::ofstream(blocker) << "not a folder";
+	const std::filesystem::path other = dir.path() / "other.json";
+	std::ofstream(other) << "{}";
+	const auto answer = [&app](const std::filesystem::path& file)
+	{
+		REQUIRE(app.waitUntil([&app] { return !app.shell().fileDialogs().empty(); }));
+		app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, {file});
+	};
+	const auto message = [&app] { return text(app, "#keycommands-message"); };
+
+	// The key commands dialog's Export and Import show the engine's error in the dialog's message.
+	openDialog(app);
+	click(app, "#keycommands-export");
+	answer(blocker / "Studio.json");
+	REQUIRE(app.waitUntil([&] { return message().find("can't write the key commands file") != std::string::npos; }));
+	click(app, "#keycommands-import");
+	answer(other);
+	REQUIRE(app.waitUntil([&] { return message().find("is no key commands file") != std::string::npos; }));
+	click(app, "#keycommands-cancel");
+	REQUIRE(closed(app));
+
+	// File > Export > Key Command Assignments, which has no dialog of its own, shows the error in an error dialog.
+	app.keys().run("keyCommands.exportAssignments", Json::object(), app.main(), nullptr);
+	answer(blocker / "assignments");
+	REQUIRE(app.waitUntil([&app] { return !elements(app, "#project-error-dialog").empty(); }));
+	CHECK(text(app, "#project-error-title") == "Export Key Command Assignments");
+	const std::string error = text(app, "#project-error-message");
+	CHECK_THAT(error, ContainsSubstring("Can't write the key command assignments"));
+	// A path is in the error once, not twice (the error from the file system already carries it).
+	const std::string name = blocker.u8string();
+	const auto first = error.find(name);
+	CHECK(first != std::string::npos);
+	CHECK(error.find(name, first + 1) == std::string::npos);
+	click(app, "#project-error-dialog button[result=ok]");
+	CHECK(app.waitUntil([&app] { return elements(app, "#project-error-dialog").empty(); }));
+}
+
+TEST_CASE("a key commands file error goes away when the next Export or Import starts", "[ui]")
+{
+	test::UiApp app({1000, 760});
+	app.appUi().showProject();
+	app.shell().showOsFileDialogs(false);
+	const test::TempDir dir;
+	const std::filesystem::path blocker = dir.path() / "blocker";
+	std::ofstream(blocker) << "not a folder";
+	const auto answer = [&app](const std::filesystem::path& file)
+	{
+		REQUIRE(app.waitUntil([&app] { return !app.shell().fileDialogs().empty(); }));
+		app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, {file});
+	};
+	const auto message = [&app] { return text(app, "#keycommands-message"); };
+
+	openDialog(app);
+	click(app, "#keycommands-export");
+	answer(blocker / "Studio.json");
+	REQUIRE(app.waitUntil([&] { return !message().empty(); }));
+
+	// Exporting again, somewhere that works, takes the old error away.
+	const std::filesystem::path good = dir.path() / "good.json";
+	click(app, "#keycommands-export");
+	REQUIRE(message().empty());
+	answer(good);
+	REQUIRE(app.waitUntil([&good] { return std::filesystem::exists(good); }));
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(message().empty());
+
+	// The same for Import: a failure, then a retry that works.
+	const std::filesystem::path bad = dir.path() / "bad.json";
+	std::ofstream(bad) << "{}";
+	click(app, "#keycommands-import");
+	answer(bad);
+	REQUIRE(app.waitUntil([&] { return !message().empty(); }));
+	click(app, "#keycommands-import");
+	REQUIRE(message().empty());
+	answer(good);
+	app.shell().step(std::chrono::milliseconds(0));
+	CHECK(app.waitUntil([&app] { return app.shell().fileDialogs().empty(); }));
+	CHECK(message().empty());
+	click(app, "#keycommands-cancel");
+	REQUIRE(closed(app));
+}
+
+TEST_CASE("a key commands file command that worked takes another message away", "[ui]")
+{
+	test::UiApp app({1000, 760});
+	app.appUi().showProject();
+	app.shell().showOsFileDialogs(false);
+	const test::TempDir dir;
+	const auto answer = [&app](const std::filesystem::path& file)
+	{
+		REQUIRE(app.waitUntil([&app] { return !app.shell().fileDialogs().empty(); }));
+		app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, {file});
+	};
+	const auto message = [&app] { return text(app, "#keycommands-message"); };
+	// A message from something else, which the file commands, run without the dialog's buttons, don't clear at start.
+	const auto someMessage = [&]
+	{
+		click(app, "#keycommands-save-preset"); // without a name
+		REQUIRE(!message().empty());
+	};
+	const std::filesystem::path good = dir.path() / "good.json";
+
+	openDialog(app);
+	someMessage();
+	app.keys().run("keyCommands.exportFile", Json::object(), app.main(), nullptr);
+	answer(good);
+	CHECK(app.waitUntil([&] { return message().empty(); }));
+	REQUIRE(std::filesystem::exists(good));
+
+	someMessage();
+	app.keys().run("keyCommands.importFile", Json::object(), app.main(), nullptr);
+	answer(good);
+	CHECK(app.waitUntil([&] { return message().empty(); }));
+	click(app, "#keycommands-cancel");
+	REQUIRE(closed(app));
+}
+
+namespace
+{
+	// A file that is in the way of an export: a name without a space, which can't wrap at a word, in a path that is no
+	// folder, so that the export fails with an error that carries the whole path.
+	std::filesystem::path blockedExport(const test::TempDir& dir)
+	{
+		const std::filesystem::path blocker = dir.path() / std::string(120, 'k');
+		std::ofstream(blocker) << "not a folder";
+		return blocker / "Studio.json";
+	}
+
+	// Clicks Export and answers its file dialog with the file; the message shows what the export said.
+	void exportInto(test::UiApp& app, const std::filesystem::path& file)
+	{
+		click(app, "#keycommands-export");
+		REQUIRE(app.waitUntil([&app] { return !app.shell().fileDialogs().empty(); }));
+		app.shell().answerFileDialog(app.shell().fileDialogs().begin()->first, {file});
+		REQUIRE(app.waitUntil([&app] { return !text(app, "#keycommands-message").empty(); }));
+	}
+
+	Json boxOf(test::UiApp& app, const std::string& selector)
+	{
+		return element(app, selector).at("box");
+	}
+
+	// The element of RmlUi's tree with this id, in any document of the main window.
+	Rml::Element* rmlElement(test::UiApp& app, const std::string& id)
+	{
+		Rml::Context& context = app.main().context();
+		for (int i = 0; i < context.GetNumDocuments(); ++i)
+			if (Rml::Element* found = context.GetDocument(i)->GetElementById(id))
+				return found;
+		return nullptr;
+	}
+
+	double bottom(const Json& box)
+	{
+		return box.at("y").get<double>() + box.at("height").get<double>();
+	}
+
+	double right(const Json& box)
+	{
+		return box.at("x").get<double>() + box.at("width").get<double>();
+	}
+}
+
+TEST_CASE("a long file path in the key commands message stays inside the dialog and off the buttons", "[ui]")
+{
+	test::UiApp app({1000, 760});
+	app.appUi().showProject();
+	app.shell().showOsFileDialogs(false);
+	const test::TempDir dir;
+	openDialog(app);
+	// The row's height with a message of one line: Save without a preset name.
+	click(app, "#keycommands-save-preset");
+	REQUIRE(app.waitUntil([&app] { return !text(app, "#keycommands-message").empty(); }));
+	const double oneLine = boxOf(app, "#keycommands-message").at("height").get<double>();
+	REQUIRE(oneLine > 0.0);
+	exportInto(app, blockedExport(dir));
+	const Json message = boxOf(app, "#keycommands-message");
+	const Json dialog = boxOf(app, "#key-commands");
+	const Json apply = boxOf(app, "#keycommands-apply");
+	// The path is broken into lines inside the message (an unbroken one ran on as a one-line row, past the buttons).
+	CHECK(message.at("height").get<double>() > 2.0 * oneLine);
+	CHECK(message.at("x").get<double>() >= dialog.at("x").get<double>());
+	CHECK(right(message) <= apply.at("x").get<double>());
+	CHECK(right(apply) <= right(dialog));
+	CHECK(right(boxOf(app, "#keycommands-ok")) <= right(dialog));
+	click(app, "#keycommands-cancel");
+	REQUIRE(closed(app));
+}
+
+TEST_CASE("the key commands dialog's buttons stay inside the window with the macros and a long error", "[ui]")
+{
+	const auto [width, height] = GENERATE(std::pair{1024, 600}, std::pair{1000, 760}, std::pair{1280, 720});
+	INFO("window " << width << "x" << height);
+	test::UiApp app({width, height});
+	app.appUi().showProject();
+	app.shell().showOsFileDialogs(false);
+	const test::TempDir dir;
+	openDialog(app);
+	click(app, "#keycommands-show-macros");
+	exportInto(app, blockedExport(dir));
+	const Json dialog = boxOf(app, "#key-commands");
+	CHECK(dialog.at("y").get<double>() >= 0.0);
+	CHECK(bottom(dialog) <= height);
+	// A long error takes no more than its cap, and scrolls.
+	CHECK(boxOf(app, "#keycommands-message").at("height").get<double>() <= 66.0);
+	for (const char* selector : {"#keycommands-apply", "#keycommands-cancel", "#keycommands-ok"})
+	{
+		const Json box = boxOf(app, selector);
+		INFO(selector);
+		CHECK(box.at("y").get<double>() >= 0.0);
+		CHECK(bottom(box) <= height);
+		CHECK(right(box) <= width);
+	}
+	// The dialog is capped at 85% of the window, so with the macros and a long error its body scrolls, above the
+	// buttons.
+	Rml::Element* body = rmlElement(app, "keycommands-body");
+	REQUIRE(body != nullptr);
+	CHECK(body->GetScrollHeight() > body->GetClientHeight());
+	click(app, "#keycommands-cancel");
+	REQUIRE(closed(app));
+}
+
+TEST_CASE("the key commands message wraps at spaces and breaks only a word that doesn't fit a line", "[ui]")
+{
+	test::UiApp app({1000, 760});
+	app.appUi().showProject();
+	openDialog(app);
+	Rml::Element* message = rmlElement(app, "keycommands-message");
+	REQUIRE(message != nullptr);
+	CHECK(message->GetComputedValues().word_break() == Rml::Style::WordBreak::BreakWord);
+	click(app, "#keycommands-cancel");
+	REQUIRE(closed(app));
+}
+
+TEST_CASE("Cancel and Escape leave no question behind for the next confirmation", "[ui]")
+{
+	// confirm.rml clears the global ConfirmDialog however it closes, so that a later gnubase.ui.confirm{} without a
+	// question of its own asks nothing stale and its OK runs no earlier caller's onOk.
+	test::UiApp app({1000, 760});
+	openDialog(app);
+	select(app, "transport.stop");
+	click(app, "#keycommands-keys listitem:last-child");
+	for (const char* close : {"cancel", "escape"})
+	{
+		INFO(close);
+		click(app, "#keycommands-remove");
+		REQUIRE(app.waitUntil([&app] { return !elements(app, "#confirm-dialog").empty(); }));
+		CHECK(text(app, "#confirm-title") == "Remove Key Command");
+		if (std::string(close) == "cancel")
+			click(app, "#confirm-cancel");
+		else
+			press(app, "Escape");
+		REQUIRE(app.waitUntil([&app] { return elements(app, "#confirm-dialog").empty(); }));
+		const std::optional<std::string> error = app.lua().run("gnubase.ui.confirm{}", "confirm");
+		INFO(error.value_or(""));
+		REQUIRE(!error.has_value());
+		REQUIRE(app.waitUntil([&app] { return !elements(app, "#confirm-dialog").empty(); }));
+		CHECK(text(app, "#confirm-title") == "Confirm");
+		confirm(app);
+		REQUIRE(app.waitUntil([&app] { return elements(app, "#confirm-dialog").empty(); }));
+		CHECK(shownKeys(app) == Strings{"Num0"}); // the stale Remove didn't run
+	}
+	click(app, "#keycommands-cancel");
+	CHECK(closed(app));
+}
+
+TEST_CASE("tool modifiers ask before an action takes another's keys, from Assign and from the list", "[ui]")
+{
+	// Reference manual pp. 1574 and 1602. By default dragDrop.copy is Alt and dragDrop.sharedCopy is Alt-Shift, both of
+	// the Drag & Drop tool (ui/eventtools.cpp); the modifier list's choices are None, Ctrl, Alt, Shift, Ctrl-Alt,
+	// Ctrl-Shift, Alt-Shift, Ctrl-Alt-Shift, in that order.
 	test::UiApp app({1000, 760});
 	app.keys().run("window.preferences", Json::object(), app.main(), nullptr);
 	REQUIRE(app.waitUntil([&app] { return !elements(app, "#preferences").empty(); }));
 	app.shell().step(std::chrono::milliseconds(0));
 	click(app, "#pages-editing-tool-modifiers");
+	CHECK(element(app, "#pref-tool-dragDrop-copy").at("value") == "alt");
+	CHECK(element(app, "#pref-tool-dragDrop-sharedCopy").at("value") == "alt+shift");
+
+	// Assign (p. 1574) Ctrl-Shift to copy, which nothing else of the tool has yet, so it doesn't ask.
 	click(app, "#pref-tool-assign-dragDrop-copy", {"ctrl", "shift"});
 	CHECK(element(app, "#pref-tool-dragDrop-copy").at("value") == "ctrl+shift");
-	// Modifiers another action of the category has leave it without any.
-	click(app, "#pref-tool-assign-dragDrop-sharedCopy", {"ctrl", "shift"});
+
+	// The drop-down list (p. 1602): moving sharedCopy one step, from Alt-Shift onto copy's Ctrl-Shift, asks first.
+	click(app, "#pref-tool-dragDrop-sharedCopy"); // opens the list
+	press(app, "Up");                             // Alt-Shift -> Ctrl-Shift
+	REQUIRE(app.waitUntil([&app] { return !elements(app, "#confirm-ok").empty(); }));
+	CHECK_THAT(text(app, "#confirm-message"), ContainsSubstring("Copy"));
+	CHECK_THAT(text(app, "#confirm-message"), ContainsSubstring("Ctrl-Shift"));
+	// Cancel puts the list back to what it showed; sharedCopy keeps its keys and copy keeps theirs.
+	cancelConfirm(app);
+	CHECK(element(app, "#pref-tool-dragDrop-sharedCopy").at("value") == "alt+shift");
+	CHECK(element(app, "#pref-tool-dragDrop-copy").at("value") == "ctrl+shift");
+	// Replace takes the keys and leaves copy without any.
+	click(app, "#pref-tool-dragDrop-sharedCopy");
+	press(app, "Up");
+	confirm(app);
 	CHECK(element(app, "#pref-tool-dragDrop-sharedCopy").at("value") == "ctrl+shift");
 	CHECK(element(app, "#pref-tool-dragDrop-copy").at("value") == "");
+
+	// Assign asks the same: copy takes the Ctrl-Shift keys sharedCopy has; Cancel keeps both, Replace takes them.
+	click(app, "#pref-tool-assign-dragDrop-copy", {"ctrl", "shift"});
+	cancelConfirm(app);
+	CHECK(element(app, "#pref-tool-dragDrop-copy").at("value") == "");
+	CHECK(element(app, "#pref-tool-dragDrop-sharedCopy").at("value") == "ctrl+shift");
+	click(app, "#pref-tool-assign-dragDrop-copy", {"ctrl", "shift"});
+	confirm(app);
+	CHECK(element(app, "#pref-tool-dragDrop-copy").at("value") == "ctrl+shift");
+	CHECK(element(app, "#pref-tool-dragDrop-sharedCopy").at("value") == "");
+
 	click(app, "#preferences-ok");
 	REQUIRE(app.waitUntil([&app] { return elements(app, "#preferences").empty(); }));
 	CHECK(app.call("settings.get", {{"key", "ui.toolModifiers"}}).at("value") ==
-		Json({{"dragDrop.copy", ""}, {"dragDrop.sharedCopy", "ctrl+shift"}}));
+		Json({{"dragDrop.copy", "ctrl+shift"}, {"dragDrop.sharedCopy", ""}}));
 }

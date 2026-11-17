@@ -43,6 +43,9 @@ jobs:
     timeout-minutes: 60
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      actions: read # main's API references, for the step "API reference changes"
     env:
       CCACHE_MAXSIZE: ${{ matrix.cache }}
       SCCACHE_CACHE_SIZE: ${{ matrix.cache }}
@@ -191,15 +194,73 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      # The generated Lua API reference and MCP tool catalogue, which the unit tests wrote (docs/api-reference.md).
+      # The generated Lua API reference and MCP tool catalogue, which the unit tests wrote (docs/api-reference.md). The
+      # file check fails the job when the tests stopped writing either of them.
       - name: Upload API references
-        if: always() && matrix.name == 'linux-x64-gcc'
+        if: ${{ !cancelled() && matrix.name == 'linux-x64-gcc' }}
         uses: actions/upload-artifact@v7
         with:
           name: api-reference
           path: build/${{ matrix.preset }}/docs/
-          if-no-files-found: ignore
+          if-no-files-found: error
           retention-days: 90
+      - name: Check API references
+        if: ${{ !cancelled() && matrix.name == 'linux-x64-gcc' }}
+        run: test -s build/${{ matrix.preset }}/docs/lua.md && test -s build/${{ matrix.preset }}/docs/mcp-tools.md
+
+      # The references aren't in a pull request's diff, so its job summary shows how they differ from main's latest.
+      - name: API reference changes
+        if: ${{ !cancelled() && github.event_name == 'pull_request' && matrix.name == 'linux-x64-gcc' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          latest='[.artifacts[] | select(.workflow_run.head_branch == "main" and (.expired | not)
+            and .workflow_run.head_repository_id == .workflow_run.repository_id)][0].workflow_run.id'
+          run=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=api-reference&per_page=100" --jq "$latest")
+          gh run download "$run" -R "$GITHUB_REPOSITORY" -n api-reference -D "$RUNNER_TEMP/main-docs"
+          {
+            echo "## API references compared with main's"
+            if diff -ru "$RUNNER_TEMP/main-docs" build/${{ matrix.preset }}/docs > "$RUNNER_TEMP/docs.diff"; then
+              echo "No changes."
+            else
+              echo '```diff'
+              head -c 900000 "$RUNNER_TEMP/docs.diff" # the summary's limit is 1 MiB
+              echo
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # main's references as web pages, which the job publish-api-reference puts on GitHub Pages. Pull requests build
+      # the pages too, to find what breaks them before main does. Jekyll renders Markdown with GitHub's flavour; the raw
+      # tags keep Liquid out of the references' text.
+      - name: Prepare API reference pages
+        if: ${{ !cancelled() && matrix.name == 'linux-x64-gcc' }}
+        run: |
+          mkdir -p api-pages/source
+          {
+            echo '# GNUbase API references'
+            echo
+            echo "Generated from \`main\` by CI ([docs/api-reference.md]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/main/docs/api-reference.md))."
+            echo
+            echo '- [Lua API](lua.html)'
+            echo '- [MCP tool catalogue](mcp-tools.html)'
+          } > api-pages/source/index.md
+          for name in lua mcp-tools; do
+            file=build/${{ matrix.preset }}/docs/$name.md
+            { head -n 1 "$file"; echo '{% raw %}'; tail -n +2 "$file"; echo '{% endraw %}'; } > "api-pages/source/$name.md"
+          done
+      - name: Build API reference pages
+        if: ${{ !cancelled() && matrix.name == 'linux-x64-gcc' }}
+        uses: actions/jekyll-build-pages@v1.0.13
+        with:
+          source: api-pages/source
+          destination: api-pages/site
+      - name: Upload API reference pages
+        if: ${{ github.event_name == 'push' && matrix.name == 'linux-x64-gcc' }}
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: api-pages/site
 
       # Non-blocking (#24): shared runners vary too much to fail on numbers, so the results are only kept.
       - name: Benchmarks
@@ -223,6 +284,23 @@ jobs:
           name: gnubase-${{ matrix.name }}
           path: build/${{ matrix.preset }}/bin/Release/
           retention-days: 14
+
+  # Publishes main's API references on GitHub Pages, the pages the Linux job built (docs/api-reference.md), so they can
+  # be read without a build or a GitHub sign-in. Needs the repository's Pages source set to GitHub Actions.
+  publish-api-reference:
+    needs: build
+    if: ${{ github.event_name == 'push' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v5
 
   sanitizers:
     timeout-minutes: 90 # asan-ubsan took up to 59 min on main on slow runners in Nov 2026
@@ -351,6 +429,11 @@ jobs:
 
       - name: Check license headers
         run: sh tools/check-spdx.sh
+
+      - name: Check the generated themes
+        run: | # resources/themes must be what tools/skin/generate.py writes; names the files that differ
+          python3 tools/skin/generate.py "$RUNNER_TEMP/themes"
+          diff -rq resources/themes "$RUNNER_TEMP/themes"
 
       - name: Install clang-format
         run: pipx install clang-format==22.1.3 # exactly the version Visual Studio 2026 bundles

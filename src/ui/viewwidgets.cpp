@@ -232,11 +232,17 @@ namespace gnubase::ui
 					return;
 				refresh(all);
 				for (const Rml::Element* part = event.GetTargetElement(); part != row; part = part->GetParentNode())
+				{
 					if (part->IsClassSet("tree-toggle"))
 					{
 						toggle(*row, !row->HasAttribute("expanded"));
 						return;
 					}
+					// A control that opens a menu, such as the track versions arrow, leaves the selection as it is:
+					// its menu works on the rows that are selected.
+					if (part->HasAttribute("menu"))
+						return;
+				}
 				const bool multiple = HasAttribute("multiple");
 				const bool shift = event.GetParameter("shift_key", false);
 				if (multiple && (event.GetParameter("ctrl_key", false) || event.GetParameter("meta_key", false)))

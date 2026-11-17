@@ -3,6 +3,7 @@
 
 #include "engine/document/serialize.h"
 #include "engine/media/backup.h"
+#include "engine/midi/midivalues.h"
 #include "platform/log.h"
 #include "platform/rt/realtime.h"
 
@@ -10,6 +11,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <ctime>
 #include <exception>
 #include <set>
@@ -135,7 +137,9 @@ namespace gnubase::engine
 
 	bool MidiRecordFilter::records(const graph::ProcessEvent& event) const
 	{
-		return !types.test(static_cast<size_t>(event.type)) && !channels.test(event.channel % 16U) &&
+		// Note expression is no MIDI message type: only its channel filters it.
+		const auto type = static_cast<size_t>(event.type);
+		return (type >= types.size() || !types.test(type)) && !channels.test(event.channel % 16U) &&
 			(event.type != EventType::Controller || !controllers.test(event.key % 128U));
 	}
 
@@ -147,14 +151,27 @@ namespace gnubase::engine
 		{
 			Sounding& sounding = m_sounding[(size_t{channel} * 128) + (event.key % 128U)];
 			if (sounding.position >= 0)
+			{
 				m_notes.push_back({{"position", sounding.position},
 					{"length", std::max<time::Samples>(position - sounding.position, 1)}, {"pitch", event.key % 128U},
 					{"velocity", sounding.velocity / g_maxVelocity},
 					{"releaseVelocity",
 						(event.type == EventType::NoteOff ? event.velocity : g_defaultReleaseVelocity) / g_maxVelocity},
 					{"channel", channel}, {"take", m_take}});
+				if (!sounding.expressions.empty())
+					m_notes.back()["expressions"] = std::move(sounding.expressions);
+			}
 			sounding.position = event.type == EventType::NoteOn ? position : -1;
 			sounding.velocity = event.velocity;
+			sounding.expressions = Json::array();
+			return;
+		}
+		if (event.type == EventType::NoteExpression)
+		{
+			Sounding& sounding = m_sounding[(size_t{channel} * 128) + (event.key % 128U)];
+			if (sounding.position >= 0 && event.parameter < g_expressionNames.size())
+				sounding.expressions.push_back({{"type", g_expressionNames.at(event.parameter)}, {"position", position},
+					{"value", event.parameterValue}});
 			return;
 		}
 		Controller controller;
@@ -212,7 +229,8 @@ namespace gnubase::engine
 	Recorder::~Recorder()
 	{
 		{
-			const std::scoped_lock lock(m_mutex);
+			std::unique_lock lock(m_mutex);
+			m_wake.wait(lock, [this] { return !m_opening; });
 			m_notify = nullptr; // the engine is going: the files stay, but nothing is added to the project
 			try
 			{
@@ -233,8 +251,9 @@ namespace gnubase::engine
 	void Recorder::prepare(int channels, uint32_t maxFrames)
 	{
 		rt::assertNotRealtime("engine::Recorder::prepare");
-		const std::scoped_lock lock(m_mutex);
-		drain(); // what the audio thread sent before it stopped
+		std::unique_lock lock(m_mutex);
+		m_wake.wait(lock, [this] { return !m_opening; }); // the chunks go away
+		drain(true);                                      // what the audio thread sent before it stopped
 		applySetups(m_latestSetup.load(std::memory_order_acquire));
 		if (m_midiRecording)
 			endMidi();
@@ -251,6 +270,16 @@ namespace gnubase::engine
 		m_filled.reset();
 		m_history.assign(static_cast<size_t>(m_next.preRecordFrames) * static_cast<size_t>(m_channels), 0.0f);
 		m_historyFrames = 0;
+		// The next device counts its frames from 0 again: what was kept so far is no input just before its recordings,
+		// and its frames are counted on after it.
+		for (auto& entry : m_retrospective)
+		{
+			entry.second.recorded = entry.second.events.size();
+			entry.second.stoppedBefore = static_cast<size_t>(std::count_if(entry.second.events.begin(),
+				entry.second.events.end(), [](const RetrospectiveEvent& kept) { return kept.position < 0; }));
+			if (!entry.second.events.empty())
+				m_frameBase = std::max(m_frameBase, entry.second.events.back().deviceFrame + 1);
+		}
 		if (maxFrames == 0)
 			return;
 		const uint32_t count = std::max(g_minChunks, g_queuedFrames / maxFrames);
@@ -291,7 +320,7 @@ namespace gnubase::engine
 
 	void Recorder::applySetups(uint64_t number)
 	{
-		if (number <= m_nextNumber)
+		if (m_opening || number <= m_nextNumber)
 			return;
 		RecordSetup next;
 		uint64_t nextNumber = 0;
@@ -318,7 +347,7 @@ namespace gnubase::engine
 	{
 		rt::assertNotRealtime("engine::Recorder::retrospective");
 		const std::scoped_lock lock(m_mutex);
-		drain();
+		drain(false);
 		const auto found = m_retrospective.find(channel);
 		if (found == m_retrospective.end())
 			return {};
@@ -330,7 +359,7 @@ namespace gnubase::engine
 	{
 		rt::assertNotRealtime("engine::Recorder::clearRetrospective");
 		const std::scoped_lock lock(m_mutex);
-		drain();
+		drain(false);
 		if (channel == 0)
 			m_retrospective.clear();
 		else
@@ -444,8 +473,10 @@ namespace gnubase::engine
 			for (const graph::ProcessEvent& event : sequencer->input())
 			{
 				// ponytail: events beyond a chunk's room are dropped; a continuation chunk if a block ever has more.
+				// Drum sounds auditioned in the drum editor (midi.inject drumSounds) play but are no MIDI input:
+				// neither recorded nor kept for retrospective recording.
 				if (event.offset < offset || event.offset - offset >= frames || event.type == EventType::SysEx ||
-					event.type == EventType::Parameter || chunk->eventCount == chunk->events.size())
+					event.type == EventType::Parameter || event.drumSound || chunk->eventCount == chunk->events.size())
 					continue;
 				chunk->events[chunk->eventCount++] = {channel, event.offset - offset,
 					played.at(static_cast<int64_t>(block.position + event.offset)), event};
@@ -460,7 +491,7 @@ namespace gnubase::engine
 		while (!m_stopping)
 		{
 			// ponytail: polls, since the audio thread can't wake it; a semaphore if 2 ms ever matters.
-			if (!drain())
+			if (!drain(true))
 			{
 				applySetups(m_latestSetup.load(std::memory_order_acquire)); // for the chunks to come
 				m_wake.wait_for(lock, g_idle);
@@ -468,12 +499,17 @@ namespace gnubase::engine
 		}
 	}
 
-	bool Recorder::drain()
+	bool Recorder::drain(bool mayBegin)
 	{
+		if (m_opening || !m_filled)
+			return false; // not prepared, or the chunks behind the one that starts a recording wait for its files
 		bool handled = false;
-		Chunk* chunk = nullptr;
-		while (m_filled && m_filled->tryPop(chunk))
+		for (Chunk* const* next = m_filled->peek(); next != nullptr; next = m_filled->peek())
 		{
+			Chunk* chunk = *next;
+			if (!mayBegin && !chunk->midi && chunk->position >= 0 && !m_recording)
+				break; // starts a recording: the disk thread lists the folder and creates the files
+			m_filled->tryPop(chunk);
 			applySetups(chunk->setup);
 			if (chunk->midi)
 			{
@@ -525,6 +561,19 @@ namespace gnubase::engine
 		m_deviceEnd = chunk.deviceFrame + chunk.frames;
 	}
 
+	Recorder::Unlocked::Unlocked(Recorder& recorder) : m_recorder(recorder)
+	{
+		m_recorder.m_opening = true;
+		m_recorder.m_mutex.unlock();
+	}
+
+	Recorder::Unlocked::~Unlocked()
+	{
+		m_recorder.m_mutex.lock();
+		m_recorder.m_opening = false;
+		m_recorder.m_wake.notify_all();
+	}
+
 	void Recorder::begin(const Chunk& chunk)
 	{
 		m_current = m_next;
@@ -532,13 +581,6 @@ namespace gnubase::engine
 		m_files.clear();
 		m_takes.clear();
 		m_written = 0;
-		if (!m_current.tracks.empty())
-		{
-			std::error_code error;
-			fs::create_directories(m_current.folder, error);
-			if (error)
-				fail("can't create the record folder " + m_current.folder.u8string() + ": " + error.message());
-		}
 		// Audio pre-record: the frames that came in just before, if none is missing in between.
 		const size_t capacity = m_channels > 0 ? m_history.size() / static_cast<size_t>(m_channels) : 0;
 		const size_t before = capacity > 0 && m_historyEnd == chunk.deviceFrame ? m_historyFrames : 0;
@@ -551,24 +593,36 @@ namespace gnubase::engine
 				static_cast<time::Samples>(before);
 			broadcast.timeReference = static_cast<uint64_t>(std::max<time::Samples>(first, 0));
 		}
-		// One listing for all tracks: the folder can hold thousands of recordings, and the lock is held meanwhile.
-		std::set<std::string> taken = takenNames(m_current.folder);
-		for (const RecordTrack& track : m_current.tracks)
 		{
-			try
+			// The folder and the files without the lock: the folder can hold thousands of recordings, and
+			// retrospective() shouldn't wait for them. Meanwhile no chunk is handled and no setup applied (m_opening),
+			// prepare and the destructor wait, and nothing else uses m_current, m_files or the pre-record history.
+			const Unlocked unlocked(*this);
+			if (!m_current.tracks.empty())
 			{
-				const std::string path = createFreeFile(
-					m_current.folder, fs::u8path(fileName(track.name) + extensionOf(m_current.format.format)), taken)
-											 .u8string();
-				WriteOptions options = m_current.format;
-				options.channels = static_cast<int>(track.ports.size());
-				if (options.broadcast)
-					options.broadcast->description = track.name.substr(0, 256);
-				m_files.push_back({track, path, AudioFileWriter::create(path, options)});
+				std::error_code error;
+				fs::create_directories(m_current.folder, error);
+				if (error)
+					fail("can't create the record folder " + m_current.folder.u8string() + ": " + error.message());
 			}
-			catch (const std::exception& error)
+			std::set<std::string> taken = takenNames(m_current.folder); // one listing for all tracks
+			for (const RecordTrack& track : m_current.tracks)
 			{
-				fail("can't record track " + track.name + ": " + error.what());
+				try
+				{
+					const std::string path = createFreeFile(m_current.folder,
+						fs::u8path(fileName(track.name) + extensionOf(m_current.format.format)), taken)
+												 .u8string();
+					WriteOptions options = m_current.format;
+					options.channels = static_cast<int>(track.ports.size());
+					if (options.broadcast)
+						options.broadcast->description = track.name.substr(0, 256);
+					m_files.push_back({track, path, AudioFileWriter::create(path, options)});
+				}
+				catch (const std::exception& error)
+				{
+					fail("can't record track " + track.name + ": " + error.what());
+				}
 			}
 		}
 
@@ -690,9 +744,15 @@ namespace gnubase::engine
 		{
 			const MidiInput& input = chunk.events[i];
 			const auto builder = m_midiBuilders.find(input.channel);
-			if (builder == m_midiBuilders.end())
+			// A track that only monitors records only chord events, no part: its input stays retrospective too.
+			const bool chordsOnly = std::any_of(m_midiCurrent.midiTracks.begin(), m_midiCurrent.midiTracks.end(),
+				[&input](const MidiRecordTrack& track) { return track.channel == input.channel && track.chordsOnly; });
+			if (builder == m_midiBuilders.end() || chordsOnly)
 				keepRetrospective(input, chunk.deviceFrame);
-			else if (m_midiCurrent.midiFilter.records(input.event))
+			if (chordsOnly)
+				if (const auto kept = m_retrospective.find(input.channel); kept != m_retrospective.end())
+					kept->second.recorded = kept->second.events.size();
+			if (builder != m_midiBuilders.end() && m_midiCurrent.midiFilter.records(input.event))
 				builder->second.add(chunk.position + input.offset, input.event);
 		}
 	}
@@ -704,20 +764,25 @@ namespace gnubase::engine
 		m_midiTakes.assign(1, {chunk.position, static_cast<time::Samples>(chunk.deviceFrame), 0});
 		m_midiBuilders.clear();
 		for (const MidiRecordTrack& track : m_midiCurrent.midiTracks)
-			m_midiBuilders[track.channel];
-		// The catch range: input that came just before recording started belongs to its start.
-		if (m_midiCurrent.catchFrames <= 0)
-			return;
-		for (auto& [channel, builder] : m_midiBuilders)
+			m_midiBuilders[track.channel] = MidiTakeBuilder();
+		// The catch range: input that came just before recording started belongs to its start, unless it came before
+		// or during an earlier recording of the track, whether that one took it or not. All that was kept so far is
+		// before this recording: the next one doesn't take it again.
+		for (const MidiRecordTrack& track : m_midiCurrent.midiTracks)
 		{
-			const auto found = m_retrospective.find(channel);
+			const auto found = m_retrospective.find(track.channel);
 			if (found == m_retrospective.end())
 				continue;
-			for (const RetrospectiveEvent& kept : found->second.events)
-				if (kept.deviceFrame < chunk.deviceFrame &&
-					kept.deviceFrame + static_cast<uint64_t>(m_midiCurrent.catchFrames) >= chunk.deviceFrame &&
-					m_midiCurrent.midiFilter.records(kept.event))
-					builder.add(chunk.position, kept.event);
+			Retrospective& buffer = found->second;
+			const uint64_t start = m_frameBase + chunk.deviceFrame;
+			if (m_midiCurrent.catchFrames > 0)
+				for (auto kept = buffer.events.begin() + static_cast<std::ptrdiff_t>(buffer.recorded);
+					kept != buffer.events.end(); ++kept)
+					if (kept->deviceFrame < start &&
+						kept->deviceFrame + static_cast<uint64_t>(m_midiCurrent.catchFrames) >= start &&
+						m_midiCurrent.midiFilter.records(kept->event))
+						m_midiBuilders[track.channel].add(chunk.position, kept->event);
+			buffer.recorded = buffer.events.size();
 		}
 	}
 
@@ -765,16 +830,37 @@ namespace gnubase::engine
 		if (m_next.retrospective == 0)
 			return;
 		Retrospective& buffer = m_retrospective[input.channel];
-		const uint64_t frame = deviceFrame + input.offset;
-		// Input after the buffer was inserted, or in stop mode after a pause, starts it afresh.
+		const uint64_t frame = m_frameBase + deviceFrame + input.offset;
+		// Input after the buffer was inserted starts it afresh, and so does input in stop mode while it holds input in
+		// stop mode, on the next device or after a pause since the last input, from playback or not: the insert places
+		// input in stop mode by its frames, which leave out the time the old device ran.
+		const auto stopped = [&buffer]
+		{
+			return std::any_of(buffer.events.begin(), buffer.events.end(),
+				[](const RetrospectiveEvent& kept) { return kept.position < 0; });
+		};
 		if (buffer.taken ||
-			(input.played < 0 && !buffer.events.empty() && buffer.events.back().position < 0 &&
-				frame > buffer.events.back().deviceFrame + static_cast<uint64_t>(m_next.pauseFrames)))
+			(input.played < 0 &&
+				(buffer.stoppedBefore > 0 ||
+					(!buffer.events.empty() &&
+						frame > buffer.events.back().deviceFrame + static_cast<uint64_t>(m_next.pauseFrames) &&
+						stopped()))))
+		{
 			buffer.events.clear();
+			buffer.recorded = 0;
+			buffer.stoppedBefore = 0;
+		}
 		buffer.taken = false;
 		buffer.events.push_back({frame, input.played, input.event});
 		while (buffer.events.size() > m_next.retrospective)
+		{
+			if (buffer.events.front().position < 0 && buffer.events.front().deviceFrame < m_frameBase &&
+				buffer.stoppedBefore > 0)
+				--buffer.stoppedBefore;
 			buffer.events.pop_front();
+			if (buffer.recorded > 0)
+				--buffer.recorded;
+		}
 	}
 
 	void Recorder::keepHistory(const Chunk& chunk)

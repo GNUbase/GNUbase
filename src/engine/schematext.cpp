@@ -11,16 +11,19 @@ namespace gnubase::engine
 {
 	std::string schemaType(const Json& schema)
 	{
-		if (const auto choices = schema.find("enum"); choices != schema.end())
-		{
-			std::string text;
-			for (const Json& choice : *choices)
-				text += (text.empty() ? "" : " | ") + choice.dump();
-			return "one of " + text;
-		}
 		const Json type = schema.value("type", Json());
 		std::string text;
-		if (type.is_array())
+		if (const auto choices = schema.find("enum"); choices != schema.end())
+		{
+			text = "one of ";
+			bool first = true;
+			for (const Json& choice : *choices)
+			{
+				text += (first ? "" : " | ") + choice.dump();
+				first = false;
+			}
+		}
+		else if (type.is_array())
 		{
 			for (const Json& name : type)
 				text += (text.empty() ? "" : " or ") + name.get<std::string>();
@@ -31,17 +34,32 @@ namespace gnubase::engine
 		}
 		else
 		{
-			return "any";
+			text = "any";
 		}
-		// The limit validate checks, which may be lower than the schema's maxLength (g_patternMaxLength).
 		const std::optional<size_t> maxLength = maxStringLength(schema);
-		const std::string limit = maxLength ? std::to_string(*maxLength) + " characters" : std::string();
 		if (const auto pattern = schema.find("pattern"); pattern != schema.end())
-			return text + " matching `" + pattern->get<std::string>() + "`" + (maxLength ? ", at most " + limit : "");
-		if (maxLength)
-			return text + " of at most " + limit;
-		if (type == "array" && schema.contains("items"))
-			return "array of " + schemaType(schema.at("items"));
+			text += " matching `" + pattern->get<std::string>() + "`" +
+				(maxLength ? ", at most " + std::to_string(*maxLength) + " characters" : "");
+		else if (maxLength)
+			text += " of at most " + std::to_string(*maxLength) + " characters";
+		else if (type == "array" && schema.contains("items"))
+			text += " of " + schemaType(schema.at("items"));
+		const auto bound = [&](const char* key, const char* phrase, const char* unit = "")
+		{
+			if (const auto value = schema.find(key); value != schema.end())
+			{
+				text += std::string(", ") + phrase + " " + value->dump();
+				if (*unit != '\0')
+					text += std::string(" ") + unit + (*value == 1 ? "" : "s");
+			}
+		};
+		bound("minLength", "at least", "character");
+		bound("minItems", "at least", "item");
+		bound("maxItems", "at most", "item");
+		bound("minimum", "at least");
+		bound("maximum", "at most");
+		bound("exclusiveMinimum", "more than");
+		bound("exclusiveMaximum", "less than");
 		return text;
 	}
 

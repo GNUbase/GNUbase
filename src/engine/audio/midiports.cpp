@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/audio/midiports.h"
 
+#include "engine/audio/miditap.h"
 #include "engine/engine.h"
 #include "engine/settings/usersettings.h"
 #include "platform/log.h"
@@ -13,6 +14,7 @@ namespace gnubase::engine
 	namespace
 	{
 		constexpr size_t g_monitorSize = 4096; // messages midi.monitor keeps between two reads
+		constexpr size_t g_activitySize = 256; // messages midi.activity keeps between two runs
 
 		Json portsSchema()
 		{
@@ -22,7 +24,8 @@ namespace gnubase::engine
 	}
 
 	MidiPorts::MidiPorts(const settings::Store& settings, std::vector<std::unique_ptr<gnubase::midi::Backend>> backends)
-		: m_settings(settings), m_backends(std::move(backends)), m_monitor(g_monitorSize)
+		: m_settings(settings), m_backends(std::move(backends)), m_mpeInputs(g_maxInputs), m_monitor(g_monitorSize),
+		  m_activity(g_activitySize)
 	{
 	}
 
@@ -45,6 +48,8 @@ namespace gnubase::engine
 		}
 		const int slot = port.slot;
 		m_allInputs[static_cast<size_t>(slot)].store(inAllInputs(port), std::memory_order_relaxed); // first open too
+		m_mpeSetups[static_cast<size_t>(slot)].store(mpe(port).pack(), std::memory_order_relaxed);
+		m_slotHashes[static_cast<size_t>(slot)].store(chordPadPortHash(key(port)), std::memory_order_relaxed);
 		try
 		{
 			port.input = port.backend->openInput(port.info.id,
@@ -126,7 +131,10 @@ namespace gnubase::engine
 		for (Port& port : m_ports)
 		{
 			if (port.slot >= 0)
+			{
 				m_allInputs[static_cast<size_t>(port.slot)].store(inAllInputs(port), std::memory_order_relaxed);
+				m_mpeSetups[static_cast<size_t>(port.slot)].store(mpe(port).pack(), std::memory_order_relaxed);
+			}
 			const bool wanted = port.present && port.info.input && visible(port);
 			if (wanted && !port.input)
 			{
@@ -142,62 +150,359 @@ namespace gnubase::engine
 		return changed;
 	}
 
-	void MidiPorts::take(const audio::DeviceBlock& block, double sampleRate, audio::MidiBuffer& allInputs,
-		const ChordPadKeys& padKeys) noexcept
+	void MidiPorts::addInput(int slot, const audio::MidiMessage& message, graph::EventBuffer& allInputs) noexcept
 	{
+		if (message.size != gnubase::midi::messageSize(message.bytes[0]) || message.bytes[0] < 0x80 ||
+			message.bytes[0] >= 0xF0)
+			return; // not a channel message
+		const graph::ProcessEvent event = MidiTap::toEvent(message, message.offset);
+		if (slot < 0)
+		{
+			if (graph::endsNotes(event))
+				allInputs.addEnd(event);
+			else
+				allInputs.add(event);
+			return;
+		}
+		const auto index = static_cast<size_t>(slot);
+		const uint64_t setup = m_mpeSetups[index].load(std::memory_order_relaxed);
+		if (setup != m_mpeApplied[index])
+		{
+			m_mpeApplied[index] = setup;
+			m_mpeInputs[index].reset();
+		}
+		m_mpeInputs[index].process(midi::MpeSetup::unpack(setup), event, allInputs);
+	}
+
+	void MidiPorts::take(const audio::DeviceBlock& block, double sampleRate, graph::EventBuffer& allInputs,
+		PadBuffers& pads, const ChordPadKeys& padKeys) noexcept
+	{
+		// The keys down on the remote's input before another became it go up with it (#1447), and what they hold ends:
+		// their note-offs come from an input that is no longer the remote's (#1571).
+		if (padKeys.portHash != m_sectionHeldPort)
+		{
+			m_sectionHeldPort = padKeys.portHash;
+			m_sectionHeld.fill(0);
+			m_sectionPadDown = false;
+			for (size_t key = 0; key < midi::PadVoices::g_triggers; ++key)
+			{
+				for (size_t player = 0; player < m_padVoices.size(); ++player)
+				{
+					m_padVoices.at(player).off(key,
+						[&buffer = pads.at(player)](bool, uint8_t pitch, uint8_t, uint8_t channel)
+						{
+							audio::MidiMessage note;
+							note.size = 3;
+							note.bytes = {static_cast<uint8_t>(0x80 | channel), pitch, 0};
+							buffer.add(note);
+						});
+				}
+				// The pad each key lit goes off, once (#1652, #1708), also with no notes held (#1740); a section key
+				// lights none.
+				tellReleased(key);
+			}
+			m_sectionPadOf.fill(0);
+		}
 		m_queue.take(block.time, sampleRate, block.frames,
-			[this, &block, &allInputs, &padKeys](int slot, const audio::MidiMessage& message)
+			[this, &block, &allInputs, &pads, &padKeys](int slot, const audio::MidiMessage& message)
 			{
 				if (slot == g_keyboardSlot)
 				{
-					allInputs.add(message); // not a port, so not for the monitor
+					addInput(slot, message, allInputs); // not a port, so not for the monitor
 					return;
 				}
-				if (m_allInputs[static_cast<size_t>(slot)].load(std::memory_order_relaxed) &&
-					!playPad(message, padKeys, allInputs))
-					allInputs.add(message);
-				if (!m_monitor.tryPush(Received{slot, block.position + message.offset, message}))
+				if (slot < 0)
+				{
+					const auto player = static_cast<size_t>(g_padsSlot - slot);
+					if (player < pads.size())
+						pads.at(player).add(message);
+					return;
+				}
+				const bool inAll = m_allInputs[static_cast<size_t>(slot)].load(std::memory_order_relaxed);
+				const int status = message.bytes[0] & 0xF0;
+				// The remote keys come from all MIDI inputs, or only from the chosen one, which may be outside them.
+				const uint64_t hash = m_slotHashes[static_cast<size_t>(slot)].load(std::memory_order_relaxed);
+				const bool remote = padKeys.portHash == 0 ? inAll : hash == padKeys.portHash;
+				if (m_padListen.load(std::memory_order_relaxed) && message.size == 3 &&
+					(status == 0x90 || status == 0x80))
+				{
+					const bool on = status == 0x90 && message.bytes[2] > 0;
+					m_padEvents.tryPush(PadEvent{PadEvent::Kind::Note, static_cast<uint8_t>(message.bytes[1] & 0x7F),
+						static_cast<uint8_t>(on ? message.bytes[2] : 0)});
+					// A remote key that goes up meanwhile ends what it played and is no section key down (#1447).
+					if (!on && remote)
+						playPad(message, padKeys, pads);
+					if (inAll)
+						addInput(slot, message, allInputs);
+				}
+				else if (m_padListen.load(std::memory_order_relaxed) &&
+					((status == 0xD0 && message.size >= 2) ||
+						(message.size == 3 && (status == 0xE0 || status == 0xB0))))
+				{
+					// MIDI Learn of what moves all pads: the control plays on as it is.
+					uint8_t source = 3; // a controller
+					if (status == 0xD0)
+						source = 1;
+					else if (status == 0xE0)
+						source = 2;
+					m_padEvents.tryPush(PadEvent{PadEvent::Kind::ControlInput, source,
+						static_cast<uint8_t>(status == 0xB0 ? message.bytes[1] & 0x7F : 0)});
+					if (inAll)
+						addInput(slot, message, allInputs);
+				}
+				else if (!(remote && playPad(message, padKeys, pads)) && inAll)
+				{
+					addInput(slot, message, allInputs);
+				}
+				const Received received{slot, block.position + message.offset, message};
+				if (!m_monitor.tryPush(received))
 					m_monitorDropped.fetch_add(1, std::memory_order_relaxed);
+				// Only while someone listens, and without system real-time messages (clock, active sensing), which
+				// some devices send all the time.
+				if (m_activityListen.load(std::memory_order_relaxed) && message.bytes[0] < 0xF8)
+				{
+					if (!m_activity.tryPush(received))
+						m_activityDropped.fetch_add(1, std::memory_order_relaxed);
+					m_activityCount.fetch_add(1, std::memory_order_relaxed);
+				}
 			});
 	}
 
-	bool MidiPorts::playPad(
-		const audio::MidiMessage& message, const ChordPadKeys& keys, audio::MidiBuffer& allInputs) noexcept
+	bool MidiPorts::playPad(const audio::MidiMessage& message, const ChordPadKeys& keys, PadBuffers& pads) noexcept
 	{
 		const int status = message.bytes[0] & 0xF0;
+		// Modify All Pad Voicings and Tensions and Transpose All Pads (p. 1387): their source plays nothing.
+		for (size_t which = 0; keys.active && which < keys.controlSources.size(); ++which)
+		{
+			const uint8_t source = keys.controlSources.at(which);
+			uint8_t value = 0;
+			if (source == 1 && status == 0xD0 && message.size >= 2)
+				value = message.bytes[1] & 0x7F;
+			else if (message.size == 3 &&
+				((source == 2 && status == 0xE0) ||
+					(source == 3 && status == 0xB0 && message.bytes[1] == keys.controlNumbers.at(which))))
+				value = message.bytes[2] & 0x7F; // the pitch bend's most significant bits, or the controller's value
+			else
+				continue;
+			m_padEvents.tryPush(PadEvent{PadEvent::Kind::Control, static_cast<uint8_t>(which), value});
+			return true;
+		}
 		if (message.size != 3 || (status != 0x90 && status != 0x80))
 			return false;
 		const size_t key = message.bytes[1] & 0x7F;
-		auto& held = m_padPitches[key];
-		uint8_t& heldCount = m_padCounts[key];
-		const auto send = [&message, &allInputs](uint8_t status, uint8_t pitch, uint8_t velocity, size_t voice)
+		// Each player that plays voices the pad its way into its own buffer (#1089).
+		const auto emitTo = [&message, &pads](size_t player)
 		{
-			audio::MidiMessage note = message;
-			note.bytes[0] = static_cast<uint8_t>(status | std::min<size_t>(voice, 15));
-			note.bytes[1] = pitch;
-			note.bytes[2] = velocity;
-			allInputs.add(note);
+			return [&message, &buffer = pads.at(player)](bool on, uint8_t pitch, uint8_t velocity, uint8_t channel)
+			{
+				audio::MidiMessage note = message;
+				note.bytes[0] = static_cast<uint8_t>((on ? 0x90 : 0x80) | channel);
+				note.bytes[1] = pitch;
+				note.bytes[2] = velocity;
+				buffer.add(note);
+			};
 		};
-		if (status == 0x80 || message.bytes[2] == 0)
+		const auto plays = [&keys](size_t player) { return (keys.players & (1U << player)) != 0; };
+		const auto offAll = [this, &emitTo, key]
 		{
-			if (heldCount == 0)
-				return false;
-			for (size_t i = 0; i < heldCount; ++i)
-				send(0x80, held[i], 0, heldCount - 1 - i);
-			heldCount = 0;
+			for (size_t player = 0; player < m_padVoices.size(); ++player)
+				m_padVoices.at(player).off(key, emitTo(player));
+		};
+		const auto holds = [this, key]
+		{
+			return std::any_of(m_padVoices.begin(), m_padVoices.end(),
+				[key](const midi::PadVoices& voices) { return voices.holds(key); });
+		};
+		const auto tell = [this, key](PadEvent::Kind kind, uint8_t velocity)
+		{ m_padEvents.tryPush(PadEvent{kind, static_cast<uint8_t>(key), velocity}); };
+		const bool off = status == 0x80 || message.bytes[2] == 0;
+		if (off)
+			m_sectionHeld.at(key) = 0; // also after the player mode changed
+		// Select/Mute Player's keys play nothing; the command thread selects or mutes (p. 1389).
+		if (keys.active && std::find(keys.playerKeys.begin(), keys.playerKeys.end(), key) != keys.playerKeys.end())
+		{
+			if (!off)
+				tell(PadEvent::Kind::Player, message.bytes[2]);
 			return true;
 		}
-		const uint8_t count = keys.counts[key];
-		if (!keys.active || count == 0)
-			return false;
-		for (size_t i = 0; i < heldCount; ++i) // a second note-on before the note-off ends the first's pitches
-			send(0x80, held[i], 0, heldCount - 1 - i);
-		for (size_t i = 0; i < count; ++i)
+		// The sections player mode (pp. 1381-1385): a pad key chooses the chord, its section keys play its sections.
+		if (keys.active && keys.sections)
 		{
-			held[i] = keys.pitches[key][i];
-			send(0x90, held[i], message.bytes[2], count - 1 - i);
+			const bool section =
+				std::find(keys.sectionKeys.begin(), keys.sectionKeys.end(), key) != keys.sectionKeys.end() ||
+				std::find(keys.subsectionKeys.begin(), keys.subsectionKeys.end(), key) != keys.subsectionKeys.end();
+			if (section)
+			{
+				if (!off)
+					m_sectionHeld.at(key) = message.bytes[2];
+				if (off)
+				{
+					offAll();
+					tellReleased(key); // a pad it lit before the player mode changed
+				}
+				else
+				{
+					playSection(message, keys, pads);
+				}
+				return true;
+			}
+			if (keys.counts.at(keys.selected).at(key) > 0 || (off && static_cast<int>(key) == m_sectionPad))
+			{
+				// A chord the key held or latched before the player mode changed ends. A pad key holds no notes here:
+				// it puts out its pad with its note-off (#1740), also when another pad key came meanwhile.
+				if (off)
+				{
+					offAll();
+					tellReleased(key);
+				}
+				if (!off)
+				{
+					m_sectionPad = static_cast<int>(key);
+					m_sectionPadDown = true;
+					tellTriggered(key, static_cast<uint8_t>(key - keys.start), message.bytes[2]);
+					// Combination: section keys pressed first start with the pad key (p. 1384).
+					if (keys.sectionPlay == 2)
+						for (size_t held = 0; held < m_sectionHeld.size(); ++held)
+							if (m_sectionHeld.at(held) > 0)
+							{
+								for (size_t player = 0; player < m_padVoices.size(); ++player)
+									m_padVoices.at(player).off(held, emitTo(player));
+								audio::MidiMessage press = message;
+								press.bytes = {0x90, static_cast<uint8_t>(held), m_sectionHeld.at(held)};
+								playSection(press, keys, pads);
+							}
+				}
+				else if (static_cast<int>(key) == m_sectionPad)
+				{
+					m_sectionPadDown = false;
+					// Without Latch Chord Pads, the sections end with the pad key.
+					if (!keys.latchPads)
+						for (const uint8_t each : keys.sectionKeys)
+							for (size_t player = 0; player < m_padVoices.size(); ++player)
+								m_padVoices.at(player).off(each, emitTo(player));
+					if (!keys.latchPads)
+						for (const uint8_t each : keys.subsectionKeys)
+							for (size_t player = 0; player < m_padVoices.size(); ++player)
+								m_padVoices.at(player).off(each, emitTo(player));
+				}
+				return true;
+			}
 		}
-		heldCount = count;
+		// A chord modifier's key plays nothing; the command thread changes the pads.
+		if (keys.active && keys.modifiers &&
+			std::find(keys.modifierKeys.begin(), keys.modifierKeys.end(), key) != keys.modifierKeys.end())
+		{
+			tell(PadEvent::Kind::Modifier, off ? 0 : message.bytes[2]);
+			return true;
+		}
+		// A remote key that Filter Notes keeps from MIDI thru, its note-offs too.
+		const bool filtered = keys.active && keys.filter && key >= keys.start && key <= keys.end;
+		if (off)
+		{
+			if (!holds())
+			{
+				tellReleased(key); // a pad it lit with nothing to play, such as with the selected player muted (#1740)
+				return filtered;
+			}
+			if (!keys.latch)
+			{
+				offAll();
+				tellReleased(key);
+			}
+			return true;
+		}
+		// Before the pad check: a key that latched a chord and plays no pad now (moved range, emptied pad, a section
+		// key after the player mode changed) still ends it.
+		if (keys.latch && holds())
+		{
+			offAll();
+			tellReleased(key);
+			return true;
+		}
+		if (!keys.active || keys.counts.at(keys.selected).at(key) == 0)
+			return filtered;
+		m_sectionPadOf.at(key) = 0;
+		for (size_t player = 0; player < m_padVoices.size(); ++player)
+			if (plays(player) && keys.counts.at(player).at(key) > 0)
+				m_padVoices.at(player).on(key, keys.pitches.at(player).at(key).data(), keys.counts.at(player).at(key),
+					message.bytes[2], keys.overlap, emitTo(player));
+		tellTriggered(key, static_cast<uint8_t>(key - keys.start), message.bytes[2]);
+		return true;
+	}
+
+	void MidiPorts::tellTriggered(size_t key, uint8_t pad, uint8_t velocity) noexcept
+	{
+		m_padLit.at(key) = static_cast<uint8_t>(pad + 1);
+		m_padEvents.tryPush(PadEvent{PadEvent::Kind::Triggered, static_cast<uint8_t>(key), velocity, pad});
+	}
+
+	void MidiPorts::tellReleased(size_t key) noexcept
+	{
+		const uint8_t lit = m_padLit.at(key);
+		if (lit == 0)
+			return;
+		m_padLit.at(key) = 0;
+		m_padEvents.tryPush(
+			PadEvent{PadEvent::Kind::Released, static_cast<uint8_t>(key), 0, static_cast<uint8_t>(lit - 1)});
+	}
+
+	bool MidiPorts::playSection(const audio::MidiMessage& message, const ChordPadKeys& keys, PadBuffers& pads) noexcept
+	{
+		const size_t key = message.bytes[1] & 0x7F;
+		const uint8_t velocity = message.bytes[2];
+		// The section of a section key, or of a subsection key with its offset.
+		int section = -1;
+		int offset = 0;
+		for (size_t i = 0; i < keys.sectionKeys.size(); ++i)
+			if (keys.sectionKeys.at(i) == key)
+				section = static_cast<int>(i);
+		for (size_t i = 0; i < keys.subsectionKeys.size() && section < 0; ++i)
+			if (keys.subsectionKeys.at(i) == key)
+			{
+				section = keys.subsectionSections.at(i);
+				offset = keys.subsectionOffsets.at(i);
+			}
+		// sections and combination need the pad key down (or latched), chordPads takes the pad triggered last.
+		const bool padPlays = m_sectionPad >= 0 && (m_sectionPadDown || keys.latchPads || keys.sectionPlay == 1);
+		if (section < 0 || section >= 5 || keys.mutedSections.at(static_cast<size_t>(section)) || !padPlays)
+			return false;
+		const auto pad = static_cast<size_t>(m_sectionPad);
+		for (size_t player = 0; player < m_padVoices.size(); ++player)
+		{
+			if ((keys.players & (1U << player)) == 0)
+				continue;
+			const uint8_t count = keys.counts.at(player).at(pad);
+			const auto& chord = keys.pitches.at(player).at(pad);
+			// The chord's notes from the lowest up over five sections: one each, and the rest to the top section, or
+			// with spread as evenly as they go.
+			std::array<uint8_t, ChordPadKeys::g_maxPitches> notes{};
+			size_t n = 0;
+			for (size_t i = 0; i < count; ++i)
+			{
+				size_t of = 0;
+				if (count <= 5)
+					of = i;
+				else if (keys.spread)
+					of = i * 5 / count;
+				else
+					of = std::min<size_t>(i, 4);
+				if (static_cast<int>(of) == section)
+					notes.at(n++) = static_cast<uint8_t>(std::clamp(chord.at(i) + offset, 0, 127));
+			}
+			if (n > 0)
+			{
+				const auto emit = [&pads, &message, player](bool on, uint8_t pitch, uint8_t level, uint8_t channel)
+				{
+					audio::MidiMessage note = message;
+					note.bytes = {static_cast<uint8_t>((on ? 0x90 : 0x80) | channel), pitch, level};
+					pads.at(player).add(note);
+				};
+				// Overlaps is for another chord's notes (p. 1382): the sections of one pad play together (p. 1383).
+				m_padVoices.at(player).on(key, notes.data(), n, velocity, keys.overlap, emit,
+					[this, pad](size_t other) { return m_sectionPadOf.at(other) == pad + 1; });
+			}
+		}
+		m_sectionPadOf.at(key) = static_cast<uint8_t>(pad + 1);
 		return true;
 	}
 
@@ -211,13 +516,31 @@ namespace gnubase::engine
 		return m_settings.value("midi.portSettings").value(key(port), Json::object());
 	}
 
+	midi::MpeSetup MidiPorts::preset(const Port& port)
+	{
+		const midi::MpeDevice* device = port.info.input ? midi::detectMpeDevice(port.info.name) : nullptr;
+		return device != nullptr ? device->setup : midi::MpeSetup();
+	}
+
+	midi::MpeSetup MidiPorts::mpe(const Port& port) const
+	{
+		if (!port.info.input)
+			return {};
+		return midi::MpeSetup::fromJson(setting(port).value("mpe", Json::object()), preset(port));
+	}
+
 	Json MidiPorts::toJson(const Port& port) const
 	{
 		const std::string showAs = setting(port).value("showAs", std::string());
-		return {{"backend", port.backend->name()}, {"id", port.info.id}, {"input", port.info.input},
+		Json json = {{"backend", port.backend->name()}, {"id", port.info.id}, {"input", port.info.input},
 			{"name", port.info.name}, {"showAs", showAs.empty() ? port.info.name : showAs}, {"visible", visible(port)},
 			{"inAllInputs", inAllInputs(port)}, {"present", port.present}, {"open", port.input != nullptr},
 			{"midi2", port.info.midi2}};
+		if (port.info.input)
+			json["mpe"] = mpe(port).toJson();
+		if (const midi::MpeDevice* device = port.info.input ? midi::detectMpeDevice(port.info.name) : nullptr)
+			json["mpeDevice"] = device->name;
+		return json;
 	}
 
 	Json MidiPorts::list() const
@@ -259,15 +582,35 @@ namespace gnubase::engine
 		const Port& port = m_ports[find(changes)];
 		if (changes.contains("inAllInputs") && !port.info.input)
 			throw CommandError("only inputs belong to all MIDI inputs");
+		if (changes.contains("mpe") && !port.info.input)
+			throw CommandError("only inputs have MPE input");
 		for (const char* name : {"backend", "id", "input"})
 			changes.erase(name);
+		if (changes.contains("mpe"))
+		{
+			// Tuning for X is Use for Tuning, as on the page: X keeps its own assignment underneath (#1749).
+			Json& call = changes.at("mpe");
+			if (call.value("xExpression", std::string()) == "tuning")
+			{
+				if (!call.value("tuning", true))
+					throw CommandError("xExpression tuning is Use for Tuning, which tuning false turns off");
+				call["tuning"] = true;
+				call.erase("xExpression");
+			}
+			// What the call leaves out stays, or is the detected device's preset; members of a later GNUbase's stay
+			// too.
+			Json mpe = setting(port).value("mpe", preset(port).toJson());
+			mpe.update(changes.at("mpe"));
+			mpe.update(midi::MpeSetup::fromJson(mpe, preset(port)).toJson());
+			changes["mpe"] = std::move(mpe);
+		}
 		// The engine applies the changed setting (applySettings), which opens or closes the port and sends
 		// midi.changed.
 		engine.modifySetting(context, "midi.portSettings",
-			[entry = key(port), &changes](const Json& value)
+			[entry = key(port), &changes, defaults = preset(port).toJson()](const Json& value)
 			{
-				return settings::changeEntry(
-					value, entry, changes, {{"showAs", ""}, {"visible", true}, {"inAllInputs", true}});
+				return settings::changeEntry(value, entry, changes,
+					{{"showAs", ""}, {"visible", true}, {"inAllInputs", true}, {"mpe", defaults}});
 			});
 		return toJson(port);
 	}
@@ -278,11 +621,46 @@ namespace gnubase::engine
 			backend->onPortsChanged([&engine] { engine.post("midi.refresh"); });
 
 		engine.registerCommand(
+			{"midi.padListen", 1,
+				"Whether every MIDI input port's notes and controls (aftertouch, pitch bend and controllers) also go "
+				"to the chord pads as they play (chordPads.listen, which uses this, and chordPads.remoteInput), with "
+				"the pads' remote keys left alone meanwhile, but for their note-offs, which end what they play.",
+				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["on"],
+					"properties": {"on": {"type": "boolean"}}})"),
+				Json::object(), false},
+			[this](CommandContext& context)
+			{
+				listOnce();
+				listenForPads(context.parameters().at("on").get<bool>());
+				return Json::object();
+			});
+
+		engine.registerCommand(
+			{"midi.activityListen", 1,
+				"Whether what the open MIDI inputs receive goes to midi.activity, which the engine then runs itself "
+				"as input arrives: the Note Expression Input page turns it on while it is open (#1749). Off by "
+				"default; turning it on starts afresh, without what came before.",
+				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["on"],
+					"properties": {"on": {"type": "boolean"}}})"),
+				Json::object(), false},
+			[this](CommandContext& context)
+			{
+				listOnce();
+				const bool on = context.parameters().at("on").get<bool>();
+				if (on && !m_activityListen.load(std::memory_order_relaxed))
+					dropActivity();
+				m_activityListen.store(on, std::memory_order_relaxed);
+				return Json::object();
+			});
+
+		engine.registerCommand(
 			{"midi.ports", 1,
 				"The MIDI ports of every MIDI backend, inputs and outputs: backend, id, system name, the name they are "
-				"shown as (showAs), whether they are visible, whether an input belongs to all MIDI inputs, whether "
-				"the port is present now and open, and whether the system speaks MIDI 2.0 with it. Ports that were "
-				"unplugged stay listed with their settings, not present.",
+				"shown as (showAs), whether they are visible, whether an input belongs to all MIDI inputs, an "
+				"input's MPE input (mpe, as midi.setPort takes it), for an input that is a known MPE device the "
+				"device's name (mpeDevice), whether the port is present now and open, and whether the system speaks "
+				"MIDI 2.0 with it. Ports that were unplugged stay listed with their "
+				"settings, not present.",
 				CommandInfo{}.parameters, portsSchema(), true},
 			[this](CommandContext&)
 			{
@@ -293,14 +671,37 @@ namespace gnubase::engine
 			{"midi.setPort", 1,
 				"Changes a MIDI port's settings. The port is given by its id, whether it is an input, and its backend "
 				"if ids repeat. showAs: the name it is shown as; empty shows the system name. visible: hidden inputs "
-				"are closed. inAllInputs, for inputs: whether tracks set to all MIDI inputs receive it. The settings "
-				"are kept in the user setting midi.portSettings, so they come back with the port, also after a "
-				"restart. Returns the port. If that changes the setting, sends midi.ports as the event midi.changed, "
-				"as settings.set and settings.reset on midi.portSettings do.",
-				Json::parse(R"({"type": "object", "additionalProperties": false, "required": ["id", "input"],
-					"properties": {"backend": {"type": "string"}, "id": {"type": "string"},
-					"input": {"type": "boolean"}, "showAs": {"type": "string"}, "visible": {"type": "boolean"},
-					"inAllInputs": {"type": "boolean"}}})"),
+				"are closed. inAllInputs, for inputs: whether tracks set to all MIDI inputs receive it. mpe, for "
+				"inputs: its MPE input (reference manual pp. 1295-1298), whose members the call leaves out stay as "
+				"they were: mode off, lower (MPE's lower zone: master channel 1, the notes on channels 2 and up), "
+				"upper (its upper zone: master channel 16, the notes on 15 and down) or rotation (channel rotation: "
+				"the notes on the used channels from firstChannel on, up to 16, no master channel); channels, the "
+				"notes' channels (a zone has at most 15); pitchRange, the semitones of the notes' pitch bend; tuning "
+				"(Use for Tuning), whether the notes' pitch bend is their tuning; initialX and initialY (Send Initial "
+				"Value), what each note's X and Y start at: off, the channel's latest value, or center, min or max (Y "
+				"only); xMessage, pressureMessage and yMessage (MIDI Message), the message of each dimension: "
+				"pitchBend, aftertouch (channel pressure) or cc0 to cc127, by default pitchBend, aftertouch and cc74; "
+				"xExpression, pressureExpression and yExpression (Note Expression Assignment), the note expression "
+				"each plays (volume, pan, tuning, vibrato, expression, brightness, pressure) or none, which passes "
+				"the message as it is, by default none (X), pressure and brightness; with tuning X plays tuning "
+				"over its own assignment, which it plays again without it, and xExpression tuning turns tuning "
+				"on (with tuning false it is rejected), keeping X's own. On the notes' channels the dimensions' "
+				"messages are the expression of the notes that sound there, as per-note expression, live and in "
+				"recordings (docs/features/note-expression.md). An input whose name is a known MPE device's "
+				"(mpeDevice in midi.ports) has the device's preset settings until a call changes them. The settings "
+				"are kept in the user setting "
+				"midi.portSettings, so they come back with the port, also after a restart. Returns the port. If that "
+				"changes the setting, sends midi.ports as the event midi.changed, as settings.set and settings.reset "
+				"on midi.portSettings do.",
+				[]
+				{
+					Json schema = Json::parse(R"({"type": "object", "additionalProperties": false,
+						"required": ["id", "input"], "properties": {"backend": {"type": "string"},
+						"id": {"type": "string"}, "input": {"type": "boolean"}, "showAs": {"type": "string"},
+						"visible": {"type": "boolean"}, "inAllInputs": {"type": "boolean"}}})");
+					schema["properties"]["mpe"] = midi::mpeSchema();
+					return schema;
+				}(),
 				Json::parse(R"({"type": "object"})"), false},
 			[this, &engine](CommandContext& context) { return setPort(engine, context); });
 		engine.registerCommand(
@@ -345,6 +746,42 @@ namespace gnubase::engine
 				}
 				const size_t dropped = m_monitorDropped.exchange(0, std::memory_order_relaxed);
 				return Json{{"received", std::move(received)}, {"dropped", start ? 0 : dropped}};
+			});
+		engine.registerCommand(
+			{"midi.activity", 1,
+				"Takes the MIDI input that the open inputs received since the last run while midi.activityListen "
+				"was on, at most 256 messages without system real-time messages (0xF8 to 0xFF), each with its port "
+				"(backend and id) and its bytes, and announces it as the event midi.activity unless there is none: "
+				"the Note Expression Input page's MIDI Activity display (reference manual p. 1298) shows it. The "
+				"engine runs it itself, at most ten times a second, while input arrives and an audio device "
+				"processes blocks; its runs stay out of engine.commandLog. What was received before a device "
+				"started is dropped then. dropped counts what didn't fit. "
+				"midi.monitor, which keeps the input's positions, takes its own copy.",
+				CommandInfo{}.parameters,
+				Json::parse(R"({"type": "object", "properties": {"received": {"type": "array"},
+					"dropped": {"type": "integer"}}, "required": ["received", "dropped"]})"),
+				false},
+			[this](CommandContext& context)
+			{
+				listOnce();
+				context.leaveOutOfLog();
+				Json received = Json::array();
+				Received entry;
+				while (m_activity.tryPop(entry))
+				{
+					const auto port = std::find_if(m_ports.begin(), m_ports.end(),
+						[&entry](const Port& candidate) { return candidate.slot == entry.slot; });
+					if (port == m_ports.end())
+						continue;
+					const std::vector<uint8_t> bytes(
+						entry.message.bytes.begin(), entry.message.bytes.begin() + entry.message.size);
+					received.push_back({{"backend", port->backend->name()}, {"id", port->info.id}, {"bytes", bytes}});
+				}
+				Json result = {{"received", std::move(received)},
+					{"dropped", m_activityDropped.exchange(0, std::memory_order_relaxed)}};
+				if (!result.at("received").empty())
+					context.emit("midi.activity", result);
+				return result;
 			});
 	}
 }

@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <set>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -24,6 +25,8 @@ namespace gnubase::ui
 	{
 		// The result of a dialog that closed to make way for another one.
 		constexpr const char* g_replaced = "replaced";
+		// The document that shows an error or a notice (showError, showNotice).
+		constexpr const char* g_errorDialog = "project-error.rml";
 		// The result with which a backup's progress dialog closes once the backup ended.
 		constexpr const char* g_backupDone = "done";
 
@@ -93,6 +96,18 @@ namespace gnubase::ui
 		}
 	}
 
+	std::string missingMedia(const Json& result)
+	{
+		const auto found = result.find("missing");
+		if (found == result.end() || !found->is_array() || found->empty())
+			return {};
+		std::string files;
+		for (const Json& path : *found)
+			files += (files.empty() ? "" : ", ") + path.get<std::string>();
+		return "The file was saved without the media files that are missing; it refers to them where they were: " +
+			files + ".";
+	}
+
 	ProjectFiles::ProjectFiles(KeyCommands& keys, EngineBinding& binding, Shell& shell, std::filesystem::path folder)
 		: m_binding(binding), m_shell(shell), m_folder(std::move(folder)),
 		  m_saved(binding.on("project.saved",
@@ -107,6 +122,16 @@ namespace gnubase::ui
 				  autoSaveWorks();
 				  readLocation();
 			  })),
+		  m_jobStarted(binding.on("job.started",
+			  [this](const engine::Event& event)
+			  {
+				  const Json job = event.data.at("job");
+				  const std::string kind = job.at("kind").get<std::string>();
+				  if (kind != "track.freeze" && kind != "track.renderInPlace" && kind != "mixdown.export")
+					  return;
+				  if (const Window* main = mainWindow())
+					  backupStarted(main->id(), engine::Result{0, {{"job", job}}, {}});
+			  })),
 		  m_jobProgress(binding.on("job.progress",
 			  [this](const engine::Event& event)
 			  {
@@ -116,9 +141,11 @@ namespace gnubase::ui
 					  : nullptr;
 				  if (dialog == nullptr)
 					  return;
-				  if (Rml::Element* bar = dialog->GetElementById("backup-progress"))
+				  if (Rml::Element* bar =
+						  dialog->GetElementById(backup->second.rendering ? "render-progress" : "backup-progress"))
 					  bar->SetAttribute("value", event.data.at("progress").get<double>());
-				  if (Rml::Element* file = dialog->GetElementById("backup-progress-file"))
+				  if (Rml::Element* file = dialog->GetElementById(
+						  backup->second.rendering ? "render-progress-file" : "backup-progress-file"))
 					  file->SetInnerRML(Rml::StringUtilities::EncodeRml(event.data.at("detail").get<std::string>()));
 			  })),
 		  m_jobFinished(
@@ -207,7 +234,10 @@ namespace gnubase::ui
 		}
 		for (const auto& backup : m_backups)
 			if (Rml::Element* progress = backup.second.progress.get())
+			{
 				progress->RemoveEventListener(g_dialogCloseEvent, this);
+				progress->RemoveEventListener(Rml::EventId::Unload, this);
+			}
 	}
 
 	void ProjectFiles::openStartScreen(Window& window)
@@ -349,21 +379,35 @@ namespace gnubase::ui
 			showError(window, result.error);
 			return;
 		}
+		// Its window may have gone since OK, such as a panel's own window: its progress shows in the main window
+		// instead, so that it doesn't run unseen (#1372). The refusal above shows there too (openWaiting).
+		if (const Window* main = mainWindow(); m_shell.find(window) == nullptr && main != nullptr)
+			window = main->id();
 		const Json& job = result.value.at("job");
 		const auto id = job.at("id").get<uint64_t>();
 		Backup& backup = m_backups[id];
 		backup.window = window;
+		backup.rendering = job.at("kind") != "project.backup";
 		// The progress isn't one of the dialogs that take turns (openDialog): while the backup runs, the other project
 		// dialogs still open, over it, and quitting closes them, not the backup (#1001). Each window shows one backup's
 		// progress at a time, so that a backup asked for in another window meanwhile shows its own (#1109). Closed
-		// before the backup ended, by Cancel or otherwise, it stops it (ProcessEvent); the backup may end before
-		// job.cancel comes.
+		// before the backup ended, by Cancel or otherwise, or gone with its window, it stops it (ProcessEvent), so that
+		// no backup runs on unseen with its outcome nowhere to show (#1206); the backup may end before job.cancel
+		// comes.
 		const bool showing = std::any_of(m_backups.begin(), m_backups.end(),
 			[window](const auto& other) { return other.second.window == window && other.second.progress; });
-		if (Rml::ElementDocument* dialog = showing ? nullptr : loadDialog(window, "backup-progress.rml"))
+		if (Rml::ElementDocument* dialog = showing && !backup.rendering
+				? nullptr
+				: loadDialog(window, backup.rendering ? "render-progress.rml" : "backup-progress.rml"))
 		{
 			backup.progress = dialog->GetObserverPtr();
-			if (Rml::Element* bar = dialog->GetElementById("backup-progress"))
+			if (backup.rendering)
+			{
+				dialog->Show(Rml::ModalFlag::None);
+				dialog->SetAttribute("job", id);
+			}
+			dialog->AddEventListener(Rml::EventId::Unload, this);
+			if (Rml::Element* bar = dialog->GetElementById(backup.rendering ? "render-progress" : "backup-progress"))
 				bar->SetAttribute("value", job.at("progress").get<double>());
 		}
 		// The job may have ended before its command's result came: job.get tells.
@@ -381,12 +425,15 @@ namespace gnubase::ui
 		const auto found = m_backups.find(id);
 		if (found == m_backups.end())
 			return; // another client's, or reported already
+		// Its window may have gone meanwhile, such as a panel's own window with a backup that ran without progress
+		// there: its errors show in the main window then, as every error does (openWaiting, #1206).
 		const WindowId window = found->second.window;
 		auto* progress = dynamic_cast<Rml::ElementDocument*>(found->second.progress.get());
 		m_backups.erase(found);
 		if (progress != nullptr)
 		{
 			progress->RemoveEventListener(g_dialogCloseEvent, this);
+			progress->RemoveEventListener(Rml::EventId::Unload, this);
 			ui::closeDialog(*progress, g_backupDone);
 		}
 		// A backup runs as a job, so most of its failures come after project.backup returned. So do the files it
@@ -399,6 +446,8 @@ namespace gnubase::ui
 		}
 		if (state != "done")
 			return; // cancelled: as the user asked
+		if (job.at("kind") != "project.backup")
+			return;
 		const Json& result = job.at("result");
 		std::string problems;
 		if (const Json& missing = result.at("missing"); !missing.empty())
@@ -428,6 +477,22 @@ namespace gnubase::ui
 			showError(window, problems);
 	}
 
+	bool ProjectFiles::cancelBackupOf(Rml::Element* progress)
+	{
+		if (progress == nullptr)
+			return false; // a backup without progress has none to match (#1372)
+		for (auto& backup : m_backups)
+			if (backup.second.progress.get() == progress)
+			{
+				progress->RemoveEventListener(g_dialogCloseEvent, this);
+				progress->RemoveEventListener(Rml::EventId::Unload, this);
+				backup.second.progress.reset();
+				m_binding.send("job.cancel", {{"job", backup.first}}, [](const engine::Result&) {});
+				return true;
+			}
+		return false;
+	}
+
 	void ProjectFiles::openDialog(WindowId window, const char* file, Shown shown, Closed closed, bool wait)
 	{
 		// A failed auto save's error came on its own, not from what the user does: it makes way for the dialog of
@@ -441,7 +506,8 @@ namespace gnubase::ui
 			return;
 		}
 		// One at a time, and the others wait, so that nothing the user is to answer or learn is dropped (#485).
-		m_waitingDialogs.push_back({window, file, std::move(shown), std::move(closed)});
+		m_waitingDialogs.push_back(
+			{window, file, std::string_view(file) == g_errorDialog, std::move(shown), std::move(closed)});
 		openWaiting();
 	}
 
@@ -452,6 +518,11 @@ namespace gnubase::ui
 			WaitingDialog next = std::move(m_waitingDialogs.front());
 			m_waitingDialogs.pop_front();
 			Rml::ElementDocument* dialog = loadDialog(next.window, next.file);
+			// An error or notice whose window went while it waited still shows, in the main window instead, so that
+			// the failed save it reports isn't taken for done (#985).
+			if (dialog == nullptr && next.error)
+				if (const Window* main = mainWindow(); main != nullptr)
+					dialog = loadDialog(main->id(), next.file);
 			if (dialog == nullptr)
 			{
 				if (next.shown)
@@ -489,8 +560,14 @@ namespace gnubase::ui
 	// event and unloading, and the dialogs that keep a failed auto save's error away hiding or unloading.
 	void ProjectFiles::ProcessEvent(Rml::Event& event)
 	{
+		if (event.GetId() == Rml::EventId::Unload && cancelBackupOf(event.GetCurrentElement()))
+			return;
 		if (event.GetId() == Rml::EventId::Hide || event.GetId() == Rml::EventId::Unload)
 		{
+			// A document that unloads mustn't keep this as a listener: RmlUi releases the document at the context's
+			// next update and calls OnDetach on its listeners then, which may be after the teardown (#985).
+			if (event.GetId() == Rml::EventId::Unload)
+				event.GetCurrentElement()->RemoveEventListener(Rml::EventId::Unload, this);
 			// The dialog is still in its context while it unloads.
 			m_shell.post(
 				[this]
@@ -519,14 +596,8 @@ namespace gnubase::ui
 			return;
 		const auto result = event.GetParameter<Rml::String>("result", "");
 		// A backup's progress that closes before the backup ended (backupEnded closes it unheard).
-		for (auto& backup : m_backups)
-			if (backup.second.progress.get() == dialog)
-			{
-				dialog->RemoveEventListener(g_dialogCloseEvent, this);
-				backup.second.progress.reset();
-				m_binding.send("job.cancel", {{"job", backup.first}}, [](const engine::Result&) {});
-				return;
-			}
+		if (cancelBackupOf(dialog))
+			return;
 		dialog->RemoveEventListener(Rml::EventId::Dblclick, this);
 		dialog->RemoveEventListener(g_dialogCloseEvent, this);
 		m_dialog.reset();
@@ -553,6 +624,8 @@ namespace gnubase::ui
 		{
 			if (!result.ok())
 				showError(id, result.error);
+			else if (const std::string missing = missingMedia(result.value); !missing.empty())
+				showNotice(id, "Missing Media Files", missing);
 		};
 	}
 
@@ -570,7 +643,7 @@ namespace gnubase::ui
 			[this, window, title, message]
 			{
 				openDialog(
-					window, "project-error.rml",
+					window, g_errorDialog,
 					[title, message](Rml::ElementDocument* dialog)
 					{
 						if (dialog == nullptr)
@@ -604,7 +677,7 @@ namespace gnubase::ui
 				}
 				// Any other error waits for the project dialog that is open.
 				openDialog(
-					window, "project-error.rml",
+					window, g_errorDialog,
 					[this, error, autoSave](Rml::ElementDocument* dialog)
 					{
 						if (dialog == nullptr)
@@ -677,6 +750,14 @@ namespace gnubase::ui
 			ui::closeDialog(*dialog, result);
 	}
 
+	Window* ProjectFiles::mainWindow()
+	{
+		for (Window* window : m_shell.windows())
+			if (window->main())
+				return window;
+		return nullptr;
+	}
+
 	void ProjectFiles::autoSaveFailed(const Json& failure)
 	{
 		// The engine logged the failure already, if it was new.
@@ -684,20 +765,17 @@ namespace gnubase::ui
 			m_autoSaveFailureShown = false;
 		if (m_autoSaveFailureShown)
 			return;
-		for (const Window* window : m_shell.windows())
-			if (window->main())
-			{
-				openError(
-					window->id(), "The project can't be auto saved: " + failure.at("error").get<std::string>(), true);
-				return;
-			}
+		if (const Window* main = mainWindow(); main != nullptr)
+			openError(main->id(), "The project can't be auto saved: " + failure.at("error").get<std::string>(), true);
 	}
 
 	void ProjectFiles::unlessUnsaved(
 		Window& window, std::function<void()> action, std::function<void(Rml::ElementDocument*)> asked)
 	{
+		const uint64_t question = ++m_questions;
 		m_binding.send("project.revision", Json::object(),
-			[this, id = window.id(), action = std::move(action), asked = std::move(asked)](const engine::Result& result)
+			[this, question, id = window.id(), action = std::move(action), asked = std::move(asked)](
+				const engine::Result& result)
 			{
 				if (!result.ok() || !result.value.at("modified").get<bool>())
 				{
@@ -708,9 +786,49 @@ namespace gnubase::ui
 				}
 				// The dialog that asked may still be closing. The question waits for a project dialog that is open.
 				m_shell.post(
-					[this, id, action, asked]
+					[this, question, id, action, asked]
 					{
-						openDialog(id, "discard-changes.rml", asked,
+						if (question != m_questions)
+						{
+							// A newer question came, such as a quit's while this one was still coming: this one
+							// doesn't open, and its action doesn't run (#985).
+							if (asked)
+								asked(nullptr);
+							return;
+						}
+						openDialog(
+							id, "discard-changes.rml",
+							[this, action, asked](Rml::ElementDocument* opened)
+							{
+								if (opened == nullptr)
+								{
+									if (asked)
+										asked(nullptr);
+									return;
+								}
+								// asked hears of the question as it shows, not once the engine answered the second
+								// look below: the user can answer it meanwhile, and a quit request after that Cancel
+								// asks again instead of finding the quit question still coming (#1454).
+								if (asked)
+									asked(opened);
+								// The question may have waited: the project can have been saved meanwhile, so ask
+								// the engine again now that it opens, and run the action at once if there is nothing
+								// left to discard (#985).
+								const Rml::ObserverPtr<Rml::Element> shown = opened->GetObserverPtr();
+								m_binding.send("project.revision", Json::object(),
+									[this, shown, action](const engine::Result& result)
+									{
+										auto* opened = dynamic_cast<Rml::ElementDocument*>(shown.get());
+										// answered or gone with its window while the engine was asked
+										if (opened == nullptr || opened != m_dialog.get())
+											return;
+										if (result.ok() && !result.value.at("modified").get<bool>())
+										{
+											ui::closeDialog(*opened, "cancel");
+											action();
+										}
+									});
+							},
 							[action](Rml::ElementDocument&, const std::string& answer)
 							{
 								if (answer == "ok")
@@ -729,6 +847,20 @@ namespace gnubase::ui
 			return;
 		// A dialog that is open, such as the start screen, would keep the question from opening: quitting cancels it.
 		closeDialog("cancel");
+		// The questions and start screens that wait for it go too, so that the quit question is next instead of one
+		// of them: their asked hears that they won't open, and an error stays, as what it says may bear on the
+		// answer (#985).
+		for (auto waiting = m_waitingDialogs.begin(); waiting != m_waitingDialogs.end();)
+		{
+			if (waiting->error)
+			{
+				++waiting;
+				continue;
+			}
+			if (waiting->shown)
+				waiting->shown(nullptr);
+			waiting = m_waitingDialogs.erase(waiting);
+		}
 		m_quitting = true;
 		// Quitting closes every window, so it waits until the event that asked for it is done with them.
 		unlessUnsaved(

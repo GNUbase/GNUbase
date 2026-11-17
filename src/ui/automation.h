@@ -62,9 +62,10 @@ namespace gnubase::ui
 		engine::Json windows();
 
 		// {"elements": [...]}: the window's documents, or the elements the CSS selector matches in them, as trees of
-		// elements with tag, id, classes, the other attributes, a form control's value, pseudo-classes such as hover
-		// or checked, whether they're visible, their border box and their children, depth levels deep (all if it's
-		// negative). Text is a child {"text": ...}; an element whose children are left out has its text instead.
+		// elements with tag, id, classes, the other attributes, a form control's value, a drop-down list's options
+		// (each its value, text and whether it's selected), pseudo-classes such as hover or checked, whether they're
+		// visible, their border box and their children, depth levels deep (all if it's negative). Text is a child
+		// {"text": ...}; an element whose children are left out has its text instead.
 		engine::Json dom(std::optional<WindowId> window, const std::string& selector, int depth);
 
 		// The window as it looks, or the element's border box in it. The element must be visible.

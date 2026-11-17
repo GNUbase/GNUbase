@@ -19,11 +19,15 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 using namespace gnubase;
@@ -72,13 +76,37 @@ namespace
 		const Rml::Property* property = element.GetProperty("decorator");
 		return property != nullptr ? property->ToString() : std::string();
 	}
+
+	// The ids of the themes there are, sorted as ui::Themes keeps them.
+	std::vector<std::string> ids(const ui::Themes& themes)
+	{
+		std::vector<std::string> found;
+		for (const ui::Theme& theme : themes.themes())
+			found.push_back(theme.id);
+		return found;
+	}
+
+	// The name the UI shows for a theme; empty for one there isn't.
+	std::string name(const ui::Themes& themes, const std::string& id)
+	{
+		for (const ui::Theme& theme : themes.themes())
+			if (theme.id == id)
+				return theme.name;
+		return {};
+	}
 }
 
 TEST_CASE("GNUbase's themes are the folders in resources/themes with a theme style sheet", "[unit]")
 {
 	const test::FakeUi fake{{{1, "Monitor", {0, 0, 1920, 1080}, {0, 0, 1920, 1080}, 1.0F}}};
 	const ui::Themes themes(resources());
-	CHECK(themes.names() == std::vector<std::string>{"dark", "gnubase", "high-contrast", "light"});
+	CHECK(ids(themes) == std::vector<std::string>{"dark", "gnubase", "high-contrast", "light"});
+	// Each theme carries the name the UI shows for it, so that no document names a theme.
+	CHECK(name(themes, "gnubase") == "GNUbase");
+	CHECK(name(themes, "dark") == "Dark");
+	CHECK(name(themes, "light") == "Light");
+	CHECK(name(themes, "high-contrast") == "High Contrast");
+	CHECK(name(themes, "neon").empty());
 	CHECK(themes.has(ui::g_defaultTheme));
 	CHECK(themes.has("light"));
 	CHECK(!themes.has("neon"));
@@ -96,7 +124,10 @@ TEST_CASE("resources without themes, or a theme style sheet outside its media qu
 	write(temp.path() / "themes" / "neon" / "theme.rcss", "body { color: #ff00ff; }");
 	CHECK_THROWS_WITH(ui::Themes(temp.path()), ContainsSubstring("neon") && ContainsSubstring("@media (theme: neon)"));
 	write(temp.path() / "themes" / "neon" / "theme.rcss", "@media (theme: neon) { body { color: #ff00ff; } }");
-	CHECK(ui::Themes(temp.path()).names() == std::vector<std::string>{"neon"});
+	const ui::Themes neon(temp.path());
+	CHECK(ids(neon) == std::vector<std::string>{"neon"});
+	// A theme without a manifest shows its id.
+	CHECK(name(neon, "neon") == "neon");
 }
 
 TEST_CASE("every document gets the design system and the active theme's colors, fonts and skins", "[unit]")
@@ -230,6 +261,158 @@ TEST_CASE("every theme draws play probability and velocity variance bars dashed,
 			CHECK_THAT(decorator(*bar), ContainsSubstring("repeating-linear-gradient"));
 			CHECK(bar->GetComputedValues().background_color().alpha == 0);
 		}
+	}
+}
+
+TEST_CASE(
+	"the bars' look reaches their sections' buttons, not their setup panes, in each state and with the focus", "[unit]")
+{
+	// #1342: the default theme draws the buttons of toolbars and the transport bar flat (#1328). The transport's setup
+	// pane is filled into the transport bar and the transport panel together with its sections, and keeps framed
+	// buttons, as the toolbar's setup pane outside its bar does. Menu buttons that show a value look pressed and
+	// disabled, and every bar button shows the focus ring over its state. The test sets the states as pseudo-classes,
+	// as the widgets do for the disabled attribute (ui/widgets.h).
+	test::FakeUi fake{{{1, "Monitor", {0, 0, 1920, 1080}, {0, 0, 1920, 1080}, 1.0F}}};
+	ui::Fonts(resources() / "fonts").load();
+	const ui::Themes themes(resources());
+	ui::Window& window = fake.shell.open(spec());
+	Rml::ElementDocument* document = window.context().LoadDocumentFromMemory(R"(<rml><body>
+		<div class="toolbar"><button id="tool">Tool</button><button id="tool-checked" class="checked">On</button>
+			<button id="value" menu="value-menu">Bar</button>
+			<button id="value-off" menu="value-menu">Bar</button>
+			<button id="value-checked" class="checked" menu="value-menu">Bar</button>
+			<button id="icon-menu" class="icon-only" menu="value-menu">C</button></div>
+		<div class="strip transport"><div class="transport-section"><button id="locate">L</button>
+			<button id="start" class="icon-only checked">S</button><button id="record" class="icon-only checked">R</button>
+			<button id="tapping" class="tapping">Tap</button><button id="suspended" class="suspended">Click</button>
+			<valuefield id="tempo"/><textdisplay id="signature" class="display"/></div>
+			<menu class="setup-pane"><button id="bar-pane">Save Preset</button></menu></div>
+		<div class="transport toolbar"><div class="transport-section"><button id="panel-locate">L</button></div>
+			<menu class="setup-pane"><button id="panel-pane">Show All</button></menu></div>
+		<menu class="setup-pane"><button id="pane">Save Preset</button></menu>
+		<menu id="value-menu"><menuitem>Bar</menuitem></menu>
+	</body></rml>)");
+	REQUIRE(document != nullptr);
+	document->Show();
+	const auto element = [document](const char* id)
+	{
+		Rml::Element* found = document->GetElementById(id);
+		REQUIRE(found != nullptr);
+		return found;
+	};
+	const auto update = [&]
+	{
+		window.requestRender();
+		fake.shell.step(milliseconds(0));
+	};
+	// The decorator in a state, set by pseudo-classes, which are cleared afterwards.
+	const auto in = [&](const char* id, const std::vector<const char*>& states)
+	{
+		Rml::Element* button = element(id);
+		for (const char* state : states)
+			button->SetPseudoClass(state, true);
+		update();
+		const std::string skin = decorator(*button);
+		for (const char* state : states)
+			button->SetPseudoClass(state, false);
+		return skin;
+	};
+	for (const std::string theme : {"gnubase", "dark", "light", "high-contrast"})
+	{
+		INFO("theme " << theme);
+		fake.shell.setTheme(theme);
+		const bool flat = theme == "gnubase";
+
+		// Setup panes inside a bar look like the one outside, in every state.
+		for (const char* id : {"bar-pane", "panel-pane"})
+		{
+			INFO(id);
+			for (const auto& states : std::vector<std::vector<const char*>>{{}, {"hover"}, {"active"}})
+			{
+				Rml::Element* outside = element("pane");
+				Rml::Element* inside = element(id);
+				for (const char* state : states)
+				{
+					outside->SetPseudoClass(state, true);
+					inside->SetPseudoClass(state, true);
+				}
+				update();
+				CHECK(decorator(*inside) == decorator(*outside));
+				CHECK(inside->GetComputedValues().color() == outside->GetComputedValues().color());
+				for (const char* state : states)
+				{
+					outside->SetPseudoClass(state, false);
+					inside->SetPseudoClass(state, false);
+				}
+			}
+		}
+		CHECK_THAT(in("pane", {}), ContainsSubstring("button-normal.svg"));
+		// The sections' buttons in the bar's look: flat in the default theme, framed in the others.
+		for (const char* id : {"tool", "locate", "panel-locate"})
+		{
+			INFO(id);
+			if (flat)
+				CHECK_THAT(in(id, {}), !ContainsSubstring(".svg"));
+			else
+				CHECK_THAT(in(id, {}), ContainsSubstring("button-normal.svg"));
+		}
+
+		// A menu button that shows a value: a field, pressed under the mouse button, dimmed when disabled.
+		CHECK_THAT(in("value", {"hover", "active"}), ContainsSubstring("pressed.svg"));
+		CHECK_THAT(in("value-off", {"disabled"}), ContainsSubstring("disabled.svg"));
+		// Also when checked, as every disabled bar button (#1711).
+		CHECK_THAT(in("value-checked", {"disabled"}), ContainsSubstring("disabled.svg"));
+		{
+			Rml::Element* checked = element("tool-checked");
+			Rml::Element* plain = element("tool");
+			checked->SetPseudoClass("disabled", true);
+			plain->SetPseudoClass("disabled", true);
+			update();
+			CHECK(decorator(*checked) == decorator(*plain));
+			CHECK(checked->GetComputedValues().color() == plain->GetComputedValues().color());
+			CHECK(checked->GetComputedValues().background_color() == plain->GetComputedValues().background_color());
+			checked->SetPseudoClass("disabled", false);
+			plain->SetPseudoClass("disabled", false);
+		}
+		if (flat)
+		{
+			CHECK_THAT(in("value", {"hover", "active"}), ContainsSubstring("dropdown-button-pressed.svg"));
+			CHECK_THAT(in("value-off", {"disabled"}), ContainsSubstring("dropdown-button-disabled.svg"));
+			// An icon-only menu button stays flat, its icon the arrow.
+			for (const char* state : {"active", "disabled"})
+			{
+				INFO(state);
+				CHECK_THAT(in("icon-menu", {state}), !ContainsSubstring(".svg"));
+			}
+		}
+
+		// The focus ring over every state of a bar button and the tempo (#1711): the ring first, which RmlUi draws on
+		// top, over the skin of the same state without the focus. A hovered button shows the skin without the hover,
+		// since the rings' rules come after the hover rules (tools/skin/generate.py).
+		const std::vector<std::pair<const char*, std::vector<const char*>>> focused{{"tool", {}}, {"tool", {"hover"}},
+			{"tool-checked", {}}, {"value", {}}, {"value", {"hover"}}, {"value-checked", {}}, {"icon-menu", {"hover"}},
+			{"start", {}}, {"record", {}}, {"tapping", {}}, {"suspended", {}}, {"locate", {"hover"}}, {"tempo", {}}};
+		for (const auto& [id, states] : focused)
+		{
+			INFO(id << " " << states.size() << " states");
+			std::vector<const char*> under;
+			std::copy_if(states.begin(), states.end(), std::back_inserter(under),
+				[](const char* state) { return std::string_view(state) != "hover"; });
+			std::string skin = in(id, under);
+			if (skin == "none")
+				skin.clear();
+			std::vector<const char*> with = states;
+			with.push_back("focus-visible");
+			const std::string ringed = in(id, with);
+			INFO("without the focus: " << skin << ", with: " << ringed);
+			const size_t end = ringed.find("), ");
+			CHECK_THAT(ringed.substr(0, end), ContainsSubstring("focus-ring.svg"));
+			CHECK(skin == (end == std::string::npos ? std::string() : ringed.substr(end + 3)));
+		}
+
+		// The tempo is plain digits in the transport bar, as the time displays and the signature.
+		update();
+		CHECK(decorator(*element("tempo")) == decorator(*element("signature")));
 	}
 }
 

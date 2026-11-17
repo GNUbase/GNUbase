@@ -5,29 +5,28 @@
 #include "engine/audiofile/resampler.h"
 #include "engine/engine.h"
 #include "engine/time/tempomap.h"
+#include "testutils/heldjob.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
-#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
-#include <optional>
 #include <string>
 #include <utility>
-#include <variant>
 #include <vector>
 
 using namespace gnubase::engine;
 namespace test = gnubase::test;
 namespace fs = std::filesystem;
 using Catch::Matchers::ContainsSubstring;
+using gnubase::test::waitForJob;
 
 namespace
 {
@@ -147,19 +146,6 @@ namespace
 			if (item.at("id") == id)
 				return item;
 		FAIL_CHECK("no " << id);
-		return {};
-	}
-
-	Json waitForJob(Client& client, uint64_t job)
-	{
-		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
-		while (std::chrono::steady_clock::now() < deadline)
-		{
-			client.wait(std::chrono::milliseconds(20));
-			if (Json state = run(client, "job.get", {{"job", job}}).at("job"); state.at("state") != "running")
-				return state;
-		}
-		FAIL_CHECK("the job didn't finish");
 		return {};
 	}
 

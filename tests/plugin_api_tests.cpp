@@ -8,6 +8,7 @@
 #include "engine/processors/builtin.h"
 #include "engine/processors/builtinplugin.h"
 #include "engine/processors/gainpan.h"
+#include "engine/processors/midieffects.h"
 #include "plugin/checkedplugin.h"
 #include "plugin/events.h"
 #include "plugin/extensions.h"
@@ -146,7 +147,7 @@ TEST_CASE("the plugin API describes a built-in processor through its factory and
 {
 	BuiltinFactory factory;
 	TestHost host;
-	REQUIRE(factory.count() == engine::processors::builtins().size());
+	REQUIRE(factory.count() == engine::processors::builtins().size() + engine::processors::midiEffects().size());
 	CHECK(factory.descriptor(0).format == "builtin");
 	CHECK(factory.create("builtin:unknown", host) == nullptr);
 
@@ -227,6 +228,104 @@ TEST_CASE("the plugin API describes a built-in processor through its factory and
 		REQUIRE(synth->init());
 		CHECK(synth->descriptor().features == std::vector<std::string>{"instrument"});
 		CHECK(extension<AudioPorts>(*synth)->audioPortCount(true) == 0);
+	}
+}
+
+TEST_CASE("no built-in processor has a built-in MIDI effect's id, so a builtin: id names one of them", "[unit]")
+{
+	// The factory looks among the processors first: a MIDI effect with a processor's id would get the processor.
+	for (const engine::processors::BuiltinInfo& effect : engine::processors::midiEffects())
+		for (const engine::processors::BuiltinInfo& processor : engine::processors::builtins())
+			CHECK(effect.id != processor.id);
+}
+
+TEST_CASE("the built-in MIDI effects are builtin: plugins with note ports, parameters and state", "[unit]")
+{
+	using engine::processors::ChordGenerator;
+	BuiltinFactory factory;
+	TestHost host;
+	const std::unique_ptr<Plugin> plugin = createActive(factory, "builtin:chordGenerator", host);
+	CHECK(plugin->descriptor().features == std::vector<std::string>{"note-effect"});
+	// Audio plugin slots don't take them: they play in the MIDI insert and send slots.
+	CHECK(engine::processors::findBuiltinPlugin("builtin:chordGenerator") == nullptr);
+	CHECK(extension<AudioPorts>(*plugin)->audioPortCount(true) == 0);
+	CHECK(extension<AudioPorts>(*plugin)->audioPortCount(false) == 0);
+	const NotePorts* notePorts = extension<NotePorts>(*plugin);
+	REQUIRE(notePorts != nullptr);
+	for (const bool input : {true, false})
+	{
+		REQUIRE(notePorts->notePortCount(input) == 1);
+		NotePortInfo info;
+		REQUIRE(notePorts->notePortInfo(input, 0, info));
+		CHECK(info.dialects == (NotePortInfo::Notes | NotePortInfo::Midi2));
+		CHECK(!notePorts->notePortInfo(input, 1, info));
+	}
+	REQUIRE(extension<Params>(*plugin)->paramCount() ==
+		engine::processors::findMidiEffect("chordGenerator")->parameters.size());
+
+	SECTION("notes in, chords out, the chord changing at its sample, controllers passing at full resolution")
+	{
+		EventList in(64, 0, 0);
+		EventList out(64, 0, 0);
+		const auto note = [&in](uint32_t offset, EventType type, int16_t key)
+		{
+			Event event;
+			event.offset = offset;
+			event.type = type;
+			event.channel = 2;
+			event.key = key;
+			event.value = 40000 / 65535.0;
+			REQUIRE(in.push(event));
+		};
+		note(0, EventType::NoteOn, 60);
+		Event controller;
+		controller.offset = 3;
+		controller.type = EventType::Midi2;
+		controller.data[0] = 0x40B20700U; // a MIDI 2.0 control change of controller 7 on channel 3
+		controller.data[1] = 0x12345678U;
+		REQUIRE(in.push(controller));
+		REQUIRE(in.push(paramValue(10, ChordGenerator::Chord, 1.0))); // minor
+		note(20, EventType::NoteOn, 70);
+		const TransportSegment segment;
+		Process process = blockWith(in, out);
+		process.frames = g_frames;
+		process.transport = &segment;
+		process.transportCount = 1;
+		REQUIRE(plugin->process(process) == ProcessStatus::Continue);
+
+		std::vector<std::pair<uint32_t, int>> notes;
+		for (const Event& event : out)
+		{
+			if (event.type == EventType::NoteOn)
+			{
+				notes.emplace_back(event.offset, event.key);
+				CHECK(event.channel == 2);
+				CHECK(std::lround(event.value * 65535.0) == 40000);
+			}
+			else
+			{
+				REQUIRE(event.type == EventType::Midi2);
+				CHECK(event.offset == 3);
+				CHECK(event.data[0] == controller.data[0]);
+				CHECK(event.data[1] == controller.data[1]);
+			}
+		}
+		CHECK(notes == std::vector<std::pair<uint32_t, int>>{{0, 60}, {0, 64}, {0, 67}, {20, 70}, {20, 73}, {20, 77}});
+	}
+
+	SECTION("its state restores its parameters in another instance")
+	{
+		EventList values(4);
+		EventList ignored(4);
+		values.push(paramValue(0, ChordGenerator::Chord, 3.0));
+		extension<Params>(*plugin)->flushParams(values, ignored);
+		std::vector<uint8_t> state;
+		REQUIRE(extension<State>(*plugin)->saveState(state, StateContext::Project));
+		const std::unique_ptr<Plugin> other = createActive(factory, "builtin:chordGenerator", host);
+		REQUIRE(extension<State>(*other)->loadState(state.data(), state.size(), StateContext::Project));
+		double value = 0.0;
+		REQUIRE(extension<Params>(*other)->paramValue(ChordGenerator::Chord, value));
+		CHECK(value == 3.0);
 	}
 }
 

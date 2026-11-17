@@ -19,7 +19,6 @@
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
-#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -640,14 +639,10 @@ namespace
 		return !app.ui().dom(std::nullopt, selector, 0).at("elements").empty();
 	}
 
-	// How many items a drop-down list has, its name among them: its options aren't in the DOM that the UI tools see.
-	int options(test::UiApp& app, const std::string& selector)
+	// How many items a drop-down list has, its name among them.
+	size_t options(test::UiApp& app, const std::string& selector)
 	{
-		Rml::Element* element = nullptr;
-		for (int i = 0; element == nullptr && i < app.main().context().GetNumDocuments(); ++i)
-			element = app.main().context().GetDocument(i)->QuerySelector(selector);
-		auto* select = dynamic_cast<Rml::ElementFormControlSelect*>(element);
-		return select != nullptr ? select->GetNumOptions() : -1;
+		return test::selectOptions(app, selector).size();
 	}
 }
 
@@ -758,6 +753,60 @@ TEST_CASE("Delete deletes a range selected between markers after a marker was se
 	app.ui().key(std::nullopt, "Delete");
 	REQUIRE(app.waitUntil([&] { return app.call("project.get").at("midiParts").empty(); }));
 	CHECK(list().size() == 2);
+}
+
+TEST_CASE("a range dragged in a cycle marker on the marker track's lane and Mod+X leave two cycle markers", "[ui]")
+{
+	// Reference manual p. 425: select a range in the cycle marker and press Ctrl/Cmd+X.
+	test::UiApp app({900, 560});
+	ui::EventDisplay& display = app.appUi().showProject();
+	app.setDpRatio(1.0F);
+	// A marker track with the cycle marker Verse from 1 to 4 s.
+	const auto track = app.call("track.add", {{"type", "marker"}}).at("track").at("id").get<uint64_t>();
+	app.call("marker.add", {{"type", "cycle"}, {"position", 2 * g_quarter}, {"end", 8 * g_quarter}, {"name", "Verse"}});
+	const auto cycles = [&app, track]
+	{
+		std::vector<std::pair<int64_t, int64_t>> found;
+		const Json markers = app.call("marker.list", {{"track", track}}).at("markers");
+		for (const Json& marker : markers)
+			found.emplace_back(marker.at("position").get<int64_t>(), marker.at("end").get<int64_t>());
+		std::sort(found.begin(), found.end());
+		return found;
+	};
+	REQUIRE(app.waitUntil(
+		[&] { return app.appUi().markerLines()->markers().markers.size() == 1 && display.laneTops().size() == 2; }));
+	// A point on the marker track's lane, below the cycle marker's upper border, at seconds.
+	const auto on = [&app, &display](double seconds)
+	{
+		const Json lanes = app.ui().dom(std::nullopt, "event-lanes.events", 0).at("elements").at(0).at("box");
+		const ui::TimelineView& view = display.view();
+		const std::vector<double>& tops = display.laneTops();
+		return ui::Target{"", 0,
+			ui::Point{static_cast<int>(lanes.at("x").get<double>() + ((seconds - view.start) / view.scale)),
+				static_cast<int>(lanes.at("y").get<double>() + tops[0] + ((tops[1] - tops[0]) * 0.75) - view.top)}};
+	};
+
+	// The range tool's drag from 2 to 3 s in the cycle marker selects that range on the marker track.
+	display.setTool(ui::Tool::RangeSelection);
+	app.ui().drag(std::nullopt, on(2.0), on(3.0), {});
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			return display.range() && display.range()->start == 4 * g_quarterSamples &&
+				display.range()->end == 6 * g_quarterSamples;
+		}));
+	CHECK(display.range().value_or(ui::RangeSelection{0, 0, std::vector<uint64_t>()}).tracks ==
+		std::vector<uint64_t>{track});
+
+	// Mod+X cuts it out of the cycle marker: Verse from 1 to 2 s and a second Verse from 3 to 4 s.
+	app.ui().key(std::nullopt, "Mod+X");
+	REQUIRE(app.waitUntil([&] { return cycles().size() == 2; }));
+	CHECK(cycles() ==
+		std::vector<std::pair<int64_t, int64_t>>{{2 * g_quarter, 4 * g_quarter}, {6 * g_quarter, 8 * g_quarter}});
+	const Json markers = app.call("marker.list", {{"track", track}}).at("markers");
+	CHECK(markers[0].at("name") == "Verse");
+	CHECK(markers[1].at("name") == "Verse");
+	REQUIRE(app.waitUntil([&] { return app.appUi().markerLines()->markers().markers.size() == 2; }));
 }
 
 TEST_CASE("the track list's context menu shows the marker lines of the active marker track, all or none", "[ui]")

@@ -99,10 +99,10 @@ TEST_CASE("Add Track adds the chord track once", "[ui]")
 	};
 	click("#add-track");
 	REQUIRE(app.waitUntil([&] { return !elements("#add-track-dialog").empty(); }));
-	// The list scrolls: Chord is below Arranger and Transpose.
-	click("#type-arranger");
-	app.ui().key(std::nullopt, "Down");
-	app.ui().key(std::nullopt, "Down");
+	// The list scrolls: Chord is below Signature, Arranger and Transpose.
+	click("#type-signature");
+	for (int i = 0; i < 3; ++i)
+		app.ui().key(std::nullopt, "Down");
 	app.shell().step(std::chrono::milliseconds(0));
 	REQUIRE(elements("#track-types").at(0).at("attributes").at("value") == "chord");
 	CHECK(elements("#track-name").empty());
@@ -121,9 +121,9 @@ TEST_CASE("Add Track adds the chord track once", "[ui]")
 		click("#add-track");
 		REQUIRE(app.waitUntil([&] { return !elements("#add-track-dialog").empty(); }));
 	}
-	click("#type-arranger");
-	app.ui().key(std::nullopt, "Down");
-	app.ui().key(std::nullopt, "Down");
+	click("#type-signature");
+	for (int i = 0; i < 3; ++i)
+		app.ui().key(std::nullopt, "Down");
 	app.shell().step(std::chrono::milliseconds(0));
 	REQUIRE(elements("#track-types").at(0).at("attributes").at("value") == "chord");
 	click("#add-track-confirm");
@@ -167,14 +167,61 @@ TEST_CASE("a chord event drags to the nearest bar and opens for typing on a doub
 	const double x = box.at("x").get<double>() + (box.at("width").get<double>() / 2.0);
 	const double y = box.at("y").get<double>() + (box.at("height").get<double>() / 2.0);
 	const double across = 1.2 / window.display.view().scale * 0.5; // pixels, at a dp ratio of 0.5
-	window.app.ui().drag(std::nullopt, {".chord-event", 0, std::nullopt},
-		{"", 0, ui::Point{static_cast<int>(std::lround(x + across)), static_cast<int>(std::lround(y))}});
+	const double bar = 2.0 / window.display.view().scale * 0.5;    // pixels
+	const ui::Point to{static_cast<int>(std::lround(x + across)), static_cast<int>(std::lround(y))};
+	const auto followed = [&]
+	{
+		return std::abs(window.element(".chord-event").at("box").at("x").get<double>() -
+				   (box.at("x").get<double>() + bar)) < 2.0;
+	};
+	// While the button is down, the event follows the mouse to the nearest bar; the release moves it (#1696).
+	window.app.ui().press(std::nullopt, {".chord-event", 0, std::nullopt}, ui::MouseButton::Left);
+	window.app.ui().move(std::nullopt, {"", 0, to});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(window.app.waitUntil(followed));
+	CHECK(window.events().at(0).at("position") == 0);
+	window.app.ui().release(std::nullopt, {"", 0, to}, ui::MouseButton::Left);
 	REQUIRE(window.app.waitUntil([&] { return window.events().at(0).at("position") == 4 * g_quarter; }));
+	CHECK(followed());
 
 	window.click(".chord-event", 2);
 	REQUIRE(window.app.waitUntil([&] { return window.hasClass(".chord-field", "shown"); }));
 	window.type("G7/B");
 	CHECK(window.app.waitUntil([&] { return window.events().at(0).at("chord") == "G7/B"; }));
+}
+
+TEST_CASE("with Show Scales, a scale event follows the mouse to the nearest bar and moves on the release", "[ui]")
+{
+	Window window;
+	window.call("track.add", {{"type", "chord"}});
+	window.call("chord.add", {{"position", 0}, {"scale", "D dorian"}});
+	window.call("chord.setTrack", {{"showScales", true}});
+	REQUIRE(window.app.waitUntil([&] { return window.elements(".scale-event").size() == 1; }));
+	window.display.setTool(ui::Tool::ObjectSelection);
+	// Three fifths of a bar (1.2 seconds at 120 BPM) to the right: onto the second bar's line.
+	const Json box = window.element(".scale-event").at("box");
+	const double x = box.at("x").get<double>() + (box.at("width").get<double>() / 2.0);
+	const double y = box.at("y").get<double>() + (box.at("height").get<double>() / 2.0);
+	const double across = 1.2 / window.display.view().scale * 0.5; // pixels, at a dp ratio of 0.5
+	const double bar = 2.0 / window.display.view().scale * 0.5;    // pixels
+	const ui::Point to{static_cast<int>(std::lround(x + across)), static_cast<int>(std::lround(y))};
+	const auto followed = [&]
+	{
+		return std::abs(window.element(".scale-event").at("box").at("x").get<double>() -
+				   (box.at("x").get<double>() + bar)) < 2.0;
+	};
+	const auto position = [&window] { return window.call("chord.get").at("scales").at(0).at("position"); };
+	// While the button is down, the event follows the mouse to the nearest bar, as chord events do; the release moves
+	// it (#1757).
+	window.app.ui().press(std::nullopt, {".scale-event", 0, std::nullopt}, ui::MouseButton::Left);
+	window.app.ui().move(std::nullopt, {"", 0, to});
+	window.app.shell().step(std::chrono::milliseconds(0));
+	CHECK(window.app.waitUntil(followed));
+	CHECK(position() == 0);
+	window.app.ui().release(std::nullopt, {"", 0, to}, ui::MouseButton::Left);
+	REQUIRE(window.app.waitUntil([&] { return position() == 4 * g_quarter; }));
+	CHECK(followed());
+	CHECK(window.call("chord.get").at("scales").at(0).at("scale") == "D dorian");
 }
 
 TEST_CASE("Project > Chord Track converts chords to MIDI and back, the Inspector sets Follow Chord Track", "[ui]")
@@ -358,7 +405,7 @@ TEST_CASE(
 			.get<uint64_t>();
 	};
 	const uint64_t loose = event(0);
-	window.call("event.toPart", {{"events", {event(96000)}}});
+	const auto audioPart = window.call("event.toPart", {{"events", {event(96000)}}}).at("events").at(0).get<uint64_t>();
 	const auto row = [](uint64_t track)
 	{ return "#track-list listitem[value=\"" + std::to_string(track) + "\"] .track-name"; };
 	REQUIRE(window.app.waitUntil([&] { return window.elements(row(audio)).size() == 1; }));
@@ -371,6 +418,17 @@ TEST_CASE(
 	run("track.createChordEventsSelected");
 	REQUIRE(window.app.waitUntil([&] { return window.ran("chord.fromAudio").size() == 1; }));
 	CHECK(window.ran("chord.fromAudio")[0] == Json{{"events", {loose}}});
+	// A selected audio part is a selection too, of nothing to make chord events from: not the track's loose events.
+	window.display.select({audioPart});
+	run("track.createChordEventsSelected");
+	// Nor with the MIDI track selected: the three functions open no dialog and send no command.
+	window.click(row(midi));
+	window.display.select({audioPart});
+	run("track.createChordEventsSelected");
+	CHECK(window.elements("#create-chord-events-dialog").empty());
+	run("track.mapToChordTrackSelected");
+	CHECK(window.elements("#map-to-chord-track-dialog").empty());
+	run("track.assignVoicesSelected");
 
 	// The selected MIDI track: all its parts; with a part selected, only that one.
 	window.click(row(midi));
@@ -386,12 +444,17 @@ TEST_CASE(
 	window.click("#create-chord-events");
 	REQUIRE(window.app.waitUntil([&] { return window.ran("chord.fromMidi").size() == 1; }));
 	CHECK(window.ran("chord.fromMidi")[0].at("parts") == Json{second});
-	CHECK(window.ran("chord.fromAudio").size() == 1); // no audio event selected
+	CHECK(window.ran("chord.fromAudio").size() == 1); // neither with the audio part nor here
 	run("track.mapToChordTrackSelected");
 	REQUIRE(window.app.waitUntil([&] { return window.elements("#map-to-chord-track-dialog").size() == 1; }));
 	window.click("#map-to-chord-track");
 	REQUIRE(window.app.waitUntil([&] { return window.ran("chord.map").size() == 2; }));
 	CHECK(window.ran("chord.map")[1].at("parts") == Json{second});
+	// Assign Voices to Notes: the first it sent is this one, none with the audio part.
+	run("track.assignVoicesSelected");
+	REQUIRE(window.app.waitUntil([&] { return !window.ran("chord.assignVoices").empty(); }));
+	CHECK(window.ran("chord.assignVoices").size() == 1);
+	CHECK(window.ran("chord.assignVoices")[0].at("parts") == Json{second});
 }
 
 TEST_CASE("with Acoustic Feedback, pressing a chord or scale event auditions it until the button is let go", "[ui]")

@@ -897,6 +897,43 @@ TEST_CASE("reset quantize leaves notes moved with note.set since", "[integration
 	CHECK(run(f.client, "project.get").at("midiParts")[0].at("notes")[0].at("velocity") == 1.0);
 }
 
+TEST_CASE("the pieces of a split quantized note no longer reset", "[integration]")
+{
+	// Review of #1470: note.split and event.split's splitNotes drop both pieces' quantize origin.
+	Fixture f;
+	const ObjectId part = f.addPart(0);
+	f.addNotes(part, {quarters(1, 10)});
+	run(f.client, "quantize.apply", {{"part", part}, {"settings", {{"grid", "1/4"}}}});
+	REQUIRE(f.positions(part) == std::vector<Ticks>{0});
+	const auto notes = [&f]
+	{
+		std::vector<Ticks> all;
+		const Json project = run(f.client, "project.get");
+		for (const Json& p : project.at("midiParts"))
+			for (const Json& note : p.at("notes"))
+				all.push_back(p.at("position").get<Ticks>() + note.at("position").get<Ticks>());
+		std::sort(all.begin(), all.end());
+		return all;
+	};
+	SECTION("note.split")
+	{
+		const Json note = run(f.client, "project.get").at("midiParts")[0].at("notes")[0];
+		run(f.client, "note.split", {{"part", part}, {"notes", {note.at("id")}}, {"position", g_sixteenth / 2}});
+	}
+	SECTION("event.split with splitNotes")
+	{
+		// At 120 BPM and 48 kHz a sixteenth is 6000 samples.
+		run(f.client, "event.split", {{"events", {part}}, {"positions", {3000}}, {"splitNotes", true}});
+	}
+	REQUIRE(notes() == std::vector<Ticks>{0, g_sixteenth / 2});
+	Json parts = Json::array();
+	const Json project = run(f.client, "project.get");
+	for (const Json& p : project.at("midiParts"))
+		parts.push_back(p.at("id"));
+	CHECK(run(f.client, "quantize.reset", {{"parts", parts}}).at("notes").empty());
+	CHECK(notes() == std::vector<Ticks>{0, g_sixteenth / 2});
+}
+
 TEST_CASE("quantize.apply keeps notes inside their part", "[integration]")
 {
 	Fixture f;

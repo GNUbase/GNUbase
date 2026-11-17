@@ -18,6 +18,8 @@
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <set>
 #include <string>
 #include <utility>
@@ -42,7 +44,8 @@ namespace
 		Rml::ElementDocument& show(const std::string& style, const std::string& body) const
 		{
 			Rml::ElementDocument* document = window.context().LoadDocumentFromMemory(
-				"<rml><head><style>body { margin: 0; } event-lanes, waveform, curve, ruler { display: block; } " +
+				"<rml><head><style>body { margin: 0; } event-lanes, event-names, part-contents, waveform, curve, ruler "
+				"{ display: block; } " +
 				style + "</style></head><body>" + body + "</body></rml>");
 			REQUIRE(document != nullptr);
 			document->Show();
@@ -137,6 +140,16 @@ TEST_CASE("documents get the canvas elements, with the style properties they dra
 	const Rml::Property* width = lanes.GetProperty("stroke-width");
 	REQUIRE(width != nullptr);
 	CHECK(lanes.ResolveLength(width->GetNumericValue()) == 3.0F);
+	// How colors that are user data show (#1312): by default as before.
+	const Rml::Property* opacity = lanes.GetProperty("own-fill-opacity");
+	REQUIRE(opacity != nullptr);
+	CHECK(opacity->Get<float>() == 1.0F);
+	const Rml::Property* tint = lanes.GetProperty("own-color-tint");
+	REQUIRE(tint != nullptr);
+	CHECK(tint->unit == Rml::Unit::KEYWORD);
+	const Rml::Property* inset = lanes.GetProperty("event-inset");
+	REQUIRE(inset != nullptr);
+	CHECK(lanes.ResolveLength(inset->GetNumericValue()) == 0.0F);
 }
 
 TEST_CASE("event lanes fill events with color, outlined by stroke-color, in their lanes", "[unit]")
@@ -186,6 +199,102 @@ TEST_CASE("an event with a color of its own is filled with it, outlined by strok
 	CHECK(count(vertices, blue()) == 16);
 	const std::vector<float> fill = extent(vertices, green());
 	CHECK(fill[2] - fill[0] == 96.0F);
+}
+
+TEST_CASE("the style sheet decides how an event's own color shows: its body's opacity and its outline's tint", "[unit]")
+{
+	// The default theme tints events in their colors (#1312): a translucent body, an outline in a lighter shade.
+	OneWindow fixture;
+	fixture.show("event-lanes { width: 400dp; height: 100dp; color: #ff0000; stroke-color: #0000ff; stroke-width: 2dp;"
+				 " own-fill-opacity: 0.5; own-color-tint: #ffffff80; }",
+		R"(<event-lanes id="lanes" scale="10"/>)");
+	auto& lanes = fixture.element<ui::EventLanes>("lanes");
+	ui::TimeSpan own{2000.0, 1000.0};
+	own.color = 0x00ff00ff;
+	lanes.setLanes({{20.0F, {{1000.0, 500.0}, own}}});
+	std::vector<Rml::Vertex> vertices = fixture.draw();
+	// The event without a color of its own shows as before: the style sheet's color, outlined by stroke-color.
+	CHECK(count(vertices, red()) == 4);
+	CHECK(count(vertices, blue()) == 8);
+	// The other: its color at half opacity, outlined by its color with half of white over it.
+	CHECK(count(vertices, Rml::Colourb(0, 255, 0, 128).ToPremultiplied()) == 4);
+	CHECK(count(vertices, Colour{128, 255, 128, 255}) == 8);
+
+	// A transparent tint outlines it in its own color; opacities beyond 0 to 1 are clamped.
+	lanes.SetAttribute("style", "own-color-tint: transparent; own-fill-opacity: 3");
+	vertices = fixture.draw();
+	CHECK(count(vertices, green()) == 12);
+	lanes.SetAttribute("style", "own-color-tint: #ffffff80; own-fill-opacity: -1");
+	vertices = fixture.draw();
+	CHECK(count(vertices, Colour{0, 0, 0, 0}) == 0); // a transparent body isn't drawn
+	CHECK(count(vertices, Colour{128, 255, 128, 255}) == 8);
+
+	// The element's opacity applies to both.
+	lanes.SetAttribute("style", "opacity: 0.5; own-color-tint: #ffffff80; own-fill-opacity: 1");
+	vertices = fixture.draw();
+	CHECK(count(vertices, Rml::Colourb(0, 255, 0, 255).ToPremultiplied(0.5F)) == 4);
+	CHECK(count(vertices, Rml::Colourb(128, 255, 128, 255).ToPremultiplied(0.5F)) == 8);
+}
+
+TEST_CASE("an own-color-tint outlines events with a color in stroke-width, also without a stroke-color", "[unit]")
+{
+	// #1332: the tint alone decides that events with a color are outlined; events without one follow stroke-color.
+	OneWindow fixture;
+	fixture.show("event-lanes { width: 400dp; height: 100dp; color: #ff0000; stroke-color: transparent;"
+				 " stroke-width: 2dp; own-color-tint: #ffffff80; }",
+		R"(<event-lanes id="lanes" scale="10"/>)");
+	auto& lanes = fixture.element<ui::EventLanes>("lanes");
+	ui::TimeSpan own{2000.0, 1000.0};
+	own.color = 0x00ff00ffU;
+	lanes.setLanes({{20.0F, {{1000.0, 500.0}, own}}});
+	std::vector<Rml::Vertex> vertices = fixture.draw();
+	const Colour tinted{128, 255, 128, 255};
+	CHECK(count(vertices, red()) == 4); // no outline
+	CHECK(count(vertices, tinted) == 8);
+	std::vector<float> ring = extent(vertices, tinted);
+	CHECK(ring[2] - ring[0] == 100.0F);
+	CHECK(ring[3] - ring[1] == 20.0F);
+	// The ring is stroke-width (2 pixels) wide: the event's body sits that far inside it on every side.
+	const std::vector<float> body = extent(vertices, green());
+	CHECK(body[0] - ring[0] == 2.0F);
+	CHECK(ring[2] - body[2] == 2.0F);
+	CHECK(body[1] - ring[1] == 2.0F);
+	CHECK(ring[3] - body[3] == 2.0F);
+
+	// An event reaching beyond the built frame (a view's width on each side: 1200 pixels) ends the drawn outline's
+	// width and a pixel outside it, so that outline stays out of view there.
+	ui::TimeSpan wide{-1e6, 2e6};
+	wide.color = 0x00ff00ffU;
+	lanes.setLanes({{20.0F, {wide}}});
+	vertices = fixture.draw();
+	ring = extent(vertices, tinted);
+	CHECK(ring[0] == -3.0F);
+	CHECK(ring[2] == 1203.0F);
+}
+
+TEST_CASE("event-inset keeps events off their lanes' top and bottom edges", "[unit]")
+{
+	OneWindow fixture;
+	fixture.show("event-lanes { width: 400dp; height: 100dp; color: #ff0000; stroke-color: #0000ff; stroke-width: 0;"
+				 " event-inset: 3dp; }",
+		R"(<event-lanes id="lanes" scale="10"/>)");
+	auto& lanes = fixture.element<ui::EventLanes>("lanes");
+	lanes.setLanes({{20.0F, {{1000.0, 500.0}}}, {30.0F, {{2000.0, 1000.0}}}});
+	std::vector<Rml::Vertex> vertices = fixture.draw();
+	// From 3 below the first lane's top to 3 above the second lane's bottom: 50 - 6.
+	std::vector<float> fill = extent(vertices, red());
+	CHECK(fill[3] - fill[1] == 44.0F);
+	CHECK(count(vertices, red()) == 8);
+
+	// A lane too low to keep the room shows its events at its full height.
+	lanes.setLanes({{6.0F, {{1000.0, 500.0}}}});
+	vertices = fixture.draw();
+	fill = extent(vertices, red());
+	CHECK(fill[3] - fill[1] == 6.0F);
+	lanes.setLanes({{7.0F, {{1000.0, 500.0}}}});
+	vertices = fixture.draw();
+	fill = extent(vertices, red());
+	CHECK(fill[3] - fill[1] == 1.0F);
 }
 
 TEST_CASE("event lanes build only the events around the view, and scrolling within that only moves them", "[unit]")
@@ -267,6 +376,144 @@ TEST_CASE("a waveform shows in each pixel the peaks of the columns it covers", "
 	CHECK(vertices.size() == 32);
 	CHECK(extent(vertices, green())[1] == 45.0F); // the first channel's 16384 at a quarter of its 20
 	CHECK(extent(vertices, green())[3] == 80.0F); // the second channel's -32767 at the bottom
+}
+
+TEST_CASE("a waveform with a color of its own shows in it when the style sheet tints own colors", "[unit]")
+{
+	// An audio event's waveform in its event's color (#1312).
+	OneWindow fixture;
+	fixture.show("waveform { width: 4dp; height: 40dp; color: #00ff00; }", R"(<waveform id="wave" scale="100"/>)");
+	auto& wave = fixture.element<ui::Waveform>("wave");
+	ui::PeakColumns peaks;
+	peaks.low = {-100, -100, -100, -100};
+	peaks.high = {100, 100, 100, 100};
+	ui::TimeSpan span{0.0, 400.0};
+	span.color = 0xff0000ffU;
+	wave.setPeaks(span, {peaks});
+	// By default (own-color-tint none) in the style sheet's color, as before.
+	std::vector<Rml::Vertex> vertices = fixture.draw();
+	CHECK(count(vertices, green()) == 4); // one quad: every pixel the same
+	wave.SetAttribute("style", "own-color-tint: #ffffff80");
+	vertices = fixture.draw();
+	CHECK(count(vertices, green()) == 0);
+	CHECK(count(vertices, Colour{255, 128, 128, 255}) == 4);
+	// A new color for the same peaks, as when the event's or its track's color changes.
+	wave.setColor(0x0000ffffU);
+	vertices = fixture.draw();
+	CHECK(count(vertices, Colour{128, 128, 255, 255}) == 4);
+	CHECK(wave.channels().size() == 1);
+	// Without an own color, the style sheet's.
+	wave.setPeaks({0.0, 400.0}, {peaks});
+	CHECK(count(fixture.draw(), green()) == 4);
+}
+
+TEST_CASE("a waveform keeps event-inset off its lane's edges inside its padding, unless the lane is too low", "[unit]")
+{
+	// #1332: a <waveform> is as high as its lane and takes event-inset as <event-lanes> does, so that it stays inside
+	// its event; its padding comes from the shared style sheet.
+	OneWindow fixture;
+	fixture.show("waveform { width: 4dp; height: 40dp; box-sizing: border-box; padding: 2dp 0; color: #00ff00;"
+				 " event-inset: 3dp; }",
+		R"(<waveform id="wave" scale="100"/>)");
+	auto& wave = fixture.element<ui::Waveform>("wave");
+	ui::PeakColumns peaks;
+	peaks.low = {-32767, -32767, -32767, -32767};
+	peaks.high = {32767, 32767, 32767, 32767};
+	wave.setPeaks({0.0, 400.0}, {peaks});
+	// Builds reach a view's height above the content, 36 here: the lane from 34 to 74, the waveform 3 and 2 inside it.
+	std::vector<float> drawn = extent(fixture.draw(), green());
+	CHECK(drawn[1] == 39.0F);
+	CHECK(drawn[3] == 69.0F);
+
+	// A lane no higher than twice the inset, as events drop their inset there, or one that would leave the waveform
+	// no pixel: the padding only. Heights 6 and 7 leave content of 2 and 3, 10 leaves content 6 and area 0.
+	for (const int height : {6, 7, 10})
+	{
+		INFO(height);
+		wave.SetAttribute("style", "height: " + std::to_string(height) + "dp");
+		const float content = static_cast<float>(height) - 4.0F;
+		drawn = extent(fixture.draw(), green());
+		CHECK(drawn[1] == content);
+		CHECK(drawn[3] == 2.0F * content);
+	}
+
+	// A lane that leaves exactly one pixel (content 7, minus the inset on both sides) keeps the inset.
+	wave.SetAttribute("style", "height: 11dp");
+	drawn = extent(fixture.draw(), green());
+	CHECK(drawn[1] == 10.0F);
+	CHECK(drawn[3] == 11.0F);
+}
+
+TEST_CASE("in the default theme a full-scale waveform stays inside its event's body", "[unit]")
+{
+	// The theme keeps events off their lanes' edges, and waveforms off them by the same event-inset (#1312, #1332).
+	OneWindow fixture;
+	std::ifstream file(std::filesystem::path(GNUBASE_RESOURCES_DIR) / "themes" / "gnubase" / "theme.rcss");
+	REQUIRE(file);
+	const std::string theme{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+	fixture.ui.shell.setTheme("gnubase");
+	fixture.show(theme +
+			" event-lanes, waveform { position: absolute; left: 0; top: 0; width: 4dp; height: 40dp;"
+			" box-sizing: border-box; } waveform { padding: 2dp 0; }", // and the shared style sheet's padding
+		R"(<div class="event-display"><div class="event-area"><event-lanes id="lanes" class="events" scale="100"/>)"
+		R"(<div class="waveforms"><waveform id="wave" scale="100"/></div></div></div>)");
+	auto& lanes = fixture.element<ui::EventLanes>("lanes");
+	auto& wave = fixture.element<ui::Waveform>("wave");
+	ui::TimeSpan event{0.0, 400.0};
+	event.color = 0x00ff00ffU;
+	lanes.setLanes({{40.0F, {event}}});
+	ui::PeakColumns peaks;
+	peaks.low = {-32768, -32768, -32768, -32768};
+	peaks.high = {32767, 32767, 32767, 32767};
+	wave.setPeaks({0.0, 400.0, 0xff0000ffU}, {peaks});
+	const std::vector<Rml::Vertex> vertices = fixture.draw();
+
+	// Canvases build around their view, a view's height above it: from vertex to element coordinates.
+	const auto top = [](Rml::Element& element, float y)
+	{
+		const Rml::Box& box = element.GetBox();
+		return y - box.GetSize(Rml::BoxArea::Content).y + box.GetPosition(Rml::BoxArea::Content).y;
+	};
+	const std::vector<float> body = extent(vertices, Colour{0, 115, 0, 115});   // green at the theme's opacity
+	const std::vector<float> line = extent(vertices, Colour{255, 89, 89, 255}); // red tinted
+	REQUIRE(body[1] < body[3]);
+	REQUIRE(line[1] < line[3]);
+	CHECK(top(lanes, body[1]) == 3.0F); // inside the outline, 2 off the lane's edges
+	CHECK(top(lanes, body[3]) == 37.0F);
+	CHECK(top(wave, line[1]) > top(lanes, body[1]));
+	CHECK(top(wave, line[3]) < top(lanes, body[3]));
+}
+
+TEST_CASE("in the default theme selected events are lit over their tint, in their events' boxes", "[unit]")
+{
+	// #1312: the selection overlay is translucent, so the event's own color shows through, and inset as the events.
+	OneWindow fixture;
+	std::ifstream file(std::filesystem::path(GNUBASE_RESOURCES_DIR) / "themes" / "gnubase" / "theme.rcss");
+	REQUIRE(file);
+	const std::string theme{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+	fixture.ui.shell.setTheme("gnubase");
+	fixture.show(theme + " event-lanes { position: absolute; left: 0; top: 0; width: 4dp; height: 40dp; }",
+		R"(<div class="event-display"><div class="event-area"><event-lanes id="events" class="events" scale="100"/>)"
+		R"(<event-lanes id="selected" class="selected-events" scale="100"/></div></div>)");
+	ui::TimeSpan event{0.0, 400.0};
+	event.color = 0x00ff00ffU;
+	fixture.element<ui::EventLanes>("events").setLanes({{40.0F, {event}}});
+	fixture.element<ui::EventLanes>("selected").setLanes({{40.0F, {{0.0, 400.0}}}}); // the overlay has no color
+	const std::vector<Rml::Vertex> vertices = fixture.draw();
+
+	// The event's body in its color at the theme's opacity, inside its outline 2 off the lane's edges.
+	const std::vector<float> body = extent(vertices, Colour{0, 115, 0, 115});
+	REQUIRE(body[1] < body[3]);
+	// The overlay: translucent white in the same box, outlined in the text color where the event is.
+	std::vector<Rml::Vertex> light;
+	std::copy_if(vertices.begin(), vertices.end(), std::back_inserter(light),
+		[](const Rml::Vertex& v) { return v.colour.alpha == 0x29; });
+	REQUIRE(!light.empty());
+	const Colour lit = light.front().colour;
+	CHECK(extent(vertices, lit) == body);
+	const std::vector<float> ring = extent(vertices, Colour{241, 244, 255, 255});
+	CHECK(ring[1] == body[1] - 1.0F);
+	CHECK(ring[3] == body[3] + 1.0F);
 }
 
 TEST_CASE("a curve builds only the segments around the view", "[unit]")
@@ -391,4 +638,176 @@ TEST_CASE("a ruler labels the major ticks around the view, far enough apart for 
 	// Ticks: a major and three minor ones per step.
 	CHECK(count(vertices, Colour(255, 255, 0, 255)) == 4 * 4 * 12);
 	CHECK(count(vertices, Colour(255, 255, 255, 255)) > 0); // the labels
+}
+
+TEST_CASE("event lanes draw their bodies at body-opacity, their outlines as they are", "[unit]")
+{
+	// The event display's Event Opacity (reference manual p. 1604, #1313).
+	OneWindow fixture;
+	fixture.show(
+		"event-lanes { width: 400dp; height: 100dp; color: #ff0000; stroke-color: #0000ff; stroke-width: 2dp; }",
+		R"(<event-lanes id="lanes" scale="10"/>)");
+	auto& lanes = fixture.element<ui::EventLanes>("lanes");
+	ui::TimeSpan own{2000.0, 1000.0};
+	own.color = 0x00ff00ffU;
+	lanes.setLanes({{20.0F, {{1000.0, 500.0}, own}}});
+	CHECK(count(fixture.draw(), red()) == 4);
+	lanes.SetAttribute("body-opacity", 0.5);
+	std::vector<Rml::Vertex> vertices = fixture.draw();
+	CHECK(count(vertices, red()) == 0);
+	CHECK(count(vertices, Colour{128, 0, 0, 128}) == 4);
+	CHECK(count(vertices, Colour{0, 128, 0, 128}) == 4); // an own color too
+	CHECK(count(vertices, blue()) == 16);                // the outlines stay
+	lanes.SetAttribute("body-opacity", 0.0);
+	vertices = fixture.draw();
+	CHECK(count(vertices, Colour{0, 0, 0, 0}) == 0); // no bodies at all
+	CHECK(count(vertices, blue()) == 16);
+}
+
+TEST_CASE("a waveform's brightness dims it or lightens it toward white", "[unit]")
+{
+	// The event display's Waveform Brightness (reference manual p. 1604, #1313): 0.5 as the style sheet draws it.
+	CHECK(ui::brightened(green(), 0.5) == green());
+	CHECK(ui::brightened(green(), 1.0) == Colour(255, 255, 255, 255));
+	CHECK(ui::brightened(green(), 0.75) == Colour(128, 255, 128, 255));
+	CHECK(ui::brightened(green(), 0.25) == Colour(0, 128, 0, 128));
+	CHECK(ui::brightened(green(), 0.0) == Colour(0, 0, 0, 0));
+	CHECK(ui::brightened(Colour(0, 100, 0, 100), 1.0) == Colour(100, 100, 100, 100)); // white at its own alpha
+
+	OneWindow fixture;
+	fixture.show("waveform { width: 4dp; height: 40dp; color: #00ff00; }", R"(<waveform id="wave" scale="100"/>)");
+	auto& wave = fixture.element<ui::Waveform>("wave");
+	ui::PeakColumns peaks;
+	peaks.low = {-100, -100, -100, -100};
+	peaks.high = {100, 100, 100, 100};
+	wave.setPeaks({0.0, 400.0}, {peaks});
+	CHECK(count(fixture.draw(), green()) == 4);
+	wave.SetAttribute("brightness", 1.0);
+	const std::vector<Rml::Vertex> vertices = fixture.draw();
+	CHECK(count(vertices, green()) == 0);
+	CHECK(count(vertices, Colour(255, 255, 255, 255)) == 4);
+	wave.SetAttribute("brightness", 0.0);
+	CHECK(fixture.draw().empty());
+}
+
+TEST_CASE("event names show at their events' top left, cut to fit or left out", "[unit]")
+{
+	// Show Event Names and Hide Truncated Event Names (reference manual pp. 1603-1604, #1313).
+	OneWindow fixture;
+	ui::Fonts(std::filesystem::path(GNUBASE_RESOURCES_DIR) / "fonts").load();
+	fixture.show("event-names { width: 400dp; height: 100dp; font-family: Inter; font-size: 12dp; color: #ffffff; "
+				 "event-inset: 2dp; }",
+		R"(<event-names id="names" scale="10"/>)");
+	auto& names = fixture.element<ui::EventNames>("names");
+	const Colour white{255, 255, 255, 255};
+	// A name that fits its event: one glyph a quad, from a quarter em and the inset inside the event's top left. The
+	// build starts a view left of and above the element.
+	names.setLanes({{40.0F, {{1000.0, 1000.0, "Drums"}}}});
+	std::vector<Rml::Vertex> vertices = fixture.draw();
+	CHECK(count(vertices, white) == 5 * 4);
+	std::vector<float> box = extent(vertices, white);
+	CHECK(box[0] >= 400.0F + 100.0F + 3.0F);
+	CHECK(box[0] <= 400.0F + 100.0F + 3.0F + 2.0F); // the D's own left side bearing
+	CHECK(box[1] >= 100.0F + 2.0F);
+	CHECK(box[2] < 400.0F + 200.0F);
+	const float full = box[2] - box[0];
+
+	// An event too short for it cuts it to the characters that fit; one too short for any shows none.
+	names.setLanes({{40.0F, {{1000.0, full * 6.0, "Drums"}, {3000.0, 10.0, "Bass"}}}});
+	vertices = fixture.draw();
+	const size_t cut = count(vertices, white);
+	CHECK(cut > 0);
+	CHECK(cut < 5 * 4);
+	CHECK(extent(vertices, white)[2] <= 400.0F + 100.0F + (full * 0.6F));
+	// Hide Truncated Event Names leaves it out.
+	names.SetAttribute("hide-truncated", true);
+	CHECK(count(fixture.draw(), white) == 0);
+	names.RemoveAttribute("hide-truncated");
+	CHECK(count(fixture.draw(), white) == cut);
+
+	// Of a thousand names, only those around the view are built: the view is 4000 units wide.
+	std::vector<ui::EventNames::Name> many;
+	many.reserve(1000);
+	for (int i = 0; i < 1000; ++i)
+		many.push_back({i * 1000.0, 900.0, "x"});
+	names.setLanes({{40.0F, many}});
+	vertices = fixture.draw();
+	CHECK(count(vertices, white) >= 4 * 4);
+	CHECK(count(vertices, white) <= 4 * 13);
+}
+
+TEST_CASE("part contents build only the parts, notes and controllers around the view", "[unit]")
+{
+	// Like the other canvas elements (#1313): the view is 4000 units wide, a build covers a view either side of it.
+	OneWindow fixture;
+	fixture.show("part-contents { width: 400dp; height: 100dp; color: #ff0000; stroke-color: #0000ff; "
+				 "stroke-width: 1dp; }",
+		R"(<part-contents id="contents" scale="10"/>)");
+	auto& contents = fixture.element<ui::PartContents>("contents");
+	// A thousand parts with a note and a controller each.
+	std::vector<ui::PartContents::Part> parts;
+	parts.reserve(1000);
+	for (int i = 0; i < 1000; ++i)
+		parts.push_back({i * 1000.0, 900.0, {{i * 1000.0, 100.0, 60}}, {{i * 1000.0, 1.0}}});
+	contents.setLanes({{60.0F, parts}});
+	std::vector<Rml::Vertex> vertices = fixture.draw();
+	CHECK(count(vertices, red()) >= 4 * 4);
+	CHECK(count(vertices, red()) <= 4 * 13);
+	CHECK(count(vertices, blue()) <= 4 * 13);
+	// One long part with ten thousand notes and controllers, a note every 100 units.
+	ui::PartContents::Part part{0.0, 1000000.0, {}, {}};
+	part.notes.reserve(10000);
+	part.controllers.reserve(10000);
+	for (int i = 0; i < 10000; ++i)
+	{
+		part.notes.push_back({i * 100.0, 50.0, 60 + (i % 12)});
+		part.controllers.push_back({i * 100.0, 0.5});
+	}
+	contents.setLanes({{60.0F, {part}}});
+	vertices = fixture.draw();
+	CHECK(count(vertices, red()) >= 4 * 40);
+	CHECK(count(vertices, red()) <= 4 * 130);
+	CHECK(count(vertices, blue()) >= 4 * 40);
+	CHECK(count(vertices, blue()) <= 4 * 130);
+}
+
+TEST_CASE("part contents show notes as lines over the part's pitch range, controllers as bars", "[unit]")
+{
+	// Part Data Mode Lines, Show Controllers and Note Brightness (reference manual p. 1607, #1313).
+	OneWindow fixture;
+	fixture.show("part-contents { width: 400dp; height: 100dp; color: #ff0000; stroke-color: #0000ff; "
+				 "stroke-width: 1dp; }",
+		R"(<part-contents id="contents" scale="10"/>)");
+	auto& contents = fixture.element<ui::PartContents>("contents");
+	ui::PartContents::Part part{
+		1000.0, 2000.0, {{1000.0, 100.0, 64}, {1500.0, 100.0, 60}, {2000.0, 200.0, 62}}, {{1200.0, 0.5}}};
+	contents.setLanes({{60.0F, {part}}});
+	std::vector<Rml::Vertex> vertices = fixture.draw();
+	CHECK(count(vertices, red()) == 3 * 4);
+	// The build starts a view left of and above the element: the part's box is 500 to 700 by 100 to 160. Five pitches
+	// share its 60 pixels: the highest at the top, the lowest at the bottom, 10 pixels each, a sixth of the box.
+	std::vector<float> notes = extent(vertices, red());
+	CHECK(notes == std::vector<float>{500.0F, 100.0F, 620.0F, 160.0F});
+	// The controller at half its value: a quarter of the box's height, from its bottom.
+	CHECK(extent(vertices, blue()) == std::vector<float>{520.0F, 152.0F, 521.0F, 160.0F});
+
+	// Note Brightness lightens them toward white.
+	contents.SetAttribute("brightness", 1.0);
+	vertices = fixture.draw();
+	CHECK(count(vertices, red()) == 0);
+	CHECK(count(vertices, Colour(255, 255, 255, 255)) == 3 * 4);
+
+	// One pitch: its line in the middle of the box, at most a sixth of it high.
+	contents.setLanes({{60.0F, {{1000.0, 2000.0, {{1000.0, 100.0, 60}}, {}}}}});
+	notes = extent(fixture.draw(), Colour(255, 255, 255, 255));
+	CHECK(notes[1] == 125.0F);
+	CHECK(notes[3] == 135.0F);
+	// A controller at the part's end ends there too.
+	contents.setLanes({{60.0F, {{1000.0, 2000.0, {}, {{2995.0, 1.0}}}}}});
+	CHECK(extent(fixture.draw(), blue()) == std::vector<float>{699.0F, 145.0F, 700.0F, 160.0F});
+	// Notes outside the part's box don't show past it.
+	contents.setLanes({{60.0F, {{1000.0, 500.0, {{1400.0, 1000.0, 60}}, {}}}}});
+	notes = extent(fixture.draw(), Colour(255, 255, 255, 255));
+	CHECK(notes[0] == 540.0F);
+	CHECK(notes[2] == 550.0F);
 }

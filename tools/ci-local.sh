@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Runs CI's checks on this machine, all at once, e.g. to reproduce a CI failure (CONTRIBUTING.md):
-# - format: license headers, clang-format and, where the private keyword list is, the keyword scan;
+# - format: license headers, the generated themes, clang-format and, where the private keyword list is, the keyword
+#   scan;
 # - on Windows: windows-x64 (build and tests) and windows-arm64 (cross-compiled; its tests need an ARM64 machine);
 # - on Linux, and on Windows in WSL: linux-gcc and linux-clang (builds and tests), asan-ubsan, tsan and clang-tidy.
 # macOS is left to CI. It checks the commit at HEAD, so commit first: on Windows the Linux jobs run in a clone inside
@@ -10,10 +11,11 @@
 # optimization, which only makes every link slow, and one run at a time per machine (lockMachine).
 # Usage: tools/ci-local.sh [job...]    default: every job this machine can run
 # Environment: GNUBASE_WSL names the WSL distribution (default Ubuntu), GNUBASE_CI_JOBS the compile jobs per build.
-# Setup: Windows needs Visual Studio 2026; Linux (or WSL, Ubuntu 24.04) needs the packages in .github/workflows/ci.yml
-# plus clang with its sanitizer runtimes (libclang-rt-18-dev), ccache, git-lfs, make (without it, GCC's link-time
-# optimization runs its jobs one after another: linking the tests takes ten times as long) and, through pipx,
-# clang-tidy==22.1.8 and clang-format==22.1.3.
+# Setup: Windows needs Visual Studio 2026 and, on Git Bash's PATH, Python 3.10 or later for the format job's
+# tools/skin/generate.py; Linux (or WSL, Ubuntu 24.04) needs the packages in .github/workflows/ci.yml plus clang
+# with its sanitizer runtimes (libclang-rt-18-dev), ccache, git-lfs, make (without it, GCC's link-time optimization
+# runs its jobs one after another: linking the tests takes ten times as long) and, through pipx, clang-tidy==22.1.8
+# and clang-format==22.1.3.
 # Logs: build/ci-local/<job>.log. Exit status: 0 every job passed, 1 a job failed, 2 error. When every job this machine
 # can run passed and the checkout had no uncommitted changes, build/ci-local/passed holds the commit they checked, so
 # other tools can skip checking it again.
@@ -114,6 +116,11 @@ job()
 	case $1 in
 	format)
 		sh tools/check-spdx.sh || return 1
+		# resources/themes must be what tools/skin/generate.py writes, as in CI's "Check the generated themes"
+		local python=python3
+		python3 --version >/dev/null 2>&1 || python=python
+		rm -rf "$logs/themes"
+		"$python" tools/skin/generate.py "$logs/themes" && diff -rq --strip-trailing-cr resources/themes "$logs/themes" || return 1
 		local format=${CLANG_FORMAT:-clang-format}
 		if [ $os = windows ] && ! command -v "$format" >/dev/null; then
 			format="$("$vswhere" -latest -property installationPath | tr -d '\r')/VC/Tools/Llvm/x64/bin/clang-format.exe"

@@ -925,6 +925,10 @@ TEST_CASE("scrubbing a media file plays its frames and leaves the cursor alone",
 	song.addTrack(2);
 	const ObjectId media = idOf(run(song.client, "media.add", {{"path", writeRamp(dir, "mono", 1, 4000)}}), "media");
 	const Json transport = run(song.client, "transport.get");
+	for (const double seconds : {0.0, -0.01})
+		CHECK_THAT(
+			song.client.call("audition.scrub", {{"media", media}, {"position", 1000}, {"seconds", seconds}}).error,
+			ContainsSubstring("parameters.seconds must be more than 0"));
 
 	// No event plays the file. 480 frames back in 0.01 seconds play backwards at normal speed.
 	CHECK(run(song.client, "audition.scrub", {{"media", media}, {"position", 1000}}) ==
@@ -1362,6 +1366,35 @@ TEST_CASE("playback that starts away from the cursor starts without a dropout", 
 		playUntil(song, played(song) + 960); // the cue thread cues the cursor
 		run(song.client, "transport.play");
 		playUntil(song, played(song) + 2400);
+		run(song.client, "transport.stop");
+	}
+	run(song.client, "audio.stop");
+	CHECK(run(song.client, "audio.get").at("playbackDropouts") == 0);
+}
+
+TEST_CASE("recording from stop with a count-in starts without a dropout", "[integration][realtime]")
+{
+	// While the transport counts in, the cue thread cues where playback starts after it, half a second before the
+	// cursor with the pre-roll, rather than at the cursor, where it would take the start's voice away.
+	const gnubase::test::TempDir dir;
+	Song song(256);
+	const TestTrack track = song.addTrack(2);
+	const ObjectId clip = song.addClip(writeRamp(dir, "stereo", 2, 96000));
+	song.add({track.id, 0, 0, 96000, 2}, clip);
+	run(song.client, "transport.set", {{"preRoll", true}, {"preRollAmount", 24000}});
+	// A sixteenth at 120 BPM: the count-in takes 6000 frames, so the cue thread cues during it.
+	run(song.client, "metronome.set",
+		{{"countIn",
+			{{"enabled", true}, {"bars", 1}, {"signature", "custom"},
+				{"customSignature", {{"numerator", 1}, {"denominator", 16}}}}}});
+	run(song.client, "audio.start");
+	for (int i = 0; i < 10; ++i)
+	{
+		run(song.client, "transport.locate", {{"position", 48000}});
+		playUntil(song, played(song) + 960); // the cue thread cues the cursor
+		run(song.client, "transport.record");
+		playUntil(song, played(song) + 6000 + 2400);
+		CHECK(run(song.client, "transport.get").at("playing") == true);
 		run(song.client, "transport.stop");
 	}
 	run(song.client, "audio.stop");

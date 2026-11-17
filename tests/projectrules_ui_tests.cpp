@@ -36,12 +36,7 @@ namespace
 						.at("id")
 						.get<uint64_t>());
 			app.call("event.set", {{"events", Json::array({parts[1]})}, {"mute", true}});
-			REQUIRE(app.waitUntil(
-				[this]
-				{
-					return display.project().is_object() &&
-						display.project().value("midiParts", Json::array()).size() == 2;
-				}));
+			REQUIRE(app.waitUntil([this] { return display.project().value("midiParts", Json::array()).size() == 2; }));
 		}
 
 		Json elements(const std::string& selector) { return app.ui().dom(std::nullopt, selector, 0).at("elements"); }

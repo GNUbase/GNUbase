@@ -67,6 +67,10 @@
 	{
 		image-color: #d76a73;
 	}
+	svg.icon.warning
+	{
+		image-color: #cda85f;
+	}
 	.dialog, dialog
 	{
 		decorator: svg-ninepatch(dialog.svg, 6 6 6 6);
@@ -134,6 +138,10 @@
 		decorator: svg-ninepatch(list-item-hover.svg, 6 6 6 6);
 	}
 	.list-item.selected, listitem.selected, listview tr.selected, select selectbox option:checked
+	{
+		decorator: svg-ninepatch(list-item-selected.svg, 6 6 6 6);
+	}
+	.arranger-row.current
 	{
 		decorator: svg-ninepatch(list-item-selected.svg, 6 6 6 6);
 	}
@@ -429,6 +437,17 @@
 	{
 		color: #5ea7b3;
 	}
+	event-names
+	{
+		color: #f3f4f5;
+		font-size: 11dp;
+	}
+	part-contents
+	{
+		color: #f3f4f5;
+		stroke-color: #b7bbc0;
+		stroke-width: 1dp;
+	}
 	curve
 	{
 		stroke-color: #7896bd;
@@ -444,6 +463,24 @@
 	.event-display
 	{
 		background-color: #151617;
+	}
+	.event-display event-lanes.events, .event-display event-lanes.muted-events, .event-display event-lanes.selected-events, .event-display event-lanes.folder-data
+	{
+		event-inset: 0dp;
+	}
+	.event-display event-lanes.events
+	{
+		own-fill-opacity: 1;
+		own-color-tint: none;
+	}
+	.event-display .waveforms waveform
+	{
+		own-color-tint: none;
+		event-inset: 0dp;
+	}
+	.event-display event-names, .event-display part-contents
+	{
+		event-inset: 0dp;
 	}
 	.event-display .overview
 	{
@@ -470,6 +507,11 @@
 		color: #4e828b;
 		stroke-color: #f3f4f5;
 	}
+	.event-display.highlight-selected-borders event-lanes.selected-events
+	{
+		stroke-color: #d76a73;
+		stroke-width: 2dp;
+	}
 	.event-display fade-lines
 	{
 		color: #f3f4f5;
@@ -489,9 +531,17 @@
 	{
 		background-color: #f3f4f5;
 	}
+	.event-display .step-input-cursor, .event-display .step-input-handle
+	{
+		background-color: #5ea7b3;
+	}
 	.event-display .cross-hair-vertical, .event-display .cross-hair-horizontal
 	{
 		background-color: #66686c;
+	}
+	.event-display .cutting-position
+	{
+		background-color: #5ea7b3;
 	}
 	.event-display .marker-lines
 	{
@@ -592,6 +642,18 @@
 		border-left-width: 1dp;
 		border-left-color: #5ea7b3;
 	}
+	.arranger-lane-row .arranger-lane-event
+	{
+		color: #f3f4f5;
+		font-size: 11dp;
+		background-color: #5ea7b340;
+		border-width: 1dp;
+		border-color: #5ea7b3;
+	}
+	.arranger-lane-row .arranger-lane-event.drawing
+	{
+		background-color: transparent;
+	}
 	.chord-pad
 	{
 		color: #f3f4f5;
@@ -634,6 +696,81 @@
 	.chord-pad.triggered
 	{
 		background-color: #41636a;
+	}
+	.chord-pad.listening
+	{
+		border-color: #d76a73;
+	}
+	.chord-pad.drop-target
+	{
+		border-color: #67ad8b;
+	}
+	.chord-pad.level-0
+	{
+		border-bottom-color: #67ad8b;
+	}
+	.chord-pad.level-1
+	{
+		border-bottom-color: #cda85f;
+	}
+	.chord-pad.level-2
+	{
+		border-bottom-color: #d76a73;
+	}
+	.chord-pad .chord-pad-voicing
+	{
+		color: #b7bbc0;
+		font-size: 11dp;
+	}
+	.chord-pad .chord-pad-progress
+	{
+		background-color: #5ea7b3;
+	}
+	.chord-pad.black-key
+	{
+		background-color: #1d1f21;
+	}
+	.chord-pads-key.white
+	{
+		background-color: #f3f4f5;
+		border-width: 1dp;
+		border-color: #484c50;
+	}
+	.chord-pads-key.black
+	{
+		background-color: #151617;
+	}
+	.chord-pads-key.remote
+	{
+		background-color: #a8ced4;
+	}
+	.chord-pads-key.black.remote
+	{
+		background-color: #416d75;
+	}
+	.chord-pads-key.section, .chord-pads-key.black.section
+	{
+		background-color: #7a663f;
+	}
+	.chord-pads-key.modifier, .chord-pads-key.black.modifier
+	{
+		background-color: #67ad8b;
+	}
+	.chord-pads-key.hover, .chord-pads-key.black.hover
+	{
+		background-color: #cda85f;
+	}
+	.chord-pads-key.played, .chord-pads-key.black.played
+	{
+		background-color: #7896bd;
+	}
+	.chord-proximity-reference
+	{
+		color: #5ea7b3;
+	}
+	.chord-suggestion.recent .chord-suggestion-chord
+	{
+		font-weight: bold;
 	}
 	.chord-suggestion
 	{
@@ -691,6 +828,10 @@
 	{
 		color: #b7bbc0;
 	}
+	.track-list listitem.rendering .track-name
+	{
+		font-style: italic;
+	}
 	.track-list .drop-line
 	{
 		background-color: #5ea7b3;
@@ -743,6 +884,15 @@
 	{
 		border-right-width: 1dp;
 		border-right-color: #484c50;
+	}
+	.mixer-channel-name.colored
+	{
+		color: #ffffff;
+		border-radius: 3dp;
+	}
+	.mixer-channel-name.colored.bright
+	{
+		color: #000000;
 	}
 	.midi-editor .editor-part, .in-place-editor .editor-part
 	{
@@ -825,9 +975,28 @@
 	{
 		background-color: #5ea7b366;
 	}
+	.key-editor-velocity
+	{
+		color: #f3f4f5;
+	}
 	.key-editor-step-cursor
 	{
 		background-color: #5ea7b3;
+	}
+	.key-expression-step
+	{
+		border-top-width: 1px;
+		border-top-color: #f3f4f5;
+	}
+	.key-expression-editor
+	{
+		background-color: #292c2f;
+		border-width: 1px;
+		border-color: #5ea7b3;
+	}
+	.key-expression-editor .key-expression-step
+	{
+		border-top-color: #7896bd;
 	}
 	.in-place-editor
 	{
@@ -877,6 +1046,57 @@
 	{
 		background-color: transparent;
 		decorator: repeating-linear-gradient(to top, #4c4e51 0dp, #4c4e51 3dp, #4c4e5100 3dp, #4c4e5100 5dp);
+	}
+	.articulation-name
+	{
+		color: #b7bbc0;
+	}
+	.articulation-row.sound-slots
+	{
+		border-bottom-width: 1px;
+		border-bottom-color: #484c50;
+	}
+	.sound-slot
+	{
+		background-color: #292c2f;
+		color: #f3f4f5;
+	}
+	.sound-slot.light
+	{
+		color: #151617;
+	}
+	.sound-slot.dark
+	{
+		color: #f3f4f5;
+	}
+	.articulation-item.direction
+	{
+		background-color: #395157;
+	}
+	.articulation-item.attribute
+	{
+		background-color: #49767e;
+	}
+	.articulation-item.reset
+	{
+		background-color: #b7bbc0;
+	}
+	.articulation-item.muted
+	{
+		background-color: #777b7f;
+	}
+	.articulation-item.selected
+	{
+		background-color: #7896bd;
+	}
+	.articulation-item.inactive
+	{
+		background-color: #4c4e51;
+	}
+	.controller-lane-frame
+	{
+		border-width: 2dp;
+		border-color: #5ea7b3;
 	}
 	.ape-display
 	{
@@ -1036,6 +1256,44 @@
 	{
 		color: #d76a73;
 	}
+	.drum-pad
+	{
+		color: #b7bbc0;
+		background-color: #1e2022;
+		border-color: #484c50;
+		border-radius: 3dp;
+	}
+	.drum-pad.assigned
+	{
+		color: #f3f4f5;
+		background-color: #292c2f;
+	}
+	.drum-pad.selected
+	{
+		border-color: #5ea7b3;
+	}
+	.drum-pad.muted, .drum-pad.soloed-out
+	{
+		color: #b7bbc0;
+		background-color: #151617;
+	}
+	.drum-pad.soloed
+	{
+		border-color: #7896bd;
+	}
+	.drum-pad-note, .drum-label
+	{
+		color: #b7bbc0;
+		font-size: 11dp;
+	}
+	.drum-group.selected, .drum-page-tab.selected
+	{
+		color: #5ea7b3;
+	}
+	.drum-message.error
+	{
+		color: #d76a73;
+	}
 	.ds-display, .sa-graph
 	{
 		background-color: #1e2022;
@@ -1167,6 +1425,18 @@
 	.inspector .insert.bypassed, .inspector .insert.inactive
 	{
 		color: #b7bbc0;
+	}
+	.inspector .midi-effect-slot.off select
+	{
+		color: #b7bbc0;
+	}
+	.inspector .midi-effect-slot.recorded
+	{
+		border-left-color: #5ea7b3;
+	}
+	.inspector .midi-divider.at .midi-divider-line
+	{
+		background-color: #5ea7b3;
 	}
 	.pool-message.error
 	{
@@ -1333,5 +1603,258 @@
 	menubar button:focus-visible
 	{
 		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6);
+	}
+	menubar
+	{
+	}
+	.toolbar
+	{
+		decorator: svg-ninepatch(toolbar.svg, 6 6 6 6);
+	}
+	.toolbar:not(.transport) button:not(.toggle):not(.primary), .transport .transport-section button:not(.toggle):not(.primary)
+	{
+		decorator: svg-ninepatch(button-normal.svg, 6 6 6 6);
+		color: #f3f4f5;
+	}
+	.toolbar:not(.transport) button:not(.toggle):not(.primary) svg.icon, .transport .transport-section button:not(.toggle):not(.primary) svg.icon
+	{
+		image-color: #f3f4f5;
+	}
+	.toolbar:not(.transport) button[menu]:not(.toggle):not(.primary), .transport .transport-section button[menu]:not(.toggle):not(.primary)
+	{
+		decorator: svg-ninepatch(dropdown-button-normal.svg, 6 6 6 6);
+	}
+	.toolbar:not(.transport) button.icon-only[menu]:not(.toggle):not(.primary), .transport .transport-section button.icon-only[menu]:not(.toggle):not(.primary)
+	{
+	}
+	.toolbar:not(.transport) button:not(.toggle):not(.primary):hover, .transport .transport-section button:not(.toggle):not(.primary):hover
+	{
+		decorator: svg-ninepatch(button-hover.svg, 6 6 6 6);
+	}
+	.toolbar:not(.transport) button:not(.toggle):not(.primary):hover svg.icon, .transport .transport-section button:not(.toggle):not(.primary):hover svg.icon
+	{
+		image-color: #f3f4f5;
+	}
+	.toolbar:not(.transport) button[menu]:not(.toggle):not(.primary):hover, .transport .transport-section button[menu]:not(.toggle):not(.primary):hover
+	{
+		decorator: svg-ninepatch(dropdown-button-hover.svg, 6 6 6 6);
+	}
+	.toolbar:not(.transport) button.icon-only[menu]:not(.toggle):not(.primary):hover, .transport .transport-section button.icon-only[menu]:not(.toggle):not(.primary):hover
+	{
+	}
+	.toolbar:not(.transport) button:not(.toggle):not(.primary):active, .transport .transport-section button:not(.toggle):not(.primary):active
+	{
+		decorator: svg-ninepatch(button-pressed.svg, 6 6 6 6);
+	}
+	.toolbar:not(.transport) button[menu]:not(.toggle):not(.primary):active, .transport .transport-section button[menu]:not(.toggle):not(.primary):active
+	{
+		decorator: svg-ninepatch(dropdown-button-pressed.svg, 6 6 6 6);
+	}
+	.toolbar:not(.transport) button.checked[menu]:not(.toggle):not(.primary), .transport .transport-section button.checked[menu]:not(.toggle):not(.primary)
+	{
+		decorator: svg-ninepatch(button-checked.svg, 6 6 6 6);
+	}
+	.toolbar:not(.transport) button.checked:not(.toggle):not(.primary), .transport .transport-section button.checked:not(.toggle):not(.primary)
+	{
+		decorator: svg-ninepatch(button-checked.svg, 6 6 6 6);
+	}
+	.toolbar:not(.transport) button.checked:not(.toggle):not(.primary) svg.icon, .transport .transport-section button.checked:not(.toggle):not(.primary) svg.icon
+	{
+		image-color: #f3f4f5;
+	}
+	.toolbar:not(.transport) button.suspended:not(.toggle):not(.primary), .transport .transport-section button.suspended:not(.toggle):not(.primary)
+	{
+		decorator: svg-ninepatch(button-normal.svg, 6 6 6 6);
+		color: #cda85f;
+	}
+	.toolbar:not(.transport) button.tapping:not(.toggle):not(.primary), .transport .transport-section button.tapping:not(.toggle):not(.primary)
+	{
+		decorator: svg-ninepatch(button-pressed.svg, 6 6 6 6);
+	}
+	.toolbar:not(.transport) button:not(.toggle):not(.primary):disabled, .transport .transport-section button:not(.toggle):not(.primary):disabled
+	{
+		decorator: svg-ninepatch(button-disabled.svg, 6 6 6 6);
+		color: #b7bbc0;
+	}
+	.toolbar:not(.transport) button:not(.toggle):not(.primary):disabled svg.icon, .transport .transport-section button:not(.toggle):not(.primary):disabled svg.icon
+	{
+		image-color: #b7bbc0;
+	}
+	.toolbar:not(.transport) button[menu]:not(.toggle):not(.primary):disabled, .transport .transport-section button[menu]:not(.toggle):not(.primary):disabled
+	{
+		decorator: svg-ninepatch(dropdown-button-disabled.svg, 6 6 6 6);
+		color: #b7bbc0;
+	}
+	.toolbar:not(.transport) button.icon-only[menu]:not(.toggle):not(.primary):active, .transport .transport-section button.icon-only[menu]:not(.toggle):not(.primary):active
+	{
+	}
+	.toolbar:not(.transport) button.icon-only[menu]:not(.toggle):not(.primary):disabled, .transport .transport-section button.icon-only[menu]:not(.toggle):not(.primary):disabled
+	{
+	}
+	.transport #start svg.icon
+	{
+		image-color: #f3f4f5;
+	}
+	.transport button#start.checked
+	{
+		decorator: svg-ninepatch(button-checked.svg, 6 6 6 6);
+	}
+	.transport #start.checked svg.icon
+	{
+		image-color: #f3f4f5;
+	}
+	.transport #record svg.icon
+	{
+		image-color: #f3f4f5;
+	}
+	.transport button#record.checked
+	{
+		decorator: svg-ninepatch(button-checked.svg, 6 6 6 6);
+	}
+	.transport #record.checked svg.icon
+	{
+		image-color: #f3f4f5;
+	}
+	.transport .primary-time
+	{
+	}
+	tabset tabs
+	{
+		decorator: svg-ninepatch(tabbar.svg, 6 6 6 6);
+	}
+	tabset tab
+	{
+		decorator: svg-ninepatch(tab-normal.svg, 6 6 6 6);
+		color: #b7bbc0;
+	}
+	tabset tab:hover
+	{
+		decorator: svg-ninepatch(tab-hover.svg, 6 6 6 6);
+		color: #f3f4f5;
+	}
+	tabset tab:selected
+	{
+		decorator: svg-ninepatch(tab-active.svg, 6 6 6 6);
+		color: #f3f4f5;
+	}
+	.docking [zone]
+	{
+	}
+	.docking .zone-frame
+	{
+	}
+	.event-display
+	{
+	}
+	.track-list
+	{
+	}
+	.track-list listitem
+	{
+	}
+	.track-list listitem:hover
+	{
+	}
+	.track-list listitem.selected
+	{
+	}
+	.track-list .track-color
+	{
+	}
+	.track-list .track-name, .track-list .track-name-field, .track-list .track-versions-toggle, .track-list .track-controls
+	{
+	}
+	.track-list listitem > .tree-toggle
+	{
+	}
+	.track-list .track-name
+	{
+	}
+	.track-list listitem[type=folder] .track-color[color]
+	{
+	}
+	.track-list listitem.selected .track-color[color]
+	{
+	}
+	.track-list .track-controls button[control=record]:not(.checked) svg.icon
+	{
+	}
+	.inspector-section button.section-header
+	{
+		decorator: svg-ninepatch(disclosure-open.svg, 6 6 6 6);
+		color: #f3f4f5;
+	}
+	.inspector-section.collapsed button.section-header
+	{
+		decorator: svg-ninepatch(disclosure-closed.svg, 6 6 6 6);
+	}
+	.inspector-section button.section-header:hover
+	{
+		decorator: svg-ninepatch(button-hover.svg, 6 6 6 6);
+	}
+	.inspector-section button.section-header:active
+	{
+		decorator: svg-ninepatch(button-pressed.svg, 6 6 6 6);
+	}
+	.mixer-channel
+	{
+	}
+	.mixer-channel-name
+	{
+	}
+	.transport .display
+	{
+	}
+	.transport .transport-section valuefield
+	{
+		decorator: svg-ninepatch(display.svg, 6 6 6 6);
+	}
+	.toolbar:not(.transport) button:not(.toggle):not(.primary):focus-visible, .transport .transport-section button:not(.toggle):not(.primary):focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(button-normal.svg, 6 6 6 6);
+	}
+	.toolbar:not(.transport) button[menu]:not(.toggle):not(.primary):focus-visible, .transport .transport-section button[menu]:not(.toggle):not(.primary):focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(dropdown-button-normal.svg, 6 6 6 6);
+	}
+	.toolbar:not(.transport) button.icon-only[menu]:not(.toggle):not(.primary):focus-visible, .transport .transport-section button.icon-only[menu]:not(.toggle):not(.primary):focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(dropdown-button-normal.svg, 6 6 6 6);
+	}
+	.toolbar:not(.transport) button.checked[menu]:not(.toggle):not(.primary):focus-visible, .transport .transport-section button.checked[menu]:not(.toggle):not(.primary):focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(button-checked.svg, 6 6 6 6);
+	}
+	.toolbar:not(.transport) button.checked:not(.toggle):not(.primary):focus-visible, .transport .transport-section button.checked:not(.toggle):not(.primary):focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(button-checked.svg, 6 6 6 6);
+	}
+	.toolbar:not(.transport) button.suspended:not(.toggle):not(.primary):focus-visible, .transport .transport-section button.suspended:not(.toggle):not(.primary):focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(button-normal.svg, 6 6 6 6);
+	}
+	.toolbar:not(.transport) button.tapping:not(.toggle):not(.primary):focus-visible, .transport .transport-section button.tapping:not(.toggle):not(.primary):focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(button-pressed.svg, 6 6 6 6);
+	}
+	.transport button#start.checked:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(button-checked.svg, 6 6 6 6);
+	}
+	.transport button#record.checked:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(button-checked.svg, 6 6 6 6);
+	}
+	.inspector-section button.section-header:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(disclosure-open.svg, 6 6 6 6);
+	}
+	.inspector-section.collapsed button.section-header:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(disclosure-closed.svg, 6 6 6 6);
+	}
+	.transport .transport-section valuefield:focus-visible
+	{
+		decorator: svg-ninepatch(focus-ring.svg, 6 6 6 6), svg-ninepatch(display.svg, 6 6 6 6);
 	}
 }

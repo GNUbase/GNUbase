@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <variant>
 #include <vector>
 
 using Catch::Matchers::ContainsSubstring;
@@ -100,6 +101,50 @@ namespace
 				result.push_back(version.at("name").get<std::string>());
 			return result;
 		}
+
+		// The ids of the parts of the midiPart.changed events since the last call, in order.
+		std::vector<int64_t> changedParts()
+		{
+			std::vector<int64_t> ids;
+			while (const auto message = client.poll())
+				if (const auto* event = std::get_if<gnubase::engine::Event>(&*message);
+					event != nullptr && event->name == "midiPart.changed")
+					ids.push_back(event->data.at("part").at("id").get<int64_t>());
+			return ids;
+		}
+
+		Json part(int64_t id)
+		{
+			const Json project = call("project.get");
+			for (const Json& item : project.at("midiParts"))
+				if (item.at("id") == id)
+					return item;
+			FAIL("no MIDI part " << id);
+		}
+
+		// A MIDI part with one note in it.
+		int64_t midiPart(int64_t onTrack, int64_t position)
+		{
+			const Json added =
+				call("midiPart.add", {{"track", onTrack}, {"position", position}, {"length", 4 * g_quarter}})
+					.at("part");
+			call("note.add",
+				{{"part", added.at("id")},
+					{"notes", {{{"position", 0}, {"length", g_quarter}, {"pitch", 60}, {"velocity", 1.0}}}}});
+			return added.at("id").get<int64_t>();
+		}
+
+		// The ids of the tracks the rules find: those with more than one version.
+		std::vector<int64_t> withVersions()
+		{
+			const Json rules = {{"filters",
+									Json::array({{{"target", "property"}, {"condition", "propertyIsSet"},
+										{"parameter1", "hasTrackVersion"}, {"parameter2", 0.0}}})},
+				{"function", "select"}, {"actions", Json::array()}};
+			return call("project.findByRules", {{"rules", rules}}).at("tracks").get<std::vector<int64_t>>();
+		}
+
+		size_t steps() { return call("history.get").at("steps").size(); }
 
 		int active(int64_t id) { return trackJson(id).at("activeVersion").get<int>(); }
 
@@ -401,4 +446,247 @@ TEST_CASE("a tempo change retimes the linear MIDI parts of inactive versions too
 	};
 	CHECK(note(plain) == std::vector<int64_t>{g_quarter / 2, g_quarter / 2});
 	CHECK(note(versioned) == note(plain));
+}
+
+TEST_CASE("a version keeps the shared copies that all go into it", "[integration]")
+{
+	Fixture f;
+	const int64_t track = f.track("midi", "musical");
+	const int64_t other = f.track("midi", "musical");
+	// Two shared copies on the track, and a pair of copies split over both tracks.
+	const int64_t together = f.midiPart(track, 0);
+	const int64_t copy = f.call("event.copy", {{"events", {together}}, {"ticks", 4 * g_quarter}, {"shared", true}})
+							 .at("events")
+							 .at(0)
+							 .get<int64_t>();
+	const int64_t split = f.midiPart(track, 8 * g_quarter);
+	const int64_t elsewhere = f.call("event.copy", {{"events", {split}}, {"track", other}, {"shared", true}})
+								  .at("events")
+								  .at(0)
+								  .get<int64_t>();
+	const auto group = [&f](int64_t id) { return f.part(id).at("shared").get<int64_t>(); };
+	REQUIRE(group(together) != 0);
+	CHECK(group(copy) == group(together));
+	REQUIRE(group(split) != 0);
+	CHECK(group(elsewhere) == group(split));
+	const int64_t note = f.part(together).at("notes").at(0).at("id").get<int64_t>();
+
+	f.call("trackVersion.add", {{"tracks", {track}}});
+	f.call("trackVersion.activate", {{"tracks", {track}}, {"version", 1}});
+
+	// The pair that went into the version whole is still one: the same group, the same notes, edited together. The
+	// copy whose partner kept playing is a part of its own, and so is the partner, the last of its copies.
+	CHECK(group(together) != 0);
+	CHECK(group(copy) == group(together));
+	CHECK(f.part(copy).at("notes").at(0).at("id") == note);
+	f.call("note.set", {{"part", together}, {"notes", {{{"id", note}, {"pitch", 72}}}}});
+	CHECK(f.part(copy).at("notes").at(0).at("pitch") == 72);
+	CHECK(group(split) == 0);
+	CHECK(group(elsewhere) == 0);
+	CHECK(f.part(elsewhere).at("notes").at(0).at("id") != f.part(split).at("notes").at(0).at("id"));
+}
+
+TEST_CASE("Duplicate Version gives the duplicate's shared copies a group of their own", "[integration]")
+{
+	Fixture f;
+	const int64_t track = f.track("midi", "musical");
+	const int64_t first = f.midiPart(track, 0);
+	const int64_t second = f.call("event.copy", {{"events", {first}}, {"ticks", 4 * g_quarter}, {"shared", true}})
+							   .at("events")
+							   .at(0)
+							   .get<int64_t>();
+	const auto group = [&f](int64_t id) { return f.part(id).at("shared").get<int64_t>(); };
+	const auto note = [&f](int64_t id) { return f.part(id).at("notes").at(0).at("id").get<int64_t>(); };
+	REQUIRE(group(first) != 0);
+	CHECK(group(second) == group(first));
+	const int64_t original = group(first);
+	const int64_t originalNote = note(first);
+
+	f.call("trackVersion.duplicate", {{"tracks", {track}}});
+	const int duplicated = f.active(track);
+	REQUIRE(duplicated > 1);
+	// The duplicate's copies are copies of each other and of nothing else: a group of their own, with note ids of
+	// their own that they share.
+	const std::vector<int64_t> copies = f.on("midiParts", track);
+	REQUIRE(copies.size() == 2);
+	CHECK(group(copies.at(0)) != 0);
+	CHECK(group(copies.at(0)) != original);
+	CHECK(group(copies.at(1)) == group(copies.at(0)));
+	CHECK(note(copies.at(0)) != originalNote);
+	CHECK(note(copies.at(1)) == note(copies.at(0)));
+
+	// Switching away and back keeps both versions' groups whole: neither is "elsewhere" for the other.
+	f.call("trackVersion.activate", {{"tracks", {track}}, {"version", 1}});
+	CHECK(f.on("midiParts", track) == std::vector<int64_t>{first, second});
+	CHECK(group(first) == original);
+	CHECK(group(second) == original);
+	CHECK(note(first) == originalNote);
+	f.call("trackVersion.activate", {{"tracks", {track}}, {"version", duplicated}});
+	REQUIRE(f.on("midiParts", track) == copies);
+	CHECK(group(copies.at(0)) != 0);
+	CHECK(group(copies.at(1)) == group(copies.at(0)));
+	CHECK(note(copies.at(1)) == note(copies.at(0)));
+	// And an edit of one still reaches the other.
+	const int64_t copied = note(copies.at(0));
+	f.call("note.set", {{"part", copies.at(0)}, {"notes", {{{"id", copied}, {"pitch", 72}}}}});
+	CHECK(f.part(copies.at(1)).at("notes").at(0).at("pitch") == 72);
+}
+
+TEST_CASE("a version command that skips a track leaves it without a version of its own", "[integration]")
+{
+	Fixture f;
+	const int64_t plain = f.track("audio");
+	const int64_t versioned = f.track("audio");
+	CHECK(f.withVersions().empty());
+
+	// The plain track has v1, so activating it there is allowed, but nothing changes: no undo step, and the track
+	// keeps storing no version of its own.
+	const size_t steps = f.steps();
+	f.call("trackVersion.activate", {{"tracks", {plain}}, {"version", 1}});
+	CHECK(f.steps() == steps);
+	CHECK(f.withVersions().empty());
+
+	// Delete Version skips the plain track too.
+	f.call("trackVersion.add", {{"tracks", {versioned}}});
+	f.call("trackVersion.remove", {{"tracks", {plain, versioned}}});
+	CHECK(f.names(versioned) == std::vector<std::string>{"v1"});
+	CHECK(f.withVersions().empty());
+	f.call("history.undo");
+	CHECK(f.active(versioned) > 1);
+	CHECK(f.withVersions() == std::vector<int64_t>{versioned});
+	f.call("history.redo");
+	CHECK(f.withVersions().empty());
+	CHECK_THAT(f.fails("trackVersion.remove", {{"tracks", {plain}}}), ContainsSubstring("only one"));
+}
+
+TEST_CASE("a tempo change separates the shared copies of an inactive version that it retimes differently", "[unit]")
+{
+	Fixture f;
+	constexpr int64_t quarterSamples = 24000; // at 48 kHz and 120 BPM
+	f.call("project.set", {{"tempoTrackActive", true}});
+	const int64_t track = f.track("midi");
+	const int64_t first = f.call("midiPart.add", {{"track", track}, {"position", 0}, {"length", 4 * quarterSamples}})
+							  .at("part")
+							  .at("id")
+							  .get<int64_t>();
+	f.call("note.add",
+		{{"part", first},
+			{"notes", {{{"position", g_quarter}, {"length", g_quarter}, {"pitch", 60}, {"velocity", 1.0}}}}});
+	const int64_t later = f.call("event.copy", {{"events", {first}}, {"delta", 8 * quarterSamples}, {"shared", true}})
+							  .at("events")
+							  .at(0)
+							  .get<int64_t>();
+	const auto group = [&f](int64_t id) { return f.part(id).at("shared").get<int64_t>(); };
+	REQUIRE(group(first) != 0);
+	REQUIRE(group(later) == group(first));
+	f.call("trackVersion.add", {{"tracks", {track}}});
+
+	// Half the tempo from the sixth quarter, while both copies lie in the inactive version: the copy after the tempo
+	// event retimes its note, the first one doesn't, so they can't share their notes any more.
+	f.call("tempo.add", {{"position", 6 * g_quarter}, {"bpm", 60.0}, {"ramp", false}});
+	f.call("trackVersion.activate", {{"tracks", {track}}, {"version", 1}});
+	CHECK(group(first) == 0);
+	CHECK(group(later) == 0);
+	const Json firstNote = f.part(first).at("notes").at(0);
+	const Json laterNote = f.part(later).at("notes").at(0);
+	CHECK(firstNote.at("id") != laterNote.at("id"));
+	CHECK(firstNote.at("position") == g_quarter);
+	CHECK(laterNote.at("position") == g_quarter / 2);
+	CHECK(laterNote.at("length") == g_quarter / 2);
+	// They are edited apart now.
+	f.call("note.set", {{"part", first}, {"notes", {{{"id", firstNote.at("id")}, {"pitch", 72}}}}});
+	CHECK(f.part(later).at("notes").at(0).at("pitch") == 60);
+}
+
+TEST_CASE("the largest set of an inactive version's shared copies that still match keeps their group", "[unit]")
+{
+	Fixture f;
+	constexpr int64_t quarterSamples = 24000; // at 48 kHz and 120 BPM
+	f.call("project.set", {{"tempoTrackActive", true}});
+	const int64_t track = f.track("midi");
+	const int64_t first = f.call("midiPart.add", {{"track", track}, {"position", 0}, {"length", 2 * quarterSamples}})
+							  .at("part")
+							  .at("id")
+							  .get<int64_t>();
+	f.call("note.add",
+		{{"part", first},
+			{"notes", {{{"position", g_quarter / 2}, {"length", g_quarter / 2}, {"pitch", 60}, {"velocity", 1.0}}}}});
+	const auto copy = [&f, first](int64_t quarters)
+	{
+		return f.call("event.copy", {{"events", {first}}, {"delta", quarters * quarterSamples}, {"shared", true}})
+			.at("events")
+			.at(0)
+			.get<int64_t>();
+	};
+	// Three copies before the eighth quarter, two after it.
+	const std::vector<int64_t> before{first, copy(2), copy(4)};
+	const std::vector<int64_t> after{copy(8), copy(12)};
+	const auto group = [&f](int64_t id) { return f.part(id).at("shared").get<int64_t>(); };
+	const int64_t shared = group(first);
+	const Json notes = f.part(first).at("notes");
+	REQUIRE(shared != 0);
+	f.call("trackVersion.add", {{"tracks", {track}}});
+
+	// Half the tempo from the eighth quarter, while all five lie in the inactive version: the three before it still
+	// match and keep the group and their notes' ids, the two after it match each other and share new ids in a new
+	// group.
+	f.call("tempo.add", {{"position", 8 * g_quarter}, {"bpm", 60.0}, {"ramp", false}});
+	f.call("trackVersion.activate", {{"tracks", {track}}, {"version", 1}});
+	for (const int64_t id : before)
+	{
+		CHECK(group(id) == shared);
+		CHECK(f.part(id).at("notes") == notes);
+	}
+	const int64_t split = group(after.front());
+	CHECK(split != 0);
+	CHECK(split != shared);
+	CHECK(group(after.back()) == split);
+	const Json moved = f.part(after.front()).at("notes");
+	CHECK(f.part(after.back()).at("notes") == moved);
+	CHECK(moved.at(0).at("id") != notes.at(0).at("id"));
+	CHECK(moved.at(0).at("position") == g_quarter / 4);
+	CHECK(moved.at(0).at("length") == g_quarter / 4);
+	// An edit of a copy after it reaches the other one, not the copies before it.
+	f.call("note.set", {{"part", after.front()}, {"notes", {{{"id", moved.at(0).at("id")}, {"pitch", 72}}}}});
+	CHECK(f.part(after.back()).at("notes").at(0).at("pitch") == 72);
+	CHECK(f.part(first).at("notes").at(0).at("pitch") == 60);
+}
+
+TEST_CASE("a tempo change that splits a playing group and an inactive one reports the playing copies only", "[unit]")
+{
+	Fixture f;
+	constexpr int64_t quarterSamples = 24000; // at 48 kHz and 120 BPM
+	f.call("project.set", {{"tempoTrackActive", true}});
+	// A part with a note and a shared copy of it eight quarters later.
+	const auto copies = [&f](int64_t track)
+	{
+		const int64_t first =
+			f.call("midiPart.add", {{"track", track}, {"position", 0}, {"length", 4 * quarterSamples}})
+				.at("part")
+				.at("id")
+				.get<int64_t>();
+		f.call("note.add",
+			{{"part", first},
+				{"notes", {{{"position", g_quarter}, {"length", g_quarter}, {"pitch", 60}, {"velocity", 1.0}}}}});
+		const int64_t later =
+			f.call("event.copy", {{"events", {first}}, {"delta", 8 * quarterSamples}, {"shared", true}})
+				.at("events")
+				.at(0)
+				.get<int64_t>();
+		return std::vector<int64_t>{first, later};
+	};
+	const int64_t versioned = f.track("midi");
+	const int64_t plain = f.track("midi");
+	const std::vector<int64_t> stashed = copies(versioned);
+	const std::vector<int64_t> playing = copies(plain);
+	f.call("trackVersion.add", {{"tracks", {versioned}}});
+	f.changedParts();
+
+	// The tempo event splits both groups; only the copies that play are announced.
+	f.call("tempo.add", {{"position", 6 * g_quarter}, {"bpm", 60.0}, {"ramp", false}});
+	CHECK(f.changedParts() == playing);
+	f.call("trackVersion.activate", {{"tracks", {versioned}}, {"version", 1}});
+	for (const int64_t id : {stashed.front(), stashed.back(), playing.front(), playing.back()})
+		CHECK(f.part(id).at("shared") == 0);
+	CHECK(f.part(stashed.back()).at("notes").at(0).at("position") == g_quarter / 2);
 }

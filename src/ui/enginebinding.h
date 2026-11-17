@@ -89,14 +89,22 @@ namespace gnubase::ui
 
 		// Sends document commands ({"command", "parameters"} each) as a step of a value widget's gesture (the
 		// "gesture" parameter of its change event, ui/widgets.h): a history.transaction named description whose merge
-		// key is what the gesture changes (e.g. "channel 5 volume") and the gesture, so that a drag, wheel turns or a
-		// held arrow key are one undo step. With gesture 0 the commands are a step of their own.
-		// The steps of one thing go one at a time (#716): while one is in flight the next waits, and a newer step of
-		// the same gesture replaces the one waiting, so that a fast drag sends its newest value whenever the engine
-		// has answered instead of piling up commands. done runs for every step sent; a step replaced before it was
-		// sent is dropped with its done.
+		// key is what the gesture changes (e.g. "mixer 3 channel 5 volume") and the gesture, so that a drag, wheel
+		// turns or a held arrow key are one undo step. With gesture 0 the commands are a step of their own. The steps
+		// of one thing go one at a time (#716): while one is in flight the next waits, and a newer step of the same
+		// gesture replaces the one waiting, so that a fast drag sends its newest value whenever the engine has answered
+		// instead of piling up commands. done runs for every step sent; a step replaced before it was sent is dropped
+		// with its done. A step sends other keys' older waiting steps first, including other views' steps, so switching
+		// controls keeps their input and undo order. shown, unless null, is what the control shows
+		// once the engine took the step, kept with the record of what's steps for shown(): an object's members are
+		// merged into what the record keeps (a JSON merge patch), e.g. one per event that the step changes, anything
+		// else replaces it. A step sent while none of what's is out and a project read after the last one that the
+		// engine took is in starts what the record keeps afresh (#1550). merge, unless empty, names the merge key
+		// instead of what, for steps whose record what is shared by things that undo apart, such as the info line's
+		// fields for each selection of events.
 		void sendStep(int gesture, const std::string& what, std::string description, engine::Json commands,
-			std::function<void(const engine::Result&)> done = {});
+			std::function<void(const engine::Result&)> done = {}, const engine::Json& shown = nullptr,
+			const std::string& merge = {});
 
 		// Whether steps of what (sendStep) are in flight or waiting. Until they aren't, the engine's values for what
 		// are older than the control that sent them, so a view leaves the control as it is (#716); the engine's
@@ -109,9 +117,19 @@ namespace gnubase::ui
 
 		// Whether the control that sends the steps of what is ahead of the engine's answer that update() handed on as
 		// handed() returned read: a step of it is on its way, or the last one that the engine took was answered after
-		// that answer. A refused step changes nothing, so it doesn't count. Once what's last step is answered, its
-		// record goes away in the next update(), so it is ahead of no answer from then on.
+		// that answer. A refused step changes nothing, so it doesn't count. Once what's last step is answered and a
+		// project read (project.get) answered after it was handed on, such as the one after its history.changed, and no
+		// other is out, its record goes away in the next update(), so it is ahead of no answer from then on; a failed
+		// read doesn't count. So records go only while some view reads the project, as the event display does: a
+		// binding without one keeps them for the session, and a view that asks about another query's answer may find
+		// the record gone before that query answers again.
 		bool ahead(const std::string& what, uint64_t read) const;
+
+		// What the steps of what showed (sendStep's shown) while the control is ahead of read, else null: a view shows
+		// it instead of the older value that read has, also after it showed another channel or event in the same
+		// control meanwhile (#1421). It goes with the record, so a session keeps none for every control it touched
+		// (#1471). Valid until the next sendStep or update().
+		const engine::Json* shown(const std::string& what, uint64_t read) const;
 
 		// A name for one view to begin the whats of its steps with, e.g. "mixer 3 ", a new one for each call. Views
 		// that show the same value, such as two mixers and the inspector, send their steps under names of their own,
@@ -201,12 +219,14 @@ namespace gnubase::ui
 		};
 
 		// The steps of one thing: the dones of those in flight, in order, those that wait, and when the engine last
-		// took one. A record with nothing in flight or waiting goes away in the next update().
+		// took one. A record with nothing in flight or waiting goes away in the update() after a project read answered
+		// after taken, once no other is out.
 		struct Steps
 		{
 			std::deque<std::function<void(const engine::Result&)>> inFlight;
 			std::deque<Step> waiting;
 			uint64_t taken = 0; // m_handed when its result was handed on
+			engine::Json shown; // sendStep's, merged
 		};
 
 		Subscription follow(std::function<void()> read);
@@ -217,7 +237,7 @@ namespace gnubase::ui
 		bool dispatch(const engine::Event& event);
 		// Draws the element's window in the shell's step (Rml::Context::RequestNextUpdate).
 		static void redraw(Rml::Element* shows);
-		void sendWaitingSteps(const std::string& before);
+		void sendWaitingSteps(const std::string& before, const std::string* except = nullptr);
 		engine::RequestId transmit(std::string command, engine::Json parameters,
 			std::function<void(const engine::Result&)> done, bool quiet, bool awaited = false);
 		void sendNextStep(const std::string& what);
@@ -240,7 +260,8 @@ namespace gnubase::ui
 		std::deque<std::function<void()>> m_held; // afterAwaited's, in order
 		bool m_runningHeld = false;               // runHeld runs one
 		uint64_t m_handed = 0;
-		uint64_t m_owners = 0; // stepOwner's
+		uint64_t m_projectRead = 0; // m_handed when the last successful project.get's answer was handed on
+		uint64_t m_owners = 0;      // stepOwner's
 		uint64_t m_nextId = 1;
 	};
 }

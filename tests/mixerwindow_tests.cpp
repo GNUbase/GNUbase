@@ -1,20 +1,27 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The mixer windows and the lower zone's mixer (#106, docs/features/mixer-window.md) in the app, driven with
 // ui::Automation as MCP's UI tools drive them. tests/mixerviews_tests.cpp checks what the engine keeps.
+#include "testutils/commandholds.h"
 #include "ui/automation.h"
 #include "ui/docking.h"
 #include "ui/keycommands.h"
+#include "ui/mixer.h"
 #include "ui/renderer.h"
 #include "ui/shell.h"
 #include "ui/tracklist.h"
 #include "uiapp.h"
 
 #include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Property.h>
+#include <RmlUi/Core/Types.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -97,6 +104,16 @@ namespace
 		FAIL("no channel " << id);
 	}
 
+	// The element the selector finds in the window's documents.
+	Rml::Element* findElement(test::UiApp& app, Window window, const std::string& selector)
+	{
+		Rml::Context& context = app.shell().find(window.value_or(0))->context();
+		for (int i = 0; i < context.GetNumDocuments(); ++i)
+			if (Rml::Element* found = context.GetDocument(i)->QuerySelector(selector))
+				return found;
+		return nullptr;
+	}
+
 	ui::WindowId openMixer(test::UiApp& app, int number)
 	{
 		app.keys().run(number == 1 ? std::string("window.mixer") : "window.mixer" + std::to_string(number),
@@ -176,6 +193,145 @@ TEST_CASE("a mixer window opens with F3 and follows the track list live", "[ui]"
 	app.ui().key(window, "F3");
 	REQUIRE(app.waitUntil([&] { return app.appUi().mixer(1) == nullptr; }));
 	CHECK(app.shell().find(*window) == nullptr);
+}
+
+TEST_CASE("a channel strip's name shows its track's color, which the style sheets don't know", "[ui]")
+{
+	test::UiApp app({1200, 700});
+	app.appUi().showProject();
+	const Json added = app.call("track.add", {{"type", "audio"}, {"name", "Guitar"}, {"color", "#204060"}});
+	const auto track = added.at("track").at("id").get<uint64_t>();
+	const auto channel = added.at("channel").at("id").get<uint64_t>();
+	const Added keys = addTrack(app, "midi", "Keys");
+	const uint64_t output = bus(app, "output");
+	const Window window = openMixer(app, 1);
+	const std::string guitar = strip(channel) + " .mixer-channel-name";
+	REQUIRE(app.waitUntil([&] { return elements(app, window, guitar).size() == 1; }));
+
+	// The track's color is user data: code sets it as the name's background color (reference manual p. 1621), and
+	// the classes tell the style sheets that a color shows and whether it's bright, for the text over it.
+	CHECK(element(app, window, guitar).at("attributes").at("color") == "#204060");
+	CHECK(has(element(app, window, guitar), "colored"));
+	CHECK(!has(element(app, window, guitar), "bright"));
+	Rml::Element* name = findElement(app, window, guitar);
+	REQUIRE(name != nullptr);
+	REQUIRE(name->GetLocalProperty("background-color") != nullptr);
+	CHECK(name->GetLocalProperty("background-color")->Get<Rml::Colourb>() == Rml::Colourb(0x20, 0x40, 0x60, 255));
+
+	// Tracks without a color and busses show the theme's.
+	for (const uint64_t other : {keys.channel, output})
+	{
+		const std::string selector = strip(other) + " .mixer-channel-name";
+		CHECK(!has(element(app, window, selector), "colored"));
+		Rml::Element* plain = findElement(app, window, selector);
+		REQUIRE(plain != nullptr);
+		CHECK(plain->GetLocalProperty("background-color") == nullptr);
+	}
+
+	// The strip follows the track's color, whichever client changes it.
+	app.call("track.set", {{"track", track}, {"color", "#f0e060"}});
+	REQUIRE(app.waitUntil([&] { return element(app, window, guitar).at("attributes").at("color") == "#f0e060"; }));
+	CHECK(has(element(app, window, guitar), "bright"));
+	name = findElement(app, window, guitar);
+	REQUIRE(name != nullptr);
+	REQUIRE(name->GetLocalProperty("background-color") != nullptr);
+	CHECK(name->GetLocalProperty("background-color")->Get<Rml::Colourb>() == Rml::Colourb(0xf0, 0xe0, 0x60, 255));
+	app.call("track.set", {{"track", keys.track}, {"color", "#e12ad8"}});
+	REQUIRE(app.waitUntil(
+		[&] { return has(element(app, window, strip(keys.channel) + " .mixer-channel-name"), "colored"); }));
+	// Bright from where black text has more contrast than white text (between #757575 and #767676), also in upper-case
+	// digits, which track.set takes.
+	for (const auto& [color, bright] :
+		std::vector<std::pair<std::string, bool>>{{"#757575", false}, {"#767676", true}, {"#F0E060", true}})
+	{
+		INFO(color);
+		const std::string shown = color;
+		app.call("track.set", {{"track", track}, {"color", color}});
+		REQUIRE(app.waitUntil([&] { return element(app, window, guitar).at("attributes").at("color") == shown; }));
+		CHECK(has(element(app, window, guitar), "bright") == bright);
+	}
+
+	// Back to the default color: the theme's again.
+	app.call("track.set", {{"track", track}, {"color", nullptr}});
+	REQUIRE(app.waitUntil([&] { return !has(element(app, window, guitar), "colored"); }));
+	CHECK(!element(app, window, guitar).value("attributes", Json::object()).contains("color"));
+	CHECK(!has(element(app, window, guitar), "bright"));
+	name = findElement(app, window, guitar);
+	REQUIRE(name != nullptr);
+	CHECK(name->GetLocalProperty("background-color") == nullptr);
+}
+
+TEST_CASE("a track color that isn't #rrggbb counts as no color on the track's mixer strip", "[unit]")
+{
+	// A project file's GNUbase entry is loaded without checking its colors; track.set and track.add take #rrggbb only.
+	Json channels = Json::array();
+	Json tracks = Json::array();
+	uint64_t id = 0;
+	for (const char* color : {"red", "#12345", "#12345g", "#1234567", "#F0E060", "#204060"})
+	{
+		++id;
+		channels.push_back({{"id", id}, {"format", "stereo"}});
+		tracks.push_back({{"id", 100 + id}, {"channel", id}, {"type", "audio"}, {"name", color}, {"color", color}});
+	}
+	const Json project = {{"busses", Json::array()}, {"channels", channels}, {"tracks", tracks}};
+	const std::vector<ui::MixerChannel> shown = ui::mixerChannels(project);
+	REQUIRE(shown.size() == 6);
+	for (size_t i = 0; i < 4; ++i)
+	{
+		INFO(shown.at(i).name);
+		CHECK(shown.at(i).color.empty());
+	}
+	CHECK(shown.at(4).color == "#F0E060");
+	CHECK(shown.at(5).color == "#204060");
+}
+
+TEST_CASE("the lower zone's mixer in the default theme looks as its golden image", "[ui]")
+{
+	test::UiApp app({1000, 680}); // CI's screens are 1024 pixels wide, and macOS opens windows at most 684 tall
+	app.appUi().showProject();
+	app.setDpRatio(1.0F);
+	// Strips with dark and bright track colors, one without, a group, and the busses; a muted and a soloed channel.
+	const Json guitar = app.call("track.add", {{"type", "audio"}, {"name", "Guitar"}, {"color", "#e12ad8"}});
+	const Json vocals = app.call("track.add", {{"type", "audio"}, {"name", "Vocals"}, {"color", "#10dff2"}});
+	addTrack(app, "midi", "Keys");
+	app.call("track.add", {{"type", "group"}, {"name", "Drums"}, {"color", "#8248ef"}});
+	app.call("channel.set", {{"channel", guitar.at("channel").at("id")}, {"mute", true}, {"volume", -6.0}});
+	app.call("channel.set", {{"channel", vocals.at("channel").at("id")}, {"solo", true}, {"pan", -0.5}});
+	app.ui().key(std::nullopt, "Alt+F3");
+	REQUIRE(app.waitUntil([&] { return strips(app, std::nullopt, "#lower-zone").size() == 6; }));
+	app.appUi().docking().setSize("project", "lower", 320); // tall enough for the whole strips
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			return has(
+				element(app, std::nullopt,
+					"#lower-zone " + strip(guitar.at("channel").at("id").get<uint64_t>()) + " button[control=mute]"),
+				"checked");
+		}));
+	app.shell().step(std::chrono::milliseconds(0));
+
+	// The strips only, from the first one's left edge to the last one's right edge, so that changes elsewhere in the
+	// window or the zone, or its width, don't touch this image.
+	const ui::Image window = app.screenshot("lower-zone-mixer-window", {1000, 680});
+	const Json shown = elements(app, std::nullopt, "#lower-zone .mixer-channel");
+	REQUIRE(shown.size() == 6);
+	const Json first = shown.front().at("box");
+	const Json end = shown.back().at("box");
+	const int x = first.at("x").get<int>();
+	const int y = first.at("y").get<int>();
+	const int width = end.at("x").get<int>() + end.at("width").get<int>() - x;
+	const int height = first.at("height").get<int>();
+	REQUIRE(x >= 0);
+	REQUIRE(y >= 0);
+	REQUIRE(x + width <= window.width);
+	REQUIRE(y + height <= window.height);
+	ui::Image zone{width, height, {}};
+	for (int row = y; row < y + height; ++row)
+	{
+		const auto begin = window.pixels.begin() + (((static_cast<std::ptrdiff_t>(row) * window.width) + x) * 4);
+		zone.pixels.insert(zone.pixels.end(), begin, begin + (static_cast<std::ptrdiff_t>(width) * 4));
+	}
+	test::UiApp::checkGolden("lower-zone-mixer", zone);
 }
 
 TEST_CASE("each mixer window and the lower zone's mixer hide channels of their own", "[ui]")
@@ -724,7 +880,7 @@ TEST_CASE("the other views of a channel follow a control dragged while the engin
 
 	// Only the control that sends waits for the engine. Moved faster than the engine answers, it always has a step on
 	// its way, and the other views still show the steps the engine took during the drag (#716).
-	const auto drag = [&](const View& dragged, const std::vector<View>& others)
+	const auto checkDrag = [&](const View& dragged, const std::vector<View>& others, const char* parameter = "volume")
 	{
 		const double before = valueOf(app, dragged.first, dragged.second);
 		test::LateDrag drag(app, dragged.first, dragged.second);
@@ -737,18 +893,23 @@ TEST_CASE("the other views of a channel follow a control dragged while the engin
 		}
 		drag.release();
 		REQUIRE(app.waitUntil(
-			[&] { return channelJson(app, guitar.channel).at("volume") == Catch::Approx(moved).margin(1e-4); }));
+			[&] { return channelJson(app, guitar.channel).at(parameter) == Catch::Approx(moved).margin(1e-4); }));
 		for (const View& other : others)
 			CHECK(app.waitUntil(
 				[&] { return valueOf(app, other.first, other.second) == Catch::Approx(moved).margin(1e-4); }));
 	};
 	SECTION("the inspector's volume")
 	{
-		drag({main, field}, {{first, fader}, {second, fader}});
+		checkDrag({main, field}, {{first, fader}, {second, fader}});
 	}
 	SECTION("a mixer's fader")
 	{
-		drag({first, fader}, {{second, fader}, {main, field}});
+		checkDrag({first, fader}, {{second, fader}, {main, field}});
+	}
+	SECTION("a mixer's panner")
+	{
+		const std::string pan = strip(guitar.channel) + " [param=pan]";
+		checkDrag({first, pan}, {{second, pan}}, "pan");
 	}
 }
 
@@ -877,4 +1038,53 @@ TEST_CASE("a strip made again while its fader's step is in flight shows the engi
 	REQUIRE(app.waitUntil([&] { return valueOf(app, window, fader) == Catch::Approx(-12.2).margin(1e-4); }));
 	CHECK(channelJson(app, guitar.channel).at("volume").get<double>() == Catch::Approx(-12.2).margin(1e-4));
 	CHECK(historyPosition(app) == position + 1); // the gesture's one undo step; visibility isn't one
+}
+
+TEST_CASE("an inspector wheel turn follows a released mixer's waiting fader step", "[ui]")
+{
+	test::CommandHolds holds;
+	test::UiApp app({1024, 600});
+	const test::ReleaseHolds releaseHolds{holds};
+	app.appUi().showProject();
+	const Added guitar = addTrack(app, "audio", "Guitar");
+	app.appUi().docking().open("inspector");
+	app.appUi().trackList()->select({guitar.track});
+	const Window window = openMixer(app, 1);
+	const std::string fader = strip(guitar.channel) + " fader";
+	const std::string field = ".inspector valuefield[control=volume]";
+	app.call("channel.set", {{"channel", guitar.channel}, {"volume", -12.0}});
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			return elements(app, window, fader).size() == 1 && elements(app, std::nullopt, field).size() == 1 &&
+				valueOf(app, window, fader) == -12.0 && valueOf(app, std::nullopt, field) == -12.0;
+		}));
+	const int64_t position = historyPosition(app);
+	app.engine().registerCommand(
+		{"test.hold", 1, "Waits for the test.", engine::CommandInfo{}.parameters, Json::object(), true},
+		[&](engine::CommandContext&) { return holds.hold(); });
+	engine::Client holder(app.engine());
+	holder.send("test.hold");
+	REQUIRE(holds.waitEntered(1));
+	test::LateDrag drag(app, window, fader);
+	drag.nudge(1);
+	drag.nudge(1);
+	const double dragged = drag.value();
+	CHECK(app.appUi().binding().waiting("history.transaction") == 1);
+	drag.release(false);
+	app.ui().wheel(std::nullopt, {field, 0, std::nullopt}, 0.0F, 1.0F);
+	const double wanted = valueOf(app, std::nullopt, field);
+	CHECK(wanted != dragged);
+	holds.release(1);
+	REQUIRE(app.appUi().binding().settle(std::chrono::seconds(5)));
+	REQUIRE(channelJson(app, guitar.channel).at("volume") == Catch::Approx(wanted).margin(1e-4));
+	CHECK(historyPosition(app) == position + 2);
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			return valueOf(app, window, fader) == Catch::Approx(wanted).margin(1e-4) &&
+				valueOf(app, std::nullopt, field) == Catch::Approx(wanted).margin(1e-4);
+		}));
+	app.call("history.undo");
+	CHECK(channelJson(app, guitar.channel).at("volume") == Catch::Approx(dragged).margin(1e-4));
 }

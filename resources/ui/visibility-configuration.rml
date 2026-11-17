@@ -1,7 +1,8 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- Names a track visibility configuration (docs/features/track-visibility.md): ui::TrackVisibility opens it from the
      Track Visibility Configurations menu's Add Configuration and Rename Configuration, and takes the name in
-     #visibility-configuration-name when it closes with OK. -->
+     #visibility-configuration-name when it closes with OK. A name that trackVisibility.set would refuse shows why in
+     #visibility-configuration-error and keeps the dialog open (#906). -->
 <rml>
 <head>
 	<title>Add Configuration</title>
@@ -37,9 +38,10 @@
 	<dialog id="visibility-configuration-dialog">
 		<div class="dialog-titlebar" id="visibility-configuration-title">Add Configuration</div>
 		<div class="row"><input type="text" id="visibility-configuration-name" autofocus="autofocus"/></div>
+		<div class="row" id="visibility-configuration-error"/>
 		<div class="row buttons">
 			<button result="cancel">Cancel</button>
-			<button class="primary" result="ok">OK</button>
+			<button id="visibility-configuration-ok" class="primary">OK</button>
 		</div>
 	</dialog>
 </body>

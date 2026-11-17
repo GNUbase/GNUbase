@@ -222,6 +222,257 @@ TEST_CASE("a draw gesture keeps its steps when the project changes under it, and
 	CHECK(f.text("#pattern-length") == "4 Steps");
 }
 
+TEST_CASE("a project read before the editor's last pattern.set doesn't undo it", "[ui]")
+{
+	Fixture f;
+	ui::PatternEditor* editor = f.app.appUi().editorWindow()->patternEditor();
+	REQUIRE(editor != nullptr);
+	const Json old = editor->project();
+	const Json view = f.app.call("editor.get", {{"editor", "window"}});
+	f.click(of(cell(36, 0)));
+	REQUIRE(f.app.waitUntil([&] { return f.steps(36) == std::vector<int>{0}; }));
+	f.settle();
+	// A project that was read before it shows after it, e.g. a project.get answered before it, or the project the
+	// editor has with a newer view (#1202): the lanes sent stay, and the next gesture keeps them.
+	editor->show(old, view, 0);
+	CHECK(f.has(cell(36, 0), "on"));
+	f.click(of(cell(38, 4)));
+	REQUIRE(f.app.waitUntil([&] { return f.steps(38) == std::vector<int>{4}; }));
+	CHECK(f.steps(36) == std::vector<int>{0});
+	f.settle();
+	// The same while a gesture goes on: it doesn't take the other lanes from that project.
+	f.app.ui().press(f.window, f.center(cell(42, 0)), ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	editor->show(old, view, 0);
+	f.app.ui().release(f.window, f.center(cell(42, 0)), ui::MouseButton::Left);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.steps(42) == std::vector<int>{0}; }));
+	CHECK(f.steps(36) == std::vector<int>{0});
+	CHECK(f.steps(38) == std::vector<int>{4});
+}
+
+TEST_CASE("a gesture right after Double Length keeps the lanes it sent", "[ui]")
+{
+	Fixture f;
+	ui::PatternEditor* editor = f.app.appUi().editorWindow()->patternEditor();
+	REQUIRE(editor != nullptr);
+	f.click(of(cell(36, 0)));
+	REQUIRE(f.app.waitUntil([&] { return f.steps(36) == std::vector<int>{0}; }));
+	f.settle();
+	const Json old = editor->project();
+	const Json view = f.app.call("editor.get", {{"editor", "window"}});
+	f.click(of("#pattern-double-length"));
+	REQUIRE(f.app.waitUntil([&] { return f.patternJson().at("length") == 32; }));
+	// A project read before Double Length's pattern.set shows after it (#1347): the lanes it sent stay, and the next
+	// gesture keeps them.
+	editor->show(old, view, 0);
+	CHECK(f.has(cell(36, 16), "on"));
+	f.click(of(cell(38, 20)));
+	REQUIRE(f.app.waitUntil([&] { return f.steps(38) == std::vector<int>{20}; }));
+	CHECK(f.steps(36) == std::vector<int>{0, 16});
+	CHECK(f.patternJson().at("length") == 32);
+	// That project shown once more after the gesture still has the length Double Length sent (#1410).
+	editor->show(old, view, 0);
+	CHECK(f.text("#pattern-length") == "32 Steps");
+	CHECK(f.elements(".pattern-lane[pitch=\"36\"] .pattern-step").size() == 32);
+	CHECK(f.has(cell(36, 16), "on"));
+	CHECK(f.has(cell(38, 20), "on"));
+}
+
+TEST_CASE("a gesture right after a mode switch edits the pattern as the engine has it", "[ui]")
+{
+	Fixture f;
+	ui::PatternEditor* editor = f.app.appUi().editorWindow()->patternEditor();
+	REQUIRE(editor != nullptr);
+	f.click(of(cell(36, 0)));
+	REQUIRE(f.app.waitUntil([&] { return f.steps(36) == std::vector<int>{0}; }));
+	f.settle();
+	const Json old = editor->project();
+	const Json view = f.app.call("editor.get", {{"editor", "window"}});
+	// Switching from drum to melodic mode clears the lanes (p. 913).
+	f.click(of(".pattern-mode[pattern-mode=poly]"));
+	REQUIRE(f.app.waitUntil([&] { return f.has(".pattern-mode[pattern-mode=poly]", "checked"); }));
+	REQUIRE(f.patternJson().at("lanes").empty());
+	// A project read before the switch shows after it (#1410): the pattern shows as the engine has it, without the
+	// lanes, and the next gesture doesn't bring them back.
+	editor->show(old, view, 0);
+	CHECK(f.has(".pattern-mode[pattern-mode=poly]", "checked"));
+	CHECK_FALSE(f.has(cell(36, 0), "on"));
+	f.click(of(cell(60, 4)));
+	REQUIRE(f.app.waitUntil([&] { return f.steps(60) == std::vector<int>{4}; }));
+	CHECK(f.patternJson().at("lanes").size() == 1);
+	CHECK(f.patternJson().at("mode") == "poly");
+}
+
+TEST_CASE("the pattern editor takes no edit of the steps before a mode switch's answer", "[ui]")
+{
+	Fixture f;
+	f.click(of(cell(36, 0)));
+	REQUIRE(f.app.waitUntil([&] { return f.steps(36) == std::vector<int>{0}; }));
+	f.settle();
+	// The answer comes only in a step: the click on a step goes while the switch is out, with the drum lanes still
+	// shown, and doesn't bring them back into the cleared melodic pattern (#1410).
+	f.app.ui().click(f.window, of(".pattern-mode[pattern-mode=poly]"), ui::MouseButton::Left, 1, {});
+	f.app.ui().click(f.window, of(cell(36, 4)), ui::MouseButton::Left, 1, {});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.has(".pattern-mode[pattern-mode=poly]", "checked"); }));
+	f.settle();
+	CHECK(f.patternJson().at("mode") == "poly");
+	CHECK(f.patternJson().at("lanes").empty());
+	CHECK(f.elements(".pattern-step.on").empty());
+}
+
+TEST_CASE("while a mode switch is out, the editor neither edits the lanes nor shows them in the new mode", "[ui]")
+{
+	Fixture f;
+	ui::PatternEditor* editor = f.app.appUi().editorWindow()->patternEditor();
+	REQUIRE(editor != nullptr);
+	f.click(of(cell(36, 0)));
+	REQUIRE(f.app.waitUntil([&] { return f.steps(36) == std::vector<int>{0}; }));
+	f.settle();
+	const Json old = editor->project();
+	const Json view = f.app.call("editor.get", {{"editor", "window"}});
+	// The answer comes only in a step: the mute goes while the switch is out. It doesn't show, and doesn't bring the
+	// drum lanes back into the cleared melodic pattern (#1532, #1535).
+	const std::string mute = ".pattern-lane[pitch=\"38\"] .pattern-lane-mute";
+	f.app.ui().click(f.window, of(".pattern-mode[pattern-mode=poly]"), ui::MouseButton::Left, 1, {});
+	f.app.ui().click(f.window, of(mute), ui::MouseButton::Left, 1, {});
+	CHECK_FALSE(f.has(mute, "checked"));
+	// A project read before the switch shows as it is until the answer, not its drum lanes as rows of melodic mode.
+	editor->show(old, view, 0);
+	CHECK(f.has(".pattern-mode[pattern-mode=drum]", "checked"));
+	CHECK(f.elements(".pattern-lane").size() == 4);
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.has(".pattern-mode[pattern-mode=poly]", "checked"); }));
+	f.settle();
+	CHECK(f.patternJson().at("mode") == "poly");
+	CHECK(f.patternJson().at("lanes").empty());
+	CHECK(f.elements(".pattern-step.on").empty());
+}
+
+TEST_CASE("while a mode switch is out, the step selection tool's double click and Delete don't edit the lanes", "[ui]")
+{
+	Fixture f;
+	f.click(of(cell(36, 0)));
+	REQUIRE(f.app.waitUntil([&] { return f.steps(36) == std::vector<int>{0}; }));
+	f.settle();
+	f.click(of(".pattern-tool[pattern-tool=select]"));
+	f.click(of(cell(36, 0)));
+	REQUIRE(f.has(cell(36, 0), "selected"));
+	// The answer comes only in a step: the double click and Delete go while the switch is out, and don't bring the
+	// drum lanes back into the cleared melodic pattern (#1615).
+	SECTION("Delete")
+	{
+		f.app.ui().click(f.window, of(".pattern-mode[pattern-mode=poly]"), ui::MouseButton::Left, 1, {});
+		f.app.ui().key(f.window, "Delete");
+	}
+	SECTION("double click")
+	{
+		f.app.ui().click(f.window, of(".pattern-mode[pattern-mode=poly]"), ui::MouseButton::Left, 1, {});
+		f.app.ui().click(f.window, of(cell(38, 4)), ui::MouseButton::Left, 2, {});
+	}
+	CHECK(f.has(cell(36, 0), "on"));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.has(".pattern-mode[pattern-mode=poly]", "checked"); }));
+	f.settle();
+	CHECK(f.patternJson().at("mode") == "poly");
+	CHECK(f.patternJson().at("lanes").empty());
+	CHECK(f.elements(".pattern-step.on").empty());
+}
+
+TEST_CASE("the selection drops the steps that the pattern no longer has", "[ui]")
+{
+	Fixture f;
+	f.click(of(cell(36, 0)));
+	REQUIRE(f.app.waitUntil([&] { return f.steps(36) == std::vector<int>{0}; }));
+	f.settle();
+	f.click(of(".pattern-tool[pattern-tool=select]"));
+	f.click(of(cell(36, 0)));
+	REQUIRE(f.has(cell(36, 0), "selected"));
+	// A script removes the step selected: one drawn later where it was doesn't show selected (#1615).
+	f.app.call("pattern.set", {{"pattern", f.pattern}, {"lanes", {{{"pitch", 36}, {"steps", Json::array()}}}}});
+	REQUIRE(f.app.waitUntil([&] { return !f.has(cell(36, 0), "on"); }));
+	f.click(of(".pattern-tool[pattern-tool=draw]"));
+	f.click(of(cell(36, 0)));
+	REQUIRE(f.app.waitUntil([&] { return f.has(cell(36, 0), "on"); }));
+	CHECK_FALSE(f.has(cell(36, 0), "selected"));
+	// A mode switch clears the step selected: Tie ties all steps, not the selected ones that are gone.
+	f.click(of(".pattern-tool[pattern-tool=select]"));
+	f.click(of(cell(36, 0)));
+	REQUIRE(f.has(cell(36, 0), "selected"));
+	f.click(of(".pattern-mode[pattern-mode=poly]"));
+	REQUIRE(f.app.waitUntil([&] { return f.has(".pattern-mode[pattern-mode=poly]", "checked"); }));
+	f.settle();
+	f.click(of(".pattern-tool[pattern-tool=draw]"));
+	f.click(of(cell(60, 0)));
+	REQUIRE(f.app.waitUntil([&] { return f.steps(60) == std::vector<int>{0}; }));
+	f.click(of(cell(60, 1)));
+	REQUIRE(f.app.waitUntil([&] { return f.steps(60) == std::vector<int>{0, 1}; }));
+	f.click(of("#pattern-tie"));
+	REQUIRE(f.app.waitUntil([&] { return f.steps(60) == std::vector<int>{0}; }));
+	CHECK(f.lane(60).at("steps").at(0).at("length") == 2);
+}
+
+TEST_CASE("the selection doesn't go along to another pattern", "[ui]")
+{
+	Fixture f;
+	const Json two = Json::array({{{"index", 0}}, {{"index", 1}}});
+	f.app.call("pattern.set", {{"pattern", f.pattern}, {"lanes", {{{"pitch", 36}, {"steps", two}}}}});
+	const uint64_t other = f.app.call("pattern.add", {{"track", f.track}}).at("pattern").at("id").get<uint64_t>();
+	f.app.call("pattern.set", {{"pattern", other}, {"lanes", {{{"pitch", 36}, {"steps", two}}}}});
+	REQUIRE(f.app.waitUntil([&] { return f.has(cell(36, 1), "on"); }));
+	f.click(of(".pattern-tool[pattern-tool=select]"));
+	f.click(of(cell(36, 0)));
+	REQUIRE(f.has(cell(36, 0), "selected"));
+	// The part plays the other pattern, which has a step at the same cell: it isn't selected (#1693).
+	f.click(of("#pattern-select"));
+	f.click(of("#pattern-menu menuitem[pattern-id=\"" + std::to_string(other) + "\"]"));
+	REQUIRE(f.app.waitUntil([&] { return f.text("#pattern-select") == "Pattern 2"; }));
+	REQUIRE(f.has(cell(36, 0), "on"));
+	CHECK_FALSE(f.has(cell(36, 0), "selected"));
+	// Tie ties all steps, not the selected ones of the pattern before.
+	f.click(of("#pattern-tie"));
+	REQUIRE(f.app.waitUntil([&] { return f.patternJson(other).at("lanes").at(0).at("steps").size() == 1; }));
+	CHECK(f.patternJson(other).at("lanes").at(0).at("steps").at(0).at("length") == 2);
+}
+
+TEST_CASE("a shorter Number of Steps edits the pattern as the engine has it, after its answer only", "[ui]")
+{
+	Fixture f;
+	ui::PatternEditor* editor = f.app.appUi().editorWindow()->patternEditor();
+	REQUIRE(editor != nullptr);
+	f.click(of(cell(36, 12)));
+	REQUIRE(f.app.waitUntil([&] { return f.steps(36) == std::vector<int>{12}; }));
+	f.settle();
+	const Json old = editor->project();
+	const Json view = f.app.call("editor.get", {{"editor", "window"}});
+	// 8 Steps drops the step at 12 (#1410).
+	f.click(of("#pattern-length"));
+	f.click(of("#pattern-length-menu menuitem[length=\"8\"]"));
+	REQUIRE(f.app.waitUntil([&] { return f.text("#pattern-length") == "8 Steps"; }));
+	REQUIRE(f.steps(36).empty());
+	// A project read before it shows after it (#1532): 8 steps without the step that went, also not as a tie further
+	// left, and the next gesture's pattern.set doesn't bring it back, which the engine would refuse.
+	editor->show(old, view, 0);
+	CHECK(f.text("#pattern-length") == "8 Steps");
+	CHECK(f.elements(".pattern-lane[pitch=\"36\"] .pattern-step").size() == 8);
+	CHECK(f.elements(".pattern-step.on").empty());
+	CHECK(f.elements(".pattern-step.tied").empty());
+	f.click(of(cell(38, 2)));
+	REQUIRE(f.app.waitUntil([&] { return f.steps(38) == std::vector<int>{2}; }));
+	CHECK(f.steps(36).empty());
+	f.settle();
+	// Until the answer of 4 Steps the editor takes no edit of the steps: a click on a step right after it goes.
+	f.click(of("#pattern-length"));
+	f.app.ui().click(f.window, of("#pattern-length-menu menuitem[length=\"4\"]"), ui::MouseButton::Left, 1, {});
+	f.app.ui().click(f.window, of(cell(42, 1)), ui::MouseButton::Left, 1, {});
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.text("#pattern-length") == "4 Steps"; }));
+	f.settle();
+	CHECK(f.steps(42).empty());
+	CHECK(f.steps(38) == std::vector<int>{2});
+}
+
 TEST_CASE("in mono mode the draw tool moves tied steps to the pitch drawn", "[ui]")
 {
 	Fixture f;
@@ -277,6 +528,34 @@ TEST_CASE("Double Step Resolution and Double Length leave the lanes' rhythms as 
 	CHECK(f.steps(36) == std::vector<int>{2, 34});
 	CHECK(f.steps(38) == std::vector<int>{2});
 	CHECK(f.lane(46).at("length") == 100);
+}
+
+TEST_CASE("Double Step Resolution moves the selection along with the steps", "[ui]")
+{
+	Fixture f;
+	f.app.call("pattern.set",
+		{{"pattern", f.pattern},
+			{"lanes",
+				{{{"pitch", 36}, {"steps", {{{"index", 1}}, {{"index", 2}}}}},
+					{{"pitch", 38}, {"resolution", "1/8"}, {"steps", {{{"index", 2}}}}}}}});
+	REQUIRE(f.app.waitUntil([&] { return f.has(cell(38, 2), "on"); }));
+	f.settle();
+	f.click(of(".pattern-tool[pattern-tool=select]"));
+	f.click(of(cell(36, 2)));
+	f.click(of(cell(38, 2)), 1, {"shift"});
+	REQUIRE(f.has(cell(36, 2), "selected"));
+	// The selected step goes to 4 and stays selected; the one from 1 at 2 isn't. The lane of its own resolution
+	// keeps its steps and their selection (#1693).
+	f.click(of("#pattern-double-resolution"));
+	REQUIRE(f.app.waitUntil([&] { return f.steps(36) == std::vector<int>{2, 4}; }));
+	f.settle();
+	CHECK(f.has(cell(36, 4), "selected"));
+	CHECK_FALSE(f.has(cell(36, 2), "selected"));
+	CHECK(f.has(cell(38, 2), "selected"));
+	f.app.ui().key(f.window, "Delete");
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(f.app.waitUntil([&] { return f.steps(36) == std::vector<int>{2}; }));
+	CHECK(f.steps(38).empty());
 }
 
 TEST_CASE("the step selection tool selects and deletes steps, and the edit functions tie and split them", "[ui]")
@@ -401,8 +680,7 @@ TEST_CASE("Open Pattern Editor opens the selected MIDI parts in the pattern edit
 						  .at("part")
 						  .at("id")
 						  .get<uint64_t>();
-	REQUIRE(
-		app.waitUntil([&] { return display.project().is_object() && display.project().at("midiParts").size() == 1; }));
+	REQUIRE(app.waitUntil([&] { return display.project().at("midiParts").size() == 1; }));
 	display.select({part});
 	app.shell().step(std::chrono::milliseconds(0));
 	for (const char* command : {"editor.openPattern", "pattern.loadPreset", "pattern.savePreset"})

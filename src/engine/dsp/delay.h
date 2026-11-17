@@ -85,5 +85,8 @@ namespace gnubase::engine::dsp
 		size_t m_length = 0;             // of each line: the longest delay plus one
 		std::array<std::vector<float>, 2> m_lines;
 		size_t m_write = 0;
+		// Samples written since the last reset, at most m_length: they are the lines' start, so reset only clears
+		// those, and a quick off and on costs next to nothing instead of 5 s of both lines (#1595).
+		size_t m_written = 0;
 	};
 }

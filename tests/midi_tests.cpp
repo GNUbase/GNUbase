@@ -388,7 +388,7 @@ TEST_CASE("when a MIDI track leaves, its instrument ends the notes only that tra
 	// The audio thread does this when it starts the program without the departed track. The staying track still
 	// holds 31 and the instrument track its own 70.
 	player.heard.clear();
-	channel->releaseNotesOf(*departed, {staying});
+	channel->releaseNotesOf(*departed, {staying}, {});
 	player.play(8);
 	CHECK(player.heard == std::vector<Heard>{off(8, 30), off(8, 40)});
 
@@ -577,9 +577,9 @@ namespace
 		std::vector<RenderController> controllers = {}, std::vector<RenderPart> parts = {})
 	{
 		auto result = std::make_shared<MidiSequencer>();
-		// Each controller event in the first part it falls into, unless the test chose one.
+		// Each controller event in the first part it falls into, unless the test chose one (or g_soundSlotPart).
 		for (RenderController& c : controllers)
-			for (size_t i = 0; c.part < 0 && i < parts.size(); ++i)
+			for (size_t i = 0; c.part == -1 && i < parts.size(); ++i)
 				if (parts[i].start <= c.position && c.position < parts[i].end)
 					c.part = static_cast<int32_t>(i);
 		auto sequence = std::make_unique<MidiSequence>();
@@ -823,6 +823,67 @@ TEST_CASE("chasing limited to parts ignores overlapping parts that ended before 
 	player.locate(500);
 	player.play(16);
 	CHECK(player.heard == std::vector<Heard>{{0, Type::Controller, 0, 7, 1, {}}});
+}
+
+TEST_CASE("chasing limited to parts takes the sound slots' output events, also between parts and after them", "[unit]")
+{
+	// A slot's CC 7 at 50 from part 0 (0 to 100), the track's (#1521); part 0's own CC 10 at 20 isn't chased outside
+	// it. Part 1 from 300 to 400.
+	std::vector<RenderController> controllers = {control(20, 10, 5), control(50, 7, 1)};
+	controllers[1].part = g_soundSlotPart;
+	MidiChase chase = chaseAll();
+	chase.beyondParts = false;
+	for (const int64_t position : {200, 500})
+	{
+		INFO("at " << position);
+		Player player(chasing(chase, {}, controllers, {{0, 100}, {300, 400}}), 16);
+		player.locate(position);
+		player.play(16);
+		CHECK(player.heard == std::vector<Heard>{{0, Type::Controller, 0, 7, 1, {}}});
+	}
+}
+
+TEST_CASE(
+	"chasing limited to parts takes a part's later event of a slot's kind, and the slot's at one position", "[unit]")
+{
+	MidiChase chase = chaseAll();
+	chase.beyondParts = false;
+	// The part's CC 7 at 100 after the slot's at 50 wins; at one position the slot's, which plays after it.
+	const auto chased = [&chase](int64_t slotAt)
+	{
+		std::vector<RenderController> controllers = {control(slotAt, 7, 2), control(100, 7, 1)};
+		controllers[0].part = g_soundSlotPart;
+		Player player(chasing(chase, {}, controllers, {{0, 1000}}), 16);
+		player.locate(500);
+		player.play(16);
+		return player.heard;
+	};
+	CHECK(chased(50) == std::vector<Heard>{{0, Type::Controller, 0, 7, 1, {}}});
+	CHECK(chased(100) == std::vector<Heard>{{0, Type::Controller, 0, 7, 2, {}}});
+}
+
+TEST_CASE(
+	"chasing limited to parts plays a slot's event at the position instead, and chases it while stopped", "[unit]")
+{
+	std::vector<RenderController> controllers = {control(100, 7, 1), control(500, 7, 2)};
+	controllers[1].part = g_soundSlotPart;
+	MidiChase chase = chaseAll();
+	chase.beyondParts = false;
+	SECTION("playing")
+	{
+		Player player(chasing(chase, {}, controllers, {{0, 1000}}), 16);
+		player.locate(500);
+		player.play(16);
+		CHECK(player.heard == std::vector<Heard>{{0, Type::Controller, 0, 7, 2, {}}});
+	}
+	SECTION("stopped")
+	{
+		Player player(chasing(chase, {}, controllers, {{0, 1000}}), 16);
+		player.stop();
+		player.locate(500);
+		player.stop(); // frame 16
+		CHECK(player.heard == std::vector<Heard>{{16, Type::Controller, 0, 7, 2, {}}});
+	}
 }
 
 TEST_CASE("cycle playback chases at every jump to the left locator", "[unit]")

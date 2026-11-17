@@ -29,8 +29,10 @@ namespace gnubase::engine
 				project.colors, project.setup, project.busses, project.tracks, project.activeMarkerTrack,
 				project.arranger, project.rootKey, project.transpose, project.chords, project.chordPads,
 				project.inputTransformer};
-			// A display choice must survive replaying other settings while merging or joining history steps.
+			// A display choice and the step input position must survive replaying other settings, also while merging or
+			// joining history steps.
 			result.setup.timeFormat.clear();
+			result.chordPads.stepPosition = 0;
 			return result;
 		}
 
@@ -147,6 +149,11 @@ namespace gnubase::engine
 			change.timeFormatBefore = before.setup.timeFormat;
 			change.timeFormatAfter = after.setup.timeFormat;
 		}
+		if (before.chordPads.stepPosition != after.chordPads.stepPosition)
+		{
+			change.stepPositionBefore = before.chordPads.stepPosition;
+			change.stepPositionAfter = after.chordPads.stepPosition;
+		}
 		ProjectSettings old = settings(before);
 		ProjectSettings now = settings(after);
 		if (!(old == now))
@@ -199,6 +206,9 @@ namespace gnubase::engine
 		if (change.timeFormatBefore && change.timeFormatAfter)
 			project.setup.timeFormat =
 				direction == Direction::Redo ? *change.timeFormatAfter : *change.timeFormatBefore;
+		if (change.stepPositionBefore && change.stepPositionAfter)
+			project.chordPads.stepPosition =
+				direction == Direction::Redo ? *change.stepPositionAfter : *change.stepPositionBefore;
 		if (change.settingsBefore && change.settingsAfter)
 		{
 			const ProjectSettings& target =
@@ -223,7 +233,9 @@ namespace gnubase::engine
 			project.rootKey = target.rootKey;
 			project.transpose = target.transpose;
 			project.chords = target.chords;
+			const time::Ticks stepPosition = project.chordPads.stepPosition;
 			project.chordPads = target.chordPads;
+			project.chordPads.stepPosition = stepPosition;
 			project.inputTransformer = target.inputTransformer;
 		}
 		applyObjects(project.trackById, change.tracks, direction);

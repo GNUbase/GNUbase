@@ -13,6 +13,8 @@ target_compile_definitions(gnubase-ui-thirdparty PUBLIC RMLUI_SDL_VERSION_MAJOR=
 target_link_libraries(gnubase-ui-thirdparty PUBLIC RmlUi::RmlUi SDL3::SDL3)
 
 add_library(gnubase-ui STATIC
+	articulationnames.cpp
+	articulationnames.h
 	audioparteditor.cpp
 	audioparteditor.h
 	automation.cpp
@@ -35,6 +37,8 @@ add_library(gnubase-ui STATIC
 	displays.h
 	docking.cpp
 	docking.h
+	drummachinepanel.cpp
+	drummachinepanel.h
 	enginebinding.cpp
 	enginebinding.h
 	eventdisplay.cpp
@@ -120,6 +124,8 @@ add_library(gnubase-ui STATIC
 	trackvisibility.h
 	transport.cpp
 	transport.h
+	transportpanelfit.cpp
+	transportpanelfit.h
 	transposetrack.cpp
 	transposetrack.h
 	ui.cpp

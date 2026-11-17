@@ -14,6 +14,22 @@ namespace gnubase::engine
 	{
 	}
 
+	SampleLoader::Lease::Lease(SampleLoader& loader, std::set<std::string> paths)
+		: m_loader(loader), m_paths(std::move(paths))
+	{
+		const std::scoped_lock lock(m_loader.m_mutex);
+		for (const auto& path : m_paths)
+			++m_loader.m_pinned[path];
+	}
+
+	SampleLoader::Lease::~Lease()
+	{
+		const std::scoped_lock lock(m_loader.m_mutex);
+		for (const auto& path : m_paths)
+			if (--m_loader.m_pinned.at(path) == 0)
+				m_loader.m_pinned.erase(path);
+	}
+
 	SampleLoader::~SampleLoader()
 	{
 		{
@@ -50,9 +66,11 @@ namespace gnubase::engine
 	{
 		const std::scoped_lock lock(m_mutex);
 		for (auto entry = m_samples.begin(); entry != m_samples.end();)
-			entry = paths.count(entry->first) == 0 ? m_samples.erase(entry) : std::next(entry);
+			entry = (paths.count(entry->first) == 0 && m_pinned.count(entry->first) == 0) ? m_samples.erase(entry)
+																						  : std::next(entry);
 		// The files waiting too, but the one being read, which can't be stopped.
-		const auto unwanted = [&paths](const std::string& path) { return paths.count(path) == 0; };
+		const auto unwanted = [this, &paths](const std::string& path)
+		{ return paths.count(path) == 0 && m_pinned.count(path) == 0; };
 		const auto first = m_queue.begin() + (m_reading ? 1 : 0);
 		m_queue.erase(std::remove_if(first, m_queue.end(), unwanted), m_queue.end());
 	}
@@ -75,10 +93,10 @@ namespace gnubase::engine
 			});
 	}
 
-	void SampleLoader::waitUntilEnding()
+	bool SampleLoader::waitUntilEnding(std::chrono::milliseconds timeout)
 	{
 		std::unique_lock lock(m_mutex);
-		m_done.wait(lock, [this] { return m_stopping; });
+		return m_done.wait_for(lock, timeout, [this] { return m_stopping; });
 	}
 
 	void SampleLoader::setRead(Read read)

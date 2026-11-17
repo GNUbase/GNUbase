@@ -208,8 +208,9 @@ namespace gnubase::ui
 			R"(</div><button id="se-auto-adjust">Auto Adjust</button><button id="se-free-warp">Free Warp</button>)"
 			R"(<button id="se-warp-reset">Reset</button>)";
 		root.SetInnerRML(R"(<div class="sample-editor empty"><div class="toolbar sample-editor-toolbar">)" + tools +
-			R"(<button id="se-zero-crossing">Snap to Zero Crossing</button><div class="spacer"/>)" + layout +
-			R"(</div><div class="info-line se-info">)" + info +
+			R"(<button id="se-zero-crossing">Snap to Zero Crossing</button>)"
+			R"(<div id="toolbar-quantize" class="toolbar-quantize"/><div class="spacer"/>)" +
+			layout + R"(</div><div class="info-line se-info">)" + info +
 			R"(</div><div class="se-overview"><waveform class="se-overview-wave"/><div class="se-overview-event"/>)"
 			R"(<div class="se-overview-selection"/><div class="se-overview-snap"/><div class="se-overview-view"/>)"
 			R"(</div><div class="se-body"><div class="se-inspector"><div class="section-header">Range</div>)" +

@@ -15,6 +15,16 @@
 
 namespace gnubase::ui
 {
+	namespace
+	{
+		uint64_t g_projectTimeBuilds = 0; // projectTime's, for tests of views that keep their context
+	}
+
+	uint64_t projectTimeBuilds()
+	{
+		return g_projectTimeBuilds;
+	}
+
 	double clampPositionSeconds(double seconds, double sampleRate)
 	{
 		if (!(seconds > 0.0) || !(sampleRate > 0.0))
@@ -276,6 +286,7 @@ namespace gnubase::ui
 
 	TimeContext projectTime(const engine::Json& project)
 	{
+		++g_projectTimeBuilds;
 		TimeContext context;
 		readSetup(project, context);
 		context.sampleRate = project.at("sampleRate").get<double>();

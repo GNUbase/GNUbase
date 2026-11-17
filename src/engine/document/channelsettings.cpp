@@ -97,6 +97,19 @@ namespace gnubase::engine
 		}
 	}
 
+	void removeMidiEffectLanes(Project& project, CommandContext& context, const Channel& before, const Channel& after)
+	{
+		for (auto lane = project.automation.begin(); lane != project.automation.end();)
+		{
+			const AutomationTarget& target = lane->second.target;
+			const bool gone = lane->second.track == before.track && target.type == AutomationTargetType::MidiEffect &&
+				midiEffectSlot(before, target.number).effect != midiEffectSlot(after, target.number).effect;
+			if (gone)
+				context.emit("automationLane.removed", {{"lane", lane->first}});
+			lane = gone ? project.automation.erase(lane) : std::next(lane);
+		}
+	}
+
 	void registerChannelSettingsCommands(ProjectModel& model, Engine& engine)
 	{
 		auto clipboard = std::make_shared<std::optional<ChannelClipboard>>();

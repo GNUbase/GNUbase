@@ -1,8 +1,8 @@
 # UI automation
 
-MCP clients, UI tests ([ui-tests.md](ui-tests.md)) and Lua ([ui-lua.md](ui-lua.md)) read GNUbase's UI back and drive it as a user would
-(#58): its windows and documents, the DOM with each element's box, screenshots of windows or single elements, and mouse
-and keyboard input. [mcp.md](../mcp.md#ui-tools) is the guide for agents.
+MCP clients, UI tests ([ui-tests.md](ui-tests.md)) and Lua ([ui-lua.md](ui-lua.md)) read GNUbase's UI back and drive it
+as a user would (#58): its windows and documents, the DOM with each element's box, screenshots of windows or single
+elements, and mouse and keyboard input. [mcp.md](../mcp.md#ui-tools) is the guide for agents.
 
 - **Interface.** `ui::Automation` (`src/ui/automation.h`) does the work, on the UI thread. It reads windows, documents
   and elements as JSON and gives input to a window's RmlUi context, the way `SdlWindowSystem` delivers the user's, so
@@ -22,12 +22,18 @@ and keyboard input. [mcp.md](../mcp.md#ui-tools) is the guide for agents.
   on, from the same list ([ui-lua.md](ui-lua.md)).
 - **Coordinates.** Everything is in the window's pixels, as in its screenshots: an element's box, the points that
   mouse tools take, the window's size. A window's dp ratio (its monitor's scale times the UI scale, #53) converts to dp.
-- **The DOM.** An element has its tag, id, classes, other attributes, a form control's value, its active
+- **The DOM.** An element has its tag, id, classes, other attributes, a form control's value, a drop-down list's
+  `options` (each its `value`, `text` and whether it's `selected`, as RmlUi keeps them outside the DOM), its active
   pseudo-classes (`hover`, `focus`, `checked`, `disabled`, ...), whether it's visible (not `display: none` or
   `visibility: hidden`, nor inside such an element, and not empty) and its border box. Text is a child `{"text": ...}`
   with white space collapsed; an element whose children are left out by the depth has its text instead. A selector
   matches in every document of the window, the documents themselves included, in document order.
 - **Input.** A click moves the mouse to the centre of the element, or to the point, and presses and releases the button;
+  an element whose centre its scrolling containers hide is scrolled into view first, just far enough, as a user would
+  scroll to it (#1781), so the click lands on it rather than on what is in its place; this goes for every input that
+  aims at an element (move, click, press, release, drag, wheel, drop). A drag takes both its ends where they are once
+  both are scrolled into view, so scrolling to the end can't move the start from under the mouse, and fails when they
+  can't both be in view, e.g. two items of a list further apart than it shows;
   a double click is two clicks, which RmlUi recognises by their timing, with the UI updated between them as frames would
   be, so a first click that opens a field leaves the second to the field. RmlUi's clock stands still for them, so they
   are one double click however long those frames take in a slow build or on a busy machine; elements that time double

@@ -80,6 +80,7 @@
 			audio = {"input", "format", "output", "name", "count"},
 			instrument = {"instrument", "output", "name", "count"},
 			sampler = {"output", "name", "count"}, -- reference manual pp. 143-144
+			drum = {"output", "name", "count"}, -- reference manual pp. 145-146
 			midi = {"output", "name", "count"},
 			group = {"format", "output", "projectFolder", "name", "count"},
 			effect = {"format", "output", "projectFolder", "name", "count"},
@@ -93,6 +94,10 @@
 			chord = {}, -- one per project (reference manual p. 1319)
 			vca = {"name", "count"}, -- reference manual p. 154
 		}
+
+		-- The pages whose tracks a command of their own creates: a sampler track is an instrument track that plays the
+		-- sampler, a drum track one that plays the drum machine, and these commands name them.
+		local creators = {sampler = "sampler.create", drum = "drum.create"}
 
 		local timeFormatNames = {barsBeats = "Bars+Beats", seconds = "Seconds", timecode = "Timecode",
 			samples = "Samples", userFrames = "fps (User)"}
@@ -280,8 +285,7 @@
 		-- track.add's parameters for what the page shows.
 		local function parameters(document)
 			local type = dialog.type
-			-- A sampler track is an instrument track that plays the sampler, which sampler.create names.
-			local result = {type = type ~= "sampler" and type or nil}
+			local result = {type = creators[type] == nil and type or nil}
 			local name = valueOf(document, "track-name")
 			if name ~= nil and name ~= "" then
 				result.name = name
@@ -378,7 +382,7 @@
 					end
 				end
 				each.index = index and index + i - 1
-				commands[i] = {command = dialog.type == "sampler" and "sampler.create" or "track.add", parameters = each}
+				commands[i] = {command = creators[dialog.type] or "track.add", parameters = each}
 			end
 			local ok, result = pcall(gnubase.history.transaction, {description = "Add Track", commands = commands})
 			if not ok then
@@ -404,6 +408,7 @@
 				<listitem id="type-audio" value="audio" class="selected">Audio</listitem>
 				<listitem id="type-instrument" value="instrument">Instrument</listitem>
 				<listitem id="type-sampler" value="sampler">Sampler</listitem>
+				<listitem id="type-drum" value="drum">Drum</listitem>
 				<listitem id="type-midi" value="midi">MIDI</listitem>
 				<listitem id="type-group" value="group">Group</listitem>
 				<listitem id="type-effect" value="effect">Effect</listitem>

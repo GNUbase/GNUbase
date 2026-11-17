@@ -67,6 +67,9 @@ namespace gnubase::ui
 	//                                 sections before its .spacer that don't fit in its width get the state class
 	//                                 .no-room, the last first, and show again once it has room for them. Its style
 	//                                 must keep the widths they need, so they stay laid out, out of the flow
+	//   fit="spare"                   an element in a section of a fit="room" container that goes before any
+	//                                 section does, the last one first: it gets .no-room while the sections fit only
+	//                                 without it, and its style keeps its width the same way
 	//   setup="channel"               a setup pane's list of the set's sections, which the docking system fills with a
 	//                                 toggle button per section (setup-section="eq"); a button dragged onto another
 	//                                 moves its section there
@@ -126,8 +129,13 @@ namespace gnubase::ui
 			const std::string& window, const std::string& set, const std::string& id, const std::string& before);
 		void setSectionHidden(const std::string& window, const std::string& set, const std::string& id, bool hidden);
 		std::vector<std::string> sections(const std::string& window, const std::string& set) const; // in order
-		// Reset All: the set's default order and hidden sections.
+		// Reset All: the set's default order and hidden sections. reset hears of every Reset All, also of a set that
+		// had them already, e.g. to fit the window to its sections again (#1612).
 		void resetSections(const std::string& window, const std::string& set);
+		void onReset(std::function<void(const std::string& window, const std::string& set)> reset)
+		{
+			m_reset = std::move(reset);
+		}
 		// The set's presets in ui.setupPresets, which all windows share: saving one replaces that of the same name;
 		// recalling one that isn't there does nothing. Sections a preset lacks keep their defaults' order after its.
 		void savePreset(const std::string& window, const std::string& set, const std::string& name);
@@ -159,6 +167,12 @@ namespace gnubase::ui
 		// Puts into ui.layout now, rather than at the next check twice a second, which windows are open and where they
 		// and the panels in windows of their own are, e.g. right after a window opened or closed.
 		void saveWindows();
+		// The width the app fitted the window to, kept in its ui.layout entry as fittedWidth: a window whose bounds
+		// still have that width wasn't sized by the user since, e.g. a transport panel that follows its sections
+		// (#1527). None if ui.layout has none. A width set goes to the engine with the next save, such as saveWindows,
+		// which saves it also when no window moved.
+		std::optional<int> fittedWidth(const std::string& name) const;
+		void setFittedWidth(const std::string& name, int width);
 
 		// Whether a panel shows: in a window of its own, or as its zone's active tab while the zone shows. What create
 		// returned stays while the panel's tab is hidden behind another one or its zone is, e.g. to refresh it only
@@ -226,9 +240,9 @@ namespace gnubase::ui
 		// Gives a zone or resizable element its size from ui.layout, or its default.
 		static void applySize(Rml::Element& element, const engine::Json* saved);
 		void applySections(const std::string& window, const Attached& attached, Rml::Element& root);
-		// Gives the sections of the shown windows' fit="room" containers the room they have, after the shell's step
-		// tasks, before it draws; fit does one container, laid out, and says whether it changed.
-		void fitSections();
+		// Gives the sections of the fit="room" containers in the context's shown documents the room they have, once
+		// the context laid them out to draw them, and says whether that changed any; fit does one container.
+		bool fitSections(Rml::Context& context);
 		static bool fit(Rml::Element& container);
 		// Runs change in the shell's next step, unless the docking system is gone by then.
 		void later(std::function<void()> change);
@@ -254,6 +268,8 @@ namespace gnubase::ui
 			m_reloadEvent; // g_documentReloadEvent, made once: the destructor removes listeners without allocating
 		Rml::String m_closeEvent;            // g_dialogCloseEvent, made once, as m_reloadEvent
 		std::set<engine::RequestId> m_saves; // layouts sent to the engine that it hasn't answered yet
+		bool m_unsaved = false;              // a fitted width that no save has sent yet
+		std::function<void(const std::string& window, const std::string& set)> m_reset;
 		engine::Json m_layout = engine::Json::object();
 		engine::Json m_presets = engine::Json::object(); // ui.setupPresets
 		Rml::ObserverPtr<Rml::Element> m_presetDialog;   // Save Preset's, while it is open

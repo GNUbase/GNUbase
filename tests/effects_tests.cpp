@@ -71,12 +71,18 @@ namespace
 		// Applies the values at once, as a block without frames.
 		void set(const std::vector<std::pair<uint32_t, double>>& values)
 		{
+			// In as many empty blocks as the events take: the drum machine has more parameters than a block holds.
 			m_events.clear();
-			for (const auto& [id, value] : values)
-				REQUIRE(m_events.add(parameter(0, id, value)));
-			m_out.clear();
-			m_processor.process({nullptr, 0, 0, m_events, m_out, m_transport});
-			m_events.clear();
+			for (size_t i = 0; i < values.size(); ++i)
+			{
+				REQUIRE(m_events.add(parameter(0, values[i].first, values[i].second)));
+				if (m_events.size() == g_maxEventsPerBlock || i + 1 == values.size())
+				{
+					m_out.clear();
+					m_processor.process({nullptr, 0, 0, m_events, m_out, m_transport});
+					m_events.clear();
+				}
+			}
 		}
 
 		Signal run(Signal signal, const std::vector<Change>& changes = {})
@@ -940,6 +946,56 @@ TEST_CASE("every effect forgets its past on reset", "[unit]")
 		runner.run(noise(2, 8192, 1.0, 5));
 		(*processor).reset();
 		CHECK(runner.run(input) == output);
+	}
+}
+
+TEST_CASE("a reset clears the delay and the reverb after a few frames and after more than a line", "[unit]")
+{
+	// A reset clears only the frames written since the last one (#1595): after a few frames, and after more than a
+	// whole line, the core is silent afterwards. Longest time, full feedback and only the wet signal, so anything
+	// left in a line would come out again. The same run without the reset has to sound within the listening time,
+	// so the silence isn't vacuous when a setting or a line length changes (#1682).
+	const auto check = [](auto& core, const char* name, uint32_t written, uint32_t listen)
+	{
+		const auto run = [&core](Signal& signal)
+		{
+			float* const channels[] = {signal[0].data(), signal[1].data()};
+			const auto length = static_cast<uint32_t>(signal[0].size());
+			for (uint32_t start = 0; start < length; start += g_block)
+				core.process(channels, 2, start, std::min(start + g_block, length));
+		};
+		for (const bool reset : {false, true})
+		{
+			INFO(name << ", " << (reset ? "reset" : "no reset") << " after " << written << " frames");
+			core.prepare(g_sampleRate, g_block);
+			Signal input = noise(2, written, 0.5);
+			run(input);
+			if (reset)
+				core.reset();
+			Signal output = silence(2, listen);
+			run(output);
+			CHECK((peak(output[0]) == 0.0) == reset);
+			CHECK((peak(output[1]) == 0.0) == reset);
+		}
+	};
+
+	const auto line = static_cast<uint32_t>(dsp::Delay::g_maxSeconds * g_sampleRate) + 1;
+	for (const uint32_t written : {uint32_t{100}, line + 1000})
+	{
+		dsp::Delay delay;
+		delay.setParameter(dsp::Delay::Time, 5000.0);
+		delay.setParameter(dsp::Delay::Feedback, 100.0);
+		delay.setParameter(dsp::Delay::Mix, 100.0);
+		check(delay, "delay", written, line + 1);
+	}
+	for (const uint32_t written : {uint32_t{100}, uint32_t{20000}})
+	{
+		dsp::Reverb reverb;
+		reverb.setParameter(dsp::Reverb::Size, 100.0);
+		reverb.setParameter(dsp::Reverb::Decay, 20.0);
+		reverb.setParameter(dsp::Reverb::Predelay, 200.0);
+		reverb.setParameter(dsp::Reverb::Mix, 100.0);
+		check(reverb, "reverb", written, 20000);
 	}
 }
 

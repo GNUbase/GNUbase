@@ -3,11 +3,13 @@
 // ui::Automation as MCP's UI tools drive it: the panel follows the selected sampler track, its controls, markers and
 // keyboard set the sampler's parameters, a dropped file loads into it, Normalize Sample sets its gain, and the add
 // track dialog's Sampler page adds sampler tracks. tests/sampler_tests.cpp checks the engine's side.
+#include "testutils/commandholds.h"
 #include "uiapp.h"
 
 #include "engine/engine.h"
 #include "ui/automation.h"
 #include "ui/docking.h"
+#include "ui/enginebinding.h"
 #include "ui/shell.h"
 #include "ui/tracklist.h"
 
@@ -23,6 +25,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace gnubase;
@@ -91,7 +94,7 @@ namespace
 			app.keys().run("window.sampler", Json::object(), app.main(), nullptr);
 			REQUIRE(
 				app.waitUntil([&] { return !elements("#sampler-panel").empty() && !has("#sampler-panel", "empty"); }));
-			REQUIRE(app.waitUntil([&] { return !elements("[parameter]").empty(); }));
+			REQUIRE(app.waitUntil([&] { return !elements("#sampler-panel [parameter]").empty(); }));
 		}
 
 		Json samplerChannel()
@@ -160,7 +163,7 @@ TEST_CASE("the sampler panel shows the selected sampler track and sets its param
 	f.open();
 	CHECK(f.elements("#sampler-file").at(0).value("text", "") == "sine");
 	// Every parameter has a control, in its section.
-	CHECK(f.elements("[parameter]").size() == 32);
+	CHECK(f.elements("#sampler-panel [parameter]").size() == 32);
 	CHECK(!f.elements(".sampler-section[section=keyboard] " + f.control("Root key")).empty());
 	CHECK(f.has(".sampler-key[key=\"60\"]", "root"));
 	CHECK(f.has(".sampler-loop", "off"));
@@ -258,6 +261,57 @@ TEST_CASE("a change in a value field and a drag of its marker are two undo steps
 	CHECK(f.app.call("history.get").at("steps").size() == steps + 2);
 }
 
+TEST_CASE("the sampler panel shows another track's own value while a turned one's last step is out, and back on it the "
+		  "turn's",
+	"[ui]")
+{
+	test::CommandHolds holds; // declared before the app: its engine's command thread waits in hold()
+	Fixture f;
+	const test::ReleaseHolds releaseHolds{holds};
+	f.app.engine().registerCommand(
+		{"test.hold", 1, "Waits for the test to release it.", engine::CommandInfo{}.parameters, Json::object(), false},
+		[&holds](engine::CommandContext&) { return holds.hold(); });
+	engine::Client holder(f.app.engine(), "holder");
+	const Json created = f.app.call("sampler.create", {{"path", f.other.u8string()}});
+	const uint64_t other = created.at("track").at("id").get<uint64_t>();
+	f.app.call("parameter.set",
+		{{"channel", created.at("channel").at("id")},
+			{"target", {{"type", "instrument"}, {"parameter", f.id("Coarse")}}}, {"value", 5.0}});
+	f.open();
+	const std::string coarse = f.control("Coarse");
+	const auto shows = [&](double value)
+	{ return f.app.waitUntil([&] { return test::controlValue(f.app, std::nullopt, coarse) == value; }); };
+	REQUIRE(shows(0.0));
+	ui::EngineBinding& binding = f.app.appUi().binding();
+	REQUIRE(f.app.waitUntil(
+		[&] { return binding.waiting("history.transaction") == 0 && binding.waiting("project.get") == 0; }));
+
+	// A wheel turn that the engine takes before a hold: the project read after it waits behind the hold, so the panel
+	// has a read from before the turn (#1305).
+	f.app.ui().wheel(std::nullopt, of(coarse), 0.0F, -1.0F);
+	holder.send("test.hold");
+	REQUIRE(holds.waitEntered(1));
+	f.app.shell().step(std::chrono::milliseconds(0));
+	REQUIRE(binding.waiting("history.transaction") == 0);
+	REQUIRE(binding.waiting("project.get") != 0);
+	CHECK(test::controlValue(f.app, std::nullopt, coarse) == 1.0);
+
+	// The other sampler track shows its own value, and back on the turned one the turn's, not the other track's
+	// (#1471).
+	f.select(other);
+	CHECK(shows(5.0));
+	f.select(f.track);
+	REQUIRE(f.app.waitUntil([&] { return f.elements("#sampler-file").at(0).value("text", "") == "sine"; }));
+	CHECK(test::controlValue(f.app, std::nullopt, coarse) == 1.0);
+	REQUIRE(binding.waiting("project.get") != 0);
+
+	// The read after the turn agrees with it.
+	holds.release(1);
+	REQUIRE(f.app.waitUntil([&] { return binding.waiting("project.get") == 0; }));
+	CHECK(f.parameter("Coarse") == 1.0);
+	CHECK(shows(1.0));
+}
+
 TEST_CASE("the sampler panel shows why a sample didn't load or normalize", "[ui]")
 {
 	Fixture f;
@@ -338,6 +392,23 @@ TEST_CASE("Lock Parameter Settings and the normalization level last when the pan
 	// Normalize Sample brings the sine's peak, half the full level, to the level.
 	f.app.ui().click(window->id(), of("#sampler-normalize"), ui::MouseButton::Left, 1, {});
 	REQUIRE(f.app.waitUntil([&] { return std::abs(f.parameter("Sample gain") - (6.02 + level)) < 0.1; }));
+
+	// A change from elsewhere right after quick changes of the panel's own, before their answers came: the field
+	// shows it, as the setting holds it (#1200).
+	for (int i = 0; i < 5; ++i)
+	{
+		f.app.ui().wheel(window->id(), of("#sampler-level"), 0.0F, 1.0F);
+		f.app.shell().step(std::chrono::milliseconds(0));
+	}
+	f.app.call("settings.set",
+		{{"key", "ui.samplerPanel"}, {"value", {{"later", 1}, {"lockParameters", true}, {"normalizeLevel", -1.5}}}});
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			const Json shown = f.app.ui().dom(window->id(), "#sampler-level", 0).at("elements").at(0);
+			return std::abs(std::stod(shown.at("attributes").at("value").get<std::string>()) + 1.5) < 1e-3;
+		}));
+	CHECK(setting().at("normalizeLevel") == -1.5);
 }
 
 TEST_CASE("the keyboard's handles drag the root key and the key range", "[ui]")
@@ -404,6 +475,57 @@ TEST_CASE("the keyboard's handles drag the root key and the key range", "[ui]")
 	drag("high", 60);
 	REQUIRE(f.app.waitUntil([&] { return f.parameter("Key high") == 60.0; }));
 	CHECK(f.parameter("Key low") == 50.0);
+}
+
+TEST_CASE("on a narrow keyboard the handles lie apart too", "[ui]")
+{
+	Fixture f;
+	f.open();
+	// In a narrow window of its own, as in a narrow zone, a key is narrower than 4dp.
+	f.app.appUi().docking().setFloating("sampler", true);
+	const ui::Window* window = nullptr;
+	REQUIRE(f.app.waitUntil(
+		[&]
+		{
+			window = f.app.appUi().docking().windowOf("sampler");
+			return window != nullptr && !f.app.ui().dom(window->id(), "[parameter]", 0).at("elements").empty();
+		}));
+	f.app.shell().setBounds(window->id(), {100, 100, 320, 600});
+	const auto box = [&](const std::string& selector)
+	{ return f.app.ui().dom(window->id(), selector, 0).at("elements").at(0).at("box"); };
+	REQUIRE(f.app.waitUntil([&] { return box("#sampler-keyboard").at("width").get<double>() < 4.0 * 128; }));
+
+	// The three handles on one key, and the range's on keys side by side: none over another (#1200).
+	for (const auto& range : {std::pair{50.0, 50.0}, std::pair{50.0, 51.0}})
+	{
+		const double low = range.first;
+		const double high = range.second;
+		f.set("Key high", high);
+		f.set("Key low", low);
+		f.set("Root key", low);
+		const auto on = [&](const std::string& handle, double key)
+		{
+			const Json keyboard = box("#sampler-keyboard");
+			const double x = keyboard.at("x").get<double>() + (key * keyboard.at("width").get<double>() / 128.0);
+			return std::abs(box(".sampler-handle[handle=" + handle + "]").at("x").get<double>() - x) < 1.0;
+		};
+		REQUIRE(f.app.waitUntil([&] { return on("root", low) && on("low", low) && on("high", high); }));
+		const std::vector<std::string> handles = {"root", "low", "high"};
+		for (size_t i = 0; i < handles.size(); ++i)
+			for (size_t j = i + 1; j < handles.size(); ++j)
+			{
+				const Json a = box(".sampler-handle[handle=" + handles[i] + "]");
+				const Json b = box(".sampler-handle[handle=" + handles[j] + "]");
+				const auto apart = [](const Json& first, const Json& second, const char* position, const char* size)
+				{
+					return first.at(position).get<double>() + first.at(size).get<double>() <=
+						second.at(position).get<double>() + 1.0; // rounded to whole pixels
+				};
+				INFO(handles[i] << " and " << handles[j] << " on " << low << " and " << high);
+				CHECK((apart(a, b, "x", "width") || apart(b, a, "x", "width") || apart(a, b, "y", "height") ||
+					apart(b, a, "y", "height")));
+			}
+	}
 }
 
 TEST_CASE("a drag of a handle or a marker ends when the button goes up outside the window", "[ui]")

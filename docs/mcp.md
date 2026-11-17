@@ -2,8 +2,8 @@
 
 GNUbase has a built-in [Model Context Protocol](https://modelcontextprotocol.io) server, so AI agents such as Claude Code can use everything the engine can do: create projects, add tracks and notes, play, render and measure audio, and run Lua.
 
-- **Tools come from the engine's command registry.** Every engine command is a tool, named with `_` instead of `.` (`track.add` is `track_add`), with the command's parameter schema as its input schema and its result schema as its output schema. A command that only reads is marked read-only (`readOnlyHint`). The [tool catalogue](#tool-catalogue) at the end lists them all; the registry itself is `engine_commands`.
-- **`script_run`** runs Lua code with the same API (the Lua API reference, [api-reference.md](api-reference.md)) in a sandbox, for work that takes many steps or for test cases written with `gnubase.test`.
+- **Tools come from the engine's command registry.** Every engine command is a tool, named with `_` instead of `.` (`track.add` is `track_add`), with the command's parameter schema as its input schema and its result schema as its output schema. A command that only reads is marked read-only (`readOnlyHint`). The generated tool catalogue lists them all ([Tool catalogue](#tool-catalogue)); the registry itself is `engine_commands`.
+- **`script_run`** runs Lua code with the same API (the [Lua API reference](https://gnubase.github.io/GNUbase/lua.html), [api-reference.md](api-reference.md)) in a sandbox, for work that takes many steps or for test cases written with `gnubase.test`.
 - **UI tools:** with its UI, GNUbase also lets agents read the UI back and use it: windows, the DOM, screenshots, mouse and keyboard (`ui_dom`, `ui_click`, ...). See [UI tools](#ui-tools).
 - **Events:** `events_take` returns what changed in the engine since the last call, such as `track.added` or `history.changed`, whoever changed it: this client, other MCP clients, Lua scripts or the UI. See [Events](#events).
 - **Resources:** queries without required parameters can also be read as resources, `gnubase://<command>`, e.g. `gnubase://project.get`.
@@ -164,7 +164,7 @@ Only `events_take` needs a session: send `initialize` first (`curl -i` shows the
 GNUbase started with its UI and `--mcp-http` also has tools to look at the UI and use it, as a person would with the mouse and the keyboard, e.g. to test a feature end to end or to check how it looks. The UI is made of RmlUi documents (HTML-like, styled with CSS), so agents find elements with CSS selectors such as `#open`, `.track.selected` or `button`.
 
 - `ui_windows` lists the windows: their ids, which is the main window, their size in pixels and their dp ratio, and the documents each shows. The other tools take a `window`; without one they use the main window.
-- `ui_dom` reads the DOM: every element's tag, id, classes, other attributes, a form control's value, pseudo-classes such as `hover`, `focus` or `checked`, whether it's visible and its box. With a `selector` it returns the elements that match; `depth` limits how many levels of children come with them, and `depth: 0` returns the elements with their text.
+- `ui_dom` reads the DOM: every element's tag, id, classes, other attributes, a form control's value, a drop-down list's options (each its value, text and whether it's selected), pseudo-classes such as `hover`, `focus` or `checked`, whether it's visible and its box. With a `selector` it returns the elements that match; `depth` limits how many levels of children come with them, and `depth: 0` returns the elements with their text.
 - `ui_screenshot` returns a PNG of the window, or with a `selector` of one element.
 - `ui_click`, `ui_move`, `ui_drag` and `ui_wheel` use the mouse on an element, by `selector` (and `index` among its matches), or on a point `x`, `y`. `ui_key` presses keys such as `Enter` or `Ctrl+S`; `ui_text` types text into the focused field. `ui_drop` drops files on an element or a point, as if dragged there from the OS's file manager, e.g. audio files on the event display to import them. Each answers with the element it reached, so the agent sees what it hit.
 - `ui_wait` waits until an element is visible, or has a text, or until none is, e.g. for a dialog that a click opens.
@@ -232,4 +232,4 @@ The MCP server gives a client the same power over GNUbase as the person using it
 
 ## Tool catalogue
 
-Every tool by area, its engine command, whether it only reads, its arguments and its result are in the generated MCP tool catalogue, `mcp-tools.md` ([API references](api-reference.md)). A running server lists the same with `tools/list`.
+Every tool by area, its engine command, whether it only reads, its arguments and its result are in the generated MCP tool catalogue: [main's on the web](https://gnubase.github.io/GNUbase/mcp-tools.html), or `mcp-tools.md` from your build ([API references](api-reference.md)). A running server lists the same with `tools/list`.

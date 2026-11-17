@@ -105,6 +105,9 @@ add_subdirectory(ext/flac EXCLUDE_FROM_ALL SYSTEM)
 set(PUGIXML_INSTALL OFF CACHE BOOL "Set by GNUbase for pugixml")
 add_subdirectory(ext/pugixml EXCLUDE_FROM_ALL SYSTEM)
 add_subdirectory(ext/miniz EXCLUDE_FROM_ALL SYSTEM)
+# No time stamps on ZIP entries: miniz takes them from localtime(), whose result is one static struct outside Windows,
+# which projects saved on several threads at once would race for (#1425).
+target_compile_definitions(miniz PUBLIC MINIZ_NO_TIME)
 # miniz adds /Zi: its files share one .pdb, which compiles through sccache can't write in parallel. Four small files,
 # so they skip the compiler cache.
 set_target_properties(miniz PROPERTIES C_COMPILER_LAUNCHER "")

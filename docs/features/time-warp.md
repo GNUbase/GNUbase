@@ -82,3 +82,4 @@ and undo; Free Warp through musical mode, existing markers and trimmed events. `
 the tool's toolbar button and second-click modes,
 Warp Grid and Free Warp drags on plain and warped clips, its modes in the context menu, the Process Tempo and
 Process Bars dialogs, and Audio > Advanced's Set Definition from Tempo and Copy and Paste Warp Markers.
+`tests/eventediting_tests.cpp`: Free Warp's drag on a stretched musical-mode event.

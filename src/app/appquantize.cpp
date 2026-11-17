@@ -10,6 +10,7 @@
 #include <array>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -52,7 +53,7 @@ namespace gnubase::app
 		// The quantize panel (pp. 372-378), a window of its own there: the right zone, or a window of its own here.
 		m_docking.add({"quantize", "Quantize", "project", "right", [this](Rml::Element& element)
 			{
-				return std::make_shared<ui::QuantizePanel>(
+				auto panel = std::make_shared<ui::QuantizePanel>(
 					m_binding, element, ui::QuantizePanel::Layout::Panel,
 					[this](const std::string& command)
 					{
@@ -61,6 +62,9 @@ namespace gnubase::app
 					},
 					[this](const std::string& command, Json parameters)
 					{ quantizeAudioTracks(command, std::move(parameters)); });
+				panel->showHitpointTracks(hitpointTracks());
+				m_quantizePanel = panel;
+				return panel;
 			}});
 		m_keys.add({"window.quantizePanel", "Opens the quantize panel.",
 			[this](ui::Window& /*window*/, Rml::Element* /*zone*/) { m_docking.open("quantize"); }});
@@ -83,25 +87,37 @@ namespace gnubase::app
 				m_keys.bind({each.keys, each.id});
 		}
 
-		// Create Groove Quantize Preset (pp. 373, 376): a groove of the first part it would quantize, which then is the
-		// project's quantize settings.
+		// Create Groove Quantize Preset (pp. 367, 373, 376): a groove of the first part it would quantize, or of the
+		// first selected audio event's hitpoints, which then is the project's quantize settings.
 		m_keys.add({"edit.createGrooveQuantize",
-			"Makes a groove quantize preset of the selected MIDI part's rhythm and quantizes to it.",
+			"Makes a groove quantize preset of the selected MIDI part's rhythm, or of the selected audio event's "
+			"hitpoints, and quantizes to it.",
 			[this](ui::Window& window, Rml::Element* zone)
 			{
 				const QuantizeTarget target = quantizeTarget(window, zone);
-				if (target.parts.empty())
+				if (target.parts.empty() && target.events.empty())
 					return;
-				m_binding.send("quantize.extractGroove", {{"part", target.parts.front().first}},
+				m_binding.send("quantize.extractGroove",
+					target.parts.empty() ? Json{{"event", target.events.front()}}
+										 : Json{{"part", target.parts.front().first}},
 					[this](const engine::Result& result)
 					{
-						if (result.ok())
-							m_binding.send(
-								"quantize.set", {{"preset", result.value.at("preset").at("name").get<std::string>()}});
+						// Refused, as for an audio event without hitpoints, it is logged as a refused Slice is.
+						if (!result.ok())
+						{
+							logging::warning("Creating a groove quantize preset failed: {}", result.error);
+							return;
+						}
+						m_binding.send(
+							"quantize.set", {{"preset", result.value.at("preset").at("name").get<std::string>()}});
 					});
 			}});
 		m_keys.enableWhen("edit.createGrooveQuantize",
-			[this](ui::Window& window, Rml::Element* zone) { return !quantizeTarget(window, zone).parts.empty(); });
+			[this](ui::Window& window, Rml::Element* zone)
+			{
+				const QuantizeTarget target = quantizeTarget(window, zone);
+				return !target.parts.empty() || !target.events.empty();
+			});
 	}
 
 	AppUi::QuantizeTarget AppUi::quantizeTarget(ui::Window& window, Rml::Element* zone) const
@@ -133,6 +149,14 @@ namespace gnubase::app
 				m_inPlace ? m_inPlace->view(std::stoull(zone->GetAttribute<Rml::String>("track", "0"))) : nullptr;
 			return view != nullptr ? ofView(*view, false) : QuantizeTarget{};
 		}
+		// From the sample editor's window (its toolbar, p. 367): the event it edits.
+		if (m_sampleEditor.window != 0 && window.id() == m_sampleEditor.window)
+		{
+			QuantizeTarget target;
+			if (m_sampleEditor.editor && m_sampleEditor.editor->event() != 0)
+				target.events.push_back(m_sampleEditor.editor->event());
+			return target;
+		}
 		// From an editor: its window, or the lower zone while the zone shows the Editor tab.
 		if (m_editor.window != 0 && window.id() == m_editor.window)
 			return ofEditor("window", false);
@@ -149,17 +173,97 @@ namespace gnubase::app
 			target.parts.emplace_back(part, std::vector<uint64_t>());
 		target.events = selected("audioEvents");
 		target.audioParts = selected("audioParts");
+		// A selection range with the range selection tool: the audio events on its tracks that it reaches, warp
+		// quantized in it (p. 370), so that Reset Quantize and Create Groove Quantize Preset leave the others alone.
+		const std::optional<ui::RangeSelection>& range =
+			m_eventDisplay ? m_eventDisplay->range() : std::optional<ui::RangeSelection>();
+		if (range && range->end > range->start && m_eventDisplay->project().is_object())
+		{
+			target.events.clear();
+			target.audioParts.clear();
+			// Where each event plays as the event display shows it (#1672), in seconds.
+			const double rate = m_eventDisplay->time().sampleRate;
+			const double from = static_cast<double>(range->start) / rate;
+			const double to = static_cast<double>(range->end) / rate;
+			for (const auto& [id, span] : m_eventDisplay->audioEventSpans())
+				if (std::find(range->tracks.begin(), range->tracks.end(), span.track) != range->tracks.end() &&
+					span.start < to && span.end > from)
+					target.events.push_back(id);
+			target.range = std::make_pair(range->start, range->end);
+		}
 		return target;
+	}
+
+	std::vector<uint64_t> AppUi::selectedAudioEvents() const
+	{
+		std::vector<uint64_t> events = selected("audioEvents");
+		const std::vector<uint64_t> parts = selected("audioParts");
+		if (!m_eventDisplay || parts.empty())
+			return events;
+		const Json& project = m_eventDisplay->project();
+		if (const auto all = project.find("audioEvents"); all != project.end())
+			for (const Json& event : *all)
+				if (std::find(parts.begin(), parts.end(), event.value("part", uint64_t{0})) != parts.end())
+					events.push_back(event.at("id").get<uint64_t>());
+		return events;
+	}
+
+	Json AppUi::hitpointTracks() const
+	{
+		Json tracks = Json::array();
+		const std::vector<uint64_t> events = selectedAudioEvents();
+		if (!m_eventDisplay || events.empty())
+			return tracks;
+		// It runs on every selection change and project update while the panel is open: by reference, not through
+		// Json::value's copies.
+		const Json& project = m_eventDisplay->project();
+		const Json none = Json::array();
+		const auto list = [&project, &none](const char* key) -> const Json&
+		{
+			const auto found = project.find(key);
+			return found != project.end() ? *found : none;
+		};
+		const std::set<uint64_t> selection(events.begin(), events.end());
+		std::set<uint64_t> withHitpoints; // clips
+		for (const Json& clip : list("clips"))
+			if (const auto hitpoints = clip.find("hitpoints"); hitpoints != clip.end() && !hitpoints->empty())
+				withHitpoints.insert(clip.at("id").get<uint64_t>());
+		std::set<uint64_t> found; // tracks
+		for (const Json& event : list("audioEvents"))
+			if (selection.count(event.at("id").get<uint64_t>()) != 0 &&
+				withHitpoints.count(event.at("clip").get<uint64_t>()) != 0)
+				found.insert(event.at("track").get<uint64_t>());
+		for (const Json& track : list("tracks"))
+			if (found.count(track.at("id").get<uint64_t>()) != 0)
+				tracks.push_back({{"track", track.at("id")}, {"name", track.value("name", std::string())}});
+		return tracks;
 	}
 
 	void AppUi::quantizeAudioTracks(const std::string& command, Json parameters)
 	{
-		std::vector<uint64_t> events = selected("audioEvents");
 		const std::vector<uint64_t> parts = selected("audioParts");
-		if (m_eventDisplay && !parts.empty())
-			for (const Json& event : m_eventDisplay->project().value("audioEvents", Json::array()))
-				if (std::find(parts.begin(), parts.end(), event.value("part", uint64_t{0})) != parts.end())
-					events.push_back(event.at("id").get<uint64_t>());
+		const std::vector<uint64_t> events = selectedAudioEvents();
+		// The cutting positions (p. 378): where Slice would cut the selected events, shown in the project window.
+		if (command == "quantize.slicePositions")
+		{
+			if (!m_eventDisplay)
+				return;
+			if (events.empty() || parameters.is_null())
+			{
+				m_eventDisplay->setCuttingPositions({});
+				return;
+			}
+			parameters["events"] = events;
+			m_binding.send(command, std::move(parameters),
+				[this](const engine::Result& result)
+				{
+					if (m_eventDisplay)
+						m_eventDisplay->setCuttingPositions(result.ok()
+								? result.value.at("positions").get<std::vector<int64_t>>()
+								: std::vector<int64_t>());
+				});
+			return;
+		}
 		if (events.empty())
 			return;
 		parameters["events"] = events;
@@ -220,12 +324,24 @@ namespace gnubase::app
 			{
 				parameters["events"] = target.events;
 				parameters["audioParts"] = target.audioParts;
+				if (target.range && command == "quantize.apply")
+				{
+					parameters["start"] = target.range->first;
+					parameters["end"] = target.range->second;
+				}
 			}
 			commands.push_back({{"command", command}, {"parameters", std::move(parameters)}});
 		}
+		// Refused, as Quantize on a selection range with Warp Quantize off is (#1668), it is logged as a refused
+		// Slice is.
+		const auto refused = [step](const engine::Result& result)
+		{
+			if (!result.ok())
+				logging::warning("{} failed: {}", step, result.error);
+		};
 		if (commands.size() == 1)
-			m_binding.send(command, commands[0].at("parameters"));
+			m_binding.send(command, commands[0].at("parameters"), refused);
 		else
-			m_binding.send("history.transaction", {{"description", step}, {"commands", std::move(commands)}});
+			m_binding.send("history.transaction", {{"description", step}, {"commands", std::move(commands)}}, refused);
 	}
 }

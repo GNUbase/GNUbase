@@ -5,13 +5,16 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <condition_variable>
 #include <mutex>
 #include <optional>
 #include <set>
 #include <stdexcept>
+#include <thread>
 #include <utility>
 #include <variant>
+#include <vector>
 
 namespace gnubase::test
 {
@@ -44,17 +47,19 @@ namespace gnubase::test
 	{
 		std::string kind;
 		std::chrono::milliseconds hold{0};
+		size_t count = 1; // how many it holds
 		mutable std::mutex mutex;
 		std::condition_variable changed;
-		uint64_t job = 0;      // the one that got to its first job.progress, once it did
-		bool released = false; // by the test
-		bool lapsed = false;   // the hold, before the test released the job
-		int holds = 0;         // how often the hook held a job
+		std::vector<uint64_t> jobs; // the ones that got to their first job.progress, in that order
+		bool released = false;      // by the test
+		bool lapsed = false;        // a hold, before the test released the jobs
+		int holds = 0;              // how often the hook held a job
 
-		bool holding() const { return job != 0 && !released && !lapsed; }
+		bool allThere() const { return jobs.size() >= count; }
+		bool holding() const { return allThere() && !released && !lapsed; }
 	};
 
-	HeldJob::HeldJob(engine::Engine& engine, std::string kind, std::chrono::milliseconds hold)
+	HeldJob::HeldJob(engine::Engine& engine, std::string kind, std::chrono::milliseconds hold, size_t jobs)
 		: m_engine(engine), m_state(std::make_shared<State>())
 	{
 		{
@@ -65,15 +70,18 @@ namespace gnubase::test
 		}
 		m_state->kind = std::move(kind);
 		m_state->hold = hold;
+		m_state->count = jobs;
 		m_engine.setJobProgressHook(
 			[state = m_state](uint64_t job, const std::string& jobKind)
 			{
 				if (jobKind != state->kind)
 					return;
 				std::unique_lock lock(state->mutex);
-				if (state->released || state->job != 0) // one job, once
+				// Each job once, the first count of them.
+				if (state->released || state->allThere() ||
+					std::find(state->jobs.begin(), state->jobs.end(), job) != state->jobs.end())
 					return;
-				state->job = job;
+				state->jobs.push_back(job);
 				++state->holds;
 				state->changed.notify_all();
 				if (!state->changed.wait_for(lock, state->hold, [&state] { return state->released; }))
@@ -102,13 +110,13 @@ namespace gnubase::test
 	bool HeldJob::waitUntilHeld(std::chrono::milliseconds timeout)
 	{
 		std::unique_lock lock(m_state->mutex);
-		return m_state->changed.wait_for(lock, timeout, [this] { return m_state->job != 0; }) && m_state->holding();
+		return m_state->changed.wait_for(lock, timeout, [this] { return m_state->allThere(); }) && m_state->holding();
 	}
 
 	uint64_t HeldJob::job() const
 	{
 		const std::scoped_lock lock(m_state->mutex);
-		return m_state->job;
+		return m_state->jobs.empty() ? 0 : m_state->jobs.front();
 	}
 
 	int HeldJob::holds() const
@@ -157,10 +165,25 @@ namespace gnubase::test
 		return finished;
 	}
 
-	engine::Json whileHeld(engine::Engine& engine, engine::Client& client, const std::string& command,
-		engine::Json parameters, const std::function<void(uint64_t job)>& during, std::vector<engine::Json>* progress)
+	void settlePeaks(engine::Client& client)
 	{
-		HeldJob held(engine, command);
+		const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+		for (;;)
+		{
+			const engine::Json statuses = run(client, "media.peakStatus", engine::Json::object()).at("media");
+			if (std::none_of(statuses.begin(), statuses.end(), [](const engine::Json& status)
+					{ return status.at("status") == "pending" || status.at("status") == "generating"; }))
+				return;
+			REQUIRE(std::chrono::steady_clock::now() < until);
+			std::this_thread::sleep_for(std::chrono::milliseconds(5));
+		}
+	}
+
+	engine::Json whileHeld(engine::Engine& engine, engine::Client& client, const std::string& command,
+		engine::Json parameters, const std::function<void(uint64_t job)>& during, std::vector<engine::Json>* progress,
+		std::chrono::milliseconds hold)
+	{
+		HeldJob held(engine, command, hold);
 		const engine::Json started = run(client, command, std::move(parameters)).at("job");
 		CHECK(started.at("kind") == command);
 		const auto job = started.at("id").get<uint64_t>();

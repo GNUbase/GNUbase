@@ -17,9 +17,10 @@ namespace gnubase::engine
 namespace gnubase::engine::midi
 {
 	// What a controller lane shows: a property of the notes, or the controller events of a type. The controller
-	// types have controller.add's names.
-	inline constexpr std::array<const char*, 9> g_laneTypes = {"velocity", "offVelocity", "probability",
-		"velocityVariance", "controller", "pitchBend", "channelPressure", "polyPressure", "program"};
+	// types have controller.add's names. articulations is the Articulations lane (#1112, reference manual p. 1287):
+	// the directions and the notes' attributes of the track's articulation map, which controller.line doesn't draw.
+	inline constexpr std::array<const char*, 10> g_laneTypes = {"velocity", "offVelocity", "probability",
+		"velocityVariance", "controller", "pitchBend", "channelPressure", "polyPressure", "program", "articulations"};
 
 	bool isLaneType(const std::string& type);
 	// Whether the lane shows a property of the notes rather than controller events.

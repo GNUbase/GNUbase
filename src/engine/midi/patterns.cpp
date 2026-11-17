@@ -4,6 +4,7 @@
 // nothing if it fails (ProjectModel::addEdit). Playback (rendersnapshot.cpp) plays a pattern event's patternNotes.
 #include "engine/midi/patterns.h"
 
+#include "engine/document/drumtrack.h"
 #include "engine/document/projectmodel.h"
 #include "engine/document/serialize.h"
 #include "engine/engine.h"
@@ -278,7 +279,8 @@ namespace gnubase::engine::midi
 		}
 
 		// A new pattern of the track (New Pattern, p. 899). Drum mode starts with the lanes of a kick, a snare and
-		// closed and open hi-hats, named after the track's drum map's sounds, or General MIDI's.
+		// closed and open hi-hats, named after the track's drum map's sounds, or General MIDI's; on a drum track with
+		// the lanes of the pads that play.
 		Pattern newPattern(const Project& project, ObjectId track, PatternMode mode)
 		{
 			Pattern pattern;
@@ -290,6 +292,20 @@ namespace gnubase::engine::midi
 			pattern.name = "Pattern " + std::to_string(count);
 			if (mode != PatternMode::Drum)
 				return pattern;
+			// A drum track's: a lane per pad that plays, named after it (#182).
+			if (const Channel* drums = drumChannelOf(project, track))
+			{
+				const std::vector<int> pads = playingDrumPads(*drums);
+				for (const int pad : pads)
+				{
+					PatternLane lane;
+					lane.pitch = pad;
+					lane.name = drumPadName(project, *drums, pad);
+					pattern.lanes.push_back(std::move(lane));
+				}
+				if (!pads.empty())
+					return pattern;
+			}
 			const DrumMap* map = drumMapOf(project, track);
 			const DrumMap gm = gmDrumMap();
 			for (const int pitch : {36, 38, 42, 46})
@@ -579,13 +595,19 @@ namespace gnubase::engine::midi
 				for (Pattern& copy : copied)
 				{
 					const ObjectId original = copy.id;
+					const ObjectId origin = copy.copiedFrom;
 					copy.track = part.track;
-					// A copy of it that the track has already, from a copy before, plays it again.
+					copy.copiedFrom = original;
+					// A copy of it that the track has already, from a copy before and unchanged since, plays it again,
+					// as does the pattern it is a copy of, on its way back (#1347); an equal pattern that isn't its
+					// copy doesn't.
 					const auto same = std::find_if(project.patterns.begin(), project.patterns.end(),
-						[&copy](const auto& each)
+						[&copy, origin](const auto& each)
 						{
 							Pattern other = each.second;
 							other.id = copy.id;
+							if (origin != 0 && each.first == origin)
+								other.copiedFrom = copy.copiedFrom;
 							return other == copy;
 						});
 					if (same != project.patterns.end())
@@ -703,7 +725,8 @@ namespace gnubase::engine::midi
 			"pattern went before their start, after a split or a start sized, so that they continue it. A pattern "
 			"event on another track than its pattern's, copied, moved or on a duplicated track, plays a copy on its "
 			"own track: a track without pattern events gets copies of all the patterns of the pattern's track (p. "
-			"936), and a copy the track has already, unchanged, plays it again. Removing a track removes its patterns.";
+			"936), and a copy the track has already, made from that pattern in an earlier copy or move and unchanged "
+			"since, plays it again (a track's own equal pattern doesn't). Removing a track removes its patterns.";
 		const auto object = [](Json properties, std::vector<std::string> required)
 		{
 			return Json{{"type", "object"}, {"properties", std::move(properties)}, {"required", std::move(required)},
@@ -718,7 +741,8 @@ namespace gnubase::engine::midi
 			{"pattern.add", 1,
 				"Adds a pattern to a MIDI or instrument track (New Pattern, p. 899): Pattern 1, 2 and so on, 16 steps "
 				"of 1/16; in drum mode (the default) with lanes for a kick, a snare and closed and open hi-hats, "
-				"named after the track's drum map's sounds, in melodic mode without lanes. copy duplicates a pattern "
+				"named after the track's drum map's sounds (on a drum track a lane per pad that plays, named after the "
+				"pad), in melodic mode without lanes. copy duplicates a pattern "
 				"instead (Duplicate Pattern), on its track unless track is given. With part, the pattern is that "
 				"part's track's and the part plays it from its start: it becomes a pattern event. Then changed by the "
 				"settings "

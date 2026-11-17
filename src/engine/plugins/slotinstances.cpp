@@ -43,8 +43,12 @@ namespace gnubase::engine::plugins
 			return processors::findBuiltinPlugin(slot.plugin) != nullptr ? none : slot.parameters;
 		}
 
+		// The built-in audio plugins only: the factory also makes the MIDI effects, which have no audio output and
+		// belong in the MIDI slots, so a slot that names one (e.g. from a project file) is unavailable.
 		std::unique_ptr<plugin::Plugin> makeBuiltin(const std::string& plugin, uint32_t channels, plugin::Host& host)
 		{
+			if (processors::findBuiltinPlugin(plugin) == nullptr)
+				return nullptr;
 			return processors::BuiltinFactory(channels).create(plugin, host);
 		}
 

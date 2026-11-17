@@ -255,16 +255,17 @@ namespace gnubase::engine
 				if (settings.compressor.on)
 					m_compressor.process(audio, channels, begin, end);
 				m_eq.process(audio, channels, begin, end, m_tailFrames);
-				// A limiter that comes on starts afresh, unless it ran bypassed to keep its look-ahead.
-				const bool runs = settings.limiter.on || lookAhead;
-				if (runs && !m_limiterRuns)
-					m_limiter.reset();
-				m_limiterRuns = runs;
-				if (runs)
+				// Only while its look-ahead counts in the channel's latency, so that it never delays a channel the
+				// graph doesn't compensate for; a limiter that starts running does so afresh, unless it ran bypassed
+				// to keep its look-ahead.
+				if (lookAhead)
 				{
+					if (!m_limiterRuns)
+						m_limiter.reset();
 					m_limiter.setBypass(!settings.limiter.on);
 					m_limiter.process(audio, channels, begin, end);
 				}
+				m_limiterRuns = lookAhead;
 			});
 	}
 }

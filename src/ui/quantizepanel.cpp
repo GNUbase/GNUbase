@@ -190,7 +190,7 @@ namespace gnubase::ui
 				R"(Q</button><button id="toolbar-quantize-presets" menu="toolbar-quantize-presets-menu" )"
 				R"(title="Quantize Presets"/><button id="toolbar-quantize-soft" type="toggle" action="soft" )"
 				R"(title="Soft Quantize On/Off">Soft</button><button id="toolbar-quantize-warp" type="toggle" )"
-				R"(action="warp" title="Warp Quantize On/Off">Warp</button>)"
+				R"(action="warp" fit="spare" title="Warp Quantize On/Off">Warp</button>)"
 				R"(<button id="toolbar-quantize-panel" class="icon-only" )"
 				R"(action="panel" title="Open Quantize Panel">...</button>)");
 		}
@@ -231,15 +231,25 @@ namespace gnubase::ui
 				R"(<button id="quantize-apply" class="primary" action="apply" title="Apply Quantize">Apply</button>)"
 				// Several audio tracks (pp. 370-372, 378-380): Slice Rules, or with warp quantizing Warp Marker
 				// Creation Rules, and Crossfades.
-				R"(</div><div id="quantize-tracks" class="quantize-settings">)" +
+				R"(</div><div id="quantize-tracks" class="quantize-settings">)"
+				R"(<div class="quantize-row">Hitpoint Tracks</div><div id="quantize-hitpoint-tracks"/>)" +
 				field("Range", milliseconds("quantize-range", 0, 1000, 20, "Range")) +
 				field("Offset", milliseconds("quantize-offset", 0, 1000, 0, "Offset")) +
 				R"(<div class="quantize-row"><div class="quantize-spacer"/>)"
+				R"(<button id="quantize-slice-reset" action="resetSlices" title="Reset Slices">Reset</button>)"
+				R"(<button id="quantize-markers-reset" action="resetWarpMarkers" title="Reset Warp Markers">)"
+				R"(Reset</button>)"
 				R"(<button id="quantize-slice" action="slice" title="Slice">Slice</button>)"
 				R"(<button id="quantize-create-markers" action="createWarpMarkers" title="Create">Create</button>)"
 				R"(</div>)" +
 				field("Crossfade Length", milliseconds("quantize-crossfade-length", 1, 500, 10, "Length")) +
-				R"(<div class="quantize-row"><div class="quantize-spacer"/>)"
+				R"(<div class="quantize-row">)"
+				R"(<button id="quantize-nudge-left" class="icon-only" action="nudgeLeft" )"
+				R"(title="Nudge Crossfade Left">&lt;</button>)"
+				R"(<button id="quantize-nudge-right" class="icon-only" action="nudgeRight" )"
+				R"(title="Nudge Crossfade Right">&gt;</button>)"
+				R"(<button id="quantize-crossfade-editor" action="crossfadeEditor" title="Open Crossfade Editor">)"
+				R"(Editor</button><div class="quantize-spacer"/>)"
 				R"(<button id="quantize-crossfade" action="crossfade" title="Crossfade">Crossfade</button>)"
 				R"(</div></div></div>)");
 			menus += R"(<menu id="quantize-grid-menu">)" + menuItems("grid", noteValues(false), "") +
@@ -264,7 +274,15 @@ namespace gnubase::ui
 		m_subscriptions.push_back(
 			m_binding.on("quantize.changed", [this](const engine::Event& event) { showSettings(event.data); }));
 		m_subscriptions.push_back(m_binding.on("quantize.presetsChanged", [this](const engine::Event&) { request(); }));
-		m_subscriptions.push_back(m_binding.on("project.reset", [this](const engine::Event&) { request(); }));
+		m_subscriptions.push_back(m_binding.on("project.reset",
+			[this](const engine::Event&)
+			{
+				// Track ids start at 1 again in every project, so the priorities go with the project (#1581).
+				m_priorities.clear();
+				m_hitpointTracks = nullptr;
+				showHitpointTracks(Json::array());
+				request();
+			}));
 		request();
 	}
 
@@ -312,8 +330,21 @@ namespace gnubase::ui
 		if (event == Rml::EventId::Change)
 		{
 			// A value field's own change has the number; its text field's has the text typed.
-			if (target->GetTagName() != "valuefield" || !target->HasAttribute("setting"))
+			if (target->GetTagName() != "valuefield")
 				return;
+			if (target->HasAttribute("track"))
+			{
+				m_priorities[std::stoull(attribute(*target, "track"))] =
+					static_cast<int>(std::lround(event.GetParameter<float>("value", 1.0F)));
+				showCuts();
+				return;
+			}
+			// Range and Offset, which move the cutting positions.
+			if (!target->HasAttribute("setting"))
+			{
+				showCuts();
+				return;
+			}
 			const std::string setting = attribute(*target, "setting");
 			const auto value = static_cast<double>(event.GetParameter<float>("value", 0.0F));
 			if (percent(setting))
@@ -356,17 +387,25 @@ namespace gnubase::ui
 				m_run("edit.resetQuantize");
 			else if (action == "panel")
 				m_run("window.quantizePanel");
+			else if (action == "crossfadeEditor")
+				m_run("audio.crossfadeEditor");
 			else if (action == "soft") // the toggle's state before this click: m_settings may not have caught up yet
 				set({{"settings", {{"soft", !button->HasAttribute("checked")}}}});
 			else if (action == "warp")
 				set({{"settings", {{"warpQuantize", !button->HasAttribute("checked")}}}});
 			else if (m_audio && action == "slice")
 				m_audio("quantize.slice",
-					{{"range", fieldValue("quantize-range")}, {"offset", fieldValue("quantize-offset")}});
+					{{"range", fieldValue("quantize-range")}, {"offset", fieldValue("quantize-offset")},
+						{"priorities", priorities()}});
 			else if (m_audio && action == "createWarpMarkers")
-				m_audio("quantize.createWarpMarkers", {{"range", fieldValue("quantize-range")}});
+				m_audio("quantize.createWarpMarkers",
+					{{"range", fieldValue("quantize-range")}, {"priorities", priorities()}});
+			else if (m_audio && (action == "resetSlices" || action == "resetWarpMarkers"))
+				m_audio("quantize." + action, Json::object());
 			else if (m_audio && action == "crossfade")
 				m_audio("quantize.crossfade", {{"length", fieldValue("quantize-crossfade-length")}});
+			else if (m_audio && (action == "nudgeLeft" || action == "nudgeRight"))
+				m_audio("quantize.nudgeCrossfade", {{"amount", action == "nudgeLeft" ? -1.0 : 1.0}});
 			else if (action == "save" || action == "rename")
 				savePreset(action == "rename");
 			else if (action == "remove" && isUserPreset(currentPreset()))
@@ -392,6 +431,57 @@ namespace gnubase::ui
 			m_binding.send("quantize.savePreset", {{"name", name}});
 		else if (isUserPreset(currentPreset()))
 			m_binding.send("quantize.renamePreset", {{"name", currentPreset()}, {"newName", name}});
+	}
+
+	void QuantizePanel::showHitpointTracks(const Json& tracks)
+	{
+		// Only a change of the list rebuilds it, so that a field being dragged or typed into stays: the selection
+		// shows again after every project update. The cutting positions follow both.
+		if (tracks == m_hitpointTracks)
+		{
+			showCuts();
+			return;
+		}
+		m_hitpointTracks = tracks;
+		showCuts();
+		std::string rml;
+		for (const Json& track : tracks)
+		{
+			const auto id = track.at("track").get<uint64_t>();
+			const auto found = m_priorities.find(id);
+			rml += R"(<div class="quantize-field"><span class="quantize-label">)" +
+				encode(track.at("name").get<std::string>()) +
+				R"(</span><valuefield class="quantize-priority" track=")" + std::to_string(id) +
+				R"(" min="0" max="5" step="1" decimals="0" value=")" +
+				std::to_string(found != m_priorities.end() ? found->second : 1) + R"(" title="Priority"/></div>)";
+		}
+		if (Rml::Element* list = find("quantize-hitpoint-tracks"))
+			list->SetInnerRML(rml);
+	}
+
+	void QuantizePanel::showCuts()
+	{
+		if (!m_audio || m_layout != Layout::Panel)
+			return;
+		// Slice Rules only: with warp quantizing nothing is cut (p. 378).
+		if (m_settings.value("warpQuantize", false) || m_hitpointTracks.empty())
+			m_audio("quantize.slicePositions", nullptr);
+		else
+			m_audio("quantize.slicePositions",
+				{{"range", fieldValue("quantize-range")}, {"offset", fieldValue("quantize-offset")},
+					{"priorities", priorities()}});
+	}
+
+	Json QuantizePanel::priorities() const
+	{
+		Json list = Json::array();
+		for (const Json& track : m_hitpointTracks)
+		{
+			const auto id = track.at("track").get<uint64_t>();
+			const auto found = m_priorities.find(id);
+			list.push_back({{"track", id}, {"priority", found != m_priorities.end() ? found->second : 1}});
+		}
+		return list;
 	}
 
 	double QuantizePanel::fieldValue(const std::string& id) const
@@ -464,6 +554,9 @@ namespace gnubase::ui
 		// Warp quantizing several tracks creates warp markers instead of slicing them (p. 378).
 		setClass(find("quantize-slice"), "hidden", warp);
 		setClass(find("quantize-create-markers"), "hidden", !warp);
+		setClass(find("quantize-slice-reset"), "hidden", warp);
+		showCuts();
+		setClass(find("quantize-markers-reset"), "hidden", !warp);
 
 		const bool groove = m_settings.at("groove").is_object();
 		setClass(find("quantize-grid-settings"), "hidden", groove);

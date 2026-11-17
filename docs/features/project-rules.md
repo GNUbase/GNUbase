@@ -16,7 +16,8 @@ holds named rules, as the MIDI rules have one ([midi-rules.md](midi-rules.md)).
     not set: is muted (a track's channel, a part, an event), is selected and parent is selected (by the ids the command
     is given as `selected`: the project window's selection of tracks, parts, events and markers), is empty (tracks
     without events, parts or markers, folders without tracks, parts without notes, controllers or events), is hidden
-    (track visibility), has track version, follows chord track and is disabled. Brackets and and/or work as in the MIDI rules,
+    (track visibility), has track version (tracks with more than one version, pp. 1434-1435, which the track version
+    indicator marks, p. 232), follows chord track and is disabled. Brackets and and/or work as in the MIDI rules,
     through the same reader (`midi::evaluateLines`).
   - **Functions:** delete, transform, select and deselect. Select and deselect change nothing: the UI selects what was
     found, or deselects everything.
@@ -76,13 +77,14 @@ and post lists and a command browser.
 ## Checks
 
 `tests/projectrules_tests.cpp`: every factory preset round-tripping through JSON with pre and post commands, and the
-rules JSON refuses (brackets nesting too deep among it), which the commands' descriptions name; `project.findByRules` on every filter target, brackets, properties and the selection;
-`project.applyRules` moving, resizing, renaming and coloring parts and markers, track names, mute, solo, time domain
-and colors, delete with folders, locked parts, audio parts that hold locked events and the active marker track last,
-generated names without gaps, new random values without a seed, positions and lengths at the longest project, also
-on a linear track and at the lowest sample rate, cycle markers made zero long on musical and linear tracks, at the
-lowest sample rate, at a tempo change and at 1 BPM, cycle markers moved before the start keeping their length,
-markers moved while their track changes its time domain both ways, and repeatable random values, in
-one undo step, undone and redone; `event.set` renaming parts; the preset library (listing, saving, removing, the file
-in the settings folder, a preset that can't be read). `tests/projectrules_ui_tests.cpp` drives Project > Project
-Rule Editor in the app with `ui::Automation`, selecting parts and markers.
+rules JSON refuses (brackets nesting too deep among it), which the commands' descriptions name; `project.findByRules` on
+every filter target, brackets, properties and the selection; `project.applyRules` moving, resizing, renaming and
+coloring parts and markers, track names, mute, solo, time domain and colors, delete with folders, locked parts, audio
+parts that hold locked events and the active marker track last, generated names without gaps, new random values without
+a seed, positions and lengths at the longest project, also on a linear track and at the lowest sample rate, cycle
+markers made zero long on musical and linear tracks, at the lowest sample rate, at a tempo change and at 1 BPM, cycle
+markers moved before the start keeping their length, markers moved while their track changes its time domain both ways,
+and repeatable random values, in one undo step, undone and redone; `event.set` renaming parts; the preset library
+(listing, saving, removing, the file in the settings folder, a preset that can't be read).
+`tests/projectrules_ui_tests.cpp` drives Project > Project Rule Editor in the app with `ui::Automation`, selecting
+parts and markers.

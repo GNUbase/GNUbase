@@ -155,14 +155,20 @@ namespace gnubase::ui
 		m_binding.send("transport.get", Json::object(),
 			[this, alive](const engine::Result& result)
 			{
-				if (!alive.expired() && result.ok())
+				if (alive.expired())
+					return;
+				if (result.ok())
 					followTransport(result.value);
+				answered();
 			});
 		m_binding.send("settings.get", {{"key", g_formatsKey}},
 			[this, alive](const engine::Result& result)
 			{
-				if (!alive.expired() && result.ok())
+				if (alive.expired())
+					return;
+				if (result.ok())
 					followFormats(result.value.at("value"));
+				answered();
 			});
 		m_binding.send("settings.get", {{"key", g_timeDisplayKey}},
 			[this, alive](const engine::Result& result)
@@ -352,7 +358,26 @@ namespace gnubase::ui
 				else
 					m_sent.reset(); // read after the tempo the gesture set
 				show();
+				if (!std::exchange(m_projectRead, true))
+					answered();
 			});
+	}
+
+	void TransportControls::onShown(std::function<void()> shown)
+	{
+		if (m_unanswered == 0)
+			shown();
+		else
+			m_shown = std::move(shown);
+	}
+
+	void TransportControls::answered()
+	{
+		if (m_unanswered == 0)
+			return;
+		--m_unanswered;
+		if (m_unanswered == 0 && m_shown)
+			std::exchange(m_shown, {})();
 	}
 
 	void TransportControls::followTransport(const Json& status)
@@ -718,6 +743,14 @@ namespace gnubase::ui
 		for (Rml::Element* element : all("[format=timeDisplay]"))
 			for (int size = 0; size <= g_largestSize; ++size)
 				element->SetClass("size-" + std::to_string(size), size == m_size);
+		// Each time display's format as a state class, so that the stylesheets give it the width of the format's widest
+		// text and running the transport doesn't change it (#1335).
+		for (Rml::Element* element : all("[time]"))
+		{
+			const std::string name = timeFormatName(format(attribute(*element, "format", "primary")));
+			for (const char* each : {"barsBeats", "seconds", "timecode", "samples", "userFrames"})
+				element->SetClass(std::string("format-") + each, name == each);
+		}
 		showTime();
 	}
 

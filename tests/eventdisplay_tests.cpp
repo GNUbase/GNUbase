@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -339,10 +340,146 @@ TEST_CASE("audio events show their waveforms from the engine's waveform overview
 	fixture.display.scrollTo(1.0);
 	REQUIRE(fixture.waitUntil([&]
 		{ return waveforms(fixture.document).size() == 1 && same(waveforms(fixture.document)[0]->channels(), fine); }));
+	// Scrolling within what it built draws it again without building it.
+	const ui::Waveform& back = *waveforms(fixture.document)[0];
+	for (int i = 0; i < 3; ++i)
+		fixture.step();
+	const uint64_t built = back.builds();
+	fixture.display.scrollTo(1.0);
+	fixture.step();
+	CHECK(back.builds() == built);
+	fixture.display.scrollTo(1.05);
+	fixture.step();
+	CHECK(back.builds() == built);
+	fixture.display.scrollTo(1.0);
+	fixture.step();
+
+	// Waveform Brightness draws them brighter; lanes lower than Smallest Track Height to Show Data show none
+	// (reference manual p. 1604, #1313).
+	CHECK(waveforms(fixture.document)[0]->GetAttribute<double>("brightness", 0.0) == Approx(0.5));
+	fixture.call("settings.set", {{"key", "ui.waveformBrightness"}, {"value", 80}});
+	REQUIRE(fixture.waitUntil(
+		[&] { return waveforms(fixture.document)[0]->GetAttribute<double>("brightness", 0.0) == Approx(0.8); }));
+	fixture.call("settings.set", {{"key", "ui.smallestTrackHeightForData"}, {"value", 41}});
+	REQUIRE(fixture.waitUntil([&] { return waveforms(fixture.document).empty(); }));
+	fixture.call("settings.set", {{"values", {{"ui.waveformBrightness", 50}, {"ui.smallestTrackHeightForData", 20}}}});
+	REQUIRE(fixture.waitUntil([&] { return waveforms(fixture.document).size() == 1; }));
 
 	// Removing the event removes its waveform, through any client.
 	fixture.call("history.undo");
 	REQUIRE(fixture.waitUntil([&] { return waveforms(fixture.document).empty(); }));
+}
+
+TEST_CASE("audio events' waveforms are in their events' colors, or else their tracks'", "[unit]")
+{
+	// #1312: the event display gives each waveform the color its event shows in.
+	const test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "take.wav";
+	test::Audio audio;
+	audio.samples.assign(4800, 0.5F);
+	test::writeWav(file, audio);
+
+	Fixture fixture;
+	const Json track =
+		fixture.call("track.add", {{"type", "audio"}, {"timeBase", "linear"}, {"color", "#204060"}}).at("track");
+	const Json media = fixture.call("media.add", {{"path", file.u8string()}}).at("media");
+	const Json clip = fixture.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	const Json event = fixture
+						   .call("audioEvent.add",
+							   {{"track", track.at("id")}, {"clip", clip.at("id")}, {"position", 0}, {"length", 4800}})
+						   .at("event");
+	const auto colored = [&](uint32_t color)
+	{
+		return fixture.waitUntil(
+			[&]
+			{
+				const std::vector<ui::Waveform*> list = waveforms(fixture.document);
+				return list.size() == 1 && list[0]->span().color == color;
+			});
+	};
+	REQUIRE(colored(0x204060ffU));
+	const ui::Waveform* wave = waveforms(fixture.document)[0];
+
+	// A color of its own, on the same element; back to the track's, which follows the track.
+	fixture.call("event.set", {{"events", {event.at("id")}}, {"color", "#a0c0e0"}});
+	REQUIRE(colored(0xa0c0e0ffU));
+	CHECK(waveforms(fixture.document)[0] == wave);
+	fixture.call("event.set", {{"events", {event.at("id")}}, {"color", nullptr}});
+	REQUIRE(colored(0x204060ffU));
+	fixture.call("track.set", {{"track", track.at("id")}, {"color", "#ffffff"}});
+	REQUIRE(colored(0xffffffffU));
+}
+
+namespace
+{
+	// A short sound, for events whose waveforms only need to show.
+	std::filesystem::path shortTake(const test::TempDir& dir)
+	{
+		const std::filesystem::path file = dir.path() / "take.wav";
+		test::Audio audio;
+		audio.samples.assign(4800, 0.5F);
+		test::writeWav(file, audio);
+		return file;
+	}
+
+	// Whether there are count waveforms, all of them in color, within five seconds.
+	bool waveformsIn(Fixture& fixture, size_t count, uint32_t color)
+	{
+		return fixture.waitUntil(
+			[&]
+			{
+				const std::vector<ui::Waveform*> list = waveforms(fixture.document);
+				return list.size() == count &&
+					std::all_of(list.begin(), list.end(),
+						[&](const ui::Waveform* wave) { return wave->span().color == color; });
+			});
+	}
+}
+
+TEST_CASE("an audio part's waveforms are in the part's color, its own or else its track's", "[unit]")
+{
+	// #1312: in the event display a part is what is selected and colored (reference manual p. 114), and its events
+	// show in it as their waveforms, in the part's color.
+	const test::TempDir dir;
+	Fixture fixture;
+	const Json track =
+		fixture.call("track.add", {{"type", "audio"}, {"timeBase", "linear"}, {"color", "#204060"}}).at("track");
+	const Json media = fixture.call("media.add", {{"path", shortTake(dir).u8string()}}).at("media");
+	const Json clip = fixture.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	const Json event = fixture
+						   .call("audioEvent.add",
+							   {{"track", track.at("id")}, {"clip", clip.at("id")}, {"position", 0}, {"length", 4800}})
+						   .at("event");
+	// The event's own color doesn't show: the part's does.
+	fixture.call("event.set", {{"events", {event.at("id")}}, {"color", "#ff0000"}});
+	const Json part = fixture.call("event.toPart", {{"events", {event.at("id")}}}).at("events").at(0);
+	REQUIRE(waveformsIn(fixture, 1, 0x204060ffU));
+	fixture.call("event.set", {{"events", {part}}, {"color", "#a0c0e0"}});
+	REQUIRE(waveformsIn(fixture, 1, 0xa0c0e0ffU));
+	fixture.call("event.set", {{"events", {part}}, {"color", "#c08040"}});
+	REQUIRE(waveformsIn(fixture, 1, 0xc08040ffU));
+	fixture.call("event.set", {{"events", {part}}, {"color", nullptr}});
+	REQUIRE(waveformsIn(fixture, 1, 0x204060ffU));
+}
+
+TEST_CASE("with a track's lanes shown, an event's waveforms on the track and on its lane are in its color", "[unit]")
+{
+	const test::TempDir dir;
+	Fixture fixture;
+	const Json track =
+		fixture.call("track.add", {{"type", "audio"}, {"timeBase", "linear"}, {"color", "#204060"}}).at("track");
+	const Json media = fixture.call("media.add", {{"path", shortTake(dir).u8string()}}).at("media");
+	const Json clip = fixture.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	const Json event = fixture
+						   .call("audioEvent.add",
+							   {{"track", track.at("id")}, {"clip", clip.at("id")}, {"position", 0}, {"length", 4800}})
+						   .at("event");
+	fixture.call("event.set", {{"events", {event.at("id")}}, {"lane", 1}, {"color", "#e0c0a0"}});
+	fixture.display.showLanes(track.at("id").get<uint64_t>(), true);
+	// One on the track's lane, where the event is in front, and one on lane 1.
+	REQUIRE(waveformsIn(fixture, 2, 0xe0c0a0ffU));
+	fixture.call("event.set", {{"events", {event.at("id")}}, {"color", nullptr}});
+	REQUIRE(waveformsIn(fixture, 2, 0x204060ffU));
 }
 
 TEST_CASE("waveforms of lanes scrolled out of view are clipped to the event area", "[unit]")
@@ -844,6 +981,174 @@ TEST_CASE("the cross-hair cursor follows the mouse over the event lanes", "[unit
 	fixture.automation.move(std::nullopt, fixture.lanesAt(321, 45));
 	fixture.step();
 	CHECK(!vertical.IsVisible());
+}
+
+TEST_CASE("an event display opens with the event display preferences stored before it", "[unit]")
+{
+	// #1313: a user who turned names off sees none at the next start. A second display opens in the same document
+	// after the preferences changed.
+	const test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "take.wav";
+	test::Audio audio;
+	audio.channels = 1;
+	for (int frame = 0; frame < 48000; ++frame)
+		audio.samples.push_back(0.5F * static_cast<float>(std::sin(frame / 50.0)));
+	test::writeWav(file, audio);
+	Fixture fixture;
+	const Json track = fixture.call("track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track");
+	const Json media = fixture.call("media.add", {{"path", file.u8string()}}).at("media");
+	const Json clip = fixture.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	fixture.call(
+		"audioEvent.add", {{"track", track.at("id")}, {"clip", clip.at("id")}, {"position", 48000}, {"length", 48000}});
+	const Json midi = fixture.call("track.add", {{"type", "midi"}}).at("track");
+	const Json part =
+		fixture.call("midiPart.add", {{"track", midi.at("id")}, {"position", 0}, {"length", 4 * g_quarter}})
+			.at("part")
+			.at("id");
+	fixture.call("note.add",
+		{{"part", part}, {"notes", {{{"position", 0}, {"length", g_quarter}, {"pitch", 60}, {"velocity", 0.5}}}}});
+	fixture.call("settings.set",
+		{{"values",
+			{{"ui.showEventNames", false}, {"ui.partDataMode", "off"}, {"ui.eventOpacity", 40},
+				{"ui.waveformBrightness", 80}}}});
+	// The change is announced before the second display opens: it reads what's stored.
+	REQUIRE(fixture.waitUntil([&fixture]
+		{ return fixture.element("event-lanes.events").GetAttribute<double>("body-opacity", 1.0) == Approx(0.4); }));
+	for (int i = 0; i < 5; ++i)
+		fixture.step();
+
+	Rml::Element* root = fixture.document.AppendChild(fixture.document.CreateElement("div"));
+	root->SetClass("event-display", true);
+	root->SetAttribute("style", "position: absolute; left: 0; top: 0; right: 0; bottom: 0;");
+	const ui::EventDisplay opened{fixture.engine, fixture.binding, *root};
+	const auto* lanes = dynamic_cast<ui::EventLanes*>(root->QuerySelector("event-lanes.events"));
+	const auto* names = dynamic_cast<ui::EventNames*>(root->QuerySelector(".event-area event-names"));
+	const auto* contents = dynamic_cast<ui::PartContents*>(root->QuerySelector(".event-area part-contents"));
+	REQUIRE(lanes != nullptr);
+	REQUIRE(names != nullptr);
+	REQUIRE(contents != nullptr);
+	const auto wave = [root] { return dynamic_cast<ui::Waveform*>(root->QuerySelector(".waveforms waveform")); };
+	REQUIRE(fixture.waitUntil(
+		[&]
+		{
+			return lanes->lanes().size() == 2 && !lanes->lanes()[1].events.empty() &&
+				lanes->GetAttribute<double>("body-opacity", 1.0) == Approx(0.4) && wave() != nullptr &&
+				wave()->GetAttribute<double>("brightness", 0.0) == Approx(0.8);
+		}));
+	// Lanes 40 dp high would show both names and notes with the defaults.
+	REQUIRE(names->lanes().size() == 2);
+	REQUIRE(contents->lanes().size() == 2);
+	CHECK(names->lanes()[0].names.empty());
+	CHECK(names->lanes()[1].names.empty());
+	CHECK(contents->lanes()[1].parts.empty());
+
+	fixture.call("settings.set",
+		{{"values",
+			{{"ui.showEventNames", true}, {"ui.partDataMode", "lines"}, {"ui.eventOpacity", 100},
+				{"ui.waveformBrightness", 50}}}});
+	REQUIRE(fixture.waitUntil([&] { return names->lanes()[1].names.size() == 1; }));
+}
+
+TEST_CASE("events show their names and MIDI parts their notes and controllers, as the preferences say", "[unit]")
+{
+	// Show Event Names, Smallest Track Height to Show Name and to Show Data, Part Data Mode and Show Controllers
+	// (reference manual pp. 1603-1604, 1607; #1313).
+	Fixture fixture;
+	fixture.addEvents();
+	const Json project = fixture.call("project.get");
+	const Json part = project.at("midiParts").at(0).at("id");
+	const auto midi = project.at("tracks").at(1).at("id").get<uint64_t>();
+	const std::string clip = project.at("clips").at(0).at("name").get<std::string>();
+	CHECK(!clip.empty());
+	fixture.call("event.set", {{"events", {part}}, {"name", "Keys"}});
+	fixture.call("note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", 0}, {"length", g_quarter}, {"pitch", 60}, {"velocity", 0.5}},
+					{{"position", g_quarter}, {"length", g_quarter}, {"pitch", 64}, {"velocity", 0.5}}}}});
+	fixture.call("controller.add",
+		{{"part", part}, {"controllers", {{{"position", g_quarter}, {"type", "pitchBend"}, {"value", 0.75}}}}});
+	auto* names = dynamic_cast<ui::EventNames*>(&fixture.element(".event-area event-names"));
+	auto* contents = dynamic_cast<ui::PartContents*>(&fixture.element(".event-area part-contents"));
+	REQUIRE(names != nullptr);
+	REQUIRE(contents != nullptr);
+	const auto shown = [&]
+	{
+		return names->lanes().size() == 2 && names->lanes()[1].names.size() == 1 &&
+			names->lanes()[1].names[0].text == "Keys" && contents->lanes().size() == 2 &&
+			contents->lanes()[1].parts.size() == 1 && contents->lanes()[1].parts[0].notes.size() == 2 &&
+			contents->lanes()[1].parts[0].controllers.size() == 1;
+	};
+	REQUIRE(fixture.waitUntil(shown));
+
+	// An audio event shows its clip's name, a part its own; both where they are, on lanes as high as the events'.
+	REQUIRE(names->lanes()[0].names.size() == 1);
+	CHECK(names->lanes()[0].names[0].text == clip);
+	CHECK(names->lanes()[0].names[0].start == Approx(2.0));
+	CHECK(names->lanes()[0].names[0].length == Approx(0.5));
+	CHECK(names->lanes()[1].names[0].start == Approx(1.0));
+	CHECK(names->lanes()[1].names[0].length == Approx(2.0));
+	CHECK(names->lanes()[0].height == Approx(ui::g_trackHeight));
+	CHECK(contents->lanes()[1].height == Approx(ui::g_trackHeight));
+	// The part's notes and controllers in seconds: a quarter is half a second at 120 BPM.
+	CHECK(contents->lanes()[0].parts.empty());
+	const ui::PartContents::Part& held = contents->lanes()[1].parts[0];
+	CHECK(held.start == Approx(1.0));
+	CHECK(held.length == Approx(2.0));
+	CHECK(held.notes[0].start == Approx(1.0));
+	CHECK(held.notes[0].length == Approx(0.5));
+	CHECK(held.notes[0].pitch == 60);
+	CHECK(held.notes[1].start == Approx(1.5));
+	CHECK(held.notes[1].pitch == 64);
+	CHECK(held.controllers[0].position == Approx(1.5));
+	CHECK(held.controllers[0].value == Approx(0.75));
+
+	// Lanes lower than the smallest heights show no names, then no data; a higher track shows them again.
+	fixture.call("settings.set", {{"key", "ui.smallestTrackHeightForName"}, {"value", 41}});
+	REQUIRE(fixture.waitUntil([&] { return names->lanes()[1].names.empty(); }));
+	CHECK(names->lanes()[0].names.empty());
+	CHECK(contents->lanes()[1].parts.size() == 1);
+	fixture.call("settings.set", {{"key", "ui.smallestTrackHeightForData"}, {"value", 41}});
+	REQUIRE(fixture.waitUntil([&] { return contents->lanes()[1].parts.empty(); }));
+	fixture.display.setTrackHeights({midi}, 60.0);
+	REQUIRE(fixture.waitUntil(shown));
+	CHECK(names->lanes()[0].names.empty()); // the audio track is still 40 dp high
+
+	// Without Show Event Names no names, without Show Controllers no controllers, with Part Data Mode Off no data.
+	fixture.call("settings.set", {{"values", {{"ui.showEventNames", false}, {"ui.showControllers", false}}}});
+	REQUIRE(fixture.waitUntil([&] { return names->lanes()[1].names.empty(); }));
+	REQUIRE(contents->lanes()[1].parts.size() == 1);
+	CHECK(contents->lanes()[1].parts[0].controllers.empty());
+	CHECK(contents->lanes()[1].parts[0].notes.size() == 2);
+	fixture.call("settings.set", {{"key", "ui.partDataMode"}, {"value", "off"}});
+	REQUIRE(fixture.waitUntil([&] { return contents->lanes()[1].parts.empty(); }));
+
+	// The others reach the canvases' attributes and a state of the event display for the style sheets.
+	fixture.call("settings.set",
+		{{"values",
+			{{"ui.eventOpacity", 40}, {"ui.noteBrightness", 80}, {"ui.hideTruncatedEventNames", true},
+				{"ui.highlightSelectedEventBorders", true}}}});
+	Rml::Element& lanes = fixture.element("event-lanes.events");
+	REQUIRE(fixture.waitUntil([&] { return lanes.GetAttribute<double>("body-opacity", 1.0) == Approx(0.4); }));
+	for (const char* overlay : {"event-lanes.selected-events", "event-lanes.muted-events", "event-lanes.folder-data"})
+	{
+		INFO(overlay);
+		CHECK(fixture.element(overlay).GetAttribute<double>("body-opacity", 1.0) == Approx(0.4));
+	}
+	CHECK(contents->GetAttribute<double>("brightness", 0.0) == Approx(0.8));
+	CHECK(names->HasAttribute("hide-truncated"));
+	CHECK(fixture.element("#display").IsClassSet("highlight-selected-borders"));
+
+	// Back to the defaults, which a newly opened event display starts with.
+	fixture.call("settings.set",
+		{{"values",
+			{{"ui.showEventNames", true}, {"ui.showControllers", true}, {"ui.partDataMode", "lines"},
+				{"ui.smallestTrackHeightForName", 28}, {"ui.smallestTrackHeightForData", 20}, {"ui.eventOpacity", 100},
+				{"ui.noteBrightness", 50}, {"ui.hideTruncatedEventNames", false},
+				{"ui.highlightSelectedEventBorders", false}}}});
+	REQUIRE(fixture.waitUntil([&] { return !fixture.element("#display").IsClassSet("highlight-selected-borders"); }));
+	CHECK(!names->HasAttribute("hide-truncated"));
+	CHECK(lanes.GetAttribute<double>("body-opacity", 0.0) == Approx(1.0));
 }
 
 TEST_CASE("the ruler shows the chosen time format", "[unit]")

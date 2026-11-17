@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/audiofile/audiofile.h"
+#include "engine/dawproject/dawproject.h"
 #include "engine/document/document.h"
+#include "engine/document/serialize.h"
 #include "engine/engine.h"
 #include "engine/time/tempomap.h"
+#include "testutils/heldjob.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -11,6 +14,7 @@
 #include <pugixml.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -18,6 +22,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -25,6 +30,7 @@ using namespace gnubase::engine;
 namespace test = gnubase::test;
 using Catch::Matchers::ContainsSubstring;
 using gnubase::test::readZip;
+using gnubase::test::settlePeaks;
 using gnubase::test::writeZip;
 using gnubase::time::g_ticksPerQuarter;
 
@@ -393,6 +399,123 @@ TEST_CASE("a GNUbase project comes back exactly from its DAWproject file", "[int
 	}
 }
 
+TEST_CASE("a missing media file is referred to by its path, and loading extracts over no file with other content",
+	"[integration]")
+{
+	const test::TempDir dir;
+	const std::string audio = utf8(dir.path() / "take.wav");
+	writeWav(audio, 44100.0, 1, 44100);
+	Engine engine;
+	Client client(engine);
+	buildProject(client, audio);
+	const std::string file = utf8(dir.path() / "song.dawproject");
+	const std::string media = utf8(dir.path() / "media");
+	run(client, "project.save", {{"path", file}});
+
+	// A file that is there with other content stays; the entry goes beside it under a numbered name.
+	const std::filesystem::path extracted = dir.path() / "media" / "audio" / "take.wav";
+	std::filesystem::create_directories(extracted.parent_path());
+	writeWav(utf8(extracted), 44100.0, 1, 100);
+	run(client, "project.load", {{"path", file}, {"mediaFolder", media}});
+	CHECK(run(client, "project.get").at("media")[0].at("path") == utf8(dir.path() / "media" / "audio" / "2-take.wav"));
+	CHECK(std::filesystem::file_size(extracted) < std::filesystem::file_size(std::filesystem::u8path(audio)));
+	// A file with the entry's content is used as it is.
+	run(client, "project.load", {{"path", file}, {"mediaFolder", media}});
+	CHECK(run(client, "project.get").at("media")[0].at("path") == utf8(dir.path() / "media" / "audio" / "2-take.wav"));
+
+	// Saved while its media file is missing, the project refers to the file where it was.
+	settlePeaks(client);
+	std::filesystem::remove(std::filesystem::u8path(audio));
+	run(client, "project.load", {{"path", file}, {"mediaFolder", utf8(dir.path() / "other")}});
+	settlePeaks(client);
+	std::filesystem::remove_all(dir.path() / "other");
+	// The result lists it, for the UI to say that the file has no copy of it (#1614).
+	CHECK(run(client, "project.save", {{"path", file}}).at("missing") ==
+		Json::array({utf8(dir.path() / "other" / "audio" / "take.wav")}));
+	// So does a new version's (#1736).
+	CHECK(run(client, "project.saveNewVersion").at("missing") ==
+		Json::array({utf8(dir.path() / "other" / "audio" / "take.wav")}));
+	run(client, "project.load", {{"path", file}, {"mediaFolder", media}});
+	CHECK(run(client, "project.get").at("media")[0].at("path") == utf8(dir.path() / "other" / "audio" / "take.wav"));
+	CHECK(run(client, "project.save", {{"path", file}, {"embedMedia", false}}).at("missing").empty());
+	const Json exported = run(client, "track.export",
+		{{"tracks", Json::array({run(client, "project.get").at("audioEvents")[0].at("track")})},
+			{"path", utf8(dir.path() / "tracks.dawproject")}});
+	CHECK(exported.at("missing").size() == 1);
+}
+
+#ifndef _WIN32
+// Not on Windows, where a folder's permissions don't keep its files from being found.
+TEST_CASE("a save fails on a media file that the file system can't say is there", "[integration]")
+{
+	// It isn't missing, so the save doesn't refer to it instead of having it: it fails and leaves the file as it was
+	// (#1614, #1736).
+	namespace fs = std::filesystem;
+	const test::TempDir dir;
+	const fs::path locked = dir.path() / "locked";
+	fs::create_directories(locked);
+	writeWav(utf8(locked / "take.wav"), 44100.0, 1, 4410);
+	Engine engine;
+	Client client(engine);
+	run(client, "media.add", {{"path", utf8(locked / "take.wav")}});
+	settlePeaks(client);
+	const std::string file = utf8(dir.path() / "song.dawproject");
+	run(client, "project.save", {{"path", file}, {"embedMedia", false}});
+	const auto size = fs::file_size(fs::u8path(file));
+	fs::permissions(locked, fs::perms::none);
+	std::error_code error;
+	if (fs::exists(locked / "take.wav", error) || !error)
+	{
+		fs::permissions(locked, fs::perms::owner_all);
+		SKIP("the folder can be searched here anyway, e.g. by root");
+	}
+	const Result failed = client.call("project.save", Json::object());
+	fs::permissions(locked, fs::perms::owner_all); // before a check can end the test, so that the folder can go
+	CHECK(!failed.ok());
+	CHECK_THAT(failed.error, ContainsSubstring("take.wav"));
+	CHECK(fs::file_size(fs::u8path(file)) == size);
+	CHECK(!fs::exists(fs::u8path(file + ".saving")));
+}
+#endif
+
+TEST_CASE("projects saved on two threads at the same time both load", "[integration]")
+{
+	// Backup jobs save beside each other and beside a save. Unless built with MINIZ_NO_TIME, miniz stamps ZIP entries
+	// through localtime(), whose result is one static struct outside Windows: the tsan job fails this test then
+	// (#1425).
+	const test::TempDir dir;
+	Engine engine;
+	Client client(engine);
+	run(client, "track.add", {{"type", "audio"}});
+	const Project project = projectFromJson(run(client, "project.get"));
+	const std::vector<std::string> files{utf8(dir.path() / "one.dawproject"), utf8(dir.path() / "two.dawproject")};
+	std::vector<std::string> errors(files.size());
+	std::vector<std::thread> threads;
+	threads.reserve(files.size());
+	for (size_t i = 0; i < files.size(); ++i)
+		threads.emplace_back(
+			[&project, &file = files[i], &error = errors[i]]
+			{
+				try
+				{
+					for (int save = 0; save < 10; ++save)
+						saveDawProject(project, file, DawProjectSaveOptions());
+				}
+				catch (const std::exception& e)
+				{
+					error = e.what();
+				}
+			});
+	for (std::thread& thread : threads)
+		thread.join();
+	for (size_t i = 0; i < files.size(); ++i)
+	{
+		INFO(errors[i]);
+		CHECK(errors[i].empty());
+		CHECK(loadDawProject(files[i], utf8(dir.path() / "media")).tracks == project.tracks);
+	}
+}
+
 TEST_CASE("without GNUbase's entry, a project is read from project.xml", "[integration]")
 {
 	const test::TempDir dir;
@@ -558,8 +681,12 @@ TEST_CASE("a project exported from Bitwig Studio loads", "[integration]")
 	const Json& event = project.at("audioEvents")[0];
 	CHECK(event.at("position") == 0);
 	CHECK(event.at("offset") == 0);
-	CHECK(event.at("length") == 135530); // eight beats at 149 BPM are longer than the file
+	CHECK(event.at("length") == 135530); // the whole file, which its Warps play as eight beats
+	// Musical mode at the tempo that puts the file's 2.8235 seconds on eight beats, in the file's own clip.
+	REQUIRE(project.at("clips").size() == 1);
 	CHECK(project.at("clips")[0].at("name") == "Drumfunk3 170bpm");
+	CHECK(project.at("clips")[0].at("warp").at("musical") == true);
+	CHECK(std::abs(project.at("clips")[0].at("warp").at("tempo").get<double>() - 170.0) < 0.1);
 	CHECK(project.at("media")[0].at("sampleRate").get<double>() == 48000.0);
 	CHECK(std::filesystem::exists(std::filesystem::u8path(project.at("media")[0].at("path").get<std::string>())));
 

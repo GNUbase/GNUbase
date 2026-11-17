@@ -13,14 +13,20 @@
 #include "engine/midi/drummaps.h"
 #include "engine/midi/midivalues.h"
 #include "engine/midi/patterns.h"
+#include "engine/midi/trackchannel.h"
+#include "engine/processors/drummachine.h"
 
 #include <algorithm>
 #include <array>
+#include <bitset>
 #include <cmath>
+#include <cstddef>
 #include <limits>
 #include <map>
 #include <numeric>
+#include <optional>
 #include <set>
+#include <string>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -29,6 +35,22 @@ namespace gnubase::engine
 {
 	namespace
 	{
+		// An expression's bit in RenderNote::startsWith: tuning, pressure and brightness have MPE initial values.
+		uint8_t initialBit(plugin::NoteExpression type)
+		{
+			switch (type)
+			{
+			case plugin::NoteExpression::Tuning:
+				return 1;
+			case plugin::NoteExpression::Pressure:
+				return 2;
+			case plugin::NoteExpression::Brightness:
+				return 4;
+			default:
+				return 0;
+			}
+		}
+
 		time::Samples toSamples(const Project& project, time::Position position)
 		{
 			return time::toSamples(position, project.tempo, project.sampleRate);
@@ -39,40 +61,107 @@ namespace gnubase::engine
 			return project.tempo.toSamples(tick, project.sampleRate);
 		}
 
-		// The channel a note plays on: a sound slot's (#175), else its drum sound's (#129), else its own.
-		uint8_t playedChannel(const Note& note, const DrumSound* sound, const SoundSlot* slot)
+		// The channel a note plays on: a sound slot's (#175), else its drum sound's (#129), else its track's, else
+		// its own.
+		uint8_t playedChannel(
+			const Note& note, const DrumSound* sound, const SoundSlot* slot, std::optional<int> trackChannel)
 		{
 			if (slot != nullptr && slot->channel >= 0)
 				return static_cast<uint8_t>(slot->channel);
 			if (sound != nullptr && sound->channel >= 0)
 				return static_cast<uint8_t>(sound->channel);
-			return note.channel;
+			return static_cast<uint8_t>(trackChannel.value_or(note.channel));
 		}
 
-		// The output events of a part's sound slots (#175, reference manual p. 1270), in the order of the notes'
-		// starts: where the slot changes, the off events of the one before, on the channel its notes played on, and
-		// the on events of the new one, on the channel of the note. Key switches play for a sample, ending where the
-		// note starts; a jump after them sends them again (MidiSequencer::chaseNotes).
-		void addOutputEvents(const Project& project, const MidiPart& part, time::Ticks start, time::Ticks end,
-			int32_t index, const ArticulationMap& map, const std::map<ObjectId, size_t>& slots, const DrumMap* drums,
-			RenderChannel& channel)
+		// A slot's Attack Compensation or Separation (p. 1271), in samples.
+		time::Samples milliseconds(const Project& project, int value)
 		{
-			// Notes that don't play (their probability, a muted drum sound) select no slot.
-			std::vector<const Note*> notes;
+			return std::llround(value * project.sampleRate / 1000.0);
+		}
+
+		// Solo Instrument (#1493, reference manual p. 1223): the pitches of the track's notes that Project::soloNotes
+		// names, whose sounds alone play; none if it names none of the track's.
+		std::bitset<g_drumSounds> soloedSounds(const Project& project, ObjectId track)
+		{
+			std::bitset<g_drumSounds> pitches;
+			for (const auto& [partId, noteId] : project.soloNotes)
+				if (const auto part = project.midiParts.find(partId);
+					part != project.midiParts.end() && part->second.track == track)
+					if (const auto note = part->second.notes.find(noteId); note != part->second.notes.end())
+						pitches.set(note->second.pitch);
+			return pitches;
+		}
+
+		// A note that selects a sound slot (#175): where it starts in the project, where it plays (earlier by its
+		// slot's Attack Compensation, unclamped so that it orders the notes), its slot, the channel it plays on and
+		// the add-on slots it plays besides (#1113).
+		struct SlotNote
+		{
+			time::Ticks order = 0;
+			time::Samples plays = 0;
+			const SoundSlot* slot = nullptr;
+			uint8_t channel = 0;
+			std::vector<const SoundSlot*> addOns;
+		};
+
+		// Whether the track's drum map plays a note of the pitch: not a muted sound's, nor while Solo Instrument
+		// solos others (soloed).
+		bool soundPlays(const DrumMap* drums, const std::bitset<g_drumSounds>& soloed, uint8_t pitch)
+		{
+			return drums == nullptr || (!drums->sounds.at(pitch).mute && (soloed.none() || soloed.test(pitch)));
+		}
+
+		// The notes of a part that select a sound slot: notes that don't play (their probability, a muted drum
+		// sound or one that Solo Instrument silences) select none.
+		void addSlotNotes(const Project& project, const MidiPart& part, time::Ticks start, time::Ticks end,
+			const ArticulationMap& map, const std::map<ObjectId, size_t>& slots, const DrumMap* drums,
+			const std::bitset<g_drumSounds>& soloed, std::vector<SlotNote>& into)
+		{
+			const std::optional<int> trackChannel = midi::trackMidiChannel(project, part.track);
+			const std::map<ObjectId, std::vector<size_t>> addOns = midi::addOnSlots(map, part);
 			for (const auto& [id, note] : part.notes)
 				if (note.position < end - start && slots.count(id) != 0 && midi::notePlays(note, part.id) &&
-					(drums == nullptr || !drums->sounds.at(note.pitch).mute))
-					notes.push_back(&note);
-			std::stable_sort(
-				notes.begin(), notes.end(), [](const Note* a, const Note* b) { return a->position < b->position; });
-			const SoundSlot* previous = nullptr;
-			uint8_t previousChannel = 0;
-			for (const Note* note : notes)
+					soundPlays(drums, soloed, note.pitch))
+				{
+					const SoundSlot& slot = map.slots.at(slots.at(id));
+					std::vector<const SoundSlot*> added;
+					if (const auto found = addOns.find(id); found != addOns.end())
+						for (const size_t index : found->second)
+							added.push_back(&map.slots.at(index));
+					const time::Samples plays = toSamples(project, start + std::max<time::Ticks>(note.position, 0)) -
+						milliseconds(project, slot.attack);
+					into.push_back({start + note.position, plays, &slot,
+						playedChannel(note, nullptr, &slot, trackChannel), std::move(added)});
+				}
+		}
+
+		// The output events of a track's sound slots (#175, reference manual p. 1270), across its parts in the order
+		// the notes play in, earlier by their slots' Attack Compensation (#1491, #1113): where a note's slot or
+		// channel differs from the last one the track sent, the off events of that one, on the channel its notes played
+		// on, and the on events of the new one, on the channel of the note. Key switches play for a sample, ending a
+		// sample before the note starts, or by the slot's Separation (p. 1271) earlier, with its controller and program
+		// changes (#1667), but after the start of the note before, which would play the slot otherwise; a jump after
+		// them sends them again (MidiSequencer::chaseNotes). The controller and program changes are the track's
+		// (g_soundSlotPart), not the part's of the note, so a chase limited to parts finds them where a part continues
+		// the slot of another. Add-on slots go on the channel of the notes that play them and follow them to another
+		// channel.
+		void addOutputEvents(const Project& project, std::vector<SlotNote>& notes, RenderChannel& channel)
+		{
+			std::stable_sort(notes.begin(), notes.end(), [](const SlotNote& a, const SlotNote& b)
+				{ return std::tie(a.plays, a.order) < std::tie(b.plays, b.order); });
+			const SlotNote* previous = nullptr;                       // the last one whose slot the track sent
+			std::optional<time::Samples> before;                      // where the note before played
+			std::vector<std::pair<const SoundSlot*, uint8_t>> addOns; // the add-on slots on, with their channel
+			for (const SlotNote& note : notes)
 			{
-				const SoundSlot& slot = map.slots.at(slots.at(note->id));
-				if (&slot == previous)
-					continue;
-				const time::Samples at = toSamples(project, start + std::max<time::Ticks>(note->position, 0));
+				const time::Samples at = std::max<time::Samples>(note.plays, 0);
+				const int separation = note.slot->separation;
+				time::Samples keySwitch = at - std::max<time::Samples>(milliseconds(project, separation), 1);
+				if (before.has_value())
+					keySwitch = std::max(keySwitch, std::min(*before + 1, at - 1));
+				keySwitch = std::max<time::Samples>(keySwitch, 0);
+				before = at;
+				const time::Samples controllers = separation > 0 ? keySwitch : at;
 				const auto send = [&](const SoundSlot& from, bool off, uint8_t on)
 				{
 					for (const OutputEvent& output : from.outputs)
@@ -80,46 +169,80 @@ namespace gnubase::engine
 						if (output.off != off)
 							continue;
 						if (output.status == OutputStatus::Note)
-							channel.notes.push_back({std::max<time::Samples>(at - 1, 0), std::max<time::Samples>(at, 1),
-								output.data1, midi::velocityFromMidi1(output.data2), on, true});
+							channel.notes.push_back({keySwitch, std::max<time::Samples>(keySwitch + 1, 1), output.data1,
+								midi::velocityFromMidi1(output.data2), on, true, 0});
 						else if (output.status == OutputStatus::Controller)
-							channel.controllers.push_back({at, ControllerType::Control, output.data1,
-								midi::controllerFromMidi1(output.data2), on, {}, index});
+							channel.controllers.push_back({controllers, ControllerType::Control, output.data1,
+								midi::controllerFromMidi1(output.data2), on, {}, g_soundSlotPart});
 						else
-							channel.controllers.push_back(
-								{at, ControllerType::Program, output.data1, g_noBank, on, {}, index});
+							channel.controllers.push_back({controllers, ControllerType::Program, output.data1, g_noBank,
+								on, {}, g_soundSlotPart});
 					}
 				};
-				if (previous != nullptr)
-					send(*previous, true, previousChannel);
-				const uint8_t played = playedChannel(*note, nullptr, &slot);
-				send(slot, false, played);
-				previous = &slot;
-				previousChannel = played;
+				// A slot that stays follows the notes to another channel of their own, as the add-ons do (#1718).
+				if (previous == nullptr || note.slot != previous->slot || note.channel != previous->channel)
+				{
+					if (previous != nullptr)
+						send(*previous->slot, true, previous->channel);
+					send(*note.slot, false, note.channel);
+					previous = &note;
+				}
+				// Add-on slots (#1113): the off events of those that end, on the channel they went to, and the on
+				// events of those that start; one that stays goes to the note's channel where it differs.
+				for (auto on = addOns.begin(); on != addOns.end();)
+				{
+					const bool stays =
+						std::find(note.addOns.begin(), note.addOns.end(), on->first) != note.addOns.end();
+					if (stays && on->second == note.channel)
+					{
+						++on;
+						continue;
+					}
+					send(*on->first, true, on->second);
+					if (!stays)
+					{
+						on = addOns.erase(on);
+						continue;
+					}
+					on->second = note.channel;
+					send(*on->first, false, note.channel);
+					++on;
+				}
+				for (const SoundSlot* addOn : note.addOns)
+					if (std::none_of(addOns.begin(), addOns.end(),
+							[addOn](const std::pair<const SoundSlot*, uint8_t>& on) { return on.first == addOn; }))
+					{
+						send(*addOn, false, note.channel);
+						addOns.emplace_back(addOn, note.channel);
+					}
 			}
 		}
 
 		// Adds a part's notes and controllers, cut at the part's end, the notes as the chord track maps them if the
-		// track follows it (#173), then as the channel's MIDI modifiers, the part's transpose and velocity and global
-		// transposition (#168) at their start play them. follower is the part's track's.
+		// track follows it (#173), then as the channel's MIDI modifiers, the part's velocity and the transposition it
+		// plays its notes with (#168, #896) at their start play them. follower is the part's track's.
+		// slotNotes, if any, gets the notes that select a sound slot of the track's articulation map.
 		void compilePart(const Project& project, ObjectId partId, const MidiPart& part, const ChordFollower& follower,
-			RenderChannel& channel)
+			RenderChannel& channel, std::vector<SlotNote>* slotNotes)
 		{
 			const time::Ticks start = time::toTicks(part.position, project.tempo, project.sampleRate);
 			const time::Position endPosition{part.position.base, part.position.value + part.length};
 			const time::Ticks end = time::toTicks(endPosition, project.tempo, project.sampleRate);
 			const auto index = static_cast<int32_t>(channel.midiParts.size());
 			channel.midiParts.push_back({toSamples(project, start), toSamples(project, end)});
-			// The part's transpose and velocity add to the track's modifiers, also while those are bypassed.
+			// The part's velocity adds to the track's modifiers, also while those are bypassed; its transpose plays
+			// in globalTranspose's sum per note, which Keep Transpose in Octave Range folds as one (#896).
 			midi::Modifiers modifiers = channel.modifiers.bypass ? midi::Modifiers() : channel.modifiers;
-			modifiers.transpose += part.transpose;
 			modifiers.velocityShift += part.velocity;
 			// The track's drum map plays each note's sound: its O-note, on its channel unless that is Any, and not
 			// at all if it is muted (#129). The modifiers then apply to the O-note.
 			const DrumMap* map = midi::drumMapOf(project, part.track);
+			const std::bitset<g_drumSounds> soloed =
+				map != nullptr ? soloedSounds(project, part.track) : std::bitset<g_drumSounds>();
 			// The track's articulation map plays each note's sound slot (#175): the slot's output events where the
 			// slot changes, and the slot's MIDI modifiers.
 			const ArticulationMap* articulations = midi::articulationMapOf(project, part.track);
+			const std::optional<int> trackChannel = midi::trackMidiChannel(project, part.track);
 			const std::map<ObjectId, size_t> slots =
 				articulations != nullptr ? midi::soundSlots(*articulations, part) : std::map<ObjectId, size_t>();
 			const auto slotOf = [&](ObjectId note) -> const SoundSlot*
@@ -128,16 +251,16 @@ namespace gnubase::engine
 				return articulations != nullptr && found != slots.end() ? &articulations->slots.at(found->second)
 																		: nullptr;
 			};
-			if (articulations != nullptr && !slots.empty())
-				addOutputEvents(project, part, start, end, index, *articulations, slots, map, channel);
+			if (slotNotes != nullptr && articulations != nullptr && !slots.empty())
+				addSlotNotes(project, part, start, end, *articulations, slots, map, soloed, *slotNotes);
 			for (const auto& [id, note] : part.notes)
 			{
 				// Notes the part hides beyond its end don't play, wherever a random position would move them.
 				if (note.position >= end - start || !midi::notePlays(note, part.id))
 					continue;
-				const DrumSound* sound = map != nullptr ? &map->sounds.at(note.pitch) : nullptr;
-				if (sound != nullptr && sound->mute)
+				if (!soundPlays(map, soloed, note.pitch))
 					continue;
+				const DrumSound* sound = map != nullptr ? &map->sounds.at(note.pitch) : nullptr;
 				const SoundSlot* slot = slotOf(id);
 				const uint64_t seed = midi::noteSeed(partId, id);
 				uint8_t pitch = sound != nullptr ? sound->oNote : note.pitch;
@@ -146,9 +269,8 @@ namespace gnubase::engine
 				uint16_t velocity = midi::playedVelocity(note, part.id);
 				if (slot != nullptr)
 				{
-					pitch = static_cast<uint8_t>(std::clamp(pitch + slot->transpose, 0, 127));
-					velocity = static_cast<uint16_t>(std::clamp<int64_t>(
-						(int64_t{velocity} * slot->velocity) / 100, 1, std::numeric_limits<uint16_t>::max()));
+					pitch = static_cast<uint8_t>(std::clamp(pitch + slot->transpose, slot->minPitch, slot->maxPitch));
+					velocity = midi::slotVelocity(*slot, velocity);
 				}
 				midi::Modifiers transposed = modifiers;
 				transposed.transpose += globalTranspose(project, part, toSamples(project, start + note.position));
@@ -165,13 +287,49 @@ namespace gnubase::engine
 					slot != nullptr ? std::max<time::Ticks>((note.length * slot->length) / 100, 1) : note.length;
 				const time::Ticks length = note.length > 0 ? midi::modifyLength(modifiers, seed, slotLength) : 0;
 				const time::Ticks noteEnd = std::min(start + position + length, end);
-				channel.notes.push_back({toSamples(project, start + position), toSamples(project, noteEnd), pitch,
-					velocity, playedChannel(note, sound, slot), false});
+				// Attack Compensation starts the note earlier (p. 1271), with its expression.
+				const time::Samples noteStart = toSamples(project, start + position);
+				const time::Samples early =
+					slot != nullptr ? std::min(milliseconds(project, slot->attack), noteStart) : time::Samples{0};
+				channel.notes.push_back({noteStart - early, toSamples(project, noteEnd) - early, pitch, velocity,
+					playedChannel(note, sound, slot, trackChannel), false, 0});
+				for (const ExpressionPoint& point : note.expressions)
+				{
+					if (start + position + point.position >= noteEnd)
+						continue;
+					channel.expressions.push_back({toSamples(project, start + position + point.position) - early, pitch,
+						channel.notes.back().channel, point.type, point.value});
+					// A point within the note's first sample is one of its initial ones, as it plays at its start.
+					if (channel.expressions.back().position == channel.notes.back().start)
+						channel.notes.back().startsWith |= initialBit(point.type);
+				}
 			}
 			for (const auto& [id, controller] : part.controllers)
 				if (controller.position < end - start && controller.type != ControllerType::Articulation)
 					channel.controllers.push_back({toSamples(project, start + controller.position), controller.type,
-						controller.number, controller.value, controller.channel, controller.data, index});
+						controller.number, controller.value,
+						static_cast<uint8_t>(trackChannel.value_or(controller.channel)), controller.data, index});
+		}
+
+		// MPE's initial values: a note on a MIDI channel gets the initial value of each of tuning, pressure and
+		// brightness that the channel's notes express and that it has no point of at its start (RenderNote::
+		// startsWith), a centered bend, no pressure and CC 74 at 64, so that as MIDI 1.0 it doesn't start at what the
+		// channel's previous note left. Of what the channel's notes don't express it gets nothing.
+		void addInitialExpressions(const std::vector<RenderNote>& notes, std::vector<RenderExpression>& expressions)
+		{
+			using plugin::NoteExpression;
+			// By their bits in RenderNote::startsWith, with their values from defaultExpression.
+			constexpr std::array<NoteExpression, 3> initial = {
+				NoteExpression::Tuning, NoteExpression::Pressure, NoteExpression::Brightness};
+			std::array<uint8_t, 16> expressed{}; // by MIDI channel, as RenderNote::startsWith
+			for (const RenderExpression& point : expressions)
+				expressed.at(point.channel % 16) |= initialBit(point.type);
+			for (const RenderNote& note : notes)
+				for (size_t i = 0; i < initial.size(); ++i)
+					if (!note.keySwitch && note.end > note.start &&
+						(expressed.at(note.channel % 16) & ~note.startsWith & (1U << i)) != 0)
+						expressions.push_back({note.start, note.pitch, note.channel, initial.at(i),
+							defaultExpression(initial.at(i)).value_or(0.0)});
 		}
 
 		// An audio part's event plays only within the part (#471): cut at its edges, where its fades are cut short. A
@@ -205,16 +363,51 @@ namespace gnubase::engine
 			return event.length > 0;
 		}
 
-		// An event of a warped clip plays a media file of its own (RenderMedia::warp), whose frames start at the
-		// event's start: its clip fades and its volume curve where its audio plays.
+		// Whether anything can shift an audio event's pitch: its own Transpose, or, while it follows global
+		// transposition, a step from its root key or transpose events that play (#1555). Others get no pitch map, so
+		// that projects without global transposition pay nothing for it.
+		bool mayShift(const Project& project, const AudioEvent& event)
+		{
+			return event.transpose != 0 ||
+				(!event.independent &&
+					(rootKeyTranspose(project, event) != 0 ||
+						(!project.transpose.mute && !project.transpose.events.empty())));
+		}
+
+		// The pitch map of an audio event that global transposition shifts (#1368): the semitones it plays shifted by
+		// from its start, and from each transpose event within it, in its media file's frames from its start, where
+		// its warp map plays them. Empty when it plays as it is.
+		std::vector<dsp::PitchPoint> pitchMap(const Project& project, const AudioEvent& event, time::Samples start,
+			const std::vector<dsp::WarpPoint>& map)
+		{
+			const double ratio = project.sampleRate / project.media.at(project.clips.at(event.clip).media).sampleRate;
+			const auto end = start + std::llround(map.back().target * ratio);
+			std::vector<dsp::PitchPoint> pitch{{0.0, static_cast<double>(globalTranspose(project, event, start))}};
+			bool shifted = pitch.front().semitones != 0.0;
+			if (!event.independent && !project.transpose.mute)
+				for (const TransposeEvent& transpose : project.transpose.events)
+					if (const time::Samples at = toSamples(project, transpose.position); at > start && at < end)
+					{
+						const auto semitones = static_cast<double>(globalTranspose(project, event, at));
+						shifted = shifted || semitones != 0.0;
+						pitch.push_back({static_cast<double>(at - start) / ratio, semitones});
+					}
+			if (!shifted)
+				pitch.clear();
+			return pitch;
+		}
+
+		// An event of a warped clip, or one that global transposition shifts, plays a media file of its own
+		// (RenderMedia::warp), whose frames start at the event's start: its clip fades and its volume curve where its
+		// audio plays.
 		// ponytail: its own fades keep their length in clip frames, whatever the stretch there.
-		void warpEvent(
-			const Project& project, const AudioEvent& event, RenderSnapshot& snapshot, RenderAudioEvent& render)
+		void warpEvent(const Project& project, const AudioEvent& event, std::vector<dsp::WarpPoint> map,
+			std::vector<dsp::PitchPoint> pitch, RenderSnapshot& snapshot, RenderAudioEvent& render)
 		{
 			const Clip& clip = project.clips.at(event.clip);
 			const MediaFile& file = project.media.at(clip.media);
-			RenderMedia media{event.id, file.path, file.sampleRate, file.channels, 0, warpMap(project, event),
-				dsp::stretchPresetFromString(clip.warp.preset).value_or(dsp::StretchPreset::Quality)};
+			RenderMedia media{event.id, file.path, file.sampleRate, file.channels, 0, std::move(map),
+				dsp::stretchPresetFromString(clip.warp.preset).value_or(dsp::StretchPreset::Quality), std::move(pitch)};
 			media.length = std::llround(media.warp.back().target);
 			const auto moved = [&media](time::Samples frame)
 			{
@@ -261,8 +454,9 @@ namespace gnubase::engine
 			channel.type = TrackType::Audio;
 			channel.instrument.clear();
 			channel.instrumentParameters.clear();
-			channel.sample.clear();
+			channel.samples.clear();
 			channel.midiThru = false;
+			channel.padThru = false;
 			channel.autoFades = AutoFades();
 			channel.sections.gain = 0.0;
 			channel.sections.phase = false;
@@ -276,7 +470,7 @@ namespace gnubase::engine
 			event.length = frozen.length;
 			channel.audioEvents.push_back(std::move(event));
 			snapshot.media.push_back({channel.id, frozen.path, frozen.sampleRate, frozen.channels, frozen.length, {},
-				dsp::StretchPreset::Quality});
+				dsp::StretchPreset::Quality, {}});
 		}
 
 		// Mute, solo and disabled tracks: with a channel soloed, only soloed channels, those they play into and those
@@ -494,9 +688,15 @@ namespace gnubase::engine
 		snapshot->signatures = project.signatures;
 		ArrangerPlan plan = arrangerPlan(project);
 		if (previous != nullptr && *previous->arranger == plan)
+		{
 			snapshot->arranger = previous->arranger;
+		}
 		else
+		{
+			// A new plan gets the next generation, so the transport can publish which one its state walks (#885).
+			plan.generation = previous != nullptr ? previous->arranger->generation + 1 : 1;
 			snapshot->arranger = std::make_shared<const ArrangerPlan>(std::move(plan));
+		}
 		snapshot->metronome = project.metronome;
 		std::vector<ObjectId>& outputs = snapshot->metronome.outputs;
 		outputs.erase(std::remove_if(outputs.begin(), outputs.end(),
@@ -509,6 +709,8 @@ namespace gnubase::engine
 		if (outputs.empty() && mainMix(project) != 0)
 			outputs.push_back(mainMix(project)); // the default output, also when the chosen busses are gone
 		snapshot->chordPadKeys = chordPadKeys(project.chordPads);
+		if (project.chordPads.snapPlayback)
+			snapshot->chordPadKeys.snapTicks = project.quantize.grid.ticks();
 		snapshot->panLaw = project.panLaw;
 		snapshot->maxVolume = project.maxVolume;
 		snapshot->recordBitDepth = project.setup.recordBitDepth;
@@ -528,7 +730,7 @@ namespace gnubase::engine
 		{
 			mediaIndex[id] = static_cast<int>(snapshot->media.size());
 			snapshot->media.push_back(
-				{id, media.path, media.sampleRate, media.channels, media.length, {}, dsp::StretchPreset::Quality});
+				{id, media.path, media.sampleRate, media.channels, media.length, {}, dsp::StretchPreset::Quality, {}});
 		}
 		for (const auto& [id, clip] : project.clips)
 			snapshot->clips.push_back({id, clip.media, clip.fadeIn, clip.fadeOut});
@@ -550,8 +752,21 @@ namespace gnubase::engine
 			render.format = channel.format;
 			render.instrument = channel.instrument;
 			render.instrumentParameters = channel.instrumentParameters;
-			if (const auto clip = project.clips.find(channel.sample); clip != project.clips.end())
-				render.sample = project.media.at(clip->second.media).path;
+			const auto path = [&project](ObjectId id)
+			{
+				const auto clip = project.clips.find(id);
+				return clip != project.clips.end() ? project.media.at(clip->second.media).path : std::string();
+			};
+			if (channel.instrument == "sampler")
+			{
+				render.samples = {path(channel.sample)};
+			}
+			else if (channel.instrument == "drumMachine")
+			{
+				render.samples.resize(processors::g_drumPads);
+				for (const auto& [pad, drum] : channel.pads)
+					render.samples.at(static_cast<size_t>(pad)) = path(drum.sample);
+			}
 			for (const ObjectId id : channel.slots)
 			{
 				const Slot& slot = project.slots.at(id);
@@ -570,6 +785,8 @@ namespace gnubase::engine
 			render.midiPan = channel.midiPan;
 			render.program = channel.program;
 			render.bank = channel.bank;
+			render.midiChannel = static_cast<uint8_t>(channel.midiChannel.value_or(0));
+			render.inputChannel = static_cast<int8_t>(midi::trackMidiChannel(project, trackId).value_or(-1));
 			render.modifiers = channel.modifiers;
 			if (const ArticulationMap* articulations = midi::articulationMapOf(project, track.id))
 				render.articulations = *articulations;
@@ -587,12 +804,20 @@ namespace gnubase::engine
 			render.listen = channel.listen;
 			render.midiThru = (track.type == TrackType::Midi || track.type == TrackType::Instrument) &&
 				channel.midiInput == "all" && (channel.monitor || channel.recordEnable);
+			render.padThru = (track.type == TrackType::Midi || track.type == TrackType::Instrument) &&
+				channel.midiInput == "chordPads" && (channel.monitor || channel.recordEnable);
+			for (size_t player = 0; player < project.chordPads.players.size(); ++player)
+				if (project.chordPads.players[player].track == track.id && track.id != 0)
+					render.padPlayer = static_cast<int>(player);
 			if (const DrumMap* map = midi::drumMapOf(project, track.id))
+			{
+				const auto plays = [&render](const DrumSound& sound)
+				{ render.drumInput.push_back({sound.oNote, static_cast<int8_t>(sound.channel), sound.mute}); };
 				for (const uint8_t pitch : midi::inputPitches(*map))
-				{
-					const DrumSound& sound = map->sounds.at(pitch);
-					render.drumInput.push_back({sound.oNote, static_cast<int8_t>(sound.channel), sound.mute});
-				}
+					plays(map->sounds.at(pitch));
+				for (const DrumSound& sound : map->sounds)
+					plays(sound);
+			}
 			render.autoFades = track.autoFades.value_or(project.autoFades);
 			if (const auto input = busIndex.find(channel.input); input != busIndex.end())
 				render.input = input->second;
@@ -658,9 +883,19 @@ namespace gnubase::engine
 				event.length, static_cast<float>(std::pow(10.0, event.volume / 20.0)), event.mute, event.fadeIn,
 				event.fadeOut, clip.fadeIn, clip.fadeOut,
 				crossfadeApplies(project, event) ? event.crossfade : Crossfade(), gainPoints(event.volumeCurve),
-				frontOf(event), 0, 0};
-			if (warped(clip))
-				warpEvent(project, event, *snapshot, render);
+				frontOf(event), event.rank, 0, 0};
+			if (warped(clip) || mayShift(project, event))
+			{
+				// An event that plays as it is maps its clip's frames from its offset onto its own.
+				const auto offset = static_cast<double>(event.offset);
+				const auto length = static_cast<double>(std::max<time::Samples>(event.length, 1));
+				std::vector<dsp::WarpPoint> map = warped(clip)
+					? warpMap(project, event)
+					: std::vector<dsp::WarpPoint>{{offset, 0.0}, {offset + length, length}};
+				std::vector<dsp::PitchPoint> pitch = pitchMap(project, event, render.start, map);
+				if (warped(clip) || !pitch.empty())
+					warpEvent(project, event, std::move(map), std::move(pitch), *snapshot, render);
+			}
 			if (const auto part = project.audioParts.find(event.part); part != project.audioParts.end() &&
 				!inPart(project, part->second, project.sampleRate / project.media.at(clip.media).sampleRate, render))
 				continue;
@@ -679,6 +914,7 @@ namespace gnubase::engine
 		std::map<ObjectId, ChordFollower> followers;
 		const auto follower = [&](ObjectId track) -> const ChordFollower&
 		{ return followers.try_emplace(track, project, track).first->second; };
+		std::map<ObjectId, std::vector<SlotNote>> slotNotes; // by track
 		for (const auto& [id, part] : project.midiParts)
 		{
 			RenderChannel& channel = snapshot->channels[static_cast<size_t>(trackChannel.at(part.track))];
@@ -696,12 +932,25 @@ namespace gnubase::engine
 				played.notes = midi::playedNotes(project, part);
 			}
 			const MidiPart& compiled = isPattern ? played : part;
-			compilePart(project, id, compiled, follower(part.track), channel);
+			compilePart(project, id, compiled, follower(part.track), channel, &slotNotes[part.track]);
 			if (!preNotes(channel))
 				continue;
 			RenderChannel unmodified;
-			compilePart(project, id, compiled, follower(part.track), unmodified);
+			compilePart(project, id, compiled, follower(part.track), unmodified, nullptr);
 			channel.preNotes.insert(channel.preNotes.end(), unmodified.notes.begin(), unmodified.notes.end());
+			channel.preExpressions.insert(
+				channel.preExpressions.end(), unmodified.expressions.begin(), unmodified.expressions.end());
+		}
+		// The sound slots' output events, across each track's parts; the MIDI sends before the modifiers get its
+		// key switches too.
+		for (auto& [track, notes] : slotNotes)
+		{
+			RenderChannel& channel = snapshot->channels[static_cast<size_t>(trackChannel.at(track))];
+			const size_t from = channel.notes.size();
+			addOutputEvents(project, notes, channel);
+			if (preNotes(channel))
+				channel.preNotes.insert(channel.preNotes.end(),
+					channel.notes.begin() + static_cast<std::ptrdiff_t>(from), channel.notes.end());
 		}
 
 		std::map<ObjectId, Points> vcaCurves; // by the VCA fader's channel
@@ -729,6 +978,13 @@ namespace gnubase::engine
 			{ return RenderAutomationPoint{position, gapValue, AutomationShape::Step, 0.0, !vca}; };
 			RenderAutomationLane played;
 			played.target = lane.target;
+			// A MIDI track's channel plays its MIDI automation on it too (p. 351), as it does its parts' events; lanes
+			// of one controller on several MIDI channels then play side by side (channelAutomation).
+			const AutomationTargetType type = lane.target.type;
+			if (const std::optional<int> on = midi::trackMidiChannel(project, lane.track); on &&
+				(type == AutomationTargetType::Controller || type == AutomationTargetType::PitchBend ||
+					type == AutomationTargetType::ChannelPressure))
+				played.target.channel = static_cast<uint8_t>(*on);
 			for (const AutomationPoint* point : sorted)
 			{
 				const time::Samples position = toSamples(project, point->position);
@@ -757,15 +1013,22 @@ namespace gnubase::engine
 			std::stable_sort(channel.audioEvents.begin(), channel.audioEvents.end(),
 				[](const RenderAudioEvent& a, const RenderAudioEvent& b) { return a.start < b.start; });
 			// At one sample key switches come first (#175): at the project's start one can't come a sample before.
+			// They keep the order the track sent them in, whatever their pitch, so that the instrument ends in the
+			// slot the track sent last (#1521).
 			for (std::vector<RenderNote>* notes : {&channel.notes, &channel.preNotes})
 				std::stable_sort(notes->begin(), notes->end(),
 					[](const RenderNote& a, const RenderNote& b)
 					{
-						return std::make_tuple(a.start, !a.keySwitch, a.pitch) <
-							std::make_tuple(b.start, !b.keySwitch, b.pitch);
+						return std::make_tuple(a.start, !a.keySwitch, a.keySwitch ? 0 : a.pitch) <
+							std::make_tuple(b.start, !b.keySwitch, b.keySwitch ? 0 : b.pitch);
 					});
 			std::stable_sort(channel.controllers.begin(), channel.controllers.end(),
 				[](const RenderController& a, const RenderController& b) { return a.position < b.position; });
+			addInitialExpressions(channel.notes, channel.expressions);
+			addInitialExpressions(channel.preNotes, channel.preExpressions);
+			for (std::vector<RenderExpression>* expressions : {&channel.expressions, &channel.preExpressions})
+				std::stable_sort(expressions->begin(), expressions->end(),
+					[](const RenderExpression& a, const RenderExpression& b) { return a.position < b.position; });
 			// The parts by start; their controller events keep pointing at them.
 			std::vector<size_t> byStart(channel.midiParts.size());
 			std::iota(byStart.begin(), byStart.end(), size_t{0});

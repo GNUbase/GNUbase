@@ -95,11 +95,14 @@ sends engine commands, so whatever another client changes shows at once.
   .track-list-header              the global track controls: #add-track, #track-controls-settings (document)
   .track-rows                     clips the rows, under the overview line and ruler's height
     listview.tracks[multiple]     the list view (widgets.md), scrolled with the event display
-      listitem[value=<id>][level][type]   a tree row per track; .selected, .disabled, .renaming
+      listitem[value=<id>][level][type]   a tree row per track; .selected, .disabled, .renaming, .versions
         .tree-indent, .tree-toggle        from the list view, by level
-        .track-color                      the track's color strip, attribute color (colors.md)
-        .track-name, input.track-name-field
+        .track-color                      the track's color strip, attribute color only with a color (colors.md)
+        .track-name, input.track-name-field   .track-version in the name while ui.showVersionName
+        .track-versions-toggle            .versions rows: the arrow that opens the Track Versions pop-up menu
+                                          #track-versions-menu (track-versions.md)
         .track-controls > button.toggle[control]   .checked while on, disabled without anything to do
+        .track-controls > select.midi-channel[control=midiChannel]   MIDI tracks: value any or 0-15
     .drop-line                    where dragged tracks go, .shown while dragging
 ```
 
@@ -118,6 +121,17 @@ sends engine commands, so whatever another client changes shows at once.
   track's height shows. In a row too narrow for both, such as deep in folders or in a narrow track list, the name gives
   way; what still doesn't fit is hidden at the row's right. The dialog keeps what the setting has that it doesn't know,
   such as another type's width from a later GNUbase.
+- **Track colors** (#1314). Code gives a track's `.track-color` strip its color as `background-color` and, only
+  while the track has one, the attribute `color`; the themes do the rest. The default theme, after the mockup
+  (`art/mockups/main-window.webp`), draws the strip as a 5 dp bar at the row's left edge, tints a folder's row in its
+  color and lights the selected row in its track's color with an outline in it: the strip stretches across the row,
+  and a nine-patch skin in the row's color (`track-row-folder`, `track-row-selected`) lets the color through. The
+  strip is positioned, so it paints over the row's background; the name, its field, the versions arrow and the
+  controls are positioned too and come after it, so they paint over it, and the folder's toggle, which comes before
+  it, is lifted with `z-index: 1`. No row is a stacking context of its own: one would keep a drop-down list in the
+  controls under the rows below it. A track without a color keeps the theme's selection. The default theme's names
+  are medium weight and Record Enable's icon is in the record color while it is off. The other themes keep the 4 dp
+  strip.
 - **Rows and lanes.** The event display has a lane per track that isn't hidden, each as high as its track
   (`EventDisplay::trackHeight`, `g_trackHeight` (40 dp) until set, 20 to 400 dp, times vertical zoom), and tells the
   track list when its lanes or view change (`onLayout`). The list sets each row's height from its lane and moves the
@@ -125,16 +139,20 @@ sends engine commands, so whatever another client changes shows at once.
   line and the ruler, by style sheet, also without the overview line. The wheel over the list scrolls the display.
 - **Controls** (pp. 191–195). The user setting `ui.trackControls` chooses each track type's controls and their order:
   `mute` (M) and `solo` (S), which tracks with a channel always show, `record` and `monitor` (audio tracks), `read`
-  (every automation lane of the track reads, or with a click none does; disabled without lanes) and `timeBase`
-  (musical or linear, `.checked` when linear). A click sends `channel.set`, `automationLane.set` in one transaction,
-  or `track.set`. Folders without a group channel and signature tracks show none. The tempo track's controls are
-  `tempoTrack`, Activate Tempo Track (`project.set` `tempoTrackActive`), `currentTempo`, Current Tempo, a text field
-  with the tempo at the project cursor that takes a tempo typed with Enter, and `tempoType`, Type of New Tempo Points,
-  a drop-down list for `editing.tempoType` ([tempo-track.md](tempo-track.md)); ruler tracks have `timeFormat`,
-  `timeOffsetOn`, `timeOffset` and `setTimeOffset` ([ruler-tracks.md](ruler-tracks.md)), marker tracks
-  `addPositionMarker`, `addCycleMarker`, `activateMarkerTrack`, `markerLocate`, `markerCycle` and `markerZoom`
-  ([markers.md](markers.md)). The defaults: mute, solo, record, monitor and read on audio tracks; mute, solo and read
-  on the others with a channel; all three on the tempo track; all four on ruler tracks; all six on marker tracks.
+  (every automation lane of the track reads, or with a click none does; disabled without lanes), `timeBase`
+  (musical or linear, `.checked` when linear) and on MIDI tracks `midiChannel` (MIDI Channel, p. 349), a drop-down list
+  of Any and 1 to 16 that sends `channel.set` `midiChannel` as the inspector's does ([mixer.md](mixer.md)). A click
+  sends `channel.set`, `automationLane.set` in one transaction, or `track.set`. Folders show Group Editing
+  (`groupEditing`, [folder-tracks.md](folder-tracks.md)), and those without a group channel nothing else; signature
+  tracks show none. The tempo track's controls are `tempoTrack`, Activate Tempo Track (`project.set`
+  `tempoTrackActive`), `currentTempo`, Current Tempo, a text field
+  with the tempo at the project cursor, following it during playback, that takes a tempo typed with Enter, and
+  `tempoType`, Type of New Tempo Points, a drop-down list for `editing.tempoType`
+  ([tempo-track.md](tempo-track.md)); ruler tracks have `timeFormat`, `timeOffsetOn`, `timeOffset` and `setTimeOffset`
+  ([ruler-tracks.md](ruler-tracks.md)), marker tracks `addPositionMarker`, `addCycleMarker`, `activateMarkerTrack`,
+  `markerLocate`, `markerCycle` and `markerZoom` ([markers.md](markers.md)). The defaults: mute, solo, record, monitor
+  and read on audio tracks; mute, solo and read on the others with a channel; all three on the tempo track; all four
+  on ruler tracks; all six on marker tracks.
 - **Selection** (pp. 218–219) is the list view's: a click selects a track, Ctrl-click adds or removes one,
   Shift-click selects a range, and Shift-click on a selected track deselects it (the list view's `shiftdeselects`,
   [widgets.md](widgets.md)). Up and Down step through the shown tracks, in the list and wherever the project window
@@ -271,8 +289,9 @@ data blocks and Move Selected Tracks to New Folder are in [folder-tracks.md](fol
   again" and `ui.removeTracksWarning` from another client; renaming with Enter and Escape; moving by a drag and undoing it; heights by a
   drag, with Ctrl for all; the wheel; folding from the toggle and the commands, in the event display too; duplicating,
   disabling, enabling and removing from the context menu and the commands; the settings dialog's Add, Remove,
-  Move Up and Reset, saved in the user setting and shown in the rows; the divider dragged both ways and to both
-  limits, with the rows, the event display and its lanes following, its double click, the width in `ui.layout`, from
+  Move Up and Reset, saved in the user setting and shown in the rows, and MIDI Channel offered for MIDI tracks alone;
+  the divider dragged both ways and to both limits, with the rows, the event display and its lanes following, its double
+  click, the width in `ui.layout`, from
   another client and `Docking::setSize`, a size too large for the window, a narrow window, a side zone squeezing the
   main zone, a larger UI scale and the dragged width after a restart; and the track name and each type's controls area
   width from the dialog, its limits, Ctrl-click to the default and Reset, from another client and with defaults for
@@ -283,5 +302,8 @@ data blocks and Move Selected Tracks to New Folder are in [folder-tracks.md](fol
   folders; a drag that ends where it started, also after another client gave the track another height meanwhile, and
   one that stays at the limit sending nothing; a drag whose release never came ending with the next press; a failed
   set (a track removed meanwhile, a folded folder removed meanwhile) showing the project's heights and folded
-  folders again; and a folded folder that undo brings back being folded in the list, also when the list took the
-  engine's layout meanwhile.
+  folders again; a folded folder that undo brings back being folded in the list, also when the list took the
+  engine's layout meanwhile; and the default theme's rows in their tracks' colors (the golden image
+  `track-list-rows`), at dp ratios 1 and 2, a row's MIDI Channel list open over the rows below it for the mouse, the
+  strip back to a bar when the selected track's color is removed, and the 4 dp strip in the other themes and the
+  default theme's look again after switching back.

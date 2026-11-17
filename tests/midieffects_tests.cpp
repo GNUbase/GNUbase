@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "engine/audio/sequencer.h"
 #include "engine/document/document.h"
+#include "engine/document/serialize.h"
 #include "engine/engine.h"
 #include "engine/processors/midieffects.h"
+#include "platform/log.h"
+#include "platform/rt/realtime.h"
+#include "plugin/checkedplugin.h"
 #include "testutils/testutils.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -10,11 +14,14 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -169,6 +176,17 @@ TEST_CASE("midiEffect.list lists the built-in MIDI effects with their parameters
 	for (const processors::BuiltinInfo& info : processors::midiEffects())
 		for (size_t i = 0; i < info.parameters.size(); ++i)
 			CHECK(info.parameters[i].id == i);
+}
+
+TEST_CASE("the sequencer remembers the automated values of every MIDI effect's parameters", "[unit]")
+{
+	// A parameter beyond them would play its static value in a new instance of its effect.
+	for (const processors::BuiltinInfo& info : processors::midiEffects())
+		for (const processors::ParameterInfo& parameter : info.parameters)
+		{
+			INFO(info.id << " " << parameter.name);
+			CHECK(parameter.id < MidiSequencer::g_automated);
+		}
 }
 
 TEST_CASE("the arpeggiator plays the held notes in each mode at its rate, gate and octaves", "[integration]")
@@ -377,10 +395,9 @@ namespace
 		return note;
 	}
 
-	// The notes out still holds after its events, as channel * 128 + pitch.
-	std::vector<int> hanging(const EventBuffer& out)
+	// Follows out's notes in held, as channel * 128 + pitch.
+	void follow(const EventBuffer& out, std::vector<int>& held)
 	{
-		std::vector<int> held;
 		for (const ProcessEvent& e : out)
 		{
 			const int index = (e.channel * 128) + e.key;
@@ -389,6 +406,13 @@ namespace
 			else if (e.type == ProcessEvent::Type::NoteOff)
 				held.erase(std::remove(held.begin(), held.end(), index), held.end());
 		}
+	}
+
+	// The notes out still holds after its events, as channel * 128 + pitch.
+	std::vector<int> hanging(const EventBuffer& out)
+	{
+		std::vector<int> held;
+		follow(out, held);
 		return held;
 	}
 }
@@ -575,14 +599,16 @@ TEST_CASE("channel.set refuses unknown MIDI effects, parameters out of range and
 	CHECK_THAT(reject(track.client, "channel.set", {{"channel", track.channel}, {"midiSends", {{"divider", 1}}}}),
 		ContainsSubstring("only the MIDI inserts"));
 	const ObjectId midi = run(track.client, "track.add", {{"type", "midi"}}).at("channel").at("id").get<ObjectId>();
-	CHECK_THAT(reject(track.client, "channel.set",
-				   {{"channel", track.channel}, {"midiSends", {{"slots", {{{"output", midi}}}}}}}),
+	Json sent = slot("transformer");
+	sent["output"] = midi;
+	CHECK_THAT(reject(track.client, "channel.set", {{"channel", track.channel}, {"midiSends", {{"slots", {sent}}}}}),
 		ContainsSubstring("instrument track's channel"));
 	// Two instrument tracks can't send to each other.
 	const ObjectId other = track.addInstrument();
-	track.set("midiSends", {{"slots", {{{"output", other}}}}});
-	CHECK_THAT(reject(track.client, "channel.set",
-				   {{"channel", other}, {"midiSends", {{"slots", {{{"output", track.channel}}}}}}}),
+	sent["output"] = other;
+	track.set("midiSends", {{"slots", {sent}}});
+	sent["output"] = track.channel;
+	CHECK_THAT(reject(track.client, "channel.set", {{"channel", other}, {"midiSends", {{"slots", {sent}}}}}),
 		ContainsSubstring("loop"));
 	CHECK_THAT(refused(5), ContainsSubstring("midiInserts must be object"));
 
@@ -723,13 +749,13 @@ TEST_CASE("a send plays its effect to another instrument track, with the track's
 	CHECK(played[track.channel] == "10 90 3c 64\n20 b0 40 7f\n25 e0 00 50\n30 80 3c 40\n40 90 3e 64\n");
 	CHECK(played[other] == "10 90 48 64\n20 b0 40 7f\n25 e0 00 50\n30 80 48 40\n40 90 4a 64\n");
 
-	// Back to the track's output: the note it played there ends there.
+	// Back to the track's output: the note it played there ends there; the track's own note sounds on (#1157).
 	sent["output"] = 0;
 	track.set("midiSends", {{"slots", {sent}}});
 	track.render(64);
 	played = track.capturedBy();
 	CHECK(played[other] == "64 80 4a 00\n");
-	CHECK(played[track.channel] == "64 80 3e 00\n");
+	CHECK(played[track.channel].empty());
 }
 
 TEST_CASE(
@@ -813,4 +839,752 @@ TEST_CASE("automation plays a MIDI effect's parameters at their samples, and par
 	CHECK(run(track.client, "project.get").at("automation").empty());
 	run(track.client, "history.undo");
 	CHECK(run(track.client, "project.get").at("automation").size() == 1);
+}
+
+TEST_CASE("an effect after a changed insert starts afresh, without the notes the old chain gave it", "[integration]")
+{
+	EffectTrack track;
+	track.set("midiInserts",
+		{{"slots", {slot("chordGenerator", {{"chord", "Major"}}), slot("arpeggiator", {{"rate", "1/16"}})}}});
+	run(track.client, "transport.play");
+	track.inject({message(10, {0x90, 60, 100})});
+	track.render(g_beat);
+	// The chord generator goes while the note sounds: an arpeggiator that kept the chord's notes would step on
+	// through them after the note ends.
+	track.set("midiInserts", {{"slots", {slot("")}}});
+	track.render(g_beat);
+	track.inject({message(2 * g_beat, {0x80, 60, 64})});
+	track.render(2 * g_beat);
+	const std::string played = track.captured();
+	for (size_t line = 0; line < played.size(); line = played.find('\n', line) + 1)
+		if (std::stoll(played.substr(line)) > 2 * g_beat)
+			CHECK(played.compare(played.find(' ', line), 4, " 90 ") != 0);
+}
+
+TEST_CASE("a send whose source changes ends its own notes only, not the track's", "[integration]")
+{
+	EffectTrack track;
+	track.add({{0, 2, 60, 100}});
+	track.set("midiSends", {{"pre", true}, {"slots", {slot("transformer", {{"value", 12}})}}});
+	run(track.client, "transport.play");
+	track.render(g_beat);
+	CHECK(track.captured() == "0 90 3c 64\n0 90 48 64\n");
+	// Switching Pre gives the send a new instance: its note ends, the part's note sounds on to its end.
+	track.set("midiSends", {{"pre", false}});
+	track.render(g_beat + 64);
+	const std::string played = track.captured();
+	CHECK(played.find(std::to_string(g_beat) + " 80 48 00\n") == 0);
+	CHECK(played.find("80 3c") == played.find(std::to_string(2 * g_beat) + " 80 3c") + 6);
+}
+
+TEST_CASE("an effect that starts afresh takes its automated values, not the slot's", "[integration]")
+{
+	EffectTrack track;
+	track.set("midiInserts", {{"slots", {slot("transformer")}}});
+	const Json target = {{"type", "midiEffect"}, {"number", 0}, {"parameter", processors::Transformer::Value}};
+	const auto lane = run(track.client, "automationLane.add", {{"track", track.track}, {"target", target}})
+						  .at("lane")
+						  .at("id")
+						  .get<ObjectId>();
+	run(track.client, "automationPoint.add",
+		{{"lane", lane}, {"points", {{{"position", 0}, {"value", 12}, {"shape", "step"}}}}});
+	run(track.client, "transport.play");
+	track.render(64);
+	// Switched off and on, the slot plays a new instance, which the lane doesn't send its value again.
+	track.set("midiInserts", {{"slots", {{{"on", false}}}}});
+	track.render(64);
+	track.set("midiInserts", {{"slots", {{{"on", true}}}}});
+	track.render(64);
+	track.inject({message(200, {0x90, 60, 100})});
+	track.render(64);
+	CHECK(track.captured() == "200 90 48 64\n");
+	// Moved across the divider, the insert plays a new instance too.
+	track.set("midiInserts", {{"divider", 1}});
+	track.render(64);
+	track.inject({message(330, {0x90, 62, 100})});
+	track.render(64);
+	CHECK(track.captured() == "256 80 48 00\n330 90 4a 64\n"); // the old instance's note ends
+}
+
+TEST_CASE("a send that starts afresh when Pre is switched takes its automated values", "[integration]")
+{
+	EffectTrack track;
+	track.set("midiSends", {{"slots", {slot("transformer")}}});
+	const Json target = {{"type", "midiEffect"}, {"number", 4}, {"parameter", processors::Transformer::Value}};
+	const auto lane = run(track.client, "automationLane.add", {{"track", track.track}, {"target", target}})
+						  .at("lane")
+						  .at("id")
+						  .get<ObjectId>();
+	run(track.client, "automationPoint.add",
+		{{"lane", lane}, {"points", {{{"position", 0}, {"value", 12}, {"shape", "step"}}}}});
+	run(track.client, "transport.play");
+	track.render(64);
+	track.set("midiSends", {{"pre", true}});
+	track.render(64);
+	// The track's own note and the send's, an octave up.
+	track.inject({message(150, {0x90, 60, 100})});
+	track.render(64);
+	const std::string played = track.captured();
+	CHECK(played.find("150 90 3c 64\n") != std::string::npos);
+	CHECK(played.find("150 90 48 64\n") != std::string::npos);
+}
+
+TEST_CASE("the inserts above the divider take their automation at its sample", "[integration]")
+{
+	EffectTrack track;
+	track.set("midiInserts", {{"divider", 1}, {"slots", {slot("transformer")}}});
+	const Json target = {{"type", "midiEffect"}, {"number", 0}, {"parameter", processors::Transformer::Value}};
+	const auto lane = run(track.client, "automationLane.add", {{"track", track.track}, {"target", target}})
+						  .at("lane")
+						  .at("id")
+						  .get<ObjectId>();
+	run(track.client, "automationPoint.add",
+		{{"lane", lane},
+			{"points",
+				{{{"position", 0}, {"value", 0}, {"shape", "step"}},
+					{{"position", g_beatTicks + (25 * g_beatTicks / g_beat)}, {"value", 12}, {"shape", "step"}}}}});
+	run(track.client, "transport.play");
+	track.render(g_beat);
+	// The value changes 25 samples into the block, between its two notes.
+	track.inject({message(g_beat + 10, {0x90, 60, 100}), message(g_beat + 40, {0x90, 62, 100})});
+	track.render(64);
+	CHECK(
+		track.captured() == std::to_string(g_beat + 10) + " 90 3c 64\n" + std::to_string(g_beat + 40) + " 90 4a 64\n");
+}
+
+TEST_CASE("a send that goes leaves the notes another track's send holds on the instrument", "[integration]")
+{
+	EffectTrack track;
+	const ObjectId second = track.addInstrument();
+	const ObjectId target = track.addInstrument();
+	Json sent = slot("transformer");
+	sent["output"] = target;
+	track.set("midiSends", {{"slots", {sent}}});
+	track.set("midiSends", {{"slots", {sent}}}, second);
+	track.inject({message(10, {0x90, 60, 100})});
+	run(track.client, "midi.inject", {{"channel", second}, {"messages", {message(20, {0x90, 60, 100})}}});
+	track.render(64);
+	CHECK(track.capturedBy()[target] == "10 90 3c 64\n20 90 3c 64\n");
+	// The second track goes with its send; the first one's still holds the note there.
+	const Json project = run(track.client, "project.get");
+	for (const Json& channel : project.at("channels"))
+		if (channel.at("id") == second)
+			run(track.client, "track.remove", {{"track", channel.at("track")}});
+	track.render(64);
+	CHECK(track.capturedBy()[target] == "");
+}
+
+TEST_CASE(
+	"a send slot without an effect has no output, also in an older project, and counts for no loop", "[integration]")
+{
+	EffectTrack track;
+	const ObjectId other = track.addInstrument();
+	Json sent = slot("transformer");
+	sent["output"] = other;
+	track.set("midiSends", {{"slots", {sent}}});
+	const auto refused = [&](const Json& slot)
+	{ return reject(track.client, "channel.set", {{"channel", track.channel}, {"midiSends", {{"slots", {slot}}}}}); };
+	// Removing the effect with an output given is refused too, and the slot keeps its effect and its output.
+	CHECK_THAT(refused({{"effect", ""}, {"output", other}}), ContainsSubstring("without an effect has no output"));
+	Json kept;
+	const Json project = run(track.client, "project.get");
+	for (const Json& channel : project.at("channels"))
+		if (channel.at("id") == track.channel)
+			kept = channel.at("midiSends").at("slots")[0];
+	CHECK(kept.at("effect") == "transformer");
+	CHECK(kept.at("output") == other);
+	CHECK(track.set("midiSends", {{"slots", {slot("")}}}).at("slots")[0].at("output") == 0);
+	// Nor does an empty slot take an output, with or without the effect given.
+	CHECK_THAT(refused({{"output", other}}), ContainsSubstring("without an effect has no output"));
+	CHECK_THAT(refused({{"effect", ""}, {"output", other}}), ContainsSubstring("without an effect has no output"));
+	// A project saved with an output on an empty slot loads without it.
+	Json saved = run(track.client, "project.get");
+	for (Json& channel : saved.at("channels"))
+		if (channel.at("id") == track.channel)
+			channel.at("midiSends").at("slots")[0]["output"] = other;
+	CHECK(projectFromJson(saved).channels.at(track.channel).midiSends.slots[0].output == 0);
+	sent["output"] = track.channel;
+	CHECK(track.set("midiSends", {{"slots", {sent}}}, other).at("slots")[0].at("output") == track.channel);
+}
+
+namespace
+{
+	namespace plugin = gnubase::plugin;
+
+	// Makes the built-in MIDI effects, each behind a plugin::CheckedPlugin that counts the calls on the wrong thread or
+	// in the wrong state, and behind a FailingEffect that fails its blocks while failing is set, if it is the effect
+	// only names (its plugin id) or only is empty. The audio thread is
+	// the real-time context; while idle, no block processes the effects, so they may stop processing there too, as a
+	// plugin slot stops its plugin before it deactivates it.
+	class TestEffects final : public plugin::Factory, public plugin::ThreadCheck
+	{
+	public:
+		explicit TestEffects(bool fail = false) : failing(fail) {}
+
+		std::atomic<bool> failing{false};
+		std::string only; // set before the effects are made
+		std::atomic<bool> idle{true};
+		std::atomic<uint32_t> violations{0};
+		std::atomic<const char*> lastViolation{nullptr};
+
+		size_t count() const override { return m_builtins.count(); }
+		const plugin::Descriptor& descriptor(size_t index) const override { return m_builtins.descriptor(index); }
+		std::unique_ptr<plugin::Plugin> create(std::string_view id, plugin::Host& host) override;
+
+		bool isMainThread() const noexcept override { return !gnubase::rt::isRealtimeContext(); }
+		bool isAudioThread() const noexcept override { return gnubase::rt::isRealtimeContext() || idle; }
+
+	private:
+		static void violated(const char* message, void* context) noexcept
+		{
+			auto* self = static_cast<TestEffects*>(context);
+			self->violations.fetch_add(1);
+			self->lastViolation.store(message);
+		}
+
+		processors::BuiltinFactory m_builtins;
+	};
+
+	// A plugin that fails every block it gets while failing is set, as a third-party one might.
+	class FailingEffect final : public plugin::Plugin
+	{
+	public:
+		FailingEffect(std::unique_ptr<plugin::Plugin> plugin, const std::atomic<bool>& failing, bool fails)
+			: m_plugin(std::move(plugin)), m_failing(failing), m_fails(fails)
+		{
+		}
+
+		const plugin::Descriptor& descriptor() const override { return m_plugin->descriptor(); }
+		bool init() override { return m_plugin->init(); }
+		bool activate(double sampleRate, uint32_t minFrames, uint32_t maxFrames) override
+		{
+			return m_plugin->activate(sampleRate, minFrames, maxFrames);
+		}
+		void deactivate() override { m_plugin->deactivate(); }
+		bool startProcessing() noexcept override { return m_plugin->startProcessing(); }
+		void stopProcessing() noexcept override { m_plugin->stopProcessing(); }
+		void reset() noexcept override { (*m_plugin).reset(); }
+		plugin::ProcessStatus process(const plugin::Process& process) noexcept override
+		{
+			return m_fails && m_failing ? plugin::ProcessStatus::Error : m_plugin->process(process);
+		}
+		void* extension(std::string_view id) override { return m_plugin->extension(id); }
+
+	private:
+		std::unique_ptr<plugin::Plugin> m_plugin;
+		const std::atomic<bool>& m_failing;
+		bool m_fails;
+	};
+
+	std::unique_ptr<plugin::Plugin> TestEffects::create(std::string_view id, plugin::Host& host)
+	{
+		std::unique_ptr<plugin::Plugin> made = m_builtins.create(id, host);
+		if (made)
+			made = std::make_unique<FailingEffect>(std::move(made), failing, only.empty() || id == only);
+		if (made)
+			made = std::make_unique<plugin::CheckedPlugin>(std::move(made), *this, &TestEffects::violated, this);
+		return made;
+	}
+
+	// A sequence with the effect in the first insert slot, or none.
+	std::unique_ptr<MidiSequence> withInsert(const std::string& effect)
+	{
+		auto sequence = std::make_unique<MidiSequence>();
+		sequence->inserts.slots[0].effect = effect;
+		return sequence;
+	}
+
+	// Plays a block of 128 frames with the events as the sequencer's input, on the audio thread, while stopped, or
+	// playing from the position if there is one. recorded: what the track's input played, which the track records.
+	EventBuffer playBlock(MidiSequencer& sequencer, const std::vector<ProcessEvent>& events, int64_t position = -1,
+		std::vector<int>* recorded = nullptr)
+	{
+		const EventBuffer in(4);
+		EventBuffer out(256);
+		graph::TransportSegment segment;
+		segment.frames = 128;
+		segment.position = position;
+		graph::TransportBlock transport;
+		if (position >= 0)
+		{
+			transport.playing = true;
+			transport.position = position;
+			transport.segments = &segment;
+			transport.segmentCount = 1;
+		}
+		for (const ProcessEvent& event : events)
+			sequencer.input().add(event);
+		{
+			const gnubase::rt::ScopedRealtimeContext audioThread;
+			sequencer.process({nullptr, 0, 128, in, out, transport});
+		}
+		if (recorded != nullptr)
+			follow(sequencer.input(), *recorded);
+		sequencer.input().clear();
+		return out;
+	}
+
+	// The note-ons among the events.
+	size_t noteOns(const EventBuffer& events)
+	{
+		return static_cast<size_t>(std::count_if(
+			events.begin(), events.end(), [](const ProcessEvent& e) { return e.type == ProcessEvent::Type::NoteOn; }));
+	}
+
+	// Plays blocks without input, following what they play in held and what send slot 2, to another instrument
+	// track, plays in sent. Returns the note-ons they played.
+	size_t playBlocks(MidiSequencer& sequencer, int blocks, std::vector<int>& held, std::vector<int>* sent = nullptr)
+	{
+		size_t ons = 0;
+		for (int i = 0; i < blocks; ++i)
+		{
+			const EventBuffer out = playBlock(sequencer, {});
+			follow(out, held);
+			ons += noteOns(out);
+			if (sent == nullptr)
+				continue;
+			follow(sequencer.sendOutput(1), *sent);
+			ons += noteOns(sequencer.sendOutput(1));
+		}
+		return ons;
+	}
+
+	// The log's text so far.
+	std::string logged(const std::filesystem::path& file)
+	{
+		gnubase::logging::flush();
+		return gnubase::test::readText(file);
+	}
+
+	// How often the text has the part.
+	size_t occurrences(const std::string& text, std::string_view part)
+	{
+		size_t count = 0;
+		for (size_t at = text.find(part); at != std::string::npos; at = text.find(part, at + 1))
+			++count;
+		return count;
+	}
+}
+
+TEST_CASE(
+	"the sequencer starts its effects on the audio thread and stops and deactivates them before they go", "[unit]")
+{
+	auto effects = std::make_shared<TestEffects>();
+	{
+		auto sequencer = std::make_shared<MidiSequencer>(effects);
+		sequencer->prepareFor(48000.0, 128);
+		effects->idle = false;
+		sequencer->setSequence(withInsert("transformer"));
+		CHECK(hanging(playBlock(*sequencer, {noteAt(ProcessEvent::Type::NoteOn, 0, 60)})) == std::vector<int>{60});
+		// The effect leaves its slot; it goes once the audio thread took the sequence without it.
+		sequencer->setSequence(withInsert(""));
+		playBlock(*sequencer, {});
+		effects->idle = true;
+		sequencer->setSequence(withInsert(""));
+		// Again, and the sequencer goes with the effect active.
+		effects->idle = false;
+		sequencer->setSequence(withInsert("chordGenerator"));
+		CHECK(!playBlock(*sequencer, {noteAt(ProcessEvent::Type::NoteOn, 0, 60)}).empty());
+		// A new sample rate activates it again; the audio thread starts it again.
+		effects->idle = true;
+		sequencer->prepareFor(44100.0, 128);
+		effects->idle = false;
+		CHECK(!playBlock(*sequencer, {noteAt(ProcessEvent::Type::NoteOn, 0, 62)}).empty());
+		effects->idle = true;
+	}
+	const char* last = effects->lastViolation.load();
+	INFO((last != nullptr ? last : "none"));
+	CHECK(effects->violations == 0);
+}
+
+TEST_CASE("an effect that fails a block passes its events on as they came, and the log says so", "[unit]")
+{
+	const gnubase::test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "gnubase.log";
+	gnubase::logging::flush(); // what earlier tests logged goes to stderr, not into this log
+	const gnubase::logging::Session log(file);
+	auto effects = std::make_shared<TestEffects>(true);
+	MidiSequencer sequencer(effects);
+	sequencer.prepareFor(48000.0, 128);
+	sequencer.setSequence(withInsert("chordGenerator"));
+	effects->idle = false;
+	const EventBuffer on = playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOn, 5, 60)});
+	REQUIRE(on.size() == 1);
+	CHECK(on[0].type == ProcessEvent::Type::NoteOn);
+	CHECK(on[0].key == 60);
+	CHECK(on[0].offset == 5);
+	const EventBuffer off = playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOff, 7, 60)});
+	REQUIRE(off.size() == 1);
+	CHECK(off[0].type == ProcessEvent::Type::NoteOff);
+	effects->idle = true;
+	CHECK(effects->violations == 0);
+	const std::string text = logged(file);
+	CHECK_THAT(text, ContainsSubstring("chordGenerator in MIDI insert 1 failed"));
+	// Once while it fails, not every block.
+	CHECK(occurrences(text, "failed a block") == 1);
+}
+
+TEST_CASE("an insert that starts to fail ends the notes it played, which would hang otherwise", "[unit]")
+{
+	auto effects = std::make_shared<TestEffects>();
+	MidiSequencer sequencer(effects);
+	sequencer.prepareFor(48000.0, 128);
+	sequencer.setSequence(withInsert("chordGenerator"));
+	effects->idle = false;
+	std::vector<int> held;
+	follow(playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOn, 5, 60)}), held);
+	REQUIRE(held.size() > 1); // the chord
+	// It fails from now on: the notes of the chord end, and the note-off that passes it ends the note again.
+	effects->failing = true;
+	follow(playBlock(sequencer, {}), held);
+	CHECK(held.empty());
+	follow(playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOff, 7, 60)}), held);
+	CHECK(held.empty());
+	effects->idle = true;
+	CHECK(effects->violations == 0);
+}
+
+TEST_CASE("a send that starts to fail ends its notes and plays nothing while it fails", "[unit]")
+{
+	auto effects = std::make_shared<TestEffects>();
+	MidiSequencer sequencer(effects);
+	sequencer.prepareFor(48000.0, 128);
+	auto sequence = std::make_unique<MidiSequence>();
+	sequence->sends.slots[0].effect = "chordGenerator";
+	sequencer.setSequence(std::move(sequence));
+	effects->idle = false;
+	std::vector<int> held;
+	follow(playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOn, 5, 60)}), held);
+	REQUIRE(held.size() > 2); // the note, and the chord the send played
+	effects->failing = true;
+	// The send's chord ends; the track's own note sounds on, and a new note plays once, not again through the send.
+	const EventBuffer failed = playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOn, 5, 62)});
+	follow(failed, held);
+	std::sort(held.begin(), held.end());
+	held.erase(std::unique(held.begin(), held.end()), held.end()); // both played 60
+	CHECK(held == std::vector<int>{60, 62});
+	CHECK(std::count_if(failed.begin(), failed.end(),
+			  [](const ProcessEvent& e) { return e.type == ProcessEvent::Type::NoteOn && e.key == 62; }) == 1);
+	follow(
+		playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOff, 7, 60), noteAt(ProcessEvent::Type::NoteOff, 7, 62)}),
+		held);
+	CHECK(held.empty());
+	effects->idle = true;
+	CHECK(effects->violations == 0);
+}
+
+TEST_CASE("the effects after an insert that starts to fail start afresh, so that its chord's arpeggios end", "[unit]")
+{
+	auto effects = std::make_shared<TestEffects>();
+	effects->only = "builtin:chordGenerator";
+	MidiSequencer sequencer(effects);
+	sequencer.prepareFor(48000.0, 128);
+	auto sequence = withInsert("chordGenerator");
+	sequence->inserts.slots[1].effect = "arpeggiator";
+	// Sends after the inserts, to the track's output and to another instrument track.
+	sequence->sends.slots[0].effect = "arpeggiator";
+	sequence->sends.slots[1].effect = "arpeggiator";
+	sequence->sendOutputs[1] = 7;
+	sequencer.setSequence(std::move(sequence));
+	effects->idle = false;
+	std::vector<int> held;
+	std::vector<int> sent;
+	follow(playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOn, 5, 60)}), held);
+	follow(sequencer.sendOutput(1), sent);
+	CHECK(playBlocks(sequencer, 200, held, &sent) > 0); // the arpeggios step through the chord
+	// The chord generator passes the key on as it came, whose note-on the arpeggiators after it got before: they
+	// start afresh, without the chord.
+	effects->failing = true;
+	CHECK(playBlocks(sequencer, 200, held, &sent) == 0);
+	CHECK(held.empty());
+	CHECK(sent.empty());
+	follow(playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOff, 7, 60)}), held);
+	CHECK(playBlocks(sequencer, 200, held, &sent) == 0);
+	CHECK(held.empty());
+	CHECK(sent.empty());
+	effects->idle = true;
+	CHECK(effects->violations == 0);
+}
+
+TEST_CASE(
+	"an effect that processes again after failing forgets the notes whose note-offs passed it meanwhile", "[unit]")
+{
+	auto effects = std::make_shared<TestEffects>();
+	MidiSequencer sequencer(effects);
+	sequencer.prepareFor(48000.0, 128);
+	sequencer.setSequence(withInsert("arpeggiator"));
+	effects->idle = false;
+	std::vector<int> held;
+	follow(playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOn, 5, 60)}), held);
+	CHECK(playBlocks(sequencer, 100, held) > 0);
+	effects->failing = true;
+	follow(playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOff, 7, 60)}), held);
+	CHECK(held.empty());
+	// It processes again, without the key it never saw released: no arpeggio.
+	effects->failing = false;
+	CHECK(playBlocks(sequencer, 200, held) == 0);
+	CHECK(held.empty());
+	// Its next notes play as usual.
+	follow(playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOn, 5, 62)}), held);
+	CHECK(playBlocks(sequencer, 100, held) > 0);
+	follow(playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOff, 7, 62)}), held);
+	CHECK(held.empty());
+	effects->idle = true;
+	CHECK(effects->violations == 0);
+}
+
+TEST_CASE("an effect that processes again after failing ends the notes that passed it meanwhile", "[unit]")
+{
+	auto effects = std::make_shared<TestEffects>();
+	MidiSequencer sequencer(effects);
+	sequencer.prepareFor(48000.0, 128);
+	sequencer.setSequence(withInsert("arpeggiator"));
+	effects->idle = false;
+	effects->failing = true;
+	std::vector<int> held;
+	// The key passes the failing arpeggiator as it came.
+	follow(playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOn, 5, 60)}), held);
+	CHECK(held == std::vector<int>{60});
+	// It processes again, started afresh without the key: the note ends, as the arpeggiator swallows its note-off.
+	effects->failing = false;
+	follow(playBlock(sequencer, {}), held);
+	CHECK(held.empty());
+	follow(playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOff, 7, 60)}), held);
+	CHECK(playBlocks(sequencer, 200, held) == 0);
+	CHECK(held.empty());
+	effects->idle = true;
+	CHECK(effects->violations == 0);
+}
+
+TEST_CASE("an insert above the divider that starts to fail ends the notes it played in what the track records, not "
+		  "the parts' notes",
+	"[unit]")
+{
+	auto effects = std::make_shared<TestEffects>();
+	MidiSequencer sequencer(effects);
+	sequencer.prepareFor(48000.0, 128);
+	auto sequence = withInsert("chordGenerator");
+	sequence->inserts.divider = 1;
+	RenderNote part;
+	part.start = 0;
+	part.end = 48000;
+	part.pitch = 48;
+	part.velocity = 40000;
+	sequence->notes.push_back(part);
+	sequencer.setSequence(std::move(sequence));
+	effects->idle = false;
+	std::vector<int> held;
+	std::vector<int> recorded;
+	follow(playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOn, 5, 60)}, 0, &recorded), held);
+	REQUIRE(recorded.size() > 1); // the chord
+	REQUIRE(held.size() == recorded.size() + 1);
+	// The chord ends where the track plays and where it records; the part's note sounds on.
+	effects->failing = true;
+	follow(playBlock(sequencer, {}, 128, &recorded), held);
+	CHECK(recorded.empty());
+	CHECK(held == std::vector<int>{48});
+	follow(playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOff, 7, 60)}, 256, &recorded), held);
+	CHECK(recorded.empty());
+	CHECK(held == std::vector<int>{48});
+	effects->idle = true;
+	CHECK(effects->violations == 0);
+}
+
+TEST_CASE("a send to another instrument track that starts to fail ends its notes there", "[unit]")
+{
+	auto effects = std::make_shared<TestEffects>();
+	MidiSequencer sequencer(effects);
+	sequencer.prepareFor(48000.0, 128);
+	auto sequence = std::make_unique<MidiSequence>();
+	sequence->sends.slots[1].effect = "chordGenerator";
+	sequence->sendOutputs[1] = 7;
+	sequencer.setSequence(std::move(sequence));
+	effects->idle = false;
+	std::vector<int> held;
+	std::vector<int> sent;
+	follow(playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOn, 5, 60)}), held);
+	follow(sequencer.sendOutput(1), sent);
+	REQUIRE(sent.size() > 1); // the chord
+	CHECK(held == std::vector<int>{60});
+	// The chord ends there, and it plays nothing while it fails; the track's own note sounds on.
+	effects->failing = true;
+	CHECK(playBlocks(sequencer, 1, held, &sent) == 0);
+	CHECK(sent.empty());
+	CHECK(held == std::vector<int>{60});
+	follow(playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOn, 5, 62)}), held);
+	CHECK(noteOns(sequencer.sendOutput(1)) == 0);
+	effects->idle = true;
+	CHECK(effects->violations == 0);
+}
+
+TEST_CASE(
+	"the effects after a chord generator that processes again start afresh, so that its key's arpeggios end", "[unit]")
+{
+	auto effects = std::make_shared<TestEffects>();
+	effects->only = "builtin:chordGenerator";
+	MidiSequencer sequencer(effects);
+	sequencer.prepareFor(48000.0, 128);
+	auto sequence = withInsert("chordGenerator");
+	sequence->inserts.slots[1].effect = "arpeggiator";
+	// Sends after the inserts, to the track's output and to another instrument track.
+	sequence->sends.slots[0].effect = "arpeggiator";
+	sequence->sends.slots[1].effect = "arpeggiator";
+	sequence->sendOutputs[1] = 7;
+	sequencer.setSequence(std::move(sequence));
+	effects->idle = false;
+	effects->failing = true;
+	std::vector<int> held;
+	std::vector<int> sent;
+	// The key passes the failing chord generator as it came, and the arpeggiators after it step through it.
+	follow(playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOn, 5, 60)}), held);
+	follow(sequencer.sendOutput(1), sent);
+	CHECK(playBlocks(sequencer, 200, held, &sent) > 0);
+	// It processes again, started afresh without the key: the arpeggiators after it start afresh too.
+	effects->failing = false;
+	playBlocks(sequencer, 1, held, &sent);
+	CHECK(held.empty());
+	CHECK(sent.empty());
+	CHECK(playBlocks(sequencer, 200, held, &sent) == 0);
+	follow(playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOff, 7, 60)}), held);
+	CHECK(playBlocks(sequencer, 200, held, &sent) == 0);
+	CHECK(held.empty());
+	CHECK(sent.empty());
+	effects->idle = true;
+	CHECK(effects->violations == 0);
+}
+
+TEST_CASE("an insert above the divider that goes while its key is held ends the notes it played in what the track "
+		  "records",
+	"[unit]")
+{
+	auto effects = std::make_shared<TestEffects>();
+	MidiSequencer sequencer(effects);
+	sequencer.prepareFor(48000.0, 128);
+	auto sequence = withInsert("chordGenerator");
+	sequence->inserts.divider = 1;
+	sequencer.setSequence(std::move(sequence));
+	effects->idle = false;
+	std::vector<int> held;
+	std::vector<int> recorded;
+	follow(playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOn, 5, 60)}, -1, &recorded), held);
+	const std::vector<int> chord = recorded;
+	REQUIRE(chord.size() > 1);
+	SECTION("removed")
+	{
+		sequencer.setSequence(withInsert(""));
+	}
+	SECTION("replaced by another insert above the divider")
+	{
+		auto replaced = withInsert("transformer");
+		replaced->inserts.divider = 1;
+		sequencer.setSequence(std::move(replaced));
+	}
+	SECTION("moved below the divider")
+	{
+		sequencer.setSequence(withInsert("chordGenerator"));
+	}
+	SECTION("the divider moved down, so that the insert below it moves above")
+	{
+		// It never saw the key's note-on: the chord ends through the count of the inserts above the divider alone.
+		auto moved = withInsert("chordGenerator");
+		moved->inserts.divider = 1;
+		moved->inserts.slots[1].effect = "transformer";
+		sequencer.setSequence(std::move(moved));
+		follow(playBlock(sequencer, {}, -1, &recorded), held);
+		REQUIRE(recorded == chord);
+		auto down = withInsert("chordGenerator");
+		down->inserts.divider = 2;
+		down->inserts.slots[1].effect = "transformer";
+		sequencer.setSequence(std::move(down));
+	}
+	// The chord ends where the track plays and where it records, and the track holds none of its notes.
+	follow(playBlock(sequencer, {}, -1, &recorded), held);
+	CHECK(recorded.empty());
+	CHECK(held.empty());
+	for (const int note : chord)
+		CHECK(!sequencer.holds(static_cast<uint16_t>(note)));
+	follow(playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOff, 7, 60)}, -1, &recorded), held);
+	CHECK(recorded.empty());
+	CHECK(held.empty());
+	effects->idle = true;
+	CHECK(effects->violations == 0);
+}
+
+TEST_CASE("a key pressed in the block in which the last insert above the divider goes sounds, though it plays a pitch "
+		  "of the chord that ends",
+	"[unit]")
+{
+	auto effects = std::make_shared<TestEffects>();
+	MidiSequencer sequencer(effects);
+	sequencer.prepareFor(48000.0, 128);
+	auto sequence = withInsert("chordGenerator");
+	sequence->inserts.divider = 1;
+	sequencer.setSequence(std::move(sequence));
+	effects->idle = false;
+	std::vector<int> held;
+	std::vector<int> recorded;
+	follow(playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOn, 5, 60)}, -1, &recorded), held);
+	const std::vector<int> chord = recorded;
+	REQUIRE(chord.size() > 1);
+	const int pitch = chord[0] != 60 ? chord[0] : chord[1];
+	// Late input comes at offset 0, as the chord's note-offs do: they go first, and the new key sounds.
+	sequencer.setSequence(withInsert(""));
+	follow(playBlock(sequencer, {noteAt(ProcessEvent::Type::NoteOn, 0, pitch)}, -1, &recorded), held);
+	CHECK(recorded == std::vector<int>{pitch});
+	CHECK(held == std::vector<int>{pitch});
+	effects->idle = true;
+	CHECK(effects->violations == 0);
+}
+
+TEST_CASE("events that don't fit an effect's event lists are dropped, and the log says so", "[unit]")
+{
+	const gnubase::test::TempDir dir;
+	const std::filesystem::path file = dir.path() / "gnubase.log";
+	gnubase::logging::flush(); // what earlier tests logged goes to stderr, not into this log
+	const gnubase::logging::Session log(file);
+	MidiSequencer sequencer;
+	sequencer.prepareFor(48000.0, 128);
+	sequencer.setSequence(withInsert("transformer"));
+	// More SysEx than a block's event lists hold.
+	std::vector<uint8_t> dump(70000, 0x10);
+	dump.front() = 0xF0;
+	dump.back() = 0xF7;
+	ProcessEvent sysex;
+	sysex.type = ProcessEvent::Type::SysEx;
+	sysex.data = dump.data();
+	sysex.size = static_cast<uint32_t>(dump.size());
+	CHECK(playBlock(sequencer, {sysex}).empty());
+	// Once while it drops them, not every block, and again when it drops some after a block without.
+	playBlock(sequencer, {sysex});
+	playBlock(sequencer, {});
+	playBlock(sequencer, {sysex});
+	const std::string text = logged(file);
+	CHECK_THAT(text, ContainsSubstring("transformer in MIDI insert 1 dropped events"));
+	CHECK(occurrences(text, "dropped events") == 2);
+}
+
+TEST_CASE("the sequencer clears the drumSound flag of the notes it maps, so the inserts below never see it", "[unit]")
+{
+	// midi.inject drumSounds (docs/features/drum-editor.md): the key is a sound's pitch, which the drum map plays as
+	// its O-note. Past the sequencer the note is what plays, and a flag left set would reach the inserts below the
+	// divider and the instrument as plugin::Event::DrumSound.
+	MidiSequencer sequencer;
+	sequencer.prepareFor(48000.0, 128);
+	auto sequence = withInsert("");
+	sequence->drumInput.resize(2 * static_cast<size_t>(g_drumSounds));
+	for (size_t i = 0; i < sequence->drumInput.size(); ++i)
+		sequence->drumInput[i].key = static_cast<uint8_t>(i % 128);
+	sequence->drumInput[g_drumSounds + 45] = {50, 9, false}; // the sound itself: O-note 50 on channel 10
+	sequencer.setSequence(std::move(sequence));
+	for (const ProcessEvent::Type type : {ProcessEvent::Type::NoteOn, ProcessEvent::Type::NoteOff})
+	{
+		ProcessEvent played = noteAt(type, 0, 45);
+		played.drumSound = true;
+		const EventBuffer out = playBlock(sequencer, {played});
+		REQUIRE(out.size() == 1);
+		CHECK(out[0].type == type);
+		CHECK(out[0].key == 50);
+		CHECK(out[0].channel == 9);
+		CHECK(!out[0].drumSound);
+	}
 }

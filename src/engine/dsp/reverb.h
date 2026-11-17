@@ -123,5 +123,9 @@ namespace gnubase::engine::dsp
 		Smoothed m_wet{0.25};
 		std::atomic<uint32_t> m_tail{0}; // read by tail() on any thread
 		bool m_fresh = true;             // nothing processed since the last reset: parameters apply at once
+		// Frames processed since the last reset, at most m_longest: every line wrote that many samples from its start,
+		// so reset only clears those (#1595).
+		size_t m_written = 0;
+		size_t m_longest = 0; // the longest line's size: predelay, combs and allpasses
 	};
 }

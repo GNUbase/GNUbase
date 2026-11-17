@@ -10,9 +10,16 @@ how each state looks (CLAUDE.md, "UI conventions"). The code is in `src/ui/theme
   `p` and the like blocks. They hold no colors, fonts, font sizes or skins (`tests/theme_tests.cpp` checks the sizes).
 - **Themes.** A theme is a folder in `resources/themes` with its skins (SVG), `manifest.json`, `tokens.json` and
   `theme.rcss`. `tools/skin/generate.py` makes all of them from one table of tokens per theme (colors, radii, border
-  widths, font sizes and families), so the skins and the style sheet always agree; change the generator and run it
-  again rather than editing its output (`resources/themes/README.md`). `theme.rcss` gives each widget state its colors,
-  fonts and skin, all inside `@media (theme: <name>)`.
+  widths, font sizes and families, and the events' look: how opaque colored events' bodies are, the one shade that
+  tints their outline and waveform and how strongly, and how far events keep off their lanes' edges), so the skins and
+  the style sheet always agree; change the generator and run it again rather than editing its output
+  (`resources/themes/README.md`); CI's format job runs it into a temporary folder
+  and fails when the output differs from `resources/themes`, naming the files that differ. `theme.rcss` gives each
+  widget state its colors, fonts and skin, all inside `@media (theme: <name>)`. The manifest's `theme` is the theme's
+  id, its folder's name, which `ui.theme` stores, and its `displayName` the name the UI shows for it, so a document
+  never names a theme: `ui::Themes` reads both and shows the id of a theme whose manifest has no name
+  (`Themes::themes`), and the preferences dialog lists the themes it gets from `gnubase.ui.themes()`
+  ([preferences.md](preferences.md)).
 - **Skins.** Widgets draw the theme's 9-slice SVGs with `decorator: svg-ninepatch(<file>, <top> <right> <bottom>
   <left>)`, a decorator in GNUbase's RmlUi fork. The skin is rasterized once per dp ratio at its own size (a 24 dp
   skin is 48 pixels at 200 %), whatever the size of the widgets that use it, and drawn as nine patches: the corners
@@ -22,6 +29,32 @@ how each state looks (CLAUDE.md, "UI conventions"). The code is in `src/ui/theme
   A widget that the keyboard focused (`:focus-visible`) gets the theme's focus ring over the skin of its state, a
   second decorator that the generator adds to each such rule ([accessibility.md](accessibility.md)).
   The default theme's glows are part of its skins, so they cost no extra render passes.
+- **Flat widgets.** The default theme follows the mockup `art/mockups/main-window.webp` (#1311, #1328); the elements and
+  layout stay as they are. Its toolbar and transport buttons have no frame: muted until the mouse is over them, a soft
+  fill under it, the accent when checked, Start in the accent and Record in the danger color, as the track list's record
+  toggle; the primary time display is bold and in the titles' size, the position displays' height following their font
+  size (#1342). The menu bar and toolbars are in the window's dark tone. Menu buttons that show a value look like
+  drop-down fields with an arrow, pressed a step toward the accent and dimmed when disabled (#1342), tabs are names over
+  an accent line, zones are rounded panels over the window's background, the zone with the keyboard focus framed by a
+  hairline in the accent, the event display's lanes are on the panels' surface with the track list a step lighter, track
+  list rows are raised with the track's color a bar at their left edge, a folder's row tinted and the selected row
+  lit and outlined in its track's color, names in medium weight and Record Enable's icon in the record color (#1314,
+  [track-list.md](track-list.md)), a selected list item is tinted and outlined in the second accent, inspector section
+  headers are
+  bold names on a tile after a disclosure arrow, value and text fields and drop-down lists are raised fields lighter
+  than their panel, without the accent line, mute, solo and record buttons are filled boxes, mixer channel strips are
+  raised panels with light fader caps over thin slots, whose round ends don't stretch, and knobs without the fixed
+  accent arc, and the transport bar's time displays, signature and tempo are plain digits. The generator's `flat_rules`
+  gives every theme the same selectors (the check below): the default theme its flat look, the others what their general
+  rules already give, so they keep their framed look. Their drop-down button and disclosure skins are the plain
+  button's, in each state. Rules for buttons in bars skip toggle and primary buttons (`:not(.toggle):not(.primary)`),
+  which keep their skins, and reach the transport's sections (`.transport-section`), not the setup pane that comes into
+  the transport bar and the transport panel with them: it keeps framed buttons, as every setup pane (#1342). Each bar
+  rule that gives a skin gets a `:focus-visible` twin with the focus ring over it, as the general rules do; a hovered
+  bar button with the focus shows the ring over the skin it has without the hover, since the twins come after the hover
+  rules (the default theme's hover fill, a background color, stays). A disabled bar button looks disabled also when it
+  is checked, a menu button that shows a value too, in every theme: in the framed themes such a menu button showed the
+  checked skin before (#1711).
 - **Every document gets them.** While a `ui::Themes` exists, every document RmlUi loads gets the shared style sheets
   and every theme's style sheet ahead of its own style (an RmlUi plugin, on document load). Documents name neither a
   theme nor a shared style sheet, and their own rules, which only lay out, come last. Live reload in Debug builds picks
@@ -40,7 +73,8 @@ The theme styles RmlUi's controls by their tags and states, and GNUbase's contai
 
 - **Text:** `body` has the theme's font and colors; `h1`, `h2`, `.text-title`, `.text-display`, `.text-label`,
   `.text-small`, `.text-muted`, `.text-accent`, and `.counter` for time and counter displays in the counter font.
-- **Icons:** `svg.icon` (resources/icons) in the text color, `.accent`, `.muted` or `.danger`; icons in buttons follow
+- **Icons:** `svg.icon` (resources/icons) in the text color, `.accent`, `.muted`, `.danger` or `.warning` (every warning
+  sign); icons in buttons follow
   the button's state.
 - **Buttons:** `button` with `:hover`, `:active`, `:disabled`, `:focus-visible` and the state classes `.checked` and
   `.suspended` (a switch that is on but paused, such as auto-scroll while editing); `button.primary`; `button.icon-only`; toggle buttons `button.toggle` with `.mute`, `.solo`, `.record` or `.monitor`
@@ -57,26 +91,46 @@ The theme styles RmlUi's controls by their tags and states, and GNUbase's contai
   `.meter-fill`, `.meter-peak`, the color picker's `.color-field`, `.color-hue` and their thumbs, `.splitter-grip-vertical`, `.splitter-grip-horizontal`, `.dropdown-arrow`,
   `.focus-ring`.
 - **Canvas elements** ([canvas.md](canvas.md)) by their tags: `event-lanes`, `waveform`, `curve` and `ruler`, with
-  `color` and the canvas properties `stroke-color` and `stroke-width`.
+  `color` and the canvas properties `stroke-color`, `stroke-width`, `own-fill-opacity`, `own-color-tint` and
+  `event-inset`.
 - **Event display** ([event-display.md](event-display.md)): `.event-display` with `.overview`, `.overview-view`,
-  `.project-cursor`, `.cross-hair-vertical` and `.cross-hair-horizontal`.
+  `.project-cursor`, `.cross-hair-vertical` and `.cross-hair-horizontal`; `event-names` and `part-contents` in it, and
+  `.event-display.highlight-selected-borders event-lanes.selected-events` for Highlight Borders of Selected Events
+  (#1313).
 
 ## Checks
 
 - `tests/uithemes_tests.cpp`: the themes are found, a theme style sheet with rules outside its media query is an
   error, documents get the theme's colors, fonts and skins for each state and the design system's layout with their
-  own last, and changed style sheets apply when documents load again.
+  own last, and changed style sheets apply when documents load again. In every theme the bars' look reaches the
+  sections' buttons of toolbars, the transport bar and the transport panel, not the transport's setup pane, which
+  looks like the one outside a bar in each state; menu buttons that show a value look pressed and disabled; every bar
+  button and the tempo show the focus ring over the skin of their state, and a checked menu button looks disabled when
+  it is; and the tempo looks like the transport's displays (#1342, #1711).
 - `tests/shell_tests.cpp`: a theme applies in every window, also in windows opened later, without loading documents
   again; work posted from another thread runs on the UI thread in the next step.
 - `tests/uisettings_tests.cpp`: `ui.theme` and `ui.scale` apply at start and follow `settings.set`, and an unknown
   theme falls back to the default.
 - `tests/svg_tests.cpp`: a 9-slice skin keeps its corners at their size at 100, 150 and 200 %, and is rasterized once
   per scale for any number of widgets of any size; decorators find their files next to the style sheet.
-- `tests/theme_tests.cpp`: every theme's style sheet uses all its skins and styles the same widgets and states as the
-  others, draws the focus ring on every focusable widget in each of its states, gives the key editor's piano keyboard
-  white keys lighter than its black keys, dims the audio part editor's events that their part hides entirely, and the
-  high contrast theme meets WCAG's contrast ratios.
+- `tests/theme_tests.cpp`: every theme's style sheet uses all its skins but those its manifest marks `unused`, the
+  flat look's own (#1314), and none of those, styles the same widgets and states as the others, draws the focus ring
+  on every focusable widget in each of its states, gives the key editor's piano keyboard
+  white keys lighter than its black keys, gives mixer strip names text with WCAG's 4.5:1 contrast on any track color,
+  dims the audio part editor's events that their part hides entirely, and the high contrast theme meets WCAG's
+  contrast ratios. The default theme's bar buttons, tabs and inspector headers are flat, the other themes' framed,
+  their arrow skins the plain button's, and no bar rule reaches toggle or primary buttons; the disabled menu button's
+  rule comes after the checked one's; the default theme's primary time display is in the titles' size; its lanes
+  and track list are off the window's background, the other themes' lanes on it, and its mixer strips and transport
+  displays follow the mockup; the zone with the focus is framed in the accent, and the fader slot's round ends and
+  the selected track list row's rounded corners lie in the skins' corners.
 - `tests/stylerules_tests.cpp`: C++ and Lua code (`src`, `resources`, `tests/lua`) never sets a style property other
   than geometry from data (position, size, transform), and documents and shared style sheets never name a theme.
 - `tests/window_tests.cpp`: a page of widgets (`tests/data/ui/widgets.rml`) in every theme, and in the default theme
-  at dp ratio 2, compared with golden images on every platform; switching back to a theme gives the same pixels.
+  at dp ratio 2, compared with golden images on every platform; switching back to a theme gives the same pixels. Its
+  toolbar holds bar buttons: plain, checked, disabled and one that shows a value.
+- `tests/uiapp_tests.cpp`: the project window in the default theme with the transport bar, the inspector's sections and
+  the left zone beside the main zone (`default-theme-window.png`), the transport bar without the locators, the locator
+  range and the punch points, so that its other sections, the tempo and signature too, fit the image (#1711). This test
+  and the other goldens of the project window (`event-display.png`, `event-colors.png`, `ruler-tracks.png`) also check
+  which toolbar sections show, since a golden image's tolerance can hide a whole button (#1342).

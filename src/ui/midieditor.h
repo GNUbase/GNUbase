@@ -99,6 +99,7 @@ namespace gnubase::ui
 		std::function<void()> m_moved;
 		std::function<void()> m_drumMapSetup;
 		engine::Json m_project = engine::Json::object();
+		uint64_t m_read = 0; // EngineBinding::handed() when m_project came
 		engine::Json m_view = engine::Json::object();
 		bool m_loading = false;
 		bool m_stale = false;

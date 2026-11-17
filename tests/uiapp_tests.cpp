@@ -165,6 +165,26 @@ TEST_CASE("UI tests click through GNUbase's UI and read it back, as MCP's UI too
 	CHECK(field.width == static_cast<int>(200.0F * app.main().dpRatio()));
 }
 
+TEST_CASE("waitUntil waits on while what it reads isn't there yet, and fails with its error past the deadline", "[ui]")
+{
+	test::UiApp app;
+	// A project the UI hasn't received yet is null JSON: reading it throws until it arrives (#1499).
+	engine::Json project;
+	int tries = 0;
+	CHECK(app.waitUntil(
+		[&]
+		{
+			if (++tries == 3)
+				project = {{"tracks", engine::Json::array({1, 2})}};
+			return project.at("tracks").size() == 2;
+		}));
+	CHECK(tries == 3);
+
+	const engine::Json missing;
+	CHECK_THROWS_AS(app.waitUntil([&] { return missing.at("tracks").empty(); }, std::chrono::milliseconds(50)),
+		engine::Json::exception);
+}
+
 TEST_CASE("UI tests run the UI from another resources folder, which a restart keeps", "[ui]")
 {
 	const test::TempDir folder;
@@ -242,6 +262,9 @@ TEST_CASE("the project window shows events and the project cursor where the engi
 	CHECK(lanes.at("attributes").at("scale") == "0.01");
 	CHECK(element(".project-cursor").at("box").at("x").get<int>() - lanes.at("box").at("x").get<int>() == 150);
 	test::UiApp::checkGolden("event-display", app.screenshot("event-display", {800, 300}));
+	// The toolbar sections the image shows, which its tolerance could hide a button of (#1342).
+	CHECK(app.shownSections("toolbar") ==
+		std::vector<std::string>{"tools", "autoScroll", "zoomPresets", "snap", "gridType", "zones"});
 
 	// Ctrl and the mouse wheel zoom in around the mouse, through the UI tools.
 	const ui::Target over{
@@ -250,6 +273,180 @@ TEST_CASE("the project window shows events and the project cursor where the engi
 	CHECK(display.view().scale < 0.01);
 	app.shell().step(std::chrono::milliseconds(0));
 	CHECK(element(".project-cursor").at("box").at("x").get<int>() - lanes.at("box").at("x").get<int>() == 150);
+}
+
+TEST_CASE("the project window shows events' names and MIDI parts' notes and controllers at each track's height", "[ui]")
+{
+	// #1313 (reference manual pp. 1603-1604, 1607): names from Smallest Track Height to Show Name (28 dp), part
+	// contents from Smallest Track Height to Show Data (20 dp), the notes over each part's pitch range.
+	test::UiApp app({800, 300});
+	ui::EventDisplay& display = app.appUi().showProject();
+	app.setDpRatio(1.0F);
+	app.call("project.set", {{"length", 60.0}});
+	const test::TempDir dir;
+	test::Audio take;
+	take.channels = 1;
+	take.sampleRate = 48000;
+	take.samples.resize(96000);
+	for (size_t i = 0; i < take.samples.size(); ++i)
+		take.samples[i] =
+			static_cast<float>(0.5 * std::sin(2.0 * 3.14159265358979 * 220.0 * static_cast<double>(i) / 48000.0));
+	const std::filesystem::path file = dir.path() / "Vocals.wav";
+	test::writeWav(file, take);
+	const Json audio = app.call("track.add", {{"type", "audio"}, {"timeBase", "linear"}}).at("track");
+	const Json media = app.call("media.add", {{"path", file.u8string()}}).at("media");
+	const Json clip = app.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	app.call(
+		"audioEvent.add", {{"track", audio.at("id")}, {"clip", clip.at("id")}, {"position", 24000}, {"length", 96000}});
+	// The same part on three MIDI tracks, 20, 40 and 80 dp high: a rising line of notes and a pitch bend under it.
+	std::vector<uint64_t> tracks;
+	for (const char* name : {"Low", "Keys", "Tall"})
+	{
+		const auto track = app.call("track.add", {{"type", "midi"}}).at("track").at("id").get<uint64_t>();
+		tracks.push_back(track);
+		const Json part =
+			app.call("midiPart.add",
+				   {{"track", track}, {"position", 0}, {"length", 8 * time::g_ticksPerQuarter}, {"name", name}})
+				.at("part")
+				.at("id");
+		Json notes = Json::array();
+		for (int i = 0; i < 8; ++i)
+			notes.push_back({{"position", i * time::g_ticksPerQuarter}, {"length", time::g_ticksPerQuarter / 2},
+				{"pitch", 60 + (i * 2)}, {"velocity", 0.8}});
+		app.call("note.add", {{"part", part}, {"notes", notes}});
+		Json bends = Json::array();
+		for (int i = 0; i < 16; ++i)
+			bends.push_back({{"position", i * time::g_ticksPerQuarter / 2}, {"type", "pitchBend"},
+				{"value", static_cast<double>(i) / 15.0}});
+		app.call("controller.add", {{"part", part}, {"controllers", bends}});
+	}
+	display.setTrackHeights({tracks[0]}, 20.0);
+	display.setTrackHeights({tracks[2]}, 80.0);
+	Rml::ElementDocument& document = *app.main().context().GetDocument(0);
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			auto* names = dynamic_cast<ui::EventNames*>(document.QuerySelector(".event-area event-names"));
+			auto* contents = dynamic_cast<ui::PartContents*>(document.QuerySelector(".event-area part-contents"));
+			auto* wave = dynamic_cast<ui::Waveform*>(document.QuerySelector(".waveforms waveform"));
+			return names != nullptr && contents != nullptr && names->lanes().size() == 4 &&
+				contents->lanes().size() == 4 && names->lanes()[0].names.size() == 1 &&
+				names->lanes()[1].names.empty() && names->lanes()[3].names.size() == 1 &&
+				contents->lanes()[1].parts.size() == 1 && contents->lanes()[3].parts.size() == 1 &&
+				contents->lanes()[3].parts[0].controllers.size() == 16 && wave != nullptr && !wave->channels().empty();
+		}));
+	app.shell().step(std::chrono::milliseconds(0));
+	test::UiApp::checkGolden("event-names-contents", app.screenshot("event-names-contents", {800, 300}));
+}
+
+TEST_CASE(
+	"the project window shows events in their colors, and colored ones selected and muted, as the theme says", "[ui]")
+{
+	// #1332: the default theme fills colored events at own-fill-opacity, tints their outline and their waveform, and
+	// keeps the selected and muted looks for colored events too.
+	test::UiApp app({800, 300});
+	ui::EventDisplay& display = app.appUi().showProject();
+	app.setDpRatio(1.0F);
+	app.call("project.set", {{"length", 60.0}});
+	const test::TempDir dir;
+	test::Audio take; // a 220 Hz tone fading out over two seconds
+	take.channels = 1;
+	take.sampleRate = 48000;
+	take.samples.resize(96000);
+	for (size_t i = 0; i < take.samples.size(); ++i)
+	{
+		const double t = static_cast<double>(i) / 48000.0;
+		take.samples[i] = static_cast<float>(0.9 * (1.0 - (t / 2.0)) * std::sin(2.0 * 3.14159265358979 * 220.0 * t));
+	}
+	const std::filesystem::path file = dir.path() / "tone.wav";
+	test::writeWav(file, take);
+	const Json audio =
+		app.call("track.add", {{"type", "audio"}, {"timeBase", "linear"}, {"color", "#e0505a"}}).at("track");
+	const Json media = app.call("media.add", {{"path", file.u8string()}}).at("media");
+	const Json clip = app.call("clip.add", {{"media", media.at("id")}}).at("clip");
+	app.call(
+		"audioEvent.add", {{"track", audio.at("id")}, {"clip", clip.at("id")}, {"position", 24000}, {"length", 96000}});
+	const Json midi = app.call("track.add", {{"type", "midi"}, {"color", "#50c878"}}).at("track");
+	const auto part = [&app, &midi](int64_t quarter)
+	{
+		return app
+			.call("midiPart.add",
+				{{"track", midi.at("id")}, {"position", quarter * time::g_ticksPerQuarter},
+					{"length", 2 * time::g_ticksPerQuarter}})
+			.at("part")
+			.at("id")
+			.get<uint64_t>();
+	};
+	part(0); // all three in view
+	const uint64_t selected = part(3);
+	const uint64_t muted = part(6);
+	app.call("event.set", {{"events", {muted}}, {"mute", true}});
+	const Json themed = app.call("track.add", {{"type", "midi"}}).at("track"); // no color: the theme's look
+	app.call("midiPart.add",
+		{{"track", themed.at("id")}, {"position", 3 * time::g_ticksPerQuarter},
+			{"length", 4 * time::g_ticksPerQuarter}});
+	Rml::ElementDocument& document = *app.main().context().GetDocument(0);
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			display.select({selected});
+			auto* lanes = dynamic_cast<ui::EventLanes*>(document.QuerySelector("event-lanes.events"));
+			auto* mutes = dynamic_cast<ui::EventLanes*>(document.QuerySelector("event-lanes.muted-events"));
+			auto* wave = dynamic_cast<ui::Waveform*>(document.QuerySelector(".waveforms waveform"));
+			const auto shown = [](const ui::EventLanes* canvas)
+			{
+				return canvas != nullptr &&
+					std::any_of(canvas->lanes().begin(), canvas->lanes().end(),
+						[](const ui::EventLanes::Lane& lane) { return !lane.events.empty(); });
+			};
+			return shown(lanes) && lanes->lanes().size() == 3 && shown(mutes) && wave != nullptr &&
+				!wave->channels().empty() && display.selection() == std::vector<uint64_t>{selected};
+		}));
+	app.shell().step(std::chrono::milliseconds(0));
+	test::UiApp::checkGolden("event-colors", app.screenshot("event-colors", {800, 300}));
+	CHECK(app.shownSections("toolbar") ==
+		std::vector<std::string>{"tools", "autoScroll", "zoomPresets", "snap", "gridType", "zones"});
+}
+
+TEST_CASE(
+	"the project window in the default theme shows its transport bar, inspector sections and zones as panels", "[ui]")
+{
+	// #1342: the default theme's flat bars, the transport bar's buttons and plain displays, the inspector's section
+	// headers, and the left zone beside the main zone as rounded panels with the window's background between them.
+	// Without the locators, the locator range and the punch points, the transport bar's other sections fit the image,
+	// the plain tempo and the signature too (#1711).
+	test::UiApp app({1000, 680}); // CI's screens are 1024 pixels wide, and macOS opens windows at most 684 tall
+	app.appUi().showProject();
+	app.setDpRatio(1.0F);
+	app.call("project.set", {{"length", 60.0}});
+	app.appUi().docking().setVisible("project", "transportBar", true);
+	for (const char* section : {"locators", "locatorRange", "punchPoints"})
+		app.appUi().docking().setSectionHidden("project", "transport", section, true);
+	app.ui().key(std::nullopt, "Mod+Alt+L");
+	const uint64_t guitar = app.call("track.add", {{"type", "audio"}, {"name", "Guitar"}, {"color", "#e12ad8"}})
+								.at("track")
+								.at("id")
+								.get<uint64_t>();
+	app.call("track.add", {{"type", "midi"}, {"name", "Keys"}});
+	ui::TrackList& list = *app.appUi().trackList();
+	REQUIRE(app.waitUntil(
+		[&]
+		{
+			list.select({guitar}); // until the list has the track
+			return visible(app, "#left-zone") && visible(app, "#transport-bar") &&
+				count(app, ".track-list listitem") == 2 && list.selection() == std::vector<uint64_t>{guitar} &&
+				visible(app, ".inspector-section[section=basics] button.section-header");
+		}));
+	app.shell().step(std::chrono::milliseconds(0));
+	test::UiApp::checkGolden("default-theme-window", app.screenshot("default-theme-window", {1000, 680}));
+	CHECK(app.shownSections("toolbar") ==
+		std::vector<std::string>{"tools", "autoScroll", "zoomPresets", "snap", "gridType", "quantize", "zones"});
+	CHECK(app.shownSections("transport-bar") ==
+		std::vector<std::string>{"transportControls", "timeDisplays", "tempoSignature", "click"});
+	const Json bar = element(app, "#transport-bar").at("box");
+	const Json click = element(app, "#transport-bar [section=click]").at("box");
+	CHECK(
+		click.at("x").get<int>() + click.at("width").get<int>() <= bar.at("x").get<int>() + bar.at("width").get<int>());
 }
 
 TEST_CASE("the project cursor and the cross-hair cursor are drawn only inside the event display's time area", "[ui]")

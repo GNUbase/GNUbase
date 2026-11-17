@@ -25,7 +25,11 @@ transport's record state and the record mode setting.
   records and where (`Recorder::setup`) is numbered when the engine hands it over, not applied: each chunk carries the
   latest number, and the disk thread applies a setup when a chunk sent after it comes, or when it finds none. So a
   recording that the audio thread started before keeps the setup it started with, and handing a setup over never
-  waits for the disk thread, which holds its lock while it lists the folder and creates a recording's files.
+  waits for the disk thread. The disk thread lists the folder and creates a recording's files without its lock, so
+  `midi.insertRetrospective` and `midi.clearRetrospective` don't wait for that either; the chunks behind the one
+  that started the recording wait meanwhile, and so do a device change and the engine's end. Those two commands
+  handle the chunks that came in only up to one that starts a recording, which they leave to the disk thread
+  (#1356).
 - **Files.** The disk thread writes one file per track, named after the track (`Audio 1.wav`, `Audio 1-2.wav` if
   that is taken; characters that file systems refuse become `_`), into the project's media folder `Audio`; an unsaved
   project records into `Recordings` in the settings folder (the temporary folder without one; `unsavedMediaFolder`,

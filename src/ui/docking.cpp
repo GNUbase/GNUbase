@@ -217,7 +217,8 @@ namespace gnubase::ui
 		m_shell.onCloseRequest(
 			[this](Window& window)
 			{
-				later([this] { saveWindows(); }); // once the shell closed it
+				saveWindows();                    // its bounds as the user left them, also those of the last moment
+				later([this] { saveWindows(); }); // and once the shell closed it, that it is closed
 				for (auto& [id, shown] : m_shown)
 					if (shown.window == window.id())
 					{
@@ -225,14 +226,10 @@ namespace gnubase::ui
 						return;
 					}
 			});
-		// In every step, after the step tasks and right before the shell draws: the window's size, the UI scale, a
-		// label the engine binding changed or the shown sections may have changed the room.
-		m_shell.beforeDraw(
-			[this, alive = std::weak_ptr<bool>(m_alive)]
-			{
-				if (!alive.expired())
-					fitSections();
-			});
+		// Whenever a window's context updates to draw it, or for a screenshot: the window's size, the UI scale, a label
+		// the engine binding changed or the shown sections may have changed the room. The layout is the draw's own.
+		m_shell.afterUpdate([this, alive = std::weak_ptr<bool>(m_alive)](Window& window)
+			{ return !alive.expired() && fitSections(window.context()); });
 		// Windows the user moved, resized, opened or closed: kept for when they open again, and for workspaces.
 		m_shell.every(std::chrono::milliseconds(500),
 			[this, alive = std::weak_ptr<bool>(m_alive)]
@@ -376,34 +373,38 @@ namespace gnubase::ui
 		document->GetContext()->RequestNextUpdate(0);
 	}
 
-	void Docking::fitSections()
+	bool Docking::fitSections(Rml::Context& context)
 	{
+		bool changed = false;
 		for (auto& [name, attached] : m_windows)
 		{
-			auto* document = dynamic_cast<Rml::ElementDocument*>(attached.document.get());
-			if (document == nullptr || attached.fits.empty() || !document->IsVisible())
+			const Rml::Element* document = attached.document.get();
+			if (document == nullptr || document->GetContext() != &context || !document->IsVisible())
 				continue;
-			// The room as it is now, which the last drawing may not have had yet. ponytail: a layout pass per step,
-			// which costs little while nothing changed; listen for the changes if it shows in a profile.
-			document->UpdateDocument();
-			bool changed = false;
 			for (const Rml::ObserverPtr<Rml::Element>& container : attached.fits)
 				if (Rml::Element* element = container.get())
 					changed = fit(*element) || changed;
-			if (changed)
-				document->GetContext()->RequestNextUpdate(0);
 		}
+		return changed;
 	}
 
 	bool Docking::fit(Rml::Element& container)
 	{
-		// What a child takes of the container's width, with its margins; a section without room is laid out out of the
-		// flow, so this is what it would take.
+		// What an element takes of the container's width, with its margins; a section or a spare part without room is
+		// laid out out of the flow, so this is what it would take.
 		const auto width = [](Rml::Element& child) { return child.GetBox().GetSize(Rml::BoxArea::Margin).x; };
+		bool changed = false;
+		const auto setNoRoom = [&changed](Rml::Element& element, bool noRoom)
+		{
+			if (element.IsClassSet("no-room") != noRoom)
+			{
+				element.SetClass("no-room", noRoom);
+				changed = true;
+			}
+		};
 		std::vector<Rml::Element*> sections; // the shown ones before the spacer, which can go
 		float room = container.GetBox().GetSize(Rml::BoxArea::Content).x;
 		bool beforeSpacer = true;
-		bool changed = false;
 		for (int i = 0; i < container.GetNumChildren(); ++i)
 		{
 			Rml::Element* child = container.GetChild(i);
@@ -414,24 +415,48 @@ namespace gnubase::ui
 				sections.push_back(child);
 			else if (child->GetComputedValues().display() != Rml::Style::Display::None)
 				room -= width(*child);
-			if (section && (child->IsClassSet("hidden") || !beforeSpacer) && child->IsClassSet("no-room"))
+			if (section && (child->IsClassSet("hidden") || !beforeSpacer))
 			{
-				child->SetClass("no-room", false);
-				changed = true;
+				setNoRoom(*child, false);
+				for (Rml::Element* spare : elements(*child, "[fit=spare]"))
+					setNoRoom(*spare, false);
 			}
 		}
-		// The last go first: a section shows while it and those before it fit, within rounding.
-		bool fits = true;
+		// The sections' spare parts go first, the last one first, until the sections fit; a part without room is out of
+		// its section's flow, so not in its width. The room a part gives up is its own section's: if that section goes
+		// too, the sections before it don't get that room.
+		std::vector<float> takes;                             // what each section takes, without the parts given up
+		std::vector<std::pair<Rml::Element*, size_t>> spares; // each with its section's index
+		float need = 0.0F;
 		for (Rml::Element* section : sections)
 		{
-			room -= width(*section);
-			fits = fits && room > -0.01F;
-			if (section->IsClassSet("no-room") == fits)
+			takes.push_back(width(*section));
+			for (Rml::Element* spare : elements(*section, "[fit=spare]"))
 			{
-				section->SetClass("no-room", !fits);
-				changed = true;
+				spares.emplace_back(spare, takes.size() - 1);
+				if (spare->IsClassSet("no-room"))
+					takes.back() += width(*spare);
 			}
+			need += takes.back();
 		}
+		size_t given = 0;
+		for (; need - room >= 0.01F && given < spares.size(); ++given)
+		{
+			const auto& [spare, owner] = spares[spares.size() - 1 - given];
+			need -= width(*spare);
+			takes[owner] -= width(*spare);
+		}
+		// Then the last sections go first: a section shows while it and those before it fit, within rounding.
+		bool fits = true;
+		for (size_t i = 0; i < sections.size(); ++i)
+		{
+			room -= takes[i];
+			fits = fits && room > -0.01F;
+			setNoRoom(*sections[i], !fits);
+		}
+		for (size_t i = 0; i < spares.size(); ++i) // shown with a section without room, for when it shows again
+			setNoRoom(
+				*spares[i].first, i + given >= spares.size() && !sections[spares[i].second]->IsClassSet("no-room"));
 		return changed;
 	}
 
@@ -781,11 +806,14 @@ namespace gnubase::ui
 	void Docking::resetSections(const std::string& window, const std::string& set)
 	{
 		if (const Json* sets = find(m_layout, {"windows", window, "sections"});
-			sets == nullptr || !sets->is_object() || !sets->contains(set))
-			return;
-		m_layout["windows"][window]["sections"].erase(set);
-		save();
-		apply();
+			sets != nullptr && sets->is_object() && sets->contains(set))
+		{
+			m_layout["windows"][window]["sections"].erase(set);
+			save();
+			apply();
+		}
+		if (m_reset)
+			m_reset(window, set);
 	}
 
 	void Docking::savePreset(const std::string& window, const std::string& set, const std::string& name)
@@ -890,6 +918,7 @@ namespace gnubase::ui
 
 	void Docking::save()
 	{
+		m_unsaved = false;
 		m_saves.insert(m_binding.send("settings.set", {{"key", "ui.layout"}, {"value", m_layout}},
 			[this, alive = std::weak_ptr<bool>(m_alive)](const engine::Result& result)
 			{
@@ -904,7 +933,7 @@ namespace gnubase::ui
 	void Docking::saveWindows()
 	{
 		const std::vector<Display> displays = m_shell.displays();
-		bool changed = false;
+		bool changed = m_unsaved;
 		for (const auto& [id, shown] : m_shown)
 			if (shown.window != 0 && m_shell.find(shown.window) != nullptr)
 				changed = keepBounds(m_layout["panels"][id], m_shell.bounds(shown.window), displays) || changed;
@@ -1016,6 +1045,25 @@ namespace gnubase::ui
 			m_shell.setMaximized(id, maximized);
 			window.maximized = maximized;
 		}
+	}
+
+	std::optional<int> Docking::fittedWidth(const std::string& name) const
+	{
+		const Json* width = find(m_layout, {"windows", name, "fittedWidth"});
+		if (width == nullptr || !width->is_number_integer())
+			return std::nullopt;
+		return width->get<int>();
+	}
+
+	void Docking::setFittedWidth(const std::string& name, int width)
+	{
+		Json& entry = m_layout["windows"][name];
+		if (!entry.is_object())
+			entry = Json::object();
+		if (entry.value("fittedWidth", Json()) == width)
+			return;
+		entry["fittedWidth"] = width;
+		m_unsaved = true;
 	}
 
 	bool Docking::savedMaximized(const std::string& name) const

@@ -20,7 +20,9 @@
 #include <algorithm>
 #include <array>
 #include <memory>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace gnubase::ui
@@ -109,11 +111,15 @@ namespace gnubase::ui
 		public:
 			using Rml::Element::Element;
 
-			// Opens the menu at a point in the window's pixels, inside the window.
+			// Opens the menu at a point in the window's pixels, inside the window. Items that come or go while it is
+			// open keep it inside the window (OnUpdate).
 			void open(Rml::Vector2f at)
 			{
+				m_button.reset();
 				addArrows(*this);
 				SetClass("open", true);
+				m_at = at;
+				m_settling = true;
 				moveTo(*this, at);
 				GetOwnerDocument()->UpdateDocument(); // for the menu's size
 				moveTo(*this, inside(*this, at));
@@ -125,6 +131,14 @@ namespace gnubase::ui
 			{
 				open(button.GetAbsoluteOffset(Rml::BoxArea::Border) +
 					Rml::Vector2f(0.0F, button.GetBox().GetSize(Rml::BoxArea::Border).y));
+				m_button = button.GetObserverPtr();
+			}
+
+			// Whether the menu is open under the button: of the buttons that share a menu, such as the list editor's
+			// cells, a click on another one opens it under that one (#1688).
+			bool openedUnder(const Rml::Element& button) const
+			{
+				return IsClassSet("open") && m_button.get() == &button;
 			}
 
 			// Closes the menu and the submenus that keys opened in it. The focus doesn't stay on a hidden item: it goes
@@ -132,6 +146,7 @@ namespace gnubase::ui
 			void close()
 			{
 				SetClass("open", false);
+				m_at.reset();
 				Rml::ElementList open;
 				QuerySelectorAll(open, "menu.open");
 				for (Rml::Element* submenu : open)
@@ -155,6 +170,17 @@ namespace gnubase::ui
 					if (GetChild(i) != &item)
 						if (Menu* submenu = submenuOf(*GetChild(i)))
 							submenu->close();
+			}
+
+			// Input came after the menu opened: the items that the opening input filled in are laid out and place the
+			// menu from where it opened, and from now on it stays where it is while it fits (OnUpdate).
+			void settle()
+			{
+				if (!m_settling || !m_at)
+					return;
+				GetOwnerDocument()->UpdateDocument();
+				m_settling = false;
+				m_at = inside(*this, *m_at);
 			}
 
 			// Focuses the first item that isn't disabled, for a menu that keys opened; false if there is none.
@@ -184,6 +210,33 @@ namespace gnubase::ui
 						return;
 					event.StopPropagation(); // the keys stay in the open menu
 				}
+			}
+
+		protected:
+			// An open menu whose size changed moves inside the window again: from where it opened for the items that
+			// the opening input filled in, as a lane's context menu's for the lane's type, so that one that shrinks
+			// goes back to the mouse; after the next input (settle) from where it is, so that one whose search leaves
+			// items out doesn't jump. The layout tries sizes before the one it ends with, so the menu moves in the next
+			// update, which it asks for.
+			void OnResize() override
+			{
+				Rml::Element::OnResize();
+				if (m_at && IsClassSet("open") && GetContext() != nullptr)
+				{
+					m_resized = true;
+					GetContext()->RequestNextUpdate(0.0);
+				}
+			}
+
+			void OnUpdate() override
+			{
+				Rml::Element::OnUpdate();
+				if (!std::exchange(m_resized, false) || !m_at || !IsClassSet("open"))
+					return;
+				const Rml::Vector2f at = inside(*this, *m_at);
+				if (!m_settling)
+					m_at = at;
+				moveTo(*this, at);
 			}
 
 		private:
@@ -340,6 +393,12 @@ namespace gnubase::ui
 				items[static_cast<size_t>(index)]->Focus(true);
 				return true;
 			}
+
+			// Where open() opened the menu and, once it settled, where it is; until it closes.
+			std::optional<Rml::Vector2f> m_at;
+			Rml::ObserverPtr<Rml::Element> m_button; // what it opened under
+			bool m_settling = false;                 // no input came since it opened
+			bool m_resized = false;                  // since the last update
 		};
 
 		Menu* menuOf(const Rml::Element& button)
@@ -358,6 +417,7 @@ namespace gnubase::ui
 			// The mouse is over the element now, at a point in the window's pixels.
 			void hover(Rml::Element* element, Rml::Vector2f at)
 			{
+				m_mouse = at;
 				Rml::Element* titled = closestWith(element, "title");
 				if (titled == m_titled.get())
 					return;
@@ -371,10 +431,14 @@ namespace gnubase::ui
 				GetContext()->RequestNextUpdate(g_tooltipDelay);
 			}
 
+			// The mouse moved within the element it's over, or elsewhere in the document.
+			void moved(Rml::Vector2f at) { m_mouse = at; }
+
 			void hide()
 			{
 				m_titled.reset();
 				m_tracking = false;
+				m_looking = false;
 				SetClass("shown", false);
 			}
 
@@ -384,29 +448,42 @@ namespace gnubase::ui
 				Rml::Element::OnUpdate();
 				const Rml::Element* titled = m_titled.get();
 				// An element that isn't hovered any more is gone from under the mouse like a destroyed one: the mouse
-				// moved onto a part of its ancestor that no other element covers, where RmlUi sends the Mouseout to
-				// the element and no Mouseover, or the element was taken out and kept, which clears the state with its
-				// Mouseout too. (RmlUi sets :hover in the default action of the Mouseover, which a listener that stops
-				// the event keeps from running: nothing stops it now.)
+				// moved onto a part of its ancestor that no other element covers and the Mouseout missed it (an
+				// element taken out and kept has its :hover cleared without a Mouseout reaching the document). RmlUi
+				// sets :hover in the default action of the Mouseover, which a listener that stops the event keeps
+				// from running: such an element gets no tooltip, and nothing stops the event in the app.
 				if (titled != nullptr && !titled->IsPseudoClassSet("hover"))
 				{
 					m_titled.reset();
-					m_tracking = true;
 					titled = nullptr;
 				}
 				if (titled == nullptr)
 				{
-					// The element may have gone from under the mouse, when a list is rendered anew. The one that
-					// replaces it is under the mouse only once it's laid out, which this update did: one more
-					// update finds it in the hover chain and sends it the Mouseover that starts its tooltip.
-					if (m_tracking)
+					if (m_looking)
 					{
+						// The update after the one that found the element gone: the hover chain was updated at its
+						// start, with the layout of the update before. The element under the mouse now is the one
+						// that replaced the removed one, or a part of an ancestor: either gets its tooltip, which
+						// no Mouseover starts when the ancestor was in the hover chain already.
+						m_looking = false;
+						lookUp();
+						titled = m_titled.get();
+					}
+					else if (m_tracking)
+					{
+						// The element may have gone from under the mouse, when a list is rendered anew. The one that
+						// replaces it is under the mouse only once it's laid out, which this update did: one more
+						// update looks.
 						m_tracking = false;
+						m_looking = true;
 						GetContext()->RequestNextUpdate(0.0);
 					}
-					if (IsClassSet("shown"))
-						SetClass("shown", false);
-					return;
+					if (titled == nullptr)
+					{
+						if (IsClassSet("shown"))
+							SetClass("shown", false);
+						return;
+					}
 				}
 				if (IsClassSet("shown"))
 					return;
@@ -426,14 +503,27 @@ namespace gnubase::ui
 				Rml::Element::OnResize();
 				if (IsClassSet("shown"))
 					if (const Rml::Vector2f at = inside(*this, m_at); at != m_at)
+					{
 						moveTo(*this, at);
+						GetContext()->RequestNextUpdate(0.0); // the layout sets its place for the next update
+					}
 			}
 
 		private:
+			// What the mouse is over now, if it's in this tooltip's document, for its tooltip.
+			void lookUp()
+			{
+				Rml::Element* hovered = GetContext()->GetHoverElement();
+				if (hovered != nullptr && hovered->GetOwnerDocument() == GetOwnerDocument())
+					hover(hovered, m_mouse);
+			}
+
 			Rml::ObserverPtr<Rml::Element> m_titled; // whose title is shown, or waits to be
 			// hover() set m_titled and hide() hasn't cleared it: if m_titled is empty, its element is gone or not
 			// hovered
 			bool m_tracking = false;
+			bool m_looking = false; // its element is gone: the next update looks for the one under the mouse
+			Rml::Vector2f m_mouse;  // where the mouse was last seen, in the window's pixels
 			Rml::Vector2f m_at;
 			double m_due = 0.0;
 		};
@@ -561,12 +651,21 @@ namespace gnubase::ui
 			}
 
 		protected:
-			// The first layout puts the dialog in the middle of the window.
+			// The first layout puts the dialog in the middle of the window. A dialog that grows later (rows that
+			// show, a message that gets longer) grows down and to the right from where it is, so a layout that
+			// takes it past the window's edge moves it back inside.
 			void OnResize() override
 			{
 				Rml::Element::OnResize();
-				if (m_placed || GetContext() == nullptr)
+				if (GetContext() == nullptr)
 					return;
+				if (m_placed)
+				{
+					const Rml::Vector2f at = GetAbsoluteOffset(Rml::BoxArea::Border);
+					if (const Rml::Vector2f kept = inside(*this, at); kept != at)
+						moveTo(*this, kept);
+					return;
+				}
 				m_placed = true;
 				const Rml::Vector2f window(GetContext()->GetDimensions());
 				moveTo(*this, ((window - GetBox().GetSize(Rml::BoxArea::Border)) * 0.5F).Round());
@@ -618,9 +717,9 @@ namespace gnubase::ui
 			}
 
 		private:
-			static constexpr std::array<Rml::EventId, 8> g_events = {Rml::EventId::Mousedown, Rml::EventId::Mouseup,
+			static constexpr std::array<Rml::EventId, 9> g_events = {Rml::EventId::Mousedown, Rml::EventId::Mouseup,
 				Rml::EventId::Click, Rml::EventId::Keydown, Rml::EventId::Keyup, Rml::EventId::Mouseover,
-				Rml::EventId::Mousescroll, Rml::EventId::Mouseout};
+				Rml::EventId::Mousescroll, Rml::EventId::Mouseout, Rml::EventId::Mousemove};
 
 			void handle(Rml::Event& event)
 			{
@@ -629,6 +728,10 @@ namespace gnubase::ui
 				const Rml::Vector2f mouse(event.GetParameter("mouse_x", 0.0F), event.GetParameter("mouse_y", 0.0F));
 				Tooltip* tooltip = tooltipOf(*document);
 				const auto key = event.GetParameter<int>("key_identifier", Rml::Input::KI_UNKNOWN);
+				if (event == Rml::EventId::Mousedown || event == Rml::EventId::Mouseup ||
+					event == Rml::EventId::Keydown)
+					for (Menu* menu : openMenus(*document))
+						menu->settle(); // input after the menu opened, e.g. a press's release or a key for its search
 				switch (event.GetId())
 				{
 				case Rml::EventId::Mouseover:
@@ -640,10 +743,24 @@ namespace gnubase::ui
 						if (auto* menu = dynamic_cast<Menu*>(item->GetParentNode()))
 							menu->hover(*item);
 					break;
+				case Rml::EventId::Mousemove:
+					// RmlUi sends no Mouseover for a move within an element: where the mouse rests, for the
+					// tooltip that a removed element's replacement gets.
+					if (tooltip != nullptr)
+						tooltip->moved(mouse);
+					break;
 				case Rml::EventId::Mouseout:
-					// The mouse left the document; Mouseover reports where it goes within it.
-					if (tooltip != nullptr && target == document)
-						tooltip->hide();
+					// The mouse left the document, or an element within it: the tooltip goes, and the one of the
+					// element it is over now comes. A part of an ancestor in the hover chain already gets no
+					// Mouseover, so the context's hover element is the one to look at, if it's in this document.
+					if (tooltip != nullptr)
+					{
+						Rml::Element* hovered = document->GetContext()->GetHoverElement();
+						if (target == document || hovered == nullptr || hovered->GetOwnerDocument() != document)
+							tooltip->hide();
+						else
+							tooltip->hover(hovered, mouse);
+					}
 					break;
 				case Rml::EventId::Mousescroll:
 					if (tooltip != nullptr)
@@ -681,10 +798,12 @@ namespace gnubase::ui
 						button != nullptr && !button->HasAttribute("disabled"))
 						if (Menu* menu = menuOf(*button))
 						{
-							if (menu->IsClassSet("open"))
-								menu->close();
-							else
+							// A click toggles the menu under its button. A text field being edited (.editing) keeps
+							// its clicks: it doesn't open the menu (#1688).
+							if (!menu->openedUnder(*button) && !button->IsClassSet("editing"))
 								menu->openUnder(*button);
+							else if (menu->IsClassSet("open"))
+								menu->close();
 						}
 					break;
 				case Rml::EventId::Keydown:

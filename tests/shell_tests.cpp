@@ -138,6 +138,26 @@ TEST_CASE("an unreachable window is centred on the primary monitor, shrunk to fi
 	CHECK(ui::place({5000, 100, 800, 600}, {}) == ui::Rect{5000, 100, 800, 600}); // no monitor: nowhere to go
 }
 
+TEST_CASE("a window fitted to a width stays on its monitor, as wide as it has room for", "[unit]")
+{
+	const std::vector<ui::Display> displays{primary(), retina()};
+	// A new one in the middle of the primary monitor, also when it opens on the other one.
+	CHECK(ui::fitWidth({2000, 100, 1100, 48}, 1200, displays, true) == ui::Rect{360, 528, 1200, 48});
+	CHECK(ui::fitWidth({0, 0, 1100, 48}, 3000, displays, true) == ui::Rect{0, 528, 1920, 48});
+	// An open one where it is, growing to the right.
+	CHECK(ui::fitWidth({100, 200, 1100, 48}, 1200, displays, false) == ui::Rect{100, 200, 1200, 48});
+	// At its monitor's right edge it moves left as far as the edge needs, not onto the next monitor.
+	CHECK(ui::fitWidth({700, 200, 1100, 48}, 1300, displays, false) == ui::Rect{620, 200, 1300, 48});
+	// No wider than its monitor's usable area: the primary's 1920, the second monitor's 2560, from its left edge.
+	CHECK(ui::fitWidth({100, 200, 1100, 48}, 3000, displays, false) == ui::Rect{0, 200, 1920, 48});
+	CHECK(ui::fitWidth({2500, 200, 1100, 48}, 1300, displays, false) == ui::Rect{2500, 200, 1300, 48});
+	CHECK(ui::fitWidth({3000, 200, 1100, 48}, 1600, displays, false) == ui::Rect{2880, 200, 1600, 48});
+	CHECK(ui::fitWidth({3000, 200, 1100, 48}, 3000, displays, false) == ui::Rect{1920, 200, 2560, 48});
+	// A window that is on no monitor fits the primary one; without any monitor only its width changes.
+	CHECK(ui::fitWidth({9000, 200, 1100, 48}, 1200, displays, false) == ui::Rect{720, 200, 1200, 48});
+	CHECK(ui::fitWidth({9000, 200, 1100, 48}, 1200, {}, false) == ui::Rect{9000, 200, 1200, 48});
+}
+
 TEST_CASE("a window's dp ratio is its monitor's scale times the user's UI scale", "[unit]")
 {
 	Ui ui({retina(), primary()});
@@ -379,6 +399,39 @@ TEST_CASE("windows are drawn only when something changed", "[unit]")
 	ui.windows.push({ui::WindowEventKind::Exposed, window.id()});
 	ui.shell.step(milliseconds(0));
 	CHECK(window.frames() == 4);
+}
+
+TEST_CASE(
+	"a task fits a window's layout after its update for drawing, and a fit that changed it updates again", "[unit]")
+{
+	Ui ui({primary()});
+	ui::Window& window = ui.shell.open(at({100, 100, 800, 600}));
+	show(window, "boxes.rml");
+	int runs = 0;
+	ui.shell.afterUpdate(
+		[&](ui::Window& updated)
+		{
+			CHECK(&updated == &window);
+			++runs;
+			// What the update laid out decides the box's width, as the toolbar's room decides its sections (#1234).
+			Rml::Element* box = updated.context().GetDocument(0)->GetElementById("box");
+			if (box->GetOffsetWidth() >= 200.0F)
+				return false;
+			box->SetProperty("width", "200dp");
+			return true;
+		});
+	ui.shell.step(milliseconds(0));
+	CHECK(runs == 1);
+	CHECK(window.frames() == 1);
+	CHECK(boxWidth(window) == 200.0F); // drawn as the fit left it
+
+	// A step that draws nothing fits nothing, so it lays nothing out.
+	ui.shell.step(milliseconds(0));
+	CHECK(runs == 1);
+	window.requestRender();
+	ui.shell.step(milliseconds(0));
+	CHECK(runs == 2);
+	CHECK(window.frames() == 2);
 }
 
 TEST_CASE("a window keeps drawing while its document animates", "[unit]")

@@ -141,13 +141,25 @@ namespace gnubase::test
 	bool UiApp::waitUntil(const std::function<bool()>& done, std::chrono::milliseconds timeout)
 	{
 		const auto deadline = std::chrono::steady_clock::now() + timeout;
-		while (!done())
+		while (true)
 		{
-			if (std::chrono::steady_clock::now() >= deadline)
+			const bool late = std::chrono::steady_clock::now() >= deadline;
+			try
+			{
+				if (done())
+					return true;
+			}
+			catch (const engine::Json::exception&)
+			{
+				// The UI hasn't received the data done() reads yet, such as a display's project before its first
+				// answer (#1499): not done yet. Past the deadline the error is the failure's message.
+				if (late)
+					throw;
+			}
+			if (late)
 				return false;
 			shell().step(std::chrono::milliseconds(10));
 		}
-		return true;
 	}
 
 	void UiApp::setDpRatio(float ratio)
@@ -183,6 +195,22 @@ namespace gnubase::test
 		const ImageDiff diff = compareWithGolden("ui/" + name, image, {8, image.pixels.size() / 4 / 500});
 		INFO(diff.report);
 		CHECK(diff.equal);
+	}
+
+	std::vector<std::string> UiApp::shownSections(const std::string& container)
+	{
+		std::vector<std::string> shown;
+		Rml::Context& context = main().context();
+		for (int i = 0; i < context.GetNumDocuments(); ++i)
+			if (const Rml::Element* sections = context.GetDocument(i)->GetElementById(container))
+				for (int child = 0; child < sections->GetNumChildren(); ++child)
+				{
+					const Rml::Element* section = sections->GetChild(child);
+					if (section->HasAttribute("section") && !section->IsClassSet("hidden") &&
+						!section->IsClassSet("no-room"))
+						shown.push_back(section->GetAttribute<Rml::String>("section", ""));
+				}
+		return shown;
 	}
 
 	namespace
@@ -232,6 +260,19 @@ namespace gnubase::test
 		return std::stod(found.at(0).at("attributes").at("value").get<std::string>());
 	}
 
+	engine::Json selectOptions(UiApp& app, const std::string& selector, std::optional<ui::WindowId> window)
+	{
+		return app.ui().dom(window, selector, 0).at("elements").at(0).at("options");
+	}
+
+	std::string selectedOption(UiApp& app, const std::string& selector)
+	{
+		for (const engine::Json& option : selectOptions(app, selector))
+			if (option.at("selected").get<bool>())
+				return option.at("text").get<std::string>();
+		return {};
+	}
+
 	double lateSteps(UiApp& app, std::optional<ui::WindowId> window, const std::string& selector, int steps,
 		int direction, const std::function<void()>& step)
 	{
@@ -269,11 +310,14 @@ namespace gnubase::test
 			[this, direction, perAnswer]
 			{
 				for (int step = 0; step < perAnswer; ++step)
-				{
-					m_moved += 2 * direction;
-					m_context.ProcessMouseMove(m_at.x, m_at.y + m_moved, 0);
-				}
+					nudge(direction);
 			});
+	}
+
+	void LateDrag::nudge(int direction)
+	{
+		m_moved += 2 * direction;
+		m_context.ProcessMouseMove(m_at.x, m_at.y + m_moved, 0);
 	}
 
 	void LateDrag::release(bool stays)

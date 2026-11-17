@@ -79,6 +79,8 @@ namespace gnubase::test
 		Rml::ElementDocument& show(const std::string& name);
 
 		// Steps the shell until done() is true; false if it isn't within the timeout.
+		// A JSON error from done() means "not ready yet"; if it still throws past the timeout, the error is rethrown.
+		// Predicates may read UI state that hasn't arrived yet without a JSON type guard.
 		bool waitUntil(const std::function<bool()>& done, std::chrono::milliseconds timeout = std::chrono::seconds(5));
 
 		// Lays the windows out at this dp ratio, whatever the monitor's scale, so that screenshots have the same pixels
@@ -92,6 +94,12 @@ namespace gnubase::test
 		// Checks the image against tests/golden/ui/<name>.png, allowing what GPUs round differently: one pixel in 500
 		// may differ by more than 8 of 255.
 		static void checkGolden(const std::string& name, const ui::Image& image);
+
+		// The sections the main window shows in the container with this id, such as "toolbar", in their order: those
+		// neither hidden nor out of room (docs/features/docking.md). A section cut off at the edge of a container that
+		// doesn't fit its sections to its width, such as the transport bar, counts as shown. A golden image's tolerance
+		// can hide a whole toolbar button, so tests with goldens of the project window check these too (#1342).
+		std::vector<std::string> shownSections(const std::string& container);
 
 	private:
 		void start(std::vector<std::unique_ptr<midi::Backend>> midiBackends,
@@ -127,6 +135,15 @@ namespace gnubase::test
 	// The value attribute of a value control (a fader, a knob, a value field) as a number.
 	double controlValue(UiApp& app, std::optional<ui::WindowId> window, const std::string& selector);
 
+	// The options of the first drop-down list that the selector matches in the window (the main window by default), as
+	// the UI tools' DOM has them: each its value, text and whether it's selected. A JSON error while none matches,
+	// which waitUntil waits out.
+	engine::Json selectOptions(
+		UiApp& app, const std::string& selector, std::optional<ui::WindowId> window = std::nullopt);
+
+	// The text of that drop-down list's selected option, empty if none is.
+	std::string selectedOption(UiApp& app, const std::string& selector);
+
 	// Changes a value control step by step while the engine answers late (#716): after each step the engine has done
 	// what the UI sent, and the UI hands the answers on only after the next step sent its commands, so that the
 	// answers to earlier steps arrive during the gesture. Checks after every step that the control is where the step
@@ -145,6 +162,10 @@ namespace gnubase::test
 		// Moves the mouse by steps of two pixels, down (1) or up (-1), perAnswer steps for each time the engine
 		// answers. Returns the control's value.
 		double move(int steps, int direction, int perAnswer = 1);
+
+		// Moves the mouse by one step of two pixels, down (1) or up (-1), without waiting for the engine, e.g. while
+		// the test holds it.
+		void nudge(int direction);
 
 		// Releases the button. If stays, checks that the control then stays where the drag left it while the engine
 		// answers late; it doesn't if another client set its value during the drag.

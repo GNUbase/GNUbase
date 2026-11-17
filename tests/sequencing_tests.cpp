@@ -613,6 +613,57 @@ TEST_CASE("a MIDI track heard again after playback moved while it was silent cha
 	CHECK(played() == afterTheOther);
 }
 
+TEST_CASE("a MIDI track on a MIDI channel heard again after a move chases on that channel", "[integration]")
+{
+	// Disabled, its parts are chased; muted by its button, its strip sends the latest values that played into the mute,
+	// forgetting the kinds its channel sent (ChannelStrip::chasedWhenHeard).
+	const bool button = GENERATE(false, true);
+	INFO((button ? "muted" : "disabled"));
+	Song song(64);
+	const ObjectId channel = channelOf(song.client, song.midi);
+	// The part: program 9 and CC 7 at 127 where it starts, CC 7 at 64 at 2000, on MIDI channel 1; the track plays them
+	// on channel 3, where its program 5, MIDI volume 50 and pan 20 go out first.
+	run(song.client, "controller.add",
+		{{"part", song.part(1)},
+			{"controllers",
+				{{{"position", 0}, {"type", "program"}, {"number", 9}},
+					{{"position", 0}, {"number", 7}, {"value", 1.0}},
+					{{"position", ticks(2000)}, {"number", 7}, {"value", 0.5}}}}});
+	run(song.client, "channel.set",
+		{{"channel", channel}, {"program", 5}, {"midiVolume", 50}, {"midiPan", 20}, {"midiChannel", 2}});
+	// Another track on Any with a later program change and CC 7 on channel 1, and one on channel 3 with a later pan.
+	const int any = song.addMidiTrack().first;
+	run(song.client, "controller.add",
+		{{"part", song.part(any)},
+			{"controllers",
+				{{{"position", ticks(1000)}, {"type", "program"}, {"number", 3}},
+					{{"position", ticks(1000)}, {"number", 7}, {"value", 1.0}}}}});
+	const auto [third, thirdTrack] = song.addMidiTrack();
+	run(song.client, "channel.set", {{"channel", channelOf(song.client, thirdTrack)}, {"midiChannel", 2}});
+	run(song.client, "controller.add",
+		{{"part", song.part(third)}, {"controllers", {{{"position", ticks(1000)}, {"number", 10}, {"value", 0.0}}}}});
+	run(song.client, "midi.capture", {{"start", true}});
+
+	const auto mute = [&](bool on)
+	{
+		if (button)
+			run(song.client, "channel.set", {{"channel", channel}, {"mute", on}});
+		else
+			run(song.client, "track.set", {{"track", song.midi}, {"enabled", !on}});
+	};
+
+	// Silent while playback starts and passes them all, then heard again.
+	mute(true);
+	run(song.client, "transport.play");
+	run(song.client, "audio.render", {{"frames", 2100}});
+	run(song.client, "midi.capture");
+	mute(false);
+	// Its values on its channel, then its part's program and latest CC 7 there, and the third track's pan, the latest
+	// of a kind its channel sent; not the other track's program and CC 7 on channel 1.
+	CHECK(controllersPlayed(song.client, false) ==
+		ControllerBytes{{0xC2, 5}, {0xB2, 7, 50}, {0xB2, 10, 20}, {0xC2, 9}, {0xB2, 10, 0}, {0xB2, 7, 64}});
+}
+
 TEST_CASE("a pedal that the chase of a MIDI track heard again presses goes up when the track is muted", "[integration]")
 {
 	const int blockSize = GENERATE(17, 64);
@@ -1263,6 +1314,84 @@ TEST_CASE("playback that starts after a sound slot's key switch sends it again b
 	run(song.client, "audio.render", {{"frames", 4}});
 	CHECK(song.capture(0, 8) == std::vector<float>{1, 0, 0, 0, 2, 1, 1, 1});
 	CHECK(song.capture(1, 8) == std::vector<float>{25, 0, 0, 0, 88, 63, 63, 63});
+}
+
+TEST_CASE("a jump limited to parts chases the sound slot that a part continues from the part before", "[integration]")
+{
+	// Parts A and B play Staccato, controller 32 at 64, and part C plays Arco, which sends Staccato's off event,
+	// controller 32 at 0 (#1521). B continues A's slot and sends nothing of its own: a jump into it, with the chase
+	// limited to the parts under the position, takes A's controller 32 all the same, as the slot is the track's.
+	Song song(64);
+	const Json map = run(song.client, "articulationMap.add",
+		{{"name", "Strings"}, {"articulations", {{{"name", "Staccato"}, {"type", "attribute"}, {"group", 0}}}},
+			{"slots",
+				{{{"name", "Arco"}},
+					{{"name", "Staccato"}, {"articulations", {"Staccato"}},
+						{"outputs",
+							{{{"status", "controller"}, {"data1", 32}, {"data2", 64}},
+								{{"status", "controller"}, {"data1", 32}, {"data2", 0}, {"off", true}}}}}}}});
+	run(song.client, "track.set", {{"track", song.instrument}, {"articulationMap", map.at("map").at("id")}});
+	run(song.client, "settings.set", {{"key", "midi.chaseBeyondParts"}, {"value", false}});
+	// After the song's parts, 2000 samples each.
+	for (const int64_t start : {48000, 50000, 52000})
+	{
+		const ObjectId part =
+			idOf(run(song.client, "midiPart.add",
+					 {{"track", song.instrument}, {"position", ticks(start)}, {"length", ticks(2000)}}),
+				"part");
+		run(song.client, "note.add",
+			{{"part", part},
+				{"notes",
+					{{{"position", 0}, {"length", ticks(1000)}, {"pitch", 60}, {"velocity", 0.8},
+						{"articulations", start < 52000 ? Json::array({"Staccato"}) : Json::array()}}}}});
+	}
+	run(song.client, "midi.capture", {{"start", true}});
+	run(song.client, "transport.locate", {{"position", 47000}});
+	run(song.client, "transport.play");
+	run(song.client, "audio.render", {{"frames", 7000}});
+	ControllerBytes played;
+	for (const Played& message : captured(song.client))
+		if (message.bytes.at(0) == 0xB0)
+			played.push_back(message.bytes);
+	CHECK(played == ControllerBytes{{0xB0, 32, 64}, {0xB0, 32, 0}});
+
+	run(song.client, "transport.locate", {{"position", 50500}});
+	CHECK(controllersPlayed(song.client) == ControllerBytes{{0xB0, 32, 64}});
+}
+
+TEST_CASE(
+	"a MIDI track heard again with the chase limited to parts chases the sound slot a part continues", "[integration]")
+{
+	// As above on the MIDI track, which was disabled while playback went from part A into part B: heard again, it
+	// gets A's controller 32 at 64, as B continues A's slot (#1521, #1600).
+	Song song(64);
+	const Json map = run(song.client, "articulationMap.add",
+		{{"name", "Strings"}, {"articulations", {{{"name", "Staccato"}, {"type", "attribute"}, {"group", 0}}}},
+			{"slots",
+				{{{"name", "Arco"}},
+					{{"name", "Staccato"}, {"articulations", {"Staccato"}},
+						{"outputs", {{{"status", "controller"}, {"data1", 32}, {"data2", 64}}}}}}}});
+	run(song.client, "track.set", {{"track", song.midi}, {"articulationMap", map.at("map").at("id")}});
+	run(song.client, "settings.set", {{"key", "midi.chaseBeyondParts"}, {"value", false}});
+	for (const int64_t start : {48000, 50000})
+	{
+		const ObjectId part = idOf(run(song.client, "midiPart.add",
+									   {{"track", song.midi}, {"position", ticks(start)}, {"length", ticks(2000)}}),
+			"part");
+		run(song.client, "note.add",
+			{{"part", part},
+				{"notes",
+					{{{"position", 0}, {"length", ticks(1000)}, {"pitch", 60}, {"velocity", 0.8},
+						{"articulations", {"Staccato"}}}}}});
+	}
+	run(song.client, "midi.capture", {{"start", true}});
+	run(song.client, "track.set", {{"track", song.midi}, {"enabled", false}});
+	run(song.client, "transport.locate", {{"position", 47000}});
+	run(song.client, "transport.play");
+	run(song.client, "audio.render", {{"frames", 3500}});
+	run(song.client, "midi.capture");
+	run(song.client, "track.set", {{"track", song.midi}, {"enabled", true}});
+	CHECK(controllersPlayed(song.client, false) == ControllerBytes{{0xB0, 32, 64}});
 }
 
 TEST_CASE("the chase settings are user settings", "[integration]")
