@@ -196,8 +196,8 @@ namespace gnubase::engine
 				beat = edit.beat;
 				frame = edit.frame;
 			}
-			require(warp.gridStart >= 0 && warp.gridStart < length && frame < length,
-				"the grid must be within the clip (0 to " + std::to_string(length - 1) + ")");
+			require(warp.gridStart < length && frame < length,
+				"the grid must start before the clip ends (" + std::to_string(length) + ")");
 		}
 
 		void sortBeats(ClipWarp& warp)
@@ -501,7 +501,8 @@ namespace gnubase::engine
 		const Json resultSchema = objectSchema({{"clip", integer}, {"warp", warpSchema}}, {"clip", "warp"});
 		const std::string warpText =
 			"A clip's warp has musical (musical mode: its beats follow the project's tempo), its definition: tempo "
-			"(BPM of quarter notes, 0 until one is set), beatsPerBar, gridStart (the clip frame of beat 0) and beats "
+			"(BPM of quarter notes, 0 until one is set), beatsPerBar, gridStart (the clip frame of beat 0, which may "
+			"precede the audio) and beats "
 			"(the beats, counted in quarters from the grid start, that Auto Adjust or Manual Adjust put elsewhere "
 			"than the tempo would, each at a clip frame), its free warp markers (each plays the audio at its "
 			"position where the clip frame target would play without it) and preset, the time stretch algorithm of "
@@ -521,8 +522,8 @@ namespace gnubase::engine
 				"on the active track versions, or without one there on an inactive version, so that nothing changes "
 				"until the tempo does; tempo (1-999 BPM); bars and beats, its length from the "
 				"grid start to its end in bars and quarters, which sets the tempo that makes it that long; "
-				"beatsPerBar (1-64); gridStart (a clip frame; the edited beats move with it); preset (the algorithm "
-				"preset of real-time warping). What isn't given stays. " +
+				"beatsPerBar (1-64); gridStart (a clip frame, 0 or more; the edited beats move with it); preset (the "
+				"algorithm preset of real-time warping). What isn't given stays. " +
 					warpText,
 				objectSchema(
 					{{"clip", integer}, {"musical", boolean}, {"tempo", number}, {"bars", integer}, {"beats", integer},
@@ -541,6 +542,8 @@ namespace gnubase::engine
 				if (parameters.contains("gridStart"))
 				{
 					const auto start = parameters.at("gridStart").get<time::Samples>();
+					// Only Set Definition from Tempo puts the grid start before the audio, by up to a quarter.
+					require(start >= 0, "gridStart must be 0 or more");
 					for (BeatEdit& edit : warp.beats)
 						edit.frame += start - warp.gridStart;
 					warp.gridStart = start;
@@ -675,6 +678,7 @@ namespace gnubase::engine
 					warp.beats.begin(), warp.beats.end(), [beat](const BeatEdit& e) { return e.beat == beat; });
 				if (mode == "start")
 				{
+					require(frame >= 0, "the grid start must be 0 or more");
 					for (BeatEdit& each : warp.beats)
 						each.frame += frame - warp.gridStart;
 					warp.gridStart = frame;
@@ -715,6 +719,49 @@ namespace gnubase::engine
 				sortBeats(warp);
 				checkBeats(warp, media.length);
 				return warpResult(clip, context);
+			});
+
+		addEdit(engine,
+			{"audioEvent.addWarpMarker", 1,
+				"Free Warp in the project window (reference manual p. 1467): inserts a marker at the audio under "
+				"position and makes it play at to, both project sample positions. Maps through the event's musical "
+				"mode, definition and existing markers. Anchors a trimmed event's offset if inserting the marker "
+				"would otherwise move it. " +
+					markerRules + warpText,
+				objectSchema({{"event", integer}, {"position", integer}, {"to", integer}}, {"event", "position", "to"}),
+				resultSchema, false},
+			"Insert warp marker",
+			[this](Project& project, CommandContext& context)
+			{
+				const Json& parameters = context.parameters();
+				const auto id = parameters.at("event").get<ObjectId>();
+				const auto found = project.audioEvents.find(id);
+				require(found != project.audioEvents.end(), "no audio event " + std::to_string(id));
+				const AudioEvent& event = found->second;
+				const auto start =
+					static_cast<double>(time::toSamples(event.position, project.tempo, project.sampleRate));
+				const auto frame = [&project, &event, start](time::Samples at)
+				{ return warpedFrameAt(project, event, static_cast<double>(at) - start); };
+				const auto position = std::llround(frame(parameters.at("position").get<time::Samples>()));
+				// A marker's target is in the definition grid's frames, before the free warp markers. Remove
+				// their inverse from the frame at the release, while keeping musical mode and the event offset.
+				const auto target = std::llround(
+					EventWarp(project, event).warpedFrame(frame(parameters.at("to").get<time::Samples>())));
+				const Clip& clip = project.clips.at(event.clip);
+				if (event.offset > 0 && position > event.offset &&
+					std::none_of(clip.warp.markers.begin(), clip.warp.markers.end(),
+						[&event, position](const WarpMarker& marker)
+						{ return marker.position >= event.offset && marker.position < position; }))
+				{
+					// Inserting into the segment containing the event's offset would also move the offset. Keep
+					// its old mapping, so the dragged audio actually reaches the requested time after insertion.
+					const auto offset =
+						std::llround(EventWarp(project, event).warpedFrame(static_cast<double>(event.offset)));
+					runEdit("clip.addWarpMarker", project,
+						{{"clip", event.clip}, {"position", event.offset}, {"target", offset}}, context);
+				}
+				return runEdit("clip.addWarpMarker", project,
+					{{"clip", event.clip}, {"position", position}, {"target", target}}, context);
 			});
 
 		addEdit(engine,

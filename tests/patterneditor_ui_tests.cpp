@@ -436,6 +436,30 @@ TEST_CASE("the selection doesn't go along to another pattern", "[ui]")
 	CHECK(f.patternJson(other).at("lanes").at(0).at("steps").at(0).at("length") == 2);
 }
 
+TEST_CASE("the selection doesn't go along to another part that plays the same pattern", "[ui]")
+{
+	Fixture f;
+	const uint64_t other =
+		f.app.call("midiPart.add", {{"track", f.track}, {"position", g_bar}, {"length", g_bar}, {"pattern", f.pattern}})
+			.at("part")
+			.at("id")
+			.get<uint64_t>();
+	f.app.call("pattern.set",
+		{{"pattern", f.pattern}, {"lanes", {{{"pitch", 36}, {"steps", Json::array({{{"index", 0}}})}}}}});
+	f.app.call("editor.set", {{"editor", "window"}, {"parts", {f.part, other}}, {"activePart", f.part}});
+	REQUIRE(f.app.waitUntil([&] { return f.has(cell(36, 0), "on"); }));
+	f.settle();
+	f.click(of(".pattern-tool[pattern-tool=select]"));
+	f.click(of(cell(36, 0)));
+	REQUIRE(f.has(cell(36, 0), "selected"));
+	// The other part shows the same pattern: its step isn't selected (#1753).
+	f.app.call("editor.set", {{"editor", "window"}, {"parts", {f.part, other}}, {"activePart", other}});
+	REQUIRE(f.app.waitUntil(
+		[&] { return f.app.appUi().editorWindow()->view().value("activePart", uint64_t{0}) == other; }));
+	REQUIRE(f.has(cell(36, 0), "on"));
+	CHECK_FALSE(f.has(cell(36, 0), "selected"));
+}
+
 TEST_CASE("a shorter Number of Steps edits the pattern as the engine has it, after its answer only", "[ui]")
 {
 	Fixture f;
@@ -556,6 +580,36 @@ TEST_CASE("Double Step Resolution moves the selection along with the steps", "[u
 	f.app.shell().step(std::chrono::milliseconds(0));
 	REQUIRE(f.app.waitUntil([&] { return f.steps(36) == std::vector<int>{2}; }));
 	CHECK(f.steps(38).empty());
+}
+
+TEST_CASE("undoing Double Step Resolution clears the selection that went along with the steps", "[ui]")
+{
+	Fixture f;
+	f.app.call("pattern.set",
+		{{"pattern", f.pattern}, {"lanes", {{{"pitch", 36}, {"steps", {{{"index", 2}}, {{"index", 4}}}}}}}});
+	REQUIRE(f.app.waitUntil([&] { return f.has(cell(36, 4), "on"); }));
+	f.settle();
+	f.click(of(".pattern-tool[pattern-tool=select]"));
+	f.click(of(cell(36, 2)));
+	REQUIRE(f.has(cell(36, 2), "selected"));
+	f.click(of("#pattern-double-resolution"));
+	REQUIRE(f.app.waitUntil([&] { return f.steps(36) == std::vector<int>{4, 8}; }));
+	f.settle();
+	REQUIRE(f.has(cell(36, 4), "selected"));
+	// The undo moves the steps back but not the selection: the step at 4 was never selected (#1753).
+	f.app.call("history.undo");
+	REQUIRE(f.app.waitUntil([&] { return f.steps(36) == std::vector<int>{2, 4}; }));
+	f.settle();
+	CHECK_FALSE(f.has(cell(36, 4), "selected"));
+	CHECK_FALSE(f.has(cell(36, 2), "selected"));
+	// A Step Resolution chosen in the toolbar keeps the steps where they are, and their selection.
+	f.click(of(cell(36, 2)));
+	REQUIRE(f.has(cell(36, 2), "selected"));
+	f.click(of("#pattern-resolution"));
+	f.click(of("#pattern-resolution-menu menuitem[resolution=\"1/8\"]"));
+	REQUIRE(f.app.waitUntil([&] { return f.patternJson().at("resolution") == "1/8"; }));
+	f.settle();
+	CHECK(f.has(cell(36, 2), "selected"));
 }
 
 TEST_CASE("the step selection tool selects and deletes steps, and the edit functions tie and split them", "[ui]")

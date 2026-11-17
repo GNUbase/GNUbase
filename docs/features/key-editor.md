@@ -141,7 +141,8 @@ selects and deselects no notes.
   before the mouse moved, ends without its effect at the next press anywhere in the editor's window (the document's
   mousedown in the capture phase), before the press reaches its target: until then the notes it moves or draws follow
   the mouse over the editor. The class goes when the gesture ends, as RmlUi doesn't scroll on a touch move during a
-  drag.
+  drag. The display shown again while a move or resize goes on, as when the engine's answers to an earlier edit come
+  in, keeps the notes where the mouse took them, also when the mouse holds still (#1789).
 - **Info line** (p. 1199). Start, end and length in bars and beats, the pitch as a name such as C3 (typing a number
   works too), velocities 0-127, the channel 1-16 and the Articulations, the attributes of the track's articulation
   map that the note has, names separated by commas ([articulation-maps.md](articulation-maps.md)). A value typed
@@ -188,7 +189,8 @@ menu.
   closed or is docked again; the object selection tool selecting, deselecting, moving, resizing, inserting and deleting;
   the draw tool with Quantize Link and an eighth from the Length Quantize menu; a move released outside the editor
   ending without its effect, the note not following the mouse back and a later click moving nothing, and a draw
-  released there drawing; the erase, trim (and with Alt), split
+  released there drawing; a resize released there ending without its effect, its note keeping the length the mouse
+  gives it while the display is shown again during it; the erase, trim (and with Alt), split
   and glue tools, and the split tool splitting the selected notes of two parts at one position in one undo step; the
   transpose palette and typing a pitch on the info line; step input with its cursor, a click moving it, and MIDI input
   selecting the next note; the Chord Editing section naming and changing a chord; the toolbox with the setting on and
