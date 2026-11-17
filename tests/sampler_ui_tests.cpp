@@ -286,14 +286,13 @@ TEST_CASE("the sampler panel shows another track's own value while a turned one'
 	REQUIRE(f.app.waitUntil(
 		[&] { return binding.waiting("history.transaction") == 0 && binding.waiting("project.get") == 0; }));
 
-	// A wheel turn that the engine takes before a hold: the project read after it waits behind the hold, so the panel
-	// has a read from before the turn (#1305).
-	f.app.ui().wheel(std::nullopt, of(coarse), 0.0F, -1.0F);
+	// A wheel turn whose step waits behind a hold, so the panel's project is older than the turn (#1305). A step the
+	// engine took brings its channel.changed, which the panel's project takes before the answer (#1881).
 	holder.send("test.hold");
 	REQUIRE(holds.waitEntered(1));
+	f.app.ui().wheel(std::nullopt, of(coarse), 0.0F, -1.0F);
 	f.app.shell().step(std::chrono::milliseconds(0));
-	REQUIRE(binding.waiting("history.transaction") == 0);
-	REQUIRE(binding.waiting("project.get") != 0);
+	REQUIRE(binding.waiting("history.transaction") != 0);
 	CHECK(test::controlValue(f.app, std::nullopt, coarse) == 1.0);
 
 	// The other sampler track shows its own value, and back on the turned one the turn's, not the other track's
@@ -303,11 +302,11 @@ TEST_CASE("the sampler panel shows another track's own value while a turned one'
 	f.select(f.track);
 	REQUIRE(f.app.waitUntil([&] { return f.elements("#sampler-file").at(0).value("text", "") == "sine"; }));
 	CHECK(test::controlValue(f.app, std::nullopt, coarse) == 1.0);
-	REQUIRE(binding.waiting("project.get") != 0);
+	REQUIRE(binding.waiting("history.transaction") != 0);
 
-	// The read after the turn agrees with it.
+	// The engine's value once it took the turn agrees with it.
 	holds.release(1);
-	REQUIRE(f.app.waitUntil([&] { return binding.waiting("project.get") == 0; }));
+	REQUIRE(f.app.waitUntil([&] { return binding.waiting("history.transaction") == 0; }));
 	CHECK(f.parameter("Coarse") == 1.0);
 	CHECK(shows(1.0));
 }
