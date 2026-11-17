@@ -279,6 +279,16 @@ namespace
 		const double seconds = options.quick ? 1.0 : 4.0;
 		const std::filesystem::path folder = transposedFolder(gnubase::platform::currentProcessId());
 		std::filesystem::create_directories(folder);
+		// The folder goes on the way out, also when a render fails and throws, so failed runs don't pile up (#1748).
+		struct RemoveFolder
+		{
+			const std::filesystem::path& folder;
+			~RemoveFolder()
+			{
+				std::error_code ignored;
+				std::filesystem::remove_all(folder, ignored);
+			}
+		} const removeFolder{folder};
 		const std::filesystem::path file = folder / "transposed.wav";
 		{
 			gnubase::engine::WriteOptions format;
@@ -304,8 +314,6 @@ namespace
 			results.push_back({{"events", count}, {"realTimeFactor", plain.speed},
 				{"transposedRealTimeFactor", shifted.speed}, {"megabytesPerTransposedEvent", perEvent}});
 		}
-		std::error_code ignored;
-		std::filesystem::remove_all(folder, ignored);
 		return results;
 	}
 

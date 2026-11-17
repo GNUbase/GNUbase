@@ -46,7 +46,10 @@ key editor's tools edit; lane presets, the line tool's modes and Auto Select Con
 
 `ui::ControllerLanes` (`src/ui/controllerlanes.h`) fills the key editor's `.controller-lanes`, below the note display
 and on its time axis. It shows the project and the view as the key editor hands them on and sends `editor.set`,
-`note.*` and `controller.*`; edits of several parts or commands go in one `history.transaction`.
+`note.*` and `controller.*`; edits of several parts or commands go in one `history.transaction`. In a low editor, such
+as the lower zone's at its default size, the lanes give way before the note display: the note display starts from 40% of
+the editor, the lanes shrink down to their footer and their list scrolls (#1775). In the in-place editor, as high as its
+track, the lanes keep their height.
 
 ```
 .controller-lanes                     .lanes-hidden while showLanes is off

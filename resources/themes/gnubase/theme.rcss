@@ -437,6 +437,17 @@
 	{
 		color: #10dff2;
 	}
+	event-names
+	{
+		color: #f1f4ff;
+		font-size: 11dp;
+	}
+	part-contents
+	{
+		color: #f1f4ff;
+		stroke-color: #aeb7d0;
+		stroke-width: 1dp;
+	}
 	curve
 	{
 		stroke-color: #e12ad8;
@@ -469,6 +480,10 @@
 		own-color-tint: #ffffff59;
 		event-inset: 2dp;
 	}
+	.event-display event-names, .event-display part-contents
+	{
+		event-inset: 2dp;
+	}
 	.event-display .overview
 	{
 		background-color: #101426;
@@ -493,6 +508,11 @@
 	{
 		color: #f1f4ff29;
 		stroke-color: #f1f4ff;
+	}
+	.event-display.highlight-selected-borders event-lanes.selected-events
+	{
+		stroke-color: #ff5270;
+		stroke-width: 2dp;
 	}
 	.event-display fade-lines
 	{
@@ -810,6 +830,10 @@
 	{
 		color: #aeb7d0;
 	}
+	.track-list listitem.rendering .track-name
+	{
+		font-style: italic;
+	}
 	.track-list .drop-line
 	{
 		background-color: #10dff2;
@@ -1059,6 +1083,10 @@
 	{
 		background-color: #aeb7d0;
 	}
+	.articulation-item.muted
+	{
+		background-color: #6a7189;
+	}
 	.articulation-item.selected
 	{
 		background-color: #e12ad8;
@@ -1067,10 +1095,10 @@
 	{
 		background-color: #3f4559;
 	}
-	.controller-lane.keyboard-focus .controller-lane-header
+	.controller-lane-frame
 	{
-		border-left-width: 2dp;
-		border-left-color: #10dff2;
+		border-width: 2dp;
+		border-color: #10dff2;
 	}
 	.ape-display
 	{
@@ -1773,6 +1801,40 @@
 	.track-list listitem.selected
 	{
 		decorator: svg-ninepatch(list-item-selected.svg, 6 6 6 6);
+	}
+	.track-list .track-color
+	{
+		width: 5dp;
+	}
+	.track-list .track-name, .track-list .track-name-field, .track-list .track-versions-toggle, .track-list .track-controls
+	{
+		position: relative;
+	}
+	.track-list listitem > .tree-toggle
+	{
+		position: relative;
+		z-index: 1;
+	}
+	.track-list .track-name
+	{
+		font-weight: 500;
+	}
+	.track-list listitem[type=folder] .track-color[color]
+	{
+		width: auto;
+		right: 0;
+		decorator: svg-ninepatch(track-row-folder.svg, 3 3 3 7);
+	}
+	.track-list listitem.selected .track-color[color]
+	{
+		width: auto;
+		right: 0;
+		border-radius: 5dp;
+		decorator: svg-ninepatch(track-row-selected.svg, 6 6 6 11);
+	}
+	.track-list .track-controls button[control=record]:not(.checked) svg.icon
+	{
+		image-color: #ff5270;
 	}
 	.inspector-section button.section-header
 	{

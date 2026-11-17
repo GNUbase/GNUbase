@@ -507,7 +507,7 @@ namespace
 		// The marker track list activates the marker track picked.
 		const auto other = app.call("track.add", {{"type", "marker"}}).at("track").at("id").get<uint64_t>();
 		REQUIRE(app.waitUntil([&markers] { return markers.markers().empty(); }));
-		CHECK(tracks->GetNumOptions() == 2);
+		CHECK(test::selectOptions(app, "#marker-track", window).size() == 2);
 		CHECK(tracks->GetValue() == std::to_string(other));
 		tracks->SetSelection(0);
 		REQUIRE(app.waitUntil([&app, track] { return app.call("project.get").at("activeMarkerTrack") == track; }));

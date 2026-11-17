@@ -4,6 +4,7 @@
 #include "engine/engine.h"
 #include "engine/midi/controllerlanes.h"
 #include "engine/midi/devices.h"
+#include "engine/midi/mpeinput.h"
 #include "platform/files.h"
 
 #include <algorithm>
@@ -21,6 +22,17 @@ namespace gnubase::engine::settings
 		Json pathOrNull(const std::filesystem::path& path)
 		{
 			return path.empty() ? Json(nullptr) : Json(path.u8string());
+		}
+
+		// midi.portSettings' mpe: every member that midi.setPort takes, by its type only, so that a later GNUbase's
+		// values stay.
+		Json mpeSettingSchema()
+		{
+			const Json mpe = midi::mpeSchema();
+			Json properties = Json::object();
+			for (const auto& member : mpe.at("properties").items())
+				properties[member.key()] = {{"type", member.value().at("type")}};
+			return {{"type", "object"}, {"properties", std::move(properties)}};
 		}
 
 		// The setting as text for command descriptions: "`ui.scale` (number, 0.5 to 4, default 1.0): The UI scale".
@@ -584,25 +596,16 @@ namespace gnubase::engine::settings
 				{"midi.portSettings",
 					"The MIDI ports' settings (midi.setPort), by backend/in or out/port id, also for ports that aren't "
 					"connected: the name shown (showAs), whether it is visible, and for inputs whether it belongs to "
-					"all MIDI inputs (inAllInputs) and its MPE input (mpe). Ports without an entry show their system "
-					"name, are visible, belong to all MIDI inputs and have no MPE input. Members of an entry that this "
-					"GNUbase doesn't know, from a later one, stay.",
+					"all MIDI inputs (inAllInputs) and its MPE input (mpe, what differs from its defaults). Ports "
+					"without an entry show their system name, are visible, belong to all MIDI inputs and have no MPE "
+					"input, but for a detected MPE device's input (mpeDevice in midi.ports), which has the device's "
+					"preset. Members of an entry that this GNUbase doesn't know, from a later one, stay.",
 					Json{{"type", "object"},
 						{"additionalProperties",
 							{{"type", "object"},
 								{"properties",
 									{{"showAs", {{"type", "string"}}}, {"visible", {{"type", "boolean"}}},
-										{"inAllInputs", {{"type", "boolean"}}},
-										{"mpe",
-											{{"type", "object"},
-												{"properties",
-													{{"mode", {{"type", "string"}}},
-														{"channels", {{"type", "integer"}}},
-														{"firstChannel", {{"type", "integer"}}},
-														{"pitchRange", {{"type", "integer"}}},
-														{"tuning", {{"type", "boolean"}}},
-														{"initialX", {{"type", "string"}}},
-														{"initialY", {{"type", "string"}}}}}}}}}}}},
+										{"inAllInputs", {{"type", "boolean"}}}, {"mpe", mpeSettingSchema()}}}}}},
 					Json::object()},
 				{"midi.recordCatchRange",
 					"MIDI record catch range in ms, 0 to 1000: MIDI input that comes this long before a recording "
@@ -661,6 +664,40 @@ namespace gnubase::engine::settings
 					"When folder tracks show the events and parts of the tracks inside them as data blocks in the "
 					"event display: always, never, or hideWhenExpanded (only while the folder is folded).",
 					Json{{"type", "string"}, {"enum", {"always", "never", "hideWhenExpanded"}}}, "always", true},
+				// The event display's preferences (reference manual pp. 1603-1604, 1607; #1313).
+				{"ui.showEventNames", "Whether the event display shows the names of events and parts on them.",
+					Json{{"type", "boolean"}}, true, true},
+				{"ui.hideTruncatedEventNames",
+					"Whether the event display leaves out the names that don't fit their event, instead of cutting "
+					"them short.",
+					Json{{"type", "boolean"}}, false, true},
+				{"ui.highlightSelectedEventBorders",
+					"Whether the event display outlines selected events and parts in red.", Json{{"type", "boolean"}},
+					false, true},
+				{"ui.eventOpacity", "How opaque the bodies of events and parts are in the event display, in percent.",
+					Json{{"type", "integer"}, {"minimum", 0}, {"maximum", 100}}, 100, true},
+				{"ui.smallestTrackHeightForData",
+					"The lowest track lane, in dp, that shows what its events and parts hold: waveforms and MIDI "
+					"part contents.",
+					Json{{"type", "integer"}, {"minimum", 0}, {"maximum", 400}}, 20, true},
+				{"ui.smallestTrackHeightForName",
+					"The lowest track lane, in dp, that shows the names of its events and parts.",
+					Json{{"type", "integer"}, {"minimum", 0}, {"maximum", 400}}, 28, true},
+				{"ui.waveformBrightness",
+					"The brightness of audio events' waveforms in the event display, in percent: 50 as the theme "
+					"draws them, less dims them, more lightens them.",
+					Json{{"type", "integer"}, {"minimum", 0}, {"maximum", 100}}, 50, true},
+				{"ui.partDataMode",
+					"How MIDI parts in the event display show their notes: as lines (lines) or not at all (off).",
+					Json{{"type", "string"}, {"enum", {"off", "lines"}}}, "lines", true},
+				{"ui.showControllers",
+					"Whether MIDI parts in the event display show their controllers and other events that aren't "
+					"notes, as bars from their bottom edge.",
+					Json{{"type", "boolean"}}, true, true},
+				{"ui.noteBrightness",
+					"The brightness of the notes MIDI parts show in the event display, in percent: 50 as the theme "
+					"draws them, less dims them, more lightens them.",
+					Json{{"type", "integer"}, {"minimum", 0}, {"maximum", 100}}, 50, true},
 				{"ui.keyCommandPresets",
 					"The key commands presets (reference manual p. 1559), by name: each the key commands and macros "
 					"as ui.keyCommands and ui.macros take them (keyCommands.savePreset). Loading one is settings.set "

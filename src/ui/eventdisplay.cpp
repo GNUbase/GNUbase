@@ -44,6 +44,12 @@ namespace gnubase::ui
 		constexpr double g_dragZoomDistance = 40.0; // dp dragged in the ruler to zoom by a factor of 2
 		constexpr double g_overviewEdge = 4.0;      // dp either side of the overview rectangle's edges
 
+		// The event display's preferences (reference manual pp. 1603-1604, 1607; #1313).
+		constexpr std::array<const char*, 10> g_displayKeys = {"ui.showEventNames", "ui.hideTruncatedEventNames",
+			"ui.highlightSelectedEventBorders", "ui.eventOpacity", "ui.smallestTrackHeightForData",
+			"ui.smallestTrackHeightForName", "ui.waveformBrightness", "ui.partDataMode", "ui.showControllers",
+			"ui.noteBrightness"};
+
 		// What the display listens to in its root element and in its document.
 		constexpr std::array<Rml::EventId, 6> g_rootEvents = {Rml::EventId::Mousedown, Rml::EventId::Mousemove,
 			Rml::EventId::Mouseover, Rml::EventId::Mouseout, Rml::EventId::Mousescroll, Rml::EventId::Dblclick};
@@ -103,6 +109,8 @@ namespace gnubase::ui
 		m_mutedLanes = &addCanvas<EventLanes>(*m_area, "event-lanes", "muted-events");
 		m_selectedLanes = &addCanvas<EventLanes>(*m_area, "event-lanes", "selected-events");
 		m_waveforms = std::make_unique<EventWaveforms>(binding, add(*m_area, "div", "waveforms"));
+		m_contents = &addCanvas<PartContents>(*m_area, "part-contents", "part-contents");
+		m_names = &addCanvas<EventNames>(*m_area, "event-names", "event-names");
 		m_fadeLines = &addCanvas<FadeLines>(*m_area, "fade-lines", "fades");
 		m_partMarks = &add(*m_area, "div", "part-marks");
 		m_cuts = &add(*m_area, "div", "cutting-positions");
@@ -231,6 +239,16 @@ namespace gnubase::ui
 					m_treatMutedKnown = true;
 					setTreatMutedAudioLikeDeleted(muted->get<bool>());
 				}
+				bool display = false;
+				for (const char* key : g_displayKeys)
+					if (const auto value = values.find(key); value != values.end())
+					{
+						takeDisplayPreference(key, *value);
+						m_displayKnown.insert(key);
+						display = true;
+					}
+				if (display)
+					showDisplayPreferences();
 			}));
 		const std::weak_ptr<bool> alive = m_alive;
 		requestProject();
@@ -249,6 +267,22 @@ namespace gnubase::ui
 					showPresets();
 				}
 			});
+		// Shown once all have answered, not once each.
+		m_displayAsked = g_displayKeys.size();
+		for (const char* key : g_displayKeys)
+			m_binding.send("settings.get", {{"key", key}},
+				[this, alive, name = std::string(key)](const engine::Result& result)
+				{
+					if (alive.expired())
+						return;
+					if (result.ok() && m_displayKnown.count(name) == 0) // newer changes win
+						takeDisplayPreference(name, result.value.at("value"));
+					if (m_displayAsked == 0)
+						return;
+					--m_displayAsked;
+					if (m_displayAsked == 0)
+						showDisplayPreferences();
+				});
 		m_binding.send("settings.get", {{"key", "ui.folderData"}},
 			[this, alive](const engine::Result& result)
 			{
@@ -492,9 +526,26 @@ namespace gnubase::ui
 		for (const Json& file : project.at("media"))
 			media[file.at("id").get<uint64_t>()] = &file;
 		std::map<uint64_t, uint64_t> clipMedia;
+		std::map<uint64_t, std::string> clipNames;
 		for (const Json& clip : project.at("clips"))
+		{
 			clipMedia[clip.at("id").get<uint64_t>()] = clip.at("media").get<uint64_t>();
+			clipNames[clip.at("id").get<uint64_t>()] = clip.value("name", std::string());
+		}
+		// The name an event shows: an audio event its clip's, as it has none of its own (#1313).
+		const auto nameOf = [&clipNames](const Json& event)
+		{
+			if (const auto clip = event.find("clip"); clip != event.end())
+			{
+				const auto found = clipNames.find(clip->get<uint64_t>());
+				return found == clipNames.end() ? std::string() : found->second;
+			}
+			return event.value("name", std::string());
+		};
 		m_folderData.assign(m_tracks.size(), {});
+		m_trackNames.assign(m_tracks.size(), {});
+		m_trackContents.assign(m_tracks.size(), {});
+		m_contentsHeights.clear();
 		m_end = 0.0;
 		// The display lane of an event's own lane, if its track's lanes show.
 		const auto takeLane = [&takeLanes](const Json& event)
@@ -522,12 +573,16 @@ namespace gnubase::ui
 			if (lanes.count(track) == 0)
 				return;
 			if (onTrackLane)
+			{
 				m_tracks[lanes[track]].events.push_back(span);
+				m_trackNames[lanes[track]].names.push_back({start, end - start, nameOf(event)});
+			}
 			m_events.push_back({event.at("id").get<uint64_t>(), lanes[track], start, end, event.value("mute", false),
 				std::nullopt, !onTrackLane, !onTrackLane});
 			if (const std::optional<size_t> taken = takeLane(event))
 			{
 				m_tracks[*taken].events.push_back(span);
+				m_trackNames[*taken].names.push_back({start, end - start, nameOf(event)});
 				m_events.push_back({event.at("id").get<uint64_t>(), *taken, start, end, event.value("mute", false),
 					std::nullopt, false, !onTrackLane});
 			}
@@ -576,6 +631,7 @@ namespace gnubase::ui
 			TimeSpan span;
 			EventWaveforms::Event wave; // with media 0 for none
 			bool mute = false;
+			std::string name;
 		};
 		std::map<size_t, std::vector<Piece>> pieces; // by lane
 		for (const Json* stackedEvent : stacked)
@@ -616,7 +672,7 @@ namespace gnubase::ui
 				m_independent.insert(event.at("id").get<uint64_t>());
 			if (lanes.count(track) != 0)
 			{
-				Piece piece{{start, length, colorOf(event)}, {}, event.value("mute", false)};
+				Piece piece{{start, length, colorOf(event)}, {}, event.value("mute", false), nameOf(event)};
 				if (file != media.end() && rate > 0.0)
 					piece.wave = {event.at("id").get<uint64_t>(), lanes[track], piece.span, file->first, waveRate,
 						file->second->at("channels").get<int>(), event.at("offset").get<int64_t>()};
@@ -660,6 +716,7 @@ namespace gnubase::ui
 			for (const Piece& piece : shown)
 			{
 				m_tracks[lane].events.push_back(piece.span);
+				m_trackNames[lane].names.push_back({piece.span.start, piece.span.length, piece.name});
 				if (piece.mute)
 					m_mutedPieces.emplace_back(lane, piece.span);
 				if (piece.wave.media == 0)
@@ -677,15 +734,48 @@ namespace gnubase::ui
 		{
 			const auto track = part.at("track").get<uint64_t>();
 			const auto position = part.at("position").get<int64_t>();
-			addEvent(part, seconds(position, linear[track]),
-				seconds(position + part.at("length").get<int64_t>(), linear[track]));
+			const double start = seconds(position, linear[track]);
+			const double end = seconds(position + part.at("length").get<int64_t>(), linear[track]);
+			addEvent(part, start, end);
 			if (part.value("globalTranspose", std::string()) == "independent")
 				m_independent.insert(part.at("id").get<uint64_t>());
+			// What it holds, in seconds (#1313): notes and the other events at their ticks from the part's start.
+			PartContents::Part contents{start, end - start, {}, {}};
+			const auto from = m_time.tempo.toTicks(start);
+			if (const auto notes = part.find("notes"); notes != part.end())
+				for (const Json& note : *notes)
+				{
+					const auto at = from + note.at("position").get<int64_t>();
+					const double noteStart = m_time.tempo.toSeconds(at);
+					contents.notes.push_back(
+						{noteStart, m_time.tempo.toSeconds(at + note.at("length").get<int64_t>()) - noteStart,
+							note.at("pitch").get<int>()});
+				}
+			if (const auto controllers = part.find("controllers"); controllers != part.end())
+				for (const Json& controller : *controllers)
+					contents.controllers.push_back(
+						{m_time.tempo.toSeconds(from + controller.at("position").get<int64_t>()),
+							controller.value("value", 1.0)});
+			std::sort(contents.notes.begin(), contents.notes.end(),
+				[](const PartContents::Note& a, const PartContents::Note& b) { return a.start < b.start; });
+			std::sort(contents.controllers.begin(), contents.controllers.end(),
+				[](const PartContents::Controller& a, const PartContents::Controller& b)
+				{ return a.position < b.position; });
+			if (const auto lane = lanes.find(track); lane != lanes.end())
+				m_trackContents[lane->second].parts.push_back(contents);
+			if (const std::optional<size_t> taken = takeLane(part))
+				m_trackContents[*taken].parts.push_back(contents);
 		}
 		for (std::vector<EventLanes::Lane>* list : {&m_tracks, &m_folderData})
 			for (EventLanes::Lane& lane : *list)
 				std::sort(lane.events.begin(), lane.events.end(),
 					[](const TimeSpan& a, const TimeSpan& b) { return a.start < b.start; });
+		for (EventNames::Lane& lane : m_trackNames)
+			std::stable_sort(lane.names.begin(), lane.names.end(),
+				[](const EventNames::Name& a, const EventNames::Name& b) { return a.start < b.start; });
+		for (PartContents::Lane& lane : m_trackContents)
+			std::stable_sort(lane.parts.begin(), lane.parts.end(),
+				[](const PartContents::Part& a, const PartContents::Part& b) { return a.start < b.start; });
 		// Events that are gone leave the selection.
 		std::vector<uint64_t> selection;
 		for (const uint64_t id : m_selection)
@@ -757,6 +847,7 @@ namespace gnubase::ui
 		m_mutedLanes->setLanes(std::move(muted));
 		m_selectedLanes->setLanes(std::move(selected));
 		m_folderLanes->setLanes(std::move(folders));
+		showNamesAndContents(lanes);
 		m_lanes->setLanes(std::move(lanes));
 		// The overview line has every event in one row, as high as the line is.
 		std::sort(all.begin(), all.end(), [](const TimeSpan& a, const TimeSpan& b) { return a.start < b.start; });
@@ -962,15 +1053,18 @@ namespace gnubase::ui
 			return;
 		for (Rml::Element* canvas : {static_cast<Rml::Element*>(m_ruler), static_cast<Rml::Element*>(m_lanes),
 				 static_cast<Rml::Element*>(m_mutedLanes), static_cast<Rml::Element*>(m_selectedLanes),
-				 static_cast<Rml::Element*>(m_fadeLines)})
+				 static_cast<Rml::Element*>(m_fadeLines), static_cast<Rml::Element*>(m_contents),
+				 static_cast<Rml::Element*>(m_names)})
 		{
 			canvas->SetAttribute("start", m_view.start);
 			canvas->SetAttribute("scale", m_view.scale);
 		}
 		for (Rml::Element* canvas : {static_cast<Rml::Element*>(m_lanes), static_cast<Rml::Element*>(m_mutedLanes),
-				 static_cast<Rml::Element*>(m_selectedLanes), static_cast<Rml::Element*>(m_fadeLines)})
+				 static_cast<Rml::Element*>(m_selectedLanes), static_cast<Rml::Element*>(m_fadeLines),
+				 static_cast<Rml::Element*>(m_contents), static_cast<Rml::Element*>(m_names)})
 			canvas->SetAttribute("scroll-top", m_view.top);
-		m_waveforms->show({m_view.start, m_view.scale, m_view.top, m_laneTops, width(), height(), dpRatio()});
+		m_waveforms->show({m_view.start, m_view.scale, m_view.top, m_laneTops, width(), height(), dpRatio(),
+			static_cast<double>(m_display.dataHeight), m_display.waveformBrightness / 100.0});
 		setCursor(m_cursorSample);
 		placeStepCursor();
 		showRange();
@@ -1114,6 +1208,85 @@ namespace gnubase::ui
 		else
 			m_lanesShown.erase(track);
 		showProject();
+	}
+
+	void EventDisplay::takeDisplayPreference(const std::string& key, const Json& value)
+	{
+		DisplayPreferences& display = m_display;
+		if (key == "ui.showEventNames")
+			display.names = value.get<bool>();
+		else if (key == "ui.hideTruncatedEventNames")
+			display.hideTruncated = value.get<bool>();
+		else if (key == "ui.highlightSelectedEventBorders")
+			display.highlightBorders = value.get<bool>();
+		else if (key == "ui.eventOpacity")
+			display.eventOpacity = value.get<int>();
+		else if (key == "ui.smallestTrackHeightForData")
+			display.dataHeight = value.get<int>();
+		else if (key == "ui.smallestTrackHeightForName")
+			display.nameHeight = value.get<int>();
+		else if (key == "ui.waveformBrightness")
+			display.waveformBrightness = value.get<int>();
+		else if (key == "ui.partDataMode")
+			display.partDataMode = value.get<std::string>();
+		else if (key == "ui.showControllers")
+			display.controllers = value.get<bool>();
+		else if (key == "ui.noteBrightness")
+			display.noteBrightness = value.get<int>();
+	}
+
+	void EventDisplay::showDisplayPreferences()
+	{
+		if (!alive())
+			return;
+		// Highlight Borders of Selected Events: a state for the style sheets to show.
+		m_root->SetClass("highlight-selected-borders", m_display.highlightBorders);
+		// Event Opacity: the events' bodies, also selected and muted ones and folders' data blocks.
+		for (EventLanes* lanes : {m_lanes, m_mutedLanes, m_selectedLanes, m_folderLanes})
+			lanes->SetAttribute("body-opacity", m_display.eventOpacity / 100.0);
+		if (m_display.hideTruncated)
+			m_names->SetAttribute("hide-truncated", true);
+		else
+			m_names->RemoveAttribute("hide-truncated");
+		m_contents->SetAttribute("brightness", m_display.noteBrightness / 100.0);
+		m_contentsHeights.clear();
+		setLanes();
+		apply();
+	}
+
+	void EventDisplay::showNamesAndContents(const std::vector<EventLanes::Lane>& lanes)
+	{
+		std::vector<float> heights;
+		heights.reserve(lanes.size());
+		for (const EventLanes::Lane& lane : lanes)
+			heights.push_back(lane.height);
+		// A drag sets the lanes again on every move: the names and contents stay as they are while the lanes do.
+		if (!heights.empty() && heights == m_contentsHeights)
+			return;
+		m_contentsHeights = heights;
+		std::vector<EventNames::Lane> names(lanes.size());
+		std::vector<PartContents::Lane> contents(lanes.size());
+		const bool data = m_display.partDataMode != "off";
+		for (size_t i = 0; i < lanes.size(); ++i)
+		{
+			names[i].height = lanes[i].height;
+			contents[i].height = lanes[i].height;
+			if (i < m_laneAutomation.size() && m_laneAutomation[i] != 0)
+				continue;
+			// Smallest Track Height to Show Name and to Show Data, in dp as the lanes are high now.
+			if (m_display.names && lanes[i].height >= static_cast<float>(m_display.nameHeight) &&
+				i < m_trackNames.size())
+				names[i].names = m_trackNames[i].names;
+			if (data && lanes[i].height >= static_cast<float>(m_display.dataHeight) && i < m_trackContents.size())
+			{
+				contents[i].parts = m_trackContents[i].parts;
+				if (!m_display.controllers)
+					for (PartContents::Part& part : contents[i].parts)
+						part.controllers.clear();
+			}
+		}
+		m_names->setLanes(std::move(names));
+		m_contents->setLanes(std::move(contents));
 	}
 
 	void EventDisplay::setFolderMode(const std::string& mode)

@@ -7,9 +7,6 @@
 #include "ui/automation.h"
 #include "uiapp.h"
 
-#include <RmlUi/Core/Context.h>
-#include <RmlUi/Core/Element.h>
-#include <RmlUi/Core/ElementDocument.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -235,14 +232,18 @@ TEST_CASE(
 		CHECK(right(inner) <= right(outer));
 		CHECK(bottom(inner) <= bottom(outer));
 	};
-	// The lane with the keyboard focus, which the themes frame inside its header (articulation lanes take it on a
-	// click).
-	const ui::Window* editor = f.window ? f.app.shell().find(*f.window) : nullptr;
-	REQUIRE(editor != nullptr);
-	Rml::Element* focused = nullptr;
-	for (int i = 0; i < editor->context().GetNumDocuments() && focused == nullptr; ++i)
-		focused = editor->context().GetDocument(i)->QuerySelector(".controller-lane");
-	REQUIRE(focused != nullptr);
+	// The lane with the keyboard focus, which the themes frame inside its header: the Articulations lane takes it on a
+	// click, and needs the track's articulation map.
+	const Json map = f.app.call("articulationMap.add",
+		{{"name", "Strings"}, {"articulations", {{{"name", "Arco"}, {"type", "direction"}, {"group", 0}}}},
+			{"slots", {{{"name", "Arco"}}}}});
+	f.app.call("track.set", {{"track", f.track}, {"articulationMap", map.at("map").at("id")}});
+	Json lanes = f.view().at("lanes");
+	lanes.push_back({{"type", "articulations"}});
+	f.app.call("editor.set", {{"editor", "window"}, {"lanes", lanes}});
+	const std::string row = ".controller-lane[lane-kind=articulations] .articulation-row";
+	REQUIRE(
+		f.app.waitUntil([&] { return f.elements(".controller-lane-type").size() == 3 && !f.elements(row).empty(); }));
 	for (const char* theme : {"gnubase", "dark", "light", "high-contrast"})
 	{
 		INFO("theme " << theme);
@@ -251,13 +252,16 @@ TEST_CASE(
 		for (const bool focus : {false, true})
 		{
 			INFO("keyboard focus " << focus);
-			focused->SetClass("keyboard-focus", focus);
-			f.app.shell().step(std::chrono::milliseconds(0));
+			// A click on the Articulations lane gives it the keyboard focus, as in the app; a click on the toolbar's
+			// spare space takes it away. The frame must be there when the boxes are read.
+			f.click(focus ? of(row) : f.spare());
+			REQUIRE(f.app.waitUntil(
+				[&] { return f.elements(".controller-lane.keyboard-focus").size() == (focus ? 1U : 0U); }));
 			const Json headers = f.elements(".controller-lane-header");
 			const Json types = f.elements(".controller-lane-type");
-			REQUIRE(headers.size() == 2);
-			REQUIRE(types.size() == 2);
-			for (size_t lane = 0; lane < 2; ++lane)
+			REQUIRE(headers.size() == 3);
+			REQUIRE(types.size() == 3);
+			for (size_t lane = 0; lane < 3; ++lane)
 				inside(types.at(lane).at("box"), headers.at(lane).at("box"));
 			const Json footer = f.box(".controller-lanes-footer");
 			inside(f.box("#controller-lane-create"), footer);

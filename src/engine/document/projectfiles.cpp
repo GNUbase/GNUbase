@@ -145,6 +145,8 @@ namespace gnubase::engine
 
 	void ProjectModel::opened(Project project, const std::string& file, CommandContext& context)
 	{
+		if (!m_trackRenders.empty())
+			throw CommandError("the project contains tracks being rendered");
 		// An auto save opens untitled and unsaved, so that saving it neither overwrites the auto save nor makes Auto
 		// Saves the project folder.
 		const bool autoSave = isAutoSave(fs::u8path(file));

@@ -437,6 +437,17 @@
 	{
 		color: #ffff00;
 	}
+	event-names
+	{
+		color: #ffffff;
+		font-size: 11dp;
+	}
+	part-contents
+	{
+		color: #ffffff;
+		stroke-color: #c8c8c8;
+		stroke-width: 1dp;
+	}
 	curve
 	{
 		stroke-color: #00ffff;
@@ -467,6 +478,10 @@
 		own-color-tint: none;
 		event-inset: 0dp;
 	}
+	.event-display event-names, .event-display part-contents
+	{
+		event-inset: 0dp;
+	}
 	.event-display .overview
 	{
 		background-color: #000000;
@@ -491,6 +506,11 @@
 	{
 		color: #b6b604;
 		stroke-color: #ffffff;
+	}
+	.event-display.highlight-selected-borders event-lanes.selected-events
+	{
+		stroke-color: #ff8c8c;
+		stroke-width: 3dp;
 	}
 	.event-display fade-lines
 	{
@@ -808,6 +828,10 @@
 	{
 		color: #c8c8c8;
 	}
+	.track-list listitem.rendering .track-name
+	{
+		font-style: italic;
+	}
 	.track-list .drop-line
 	{
 		background-color: #ffff00;
@@ -1057,6 +1081,10 @@
 	{
 		background-color: #c8c8c8;
 	}
+	.articulation-item.muted
+	{
+		background-color: #747474;
+	}
 	.articulation-item.selected
 	{
 		background-color: #00ffff;
@@ -1065,10 +1093,10 @@
 	{
 		background-color: #3c3c3c;
 	}
-	.controller-lane.keyboard-focus .controller-lane-header
+	.controller-lane-frame
 	{
-		border-left-width: 3dp;
-		border-left-color: #ffff00;
+		border-width: 3dp;
+		border-color: #ffff00;
 	}
 	.ape-display
 	{
@@ -1728,6 +1756,27 @@
 	{
 	}
 	.track-list listitem.selected
+	{
+	}
+	.track-list .track-color
+	{
+	}
+	.track-list .track-name, .track-list .track-name-field, .track-list .track-versions-toggle, .track-list .track-controls
+	{
+	}
+	.track-list listitem > .tree-toggle
+	{
+	}
+	.track-list .track-name
+	{
+	}
+	.track-list listitem[type=folder] .track-color[color]
+	{
+	}
+	.track-list listitem.selected .track-color[color]
+	{
+	}
+	.track-list .track-controls button[control=record]:not(.checked) svg.icon
 	{
 	}
 	.inspector-section button.section-header

@@ -150,7 +150,8 @@ TEST_CASE("every theme has the same assets, each a renderable SVG of its manifes
 			}
 		}
 
-		// The theme's style sheet uses every skin, and styles the same widgets and states as every other theme.
+		// The theme's style sheet uses every skin but those its manifest marks unused, which belong to another look
+		// (#1314), and styles the same widgets and states as every other theme.
 		const std::string sheet = gnubase::test::readText(dir / "theme.rcss");
 		CHECK(sheet.find("@media (theme: " + std::string(theme) + ")") != std::string::npos);
 		for (const auto& [name, asset] : assets.items())
@@ -159,7 +160,7 @@ TEST_CASE("every theme has the same assets, each a renderable SVG of its manifes
 			const std::string file = asset.at("file").get<std::string>();
 			const bool used =
 				sheet.find("(" + file + ")") != std::string::npos || sheet.find("(" + file + ",") != std::string::npos;
-			CHECK(used);
+			CHECK(used != asset.value("unused", false));
 		}
 		CHECK(selectors(sheet) == selectors(gnubase::test::readText(themesDir() / "gnubase" / "theme.rcss")));
 
@@ -488,6 +489,26 @@ TEST_CASE("the default theme's bars, tabs and inspector headers are flat, the ot
 			const double end = attribute("y") + attribute("rx");
 			CHECK(slice.at("top").get<double>() >= end);
 			CHECK(slice.at("bottom").get<double>() >= end);
+			// The selected track list row's rounded outline keeps its corners in the nine-patch's corners too, the
+			// color strip at its left included (#1314).
+			const nlohmann::json row = readJson(dir / "manifest.json").at("assets").at("track-row-selected");
+			const std::string lit = file("track-row-selected.svg");
+			const size_t litAt = lit.find("<rect");
+			REQUIRE(litAt != std::string::npos);
+			const auto litAttribute = [&lit, litAt](const std::string& name)
+			{
+				const size_t at = lit.find(" " + name + "=\"", litAt) + name.size() + 3;
+				return std::stod(lit.substr(at, lit.find('"', at) - at));
+			};
+			const double radius = litAttribute("rx");
+			CHECK(radius > 0);
+			const nlohmann::json& rowSlice = row.at("slice");
+			CHECK(rowSlice.at("left").get<double>() >= litAttribute("x") + radius);
+			CHECK(rowSlice.at("top").get<double>() >= litAttribute("y") + radius);
+			CHECK(rowSlice.at("right").get<double>() >=
+				row.at("width").get<double>() - litAttribute("x") - litAttribute("width") + radius);
+			CHECK(rowSlice.at("bottom").get<double>() >=
+				row.at("height").get<double>() - litAttribute("y") - litAttribute("height") + radius);
 			// Lanes and the track list on the panels' surface over the window's background, the selected row outlined.
 			const std::string background = token("background");
 			CHECK(value(last(".event-display"), "background-color") == token("surface"));
@@ -647,4 +668,20 @@ TEST_CASE("the shared style sheets leave font sizes to the themes", "[unit]")
 	const std::string base =
 		gnubase::test::readText(std::filesystem::path(GNUBASE_RESOURCES_DIR) / "styles" / "base.rcss");
 	CHECK(base.find("font-size") == std::string::npos);
+}
+
+TEST_CASE("rendering track appearance belongs to each theme", "[unit]")
+{
+	const std::string base =
+		gnubase::test::readText(std::filesystem::path(GNUBASE_RESOURCES_DIR) / "styles" / "base.rcss");
+	CHECK(base.find("listitem.rendering") == std::string::npos);
+	for (const char* theme : g_themes)
+	{
+		INFO(theme);
+		const auto sheet = rules(gnubase::test::readText(themesDir() / theme / "theme.rcss"));
+		const auto found = std::find_if(sheet.begin(), sheet.end(),
+			[](const auto& rule) { return rule.first.find("listitem.rendering .track-name") != std::string::npos; });
+		REQUIRE(found != sheet.end());
+		CHECK(found->second.find("font-style: italic") != std::string::npos);
+	}
 }

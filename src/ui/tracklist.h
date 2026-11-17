@@ -228,6 +228,8 @@ namespace gnubase::ui
 
 		EventDisplay& m_display;
 		EngineBinding& m_binding;
+		std::set<uint64_t> m_rendering;
+		std::map<uint64_t, std::set<uint64_t>> m_renderJobs;
 		Rml::ObserverPtr<Rml::Element> m_root;
 		Rml::Element* m_document = nullptr;
 		Rml::Element* m_rows = nullptr; // clips the list view

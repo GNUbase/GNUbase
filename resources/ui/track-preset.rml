@@ -4,7 +4,7 @@
      their channel and patch or only one of them (p. 238); Load applies the
      preset chosen to them (track.loadPreset), listing only the presets of their types; Add adds the tracks of the
      preset chosen below the first of them, or at the bottom (track.addFromPreset). The engine's message shows when it
-     refuses. -->
+     refuses, and after Save the media files that are missing (track.savePreset's missing). -->
 <rml>
 <head>
 	<title>Track Preset</title>
@@ -57,6 +57,7 @@
 
 		function dialog.load(document)
 			dialog.mode = document:GetAttribute("mode") or "save"
+			dialog.saved = false
 			dialog.tracks = {}
 			for id in (document:GetAttribute("tracks") or ""):gmatch("%d+") do
 				dialog.tracks[#dialog.tracks + 1] = math.tointeger(tonumber(id))
@@ -107,6 +108,10 @@
 		end
 
 		function dialog.confirm(document)
+			if dialog.saved then
+				document:Close()
+				return
+			end
 			local ok, problem
 			if dialog.mode == "save" then
 				local parameters = {tracks = dialog.tracks, name = value(document, "preset-name")}
@@ -125,7 +130,16 @@
 				end
 				ok, problem = pcall(gnubase.track.addFromPreset, parameters)
 			end
-			if ok then
+			if ok and dialog.mode == "save" and #(problem.missing or {}) > 0 then
+				-- The preset refers to the media files that are missing where they were (#1736): the dialog says
+				-- which, and OK closes it.
+				dialog.saved = true
+				document:GetElementById("preset-row").inner_rml = ""
+				document:GetElementById("preset-keep-row").inner_rml = ""
+				document:GetElementById("preset-message").inner_rml = escape(
+					"The preset was saved without the media files that are missing; it refers to them where they were: " ..
+					table.concat(problem.missing, ", ") .. ".")
+			elseif ok then
 				document:Close()
 			else
 				document:GetElementById("preset-message").inner_rml = escape(problem)

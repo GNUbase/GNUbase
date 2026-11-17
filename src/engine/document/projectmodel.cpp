@@ -51,6 +51,7 @@
 #include <ctime>
 #include <filesystem>
 #include <initializer_list>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <optional>
@@ -3078,6 +3079,7 @@ namespace gnubase::engine
 				note.velocityVariance = item.value("velocityVariance", 0.0);
 				require(std::abs(note.velocityVariance) <= 1.0, name + ".velocityVariance must be -1 to 1");
 				note.articulations = item.value("articulations", std::vector<std::string>());
+				note.mutedArticulations = mutedArticulationsFrom(item, note, name);
 				note.expressions = expressionsFromJson(item.value("expressions", Json::array()), name + ".expressions");
 				notes.push_back(note);
 			}
@@ -3091,6 +3093,28 @@ namespace gnubase::engine
 			context.emit("note.added", {{"part", part.id}, {"notes", added}});
 			return {{"notes", added}};
 		}
+	}
+
+	std::vector<std::string> mutedArticulationsFrom(const Json& item, const Note& note, const std::string& name)
+	{
+		const auto has = [&note](const std::string& each)
+		{ return std::find(note.articulations.begin(), note.articulations.end(), each) != note.articulations.end(); };
+		std::vector<std::string> muted;
+		if (!item.contains("mutedArticulations"))
+		{
+			std::copy_if(
+				note.mutedArticulations.begin(), note.mutedArticulations.end(), std::back_inserter(muted), has);
+			return muted;
+		}
+		for (const std::string& each : item.at("mutedArticulations").get<std::vector<std::string>>())
+		{
+			std::string message = name;
+			message.append(".mutedArticulations: ").append(each).append(" isn't one of the note's articulations");
+			require(has(each), message);
+			if (std::find(muted.begin(), muted.end(), each) == muted.end())
+				muted.push_back(each);
+		}
+		return muted;
 	}
 
 	Controller controllerFrom(const Json& item, const std::string& name)
@@ -3109,6 +3133,8 @@ namespace gnubase::engine
 			needs("number");
 			requireRange(item.at("number").get<int64_t>(), 0, 127, name + ".number");
 		}
+		require(type == ControllerType::Articulation || !item.contains("muted"),
+			name + ".muted applies only to articulation events");
 		if (type == ControllerType::Articulation)
 		{
 			needs("articulation");
@@ -3370,6 +3396,7 @@ namespace gnubase::engine
 			{"note.remove", "Remove notes"},
 			{"note.move", "Move notes"},
 			{"note.set", "Change notes"},
+			{"note.replaceExpression", "Change note expression"},
 			{"note.split", "Split notes"},
 			{"note.glue", "Glue notes"},
 			{"note.voicing", "Change chord"},
@@ -3605,14 +3632,47 @@ namespace gnubase::engine
 				[this, handler = std::move(handler)](CommandContext& context) { return handler(m_project, context); });
 			return;
 		}
+		if (info.name == "track.move")
+		{
+			handler = [this, move = std::move(handler)](Project& project, CommandContext& context)
+			{
+				const ObjectId id = context.parameters().at("track").get<ObjectId>();
+				checkRenderMove(id);
+				Json result = move(project, context);
+				m_movingTracks.push_back(id);
+				return result;
+			};
+		}
+
 		if (!action.empty())
 			m_edits[info.name] = {info, handler};
+		const bool finishesRender = info.name == "track.finishRender";
 		engine.registerCommand(std::move(info),
-			[this, action = std::move(action), handler = std::move(handler)](CommandContext& context)
+			[this, action = std::move(action), handler = std::move(handler), finishesRender](CommandContext& context)
 			{
+				std::vector<ObjectId> previousMoves = std::move(m_movingTracks);
+				m_movingTracks.clear();
+				struct ResetMoves
+				{
+					std::vector<ObjectId>& current;
+					std::vector<ObjectId>& previous;
+					~ResetMoves() { current = std::move(previous); }
+				};
+				const ResetMoves resetMoves{m_movingTracks, previousMoves};
+				const uint64_t applying = m_applyingRender;
+				if (finishesRender)
+					m_applyingRender = context.parameters().at("token").get<uint64_t>();
+				struct ResetRender
+				{
+					uint64_t& value;
+					uint64_t before;
+					~ResetRender() { value = before; }
+				};
+				const ResetRender resetRender{m_applyingRender, applying};
 				Project before = m_project;
 				const bool followsEvents = m_automationFollowsEvents; // automation.set in a transaction changes it
 				Json result;
+				ProjectChange change;
 				try
 				{
 					result = handler(m_project, context);
@@ -3621,6 +3681,8 @@ namespace gnubase::engine
 					syncSharedParts(before.midiParts, m_project, context);
 					midi::adoptPatterns(m_project, context);
 					followTrackFolders(m_project, context, before);
+					change = difference(before, m_project);
+					checkRenderLocks(m_project, {&change});
 				}
 				catch (...)
 				{
@@ -3630,11 +3692,14 @@ namespace gnubase::engine
 				}
 				announceWarpedEvents(before, m_project, context);
 				if (action.empty()) // a transaction
-					record(context.parameters().at("description").get<std::string>(), before, context,
-						context.parameters().value("merge", std::string()));
+					record(context.parameters().at("description").get<std::string>(), before, std::move(change),
+						context, context.parameters().value("merge", std::string()));
 				else
-					record(action, before, context);
+					record(
+						finishesRender ? renderAction(m_applyingRender) : action, before, std::move(change), context);
 				publish();
+				if (m_applyingRender != 0)
+					endTrackRender(m_applyingRender, context);
 				return result;
 			});
 	}
@@ -3660,7 +3725,8 @@ namespace gnubase::engine
 		engine.registerCommand(std::move(info), std::move(handler));
 	}
 
-	void ProjectModel::record(std::string action, const Project& before, CommandContext& context, std::string merge)
+	void ProjectModel::record(
+		std::string action, const Project& before, ProjectChange change, CommandContext& context, std::string merge)
 	{
 		const std::vector<HistoryStep>& steps = m_history.steps();
 		if (!merge.empty() && !steps.empty() && m_history.position() == steps.size() && steps.back().merge == merge)
@@ -3668,7 +3734,7 @@ namespace gnubase::engine
 			// The step joins the last one: what changed since before that one.
 			Project start = before;
 			apply(start, steps.back().change, Direction::Undo);
-			ProjectChange change = difference(start, m_project);
+			change = difference(start, m_project);
 			// Compose only format edits, excluding display choices made between the gesture's commands.
 			change.timeFormatBefore = steps.back().change.timeFormatBefore;
 			change.timeFormatAfter = steps.back().change.timeFormatAfter;
@@ -3698,16 +3764,23 @@ namespace gnubase::engine
 				change.stepPositionAfter.reset();
 			}
 			if (change.empty())
+			{
 				m_history.removeLast();
+			}
 			else
-				m_history.step(steps.size() - 1).change = std::move(change);
+			{
+				HistoryStep& step = m_history.step(steps.size() - 1);
+				step.change = std::move(change);
+				step.movedTracks.insert(step.movedTracks.end(), m_movingTracks.begin(), m_movingTracks.end());
+			}
 			announceHistory(context);
 			return;
 		}
-		ProjectChange change = difference(before, m_project);
 		if (change.empty())
 			return;
-		m_history.record({std::move(action), now(), {}, std::move(change), std::move(merge)});
+		HistoryStep step{std::move(action), now(), {}, std::move(change), std::move(merge)};
+		step.movedTracks = m_movingTracks;
+		m_history.record(std::move(step));
 		announceHistory(context);
 	}
 
@@ -3721,11 +3794,10 @@ namespace gnubase::engine
 				{"redo", position < steps.size() ? Json(steps[position].action) : Json(nullptr)}});
 	}
 
-	void ProjectModel::setSoloNotes(std::vector<std::pair<ObjectId, ObjectId>> notes)
+	void ProjectModel::updateSoloNotes()
 	{
-		if (notes == m_project.soloNotes)
+		if (!m_soloNotesSource || m_soloNotesSource() == m_project.soloNotes)
 			return;
-		m_project.soloNotes = std::move(notes);
 		const bool saved = m_savedRevision == m_revision;
 		const bool autoSaved = m_autoSavedRevision == m_revision;
 		publish();
@@ -3737,6 +3809,8 @@ namespace gnubase::engine
 
 	void ProjectModel::publish()
 	{
+		if (m_soloNotesSource)
+			m_project.soloNotes = m_soloNotesSource();
 		m_snapshots.publish(compile(m_project, ++m_revision, &m_snapshots.latest(), m_openedRevision));
 	}
 
@@ -3750,6 +3824,23 @@ namespace gnubase::engine
 		require(available > 0, undo ? "nothing to undo" : "nothing to redo");
 		require(static_cast<size_t>(steps) <= available,
 			"only " + std::to_string(available) + (undo ? " steps can be undone" : " steps can be redone"));
+		if (!m_trackRenders.empty())
+		{
+			Project candidate = m_project;
+			std::vector<const ProjectChange*> changes;
+			for (int64_t i = 0; i < steps; ++i)
+			{
+				const size_t index = undo ? m_history.position() - 1 - static_cast<size_t>(i)
+										  : m_history.position() + static_cast<size_t>(i);
+				for (const ObjectId track : m_history.steps()[index].movedTracks)
+					checkRenderMove(track);
+				const ProjectChange& change = m_history.steps()[index].change;
+				apply(candidate, change, direction);
+				changes.push_back(&change);
+			}
+			checkRenderLocks(candidate, changes);
+		}
+
 		const std::string timeFormat = m_project.setup.timeFormat;
 		// Only what announceWarpedEvents reads: a copy of the whole project made undo slow in large projects (#1266).
 		Project before;
@@ -3874,6 +3965,10 @@ namespace gnubase::engine
 		if (!change.empty())
 			joined =
 				HistoryStep{context.parameters().at("action").get<std::string>(), now(), {}, std::move(change), {}};
+		if (joined)
+			for (size_t i = first; i < position; ++i)
+				joined->movedTracks.insert(
+					joined->movedTracks.end(), steps[i].movedTracks.begin(), steps[i].movedTracks.end());
 		m_history.join(first, std::move(joined));
 		announceHistory(context);
 		return {{"steps", position - first}};
@@ -4739,7 +4834,8 @@ namespace gnubase::engine
 			objectSchema({{"position", integerSchema}, {"length", integerSchema}, {"pitch", integerSchema},
 							 {"velocity", numberSchema}, {"releaseVelocity", numberSchema}, {"channel", integerSchema},
 							 {"probability", numberSchema}, {"velocityVariance", numberSchema},
-							 {"articulations", arraySchema(stringSchema)}, {"expressions", expressionsSchema()}},
+							 {"articulations", arraySchema(stringSchema)},
+							 {"mutedArticulations", arraySchema(stringSchema)}, {"expressions", expressionsSchema()}},
 				{"position", "length", "pitch", "velocity"});
 		add(engine,
 			{"note.add", 1,
@@ -4747,7 +4843,9 @@ namespace gnubase::engine
 				"0-1, release (note-off) velocity 0-1 (default 0.5), MIDI channel 0-15 (default 0), play probability "
 				"0-1, the chance that the note plays (default 1), and velocity variance -1 to 1, the share by which "
 				"playback raises (positive) or lowers (negative) its velocity at most (default 0). articulations are "
-				"the attributes of the track's articulation map (articulationMap.add) that the note has, by name. "
+				"the attributes of the track's articulation map (articulationMap.add) that the note has, by name, and "
+				"mutedArticulations those of them that are muted, as the mute tool mutes them: they select no sound "
+				"slot. "
 				"expressions are its per-note expression: points {type, position, value}, position in ticks from the "
 				"note's start, type volume (a linear gain 0-4), pan (0-1, 0.5 the center), tuning (semitones, -120 to "
 				"120), vibrato, expression, brightness or pressure (0-1).",
@@ -4761,14 +4859,15 @@ namespace gnubase::engine
 			[](Project& project, CommandContext& context)
 			{ return removeFromPart(project, context, &MidiPart::notes, "notes", "note"); });
 
-		const Json controller = objectSchema(
-			{{"position", integerSchema},
-				{"type",
-					enumSchema({"controller", "pitchBend", "channelPressure", "polyPressure", "program", "sysEx",
-						"articulation"})},
-				{"number", integerSchema}, {"value", numberSchema}, {"channel", integerSchema}, {"bank", integerSchema},
-				{"data", arraySchema(integerSchema)}, {"articulation", stringSchema}, {"reset", booleanSchema}},
-			{"position"});
+		const Json controller =
+			objectSchema({{"position", integerSchema},
+							 {"type",
+								 enumSchema({"controller", "pitchBend", "channelPressure", "polyPressure", "program",
+									 "sysEx", "articulation"})},
+							 {"number", integerSchema}, {"value", numberSchema}, {"channel", integerSchema},
+							 {"bank", integerSchema}, {"data", arraySchema(integerSchema)},
+							 {"articulation", stringSchema}, {"reset", booleanSchema}, {"muted", booleanSchema}},
+				{"position"});
 		add(engine,
 			{"controller.add", 1,
 				"Adds controller events to a MIDI part: position from the part's start in ticks, MIDI channel 0-15 "
@@ -4777,7 +4876,8 @@ namespace gnubase::engine
 				"pitch) and value; program: number (the program) and optionally bank 0-16383; sysEx: data, the "
 				"message's bytes from 0xF0 to 0xF7; articulation: a direction of the track's articulation map "
 				"(articulationMap.add), articulation its name and reset (default false) whether it ends the "
-				"directions of its group instead; it plays nothing itself.",
+				"directions of its group instead, and muted (default false) whether the mute tool muted it: a muted "
+				"direction selects no sound slot. It plays nothing itself.",
 				objectSchema({{"part", idSchema}, {"controllers", arraySchema(controller)}}, {"part", "controllers"}),
 				{{"type", "object"}, {"properties", {{"controllers", {{"type", "array"}}}}},
 					{"required", {"controllers"}}},
@@ -5048,9 +5148,10 @@ namespace gnubase::engine
 				"A number that grows with every change of the project: every edit, undo and redo, and loading or "
 				"starting a project. quantize.savePreset, quantize.renamePreset, quantize.removePreset and "
 				"quantize.extractGroove also advance it when they change the quantize preset saved with the project, "
-				"without an undo step, and so does the drum editor's Solo Instrument (editor.set soloInstrument, and "
-				"the selection while it is on) when it changes what plays, without a change of the project: modified "
-				"stays as it was. project.load with revision loads only if it hasn't changed. modified says "
+				"without an undo step, and so does the drum editor's Solo Instrument (editor.set soloInstrument) when "
+				"the selected notes it solos change: it goes on or off with notes selected, or the selection changes "
+				"while it is on, even if what plays stays the same. Neither changes the project: modified stays as "
+				"it was. project.load with revision loads only if it hasn't changed. modified says "
 				"whether the project changed since it was last saved, loaded or started; undoing back to the saved "
 				"state still counts as a change. project identifies the open project: the revision at which it was "
 				"loaded or started, so it changes only when another project is opened.",

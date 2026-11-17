@@ -22,6 +22,20 @@ namespace gnubase::engine
 	class SampleLoader
 	{
 	public:
+		// A background render keeps its immutable samples and pending reads alive while live tracks change.
+		class Lease
+		{
+		public:
+			Lease(SampleLoader& loader, std::set<std::string> paths);
+			~Lease();
+			Lease(const Lease&) = delete;
+			Lease& operator=(const Lease&) = delete;
+
+		private:
+			SampleLoader& m_loader;
+			std::set<std::string> m_paths;
+		};
+
 		using Read = std::function<std::shared_ptr<const processors::Sample>(const std::string& path)>;
 
 		// loaded runs on the loader's thread after each file is read; read reads one (processors::sharedSample).
@@ -63,6 +77,7 @@ namespace gnubase::engine
 		std::condition_variable m_wake;  // a file asked for, or stop
 		std::condition_variable m_done;  // a file read
 		std::deque<std::string> m_queue; // waiting; the first is being read while the thread runs
+		std::map<std::string, size_t> m_pinned;
 		std::map<std::string, std::shared_ptr<const processors::Sample>> m_samples;
 		bool m_reading = false;    // the first file waiting is being read
 		bool m_announcing = false; // the callback runs for a file read, which has left the queue

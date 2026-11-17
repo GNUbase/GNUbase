@@ -16,11 +16,12 @@ they are.
   or automation, and the project's busses, tempo, time signatures and fader top, and the media files of the samples
   that a sampler and drum pads play (p. 940), so that it keeps playing them when the project moves or goes; a file
   that is missing is referred to by its absolute path, as `project.save` does, so that the track can still be saved
-  (#1567), and the result lists it (`missing`, #1614). It isn't an undo step. A preset name must be a file name, as a
-  template's must. MIDI tracks' presets keep their MIDI channel and their patch (program and bank), or with `keep`
-  `channel` or `patch` only one of them (p. 238): the file has the other at its default and says which one it kept (the
-  project's `presetKeeps`, in GNUbase's entry of the file), so that loading the preset leaves the other as the track has
-  it and new tracks from it have the default.
+  (#1567), and the result lists it (`missing`, #1614), which the track preset dialog's Save names (#1736). It isn't an
+  undo step. A preset name must be a file name, as a template's must. MIDI tracks' presets keep their MIDI channel and
+  their patch (program and bank), or with `keep` `channel` or `patch` only one of them (p. 238): the file has the other
+  at its default and says which one it kept (the project's `presetKeeps`, in GNUbase's entry of the file), so that
+  loading the preset leaves the other as the track has it and new tracks from it have the default. `keep` without a MIDI
+  track among the tracks is refused, so a preset of audio tracks never says it keeps one.
 - **Listing them.** `track.presets` lists the presets by name with their file and the types of their tracks, top to
   bottom, and of a preset that keeps only one of a MIDI track's channel and patch which one (`keeps`), which the Load
   dialog shows after its name ("Keys (Patch only)"). A file that isn't a readable DAWproject file is left out.
@@ -102,17 +103,17 @@ they are.
   manual's note on Events and Parts says; the tracks imported onto get their new versions together), and its other
   versions after the track's, versions that share an ID in the file sharing a new one in the project, and a version
   named as one of the track's getting the next free `vN` name (a source with only its first version, with `replace`
-  or `add`, leaves the track storing no version of its own, #1629); with `settings` its channel settings, inserts, routing
-  and drum and articulation maps, the track's plugins going with their automation; with `automation` its automation in
-  place of the track's, and without it, once events or settings are imported onto the track, the track loses its
-  automation (the note on Automation, p. 204). The IDs of the file's versions become new ones, one for each ID of the
-  file, on the new tracks too, including the implicit first version of a track without a version list, so that none
-  of them falls into a version group the project has of its own; the new
-  version of a track imported onto gets the ID its source's active version has, so that the tracks imported onto get
-  one ID when the versions their sources played shared one in the file, and the versions that shared one there keep
-  playing together here when they didn't (p. 233). What played or sent into the copy's channel, such as another
-  imported track, goes into the track's. Its events, parts, versions and automation take the track's time base. A
-  source goes onto one track, and not one inside a listed folder, which brings it along.
+  or `add`, leaves the track storing no version of its own, #1629); with `settings` its channel settings, inserts,
+  routing and drum and articulation maps, the track's plugins going with their automation; with `automation` its
+  automation in place of the track's, and without it, once events or settings are imported onto the track, the track
+  loses its automation (the note on Automation, p. 204). The IDs of the file's versions become new ones, one for each ID
+  of the file, on the new tracks too, including the implicit first version of a track without a version list, so that
+  none of them falls into a version group the project has of its own; the new version of a track imported onto gets the
+  ID its source's active version has, so that the tracks imported onto get one ID when the versions their sources played
+  shared one in the file, and the versions that shared one there keep playing together here when they didn't (p. 233).
+  What played or sent into the copy's channel, such as another imported track, goes into the track's. Its events, parts,
+  versions and automation take the track's time base. A source goes onto one track, and not one inside a listed folder,
+  which brings it along.
 - **Where the events go** (Import Position, p. 204). `position` `absolute` (the default) puts them at the timecode
   they had in the file, so they move by the difference of the project start times (project setup's start); `relative`
   keeps them as far from the project start as from the file's; `cursor` puts them as far from the project cursor. That
@@ -135,7 +136,7 @@ they are.
 | Item | Command | Where | What it does |
 |---|---|---|---|
 | Tracks from Project or Track Archive... | `file.importTracks` | File > Import | the OS's open dialog, then the Import Options dialog (below) for the file |
-| Selected Tracks... | `file.exportTracks` | File > Export | the OS's save dialog (`.dawproject` added to a name without an extension), then `track.export` of the selected tracks, copying the media; disabled without a selection; the engine's refusal shows in the project error dialog, the tracks it left out in the same dialog titled Export Selected Tracks (`ProjectFiles::showNotice`) |
+| Selected Tracks... | `file.exportTracks` | File > Export | the OS's save dialog (`.dawproject` added to a name without an extension), then `track.export` of the selected tracks, copying the media; disabled without a selection; the engine's refusal shows in the project error dialog, the tracks it left out and the media files missing in the same dialog titled Export Selected Tracks (`ProjectFiles::showNotice`) |
 | Add Track from Preset... | `project.addTrackFromPreset` | track list's context menu | the track preset dialog: `track.addFromPreset` below the first selected track |
 | Save Track Preset... | `track.saveTrackPreset` | track list's context menu | the track preset dialog: `track.savePreset` of the selected tracks; disabled without a selection |
 | Load Track Preset... | `track.loadTrackPreset` | track list's context menu | the track preset dialog: `track.loadPreset` onto the selected tracks; disabled without a selection |

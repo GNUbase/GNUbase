@@ -2,6 +2,8 @@
 #pragma once
 
 #include "engine/clock.h"
+#include "engine/jobs/jobs.h"
+#include "engine/plugins/slotinstances.h"
 #include "engine/schema.h"
 #include "platform/audio/device.h"
 #include "platform/midi/port.h"
@@ -148,6 +150,8 @@ namespace gnubase::engine
 				m_unchanged = true;
 		}
 		bool unchanged() const { return m_unchanged; }
+		// Engine-posted work can finish its own jobs; clients cannot invoke those completion handlers.
+		bool internal() const { return m_outer != nullptr ? m_outer->internal() : m_internal; }
 
 		// If the command fails, leaves the failure out of engine.commandLog and the error log: for a command that the
 		// engine runs on its own and whose failure was reported already, such as a due auto save that fails again.
@@ -165,6 +169,7 @@ namespace gnubase::engine
 		CommandContext* m_outer = nullptr;
 		Engine* m_engine = nullptr; // set on the outermost context
 		std::vector<Event> m_events;
+		bool m_internal = false;
 		bool m_unchanged = false;    // markUnchanged
 		bool m_unlogged = false;     // leaveOutOfLog
 		bool m_quietFailure = false; // failQuietly
@@ -223,6 +228,10 @@ namespace gnubase::engine
 
 		// The plugin host processes and the plugins that run in them.
 		plugins::HostManager& pluginHosts();
+		// Command thread: prepare a render from the current snapshot, or start background work.
+		Jobs::Work prepareMixdown(const Json& parameters);
+		Json startJob(std::string kind, Jobs::Work work);
+		bool jobCancelled(JobId job) const;
 
 		// The folder of the user settings; empty when they are kept in memory only. Features whose user settings
 		// have files of their own, such as the quantize presets, keep them there.
@@ -264,6 +273,8 @@ namespace gnubase::engine
 		// For tests: reads the samplers' samples asked for from now on with read instead of processors::sharedSample,
 		// e.g. to hold a read back (AudioEngine::setSampleReader). Any thread.
 		void setSampleReader(std::function<std::shared_ptr<const processors::Sample>(const std::string& path)> read);
+		// Substitute the private render's plugin factory for tests; set before issuing render commands.
+		void setRenderPluginFactory(plugins::SlotInstances::Factory factory);
 		// For tests: how long an offline render waits for the samplers' samples before it logs a warning and waits
 		// again, 30 s unless set, 20 rounds at most before it fails (AudioEngine::setOfflineSampleWait). Any thread.
 		void setOfflineSampleWait(std::chrono::milliseconds wait);

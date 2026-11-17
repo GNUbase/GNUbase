@@ -105,7 +105,7 @@ namespace
 	}
 
 	// Opens a drop-down list, moves the selection that many options down (up when negative) with the arrow keys, and
-	// closes it. Its options aren't in the DOM that the UI tools see.
+	// closes it.
 	void choose(test::UiApp& app, const std::string& select, int down)
 	{
 		click(app, select);
@@ -191,6 +191,42 @@ TEST_CASE("settings.set changes several settings at once, all of them or none", 
 		ContainsSubstring("values"));
 	CHECK(run(client, "settings.set", {{"key", "ui.scale"}, {"value", 1.5}}) ==
 		Json({{"key", "ui.scale"}, {"value", 1.5}}));
+}
+
+TEST_CASE("the event display's preferences are user settings with their defaults and limits", "[unit]")
+{
+	// Reference manual pp. 1603-1604, 1607 (#1313): what the event display shows of events and parts.
+	const test::TempDir dir;
+	engine::Engine engine(audio::makeBackends(), dir.path());
+	engine::Client client(engine);
+	const Json defaults = {{"ui.showEventNames", true}, {"ui.hideTruncatedEventNames", false},
+		{"ui.highlightSelectedEventBorders", false}, {"ui.eventOpacity", 100}, {"ui.smallestTrackHeightForData", 20},
+		{"ui.smallestTrackHeightForName", 28}, {"ui.waveformBrightness", 50}, {"ui.partDataMode", "lines"},
+		{"ui.showControllers", true}, {"ui.noteBrightness", 50}};
+	const Json list = run(client, "settings.list");
+	for (const auto& [key, value] : defaults.items())
+	{
+		INFO(key);
+		CHECK(setting(client, key) == value);
+		CHECK(entryOf(list, key).at("preference") == true);
+	}
+	// Percentages from 0 to 100, heights from 0 to 400 dp, and the part data modes there are.
+	for (const char* key : {"ui.eventOpacity", "ui.waveformBrightness", "ui.noteBrightness"})
+	{
+		INFO(key);
+		CHECK_THAT(reject(client, "settings.set", {{"key", key}, {"value", 101}}), ContainsSubstring(key));
+		CHECK_THAT(reject(client, "settings.set", {{"key", key}, {"value", -1}}), ContainsSubstring(key));
+	}
+	for (const char* key : {"ui.smallestTrackHeightForData", "ui.smallestTrackHeightForName"})
+	{
+		INFO(key);
+		CHECK_THAT(reject(client, "settings.set", {{"key", key}, {"value", 401}}), ContainsSubstring(key));
+	}
+	CHECK_THAT(reject(client, "settings.set", {{"key", "ui.partDataMode"}, {"value", "scores"}}),
+		ContainsSubstring("ui.partDataMode"));
+	run(client, "settings.set", {{"values", {{"ui.partDataMode", "off"}, {"ui.noteBrightness", 80}}}});
+	CHECK(setting(client, "ui.partDataMode") == "off");
+	CHECK(setting(client, "ui.noteBrightness") == 80);
 }
 
 TEST_CASE("preference presets are saved, renamed and removed in the user settings", "[unit]")

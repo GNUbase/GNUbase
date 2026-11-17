@@ -433,7 +433,7 @@ TEST_CASE("the Windows dialog lists the open windows, activates and closes them"
 	REQUIRE(app.waitUntil([&app] { return elements(app, "#windows-list listitem", app.main().id()).size() == 3; }));
 
 	// All closes every window but the project window.
-	press("#windows-mode"); // its options aren't in the DOM that the UI tools see
+	press("#windows-mode");
 	app.ui().key(app.main().id(), "Down");
 	press("#windows-mode");
 	REQUIRE(app.waitUntil(

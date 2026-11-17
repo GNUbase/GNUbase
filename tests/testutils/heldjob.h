@@ -69,6 +69,11 @@ namespace gnubase::test
 	// ended, a minute at most, and returns the job. Progress events go to progress, if given.
 	engine::Json waitForJob(engine::Client& client, uint64_t job, std::vector<engine::Json>* progress = nullptr);
 
+	// Waits until the peak worker is done with every media file, 20 seconds at most, before a test moves or removes
+	// one: it writes peak files next to them and has them open meanwhile, and Windows can't move or remove what is open
+	// or a folder that is written into.
+	void settlePeaks(engine::Client& client);
+
 	// Starts a job with the command, through client, and holds it at its first job.progress while during runs with the
 	// job's id; then checks that the job still runs and was held all along, lets it go on and returns the job once it
 	// ended (#1154). So what during does comes before anything the job does after its first job.progress, however the

@@ -11,10 +11,6 @@
 #include "ui/tracklist.h"
 #include "uiapp.h"
 
-#include <RmlUi/Core/Context.h>
-#include <RmlUi/Core/Element.h>
-#include <RmlUi/Core/ElementDocument.h>
-#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
@@ -134,18 +130,12 @@ namespace
 		app.shell().step(std::chrono::milliseconds(0));
 	}
 
-	// The texts of a drop-down list's options, which aren't in the DOM that the UI tools see.
+	// The texts of a drop-down list's options.
 	std::vector<std::string> options(test::UiApp& app, const std::string& selector)
 	{
-		Rml::Element* element = nullptr;
-		for (int i = 0; element == nullptr && i < app.main().context().GetNumDocuments(); ++i)
-			element = app.main().context().GetDocument(i)->QuerySelector(selector);
-		auto* list = dynamic_cast<Rml::ElementFormControlSelect*>(element);
-		REQUIRE(list != nullptr);
 		std::vector<std::string> texts;
-		texts.reserve(static_cast<size_t>(list->GetNumOptions()));
-		for (int i = 0; i < list->GetNumOptions(); ++i)
-			texts.push_back(list->GetOption(i)->GetInnerRML());
+		for (const Json& option : test::selectOptions(app, selector))
+			texts.push_back(option.at("text").get<std::string>());
 		return texts;
 	}
 
@@ -292,6 +282,10 @@ TEST_CASE("a MIDI track's preset keeps its channel or its patch, which loading i
 	run(client, "track.savePreset", {{"tracks", {strings.track}}, {"name", "Patch"}, {"keep", "patch"}});
 	CHECK_THAT(reject(client, "track.savePreset", {{"tracks", {strings.track}}, {"name", "Both"}, {"keep", "both"}}),
 		ContainsSubstring("keep"));
+	// keep is about MIDI tracks: tracks without one have nothing to keep it of.
+	const Added vocals = add(client, {{"type", "audio"}, {"name", "Vocals"}});
+	CHECK_THAT(reject(client, "track.savePreset", {{"tracks", {vocals.track}}, {"name", "Vox"}, {"keep", "patch"}}),
+		ContainsSubstring("MIDI track"));
 	// track.presets says which one a preset keeps.
 	const Json presets = run(client, "track.presets").at("presets");
 	REQUIRE(presets.size() == 2);
@@ -1162,7 +1156,10 @@ TEST_CASE("track.import of a track without versions onto one leaves it without v
 				{"destinations", {{{"source", source}, {"track", piano.track}}}}});
 	};
 	// Replacing the track's parts or adding to them keeps it at its one version, which isn't track versions for the
-	// project rules (#1629); a new version is.
+	// project rules (#1629); a new version is. These checks see what the project rules see, not whether the track
+	// stores a version list (mergeTrack): that list isn't observable through the engine API, since project.get,
+	// track.changed and the project file show a track that stores only its untouched first version as one that stores
+	// none (versionsOf), loading drops such a list, and hasTrackVersion needs two versions.
 	for (const std::string existing : {"replace", "add"})
 	{
 		INFO(existing);
@@ -1741,11 +1738,23 @@ TEST_CASE("File > Export > Selected Tracks and File > Import > Tracks go through
 	const ObjectId folder =
 		app.call("track.add", {{"type", "folder"}, {"name", "Band"}}).at("track").at("id").get<ObjectId>();
 	app.call("track.add", {{"type", "vca"}, {"name", "Faders"}, {"parent", folder}});
+	// A track in it plays a media file that is missing, which the notice names too (#1736).
+	const ObjectId drums = app.call("track.add", {{"type", "audio"}, {"name", "Drums"}, {"parent", folder}})
+							   .at("track")
+							   .at("id")
+							   .get<ObjectId>();
+	const Json gone = app.call("media.add",
+		{{"path", (dir.path() / "gone.wav").u8string()}, {"sampleRate", 48000.0}, {"channels", 2}, {"length", 10}});
+	const Json clip = app.call("clip.add", {{"media", gone.at("media").at("id")}});
+	app.call("audioEvent.add",
+		{{"track", drums}, {"clip", clip.at("clip").at("id")}, {"position", 0}, {"offset", 0}, {"length", 10}});
 	app.call("project.save", {{"path", (dir.path() / "song.dawproject").u8string()}});
 	select(app, {folder});
 	app.keys().run("file.exportTracks", Json::object(), app.main(), nullptr);
 	answer(app, dir.path() / "band.dawproject");
-	CHECK_THAT(error("Export Selected Tracks"), ContainsSubstring("Faders"));
+	const std::string notice = error("Export Selected Tracks");
+	CHECK_THAT(notice, ContainsSubstring("Faders"));
+	CHECK_THAT(notice, ContainsSubstring("gone.wav"));
 	// The dialog shows the tracks that can't be imported.
 	importTracks(dir.path() / "song.dawproject");
 	CHECK_THAT(text("#import-tracks"), ContainsSubstring("Faders (can't be imported yet)"));
@@ -2055,6 +2064,7 @@ TEST_CASE(
 TEST_CASE("the track preset dialog saves, loads and adds track presets", "[ui]")
 {
 	test::UiApp app{{1000, 700}};
+	const test::TempDir dir;
 	app.appUi().showProject();
 	for (const char* command : {"project.addTrackFromPreset", "track.saveTrackPreset", "track.loadTrackPreset"})
 		CHECK(app.ui()
@@ -2095,9 +2105,10 @@ TEST_CASE("the track preset dialog saves, loads and adds track presets", "[ui]")
 	click(app, "#preset-confirm");
 	REQUIRE(app.waitUntil([&app] { return !shown(app, "#track-preset-dialog"); }));
 	// Load says what it keeps.
+	app.call("track.savePreset", {{"tracks", {midi.at("track").at("id")}}, {"name", "Lead"}, {"keep", "channel"}});
 	app.keys().run("track.loadTrackPreset", Json::object(), app.main(), nullptr);
 	REQUIRE(app.waitUntil([&app] { return shown(app, "#track-preset-dialog"); }));
-	CHECK(options(app, "#preset-list") == std::vector<std::string>{"Keys (Patch only)"});
+	CHECK(options(app, "#preset-list") == std::vector<std::string>{"Keys (Patch only)", "Lead (Channel only)"});
 	click(app, "#track-preset-dialog button[result=cancel]");
 	app.call("channel.set", {{"channel", midi.at("channel").at("id")}, {"program", 10}, {"midiChannel", 3}});
 	app.call("track.loadPreset", {{"tracks", {midi.at("track").at("id")}}, {"name", "Keys"}});
@@ -2110,6 +2121,29 @@ TEST_CASE("the track preset dialog saves, loads and adds track presets", "[ui]")
 	app.keys().run("track.loadTrackPreset", Json::object(), app.main(), nullptr);
 	click(app, "#preset-confirm");
 	REQUIRE(app.waitUntil([&app] { return channelOf(app.call("project.get"), "Other").at("volume") == -6.0; }));
+
+	// Save names the media files that are missing, which the preset refers to where they were (#1736); OK then closes
+	// the dialog.
+	const fs::path gone = fs::absolute(dir.path() / "gone.wav").lexically_normal();
+	const Json media =
+		app.call("media.add", {{"path", gone.u8string()}, {"sampleRate", 48000.0}, {"channels", 1}, {"length", 10}});
+	const Json sampler = app.call("sampler.create",
+		{{"clip", app.call("clip.add", {{"media", media.at("media").at("id")}}).at("clip").at("id")}});
+	select(app, {sampler.at("track").at("id").get<ObjectId>()});
+	app.keys().run("track.saveTrackPreset", Json::object(), app.main(), nullptr);
+	click(app, "#preset-name");
+	app.ui().text(std::nullopt, "Lost");
+	click(app, "#preset-confirm");
+	const auto message = [&app]
+	{ return app.ui().dom(std::nullopt, "#preset-message", 0).at("elements")[0].at("text").get<std::string>(); };
+	REQUIRE(app.waitUntil([&message] { return message().find("gone.wav") != std::string::npos; }));
+	CHECK(shown(app, "#track-preset-dialog"));
+	CHECK(app.call("track.presets").at("presets").size() == 4);
+	click(app, "#preset-confirm");
+	REQUIRE(app.waitUntil([&app] { return !shown(app, "#track-preset-dialog"); }));
+	CHECK(app.call("track.presets").at("presets").size() == 4);
+	app.call("track.remove", {{"track", sampler.at("track").at("id")}});
+	select(app, {other.at("track").at("id").get<ObjectId>()});
 
 	// Add adds the first preset listed, Keys.
 	app.keys().run("project.addTrackFromPreset", Json::object(), app.main(), nullptr);
