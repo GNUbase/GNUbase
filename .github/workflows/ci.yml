@@ -46,6 +46,10 @@ jobs:
     permissions:
       contents: read
       actions: read # main's API references, for the step "API reference changes"
+    # The ID of the API reference pages the Linux job uploaded, for publish-api-reference. Only that job sets it, and
+    # an empty value from another matrix job doesn't override it.
+    outputs:
+      pages-artifact: ${{ steps.upload-pages.outputs.artifact_id }}
     env:
       CCACHE_MAXSIZE: ${{ matrix.cache }}
       SCCACHE_CACHE_SIZE: ${{ matrix.cache }}
@@ -205,6 +209,7 @@ jobs:
           if-no-files-found: error
           retention-days: 90
       - name: Check API references
+        id: check-references
         if: ${{ !cancelled() && matrix.name == 'linux-x64-gcc' }}
         run: test -s build/${{ matrix.preset }}/docs/lua.md && test -s build/${{ matrix.preset }}/docs/mcp-tools.md
 
@@ -235,6 +240,7 @@ jobs:
       # the pages too, to find what breaks them before main does. Jekyll renders Markdown with GitHub's flavour; the raw
       # tags keep Liquid out of the references' text.
       - name: Prepare API reference pages
+        id: prepare-pages
         if: ${{ !cancelled() && matrix.name == 'linux-x64-gcc' }}
         run: |
           mkdir -p api-pages/source
@@ -251,13 +257,19 @@ jobs:
             { head -n 1 "$file"; echo '{% raw %}'; tail -n +2 "$file"; echo '{% endraw %}'; } > "api-pages/source/$name.md"
           done
       - name: Build API reference pages
+        id: build-pages
         if: ${{ !cancelled() && matrix.name == 'linux-x64-gcc' }}
         uses: actions/jekyll-build-pages@v1.0.13
         with:
           source: api-pages/source
           destination: api-pages/site
+      # On pushes, also when tests failed: the unit tests write the references whatever the other tests do, and the
+      # pages go up only when the references passed their check and both page steps succeeded.
       - name: Upload API reference pages
-        if: ${{ github.event_name == 'push' && matrix.name == 'linux-x64-gcc' }}
+        id: upload-pages
+        if: >-
+          ${{ !cancelled() && github.event_name == 'push' && steps.check-references.outcome == 'success'
+          && steps.prepare-pages.outcome == 'success' && steps.build-pages.outcome == 'success' }}
         uses: actions/upload-pages-artifact@v5
         with:
           path: api-pages/site
@@ -286,10 +298,12 @@ jobs:
           retention-days: 14
 
   # Publishes main's API references on GitHub Pages, the pages the Linux job built (docs/api-reference.md), so they can
-  # be read without a build or a GitHub sign-in. Needs the repository's Pages source set to GitHub Actions.
+  # be read without a build or a GitHub sign-in. Needs the repository's Pages source set to GitHub Actions. Runs once
+  # all build jobs ended, whether they passed or failed, when the Linux job uploaded the pages, and is skipped when it
+  # uploaded none, so a run without pages leaves the last ones online.
   publish-api-reference:
     needs: build
-    if: ${{ github.event_name == 'push' }}
+    if: ${{ !cancelled() && github.event_name == 'push' && needs.build.outputs.pages-artifact != '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
