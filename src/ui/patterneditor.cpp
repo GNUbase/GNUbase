@@ -205,8 +205,12 @@ namespace gnubase::ui
 		if (m_pattern.is_object() && lane(m_lane) == nullptr)
 			m_lane = m_pattern.at("lanes").empty() ? -1 : m_pattern.at("lanes").at(0).at("pitch").get<int>();
 		// The selection keeps only the steps the pattern shown has: a mode switch, a shorter Number of Steps, an undo
-		// or a script may have taken some (#1615). Another part or pattern shown starts without one (#1693).
-		const std::pair<uint64_t, uint64_t> shown{m_part, pattern};
+		// or a script may have taken some (#1615). Another part or pattern shown starts without one (#1693), and so
+		// does another Step Resolution that doubleLength() or set() didn't send: an undo of Double Step Resolution
+		// moves the steps back but not the selection (#1753).
+		std::tuple<uint64_t, uint64_t, std::string> shown{m_part, pattern, ""};
+		if (m_pattern.is_object())
+			std::get<2>(shown) = m_pattern.value("resolution", "");
 		if (shown != m_shown)
 			m_selection.clear();
 		m_shown = shown;
@@ -449,6 +453,8 @@ namespace gnubase::ui
 		const bool lanes = !waiting() && (!changes.contains("mode") || changes.at("mode") == m_pattern.at("mode")) &&
 			(!changes.contains("length") || changes.at("length") >= m_pattern.at("length"));
 		changes["pattern"] = m_pattern.at("id");
+		if (changes.contains("resolution") && changes.at("resolution").is_string())
+			std::get<2>(m_shown) = changes.at("resolution").get<std::string>(); // the steps keep their selection
 		Json sent = behind() ? m_sent : Json::object();
 		sent.update(changes);
 		if (lanes)
@@ -576,6 +582,8 @@ namespace gnubase::ui
 		for (const auto& [pitch, index] : m_selection)
 			selection.insert({pitch, doubled.count(pitch) != 0 ? index * 2 : index});
 		m_selection = std::move(selection);
+		if (resolution)
+			std::get<2>(m_shown) = changes.at("resolution").get<std::string>();
 		sendLanes(resolution ? "Double Step Resolution" : "Double Length", std::move(changes));
 	}
 

@@ -8,6 +8,7 @@
 #include "engine/engine.h"
 #include "ui/automation.h"
 #include "ui/canvas.h"
+#include "ui/docking.h"
 #include "ui/eventdisplay.h"
 #include "ui/tracklist.h"
 
@@ -323,6 +324,10 @@ TEST_CASE("the color menu colors the selected events, or else the selected track
 						  .at("id")
 						  .get<uint64_t>();
 	REQUIRE(window.app.waitUntil([&] { return window.elements("#track-list listitem").size() == 2; }));
+
+	// At 1024 pixels the toolbar has no room for its color section after the quantize section, which goes here.
+	window.app.appUi().docking().setSectionHidden("project", "toolbar", "quantize", true);
+	window.app.shell().step(std::chrono::milliseconds(0));
 
 	// With tracks selected and no events: the colors of the set, and Set Track Color to Default.
 	window.app.appUi().trackList()->select({audio, midi});
