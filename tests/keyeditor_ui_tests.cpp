@@ -784,8 +784,9 @@ TEST_CASE("the object selection tool selects, moves, resizes, inserts and delete
 			note = f.note(ids[1]);
 			return note.at("length") == 2 * g_quarter;
 		});
-	INFO("pressed at " << from.point->x << ", " << from.point->y << " on the note's box " << box.dump()
-					   << ", the note now " << note.dump());
+	const ui::Point pressed = from.point.value_or(ui::Point{});
+	INFO("pressed at " << pressed.x << ", " << pressed.y << " on the note's box " << box.dump() << ", the note now "
+					   << note.dump());
 	REQUIRE(resized);
 	f.settle();
 	CHECK(f.note(ids[1]).at("position") == g_quarter);
