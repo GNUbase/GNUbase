@@ -264,7 +264,7 @@ namespace gnubase::ui
 			setInner(root->QuerySelector(".editor-global-tracks"), globalTracksRml());
 			showContent();
 			if (m_keys)
-				m_keys->show(m_project, m_view);
+				m_keys->show(m_project, m_view, m_read);
 			if (m_list)
 				m_list->show(m_project, m_view);
 			if (m_audio)

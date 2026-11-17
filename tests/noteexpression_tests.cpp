@@ -706,3 +706,200 @@ TEST_CASE(
 	CHECK(points[1].type == gnubase::plugin::NoteExpression::Tuning);
 	CHECK(points[1].value == 120.0);
 }
+
+TEST_CASE("note.replaceExpression replaces one expression's points in a span of each note and keeps the others",
+	"[integration]")
+{
+	// The key editor's expression editor (#1795): an edit names only what its gesture went over, so that it doesn't
+	// depend on the points that the editor's copy of the project has.
+	Setup setup;
+	Client& client = setup.client;
+	const ObjectId part = addPart(client, setup.track);
+	const Json added = run(client, "note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", 0}, {"length", g_beatTicks}, {"pitch", 60}, {"velocity", 0.5},
+					 {"expressions",
+						 {point("tuning", 0, 1.0), point("tuning", 100, 2.0), point("pressure", 150, 0.5),
+							 point("tuning", 200, 3.0), point("tuning", 300, 4.0)}}},
+					{{"position", g_beatTicks}, {"length", g_beatTicks}, {"pitch", 62}, {"velocity", 0.5},
+						{"expressions", {point("tuning", 0, 5.0)}}}}}});
+	const Json first = added.at("notes").at(0).at("id");
+	const Json second = added.at("notes").at(1).at("id");
+	const auto noteOf = [&](const Json& id)
+	{
+		const Json project = run(client, "project.get"); // kept: a range-for keeps no temporary it reaches into
+		for (const Json& note : project.at("midiParts").at(0).at("notes"))
+			if (note.at("id") == id)
+				return note;
+		return Json();
+	};
+	const auto replace = [&](Json notes)
+	{
+		return run(client, "note.replaceExpression", {{"part", part}, {"type", "tuning"}, {"notes", std::move(notes)}});
+	};
+
+	// The tuning points from 100 to 200, both ends included, give way to the new ones; the pressure point between
+	// them and the tuning points outside the span stay.
+	const Json changed = replace(Json::array({{{"id", first}, {"from", 100}, {"to", 200},
+		{"points", {{{"position", 150}, {"value", -2.0}}, {{"position", 120}, {"value", 7.0}}}}}}));
+	REQUIRE(changed.at("notes").size() == 1);
+	CHECK(pointsOf(changed.at("notes").at(0)) ==
+		Points{{"pressure", 150, 500}, {"tuning", 0, 1000}, {"tuning", 120, 7000}, {"tuning", 150, -2000},
+			{"tuning", 300, 4000}});
+	// Sorted by position, a new point after the one of another expression at its position.
+	std::vector<std::pair<std::string, int64_t>> order;
+	const Json sorted = noteOf(first);
+	for (const Json& each : sorted.at("expressions"))
+		order.emplace_back(each.at("type").get<std::string>(), each.at("position").get<int64_t>());
+	CHECK(order ==
+		std::vector<std::pair<std::string, int64_t>>{
+			{"tuning", 0}, {"tuning", 120}, {"pressure", 150}, {"tuning", 150}, {"tuning", 300}});
+	CHECK(pointsOf(noteOf(second)) == Points{{"tuning", 0, 5000}});
+	CHECK(run(client, "history.get").at("steps").back().at("action") == "Change note expression");
+	run(client, "history.undo");
+	CHECK(pointsOf(noteOf(first)) ==
+		Points{{"pressure", 150, 500}, {"tuning", 0, 1000}, {"tuning", 100, 2000}, {"tuning", 200, 3000},
+			{"tuning", 300, 4000}});
+	run(client, "history.redo");
+
+	// Edits that a client made from the same state both stay (#1795): an erase, a draw elsewhere that knows nothing
+	// of the erase, then an erase of the point the draw made.
+	replace(Json::array({{{"id", first}, {"from", 290}, {"to", 310}, {"points", Json::array()}}}));
+	replace(Json::array(
+		{{{"id", first}, {"from", 400}, {"to", 400}, {"points", Json::array({{{"position", 400}, {"value", 9.0}}})}}}));
+	CHECK(pointsOf(noteOf(first)) ==
+		Points{{"pressure", 150, 500}, {"tuning", 0, 1000}, {"tuning", 120, 7000}, {"tuning", 150, -2000},
+			{"tuning", 400, 9000}});
+	replace({{{"id", first}, {"from", 390}, {"to", 410}, {"points", Json::array()}},
+		{{"id", second}, {"from", 0}, {"to", 0}, {"points", Json::array({{{"position", 0}, {"value", 6.0}}})}}});
+	CHECK(pointsOf(noteOf(first)) ==
+		Points{{"pressure", 150, 500}, {"tuning", 0, 1000}, {"tuning", 120, 7000}, {"tuning", 150, -2000}});
+	CHECK(pointsOf(noteOf(second)) == Points{{"tuning", 0, 6000}});
+	// The edit of both notes is one undo step.
+	run(client, "history.undo");
+	CHECK(pointsOf(noteOf(second)) == Points{{"tuning", 0, 5000}});
+	CHECK(pointsOf(noteOf(first)).size() == 5);
+
+	// A note named twice gets both changes in order.
+	const Json twice =
+		replace({{{"id", second}, {"from", 0}, {"to", 0}, {"points", Json::array({{{"position", 0}, {"value", 8.0}}})}},
+			{{"id", second}, {"from", 0}, {"to", 10}, {"points", Json::array({{{"position", 10}, {"value", 9.0}}})}}});
+	REQUIRE(twice.at("notes").size() == 1);
+	CHECK(pointsOf(twice.at("notes").at(0)) == Points{{"tuning", 10, 9000}});
+}
+
+TEST_CASE("a note.replaceExpression that changes nothing leaves the project unmodified", "[integration]")
+{
+	// An erase over a span without points of the expression, as the expression editor sends it for each note that its
+	// gesture went over: no revision, so no modified project and no undo step.
+	Setup setup;
+	Client& client = setup.client;
+	const ObjectId part = addPart(client, setup.track);
+	const Json id = run(client, "note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", 0}, {"length", g_beatTicks}, {"pitch", 60}, {"velocity", 0.5},
+					{"expressions", {point("pressure", 100, 0.5), point("tuning", 200, 1.0)}}}}}})
+						.at("notes")
+						.at(0)
+						.at("id");
+	const Json before = run(client, "project.revision");
+	const size_t steps = run(client, "history.get").at("steps").size();
+	CHECK(run(client, "note.replaceExpression",
+		{{"part", part}, {"type", "tuning"},
+			{"notes", Json::array({{{"id", id}, {"from", 0}, {"to", 150}, {"points", Json::array()}}})}})
+			.at("notes")
+			.empty());
+	// The point that the note has already changes nothing either.
+	CHECK(run(client, "note.replaceExpression",
+		{{"part", part}, {"type", "tuning"},
+			{"notes",
+				Json::array({{{"id", id}, {"from", 150}, {"to", 250},
+					{"points", Json::array({{{"position", 200}, {"value", 1.0}}})}}})}})
+			.at("notes")
+			.empty());
+	CHECK(run(client, "project.revision") == before);
+	CHECK(run(client, "history.get").at("steps").size() == steps);
+}
+
+TEST_CASE("note.replaceExpression refuses what it can't do and changes nothing then", "[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	const ObjectId part = addPart(client, setup.track);
+	const Json id = run(client, "note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", 0}, {"length", g_beatTicks}, {"pitch", 60}, {"velocity", 0.5},
+					{"expressions", {point("tuning", 100, 1.0)}}}}}})
+						.at("notes")
+						.at(0)
+						.at("id");
+	const auto notes = [&] { return run(client, "project.get").at("midiParts").at(0).at("notes"); };
+	const Json before = notes();
+	const Json revision = run(client, "project.revision");
+	// After a valid change, which the refusal must leave out too.
+	const auto replace = [&](Json change, const std::string& type = "tuning")
+	{
+		Json changes = Json::array({{{"id", id}, {"from", 0}, {"to", 200}, {"points", Json::array()}}});
+		changes.push_back(std::move(change));
+		return reject(client, "note.replaceExpression", {{"part", part}, {"type", type}, {"notes", changes}});
+	};
+	CHECK_THAT(replace({{"id", 999999}, {"from", 0}, {"to", 10}, {"points", Json::array()}}),
+		ContainsSubstring("no note 999999"));
+	CHECK_THAT(replace({{"id", id}, {"from", 10}, {"to", 5}, {"points", Json::array()}}),
+		ContainsSubstring("notes[1].to must not be before its from"));
+	CHECK_THAT(
+		replace({{"id", id}, {"from", 10}, {"to", 20}, {"points", Json::array({{{"position", 30}, {"value", 1.0}}})}}),
+		ContainsSubstring("notes[1].points[0].position must be from 10 to 20"));
+	CHECK_THAT(replace({{"id", id}, {"from", -20}, {"to", 20},
+				   {"points", Json::array({{{"position", -10}, {"value", 1.0}}})}}),
+		ContainsSubstring("must not be negative"));
+	CHECK_THAT(
+		replace({{"id", id}, {"from", 0}, {"to", 20}, {"points", Json::array({{{"position", 10}, {"value", 121.0}}})}}),
+		ContainsSubstring("notes[1].points[0].value"));
+	CHECK_THAT(
+		replace({{"id", id}, {"from", 0}, {"to", 20}, {"points", Json::array({{{"position", 10}, {"value", 2.0}}})}},
+			"pressure"),
+		ContainsSubstring("notes[1].points[0].value"));
+	CHECK_THAT(reject(client, "note.replaceExpression",
+				   {{"part", part}, {"type", "wobble"},
+					   {"notes", Json::array({{{"id", id}, {"from", 0}, {"to", 10}, {"points", Json::array()}}})}}),
+		ContainsSubstring("type"));
+	CHECK_THAT(reject(client, "note.replaceExpression",
+				   {{"part", 999999}, {"type", "tuning"},
+					   {"notes", Json::array({{{"id", id}, {"from", 0}, {"to", 10}, {"points", Json::array()}}})}}),
+		ContainsSubstring("no MIDI part 999999"));
+	CHECK(notes() == before);
+	CHECK(run(client, "project.revision") == revision);
+}
+
+TEST_CASE("note.replaceExpression reaches the shared copies of the part", "[integration]")
+{
+	Setup setup;
+	Client& client = setup.client;
+	const ObjectId part = addPart(client, setup.track);
+	const Json id = run(client, "note.add",
+		{{"part", part},
+			{"notes",
+				{{{"position", 0}, {"length", g_beatTicks}, {"pitch", 60}, {"velocity", 0.5},
+					{"expressions", {point("tuning", 100, 1.0)}}}}}})
+						.at("notes")
+						.at(0)
+						.at("id");
+	run(client, "event.copy", {{"events", {part}}, {"ticks", 4 * g_beatTicks}, {"shared", true}});
+	run(client, "note.replaceExpression",
+		{{"part", part}, {"type", "volume"},
+			{"notes",
+				Json::array({{{"id", id}, {"from", 0}, {"to", 0},
+					{"points", Json::array({{{"position", 0}, {"value", 3.5}}})}}})}});
+	const Json parts = run(client, "project.get").at("midiParts");
+	REQUIRE(parts.size() == 2);
+	for (const Json& each : parts)
+	{
+		INFO("part " << each.at("id"));
+		REQUIRE(each.at("notes").size() == 1);
+		CHECK(pointsOf(each.at("notes").at(0)) == Points{{"tuning", 100, 1000}, {"volume", 0, 3500}});
+	}
+}
