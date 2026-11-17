@@ -353,6 +353,11 @@ TEST_CASE("definition from tempo preserves off-beat events and separates shared 
 	CHECK(byId(client, "clips", firstClip).at("warp").at("gridStart") == -3000);
 	// Later warp edits accept the definition's leading quarter before the audio starts.
 	run(client, "clip.setWarp", {{"clip", firstClip}, {"preset", "quality"}});
+	// A grid start that a command gives can't be before the audio.
+	CHECK_THAT(
+		reject(client, "clip.setWarp", {{"clip", firstClip}, {"gridStart", -1}}), ContainsSubstring("0 or more"));
+	CHECK_THAT(reject(client, "clip.adjustGrid", {{"clip", firstClip}, {"mode", "start"}, {"frame", -1}}),
+		ContainsSubstring("0 or more"));
 	CHECK(byId(client, "audioEvents", untouched).at("clip") == clip);
 	CHECK_FALSE(byId(client, "clips", clip).at("warp").at("musical").get<bool>());
 	CHECK(rendered(engine, firstTrack).first == 12000);
@@ -371,6 +376,54 @@ TEST_CASE("definition from tempo preserves off-beat events and separates shared 
 	CHECK(undone.at("audioEvents") == before.at("audioEvents"));
 	run(client, "history.redo");
 	CHECK(std::abs(rendered(engine, firstTrack).second - 87000) <= 1);
+}
+
+TEST_CASE("definition from tempo copies a shared clip by placement, not by reference", "[unit]")
+{
+	Engine engine;
+	Client client(engine);
+	const ObjectId track = addTrack(client, {{"type", "audio"}, {"timeBase", "linear"}});
+	const ObjectId clip = addClip(client, "take.wav", 96000);
+	const auto clipOf = [&client](ObjectId event)
+	{ return byId(client, "audioEvents", event).at("clip").get<ObjectId>(); };
+	const auto musical = [&client](ObjectId id)
+	{ return byId(client, "clips", id).at("warp").at("musical").get<bool>(); };
+	SECTION("the pieces of a split recording keep their clip and glue again")
+	{
+		// Clip frame 0 plays at project sample 12000 in each piece (reference manual p. 1468).
+		const std::vector<ObjectId> pieces{addEvent(client, track, clip, 12000, 0, 24000),
+			addEvent(client, track, clip, 36000, 24000, 24000), addEvent(client, track, clip, 60000, 48000, 48000)};
+		CHECK(run(client, "event.setDefinitionFromTempo", {{"events", pieces}}).at("clips") == Json::array({clip}));
+		CHECK(run(client, "project.get").at("clips").size() == 1);
+		for (const ObjectId piece : pieces)
+			CHECK(clipOf(piece) == clip);
+		CHECK(musical(clip));
+		run(client, "event.glue", {{"events", pieces}});
+		CHECK(run(client, "project.get").at("audioEvents").size() == 1);
+	}
+	SECTION("a clip a sampler track plays stays with it")
+	{
+		const ObjectId event = addEvent(client, track, clip, 12000, 0, 96000);
+		run(client, "sampler.create", {{"clip", clip}});
+		run(client, "event.setDefinitionFromTempo", {{"events", {event}}});
+		CHECK(clipOf(event) != clip);
+		CHECK(musical(clipOf(event)));
+		CHECK_FALSE(musical(clip));
+	}
+	SECTION("events that share a clip only among themselves: the first placement keeps it")
+	{
+		const ObjectId first = addEvent(client, track, clip, 12000, 0, 48000);
+		const ObjectId second = addEvent(client, track, clip, 72000, 0, 48000);
+		const ObjectId third = addEvent(client, track, clip, 120000, 48000, 48000); // in the second's placement
+		CHECK(
+			run(client, "event.setDefinitionFromTempo", {{"events", {first, second, third}}}).at("clips").size() == 2);
+		CHECK(clipOf(first) == clip);
+		CHECK(clipOf(second) != clip);
+		CHECK(clipOf(third) == clipOf(second));
+		CHECK(musical(clip));
+		CHECK(musical(clipOf(second)));
+		CHECK(rendered(engine, track).first == 12000);
+	}
 }
 
 TEST_CASE("definition from tempo leaves an inactive track version's clip unchanged", "[unit]")

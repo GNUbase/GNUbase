@@ -522,8 +522,8 @@ namespace gnubase::engine
 				"on the active track versions, or without one there on an inactive version, so that nothing changes "
 				"until the tempo does; tempo (1-999 BPM); bars and beats, its length from the "
 				"grid start to its end in bars and quarters, which sets the tempo that makes it that long; "
-				"beatsPerBar (1-64); gridStart (a clip frame; the edited beats move with it); preset (the algorithm "
-				"preset of real-time warping). What isn't given stays. " +
+				"beatsPerBar (1-64); gridStart (a clip frame, 0 or more; the edited beats move with it); preset (the "
+				"algorithm preset of real-time warping). What isn't given stays. " +
 					warpText,
 				objectSchema(
 					{{"clip", integer}, {"musical", boolean}, {"tempo", number}, {"bars", integer}, {"beats", integer},
@@ -542,6 +542,8 @@ namespace gnubase::engine
 				if (parameters.contains("gridStart"))
 				{
 					const auto start = parameters.at("gridStart").get<time::Samples>();
+					// Only Set Definition from Tempo puts the grid start before the audio, by up to a quarter.
+					require(start >= 0, "gridStart must be 0 or more");
 					for (BeatEdit& edit : warp.beats)
 						edit.frame += start - warp.gridStart;
 					warp.gridStart = start;
@@ -676,6 +678,7 @@ namespace gnubase::engine
 					warp.beats.begin(), warp.beats.end(), [beat](const BeatEdit& e) { return e.beat == beat; });
 				if (mode == "start")
 				{
+					require(frame >= 0, "the grid start must be 0 or more");
 					for (BeatEdit& each : warp.beats)
 						each.frame += frame - warp.gridStart;
 					warp.gridStart = frame;

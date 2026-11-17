@@ -100,7 +100,9 @@ the info line).
 first click chooses the tool and the next opens its modes (p. 265): `#object-selection-menu` with the sizing modes and
 `#line-menu` with the line modes, `#play-menu` with the play modes and `#time-warp-toolbar-menu` with the time warp modes,
 each with the mode checked. The toolbox and the context menu's Tools choose the time warp tool too, and the
-Tools' Time Warp Mode chooses it with a mode. The toolbar hides sections that do not fit in a narrow window.
+Tools' Time Warp Mode chooses it with a mode. The toolbar hides sections that do not fit in a narrow window: with the
+time warp button, a 1024-pixel window at a dp ratio of 1 has no room for the color section and those after it, and
+none for the Quantize section either once the snap and grid types show their longest names.
 
 The commands are in `EventDisplay::actions()`, and `app::AppUi` binds the reference's keys (p. 1569) in the project
 window: `tool.objectSelection` 1, `tool.rangeSelection` 2, `tool.split` 3, `tool.glue` 4, `tool.erase` 5, `tool.zoom`

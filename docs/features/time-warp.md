@@ -60,7 +60,10 @@ signature events ([signature-track.md](signature-track.md)) and the clips' warp 
   and `#pb-denominator`; Process sends `tempo.processBars`.
 - **Audio > Advanced > Set Definition from Tempo...** (`audio.setDefinitionFromTempo`) opens
   `resources/ui/definition-from-tempo.rml` for the selected audio events: Set all Tracks to Musical Time Base
-  `#dt-all-tracks`; OK sends `event.setDefinitionFromTempo`.
+  `#dt-all-tracks`; OK sends `event.setDefinitionFromTempo`. Selected events of one clip that play its frame 0 at the
+  same time, such as the pieces of a split recording, keep sharing the clip and its one definition, so they still glue
+  into one event. At another placement they get a copy of the clip with a definition of its own; the original stays
+  with the clip's other events and sampler tracks, or else with the first placement.
 - **Audio > Advanced > Copy Warp Markers from Selected Event** (`audio.copyWarpMarkers`) remembers the first selected
   audio event, **Paste Warp Markers to Selected Events** (`audio.pasteWarpMarkers`) sends `event.pasteWarpMarkers`
   for the selected ones.
@@ -77,7 +80,8 @@ time formats; Write Definition to Audio Files.
 `tests/timewarp_tests.cpp`: time warp in both grid modes, with a later tempo event and its limits; Process Tempo by
 length and end, from the locators and with a ramp across the range's end; every Process Bars type and its errors;
 Set Definition from Tempo playing as before and following a tempo change, for the events' tracks or all, with off-beat
-starts and shared clips, including inactive track versions; pasting warp markers once per clip, keeping those there,
+starts and shared clips copied by placement, keeping split pieces together, with sampler tracks and inactive track
+versions; pasting warp markers once per clip, keeping those there,
 and undo; Free Warp through musical mode, existing markers and trimmed events. `tests/timewarp_ui_tests.cpp`:
 the tool's toolbar button and second-click modes,
 Warp Grid and Free Warp drags on plain and warped clips, its modes in the context menu, the Process Tempo and

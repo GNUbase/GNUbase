@@ -908,8 +908,10 @@ namespace
 		// 4 dp wider, which pixels round to less at small dp ratios: 3 against 2 pixels at 0.7, so wider by more than a
 		// dp (#1239).
 		CHECK(now.between.front() > now.within + ratio);
+		// The boxes round their position and width each on its own, so a gap measures up to 1.5 pixels off: two equal
+		// gaps differ by up to 2 (4.85 pixels each measure 4 to 6 at 0.97).
 		for (const double gap : now.between)
-			CHECK(std::abs(gap - now.between.front()) <= 1.0);
+			CHECK(std::abs(gap - now.between.front()) <= 2.0);
 		CHECK(std::abs(now.inset - expected.inset) <= 1.0);
 	}
 }
@@ -1189,14 +1191,15 @@ TEST_CASE("the toolbar makes room for its sections with the widest labels, and f
 		const std::vector<std::string> wide = checkToolbarRoom(window, defaults, reference, false);
 		CHECK(wide.size() < before.size());
 
-		// A section the user hides in the setup pane makes room for the next one.
-		REQUIRE(wide.size() >= 5);
+		// The sections the user hides in the setup pane make room for the next one, which comes after them: the tools,
+		// the widest, make room for any one section, such as the Quantize section at 1024 pixels.
+		REQUIRE(wide.size() >= 4);
 		const std::string& next = defaults.at(wide.size() - 1); // the first one without room
 		docking.setSectionHidden("project", "toolbar", "zoomPresets", true);
-		docking.setSectionHidden("project", "toolbar", "autoScroll", true);
+		docking.setSectionHidden("project", "toolbar", "tools", true);
 		std::vector<std::string> order;
 		for (const std::string& name : defaults)
-			if (name != "zoomPresets" && name != "autoScroll")
+			if (name != "zoomPresets" && name != "tools")
 				order.push_back(name);
 		const std::vector<std::string> roomMade = checkToolbarRoom(window, order, reference);
 		CHECK(std::find(roomMade.begin(), roomMade.end(), next) != roomMade.end());

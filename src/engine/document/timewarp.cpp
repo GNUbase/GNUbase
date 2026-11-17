@@ -374,31 +374,64 @@ namespace gnubase::engine
 					linear.end());
 			}
 			setTimeBase(model, project, linear, "musical", context);
-			std::map<ObjectId, size_t> references;
-			forEveryAudioEvent(project, [&references](const AudioEvent& event) { ++references[event.clip]; });
-			forEverySamplerClip(project, [&references](ObjectId clip) { ++references[clip]; });
-			std::set<ObjectId> clips;
+			std::map<ObjectId, size_t> unselected; // the clips' references that aren't selected events
+			forEveryAudioEvent(project, [&unselected](const AudioEvent& event) { ++unselected[event.clip]; });
+			forEverySamplerClip(project, [&unselected](ObjectId clip) { ++unselected[clip]; });
+			for (const ObjectId id : eventIds)
+				--unselected.at(project.audioEvents.at(id).clip);
+			// The selected events of a clip that play its frame 0 at one time, within a sample, share one definition,
+			// as the pieces of a split recording do; another placement needs a grid of its own, so a copy of the clip.
+			// The original stays with the references that aren't selected, or else with the first placement.
+			struct Placement
+			{
+				ObjectId original = 0;
+				double start = 0.0; // project samples of clip frame 0
+				ObjectId clip = 0;
+				ObjectId event = 0; // the first event, which the definition is made from
+			};
+			std::vector<Placement> placements;
+			std::vector<ObjectId> moved;
 			for (const ObjectId id : eventIds)
 			{
 				AudioEvent& event = project.audioEvents.at(id);
-				// Different placements need different grids; an unselected event must keep its original clip too.
-				const bool shared = references.at(event.clip) > 1;
-				if (shared)
+				const ObjectId original = event.clip;
+				const double start = EventTime(project, event).samplesAt(0.0);
+				const auto same =
+					std::find_if(placements.begin(), placements.end(), [original, start](const Placement& each)
+						{ return each.original == original && std::abs(each.start - start) <= 1.0; });
+				if (same != placements.end())
 				{
-					--references.at(event.clip);
-					Clip copy = project.clips.at(event.clip);
-					copy.id = project.newId();
-					event.clip = copy.id;
-					project.clips[event.clip] = std::move(copy);
+					event.clip = same->clip;
 				}
-				defineFromTempo(project, event);
-				clips.insert(event.clip);
-				if (shared)
+				else
 				{
-					context.emit("clip.added", {{"clip", toJson(project.clips.at(event.clip))}});
-					context.emit("audioEvent.changed", {{"event", audioEventJson(project, event)}});
+					const bool keep = unselected.at(original) == 0 &&
+						std::none_of(placements.begin(), placements.end(),
+							[original](const Placement& each) { return each.original == original; });
+					Placement placement{original, start, original, id};
+					if (!keep)
+					{
+						Clip copy = project.clips.at(original); // not defined yet, as the definitions come below
+						copy.id = project.newId();
+						placement.clip = copy.id;
+						project.clips[copy.id] = std::move(copy);
+					}
+					event.clip = placement.clip;
+					placements.push_back(placement);
 				}
+				if (event.clip != original)
+					moved.push_back(id);
 			}
+			std::set<ObjectId> clips;
+			for (const Placement& placement : placements)
+			{
+				defineFromTempo(project, project.audioEvents.at(placement.event));
+				clips.insert(placement.clip);
+				if (placement.clip != placement.original)
+					context.emit("clip.added", {{"clip", toJson(project.clips.at(placement.clip))}});
+			}
+			for (const ObjectId id : moved)
+				context.emit("audioEvent.changed", {{"event", audioEventJson(project, project.audioEvents.at(id))}});
 			Json result = Json::array();
 			for (const ObjectId id : clips)
 			{
@@ -532,9 +565,11 @@ namespace gnubase::engine
 				"(ids) the project's tempo as their definition, the grid on each quarter where the event plays it "
 				"now, and turns musical mode on, so that they play as before and follow tempo changes from then on. "
 				"The events' tracks, or with allTracks every track, become musical first, keeping their time. A clip "
-				"in musical mode already is refused. Shared clips are copied for independent definitions at each "
-				"selected placement; unselected events keep their clips. Repeated event ids are ignored. Returns the "
-				"clips.",
+				"in musical mode already is refused. Events of one clip that play its frame 0 at the same time, such "
+				"as "
+				"the pieces of a split recording, keep sharing it; at another placement they get a copy of the clip "
+				"with a definition of its own. The clip stays with the references to it that aren't given, or else "
+				"with the first placement. Repeated event ids are ignored. Returns the clips.",
 				objectSchema({{"events", ids}, {"allTracks", boolean}}, {"events"}),
 				{{"type", "object"}, {"properties", {{"clips", ids}}}, {"required", {"clips"}}}, false},
 			"Set Definition from Tempo", [&model](Project& project, CommandContext& context)
