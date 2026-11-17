@@ -275,12 +275,25 @@
 				{key = "ui.zoomToolHorizontalOnly", label = "Zoom Tool Standard Mode: Horizontal Zooming Only"}}},
 			{id = "editors", name = "Editors", items = {
 				{key = "editing.useDrumEditor", label = "Use Drum Editor when Drum Map is assigned"}}},
-			{id = "event-display", name = "Event Display", items = {}},
+			-- The event display's look (pp. 1603-1604, 1607; #1313).
+			{id = "event-display", name = "Event Display", items = {
+				{key = "ui.showEventNames", label = "Show Event Names"},
+				{key = "ui.hideTruncatedEventNames", label = "Hide Truncated Event Names"},
+				{key = "ui.highlightSelectedEventBorders", label = "Highlight Borders of Selected Events"},
+				{key = "ui.eventOpacity", label = "Event Opacity", unit = "%"},
+				{key = "ui.smallestTrackHeightForData", label = "Smallest Track Height to Show Data", unit = "dp"},
+				{key = "ui.smallestTrackHeightForName", label = "Smallest Track Height to Show Name", unit = "dp"}}},
+			{id = "event-display-audio", parent = "Event Display", name = "Audio", items = {
+				{key = "ui.waveformBrightness", label = "Waveform Brightness", unit = "%"}}},
 			{id = "event-display-folders", parent = "Event Display", name = "Folders", items = {
 				{key = "ui.folderData", label = "Show Data on Folder Tracks", choices = {
 					{"always", "Always Show Data"}, {"never", "Never Show Data"},
 					{"hideWhenExpanded", "Hide Data When Expanded"}}},
 				{key = "editing.applyFolderColor", label = "Apply Color of Folder Track Automatically"}}},
+			{id = "event-display-midi", parent = "Event Display", name = "MIDI", items = {
+				{key = "ui.partDataMode", label = "Part Data Mode", choices = {{"off", "Off"}, {"lines", "Lines"}}},
+				{key = "ui.showControllers", label = "Show Controllers"},
+				{key = "ui.noteBrightness", label = "Note Brightness", unit = "%"}}},
 			{id = "event-display-markers", parent = "Event Display", name = "Markers", items = {
 				{key = "ui.markerLines", label = "Show Marker Lines", choices = {
 					{"off", "Off"}, {"active", "From Active Marker Track"}, {"all", "From All Marker Tracks"}}}}},

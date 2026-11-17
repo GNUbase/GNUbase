@@ -437,6 +437,17 @@
 	{
 		color: #0969da;
 	}
+	event-names
+	{
+		color: #17202d;
+		font-size: 11dp;
+	}
+	part-contents
+	{
+		color: #17202d;
+		stroke-color: #566273;
+		stroke-width: 1dp;
+	}
 	curve
 	{
 		stroke-color: #6554c0;
@@ -467,6 +478,10 @@
 		own-color-tint: none;
 		event-inset: 0dp;
 	}
+	.event-display event-names, .event-display part-contents
+	{
+		event-inset: 0dp;
+	}
 	.event-display .overview
 	{
 		background-color: #ffffff;
@@ -491,6 +506,11 @@
 	{
 		color: #5094e4;
 		stroke-color: #17202d;
+	}
+	.event-display.highlight-selected-borders event-lanes.selected-events
+	{
+		stroke-color: #c92d42;
+		stroke-width: 2dp;
 	}
 	.event-display fade-lines
 	{

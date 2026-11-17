@@ -61,7 +61,7 @@ namespace gnubase::ui
 		waves.reserve(events.size());
 		for (const Event& event : events)
 		{
-			Wave wave{event, nullptr, {}, false, false};
+			Wave wave{event, nullptr, {}, false, false, std::nullopt};
 			if (const auto found = old.find({event.id, count[event.id]++}); found != old.end())
 			{
 				// The element shows what it has until the new columns are in, and a question in flight stays the
@@ -106,12 +106,13 @@ namespace gnubase::ui
 		const bool laneShown = wave.event.lane + 1 < view.laneTops.size();
 		const double laneTop = laneShown ? view.laneTops[wave.event.lane] : 0.0;
 		const double laneHeight = laneShown ? view.laneTops[wave.event.lane + 1] - laneTop : 0.0;
-		if (!laneShown || !(visible > 0.0) || !(to > from) || laneTop + laneHeight <= view.top - view.height ||
-			laneTop >= view.top + (2.0 * view.height))
+		if (!laneShown || laneHeight < view.minimumHeight || !(visible > 0.0) || !(to > from) ||
+			laneTop + laneHeight <= view.top - view.height || laneTop >= view.top + (2.0 * view.height))
 		{
 			if (wave.element != nullptr)
 				m_container->RemoveChild(std::exchange(wave.element, nullptr));
 			wave.asked = {};
+			wave.placed.reset();
 			return;
 		}
 		if (wave.element == nullptr)
@@ -121,12 +122,20 @@ namespace gnubase::ui
 			if (wave.element == nullptr)
 				return; // <waveform> isn't registered: nothing to draw with
 			m_container->AppendChild(std::move(element));
+			wave.placed.reset();
 		}
 		wave.element->SetAttribute("media", static_cast<int64_t>(wave.event.media)); // for the UI tools
 		wave.element->SetAttribute("start", view.start);
 		wave.element->SetAttribute("scale", view.scale);
-		wave.element->SetProperty(Rml::PropertyId::Top, dp(laneTop - view.top));
-		wave.element->SetProperty(Rml::PropertyId::Height, dp(laneHeight));
+		// Only when it changes: the attribute builds the waveform again, which scrolling within its build doesn't.
+		if (wave.element->GetAttribute<double>("brightness", -1.0) != view.brightness)
+			wave.element->SetAttribute("brightness", view.brightness);
+		if (const std::pair<double, double> place{laneTop - view.top, laneHeight}; wave.placed != place)
+		{
+			wave.element->SetProperty(Rml::PropertyId::Top, dp(place.first));
+			wave.element->SetProperty(Rml::PropertyId::Height, dp(place.second));
+			wave.placed = place;
+		}
 		if (!wave.pending && (wave.stale || !covers(wave, wave.asked)))
 			ask(wave, from, to);
 	}

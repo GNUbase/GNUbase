@@ -22,7 +22,8 @@ namespace gnubase::ui
 {
 	class RmlUi;
 
-	// Registers <event-lanes>, <waveform>, <curve>, <fade-lines> and <ruler>, and the style properties they draw with:
+	// Registers <event-lanes>, <event-names>, <part-contents>, <waveform>, <curve>, <fade-lines> and <ruler>, and the
+	// style properties they draw with:
 	// stroke-color and stroke-width, and how colors that are user data show (#1312): own-fill-opacity (a number, 1 by
 	// default) is how opaque an event's body is in its own color; own-color-tint (none by default, or a color) is laid
 	// over an own color by its alpha for the event's outline and for a waveform, which otherwise use stroke-color and
@@ -112,6 +113,11 @@ namespace gnubase::ui
 		void OnRender() override;
 		void OnAttributeChange(const Rml::ElementAttributes& changed) override;
 		void OnPropertyChange(const Rml::PropertyIdSet& changed) override;
+		// Whether attributes that the build reads changed, such as how bright or opaque it draws: they build again.
+		virtual bool drawsWith(const Rml::ElementAttributes& /*changed*/) const { return false; }
+		// Builds again when the element's font must be generated again, e.g. after RmlUi released its glyphs. Elements
+		// that draw text call it before Canvas::OnRender.
+		void followFont();
 
 	private:
 		struct Piece
@@ -127,12 +133,19 @@ namespace gnubase::ui
 		Frame m_built;
 		std::vector<Piece> m_pieces;
 		uint64_t m_builds = 0;
+		int m_fontVersion = -1;
 	};
+
+	// A color drawn at a brightness from 0 to 1: 0.5 as it is, less dims it toward transparent, more lightens it
+	// toward white (the event display's Waveform Brightness and Note Brightness, #1313).
+	Rml::ColourbPremultiplied brightened(Rml::ColourbPremultiplied colour, double brightness);
 
 	// <event-lanes>: rows of rectangles, such as the events of tracks or the notes of a key editor (one lane per
 	// pitch). Fills them with color, or with their own color if they have one at own-fill-opacity, outlined by
 	// stroke-color, or an own color with own-color-tint over it, event-inset off their lane's edges. An own-color-tint
-	// outlines events with a color in stroke-width even if stroke-color is transparent.
+	// outlines events with a color in stroke-width even if stroke-color is transparent. The attribute body-opacity (0
+	// to 1, 1 by default; the event display's Event Opacity, #1313) makes the bodies more transparent, not the
+	// outlines.
 	class EventLanes final : public Canvas
 	{
 	public:
@@ -149,11 +162,108 @@ namespace gnubase::ui
 
 	protected:
 		void build(const Frame& frame, Rml::TexturedMeshList& meshes) override;
+		bool drawsWith(const Rml::ElementAttributes& changed) const override;
 
 	private:
 		std::vector<Lane> m_lanes;
 		std::vector<double> m_tops;    // each lane's top in dp, and the bottom of the last
 		std::vector<double> m_longest; // each lane's longest event
+	};
+
+	// <event-names>: the names of events at their top left, in color and the element's font, event-inset off the lane's
+	// top (in lanes high enough for a line then) and a quarter em in from the event's left edge (#1313). A name that
+	// doesn't fit its event is cut to the characters that fit, or left out with the attribute hide-truncated; a name of
+	// which no character fits is left out.
+	class EventNames final : public Canvas
+	{
+	public:
+		struct Name
+		{
+			double start = 0.0;
+			double length = 0.0;
+			std::string text;
+
+			double end() const { return start + length; }
+		};
+		struct Lane
+		{
+			float height = 0.0F;     // dp
+			std::vector<Name> names; // by start
+		};
+
+		using Canvas::Canvas;
+
+		void setLanes(std::vector<Lane> lanes);
+		const std::vector<Lane>& lanes() const { return m_lanes; }
+
+	protected:
+		void build(const Frame& frame, Rml::TexturedMeshList& meshes) override;
+		bool drawsWith(const Rml::ElementAttributes& changed) const override;
+		void OnRender() override;
+
+	private:
+		std::vector<Lane> m_lanes;
+		std::vector<double> m_tops;
+		std::vector<double> m_longest;
+	};
+
+	// <part-contents>: what MIDI parts hold, inside their part's box event-inset off the lane's edges (#1313): notes as
+	// lines in color, from the part's highest pitch at the top to its lowest at the bottom, each as long as the note
+	// and as high as a pitch's share of the box, at most a sixth of it; controllers and the other events that aren't
+	// notes as bars in stroke-color from the box's bottom, as high as their value of a quarter of the box. The
+	// attribute brightness (0 to 1, 0.5 by default; the event display's Note Brightness) draws the notes brighter or
+	// dimmer (brightened).
+	class PartContents final : public Canvas
+	{
+	public:
+		struct Note
+		{
+			double start = 0.0;
+			double length = 0.0;
+			int pitch = 0;
+		};
+		struct Controller
+		{
+			double position = 0.0;
+			double value = 0.0; // 0 to 1
+		};
+		struct Part
+		{
+			double start = 0.0;
+			double length = 0.0;
+			std::vector<Note> notes;             // by start
+			std::vector<Controller> controllers; // by position
+
+			double end() const { return start + length; }
+		};
+		struct Lane
+		{
+			float height = 0.0F;     // dp
+			std::vector<Part> parts; // by start
+		};
+
+		using Canvas::Canvas;
+
+		void setLanes(std::vector<Lane> lanes);
+		const std::vector<Lane>& lanes() const { return m_lanes; }
+
+	protected:
+		void build(const Frame& frame, Rml::TexturedMeshList& meshes) override;
+		bool drawsWith(const Rml::ElementAttributes& changed) const override;
+
+	private:
+		// What setLanes works out for each part: its pitch range and its longest note.
+		struct Range
+		{
+			int lowest = 0;
+			int highest = 0;
+			double longest = 0.0;
+		};
+
+		std::vector<Lane> m_lanes;
+		std::vector<std::vector<Range>> m_ranges; // by lane and part
+		std::vector<double> m_tops;
+		std::vector<double> m_longest;
 	};
 
 	// One channel's peak columns as media.peaks returns them: the smallest and largest sample of each column, -32767
@@ -168,6 +278,8 @@ namespace gnubase::ui
 	// own-color-tint over it if that isn't none. As high as its lane, it keeps event-inset off the lane's edges inside
 	// its padding, as <event-lanes> keeps events, unless that would leave it no pixel (as in lanes no higher than twice
 	// the inset, where events drop it). A pixel shows the columns it covers; columns wider than a pixel are repeated.
+	// The attribute brightness (0 to 1, 0.5 by default; the event display's Waveform Brightness, #1313) draws it
+	// brighter or dimmer (brightened).
 	class Waveform final : public Canvas
 	{
 	public:
@@ -182,6 +294,7 @@ namespace gnubase::ui
 
 	protected:
 		void build(const Frame& frame, Rml::TexturedMeshList& meshes) override;
+		bool drawsWith(const Rml::ElementAttributes& changed) const override;
 
 	private:
 		TimeSpan m_span;
@@ -320,6 +433,5 @@ namespace gnubase::ui
 
 	private:
 		RulerScale m_scale;
-		int m_fontVersion = -1;
 	};
 }
