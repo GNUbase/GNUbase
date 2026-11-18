@@ -25,11 +25,13 @@ env:
     libdrm-dev libgbm-dev libgl1-mesa-dev libgles2-mesa-dev libegl1-mesa-dev
     libdbus-1-dev libibus-1.0-dev libudev-dev libfribidi-dev libthai-dev
     libvulkan1 mesa-vulkan-drivers
-  # Compiler caches: only pushes to main save them, and pull requests restore main's. A pull request's own would only
-  # push main's out of the repository's 10 GB of Actions cache, as no other pull request can restore them. Each job caps
-  # its cache (CCACHE_MAXSIZE, SCCACHE_CACHE_SIZE) at about one and a half of its builds, so that main's caches take
-  # about half of the 10 GB. SDL and RmlUi compile with precompiled headers, which neither ccache nor sccache can cache,
-  # so CI builds without them.
+  # Compiler caches: only pushes to main save them, and pull requests restore main's latest. A pull request's own would
+  # only push main's out of the repository's 10 GB of Actions cache, as no other pull request can restore them. Each job
+  # caps its cache (CCACHE_MAXSIZE, SCCACHE_CACHE_SIZE) at about one and a half of its builds, so that one push's caches
+  # take about half of the 10 GB. Each push to main saves them under new keys, and GitHub evicts the least recently used
+  # once the 10 GB are full, so about two pushes' caches stay. The jobs print their cache statistics after building,
+  # to check the caps against. SDL and RmlUi compile with precompiled headers, which neither ccache nor sccache can
+  # cache, so CI builds without them.
   CCACHE_DIR: ${{ github.workspace }}/.ccache
   CCACHE_LAUNCHER: >-
     -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON
@@ -125,6 +127,10 @@ jobs:
 
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }} --config Release
+
+      - name: Compiler cache statistics
+        if: runner.os != 'Windows'
+        run: ccache --show-stats
 
       # Stopping the server writes out what it still holds before the cache is saved, and prints its statistics.
       - name: Stop sccache (Windows)
@@ -370,7 +376,9 @@ jobs:
         run: cmake --preset linux-clang -DGNUBASE_SANITIZERS=${{ matrix.sanitizers }} $CCACHE_LAUNCHER
 
       - name: Build tests
-        run: cmake --build --preset linux-clang --target gnubase-tests
+        run: |
+          cmake --build --preset linux-clang --target gnubase-tests
+          ccache --show-stats
 
       - name: Save the compiler cache
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -420,11 +428,14 @@ jobs:
           cmake --preset linux-clang -DGNUBASE_CLANG_TIDY=ON -DGNUBASE_CLANG_TIDY_CACHE=$PWD/.tidy-cache
           $CCACHE_LAUNCHER
 
-      # Keeps only the passes this build used, so the cache doesn't grow with every push.
+      # Keeps only the passes this build used, so the cache doesn't grow with every push. The folder is missing when no
+      # file had a key (tools/clang-tidy-cache.sh).
       - name: Build with clang-tidy
         run: |
           touch "$RUNNER_TEMP/build-start"
           cmake --build --preset linux-clang
+          ccache --show-stats
+          mkdir -p .tidy-cache
           find .tidy-cache -type f ! -newer "$RUNNER_TEMP/build-start" -delete
 
       - name: Save the caches

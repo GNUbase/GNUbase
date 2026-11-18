@@ -153,9 +153,12 @@ job()
 			cmake --build "build/$1" --target gnubase-tests && runTests "build/$1" Debug
 		;;
 	clang-tidy)
+		# Unlike CI, which builds every file, the build here is incremental: a pass of a file it didn't rebuild can
+		# still be reused later, for example after switching back to a branch. So it drops passes unused for 30 days.
 		cmake --preset linux-clang -B build/clang-tidy -DGNUBASE_CLANG_TIDY=ON \
 			-DGNUBASE_CLANG_TIDY_CACHE="$root/build/clang-tidy-cache" "${ccache[@]}" &&
-			cmake --build build/clang-tidy
+			cmake --build build/clang-tidy &&
+			{ [ ! -d build/clang-tidy-cache ] || find build/clang-tidy-cache -type f -mtime +30 -delete; }
 		;;
 	*)
 		echo "Unknown job $1" >&2

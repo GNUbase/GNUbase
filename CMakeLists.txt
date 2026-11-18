@@ -28,6 +28,10 @@ option(GNUBASE_RENDER_SPIKE "Build the render backend spike (spikes/render-backe
 if(GNUBASE_SANITIZERS AND MSVC)
 	message(FATAL_ERROR "GNUBASE_SANITIZERS is only supported with GCC and Clang")
 endif()
+# CMake would run the cache's shell script as the clang-tidy command, which Windows can't.
+if(GNUBASE_CLANG_TIDY AND GNUBASE_CLANG_TIDY_CACHE AND CMAKE_HOST_WIN32)
+	message(FATAL_ERROR "GNUBASE_CLANG_TIDY_CACHE needs a Linux or macOS host; leave it empty on Windows")
+endif()
 if(GNUBASE_CLANG_TIDY)
 	find_program(GNUBASE_CLANG_TIDY_EXE NAMES clang-tidy REQUIRED)
 	set(clangTidy "${GNUBASE_CLANG_TIDY_EXE};--warnings-as-errors=*")
